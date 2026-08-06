@@ -4,7 +4,12 @@ import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot, type ExecOnSlotOptions } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
-import { parseHookJsonl, readRunnerObservabilityFiles } from './observability-files.js';
+import {
+  observedAtFromRecord,
+  parseHookJsonl,
+  readRunnerObservabilityFiles,
+  readRunnerPaneObservabilityState,
+} from './observability-files.js';
 import {
   getRunnerDefinition,
   runnerPersistsSessionFiles,
@@ -17,6 +22,7 @@ import {
   loadSessionMtimesMs,
   RUNNER_SESSION_CAPTURE_MAX_POLLS,
   RUNNER_SESSION_CAPTURE_POLL_MS,
+  RUNNER_SESSION_DISPATCH_SLACK_MS,
   runnerSessionIdForPath,
   statSessionPathMtimeMs,
 } from './session-path-resolution.js';
@@ -182,6 +188,27 @@ async function tryHookSessionBinding(
   },
 ): Promise<RunnerSessionBinding | null> {
   if (getRunnerDefinition(runner).observabilityScope !== 'event-driven') return null;
+  if (options.paneId) {
+    const paneState = await readRunnerPaneObservabilityState(vars, options.paneId);
+    const observedAt = paneState ? observedAtFromRecord(paneState) : null;
+    const transcriptPath = paneState?.transcript_path?.trim() ?? '';
+    const sessionId = paneState?.session_id?.trim() ?? '';
+    const isCurrentDispatch =
+      options.sinceMs === undefined ||
+      (observedAt !== null && observedAt >= options.sinceMs - RUNNER_SESSION_DISPATCH_SLACK_MS);
+    const isCurrentSlot =
+      !options.slotId || !paneState?.slotId || paneState.slotId === options.slotId;
+    if (transcriptPath && sessionId && isCurrentDispatch && isCurrentSlot) {
+      const mtimeMs = await statSessionPathMtimeMs(vars, transcriptPath);
+      if (mtimeMs !== null) {
+        return {
+          runnerSessionPath: transcriptPath,
+          runnerSessionId: sessionId,
+          source: 'hook',
+        };
+      }
+    }
+  }
   const { hooksRaw } = await readRunnerObservabilityFiles(vars);
   const hookBinding = findSessionStartFromHooks(parseHookJsonl(hooksRaw), options);
   if (!hookBinding) return null;

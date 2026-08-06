@@ -3,8 +3,10 @@ import test from 'node:test';
 
 import {
   branchDiffPollAction,
-  gitChangesFingerprint,
+  committedReviewBranchDiffRequest,
+  committedReviewFileDiffRequest,
   isBranchDiffTicketCurrent,
+  normalizeReviewBaseRef,
   slotViewBranchList,
 } from './slot-view-branch-model.js';
 
@@ -26,57 +28,35 @@ test('slotViewBranchList deduplicates main and empty candidates', () => {
   );
 });
 
+test('normalizeReviewBaseRef uses one gateway request form for local and remote refs', () => {
+  assert.equal(normalizeReviewBaseRef('origin/main'), 'main');
+  assert.equal(normalizeReviewBaseRef(' release/1.2 '), 'release/1.2');
+  assert.equal(normalizeReviewBaseRef(undefined), 'main');
+});
+
+test('review workspace requests preserve a certified non-main base and committed HEAD target', () => {
+  assert.deepEqual(committedReviewBranchDiffRequest('slot-1', 'origin/release/1.2'), {
+    slotId: 'slot-1',
+    base: 'release/1.2',
+  });
+  assert.deepEqual(committedReviewFileDiffRequest('slot-1', 'src/index.ts', 'origin/release/1.2'), {
+    slotId: 'slot-1',
+    path: 'src/index.ts',
+    base: 'release/1.2',
+    target: 'head',
+  });
+});
+
 const POLL_BASE = {
   prevBranch: 'feat/x' as string | undefined,
   nextBranch: 'feat/x',
   prevAhead: 2 as number | undefined,
   nextAhead: 2,
-  prevChangesKey: '' as string | undefined,
-  nextChangesKey: '',
+  prevHeadSha: 'head-a' as string | undefined,
+  nextHeadSha: 'head-a',
   lastLoadFailed: false,
   loading: false,
 };
-
-test('branchDiffPollAction reloads and clears the cache when the working tree changes', () => {
-  assert.equal(
-    branchDiffPollAction({
-      ...POLL_BASE,
-      prevChangesKey: 'a.ts:M:0',
-      nextChangesKey: 'a.ts:M:0|b.ts:A:0',
-    }),
-    'reload-and-clear-cache',
-  );
-});
-
-test('branchDiffPollAction keeps reloading the list while the worktree stays dirty', () => {
-  // Same status fingerprint, but an already-modified file may have new edits
-  // the fingerprint cannot see — list refresh only, cache stays.
-  assert.equal(
-    branchDiffPollAction({
-      ...POLL_BASE,
-      prevChangesKey: 'a.ts:M:0',
-      nextChangesKey: 'a.ts:M:0',
-    }),
-    'reload',
-  );
-});
-
-test('gitChangesFingerprint is order-independent and state-sensitive', () => {
-  assert.equal(
-    gitChangesFingerprint([
-      { path: 'b.ts', status: 'A', staged: false },
-      { path: 'a.ts', status: 'M', staged: true },
-    ]),
-    gitChangesFingerprint([
-      { path: 'a.ts', status: 'M', staged: true },
-      { path: 'b.ts', status: 'A', staged: false },
-    ]),
-  );
-  assert.notEqual(
-    gitChangesFingerprint([{ path: 'a.ts', status: 'M', staged: true }]),
-    gitChangesFingerprint([{ path: 'a.ts', status: 'M', staged: false }]),
-  );
-});
 
 test('branchDiffPollAction reloads and clears the diff cache on branch change', () => {
   assert.equal(
@@ -87,6 +67,13 @@ test('branchDiffPollAction reloads and clears the diff cache on branch change', 
 
 test('branchDiffPollAction reloads and clears the diff cache when ahead changes', () => {
   assert.equal(branchDiffPollAction({ ...POLL_BASE, nextAhead: 6 }), 'reload-and-clear-cache');
+});
+
+test('branchDiffPollAction reloads and clears the diff cache when HEAD changes', () => {
+  assert.equal(
+    branchDiffPollAction({ ...POLL_BASE, nextHeadSha: 'head-amended' }),
+    'reload-and-clear-cache',
+  );
 });
 
 test('branchDiffPollAction retries without clearing the cache after a failed load', () => {
@@ -110,7 +97,7 @@ test('branchDiffPollAction does not treat the first poll as git movement', () =>
       ...POLL_BASE,
       prevBranch: undefined,
       prevAhead: undefined,
-      prevChangesKey: undefined,
+      prevHeadSha: undefined,
     }),
     'none',
   );

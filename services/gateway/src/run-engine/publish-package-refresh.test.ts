@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type {
+  IndependentReviewStatus,
   ReadyGatePayload,
   ReadyGatePrPackage,
   ReviewGatePayload,
@@ -15,8 +16,10 @@ import type {
 
 import { execLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
+import { runResolveDecision } from '../methods/run.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
+import { APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION } from './gate-policy.js';
 import {
   refreshPublishPackage,
   reviewDepthForPublishPackageRefresh,
@@ -410,8 +413,9 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
     oldReviewSubjectHash,
   );
 
-  updateRun(run.id, { slotId: null });
-  // Re-seed stale fields while slot is released — null probe must clear them.
+  await rm(poolFile, { force: true });
+  // Re-seed stale fields after the configured slot is removed while the
+  // durable run still retains its slot id.
   const beforeRelease = getRun(run.id)!;
   const beforeReleaseDecision = beforeRelease.decisions[0];
   updateRun(run.id, {
@@ -444,6 +448,66 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   assert.equal(afterRelease.mergeConflicts, undefined);
   assert.equal(afterRelease.mergeConflictPaths, undefined);
   assert.equal(afterRelease.branchFreshnessHint, undefined);
+  assert.equal(afterRelease.prPackage?.reviewSnapshot?.source, 'unavailable');
+  assert.equal(afterRelease.prPackage?.reviewSnapshot?.missingReason, 'slot-load-error');
+
+  const unavailablePackage = afterRelease.prPackage!;
+  const exactReview: IndependentReviewStatus = {
+    id: 'independent-review-removed-slot',
+    source: 'dispatch',
+    crossRunner: false,
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    reviewedHeadSha: unavailablePackage.headSha,
+    reviewedReviewSubjectHash: unavailablePackage.reviewSubjectHash,
+    reviewSnapshot: unavailablePackage.reviewSnapshot,
+  };
+  const beforeApproval = getRun(run.id)!;
+  updateRun(run.id, {
+    status: 'monitoring',
+    engineState: {
+      ...beforeApproval.engineState,
+      publishGate: {
+        ...beforeApproval.engineState?.publishGate,
+        reviewDepth,
+        independentReviews: [exactReview],
+      },
+    },
+    decisions: beforeApproval.decisions.map((entry) =>
+      entry.id === decision.id
+        ? {
+            ...entry,
+            actions: [
+              ...entry.actions,
+              {
+                id: APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+                label: 'Publish Anyway (snapshot unavailable)',
+                style: 'primary' as const,
+              },
+            ],
+          }
+        : entry,
+    ),
+  });
+  await runResolveDecision(
+    {
+      runId: run.id,
+      decisionId: decision.id,
+      actionId: APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+      selectionData: {
+        packageId: unavailablePackage.id,
+        packageHash: unavailablePackage.packageHash,
+        packageHeadSha: unavailablePackage.headSha,
+        selectedEvidenceKeys: unavailablePackage.selectedEvidenceKeys,
+      },
+    },
+    () => {},
+  );
+  assert.equal(
+    getRun(run.id)!.decisions.find((entry) => entry.id === decision.id)?.resolvedAction,
+    APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+  );
 });
 test('refreshPublishPackage fails closed when worker artifacts cannot be mirrored', async (t) => {
   const testId = `refresh-package-fail-${process.pid}-${Date.now()}`;

@@ -716,7 +716,7 @@ export function runnerLaunchBlockerAutoActionKey(
  *
  * TRIGGER ONLY: the returned key is advisory. The classifier's judged pane can
  * be seconds stale by the time its verdict arrives, so delivery authorization
- * comes from confirmTrustPromptWithFreshEvidence, which re-captures the pane
+ * comes from resolveLaunchBlockerWithFreshEvidence, which re-captures the pane
  * and requires the deterministic detector to confirm.
  */
 export function keyForClassifierTrustAction(
@@ -747,7 +747,7 @@ export function keyForClassifierTrustAction(
  * after a pane transition. `exec` runs a tmux subcommand on the slot; injected
  * so tests can pin target, key, and the no-evidence-no-send rule.
  */
-export async function confirmTrustPromptWithFreshEvidence(opts: {
+export async function resolveLaunchBlockerWithFreshEvidence(opts: {
   runnerId: string | null | undefined;
   target: string;
   logPrefix: string;
@@ -2039,7 +2039,10 @@ export async function sendRunnerInstructionSafely(
   message: string,
   logPrefix: string,
   timeoutMs?: number,
-  opts: { forceBusyPoll?: boolean; recovery?: RunnerSendRecoveryContext } = {},
+  opts: {
+    forceBusyPoll?: boolean;
+    recovery?: RunnerSendRecoveryContext;
+  } = {},
 ): Promise<boolean> {
   const runner = normalizeRunner(runnerId);
   const def = getRunnerDefinition(runner);
@@ -2605,7 +2608,7 @@ export async function sendRunnerPostLaunchPrompt(
       console.log(
         `[${logPrefix}] pane classifier reported trust_prompt in ${target}: ${classifierForFailure.reason}`,
       );
-      const confirmed = await confirmTrustPromptWithFreshEvidence({
+      const confirmed = await resolveLaunchBlockerWithFreshEvidence({
         runnerId: runner,
         target,
         logPrefix,

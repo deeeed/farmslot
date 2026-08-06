@@ -92,6 +92,28 @@ export function parseTerminalSelfReviewSignal(raw: string) {
   return terminalWorkerSignalFromRaw(raw);
 }
 
+export function applyTerminalReviewSignal(
+  feedback: ReviewAgentResult,
+  signal: ReturnType<typeof parseTerminalSelfReviewSignal>,
+): ReviewAgentResult {
+  if (!signal || signal.status === 'complete' || signal.status === 'done') return feedback;
+  return { verdict: 'pass', issues: [], incomplete: true };
+}
+
+async function readTerminalReviewSignal(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+  signalBasename: string,
+) {
+  const raw = (
+    await execOnSlot(
+      vars,
+      `cat ${shellQuote(slotTaskRelPath(vars, taskDir, signalBasename))} 2>/dev/null`,
+    )
+  ).stdout.trim();
+  return parseTerminalSelfReviewSignal(raw);
+}
+
 export function shouldKeepWaitingForOverdueReview(
   reviewerProcessAlive: boolean,
   _reviewerAtIdlePrompt: boolean,
@@ -447,7 +469,10 @@ async function recoverRunningReviewAgent(params: {
       abandonRecoveredReviewer,
     );
     if (!completed) return null;
-    const feedback = await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath);
+    const feedback = applyTerminalReviewSignal(
+      await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath),
+      await readTerminalReviewSignal(params.vars, params.taskDir, signalBasename),
+    );
     await waitForSessionTranscriptToSettle(params.vars, context.runnerSessionPath ?? null);
     const usage = context.runnerSessionPath
       ? await extractRunnerSessionUsage({
@@ -749,7 +774,9 @@ export async function runReviewAgent(
     ): Promise<void> => {
       const handoffAckSinceMs = Date.now();
       debugSelfReviewLog(`[self-review] launching (${runner}) via respawn-window: ${launchCmd}`);
-      await respawnTmuxWindowWithCommand(vars, reviewTarget, launchCmd);
+      await respawnTmuxWindowWithCommand(vars, reviewTarget, launchCmd, {
+        preserveWindowAfterExit: true,
+      });
       await new Promise((r) => setTimeout(r, TMUX_WINDOW_RESPAWN_SETTLE_MS));
       sessionMeta = await bestEffortCaptureRunnerSessionMetadata(
         vars,
@@ -900,7 +927,10 @@ export async function runReviewAgent(
         });
 
     // 7. Read reviewer-specific feedback.
-    const feedback = await readReviewFeedback(vars, taskDir, feedbackRelPath);
+    const feedback = applyTerminalReviewSignal(
+      await readReviewFeedback(vars, taskDir, feedbackRelPath),
+      await readTerminalReviewSignal(vars, taskDir, reviewChecklistTarget.signal),
+    );
     if (feedback.incomplete) {
       return {
         ...feedback,

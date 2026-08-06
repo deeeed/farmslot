@@ -305,6 +305,11 @@ case "$ACTION" in
       cd "$REPO_ROOT"
       export GATEWAY_PORT="$GATEWAY_PORT"
       export VITE_PORT="$VITE_PORT"
+      # The isolated self-integration pool is keyed by farmslot-demo. Register
+      # this stack's co-launched node under the same identity so node-backed
+      # exec, attachments, file watches, and metrics exercise the sandbox
+      # instead of silently falling back to the physical host node.
+      export MACHINE_NAME="${MACHINE_NAME:-farmslot-demo}"
       # This is a per-worktree validation/recipe stack, not the control plane. It
       # shares the operator's run history (FARMSLOT_RUNS_DIR) for read-only display,
       # so it must NOT orchestrate: run recovery here would re-drive the operator's

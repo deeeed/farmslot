@@ -652,7 +652,7 @@ async function respawnRoleWindowWithCommand(
   target: string,
   command: string,
 ): Promise<void> {
-  const launchCommand = buildRoleLaunchCommandWithDiagnosticHold(command);
+  const launchCommand = buildRoleLaunchCommandWithDiagnosticHold(command, vars.remoteRepo);
   const respawned = await execOnSlot(
     vars,
     tmuxShellSnippet(
@@ -677,7 +677,10 @@ async function respawnRoleWindowWithCommand(
   await applyRoleWindowOptions(vars, target);
 }
 
-export function buildRoleLaunchCommandWithDiagnosticHold(command: string): string {
+export function buildRoleLaunchCommandWithDiagnosticHold(
+  command: string,
+  remoteRepo: string,
+): string {
   // Keep the wrapper as the tmux pane process so launch failures can preserve
   // stderr briefly for diagnostics. If dispatch cleanup kills the child runner,
   // or a runner exits non-zero during launch/user quit, this outer shell can
@@ -686,11 +689,12 @@ export function buildRoleLaunchCommandWithDiagnosticHold(command: string): strin
   const lines = [
     `bash -lc ${shellQuote(command)}`,
     '__farmslot_status=$?',
+    'echo "[farmslot] runner launch command exited $__farmslot_status" >&2',
     'if [ "$__farmslot_status" -ne 0 ]; then',
-    '  echo "[farmslot] runner launch command exited $__farmslot_status; preserving pane for diagnostics" >&2',
+    '  echo "[farmslot] preserving pane for launch diagnostics" >&2',
     `  sleep ${ROLE_LAUNCH_FAILURE_DIAGNOSTIC_HOLD_SECONDS}`,
     'fi',
-    'exit "$__farmslot_status"',
+    buildDispatchRoleShellCommand(remoteRepo),
   ];
   return `bash -c ${shellQuote(lines.join('\n'))}`;
 }

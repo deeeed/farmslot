@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-05T17:58:20.046Z",
+  "host": "macwork",
+  "scenario": "retained-handoff-smoke",
+  "runner": "claude",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-retained-ivI9kw",
+  "session": "runner-validate-claude-retained-handoff-smoke-18242",
+  "sessionId": "ecf6db60-d793-4a7d-95d4-545a7bb75c61",
+  "sessionPath": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-retained-ivI9kw/ecf6db60-d793-4a7d-95d4-545a7bb75c61.jsonl",
+  "initialCompleted": true,
+  "handoffDelivered": true,
+  "pass": true,
+  "error": null,
+  "paneTail": null
+}

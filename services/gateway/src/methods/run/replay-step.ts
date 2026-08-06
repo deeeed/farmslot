@@ -29,6 +29,7 @@ import { execOnSlot } from '../../core/exec.js';
 import { SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
+import { refreshArtifactMirror } from '../../run-completion/artifact-mirror.js';
 import {
   hasValidPrNumber,
   supersedeStaleHumanGateDecisions,
@@ -509,6 +510,16 @@ export async function runReplayStep(
           throw err;
         }
       }
+    }
+
+    // A worker can continue refining evidence after the original gate was built.
+    // Replaying only the human gate must therefore refresh the worker-owned mirror
+    // first; otherwise the new decision faithfully republishes stale report text.
+    if (replayStepName === PS.HUMAN_GATE && effectiveSlotId && replayTaskFile) {
+      const copied = await refreshArtifactMirror(getRun(params.runId) ?? existing);
+      console.log(
+        `[run] replay from ${replayStepName} — refreshed ${copied} worker artifact(s) before rebuilding the gate`,
+      );
     }
 
     // Drop branch-affinity nudge hints on any replay. The flags were set at run.create time

@@ -110,7 +110,22 @@ export interface SelfReviewResult {
   retryCount: number;
   maxRetries?: number;
   feedbackSent?: boolean;
+  /** Reviewer findings are valid, but their worker fix handoff still needs recovery. */
+  recoveryContinuationPending?: boolean;
   durationMs?: number;
+}
+
+/** The fix checklist exists, but the retained worker did not accept its prompt. */
+export class SelfReviewFixDeliveryError extends Error {
+  override name = 'SelfReviewFixDeliveryError';
+}
+
+function resolveWorkerModel(
+  run: Pick<NonNullable<ReturnType<typeof getRun>>, 'metrics'> | null | undefined,
+  runner: string,
+  fallback: string,
+): string {
+  return run?.metrics.model?.trim() || runnerDefaultModel(runner) || fallback;
 }
 
 export interface SelfReviewOptions {
@@ -127,7 +142,8 @@ export interface SelfReviewOptions {
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
-const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min for worker to fix
+const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min without worker progress
+const FEEDBACK_MAX_ACTIVE_MS = 2 * 60 * 60_000; // bound continuously progressing fix passes
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -334,6 +350,9 @@ export async function executeSelfReview(
       return {
         skipped: true,
         reason: 'no-feedback-file',
+        runner: reviewRunner,
+        model,
+        crossRunner: isCrossRunnerReview,
         retryCount: 0,
         validationDepth,
         usage: result.usage,
@@ -410,6 +429,7 @@ export interface SelfReviewRetryDeps {
     model: string,
     runId: string,
   ) => Promise<boolean>;
+  resumeFixPromptDelivery: typeof resumeSelfReviewFixPromptDelivery;
   sendFeedbackToWorker: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
     issues: SelfReviewIssue[],
@@ -486,6 +506,7 @@ function setSelfReviewProgressDetail(runId: string, detail: string): void {
 const PRODUCTION_DEPS: SelfReviewRetryDeps = {
   isWorkerAlive,
   relaunchWorkerForFix,
+  resumeFixPromptDelivery: resumeSelfReviewFixPromptDelivery,
   sendFeedbackToWorker,
   startProgressWatcher,
   waitForWorkerSignal,
@@ -576,6 +597,7 @@ export async function runSelfReviewRetryLoop({
           retryCount,
           maxRetries,
           feedbackSent,
+          recoveryContinuationPending: true,
           durationMs: Date.now() - start,
         };
       }
@@ -609,6 +631,7 @@ export async function runSelfReviewRetryLoop({
           retryCount,
           maxRetries,
           feedbackSent,
+          recoveryContinuationPending: true,
           durationMs: Date.now() - start,
         };
       }
@@ -624,7 +647,66 @@ export async function runSelfReviewRetryLoop({
         `[self-review] run ${runId.slice(0, 8)} — failed to capture fix base SHA: ${(err as Error).message}`,
       );
     }
-    const fixSignalBaseline = await deps.sendFeedbackToWorker(vars, result.issues, taskDir, runId);
+    let fixSignalBaseline: string | undefined;
+    try {
+      fixSignalBaseline = await deps.sendFeedbackToWorker(vars, result.issues, taskDir, runId);
+    } catch (error) {
+      if (!(error instanceof SelfReviewFixDeliveryError)) throw error;
+      let deliveryError: unknown = error;
+      console.warn(
+        `[self-review] run ${runId.slice(0, 8)} — retained worker rejected the fix task; relaunching once before preserving the findings`,
+      );
+      const run = deps.getRun(runId);
+      const fixContext = run?.agentContexts?.find(
+        (context) => context.role === 'self-review-fix' && context.taskFile,
+      );
+      const relaunched = await deps.relaunchWorkerForFix(
+        vars,
+        workerRunner,
+        resolveWorkerModel(run, workerRunner, model),
+        runId,
+      );
+      if (relaunched) {
+        const relaunchedFixContext =
+          deps
+            .getRun(runId)
+            ?.agentContexts?.find(
+              (context) => context.role === 'self-review-fix' && context.taskFile,
+            ) ?? fixContext;
+        if (relaunchedFixContext) {
+          const delivery = await deps.resumeFixPromptDelivery(
+            vars,
+            runId,
+            relaunchedFixContext,
+            undefined,
+            { priorPromptSendAttempted: false },
+          );
+          if (delivery === 'delivered') fixSignalBaseline = '';
+          else deliveryError = new Error(`fresh-worker fix delivery ${delivery}`);
+        }
+      }
+      if (fixSignalBaseline === undefined) {
+        const message =
+          deliveryError instanceof Error ? deliveryError.message : String(deliveryError);
+        console.warn(
+          `[self-review] run ${runId.slice(0, 8)} — preserving ${result.issues.length} reviewer finding(s) after fix delivery failed: ${message}`,
+        );
+        return {
+          verdict: 'issues',
+          reason: `fix-delivery-unavailable: ${message}`,
+          issues: result.issues,
+          validationDepth,
+          usage: result.usage,
+          reviewSnapshot: result.reviewSnapshot,
+          attempts,
+          retryCount,
+          maxRetries,
+          feedbackSent: false,
+          recoveryContinuationPending: true,
+          durationMs: Date.now() - start,
+        };
+      }
+    }
     const fixStartedAt = new Date().toISOString();
     retryCount += 1;
     feedbackSent = true;
@@ -872,6 +954,7 @@ interface FixPromptRecoveryDeps {
   resolvePrompt: typeof resolveWorkerDispatchPrompt;
   resolveRuntimeDir: typeof resolveProjectRuntimeDir;
   readLaunchAck: typeof readLaunchAckSignalSnapshot;
+  syncChecklistTarget: typeof syncChecklistTargetForRole;
   ensureTarget: typeof ensureTmuxTargetReadyForRelaunch;
   persistTarget: (
     runId: string,
@@ -886,6 +969,7 @@ const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
   resolvePrompt: resolveWorkerDispatchPrompt,
   resolveRuntimeDir: resolveProjectRuntimeDir,
   readLaunchAck: readLaunchAckSignalSnapshot,
+  syncChecklistTarget: syncChecklistTargetForRole,
   ensureTarget: ensureTmuxTargetReadyForRelaunch,
   persistTarget: async (runId, run, target) => {
     await upsertAgentContext(runId, 'self-review-fix', { target });
@@ -908,7 +992,10 @@ export async function resumeSelfReviewFixPromptDelivery(
   runId: string,
   context: FixPromptRecoveryContext,
   deps: FixPromptRecoveryDeps = FIX_PROMPT_RECOVERY_DEPS,
-): Promise<'delivered' | 'deferred' | 'unsupported'> {
+  options: {
+    priorPromptSendAttempted?: boolean;
+  } = {},
+): Promise<'delivered' | 'deferred' | 'relaunch-required' | 'unsupported'> {
   const storedTarget = context.target?.target;
   const session = context.target?.session;
   const taskFile = context.taskFile;
@@ -919,6 +1006,13 @@ export async function resumeSelfReviewFixPromptDelivery(
 
   const run = deps.getRun(runId);
   if (!run) return 'unsupported';
+  const taskDir = path.posix.dirname(taskFile);
+  // A gateway restart can leave the shared mark helper pointed back at TASK.md
+  // even though the durable fix context still owns SELF-REVIEW-FIX.md. Restore
+  // the role target before any recovered prompt is delivered, otherwise a
+  // completed worker writes SIGNAL.json while recovery waits forever on the
+  // scoped fix signal.
+  await deps.syncChecklistTarget(vars, taskDir, 'self-review-fix');
   const target = await deps.ensureTarget(
     vars,
     session,
@@ -935,7 +1029,6 @@ export async function resumeSelfReviewFixPromptDelivery(
     pane: null,
     target,
   });
-  const taskDir = path.posix.dirname(taskFile);
   const attemptStartedAt = context.attemptStartedAt?.trim();
   if (!attemptStartedAt) return 'deferred';
   const basePrompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
@@ -961,13 +1054,16 @@ export async function resumeSelfReviewFixPromptDelivery(
     launchAckSignalPath: signalPath,
     launchAckBaseline,
     acceptExistingLaunchAck: false,
-    priorPromptSendAttempted: true,
+    priorPromptSendAttempted: options.priorPromptSendAttempted ?? true,
     timeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
     recovery: { runId },
     sendLogPrefix: 'self-review-fix-recovery',
     forceBusyPoll: true,
   });
-  return result.delivered ? 'delivered' : 'deferred';
+  if (result.delivered) return 'delivered';
+  return result.disposition === 'hold' && result.retryable === false
+    ? 'relaunch-required'
+    : 'deferred';
 }
 
 async function recoverSelfReviewFixPass({
@@ -1034,10 +1130,42 @@ async function recoverSelfReviewFixPass({
     );
 
     if (!fixSignal) {
-      const delivery = await resumeSelfReviewFixPromptDelivery(vars, runId, fixContext);
+      const expectedWorkerModel = resolveWorkerModel(run, workerRunner, model);
+      const fixContextMatchesWorker =
+        normalizeRunner(fixContext.runner) === normalizeRunner(workerRunner) &&
+        (!fixContext.model?.trim() || fixContext.model.trim() === expectedWorkerModel);
+      let delivery = fixContextMatchesWorker
+        ? await resumeSelfReviewFixPromptDelivery(vars, runId, fixContext)
+        : 'relaunch-required';
+      if (!fixContextMatchesWorker) {
+        debugSelfReviewLog(
+          `[self-review] run ${runId.slice(0, 8)} — fix context ${fixContext.runner}/${fixContext.model ?? 'default'} does not match worker ${workerRunner}/${expectedWorkerModel}; relaunching with worker model`,
+        );
+      }
       debugSelfReviewLog(
         `[self-review] run ${runId.slice(0, 8)} — recovered fix prompt ${delivery}`,
       );
+      if (delivery === 'relaunch-required') {
+        const relaunched = await relaunchWorkerForFix(vars, workerRunner, model, runId);
+        if (relaunched) {
+          const relaunchedFixContext =
+            getRun(runId)?.agentContexts?.find(
+              (candidate) => candidate.role === 'self-review-fix' && candidate.taskFile,
+            ) ?? fixContext;
+          delivery = await resumeSelfReviewFixPromptDelivery(
+            vars,
+            runId,
+            relaunchedFixContext,
+            FIX_PROMPT_RECOVERY_DEPS,
+            { priorPromptSendAttempted: false },
+          );
+        } else {
+          delivery = 'deferred';
+        }
+        debugSelfReviewLog(
+          `[self-review] run ${runId.slice(0, 8)} — recovered fix prompt fresh-worker ${delivery}`,
+        );
+      }
       if (delivery === 'deferred') {
         setProgressDetail(
           runId,
@@ -1470,7 +1598,7 @@ async function sendFeedbackToWorker(
       const failureSummary = terminalRetainedHoldReason
         ? 'self-review fix task delivery stopped after the retained runner was replaced but did not acknowledge the prompt'
         : `self-review fix task delivery kept deferring for ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min — worker never accepted the prompt`;
-      throw new Error(
+      throw new SelfReviewFixDeliveryError(
         `${failureSummary} (${fixTaskFile}).${retainedSummary} Pane re-resolution found no accepting runner pane in session ${session} (windows seen: ${seenSummary}). Escape: replay the self-review step after restoring runner observability.`,
       );
     }
@@ -1499,7 +1627,7 @@ async function sendFeedbackToWorker(
       );
       await markAgentContextStatus(runId, 'self-review-fix', 'failed');
       await unwatchContext(vars.slotId, 'self-review-fix');
-      throw new Error(
+      throw new SelfReviewFixDeliveryError(
         `self-review fix task delivered but the worker pane never changed — runner is unresponsive (${fixTaskFile})`,
       );
     }
@@ -1593,6 +1721,7 @@ async function relaunchWorkerForFix(
 ): Promise<boolean> {
   const resolved = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
   const parentRun = getRun(runId);
+  const effectiveModel = resolveWorkerModel(parentRun, runner, model);
   const roleWindowName =
     parentRun?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(parentRun?.flowType))
       ?.target?.window ?? null;
@@ -1603,21 +1732,32 @@ async function relaunchWorkerForFix(
     roleWindowName,
     parentRun?.flowType,
   );
-  const prompt = 'Continue working on the current TASK.md and self-review fix feedback.';
+  const fixContext = parentRun?.agentContexts?.find(
+    (context) => context.role === 'self-review-fix' && context.taskFile,
+  );
+  const prompt =
+    parentRun?.project && fixContext?.taskFile && fixContext.attemptStartedAt
+      ? `${await resolveWorkerDispatchPrompt(parentRun.project, {
+          taskFile: fixContext.taskFile,
+          taskDir: path.posix.dirname(fixContext.taskFile),
+        })}\n\nFarmslot fix delivery attempt: ${fixContext.attemptStartedAt}`
+      : 'Continue working on the current TASK.md and self-review fix feedback.';
   // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.
   const parentSafetyTier = parentRun?.safetyTier;
   const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
   const taskDir = parentRun
     ? await resolveWorkerTaskDir(vars, parentRun.project, parentRun.taskFile)
     : null;
-  let launchCmd = buildLaunchCommand(vars, runner, model, prompt, {
+  let launchCmd = buildLaunchCommand(vars, runner, effectiveModel, prompt, {
     effort: parentRun?.effort,
     safetyTier: parentSafetyTier,
     runtimeDir,
     taskDir: taskDir ?? undefined,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
-  await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd);
+  await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
+    preserveWindowAfterExit: true,
+  });
   await new Promise((r) => setTimeout(r, TMUX_WINDOW_RESPAWN_SETTLE_MS));
   const run = getRun(runId);
   const workerRole = resolved.role ?? primaryRoleForFlow(run?.flowType);
@@ -1629,7 +1769,7 @@ async function relaunchWorkerForFix(
   await upsertAgentContext(runId, workerRole, {
     status: 'working',
     runner,
-    model,
+    model: effectiveModel,
     runnerSessionId: null,
     runnerSessionPath: null,
     target: {
@@ -1639,6 +1779,20 @@ async function relaunchWorkerForFix(
       target: workerTarget,
     },
   });
+  if (fixContext) {
+    const updatedFixContext = await upsertAgentContext(runId, 'self-review-fix', {
+      status: 'working',
+      runner,
+      model: effectiveModel,
+      target: {
+        session: resolved.session,
+        window,
+        pane: null,
+        target: workerTarget,
+      },
+    });
+    if (updatedFixContext) await watchContext(vars.slotId, updatedFixContext);
+  }
 
   if (!runnerNeedsPostLaunchPrompt(runner)) {
     // Never trust the respawn blindly (ported from ci-monitor, PR #326): a
@@ -1705,11 +1859,16 @@ async function waitForWorkerSignal(
   const signalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
 
   const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
+  let lastProgressAt = start;
+  let lastObservedSignal = baseline;
+  const maxActiveMs = Math.max(timeoutMs, Math.min(FEEDBACK_MAX_ACTIVE_MS, timeoutMs * 4));
+  while (Date.now() - start < maxActiveMs && Date.now() - lastProgressAt < timeoutMs) {
     await new Promise((r) => setTimeout(r, 2000));
     try {
       const raw = await readOptionalSlotFile(vars, signalPath);
-      if (!raw || raw === baseline) continue;
+      if (!raw || raw === lastObservedSignal) continue;
+      lastObservedSignal = raw;
+      lastProgressAt = Date.now();
       const signal = terminalWorkerSignalFromRaw(raw);
       if (signal) return signal;
     } catch (err) {

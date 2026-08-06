@@ -22,6 +22,10 @@ import {
 } from '../../utils/reconnect.js';
 import { type LightboxItem, type LightboxPair } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
+import {
+  committedReviewBranchDiffRequest,
+  committedReviewFileDiffRequest,
+} from '../slot-view/slot-view-branch-model.js';
 
 import {
   isReadyPublicationApproval,
@@ -464,10 +468,13 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     if (!this.slotId) return;
     this._diffLoading = true;
     try {
-      const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
-        slotId: this.slotId,
-        base: 'main',
-      });
+      const result = await gateway.request<GitBranchDiffResult>(
+        Methods.GIT_BRANCH_DIFF,
+        committedReviewBranchDiffRequest(
+          this.slotId,
+          this._payload?.prPackage?.reviewSnapshot?.baseRef,
+        ),
+      );
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffError = '';
       this._diffFiles = result.files;
@@ -510,11 +517,14 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._fileDiffLoading = true;
     this._fileDiff = '';
     try {
-      const result = await gateway.request<GitDiffResult>(Methods.GIT_DIFF, {
-        slotId: this.slotId,
-        path: filePath,
-        base: 'main',
-      });
+      const result = await gateway.request<GitDiffResult>(
+        Methods.GIT_DIFF,
+        committedReviewFileDiffRequest(
+          this.slotId,
+          filePath,
+          this._payload?.prPackage?.reviewSnapshot?.baseRef,
+        ),
+      );
       this._fileDiff = result.diff;
       if (this._diffModalOpen && !this._diffModalUrl) {
         this._diffModalTitle = `${workspaceArtifactBasename(filePath)} diff`;

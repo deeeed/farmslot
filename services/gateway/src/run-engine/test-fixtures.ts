@@ -87,14 +87,28 @@ export function makeCollisionDecision(existingDirs: string[]): RunDecision {
 export function makeReadyGatePackage(
   overrides: Partial<ReadyGatePrPackage> = {},
 ): ReadyGatePrPackage {
+  const headSha = overrides.headSha ?? 'abc1234';
+  const diffStat = overrides.diffStat ?? { files: 1, additions: 2, deletions: 1 };
   return {
     id: overrides.id ?? 'pkg-1',
     artifactPath: overrides.artifactPath ?? 'artifacts/pr-package.json',
     packageHash: overrides.packageHash ?? 'hash-1',
     branch: overrides.branch ?? 'fix/proj-1-codex',
     remoteBranchRef: overrides.remoteBranchRef ?? 'origin/fix/proj-1-codex',
-    headSha: overrides.headSha ?? 'abc1234',
-    diffStat: overrides.diffStat ?? { files: 1, additions: 2, deletions: 1 },
+    headSha,
+    diffStat,
+    reviewSnapshot:
+      'reviewSnapshot' in overrides
+        ? overrides.reviewSnapshot
+        : {
+            source: 'local-git',
+            baseRef: 'origin/main',
+            baseSha: 'base-default',
+            headSha,
+            diffHash: 'diff-default',
+            diffStat,
+            capturedAt: '2026-04-15T00:00:00.000Z',
+          },
     draftTitle: overrides.draftTitle ?? 'fix(command-center): harden gate',
     draftBody: overrides.draftBody ?? 'Body',
     evidenceManifest: overrides.evidenceManifest ?? [],

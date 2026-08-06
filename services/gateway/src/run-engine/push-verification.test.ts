@@ -73,7 +73,12 @@ test('worktree inspection counts actual content changes and untracked files NUL-
 
   const state = await inspectWorktreePublishState('feature', script.execute);
 
-  assert.deepEqual(state, { dirtyFiles: 4, unpushedCommits: 0 });
+  assert.deepEqual(state, {
+    dirtyFiles: 4,
+    trackedDirtyFiles: 3,
+    untrackedFiles: 2,
+    unpushedCommits: 0,
+  });
   assert.deepEqual(script.commands.slice(0, 4), [
     'git rev-parse --verify --quiet HEAD',
     'git diff --name-only -z HEAD --',
@@ -94,7 +99,12 @@ test('worktree inspection supports a repository with no HEAD commit yet', async 
 
   const state = await inspectWorktreePublishState('feature', script.execute);
 
-  assert.deepEqual(state, { dirtyFiles: 2, unpushedCommits: 1 });
+  assert.deepEqual(state, {
+    dirtyFiles: 2,
+    trackedDirtyFiles: 1,
+    untrackedFiles: 1,
+    unpushedCommits: 1,
+  });
   assert.equal(script.commands[1], 'git ls-files --cached -z');
   assert.ok(!script.commands.some((command) => command.includes('git diff --cached')));
 });
@@ -111,7 +121,12 @@ test('worktree inspection compares an existing feature remote with the local bra
 
   const state = await inspectWorktreePublishState('feature', script.execute);
 
-  assert.deepEqual(state, { dirtyFiles: 0, unpushedCommits: 2 });
+  assert.deepEqual(state, {
+    dirtyFiles: 0,
+    trackedDirtyFiles: 0,
+    untrackedFiles: 0,
+    unpushedCommits: 2,
+  });
   assert.equal(
     script.commands.at(-1),
     "git rev-list --count 'origin/feature'..'refs/heads/feature'",
@@ -132,7 +147,12 @@ test('new branch inspection keeps a missing feature remote blocked at its upstre
 
   const state = await inspectWorktreePublishState('feature', script.execute);
 
-  assert.deepEqual(state, { dirtyFiles: 0, unpushedCommits: 1 });
+  assert.deepEqual(state, {
+    dirtyFiles: 0,
+    trackedDirtyFiles: 0,
+    untrackedFiles: 0,
+    unpushedCommits: 1,
+  });
   assert.equal(script.commands.at(-1), "git rev-list --count 'origin/main'..'refs/heads/feature'");
   assert.ok(!script.commands.includes("git rev-list --count 'refs/heads/feature'"));
 });
@@ -151,7 +171,12 @@ test('new branch inspection falls back to origin HEAD when it has no upstream', 
 
   const state = await inspectWorktreePublishState('feature', script.execute);
 
-  assert.deepEqual(state, { dirtyFiles: 0, unpushedCommits: 3 });
+  assert.deepEqual(state, {
+    dirtyFiles: 0,
+    trackedDirtyFiles: 0,
+    untrackedFiles: 0,
+    unpushedCommits: 3,
+  });
   assert.equal(script.commands.at(-1), "git rev-list --count 'origin/main'..'refs/heads/feature'");
 });
 
@@ -168,6 +193,30 @@ test('new branch inspection keeps publication blocked when no comparison ref exi
 
   const state = await inspectWorktreePublishState('feature', script.execute);
 
-  assert.deepEqual(state, { dirtyFiles: 0, unpushedCommits: 1 });
+  assert.deepEqual(state, {
+    dirtyFiles: 0,
+    trackedDirtyFiles: 0,
+    untrackedFiles: 0,
+    unpushedCommits: 1,
+  });
   assert.ok(!script.commands.some((command) => command.startsWith('git rev-list --count')));
+});
+
+test('commit-mode inspection reports untracked leftovers without treating them as tracked dirty', async () => {
+  // Run add136c6: worker committed task work but AgenticService leftovers stayed untracked.
+  const script = scriptedExecutor([
+    result(),
+    result(), // clean tracked
+    result(), // clean staged
+    result('app/core/AgenticService/AgenticService.ts\0app/core/AgenticService/AgentStepHud.tsx\0'),
+    result('origin/feature\n'),
+    result('1\n'),
+  ]);
+
+  const state = await inspectWorktreePublishState('feature', script.execute);
+
+  assert.equal(state.trackedDirtyFiles, 0);
+  assert.equal(state.untrackedFiles, 2);
+  assert.equal(state.dirtyFiles, 2);
+  assert.equal(state.unpushedCommits, 1);
 });

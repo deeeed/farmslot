@@ -66,6 +66,41 @@ export async function gitExec(
 }
 
 const VALID_STATUSES: GitChangeStatus[] = ['M', 'A', 'D', '?', 'R'];
+const BASE_REFRESH_TTL_MS = 15_000;
+const baseRefreshCache = new Map<string, { expiresAt: number; refresh: Promise<void> }>();
+
+export async function refreshRemoteBaseRef(
+  slotId: string,
+  remoteRef: string,
+  deps: GitExecDeps = {},
+): Promise<void> {
+  const branch = remoteRef.startsWith('origin/') ? remoteRef.slice('origin/'.length) : remoteRef;
+  const refreshBase = () =>
+    gitExec(
+      slotId,
+      ['fetch', '--no-tags', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`],
+      undefined,
+      deps,
+    ).then(() => undefined);
+  if (Object.keys(deps).length > 0) {
+    await refreshBase();
+    return;
+  }
+
+  const now = Date.now();
+  for (const [key, cached] of baseRefreshCache) {
+    if (cached.expiresAt <= now) baseRefreshCache.delete(key);
+  }
+  const cacheKey = `${slotId}:origin/${branch}`;
+  const cached = baseRefreshCache.get(cacheKey);
+  if (cached) {
+    await cached.refresh;
+    return;
+  }
+  const refresh = refreshBase();
+  baseRefreshCache.set(cacheKey, { expiresAt: now + BASE_REFRESH_TTL_MS, refresh });
+  await refresh;
+}
 
 function toStatus(char: string): GitChangeStatus {
   return VALID_STATUSES.includes(char as GitChangeStatus) ? (char as GitChangeStatus) : 'M';
@@ -115,17 +150,37 @@ function parseStatusLine(line: string): GitChange[] {
   return changes;
 }
 
-export async function gitStatus(params: GitStatusParams): Promise<GitStatusResult> {
-  const [porcelainResult, branchResult, aheadBehindResult] = await Promise.all([
-    gitExec(params.slotId, ['status', '--porcelain=v1']),
-    gitExec(params.slotId, ['branch', '--show-current']),
-    gitExec(params.slotId, ['rev-list', '--left-right', '--count', 'HEAD...@{u}']).catch(() => ({
+export async function gitStatus(
+  params: GitStatusParams,
+  deps: GitExecDeps = {},
+): Promise<GitStatusResult> {
+  // A successful status establishes that this is a readable repository. HEAD
+  // may still be absent before its first commit, which is a valid workspace.
+  const porcelainResult = await gitExec(
+    params.slotId,
+    ['status', '--porcelain=v1'],
+    undefined,
+    deps,
+  );
+  const [branchResult, headResult, aheadBehindResult] = await Promise.all([
+    gitExec(params.slotId, ['branch', '--show-current'], undefined, deps),
+    gitExec(params.slotId, ['rev-parse', '--verify', 'HEAD'], undefined, deps).catch(() => ({
+      stdout: '',
+      stderr: '',
+    })),
+    gitExec(
+      params.slotId,
+      ['rev-list', '--left-right', '--count', 'HEAD...@{u}'],
+      undefined,
+      deps,
+    ).catch(() => ({
       stdout: '0\t0',
       stderr: '',
     })),
   ]);
 
   const branch = branchResult.stdout.trim();
+  const headSha = headResult.stdout.trim();
 
   const parts = aheadBehindResult.stdout.trim().split('\t');
   const ahead = parseInt(parts[0], 10) || 0;
@@ -137,22 +192,59 @@ export async function gitStatus(params: GitStatusParams): Promise<GitStatusResul
     changes.push(...parseStatusLine(line));
   }
 
-  return { branch, ahead, behind, changes };
+  return { branch, headSha, ahead, behind, changes };
 }
 
-export async function gitDiff(params: GitDiffParams): Promise<GitDiffResult> {
+async function resolveRemoteBaseRef(
+  slotId: string,
+  requestedBase: string,
+  deps: GitExecDeps = {},
+  options: { refresh: boolean } = { refresh: false },
+): Promise<string> {
+  const base = requestedBase.trim() || 'main';
+  if (base.startsWith('refs/') || /^[0-9a-f]{7,40}$/i.test(base)) {
+    await gitExec(slotId, ['rev-parse', '--verify', base], undefined, deps);
+    return base;
+  }
+  const remoteRef = base.startsWith('origin/') ? base : `origin/${base}`;
+  const branch = remoteRef.slice('origin/'.length);
+  if (options.refresh) {
+    // Branch inventory refreshes the PR base once. Per-file diff reads reuse
+    // that ref instead of multiplying network fetches across an opened tree.
+    // A missing network refresh is non-fatal when the remote-tracking ref is
+    // already available; the verification/fallback below remains authoritative.
+    await refreshRemoteBaseRef(slotId, remoteRef, deps).catch(() => undefined);
+  }
+  try {
+    await gitExec(slotId, ['rev-parse', '--verify', remoteRef], undefined, deps);
+    return remoteRef;
+  } catch {
+    // Offline/local-only worktrees may have no remote-tracking ref yet. The
+    // named local branch is a safe read-only fallback for a per-file diff.
+    await gitExec(slotId, ['rev-parse', '--verify', branch], undefined, deps);
+    return branch;
+  }
+}
+
+export async function gitDiff(
+  params: GitDiffParams,
+  deps: GitExecDeps = {},
+): Promise<GitDiffResult> {
   const args = ['diff'];
 
   if (params.base) {
-    let baseRef = params.base;
-    try {
-      await gitExec(params.slotId, ['rev-parse', '--verify', `origin/${params.base}`]);
-      baseRef = `origin/${params.base}`;
-    } catch {
-      /* use local ref */
-    }
+    // `git.diff` is also a public RPC/chat tool and cannot assume a preceding
+    // branch-inventory request refreshed the PR base.
+    const baseRef = await resolveRemoteBaseRef(params.slotId, params.base, deps, {
+      refresh: true,
+    });
 
-    const { stdout: mergeBase } = await gitExec(params.slotId, ['merge-base', baseRef, 'HEAD']);
+    const { stdout: mergeBase } = await gitExec(
+      params.slotId,
+      ['merge-base', baseRef, 'HEAD'],
+      undefined,
+      deps,
+    );
     // 'worktree' diffs merge-base against the working tree (committed +
     // uncommitted); default diffs committed history only.
     args.push(params.target === 'worktree' ? mergeBase.trim() : `${mergeBase.trim()}..HEAD`);
@@ -165,7 +257,7 @@ export async function gitDiff(params: GitDiffParams): Promise<GitDiffResult> {
     if (params.oldPath && params.oldPath !== params.path) args.push(params.oldPath);
   }
 
-  const { stdout } = await gitExec(params.slotId, args, { maxBuffer: 10 * 1024 * 1024 });
+  const { stdout } = await gitExec(params.slotId, args, { maxBuffer: 10 * 1024 * 1024 }, deps);
   return { diff: stdout };
 }
 
@@ -244,14 +336,7 @@ export async function gitBranchDiff(
   deps: GitExecDeps = {},
 ): Promise<GitBranchDiffResult> {
   const base = params.base || 'main';
-
-  let baseRef = base;
-  try {
-    await gitExec(params.slotId, ['rev-parse', '--verify', `origin/${base}`], undefined, deps);
-    baseRef = `origin/${base}`;
-  } catch {
-    /* use local ref */
-  }
+  const baseRef = await resolveRemoteBaseRef(params.slotId, base, deps, { refresh: true });
 
   const [mergeBaseResult, branchResult] = await Promise.all([
     gitExec(params.slotId, ['merge-base', baseRef, 'HEAD'], undefined, deps),

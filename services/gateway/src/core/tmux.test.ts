@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  buildTmuxRespawnLaunchCommand,
   parseTmuxKeys,
   selectExactTmuxWindowPane,
   selectResolvedTmuxSession,
@@ -9,6 +10,29 @@ import {
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from './tmux.js';
+
+describe('buildTmuxRespawnLaunchCommand', () => {
+  it('returns a primary worker to its repo shell after the runner exits', () => {
+    const command = buildTmuxRespawnLaunchCommand(
+      'claude --resume session-id',
+      '/tmp/mobile 3',
+      true,
+    );
+
+    assert.match(command, /bash -lc/);
+    assert.match(command, /claude/);
+    assert.match(command, /cd .*mobile 3/);
+    assert.match(command, /exec .*shell:-\/bin\/sh/);
+    assert.doesNotMatch(command, /^exec bash -lc/);
+  });
+
+  it('lets a disposable reviewer window exit with the runner', () => {
+    assert.equal(
+      buildTmuxRespawnLaunchCommand('codex review', '/tmp/reviewer'),
+      `exec bash -lc 'codex review'`,
+    );
+  });
+});
 
 describe('shellQuote', () => {
   it('wraps strings for safe single-quoted shell usage', () => {

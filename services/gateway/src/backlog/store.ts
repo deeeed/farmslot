@@ -2086,7 +2086,7 @@ export function isValidManualBacklogRunHandoff(
 
 /** Outcome of matching a direct run.create to a backlog item by sourceRef. */
 export type DirectRunBacklogLinkResult =
-  | { action: 'linked'; itemId: string }
+  | { action: 'linked'; itemId: string; initialContext: string }
   | { action: 'warned'; itemId: string; reason: string }
   | { action: 'none' };
 
@@ -2130,12 +2130,13 @@ export async function linkDirectRunToMatchingBacklog(
       .sort(byCreated)[0];
 
     if (linkable) {
+      const initialContext = await buildInitialContext(linkable);
       await applyRunStartToItem(linkable, run, 'direct-run-soft-link');
       console.log(
         `[backlog] soft-linked run ${run.id.slice(0, 8)} to backlog item ${linkable.id} ` +
           `(${linkable.sourceRef}) via sourceRef match on run.create`,
       );
-      return { action: 'linked' as const, itemId: linkable.id };
+      return { action: 'linked' as const, itemId: linkable.id, initialContext };
     }
 
     const [primary] = matches.sort(byCreated);

@@ -13,7 +13,7 @@ import { gateway } from '../../gateway-client.js';
 import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 
 import type { SlotView } from './slot-view.js';
-import { branchDiffPollAction, gitChangesFingerprint } from './slot-view-branch-model.js';
+import { branchDiffPollAction } from './slot-view-branch-model.js';
 import {
   isDirectoryReadErrorMessage,
   isImageFile,
@@ -61,6 +61,7 @@ export async function initSlotViewLive(view: SlotView, epoch: number) {
     view._liveEntries = fsResult.entries;
     view._liveGitData = {
       branch: gitResult.branch,
+      headSha: gitResult.headSha,
       ahead: gitResult.ahead,
       behind: gitResult.behind,
       changes: gitResult.changes,
@@ -91,11 +92,10 @@ export async function initSlotViewLive(view: SlotView, epoch: number) {
   // Auto-pin task folder if slot is working and has a taskFile
   view._autoPinTaskFolder();
 
-  // Load branch diff (changes vs base branch)
+  // Resolve the PR base before loading changed files. Falling back to a stale
+  // local `main` can inflate the source tree far beyond GitHub's PR diff.
+  await view._detectPR();
   view._loadBranchDiff();
-
-  // Detect PR for this slot (enables Comments tab)
-  view._detectPR();
 
   // Load pinned folder entries if set
   if (view._pinnedFolder) view._loadPinnedEntries();
@@ -118,11 +118,10 @@ export async function refreshSlotViewGitStatus(view: SlotView) {
     if (!isCurrentLiveResult(view, epoch)) return;
     const prevBranch = view._liveGitData?.branch;
     const prevAhead = view._liveGitData?.ahead;
-    const prevChangesKey = view._liveGitData
-      ? gitChangesFingerprint(view._liveGitData.changes)
-      : undefined;
+    const prevHeadSha = view._liveGitData?.headSha;
     view._liveGitData = {
       branch: result.branch,
+      headSha: result.headSha,
       ahead: result.ahead,
       behind: result.behind,
       changes: result.changes,
@@ -132,8 +131,8 @@ export async function refreshSlotViewGitStatus(view: SlotView) {
       nextBranch: result.branch,
       prevAhead,
       nextAhead: result.ahead,
-      prevChangesKey,
-      nextChangesKey: gitChangesFingerprint(result.changes),
+      prevHeadSha,
+      nextHeadSha: result.headSha,
       lastLoadFailed: view._branchDiffError !== null,
       loading: view._branchDiffLoading,
     });

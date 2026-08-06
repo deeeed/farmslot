@@ -156,6 +156,8 @@ export interface ReviewGatePayload {
   kind: 'review';
   prNumber: number | null;
   repo: string | null;
+  /** PR/project base branch used by the review diff workspace. */
+  baseRef?: string;
   recommendation: string;
   reviewMd: string;
   lineComments: ReviewLineComment[];
@@ -245,6 +247,11 @@ export interface ReviewDiffSnapshot {
   diffPath?: string | null;
   diffHash?: string | null;
   diffStat?: DiffStat;
+  untrackedFiles?: Array<{
+    path: string;
+    blobSha: string;
+    mode: '100644' | '100755' | '120000';
+  }>;
   capturedAt: string;
   source: 'local-git' | 'github-pr' | 'unavailable';
   missingReason?: string;
@@ -539,6 +546,8 @@ export interface ReadyGatePrPackage {
   remoteBranchRef?: string | null;
   headSha?: string;
   diffStat: DiffStat;
+  /** Exact worktree diff identity captured with the same scope as independent reviews. */
+  reviewSnapshot?: ReviewDiffSnapshot;
   draftTitle: string;
   draftBody: string;
   evidenceManifest?: EvidenceManifestEntry[];

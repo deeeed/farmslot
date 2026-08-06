@@ -460,11 +460,29 @@ test('codex legacy cleanup restores owned project files without losing operator 
     },
     {
       files: {
+        'config.toml.farmslot-backup':
+          '[operator]\nnotes = """\n[features]\n"""\n\n[features]\nhooks = false\n',
+        'config.toml':
+          '[operator]\nnotes = """\n[features]\n"""\nadded = true\n\n[features]\nhooks = true\n',
+      },
+      expected: {
+        'config.toml':
+          '[operator]\nnotes = """\n[features]\n"""\nadded = true\n\n[features]\nhooks = false\n',
+      },
+    },
+    {
+      files: {
         'hooks.json': `${JSON.stringify({ hooks: { Stop: [farmslotHook] } })}\n`,
         'config.toml': '[features]\nhooks = true\n\n[operator]\nadded = true\n',
       },
       expected: { 'config.toml': '[features]\nhooks = true\n\n[operator]\nadded = true\n' },
       missing: ['hooks.json'],
+    },
+    {
+      files: {
+        'config.toml': '[features]\nhooks = true\n',
+      },
+      expected: { 'config.toml': '[features]\nhooks = true\n' },
     },
   ];
 
@@ -558,7 +576,7 @@ test('codex install is idempotent for isolated codex-home config.toml', () => {
   fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
   fs.writeFileSync(
     path.join(repo, '.agent', 'codex-home', 'config.toml'),
-    '[features]\nhooks = false\ncustom_flag = true\n\n[tui.model_availability_nux]\n"gpt-5.5" = 1\n',
+    '[features]\nhooks = false\ncustom_flag = true\n\n[tui.model_availability_nux]\n"gpt-5.5" = 1\n\n[features]\nhooks = true\n\n[features]\nhooks = true\n',
   );
 
   for (let i = 0; i < 2; i += 1) {
@@ -588,6 +606,77 @@ test('codex install is idempotent for isolated codex-home config.toml', () => {
   assert.match(homeContent, /custom_flag = true/);
   assert.equal((homeContent.match(/^\[projects\./gm) || []).length, 1);
   assert.match(homeContent, /\[tui\.model_availability_nux\]/);
+});
+
+test('codex install preserves multiline arrays inside the features section', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-array-'));
+  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repo, '.agent', 'codex-home', 'config.toml'),
+    '[features]\nexperimental = [\n  "alpha",\n  "beta",\n]\nhooks = false\n\n[operator]\nname = "arthur"\n',
+  );
+
+  installToTempDir('codex', repo);
+
+  const content = fs.readFileSync(path.join(repo, '.agent', 'codex-home', 'config.toml'), 'utf8');
+  assert.match(content, /experimental = \[\n {2}"alpha",\n {2}"beta",\n\]/);
+  assert.match(content, /hooks = true/);
+  assert.match(content, /\[operator\]\nname = "arthur"/);
+});
+
+test('codex install does not treat nested multiline array values as TOML sections', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-nested-array-'));
+  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repo, '.agent', 'codex-home', 'config.toml'),
+    '[features]\nmodels = [\n  ["alpha"],\n  ["beta"]\n]\nhooks = false\n\n[operator]\nname = "arthur"\n',
+  );
+
+  installToTempDir('codex', repo);
+
+  const content = fs.readFileSync(path.join(repo, '.agent', 'codex-home', 'config.toml'), 'utf8');
+  assert.match(content, /models = \[\n {2}\["alpha"\],\n {2}\["beta"\]\n\]/);
+  assert.match(content, /hooks = true/);
+  assert.match(content, /\[operator\]\nname = "arthur"/);
+});
+
+test('codex install is idempotent when multiline strings contain section-like text', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-string-'));
+  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
+  const configPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  fs.writeFileSync(
+    configPath,
+    '[operator]\nnotes = """\n[features]\n[not-a-section]\n"""\n\n[features]\n# first copy\nhooks = false\n\n[features]\n# second copy\ncustom_flag = true\n',
+  );
+
+  installToTempDir('codex', repo);
+  installToTempDir('codex', repo);
+
+  const content = fs.readFileSync(configPath, 'utf8');
+  assert.equal((content.match(/^\[features\]/gm) || []).length, 2);
+  assert.match(content, /notes = """\n\[features\]\n\[not-a-section\]\n"""/);
+  assert.match(content, /# first copy/);
+  assert.match(content, /# second copy/);
+  assert.match(content, /hooks = true/);
+  assert.match(content, /custom_flag = true/);
+});
+
+test('codex install handles multiline string closers with trailing quote content', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-string-closer-'));
+  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
+  const configPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  fs.writeFileSync(
+    configPath,
+    "[operator]\nmodels = [\n  \"\"\"foo\"\"\"\",\n  '''bar'''''\n]\n\n[features]\nhooks = false\n",
+  );
+
+  installToTempDir('codex', repo);
+  installToTempDir('codex', repo);
+
+  const content = fs.readFileSync(configPath, 'utf8');
+  assert.equal((content.match(/^\[features\]/gm) || []).length, 1);
+  assert.equal((content.match(/^\[projects\./gm) || []).length, 1);
+  assert.match(content, /hooks = true/);
 });
 
 test('codex install rebinds auth.json symlink from account A to B without touching source files', () => {

@@ -62,10 +62,13 @@ import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { createEngineDecision } from './engine-decisions.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   assertEvidenceRefreshOverrideAvailable,
   assertPublicationReviewPolicySatisfied,
+  assertUnavailableSnapshotOverrideAvailable,
   buildEvidenceRefreshAction,
   buildPublishGateReviewStatus,
+  buildUnavailableSnapshotAction,
   CLOSE_AS_SHIPPED_ACTION,
   countStalePublicationReviews,
   hasValidPrNumber,
@@ -132,6 +135,7 @@ function selfReviewResultFromInterruptedReview(review: IndependentReviewStatus):
     crossRunner: review.crossRunner,
     retryCount: Math.max(0, (review.attempts?.length ?? 1) - 1),
     feedbackSent: review.feedbackSent,
+    recoveryContinuationPending: review.recoveryContinuationPending,
   };
 }
 
@@ -614,7 +618,9 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const workerLearnings = await readTaskArtifactText(current.taskFile, 'learnings.md');
 
   // Build diff stat
-  const diffStat = await getDiffStat(current);
+  // The publication package must describe the final reviewed HEAD. Earlier
+  // completion snapshots remain durable history, but cannot supply this gate.
+  const diffStat = await getDiffStat(current, { fresh: true });
 
   const videoProofWarning = localVideoProofWarning(preparedPackage?.evidenceManifest);
   // Out-of-band merge detection: if this branch already has a MERGED PR the
@@ -731,6 +737,10 @@ export async function executeReadyGate(runId: string): Promise<string> {
     publicationApprovalGate && preparedPackage
       ? buildEvidenceRefreshAction(independentReviews, preparedPackage, reviewDepth)
       : null;
+  const unavailableSnapshotAction =
+    publicationApprovalGate && preparedPackage
+      ? buildUnavailableSnapshotAction(independentReviews, preparedPackage, reviewDepth)
+      : null;
   const actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }> =
     publicationApprovalGate
       ? [
@@ -749,6 +759,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
             ? [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const }]
             : []),
           ...(evidenceRefreshAction ? [evidenceRefreshAction] : []),
+          ...(unavailableSnapshotAction ? [unavailableSnapshotAction] : []),
           { id: 'hold', label: 'Hold', style: 'secondary' as const },
           {
             id: 'request-extra-review',
@@ -956,6 +967,14 @@ export async function executeReadyGate(runId: string): Promise<string> {
         decision,
         reviewDepth,
         selectionData,
+      );
+    }
+    if (actionId === APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION) {
+      if (!approvedPackage) throw new Error('Publication approval requires a prepared package');
+      assertUnavailableSnapshotOverrideAvailable(
+        getRun(runId)!.engineState?.publishGate?.independentReviews ?? [],
+        approvedPackage,
+        reviewDepth,
       );
     }
     if (isPublishApprovalAction(actionId)) {

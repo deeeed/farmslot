@@ -75,6 +75,18 @@ function makeApprovingReview(
       'reviewedReviewSubjectHash' in overrides
         ? overrides.reviewedReviewSubjectHash
         : 'subject-old',
+    reviewSnapshot:
+      'reviewSnapshot' in overrides
+        ? overrides.reviewSnapshot
+        : {
+            source: 'local-git',
+            baseRef: 'origin/main',
+            baseSha: 'base-default',
+            headSha: overrides.reviewedHeadSha ?? 'abc1234',
+            diffHash: 'diff-default',
+            diffStat: { files: 1, additions: 2, deletions: 1 },
+            capturedAt: '2026-04-15T00:00:00.000Z',
+          },
     ...overrides,
   };
 }
@@ -230,6 +242,38 @@ test('staleReviewsAreEvidenceOnly is false when reviewed HEAD differs (code chan
   });
   const reviews = [
     makeApprovingReview({ reviewedHeadSha: 'abc1234', reviewedReviewSubjectHash: 'subject-old' }),
+  ];
+  assert.equal(staleReviewsAreEvidenceOnly(reviews, preparedPackage), false);
+});
+
+test('staleReviewsAreEvidenceOnly is false for same-HEAD diff drift', () => {
+  const preparedPackage = makeReadyGatePackage({
+    headSha: 'abc1234',
+    reviewSubjectHash: 'subject-new',
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'origin/main',
+      baseSha: 'base-new',
+      headSha: 'abc1234',
+      diffHash: 'diff-new',
+      diffStat: { files: 1, additions: 2, deletions: 1 },
+      capturedAt: '2026-08-06T00:00:00.000Z',
+    },
+  });
+  const reviews = [
+    makeApprovingReview({
+      reviewedHeadSha: 'abc1234',
+      reviewedReviewSubjectHash: 'subject-old',
+      reviewSnapshot: {
+        source: 'local-git',
+        baseRef: 'origin/main',
+        baseSha: 'base-old',
+        headSha: 'abc1234',
+        diffHash: 'diff-old',
+        diffStat: { files: 1, additions: 2, deletions: 1 },
+        capturedAt: '2026-08-05T00:00:00.000Z',
+      },
+    }),
   ];
   assert.equal(staleReviewsAreEvidenceOnly(reviews, preparedPackage), false);
 });

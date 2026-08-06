@@ -6,6 +6,7 @@ import type {
   NoChangeGatePayload,
   ReadyGatePrPackage,
   ReviewDepthPolicy,
+  ReviewDiffSnapshot,
   Run,
   RunDecision,
   WorkerTerminalDisposition,
@@ -33,6 +34,9 @@ import { publicationReviewPolicyForRun } from './publication-policy.js';
  */
 export const APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION = 'approve-publish-evidence-refresh';
 
+/** Explicit human escape when the slot disappeared before its diff snapshot could be recaptured. */
+export const APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION = 'approve-publish-snapshot-unavailable';
+
 /**
  * Gate action offered when the run's branch already shipped out-of-band (merged
  * PR, or zero commits ahead of the default branch). Resolving it links the
@@ -49,6 +53,7 @@ export const CLOSE_AS_SHIPPED_ACTION = 'close-as-shipped';
 export const PUBLISH_APPROVAL_ACTIONS: ReadonlySet<string> = new Set([
   'approve-publish',
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   'ready',
 ]);
 
@@ -194,6 +199,7 @@ export function buildPublishGateReviewStatus({
     validationDepth: finalAttempt.validationDepth ?? reviewResult.validationDepth,
     usage: finalAttempt.usage ?? reviewResult.usage,
     feedbackSent: reviewResult.feedbackSent === true,
+    recoveryContinuationPending: reviewResult.recoveryContinuationPending === true,
     attempts,
     artifactPaths: [...new Set(attempts.flatMap((attempt) => attempt.artifactPaths ?? []))],
     taskProgressArtifactPath: finalAttempt.taskProgressArtifactPath,
@@ -384,18 +390,35 @@ function selectedEvidenceKeysMatchPackageSelection(
 
 export function reviewFinalSnapshotMatchesPreparedPackage(
   review: IndependentReviewStatus,
-  preparedPackage: Pick<ReadyGatePrPackage, 'headSha'>,
+  preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot'>,
 ): boolean {
   if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
   const snapshot = review.reviewSnapshot;
   if (!snapshot || snapshot.source === 'unavailable') return false;
-  return Boolean(preparedPackage.headSha && snapshot.headSha === preparedPackage.headSha);
+  if (!preparedPackage.headSha || snapshot.headSha !== preparedPackage.headSha) return false;
+  return reviewSnapshotDiffMatchesPackage(snapshot, preparedPackage);
+}
+
+function reviewSnapshotDiffMatchesPackage(
+  snapshot: ReviewDiffSnapshot,
+  preparedPackage: Pick<ReadyGatePrPackage, 'reviewSnapshot'>,
+): boolean {
+  const preparedSnapshot = preparedPackage.reviewSnapshot;
+  if (!preparedSnapshot || preparedSnapshot.source === 'unavailable') return false;
+  return (
+    snapshot.baseRef === preparedSnapshot.baseRef &&
+    snapshot.baseSha === preparedSnapshot.baseSha &&
+    snapshot.headSha === preparedSnapshot.headSha &&
+    snapshot.diffHash === preparedSnapshot.diffHash
+  );
 }
 
 /**
  * Per-review staleness diagnosis against the prepared package's review subject.
  * `headDrift` means the review certified a different (or missing) HEAD SHA than
  * the prepared package — a real code change that mandates re-review.
+ * `diffDrift` means the worktree snapshot differs at the same HEAD (for example
+ * uncommitted files), which also mandates re-review.
  * `subjectDrift` means the reviewed subject hash no longer matches — typically
  * caused by an evidence/package refresh that regenerated artifact digests even
  * though the reviewed code (HEAD) is unchanged. The two reasons are kept
@@ -404,29 +427,36 @@ export function reviewFinalSnapshotMatchesPreparedPackage(
 interface PublicationReviewStaleness {
   stale: boolean;
   headDrift: boolean;
+  diffDrift: boolean;
   subjectDrift: boolean;
 }
 
 function diagnosePublicationReviewStaleness(
   review: IndependentReviewStatus,
   packageReviewSubjectHash: string,
-  preparedPackage: Pick<ReadyGatePrPackage, 'headSha'>,
+  preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot'>,
 ): PublicationReviewStaleness {
   const snapshot = review.reviewSnapshot;
   const reviewedHeadSha = review.reviewedHeadSha ?? snapshot?.headSha ?? null;
   const reviewedSubjectHash = review.reviewedReviewSubjectHash ?? null;
   const subjectDrift = reviewedSubjectHash !== packageReviewSubjectHash;
+  const diffDrift = !snapshot || !reviewSnapshotDiffMatchesPackage(snapshot, preparedPackage);
   const headDrift =
     !reviewedHeadSha ||
     reviewedHeadSha !== preparedPackage.headSha ||
     (!review.reviewedHeadSha && (!snapshot || snapshot.source === 'unavailable'));
-  return { stale: headDrift || subjectDrift, headDrift, subjectDrift };
+  return {
+    stale: headDrift || diffDrift || subjectDrift,
+    headDrift,
+    diffDrift,
+    subjectDrift,
+  };
 }
 
 /** True when a review was captured for the exact prepared package subject and HEAD. */
 export function publicationReviewMatchesPreparedPackage(
   review: IndependentReviewStatus,
-  preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSubjectHash'>,
+  preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot' | 'reviewSubjectHash'>,
 ): boolean {
   const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
   if (!packageReviewSubjectHash) return false;
@@ -502,7 +532,8 @@ function classifyStaleApprovingReviews(
       preparedPackage,
     );
     if (!diagnosis.stale) continue;
-    if (diagnosis.subjectDrift && !diagnosis.headDrift) evidenceOnly.push(review);
+    if (diagnosis.subjectDrift && !diagnosis.headDrift && !diagnosis.diffDrift)
+      evidenceOnly.push(review);
     else hasHeadDriftedApproval = true;
   }
   return { evidenceOnly, hasHeadDriftedApproval };
@@ -582,6 +613,73 @@ export function buildEvidenceRefreshAction(
   };
 }
 
+function reviewMatchesUnavailableSnapshotPackage(
+  review: IndependentReviewStatus,
+  preparedPackage: ReadyGatePrPackage,
+): boolean {
+  const certifiedSnapshotHead =
+    review.reviewSnapshot?.source === 'unavailable' ? undefined : review.reviewSnapshot?.headSha;
+  return (
+    isQualifyingIndependentReview(review) &&
+    review.verdict === 'pass' &&
+    review.unresolvedCount === 0 &&
+    review.reviewedHeadSha === preparedPackage.headSha &&
+    review.reviewedReviewSubjectHash === preparedPackage.reviewSubjectHash &&
+    (!certifiedSnapshotHead || certifiedSnapshotHead === preparedPackage.headSha)
+  );
+}
+
+export function unavailableSnapshotOverrideAvailable(
+  independentReviews: IndependentReviewStatus[],
+  preparedPackage: ReadyGatePrPackage,
+  reviewDepth: ReviewDepthPolicy,
+): boolean {
+  if (preparedPackage.reviewSnapshot?.source !== 'unavailable') return false;
+  const matching = independentReviews.filter((review) =>
+    reviewMatchesUnavailableSnapshotPackage(review, preparedPackage),
+  );
+  return freshPublicationReviewCountSatisfied(reviewDepth, matching);
+}
+
+export function assertUnavailableSnapshotOverrideAvailable(
+  independentReviews: IndependentReviewStatus[],
+  preparedPackage: ReadyGatePrPackage,
+  reviewDepth: ReviewDepthPolicy,
+): void {
+  if (!unavailableSnapshotOverrideAvailable(independentReviews, preparedPackage, reviewDepth)) {
+    throw new Error(
+      'Snapshot-unavailable override requires passing reviews for the exact package HEAD and subject',
+    );
+  }
+}
+
+export function buildUnavailableSnapshotAction(
+  independentReviews: IndependentReviewStatus[],
+  preparedPackage: ReadyGatePrPackage,
+  reviewDepth: ReviewDepthPolicy,
+): DecisionAction | null {
+  if (!unavailableSnapshotOverrideAvailable(independentReviews, preparedPackage, reviewDepth)) {
+    return null;
+  }
+  return {
+    id: APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+    label: 'Publish Anyway (snapshot unavailable)',
+    style: 'primary',
+  };
+}
+
+function snapshotUnavailableOverrideWasApproved(
+  current: Run,
+  preparedPackage: ReadyGatePrPackage,
+): boolean {
+  return current.decisions.some((decision) => {
+    if (decision.resolvedAction !== APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION) return false;
+    const decisionPackage = (decision.payload as { prPackage?: ReadyGatePrPackage } | undefined)
+      ?.prPackage;
+    return decisionPackage?.packageHash === preparedPackage.packageHash;
+  });
+}
+
 /**
  * Carry the prior pass verdict forward when the operator uses the human
  * evidence-refresh override: restamp every evidence-only stale approving review
@@ -659,7 +757,13 @@ export function assertPublicationReviewPolicySatisfied(
           requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
         })
       : 0;
-  if (!independentReviewPolicySatisfied(reviewDepth, independentReviews) || staleReviewCount > 0) {
+  const unavailableOverrideApproved =
+    snapshotUnavailableOverrideWasApproved(current, preparedPackage) &&
+    unavailableSnapshotOverrideAvailable(independentReviews, preparedPackage, reviewDepth);
+  if (
+    !independentReviewPolicySatisfied(reviewDepth, independentReviews) ||
+    (staleReviewCount > 0 && !unavailableOverrideApproved)
+  ) {
     throw new Error(
       'Publication approval requires passing independent reviews for the approved package; package changed, refresh package and re-review before publishing',
     );

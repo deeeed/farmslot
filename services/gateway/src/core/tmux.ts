@@ -25,6 +25,16 @@ export function tmuxShellSnippet(snippet: string): string {
   ].join('\n');
 }
 
+export function buildDispatchRoleShellCommand(remoteRepo: string): string {
+  return [
+    `cd ${shellQuote(remoteRepo)}`,
+    'shell="${SHELL:-}"',
+    'if [ -z "$shell" ]; then shell="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk \'{print $2}\')"; fi',
+    'if [ -z "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
+    'exec "${shell:-/bin/sh}"',
+  ].join(' && ');
+}
+
 export function parseTmuxKeys(keys: string): string[] {
   return keys.trim().split(/\s+/).filter(Boolean);
 }
@@ -128,6 +138,17 @@ export async function resolveTmuxSession(
  */
 export const TMUX_WINDOW_RESPAWN_SETTLE_MS = 500;
 
+export function buildTmuxRespawnLaunchCommand(
+  command: string,
+  remoteRepo: string,
+  preserveWindowAfterExit = false,
+): string {
+  if (!preserveWindowAfterExit) return `exec bash -lc ${shellQuote(command)}`;
+  return `bash -c ${shellQuote(
+    [`bash -lc ${shellQuote(command)}`, buildDispatchRoleShellCommand(remoteRepo)].join('\n'),
+  )}`;
+}
+
 /**
  * Launch a shell command in an existing tmux window by replacing its pane via
  * `respawn-window`. Avoids `send-keys -l` for long runner launch lines, which
@@ -138,8 +159,13 @@ export async function respawnTmuxWindowWithCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   command: string,
+  options?: { preserveWindowAfterExit?: boolean },
 ): Promise<void> {
-  const launchCommand = `exec bash -lc ${shellQuote(command)}`;
+  const launchCommand = buildTmuxRespawnLaunchCommand(
+    command,
+    vars.remoteRepo,
+    options?.preserveWindowAfterExit,
+  );
   const respawned = await execOnSlot(
     vars,
     tmuxShellSnippet(

@@ -273,6 +273,13 @@ async function readPortableTextIfExistsUncached(
   return readSlotTextIfExists(run, filePath);
 }
 
+function portableWorkerQualityArtifactIsStale(
+  artifact: RecipeQualityArtifact | null,
+  hasCurrentRecipeSources: boolean,
+): boolean {
+  return Boolean(artifact?.meta.producer === 'worker' && hasCurrentRecipeSources);
+}
+
 async function scanSlotArtifactRoot(
   artifactRoot: string,
   run: Run,
@@ -593,11 +600,28 @@ function resolveInheritedRecipeInputsDir(run: Pick<Run, 'taskFile'>): string | n
 async function loadContextFromInheritedInputs(run: Run): Promise<LiveRecipeContext | null> {
   const inheritedRoot = resolveInheritedRecipeInputsDir(run);
   if (!inheritedRoot) return null;
-  const [recipeJson, workerLearnings, recipeQualityArtifact] = await Promise.all([
-    readPortableTextIfExists(run, path.join(inheritedRoot, 'recipe.json')),
-    readPortableTextIfExists(run, path.join(inheritedRoot, 'learnings.md')),
-    readRecipeQualityArtifactPortable(run, path.join(inheritedRoot, 'recipe-quality.json')),
-  ]);
+  const [recipeJson, recipeCoverage, workerLearnings, storedRecipeQualityArtifact] =
+    await Promise.all([
+      readPortableTextIfExists(run, path.join(inheritedRoot, 'recipe.json')),
+      readPortableTextIfExists(run, path.join(inheritedRoot, 'recipe-coverage.md')),
+      readPortableTextIfExists(run, path.join(inheritedRoot, 'learnings.md')),
+      readRecipeQualityArtifactPortable(run, path.join(inheritedRoot, 'recipe-quality.json')),
+    ]);
+  const recipeQualityArtifact =
+    recipeJson || recipeCoverage
+      ? (
+          await loadRecipeQualityEvaluation({
+            run,
+            recipeJson,
+            recipeCoverage,
+            recipeQualityArtifact: storedRecipeQualityArtifact,
+            recipeQualityArtifactIsStale: portableWorkerQualityArtifactIsStale(
+              storedRecipeQualityArtifact,
+              Boolean(recipeJson || recipeCoverage),
+            ),
+          })
+        ).artifact
+      : storedRecipeQualityArtifact;
   const context: LiveRecipeContext = {
     source: 'recipe-run-artifacts',
     recipeRunId: null,
@@ -639,16 +663,33 @@ async function loadContextFromArtifactRoot({
   const [
     recipeJson,
     workerLearnings,
-    recipeQualityArtifact,
+    storedRecipeQualityArtifact,
+    recipeCoverage,
     typedArtifactManifestJson,
     artifactScan,
   ] = await Promise.all([
     readPortableTextIfExists(run, path.join(artifactRoot, 'recipe.json')),
     readPortableTextIfExists(run, path.join(artifactRoot, 'learnings.md')),
     readRecipeQualityArtifactPortable(run, path.join(artifactRoot, 'recipe-quality.json')),
+    readPortableTextIfExists(run, path.join(artifactRoot, 'recipe-coverage.md')),
     readPortableTextIfExists(run, path.join(artifactRoot, 'artifact-manifest.json')),
     scanArtifactRootPortable(artifactRoot, run, effectiveScanOptions),
   ]);
+  const recipeQualityArtifact =
+    recipeJson || recipeCoverage
+      ? (
+          await loadRecipeQualityEvaluation({
+            run,
+            recipeJson,
+            recipeCoverage,
+            recipeQualityArtifact: storedRecipeQualityArtifact,
+            recipeQualityArtifactIsStale: portableWorkerQualityArtifactIsStale(
+              storedRecipeQualityArtifact,
+              Boolean(recipeJson || recipeCoverage),
+            ),
+          })
+        ).artifact
+      : storedRecipeQualityArtifact;
   const typedArtifactRefs = parseTypedArtifactManifestRefs(
     typedArtifactManifestJson,
     path.join(artifactRoot, 'artifact-manifest.json'),
@@ -780,27 +821,18 @@ async function readLatestValidRecipeRunPointerFromRoots(
  * leaderboard reads — so the per-run badge and the leaderboard can never disagree.
  * good/ok map to pass (the recipe proved the feature; ok = warn), bad to fail.
  */
-async function currentArtifactsGroupStatus(
-  run: Run,
-  context: Pick<LiveRecipeContext, 'recipeJson' | 'artifactRoot'>,
-): Promise<RecipeRunArtifactGroupStatus> {
-  // Derive the badge through the canonical evaluator — the same source the family
-  // leaderboard uses — pointed at THIS artifact root so a schema-valid file there
-  // is reused and structurally merged (not the raw verdict, which could disagree
-  // with the leaderboard). good/ok -> pass (recipe proved the feature), bad -> fail.
-  if (!context.artifactRoot) return 'unknown';
-  const recipeCoverage = await readPortableTextIfExists(
-    run,
-    path.join(context.artifactRoot, 'recipe-coverage.md'),
-  );
-  const { signal } = await loadRecipeQualityEvaluation({
-    run,
-    artifactDir: context.artifactRoot,
-    recipeJson: context.recipeJson,
-    recipeCoverage,
-  });
-  if (signal.semantic === 'good' || signal.semantic === 'ok') return 'pass';
-  if (signal.semantic === 'bad') return 'fail';
+function currentArtifactsGroupStatus(
+  context: Pick<LiveRecipeContext, 'recipeQualityArtifact'>,
+): RecipeRunArtifactGroupStatus {
+  // loadContextFromArtifactRoot already ran the canonical evaluator with files
+  // read through the slot-portable API. Reuse that exact result; rereading the
+  // same absolute path on the gateway can cross-contaminate remote slots.
+  if (
+    context.recipeQualityArtifact?.verdict === 'pass' ||
+    context.recipeQualityArtifact?.verdict === 'warn'
+  )
+    return 'pass';
+  if (context.recipeQualityArtifact?.verdict === 'fail') return 'fail';
   return 'unknown';
 }
 
@@ -833,7 +865,7 @@ export async function listRecipeRunArtifactGroupsForRun(
       label: 'Recipe package',
       groupKind: 'current-artifacts',
       promoted: false,
-      status: await currentArtifactsGroupStatus(run, current),
+      status: currentArtifactsGroupStatus(current),
       ...current,
     });
     break;
@@ -847,7 +879,7 @@ export async function listRecipeRunArtifactGroupsForRun(
         label: 'Inherited recipe package',
         groupKind: 'current-artifacts',
         promoted: false,
-        status: await currentArtifactsGroupStatus(run, inherited),
+        status: currentArtifactsGroupStatus(inherited),
         ...inherited,
       });
     }

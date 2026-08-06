@@ -8,9 +8,27 @@ import {
   buildBrowserPidFileCapturableCommand,
   buildBrowserPidRecoveryCommand,
   isSimulatorDeviceProbe,
+  isSlotResourceConfigured,
+  purgeRemovedSlotWarnings,
   shouldProbeResourceForSlot,
   slotHasActiveRun,
 } from './resource-manager.js';
+
+test('purgeRemovedSlotWarnings drops warnings for slots removed from the fleet', () => {
+  const warnings = new Map([
+    ['active-slot', 'metro'],
+    ['removed-slot', 'browser'],
+  ]);
+  purgeRemovedSlotWarnings(warnings, new Set(['active-slot']));
+  assert.deepEqual([...warnings], [['active-slot', 'metro']]);
+});
+
+test('isSlotResourceConfigured only accepts resources declared by the slot', () => {
+  const resources = { 'ios-sim': { simulator: 'mmdev-1' }, 'dev-server': { port: 8061 } };
+  assert.equal(isSlotResourceConfigured(resources, 'ios-sim'), true);
+  assert.equal(isSlotResourceConfigured(resources, 'android-emu'), false);
+  assert.equal(isSlotResourceConfigured(undefined, 'ios-sim'), false);
+});
 
 const iosSimResource = {
   type: 'device',

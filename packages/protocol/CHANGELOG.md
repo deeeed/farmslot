@@ -1,12 +1,21 @@
 # Changelog
 
+All notable changes to `@farmslot/protocol` are tracked here.
+
 ## Unreleased
 
 - feat(terminal): add the terminal image-attachment contract — chunked upload params, separate delivery result with an explicit `unsupported` status, size/MIME limits, and cleanup scopes.
 
-- feat(publication): ready-gate payload soft fields `behindMain`, `mergeConflicts`, `mergeConflictPaths`, and `branchFreshnessHint` for early branch-staleness chips (not a hard fail).
-- fix(run): independent review state records when restart recovery explicitly owes a worker fix/re-review continuation, and reviewer contexts retain the loop that owns their launch snapshot.
-- fix(runs): expose structured publication-review launch rejections in ready-gate payloads and persisted publish-gate state alongside the recoverable gate description.
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.19.0 - 2026-08-06
+
+- fix(git): expose the current `HEAD` SHA in `git.status` so clients can invalidate committed diff caches after same-ahead rebases and rewritten commits
+- fix(publication): bind review snapshots to explicit untracked file paths, Git modes, and blob identities, including empty files and dangling symlinks that produce no Git patch
+- fix(publication): carry the exact reviewed diff identity and PR base through ready-gate packages so clients and publish policy can reject stale reviews
+- feat(publication): ready-gate payload soft fields `behindMain`, `mergeConflicts`, `mergeConflictPaths`, and `branchFreshnessHint` for early branch-staleness chips (not a hard fail)
+- fix(run): independent review state records when restart recovery explicitly owes a worker fix/re-review continuation, and reviewer contexts retain the loop that owns their launch snapshot
+- fix(runs): expose structured publication-review launch rejections in ready-gate payloads and persisted publish-gate state alongside the recoverable gate description
 
 ## 0.18.0 - 2026-08-03
 

@@ -42,7 +42,6 @@ describe('recipe source trust environment', () => {
 });
 import {
   assertSupportedRunnerSpelling,
-  confirmTrustPromptWithFreshEvidence,
   detectRunnerLaunchBlocker,
   getRunnerDefinition,
   getRunnerObservability,
@@ -50,6 +49,7 @@ import {
   isRunnerPaneRetired,
   keyForClassifierTrustAction,
   normalizeRunner,
+  resolveLaunchBlockerWithFreshEvidence,
   resolveSafeSendTimeoutMs,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
   RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
@@ -375,14 +375,14 @@ describe('cursor runner', () => {
     );
   });
 
-  it('confirmTrustPromptWithFreshEvidence sends the detector key for the captured target', async () => {
+  it('resolveLaunchBlockerWithFreshEvidence sends the detector key for the captured target', async () => {
     const grokPane = `
   ┃  Run Grok Build in a project directory?
   ┃  1 (○) farmslot-grok-probe (current)
   ┃  ↑/↓ navigate · y copy                                    Enter:submit
 `;
     const commands: string[] = [];
-    const result = await confirmTrustPromptWithFreshEvidence({
+    const result = await resolveLaunchBlockerWithFreshEvidence({
       runnerId: 'grok',
       target: 'ff-2:agent.0',
       logPrefix: 'test',
@@ -397,14 +397,14 @@ describe('cursor runner', () => {
     assert.match(commands[1], /^send-keys -t 'ff-2:agent\.0' 'Enter'/);
   });
 
-  it('confirmTrustPromptWithFreshEvidence maps a cursor workspace-trust capture to the a key', async () => {
+  it('resolveLaunchBlockerWithFreshEvidence maps a cursor workspace-trust capture to the a key', async () => {
     const cursorPane = `
   ▶ [a] Trust this workspace
     [q] Quit
   Use arrow keys to navigate
 `;
     const commands: string[] = [];
-    const result = await confirmTrustPromptWithFreshEvidence({
+    const result = await resolveLaunchBlockerWithFreshEvidence({
       runnerId: 'cursor',
       target: 'ff-1:agent.0',
       logPrefix: 'test',
@@ -433,7 +433,7 @@ describe('cursor runner', () => {
 
     const commands: string[] = [];
     let refreshed = false;
-    const result = await confirmTrustPromptWithFreshEvidence({
+    const result = await resolveLaunchBlockerWithFreshEvidence({
       runnerId: 'codex',
       target: 'core-2:review.0',
       logPrefix: 'test',
@@ -451,9 +451,9 @@ describe('cursor runner', () => {
     assert.match(commands[1], /^send-keys -t 'core-2:review\.0' '2' 'Enter'/);
   });
 
-  it('confirmTrustPromptWithFreshEvidence never sends without fresh deterministic evidence', async () => {
+  it('resolveLaunchBlockerWithFreshEvidence never sends without fresh deterministic evidence', async () => {
     const commands: string[] = [];
-    const result = await confirmTrustPromptWithFreshEvidence({
+    const result = await resolveLaunchBlockerWithFreshEvidence({
       runnerId: 'grok',
       target: 'ff-2:agent.0',
       logPrefix: 'test',
@@ -468,7 +468,7 @@ describe('cursor runner', () => {
     assert.match(commands[0], /^capture-pane/);
   });
 
-  it('confirmTrustPromptWithFreshEvidence surfaces a failed send instead of swallowing it', async () => {
+  it('resolveLaunchBlockerWithFreshEvidence surfaces a failed send instead of swallowing it', async () => {
     const grokPane = `
   ┃  Run Grok Build in a project directory?
   ┃  1 (○) farmslot-grok-probe (current)
@@ -476,7 +476,7 @@ describe('cursor runner', () => {
 `;
     await assert.rejects(
       () =>
-        confirmTrustPromptWithFreshEvidence({
+        resolveLaunchBlockerWithFreshEvidence({
           runnerId: 'grok',
           target: 'ff-2:agent.0',
           logPrefix: 'test',
@@ -1434,8 +1434,13 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT);
       assert.match(
         cmd,
-        /node "\$\{HOME\}\/farmslot-node\/scripts\/install-runner-observability\.mjs"/,
+        /installer="\$\{HOME\}\/farmslot-node\/scripts\/install-runner-observability\.mjs"/,
       );
+      assert.match(
+        cmd,
+        /candidate="\$\{HOME\}\/farmslot-node\/support\/\$\{support_hash\}\/scripts\/install-runner-observability\.mjs"/,
+      );
+      assert.match(cmd, /node "\$installer"/);
       assert.match(cmd, /--repo "\$\{HOME\}\/work\/repo"/);
       assert.match(cmd, /cd "\$\{HOME\}\/work\/repo" && unset CLAUDECODE/);
       assert.match(

@@ -26,12 +26,7 @@ interface OpenFile {
   type: 'file' | 'diff';
 }
 
-interface GitData {
-  branch: string;
-  ahead: number;
-  behind: number;
-  changes: Array<{ path: string; status: string; oldPath?: string }>;
-}
+type GitData = GitStatusResult;
 
 const QUICK_ACCESS = [
   { path: 'TASK.md', label: 'TASK.md' },
@@ -301,6 +296,7 @@ export class SlotWorkspace extends LitElement {
       this._liveEntries = fsResult.entries;
       this._liveGitData = {
         branch: gitResult.branch,
+        headSha: gitResult.headSha,
         ahead: gitResult.ahead,
         behind: gitResult.behind,
         changes: gitResult.changes,
@@ -330,6 +326,7 @@ export class SlotWorkspace extends LitElement {
       });
       this._liveGitData = {
         branch: result.branch,
+        headSha: result.headSha,
         ahead: result.ahead,
         behind: result.behind,
         changes: result.changes,

@@ -57,7 +57,7 @@ async function writeTaskFile(taskDir: string, body: string): Promise<string> {
   return taskFile;
 }
 
-test('loadRecipeQualityEvaluation preserves a valid worker artifact', async () => {
+test('loadRecipeQualityEvaluation preserves a current gateway artifact and merges structural checks', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-valid-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(taskDir, '# Task\nWrite artifacts/recipe-quality.json\n');
@@ -83,10 +83,10 @@ test('loadRecipeQualityEvaluation preserves a valid worker artifact', async () =
     JSON.stringify(
       {
         version: 1,
-        verdict: 'pass',
+        verdict: 'fail',
         compact: {
-          verdict: 'PASS',
-          reasons: ['Used existing flows and proved the claim.'],
+          verdict: 'FAIL',
+          reasons: ['Live proof did not establish the claimed state.'],
           better_version_guidance: [],
         },
         dimensions: {},
@@ -99,7 +99,7 @@ test('loadRecipeQualityEvaluation preserves a valid worker artifact', async () =
           proof_mode: 'mixed',
         },
         meta: {
-          producer: 'worker',
+          producer: 'gateway',
           fallback_used: false,
           legacy_task: false,
           artifact_required: true,
@@ -116,10 +116,100 @@ test('loadRecipeQualityEvaluation preserves a valid worker artifact', async () =
     recipeJson,
   });
 
-  assert.equal(evaluation.artifact.verdict, 'pass');
-  assert.equal(evaluation.artifact.meta.producer, 'worker');
+  assert.equal(evaluation.artifact.verdict, 'fail');
+  assert.equal(evaluation.artifact.meta.producer, 'gateway');
   assert.equal(evaluation.signal.source, 'recipe-quality');
-  assert.equal(evaluation.signal.semantic, 'good');
+  assert.equal(evaluation.signal.semantic, 'bad');
+});
+
+test('loadRecipeQualityEvaluation uses a supplied slot artifact instead of the gateway filesystem', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-portable-'));
+  const taskDir = path.join(base, 'task');
+  const taskFile = await writeTaskFile(taskDir, '# Task\n');
+  await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
+  await writeFile(
+    path.join(taskDir, 'artifacts', 'recipe-quality.json'),
+    JSON.stringify({ invalid: 'gateway-host-collision' }),
+  );
+  const portableArtifact = {
+    version: 1,
+    verdict: 'fail',
+    compact: {
+      verdict: 'FAIL',
+      reasons: ['The remote worker found a live proof failure.'],
+      better_version_guidance: [],
+    },
+    dimensions: {},
+    structural_findings: [],
+    contextual_findings: [],
+    suggested_recipe_delta: [],
+    training_fields: { proof_mode: 'mixed' },
+    meta: {
+      producer: 'worker',
+      fallback_used: false,
+      legacy_task: false,
+      artifact_required: true,
+      source_signals: ['recipe-quality.json'],
+    },
+  };
+  assert.ok(isRecipeQualityArtifact(portableArtifact));
+
+  const evaluation = await loadRecipeQualityEvaluation({
+    run: makeRun({ taskFile }),
+    recipeQualityArtifact: portableArtifact,
+  });
+
+  assert.equal(evaluation.artifact.verdict, 'fail');
+  assert.equal(evaluation.artifact.compact.reasons[0], portableArtifact.compact.reasons[0]);
+});
+
+test('loadRecipeQualityEvaluation ignores a legacy worker verdict when recipe sources exist', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-stale-'));
+  const taskDir = path.join(base, 'task');
+  const taskFile = await writeTaskFile(taskDir, '# Task\n');
+  const artifactsDir = path.join(taskDir, 'artifacts');
+  await mkdir(artifactsDir, { recursive: true });
+  const qualityPath = path.join(artifactsDir, 'recipe-quality.json');
+  await writeFile(
+    qualityPath,
+    JSON.stringify({
+      version: 1,
+      verdict: 'fail',
+      compact: { verdict: 'FAIL', reasons: ['Old failure.'], better_version_guidance: [] },
+      dimensions: {},
+      structural_findings: [],
+      contextual_findings: [],
+      suggested_recipe_delta: [],
+      training_fields: { proof_mode: 'mixed' },
+      meta: {
+        producer: 'worker',
+        fallback_used: false,
+        legacy_task: false,
+        artifact_required: true,
+        source_signals: ['recipe-quality.json'],
+      },
+    }),
+  );
+  const recipeJson = JSON.stringify({
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: 'Current recipe.',
+    workflow: {
+      entry: 'start',
+      nodes: {
+        start: { action: 'assert', intent: 'Prove current state.', next: 'done' },
+        done: { action: 'end', status: 'pass' },
+      },
+    },
+  });
+  await writeFile(path.join(artifactsDir, 'recipe.json'), recipeJson);
+
+  const evaluation = await loadRecipeQualityEvaluation({
+    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'fix-bug' }),
+    recipeJson,
+  });
+
+  assert.equal(evaluation.artifact.verdict, 'pass');
+  assert.equal(evaluation.artifact.meta.producer, 'fallback:recipe-json');
 });
 
 test('loadRecipeQualityEvaluation regenerates from recipe structure when the existing artifact is non-conformant (read-only)', async () => {

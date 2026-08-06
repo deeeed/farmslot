@@ -176,7 +176,9 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
 
-  await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd);
+  await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {
+    preserveWindowAfterExit: true,
+  });
   await new Promise((resolve) => setTimeout(resolve, TMUX_WINDOW_RESPAWN_SETTLE_MS));
 
   const workerRole = primaryTarget.role ?? primaryRoleForFlow(run.flowType);

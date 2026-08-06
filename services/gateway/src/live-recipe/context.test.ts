@@ -18,7 +18,7 @@ import {
 } from './context.js';
 import { FakeNodeWebSocket, makeRun, poolDir } from './test-fixtures.js';
 
-test('loadLiveRecipeContextForRun projects live recipe artifacts without decision fallback', async (t) => {
+test('loadLiveRecipeContextForRun derives quality from recipe sources instead of a worker verdict', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-live-recipe-'));
   t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -26,7 +26,27 @@ test('loadLiveRecipeContextForRun projects live recipe artifacts without decisio
   const artifactsDir = path.join(taskDir, 'artifacts');
   await mkdir(artifactsDir, { recursive: true });
   await writeFile(path.join(taskDir, 'TASK.md'), '# task\n', 'utf-8');
-  await writeFile(path.join(artifactsDir, 'recipe.json'), '{"entry":"start"}\n', 'utf-8');
+  const recipePath = path.join(artifactsDir, 'recipe.json');
+  await writeFile(
+    recipePath,
+    JSON.stringify({
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Proves the current recipe artifact is executable.',
+      workflow: {
+        entry: 'start',
+        nodes: {
+          start: {
+            action: 'assert_file',
+            path: 'artifacts/recipe.json',
+            intent: 'Confirm the current recipe artifact exists',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    }),
+    'utf-8',
+  );
   await writeFile(
     path.join(artifactsDir, 'learnings.md'),
     'Watch for stale metro sockets.\n',
@@ -66,9 +86,10 @@ test('loadLiveRecipeContextForRun projects live recipe artifacts without decisio
   assert.equal(context.recipeRunId, null);
   assert.equal(context.selectionReason, 'latest-run');
   assert.equal(context.artifactRoot, artifactsDir);
-  assert.equal(context.recipeJson, '{"entry":"start"}\n');
+  assert.match(context.recipeJson ?? '', /schemas\/recipe-v1\.schema\.json/);
   assert.equal(context.workerLearnings, 'Watch for stale metro sockets.\n');
   assert.equal(context.recipeQualityArtifact?.compact.verdict, 'PASS');
+  assert.equal(context.recipeQualityArtifact?.meta.producer, 'fallback:recipe-json');
   assert.ok((context.artifactManifest?.length ?? 0) >= 3);
 });
 
@@ -85,6 +106,31 @@ test('loadLiveRecipeContextForRun falls back to inputs/inherited recipe.json', a
     '{"title":"Inherited related-markets recipe"}\n',
     'utf-8',
   );
+  await writeFile(
+    path.join(inheritedDir, 'recipe-quality.json'),
+    JSON.stringify({
+      version: 1,
+      verdict: 'pass',
+      compact: { verdict: 'PASS', reasons: ['Worker claimed pass.'], better_version_guidance: [] },
+      dimensions: {},
+      structural_findings: [],
+      contextual_findings: [],
+      suggested_recipe_delta: [],
+      training_fields: {
+        project: 'example-mobile-farm',
+        flow_type: 'dev',
+        proof_mode: 'mixed',
+      },
+      meta: {
+        producer: 'worker',
+        fallback_used: false,
+        legacy_task: false,
+        artifact_required: true,
+        source_signals: ['recipe-quality.json'],
+      },
+    }),
+    'utf-8',
+  );
 
   const run = makeRun(path.join(taskDir, 'TASK.md'), { id: 'run-inherited-recipe-1' });
   const context = await loadLiveRecipeContextForRun(run);
@@ -93,6 +139,11 @@ test('loadLiveRecipeContextForRun falls back to inputs/inherited recipe.json', a
   assert.ok(context);
   assert.match(context.recipeJson ?? '', /Inherited related-markets recipe/);
   assert.equal(context.artifactRoot, inheritedDir);
+  assert.equal(
+    context.recipeQualityArtifact?.compact.verdict,
+    'FAIL',
+    'canonical inherited-recipe validation must override an invalid worker-authored pass',
+  );
   assert.equal(groups.length, 1);
   assert.equal(groups[0]?.groupKind, 'current-artifacts');
   assert.equal(groups[0]?.label, 'Inherited recipe package');

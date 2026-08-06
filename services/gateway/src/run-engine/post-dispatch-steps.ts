@@ -148,7 +148,10 @@ const MAX_HUMAN_GATE_REVIEW_REQUEST_LOOPS = 3;
 function stampFreshReviewsForPreparedPackage(
   runId: string,
   reviewIds: string[],
-  prPackage: Pick<ReadyGatePrPackage, 'headSha' | 'packageInputHash' | 'reviewSubjectHash'>,
+  prPackage: Pick<
+    ReadyGatePrPackage,
+    'headSha' | 'reviewSnapshot' | 'packageInputHash' | 'reviewSubjectHash'
+  >,
 ): void {
   if (reviewIds.length === 0) return;
   const reviewIdSet = new Set(reviewIds);

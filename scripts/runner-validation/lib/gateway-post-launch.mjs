@@ -16,6 +16,7 @@ export function runGatewayPostLaunchPrompt({
   marker,
   timeoutMs = 120_000,
   artifactsDir,
+  requirePromptDigest = false,
 }) {
   fs.mkdirSync(artifactsDir, { recursive: true });
   const blockerSnapshotPath = `${artifactsDir}/dispatch-launch.txt`;
@@ -61,6 +62,7 @@ try {
       blockerSnapshotPath: ${JSON.stringify(blockerSnapshotPath)},
       softAcceptOnHandoffAck: true,
       handoffAckSinceMs: Date.now(),
+      requirePromptDigest: ${requirePromptDigest},
     },
   );
   console.log(JSON.stringify({ ok: true, blockerSnapshotPath: ${JSON.stringify(blockerSnapshotPath)} }));

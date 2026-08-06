@@ -4,6 +4,7 @@ import test from 'node:test';
 import { resumableSessionProbeCommand } from '../runners/session-process.js';
 
 import {
+  applyTerminalReviewSignal,
   parseTerminalSelfReviewSignal,
   shouldKeepWaitingForOverdueReview,
 } from './review-agent.js';
@@ -32,6 +33,34 @@ test('parseTerminalSelfReviewSignal accepts terminal mark complete signal', () =
   });
   const signal = parseTerminalSelfReviewSignal(raw);
   assert.equal(signal?.status, 'complete');
+});
+
+test('blocked reviewer signal cannot become a passing review', () => {
+  const signal = parseTerminalSelfReviewSignal(
+    JSON.stringify({
+      status: 'blocked',
+      outcome: 'partial',
+      disposition: 'blocked',
+      reason: 'reviewer quota exhausted',
+    }),
+  );
+
+  assert.deepEqual(applyTerminalReviewSignal({ verdict: 'pass', issues: [] }, signal), {
+    verdict: 'pass',
+    issues: [],
+    incomplete: true,
+  });
+});
+
+test('terminal done reviewer signal preserves its parsed verdict', () => {
+  const signal = parseTerminalSelfReviewSignal(
+    JSON.stringify({ status: 'done', outcome: 'success', disposition: 'fixed' }),
+  );
+
+  assert.deepEqual(applyTerminalReviewSignal({ verdict: 'pass', issues: [] }, signal), {
+    verdict: 'pass',
+    issues: [],
+  });
 });
 
 test('parseTerminalSelfReviewSignal rejects legacy substring-only detection', () => {

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-05T17:57:36.695Z",
+  "host": "macwork",
+  "scenario": "dispatch-prompt-smoke",
+  "runner": "codex",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-dispatch-FtWY3z",
+  "session": "runner-validate-codex-dispatch-prompt-smoke-4333",
+  "launchMode": "codex-interactive",
+  "gatewayPath": "sendRunnerPostLaunchPrompt",
+  "promptDelivered": true,
+  "responseCompleted": true,
+  "hookEvents": ["SessionStart", "UserPromptSubmit", "Stop"],
+  "blockerSnapshotPath": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-dispatch-FtWY3z/.artifacts/runner-blockers/dispatch-launch.txt",
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.N43gbD/launch-cb31418b7f5e08e8.sh\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.0)                               │\n│                                                          │\n│ model:       gpt-5.6-sol   /model to change              │\n│ directory:   …gn/T/runner-validate-codex-dispatch-FtWY3z │\n│ permissions: YOLO mode                                   │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: Start a fresh idea with /new; the previous session stays in history.\n\n⚠ Heads up, you have less than 10% of your weekly limit left. Run /status for a\n  breakdown.\n\n\n› Reply with exactly TMUX_HOOK_OK and nothing else.\n\n\n• Working (2s • esc to interrupt)\n\n\n› Explain this codebase\n\n  gpt-5.6-sol default · /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/…"
+}

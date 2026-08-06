@@ -34,6 +34,13 @@ interface RecipeQualityEvaluationInput {
    * for that root — the per-run badge and family leaderboard never diverge.
    */
   artifactDir?: string | null;
+  /**
+   * Portable callers pass the artifact they already read from the slot. When
+   * present, the evaluator must not reread the gateway host filesystem.
+   */
+  recipeQualityArtifact?: RecipeQualityArtifact | null;
+  /** True only when the caller can prove the supplied artifact predates its sources. */
+  recipeQualityArtifactIsStale?: boolean;
 }
 
 interface StructuralRecipeEvaluation {
@@ -348,10 +355,10 @@ function buildFallbackEvaluation(
     const artifact = buildArtifact({
       verdict: 'warn',
       reasons: [
-        'Only legacy recipe-coverage.md was available; shared recipe-quality.json was missing.',
+        'Recipe quality was derived from current recipe-coverage.md; no gateway-owned recipe-quality artifact was available.',
       ],
       betterVersionGuidance: [
-        'Keep recipe-coverage.md complete; the gateway derives recipe-quality from it.',
+        'Keep recipe.json and recipe-coverage.md complete; the gateway derives recipe quality from those current sources.',
       ],
       producer: 'fallback:recipe-coverage',
       fallbackSource: 'fallback:recipe-coverage',
@@ -468,26 +475,47 @@ export async function loadRecipeQualityEvaluation(
   const taskText = run.taskFile ? await readTextIfExists(run.taskFile) : null;
   const legacyTask = !taskText?.includes(RECIPE_QUALITY_MARKER);
   const artifactsDir = input.artifactDir ?? (taskDir ? path.join(taskDir, 'artifacts') : null);
-  const artifactText = artifactsDir
-    ? await readTextIfExists(path.join(artifactsDir, RECIPE_QUALITY_FILENAME))
-    : null;
+  const hasPortableArtifact = Object.hasOwn(input, 'recipeQualityArtifact');
+  const suppliedArtifact = hasPortableArtifact ? input.recipeQualityArtifact : undefined;
+  const artifactText =
+    !hasPortableArtifact && artifactsDir
+      ? await readTextIfExists(path.join(artifactsDir, RECIPE_QUALITY_FILENAME))
+      : null;
   const structural = evaluateRecipeStructure(input.recipeJson);
+  const hasCurrentRecipeSources = Boolean(input.recipeJson || input.recipeCoverage);
 
   // The gateway is the sole producer of recipe-quality.json (ADR/roadmap:
   // run-metrics consolidation). A previously-generated, schema-valid artifact is
   // reused for idempotency; anything else (absent, unparseable, or non-conformant)
   // is regenerated from the recipe structure — never salvaged or fabricated into a
   // misleading fail. Workers no longer hand-author this file.
+  if (suppliedArtifact && !input.recipeQualityArtifactIsStale) {
+    const merged = mergeStructuralEvaluation(suppliedArtifact, structural);
+    return { artifact: merged, signal: buildSignal(run.id, merged) };
+  }
+
   if (artifactText) {
     try {
       const parsed = JSON.parse(artifactText);
       if (isRecipeQualityArtifact(parsed)) {
-        const artifact = mergeStructuralEvaluation(parsed as RecipeQualityArtifact, structural);
-        return { artifact, signal: buildSignal(run.id, artifact) };
+        const artifact = parsed as RecipeQualityArtifact;
+        // Worker-authored verdicts are legacy input. Once current recipe
+        // sources exist, derive quality from them instead of guessing artifact
+        // freshness from copy-order-dependent mtimes.
+        const workerArtifactIsStale =
+          artifact.meta.producer === 'worker' && hasCurrentRecipeSources;
+        if (!workerArtifactIsStale) {
+          const merged = mergeStructuralEvaluation(artifact, structural);
+          return { artifact: merged, signal: buildSignal(run.id, merged) };
+        }
+        console.warn(
+          `[recipe-quality] ignoring stale worker-authored ${RECIPE_QUALITY_FILENAME}; deriving quality from newer recipe sources.`,
+        );
+      } else {
+        console.warn(
+          `[recipe-quality] ${RECIPE_QUALITY_FILENAME} did not match the shared schema; regenerating from recipe structure.`,
+        );
       }
-      console.warn(
-        `[recipe-quality] ${RECIPE_QUALITY_FILENAME} did not match the shared schema; regenerating from recipe structure.`,
-      );
     } catch (error) {
       console.warn(
         `[recipe-quality] failed to parse ${RECIPE_QUALITY_FILENAME}; regenerating from recipe structure: ${(error as Error).message}`,

@@ -602,7 +602,7 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
       case 'resource.watch.start': {
         const slotId = requireString(params, 'slotId');
         const resources = params.resources as WatchInstruction[];
-        startResourceWatch(slotId, resources, (change: ResourceStatusChange) => {
+        const count = startResourceWatch(slotId, resources, (change: ResourceStatusChange) => {
           if (!ws || ws.readyState !== WebSocket.OPEN) return;
           ws.send(
             JSON.stringify({
@@ -612,7 +612,7 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
             }),
           );
         });
-        sendResponse(frame.id, true, { watching: true, count: resources.length });
+        sendResponse(frame.id, true, { watching: true, count });
         break;
       }
 
