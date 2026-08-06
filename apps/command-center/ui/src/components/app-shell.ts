@@ -12,6 +12,7 @@ import type {
   GitHubRateLimitPayload,
   NodeInfo,
   NodesListResult,
+  PairingAuthority,
   PairingCandidate,
   PairingCandidatesResult,
   PairingCreateResult,
@@ -89,6 +90,11 @@ import {
   parseStoredSidebarWidth,
   SIDEBAR_WIDTH_PREF_KEY,
 } from './app-shell-nav-model.js';
+import {
+  pairingAuthorityFromSelection,
+  type PairingAuthorityKind,
+  type PairingAuthorityRole,
+} from './app-shell-pairing-model.js';
 import { renderAppShellAuthStyles, renderAppShellStyles } from './app-shell-styles.js';
 
 type Route =
@@ -223,6 +229,10 @@ export class FarmApp extends LitElement {
   @state() private pairingOpen = false;
   @state() private pairingBusy = false;
   @state() private pairingProfileName = DEFAULT_PAIRING_PROFILE_NAME;
+  @state() private pairingAuthorityKind: PairingAuthorityKind = '';
+  @state() private pairingExistingPrincipalId = '';
+  @state() private pairingNewServiceName = '';
+  @state() private pairingNewServiceRole: PairingAuthorityRole = '';
   @state() private pairingLanGatewayUrl = resolveDefaultPairingGatewayUrl();
   @state() private pairingRemoteGatewayUrl = resolveDefaultRemotePairingGatewayUrl();
   @state() private pairingDetectedTargets: PairingTarget[] = [];
@@ -882,6 +892,18 @@ export class FarmApp extends LitElement {
       this.pairingError = `${invalidTarget.profileName} URL must start with ws:// or wss://`;
       return;
     }
+    let authority: PairingAuthority;
+    try {
+      authority = pairingAuthorityFromSelection(
+        this.pairingAuthorityKind,
+        this.pairingExistingPrincipalId,
+        this.pairingNewServiceName,
+        this.pairingNewServiceRole,
+      );
+    } catch (error) {
+      this.pairingError = error instanceof Error ? error.message : 'Invalid pairing authority';
+      return;
+    }
     await this.refreshPairingListenWarning();
     const needsLocalGatewayReachable = targets.some((target) =>
       pairingTargetNeedsRemoteListen(target),
@@ -903,6 +925,7 @@ export class FarmApp extends LitElement {
             gatewayUrl: target.gatewayUrl,
             profileName: target.profileName,
             ttlSeconds: 180,
+            authority,
           }),
         ),
       );
@@ -1367,7 +1390,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
               <div class="pairing-copy">
                 Review the current browser connection, then generate a short-lived QR code for
                 Companion. The mobile app exchanges it once for the selected gateway URL and auth
-                credential.
+                credential under the explicit authority selected below.
               </div>
             </div>
             <button class="pairing-close" type="button" @click=${() => this.closePairingPanel()}>
@@ -1420,6 +1443,94 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
               >
             </div>
           </div>
+
+          <div class="pairing-label">Pairing authority</div>
+          <div class="pairing-copy" role="radiogroup" aria-label="Pairing authority">
+            <label>
+              <input
+                type="radio"
+                name="pairing-authority"
+                data-testid="pairing-authority-existing-principal"
+                .checked=${this.pairingAuthorityKind === 'existing-principal'}
+                @change=${() => {
+                  this.pairingAuthorityKind = 'existing-principal';
+                }}
+              />
+              Use an existing principal
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="pairing-authority"
+                data-testid="pairing-authority-new-service"
+                .checked=${this.pairingAuthorityKind === 'new-service-principal'}
+                @change=${() => {
+                  this.pairingAuthorityKind = 'new-service-principal';
+                }}
+              />
+              Create a new service principal
+            </label>
+          </div>
+
+          ${this.pairingAuthorityKind === 'existing-principal'
+            ? html`
+                <label class="pairing-label" for="pairing-existing-principal-id"
+                  >Existing principal ID</label
+                >
+                <input
+                  id="pairing-existing-principal-id"
+                  class="pairing-input"
+                  data-testid="pairing-existing-principal-id"
+                  .value=${this.pairingExistingPrincipalId}
+                  @input=${(event: InputEvent) => {
+                    this.pairingExistingPrincipalId = (event.target as HTMLInputElement).value;
+                  }}
+                />
+              `
+            : ''}
+          ${this.pairingAuthorityKind === 'new-service-principal'
+            ? html`
+                <label class="pairing-label" for="pairing-new-service-name"
+                  >New service principal name</label
+                >
+                <input
+                  id="pairing-new-service-name"
+                  class="pairing-input"
+                  data-testid="pairing-new-service-name"
+                  .value=${this.pairingNewServiceName}
+                  @input=${(event: InputEvent) => {
+                    this.pairingNewServiceName = (event.target as HTMLInputElement).value;
+                  }}
+                />
+                <div class="pairing-label">New service principal role</div>
+                <div class="pairing-copy" role="radiogroup" aria-label="New service principal role">
+                  <label>
+                    <input
+                      type="radio"
+                      name="pairing-new-service-role"
+                      data-testid="pairing-new-service-role-operator"
+                      .checked=${this.pairingNewServiceRole === 'operator'}
+                      @change=${() => {
+                        this.pairingNewServiceRole = 'operator';
+                      }}
+                    />
+                    Operator
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="pairing-new-service-role"
+                      data-testid="pairing-new-service-role-admin"
+                      .checked=${this.pairingNewServiceRole === 'admin'}
+                      @change=${() => {
+                        this.pairingNewServiceRole = 'admin';
+                      }}
+                    />
+                    Admin
+                  </label>
+                </div>
+              `
+            : ''}
 
           <label class="pairing-label" for="pairing-lan-gateway-url">LAN gateway URL</label>
           <input

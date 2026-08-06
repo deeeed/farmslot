@@ -767,6 +767,8 @@ export function renderAppShellStyles(
       }
       farm-app .pairing-card {
         width: min(460px, calc(100vw - 48px));
+        max-height: calc(100vh - 48px);
+        overflow-y: auto;
         background: ${colors.bgSurface};
         border: 1px solid ${colors.bgCardHover};
         border-radius: 14px;
