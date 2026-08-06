@@ -44,6 +44,9 @@ import {
   type ConfigTemplatePreviewParams,
   type ConfigTemplatesParams,
   type CopilotFormatInstructionParams,
+  type CredentialIssueParams,
+  type CredentialListParams,
+  type CredentialRevokeParams,
   type DecisionResolveParams,
   type DiagnosticsRunParams,
   type DispatchCandidatesParams,
@@ -96,16 +99,13 @@ import {
   type NodeHealthResult,
   type PairingCandidatesParams,
   type PairingCreateParams,
-  type CredentialIssueParams,
-  type CredentialListParams,
-  type CredentialRevokeParams,
-  type PrincipalCreateParams,
-  type PrincipalGrantParams,
-  type PrincipalRevokeRoleParams,
   type PRAddCommentParams,
   type PRDeleteCommentParams,
   type PREditCommentParams,
   type PRForSlotParams,
+  type PrincipalCreateParams,
+  type PrincipalGrantParams,
+  type PrincipalRevokeRoleParams,
   type PRListParams,
   PROTOCOL_VERSION,
   type ProviderAccountsSnapshotParams,
@@ -324,7 +324,6 @@ import {
   prReviewComments,
   prSubmitReview,
 } from '../methods/pr/review-comments.js';
-import { providerAccountsSnapshot } from '../methods/provider-accounts.js';
 import {
   credentialIssue,
   credentialList,
@@ -334,6 +333,7 @@ import {
   principalList,
   principalRevokeRole,
 } from '../methods/principal.js';
+import { providerAccountsSnapshot } from '../methods/provider-accounts.js';
 import {
   recipeCancel,
   recipeCommand,
@@ -498,7 +498,7 @@ export async function routeMethod(
   params: unknown,
   context: RouteMethodContext,
 ): Promise<unknown> {
-  const { authRuntime, broadcast, emit, isActiveClient, nextEventSeq, state } = context;
+  const { authRuntime, state } = context;
   const actingPrincipal = authorizeGatewayMethod(authRuntime, state, method);
   return runWithSessionOriginator(actingPrincipal, () =>
     routeAuthorizedMethod(method, params, context),

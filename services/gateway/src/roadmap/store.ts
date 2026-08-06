@@ -58,7 +58,6 @@ import {
   markBacklogItemReady,
   updateBacklogItem,
 } from '../backlog/store.js';
-import type { WorkOriginator } from '../security/work-originator.js';
 import { assertNoUnknownPlaceholders } from '../core/hooks.js';
 import { loadPromptTemplate } from '../core/prompt-templates.js';
 import { farmslotRoot, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
@@ -72,6 +71,7 @@ import {
 } from '../refinement/session.js';
 import { runnerDefaultModel } from '../runners/registry.js';
 import { getAllRunsWithArchived } from '../runs/store.js';
+import type { WorkOriginator } from '../security/work-originator.js';
 import { listWorkGraphs } from '../work-graph/store.js';
 
 import {

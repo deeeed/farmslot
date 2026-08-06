@@ -22,12 +22,12 @@ import {
 } from '../../backlog/dispatch-queue.js';
 import { removeOrphanBacklogQueueItem } from '../../backlog/store.js';
 import { loadProjectVars, loadSlotVars } from '../../core/index.js';
+import { currentSessionOriginator, workAuthorshipNotice } from '../../security/work-originator.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
 } from '../../tasks/execution-template-catalog.js';
 import { resolveWorkerTemplateSelection } from '../../tasks/worker-template-options.js';
-import { currentSessionOriginator, workAuthorshipNotice } from '../../security/work-originator.js';
 
 // ─── Queue Handlers ───
 

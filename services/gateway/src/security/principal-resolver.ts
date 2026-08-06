@@ -1,8 +1,8 @@
 import type { AuthenticationRef, GatewayAuthClientKind, Principal } from '@farmslot/protocol';
 
 import type { GatewayAuthSession } from './auth.js';
-import type { CredentialStoreRuntime } from './credential-store.js';
 import { parseCredentialWire, safeEqualSecret, verifySecret } from './credential-secret.js';
+import type { CredentialStoreRuntime } from './credential-store.js';
 import { VerificationCache } from './verification-cache.js';
 
 export type PrincipalResolution =

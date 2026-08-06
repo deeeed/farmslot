@@ -2,8 +2,9 @@ import type { Principal, SafetyTier } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import type { ClientState } from '../server/client-state.js';
-import { AUTHORIZATION_METHOD_CLASSIFICATION } from './authorization-classification.generated.js';
+
 import type { GatewayAuthRuntime, GatewayAuthSession } from './auth.js';
+import { AUTHORIZATION_METHOD_CLASSIFICATION } from './authorization-classification.generated.js';
 import { activeAdminCredentialCount } from './credential-store.js';
 
 const IDENTITY_MANAGEMENT_METHODS = new Set([

@@ -21,12 +21,12 @@ import { getBacklogRefinementSession, startBacklogRefinement } from '../backlog/
 import {
   archiveBacklogItem,
   autoDispatchBacklogReady,
+  backlogRecordOriginator,
   closeShippedBacklogItem,
   createBacklogItem,
   deleteBacklogItem,
   dequeueBacklogItem,
   enqueueBacklogItem,
-  backlogRecordOriginator,
   getBacklogSpec,
   listBacklogItems,
   markBacklogItemReady,
@@ -34,8 +34,8 @@ import {
   upcomingBacklogItems,
   updateBacklogItem,
 } from '../backlog/store.js';
-import { schedulerTick } from '../work-graph/store.js';
 import { currentSessionOriginator, workAuthorshipNotice } from '../security/work-originator.js';
+import { schedulerTick } from '../work-graph/store.js';
 
 export const backlogCreate = (params: BacklogCreateParams) =>
   createBacklogItem(params, currentSessionOriginator());

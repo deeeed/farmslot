@@ -13,6 +13,7 @@ import type {
   WorkGraphUpdateNodeParams,
 } from '@farmslot/protocol';
 
+import { currentSessionOriginator, workAuthorshipNotice } from '../security/work-originator.js';
 import {
   activateWorkGraph,
   addWorkGraphEdge,
@@ -28,7 +29,6 @@ import {
   updateWorkGraphNode,
   workGraphRecordOriginator,
 } from '../work-graph/store.js';
-import { currentSessionOriginator, workAuthorshipNotice } from '../security/work-originator.js';
 
 export const workGraphCreate = (params: WorkGraphCreateParams) =>
   createWorkGraph(params, currentSessionOriginator());

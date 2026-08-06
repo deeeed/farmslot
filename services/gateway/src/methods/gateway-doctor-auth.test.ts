@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
-import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import test from 'node:test';
 
 import { createGatewayAuthRuntime, initializeGatewayIdentity } from '../security/auth.js';
 

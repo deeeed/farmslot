@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import test from 'node:test';
 
 import { Methods } from '@farmslot/protocol';
 
@@ -17,12 +17,6 @@ import {
   isNodeSubjectSession,
 } from './authorization.js';
 import {
-  credentialStorePath,
-  CredentialStoreRuntime,
-  loadCredentialStore,
-} from './credential-store.js';
-import { CredentialStoreWriter, readCredentialStoreOffline } from './credential-store-writer.js';
-import {
   formatCredentialWire,
   generateCredentialId,
   generateCredentialSecret,
@@ -30,6 +24,12 @@ import {
   parseCredentialWire,
   verifySecret,
 } from './credential-secret.js';
+import {
+  credentialStorePath,
+  CredentialStoreRuntime,
+  loadCredentialStore,
+} from './credential-store.js';
+import { CredentialStoreWriter, readCredentialStoreOffline } from './credential-store-writer.js';
 import { registerGatewayPresence } from './gateway-presence.js';
 
 const operatorMethods = [

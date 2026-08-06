@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { hostname, networkInterfaces } from 'node:os';
 
 import {
+  type PairingAuthority,
   type PairingCandidate,
   type PairingCandidatesParams,
   type PairingCandidatesResult,
@@ -10,7 +11,6 @@ import {
   type PairingCreateResult,
   type PairingExchangeParams,
   type PairingExchangeResult,
-  type PairingAuthority,
   parseTailscaleDnsNameFromStatus,
 } from '@farmslot/protocol';
 
