@@ -25,7 +25,7 @@ import { expandHook, expandTemplate } from '../core/hooks.js';
 import { resetSlot, SLOT_PHASE_RELEASING } from '../core/state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
-import { clearStalePrepareProcess } from '../methods/slot.js';
+import { buildPrepareIdentityReapCommand, clearStalePrepareProcess } from '../methods/slot.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
 import {
   createRun,
@@ -1217,34 +1217,11 @@ export async function cleanupSlotProcesses(slotId: string): Promise<void> {
   const rd = `${vars.remoteRepo}/${runtimeDir}`;
   const port = vars.resourceVars.port;
 
-  // Kill the exact prepare process group only while a live member still carries
-  // the opaque scope exported by this prepare. Nohup descendants retain both
-  // identities after the wrapper exits; a recycled PGID cannot satisfy the
-  // scope check.
+  // Reuse the same exact portable identity verifier as prepare replacement so
+  // stale or recycled identities cannot signal an unrelated process group.
   const killCmd = [
     'set -u',
-    `identityfile="${rd}/preflight.identity";`,
-    `if [ -f "$identityfile" ]; then`,
-    `  identity=$(cat "$identityfile" 2>/dev/null || true);`,
-    `  tab=$(printf '\t');`,
-    `  pgid=""; sentinel=""; scope=""; rest="";`,
-    `  case "$identity" in *"$tab"*) pgid=\${identity%%"$tab"*}; rest=\${identity#*"$tab"} ;; esac;`,
-    `  case "$rest" in *"$tab"*) sentinel=\${rest%%"$tab"*}; scope=\${rest#*"$tab"} ;; esac;`,
-    `  valid=false;`,
-    `  case "$pgid:$sentinel" in *[!0-9:]*|:*|*:) ;; *) case "$scope" in ''|*[!0-9a-f]*|*"$tab"*) ;; *) if [ "$pgid" -gt 1 ] && [ "$sentinel" -gt 1 ] && [ "\${#scope}" -eq 32 ]; then valid=true; fi ;; esac ;; esac;`,
-    `  matched=false;`,
-    `  if $valid; then`,
-    `    live_pgid=$(ps -o pgid= -p "$sentinel" 2>/dev/null | tr -d '[:space:]');`,
-    `    marker_ok=false; scope_ok=false;`,
-    `    if [ "$live_pgid" = "$pgid" ]; then`,
-    `      sentinel_command=$(ps -ww -p "$sentinel" -o command= 2>/dev/null || true);`,
-    `      if printf '%s\n' "$sentinel_command" | tr ' ' '\n' | grep -Fxq -- 'farmslot-prepare-scope'; then marker_ok=true; fi;`,
-    `      if printf '%s\n' "$sentinel_command" | tr ' ' '\n' | grep -Fxq -- "$scope"; then scope_ok=true; fi;`,
-    `    fi;`,
-    `    if $marker_ok && $scope_ok; then matched=true; fi;`,
-    `  fi;`,
-    `  if $matched && kill -TERM -- "-$pgid" 2>/dev/null; then echo "killed verified preflight group ($pgid)"; fi;`,
-    `fi`,
+    buildPrepareIdentityReapCommand(`${rd}/preflight.identity`),
     // Kill later process-specific identities when their pidfiles exist.
     `for pf in launcher.pid browser.pid chromium.pid webpack.pid; do`,
     `  pidfile="${rd}/$pf";`,
@@ -1258,7 +1235,7 @@ export async function cleanupSlotProcesses(slotId: string): Promise<void> {
       ? `if pids=$(lsof -ti ":${port}" 2>/dev/null); then if [ -n "$pids" ]; then kill $pids; fi; else rc=$?; if [ "$rc" -ne 1 ]; then exit "$rc"; fi; fi`
       : ':',
     // Clean pid files
-    `rm -f "${rd}/browser.pid" "${rd}/chromium.pid" "${rd}/extension.id" "${rd}/launcher.pid" "${rd}/preflight.identity" "${rd}/preflight.pgid" "${rd}/webpack.pid"`,
+    `rm -f "${rd}/browser.pid" "${rd}/chromium.pid" "${rd}/extension.id" "${rd}/launcher.pid" "${rd}/preflight.pgid" "${rd}/webpack.pid"`,
   ].join('\n');
 
   const result = await execOnSlot(vars, killCmd);

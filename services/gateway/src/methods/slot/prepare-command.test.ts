@@ -11,6 +11,7 @@ import type { SlotVars } from '../../core/index.js';
 import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
 
 import {
+  buildPrepareIdentityReapCommand,
   buildPrepareWrappedCommand,
   clearStalePrepareProcess,
   prepareSignalHint,
@@ -152,6 +153,27 @@ test('buildPrepareWrappedCommand persists an opaque prepare scope through an exa
   assert.match(command, /preflight\.identity/);
   assert.match(command, /FARMSLOT_PREPARE_SENTINEL_PID/);
   assert.match(command, /parent.*FARMSLOT_PREPARE_SENTINEL_PID.*return/);
+});
+
+test('buildPrepareWrappedCommand reaps the prior exact identity before replacing it', () => {
+  const identityPath = '/tmp/runtime/preflight.identity';
+  const reapCommand = buildPrepareIdentityReapCommand(identityPath);
+  const command = buildPrepareWrappedCommand('echo ok', '/tmp/prep.exit', '/tmp/prep', {
+    prepareScope: {
+      token: '22222222222222222222222222222222',
+      identityPath,
+    },
+  });
+
+  assert.ok(command.includes(reapCommand), 'prepare must use the shared identity verifier');
+  assert.ok(
+    command.indexOf(reapCommand) < command.indexOf('nohup sh -c'),
+    'the prior identity must be reaped before the replacement sentinel starts',
+  );
+  assert.match(reapCommand, /case "\$pgid" in ''\|\*\[!0-9\]\*/);
+  assert.match(reapCommand, /case "\$sentinel" in ''\|\*\[!0-9\]\*/);
+  assert.match(reapCommand, /grep -Fxq -- 'farmslot-prepare-scope'/);
+  assert.match(reapCommand, /rm -f "\$identityfile"$/);
 });
 
 test('clearStalePrepareProcess returns false when there is no live tracked preflight', async () => {

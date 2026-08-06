@@ -32,6 +32,15 @@ interface RecoveryModule {
   startRun(runId: string): Promise<void>;
 }
 
+interface PrepareCommandModule {
+  buildPrepareWrappedCommand(
+    command: string,
+    sentinelPath: string,
+    scratchDir: string,
+    options: { prepareScope: { token: string; identityPath: string } },
+  ): string;
+}
+
 interface ReplayModule {
   runReplayStep(
     params: { runId: string; stepName: string; triggeredBy: 'operator' | 'auto-recovery' },
@@ -111,6 +120,10 @@ interface WaitBehaviorSnapshot {
 }
 
 interface SlotCleanupSnapshot {
+  replacementPriorSentinelKilled: boolean;
+  replacementPriorChildKilled: boolean;
+  replacementCurrentIdentityPersisted: boolean;
+  replacementCurrentScopedGroupPreserved: boolean;
   launcherPidAbsentBeforeCleanup: boolean;
   trackedPrePidLauncherKilled: boolean;
   similarlyNamedNeighborPreserved: boolean;
@@ -659,7 +672,46 @@ async function waitForProcessExit(pid: number, timeoutMs = 1_000): Promise<boole
   return !processIsAlive(pid);
 }
 
-async function runSlotCleanupContract(recovery: RecoveryModule): Promise<SlotCleanupSnapshot> {
+function readPrepareIdentity(
+  identityPath: string,
+): { pgid: number; sentinelPid: number; scope: string } | null {
+  if (!existsSync(identityPath)) return null;
+  const [pgidText, sentinelText, scope] = readFileSync(identityPath, 'utf-8').trim().split('\t');
+  const pgid = Number(pgidText);
+  const sentinelPid = Number(sentinelText);
+  if (!Number.isInteger(pgid) || !Number.isInteger(sentinelPid) || !scope) return null;
+  return { pgid, sentinelPid, scope };
+}
+
+async function waitForPrepareIdentityScope(
+  identityPath: string,
+  scope: string,
+  timeoutMs = 1_000,
+): Promise<{ pgid: number; sentinelPid: number; scope: string } | null> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const identity = readPrepareIdentity(identityPath);
+    if (identity?.scope === scope) return identity;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  } while (Date.now() < deadline);
+  return null;
+}
+
+function processGroupId(pid: number): number | null {
+  try {
+    const pgid = Number(
+      execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf-8' }).trim(),
+    );
+    return Number.isInteger(pgid) ? pgid : null;
+  } catch {
+    return null;
+  }
+}
+
+async function runSlotCleanupContract(
+  recovery: RecoveryModule,
+  prepareCommand: PrepareCommandModule,
+): Promise<SlotCleanupSnapshot> {
   const runtimeDir = path.join(repoDir, '.agent');
   const processGroupPath = path.join(runtimeDir, 'preflight.identity');
   const launcherPidPath = path.join(runtimeDir, 'launcher.pid');
@@ -668,6 +720,44 @@ async function runSlotCleanupContract(recovery: RecoveryModule): Promise<SlotCle
   const trackedScope = '11111111111111111111111111111111';
   const recycledScope = '22222222222222222222222222222222';
   const staleScope = '33333333333333333333333333333333';
+  const replacementScope = '44444444444444444444444444444444';
+
+  const prior = spawnScopedPrepareGroup('prior-prepare', trackedScope);
+  writeText(processGroupPath, `${prior.groupPid}\t${prior.groupPid}\t${trackedScope}\n`);
+  const replacementCommand = prepareCommand.buildPrepareWrappedCommand(
+    ':',
+    path.join(tempRoot, 'replacement.exit'),
+    path.join(tempRoot, 'replacement-scratch'),
+    { prepareScope: { token: replacementScope, identityPath: processGroupPath } },
+  );
+  const replacementWrapper = spawn('/bin/bash', ['-c', replacementCommand], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  assert.ok(
+    replacementWrapper.pid && replacementWrapper.pid > 1,
+    'replacement wrapper pid missing',
+  );
+  replacementWrapper.unref();
+  const replacementIdentity = await waitForPrepareIdentityScope(processGroupPath, replacementScope);
+  const replacementPriorSentinelKilled = await waitForProcessExit(prior.groupPid);
+  const replacementPriorChildKilled = await waitForProcessExit(prior.launcherPid);
+  const replacementCurrentIdentityPersisted = replacementIdentity !== null;
+  const replacementCurrentScopedGroupPreserved =
+    replacementIdentity !== null &&
+    processIsAlive(replacementIdentity.sentinelPid) &&
+    processGroupId(replacementIdentity.sentinelPid) === replacementIdentity.pgid;
+
+  if (recovery.cleanupSlotProcesses) {
+    await recovery.cleanupSlotProcesses(slotId);
+    if (replacementIdentity) {
+      assert.ok(
+        await waitForProcessExit(replacementIdentity.sentinelPid),
+        'replacement group cleanup did not terminate its exact sentinel',
+      );
+    }
+  }
+
   const tracked = spawnScopedPrepareGroup('tracked-prepare', trackedScope);
   const neighborPid = spawnGeneratedRunner();
   writeText(processGroupPath, `${tracked.groupPid}\t${tracked.groupPid}\t${trackedScope}\n`);
@@ -675,6 +765,10 @@ async function runSlotCleanupContract(recovery: RecoveryModule): Promise<SlotCle
 
   if (!recovery.cleanupSlotProcesses) {
     return {
+      replacementPriorSentinelKilled,
+      replacementPriorChildKilled,
+      replacementCurrentIdentityPersisted,
+      replacementCurrentScopedGroupPreserved,
       launcherPidAbsentBeforeCleanup,
       trackedPrePidLauncherKilled: false,
       similarlyNamedNeighborPreserved: processIsAlive(neighborPid),
@@ -693,6 +787,10 @@ async function runSlotCleanupContract(recovery: RecoveryModule): Promise<SlotCle
   writeText(processGroupPath, `${recycled.groupPid}\t${recycled.groupPid}\t${staleScope}\n`);
   await recovery.cleanupSlotProcesses(slotId);
   return {
+    replacementPriorSentinelKilled,
+    replacementPriorChildKilled,
+    replacementCurrentIdentityPersisted,
+    replacementCurrentScopedGroupPreserved,
     launcherPidAbsentBeforeCleanup,
     trackedPrePidLauncherKilled,
     similarlyNamedNeighborPreserved,
@@ -892,6 +990,9 @@ async function main(): Promise<void> {
   const recovery = (await import(
     moduleUrl('services/gateway/src/run-engine/orchestrator.ts')
   )) as unknown as RecoveryModule;
+  const prepareCommand = (await import(
+    moduleUrl('services/gateway/src/methods/slot/prepare-command.ts')
+  )) as unknown as PrepareCommandModule;
   const replay = (await import(
     moduleUrl('services/gateway/src/methods/run/replay-step.ts')
   )) as unknown as ReplayModule;
@@ -918,7 +1019,7 @@ async function main(): Promise<void> {
   const activeEpisodePreserved = recoveryEpisodeSnapshot(activeEpisodeRun);
 
   const vars = await config.loadSlotVars(slotId);
-  const slotCleanup = await runSlotCleanupContract(recovery);
+  const slotCleanup = await runSlotCleanupContract(recovery, prepareCommand);
   const waitBehavior = await runWaitBehaviorContract(vars, reviewAgent, sessionProcess);
 
   await replay.runReplayStep(
