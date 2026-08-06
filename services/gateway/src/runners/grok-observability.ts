@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { execOnSlot } from '../core/exec.js';
 
 import { readSlotClockMs } from './observability-clock.js';
@@ -9,14 +11,16 @@ type GrokPromptSignalProbe =
       promptAcceptedAt: number | null;
       activity: Extract<RunnerActivity, 'idle' | 'composing' | 'tool-running' | 'unknown'>;
       activityAt: number;
+      sessionId?: string;
+      sessionPath?: string;
     }
   | { status: 'unavailable' | 'ambiguous' };
 
 type ProbeGrokPromptSignal = (
   vars: SlotVars,
   target: string,
-  sinceMs: number,
-  promptText: string,
+  sinceMs: number | null,
+  promptText: string | null,
 ) => Promise<GrokPromptSignalProbe>;
 
 export function parseGrokPromptSignalProbe(raw: string): GrokPromptSignalProbe {
@@ -40,14 +44,16 @@ export function parseGrokPromptSignalProbe(raw: string): GrokPromptSignalProbe {
     promptAcceptedAt: value.promptAcceptedAt,
     activity: value.activity,
     activityAt: value.activityAt,
+    ...(typeof value.sessionId === 'string' ? { sessionId: value.sessionId } : {}),
+    ...(typeof value.sessionPath === 'string' ? { sessionPath: value.sessionPath } : {}),
   };
 }
 
 async function probeGrokPromptSignal(
   vars: SlotVars,
   target: string,
-  sinceMs: number,
-  promptText: string,
+  sinceMs: number | null,
+  promptText: string | null,
 ): Promise<GrokPromptSignalProbe> {
   const result = await execOnSlot(
     vars,
@@ -65,8 +71,8 @@ async function probeGrokPromptSignal(
 export function buildGrokPromptSignalProbeCommand(
   vars: SlotVars,
   target: string,
-  sinceMs: number,
-  promptText: string,
+  sinceMs: number | null,
+  promptText: string | null,
 ): string {
   return `
 python3 - <<'PY'
@@ -79,8 +85,8 @@ from urllib.parse import quote
 
 target = ${JSON.stringify(target)}
 repo = ${JSON.stringify(vars.remoteRepo)}
-since_ms = ${Math.floor(sinceMs)}
-expected_prompt = ${JSON.stringify(promptText)}
+since_ms = ${sinceMs === null ? 'None' : Math.floor(sinceMs)}
+expected_prompt = ${promptText === null ? 'None' : JSON.stringify(promptText)}
 home = Path.home()
 active_path = home / '.grok' / 'active_sessions.json'
 session_roots = list(dict.fromkeys([
@@ -151,10 +157,18 @@ if len(candidates) != 1:
     raise SystemExit(0)
 
 candidate = candidates[0]
-session_dirs = list(dict.fromkeys([
-    root / candidate['session_id'] for root in session_roots
-]))
-session_dirs = [path for path in session_dirs if path.is_dir()]
+session_dirs = []
+seen_session_dirs = set()
+for root in session_roots:
+    raw_path = root / candidate['session_id']
+    if not raw_path.is_dir():
+        continue
+    canonical_path = Path(os.path.realpath(raw_path))
+    canonical_key = str(canonical_path)
+    if canonical_key in seen_session_dirs:
+        continue
+    seen_session_dirs.add(canonical_key)
+    session_dirs.append(canonical_path)
 if len(session_dirs) != 1:
     print(json.dumps({'status': 'ambiguous' if session_dirs else 'unavailable'}))
     raise SystemExit(0)
@@ -215,8 +229,13 @@ for message in read_jsonl_tail(chat_path):
     texts = [item.get('text') for item in content if isinstance(item, dict) and item.get('type') == 'text']
     if not texts or not all(isinstance(text, str) for text in texts):
         continue
+    text = ''.join(texts)
+    user_query_prefix = '<user_query>\\n'
+    user_query_suffix = '\\n</user_query>'
+    if text.startswith(user_query_prefix) and text.endswith(user_query_suffix):
+        text = text[len(user_query_prefix):-len(user_query_suffix)]
     if latest_user is None or prompt_index > latest_user['prompt_index']:
-        latest_user = {'prompt_index': prompt_index, 'text': ''.join(texts)}
+        latest_user = {'prompt_index': prompt_index, 'text': text}
 
 if latest_start is None:
     activity = 'unknown'
@@ -239,6 +258,8 @@ if (
     latest_start is not None
     and latest_user is not None
     and latest_start['turn_number'] == latest_user['prompt_index']
+    and expected_prompt is not None
+    and since_ms is not None
     and latest_start['at'] >= max(candidate['opened_at_ms'], since_ms)
     and latest_user['text'] == expected_prompt
 ):
@@ -249,6 +270,8 @@ print(json.dumps({
     'promptAcceptedAt': accepted_at,
     'activity': activity,
     'activityAt': activity_at,
+    'sessionId': candidate['session_id'],
+    'sessionPath': str(session_dir),
 }))
 PY`;
 }
@@ -259,14 +282,18 @@ export function createGrokLogObservability(
 ): RunnerObservability {
   return {
     promptAcceptanceMode: 'native-text',
+    async resolveSessionId(_vars, sessionPath) {
+      return path.basename(sessionPath) || null;
+    },
     async getActivity(vars, target) {
-      const signal = await probe(vars, target, 0, '');
+      const signal = await probe(vars, target, null, null);
       if (signal.status !== 'matched') return null;
       return {
         value: signal.activity,
         source: 'signal',
         confidence: 'high',
         observedAt: signal.activityAt,
+        ...(signal.sessionId ? { sessionId: signal.sessionId } : {}),
       };
     },
     async getContextPct() {
@@ -301,8 +328,22 @@ export function createGrokLogObservability(
             exactPromptMatch: true,
           };
     },
-    async getSessionDeliveryState() {
-      return null;
+    async getSessionDeliveryState(vars, target, sessionId, _sessionPath) {
+      const signal = await probe(vars, target, null, null);
+      if (signal.status !== 'matched' || signal.sessionId !== sessionId) {
+        return null;
+      }
+      return {
+        value:
+          signal.activity === 'idle'
+            ? 'idle'
+            : signal.activity === 'unknown'
+              ? 'unknown'
+              : 'active',
+        source: 'signal',
+        confidence: 'high',
+        observedAt: signal.activityAt,
+      };
     },
   };
 }

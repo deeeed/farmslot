@@ -103,8 +103,106 @@ try {
   const parsed = JSON.parse(jsonLine);
   return {
     ...parsed,
+    gatewayLog:
+      stdout
+        .split('\n')
+        .filter((line) => line && line !== jsonLine)
+        .join('\n') || null,
     exitCode: result.status,
     stderr: result.stderr?.trim() || null,
+  };
+}
+
+/** Invoke the production safe-send contract against an already-idle runner pane. */
+export function runGatewaySafeInstruction({
+  repo,
+  target,
+  runner,
+  message,
+  sessionId,
+  sessionPath,
+  timeoutMs = 30_000,
+}) {
+  const snippet = `
+import os from 'node:os';
+import { sendCiFixNudge } from './services/gateway/src/ci-monitor/inline-fix.ts';
+
+const vars = {
+  slotId: 'runner-validate-local',
+  machine: os.hostname(),
+  platform: 'local',
+  host: 'localhost',
+  sshUser: os.userInfo().username,
+  osType: process.platform === 'darwin' ? 'darwin' : 'linux',
+  claudePath: '',
+  codexPath: '',
+  opencodePath: '',
+  cursorPath: '',
+  grokPath: '',
+  dispatchCmd: '',
+  recycleCmd: '',
+  repo: ${JSON.stringify(repo)},
+  session: ${JSON.stringify(target)},
+  slotMode: 'dispatch',
+  slotEnabled: true,
+  sshTarget: \`\${os.userInfo().username}@localhost\`,
+  remoteRepo: ${JSON.stringify(repo)},
+  projectName: '',
+  resourceVars: {},
+};
+
+const run = {
+  id: 'runner-validate-ci-fix',
+  flowType: 'dev',
+  metrics: {
+    runner: ${JSON.stringify(runner)},
+    model: null,
+    nudgeCount: 0,
+    runnerSessionId: ${JSON.stringify(sessionId)},
+    runnerSessionPath: ${JSON.stringify(sessionPath)},
+  },
+  agentContexts: [{
+    role: 'dev',
+    runnerSessionId: ${JSON.stringify(sessionId)},
+    runnerSessionPath: ${JSON.stringify(sessionPath)},
+  }],
+};
+
+const delivery = await sendCiFixNudge({
+  vars,
+  target: ${JSON.stringify(target)},
+  runner: ${JSON.stringify(runner)},
+  prompt: ${JSON.stringify(message)},
+  run,
+  timeoutMs: ${timeoutMs},
+  forceBusyPoll: true,
+});
+const delivered = delivery.sent;
+process.stdout.write(JSON.stringify({ delivered }) + '\\n', () => {
+  process.exit(delivered ? 0 : 1);
+});
+`;
+
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: timeoutMs + 30_000,
+    env: {
+      ...process.env,
+      FARMSLOT_HOME: process.env.FARMSLOT_HOME ?? `${os.homedir()}/.farmslot-dev`,
+    },
+  });
+  const stdout = result.stdout?.trim() ?? '';
+  const jsonLine = stdout
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .pop();
+  return {
+    result: jsonLine ? JSON.parse(jsonLine) : null,
+    exitCode: result.status,
+    error:
+      result.stderr?.trim() ||
+      (!jsonLine ? stdout || 'safe-send wrapper returned no result' : null),
   };
 }
 

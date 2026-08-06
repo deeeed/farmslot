@@ -23,6 +23,7 @@ import {
 import {
   renderPipelineControls,
   renderPipelineProgressPanel,
+  renderReviewRecoveryStatus,
   renderRunPipelineSummary,
 } from './run-pipeline-panels.js';
 import {
@@ -94,10 +95,21 @@ export class RunPipeline extends LitElement {
     if (!this.run) return nothing;
     const layout = computeLayout(this.run);
     const isActive = !['done', 'failed', 'cancelled'].includes(this.run.status);
+    const recovery = this.run.engineState?.publishGate?.reviewRecovery;
+    const showRecovery = Boolean(recovery && recovery.status !== 'recovered');
 
     return html`
       <div class="pipeline-wrap">
-        ${isActive ? this.renderControls() : nothing}
+        ${showRecovery
+          ? html`
+              <div class="pipeline-status-row">
+                ${renderReviewRecoveryStatus(this.run)}
+                ${isActive ? this.renderControls() : nothing}
+              </div>
+            `
+          : isActive
+            ? this.renderControls()
+            : nothing}
         <svg
           viewBox="0 0 ${layout.width} ${layout.height}"
           width="${layout.width}"

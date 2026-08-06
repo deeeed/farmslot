@@ -14,6 +14,7 @@ import {
   selfReviewChecklistMarkPrompt,
   waitForRecoveredReviewerOrCleanup,
 } from './review-agent.js';
+import { TerminalReviewArtifactError } from './terminal-result.js';
 
 test('restart recovery reclaims only the newest matching in-flight reviewer', () => {
   const context = (id: string, status: AgentContext['status'], scope: string | null) =>
@@ -144,14 +145,23 @@ test('review prompt recovery reuses the exact live reviewer pane', async () => {
 });
 
 test('review recovery timeout performs cleanup before allowing a fresh reviewer', async () => {
-  const cleanupReasons: string[] = [];
-  const completed = await waitForRecoveredReviewerOrCleanup(
-    async () => false,
-    async (reason) => {
-      cleanupReasons.push(reason);
-    },
-  );
+  const cleanupReasons: Array<{ reason: string; status?: 'failed' | 'blocked' }> = [];
+  const recordCleanup = async (reason: string, status?: 'failed' | 'blocked') => {
+    cleanupReasons.push(status ? { reason, status } : { reason });
+  };
+  const completed = await waitForRecoveredReviewerOrCleanup(async () => false, recordCleanup);
 
   assert.equal(completed, false);
-  assert.deepEqual(cleanupReasons, ['recovered reviewer timeout']);
+  assert.deepEqual(cleanupReasons, [{ reason: 'recovered reviewer timeout' }]);
+
+  await assert.rejects(
+    waitForRecoveredReviewerOrCleanup(async () => {
+      throw new TerminalReviewArtifactError('invalid result');
+    }, recordCleanup),
+    TerminalReviewArtifactError,
+  );
+  assert.deepEqual(cleanupReasons.at(-1), {
+    reason: 'invalid recovered reviewer artifact cleanup',
+    status: 'blocked',
+  });
 });

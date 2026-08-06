@@ -5,6 +5,7 @@ import type { PublicationReviewLaunchRejection } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { TerminalReviewArtifactError } from '../self-review/terminal-result.js';
 
 import {
   executePublishGateReviewPlan,
@@ -151,6 +152,14 @@ test('resumeInterruptedPublicationReview keeps feedback recoverable when deliver
   assert.equal(
     getRun(run.id)?.engineState?.publishGate?.independentReviews?.[0]?.feedbackSent,
     false,
+  );
+  await assert.rejects(
+    resumeInterruptedPublicationReview(run.id, 'slot-1', {
+      executeReview: async () => {
+        throw new TerminalReviewArtifactError('structured reviewer result is invalid');
+      },
+    }),
+    TerminalReviewArtifactError,
   );
 });
 

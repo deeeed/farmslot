@@ -1,4 +1,4 @@
-import { type Run } from '@farmslot/protocol';
+import { type AgentContext, type Run } from '@farmslot/protocol';
 
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot, type ExecOnSlotOptions } from '../core/exec.js';
@@ -12,6 +12,7 @@ import {
 } from './observability-files.js';
 import {
   getRunnerDefinition,
+  getRunnerObservability,
   runnerPersistsSessionFiles,
   runnerProcessPatternSource,
 } from './registry.js';
@@ -77,6 +78,49 @@ export function resolvePersistedRunnerSessionBinding(
   return { binding: null, reason: null };
 }
 
+/** Resolve one run/context's retained session without mixing partial identities. */
+export function resolveRunRetainedSessionBinding(
+  run: {
+    agentContexts?: Run['agentContexts'];
+    metrics: Pick<Run['metrics'], 'runnerSessionId' | 'runnerSessionPath'>;
+  },
+  context?: Pick<AgentContext, 'runnerSessionId' | 'runnerSessionPath'> | null,
+): PersistedRunnerSessionBindingResult {
+  if (context === null) {
+    return { binding: null, reason: 'requested agent context is unavailable' };
+  }
+  return resolvePersistedRunnerSessionBinding(
+    context
+      ? [
+          {
+            label: 'agent context',
+            runnerSessionId: context.runnerSessionId,
+            runnerSessionPath: context.runnerSessionPath,
+          },
+        ]
+      : [
+          {
+            label: 'run metrics',
+            runnerSessionId: run.metrics.runnerSessionId,
+            runnerSessionPath: run.metrics.runnerSessionPath,
+          },
+        ],
+  );
+}
+
+export function retainedSessionSendOption(result: PersistedRunnerSessionBindingResult): {
+  retainedSession?: { sessionId: string; sessionPath: string };
+} {
+  return result.binding
+    ? {
+        retainedSession: {
+          sessionId: result.binding.runnerSessionId,
+          sessionPath: result.binding.runnerSessionPath,
+        },
+      }
+    : {};
+}
+
 /** Files for Claude/Codex and directories for Grok are both resumable state. */
 export function resumableSessionProbeCommand(runnerSessionPath: string): string {
   return `test -e ${shellQuote(runnerSessionPath)}`;
@@ -125,7 +169,7 @@ def repo_path_matches(session_path, repo_path: str) -> bool:
 if runner == 'claude':
     session_dir = home / '.claude' / 'projects' / repo.replace('/', '-')
     if session_dir.is_dir():
-        paths = [str(p) for p in sorted(session_dir.glob('*.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True)]
+        paths = [os.path.realpath(p) for p in sorted(session_dir.glob('*.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True)]
 elif runner == 'grok':
     keys = {quote(repo, safe=''), quote(grok_repo_key(repo), safe='')}
     cutoff = time() - (7 * 24 * 60 * 60)
@@ -140,7 +184,7 @@ elif runner == 'grok':
                     continue
                 summary = json.loads(summary_path.read_text())
                 if grok_cwd_matches(summary.get('info', {}).get('cwd'), repo):
-                    parent = str(summary_path.parent)
+                    parent = os.path.realpath(summary_path.parent)
                     if parent in seen:
                         continue
                     seen.add(parent)
@@ -167,7 +211,9 @@ else:
                 with path.open() as f:
                     first = json.loads(next(f))
                 if first.get('type') == 'session_meta' and repo_path_matches(first.get('payload', {}).get('cwd'), repo):
-                    paths.append(str(path))
+                    canonical = os.path.realpath(path)
+                    if canonical not in paths:
+                        paths.append(canonical)
                 seen += 1
             except Exception:
                 # Codex session discovery scans CLI-owned files; skip malformed/non-session files.
@@ -214,11 +260,28 @@ async function tryHookSessionBinding(
   if (!hookBinding) return null;
   const mtimeMs = await statSessionPathMtimeMs(vars, hookBinding.transcriptPath);
   if (mtimeMs === null) return null;
+  const runnerSessionId =
+    hookBinding.sessionId ??
+    (await resolveSessionIdFromPath(vars, runner, hookBinding.transcriptPath));
+  if (!runnerSessionId) return null;
   return {
     runnerSessionPath: hookBinding.transcriptPath,
-    runnerSessionId: hookBinding.sessionId ?? runnerSessionIdForPath(hookBinding.transcriptPath),
+    runnerSessionId,
     source: 'hook',
   };
+}
+
+async function resolveSessionIdFromPath(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  sessionPath: string,
+): Promise<string | null> {
+  const definition = getRunnerDefinition(runner);
+  const observability = getRunnerObservability(runner);
+  if (observability?.resolveSessionId) {
+    return observability.resolveSessionId(vars, sessionPath);
+  }
+  return definition.supportsExactSessionDelivery ? null : runnerSessionIdForPath(sessionPath);
 }
 
 async function tryFilesystemSessionBinding(
@@ -240,9 +303,11 @@ async function tryFilesystemSessionBinding(
     existingPath: options.existingPath,
   });
   if (!chosen) return null;
+  const runnerSessionId = await resolveSessionIdFromPath(vars, runner, chosen);
+  if (!runnerSessionId) return null;
   return {
     runnerSessionPath: chosen,
-    runnerSessionId: runnerSessionIdForPath(chosen),
+    runnerSessionId,
     source: 'filesystem',
   };
 }

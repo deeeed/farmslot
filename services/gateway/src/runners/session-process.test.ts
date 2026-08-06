@@ -7,6 +7,8 @@ import { promisify } from 'node:util';
 import {
   buildFindRunnerDescendantPidCommand,
   resolvePersistedRunnerSessionBinding,
+  resolveRunRetainedSessionBinding,
+  retainedSessionSendOption,
 } from './session-process.js';
 
 const execFile = promisify(execFileCb);
@@ -75,6 +77,65 @@ test('persisted runner session binding rejects a partial higher-priority source'
     {
       binding: null,
       reason: 'context has incomplete retained session metadata',
+    },
+  );
+});
+
+test('run retained session binding prefers the selected agent context', () => {
+  assert.deepEqual(
+    resolveRunRetainedSessionBinding(
+      {
+        metrics: {
+          runnerSessionId: 'metrics-session',
+          runnerSessionPath: '/sessions/metrics.jsonl',
+        },
+        agentContexts: [],
+      },
+      {
+        runnerSessionId: 'context-session',
+        runnerSessionPath: '/sessions/context.jsonl',
+      },
+    ),
+    {
+      binding: {
+        runnerSessionId: 'context-session',
+        runnerSessionPath: '/sessions/context.jsonl',
+      },
+      reason: null,
+    },
+  );
+});
+
+test('run retained session binding does not borrow metrics for an unbound selected context', () => {
+  const result = resolveRunRetainedSessionBinding(
+    {
+      metrics: {
+        runnerSessionId: 'metrics-session',
+        runnerSessionPath: '/sessions/metrics.jsonl',
+      },
+      agentContexts: [],
+    },
+    { runnerSessionId: null, runnerSessionPath: null },
+  );
+
+  assert.deepEqual(result, { binding: null, reason: null });
+  assert.deepEqual(retainedSessionSendOption(result), {});
+});
+
+test('retained session send option maps one atomic binding', () => {
+  assert.deepEqual(
+    retainedSessionSendOption({
+      binding: {
+        runnerSessionId: 'session-1',
+        runnerSessionPath: '/sessions/session-1.jsonl',
+      },
+      reason: null,
+    }),
+    {
+      retainedSession: {
+        sessionId: 'session-1',
+        sessionPath: '/sessions/session-1.jsonl',
+      },
     },
   );
 });

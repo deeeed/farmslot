@@ -1511,6 +1511,17 @@ export function mockPipelineRuns(): Run[] {
           createdAt: new Date(now - 3 * 60000).toISOString(),
         },
       ],
+      engineState: {
+        publishGate: {
+          reviewRecovery: {
+            status: 'operator-required',
+            attempts: 4,
+            startedAt: new Date(now - 4 * 60000).toISOString(),
+            updatedAt: new Date(now - 3 * 60000).toISOString(),
+            lastError: 'Reviewer completed without a valid structured result.',
+          },
+        },
+      },
       metrics: { nudgeCount: 0, model: 'sonnet', runner: 'claude' },
       createdAt: new Date(now - 5 * 60000).toISOString(),
       updatedAt: new Date(now - 3 * 60000).toISOString(),
@@ -1526,6 +1537,17 @@ export function mockPipelineRuns(): Run[] {
       slotId: 'runner-a-example-2',
       branch: 'fix/proj-2499',
       taskFile: 'tasks/PROJ-2499.md',
+      engineState: {
+        publishGate: {
+          reviewRecovery: {
+            status: 'operator-required',
+            attempts: 2,
+            startedAt: new Date(now - 80 * 60000).toISOString(),
+            updatedAt: new Date(now - 60 * 60000).toISOString(),
+            lastError: 'Historical run requires operator review.',
+          },
+        },
+      },
       steps: [
         { name: 'grade', status: 'done', durationMs: 15000 },
         { name: 'find-slot', status: 'done', durationMs: 6000 },

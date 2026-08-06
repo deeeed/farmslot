@@ -10,6 +10,7 @@ import { DEFAULT_GATEWAY_PORT, sanitizePhaseName } from './shared.js';
 const PREPARE_POLL_WARNING_THROTTLE_MS = 30_000;
 const PREPARE_SENTINEL_POLL_TIMEOUT_MS = 10_000;
 const PREPARE_WINDOW_POLL_TIMEOUT_MS = 5_000;
+const PREPARE_SCOPE_SENTINEL_MARKER = 'farmslot-prepare-scope';
 export const PREPARE_DEPS_TIMEOUT_MS = 90 * 60_000;
 export const PREPARE_PREFLIGHT_TIMEOUT_MS = 15 * 60_000;
 
@@ -277,11 +278,43 @@ export function buildPreparePreLaunchSweepCommand(sessionName: string, labelPart
   );
 }
 
+export function buildPrepareIdentityReapCommand(identityPath: string): string {
+  return [
+    `identityfile=${shellQuote(identityPath)}`,
+    `if [ -f "$identityfile" ]; then`,
+    `  identity=$(cat "$identityfile" 2>/dev/null || true)`,
+    `  tab=$(printf '\t')`,
+    `  pgid=""; sentinel=""; scope=""; rest=""`,
+    `  case "$identity" in *"$tab"*) pgid=\${identity%%"$tab"*}; rest=\${identity#*"$tab"} ;; esac`,
+    `  case "$rest" in *"$tab"*) sentinel=\${rest%%"$tab"*}; scope=\${rest#*"$tab"} ;; esac`,
+    `  valid=false`,
+    `  case "$pgid" in ''|*[!0-9]*) ;; *) case "$sentinel" in ''|*[!0-9]*) ;; *) case "$scope" in ''|*[!0-9a-f]*|*"$tab"*) ;; *) if [ "$pgid" -gt 1 ] && [ "$sentinel" -gt 1 ] && [ "\${#scope}" -eq 32 ]; then valid=true; fi ;; esac ;; esac ;; esac`,
+    `  matched=false`,
+    `  if $valid; then`,
+    `    live_pgid=$(ps -o pgid= -p "$sentinel" 2>/dev/null | tr -d '[:space:]')`,
+    `    marker_ok=false; scope_ok=false`,
+    `    if [ "$live_pgid" = "$pgid" ]; then`,
+    `      sentinel_command=$(ps -ww -p "$sentinel" -o command= 2>/dev/null || true)`,
+    `      if printf '%s\n' "$sentinel_command" | tr '[:space:]' '\n' | grep -Fxq -- ${shellQuote(PREPARE_SCOPE_SENTINEL_MARKER)}; then marker_ok=true; fi`,
+    `      if printf '%s\n' "$sentinel_command" | tr '[:space:]' '\n' | grep -Fxq -- "$scope"; then scope_ok=true; fi`,
+    `    fi`,
+    `    if $marker_ok && $scope_ok; then matched=true; fi`,
+    `  fi`,
+    `  if $matched && kill -TERM -- "-$pgid" 2>/dev/null; then echo "killed verified preflight group ($pgid)"; fi`,
+    `fi`,
+    `rm -f "$identityfile"`,
+  ].join('\n');
+}
+
 export function buildPrepareWrappedCommand(
   cmd: string,
   sentinelPath: string,
   scratchDir: string,
-  opts?: { keepAliveOnSuccess?: boolean; workspaceRoot?: string | null },
+  opts?: {
+    keepAliveOnSuccess?: boolean;
+    workspaceRoot?: string | null;
+    prepareScope?: { token: string; identityPath: string };
+  },
 ): string {
   const quotedSentinelPath = shellQuote(sentinelPath);
   const keepAliveOnSuccess = opts?.keepAliveOnSuccess === true;
@@ -296,6 +329,18 @@ export function buildPrepareWrappedCommand(
   const workspaceExports = opts?.workspaceRoot
     ? [`export FARMSLOT_WORKSPACE=${shellQuote(opts.workspaceRoot)}`]
     : [];
+  const prepareScopeSetup = opts?.prepareScope
+    ? [
+        `mkdir -p ${shellQuote(path.dirname(opts.prepareScope.identityPath))}`,
+        buildPrepareIdentityReapCommand(opts.prepareScope.identityPath),
+        `export FARMSLOT_PREPARE_SCOPE=${shellQuote(opts.prepareScope.token)}`,
+        `nohup sh -c ${shellQuote('while :; do sleep 86400; done')} ${PREPARE_SCOPE_SENTINEL_MARKER} ${shellQuote(opts.prepareScope.token)} >/dev/null 2>&1 &`,
+        'FARMSLOT_PREPARE_SENTINEL_PID=$!',
+        'export FARMSLOT_PREPARE_SENTINEL_PID',
+        `FARMSLOT_PREPARE_PGID=$(ps -o pgid= -p $$ | tr -d '[:space:]')`,
+        `case "$FARMSLOT_PREPARE_PGID" in ''|*[!0-9]*) ;; *) printf '%s\t%s\t%s\n' "$FARMSLOT_PREPARE_PGID" "$FARMSLOT_PREPARE_SENTINEL_PID" "$FARMSLOT_PREPARE_SCOPE" > ${shellQuote(opts.prepareScope.identityPath)} ;; esac`,
+      ]
+    : [];
   return [
     'unset FORCE_COLOR',
     ...workspaceExports,
@@ -304,6 +349,7 @@ export function buildPrepareWrappedCommand(
     '  local parent="$1"',
     '  local signal="${2:-TERM}"',
     '  local children child',
+    '  if [ -n "${FARMSLOT_PREPARE_SENTINEL_PID:-}" ] && [ "$parent" = "$FARMSLOT_PREPARE_SENTINEL_PID" ]; then return; fi',
     '  children=$(pgrep -P "$parent" 2>/dev/null || true)',
     '  for child in $children; do',
     '    __farmslot_kill_tree "$child" "$signal"',
@@ -328,6 +374,7 @@ export function buildPrepareWrappedCommand(
     '  sleep 1',
     '  exit "$code"',
     '}',
+    ...prepareScopeSetup,
     "trap '__farmslot_signal_exit 129' HUP",
     "trap '__farmslot_signal_exit 130' INT",
     "trap '__farmslot_signal_exit 143' TERM",
@@ -415,6 +462,7 @@ export async function runPrepareCommand(
     windowLabel?: string;
     phase?: string;
     forceLocal?: boolean;
+    prepareScope?: { token: string; identityPath: string };
   },
 ): Promise<import('../../core/exec.js').ExecResult> {
   const slotIsLocal = isLocal(vars.host, vars.machine);
@@ -461,6 +509,7 @@ export async function runPrepareCommand(
   const wrappedCmd = buildPrepareWrappedCommand(cmd, sentinelPath, slotHostScratchDir, {
     keepAliveOnSuccess: opts?.phase === 'preflight',
     workspaceRoot: resolveWorkspaceRoot(),
+    ...(opts?.prepareScope ? { prepareScope: opts.prepareScope } : {}),
   });
   // Stage the wrapped command in a temp script so tmux respawn-pane can exec
   // bash directly against the file. Necessary because tmux runs respawn-pane's

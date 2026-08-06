@@ -25,7 +25,7 @@ import { expandHook, expandTemplate } from '../core/hooks.js';
 import { resetSlot, SLOT_PHASE_RELEASING } from '../core/state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
-import { clearStalePrepareProcess } from '../methods/slot.js';
+import { buildPrepareIdentityReapCommand, clearStalePrepareProcess } from '../methods/slot.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
 import {
   createRun,
@@ -78,10 +78,14 @@ import {
   executeReadyGate,
   readPreparedPackage,
 } from './ready-gate.js';
-import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
+import {
+  isTerminalReviewArtifactError,
+  recoverInflightPublicationReviews,
+} from './recover-inflight-reviews.js';
 import {
   hasRecoverablePublicationReviewer,
   isPublicationReviewRecoveryHeld,
+  markTerminalReviewArtifactOperatorRequired,
   recoverActiveRuns as recoverActiveRunsImpl,
   type RunRecoveryCollaborators,
   startOrphanReconciler as startOrphanReconcilerImpl,
@@ -406,8 +410,10 @@ async function finalizeNonThrownTerminalRun(
       // agents) runs INSIDE the cleanup helper, behind its releasing fence and
       // only when this run still owns the slot exclusively — an incoming
       // nudge's reserved worker must never be killed by the dying owner.
-      // cleanupSlotProcesses is idempotent (kill 2>/dev/null + rm -f) so
-      // calling it on flows where prepare did not run is a no-op.
+      // cleanupSlotProcesses is idempotent: it signals a prepare group only
+      // when its opaque scope still matches a live member, while missing or
+      // stale identities are removed without signalling. Calling it on flows
+      // where prepare did not run is therefore a no-op.
       await cleanupSlotAfterRunFailure(slotId, runId, `non-thrown ${run.status}`, async () => {
         await cleanupSlotProcesses(slotId);
         const currentRun = getRun(runId);
@@ -552,6 +558,21 @@ export async function startRun(runId: string): Promise<void> {
         console.log(
           `[run-engine] run ${runId.slice(0, 8)} step ${stepName} threw after ${interruptedRun?.status ?? 'deletion'}; preserving operator state`,
         );
+        return;
+      }
+
+      if (isTerminalReviewArtifactError(err)) {
+        console.warn(
+          `[run-engine] run ${runId.slice(0, 8)} step ${stepName} requires operator review: ${msg}`,
+        );
+        markTerminalReviewArtifactOperatorRequired({ updateRun }, interruptedRun, msg);
+        updateRunStep(runId, stepName, {
+          status: 'done',
+          detail: msg,
+          completedAt: new Date().toISOString(),
+        });
+        updateRun(runId, { status: 'blocked', error: msg });
+        await finalizeNonThrownTerminalRun(runId, i + 1, steps);
         return;
       }
 
@@ -825,9 +846,15 @@ function rearmPublicationReviewRecovery(
   let settled = false;
   let inFlight = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let attempts = 0;
+  const storedRecovery = run.engineState?.publishGate?.reviewRecovery;
+  // Only a still-active watcher belongs to this episode. Recovered and
+  // operator-required records describe a closed episode; a later interrupted
+  // reviewer must get a fresh budget and clock.
+  const previousRecovery = storedRecovery?.status === 'watching' ? storedRecovery : undefined;
+  let attempts = previousRecovery?.attempts ?? 0;
   let failures = 0;
-  const startedAtMs = Date.now();
+  const persistedStartedAtMs = Date.parse(previousRecovery?.startedAt ?? '');
+  const startedAtMs = Number.isFinite(persistedStartedAtMs) ? persistedStartedAtMs : Date.now();
   const startedAt = new Date(startedAtMs).toISOString();
   const state = {
     replayPending: options?.replayPending ?? false,
@@ -919,13 +946,41 @@ function rearmPublicationReviewRecovery(
         return;
       }
       if (!state.replayPending) {
-        const recovered = await recoverInflightPublicationReviews(latest.id, latest.slotId);
-        if (recovered.length === 0) {
+        const recoveryResult = await recoverInflightPublicationReviews(latest.id, latest.slotId);
+        if (
+          recoveryResult.recoveredIds.length === 0 &&
+          recoveryResult.terminalErrors.length === 0
+        ) {
           failures = 0;
           schedule(latest);
           return;
         }
-        state.replayPending = true;
+        state.replayPending = recoveryResult.recoveredIds.length > 0;
+        if (recoveryResult.terminalErrors.length > 0) {
+          const terminalMessage = recoveryResult.terminalErrors
+            .map((error) => error.message)
+            .join('; ');
+          if (state.replayPending) {
+            try {
+              await replayHumanGateForRecovery(latest.id);
+            } catch (error) {
+              persistRecovery(getRun(latest.id) ?? latest, 'operator-required', {
+                lastError:
+                  `${terminalMessage}; gate replay failed: ${(error as Error).message}`.slice(
+                    0,
+                    200,
+                  ),
+              });
+              state.cleanup();
+              return;
+            }
+          }
+          persistRecovery(getRun(latest.id) ?? latest, 'operator-required', {
+            lastError: terminalMessage.slice(0, 200),
+          });
+          state.cleanup();
+          return;
+        }
       }
       await replayHumanGateForRecovery(latest.id);
       persistRecovery(getRun(latest.id) ?? latest, 'recovered');
@@ -1146,7 +1201,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
 
 // ─── Slot process cleanup on prepare failure ───
 
-async function cleanupSlotProcesses(slotId: string): Promise<void> {
+export async function cleanupSlotProcesses(slotId: string): Promise<void> {
   const vars = await loadSlotVars(slotId);
   let runtimeDir = '.agent';
   try {
@@ -1162,9 +1217,12 @@ async function cleanupSlotProcesses(slotId: string): Promise<void> {
   const rd = `${vars.remoteRepo}/${runtimeDir}`;
   const port = vars.resourceVars.port;
 
-  // Kill by pidfile (launcher, browser, chromium, webpack)
+  // Reuse the same exact portable identity verifier as prepare replacement so
+  // stale or recycled identities cannot signal an unrelated process group.
   const killCmd = [
     'set -u',
+    buildPrepareIdentityReapCommand(`${rd}/preflight.identity`),
+    // Kill later process-specific identities when their pidfiles exist.
     `for pf in launcher.pid browser.pid chromium.pid webpack.pid; do`,
     `  pidfile="${rd}/$pf";`,
     `  if [ -f "$pidfile" ]; then`,
@@ -1172,14 +1230,12 @@ async function cleanupSlotProcesses(slotId: string): Promise<void> {
     `    if [ -n "$p" ] && kill "$p" 2>/dev/null; then echo "killed $pf ($p)"; fi;`,
     `  fi;`,
     `done`,
-    // Kill by slot pattern (catches nohup'd launch-browser.sh)
-    `if pkill -f "tsx.*launch-browser.*${slotId}" 2>/dev/null; then echo "killed launch-browser for ${slotId}"; fi`,
     // Kill webpack by dev-server port
     port
       ? `if pids=$(lsof -ti ":${port}" 2>/dev/null); then if [ -n "$pids" ]; then kill $pids; fi; else rc=$?; if [ "$rc" -ne 1 ]; then exit "$rc"; fi; fi`
       : ':',
     // Clean pid files
-    `rm -f "${rd}/browser.pid" "${rd}/chromium.pid" "${rd}/extension.id" "${rd}/launcher.pid" "${rd}/webpack.pid"`,
+    `rm -f "${rd}/browser.pid" "${rd}/chromium.pid" "${rd}/extension.id" "${rd}/launcher.pid" "${rd}/preflight.pgid" "${rd}/webpack.pid"`,
   ].join('\n');
 
   const result = await execOnSlot(vars, killCmd);

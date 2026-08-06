@@ -10,6 +10,7 @@ import {
   type RunResumeResult,
 } from '@farmslot/protocol';
 
+import { selectAgentContext } from '../../agents/contexts.js';
 import { execOnSlot } from '../../core/exec.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { bumpRunGeneration, cancelRunEngine, startRun } from '../../run-engine/orchestrator.js';
@@ -25,6 +26,10 @@ import {
   runnerPaneLooksIdle,
   sendRunnerInstructionSafely,
 } from '../../runners/registry.js';
+import {
+  resolveRunRetainedSessionBinding,
+  retainedSessionSendOption,
+} from '../../runners/session-process.js';
 import { getRun, updateRun } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
@@ -131,11 +136,13 @@ export async function runResume(params: RunResumeParams, emit: Emit): Promise<Ru
     try {
       const { loadSlotVars } = await import('../../core/config.js');
       const vars = await loadSlotVars(existing.slotId);
-      const session = await resolveTmuxSession(existing.slotId, vars);
+      // Preserve the pre-retained-binding resume behavior: a missing or ambiguous
+      // context must not prevent the base worker session from being nudged.
+      const target = await resolveTmuxSession(existing.slotId, vars);
       // Capture last few lines of tmux pane to check for idle prompt
       const { stdout } = await execOnSlot(
         vars,
-        tmuxShellSnippet(`capture-pane -t ${shellQuote(session)} -p -S '-5'`),
+        tmuxShellSnippet(`capture-pane -t ${shellQuote(target)} -p -S '-5'`),
       );
       // Strip ANSI escape codes and check for Claude Code prompt patterns
       const clean = stdout.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/[^\x20-\x7E\n❯⏵⏸]/g, '');
@@ -144,6 +151,10 @@ export async function runResume(params: RunResumeParams, emit: Emit): Promise<Ru
         .map((l) => l.trim())
         .filter(Boolean);
       const runner = normalizeRunner(existing.metrics.runner);
+      const retainedSession = resolveRunRetainedSessionBinding(
+        existing,
+        selectAgentContext(existing, { role: 'primary' }),
+      );
       const nudge = runnerContinueCommand(runner);
       // ADR-032 Phase 3: when the pane is retired for this runner (Claude), skip the pane-idle
       // pre-gate and let the hook-only safe-send own the idle/busy decision. Pane-fallback runners
@@ -153,13 +164,14 @@ export async function runResume(params: RunResumeParams, emit: Emit): Promise<Ru
         // the ADR-031 intelligence-action audit, not just a console warning.
         const sent = await sendRunnerInstructionSafely(
           vars,
-          session,
+          target,
           runner,
           nudge,
           'run-resume',
           undefined,
           {
             recovery: { runId: existing.id, emit },
+            ...retainedSessionSendOption(retainedSession),
           },
         );
         console.log(

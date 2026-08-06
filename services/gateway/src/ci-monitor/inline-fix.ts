@@ -5,12 +5,14 @@ import {
   type BotComment,
   type CIWatchFixProgress,
   primaryRoleForFlow,
+  type Run,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
 import {
   markAgentContextStatus,
   resolveAgentTarget,
+  selectAgentContext,
   upsertAgentContext,
 } from '../agents/contexts.js';
 import {
@@ -41,10 +43,15 @@ import {
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
   runnerProcessPatternSource,
+  type RunnerSendRecoveryContext,
   sendRunnerInstructionSafely,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
-import { isRunnerAliveUnderPane } from '../runners/session-process.js';
+import {
+  isRunnerAliveUnderPane,
+  resolveRunRetainedSessionBinding,
+  retainedSessionSendOption,
+} from '../runners/session-process.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { retryDeferredFixDelivery } from '../self-review/orchestrator.js';
@@ -77,6 +84,42 @@ const MAX_INLINE_CI_FIX_ATTEMPTS = 2;
 const MAX_INLINE_CI_FIX_TOTAL = 6;
 const INLINE_FIX_TIMEOUT_MS = 10 * 60_000;
 const INLINE_FIX_FALLBACK_POLL_MS = 30_000;
+
+export function resolveCiFixRetainedSession(run: Run | undefined) {
+  if (!run) return { binding: null, reason: null };
+  const primaryContext = selectAgentContext(run, { role: 'primary' });
+  return resolveRunRetainedSessionBinding(run, primaryContext);
+}
+
+export async function sendCiFixNudge(input: {
+  vars: Awaited<ReturnType<typeof loadSlotVars>>;
+  target: string;
+  runner: string;
+  prompt: string;
+  run: Run | undefined;
+  timeoutMs?: number;
+  forceBusyPoll?: boolean;
+  recovery?: RunnerSendRecoveryContext;
+}): Promise<{
+  sent: boolean;
+  retainedSession: ReturnType<typeof resolveCiFixRetainedSession>;
+}> {
+  const retainedSession = resolveCiFixRetainedSession(input.run);
+  const sent = await sendRunnerInstructionSafely(
+    input.vars,
+    input.target,
+    input.runner,
+    input.prompt,
+    'ci-monitor',
+    input.timeoutMs,
+    {
+      ...(input.forceBusyPoll ? { forceBusyPoll: true } : {}),
+      ...(input.recovery ? { recovery: input.recovery } : {}),
+      ...retainedSessionSendOption(retainedSession),
+    },
+  );
+  return { sent, retainedSession };
+}
 
 export async function isInlineFixDedupedNow(
   runId: string,
@@ -499,24 +542,27 @@ async function attemptInlineCIFix(
       run?.flowType,
     );
     const session = primaryTarget.session;
-
     // Send one-liner nudge to worker
     const ciFixTaskFile = taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
     const nudgeCmd = await resolveWorkerDispatchPrompt(run?.project ?? vars.projectName, {
       taskFile: ciFixTaskFile,
       taskDir: writeResult.taskDir,
     });
+    let retainedSession = resolveCiFixRetainedSession(run);
     try {
-      let sent = await sendRunnerInstructionSafely(
+      const initialDelivery = await sendCiFixNudge({
         vars,
-        workerTarget,
+        target: workerTarget,
         runner,
-        nudgeCmd,
-        'ci-monitor',
-        undefined,
-        // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-        { recovery: { runId } },
-      );
+        prompt: nudgeCmd,
+        run,
+        recovery: { runId },
+      });
+      retainedSession = initialDelivery.retainedSession;
+      if (retainedSession.reason) {
+        console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${retainedSession.reason}`);
+      }
+      let sent = initialDelivery.sent;
       if (!sent) {
         // A deferred send never retries on its own, and two immediate probes
         // lose the race against a warm worker that is still booting — the
@@ -530,17 +576,18 @@ async function attemptInlineCIFix(
         const retry = await retryDeferredFixDelivery({
           runId,
           target: workerTarget,
-          send: (retryTarget) =>
-            sendRunnerInstructionSafely(
-              vars!,
-              retryTarget,
-              runner,
-              nudgeCmd,
-              'ci-monitor',
-              undefined,
-              // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-              { forceBusyPoll: true, recovery: { runId } },
-            ),
+          send: async (retryTarget) =>
+            (
+              await sendCiFixNudge({
+                vars: vars!,
+                target: retryTarget,
+                runner,
+                prompt: nudgeCmd,
+                run: getRun(runId) ?? run,
+                forceBusyPoll: true,
+                recovery: { runId },
+              })
+            ).sent,
           rediscover: (storedTarget) =>
             rediscoverAcceptingWorkerPane(vars!, session, runner, storedTarget),
           persistTarget: async (adopted, window) => {
@@ -606,6 +653,8 @@ async function attemptInlineCIFix(
       runner,
       model: run?.metrics.model ?? null,
       target: { session, window: null, pane: null, target: workerTarget },
+      runnerSessionId: retainedSession.binding?.runnerSessionId ?? null,
+      runnerSessionPath: retainedSession.binding?.runnerSessionPath ?? null,
     });
     if (ciFixContext) await watchContext(slotId, ciFixContext);
     ciFixContextStarted = true;

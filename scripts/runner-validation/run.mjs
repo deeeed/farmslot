@@ -29,7 +29,7 @@ function parseArgs(argv) {
     else if (token === '--keep-session') args.keepSession = true;
     else if (token === '--help' || token === '-h') {
       console.log(
-        'usage: runner-validation/run.mjs [--runner claude|codex|cursor|grok|both|hooks|pane-only|all] [--scenario hook-smoke|pane-smoke|interaction-smoke|dispatch-prompt-smoke|dispatch-prompt-mcp-race|dispatch-prompt-trust|prompt-accepted|retained-handoff-smoke|turn-boundary|busy-composer|mode-switch|session-attribution-smoke|token-usage-smoke|all] [--out-dir path] [--timeout-ms 300000] [--keep-session]',
+        `usage: runner-validation/run.mjs [--runner claude|codex|cursor|grok|both|hooks|pane-only|all] [--scenario ${listScenarios().join('|')}|all] [--out-dir path] [--timeout-ms 300000] [--keep-session]`,
       );
       process.exit(0);
     } else {
@@ -56,12 +56,15 @@ async function main() {
   const runners = runnersForArg(args.runner);
   const scenarios = scenariosForArg(args.scenario);
   const results = [];
+  const completedRunnerAgnosticScenarios = new Set();
 
   for (const runnerId of runners) {
     const runnerAdapter = getRunnerAdapter(runnerId);
     for (const scenarioId of scenarios) {
-      sleepMs(3000);
       const scenario = SCENARIOS[scenarioId];
+      if (scenario.RUNNER_AGNOSTIC && completedRunnerAgnosticScenarios.has(scenarioId)) continue;
+      if (scenario.RUNNER_AGNOSTIC) completedRunnerAgnosticScenarios.add(scenarioId);
+      sleepMs(3000);
       const result = await scenario.runScenario({
         runnerAdapter,
         timeoutMs: args.timeoutMs,
@@ -70,7 +73,7 @@ async function main() {
       });
       results.push(result);
       const label = result.skipped ? 'SKIP' : result.pass ? 'PASS' : 'FAIL';
-      console.log(`${runnerId}/${scenarioId}: ${label} -> ${result.outPath}`);
+      console.log(`${result.runner ?? runnerId}/${scenarioId}: ${label} -> ${result.outPath}`);
       if (!result.pass && !result.skipped) {
         console.error(JSON.stringify(result.report, null, 2));
       }

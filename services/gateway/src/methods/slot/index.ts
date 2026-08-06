@@ -18,6 +18,7 @@ export {
 export { slotPrepare } from './prepare.js';
 export {
   buildDevServerPortCleanup,
+  buildPrepareIdentityReapCommand,
   buildPrepareKillWindowsByNameCommand,
   buildPrepareNewWindowCommand,
   buildPreparePlaceholderCommand,

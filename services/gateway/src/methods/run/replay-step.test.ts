@@ -928,6 +928,13 @@ test('runReplayStep clears stale publish approval when replaying human gate', as
         approvedAt: '2026-04-15T00:10:00.000Z',
         publicationStatus: 'publish_failed',
         independentReviews: [],
+        reviewRecovery: {
+          status: 'operator-required',
+          attempts: 3,
+          startedAt: '2026-04-15T00:00:00.000Z',
+          updatedAt: '2026-04-15T00:10:00.000Z',
+          lastError: 'Reviewer result requires operator remediation',
+        },
       },
     },
     steps: run.steps.map((step) =>
@@ -955,6 +962,7 @@ test('runReplayStep clears stale publish approval when replaying human gate', as
   assert.equal(replayed.engineState?.publishGate?.publicationStatus, 'not_published');
   assert.equal(replayed.engineState?.publishGate?.approvedAt, undefined);
   assert.equal(replayed.engineState?.publishGate?.approvedPackageHash, undefined);
+  assert.equal(replayed.engineState?.publishGate?.reviewRecovery, undefined);
 });
 
 test('runReplayStep supersedes a pending human-gate decision instead of deleting it', async (t) => {

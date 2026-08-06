@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- test(review-recovery): add a read-only CDP probe for active and inactive operator-required banner rendering.
 - chore: type-escape baseline pruned — `fleet/state.ts` no longer contains `as any` casts (RawSlot honest optionality).
 - refactor: rename the branch-maintenance flow `merge-main` → `update-branch` in the orphan-run backfill flow map.
 - chore: recipe operational gate runs the hook-expansion tests from their new `@farmslot/slot-config` home.

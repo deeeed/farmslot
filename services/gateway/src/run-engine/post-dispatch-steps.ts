@@ -60,7 +60,10 @@ import {
   type PublishGateReviewPlanResult,
   resumeInterruptedPublicationReview,
 } from './ready-gate.js';
-import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
+import {
+  recoverInflightPublicationReviews,
+  TerminalReviewArtifactError,
+} from './recover-inflight-reviews.js';
 import {
   automaticPublicationReviewPlan,
   humanGateReviewDepth,
@@ -771,10 +774,16 @@ export async function executeHumanGateStep(
       // a completed review is never silently discarded.
       let recoveredReviewIds: string[] = [];
       if (current.slotId) {
-        recoveredReviewIds = await recoverInflightPublicationReviews(runId, current.slotId);
+        const recoveryResult = await recoverInflightPublicationReviews(runId, current.slotId);
+        recoveredReviewIds = recoveryResult.recoveredIds;
         if (recoveredReviewIds.length) {
           console.log(
             `[run-engine] run ${runId.slice(0, 8)} — recovered ${recoveredReviewIds.length} in-flight publication review(s) after restart`,
+          );
+        }
+        if (recoveryResult.terminalErrors.length > 0) {
+          throw new TerminalReviewArtifactError(
+            recoveryResult.terminalErrors.map((error) => error.message).join('; '),
           );
         }
       }

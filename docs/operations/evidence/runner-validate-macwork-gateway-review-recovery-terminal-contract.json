@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-06T19:42:29.259Z",
+  "host": "macwork",
+  "scenario": "review-recovery-terminal-contract",
+  "runner": "gateway",
+  "baselineSha": "53ca603b7f4605defd44440edfef4599f370c6b5",
+  "baselineReachability": "origin/main",
+  "baselineAdaptation": "export waitForReviewCompletion; use 25ms polls except a 4s overdue poll that preserves the production deadline miss",
+  "baseline": {
+    "sourceSha": "53ca603b7f4605defd44440edfef4599f370c6b5",
+    "recovery": {
+      "recoveryStatus": "watching",
+      "recoveryAttempts": 0,
+      "recoveryStartedAt": "2026-08-06T19:41:37.729Z",
+      "nextRetryAtPresent": true,
+      "reviewVerdicts": {},
+      "reviewRecoveryPending": {},
+      "contextStatus": {
+        "rev-missing": "working",
+        "rev-invalid": "working",
+        "rev-valid": "working",
+        "rev-failed": "working",
+        "rev-blocked": "working",
+        "rev-stale": "working",
+        "rev-no-signal-invalid": "complete"
+      },
+      "contextLastSignalAt": {
+        "rev-missing": null,
+        "rev-invalid": null,
+        "rev-valid": null,
+        "rev-failed": null,
+        "rev-blocked": null,
+        "rev-stale": null,
+        "rev-no-signal-invalid": null
+      },
+      "gateReplayed": false
+    },
+    "closedEpisodeReset": {
+      "status": "watching",
+      "attempts": 0,
+      "startedAt": "2026-08-06T19:41:37.147Z"
+    },
+    "activeEpisodePreserved": {
+      "status": "watching",
+      "attempts": 0,
+      "startedAt": "2026-08-06T19:41:37.027Z"
+    },
+    "replayClearedRecovery": false,
+    "pipeline": {
+      "status": "failed",
+      "currentStepStatus": "failed",
+      "remainingStepStatuses": {
+        "finalize": "skipped",
+        "ci-watch": "skipped"
+      },
+      "completedAtPresent": true,
+      "metricsOutcome": "failure",
+      "durationRecorded": true,
+      "slotLifecycle": "ready",
+      "slotCurrentRunId": null
+    },
+    "waitBehavior": {
+      "failedSignalExited": false,
+      "blockedSignalExited": false,
+      "missingJsonTerminalInvalid": false,
+      "invalidJsonTerminalInvalid": false,
+      "noSignalInvalidJsonTerminalInvalid": false,
+      "activeInvalidRemainedRecoverable": false,
+      "activeInvalidReviewerAlive": false,
+      "overdueSettledBeforeDeadline": false,
+      "overdueReviewerTimedOut": false,
+      "overdueReviewWindowKilledBeforeThrow": false,
+      "overdueNeighborWindowPreserved": true
+    },
+    "slotCleanup": {
+      "replacementPriorSentinelKilled": false,
+      "replacementPriorChildKilled": false,
+      "replacementCurrentIdentityPersisted": false,
+      "replacementCurrentScopedGroupPreserved": false,
+      "launcherPidAbsentBeforeCleanup": true,
+      "trackedPrePidLauncherKilled": false,
+      "similarlyNamedNeighborPreserved": true,
+      "processGroupIdentityRemoved": false,
+      "recycledWrongScopeGroupPreserved": false,
+      "staleIdentityRemoved": false
+    },
+    "contractSatisfied": false
+  },
+  "current": {
+    "sourceSha": "0facc036b56fc9f9e8746217325979de1b63321e",
+    "recovery": {
+      "recoveryStatus": "operator-required",
+      "recoveryAttempts": 38,
+      "recoveryStartedAt": "2026-08-06T10:00:00.000Z",
+      "nextRetryAtPresent": false,
+      "reviewVerdicts": {
+        "independent-review-3": "pass",
+        "independent-review-4": "failed",
+        "independent-review-5": "failed"
+      },
+      "reviewRecoveryPending": {
+        "independent-review-3": false,
+        "independent-review-4": false,
+        "independent-review-5": false
+      },
+      "contextStatus": {
+        "rev-missing": "blocked",
+        "rev-invalid": "blocked",
+        "rev-valid": "complete",
+        "rev-failed": "failed",
+        "rev-blocked": "blocked",
+        "rev-stale": "failed",
+        "rev-no-signal-invalid": "blocked"
+      },
+      "contextLastSignalAt": {
+        "rev-missing": null,
+        "rev-invalid": null,
+        "rev-valid": "2026-08-06T19:42:21.982Z",
+        "rev-failed": "2026-08-06T10:40:00.000Z",
+        "rev-blocked": "2026-08-06T10:40:00.000Z",
+        "rev-stale": null,
+        "rev-no-signal-invalid": null
+      },
+      "gateReplayed": true
+    },
+    "closedEpisodeReset": {
+      "status": "watching",
+      "attempts": 0,
+      "startedAt": "2026-08-06T19:42:21.812Z"
+    },
+    "activeEpisodePreserved": {
+      "status": "watching",
+      "attempts": 7,
+      "startedAt": "2026-08-06T10:00:00.000Z"
+    },
+    "replayClearedRecovery": true,
+    "pipeline": {
+      "status": "blocked",
+      "currentStepStatus": "done",
+      "remainingStepStatuses": {
+        "finalize": "skipped",
+        "ci-watch": "skipped"
+      },
+      "completedAtPresent": true,
+      "metricsOutcome": "partial",
+      "durationRecorded": true,
+      "slotLifecycle": "ready",
+      "slotCurrentRunId": null
+    },
+    "waitBehavior": {
+      "failedSignalExited": true,
+      "blockedSignalExited": true,
+      "missingJsonTerminalInvalid": true,
+      "invalidJsonTerminalInvalid": true,
+      "noSignalInvalidJsonTerminalInvalid": true,
+      "activeInvalidRemainedRecoverable": true,
+      "activeInvalidReviewerAlive": true,
+      "overdueSettledBeforeDeadline": true,
+      "overdueReviewerTimedOut": true,
+      "overdueReviewWindowKilledBeforeThrow": true,
+      "overdueNeighborWindowPreserved": true
+    },
+    "slotCleanup": {
+      "replacementPriorSentinelKilled": true,
+      "replacementPriorChildKilled": true,
+      "replacementCurrentIdentityPersisted": true,
+      "replacementCurrentScopedGroupPreserved": true,
+      "launcherPidAbsentBeforeCleanup": true,
+      "trackedPrePidLauncherKilled": true,
+      "similarlyNamedNeighborPreserved": true,
+      "processGroupIdentityRemoved": true,
+      "recycledWrongScopeGroupPreserved": true,
+      "staleIdentityRemoved": true
+    },
+    "contractSatisfied": true
+  },
+  "baselineLog": [
+    "[pty] set tmux escape-time=10 status-left-length=30",
+    "[run-store] loaded 5 runs from disk",
+    "[run-engine] recovering 5 active run(s)",
+    "[run-engine] run active-e — re-armed publication-review recovery",
+    "[run-engine] run closed-e — re-armed publication-review recovery",
+    "[run-engine] run pipeline — paused, skipping recovery",
+    "[run-engine] run recovery — re-armed publication-review recovery",
+    "[run-engine] run wait-con — paused, skipping recovery",
+    "[run] replay from human-gate — re-claimed slot review-recovery-validation",
+    "[run] replay from human-gate — refreshed 0 worker artifact(s) before rebuilding the gate",
+    "[run] replaying recovery from step human-gate",
+    "[run-engine] starting run pipeline from step 8/11 (human-gate) gen=0",
+    "[run-engine] run pipeline — superseded 1 stale human-gate decision(s) on gate entry",
+    "[run-engine] slot review-recovery-validation reset to ready/idle after terminal safety net"
+  ],
+  "currentLog": [
+    "[pty] set tmux escape-time=10 status-left-length=30",
+    "[run-store] loaded 5 runs from disk",
+    "[run-engine] recovering 5 active run(s)",
+    "[run-engine] run active-e — re-armed publication-review recovery",
+    "[run-engine] run closed-e — re-armed publication-review recovery",
+    "[run-engine] run pipeline — paused, skipping recovery",
+    "[run-engine] run recovery — recovered in-flight publication review independent-review-3 (verdict pass) from reviewer context rev-valid",
+    "[run-engine] run recovery — recovered terminal failed publication review independent-review-4 from reviewer context rev-failed",
+    "[run-engine] run recovery — recovered terminal blocked publication review independent-review-5 from reviewer context rev-blocked",
+    "[run] replay from human-gate — re-claimed slot review-recovery-validation",
+    "[run] replay from human-gate — refreshed 0 worker artifact(s) before rebuilding the gate",
+    "[run] replaying recovery from step human-gate",
+    "[run-engine] run wait-con — paused, skipping recovery",
+    "[run-engine] cleaned up slot processes for review-recovery-validation",
+    "[run-engine] cleaned up slot processes for review-recovery-validation",
+    "[run-engine] cleaned up slot processes for review-recovery-validation",
+    "[run] replay from human-gate — re-claimed slot review-recovery-validation",
+    "[run] replay from human-gate — refreshed 0 worker artifact(s) before rebuilding the gate",
+    "[run] replaying recovery from step human-gate",
+    "[run-engine] starting run pipeline from step 8/11 (human-gate) gen=0",
+    "[run-engine] run pipeline — superseded 1 stale human-gate decision(s) on gate entry",
+    "[run-engine] cleaned up slot processes for review-recovery-validation",
+    "[run-engine] slot review-recovery-validation reset to ready/idle after non-thrown blocked"
+  ],
+  "failBefore": true,
+  "passAfter": true,
+  "pass": true,
+  "error": null
+}

@@ -5,6 +5,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - feat(auth): implement ADR-051 principals, durable independently revocable credentials, solo-to-activated lifecycle, default-deny role authorization, scoped pairing, work provenance, and fire-time reauthorization.
+- Require a machine-readable verdict and issue artifact from newly launched self-review and publication reviewers, bound live waits to the configured timeout without masking them on cleanup failure, preserve failed and valid sibling outcomes during restart recovery, and terminalize operator-required review failures with coherent replay and opaque-scope-verified process-group cleanup, including the pre-launcher-pid window without trusting recycled identities.
+
+- Route CI-watch follow-ups through the runner capability with the original worker's exact retained-session binding, and submit an already-buffered runner prompt before waiting for an empty composer, so retained work and independent reviews cannot stall after a dropped Enter.
+
+- fix(server): handle WebSocket `error` events (including `WS_ERR_UNSUPPORTED_MESSAGE_LENGTH` / close 1009) so an oversized inbound frame closes that client instead of crashing the whole gateway process; make the 100 MiB `maxPayload` explicit.
 - fix(terminal): name the staged image path plainly in the Claude attachment prompt. The previous `@<path>` reference opened Claude Code's file-reference autocomplete, which consumed the submit Enter, so the instruction sat unsent in the composer while delivery reported success. Proven end to end against live Claude and Codex runner panes.
 - fix(terminal): route image-attachment upload and delivery through the same bare-session-aware target resolution the terminal input path uses, so an image pasted into a postmortem terminal is staged for and delivered to the bare PTY the operator is attached to instead of the still-active run's context pane.
 - fix(terminal): resolve the attachment runner from the selected agent context instead of the slot, bind each upload and delivery to the target it started against, clear buffered chunks of interrupted uploads on lifecycle cleanup under an explicit byte ceiling, and reject unknown cleanup scopes before deleting anything.

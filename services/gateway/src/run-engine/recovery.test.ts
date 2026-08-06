@@ -221,6 +221,7 @@ test('recoverActiveRuns re-presents a blocked gate after its completed review wa
     loadFleetStatus: async () => ({
       slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
     }),
+    getRun: () => run,
     reconcileRunAgentRuntime: async () => {},
     rearmPublicationReviewRecovery: () => {
       rearmed = true;
@@ -233,7 +234,7 @@ test('recoverActiveRuns re-presents a blocked gate after its completed review wa
     },
     setPrHealthOverlay: () => {},
     quarantineLeakedRun: async () => {},
-    recoverInflightPublicationReviews: async () => [],
+    recoverInflightPublicationReviews: async () => ({ recoveredIds: [], terminalErrors: [] }),
     replayHumanGate: async () => {},
   } as unknown as RunRecoveryCollaborators;
 
@@ -324,7 +325,7 @@ test('recoverActiveRuns isolates tmux runtime reconciliation failures', async ()
     updateRunStep: () => {},
     setPrHealthOverlay: () => {},
     quarantineLeakedRun: async () => {},
-    recoverInflightPublicationReviews: async () => [],
+    recoverInflightPublicationReviews: async () => ({ recoveredIds: [], terminalErrors: [] }),
     replayHumanGate: async () => {},
   } as unknown as RunRecoveryCollaborators;
 
@@ -365,7 +366,7 @@ test('recoverActiveRuns clears stale human-gate running detail while re-presenti
     broadcast: () => {},
     setPrHealthOverlay: () => {},
     quarantineLeakedRun: async () => {},
-    recoverInflightPublicationReviews: async () => [],
+    recoverInflightPublicationReviews: async () => ({ recoveredIds: [], terminalErrors: [] }),
     replayHumanGate: async () => {},
   } as unknown as RunRecoveryCollaborators;
 
@@ -489,7 +490,8 @@ function withRecoverableReviewer(run: Run): Run {
 function publicationReviewRecoveryDeps(
   run: Run,
   options: {
-    recovered?: unknown[];
+    recovered?: string[];
+    terminalErrors?: Array<{ contextId: string; message: string }>;
     replayError?: Error;
   } = {},
 ): {
@@ -514,6 +516,7 @@ function publicationReviewRecoveryDeps(
     loadFleetStatus: async () => ({
       slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
     }),
+    getRun: () => run,
     updateRun: (_runId: string, fields: Partial<Run>) => {
       calls.updates.push(fields);
     },
@@ -535,7 +538,10 @@ function publicationReviewRecoveryDeps(
       });
       return () => {};
     },
-    recoverInflightPublicationReviews: async () => options.recovered ?? [],
+    recoverInflightPublicationReviews: async () => ({
+      recoveredIds: options.recovered ?? [],
+      terminalErrors: options.terminalErrors ?? [],
+    }),
     replayHumanGate: async (runId: string) => {
       calls.replayed.push(runId);
       if (options.replayError) throw options.replayError;
@@ -705,7 +711,7 @@ test('recovery replays the human gate before reconciliation when a reviewer comp
     }),
   );
   const { deps, calls } = publicationReviewRecoveryDeps(run, {
-    recovered: [{ id: 'rev3' }],
+    recovered: ['rev3'],
   });
 
   await recoverActiveRuns(deps);
@@ -728,7 +734,7 @@ test('recovery retries gate replay after a completed reviewer was ingested', asy
     }),
   );
   const { deps, calls } = publicationReviewRecoveryDeps(run, {
-    recovered: [{ id: 'rev3' }],
+    recovered: ['rev3'],
     replayError: new Error('transient replay failure'),
   });
 
@@ -740,9 +746,52 @@ test('recovery retries gate replay after a completed reviewer was ingested', asy
   assert.equal(calls.broadcasted, 0);
 });
 
+test('recovery replays valid siblings before parking accumulated terminal errors', async () => {
+  const run = withRecoverableReviewer(
+    minimalActiveRun({
+      ticketOrPr: 'RECOVERY-TERMINAL-SIBLINGS',
+      familyRootTicketOrPr: 'RECOVERY-TERMINAL-SIBLINGS',
+      taskFile: '/tmp/farmslot-recovery-terminal-siblings/TASK.md',
+      status: 'blocked',
+      steps: [{ name: 'human-gate', status: 'running' }],
+      decisions: [humanGateDecision('gate-review-terminal-invalid')],
+      engineState: {
+        publishGate: {
+          reviewRecovery: {
+            status: 'watching',
+            attempts: 38,
+            startedAt: '2026-08-06T10:00:00.000Z',
+            updatedAt: '2026-08-06T14:00:00.000Z',
+            nextRetryAt: '2026-08-06T14:05:00.000Z',
+          },
+        },
+      },
+    }),
+  );
+  const { deps, calls } = publicationReviewRecoveryDeps(run, {
+    recovered: ['independent-review-2'],
+    terminalErrors: [
+      {
+        contextId: 'rev-invalid',
+        message: 'Reviewer rev-invalid completed without review-result.json',
+      },
+    ],
+  });
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(calls.replayed, [run.id]);
+  assert.deepEqual(calls.rearmed, []);
+  const recovery = calls.updates.at(-1)?.engineState?.publishGate?.reviewRecovery;
+  assert.equal(recovery?.status, 'operator-required');
+  assert.equal(recovery?.attempts, 38);
+  assert.equal(recovery?.startedAt, '2026-08-06T10:00:00.000Z');
+  assert.equal(recovery?.nextRetryAt, undefined);
+});
+
 function gateRecoveryDeps(
   run: Run,
-  opts: { recovered: unknown[] },
+  opts: { recovered: string[] },
 ): {
   deps: RunRecoveryCollaborators;
   calls: { replayed: string[]; rebroadcastDecisionIds: string[] };
@@ -761,7 +810,10 @@ function gateRecoveryDeps(
     setPrHealthOverlay: () => {},
     quarantineLeakedRun: async () => {},
     rearmHandoffAutoRecovery: () => undefined,
-    recoverInflightPublicationReviews: async () => opts.recovered,
+    recoverInflightPublicationReviews: async () => ({
+      recoveredIds: opts.recovered,
+      terminalErrors: [],
+    }),
     replayHumanGate: async (runId: string) => {
       calls.replayed.push(runId);
     },
@@ -778,7 +830,7 @@ test('recovery re-enters the human gate when a lost reviewer result was ingested
     steps: [{ name: 'human-gate', status: 'running' }],
     decisions: [humanGateDecision('gate-1')],
   });
-  const { deps, calls } = gateRecoveryDeps(run, { recovered: [{ id: 'rev1' }] });
+  const { deps, calls } = gateRecoveryDeps(run, { recovered: ['rev1'] });
 
   await recoverActiveRuns(deps);
 
@@ -826,7 +878,7 @@ test('recovery falls back to re-presenting still-pending decisions when gate re-
     setPrHealthOverlay: () => {},
     quarantineLeakedRun: async () => {},
     rearmHandoffAutoRecovery: () => undefined,
-    recoverInflightPublicationReviews: async () => [],
+    recoverInflightPublicationReviews: async () => ({ recoveredIds: [], terminalErrors: [] }),
     replayHumanGate: async () => {
       throw new Error('replay preflight failed');
     },
@@ -1085,7 +1137,7 @@ test('recovery holds an interactive dev run instead of completing it for the ope
     broadcast: () => {},
     setPrHealthOverlay: () => {},
     quarantineLeakedRun: async () => {},
-    recoverInflightPublicationReviews: async () => [],
+    recoverInflightPublicationReviews: async () => ({ recoveredIds: [], terminalErrors: [] }),
     replayHumanGate: async () => {},
   } as unknown as RunRecoveryCollaborators;
 
@@ -1122,7 +1174,7 @@ test('recovery still advances an autonomous dev run whose worker finished', asyn
     broadcast: () => {},
     setPrHealthOverlay: () => {},
     quarantineLeakedRun: async () => {},
-    recoverInflightPublicationReviews: async () => [],
+    recoverInflightPublicationReviews: async () => ({ recoveredIds: [], terminalErrors: [] }),
     replayHumanGate: async () => {},
   } as unknown as RunRecoveryCollaborators;
 

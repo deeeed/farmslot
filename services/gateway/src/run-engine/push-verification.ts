@@ -13,11 +13,15 @@
 
 import { type ExecResult, isInteractiveDevRun, type Run } from '@farmslot/protocol';
 
-import { resolveAgentTarget } from '../agents/contexts.js';
+import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { normalizeRunner, sendRunnerInstructionSafely } from '../runners/registry.js';
+import {
+  resolveRunRetainedSessionBinding,
+  retainedSessionSendOption,
+} from '../runners/session-process.js';
 import { getRun } from '../runs/store.js';
 
 const WORKER_OWNED_PUSH_FLOWS = new Set(['pr-complete', 'update-branch']);
@@ -263,6 +267,8 @@ export async function verifyWorkerPushedBranch(
   let nudged = false;
   try {
     const target = await resolveAgentTarget(slotId, { runId, role: 'primary' });
+    const primaryContext = selectAgentContext(run, { role: 'primary' });
+    const retainedSession = resolveRunRetainedSessionBinding(run, primaryContext);
     const instruction =
       mode === 'push'
         ? `Your completion signal was received but the branch is not published. In ${vars.remoteRepo}: ` +
@@ -282,7 +288,11 @@ export async function verifyWorkerPushedBranch(
       'push-verification',
       undefined,
       // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-      { forceBusyPoll: true, recovery: { runId } },
+      {
+        forceBusyPoll: true,
+        recovery: { runId },
+        ...retainedSessionSendOption(retainedSession),
+      },
     );
     console.log(
       `[push-verification] run ${runId.slice(0, 8)} — publish nudge ${nudged ? 'delivered' : 'NOT delivered (send deferred/failed)'}`,

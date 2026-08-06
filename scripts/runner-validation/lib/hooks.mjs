@@ -56,3 +56,24 @@ export function turnBoundaryOrdered(rows) {
   }
   return { pass: stopAt >= submitAt, submitAt, stopAt };
 }
+
+export function hookDigestTurnEvidence(rows, promptDigest) {
+  const submit = rows.find(
+    (row) => eventName(row) === 'UserPromptSubmit' && row.runnerPromptDigest === promptDigest,
+  );
+  if (!submit) return null;
+  const submitAt = submit.observedAt ?? submit.timestamp;
+  const stop = rows.find((row) => {
+    if (eventName(row) !== 'Stop' || row.session_id !== submit.session_id) return false;
+    const stopAt = row.observedAt ?? row.timestamp;
+    return typeof submitAt === 'number' && typeof stopAt === 'number' && stopAt >= submitAt;
+  });
+  return stop
+    ? {
+        digest: promptDigest,
+        sessionId: submit.session_id,
+        submittedAt: submitAt,
+        stoppedAt: stop.observedAt ?? stop.timestamp,
+      }
+    : null;
+}

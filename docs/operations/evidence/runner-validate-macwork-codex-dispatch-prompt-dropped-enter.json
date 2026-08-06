@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-06T11:11:43.820Z",
+  "host": "macwork",
+  "scenario": "dispatch-prompt-dropped-enter",
+  "runner": "codex",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-dropped-enter-m0yUlw",
+  "session": "runner-validate-codex-dispatch-prompt-dropped-enter-61639",
+  "gatewayPath": "sendRunnerPostLaunchPrompt",
+  "setupTransport": {
+    "literalTextSent": true,
+    "submitKeySent": false,
+    "promptDigest": "ba978966dfe24946",
+    "sentAt": 1786014676289
+  },
+  "gatewayRecoveredBufferedPrompt": true,
+  "nativeTurn": {
+    "digest": "ba978966dfe24946",
+    "sessionId": "019fd6c5-1d63-7010-a38d-a716e00c4ab5",
+    "submittedAt": 1786014697998,
+    "stoppedAt": 1786014701791
+  },
+  "gatewayLog": "[dispatch-prompt-smoke] recovering buffered instruction in %110 with submit-only delivery\n[dispatch-prompt-smoke] prompt delivered to %110 (attempt 1/3)",
+  "pass": true,
+  "error": null,
+  "paneTail": null
+}

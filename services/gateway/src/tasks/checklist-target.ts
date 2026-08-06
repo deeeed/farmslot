@@ -109,7 +109,11 @@ export async function syncChecklistTargetForRole(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
   role: NestedLoopAgentRole,
-  terminal?: { reportPath?: string; target?: ChecklistTarget },
+  terminal?: {
+    reportPath?: string;
+    additionalArtifactPaths?: readonly string[];
+    target?: ChecklistTarget;
+  },
   registry: ChecklistTargetRegistry = DEFAULT_CHECKLIST_TARGET_REGISTRY,
 ): Promise<void> {
   const target = terminal?.target ?? checklistTargetForAgentRole(role, registry);
@@ -121,6 +125,7 @@ export async function syncChecklistTargetForRole(
     undefined,
     terminal?.reportPath,
     target.checklist,
+    terminal?.additionalArtifactPaths,
   );
 }
 

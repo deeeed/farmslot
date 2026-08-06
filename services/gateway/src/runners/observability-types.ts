@@ -67,6 +67,17 @@ export interface RunnerObservability {
    * gateway clock because fleet nodes can be skewed.
    */
   capturePromptAcceptanceBaseline?(vars: SlotVars, target: string): Promise<number>;
+  /** Resolve the runner-native session id stored inside one persisted session. */
+  resolveSessionId?(vars: SlotVars, sessionPath: string): Promise<string | null>;
+  /**
+   * Upgrade one persisted binding to the runner's current native identity.
+   * Providers must reject ids that are neither current nor a format they
+   * previously persisted; callers fail closed when normalization rejects it.
+   */
+  normalizeRetainedSessionBinding?(
+    vars: SlotVars,
+    binding: { sessionId: string; sessionPath: string },
+  ): Promise<{ sessionId: string; sessionPath: string } | null>;
   promptAccepted(
     vars: SlotVars,
     target: string,
@@ -78,6 +89,15 @@ export interface RunnerObservability {
     paneRetired?: boolean,
     /** Exact prompt text for native providers whose session protocol exposes it. */
     promptText?: string,
+  ): Promise<ObservabilityReading<boolean> | null>;
+  /** Exact prompt acceptance from one persisted runner-native session history. */
+  promptAcceptedInSession?(
+    vars: SlotVars,
+    target: string,
+    sessionId: string,
+    sessionPath: string,
+    promptText: string,
+    sinceMs: number,
   ): Promise<ObservabilityReading<boolean> | null>;
   /**
    * Durable delivery state for one persisted runner session. Unlike transient
