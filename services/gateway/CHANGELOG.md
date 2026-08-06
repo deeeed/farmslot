@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(push-verification): autonomous-dev completion ignores untracked leftovers so farm scaffold dirt (e.g. AgenticService) cannot soft-lock after a clean task commit; tracked dirtiness still blocks.
 - chore: comment-only sweep — code comments describe rationale inline instead of citing ticket numbers (no behavior change).
 - refactor(gateway): ready-gate / publish-package decision labels use independent-review and runner-diversity wording (action ids unchanged for replay compatibility) (MANUAL-000008).
 - refactor: `runtime/session-usage.ts` consumes the ported `@farmslot/slot-config` core directly instead of shelling out to `scripts/session-usage.sh`; `computePRRecommendation` moved to `@farmslot/protocol` (re-imported) with the bash pr-monitor rules folded in — `PRStatus` gains `workerActive` so formatters can derive the worker-active sub-labels.
