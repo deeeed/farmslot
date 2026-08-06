@@ -1164,6 +1164,7 @@ async function slotPrepareInner(
   }
   if (preflightHook) {
     const preflightPidPath = path.join(vars.remoteRepo, runtimeDir, 'preflight.pid');
+    const preflightProcessGroupPath = path.join(vars.remoteRepo, runtimeDir, 'preflight.pgid');
     const rawCleanupPatterns = getProjectFieldRaw(projectJson, 'cleanup_patterns');
     const cleanupPatterns = Array.isArray(rawCleanupPatterns)
       ? rawCleanupPatterns.map((p) => expandTemplate(String(p), vars, projectVars)).filter(Boolean)
@@ -1187,7 +1188,10 @@ async function slotPrepareInner(
     }
     const wrappedPreflightHook = [
       `PREP_PID_FILE=${shellQuote(preflightPidPath)}`,
+      `PREP_PGID_FILE=${shellQuote(preflightProcessGroupPath)}`,
       `echo $$ > "$PREP_PID_FILE"`,
+      `PREP_PGID=$(ps -o pgid= -p $$ | tr -d '[:space:]')`,
+      `case "$PREP_PGID" in ''|*[!0-9]*) ;; *) printf '%s\n' "$PREP_PGID" > "$PREP_PGID_FILE" ;; esac`,
       `cleanup_prepare_pid(){ rm -f "$PREP_PID_FILE"; }`,
       `trap cleanup_prepare_pid EXIT INT TERM`,
       ...varExports,

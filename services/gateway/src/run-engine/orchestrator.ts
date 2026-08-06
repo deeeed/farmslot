@@ -1199,7 +1199,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
 
 // ─── Slot process cleanup on prepare failure ───
 
-async function cleanupSlotProcesses(slotId: string): Promise<void> {
+export async function cleanupSlotProcesses(slotId: string): Promise<void> {
   const vars = await loadSlotVars(slotId);
   let runtimeDir = '.agent';
   try {
@@ -1215,9 +1215,17 @@ async function cleanupSlotProcesses(slotId: string): Promise<void> {
   const rd = `${vars.remoteRepo}/${runtimeDir}`;
   const port = vars.resourceVars.port;
 
-  // Kill by pidfile (launcher, browser, chromium, webpack)
+  // Kill the exact prepare process group first. Nohup descendants retain this
+  // group after the wrapper exits, including launchers that have not written
+  // their own pidfiles yet.
   const killCmd = [
     'set -u',
+    `groupfile="${rd}/preflight.pgid";`,
+    `if [ -f "$groupfile" ]; then`,
+    `  pgid=$(tr -d '[:space:]' < "$groupfile");`,
+    `  case "$pgid" in ''|*[!0-9]*) ;; *) if [ "$pgid" -gt 1 ] && kill -TERM -- "-$pgid" 2>/dev/null; then echo "killed preflight group ($pgid)"; fi ;; esac;`,
+    `fi`,
+    // Kill later process-specific identities when their pidfiles exist.
     `for pf in launcher.pid browser.pid chromium.pid webpack.pid; do`,
     `  pidfile="${rd}/$pf";`,
     `  if [ -f "$pidfile" ]; then`,
@@ -1230,7 +1238,7 @@ async function cleanupSlotProcesses(slotId: string): Promise<void> {
       ? `if pids=$(lsof -ti ":${port}" 2>/dev/null); then if [ -n "$pids" ]; then kill $pids; fi; else rc=$?; if [ "$rc" -ne 1 ]; then exit "$rc"; fi; fi`
       : ':',
     // Clean pid files
-    `rm -f "${rd}/browser.pid" "${rd}/chromium.pid" "${rd}/extension.id" "${rd}/launcher.pid" "${rd}/webpack.pid"`,
+    `rm -f "${rd}/browser.pid" "${rd}/chromium.pid" "${rd}/extension.id" "${rd}/launcher.pid" "${rd}/preflight.pgid" "${rd}/webpack.pid"`,
   ].join('\n');
 
   const result = await execOnSlot(vars, killCmd);

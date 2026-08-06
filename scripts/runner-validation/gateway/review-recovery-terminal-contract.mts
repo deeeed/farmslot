@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -27,6 +27,7 @@ interface StoreModule {
 }
 
 interface RecoveryModule {
+  cleanupSlotProcesses?(slotId: string): Promise<void>;
   recoverActiveRuns(): Promise<void>;
   startRun(runId: string): Promise<void>;
 }
@@ -109,6 +110,13 @@ interface WaitBehaviorSnapshot {
   overdueNeighborWindowPreserved: boolean;
 }
 
+interface SlotCleanupSnapshot {
+  launcherPidAbsentBeforeCleanup: boolean;
+  trackedPrePidLauncherKilled: boolean;
+  similarlyNamedNeighborPreserved: boolean;
+  processGroupIdentityRemoved: boolean;
+}
+
 interface PipelineSnapshot {
   status: string;
   currentStepStatus: string | null;
@@ -128,6 +136,7 @@ interface ContractExecution {
   replayClearedRecovery: boolean;
   pipeline: PipelineSnapshot;
   waitBehavior: WaitBehaviorSnapshot;
+  slotCleanup: SlotCleanupSnapshot;
   contractSatisfied: boolean;
 }
 
@@ -585,6 +594,51 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
+function spawnGeneratedRunner(): number {
+  const child = spawn(runnerPath, ['30'], { detached: true, stdio: 'ignore' });
+  assert.ok(child.pid && child.pid > 1, 'generated runner pid was not available');
+  generatedRunnerPids.add(child.pid);
+  child.unref();
+  return child.pid;
+}
+
+async function waitForProcessExit(pid: number, timeoutMs = 1_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (processIsAlive(pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return !processIsAlive(pid);
+}
+
+async function runSlotCleanupContract(recovery: RecoveryModule): Promise<SlotCleanupSnapshot> {
+  const runtimeDir = path.join(repoDir, '.agent');
+  const processGroupPath = path.join(runtimeDir, 'preflight.pgid');
+  const launcherPidPath = path.join(runtimeDir, 'launcher.pid');
+  mkdirSync(runtimeDir, { recursive: true });
+
+  const trackedPid = spawnGeneratedRunner();
+  const neighborPid = spawnGeneratedRunner();
+  writeText(processGroupPath, `${trackedPid}\n`);
+  const launcherPidAbsentBeforeCleanup = !existsSync(launcherPidPath);
+
+  if (!recovery.cleanupSlotProcesses) {
+    return {
+      launcherPidAbsentBeforeCleanup,
+      trackedPrePidLauncherKilled: false,
+      similarlyNamedNeighborPreserved: processIsAlive(neighborPid),
+      processGroupIdentityRemoved: false,
+    };
+  }
+
+  await recovery.cleanupSlotProcesses(slotId);
+  return {
+    launcherPidAbsentBeforeCleanup,
+    trackedPrePidLauncherKilled: await waitForProcessExit(trackedPid),
+    similarlyNamedNeighborPreserved: processIsAlive(neighborPid),
+    processGroupIdentityRemoved: !existsSync(processGroupPath),
+  };
+}
+
 function tmuxWindowExists(windowId: string): boolean {
   const ids = execFileSync('tmux', ['list-windows', '-a', '-F', '#{window_id}'], {
     encoding: 'utf-8',
@@ -800,6 +854,7 @@ async function main(): Promise<void> {
   const activeEpisodePreserved = recoveryEpisodeSnapshot(activeEpisodeRun);
 
   const vars = await config.loadSlotVars(slotId);
+  const slotCleanup = await runSlotCleanupContract(recovery);
   const waitBehavior = await runWaitBehaviorContract(vars, reviewAgent, sessionProcess);
 
   await replay.runReplayStep(
@@ -872,7 +927,8 @@ async function main(): Promise<void> {
     pipeline.durationRecorded &&
     pipeline.slotLifecycle === 'ready' &&
     pipeline.slotCurrentRunId === null &&
-    Object.values(waitBehavior).every(Boolean);
+    Object.values(waitBehavior).every(Boolean) &&
+    Object.values(slotCleanup).every(Boolean);
 
   const result: ContractExecution = {
     sourceSha,
@@ -882,6 +938,7 @@ async function main(): Promise<void> {
     replayClearedRecovery,
     pipeline,
     waitBehavior,
+    slotCleanup,
     contractSatisfied,
   };
   // replay-step schedules engine continuation after returning. Let that
@@ -898,11 +955,21 @@ main()
   })
   .finally(() => {
     for (const pid of generatedRunnerPids) {
-      if (!processIsAlive(pid)) continue;
-      const command = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], {
-        encoding: 'utf-8',
-      }).trim();
-      if (command.startsWith(runnerPath)) process.kill(pid, 'SIGTERM');
+      let command: string;
+      try {
+        command = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], {
+          encoding: 'utf-8',
+        }).trim();
+      } catch {
+        // The exact generated process may have exited between scenario checks and cleanup.
+        continue;
+      }
+      if (command !== runnerPath && !command.startsWith(`${runnerPath} `)) continue;
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // Exact process exit raced cleanup; session and temp cleanup must still run.
+      }
     }
     if (waitSessionId) {
       try {

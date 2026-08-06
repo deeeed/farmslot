@@ -1218,24 +1218,13 @@ export async function waitForReviewCompletion(
     if (!hasWindow) {
       // Window disappearance establishes completion. Required artifacts must
       // now be valid; unlike pane heuristics, this branch may fail closed.
-      if (await completedOutputIsValid(true)) {
-        debugSelfReviewLog(`[self-review] review window gone + feedback written — agent completed`);
-        await markAgentContextStatus(runId, 'self-review', 'complete', {
-          id: reviewContextId,
-          lastSignalAt: new Date().toISOString(),
-        });
-        return true;
-      }
-      console.warn(
-        `[self-review] review window gone before feedback file existed — waiting for timeout`,
-      );
-      if (Date.now() - start >= timeoutMs) {
-        console.warn(
-          `[self-review] review window disappeared without feedback after ${timeoutMs}ms`,
-        );
-        return false;
-      }
-      continue;
+      await completedOutputIsValid(true);
+      debugSelfReviewLog(`[self-review] review window gone + feedback written — agent completed`);
+      await markAgentContextStatus(runId, 'self-review', 'complete', {
+        id: reviewContextId,
+        lastSignalAt: new Date().toISOString(),
+      });
+      return true;
     }
 
     // Check if the configured runner process is still running in the review pane.
@@ -1398,7 +1387,13 @@ export async function waitForReviewCompletionOrThrow(
   );
   if (completed) return;
 
-  await killSelfReviewWindow(vars, session, 'review timeout cleanup', reviewWindow);
+  try {
+    await killSelfReviewWindow(vars, session, 'review timeout cleanup', reviewWindow);
+  } catch (cleanupErr) {
+    console.warn(
+      `[self-review] review timeout cleanup failed for ${session}:${reviewWindow}: ${(cleanupErr as Error).message}`,
+    );
+  }
   throw new Error(
     `Self-review agent did not complete within ${timeoutMs}ms (${timeoutMs / 60_000}min). Bump self_review.review_timeout_min in projects/${vars.projectName}/project.json if reviews need longer.`,
   );
