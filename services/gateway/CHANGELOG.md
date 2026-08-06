@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep terminal runner idle hooks authoritative for retained CI-watch task delivery instead of expiring healthy workers after two minutes.
+
 - fix(server): handle WebSocket `error` events (including `WS_ERR_UNSUPPORTED_MESSAGE_LENGTH` / close 1009) so an oversized inbound frame closes that client instead of crashing the whole gateway process; make the 100 MiB `maxPayload` explicit.
 - fix(terminal): name the staged image path plainly in the Claude attachment prompt. The previous `@<path>` reference opened Claude Code's file-reference autocomplete, which consumed the submit Enter, so the instruction sat unsent in the composer while delivery reported success. Proven end to end against live Claude and Codex runner panes.
 - fix(terminal): route image-attachment upload and delivery through the same bare-session-aware target resolution the terminal input path uses, so an image pasted into a postmortem terminal is staged for and delivered to the bare PTY the operator is attached to instead of the still-active run's context pane.

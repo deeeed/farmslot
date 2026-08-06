@@ -20,14 +20,15 @@ import { listScenarios } from './scenarios/index.mjs';
 
 const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/panes');
 
-test('runner-validation catalog includes four runners and thirteen scenarios', () => {
+test('runner-validation catalog includes four runners and fourteen scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
-  assert.equal(listScenarios().length, 13);
+  assert.equal(listScenarios().length, 14);
   assert.ok(listScenarios().includes('hook-smoke'));
   assert.ok(listScenarios().includes('pane-smoke'));
   assert.ok(listScenarios().includes('interaction-smoke'));
   assert.ok(listScenarios().includes('dispatch-prompt-trust'));
   assert.ok(listScenarios().includes('retained-handoff-smoke'));
+  assert.ok(listScenarios().includes('retained-safe-send-smoke'));
   assert.ok(listScenarios().includes('session-attribution-smoke'));
   assert.ok(listScenarios().includes('token-usage-smoke'));
 });

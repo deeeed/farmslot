@@ -1877,9 +1877,10 @@ async function waitForPaneAfterClassifierAction(
  * ADR-032 Phase 3 hook-only send loop. Reached only when {@link isRunnerPaneRetired} is true.
  * The decision to send/hold uses hook readings ONLY — the pane predicates
  * (`paneShowsBusyComposer` / `runnerPaneHasPendingInstruction` / `runnerPaneLooksIdle`) are
- * never consulted for the decision. Degraded readings (hook `unknown`/absent/stale) resolve to
- * busy: the send holds, and on timeout an ADR-031 deterministic recovery + attention is emitted
- * instead of falling back to the pane. Post-send delivery verification inside
+ * never consulted for the decision. A terminal Stop / idle_prompt remains authoritative until a
+ * later structured event starts another turn; other degraded readings (hook unknown/absent/stale)
+ * resolve to busy. The send then holds, and on timeout an ADR-031 deterministic recovery +
+ * attention is emitted instead of falling back to the pane. Post-send delivery verification inside
  * {@link submitRunnerInstruction} still reads the pane, which is confirmation, not a decision.
  */
 async function sendRunnerInstructionHookOnly(

@@ -108,6 +108,70 @@ try {
   };
 }
 
+/** Invoke the production safe-send contract against an already-idle runner pane. */
+export function runGatewaySafeInstruction({ repo, target, runner, message, timeoutMs = 30_000 }) {
+  const snippet = `
+import os from 'node:os';
+import { sendRunnerInstructionSafely } from './services/gateway/src/runners/registry.ts';
+
+const vars = {
+  slotId: 'runner-validate-local',
+  machine: os.hostname(),
+  platform: 'local',
+  host: 'localhost',
+  sshUser: os.userInfo().username,
+  osType: process.platform === 'darwin' ? 'darwin' : 'linux',
+  claudePath: '',
+  codexPath: '',
+  opencodePath: '',
+  cursorPath: '',
+  grokPath: '',
+  dispatchCmd: '',
+  recycleCmd: '',
+  repo: ${JSON.stringify(repo)},
+  session: ${JSON.stringify(target)},
+  slotMode: 'dispatch',
+  slotEnabled: true,
+  sshTarget: \`\${os.userInfo().username}@localhost\`,
+  remoteRepo: ${JSON.stringify(repo)},
+  projectName: '',
+  resourceVars: {},
+};
+
+const delivered = await sendRunnerInstructionSafely(
+  vars,
+  ${JSON.stringify(target)},
+  ${JSON.stringify(runner)},
+  ${JSON.stringify(message)},
+  'retained-safe-send-smoke',
+  ${timeoutMs},
+  { forceBusyPoll: true },
+);
+console.log(JSON.stringify({ delivered }));
+if (!delivered) process.exit(1);
+`;
+
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: timeoutMs + 30_000,
+    env: {
+      ...process.env,
+      FARMSLOT_HOME: process.env.FARMSLOT_HOME ?? `${os.homedir()}/.farmslot-dev`,
+    },
+  });
+  const stdout = result.stdout?.trim() ?? '';
+  const jsonLine = stdout
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .pop();
+  return {
+    result: jsonLine ? JSON.parse(jsonLine) : null,
+    exitCode: result.status,
+    error: result.stderr?.trim() || (!jsonLine ? stdout : null),
+  };
+}
+
 /** Invoke the production retained-session handoff against a local tmux target. */
 export function runGatewayRetainedHandoff({
   repo,

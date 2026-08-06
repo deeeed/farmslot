@@ -131,6 +131,7 @@ export function deriveRunnerActivity(
     (!lastTurnStop || lastIdleNotification.observedAt > lastTurnStop.observedAt)
       ? lastIdleNotification
       : lastTurnStop;
+  const lastTerminalIdle = lastIdle;
   if (lastSessionStart && (!lastIdle || lastSessionStart.observedAt > lastIdle.observedAt)) {
     lastIdle = lastSessionStart;
   }
@@ -143,7 +144,24 @@ export function deriveRunnerActivity(
   ]
     .filter((value): value is number => value != null)
     .sort((a, b) => b - a)[0];
-  if (freshest == null || !isFreshObservedAt(freshest, now)) return null;
+  if (freshest == null) return null;
+  if (!isFreshObservedAt(freshest, now)) {
+    // A whole-turn Stop / idle_prompt is a durable state boundary, not a
+    // heartbeat. It remains authoritative until a later event in this pane
+    // starts another turn. Expiring it made retained workers permanently
+    // undeliverable after two idle minutes even though their runner process
+    // and structured terminal signal were both healthy.
+    if (lastTerminalIdle?.observedAt === freshest) {
+      return {
+        value: 'idle',
+        source: 'hook',
+        confidence: 'high',
+        observedAt: lastTerminalIdle.observedAt,
+        ...(lastTerminalIdle.sessionId ? { sessionId: lastTerminalIdle.sessionId } : {}),
+      };
+    }
+    return null;
+  }
 
   if (
     lastPreToolUse &&
