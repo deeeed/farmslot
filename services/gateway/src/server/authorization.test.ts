@@ -13,16 +13,16 @@ import {
   type CredentialIssueResult,
   type GatewayAuthConnectResult,
   Methods,
+  type Principal,
   type PrincipalCreateResult,
+  type ProjectConfig,
   type RequestFrame,
   type ResponseFrame,
 } from '@farmslot/protocol';
 
 import { createGatewayAuthRuntime, initializeGatewayIdentity } from '../security/auth.js';
-import { authorizeStoredRunEffect } from '../security/authorization.js';
-import { resolveWorkOriginator } from '../security/work-originator.js';
 import { createWebSocketServer } from '../server.js';
-import { WEBHOOK_WORK_ORIGINATORS } from '../webhook.js';
+import { resolveWebhookWorkOriginator } from '../webhook.js';
 
 test('authorization denial survives the response frame with a teaching Next action', async () => {
   const runtime = isolatedRuntime();
@@ -160,17 +160,33 @@ test('activation-latching issuance returns both one-time secrets before closing 
   }
 });
 
-test('webhook ingress cannot resolve as the system principal', () => {
+test('webhook ingress requires a configured stored admin service principal', () => {
   const runtime = isolatedRuntime();
-  for (const originator of Object.values(WEBHOOK_WORK_ORIGINATORS)) {
-    assert.equal(originator.kind, 'principal');
-    const resolved = resolveWorkOriginator(runtime, originator);
-    assert.equal(resolved, null);
-    assert.throws(
-      () => authorizeStoredRunEffect(resolved, originator.principalId, undefined),
-      /cannot be resolved/u,
-    );
-  }
+  const project = { webhooks: { auto_dispatch: true } } as ProjectConfig;
+  const principals = new Map<string, Principal>();
+  const resolvePrincipal = (principalId: string) => principals.get(principalId) ?? null;
+
+  const missingConfiguration = resolveWebhookWorkOriginator(project, 'github', resolvePrincipal);
+  assert.equal(missingConfiguration.ok, false);
+  if (!missingConfiguration.ok) assert.match(missingConfiguration.message, /github_principal_id/u);
+
+  const authority = runtime.writer.createPrincipal(
+    { type: 'service', displayName: 'github-ingress' },
+    [{ role: 'admin', scope: { kind: 'global' } }],
+  );
+  principals.set(authority.id, authority);
+  const configured = resolveWebhookWorkOriginator(
+    {
+      ...project,
+      webhooks: { ...project.webhooks, github_principal_id: authority.id },
+    },
+    'github',
+    resolvePrincipal,
+  );
+  assert.deepEqual(configured, {
+    ok: true,
+    originator: { kind: 'principal', principalId: authority.id },
+  });
 });
 
 function isolatedRuntime() {

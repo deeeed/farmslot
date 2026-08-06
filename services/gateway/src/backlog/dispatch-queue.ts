@@ -361,8 +361,8 @@ export async function loadQueue(
     if (migrationOpen) {
       await persist();
       await writeFile(QUEUE_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
+      console.log(`[provenance] dispatch queue migrated ${migrated} item(s)`);
     }
-    console.log(`[provenance] dispatch queue migrated ${migrated} item(s)`);
     schedulePersist('load-reconcile');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
@@ -837,15 +837,35 @@ export function listItems(): QueueItem[] {
 }
 
 export function getQueueSnapshot(): QueueRecord[] {
-  return [...queue];
+  return queue.map(cloneQueueRecord);
+}
+
+export function mutateQueueItemForTests(
+  itemId: string,
+  mutation: (item: QueueRecord) => void,
+): QueueRecord {
+  if (!shouldUseIsolatedQueueFile(process.env, process.argv)) {
+    throw new Error('mutateQueueItemForTests is available only in an isolated test runtime');
+  }
+  const item = queue.find((candidate) => candidate.id === itemId);
+  if (!item) throw new Error(`Queue item not found: ${itemId}`);
+  mutation(item);
+  return cloneQueueRecord(item);
 }
 
 export function queueRecordOriginator(itemId: string): WorkOriginator | undefined {
-  return queue.find((item) => item.id === itemId)?.originator;
+  const originator = queue.find((item) => item.id === itemId)?.originator;
+  return originator ? structuredClone(originator) : undefined;
 }
 
 function publicQueueItem(record: QueueRecord): QueueItem {
-  return record;
+  return structuredClone(record);
+}
+
+function cloneQueueRecord(record: QueueRecord): QueueRecord {
+  const clone: QueueRecord = structuredClone(record);
+  if (record.originator) setQueueOriginator(clone, record.originator);
+  return clone;
 }
 
 export function buildQueuePreviewParams(item: QueueItem) {

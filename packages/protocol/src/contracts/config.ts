@@ -179,6 +179,8 @@ export interface ProjectConfig {
   webhooks?: {
     github_secret?: string; // HMAC secret for GitHub webhook validation
     jira_secret?: string; // token for Jira webhook validation
+    github_principal_id?: string; // stored admin service principal responsible for GitHub work
+    jira_principal_id?: string; // stored admin service principal responsible for Jira work
     auto_dispatch?: boolean; // default true
   };
   ci_watch?: {

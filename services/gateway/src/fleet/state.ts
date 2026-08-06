@@ -842,6 +842,8 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
                 webhooks: {
                   github_secret: raw.webhooks.github_secret,
                   jira_secret: raw.webhooks.jira_secret,
+                  github_principal_id: raw.webhooks.github_principal_id,
+                  jira_principal_id: raw.webhooks.jira_principal_id,
                   auto_dispatch: raw.webhooks.auto_dispatch,
                 },
               }

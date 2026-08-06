@@ -2,9 +2,9 @@ process.env.NODE_TEST_CONTEXT = '1';
 
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import test from 'node:test';
 
 const root = mkdtempSync(join(tmpdir(), 'farmslot-provenance-'));
 const queueFile = join(root, 'dispatch-queue.json');
@@ -145,6 +145,19 @@ test('legacy migration is per-store, observable, one-time, and public projection
       kind: 'principal',
       principalId: 'sam',
     });
+    const queueSnapshot = queue.getQueueSnapshot().find((record) => record.id === added.id)!;
+    queueSnapshot.label = 'mutated snapshot';
+    if (queueSnapshot.originator?.kind === 'principal') {
+      queueSnapshot.originator.principalId = 'mutated-snapshot-principal';
+    }
+    assert.equal(
+      queue.getQueueSnapshot().find((record) => record.id === added.id)?.label,
+      'edited',
+    );
+    assert.deepEqual(queue.queueRecordOriginator(added.id), {
+      kind: 'principal',
+      principalId: 'sam',
+    });
     assert.equal(JSON.stringify(queue.listItems()).includes('principalId'), false);
     assert.equal(JSON.stringify(events).includes('principalId'), false);
     const reauthored = runWithSessionOriginator(
@@ -180,6 +193,17 @@ test('legacy migration is per-store, observable, one-time, and public projection
       kind: 'principal',
       principalId: 'owner',
     });
+    const backlogSnapshot = backlog.getBacklogItemSnapshot(createdBacklog.item.id)!;
+    backlogSnapshot.title = 'mutated snapshot';
+    assert.equal(backlog.getBacklogItemSnapshot(createdBacklog.item.id)?.title, 'New backlog');
+    await assert.rejects(
+      () => backlog.updateBacklogItem({ itemId: createdBacklog.item.id, title: '   ' }),
+      /title is required/u,
+    );
+    assert.deepEqual(backlog.backlogRecordOriginator(createdBacklog.item.id), {
+      kind: 'principal',
+      principalId: 'owner',
+    });
     await backlog.flushBacklogForTests();
 
     const createdGraph = await workGraph.createWorkGraph(
@@ -207,7 +231,7 @@ test('legacy migration is per-store, observable, one-time, and public projection
     assert.equal(backlog.backlogRecordOriginator(createdBacklog.item.id), undefined);
     assert.equal(workGraph.workGraphRecordOriginator('wg_new'), undefined);
     assert.equal(
-      logs.some((line) => line.includes('migrated 1 item(s)')),
+      logs.some((line) => line.includes('[provenance]') && line.includes('migrated')),
       false,
     );
 

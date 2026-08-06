@@ -240,8 +240,10 @@ export async function loadWorkGraphs(
       graphs.set(snapshot.graph.id, snapshot);
     }
   }
-  if (migrationOpen) await writeFile(GRAPH_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
-  console.log(`[provenance] work graph migrated ${migrated} item(s)`);
+  if (migrationOpen) {
+    await writeFile(GRAPH_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
+    console.log(`[provenance] work graph migrated ${migrated} item(s)`);
+  }
 }
 
 function restampWorkGraph(snapshot: WorkGraphRecord, originator: WorkOriginator | undefined): void {

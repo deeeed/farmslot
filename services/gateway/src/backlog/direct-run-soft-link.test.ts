@@ -403,8 +403,10 @@ test('reconcileBacklogRun durably links a historical graph run and applies termi
     flowType: 'fix-bug',
     status: 'candidate',
   });
-  created.item.workGraphId = 'graph-1';
-  created.item.workNodeId = 'node-1';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.workGraphId = 'graph-1';
+    item.workNodeId = 'node-1';
+  });
 
   const run = runStore.createRun({
     flowType: 'fix-bug',

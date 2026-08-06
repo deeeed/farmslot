@@ -979,8 +979,8 @@ export async function loadBacklog(
     if (migrationOpen) {
       await persistNow('provenance-migration');
       await writeFile(BACKLOG_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
+      console.log(`[provenance] backlog migrated ${migrated} item(s)`);
     }
-    console.log(`[provenance] backlog migrated ${migrated} item(s)`);
     if (await reconcileBacklogLinks()) schedulePersist('load-reconcile');
     const orphans = listOrphanedBacklogQueueItems();
     if (orphans.length > 0) {
@@ -994,8 +994,8 @@ export async function loadBacklog(
       if (migrationOpen) {
         await mkdir(path.dirname(BACKLOG_PROVENANCE_MARKER), { recursive: true });
         await writeFile(BACKLOG_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
+        console.log('[provenance] backlog migrated 0 item(s)');
       }
-      console.log('[provenance] backlog migrated 0 item(s)');
       const orphans = listOrphanedBacklogQueueItems();
       if (orphans.length > 0) {
         console.warn(
@@ -1032,7 +1032,13 @@ export function listBacklogItems(params: BacklogListParams = {}): BacklogListRes
 }
 
 function publicBacklogItem(record: BacklogRecord): BacklogItem {
-  return record;
+  return structuredClone(record);
+}
+
+function cloneBacklogRecord(record: BacklogRecord): BacklogRecord {
+  const clone: BacklogRecord = structuredClone(record);
+  if (record.originator) setBacklogOriginator(clone, record.originator);
+  return clone;
 }
 
 function restampBacklogRecord(record: BacklogRecord, originator: WorkOriginator | undefined): void {
@@ -1243,6 +1249,18 @@ export function getBacklogItemSnapshot(itemId: string): BacklogItem | null {
   return item ? publicBacklogItem(item) : null;
 }
 
+export function mutateBacklogItemForTests(
+  itemId: string,
+  mutation: (item: BacklogItem) => void,
+): BacklogItem {
+  if (!shouldUseIsolatedBacklogFile(process.env, process.argv)) {
+    throw new Error('mutateBacklogItemForTests is available only in an isolated test runtime');
+  }
+  const item = getItem(itemId);
+  mutation(item);
+  return publicBacklogItem(item);
+}
+
 export function listBacklogItemSnapshots(): BacklogItem[] {
   return items.map(publicBacklogItem);
 }
@@ -1337,7 +1355,7 @@ export async function updateBacklogItem(
     const itemIndex = items.findIndex((candidate) => candidate.id === params.itemId);
     if (itemIndex < 0) throw new Error(`Backlog item not found: ${params.itemId}`);
     const item = items[itemIndex]!;
-    const snapshot: BacklogRecord = structuredClone(item);
+    const snapshot = cloneBacklogRecord(item);
     const nextSourceKind = params.sourceKind ?? item.sourceKind;
     const nextFlowType = params.flowType ?? item.flowType;
     if (!VALID_SOURCE_KINDS.has(nextSourceKind)) throw new Error('Invalid backlog source kind');

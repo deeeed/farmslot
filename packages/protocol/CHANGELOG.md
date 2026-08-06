@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- feat(auth)!: add principal and credential contracts plus caller summaries; require an explicit principal authority when creating pairing codes.
+- feat(auth)!: add principal and credential contracts plus caller summaries; require explicit principal authority for pairing codes and configured GitHub/Jira auto-dispatch webhook identities.
 - feat(agents): add the optional `reviewResultFile` path used for authoritative structured results by newly launched self-review and publication reviewers.
 - feat(terminal): add the terminal image-attachment contract — chunked upload params, separate delivery result with an explicit `unsupported` status, size/MIME limits, and cleanup scopes.
 

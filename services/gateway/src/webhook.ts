@@ -4,16 +4,64 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import type { FlowType, ProjectConfig } from '@farmslot/protocol';
+import type { FlowType, Principal, ProjectConfig } from '@farmslot/protocol';
 
 import { addItem } from './backlog/dispatch-queue.js';
 import { loadProjectConfigs } from './fleet/state.js';
+import { isAdminPrincipal } from './security/authorization.js';
 import type { WorkOriginator } from './security/work-originator.js';
 
-export const WEBHOOK_WORK_ORIGINATORS = {
-  github: { kind: 'principal', principalId: 'github-webhook' },
-  jira: { kind: 'principal', principalId: 'jira-webhook' },
-} as const satisfies Record<'github' | 'jira', WorkOriginator>;
+export type WebhookProvider = 'github' | 'jira';
+export type WebhookPrincipalResolver = (principalId: string) => Principal | null;
+
+export type WebhookAuthorityResolution =
+  | { ok: true; originator: WorkOriginator }
+  | { ok: false; message: string };
+
+export function resolveWebhookWorkOriginator(
+  project: ProjectConfig,
+  provider: WebhookProvider,
+  resolvePrincipal: WebhookPrincipalResolver,
+): WebhookAuthorityResolution {
+  const principalId =
+    provider === 'github'
+      ? project.webhooks?.github_principal_id?.trim()
+      : project.webhooks?.jira_principal_id?.trim();
+  const configKey = `webhooks.${provider}_principal_id`;
+  if (!principalId) {
+    return {
+      ok: false,
+      message: `${configKey} must name a stored admin service principal before ${provider} webhook work can be queued`,
+    };
+  }
+  const principal = resolvePrincipal(principalId);
+  if (!principal) {
+    return { ok: false, message: `${configKey} names missing principal '${principalId}'` };
+  }
+  if (principal.subject.type !== 'service' || !isAdminPrincipal(principal)) {
+    return {
+      ok: false,
+      message: `${configKey} must name a service principal with admin/global authority`,
+    };
+  }
+  return { ok: true, originator: { kind: 'principal', principalId: principal.id } };
+}
+
+function webhookOriginatorOrReject(
+  project: ProjectConfig,
+  provider: WebhookProvider,
+  resolvePrincipal: WebhookPrincipalResolver,
+  res: ServerResponse,
+): WorkOriginator | null {
+  const authority = resolveWebhookWorkOriginator(project, provider, resolvePrincipal);
+  if (authority.ok) return authority.originator;
+  console.warn(`[webhook/${provider}] refusing queue persistence: ${authority.message}`);
+  json(res, 503, {
+    error: 'Webhook service authority is not configured',
+    detail: authority.message,
+  });
+  return null;
+}
 
 // ─── Helpers ───
 
@@ -53,6 +101,7 @@ function matchProjectByJiraKey(projects: ProjectConfig[], issueKey: string): Pro
 export async function handleGitHubWebhook(
   req: IncomingMessage,
   res: ServerResponse,
+  resolvePrincipal: WebhookPrincipalResolver,
 ): Promise<void> {
   const body = await readBody(req);
   let payload: Record<string, unknown>;
@@ -119,6 +168,8 @@ export async function handleGitHubWebhook(
     json(res, 200, { ignored: true, reason: 'auto_dispatch disabled' });
     return;
   }
+  const originator = webhookOriginatorOrReject(project, 'github', resolvePrincipal, res);
+  if (!originator) return;
 
   const flowType: FlowType = 'review-pr';
   const ticketOrPr = `${repoFullName}#${prNumber}`;
@@ -130,7 +181,7 @@ export async function handleGitHubWebhook(
       ticketOrPr,
       priority: 10,
     },
-    WEBHOOK_WORK_ORIGINATORS.github,
+    originator,
   );
 
   console.log(
@@ -141,7 +192,11 @@ export async function handleGitHubWebhook(
 
 // ─── Jira webhook ───
 
-export async function handleJiraWebhook(req: IncomingMessage, res: ServerResponse): Promise<void> {
+export async function handleJiraWebhook(
+  req: IncomingMessage,
+  res: ServerResponse,
+  resolvePrincipal: WebhookPrincipalResolver,
+): Promise<void> {
   const body = await readBody(req);
   let payload: Record<string, unknown>;
   try {
@@ -211,6 +266,8 @@ export async function handleJiraWebhook(req: IncomingMessage, res: ServerRespons
     json(res, 200, { ignored: true, reason: 'auto_dispatch disabled' });
     return;
   }
+  const originator = webhookOriginatorOrReject(project, 'jira', resolvePrincipal, res);
+  if (!originator) return;
 
   const flowType: FlowType = 'fix-bug';
   const item = addItem(
@@ -220,7 +277,7 @@ export async function handleJiraWebhook(req: IncomingMessage, res: ServerRespons
       ticketOrPr: issueKey,
       priority: 10,
     },
-    WEBHOOK_WORK_ORIGINATORS.jira,
+    originator,
   );
 
   console.log(

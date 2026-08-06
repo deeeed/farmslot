@@ -226,9 +226,10 @@ function registryMethods() {
 function webhookOriginatorProblems() {
   const source = readFileSync(webhookPath, 'utf8');
   const file = ts.createSourceFile(webhookPath, source, ts.ScriptTarget.Latest, true);
-  const expected = new Set(['WEBHOOK_WORK_ORIGINATORS.github', 'WEBHOOK_WORK_ORIGINATORS.jira']);
-  const observed = new Set();
+  const expectedProviders = new Set(['github', 'jira']);
+  const observedProviders = new Set();
   const findings = [];
+  let addItemCalls = 0;
   const visit = (node) => {
     if (
       ts.isPropertyAssignment(node) &&
@@ -243,20 +244,36 @@ function webhookOriginatorProblems() {
       ts.isIdentifier(node.expression) &&
       node.expression.text === 'addItem'
     ) {
+      addItemCalls += 1;
       const originator = node.arguments[1]?.getText(file);
-      if (!originator || !expected.has(originator)) {
+      if (originator !== 'originator') {
         findings.push(
-          `webhook addItem must use an explicit external originator (found ${originator ?? 'none'})`,
+          `webhook addItem must use the resolved service originator (found ${originator ?? 'none'})`,
         );
-      } else {
-        observed.add(originator);
+      }
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'webhookOriginatorOrReject'
+    ) {
+      const provider = node.arguments[1];
+      if (provider && ts.isStringLiteral(provider) && expectedProviders.has(provider.text)) {
+        observedProviders.add(provider.text);
       }
     }
     ts.forEachChild(node, visit);
   };
   visit(file);
-  for (const originator of expected) {
-    if (!observed.has(originator)) findings.push(`webhook ingress is missing ${originator}`);
+  if (addItemCalls !== 2) {
+    findings.push(
+      `webhook ingress must have exactly two queue persistence sites (found ${addItemCalls})`,
+    );
+  }
+  for (const provider of expectedProviders) {
+    if (!observedProviders.has(provider)) {
+      findings.push(`webhook ingress is missing ${provider} service-authority resolution`);
+    }
   }
   return [...new Set(findings)];
 }

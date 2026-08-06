@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - feat(auth): implement ADR-051 principals, durable independently revocable credentials, solo-to-activated lifecycle, default-deny role authorization, scoped pairing, work provenance, and fire-time reauthorization.
 - fix(run-engine): preserve an existing fix-bug/dev feature branch without reset or clean when replaying from prepare instead of recreating it from main or discarding unpublished work.
+- fix(auth): require auto-dispatch webhooks to name a stored admin service principal, preserve authority across rejected backlog updates, return defensive backlog and queue snapshots, and log provenance migration only when it runs.
 
 - Require a machine-readable verdict and issue artifact from newly launched self-review and publication reviewers, bound live waits to the configured timeout without masking them on cleanup failure, preserve failed and valid sibling outcomes during restart recovery, and terminalize operator-required review failures with coherent replay and opaque-scope-verified process-group cleanup, including the pre-launcher-pid window without trusting recycled identities.
 

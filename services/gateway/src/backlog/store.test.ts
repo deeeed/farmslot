@@ -590,8 +590,10 @@ test('backlog load marks missing queue link needs-attention and clears stale que
     flowType: 'dev',
     status: 'ready',
   });
-  created.item.queuedQueueItemId = 'missing-queue-item';
-  created.item.status = 'queued';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.queuedQueueItemId = 'missing-queue-item';
+    item.status = 'queued';
+  });
   await backlog.flushBacklogForTests();
 
   await backlog.loadBacklog();
@@ -637,7 +639,9 @@ test('backlog.archive moves finished backlog items to archived', async () => {
     sourceKind: 'manual',
     flowType: 'dev',
   });
-  created.item.status = 'done';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'done';
+  });
 
   const archived = await backlog.archiveBacklogItem({ itemId: created.item.id });
   assert.equal(archived.item.status, 'archived');
@@ -653,7 +657,9 @@ test('explicit archived filter includes archived backlog items', async () => {
     sourceKind: 'manual',
     flowType: 'dev',
   });
-  created.item.status = 'archived';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'archived';
+  });
 
   assert.equal(backlog.listBacklogItems({ status: 'archived' }).items.length, 1);
   assert.equal(backlog.listBacklogItems().items.length, 0);
@@ -675,9 +681,11 @@ test('delete allows backlog items linked only to terminal runs', async () => {
     backlogItemId: created.item.id,
   });
   runStore.updateRun(run.id, { status: 'done' });
-  created.item.status = 'done';
-  created.item.runId = run.id;
-  created.item.queuedQueueItemId = 'stale-queue-link';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'done';
+    item.runId = run.id;
+    item.queuedQueueItemId = 'stale-queue-link';
+  });
 
   await backlog.deleteBacklogItem(created.item.id);
 
@@ -699,7 +707,9 @@ test('manual backlog run handoff normalizes manual refs', async () => {
     flowType: 'dev',
     status: 'ready',
   });
-  created.item.status = 'queued';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'queued';
+  });
 
   assert.equal(
     backlog.isValidManualBacklogRunHandoff(created.item.id, 'manual-000001', 'farmslot-farm'),
@@ -720,9 +730,11 @@ test('run observation heals needs-attention when linked run completes', async ()
     flowType: 'dev',
     status: 'ready',
   });
-  created.item.status = 'needs-attention';
-  created.item.runId = 'blocked-then-done';
-  created.item.lastObservedRunStatus = 'blocked';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'needs-attention';
+    item.runId = 'blocked-then-done';
+    item.lastObservedRunStatus = 'blocked';
+  });
 
   await backlog.markBacklogRunObserved({
     id: 'blocked-then-done',
@@ -745,8 +757,10 @@ test('multi-PR item returns to ready on run done instead of auto-closing', async
     status: 'ready',
     multiPr: true,
   });
-  created.item.status = 'running';
-  created.item.runId = 'slice-1-run';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'running';
+    item.runId = 'slice-1-run';
+  });
 
   await backlog.markBacklogRunObserved({
     id: 'slice-1-run',
@@ -770,10 +784,11 @@ test('multi-PR item returns to ready on run done instead of auto-closing', async
 
   // Failure/needs-attention paths keep their normal behavior on multi-PR items
   // once the next slice's run is actually linked (queue -> run handoff).
-  const queuedItem = backlog.listBacklogItems({ includeArchived: true }).items[0]!;
-  delete queuedItem.queuedQueueItemId;
-  queuedItem.status = 'running';
-  queuedItem.runId = 'slice-2-run';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    delete item.queuedQueueItemId;
+    item.status = 'running';
+    item.runId = 'slice-2-run';
+  });
   await backlog.markBacklogRunObserved({
     id: 'slice-2-run',
     status: 'failed',
@@ -799,8 +814,10 @@ test('late completion echo from a previous slice cannot clobber the next slice',
     backlogItemId: created.item.id,
   });
   runStore.updateRun(sliceOne.id, { status: 'done' });
-  created.item.status = 'running';
-  created.item.runId = sliceOne.id;
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'running';
+    item.runId = sliceOne.id;
+  });
   await backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
   assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.status, 'ready');
 
@@ -813,8 +830,10 @@ test('late completion echo from a previous slice cannot clobber the next slice',
     allowedSlots: ['no-such-slot'],
     priority: 10,
   });
-  created.item.status = 'queued';
-  created.item.queuedQueueItemId = queueItem.id;
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'queued';
+    item.queuedQueueItemId = queueItem.id;
+  });
   await backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
   let item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'queued');
@@ -828,9 +847,11 @@ test('late completion echo from a previous slice cannot clobber the next slice',
     backlogItemId: created.item.id,
   });
   runStore.updateRun(sliceTwo.id, { status: 'monitoring' });
-  delete created.item.queuedQueueItemId;
-  created.item.status = 'running';
-  created.item.runId = sliceTwo.id;
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    delete item.queuedQueueItemId;
+    item.status = 'running';
+    item.runId = sliceTwo.id;
+  });
   await backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
   item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'running');
@@ -869,8 +890,10 @@ test('a late prior-slice done echo does not resurrect a failed multi-PR slice', 
     backlogItemId: created.item.id,
   });
   runStore.updateRun(sliceTwo.id, { status: 'failed' });
-  created.item.status = 'failed';
-  created.item.runId = sliceTwo.id;
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'failed';
+    item.runId = sliceTwo.id;
+  });
 
   // A late slice-1 done echo must NOT reset the failed item to ready or clear
   // slice 2's link, even though slice 2's run is terminal.
@@ -1207,8 +1230,9 @@ test('restart drops a dispatching launch-candidate row whose run already exists'
   const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
   // Simulate gateway shutdown mid-handoff: row is 'dispatching' on disk and the
   // run it produced is durable with the SAME launchAttempt.
-  const row = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id)!;
-  row.status = 'dispatching';
+  const row = queue.mutateQueueItemForTests(enqueued.queueItem.id, (item) => {
+    item.status = 'dispatching';
+  });
   await queue.persistQueueNow();
   runStore.createRun({
     flowType: 'dev',
@@ -1252,8 +1276,9 @@ test('restart re-queues a dispatching launch-candidate row with no durable run',
     },
   });
   const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
-  const row = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id)!;
-  row.status = 'dispatching';
+  const row = queue.mutateQueueItemForTests(enqueued.queueItem.id, (item) => {
+    item.status = 'dispatching';
+  });
   await queue.persistQueueNow();
 
   await queue.loadQueue();
@@ -1304,28 +1329,29 @@ test('restart attempt matrix: mismatched attempts re-queue, only exact matches d
   // must survive restart; dropping it would strand the re-dispatch.
   const retryItem = await mkItem('lp_retry_mx');
   const retryEnqueued = await backlog.enqueueBacklogItem({ itemId: retryItem.id });
-  const retryRow = queue.getQueueSnapshot().find((row) => row.id === retryEnqueued.queueItem.id)!;
-  retryRow.status = 'dispatching';
-  retryRow.launchAttempt = 2;
+  const retryRow = queue.mutateQueueItemForTests(retryEnqueued.queueItem.id, (row) => {
+    row.status = 'dispatching';
+    row.launchAttempt = 2;
+  });
   const oldRun = mkRun(retryItem, 'lp_retry_mx', 1);
   runStore.updateRun(oldRun.id, { status: 'failed' } as never);
 
   // Case 2: legacy row (no attempt) vs attempt-bearing run — undefined !== 1, re-queue.
   const legacyItem = await mkItem('lp_legacy_mx');
   const legacyEnqueued = await backlog.enqueueBacklogItem({ itemId: legacyItem.id });
-  const legacyRow = queue.getQueueSnapshot().find((row) => row.id === legacyEnqueued.queueItem.id)!;
-  legacyRow.status = 'dispatching';
-  delete legacyRow.launchAttempt;
+  const legacyRow = queue.mutateQueueItemForTests(legacyEnqueued.queueItem.id, (row) => {
+    row.status = 'dispatching';
+    delete row.launchAttempt;
+  });
   mkRun(legacyItem, 'lp_legacy_mx', 1);
 
   // Case 3: legacy row vs legacy run (both undefined) — match, drop.
   const bothLegacyItem = await mkItem('lp_bothlegacy_mx');
   const bothLegacyEnqueued = await backlog.enqueueBacklogItem({ itemId: bothLegacyItem.id });
-  const bothLegacyRow = queue
-    .getQueueSnapshot()
-    .find((row) => row.id === bothLegacyEnqueued.queueItem.id)!;
-  bothLegacyRow.status = 'dispatching';
-  delete bothLegacyRow.launchAttempt;
+  const bothLegacyRow = queue.mutateQueueItemForTests(bothLegacyEnqueued.queueItem.id, (row) => {
+    row.status = 'dispatching';
+    delete row.launchAttempt;
+  });
   mkRun(bothLegacyItem, 'lp_bothlegacy_mx', undefined);
 
   await queue.persistQueueNow();
@@ -1455,8 +1481,10 @@ test('close-shipped finalizes a multi-PR item after its last slice', async () =>
     status: 'ready',
     multiPr: true,
   });
-  created.item.status = 'running';
-  created.item.runId = 'final-slice-run';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'running';
+    item.runId = 'final-slice-run';
+  });
   await backlog.markBacklogRunObserved({
     id: 'final-slice-run',
     status: 'done',
@@ -1495,8 +1523,10 @@ test('run observation does not overwrite terminal backlog status', async () => {
     flowType: 'dev',
     status: 'ready',
   });
-  created.item.status = 'done';
-  created.item.runId = 'run-terminal';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'done';
+    item.runId = 'run-terminal';
+  });
 
   await backlog.markBacklogRunObserved({
     id: 'run-terminal',
@@ -1517,9 +1547,11 @@ test('run observation reactivates a failed item when its own run is replayed', a
     flowType: 'dev',
     status: 'ready',
   });
-  created.item.status = 'failed';
-  created.item.runId = 'run-replayed';
-  created.item.lastObservedRunStatus = 'failed';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'failed';
+    item.runId = 'run-replayed';
+    item.lastObservedRunStatus = 'failed';
+  });
 
   // Replaying the item's own run moves it back to a non-terminal status; the
   // backlog item must follow instead of staying stuck at failed.
@@ -1543,8 +1575,10 @@ test('run observation can follow successor run by backlogItemId after parent can
     flowType: 'dev',
     status: 'ready',
   });
-  created.item.status = 'running';
-  created.item.runId = 'parent-run';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'running';
+    item.runId = 'parent-run';
+  });
 
   await backlog.markBacklogRunObserved({
     id: 'parent-run',
@@ -1571,9 +1605,11 @@ test('deleted run releases failed backlog item back to ready', async () => {
     flowType: 'dev',
     status: 'ready',
   });
-  created.item.status = 'failed';
-  created.item.runId = 'deleted-run';
-  created.item.lastObservedRunStatus = 'failed';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'failed';
+    item.runId = 'deleted-run';
+    item.lastObservedRunStatus = 'failed';
+  });
 
   const graphIds = await backlog.markBacklogRunReleased('deleted-run');
   assert.deepEqual(graphIds, []);
@@ -1593,9 +1629,11 @@ test('mark ready clears stale run linkage for failed backlog items', async () =>
     flowType: 'dev',
     status: 'ready',
   });
-  created.item.status = 'failed';
-  created.item.runId = 'stale-run';
-  created.item.lastObservedRunStatus = 'failed';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'failed';
+    item.runId = 'stale-run';
+    item.lastObservedRunStatus = 'failed';
+  });
 
   const result = await backlog.markBacklogItemReady({ itemId: created.item.id });
   assert.equal(result.item.status, 'ready');
@@ -1612,9 +1650,11 @@ test('backlog load releases failed items with missing linked runs', async () => 
     flowType: 'dev',
     status: 'ready',
   });
-  created.item.status = 'failed';
-  created.item.runId = 'missing-run';
-  created.item.lastObservedRunStatus = 'failed';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'failed';
+    item.runId = 'missing-run';
+    item.lastObservedRunStatus = 'failed';
+  });
   await backlog.updateBacklogItem({ itemId: created.item.id, notes: 'persist failed link' });
   await backlog.flushBacklogForTests();
 
@@ -1636,7 +1676,9 @@ test('backlog broadcasts include archived items for client-side archived filter'
     sourceKind: 'manual',
     flowType: 'dev',
   });
-  created.item.status = 'archived';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'archived';
+  });
   await backlog.updateBacklogItem({ itemId: created.item.id, notes: 'touch' });
 
   assert.equal((payload as { items?: Array<{ id: string }> }).items?.[0]?.id, created.item.id);
@@ -1658,8 +1700,10 @@ test('backlog load does not overwrite terminal status from linked run observatio
     backlogItemId: created.item.id,
   });
   runStore.updateRun(run.id, { status: 'failed' });
-  created.item.status = 'done';
-  created.item.runId = run.id;
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'done';
+    item.runId = run.id;
+  });
   await backlog.flushBacklogForTests();
 
   await backlog.loadBacklog();
@@ -1786,9 +1830,11 @@ test('backlog.dequeue rejects work-graph-linked items', async () => {
     flowType: 'dev',
     status: 'ready',
   });
-  created.item.status = 'queued';
-  created.item.workGraphId = 'graph-1';
-  created.item.workNodeId = 'node-1';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'queued';
+    item.workGraphId = 'graph-1';
+    item.workNodeId = 'node-1';
+  });
 
   await assert.rejects(
     () => backlog.dequeueBacklogItem({ itemId: created.item.id }),
@@ -1811,8 +1857,10 @@ test('backlog.dequeue rejects items linked to active runs', async () => {
     ticketOrPr: created.item.sourceRef,
     backlogItemId: created.item.id,
   });
-  created.item.status = 'queued';
-  created.item.runId = run.id;
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'queued';
+    item.runId = run.id;
+  });
 
   await assert.rejects(
     () => backlog.dequeueBacklogItem({ itemId: created.item.id }),
@@ -1831,9 +1879,9 @@ test('backlog.dequeue rejects while linked queue item is dispatching', async () 
     allowedSlots: ['macwork-ff-1'],
   });
   const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
-  const linked = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id);
-  assert.ok(linked);
-  linked.status = 'dispatching';
+  queue.mutateQueueItemForTests(enqueued.queueItem.id, (item) => {
+    item.status = 'dispatching';
+  });
 
   await assert.rejects(
     () => backlog.dequeueBacklogItem({ itemId: created.item.id }),
@@ -1852,9 +1900,9 @@ test('backlog.dequeue purges cancelled linked queue rows before re-enqueue', asy
     allowedSlots: ['macwork-ff-1'],
   });
   const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
-  const linked = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id);
-  assert.ok(linked);
-  linked.status = 'cancelled';
+  queue.mutateQueueItemForTests(enqueued.queueItem.id, (item) => {
+    item.status = 'cancelled';
+  });
   await queue.persistQueueNow();
 
   const dequeued = await backlog.dequeueBacklogItem({ itemId: created.item.id });
@@ -2003,9 +2051,9 @@ test('dispatch.queue.removeOrphan removes cancelled orphaned backlog-linked queu
     status: 'ready',
   });
   const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
-  const linked = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id);
-  assert.ok(linked);
-  linked.status = 'cancelled';
+  queue.mutateQueueItemForTests(enqueued.queueItem.id, (item) => {
+    item.status = 'cancelled';
+  });
   await queue.persistQueueNow();
 
   await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
@@ -2025,9 +2073,9 @@ test('dispatch.queue.removeOrphan refuses dispatching orphaned backlog-linked qu
     status: 'ready',
   });
   const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
-  const linked = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id);
-  assert.ok(linked);
-  linked.status = 'dispatching';
+  queue.mutateQueueItemForTests(enqueued.queueItem.id, (item) => {
+    item.status = 'dispatching';
+  });
   await queue.persistQueueNow();
 
   await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
@@ -2128,8 +2176,10 @@ test('closeShipped refuses items with an active run', async () => {
     sourceKind: 'manual',
     flowType: 'dev',
   });
-  created.item.status = 'running';
-  created.item.runId = 'run-live-1';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'running';
+    item.runId = 'run-live-1';
+  });
 
   await assert.rejects(
     () => backlog.closeShippedBacklogItem({ itemId: created.item.id }),
@@ -2152,9 +2202,9 @@ test('closeShipped refuses items whose queue row is mid-dispatch', async () => {
   });
   await backlog.markBacklogItemReady({ itemId: created.item.id });
   const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
-  const row = queue.getQueueSnapshot().find((candidate) => candidate.id === enqueued.queueItem.id);
-  assert.ok(row);
-  row.status = 'dispatching';
+  queue.mutateQueueItemForTests(enqueued.queueItem.id, (item) => {
+    item.status = 'dispatching';
+  });
 
   await assert.rejects(
     () => backlog.closeShippedBacklogItem({ itemId: created.item.id }),
@@ -2180,9 +2230,11 @@ test('a failed backlog write rejects the settle instead of reporting a settled c
     flowType: 'dev',
     status: 'ready',
   });
-  created.item.status = 'needs-attention';
-  created.item.runId = 'settle-persist-failure';
-  created.item.lastObservedRunStatus = 'blocked';
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'needs-attention';
+    item.runId = 'settle-persist-failure';
+    item.lastObservedRunStatus = 'blocked';
+  });
 
   // Make the backlog file undeletable/unwritable by removing write permission on its
   // directory, so `persist()` fails on the temp-file write.

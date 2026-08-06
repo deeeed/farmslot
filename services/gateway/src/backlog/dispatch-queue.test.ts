@@ -27,6 +27,7 @@ import {
   isQueueClaimHeld,
   listItems,
   loadQueue,
+  mutateQueueItemForTests,
   persistQueueNow,
   QueueClaimLostError,
   reclaimExpiredClaims,
@@ -266,7 +267,9 @@ test('updateItem allows pending slot reassignment but rejects dispatching items'
     });
     assert.deepEqual(updated.allowedSlots, ['slot-a', 'slot-b']);
     assert.equal(updated.priority, 5);
-    item.status = 'dispatching';
+    mutateQueueItemForTests(item.id, (record) => {
+      record.status = 'dispatching';
+    });
     assert.throws(
       () => updateItem({ itemId: item.id, allowedSlots: ['slot-c'] }),
       /item is dispatching/,
@@ -318,7 +321,9 @@ test('evalSuiteCapUsage counts active runs and dispatching eval queue cells', as
     },
   });
   try {
-    item.status = 'dispatching';
+    mutateQueueItemForTests(item.id, (record) => {
+      record.status = 'dispatching';
+    });
     const usage = evalSuiteCapUsage(capGroupId, getQueueSnapshot());
     assert.equal(usage.cap, 2);
     assert.equal(usage.active, 1);
@@ -1117,10 +1122,11 @@ test('claimQueueItem records exclusive holder and rejects a second claimer', () 
     assert.ok(claimA);
     assert.equal(claimA.holderId, 'holder-a');
     assert.equal(claimA.epoch, 1);
-    assert.equal(item.status, 'dispatching');
-    assert.equal(item.claimHolder, 'holder-a');
-    assert.equal(item.claimEpoch, 1);
-    assert.ok(item.claimExpiresAt);
+    const claimed = getQueueSnapshot().find((record) => record.id === item.id);
+    assert.equal(claimed?.status, 'dispatching');
+    assert.equal(claimed?.claimHolder, 'holder-a');
+    assert.equal(claimed?.claimEpoch, 1);
+    assert.ok(claimed?.claimExpiresAt);
     assert.equal(isQueueClaimHeld(claimA), true);
 
     const claimB = claimQueueItem(item.id, 'holder-b');
@@ -1222,7 +1228,7 @@ test('cancelGraphQueuedItem revokes a claimed dispatching row', async () => {
   });
   const claim = claimQueueItem(item.id, 'holder-cancel');
   assert.ok(claim);
-  assert.equal(item.status, 'dispatching');
+  assert.equal(getQueueSnapshot().find((record) => record.id === item.id)?.status, 'dispatching');
 
   const cancelled = await cancelGraphQueuedItem({
     workGraphId: 'wg_cancel_claim',
@@ -1450,13 +1456,17 @@ test('assertQueueClaimHeld renews an uncontested claim past wall-clock TTL', () 
     const claim = claimQueueItem(item.id, 'holder-renew', { ttlMs: 1 });
     assert.ok(claim);
     // Force past wall-clock expiry without reclaim — ownership still matches.
-    item.claimExpiresAt = new Date(Date.now() - 1_000).toISOString();
-    claim.expiresAt = item.claimExpiresAt;
+    const expired = new Date(Date.now() - 1_000).toISOString();
+    mutateQueueItemForTests(item.id, (record) => {
+      record.claimExpiresAt = expired;
+    });
+    claim.expiresAt = expired;
     assert.equal(isQueueClaimHeld(claim), false, 'isQueueClaimHeld still honors TTL');
     // assert renews rather than treating pure expiry as takeover.
     assert.doesNotThrow(() => assertQueueClaimHeld(claim, 'pre-create'));
     assert.equal(isQueueClaimHeld(claim), true, 'renew extends TTL');
-    assert.ok(Date.parse(item.claimExpiresAt!) > Date.now());
+    const renewed = getQueueSnapshot().find((record) => record.id === item.id);
+    assert.ok(Date.parse(renewed!.claimExpiresAt!) > Date.now());
   } finally {
     if (getQueueSnapshot().some((q) => q.id === item.id)) {
       removeQueueItemInternal(item.id, 'test-cleanup');
@@ -1472,11 +1482,11 @@ test('reclaimExpiredClaims restores stranded dispatching rows to queued', () => 
   });
   const claim = claimQueueItem(item.id, 'holder-expire', { ttlMs: 1 });
   assert.ok(claim);
-  assert.equal(item.status, 'dispatching');
+  assert.equal(getQueueSnapshot().find((record) => record.id === item.id)?.status, 'dispatching');
   // Force past expiry without waiting.
   const n = reclaimExpiredClaims(Date.parse(claim.expiresAt) + 1);
   assert.ok(n >= 1);
-  assert.equal(item.status, 'queued');
+  assert.equal(getQueueSnapshot().find((record) => record.id === item.id)?.status, 'queued');
   assert.equal(isQueueClaimHeld(claim), false);
   // Fresh claim is possible again.
   const again = claimQueueItem(item.id, 'holder-retry');
@@ -1625,8 +1635,10 @@ test('loadQueue keeps legacy undefined-attempt launch row against live attempt-b
     launchCandidateId: 'cand_legacy',
   });
   // Simulate legacy disk row without launchAttempt.
-  delete (item as { launchAttempt?: number }).launchAttempt;
-  item.status = 'dispatching';
+  mutateQueueItemForTests(item.id, (record) => {
+    delete record.launchAttempt;
+    record.status = 'dispatching';
+  });
   await persistQueueNow();
   await loadQueue();
   const reloaded = getQueueSnapshot().find((q) => q.id === item.id);

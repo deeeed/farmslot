@@ -71,8 +71,8 @@ import { refreshBranches } from './methods/dispatch.js';
 import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
 import { fleetRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
-import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { resolveCreateSafetyTier } from './methods/run.js';
+import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
 import { initRunCompletion } from './run-completion/orchestrator.js';
@@ -506,6 +506,11 @@ async function main(): Promise<void> {
   // Shared request handler for the plaintext HTTP server and (when TLS is
   // configured) the HTTPS server — identical health/file/artifact/webhook/
   // static-UI routing regardless of transport.
+  const resolveWebhookPrincipal = (principalId: string) => {
+    const resolution = gatewayAuthRuntime.resolver.resolvePrincipalId(principalId);
+    return resolution.ok ? resolution.principal : null;
+  };
+
   const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
     if (!applyGatewayCors(req, res)) {
       res.writeHead(403);
@@ -543,7 +548,7 @@ async function main(): Promise<void> {
     }
     // Webhook endpoints
     if (req.method === 'POST' && req.url === '/webhook/github') {
-      handleGitHubWebhook(req, res).catch((err) => {
+      handleGitHubWebhook(req, res, resolveWebhookPrincipal).catch((err) => {
         console.error(`[webhook/github] error: ${(err as Error).message}`);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Internal error' }));
@@ -551,7 +556,7 @@ async function main(): Promise<void> {
       return;
     }
     if (req.method === 'POST' && req.url === '/webhook/jira') {
-      handleJiraWebhook(req, res).catch((err) => {
+      handleJiraWebhook(req, res, resolveWebhookPrincipal).catch((err) => {
         console.error(`[webhook/jira] error: ${(err as Error).message}`);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Internal error' }));
