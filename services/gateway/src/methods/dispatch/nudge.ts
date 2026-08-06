@@ -9,7 +9,7 @@ import {
   primaryRoleForFlow,
 } from '@farmslot/protocol';
 
-import { upsertAgentContext } from '../../agents/contexts.js';
+import { selectAgentContext, upsertAgentContext } from '../../agents/contexts.js';
 import {
   claimSlotStatusIf,
   execLocal,
@@ -37,6 +37,10 @@ import {
   runnerSupportsTmuxNudges,
   sendRunnerInstructionSafely,
 } from '../../runners/registry.js';
+import {
+  resolveRunRetainedSessionBinding,
+  retainedSessionSendOption,
+} from '../../runners/session-process.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
@@ -335,6 +339,18 @@ export async function nudgeDispatch(
     taskDir: workerTaskAbs,
   });
   const nudgeTimeoutMs = resolveSafeSendTimeoutMs(runner);
+  const { getRun, updateRun } = await import('../../runs/store.js');
+  const deliveryOwnerRunId = (await readSlotField(params.slotId, 'current_run_id')) as
+    | string
+    | null;
+  const deliveryOwnerRun =
+    deliveryOwnerRunId && deliveryOwnerRunId !== params.runId ? getRun(deliveryOwnerRunId) : null;
+  const deliveryOwnerContext = deliveryOwnerRun
+    ? selectAgentContext(deliveryOwnerRun, { role: 'primary' })
+    : null;
+  const retainedSession = deliveryOwnerRun
+    ? resolveRunRetainedSessionBinding(deliveryOwnerRun, deliveryOwnerContext)
+    : { binding: null, reason: null };
   const sent = await sendRunnerInstructionSafely(
     vars,
     workerTarget,
@@ -343,7 +359,11 @@ export async function nudgeDispatch(
     '[nudge]',
     nudgeTimeoutMs,
     // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-    { forceBusyPoll: true, recovery: { runId: params.runId, emit } },
+    {
+      forceBusyPoll: true,
+      recovery: { runId: params.runId, emit },
+      ...retainedSessionSendOption(retainedSession),
+    },
   );
   if (!sent) {
     // Capture the pane tail so the failure is debuggable rather than a context-free timeout.
@@ -353,7 +373,6 @@ export async function nudgeDispatch(
     );
     // No rollback needed — we deferred all state mutation past this point. Prior run is still
     // the slot's owner and its monitor/watchers are intact. The new run fails cleanly.
-    const { getRun, updateRun } = await import('../../runs/store.js');
     const timeoutRun = getRun(params.runId);
     if (timeoutRun) {
       updateRun(params.runId, {
@@ -381,12 +400,9 @@ export async function nudgeDispatch(
   // context starts at `priorOwnerNudgeCount + 1`, not `0 + 1`. Without this read here the
   // wizard's `×N` chip resets to 1 after every nudge regardless of how many we've sent into
   // the same worker, which also defeats the `high-nudge-count` risk-flag threshold.
-  const { getRun } = await import('../../runs/store.js');
-  const priorRunId = (await readSlotField(params.slotId, 'current_run_id')) as string | null;
-  const priorOwnerRun = priorRunId && priorRunId !== params.runId ? getRun(priorRunId) : null;
   const priorOwnerContext =
-    priorOwnerRun?.agentContexts?.find((c) => c.role === workerRole) ??
-    priorOwnerRun?.agentContexts?.[0];
+    deliveryOwnerRun?.agentContexts?.find((c) => c.role === workerRole) ??
+    deliveryOwnerRun?.agentContexts?.[0];
   const priorNudgeCount = priorOwnerContext?.nudgeCount ?? 0;
 
   await terminalizePriorRunOnSlot(params.slotId, params.runId, 'nudge');

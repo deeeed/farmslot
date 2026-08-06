@@ -31,6 +31,7 @@ import {
 import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-signals.js';
 
 import { claudeHookObservability } from './claude-observability.js';
+import { codexSessionObservability } from './codex-observability.js';
 import { grokLogObservability } from './grok-observability.js';
 import {
   buildPendingDegradedAgreementEntry,
@@ -62,6 +63,7 @@ import type {
   ObservabilityScope,
   RunnerActivity,
   RunnerObservability,
+  RunnerSessionDeliveryState,
 } from './observability-types.js';
 import { lineHasAuthBlockerPhrase, readPaneStateFromCapture } from './pane-state-script.js';
 import {
@@ -103,6 +105,8 @@ export interface RunnerDefinition {
   sessionReload: SessionReloadCapability;
   /** How a completed worker session receives a chained task without TUI parsing. */
   retainedSessionHandoff: RetainedSessionHandoff;
+  /** Exact persisted-session identity can gate retained prompt delivery. */
+  supportsExactSessionDelivery: boolean;
   /** Runner's TUI can show a busy "composer" pane that swallows send-keys — poll before sending. */
   requiresBusyComposerPoll: boolean;
   /**
@@ -186,6 +190,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
     retainedSessionHandoff: 'resume-with-prompt',
+    supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: false,
     // Claude has no "more dangerous" mode beyond --dangerously-skip-permissions,
     // so full-auto and dangerous collapse onto the same flag. Sandboxed drops it.
@@ -218,6 +223,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
     retainedSessionHandoff: 'resume-with-prompt',
+    supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: true,
     // Codex tier mapping:
     //   sandboxed  — default; Codex CLI prompts for approvals on destructive ops.
@@ -254,6 +260,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: false,
     sessionReload: 'none',
     retainedSessionHandoff: 'in-place',
+    supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
     flagsByTier: {
       sandboxed: ['--sandbox', 'enabled'],
@@ -281,6 +288,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
     retainedSessionHandoff: 'in-place',
+    supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: true,
     flagsByTier: {
       sandboxed: [],
@@ -304,6 +312,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: false,
     sessionReload: 'none',
     retainedSessionHandoff: 'unsupported',
+    supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
@@ -323,6 +332,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: false,
     sessionReload: 'none',
     retainedSessionHandoff: 'unsupported',
+    supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
@@ -342,6 +352,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: false,
     sessionReload: 'none',
     retainedSessionHandoff: 'unsupported',
+    supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
@@ -353,7 +364,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
 
 const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
   claude: claudeHookObservability,
-  codex: claudeHookObservability,
+  codex: codexSessionObservability,
   grok: grokLogObservability,
 };
 
@@ -1465,6 +1476,7 @@ export async function runnerHasDurablePromptHandoff(
     requirePromptDigest?: boolean;
     acceptExistingLaunchAck?: boolean;
     promptAcceptanceBaselineMs?: number | null;
+    retainedSession?: { sessionId: string; sessionPath: string };
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
   const observability = getRunnerObservability(runner);
@@ -1488,6 +1500,28 @@ export async function runnerHasDurablePromptHandoff(
     return { accepted: false, reason: 'prompt acceptance baseline unavailable' };
   }
   try {
+    if (opts.retainedSession && observability.promptAcceptedInSession) {
+      const nativeReading = await observability.promptAcceptedInSession(
+        vars,
+        target,
+        opts.retainedSession.sessionId,
+        opts.retainedSession.sessionPath,
+        message,
+        promptAcceptedSinceMs,
+      );
+      if (
+        isObservabilityReadingAuthoritative(nativeReading) &&
+        nativeReading.value === true &&
+        nativeReading.exactPromptMatch === true &&
+        nativeReading.source === 'signal'
+      ) {
+        return {
+          accepted: true,
+          reason: 'exact prompt accepted by runner-native session history',
+          source: 'native-signal',
+        };
+      }
+    }
     const reading = await observability.promptAccepted(
       vars,
       target,
@@ -1892,6 +1926,7 @@ async function sendRunnerInstructionHookOnly(
   loopStartMs: number,
   promptAcceptedSinceMs: number,
   recovery?: RunnerSendRecoveryContext,
+  retainedSession?: { sessionId: string; sessionPath: string },
 ): Promise<boolean> {
   const observability = getRunnerObservability(runner);
   if (!observability) return false;
@@ -1923,7 +1958,30 @@ async function sendRunnerInstructionHookOnly(
     }
     if (promptReading?.value === true && promptReading.confidence === 'high') return true;
 
-    const activity = await readRunnerActivityFromObservability(vars, target, runner);
+    let activity = await readRunnerActivityFromObservability(vars, target, runner);
+    if (
+      retainedSession &&
+      (!activity ||
+        activity.value === 'unknown' ||
+        activity.sessionId !== retainedSession.sessionId)
+    ) {
+      const sessionState = await observability.getSessionDeliveryState(
+        vars,
+        target,
+        retainedSession.sessionId,
+        retainedSession.sessionPath,
+      );
+      activity =
+        sessionState?.confidence === 'high' && sessionState.value !== 'unknown'
+          ? {
+              value: sessionState.value === 'idle' ? 'idle' : 'tool-running',
+              source: sessionState.source,
+              confidence: sessionState.confidence,
+              observedAt: sessionState.observedAt,
+              sessionId: retainedSession.sessionId,
+            }
+          : null;
+    }
     const idleDecision = selectIdleFromObservabilityAndPane(activity, false, true);
     if (idleDecision.degraded) {
       sawHookDegraded = true;
@@ -2042,6 +2100,7 @@ export async function sendRunnerInstructionSafely(
   opts: {
     forceBusyPoll?: boolean;
     recovery?: RunnerSendRecoveryContext;
+    retainedSession?: { sessionId: string; sessionPath: string };
   } = {},
 ): Promise<boolean> {
   const runner = normalizeRunner(runnerId);
@@ -2058,6 +2117,50 @@ export async function sendRunnerInstructionSafely(
     runner,
     hookPromptAcceptedSinceMs,
   );
+  let retainedSession = opts.retainedSession;
+  if (retainedSession && def.supportsExactSessionDelivery) {
+    const observability = getRunnerObservability(runner);
+    if (observability?.normalizeRetainedSessionBinding) {
+      try {
+        retainedSession =
+          (await observability.normalizeRetainedSessionBinding(vars, retainedSession)) ?? undefined;
+      } catch (error) {
+        console.warn(
+          `[${logPrefix}] retained ${runner} session normalization failed for ${target}: ${(error as Error).message}`,
+        );
+        retainedSession = undefined;
+      }
+      if (!retainedSession) {
+        console.warn(
+          `[${logPrefix}] retained ${runner} session binding is incompatible with native session identity; holding send`,
+        );
+        return false;
+      }
+    }
+  }
+  if (retainedSession && def.supportsExactSessionDelivery && !isRunnerPaneRetired(runner)) {
+    const observability = getRunnerObservability(runner);
+    let retainedState: ObservabilityReading<RunnerSessionDeliveryState> | null = null;
+    try {
+      retainedState =
+        (await observability?.getSessionDeliveryState(
+          vars,
+          target,
+          retainedSession.sessionId,
+          retainedSession.sessionPath,
+        )) ?? null;
+    } catch (error) {
+      console.warn(
+        `[${logPrefix}] retained ${runner} session identity read failed for ${target}: ${(error as Error).message}`,
+      );
+    }
+    if (retainedState?.confidence !== 'high' || retainedState.value === 'unknown') {
+      console.warn(
+        `[${logPrefix}] retained ${runner} session identity is unavailable for ${target}; holding send`,
+      );
+      return false;
+    }
+  }
   // ADR-032 Phase 3: hook-capable runners that don't need the busy-composer poll (Claude) resolve
   // the decision from hooks only. Runners that require the poll (Codex) take the pane-fallback path
   // below.
@@ -2072,6 +2175,7 @@ export async function sendRunnerInstructionSafely(
       loopStartMs,
       hookPromptAcceptedSinceMs,
       opts.recovery,
+      retainedSession,
     );
   }
   // Skip the busy-composer poll iff the runner doesn't require it AND the caller didn't opt
@@ -2767,57 +2871,78 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
-    const preSendPane = await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
-      deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
-      pollIntervalMs,
-    });
-    const preSendHandoff = await runnerHasDurablePromptHandoff(
-      vars,
-      target,
-      runner,
-      message,
-      handoffAckSinceMs,
-      {
-        launchAckSignalPath: opts.launchAckSignalPath,
-        launchAckBaseline,
-        requirePromptDigest,
-        acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
-        promptAcceptanceBaselineMs,
-      },
-    );
-    if (preSendHandoff.accepted) {
-      console.log(
-        `[${logPrefix}] prompt handoff accepted via ${preSendHandoff.source}: ${preSendHandoff.reason} before attempt ${attempt}/${maxAttempts}`,
-      );
-      return;
-    }
-    const preSendPaneClaimsTaskActive =
-      runnerPaneShowsPreSendDuplicateInstruction(preSendPane, message, runner) ||
-      runnerPaneShowsTaskAlreadyRunning(preSendPane, message, marker, runner);
-    // The previous attempt's prompt may have been accepted just after its verify
-    // window closed. Pane progress prevents a duplicate transport send, but an
-    // exact-ack caller must keep waiting for structured evidence.
-    if (preSendPaneClaimsTaskActive) {
-      if (requirePromptDigest) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.max(0, Math.min(pollIntervalMs, deliveryDeadline - Date.now()))),
-        );
-        continue;
-      }
-      console.log(
-        `[${logPrefix}] task already visible with runner progress in ${target}; skipping duplicate send (attempt ${attempt}/${maxAttempts})`,
-      );
-      return;
-    }
-    const shouldSubmitOnly = runnerPaneShouldSubmitExistingInstruction(
+    // A prior send can leave the exact instruction in the live composer when
+    // the runner drops Enter. Submit that buffer before waiting for an empty
+    // prompt: a buffered composer cannot satisfy the ready-state wait, so doing
+    // this check afterwards turns the recovery attempt into a guaranteed
+    // timeout.
+    let preSendPane = immediatePane;
+    let shouldSubmitOnly = runnerPaneShouldSubmitExistingInstruction(
       preSendPane,
       message,
       marker,
       runner,
       { allowMarkerOnly: attempt > 1 },
     );
+    if (!shouldSubmitOnly) {
+      preSendPane = await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
+        deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
+        pollIntervalMs,
+      });
+      const preSendHandoff = await runnerHasDurablePromptHandoff(
+        vars,
+        target,
+        runner,
+        message,
+        handoffAckSinceMs,
+        {
+          launchAckSignalPath: opts.launchAckSignalPath,
+          launchAckBaseline,
+          requirePromptDigest,
+          acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
+          promptAcceptanceBaselineMs,
+        },
+      );
+      if (preSendHandoff.accepted) {
+        console.log(
+          `[${logPrefix}] prompt handoff accepted via ${preSendHandoff.source}: ${preSendHandoff.reason} before attempt ${attempt}/${maxAttempts}`,
+        );
+        return;
+      }
+      const preSendPaneClaimsTaskActive =
+        runnerPaneShowsPreSendDuplicateInstruction(preSendPane, message, runner) ||
+        runnerPaneShowsTaskAlreadyRunning(preSendPane, message, marker, runner);
+      // The previous attempt's prompt may have been accepted just after its verify
+      // window closed. Pane progress prevents a duplicate transport send, but an
+      // exact-ack caller must keep waiting for structured evidence.
+      if (preSendPaneClaimsTaskActive) {
+        if (requirePromptDigest) {
+          await new Promise((resolve) =>
+            setTimeout(
+              resolve,
+              Math.max(0, Math.min(pollIntervalMs, deliveryDeadline - Date.now())),
+            ),
+          );
+          continue;
+        }
+        console.log(
+          `[${logPrefix}] task already visible with runner progress in ${target}; skipping duplicate send (attempt ${attempt}/${maxAttempts})`,
+        );
+        return;
+      }
+      shouldSubmitOnly = runnerPaneShouldSubmitExistingInstruction(
+        preSendPane,
+        message,
+        marker,
+        runner,
+        { allowMarkerOnly: attempt > 1 },
+      );
+    }
     let sendCommand: string;
     if (shouldSubmitOnly) {
+      console.log(
+        `[${logPrefix}] recovering buffered instruction in ${target} with submit-only delivery`,
+      );
       sendCommand = tmuxShellSnippet(
         `send-keys -t ${shellQuote(target)} ${runnerBufferedInstructionSubmitKey(preSendPane, runner)} 2>/dev/null`,
       );

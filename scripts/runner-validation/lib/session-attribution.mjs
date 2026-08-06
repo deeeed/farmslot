@@ -111,7 +111,16 @@ export function loadMtimes(paths) {
   return map;
 }
 
-export function runnerSessionIdForPath(sessionPath) {
+export function runnerSessionIdForPath(runner, sessionPath) {
+  if (runner === 'codex') {
+    try {
+      const first = JSON.parse(fs.readFileSync(sessionPath, 'utf8').split('\n')[0]);
+      const sessionId = first?.type === 'session_meta' ? first?.payload?.id : null;
+      return typeof sessionId === 'string' && sessionId ? sessionId : null;
+    } catch {
+      return null;
+    }
+  }
   const base = path.basename(sessionPath);
   return base.endsWith('.jsonl') ? base.slice(0, -'.jsonl'.length) : base;
 }
@@ -151,11 +160,12 @@ export function listSessionCandidates(runner, repo, runtimeDir = '.agent') {
     return fs
       .readdirSync(sessionDir)
       .filter((name) => name.endsWith('.jsonl'))
-      .map((name) => path.join(sessionDir, name))
+      .map((name) => fs.realpathSync.native(path.join(sessionDir, name)))
       .sort((a, b) => statMtimeMs(b) - statMtimeMs(a));
   }
   if (runner === 'grok') {
     const paths = [];
+    const seen = new Set();
     for (const key of grokSessionDirKeys(repo)) {
       const sessionsDir = path.join(os.homedir(), '.grok', 'sessions', key);
       if (!fs.existsSync(sessionsDir)) continue;
@@ -166,7 +176,13 @@ export function listSessionCandidates(runner, repo, runtimeDir = '.agent') {
         if (statMtimeMs(summaryPath) < cutoff) continue;
         try {
           const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
-          if (grokCwdMatches(summary?.info?.cwd, repo)) paths.push(path.dirname(summaryPath));
+          if (grokCwdMatches(summary?.info?.cwd, repo)) {
+            const sessionPath = fs.realpathSync.native(path.dirname(summaryPath));
+            if (!seen.has(sessionPath)) {
+              seen.add(sessionPath);
+              paths.push(sessionPath);
+            }
+          }
         } catch {
           // Grok may write summary.json incrementally during launch.
         }
@@ -191,7 +207,7 @@ export function listSessionCandidates(runner, repo, runtimeDir = '.agent') {
         try {
           const first = JSON.parse(fs.readFileSync(full, 'utf8').split('\n')[0]);
           if (first?.type === 'session_meta' && repoPathMatches(first?.payload?.cwd, repo))
-            paths.push(full);
+            paths.push(fs.realpathSync.native(full));
         } catch {
           // Codex-owned session files may be partial during discovery.
         }
@@ -319,7 +335,7 @@ export function resolveSessionBinding({
       return {
         runnerSessionPath: hookBinding.transcriptPath,
         runnerSessionId:
-          hookBinding.sessionId ?? runnerSessionIdForPath(hookBinding.transcriptPath),
+          hookBinding.sessionId ?? runnerSessionIdForPath(runner, hookBinding.transcriptPath),
         source: 'hook',
         hookBinding,
       };
@@ -335,7 +351,7 @@ export function resolveSessionBinding({
   if (!chosen) return null;
   return {
     runnerSessionPath: chosen,
-    runnerSessionId: runnerSessionIdForPath(chosen),
+    runnerSessionId: runnerSessionIdForPath(runner, chosen),
     source: 'filesystem',
     hookBinding: null,
   };

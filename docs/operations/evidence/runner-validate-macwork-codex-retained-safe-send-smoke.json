@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-06T11:11:50.001Z",
+  "host": "macwork",
+  "scenario": "retained-safe-send-smoke",
+  "runner": "codex",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-send-ZIksWd",
+  "session": "runner-validate-codex-retained-safe-send-smoke-61523",
+  "initialCompleted": true,
+  "filesystemSessionId": "019fd6c5-5cfa-7a53-8444-08fc5b1d8880",
+  "nativeSessionId": "019fd6c5-5cfa-7a53-8444-08fc5b1d8880",
+  "legacyBinding": {
+    "sessionId": "rollout-2026-08-06T19-11-26-019fd6c5-5cfa-7a53-8444-08fc5b1d8880",
+    "sessionPath": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-send-ZIksWd/.agent/codex-home/sessions/2026/08/06/rollout-2026-08-06T19-11-26-019fd6c5-5cfa-7a53-8444-08fc5b1d8880.jsonl",
+    "format": "pre-native-id-filesystem-binding"
+  },
+  "legacyBindingUpgraded": true,
+  "mismatchedSessionRejected": true,
+  "followupDelivered": true,
+  "followupAccepted": true,
+  "nativeFollowupTurn": {
+    "digest": "5e8feebbdcccfa6c",
+    "sessionId": "019fd6c5-5cfa-7a53-8444-08fc5b1d8880",
+    "submittedAt": 1786014707967,
+    "stoppedAt": 1786014709863
+  },
+  "mismatchedSend": {
+    "result": {
+      "delivered": false
+    },
+    "exitCode": 1,
+    "error": "[ci-monitor] retained codex session binding is incompatible with native session identity; holding send"
+  },
+  "pass": true,
+  "error": null,
+  "paneTail": null
+}

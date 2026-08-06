@@ -29,7 +29,7 @@ function parseArgs(argv) {
     else if (token === '--keep-session') args.keepSession = true;
     else if (token === '--help' || token === '-h') {
       console.log(
-        'usage: runner-validation/run.mjs [--runner claude|codex|cursor|grok|both|hooks|pane-only|all] [--scenario hook-smoke|pane-smoke|interaction-smoke|dispatch-prompt-smoke|dispatch-prompt-mcp-race|dispatch-prompt-trust|prompt-accepted|retained-handoff-smoke|turn-boundary|busy-composer|mode-switch|session-attribution-smoke|token-usage-smoke|all] [--out-dir path] [--timeout-ms 300000] [--keep-session]',
+        'usage: runner-validation/run.mjs [--runner claude|codex|cursor|grok|both|hooks|pane-only|all] [--scenario hook-smoke|pane-smoke|interaction-smoke|dispatch-prompt-smoke|dispatch-prompt-dropped-enter|dispatch-prompt-mcp-race|dispatch-prompt-trust|prompt-accepted|retained-handoff-smoke|retained-safe-send-smoke|turn-boundary|busy-composer|mode-switch|session-attribution-smoke|token-usage-smoke|all] [--out-dir path] [--timeout-ms 300000] [--keep-session]',
       );
       process.exit(0);
     } else {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -70,6 +70,41 @@ describe('Grok structured prompt observability', () => {
       confidence: 'high',
       observedAt: 1300,
     });
+  });
+
+  it('reports delivery state only for the exact retained Grok session', async () => {
+    const observability = createGrokLogObservability(async () => ({
+      status: 'matched',
+      promptAcceptedAt: null,
+      activity: 'idle',
+      activityAt: 1300,
+      sessionId: 'session-1',
+      sessionPath: '/sessions/session-1',
+    }));
+
+    assert.deepEqual(
+      await observability.getSessionDeliveryState(
+        makeVars(),
+        'core-3:bugfix',
+        'session-1',
+        '/sessions/session-1',
+      ),
+      {
+        value: 'idle',
+        source: 'signal',
+        confidence: 'high',
+        observedAt: 1300,
+      },
+    );
+    assert.equal(
+      await observability.getSessionDeliveryState(
+        makeVars(),
+        'core-3:bugfix',
+        'different-session',
+        '/sessions/session-1',
+      ),
+      null,
+    );
   });
 
   it('does not claim the runner is idle before its first turn event', async () => {
@@ -220,6 +255,8 @@ describe('Grok structured prompt observability', () => {
         promptAcceptedAt: Date.parse(acceptedAt),
         activity: 'tool-running',
         activityAt: Date.parse('2026-08-01T12:00:01.500+00:00'),
+        sessionId,
+        sessionPath: await realpath(sessionDir),
       });
 
       await writeFile(
@@ -248,6 +285,8 @@ describe('Grok structured prompt observability', () => {
         promptAcceptedAt: null,
         activity: 'idle',
         activityAt: Date.parse('2026-08-01T12:00:02+00:00'),
+        sessionId,
+        sessionPath: await realpath(sessionDir),
       });
 
       await writeFile(

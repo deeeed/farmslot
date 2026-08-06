@@ -49,7 +49,11 @@ import {
   sendRunnerInstructionSafely,
   stripRunnerNoise,
 } from '../runners/registry.js';
-import { isRunnerAliveUnderPane } from '../runners/session-process.js';
+import {
+  isRunnerAliveUnderPane,
+  resolveRunRetainedSessionBinding,
+  retainedSessionSendOption,
+} from '../runners/session-process.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { onWorkerSignal, resolveContextFilePath } from '../tasks/watcher.js';
 import {
@@ -794,6 +798,8 @@ export async function monitorRun(
           lastArtifactContractMessage = probe.message;
           try {
             const context = currentMonitorContext();
+            const currentRun = getRun(runId) ?? initialRun;
+            const retainedSession = resolveRunRetainedSessionBinding(currentRun, context);
             const vars = await loadSlotVars(slotId);
             const target = (
               await resolveAgentTarget(slotId, {
@@ -813,6 +819,8 @@ export async function monitorRun(
                   : 'complete',
               ),
               'artifact-contract',
+              undefined,
+              retainedSessionSendOption(retainedSession),
             );
           } catch (err) {
             // The durable blocked decision below is the recovery path when the
@@ -1353,7 +1361,9 @@ async function sendNudge(
 
   try {
     const vars = await loadSlotVars(slotId);
+    const context = selectAgentContext(run, { role, contextId });
     const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
+    const retainedSession = resolveRunRetainedSessionBinding(run, context);
     const sent = await sendRunnerInstructionSafely(
       vars,
       session,
@@ -1363,7 +1373,10 @@ async function sendNudge(
       undefined,
       // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit (not just a
       // console warning); broadcastFn flips the degraded-audit flag in the UI on write failure.
-      { recovery: { runId, emit: broadcastFn } },
+      {
+        recovery: { runId, emit: broadcastFn },
+        ...retainedSessionSendOption(retainedSession),
+      },
     );
     if (!sent) return;
 
