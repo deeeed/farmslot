@@ -1,9 +1,11 @@
 {
-  "version": "0.2.0",
-  "date": "2026-07-03",
+  "version": "0.3.0",
+  "date": "2026-08-06",
   "items": [
-    "What's New modal on launch when a newer companion version has release notes.",
-    "Recipe proof HUD stays visible above native modals on iOS.",
-    "Settings shows app version, variant, and native build number."
+    "UX review boards from recipes: typed navigation map, hierarchical Ready Gate screens, overall notes, and point/area annotations",
+    "Backlog capture sheet over LAN plus offline UX catalog for main workspaces, run packages, and decision surfaces",
+    "Run details reuse shared decision actions and show active independent review/fix work instead of a premature publish gate",
+    "Foreground-aware gateway liveness, clearer pairing errors when the gateway must listen on all interfaces, and more reliable Metro cold-boot prepare",
+    "Fullscreen image pinch/pan/zoom, interactive operator packets on run detail, and continuous-gesture proof recipes for CDP validation"
   ]
 }
