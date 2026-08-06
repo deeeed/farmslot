@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- chore(deps): upgrade Companion to Expo SDK 57 / React Native 0.86 (expo@57.0.10, aligned expo-\* modules via `expo install --fix`).
 - fix(sync): trust complete run-decision projections, coalesce fallback reconciliation for malformed or incomplete retrospective events, and offer an explicit retry for decision sync timeouts.
 - fix(ux-catalog): model Review, Terminals, Advanced, and Settings as sibling bottom-tab roots in the generated navigation map.
 
