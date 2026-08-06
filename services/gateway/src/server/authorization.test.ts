@@ -13,6 +13,7 @@ import {
   type CredentialIssueResult,
   type GatewayAuthConnectResult,
   Methods,
+  NODE_FRAME_MAGIC,
   type Principal,
   type PrincipalCreateResult,
   type ProjectConfig,
@@ -110,6 +111,121 @@ test('auth.connect enforces node subject and returns all virtual and stored self
     await onceClose(ws);
   } finally {
     await activatedHarness.close();
+  }
+});
+
+test('all seven node frame paths accept node principals and refuse non-node principals', async () => {
+  const runtime = isolatedRuntime();
+  const admin = runtime.writer.createPrincipal({ type: 'person', displayName: 'frame-admin' }, [
+    { role: 'admin', scope: { kind: 'global' } },
+  ]);
+  const adminIssue = runtime.writer.issueCredential(admin.id, 'frame-admin');
+  const node = runtime.writer.createPrincipal(
+    { type: 'node', displayName: 'frame-node', machine: 'frame-node' },
+    [],
+  );
+  const nodeIssue = runtime.writer.issueCredential(node.id, 'frame-node');
+  const frames: Array<{ name: string; data: string | Buffer }> = [
+    {
+      name: 'binary',
+      data: Buffer.from([NODE_FRAME_MAGIC, 0, 0, 1, 0, 1, 1, 0x73, 0]),
+    },
+    {
+      name: 'response',
+      data: JSON.stringify({ type: 'res', id: 'unknown-node-request', ok: true, payload: {} }),
+    },
+    {
+      name: 'fs.changed',
+      data: JSON.stringify({
+        type: 'event',
+        event: 'node.fs.changed',
+        payload: {
+          requestId: 'unknown-watch',
+          machine: 'frame-node',
+          path: '/tmp/unknown',
+          content: '',
+        },
+      }),
+    },
+    {
+      name: 'exec.output',
+      data: JSON.stringify({
+        type: 'event',
+        event: 'node.exec.output',
+        payload: { requestId: 'unknown-node-request', stream: 'stdout', data: '' },
+      }),
+    },
+    {
+      name: 'resource.changed',
+      data: JSON.stringify({
+        type: 'event',
+        event: 'node.resource.changed',
+        payload: {
+          machine: 'frame-node',
+          slotId: 'frame-test-slot',
+          resourceId: 'gateway',
+          status: 'unknown',
+        },
+      }),
+    },
+    {
+      name: 'tmux.workers.changed',
+      data: JSON.stringify({
+        type: 'event',
+        event: 'node.tmux.workers.changed',
+        payload: { machine: 'frame-node', panes: [] },
+      }),
+    },
+    {
+      name: 'metrics',
+      data: JSON.stringify({
+        type: 'event',
+        event: 'node.metrics',
+        payload: {
+          machine: 'frame-node',
+          metrics: {
+            cpuPercent: 0,
+            memoryPercent: 0,
+            memoryUsedGb: 0,
+            memoryTotalGb: 1,
+            diskPercent: 0,
+            loadAvg1: 0,
+            loadAvg5: 0,
+            collectedAt: new Date(0).toISOString(),
+          },
+        },
+      }),
+    },
+  ];
+  const harness = await startServer(runtime);
+  try {
+    for (const frame of frames) {
+      const nodeWs = await connect(harness.url);
+      const nodeAuth = await request(nodeWs, Methods.AUTH_CONNECT, {
+        clientKind: 'node',
+        token: nodeIssue.secret,
+      });
+      assert.equal(nodeAuth.ok, true, `${frame.name}: node authentication`);
+      nodeWs.send(frame.data);
+      await waitForFrameHandling();
+      assert.equal(nodeWs.readyState, WebSocket.OPEN, `${frame.name}: node principal accepted`);
+      nodeWs.close();
+      await onceClose(nodeWs);
+
+      const adminWs = await connect(harness.url);
+      const adminAuth = await request(adminWs, Methods.AUTH_CONNECT, {
+        clientKind: 'ui',
+        token: adminIssue.secret,
+      });
+      assert.equal(adminAuth.ok, true, `${frame.name}: non-node authentication`);
+      const closed = onceClose(adminWs);
+      adminWs.send(frame.data);
+      const denial = await closed;
+      assert.equal(denial.code, 1008, `${frame.name}: non-node principal refused`);
+      assert.match(denial.reason, /node authentication required/u, frame.name);
+    }
+  } finally {
+    await harness.close();
   }
 });
 
@@ -247,4 +363,8 @@ function onceClose(ws: WebSocket): Promise<{ code: number; reason: string }> {
   return new Promise((resolve) => {
     ws.once('close', (code, reason) => resolve({ code, reason: reason.toString() }));
   });
+}
+
+async function waitForFrameHandling(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 25));
 }

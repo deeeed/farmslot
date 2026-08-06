@@ -61,7 +61,7 @@ test('gatewayApiUrl can authenticate artifact URLs with stored passwords', () =>
 
     assert.equal(
       gatewayApiUrl('/api/file?slotId=s1&path=a.png'),
-      'http://localhost:7777/api/file?slotId=s1&path=a.png&token=hosted-password',
+      'http://localhost:7777/api/file?slotId=s1&path=a.png&password=hosted-password',
     );
   });
 });
@@ -122,7 +122,7 @@ test('gatewayProxiedFetchUrl keeps hosted /cc artifact URLs absolute with token'
   });
 });
 
-test('gatewayHttpFetch uses authenticated proxied URL without double token injection', async () => {
+test('gatewayHttpFetch uses transport-specific headers without query credential injection', async () => {
   const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   const store = new Map<string, string>([[GATEWAY_TOKEN_STORAGE_KEY, 'dev-token']]);
   Object.defineProperty(globalThis, 'localStorage', {
@@ -140,10 +140,13 @@ test('gatewayHttpFetch uses authenticated proxied URL without double token injec
     },
   });
 
-  const calls: string[] = [];
+  const calls: Array<{ url: string; authorization: string | null }> = [];
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = ((input: RequestInfo | URL) => {
-    calls.push(String(input));
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({
+      url: String(input),
+      authorization: new Headers(init?.headers).get('Authorization'),
+    });
     return Promise.resolve(new Response('ok', { status: 200 }));
   }) as typeof fetch;
 
@@ -154,7 +157,26 @@ test('gatewayHttpFetch uses authenticated proxied URL without double token injec
       pathname: '/',
     });
     assert.equal(calls.length, 1);
-    assert.equal(calls[0], '/api/run-artifact?runId=1&path=a.diff&token=dev-token');
+    assert.deepEqual(calls[0], {
+      url: '/api/run-artifact?runId=1&path=a.diff',
+      authorization: 'Bearer dev-token',
+    });
+    store.delete(GATEWAY_TOKEN_STORAGE_KEY);
+    store.set(GATEWAY_PASSWORD_STORAGE_KEY, 'legacy password');
+    await gatewayHttpFetch('/api/file?slotId=s1&path=a.txt', undefined, {
+      href: 'http://localhost:5175/#slot/s1',
+      origin: 'http://localhost:5175',
+      pathname: '/',
+    });
+    assert.deepEqual(calls[1], {
+      url: '/api/file?slotId=s1&path=a.txt',
+      authorization: `Basic ${Buffer.from(':legacy password').toString('base64')}`,
+    });
+    await gatewayHttpFetch('https://example.com/not-gateway');
+    assert.deepEqual(calls[2], {
+      url: 'https://example.com/not-gateway',
+      authorization: null,
+    });
     assert.equal(
       gatewayProxiedFetchUrl('/api/run-artifact?runId=1&path=a.diff&token=dev-token', {
         href: 'http://localhost:5175/#family/demo',

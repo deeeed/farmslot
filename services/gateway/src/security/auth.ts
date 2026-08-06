@@ -66,6 +66,7 @@ const DEFAULT_RATE_LIMIT_MAX = 8;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const AUTH_HEADER_PREFIX = 'Bearer ';
 const HTTP_AUTH_COOKIE = 'farmslot_gateway_credential';
+const HTTP_PASSWORD_COOKIE = 'farmslot_gateway_password';
 const TRUST_PROXY_HEADERS_ENV = 'FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS';
 
 interface RateLimitBucket {
@@ -398,27 +399,34 @@ export function getHttpCredential(
       return value ? { value, transport: 'password' } : undefined;
     }
   }
-  const queryCredential = getQueryCredential(req.url);
-  if (queryCredential) return { value: queryCredential, transport: 'token' };
-  const cookie = getCookieValue(req.headers.cookie, HTTP_AUTH_COOKIE);
-  return cookie ? { value: cookie, transport: 'token' } : undefined;
+  const queryToken = getQueryCredential(req.url, 'token');
+  const queryPassword = getQueryCredential(req.url, 'password');
+  if (queryToken && queryPassword) return undefined;
+  if (queryToken) return { value: queryToken, transport: 'token' };
+  if (queryPassword) return { value: queryPassword, transport: 'password' };
+  const cookieToken = getCookieValue(req.headers.cookie, HTTP_AUTH_COOKIE);
+  const cookiePassword = getCookieValue(req.headers.cookie, HTTP_PASSWORD_COOKIE);
+  if (cookieToken && cookiePassword) return undefined;
+  if (cookieToken) return { value: cookieToken, transport: 'token' };
+  return cookiePassword ? { value: cookiePassword, transport: 'password' } : undefined;
 }
 
-// Query-string credentials exist only for header-incapable clients (React Native
-// <Image>/Source, which cannot send an Authorization header). They are accepted
-// last (after header and before cookie) and compared with the same constant-time
-// check + rate limiter as header auth. Query tokens are intrinsically more
-// exposed than headers (browser history, Referer, intermediary access logs), so
-// the gateway must never log raw req.url, and the companion only appends a query
-// token on Image/Source URLs — fetch() calls stay header-only (gatewayFetch).
-function getQueryCredential(url: string | undefined): string | undefined {
+// Query-string credentials exist only for header-incapable resources. The
+// parameter name preserves the transport distinction: `token` can resolve issued
+// credentials, while `password` is legacy environment-password compatibility.
+// Query secrets are intrinsically more exposed than headers, so the gateway must
+// never log raw req.url and fetch-capable clients keep credentials in headers.
+function getQueryCredential(
+  url: string | undefined,
+  name: 'token' | 'password',
+): string | undefined {
   if (!url) return undefined;
   const queryStart = url.indexOf('?');
   if (queryStart < 0) return undefined;
   const hashStart = url.indexOf('#', queryStart);
   const query = url.slice(queryStart + 1, hashStart >= 0 ? hashStart : undefined);
   const params = new URLSearchParams(query);
-  return nonEmpty(params.get('token') ?? undefined);
+  return nonEmpty(params.get(name) ?? undefined);
 }
 
 function getCookieValue(

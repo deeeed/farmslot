@@ -100,6 +100,7 @@ export function gatewayStatusMessage(client: {
 const DEFAULT_TIMEOUT = 15_000;
 const MAX_BACKOFF = 30_000;
 const HTTP_AUTH_COOKIE = 'farmslot_gateway_credential';
+const HTTP_PASSWORD_COOKIE = 'farmslot_gateway_password';
 const HTTP_AUTH_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
@@ -142,26 +143,32 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
 }
 
 function syncBrowserHttpAuthCookie(auth: GatewayAuthCredentials, gatewayUrl: string): void {
-  const credential = auth.token?.trim() || auth.password?.trim();
+  const token = auth.token?.trim();
+  const password = auth.password?.trim();
   const secure = location.protocol === 'https:' ? '; Secure' : '';
-  const clearCookie = (): void => {
-    document.cookie = `${HTTP_AUTH_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0${secure}`;
+  const clearCookies = (): void => {
+    for (const name of [HTTP_AUTH_COOKIE, HTTP_PASSWORD_COOKIE]) {
+      document.cookie = `${name}=; Path=/; SameSite=Lax; Max-Age=0${secure}`;
+    }
   };
-  if (!credential) {
-    clearCookie();
+  if (!token && !password) {
+    clearCookies();
     return;
   }
   try {
     if (gatewayWebSocketToHttpOrigin(gatewayUrl) !== location.origin) {
-      clearCookie();
+      clearCookies();
       return;
     }
   } catch {
-    clearCookie();
+    clearCookies();
     return;
   }
-  document.cookie = `${HTTP_AUTH_COOKIE}=${encodeURIComponent(
-    credential,
+  clearCookies();
+  const name = token ? HTTP_AUTH_COOKIE : HTTP_PASSWORD_COOKIE;
+  const credential = token ?? password;
+  document.cookie = `${name}=${encodeURIComponent(
+    credential!,
   )}; Path=/; SameSite=Lax; Max-Age=${HTTP_AUTH_COOKIE_MAX_AGE_SECONDS}${secure}`;
 }
 

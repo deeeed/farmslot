@@ -126,8 +126,9 @@ export function isNodeSubjectSession(
   try {
     authorizeGatewayIngress(runtime, session, { kind: 'node-frame' });
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (error instanceof GatewayMethodError) return false;
+    throw error;
   }
 }
 
