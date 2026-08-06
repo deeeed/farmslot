@@ -9,7 +9,11 @@ import { promisify } from 'node:util';
 
 import { validateRecipeActionManifestDocument } from '@farmslot/protocol';
 
-import { commandCenterActionManifest, commandCenterRecipeParams } from './run-recipe.mjs';
+import {
+  commandCenterActionManifest,
+  commandCenterRecipeParams,
+  recipeUsesAnyAction,
+} from './run-recipe.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const execFileAsync = promisify(execFile);
@@ -57,6 +61,21 @@ test('Command Center passes declared runtime values through canonical recipe par
       { slot_id: 'slot-explicit', run_id: 'run-123' },
     ),
     { cdp_port: 9323, slot_id: 'slot-explicit', run_id: 'run-123' },
+  );
+});
+
+test('Command Center state-only recipes do not require a browser HUD', () => {
+  const uiActions = new Set(['app.hud', 'ui.navigate', 'ui.screenshot']);
+  assert.equal(
+    recipeUsesAnyAction(
+      { workflow: { nodes: { check: { action: 'command' }, done: { action: 'end' } } } },
+      uiActions,
+    ),
+    false,
+  );
+  assert.equal(
+    recipeUsesAnyAction({ workflow: { nodes: { visit: { action: 'ui.navigate' } } } }, uiActions),
+    true,
   );
 });
 

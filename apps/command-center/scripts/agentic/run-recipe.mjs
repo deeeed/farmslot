@@ -292,6 +292,19 @@ export function commandCenterActionManifest(manifest, implementedActions) {
   };
 }
 
+export function recipeUsesAnyAction(recipe, actions) {
+  const pending = [recipe];
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (!value || typeof value !== 'object') continue;
+    if (!Array.isArray(value) && typeof value.action === 'string' && actions.has(value.action)) {
+      return true;
+    }
+    pending.push(...(Array.isArray(value) ? value : Object.values(value)));
+  }
+  return false;
+}
+
 function hashFromNavigateTarget(target) {
   if (!target || typeof target !== 'string') return '';
   const hashIndex = target.indexOf('#');
@@ -684,7 +697,15 @@ async function main() {
       ? withCapturableRecordingTarget(webVideoRecorder)
       : webVideoRecorder;
 
-  const hudEnabled = filteredActions.includes('app.hud');
+  const hudEnabled =
+    filteredActions.includes('app.hud') &&
+    (options.recordVideo || recipeUsesAnyAction(recipeRaw, new Set(uiActions)));
+  const activeActions = hudEnabled
+    ? filteredActions
+    : filteredActions.filter((action) => action !== 'app.hud');
+  const activeManifest = hudEnabled
+    ? filteredManifest
+    : commandCenterActionManifest(manifest, new Set(activeActions));
   const trust = resolveCommandCenterRecipeTrust();
   const invocationTrust = trust.source?.trust ?? COMMAND_CENTER_RECIPE_SOURCE.trust;
   const librarySources = applyTaskLocalInvocationTrust(
@@ -692,15 +713,15 @@ async function main() {
     invocationTrust,
   );
   const runner = createRecipeRunner({
-    actionManifest: filteredManifest,
+    actionManifest: activeManifest,
     defaultSource: COMMAND_CENTER_RECIPE_SOURCE,
     adapters: [
       ...createStandardUiAdapters({
         transport,
-        actions: filteredActions,
+        actions: activeActions,
       }),
       ...createStandardCoreAdapters({
-        actions: filteredActions,
+        actions: activeActions,
       }),
     ],
     hud: hudEnabled

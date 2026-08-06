@@ -1,0 +1,114 @@
+[
+  {
+    "method": "nodes.list",
+    "handler": "services/gateway/src/server/route-method.ts",
+    "assertions": {
+      "I1": true,
+      "I2": true,
+      "I3": true,
+      "I4": true,
+      "I5": true,
+      "I6": true,
+      "I7": true
+    },
+    "reachabilityHash": "3885c07c9036d9f5fc3b479caeaeb17bc8fc7e1e6fdbc22e8592b1ea72c63fd6"
+  },
+  {
+    "method": "node.health",
+    "handler": "services/gateway/src/server/route-method.ts",
+    "assertions": {
+      "I1": true,
+      "I2": true,
+      "I3": true,
+      "I4": true,
+      "I5": true,
+      "I6": true,
+      "I7": true
+    },
+    "reachabilityHash": "a4f086554095b221bf71fd3328a0b991c800ae53f806208c7f7089eb489bfddd"
+  },
+  {
+    "method": "node.health.all",
+    "handler": "services/gateway/src/server/route-method.ts",
+    "assertions": {
+      "I1": true,
+      "I2": true,
+      "I3": true,
+      "I4": true,
+      "I5": true,
+      "I6": true,
+      "I7": true
+    },
+    "reachabilityHash": "ec930bfcdea677bfde818d2aad313c40a3406fc449eaad3145d77500e419b771"
+  },
+  {
+    "method": "run.list",
+    "handler": "services/gateway/src/server/run-route.ts",
+    "assertions": {
+      "I1": true,
+      "I2": true,
+      "I3": true,
+      "I4": true,
+      "I5": true,
+      "I6": true,
+      "I7": true
+    },
+    "reachabilityHash": "14ea4b7e228b75fdc0d32d4189119464c8b601ae0afad8417fd450cf9119243f"
+  },
+  {
+    "method": "dispatch.queue.list",
+    "handler": "services/gateway/src/server/route-method.ts",
+    "assertions": {
+      "I1": true,
+      "I2": true,
+      "I3": true,
+      "I4": true,
+      "I5": true,
+      "I6": true,
+      "I7": true
+    },
+    "reachabilityHash": "76de12deaf2e72e4a820fab77845ca566696b1f6e7cb6a192e3b2877f0df1b04"
+  },
+  {
+    "method": "backlog.list",
+    "handler": "services/gateway/src/server/route-method.ts",
+    "assertions": {
+      "I1": true,
+      "I2": true,
+      "I3": true,
+      "I4": true,
+      "I5": true,
+      "I6": true,
+      "I7": true
+    },
+    "reachabilityHash": "debf11e5163175342e7a48468176d69477301bf45a75a1a2ad1ae28f2c4b6343"
+  },
+  {
+    "method": "workGraph.get",
+    "handler": "services/gateway/src/server/route-method.ts",
+    "assertions": {
+      "I1": true,
+      "I2": true,
+      "I3": true,
+      "I4": true,
+      "I5": true,
+      "I6": true,
+      "I7": true
+    },
+    "reachabilityHash": "f60d4ee094f07909f161cb5dce8aea03f1c0f1ff2823ed0cdd9db8fb7f249104"
+  },
+  {
+    "method": "workGraph.list",
+    "handler": "services/gateway/src/server/route-method.ts",
+    "assertions": {
+      "I1": true,
+      "I2": true,
+      "I3": true,
+      "I4": true,
+      "I5": true,
+      "I6": true,
+      "I7": true
+    },
+    "reachabilityHash": "681ce8a80a7b7f59802dffca0da9e4e5e6c473d5ef2325b6e6e000a2f8e997a1"
+  }
+]
