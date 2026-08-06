@@ -109,7 +109,15 @@ try {
 }
 
 /** Invoke the production safe-send contract against an already-idle runner pane. */
-export function runGatewaySafeInstruction({ repo, target, runner, message, timeoutMs = 30_000 }) {
+export function runGatewaySafeInstruction({
+  repo,
+  target,
+  runner,
+  message,
+  sessionId,
+  sessionPath,
+  timeoutMs = 30_000,
+}) {
   const snippet = `
 import os from 'node:os';
 import { sendRunnerInstructionSafely } from './services/gateway/src/runners/registry.ts';
@@ -145,7 +153,13 @@ const delivered = await sendRunnerInstructionSafely(
   ${JSON.stringify(message)},
   'retained-safe-send-smoke',
   ${timeoutMs},
-  { forceBusyPoll: true },
+  {
+    forceBusyPoll: true,
+    retainedSession: {
+      sessionId: ${JSON.stringify(sessionId)},
+      sessionPath: ${JSON.stringify(sessionPath)},
+    },
+  },
 );
 console.log(JSON.stringify({ delivered }));
 if (!delivered) process.exit(1);

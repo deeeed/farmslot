@@ -37,6 +37,7 @@ import {
   runnerSupportsTmuxNudges,
   sendRunnerInstructionSafely,
 } from '../../runners/registry.js';
+import { resolveRunRetainedSessionBinding } from '../../runners/session-process.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
@@ -335,6 +336,19 @@ export async function nudgeDispatch(
     taskDir: workerTaskAbs,
   });
   const nudgeTimeoutMs = resolveSafeSendTimeoutMs(runner);
+  const deliveryOwnerRunId = (await readSlotField(params.slotId, 'current_run_id')) as
+    | string
+    | null;
+  const { getRun: getRunForDelivery } = await import('../../runs/store.js');
+  const deliveryOwnerRun =
+    deliveryOwnerRunId && deliveryOwnerRunId !== params.runId
+      ? getRunForDelivery(deliveryOwnerRunId)
+      : null;
+  const deliveryOwnerContext =
+    deliveryOwnerRun?.agentContexts?.find((context) => context.role === workerRole) ?? null;
+  const retainedSession = deliveryOwnerRun
+    ? resolveRunRetainedSessionBinding(deliveryOwnerRun, deliveryOwnerContext)
+    : { binding: null, reason: null };
   const sent = await sendRunnerInstructionSafely(
     vars,
     workerTarget,
@@ -343,7 +357,18 @@ export async function nudgeDispatch(
     '[nudge]',
     nudgeTimeoutMs,
     // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-    { forceBusyPoll: true, recovery: { runId: params.runId, emit } },
+    {
+      forceBusyPoll: true,
+      recovery: { runId: params.runId, emit },
+      ...(retainedSession.binding
+        ? {
+            retainedSession: {
+              sessionId: retainedSession.binding.runnerSessionId,
+              sessionPath: retainedSession.binding.runnerSessionPath,
+            },
+          }
+        : {}),
+    },
   );
   if (!sent) {
     // Capture the pane tail so the failure is debuggable rather than a context-free timeout.

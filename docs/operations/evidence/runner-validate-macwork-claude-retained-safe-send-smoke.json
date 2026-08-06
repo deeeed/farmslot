@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-06T07:36:11.977Z",
+  "host": "macwork",
+  "scenario": "retained-safe-send-smoke",
+  "runner": "claude",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-retained-send-Nfaahy",
+  "session": "runner-validate-claude-retained-safe-send-smoke-31070",
+  "initialStopped": true,
+  "mismatchedSessionRejected": true,
+  "followupDelivered": true,
+  "followupAccepted": true,
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.BnUp1m/launch-49aa2c662a5bdcbb.sh\n╭─── Claude Code v2.1.222 ─────────────────────────────────────────────────────╮\n│                                                    │ Tips for getting        │\n│                Welcome back Arthur!                │ started                 │\n│                                                    │ Run /init to create a … │\n│                       ▐▛███▜▌                      │ ─────────────────────── │\n│                      ▝▜█████▛▘                     │ What's new              │\n│                        ▘▘ ▝▝                       │ Fixed worktree-isolate… │\n│      Opus 5 with high effort · Claude Max ·        │ Fixed PreToolUse auto-… │\n│      abreton@siteed.net's Organization             │ Fixed `/usage-credits`… │\n│  /…/T/runner-validate-claude-retained-send-Nfaahy  │ /release-notes for more │\n╰──────────────────────────────────────────────────────────────────────────────╯\n\n ⚠ 2 MCP servers need authentication · run /mcp\n\n❯ Reply with exactly TMUX_HOOK_OK and nothing else.\n\n⏺ TMUX_HOOK_OK\n\n✻ Baked for 3s\n\n❯ Reply with exactly RETAINED_SAFE_SEND_OK and nothing else.\n\n⏺ RETAINED_SAFE_SEND_OK\n\n✻ Churned for 2s\n\n────────────────────────────────────────────────────────────────────────────────\n❯ \n────────────────────────────────────────────────────────────────────────────────\n  fs · Opus 5 · ctx:3%\n  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n                                                              ● high · /effort"
+}

@@ -1,4 +1,4 @@
-import { type Run } from '@farmslot/protocol';
+import { type AgentContext, type Run } from '@farmslot/protocol';
 
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot, type ExecOnSlotOptions } from '../core/exec.js';
@@ -75,6 +75,25 @@ export function resolvePersistedRunnerSessionBinding(
     };
   }
   return { binding: null, reason: null };
+}
+
+/** Resolve one run/context's retained session without mixing partial identities. */
+export function resolveRunRetainedSessionBinding(
+  run: Pick<Run, 'agentContexts' | 'metrics'>,
+  context?: Pick<AgentContext, 'runnerSessionId' | 'runnerSessionPath'> | null,
+): PersistedRunnerSessionBindingResult {
+  return resolvePersistedRunnerSessionBinding([
+    {
+      label: 'agent context',
+      runnerSessionId: context?.runnerSessionId,
+      runnerSessionPath: context?.runnerSessionPath,
+    },
+    {
+      label: 'run metrics',
+      runnerSessionId: run.metrics.runnerSessionId,
+      runnerSessionPath: run.metrics.runnerSessionPath,
+    },
+  ]);
 }
 
 /** Files for Claude/Codex and directories for Grok are both resumable state. */

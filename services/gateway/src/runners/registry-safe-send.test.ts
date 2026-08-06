@@ -7,7 +7,11 @@ import { mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
 
-import type { ObservabilityReading, RunnerActivity } from './observability-types.js';
+import type {
+  ObservabilityReading,
+  RunnerActivity,
+  RunnerSessionDeliveryState,
+} from './observability-types.js';
 import { makeVars } from './test-fixtures.js';
 
 const vars = makeVars();
@@ -27,6 +31,7 @@ let promptAcceptedReading: ObservabilityReading<boolean> | null = {
   observedAt: Date.now(),
   exactPromptMatch: true,
 };
+let sessionDeliveryReading: ObservabilityReading<RunnerSessionDeliveryState> | null = null;
 const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
 let paneCaptureCount = 0;
@@ -68,7 +73,8 @@ mock.module('./claude-observability.js', {
         return promptAcceptedReading;
       },
       async getSessionDeliveryState() {
-        return null;
+        callOrder.push('obs:getSessionDeliveryState');
+        return sessionDeliveryReading;
       },
     },
   },
@@ -1119,6 +1125,73 @@ test('claude (hook-only) degraded (hook unknown) holds the send instead of pane 
     `degraded hold must not send into a blind composer; order=${callOrder.join(',')}`,
   );
   assert.ok(callOrder.includes('obs:getActivity'));
+});
+
+test('claude (hook-only) exact retained session idle permits delivery after transient activity expires', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = null;
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  sessionDeliveryReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now() - 180_000,
+  };
+  paneText = '❯\nctx:12%\n';
+  try {
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      target,
+      'claude',
+      message,
+      '[test]',
+      5_000,
+      {
+        retainedSession: {
+          sessionId: 'session-dev',
+          sessionPath: '/sessions/session-dev.jsonl',
+        },
+      },
+    );
+    assert.equal(sent, true);
+    assert.ok(callOrder.includes('obs:getSessionDeliveryState'));
+    assert.ok(callOrder.includes('tmux:send-literal'));
+  } finally {
+    sessionDeliveryReading = null;
+  }
+});
+
+test('claude (hook-only) does not use retained idle without an exact session binding', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = null;
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  sessionDeliveryReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now() - 180_000,
+  };
+  paneText = '❯\nctx:12%\n';
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20);
+    assert.equal(sent, false);
+    assert.equal(callOrder.includes('obs:getSessionDeliveryState'), false);
+    assert.equal(callOrder.includes('tmux:send-literal'), false);
+  } finally {
+    sessionDeliveryReading = null;
+  }
 });
 
 test('claude (hook-only) holds instead of concatenating onto FOREIGN composer draft', async () => {

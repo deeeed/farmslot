@@ -44,7 +44,10 @@ import {
   sendRunnerInstructionSafely,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
-import { isRunnerAliveUnderPane } from '../runners/session-process.js';
+import {
+  isRunnerAliveUnderPane,
+  resolveRunRetainedSessionBinding,
+} from '../runners/session-process.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { retryDeferredFixDelivery } from '../self-review/orchestrator.js';
@@ -499,6 +502,14 @@ async function attemptInlineCIFix(
       run?.flowType,
     );
     const session = primaryTarget.session;
+    const primaryRole = primaryRoleForFlow(run?.flowType);
+    const primaryContext = run?.agentContexts?.find((context) => context.role === primaryRole);
+    const retainedSession = run
+      ? resolveRunRetainedSessionBinding(run, primaryContext)
+      : { binding: null, reason: null };
+    if (retainedSession.reason) {
+      console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${retainedSession.reason}`);
+    }
 
     // Send one-liner nudge to worker
     const ciFixTaskFile = taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
@@ -515,7 +526,17 @@ async function attemptInlineCIFix(
         'ci-monitor',
         undefined,
         // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-        { recovery: { runId } },
+        {
+          recovery: { runId },
+          ...(retainedSession.binding
+            ? {
+                retainedSession: {
+                  sessionId: retainedSession.binding.runnerSessionId,
+                  sessionPath: retainedSession.binding.runnerSessionPath,
+                },
+              }
+            : {}),
+        },
       );
       if (!sent) {
         // A deferred send never retries on its own, and two immediate probes
@@ -539,7 +560,18 @@ async function attemptInlineCIFix(
               'ci-monitor',
               undefined,
               // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-              { forceBusyPoll: true, recovery: { runId } },
+              {
+                forceBusyPoll: true,
+                recovery: { runId },
+                ...(retainedSession.binding
+                  ? {
+                      retainedSession: {
+                        sessionId: retainedSession.binding.runnerSessionId,
+                        sessionPath: retainedSession.binding.runnerSessionPath,
+                      },
+                    }
+                  : {}),
+              },
             ),
           rediscover: (storedTarget) =>
             rediscoverAcceptingWorkerPane(vars!, session, runner, storedTarget),
@@ -606,6 +638,8 @@ async function attemptInlineCIFix(
       runner,
       model: run?.metrics.model ?? null,
       target: { session, window: null, pane: null, target: workerTarget },
+      runnerSessionId: retainedSession.binding?.runnerSessionId ?? null,
+      runnerSessionPath: retainedSession.binding?.runnerSessionPath ?? null,
     });
     if (ciFixContext) await watchContext(slotId, ciFixContext);
     ciFixContextStarted = true;

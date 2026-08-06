@@ -59,7 +59,7 @@ Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabi
 | `dispatch-prompt-mcp-race`  | MCP init race: fixture repro + live force-fail + fix pass | skip         | skip              | **interactive** launch |
 | `dispatch-prompt-trust`     | Directory-trust / project-directory + classifier send_yes | skip         | skip              | **fixture**            |
 | `prompt-accepted`           | Sentinel digest ↔ UserPromptSubmit                        | live         | skip              | skip                   |
-| `retained-safe-send-smoke`  | Stale terminal hook → retained worker follow-up delivery  | live         | skip              | skip                   |
+| `retained-safe-send-smoke`  | Exact retained-session follow-up after activity expiry    | live         | skip              | skip                   |
 | `turn-boundary`             | Stop after UserPromptSubmit                               | live         | skip              | skip                   |
 | `busy-composer`             | Busy pane regex fixtures                                  | fixtures     | skip              | skip                   |
 | `mode-switch`               | Bypass / permission mode                                  | live         | skip              | skip                   |

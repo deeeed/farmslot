@@ -1877,10 +1877,9 @@ async function waitForPaneAfterClassifierAction(
  * ADR-032 Phase 3 hook-only send loop. Reached only when {@link isRunnerPaneRetired} is true.
  * The decision to send/hold uses hook readings ONLY — the pane predicates
  * (`paneShowsBusyComposer` / `runnerPaneHasPendingInstruction` / `runnerPaneLooksIdle`) are
- * never consulted for the decision. A terminal Stop / idle_prompt remains authoritative until a
- * later structured event starts another turn; other degraded readings (hook unknown/absent/stale)
- * resolve to busy. The send then holds, and on timeout an ADR-031 deterministic recovery +
- * attention is emitted instead of falling back to the pane. Post-send delivery verification inside
+ * never consulted for the decision. Degraded readings (hook `unknown`/absent/stale) resolve to
+ * busy: the send holds, and on timeout an ADR-031 deterministic recovery + attention is emitted
+ * instead of falling back to the pane. Post-send delivery verification inside
  * {@link submitRunnerInstruction} still reads the pane, which is confirmation, not a decision.
  */
 async function sendRunnerInstructionHookOnly(
@@ -1893,6 +1892,7 @@ async function sendRunnerInstructionHookOnly(
   loopStartMs: number,
   promptAcceptedSinceMs: number,
   recovery?: RunnerSendRecoveryContext,
+  retainedSession?: { sessionId: string; sessionPath: string },
 ): Promise<boolean> {
   const observability = getRunnerObservability(runner);
   if (!observability) return false;
@@ -1924,7 +1924,27 @@ async function sendRunnerInstructionHookOnly(
     }
     if (promptReading?.value === true && promptReading.confidence === 'high') return true;
 
-    const activity = await readRunnerActivityFromObservability(vars, target, runner);
+    let activity: ObservabilityReading<RunnerActivity> | null;
+    if (retainedSession) {
+      const sessionState = await observability.getSessionDeliveryState(
+        vars,
+        target,
+        retainedSession.sessionId,
+        retainedSession.sessionPath,
+      );
+      activity =
+        sessionState?.confidence === 'high' && sessionState.value !== 'unknown'
+          ? {
+              value: sessionState.value === 'idle' ? 'idle' : 'tool-running',
+              source: sessionState.source,
+              confidence: sessionState.confidence,
+              observedAt: sessionState.observedAt,
+              sessionId: retainedSession.sessionId,
+            }
+          : null;
+    } else {
+      activity = await readRunnerActivityFromObservability(vars, target, runner);
+    }
     const idleDecision = selectIdleFromObservabilityAndPane(activity, false, true);
     if (idleDecision.degraded) {
       sawHookDegraded = true;
@@ -2043,6 +2063,7 @@ export async function sendRunnerInstructionSafely(
   opts: {
     forceBusyPoll?: boolean;
     recovery?: RunnerSendRecoveryContext;
+    retainedSession?: { sessionId: string; sessionPath: string };
   } = {},
 ): Promise<boolean> {
   const runner = normalizeRunner(runnerId);
@@ -2073,6 +2094,7 @@ export async function sendRunnerInstructionSafely(
       loopStartMs,
       hookPromptAcceptedSinceMs,
       opts.recovery,
+      opts.retainedSession,
     );
   }
   // Skip the busy-composer poll iff the runner doesn't require it AND the caller didn't opt

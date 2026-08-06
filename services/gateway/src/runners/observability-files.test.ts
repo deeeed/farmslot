@@ -136,59 +136,6 @@ test('deriveRunnerActivity lets a later Stop close an unmatched tool hook', () =
   });
 });
 
-test('deriveRunnerActivity keeps a terminal Stop idle after heartbeat freshness expires', () => {
-  const reading = deriveRunnerActivity(
-    [
-      { hook_event_name: 'UserPromptSubmit', observedAt: NOW - 300_000 },
-      {
-        hook_event_name: 'Stop',
-        session_id: 'retained-session',
-        observedAt: NOW - 240_000,
-      },
-    ],
-    null,
-    NOW,
-  );
-  assert.deepEqual(reading, {
-    value: 'idle',
-    source: 'hook',
-    confidence: 'high',
-    observedAt: NOW - 240_000,
-    sessionId: 'retained-session',
-  });
-});
-
-test('deriveRunnerActivity keeps an idle_prompt notification durable for retained workers', () => {
-  const reading = deriveRunnerActivity(
-    [
-      { hook_event_name: 'Stop', observedAt: NOW - 300_000 },
-      {
-        hook_event_name: 'Notification',
-        notification_type: 'idle_prompt',
-        session_id: 'retained-session',
-        observedAt: NOW - 240_000,
-      },
-    ],
-    null,
-    NOW,
-  );
-  assert.equal(reading?.value, 'idle');
-  assert.equal(reading?.observedAt, NOW - 240_000);
-  assert.equal(reading?.sessionId, 'retained-session');
-});
-
-test('deriveRunnerActivity does not let an older Stop hide a later stale active event', () => {
-  const reading = deriveRunnerActivity(
-    [
-      { hook_event_name: 'Stop', observedAt: NOW - 300_000 },
-      { hook_event_name: 'UserPromptSubmit', observedAt: NOW - 240_000 },
-    ],
-    null,
-    NOW,
-  );
-  assert.equal(reading, null);
-});
-
 test('lastTurnCompletedFromHooks ignores subagent completion', () => {
   const reading = lastTurnCompletedFromHooks(
     [

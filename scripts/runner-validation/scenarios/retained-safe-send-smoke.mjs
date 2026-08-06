@@ -16,11 +16,15 @@ export const SCENARIO_ID = 'retained-safe-send-smoke';
 const FOLLOWUP_PROMPT = 'Reply with exactly RETAINED_SAFE_SEND_OK and nothing else.';
 
 function ageObservability(obsDir, paneId) {
-  const staleAt = Date.now() - 180_000;
+  const ageMs = 180_000;
   const logPath = path.join(obsDir, 'hooks.jsonl');
   const rows = readHookLines(logPath).map((row) =>
     !row.tmuxPane || row.tmuxPane === paneId
-      ? { ...row, observedAt: staleAt, timestamp: staleAt }
+      ? {
+          ...row,
+          ...(typeof row.observedAt === 'number' ? { observedAt: row.observedAt - ageMs } : {}),
+          ...(typeof row.timestamp === 'number' ? { timestamp: row.timestamp - ageMs } : {}),
+        }
       : row,
   );
   fs.writeFileSync(logPath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
@@ -29,7 +33,12 @@ function ageObservability(obsDir, paneId) {
     const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
     fs.writeFileSync(
       statusPath,
-      JSON.stringify({ ...status, observedAt: staleAt, timestamp: staleAt, mtime: staleAt }),
+      JSON.stringify({
+        ...status,
+        ...(typeof status.observedAt === 'number' ? { observedAt: status.observedAt - ageMs } : {}),
+        ...(typeof status.timestamp === 'number' ? { timestamp: status.timestamp - ageMs } : {}),
+        ...(typeof status.mtime === 'number' ? { mtime: status.mtime - ageMs } : {}),
+      }),
     );
   }
 }
@@ -59,6 +68,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     repo,
     session,
     initialStopped: false,
+    mismatchedSessionRejected: false,
     followupDelivered: false,
     followupAccepted: false,
     pass: false,
@@ -77,16 +87,37 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     sendShellScript(paneId, repo, [command]);
 
     const initialRows = pollHookRows(logPath, initialCount, ['Stop'], timeoutMs);
-    report.initialStopped = initialRows.some((row) => eventName(row) === 'Stop');
+    const stopRow = [...initialRows].reverse().find((row) => eventName(row) === 'Stop');
+    report.initialStopped = Boolean(stopRow);
     if (!report.initialStopped) throw new Error('initial Claude turn did not emit Stop');
+    const sessionId = stopRow?.session_id;
+    const sessionPath = stopRow?.transcript_path;
+    if (!sessionId || !sessionPath) {
+      throw new Error('terminal hook did not expose an exact retained session binding');
+    }
 
     ageObservability(obsDir, paneId);
     const followupCount = readHookLines(logPath).length;
+    const mismatchedSend = runGatewaySafeInstruction({
+      repo,
+      target: paneId,
+      runner,
+      message: FOLLOWUP_PROMPT,
+      sessionId: `${sessionId}-mismatch`,
+      sessionPath,
+      timeoutMs: 200,
+    });
+    report.mismatchedSessionRejected = mismatchedSend.result?.delivered === false;
+    if (!report.mismatchedSessionRejected) {
+      throw new Error('production safe-send accepted a mismatched retained session binding');
+    }
     const safeSend = runGatewaySafeInstruction({
       repo,
       target: paneId,
       runner,
       message: FOLLOWUP_PROMPT,
+      sessionId,
+      sessionPath,
       timeoutMs: Math.min(timeoutMs, 60_000),
     });
     report.followupDelivered = safeSend.result?.delivered === true;
@@ -104,7 +135,11 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     report.followupAccepted = followupRows.some(
       (row) => eventName(row) === 'UserPromptSubmit' && row.runnerPromptDigest === expectedDigest,
     );
-    report.pass = report.initialStopped && report.followupDelivered && report.followupAccepted;
+    report.pass =
+      report.initialStopped &&
+      report.mismatchedSessionRejected &&
+      report.followupDelivered &&
+      report.followupAccepted;
     report.paneTail = capturePane(paneId, 40);
   } catch (error) {
     report.error = error?.message || String(error);

@@ -304,6 +304,14 @@ export async function deliverPromptInPlace(
       {
         forceBusyPoll: options.forceBusyPoll ?? true,
         recovery: options.recovery,
+        ...(options.sessionId && options.sessionPath
+          ? {
+              retainedSession: {
+                sessionId: options.sessionId,
+                sessionPath: options.sessionPath,
+              },
+            }
+          : {}),
       },
     );
     if (accepted && options.launchAckSignalPath) {
