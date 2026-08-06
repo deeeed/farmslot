@@ -1,0 +1,234 @@
+process.env.NODE_TEST_CONTEXT = '1';
+
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+
+import WebSocket from 'ws';
+
+import {
+  type CredentialIssueResult,
+  type GatewayAuthConnectResult,
+  Methods,
+  type PrincipalCreateResult,
+  type RequestFrame,
+  type ResponseFrame,
+} from '@farmslot/protocol';
+
+import { createGatewayAuthRuntime, initializeGatewayIdentity } from '../security/auth.js';
+import { authorizeStoredRunEffect } from '../security/authorization.js';
+import { resolveWorkOriginator } from '../security/work-originator.js';
+import { createWebSocketServer } from '../server.js';
+import { WEBHOOK_WORK_ORIGINATORS } from '../webhook.js';
+
+test('authorization denial survives the response frame with a teaching Next action', async () => {
+  const runtime = isolatedRuntime();
+  const principal = runtime.writer.createPrincipal({ type: 'person', displayName: 'sam' }, [
+    { role: 'operator', scope: { kind: 'global' } },
+  ]);
+  const issue = runtime.writer.issueCredential(principal.id, 'sam-laptop');
+  const harness = await startServer(runtime);
+  try {
+    const ws = await connect(harness.url);
+    const auth = await request(ws, Methods.AUTH_CONNECT, {
+      clientKind: 'ui',
+      token: issue.secret,
+    });
+    assert.equal(auth.ok, true);
+    assert.deepEqual((auth.payload as { principal?: unknown }).principal, {
+      id: principal.id,
+      displayName: 'sam',
+      subjectKind: 'person',
+      roles: [{ role: 'operator', scope: { kind: 'global' } }],
+    });
+
+    const permitted = await request(ws, Methods.DISPATCH_QUEUE_LIST, {});
+    assert.equal(permitted.ok, true);
+
+    const privileged = await request(ws, Methods.DISPATCH_QUEUE_ADD, {});
+    assert.equal(privileged.ok, false);
+    assert.match(privileged.error?.message ?? '', /requires the admin role[\s\S]*principal 'sam'/u);
+    assert.match(
+      privileged.error?.userAction ?? '',
+      /farmslot principal grant sam --role admin --scope global/u,
+    );
+    assert.doesNotMatch(privileged.error?.message ?? '', /owner/u);
+
+    const unproven = await request(ws, Methods.BACKLOG_UPCOMING, {});
+    assert.equal(unproven.ok, false);
+    assert.match(unproven.error?.message ?? '', /not on the proven-conformant allowlist/u);
+    assert.notEqual(unproven.error?.message, privileged.error?.message);
+    ws.close();
+    await onceClose(ws);
+  } finally {
+    await harness.close();
+  }
+});
+
+test('auth.connect enforces node subject and returns all virtual and stored self summaries', async () => {
+  const solo = isolatedRuntime();
+  const soloHarness = await startServer(solo);
+  try {
+    const ui = await connect(soloHarness.url);
+    const uiAuth = await request(ui, Methods.AUTH_CONNECT, { clientKind: 'ui' });
+    const uiPrincipal = (uiAuth.payload as GatewayAuthConnectResult).principal;
+    assert.equal(uiPrincipal?.id, 'local-admin');
+    assert.equal(uiPrincipal?.subjectKind, 'person');
+    ui.close();
+    await onceClose(ui);
+
+    const node = await connect(soloHarness.url);
+    const nodeAuth = await request(node, Methods.AUTH_CONNECT, { clientKind: 'node' });
+    const nodePrincipal = (nodeAuth.payload as GatewayAuthConnectResult).principal;
+    assert.equal(nodePrincipal?.id, 'local-node');
+    assert.equal(nodePrincipal?.subjectKind, 'node');
+    node.close();
+    await onceClose(node);
+  } finally {
+    await soloHarness.close();
+  }
+
+  const activated = isolatedRuntime();
+  const operator = activated.writer.createPrincipal({ type: 'person', displayName: 'operator' }, [
+    { role: 'operator', scope: { kind: 'global' } },
+  ]);
+  const operatorIssue = activated.writer.issueCredential(operator.id, 'operator');
+  const activatedHarness = await startServer(activated);
+  try {
+    const ws = await connect(activatedHarness.url);
+    const rejected = await request(ws, Methods.AUTH_CONNECT, {
+      clientKind: 'node',
+      token: operatorIssue.secret,
+    });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error?.code, 'AUTH_FORBIDDEN');
+    assert.match(rejected.error?.userAction ?? '', /issue a node credential/u);
+    ws.close();
+    await onceClose(ws);
+  } finally {
+    await activatedHarness.close();
+  }
+});
+
+test('latching activation closes every open solo session immediately', async () => {
+  const runtime = isolatedRuntime();
+  const harness = await startServer(runtime);
+  try {
+    const ws = await connect(harness.url);
+    const close = onceClose(ws);
+    const principal = runtime.writer.createPrincipal(
+      { type: 'person', displayName: 'first-operator' },
+      [{ role: 'operator', scope: { kind: 'global' } }],
+    );
+    runtime.writer.issueCredential(principal.id, 'first-operator');
+    const closed = await close;
+    assert.equal(closed.code, 1008);
+    assert.match(closed.reason, /authorization changed/u);
+  } finally {
+    await harness.close();
+  }
+});
+
+test('activation-latching issuance returns both one-time secrets before closing the session', async () => {
+  const runtime = isolatedRuntime();
+  const harness = await startServer(runtime);
+  try {
+    const ws = await connect(harness.url);
+    const auth = await request(ws, Methods.AUTH_CONNECT, { clientKind: 'ui' });
+    assert.equal(auth.ok, true);
+    const created = await request(ws, Methods.PRINCIPAL_CREATE, {
+      subject: { type: 'person', displayName: 'first-operator' },
+      roles: [{ role: 'operator', scope: { kind: 'global' } }],
+    });
+    assert.equal(created.ok, true);
+    const close = onceClose(ws);
+    const issued = await request(ws, Methods.CREDENTIAL_ISSUE, {
+      principalId: (created.payload as PrincipalCreateResult).principal.id,
+      displayName: 'first-operator',
+    });
+    assert.equal(issued.ok, true);
+    const issue = issued.payload as CredentialIssueResult;
+    assert.match(issue.secret, /^fs_/u);
+    assert.match(issue.adminGrant?.secret ?? '', /^fs_/u);
+    assert.equal(issue.activationLatched, true);
+    assert.equal((await close).code, 1008);
+  } finally {
+    await harness.close();
+  }
+});
+
+test('webhook ingress cannot resolve as the system principal', () => {
+  const runtime = isolatedRuntime();
+  for (const originator of Object.values(WEBHOOK_WORK_ORIGINATORS)) {
+    assert.equal(originator.kind, 'principal');
+    const resolved = resolveWorkOriginator(runtime, originator);
+    assert.equal(resolved, null);
+    assert.throws(
+      () => authorizeStoredRunEffect(resolved, originator.principalId, undefined),
+      /cannot be resolved/u,
+    );
+  }
+});
+
+function isolatedRuntime() {
+  const runtime = createGatewayAuthRuntime({
+    FARMSLOT_HOME: mkdtempSync(join(tmpdir(), 'farmslot-server-auth-')),
+    GATEWAY_HOST: '127.0.0.1',
+  });
+  initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
+  return runtime;
+}
+
+async function startServer(runtime: ReturnType<typeof isolatedRuntime>) {
+  const server = createServer();
+  const wss = createWebSocketServer(server, runtime);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('missing test server address');
+  return {
+    url: `ws://127.0.0.1:${address.port}`,
+    close: async () => {
+      for (const client of wss.clients) client.terminate();
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    },
+  };
+}
+
+async function connect(url: string): Promise<WebSocket> {
+  const ws = new WebSocket(url);
+  await new Promise<void>((resolve, reject) => {
+    ws.once('open', resolve);
+    ws.once('error', reject);
+  });
+  return ws;
+}
+
+let requestId = 0;
+async function request(ws: WebSocket, method: string, params: unknown): Promise<ResponseFrame> {
+  const id = `auth-test-${++requestId}`;
+  const response = new Promise<ResponseFrame>((resolve, reject) => {
+    const onMessage = (data: WebSocket.RawData) => {
+      const frame = JSON.parse(data.toString()) as ResponseFrame;
+      if (frame.type !== 'res' || frame.id !== id) return;
+      ws.off('message', onMessage);
+      resolve(frame);
+    };
+    ws.on('message', onMessage);
+    ws.once('error', reject);
+  });
+  const frame: RequestFrame = { type: 'req', id, method, params };
+  ws.send(JSON.stringify(frame));
+  return response;
+}
+
+function onceClose(ws: WebSocket): Promise<{ code: number; reason: string }> {
+  return new Promise((resolve) => {
+    ws.once('close', (code, reason) => resolve({ code, reason: reason.toString() }));
+  });
+}

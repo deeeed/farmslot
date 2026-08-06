@@ -96,6 +96,12 @@ import {
   type NodeHealthResult,
   type PairingCandidatesParams,
   type PairingCreateParams,
+  type CredentialIssueParams,
+  type CredentialListParams,
+  type CredentialRevokeParams,
+  type PrincipalCreateParams,
+  type PrincipalGrantParams,
+  type PrincipalRevokeRoleParams,
   type PRAddCommentParams,
   type PRDeleteCommentParams,
   type PREditCommentParams,
@@ -320,6 +326,15 @@ import {
 } from '../methods/pr/review-comments.js';
 import { providerAccountsSnapshot } from '../methods/provider-accounts.js';
 import {
+  credentialIssue,
+  credentialList,
+  credentialRevoke,
+  principalCreate,
+  principalGrant,
+  principalList,
+  principalRevokeRole,
+} from '../methods/principal.js';
+import {
   recipeCancel,
   recipeCommand,
   recipeProjectHookCommand,
@@ -432,6 +447,8 @@ import {
   requireAuthenticatedSession,
   requireNodeSession,
 } from '../security/auth.js';
+import { authorizeGatewayMethod } from '../security/authorization.js';
+import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import type { ClientState } from './client-state.js';
 import { routeRunMethod } from './run-route.js';
@@ -482,6 +499,18 @@ export async function routeMethod(
   context: RouteMethodContext,
 ): Promise<unknown> {
   const { authRuntime, broadcast, emit, isActiveClient, nextEventSeq, state } = context;
+  const actingPrincipal = authorizeGatewayMethod(authRuntime, state, method);
+  return runWithSessionOriginator(actingPrincipal, () =>
+    routeAuthorizedMethod(method, params, context),
+  );
+}
+
+async function routeAuthorizedMethod(
+  method: string,
+  params: unknown,
+  context: RouteMethodContext,
+): Promise<unknown> {
+  const { authRuntime, broadcast, emit, isActiveClient, nextEventSeq, state } = context;
   // RPC dispatch boundary — params arrive untyped from the wire;
   // each handler receives its typed params via assertion.
   const p: unknown = params ?? {};
@@ -495,7 +524,23 @@ export async function routeMethod(
     case Methods.GATEWAY_STATUS:
       return gatewayStatus(p as GatewayStatusParams);
     case Methods.GATEWAY_DOCTOR:
-      return gatewayDoctor(p as GatewayDoctorParams);
+      return gatewayDoctor(p as GatewayDoctorParams, authRuntime);
+
+    // Principal and credential management (authorization gate above is admin-only).
+    case Methods.PRINCIPAL_CREATE:
+      return principalCreate(p as PrincipalCreateParams, authRuntime);
+    case Methods.PRINCIPAL_LIST:
+      return principalList(authRuntime);
+    case Methods.PRINCIPAL_GRANT:
+      return principalGrant(p as PrincipalGrantParams, authRuntime);
+    case Methods.PRINCIPAL_REVOKE_ROLE:
+      return principalRevokeRole(p as PrincipalRevokeRoleParams, authRuntime);
+    case Methods.CREDENTIAL_ISSUE:
+      return credentialIssue(p as CredentialIssueParams, authRuntime);
+    case Methods.CREDENTIAL_LIST:
+      return credentialList(p as CredentialListParams, authRuntime);
+    case Methods.CREDENTIAL_REVOKE:
+      return credentialRevoke(p as CredentialRevokeParams, authRuntime);
 
     // Fleet
     case Methods.FLEET_STATUS:

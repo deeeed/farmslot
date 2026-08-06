@@ -57,6 +57,7 @@ import {
   resolveRequestIp,
   sanitizeAuthFailureReason,
 } from './security/auth.js';
+import { canReceiveBroadcast, isNodeSubjectSession } from './security/authorization.js';
 import { isGatewayOriginAllowed } from './security/origin.js';
 import { handleSelfReviewFsChanged } from './self-review/orchestrator.js';
 import type { ClientState } from './server/client-state.js';
@@ -74,6 +75,7 @@ const ENABLE_RESOURCE_POLL_ALL =
 let clientSeq = 0;
 const clients = new Map<WebSocket, ClientState>();
 let activeAuthRuntime: GatewayAuthRuntime | null = null;
+const invalidationInstalled = new WeakSet<GatewayAuthRuntime>();
 
 function isActiveClient(state: ClientState): boolean {
   return clients.get(state.ws) === state && state.ws.readyState === WebSocket.OPEN;
@@ -100,6 +102,7 @@ export function createWebSocketServer(
   authRuntime: GatewayAuthRuntime,
 ): WebSocketServer {
   activeAuthRuntime = authRuntime;
+  installCredentialSessionInvalidation(authRuntime);
   const wss = new WebSocketServer({
     server: httpServer,
     verifyClient: (info, done) => {
@@ -120,23 +123,25 @@ export function createWebSocketServer(
       terminalSubscribeSeq: new Map(),
       screenHandlers: new Map(),
       thumbnailSubscribed: false,
-      authenticated: authRuntime.auth.mode === 'none',
-      clientKind: authRuntime.auth.mode === 'none' ? 'ui' : undefined,
-      authMode: authRuntime.auth.mode === 'none' ? 'none' : undefined,
-      authenticatedAt: authRuntime.auth.mode === 'none' ? Date.now() : undefined,
+      authenticated: authRuntime.resolver.isSoloMode(),
+      clientKind: authRuntime.resolver.isSoloMode() ? 'ui' : undefined,
+      authMode: authRuntime.resolver.isSoloMode() ? 'none' : undefined,
+      authenticatedAt: authRuntime.resolver.isSoloMode() ? Date.now() : undefined,
     };
     clients.set(ws, state);
 
     // Send privileged hello snapshot only after auth when auth is enabled.
-    if (authRuntime.auth.mode === 'none') sendHello(ws);
+    if (
+      authRuntime.resolver.isSoloMode() &&
+      canReceiveBroadcast(authRuntime, state, Events.HELLO)
+    ) {
+      sendHello(ws);
+    }
 
     ws.on('message', (raw: Buffer, isBinary: boolean) => {
       // Handle binary frames from nodes (screen capture relay)
       if (isBinary && raw.length > 7 && raw[0] === NODE_FRAME_MAGIC) {
-        if (
-          authRuntime.auth.mode !== 'none' &&
-          (!state.authenticated || state.clientKind !== 'node')
-        ) {
+        if (!isNodeSubjectSession(authRuntime, state)) {
           console.warn(`[auth] rejected pre-auth node binary frame from ${state.id}`);
           ws.close(1008, 'node authentication required');
           return;
@@ -149,10 +154,7 @@ export function createWebSocketServer(
       try {
         const peek = JSON.parse(raw.toString());
         if (peek.type === 'res' && typeof peek.id === 'string') {
-          if (
-            authRuntime.auth.mode !== 'none' &&
-            (!state.authenticated || state.clientKind !== 'node')
-          ) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node response from ${state.id}`);
             ws.close(1008, 'node authentication required');
             return;
@@ -162,10 +164,7 @@ export function createWebSocketServer(
         }
         // Route node fs.changed events to task watcher or branch watcher
         if (peek.type === 'event' && peek.event === 'node.fs.changed') {
-          if (
-            authRuntime.auth.mode !== 'none' &&
-            (!state.authenticated || state.clientKind !== 'node')
-          ) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node event from ${state.id}`);
             ws.close(1008, 'node authentication required');
             return;
@@ -180,10 +179,7 @@ export function createWebSocketServer(
         }
         // Route node exec output events to per-request streaming callbacks
         if (peek.type === 'event' && peek.event === 'node.exec.output') {
-          if (
-            authRuntime.auth.mode !== 'none' &&
-            (!state.authenticated || state.clientKind !== 'node')
-          ) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node event from ${state.id}`);
             ws.close(1008, 'node authentication required');
             return;
@@ -193,10 +189,7 @@ export function createWebSocketServer(
         }
         // Route node resource.changed events to resource manager
         if (peek.type === 'event' && peek.event === 'node.resource.changed') {
-          if (
-            authRuntime.auth.mode !== 'none' &&
-            (!state.authenticated || state.clientKind !== 'node')
-          ) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node event from ${state.id}`);
             ws.close(1008, 'node authentication required');
             return;
@@ -208,10 +201,7 @@ export function createWebSocketServer(
         // Route node-pushed tmux worker inventory/status updates. The node owns
         // sampling so the gateway can broadcast changes without polling every pane.
         if (peek.type === 'event' && peek.event === 'node.tmux.workers.changed') {
-          if (
-            authRuntime.auth.mode !== 'none' &&
-            (!state.authenticated || state.clientKind !== 'node')
-          ) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node event from ${state.id}`);
             ws.close(1008, 'node authentication required');
             return;
@@ -234,10 +224,7 @@ export function createWebSocketServer(
         }
         // Route node metrics events to node health
         if (peek.type === 'event' && peek.event === 'node.metrics') {
-          if (
-            authRuntime.auth.mode !== 'none' &&
-            (!state.authenticated || state.clientKind !== 'node')
-          ) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node event from ${state.id}`);
             ws.close(1008, 'node authentication required');
             return;
@@ -511,7 +498,7 @@ async function handleMessage(
     const result = authenticateGatewayClient({
       runtime: authRuntime,
       connectParams: authParams,
-      clientIp: resolveRequestIp(req),
+      clientIp: resolveRequestIp(req, authRuntime.store.env),
     });
     if (!result.ok) {
       const retry = result.retryAfterMs
@@ -523,10 +510,19 @@ async function handleMessage(
       });
       return;
     }
+    if (clientKind === 'node' && result.principal?.subject.type !== 'node') {
+      sendResponse(state.ws, frame.id, false, undefined, {
+        code: 'AUTH_FORBIDDEN',
+        message: 'auth.connect with clientKind node requires a node-subject principal',
+        userAction: 'issue a node credential and reconnect',
+      });
+      return;
+    }
     state.authenticated = true;
     state.clientKind = clientKind;
     state.authMode = result.mode ?? authRuntime.auth.mode;
     state.authenticatedAt = Date.now();
+    state.authentication = result.authentication;
     console.log(`[auth] ${clientKind} authenticated using ${state.authMode}`);
     sendResponse(state.ws, frame.id, true, {
       ok: true,
@@ -534,12 +530,20 @@ async function handleMessage(
       authMode: state.authMode,
       authenticatedAt: state.authenticatedAt,
       capabilities: {
-        httpBearerAuth: authRuntime.auth.mode !== 'none',
+        httpBearerAuth: !authRuntime.resolver.isSoloMode(),
         voiceInstructionFormatting: true,
         gatewayPing: true,
       },
+      principal: result.principal
+        ? {
+            id: result.principal.id,
+            displayName: result.principal.subject.displayName,
+            subjectKind: result.principal.subject.type,
+            roles: result.principal.roles,
+          }
+        : undefined,
     });
-    await sendHello(state.ws);
+    if (canReceiveBroadcast(authRuntime, state, Events.HELLO)) await sendHello(state.ws);
     return;
   }
 
@@ -627,7 +631,8 @@ export function broadcast(frame: EventFrame): void {
   for (const [ws, state] of clients) {
     if (
       ws.readyState === WebSocket.OPEN &&
-      (activeAuthRuntime?.auth.mode === 'none' || state.authenticated)
+      activeAuthRuntime !== null &&
+      canReceiveBroadcast(activeAuthRuntime, state, frame.event)
     ) {
       ws.send(msg);
     }
@@ -640,5 +645,37 @@ export function broadcastEvent(event: string, payload: unknown): void {
     event,
     payload,
     seq: ++eventSeq,
+  });
+}
+
+export function closeSessions(predicate: (state: ClientState) => boolean): void {
+  for (const state of clients.values()) {
+    if (predicate(state)) state.ws.close(1008, 'authorization changed; re-authentication required');
+  }
+}
+
+function installCredentialSessionInvalidation(authRuntime: GatewayAuthRuntime): void {
+  if (invalidationInstalled.has(authRuntime)) return;
+  invalidationInstalled.add(authRuntime);
+  authRuntime.store.onChange((change) => {
+    // Let the mutation's response frame (especially the one-time issuance
+    // secret that latches activation) flush before invalidating sockets.
+    setImmediate(() => {
+      if (change.activationLatched) {
+        closeSessions(() => true);
+        return;
+      }
+      closeSessions((state) => {
+        if (
+          state.authentication?.kind === 'credential' &&
+          change.revokedCredentialIds.includes(state.authentication.credentialId)
+        ) {
+          return true;
+        }
+        const resolution = authRuntime.resolver.resolveSessionPrincipal(state);
+        if (!resolution.ok) return true;
+        return change.changedPrincipalIds.includes(resolution.principal.id);
+      });
+    });
   });
 }

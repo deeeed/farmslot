@@ -16,6 +16,8 @@ import { listOrphanedBacklogQueueItems } from '../backlog/store.js';
 import { getGatewayListenSnapshot, remotePairingBlockedHint } from '../core/listen-address.js';
 import { getAllNodes } from '../fleet/machine-registry.js';
 import { loadPoolConfigs, loadProjectConfigs } from '../fleet/state.js';
+import type { GatewayAuthRuntime } from '../security/auth.js';
+import { activeAdminCredentialCount } from '../security/credential-store.js';
 
 import { gatewayStatus } from './gateway-status.js';
 
@@ -74,11 +76,12 @@ const SECTION_RUNNERS: Record<GatewayDoctorSectionId, GatewayDoctorRunner> = {
 
 export async function gatewayDoctor(
   params: GatewayDoctorParams = {},
+  authRuntime?: GatewayAuthRuntime,
 ): Promise<GatewayDoctorResult> {
   const sectionIds = requestedDoctorSectionIds(params);
-  if (params.run === false) return doctorResult(sectionIds, []);
+  if (params.run === false) return doctorResult(sectionIds, [], authRuntime);
   const sections = await Promise.all(sectionIds.map((sectionId) => SECTION_RUNNERS[sectionId]()));
-  return doctorResult(sectionIds, sections);
+  return doctorResult(sectionIds, sections, authRuntime);
 }
 
 function requestedDoctorSectionIds(params: GatewayDoctorParams): GatewayDoctorSectionId[] {
@@ -104,6 +107,7 @@ function assertDoctorSectionId(sectionId: string): GatewayDoctorSectionId {
 function doctorResult(
   requestedSectionIds: GatewayDoctorSectionId[],
   sections: GatewayDoctorSection[],
+  authRuntime?: GatewayAuthRuntime,
 ): GatewayDoctorResult {
   const checks = sections.flatMap((section) => section.checks);
   return {
@@ -116,7 +120,20 @@ function doctorResult(
       fail: checks.filter((check) => !check.ok).length,
     },
     sections,
+    ...(authRuntime ? { identityState: identityState(authRuntime) } : {}),
   };
+}
+
+function identityState(
+  runtime: GatewayAuthRuntime,
+): NonNullable<GatewayDoctorResult['identityState']> {
+  const store = runtime.store.snapshot();
+  if (store.activatedAt !== null) {
+    return activeAdminCredentialCount(store) > 0
+      ? 'activated-with-admin'
+      : 'activated-without-admin';
+  }
+  return runtime.resolver.isSoloMode() ? 'solo-mode' : 'never-latched-non-loopback';
 }
 
 async function gatewaySection(): Promise<GatewayDoctorSection> {
