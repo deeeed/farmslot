@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-06T17:01:43.442Z",
+  "recordedAt": "2026-08-06T18:16:12.799Z",
   "host": "macwork",
   "scenario": "review-recovery-terminal-contract",
   "runner": "gateway",
   "baselineSha": "53ca603b7f4605defd44440edfef4599f370c6b5",
   "baselineReachability": "origin/main",
-  "baselineAdaptation": "export waitForReviewCompletion and shorten only its poll interval",
+  "baselineAdaptation": "export waitForReviewCompletion; use 25ms polls except a 4s overdue poll that preserves the production deadline miss",
   "baseline": {
     "sourceSha": "53ca603b7f4605defd44440edfef4599f370c6b5",
     "recovery": {
       "recoveryStatus": "watching",
       "recoveryAttempts": 0,
-      "recoveryStartedAt": "2026-08-06T17:01:30.160Z",
+      "recoveryStartedAt": "2026-08-06T18:15:22.440Z",
       "nextRetryAtPresent": true,
       "reviewVerdicts": {},
       "reviewRecoveryPending": {},
@@ -39,12 +39,12 @@
     "closedEpisodeReset": {
       "status": "watching",
       "attempts": 0,
-      "startedAt": "2026-08-06T17:01:26.590Z"
+      "startedAt": "2026-08-06T18:15:21.987Z"
     },
     "activeEpisodePreserved": {
       "status": "watching",
       "attempts": 0,
-      "startedAt": "2026-08-06T17:01:26.215Z"
+      "startedAt": "2026-08-06T18:15:21.927Z"
     },
     "replayClearedRecovery": false,
     "pipeline": {
@@ -66,13 +66,17 @@
       "missingJsonTerminalInvalid": false,
       "invalidJsonTerminalInvalid": false,
       "noSignalInvalidJsonTerminalInvalid": false,
-      "overdueReviewerAlive": true,
-      "overdueReviewerTimedOut": true
+      "activeInvalidRemainedRecoverable": false,
+      "activeInvalidReviewerAlive": false,
+      "overdueSettledBeforeDeadline": false,
+      "overdueReviewerTimedOut": false,
+      "overdueReviewWindowKilledBeforeThrow": false,
+      "overdueNeighborWindowPreserved": true
     },
     "contractSatisfied": false
   },
   "current": {
-    "sourceSha": "5c00880b311a6bd5b273d67e8400573ecb8c028d",
+    "sourceSha": "e70eb06b534f80185da23941010631b30eb0a873",
     "recovery": {
       "recoveryStatus": "operator-required",
       "recoveryAttempts": 38,
@@ -100,7 +104,7 @@
       "contextLastSignalAt": {
         "rev-missing": null,
         "rev-invalid": null,
-        "rev-valid": "2026-08-06T17:01:40.468Z",
+        "rev-valid": "2026-08-06T18:16:03.691Z",
         "rev-failed": "2026-08-06T10:40:00.000Z",
         "rev-blocked": "2026-08-06T10:40:00.000Z",
         "rev-stale": null,
@@ -111,7 +115,7 @@
     "closedEpisodeReset": {
       "status": "watching",
       "attempts": 0,
-      "startedAt": "2026-08-06T17:01:40.073Z"
+      "startedAt": "2026-08-06T18:16:02.936Z"
     },
     "activeEpisodePreserved": {
       "status": "watching",
@@ -138,8 +142,12 @@
       "missingJsonTerminalInvalid": true,
       "invalidJsonTerminalInvalid": true,
       "noSignalInvalidJsonTerminalInvalid": true,
-      "overdueReviewerAlive": true,
-      "overdueReviewerTimedOut": true
+      "activeInvalidRemainedRecoverable": true,
+      "activeInvalidReviewerAlive": true,
+      "overdueSettledBeforeDeadline": true,
+      "overdueReviewerTimedOut": true,
+      "overdueReviewWindowKilledBeforeThrow": true,
+      "overdueNeighborWindowPreserved": true
     },
     "contractSatisfied": true
   },
