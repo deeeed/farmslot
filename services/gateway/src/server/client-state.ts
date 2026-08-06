@@ -3,6 +3,7 @@
 import type { WebSocket } from 'ws';
 
 import type {
+  AuthenticationRef,
   GatewayAuthClientKind,
   GatewayAuthMode,
   TerminalData,
@@ -43,4 +44,5 @@ export interface ClientState extends TerminalSubscriptionState {
   clientKind?: GatewayAuthClientKind;
   authMode?: GatewayAuthMode;
   authenticatedAt?: number;
+  authentication?: AuthenticationRef;
 }

@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   authenticateGatewayClient,
   authorizeHttpRequest,
   createGatewayAuthRuntime,
   GatewayAuthRateLimiter,
+  initializeGatewayIdentity,
   resolveGatewayAuth,
   resolveRequestIp,
 } from './auth.js';
@@ -14,7 +18,7 @@ assert.deepEqual(resolveGatewayAuth({ FARMSLOT_GATEWAY_TOKEN: 'abc' }).mode, 'to
 assert.deepEqual(resolveGatewayAuth({ FARMSLOT_GATEWAY_PASSWORD: 'pw' }).mode, 'password');
 assert.throws(() => resolveGatewayAuth({ FARMSLOT_GATEWAY_AUTH_MODE: 'token' }), /requires/);
 
-const runtime = createGatewayAuthRuntime({ FARMSLOT_GATEWAY_TOKEN: 'abc' });
+const runtime = createInitializedRuntime({ FARMSLOT_GATEWAY_TOKEN: 'abc' });
 assert.equal(
   authenticateGatewayClient({
     runtime,
@@ -33,7 +37,7 @@ assert.equal(
 );
 
 const limited = {
-  auth: runtime.auth,
+  ...runtime,
   limiter: new GatewayAuthRateLimiter(1, 60_000),
 };
 authenticateGatewayClient({
@@ -51,7 +55,7 @@ assert.equal(rateLimited.rateLimited, true);
 // Loopback clients bypass the rate limiter: a valid token authenticates even after a
 // prior failure that would lock out a remote IP (max=1). Covers the mapped IPv6 form.
 for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
-  const loopbackLimited = { auth: runtime.auth, limiter: new GatewayAuthRateLimiter(1, 60_000) };
+  const loopbackLimited = { ...runtime, limiter: new GatewayAuthRateLimiter(1, 60_000) };
   authenticateGatewayClient({
     runtime: loopbackLimited,
     connectParams: { clientKind: 'ui', token: 'bad' },
@@ -72,31 +76,24 @@ for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
 
 // With proxy headers trusted, clientIp comes from X-Forwarded-For — a forged loopback
 // IP must NOT be exempt, so brute-force protection stays on for remote callers.
-const prevTrust = process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS;
-process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS = '1';
-try {
-  const proxyLimited = { auth: runtime.auth, limiter: new GatewayAuthRateLimiter(1, 60_000) };
-  authenticateGatewayClient({
-    runtime: proxyLimited,
-    connectParams: { clientKind: 'ui', token: 'bad' },
-    clientIp: '127.0.0.1',
-  });
-  const forged = authenticateGatewayClient({
-    runtime: proxyLimited,
-    connectParams: { clientKind: 'ui', token: 'abc' },
-    clientIp: '127.0.0.1',
-  });
-  assert.equal(
-    forged.rateLimited,
-    true,
-    'forged loopback under proxy trust must stay rate-limited',
-  );
-} finally {
-  if (prevTrust === undefined) delete process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS;
-  else process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS = prevTrust;
-}
+const proxyRuntime = createInitializedRuntime({
+  FARMSLOT_GATEWAY_TOKEN: 'abc',
+  FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS: '1',
+});
+const proxyLimited = { ...proxyRuntime, limiter: new GatewayAuthRateLimiter(1, 60_000) };
+authenticateGatewayClient({
+  runtime: proxyLimited,
+  connectParams: { clientKind: 'ui', token: 'bad' },
+  clientIp: '127.0.0.1',
+});
+const forged = authenticateGatewayClient({
+  runtime: proxyLimited,
+  connectParams: { clientKind: 'ui', token: 'abc' },
+  clientIp: '127.0.0.1',
+});
+assert.equal(forged.rateLimited, true, 'forged loopback under proxy trust must stay rate-limited');
 
-const cookieRuntime = createGatewayAuthRuntime({ FARMSLOT_GATEWAY_TOKEN: 'cookie-token' });
+const cookieRuntime = createInitializedRuntime({ FARMSLOT_GATEWAY_TOKEN: 'cookie-token' });
 const cookieResponse = createFakeResponse();
 const cookieAuthorized = authorizeHttpRequest({
   runtime: cookieRuntime,
@@ -111,7 +108,7 @@ assert.equal(cookieResponse.statusCode, undefined);
 
 const encodedCookieResponse = createFakeResponse();
 const encodedCookieAuthorized = authorizeHttpRequest({
-  runtime: createGatewayAuthRuntime({ FARMSLOT_GATEWAY_TOKEN: 'cookie token with spaces' }),
+  runtime: createInitializedRuntime({ FARMSLOT_GATEWAY_TOKEN: 'cookie token with spaces' }),
   req: createFakeRequest({
     cookie: `farmslot_gateway_credential=${encodeURIComponent('cookie token with spaces')}`,
     remoteAddress: '127.0.0.1',
@@ -122,7 +119,7 @@ assert.equal(encodedCookieAuthorized, true);
 
 const queryTokenResponse = createFakeResponse();
 const queryTokenAuthorized = authorizeHttpRequest({
-  runtime: createGatewayAuthRuntime({ FARMSLOT_GATEWAY_TOKEN: 'query token' }),
+  runtime: createInitializedRuntime({ FARMSLOT_GATEWAY_TOKEN: 'query token' }),
   req: createFakeRequest({
     url: `/api/run-artifact?runId=run-1&path=artifacts%2Fafter.png&token=${encodeURIComponent('query token')}`,
     remoteAddress: '127.0.0.1',
@@ -172,6 +169,16 @@ try {
 }
 
 console.log('gateway auth tests passed');
+
+function createInitializedRuntime(env: NodeJS.ProcessEnv) {
+  const runtime = createGatewayAuthRuntime({
+    ...env,
+    FARMSLOT_HOME: mkdtempSync(join(tmpdir(), 'farmslot-auth-test-')),
+    GATEWAY_HOST: '127.0.0.1',
+  });
+  initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
+  return runtime;
+}
 
 function createFakeRequest(params: {
   cookie?: string;
