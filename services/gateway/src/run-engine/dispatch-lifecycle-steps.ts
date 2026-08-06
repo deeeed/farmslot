@@ -331,6 +331,7 @@ export async function executePrepareStep(
       prepareController.signal,
       {
         ...(warmRecovery ? { stripClean: true } : {}),
+        ...(isPrepareReplay ? { preserveBranch: true } : {}),
         ...(current.startRef ? { startRef: { requestedRef: current.startRef.requestedRef } } : {}),
       },
     );
