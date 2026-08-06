@@ -22,12 +22,12 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - Align embedded recipes and actions with the strict Action Manifest v1 contract
 - Migrate embedded automation recipes and recipe UI terminology to parameterized, composable Recipe v1 documents
 - feat: run filters render the renamed `update-branch` branch-maintenance flow (was `merge-main`), and normalize a legacy persisted `merge-main` filter selection to `update-branch` on load so the saved filter still matches runs
-- an executable native settings recipe using the slot-assigned simulator and keep warm Metro services alive after profile preparation
-- passive UI observation handling to the Companion recipe bridge
-- Enter to Companion tmux shortcuts and a native terminal history view toggle
+- Add an executable native settings recipe using the slot-assigned simulator and keep warm Metro services alive after profile preparation
+- Add passive UI observation handling to the Companion recipe bridge
+- Add Enter to Companion tmux shortcuts and a native terminal history view toggle
 - Enable pinch zoom, pan, and double-tap reset in Companion fullscreen image viewers
 - fix: pairing WebSocket failures on LAN gateway URLs explain when the gateway must listen on all interfaces
-- quick idea capture in the companion copilot flow
+- Add quick idea capture in the companion copilot flow
 - Render interactive operator packets on run detail with artifact anchors and auth-aware artifact links
 - Wire local Google Play service account symlink for non-interactive EAS Android submit
 - Normalize duplicate imports so the repository-wide import hygiene rule can cover Companion

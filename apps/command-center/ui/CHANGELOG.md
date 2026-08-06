@@ -13,7 +13,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - fix(dispatch): use one sortable slot-choice table across Dispatch, Backlog, Roadmap, and Work Graph, with shared lifecycle/worker colors and bounded scrolling for long fleets
 - fix(runs): clear run-scoped worker progress immediately when the selected run changes and ignore late progress or family responses from the previous selection
 - fix(runs): show the live current-package review summary in run details instead of retaining the gate-time snapshot after package or review changes
-- feat(runs): selecting a Runs inventory row opens the existing full detail beside the list,
+- feat(runs): selecting a Runs inventory row opens the existing full detail beside the list, preserving filters while operators inspect its pipeline and slot; run and publication descriptions now use readable foreground contrast, with an explicit link to the full run workspace
 - fix(runs): label a retained publication-review launch refusal as **review launch paused** instead of implying that an independent reviewer is running
 - fix(roadmap): run deletion/archive events invalidate delivery even when the affected run is outside the paginated client run list, preventing stale badges and lineage detail
 - fix(roadmap): the delivery revision tracks backlog rows reachable only through `RoadmapItem.promotion`, which carry no `roadmapItemId`; filtering on the canonical link alone dropped a supported lineage case and left its badges stale
@@ -27,7 +27,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - fix(roadmap): delivery _detail_ requests are generation-stamped too, so two overlapping `roadmap.get` calls for the same selected item cannot land out of order and restore stale lineage, and a superseded request's error no longer surfaces after the selection moved on
 - feat(slot-view): the source-control panel shows every change vs the base branch — committed or not — as one deduped list ("All changes vs main"), with per-file diffs computed against the working tree
 - fix(slot-view): branch-diff file list self-heals — the git-status poll reloads it after a transient failure or when the commit count changes, and failures render as "Branch diff unavailable" instead of a false "No changes"
-- fix(roadmap): delivery reloads trigged by run updates are coalesced and generation-stamped, so a burst of `RUN_UPDATED` events cannot stack overlapping full projections or let a slow earlier response overwrite newer badges
+- fix(roadmap): delivery reloads triggered by run updates are coalesced and generation-stamped, so a burst of `RUN_UPDATED` events cannot stack overlapping full projections or let a slow earlier response overwrite newer badges
 - fix(roadmap): the delivery revision folds every row's identity, not just the count and newest timestamp, so swapping one linked row for another (or two edits in the same millisecond) no longer leaves badges stale
 - fix(roadmap): delivery refresh tracks content, not row counts, so a run reaching `done` updates both list badges and the open item; unreachable evidence (archived-only families, URL-less PRs, deleted backlog items) renders as an inert chip instead of disappearing or linking nowhere
 - fix(roadmap): delivery badges refresh when runs or backlog items change while the panel is mounted; backlog backlinks pin the item's status so delivered lineage is not filtered out; archived-only run families render without a dead link

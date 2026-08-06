@@ -6,6 +6,7 @@
     "Ready-gate recaptures the contribution diff at HEAD, refuses to restamp when the package changed, and soft-chips behind-main / merge conflicts",
     "Roadmap delivery lineage is projected from the full backlog and run stores so historical runs stay visible with durable backlinks",
     "Dispatch exclusive claim protocol and Codex multi-account seat bind/failover keep concurrent queue work and provider seats honest",
-    "Worktree branch diffs include uncommitted and untracked files; git.status exposes HEAD SHA so clients can invalidate committed-diff caches after rebases"
+    "Worktree branch diffs include uncommitted and untracked files; git.status exposes HEAD SHA so clients can invalidate committed-diff caches after rebases",
+    "BREAKING for node hosts: exec/filesystem RPCs require coordinated gateway+node upgrade (argv + path contract); upgrade both sides together before fleet use"
   ]
 }
