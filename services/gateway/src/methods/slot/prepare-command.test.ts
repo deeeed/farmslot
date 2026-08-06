@@ -139,6 +139,21 @@ test('buildPrepareWrappedCommand omits the export when no workspace resolves', (
   );
 });
 
+test('buildPrepareWrappedCommand persists an opaque prepare scope through an exact sentinel', () => {
+  const command = buildPrepareWrappedCommand('echo ok', '/tmp/prep.exit', '/tmp/prep', {
+    prepareScope: {
+      token: '11111111111111111111111111111111',
+      identityPath: '/tmp/runtime/preflight.identity',
+    },
+  });
+
+  assert.match(command, /FARMSLOT_PREPARE_SCOPE='11111111111111111111111111111111'/);
+  assert.match(command, /farmslot-prepare-scope '11111111111111111111111111111111'/);
+  assert.match(command, /preflight\.identity/);
+  assert.match(command, /FARMSLOT_PREPARE_SENTINEL_PID/);
+  assert.match(command, /parent.*FARMSLOT_PREPARE_SENTINEL_PID.*return/);
+});
+
 test('clearStalePrepareProcess returns false when there is no live tracked preflight', async () => {
   // Missing pid file: the tracked-PID branch is skipped and the fallback sweep
   // matches nothing real, so no kill is reported. This guards against the

@@ -281,7 +281,11 @@ export function buildPrepareWrappedCommand(
   cmd: string,
   sentinelPath: string,
   scratchDir: string,
-  opts?: { keepAliveOnSuccess?: boolean; workspaceRoot?: string | null },
+  opts?: {
+    keepAliveOnSuccess?: boolean;
+    workspaceRoot?: string | null;
+    prepareScope?: { token: string; identityPath: string };
+  },
 ): string {
   const quotedSentinelPath = shellQuote(sentinelPath);
   const keepAliveOnSuccess = opts?.keepAliveOnSuccess === true;
@@ -296,6 +300,17 @@ export function buildPrepareWrappedCommand(
   const workspaceExports = opts?.workspaceRoot
     ? [`export FARMSLOT_WORKSPACE=${shellQuote(opts.workspaceRoot)}`]
     : [];
+  const prepareScopeSetup = opts?.prepareScope
+    ? [
+        `mkdir -p ${shellQuote(path.dirname(opts.prepareScope.identityPath))}`,
+        `export FARMSLOT_PREPARE_SCOPE=${shellQuote(opts.prepareScope.token)}`,
+        `nohup sh -c ${shellQuote('while :; do sleep 86400; done')} farmslot-prepare-scope ${shellQuote(opts.prepareScope.token)} >/dev/null 2>&1 &`,
+        'FARMSLOT_PREPARE_SENTINEL_PID=$!',
+        'export FARMSLOT_PREPARE_SENTINEL_PID',
+        `FARMSLOT_PREPARE_PGID=$(ps -o pgid= -p $$ | tr -d '[:space:]')`,
+        `case "$FARMSLOT_PREPARE_PGID" in ''|*[!0-9]*) ;; *) printf '%s\t%s\t%s\n' "$FARMSLOT_PREPARE_PGID" "$FARMSLOT_PREPARE_SENTINEL_PID" "$FARMSLOT_PREPARE_SCOPE" > ${shellQuote(opts.prepareScope.identityPath)} ;; esac`,
+      ]
+    : [];
   return [
     'unset FORCE_COLOR',
     ...workspaceExports,
@@ -304,6 +319,7 @@ export function buildPrepareWrappedCommand(
     '  local parent="$1"',
     '  local signal="${2:-TERM}"',
     '  local children child',
+    '  if [ -n "${FARMSLOT_PREPARE_SENTINEL_PID:-}" ] && [ "$parent" = "$FARMSLOT_PREPARE_SENTINEL_PID" ]; then return; fi',
     '  children=$(pgrep -P "$parent" 2>/dev/null || true)',
     '  for child in $children; do',
     '    __farmslot_kill_tree "$child" "$signal"',
@@ -328,6 +344,7 @@ export function buildPrepareWrappedCommand(
     '  sleep 1',
     '  exit "$code"',
     '}',
+    ...prepareScopeSetup,
     "trap '__farmslot_signal_exit 129' HUP",
     "trap '__farmslot_signal_exit 130' INT",
     "trap '__farmslot_signal_exit 143' TERM",
@@ -415,6 +432,7 @@ export async function runPrepareCommand(
     windowLabel?: string;
     phase?: string;
     forceLocal?: boolean;
+    prepareScope?: { token: string; identityPath: string };
   },
 ): Promise<import('../../core/exec.js').ExecResult> {
   const slotIsLocal = isLocal(vars.host, vars.machine);
@@ -461,6 +479,7 @@ export async function runPrepareCommand(
   const wrappedCmd = buildPrepareWrappedCommand(cmd, sentinelPath, slotHostScratchDir, {
     keepAliveOnSuccess: opts?.phase === 'preflight',
     workspaceRoot: resolveWorkspaceRoot(),
+    ...(opts?.prepareScope ? { prepareScope: opts.prepareScope } : {}),
   });
   // Stage the wrapped command in a temp script so tmux respawn-pane can exec
   // bash directly against the file. Necessary because tmux runs respawn-pane's

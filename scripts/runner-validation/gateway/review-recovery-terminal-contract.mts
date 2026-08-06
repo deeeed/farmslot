@@ -596,16 +596,59 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
-function spawnGeneratedRunner(scope?: string): number {
+function spawnGeneratedRunner(): number {
   const child = spawn(runnerPath, ['30'], {
     detached: true,
-    env: scope ? { ...process.env, FARMSLOT_PREPARE_SCOPE: scope } : process.env,
     stdio: 'ignore',
   });
   assert.ok(child.pid && child.pid > 1, 'generated runner pid was not available');
   generatedRunnerPids.add(child.pid);
   child.unref();
   return child.pid;
+}
+
+function spawnScopedPrepareGroup(
+  name: string,
+  scope: string,
+): {
+  groupPid: number;
+  launcherPid: number;
+} {
+  const launcherPidPath = path.join(tempRoot, `${name}.launcher.pid`);
+  const child = spawn(
+    '/bin/sh',
+    [
+      '-c',
+      '"$FARMSLOT_SCENARIO_RUNNER" 30 & child=$!; printf \'%s\' "$child" > "$FARMSLOT_SCENARIO_PID_FILE"; wait "$child"',
+      'farmslot-prepare-scope',
+      scope,
+    ],
+    {
+      detached: true,
+      env: {
+        ...process.env,
+        FARMSLOT_PREPARE_SCOPE: scope,
+        FARMSLOT_SCENARIO_PID_FILE: launcherPidPath,
+        FARMSLOT_SCENARIO_RUNNER: runnerPath,
+      },
+      stdio: 'ignore',
+    },
+  );
+  assert.ok(child.pid && child.pid > 1, `${name} group pid was not available`);
+  generatedRunnerPids.add(child.pid);
+  child.unref();
+
+  const pidDeadline = Date.now() + 1_000;
+  while (!existsSync(launcherPidPath) && Date.now() < pidDeadline) {
+    execFileSync('sleep', ['0.01']);
+  }
+  const launcherPid = Number(readFileSync(launcherPidPath, 'utf-8'));
+  assert.ok(
+    Number.isInteger(launcherPid) && launcherPid > 1,
+    `${name} launcher pid was not recorded`,
+  );
+  generatedRunnerPids.add(launcherPid);
+  return { groupPid: child.pid, launcherPid };
 }
 
 async function waitForProcessExit(pid: number, timeoutMs = 1_000): Promise<boolean> {
@@ -625,9 +668,9 @@ async function runSlotCleanupContract(recovery: RecoveryModule): Promise<SlotCle
   const trackedScope = '11111111111111111111111111111111';
   const recycledScope = '22222222222222222222222222222222';
   const staleScope = '33333333333333333333333333333333';
-  const trackedPid = spawnGeneratedRunner(trackedScope);
+  const tracked = spawnScopedPrepareGroup('tracked-prepare', trackedScope);
   const neighborPid = spawnGeneratedRunner();
-  writeText(processGroupPath, `${trackedPid}\t${trackedScope}\n`);
+  writeText(processGroupPath, `${tracked.groupPid}\t${tracked.groupPid}\t${trackedScope}\n`);
   const launcherPidAbsentBeforeCleanup = !existsSync(launcherPidPath);
 
   if (!recovery.cleanupSlotProcesses) {
@@ -642,19 +685,20 @@ async function runSlotCleanupContract(recovery: RecoveryModule): Promise<SlotCle
   }
 
   await recovery.cleanupSlotProcesses(slotId);
-  const trackedPrePidLauncherKilled = await waitForProcessExit(trackedPid);
+  const trackedPrePidLauncherKilled = await waitForProcessExit(tracked.launcherPid);
   const similarlyNamedNeighborPreserved = processIsAlive(neighborPid);
   const processGroupIdentityRemoved = !existsSync(processGroupPath);
 
-  const recycledPid = spawnGeneratedRunner(recycledScope);
-  writeText(processGroupPath, `${recycledPid}\t${staleScope}\n`);
+  const recycled = spawnScopedPrepareGroup('recycled-prepare', recycledScope);
+  writeText(processGroupPath, `${recycled.groupPid}\t${recycled.groupPid}\t${staleScope}\n`);
   await recovery.cleanupSlotProcesses(slotId);
   return {
     launcherPidAbsentBeforeCleanup,
     trackedPrePidLauncherKilled,
     similarlyNamedNeighborPreserved,
     processGroupIdentityRemoved,
-    recycledWrongScopeGroupPreserved: processIsAlive(recycledPid),
+    recycledWrongScopeGroupPreserved:
+      processIsAlive(recycled.groupPid) && processIsAlive(recycled.launcherPid),
     staleIdentityRemoved: !existsSync(processGroupPath),
   };
 }

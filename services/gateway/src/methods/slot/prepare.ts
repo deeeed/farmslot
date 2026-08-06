@@ -1189,12 +1189,7 @@ async function slotPrepareInner(
     }
     const wrappedPreflightHook = [
       `PREP_PID_FILE=${shellQuote(preflightPidPath)}`,
-      `PREP_IDENTITY_FILE=${shellQuote(preflightIdentityPath)}`,
-      `PREP_SCOPE=${shellQuote(preflightScope)}`,
-      `export FARMSLOT_PREPARE_SCOPE="$PREP_SCOPE"`,
       `echo $$ > "$PREP_PID_FILE"`,
-      `PREP_PGID=$(ps -o pgid= -p $$ | tr -d '[:space:]')`,
-      `case "$PREP_PGID" in ''|*[!0-9]*) ;; *) printf '%s\t%s\n' "$PREP_PGID" "$PREP_SCOPE" > "$PREP_IDENTITY_FILE" ;; esac`,
       `cleanup_prepare_pid(){ rm -f "$PREP_PID_FILE"; }`,
       `trap cleanup_prepare_pid EXIT INT TERM`,
       ...varExports,
@@ -1250,6 +1245,7 @@ async function slotPrepareInner(
         signal,
         windowLabel,
         phase: 'preflight',
+        prepareScope: { token: preflightScope, identityPath: preflightIdentityPath },
         onOutput: (outputStream, data) => {
           stream.output(outputStream === 'stderr' ? 'stderr' : 'stdout', data);
           phaseBuffer += stripAnsi(data);
