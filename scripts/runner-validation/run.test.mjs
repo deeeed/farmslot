@@ -20,9 +20,10 @@ import { listScenarios } from './scenarios/index.mjs';
 
 const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/panes');
 
-test('runner-validation catalog includes four runners and fifteen scenarios', () => {
+test('runner-validation catalog includes four runners and sixteen scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
-  assert.equal(listScenarios().length, 15);
+  assert.equal(listScenarios().length, 16);
+  assert.ok(listScenarios().includes('review-recovery-terminal-contract'));
   assert.ok(listScenarios().includes('hook-smoke'));
   assert.ok(listScenarios().includes('pane-smoke'));
   assert.ok(listScenarios().includes('interaction-smoke'));

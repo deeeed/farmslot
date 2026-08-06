@@ -5,7 +5,26 @@ import path from 'node:path';
 import { writeEvidence } from '../lib/evidence.mjs';
 
 export const SCENARIO_ID = 'review-recovery-terminal-contract';
-const BASELINE_SHA = '2f5299c7d4c1ed675875d7107d15d1f71970547d';
+export const RUNNER_AGNOSTIC = true;
+const BASELINE_SHA = '53ca603b7f4605defd44440edfef4599f370c6b5';
+
+function exposeBaselineWaitContract(baselineRoot) {
+  const reviewAgentPath = path.join(
+    baselineRoot,
+    'services/gateway/src/self-review/review-agent.ts',
+  );
+  const original = fs.readFileSync(reviewAgentPath, 'utf-8');
+  const exposed = original
+    .replace(
+      'async function waitForReviewCompletion(',
+      'export async function waitForReviewCompletion(',
+    )
+    .replace('const pollInterval = 10_000; // 10s', 'const pollInterval = 25;');
+  if (exposed === original) {
+    throw new Error('main-reachable baseline wait contract could not be exposed');
+  }
+  fs.writeFileSync(reviewAgentPath, exposed);
+}
 
 function runContractExecutor({ root, sourceRoot, sourceSha, resultPath }) {
   const executor = path.join(
@@ -29,8 +48,8 @@ function runContractExecutor({ root, sourceRoot, sourceSha, resultPath }) {
   };
 }
 
-export async function runScenario({ runnerAdapter, outDir }) {
-  const runner = runnerAdapter.RUNNER_ID;
+export async function runScenario({ outDir }) {
+  const runner = 'gateway';
   const root = process.cwd();
   fs.mkdirSync(path.join(root, 'temp'), { recursive: true });
   const tempRoot = fs.mkdtempSync(path.join(root, 'temp', 'review-recovery-contract-'));
@@ -40,6 +59,8 @@ export async function runScenario({ runnerAdapter, outDir }) {
   const report = {
     runner,
     baselineSha: BASELINE_SHA,
+    baselineReachability: 'origin/main',
+    baselineAdaptation: 'export waitForReviewCompletion and shorten only its poll interval',
     baseline: null,
     current: null,
     baselineLog: [],
@@ -52,6 +73,9 @@ export async function runScenario({ runnerAdapter, outDir }) {
 
   try {
     fs.mkdirSync(baselineRoot, { recursive: true });
+    execFileSync('git', ['merge-base', '--is-ancestor', BASELINE_SHA, 'origin/main'], {
+      cwd: root,
+    });
     const archive = execFileSync('git', ['archive', BASELINE_SHA], {
       cwd: root,
       maxBuffer: 256 * 1024 * 1024,
@@ -60,6 +84,7 @@ export async function runScenario({ runnerAdapter, outDir }) {
       input: archive,
       maxBuffer: 256 * 1024 * 1024,
     });
+    exposeBaselineWaitContract(baselineRoot);
     const baseline = runContractExecutor({
       root,
       sourceRoot: baselineRoot,
@@ -73,7 +98,7 @@ export async function runScenario({ runnerAdapter, outDir }) {
     const current = runContractExecutor({
       root,
       sourceRoot: root,
-      sourceSha: `working-tree@${currentSha}`,
+      sourceSha: currentSha,
       resultPath: currentResultPath,
     });
     report.baseline = baseline.result;

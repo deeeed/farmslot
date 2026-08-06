@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { resumableSessionProbeCommand } from '../runners/session-process.js';
 
+import { parseStructuredReviewFeedback } from './feedback.js';
 import { applyTerminalReviewSignal, parseTerminalSelfReviewSignal } from './review-agent.js';
 import {
   isSuccessfulTerminalReviewSignal,
@@ -72,6 +73,27 @@ test('established completion makes an invalid structured result terminal', () =>
   );
 
   assert.match(error?.message ?? '', /review-result\.json is invalid/);
+});
+
+test('structured result parser preserves schema v1 issues and fails closed on corruption', () => {
+  assert.deepEqual(
+    parseStructuredReviewFeedback(
+      JSON.stringify({
+        schemaVersion: 1,
+        verdict: 'issues',
+        issues: [{ file: 'src/review.ts', line: 7, description: 'Keep this finding.' }],
+      }),
+      'artifacts/review-result.json',
+    ),
+    {
+      verdict: 'issues',
+      issues: [{ file: 'src/review.ts', line: 7, description: 'Keep this finding.' }],
+    },
+  );
+  const corrupt = parseStructuredReviewFeedback('{', 'artifacts/review-result.json');
+  assert.equal(corrupt.verdict, 'issues');
+  assert.equal(corrupt.incomplete, true);
+  assert.match(corrupt.terminalInvalidReason ?? '', /not valid JSON/);
 });
 
 test('parseTerminalSelfReviewSignal rejects legacy substring-only detection', () => {

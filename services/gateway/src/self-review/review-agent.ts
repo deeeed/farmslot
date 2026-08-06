@@ -300,9 +300,15 @@ export async function resumeReviewAgentPromptDelivery(
 
 export async function waitForRecoveredReviewerOrCleanup(
   waitForCompletion: () => Promise<boolean>,
-  abandonRecoveredReviewer: (reason: string) => Promise<unknown>,
+  abandonRecoveredReviewer: (reason: string, status?: 'failed' | 'blocked') => Promise<unknown>,
 ): Promise<boolean> {
-  if (await waitForCompletion()) return true;
+  try {
+    if (await waitForCompletion()) return true;
+  } catch (error) {
+    if (!isTerminalReviewArtifactError(error)) throw error;
+    await abandonRecoveredReviewer('invalid recovered reviewer artifact cleanup', 'blocked');
+    throw error;
+  }
   await abandonRecoveredReviewer('recovered reviewer timeout');
   return false;
 }
@@ -1147,7 +1153,7 @@ export async function runReviewAgent(
   }
 }
 
-async function waitForReviewCompletion(
+export async function waitForReviewCompletion(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
   taskDir: string,
@@ -1159,22 +1165,43 @@ async function waitForReviewCompletion(
   signalBasename: string,
   feedbackRelPath: string,
   resultRelPath?: string | null,
+  pollInterval = 10_000,
 ): Promise<boolean> {
   const start = Date.now();
-  const pollInterval = 10_000; // 10s
   // Re-enforce the minimum window size before polling: completion matching
   // reads the last pane lines, which a reflowed 5-row window truncates.
   await ensureTmuxWindowMinimumSize(vars, `${session}:${reviewWindow}`);
   const requiredOutputPaths = [feedbackRelPath, ...(resultRelPath ? [resultRelPath] : [])].map(
     (relPath) => `${vars.remoteRepo}/${taskDir}/${relPath}`,
   );
-  const hasRequiredOutput = async (): Promise<boolean> =>
-    (
-      await execOnSlot(
-        vars,
-        `${requiredOutputPaths.map((outputPath) => `test -f ${shellQuote(outputPath)}`).join(' && ')} && echo yes`,
-      )
-    ).stdout.trim() === 'yes';
+  const outputExists = async (outputPath: string): Promise<boolean> =>
+    (await execOnSlot(vars, `test -f ${shellQuote(outputPath)} && echo yes`)).stdout.trim() ===
+    'yes';
+  const terminalInvalid = async (reason: string): Promise<never> => {
+    await markAgentContextStatus(runId, 'self-review', 'blocked', {
+      id: reviewContextId,
+      lastSignalAt: new Date().toISOString(),
+    });
+    throw new TerminalReviewArtifactError(
+      `Reviewer ${reviewContextId} completed with an invalid result artifact: ${reason}`,
+    );
+  };
+  const completedOutputIsValid = async (strict: boolean): Promise<boolean> => {
+    if (!(await outputExists(requiredOutputPaths[0]!))) {
+      if (!strict) return false;
+      return terminalInvalid(`${feedbackRelPath} is missing`);
+    }
+    if (resultRelPath && !(await outputExists(requiredOutputPaths[1]!))) {
+      return terminalInvalid(`${resultRelPath} is missing`);
+    }
+    if (resultRelPath) {
+      const feedback = await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath);
+      if (feedback.terminalInvalidReason) {
+        return terminalInvalid(feedback.terminalInvalidReason);
+      }
+    }
+    return true;
+  };
 
   while (true) {
     await new Promise((r) => setTimeout(r, pollInterval));
@@ -1193,7 +1220,7 @@ async function waitForReviewCompletion(
 
     if (!hasWindow) {
       // Window disappearance is only success after the review artifact exists.
-      if (await hasRequiredOutput()) {
+      if (await completedOutputIsValid(false)) {
         debugSelfReviewLog(`[self-review] review window gone + feedback written — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
           id: reviewContextId,
@@ -1230,7 +1257,7 @@ async function waitForReviewCompletion(
       if (!agentAlive) {
         // Runner exited but window still exists — only declare done if feedback was written.
         // Without this gate, a false positive fires during runner startup before it has forked.
-        if (await hasRequiredOutput()) {
+        if (await completedOutputIsValid(false)) {
           debugSelfReviewLog(
             `[self-review] ${runner} process exited + feedback written — agent completed`,
           );
@@ -1275,25 +1302,15 @@ async function waitForReviewCompletion(
         );
         return true;
       }
-      if (await hasRequiredOutput()) {
-        debugSelfReviewLog(
-          `[self-review] terminal ${signalBasename} (status=${terminalSignal.status}) + feedback — agent completed`,
-        );
-        await markAgentContextStatus(runId, 'self-review', 'complete', {
-          id: reviewContextId,
-          lastSignalAt: new Date().toISOString(),
-        });
-        return true;
-      }
-      await markAgentContextStatus(runId, 'self-review', 'blocked', {
+      await completedOutputIsValid(true);
+      debugSelfReviewLog(
+        `[self-review] terminal ${signalBasename} (status=${terminalSignal.status}) + feedback — agent completed`,
+      );
+      await markAgentContextStatus(runId, 'self-review', 'complete', {
         id: reviewContextId,
         lastSignalAt: new Date().toISOString(),
       });
-      throw new TerminalReviewArtifactError(
-        `Reviewer ${reviewContextId} completed without all required review artifacts (${requiredOutputPaths
-          .map((outputPath) => path.posix.basename(outputPath))
-          .join(', ')})`,
-      );
+      return true;
     }
 
     // Check pane output for signs of completion
@@ -1313,7 +1330,7 @@ async function waitForReviewCompletion(
       !runnerPaneShowsCurrentInteractiveProgress(pane, runner);
     if (reviewerAtIdlePrompt) {
       // Double-check: the reviewer-specific feedback file exists = work is done.
-      if (await hasRequiredOutput()) {
+      if (await completedOutputIsValid(false)) {
         debugSelfReviewLog(`[self-review] idle prompt + feedback file — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
           id: reviewContextId,
@@ -1325,7 +1342,7 @@ async function waitForReviewCompletion(
 
     // Shell prompt without feedback is not success — Codex can bounce back to shell after an internal shortcut.
     if (pane.match(/[\$%]\s*$/m) && !pane.includes('⏵⏵')) {
-      if (await hasRequiredOutput()) {
+      if (await completedOutputIsValid(false)) {
         debugSelfReviewLog(`[self-review] shell prompt + feedback file — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
           id: reviewContextId,

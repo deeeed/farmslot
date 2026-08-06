@@ -185,6 +185,7 @@ async function resumeInterruptedPublicationReviewOnce(
       resumeFromResult: selfReviewResultFromInterruptedReview(interrupted),
     });
   } catch (error) {
+    if (isTerminalReviewArtifactError(error)) throw error;
     console.warn(
       `[ready-gate] run ${runId.slice(0, 8)} — interrupted review continuation remains recoverable: ${(error as Error).message}`,
     );

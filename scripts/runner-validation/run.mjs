@@ -56,12 +56,15 @@ async function main() {
   const runners = runnersForArg(args.runner);
   const scenarios = scenariosForArg(args.scenario);
   const results = [];
+  const completedRunnerAgnosticScenarios = new Set();
 
   for (const runnerId of runners) {
     const runnerAdapter = getRunnerAdapter(runnerId);
     for (const scenarioId of scenarios) {
       sleepMs(3000);
       const scenario = SCENARIOS[scenarioId];
+      if (scenario.RUNNER_AGNOSTIC && completedRunnerAgnosticScenarios.has(scenarioId)) continue;
+      if (scenario.RUNNER_AGNOSTIC) completedRunnerAgnosticScenarios.add(scenarioId);
       const result = await scenario.runScenario({
         runnerAdapter,
         timeoutMs: args.timeoutMs,
@@ -70,7 +73,7 @@ async function main() {
       });
       results.push(result);
       const label = result.skipped ? 'SKIP' : result.pass ? 'PASS' : 'FAIL';
-      console.log(`${runnerId}/${scenarioId}: ${label} -> ${result.outPath}`);
+      console.log(`${result.runner ?? runnerId}/${scenarioId}: ${label} -> ${result.outPath}`);
       if (!result.pass && !result.skipped) {
         console.error(JSON.stringify(result.report, null, 2));
       }

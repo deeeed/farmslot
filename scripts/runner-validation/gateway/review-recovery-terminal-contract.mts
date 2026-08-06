@@ -30,25 +30,29 @@ interface ReplayModule {
   ): Promise<unknown>;
 }
 
-interface FeedbackModule {
-  readReviewFeedback(
+interface ReviewAgentModule {
+  waitForReviewCompletion(
     vars: unknown,
+    session: string,
     taskDir: string,
+    timeoutMs: number,
+    runId: string,
+    runner: string,
+    reviewWindow: string,
+    reviewContextId: string,
+    signalBasename: string,
     feedbackRelPath: string,
     resultRelPath?: string | null,
-  ): Promise<{ terminalInvalidReason?: string }>;
+    pollInterval?: number,
+  ): Promise<boolean>;
+}
+
+interface SessionProcessModule {
+  isRunnerAliveUnderPane(vars: unknown, panePid: string, runner: string): Promise<boolean>;
 }
 
 interface ConfigModule {
   loadSlotVars(slotId: string): Promise<unknown>;
-}
-
-interface TerminalResultModule {
-  terminalReviewArtifactErrorForCompletion?: (
-    contextId: string,
-    terminalInvalidReason: string | undefined,
-    completionEstablished: boolean,
-  ) => Error | undefined;
 }
 
 interface RecoverySnapshot {
@@ -61,6 +65,22 @@ interface RecoverySnapshot {
   contextStatus: Record<string, string>;
   contextLastSignalAt: Record<string, string | null>;
   gateReplayed: boolean;
+}
+
+interface RecoveryEpisodeSnapshot {
+  status: string | null;
+  attempts: number | null;
+  startedAt: string | null;
+}
+
+interface WaitBehaviorSnapshot {
+  failedSignalExited: boolean;
+  blockedSignalExited: boolean;
+  missingJsonTerminalInvalid: boolean;
+  invalidJsonTerminalInvalid: boolean;
+  noSignalInvalidJsonTerminalInvalid: boolean;
+  overdueReviewerAlive: boolean;
+  overdueReviewerTimedOut: boolean;
 }
 
 interface PipelineSnapshot {
@@ -77,9 +97,11 @@ interface PipelineSnapshot {
 interface ContractExecution {
   sourceSha: string;
   recovery: RecoverySnapshot;
+  closedEpisodeReset: RecoveryEpisodeSnapshot;
+  activeEpisodePreserved: RecoveryEpisodeSnapshot;
   replayClearedRecovery: boolean;
   pipeline: PipelineSnapshot;
-  noSignalCorruptJsonOperatorRequired: boolean;
+  waitBehavior: WaitBehaviorSnapshot;
   contractSatisfied: boolean;
 }
 
@@ -97,12 +119,16 @@ const repoDir = path.join(fixtureRoot, 'repo');
 const taskRoot = path.join(repoDir, 'tasks');
 const recoveryTaskDir = path.join(taskRoot, 'recovery');
 const pipelineTaskDir = path.join(taskRoot, 'pipeline');
-const classificationTaskDir = path.join(taskRoot, 'classification');
+const waitTaskDir = path.join(taskRoot, 'wait');
 const statusPath = path.join(fixtureRoot, '.farm-status.json');
 const recoveryRunId = 'recovery-contract-run';
 const pipelineRunId = 'pipeline-terminal-contract-run';
+const waitRunId = 'wait-contract-run';
+const closedEpisodeRunId = 'closed-episode-contract-run';
+const activeEpisodeRunId = 'active-episode-contract-run';
 const slotId = 'review-recovery-validation';
 const project = 'review-recovery-validation';
+const waitSession = `review-recovery-wait-${process.pid}`;
 const startedAt = '2026-08-06T10:00:00.000Z';
 const completedAt = '2026-08-06T10:40:00.000Z';
 const staleSignalAt = '2026-08-06T09:00:00.000Z';
@@ -164,6 +190,15 @@ function reviewerContext(
     updatedAt: startedAt,
     ...(options.completedAt ? { completedAt: options.completedAt } : {}),
   };
+}
+
+function contextForRun(id: string, runId: string, taskName: string): AgentContext {
+  const context = reviewerContext(id, `independent-${id}`);
+  context.runId = runId;
+  context.taskFile = `tasks/${taskName}/SELF-REVIEW.${id}.md`;
+  context.signalFile = `tasks/${taskName}/SELF-REVIEW.${id}-SIGNAL.json`;
+  context.reviewResultFile = `artifacts/review-result.${id}.json`;
+  return context;
 }
 
 function runRecord(
@@ -260,7 +295,7 @@ function seedFixture(): void {
     self_review: { enabled: true, max_retries: 0, review_timeout_min: 1 },
   });
 
-  for (const taskDir of [recoveryTaskDir, pipelineTaskDir, classificationTaskDir]) {
+  for (const taskDir of [recoveryTaskDir, pipelineTaskDir, waitTaskDir]) {
     writeText(path.join(taskDir, 'TASK.md'), '# Review recovery terminal contract\n');
   }
   const recoveryCases = [
@@ -361,13 +396,48 @@ function seedFixture(): void {
     runRecord(pipelineRunId, pipelineTaskDir, 'paused', [pipelineContext], undefined),
   );
 
-  writeText(
-    path.join(classificationTaskDir, 'artifacts', 'review-feedback.no-signal.md'),
-    '# Review\n\nVERDICT: PASS\n',
+  const waitContexts = [
+    'wait-failed',
+    'wait-blocked',
+    'wait-missing',
+    'wait-invalid',
+    'wait-no-signal-invalid',
+    'wait-overdue',
+  ].map((id) => contextForRun(id, waitRunId, 'wait'));
+  writeJson(
+    path.join(runsDir, `${waitRunId}.json`),
+    runRecord(waitRunId, waitTaskDir, 'paused', waitContexts, undefined),
   );
-  writeText(
-    path.join(classificationTaskDir, 'artifacts', 'review-result.no-signal.json'),
-    '{"verdict":"pass"}\n',
+
+  const closedEpisodeContext = contextForRun(
+    'closed-episode-reviewer',
+    closedEpisodeRunId,
+    'recovery',
+  );
+  const activeEpisodeContext = contextForRun(
+    'active-episode-reviewer',
+    activeEpisodeRunId,
+    'recovery',
+  );
+  writeJson(
+    path.join(runsDir, `${closedEpisodeRunId}.json`),
+    runRecord(closedEpisodeRunId, recoveryTaskDir, 'blocked', [closedEpisodeContext], {
+      status: 'operator-required',
+      attempts: 38,
+      startedAt,
+      updatedAt: completedAt,
+      lastError: 'Earlier reviewer episode ended.',
+    }),
+  );
+  writeJson(
+    path.join(runsDir, `${activeEpisodeRunId}.json`),
+    runRecord(activeEpisodeRunId, recoveryTaskDir, 'blocked', [activeEpisodeContext], {
+      status: 'watching',
+      attempts: 7,
+      startedAt,
+      updatedAt: completedAt,
+      nextRetryAt: '2026-08-06T10:45:00.000Z',
+    }),
   );
   writeJson(statusPath, {
     slots: [
@@ -407,6 +477,127 @@ function recoverySnapshot(run: Run): RecoverySnapshot {
   };
 }
 
+function recoveryEpisodeSnapshot(run: Run): RecoveryEpisodeSnapshot {
+  const recovery = run.engineState?.publishGate?.reviewRecovery;
+  return {
+    status: recovery?.status ?? null,
+    attempts: recovery?.attempts ?? null,
+    startedAt: recovery?.startedAt ?? null,
+  };
+}
+
+function createWaitWindow(name: string, lifetimeSeconds?: number): void {
+  const args = ['new-window', '-d', '-t', waitSession, '-n', name];
+  if (lifetimeSeconds !== undefined) {
+    args.push(`bash -c 'exec -a scripted-runner sleep ${lifetimeSeconds}'`);
+  }
+  execFileSync('tmux', args, { stdio: 'ignore' });
+}
+
+function writeWaitSignal(id: string, status: 'complete' | 'failed' | 'blocked'): void {
+  writeJson(path.join(waitTaskDir, `SELF-REVIEW.${id}-SIGNAL.json`), terminalSignal(status));
+}
+
+async function runWaitBehaviorContract(
+  vars: unknown,
+  reviewAgent: ReviewAgentModule,
+  sessionProcess: SessionProcessModule,
+): Promise<WaitBehaviorSnapshot> {
+  const runCase = async (id: string, lifetimeSeconds?: number): Promise<boolean | Error> => {
+    createWaitWindow(id, lifetimeSeconds);
+    try {
+      return await reviewAgent.waitForReviewCompletion(
+        vars,
+        waitSession,
+        'tasks/wait',
+        1,
+        waitRunId,
+        'scripted',
+        id,
+        id,
+        `SELF-REVIEW.${id}-SIGNAL.json`,
+        `artifacts/review-feedback.${id}.md`,
+        `artifacts/review-result.${id}.json`,
+        25,
+      );
+    } catch (error) {
+      return error instanceof Error ? error : new Error(String(error));
+    }
+  };
+  const isTerminalInvalid = (result: boolean | Error): boolean =>
+    result instanceof Error && result.name === 'TerminalReviewArtifactError';
+
+  writeWaitSignal('wait-failed', 'failed');
+  const failed = await runCase('wait-failed', 0.5);
+
+  writeWaitSignal('wait-blocked', 'blocked');
+  const blocked = await runCase('wait-blocked', 0.5);
+
+  writeText(
+    path.join(waitTaskDir, 'artifacts', 'review-feedback.wait-missing.md'),
+    '# Review\n\n## Verdict: PASS\n',
+  );
+  writeWaitSignal('wait-missing', 'complete');
+  const missing = await runCase('wait-missing', 0.5);
+
+  writeText(
+    path.join(waitTaskDir, 'artifacts', 'review-feedback.wait-invalid.md'),
+    '# Review\n\n## Verdict: PASS\n',
+  );
+  writeText(
+    path.join(waitTaskDir, 'artifacts', 'review-result.wait-invalid.json'),
+    '{"schemaVersion":1,"verdict":"pass"}\n',
+  );
+  writeWaitSignal('wait-invalid', 'complete');
+  const invalid = await runCase('wait-invalid', 0.5);
+
+  writeText(
+    path.join(waitTaskDir, 'artifacts', 'review-feedback.wait-no-signal-invalid.md'),
+    '# Review\n\n## Verdict: PASS\n',
+  );
+  writeText(
+    path.join(waitTaskDir, 'artifacts', 'review-result.wait-no-signal-invalid.json'),
+    '{"schemaVersion":1,"verdict":"pass"}\n',
+  );
+  const noSignalInvalid = await runCase('wait-no-signal-invalid');
+
+  createWaitWindow('wait-overdue', 0.5);
+  const overduePanePid = execFileSync(
+    'tmux',
+    ['list-panes', '-t', `${waitSession}:wait-overdue`, '-F', '#{pane_pid}'],
+    { encoding: 'utf-8' },
+  ).trim();
+  const overdueReviewerAlive = await sessionProcess.isRunnerAliveUnderPane(
+    vars,
+    overduePanePid,
+    'scripted',
+  );
+  const overdue = await reviewAgent.waitForReviewCompletion(
+    vars,
+    waitSession,
+    'tasks/wait',
+    1,
+    waitRunId,
+    'scripted',
+    'wait-overdue',
+    'wait-overdue',
+    'SELF-REVIEW.wait-overdue-SIGNAL.json',
+    'artifacts/review-feedback.wait-overdue.md',
+    'artifacts/review-result.wait-overdue.json',
+    25,
+  );
+
+  return {
+    failedSignalExited: failed === true,
+    blockedSignalExited: blocked === true,
+    missingJsonTerminalInvalid: isTerminalInvalid(missing),
+    invalidJsonTerminalInvalid: isTerminalInvalid(invalid),
+    noSignalInvalidJsonTerminalInvalid: isTerminalInvalid(noSignalInvalid),
+    overdueReviewerAlive,
+    overdueReviewerTimedOut: overdue === false,
+  };
+}
+
 function readSlotSnapshot(): { lifecycle: string | null; currentRunId: string | null } {
   const parsed: { slots?: Array<Record<string, unknown>> } = JSON.parse(
     readFileSync(statusPath, 'utf-8'),
@@ -420,6 +611,9 @@ function readSlotSnapshot(): { lifecycle: string | null; currentRunId: string | 
 
 async function main(): Promise<void> {
   seedFixture();
+  execFileSync('tmux', ['new-session', '-d', '-s', waitSession, '-n', 'anchor', 'sleep 120'], {
+    stdio: 'ignore',
+  });
   const store = (await import(
     moduleUrl('services/gateway/src/runs/store.ts')
   )) as unknown as StoreModule;
@@ -429,21 +623,30 @@ async function main(): Promise<void> {
   const replay = (await import(
     moduleUrl('services/gateway/src/methods/run/replay-step.ts')
   )) as unknown as ReplayModule;
-  const feedbackModule = (await import(
-    moduleUrl('services/gateway/src/self-review/feedback.ts')
-  )) as unknown as FeedbackModule;
+  const reviewAgent = (await import(
+    moduleUrl('services/gateway/src/self-review/review-agent.ts')
+  )) as unknown as ReviewAgentModule;
+  const sessionProcess = (await import(
+    moduleUrl('services/gateway/src/runners/session-process.ts')
+  )) as unknown as SessionProcessModule;
   const config = (await import(
     moduleUrl('services/gateway/src/core/config.ts')
   )) as unknown as ConfigModule;
-  const terminalResult = (await import(
-    moduleUrl('services/gateway/src/self-review/terminal-result.ts')
-  )) as unknown as TerminalResultModule;
 
   await store.loadAllRuns();
   await recovery.recoverActiveRuns();
   const recoveredRun = store.getRun(recoveryRunId);
   assert.ok(recoveredRun);
   const recovered = recoverySnapshot(recoveredRun);
+  const closedEpisodeRun = store.getRun(closedEpisodeRunId);
+  const activeEpisodeRun = store.getRun(activeEpisodeRunId);
+  assert.ok(closedEpisodeRun);
+  assert.ok(activeEpisodeRun);
+  const closedEpisodeReset = recoveryEpisodeSnapshot(closedEpisodeRun);
+  const activeEpisodePreserved = recoveryEpisodeSnapshot(activeEpisodeRun);
+
+  const vars = await config.loadSlotVars(slotId);
+  const waitBehavior = await runWaitBehaviorContract(vars, reviewAgent, sessionProcess);
 
   await replay.runReplayStep(
     { runId: recoveryRunId, stepName: 'human-gate', triggeredBy: 'operator' },
@@ -487,21 +690,6 @@ async function main(): Promise<void> {
     slotCurrentRunId: slot.currentRunId,
   };
 
-  const vars = await config.loadSlotVars(slotId);
-  const noSignalFeedback = await feedbackModule.readReviewFeedback(
-    vars,
-    'tasks/classification',
-    'artifacts/review-feedback.no-signal.md',
-    'artifacts/review-result.no-signal.json',
-  );
-  const noSignalCorruptJsonOperatorRequired = Boolean(
-    terminalResult.terminalReviewArtifactErrorForCompletion?.(
-      'no-signal-reviewer',
-      noSignalFeedback.terminalInvalidReason,
-      true,
-    ),
-  );
-
   const contractSatisfied =
     recovered.recoveryStatus === 'operator-required' &&
     recovered.recoveryAttempts === 38 &&
@@ -515,6 +703,12 @@ async function main(): Promise<void> {
     recovered.reviewRecoveryPending['independent-review-5'] === false &&
     recovered.reviewVerdicts['independent-review-6'] === undefined &&
     recovered.contextLastSignalAt['rev-stale'] !== staleSignalAt &&
+    closedEpisodeReset.status === 'watching' &&
+    closedEpisodeReset.attempts === 0 &&
+    closedEpisodeReset.startedAt !== startedAt &&
+    activeEpisodePreserved.status === 'watching' &&
+    activeEpisodePreserved.attempts === 7 &&
+    activeEpisodePreserved.startedAt === startedAt &&
     replayClearedRecovery &&
     pipeline.status === 'blocked' &&
     pipeline.currentStepStatus === 'done' &&
@@ -524,16 +718,21 @@ async function main(): Promise<void> {
     pipeline.durationRecorded &&
     pipeline.slotLifecycle === 'ready' &&
     pipeline.slotCurrentRunId === null &&
-    noSignalCorruptJsonOperatorRequired;
+    Object.values(waitBehavior).every(Boolean);
 
   const result: ContractExecution = {
     sourceSha,
     recovery: recovered,
+    closedEpisodeReset,
+    activeEpisodePreserved,
     replayClearedRecovery,
     pipeline,
-    noSignalCorruptJsonOperatorRequired,
+    waitBehavior,
     contractSatisfied,
   };
+  // replay-step schedules engine continuation after returning. Let that
+  // isolated continuation settle before removing its temporary run store.
+  await new Promise((resolve) => setTimeout(resolve, 500));
   writeJson(resultPath, result);
 }
 
@@ -544,5 +743,10 @@ main()
     process.exitCode = 1;
   })
   .finally(() => {
+    try {
+      execFileSync('tmux', ['kill-session', '-t', waitSession], { stdio: 'ignore' });
+    } catch {
+      // The session may already have exited after a fatal setup error.
+    }
     rmSync(tempRoot, { recursive: true, force: true });
   });

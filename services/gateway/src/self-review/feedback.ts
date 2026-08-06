@@ -15,13 +15,16 @@ interface StructuredReviewFeedback {
   issues: SelfReviewIssue[];
 }
 
-function parseStructuredReviewFeedback(raw: string, resultRelPath: string): ReviewAgentResult {
+export function parseStructuredReviewFeedback(
+  raw: string,
+  resultRelPath: string,
+): ReviewAgentResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
     return {
-      verdict: 'pass',
+      verdict: 'issues',
       issues: [],
       incomplete: true,
       terminalInvalidReason: `${resultRelPath} is not valid JSON: ${(error as Error).message}`,
@@ -29,7 +32,7 @@ function parseStructuredReviewFeedback(raw: string, resultRelPath: string): Revi
   }
   if (!parsed || typeof parsed !== 'object') {
     return {
-      verdict: 'pass',
+      verdict: 'issues',
       issues: [],
       incomplete: true,
       terminalInvalidReason: `${resultRelPath} must contain a JSON object`,
@@ -57,7 +60,7 @@ function parseStructuredReviewFeedback(raw: string, resultRelPath: string): Revi
     (candidate.verdict === 'issues' && issues!.length === 0)
   ) {
     return {
-      verdict: 'pass',
+      verdict: 'issues',
       issues: [],
       incomplete: true,
       terminalInvalidReason:
@@ -80,7 +83,7 @@ export async function readReviewFeedback(
     const raw = result.stdout.trim();
     if (!raw) {
       return {
-        verdict: 'pass',
+        verdict: 'issues',
         issues: [],
         incomplete: true,
         terminalInvalidReason:

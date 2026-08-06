@@ -844,7 +844,11 @@ function rearmPublicationReviewRecovery(
   let settled = false;
   let inFlight = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const previousRecovery = run.engineState?.publishGate?.reviewRecovery;
+  const storedRecovery = run.engineState?.publishGate?.reviewRecovery;
+  // Only a still-active watcher belongs to this episode. Recovered and
+  // operator-required records describe a closed episode; a later interrupted
+  // reviewer must get a fresh budget and clock.
+  const previousRecovery = storedRecovery?.status === 'watching' ? storedRecovery : undefined;
   let attempts = previousRecovery?.attempts ?? 0;
   let failures = 0;
   const persistedStartedAtMs = Date.parse(previousRecovery?.startedAt ?? '');

@@ -60,7 +60,7 @@ Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabi
 | `dispatch-prompt-mcp-race`          | MCP init race: fixture repro + live force-fail + fix pass             | skip         | skip              | **interactive** launch |
 | `dispatch-prompt-trust`             | Directory-trust / project-directory + classifier send_yes             | skip         | skip              | **fixture**            |
 | `prompt-accepted`                   | Sentinel digest ↔ UserPromptSubmit                                    | live         | skip              | skip                   |
-| `review-recovery-terminal-contract` | Restart recovery, replay, terminalization, and slot cleanup           | gateway E2E  | gateway E2E       | gateway E2E            |
+| `review-recovery-terminal-contract` | Runner-agnostic recovery, wait, replay, and slot cleanup (once)       | gateway E2E  | not repeated      | not repeated           |
 | `retained-safe-send-smoke`          | Exact retained-session follow-up after activity expiry                | live         | skip              | live                   |
 | `turn-boundary`                     | Stop after UserPromptSubmit                                           | live         | skip              | skip                   |
 | `busy-composer`                     | Busy pane regex fixtures                                              | fixtures     | skip              | skip                   |
@@ -83,10 +83,11 @@ Skipped scenarios record `skipReason` and count as pass so matrices stay honest.
 
 Do not duplicate token parsing in harness JS — scenarios call `scripts/session-usage.sh` via `lib/session-usage-harness.mjs` (same env contract as L1).
 
-## Publication reviewer result contract
+## Self-review result contract
 
-Publication reviewer contexts launched with `reviewResultFile` write two scoped artifacts before
-their terminal signal:
+Every self-review context launched through `runReviewAgent`—ordinary self-review and
+publication-gate reviewers alike—receives `reviewResultFile` and writes two scoped artifacts before
+its terminal signal:
 
 - `artifacts/review-feedback.<context>.md` — human-readable analysis.
 - `artifacts/review-result.<context>.json` — authoritative verdict and issue list.
@@ -106,10 +107,10 @@ a visible failed-review outcome without retry; stale prior-attempt signals are i
 production gateway regression against the broken baseline and current gateway paths with:
 
 ```bash
-node scripts/runner-validation/run.mjs --runner codex --scenario review-recovery-terminal-contract --out-dir docs/operations/evidence
+node scripts/runner-validation/run.mjs --scenario review-recovery-terminal-contract --out-dir docs/operations/evidence
 ```
 
-Evidence: `evidence/runner-validate-<host>-codex-review-recovery-terminal-contract.json`.
+Evidence: `evidence/runner-validate-<host>-gateway-review-recovery-terminal-contract.json`.
 
 ## Session binding + attribution
 

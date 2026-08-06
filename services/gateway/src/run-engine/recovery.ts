@@ -476,6 +476,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         // handles it without re-presenting every gate on every restart.
         const gateDecisions = unresolved.filter((d) => d.type === 'engine_human_gate');
         if (gateDecisions.length > 0 && run.slotId) {
+          const recoveryForensics = run.engineState?.publishGate?.reviewRecovery
+            ? { ...run.engineState.publishGate.reviewRecovery }
+            : undefined;
           let recoveryResult: PublicationReviewRecoveryResult = {
             recoveredIds: [],
             terminalErrors: [],
@@ -505,6 +508,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                   deps,
                   deps.getRun(run.id) ?? run,
                   terminalReviewRecoveryMessage(recoveryResult),
+                  recoveryForensics,
                 );
               }
               continue;
@@ -514,6 +518,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                   deps,
                   deps.getRun(run.id) ?? run,
                   `${terminalReviewRecoveryMessage(recoveryResult)}; gate replay failed: ${(err as Error).message}`,
+                  recoveryForensics,
                 );
                 continue;
               }
@@ -530,6 +535,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
               deps,
               deps.getRun(run.id) ?? run,
               terminalReviewRecoveryMessage(recoveryResult),
+              recoveryForensics,
             );
             continue;
           }
