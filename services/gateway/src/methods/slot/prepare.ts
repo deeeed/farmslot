@@ -667,7 +667,33 @@ async function slotPrepareInner(
     step('origin-head', `origin/HEAD = ${expectedHead}`);
   }
 
-  if (branch) {
+  if (branch && opts?.preserveBranch) {
+    const localExists =
+      (
+        await execOnSlot(
+          vars,
+          `cd ${shellQuote(vars.remoteRepo)} && git show-ref --verify --quiet ${shellQuote(`refs/heads/${branch}`)}`,
+        )
+      ).exitCode === 0;
+    if (!localExists) {
+      throw new Error(
+        `Replay cannot preserve ${branch}: the local branch no longer exists on ${params.slotId}. ` +
+          `Restore the branch before replaying prepare, or replay from find-slot with a published branch.`,
+      );
+    }
+    if (current !== branch) {
+      const checkoutR = await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
+      );
+      if (checkoutR.exitCode !== 0) {
+        throw new Error(
+          `Replay could not restore ${branch} on ${params.slotId}: ${checkoutR.stderr.slice(-200) || checkoutR.stdout.slice(-200)}`,
+        );
+      }
+    }
+    step('branch', `Replay preserving existing local ${branch} without reset or clean`);
+  } else if (branch) {
     step('branch', `Checking out ${branch}...`);
     if (current === branch && !forceNewBranch) {
       const fetchBranchR = await execOnSlot(
