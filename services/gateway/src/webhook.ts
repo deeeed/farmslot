@@ -8,6 +8,12 @@ import type { FlowType, ProjectConfig } from '@farmslot/protocol';
 
 import { addItem } from './backlog/dispatch-queue.js';
 import { loadProjectConfigs } from './fleet/state.js';
+import type { WorkOriginator } from './security/work-originator.js';
+
+export const WEBHOOK_WORK_ORIGINATORS = {
+  github: { kind: 'principal', principalId: 'github-webhook' },
+  jira: { kind: 'principal', principalId: 'jira-webhook' },
+} as const satisfies Record<'github' | 'jira', WorkOriginator>;
 
 // ─── Helpers ───
 
@@ -117,12 +123,15 @@ export async function handleGitHubWebhook(
   const flowType: FlowType = 'review-pr';
   const ticketOrPr = `${repoFullName}#${prNumber}`;
 
-  const item = addItem({
-    flowType,
-    project: project.name,
-    ticketOrPr,
-    priority: 10,
-  });
+  const item = addItem(
+    {
+      flowType,
+      project: project.name,
+      ticketOrPr,
+      priority: 10,
+    },
+    WEBHOOK_WORK_ORIGINATORS.github,
+  );
 
   console.log(
     `[webhook/github] queued ${flowType} for ${ticketOrPr} (queue item ${item.id.slice(0, 8)})`,
@@ -204,12 +213,15 @@ export async function handleJiraWebhook(req: IncomingMessage, res: ServerRespons
   }
 
   const flowType: FlowType = 'fix-bug';
-  const item = addItem({
-    flowType,
-    project: project.name,
-    ticketOrPr: issueKey,
-    priority: 10,
-  });
+  const item = addItem(
+    {
+      flowType,
+      project: project.name,
+      ticketOrPr: issueKey,
+      priority: 10,
+    },
+    WEBHOOK_WORK_ORIGINATORS.jira,
+  );
 
   console.log(
     `[webhook/jira] queued ${flowType} for ${issueKey} (queue item ${item.id.slice(0, 8)})`,

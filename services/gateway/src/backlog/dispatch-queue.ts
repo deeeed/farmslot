@@ -3,7 +3,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -23,6 +23,18 @@ import { farmslotRoot, loadFleetStatus } from '../fleet/state.js';
 import { resolveDispatchPreviewFromFleet } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { discardUndurableRun, getAllRuns, getRun, runRecordPath } from '../runs/store.js';
+import type { WorkOriginator } from '../security/work-originator.js';
+
+export type QueueRecord = QueueItem & { originator?: WorkOriginator };
+
+function setQueueOriginator(record: QueueRecord, originator: WorkOriginator): void {
+  Object.defineProperty(record, 'originator', {
+    value: structuredClone(originator),
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+}
 
 function shouldUseIsolatedQueueFile(env: NodeJS.ProcessEnv, argv: readonly string[]): boolean {
   if (env.FARMSLOT_TEST_TMP === '1' || env.NODE_TEST_CONTEXT) return true;
@@ -38,7 +50,8 @@ function resolveQueueFile(): string {
 }
 
 const QUEUE_FILE = resolveQueueFile();
-const queue: QueueItem[] = [];
+const queue: QueueRecord[] = [];
+const QUEUE_PROVENANCE_MARKER = `${QUEUE_FILE}.provenance-v1`;
 let queuePersistChain: Promise<void> = Promise.resolve();
 
 /** Default exclusive-claim TTL. Holders must re-validate before createRun. */
@@ -47,7 +60,7 @@ export const DEFAULT_QUEUE_CLAIM_TTL_MS = 60_000;
 type BroadcastFn = (event: string, payload: unknown) => void;
 /** createAndStartRun receives the exclusive claim so it can re-validate at the
  * synchronous createRun boundary after its own awaits (imports, ticket fetch, …). */
-export type CreateAndStartRunFn = (item: QueueItem, claim: QueueClaim) => Promise<void>;
+export type CreateAndStartRunFn = (item: QueueRecord, claim: QueueClaim) => Promise<void>;
 let _broadcast: BroadcastFn | null = null;
 let _createAndStartRun: CreateAndStartRunFn | null = null;
 let dispatchInFlight: Promise<void> | null = null;
@@ -171,7 +184,11 @@ async function persist(): Promise<void> {
   // Atomic write: tmp + rename so a crash mid-write cannot leave a truncated
   // queue file that drops items on restart.
   const tmpPath = `${QUEUE_FILE}.tmp.${process.pid}.${randomUUID().slice(0, 8)}`;
-  await writeFile(tmpPath, JSON.stringify(queue, null, 2), 'utf-8');
+  const storedQueue = queue.map((item) => ({
+    ...item,
+    ...(item.originator ? { originator: item.originator } : {}),
+  }));
+  await writeFile(tmpPath, JSON.stringify(storedQueue, null, 2), 'utf-8');
   await rename(tmpPath, QUEUE_FILE);
 }
 
@@ -238,16 +255,24 @@ function findNonTerminalHandoffOwner(item: QueueItem): Run | undefined {
   });
 }
 
-export async function loadQueue(): Promise<void> {
+export async function loadQueue(
+  legacyOriginator: WorkOriginator = { kind: 'principal', principalId: 'local-admin' },
+): Promise<void> {
   queue.length = 0;
   try {
     const raw = await readFile(QUEUE_FILE, 'utf-8');
-    const items: QueueItem[] = JSON.parse(raw);
+    const items: QueueRecord[] = JSON.parse(raw);
+    const migrationOpen = !existsSync(QUEUE_PROVENANCE_MARKER);
+    let migrated = 0;
     for (const item of items) {
-      const normalized: QueueItem = {
-        ...item,
+      const { originator: storedOriginator, ...publicItem } = item;
+      const normalized: QueueRecord = {
+        ...publicItem,
         queueKind: item.queueKind ?? 'dispatch',
       };
+      if (storedOriginator) setQueueOriginator(normalized, storedOriginator);
+      else if (migrationOpen) setQueueOriginator(normalized, legacyOriginator);
+      if (migrationOpen && !item.originator) migrated += 1;
       if (normalized.status === 'queued') {
         // Crash after create/revive can leave a still-queued disk row while a
         // live Run already owns the work — drop rather than double-dispatch.
@@ -333,10 +358,19 @@ export async function loadQueue(): Promise<void> {
       }
     }
     console.log(`[dispatch-queue] loaded ${queue.length} queued items from disk`);
+    if (migrationOpen) {
+      await persist();
+      await writeFile(QUEUE_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
+    }
+    console.log(`[provenance] dispatch queue migrated ${migrated} item(s)`);
     schedulePersist('load-reconcile');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code !== 'ENOENT') {
+    if (code === 'ENOENT' && !existsSync(QUEUE_PROVENANCE_MARKER)) {
+      await mkdir(path.dirname(QUEUE_PROVENANCE_MARKER), { recursive: true });
+      await writeFile(QUEUE_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
+      console.log('[provenance] dispatch queue migrated 0 item(s)');
+    } else if (code !== 'ENOENT') {
       console.warn(`[dispatch-queue] failed to load queue: ${(err as Error).message}`);
     }
   }
@@ -366,7 +400,10 @@ function assertEvalQueueItem(params: InternalDispatchQueueAddParams): void {
     throw new Error('Cannot queue eval cell: missing trialStartParams');
 }
 
-export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
+export function addItem(
+  params: InternalDispatchQueueAddParams,
+  originator: WorkOriginator = { kind: 'system' },
+): QueueItem {
   assertAllowedSlots(params.allowedSlots, 'queue dispatch');
   assertEvalQueueItem(params);
   if (params.backlogItemId && params.launchPlanId && params.launchCandidateId) {
@@ -376,7 +413,7 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
         item.launchPlanId === params.launchPlanId &&
         item.launchCandidateId === params.launchCandidateId,
     );
-    if (existing) return existing;
+    if (existing) return publicQueueItem(existing);
     const existingRun = getAllRuns().find(
       (run) =>
         run.backlogItemId === params.backlogItemId &&
@@ -391,7 +428,7 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
   }
   const startRef = normalizeStartRefRequest(params);
   const tags = normalizeRunTags(params.tags);
-  const item: QueueItem = {
+  const item: QueueRecord = {
     id: randomUUID(),
     queueKind: params.queueKind ?? 'dispatch',
     backlogItemId: params.backlogItemId,
@@ -439,6 +476,7 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
     createdAt: new Date().toISOString(),
     status: 'queued',
   };
+  setQueueOriginator(item, originator);
   queue.push(item);
   schedulePersist('add');
   console.log(
@@ -450,7 +488,7 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
       console.error(`[dispatch-queue] auto-dispatch after add failed: ${(err as Error).message}`);
     });
   }
-  return item;
+  return publicQueueItem(item);
 }
 
 function removeItemAtIndex(idx: number, reason: string): void {
@@ -734,7 +772,10 @@ export async function cancelGraphQueuedItem(params: {
   return true;
 }
 
-export function updateItem(params: DispatchQueueUpdateParams): QueueItem {
+export function updateItem(
+  params: DispatchQueueUpdateParams,
+  originator: WorkOriginator = { kind: 'system' },
+): QueueItem {
   const item = queue.find((q) => q.id === params.itemId);
   if (!item) throw new Error(`Queue item not found: ${params.itemId}`);
   if (item.status !== 'queued') {
@@ -747,12 +788,16 @@ export function updateItem(params: DispatchQueueUpdateParams): QueueItem {
     assertAllowedSlots(params.allowedSlots, 'update queue dispatch');
     item.allowedSlots = normalizeAllowedSlots(params.allowedSlots);
   }
+  setQueueOriginator(item, originator);
   schedulePersist('update');
   broadcastQueue();
-  return item;
+  return publicQueueItem(item);
 }
 
-export function reorderItems(itemIds: string[]): QueueItem[] {
+export function reorderItems(
+  itemIds: string[],
+  originator: WorkOriginator = { kind: 'system' },
+): QueueItem[] {
   const uniqueIds = [...new Set(itemIds)];
   if (uniqueIds.length !== itemIds.length)
     throw new Error('Cannot reorder queue: duplicate item ids');
@@ -770,7 +815,10 @@ export function reorderItems(itemIds: string[]): QueueItem[] {
   // Manual numeric priority edits remain valid until the next explicit reorder.
   normalizedIds.forEach((id, index) => {
     const item = queue.find((candidate) => candidate.id === id);
-    if (item?.status === 'queued') item.priority = (index + 1) * 10;
+    if (item?.status === 'queued') {
+      item.priority = (index + 1) * 10;
+      setQueueOriginator(item, originator);
+    }
   });
   schedulePersist('reorder');
   broadcastQueue();
@@ -784,11 +832,20 @@ function broadcastQueue(): void {
 export function listItems(): QueueItem[] {
   return [...queue]
     .filter((q) => q.status === 'queued')
-    .sort((a, b) => a.priority - b.priority || a.createdAt.localeCompare(b.createdAt));
+    .sort((a, b) => a.priority - b.priority || a.createdAt.localeCompare(b.createdAt))
+    .map(publicQueueItem);
 }
 
-export function getQueueSnapshot(): QueueItem[] {
+export function getQueueSnapshot(): QueueRecord[] {
   return [...queue];
+}
+
+export function queueRecordOriginator(itemId: string): WorkOriginator | undefined {
+  return queue.find((item) => item.id === itemId)?.originator;
+}
+
+function publicQueueItem(record: QueueRecord): QueueItem {
+  return record;
 }
 
 export function buildQueuePreviewParams(item: QueueItem) {

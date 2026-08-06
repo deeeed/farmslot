@@ -58,6 +58,7 @@ import {
   markBacklogItemReady,
   updateBacklogItem,
 } from '../backlog/store.js';
+import type { WorkOriginator } from '../security/work-originator.js';
 import { assertNoUnknownPlaceholders } from '../core/hooks.js';
 import { loadPromptTemplate } from '../core/prompt-templates.js';
 import { farmslotRoot, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
@@ -1365,6 +1366,7 @@ export async function startRoadmapRefinement(
 
 async function promoteRoadmapItemUnlocked(
   params: RoadmapPromoteParams,
+  originator: WorkOriginator,
 ): Promise<RoadmapPromoteResult> {
   if (!params.itemId?.trim()) throw new Error('roadmap.promote requires itemId');
   if (!Array.isArray(params.specs) || params.specs.length === 0) {
@@ -1404,20 +1406,23 @@ async function promoteRoadmapItemUnlocked(
       const { spec, project, markdown, tags } = prepared;
       const specPath = await writeBacklogSpecFile(project, spec.title, markdown);
       specPaths.push(specPath);
-      const created = await createBacklogItem({
-        project,
-        title: spec.title,
-        sourceKind: 'manual',
-        flowType: spec.flowType ?? 'dev',
-        roadmapItemId: current.id,
-        specPath,
-        tags,
-        status: 'ready',
-        notes: `Promoted from roadmap item ${current.id}: ${current.title}`,
-        ...(spec.priority !== undefined ? { priority: spec.priority } : {}),
-        ...(spec.allowedSlots !== undefined ? { allowedSlots: spec.allowedSlots } : {}),
-        autoDispatch: false,
-      });
+      const created = await createBacklogItem(
+        {
+          project,
+          title: spec.title,
+          sourceKind: 'manual',
+          flowType: spec.flowType ?? 'dev',
+          roadmapItemId: current.id,
+          specPath,
+          tags,
+          status: 'ready',
+          notes: `Promoted from roadmap item ${current.id}: ${current.title}`,
+          ...(spec.priority !== undefined ? { priority: spec.priority } : {}),
+          ...(spec.allowedSlots !== undefined ? { allowedSlots: spec.allowedSlots } : {}),
+          autoDispatch: false,
+        },
+        originator,
+      );
       backlogItems.push(created.item);
       promotion.push({
         backlogItemId: created.item.id,
@@ -1462,8 +1467,9 @@ async function promoteRoadmapItemUnlocked(
 
 export async function promoteRoadmapItem(
   params: RoadmapPromoteParams,
+  originator: WorkOriginator = { kind: 'system' },
 ): Promise<RoadmapPromoteResult> {
-  return withRoadmapMutation(() => promoteRoadmapItemUnlocked(params));
+  return withRoadmapMutation(() => promoteRoadmapItemUnlocked(params, originator));
 }
 
 export const __roadmapStoreTest = {

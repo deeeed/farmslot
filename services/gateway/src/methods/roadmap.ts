@@ -25,6 +25,7 @@ import {
   saveRoadmapPromotionDraft,
   startRoadmapRefinement,
 } from '../roadmap/store.js';
+import { currentSessionOriginator } from '../security/work-originator.js';
 
 export const roadmapList = (params: RoadmapListParams = {}) => listRoadmapItems(params);
 export const roadmapGet = (params: RoadmapGetParams) => getRoadmapItem(params);
@@ -40,4 +41,5 @@ export const roadmapPromotionDraftGet = (params: RoadmapPromotionDraftGetParams)
   getRoadmapPromotionDraft(params);
 export const roadmapPromotionDraftSave = (params: RoadmapPromotionDraftSaveParams) =>
   saveRoadmapPromotionDraft(params);
-export const roadmapPromote = (params: RoadmapPromoteParams) => promoteRoadmapItem(params);
+export const roadmapPromote = (params: RoadmapPromoteParams) =>
+  promoteRoadmapItem(params, currentSessionOriginator());

@@ -208,6 +208,8 @@ export interface DispatchQueueUpdateParams {
 
 export interface DispatchQueueUpdateResult {
   item: QueueItem;
+  /** Present when this session took authorship from a different principal. */
+  authorshipNotice?: string;
 }
 
 export interface DispatchQueueReorderParams {

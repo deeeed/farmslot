@@ -823,6 +823,10 @@ and **fails closed** when it cannot be resolved — a denial naming the item, no
 a fallback to gateway authority. A principal revoked or demoted between enqueue and fire fails the
 check, because §2's live lookup resolves the reference rather than a cached authority.
 
+On first load after upgrade, a one-time migration stamps work items that predate provenance with
+the resolved legacy admin (or solo `local-admin`); once the store's provenance marker exists, a
+missing originator is corruption and the fire-time path fails closed as above.
+
 **`system` holds an ordinary `admin`/`global` binding and is unreachable from every ingress.** Its
 authority is not an exemption from role checks — it passes them like any admin principal — so the
 containment is entirely in reachability: no credential authenticates as it, and the resolver returns

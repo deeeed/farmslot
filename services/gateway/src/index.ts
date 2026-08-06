@@ -52,7 +52,9 @@ import { getMachineHealth, startLocalCollection } from './fleet/node-health.js';
 import {
   farmslotRoot,
   getCachedFleet,
+  isValidSafetyTier,
   loadFleetStatus,
+  loadProjectConfig,
   setBranchOverlay,
   setTaskProgressOverlay,
   startFileWatcher,
@@ -70,6 +72,7 @@ import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
 import { fleetRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
 import { reconcileStalePrepareLocks } from './methods/slot.js';
+import { resolveCreateSafetyTier } from './methods/run.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
 import { initRunCompletion } from './run-completion/orchestrator.js';
@@ -84,8 +87,15 @@ import {
   assertGatewayBindAllowed,
   authorizeHttpRequest,
   createGatewayAuthRuntime,
+  initializeGatewayIdentity,
+  latchActivationForExposure,
+  shouldTrustProxyHeaders,
+  startCredentialFreshnessPolling,
 } from './security/auth.js';
+import { authorizeStoredRunEffect } from './security/authorization.js';
+import { registerGatewayPresence } from './security/gateway-presence.js';
 import { applyGatewayCors } from './security/origin.js';
+import { migrationOriginator, resolveWorkOriginator } from './security/work-originator.js';
 import { initSelfReview } from './self-review/orchestrator.js';
 import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
 import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
@@ -168,13 +178,20 @@ const ENABLE_ORCHESTRATION = process.env.FARMSLOT_DISABLE_ORCHESTRATION !== '1';
 
 async function main(): Promise<void> {
   const releaseGatewaySingletonLock = acquireGatewaySingletonLock();
-  process.once('exit', releaseGatewaySingletonLock);
-  process.once('SIGINT', () => {
+  let releaseGatewayPresence = (): void => {};
+  let stopCredentialFreshnessPolling = (): void => {};
+  const releaseIdentityResources = (): void => {
+    stopCredentialFreshnessPolling();
+    releaseGatewayPresence();
     releaseGatewaySingletonLock();
+  };
+  process.once('exit', releaseIdentityResources);
+  process.once('SIGINT', () => {
+    releaseIdentityResources();
     process.exit(130);
   });
   process.once('SIGTERM', () => {
-    releaseGatewaySingletonLock();
+    releaseIdentityResources();
     process.exit(143);
   });
 
@@ -210,7 +227,25 @@ async function main(): Promise<void> {
   const host =
     process.env.GATEWAY_HOST?.trim() ||
     (gatewayAuthRuntime.auth.mode === 'none' ? '127.0.0.1' : undefined);
-  assertGatewayBindAllowed({ auth: gatewayAuthRuntime.auth, host, port: PORT });
+  releaseGatewayPresence = registerGatewayPresence({
+    pid: process.pid,
+    farmslotRoot,
+    port: PORT,
+  });
+  initializeGatewayIdentity(gatewayAuthRuntime, {
+    host,
+    log: (message) => console.warn(`[auth] ${message}`),
+  });
+  if (!gatewayAuthRuntime.store.isActivated()) {
+    assertGatewayBindAllowed({ auth: gatewayAuthRuntime.auth, host, port: PORT });
+    if (shouldTrustProxyHeaders(gatewayAuthRuntime.store.env)) {
+      throw new Error(
+        'Refusing declared proxy-header trust before gateway activation; issue an admin credential offline, then restart.',
+      );
+    }
+  }
+  latchActivationForExposure(gatewayAuthRuntime, host);
+  stopCredentialFreshnessPolling = startCredentialFreshnessPolling(gatewayAuthRuntime);
   setGatewayListenAddress(host, PORT);
   console.log(`[auth] gateway mode=${gatewayAuthRuntime.auth.mode}`);
 
@@ -321,20 +356,42 @@ async function main(): Promise<void> {
 
   // Load dispatch queue + init auto-dispatch
   await loadEvalSuiteCaps();
-  await loadQueue();
+  const legacyWorkOriginator = migrationOriginator(gatewayAuthRuntime);
+  await loadQueue(legacyWorkOriginator);
   initBacklogStore(observedBroadcast);
-  await loadBacklog();
+  await loadBacklog(legacyWorkOriginator);
   initWorkGraphStore(observedBroadcast);
-  await loadWorkGraphs();
+  await loadWorkGraphs(legacyWorkOriginator);
   schedulerTick().catch((err) => {
     console.error(`[work-graph] startup reconciliation failed: ${(err as Error).message}`);
   });
 
   initDispatchQueue(observedBroadcast, async (item, claim) => {
+    const projectConfig = await loadProjectConfig(item.project);
+    const requestedSafetyTier =
+      item.queueKind === 'eval-cell' &&
+      isValidSafetyTier(item.evalCell?.trialStartParams.safetyTier)
+        ? item.evalCell.trialStartParams.safetyTier
+        : undefined;
+    const effectiveSafetyTier = resolveCreateSafetyTier(
+      requestedSafetyTier,
+      projectConfig?.defaultSafetyTier,
+    );
+    const itemLabel = item.label || `${item.project}/${item.ticketOrPr} (${item.id.slice(0, 8)})`;
+    const authorizeOriginator = () =>
+      authorizeStoredRunEffect(
+        resolveWorkOriginator(gatewayAuthRuntime, item.originator),
+        itemLabel,
+        effectiveSafetyTier,
+      );
+    authorizeOriginator();
     // runCreate/evalTrialStart await substantially before the durable store write.
     // Pass beforeCreate so assertQueueClaimHeld runs synchronously immediately
     // before createRun in the store — after those awaits, not before them.
-    const beforeCreate = () => assertQueueClaimHeld(claim, 'pre-durable-createRun');
+    const beforeCreate = () => {
+      assertQueueClaimHeld(claim, 'pre-durable-createRun');
+      authorizeOriginator();
+    };
     /** After createRun is persisted, drop the queue row and await queue disk write. */
     const dropQueueRowAfterCreate = async (runId: string) => {
       item.runId = runId;
@@ -355,6 +412,7 @@ async function main(): Promise<void> {
           trialId: item.evalCell.trialId,
           capGroupId: item.evalCell.capGroupId,
           suiteId: item.evalCell.suiteId,
+          safetyTier: effectiveSafetyTier,
           slotId: item.slotId,
           allowedSlots:
             item.allowedSlots && item.allowedSlots.length > 0 ? item.allowedSlots : undefined,
@@ -422,6 +480,7 @@ async function main(): Promise<void> {
       devChecklist: item.devChecklist,
       reviewDepth: item.reviewDepth,
       pendingReviewPlan: item.pendingReviewPlan,
+      safetyTier: effectiveSafetyTier,
     } satisfies import('@farmslot/protocol').RunCreateParams;
     const { run } = await runCreate(runParams, broadcastEvent, {
       expectedExecutionTemplate: item.executionTemplate,

@@ -72,6 +72,8 @@ export interface WorkGraphRemoveEdgeResult {
 export interface WorkGraphUpdateNodeParams extends WorkGraphUpdateNodeInput {}
 export interface WorkGraphUpdateNodeResult {
   graph: WorkGraphProjection;
+  /** Present when this session took authorship from a different principal. */
+  authorshipNotice?: string;
 }
 
 export interface WorkGraphActivateParams {

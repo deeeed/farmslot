@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -41,11 +42,13 @@ import {
 } from '../backlog/store.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { getAllRuns } from '../runs/store.js';
+import { isWorkOriginator, type WorkOriginator } from '../security/work-originator.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
+type WorkGraphRecord = WorkGraphSnapshot & { originator?: WorkOriginator };
 
 const LEASE_MS = 30_000;
-const graphs = new Map<string, WorkGraphSnapshot>();
+const graphs = new Map<string, WorkGraphRecord>();
 let persistChain: Promise<void> = Promise.resolve();
 let mutationTail: Promise<void> = Promise.resolve();
 let broadcast: BroadcastFn | null = null;
@@ -64,6 +67,7 @@ function resolveGraphDir(): string {
 }
 
 const GRAPH_DIR = resolveGraphDir();
+const GRAPH_PROVENANCE_MARKER = path.join(GRAPH_DIR, '.provenance-v1');
 const SAFE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 export function initWorkGraphStore(fn: BroadcastFn): void {
@@ -97,7 +101,7 @@ function graphFile(graphId: string): string {
   return file;
 }
 
-async function persistSnapshot(snapshot: WorkGraphSnapshot): Promise<void> {
+async function persistSnapshot(snapshot: WorkGraphRecord): Promise<void> {
   await ensureDir();
   const file = graphFile(snapshot.graph.id);
   const tmp = `${file}.tmp.${process.pid}.${randomUUID().slice(0, 8)}`;
@@ -105,20 +109,20 @@ async function persistSnapshot(snapshot: WorkGraphSnapshot): Promise<void> {
   await rename(tmp, file);
 }
 
-function enqueuePersist(snapshot: WorkGraphSnapshot): Promise<void> {
+function enqueuePersist(snapshot: WorkGraphRecord): Promise<void> {
   persistChain = persistChain.catch(() => undefined).then(() => persistSnapshot(snapshot));
   return persistChain;
 }
 
-async function persistNow(snapshot: WorkGraphSnapshot): Promise<void> {
+async function persistNow(snapshot: WorkGraphRecord): Promise<void> {
   await enqueuePersist(snapshot);
 }
 
-function emit(snapshot: WorkGraphSnapshot): void {
+function emit(snapshot: WorkGraphRecord): void {
   broadcast?.(Events.WORK_GRAPH_UPDATED, { graph: project(snapshot) });
 }
 
-function project(snapshot: WorkGraphSnapshot): WorkGraphProjection {
+function project(snapshot: WorkGraphRecord): WorkGraphProjection {
   return {
     graph: { ...snapshot.graph, tags: snapshot.graph.tags ? [...snapshot.graph.tags] : undefined },
     nodes: snapshot.nodes.map((node) => ({
@@ -169,13 +173,13 @@ function normalizeId(prefix: string, input: string | undefined, title = ''): str
   return `${prefix}_${slug || randomUUID().slice(0, 8)}${suffix}`;
 }
 
-function requireGraph(graphId: string): WorkGraphSnapshot {
+function requireGraph(graphId: string): WorkGraphRecord {
   const snapshot = graphs.get(graphId);
   if (!snapshot) throw new Error(`Work graph not found: ${graphId}`);
   return snapshot;
 }
 
-function normalizeStoredSnapshot(raw: unknown): WorkGraphSnapshot | null {
+function normalizeStoredSnapshot(raw: unknown): WorkGraphRecord | null {
   if (!raw || typeof raw !== 'object') return null;
   const snapshot = raw as WorkGraphSnapshot;
   if (!snapshot.graph?.id || snapshot.graph.version !== 1) return null;
@@ -203,12 +207,19 @@ function normalizeStoredSnapshot(raw: unknown): WorkGraphSnapshot | null {
     })),
     gates: Array.isArray(snapshot.gates) ? snapshot.gates : [],
     ledger: Array.isArray(snapshot.ledger) ? snapshot.ledger : [],
+    ...(isWorkOriginator((raw as Record<string, unknown>).originator)
+      ? { originator: structuredClone((raw as WorkGraphRecord).originator) }
+      : {}),
   };
 }
 
-export async function loadWorkGraphs(): Promise<void> {
+export async function loadWorkGraphs(
+  legacyOriginator: WorkOriginator = { kind: 'principal', principalId: 'local-admin' },
+): Promise<void> {
   graphs.clear();
   await ensureDir();
+  const migrationOpen = !existsSync(GRAPH_PROVENANCE_MARKER);
+  let migrated = 0;
   let files: string[];
   try {
     files = await readdir(GRAPH_DIR);
@@ -220,8 +231,31 @@ export async function loadWorkGraphs(): Promise<void> {
     if (!file.endsWith('.json') || file.includes('.tmp.')) continue;
     const parsed: unknown = JSON.parse(await readFile(path.join(GRAPH_DIR, file), 'utf-8'));
     const snapshot = normalizeStoredSnapshot(parsed);
-    if (snapshot) graphs.set(snapshot.graph.id, snapshot);
+    if (snapshot) {
+      if (migrationOpen && !snapshot.originator) {
+        snapshot.originator = structuredClone(legacyOriginator);
+        migrated += 1;
+        await persistNow(snapshot);
+      }
+      graphs.set(snapshot.graph.id, snapshot);
+    }
   }
+  if (migrationOpen) await writeFile(GRAPH_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
+  console.log(`[provenance] work graph migrated ${migrated} item(s)`);
+}
+
+function restampWorkGraph(snapshot: WorkGraphRecord, originator: WorkOriginator | undefined): void {
+  if (originator) snapshot.originator = structuredClone(originator);
+}
+
+function requireWorkGraphOriginator(snapshot: WorkGraphRecord): WorkOriginator {
+  if (!snapshot.originator) {
+    throw new Error(
+      `Work graph '${snapshot.graph.title || snapshot.graph.id}' has no WorkOriginator; ` +
+        'the post-provenance record is corrupt and cannot schedule work.',
+    );
+  }
+  return structuredClone(snapshot.originator);
 }
 
 function wouldCreateCycle(nodes: readonly WorkNode[], edges: readonly WorkEdge[]): string[] {
@@ -267,6 +301,7 @@ function assertNoCycle(snapshot: WorkGraphSnapshot): void {
 
 export async function createWorkGraph(
   params: WorkGraphCreateParams,
+  originator: WorkOriginator = { kind: 'system' },
 ): Promise<{ graph: WorkGraphProjection }> {
   return withMutation(async () => {
     if (!params.project?.trim()) throw new Error('workGraph.create requires project');
@@ -287,7 +322,14 @@ export async function createWorkGraph(
       createdAt: now,
       updatedAt: now,
     };
-    const snapshot: WorkGraphSnapshot = { graph, nodes: [], edges: [], gates: [], ledger: [] };
+    const snapshot: WorkGraphRecord = {
+      graph,
+      nodes: [],
+      edges: [],
+      gates: [],
+      ledger: [],
+      originator: structuredClone(originator),
+    };
     graphs.set(id, snapshot);
     await persistNow(snapshot);
     emit(snapshot);
@@ -314,6 +356,11 @@ export function listWorkGraphs(params: WorkGraphListRpcParams = {}): {
 
 export function getWorkGraph(params: { graphId: string }): { graph: WorkGraphProjection } {
   return { graph: project(requireGraph(params.graphId)) };
+}
+
+export function workGraphRecordOriginator(graphId: string): WorkOriginator | undefined {
+  const originator = graphs.get(graphId)?.originator;
+  return originator ? structuredClone(originator) : undefined;
 }
 
 function assertBacklogAvailableForNode(backlogItemId: string, graphId: string): void {
@@ -367,6 +414,7 @@ function syncReferenceNode(node: WorkNode, now: string): void {
 
 export async function addWorkGraphNode(
   params: WorkGraphAddNodeParams,
+  originator?: WorkOriginator,
 ): Promise<{ graph: WorkGraphProjection }> {
   return withMutation(async () => {
     const snapshot = requireGraph(params.graphId);
@@ -428,14 +476,18 @@ export async function addWorkGraphNode(
       updatedAt: now,
     };
     if (backlogItem) {
-      await attachBacklogItemToWorkNode({
-        itemId: backlogItem.id,
-        graphId: snapshot.graph.id,
-        nodeId,
-      });
+      await attachBacklogItemToWorkNode(
+        {
+          itemId: backlogItem.id,
+          graphId: snapshot.graph.id,
+          nodeId,
+        },
+        originator,
+      );
     }
     snapshot.nodes.push(node);
     snapshot.graph.updatedAt = now;
+    restampWorkGraph(snapshot, originator);
     await persistNow(snapshot);
     emit(snapshot);
     return { graph: project(snapshot) };
@@ -444,6 +496,7 @@ export async function addWorkGraphNode(
 
 export async function addWorkGraphEdge(
   params: WorkGraphAddEdgeParams,
+  originator?: WorkOriginator,
 ): Promise<{ graph: WorkGraphProjection }> {
   return withMutation(async () => {
     const snapshot = requireGraph(params.graphId);
@@ -471,16 +524,20 @@ export async function addWorkGraphEdge(
     assertNoCycle(candidate);
     snapshot.edges.push(edge);
     snapshot.graph.updatedAt = new Date().toISOString();
+    restampWorkGraph(snapshot, originator);
     await persistNow(snapshot);
     emit(snapshot);
     return { graph: project(snapshot) };
   });
 }
 
-export async function removeWorkGraphEdge(params: {
-  graphId: string;
-  edgeId: string;
-}): Promise<{ graph: WorkGraphProjection }> {
+export async function removeWorkGraphEdge(
+  params: {
+    graphId: string;
+    edgeId: string;
+  },
+  originator?: WorkOriginator,
+): Promise<{ graph: WorkGraphProjection }> {
   return withMutation(async () => {
     const snapshot = requireGraph(params.graphId);
     if (snapshot.graph.status !== 'planning') {
@@ -490,16 +547,20 @@ export async function removeWorkGraphEdge(params: {
     if (edgeIndex < 0) throw new Error(`Work edge not found: ${params.edgeId}`);
     snapshot.edges.splice(edgeIndex, 1);
     snapshot.graph.updatedAt = new Date().toISOString();
+    restampWorkGraph(snapshot, originator);
     await persistNow(snapshot);
     emit(snapshot);
     return { graph: project(snapshot) };
   });
 }
 
-export async function removeWorkGraphNode(params: {
-  graphId: string;
-  nodeId: string;
-}): Promise<{ graph: WorkGraphProjection }> {
+export async function removeWorkGraphNode(
+  params: {
+    graphId: string;
+    nodeId: string;
+  },
+  originator?: WorkOriginator,
+): Promise<{ graph: WorkGraphProjection }> {
   return withMutation(async () => {
     const snapshot = requireGraph(params.graphId);
     if (snapshot.graph.status !== 'planning') {
@@ -524,12 +585,16 @@ export async function removeWorkGraphNode(params: {
     snapshot.graph.updatedAt = new Date().toISOString();
     try {
       if (node.backlogItemId) {
-        await detachBacklogItemFromWorkNode({
-          itemId: node.backlogItemId,
-          graphId: snapshot.graph.id,
-          nodeId: node.id,
-        });
+        await detachBacklogItemFromWorkNode(
+          {
+            itemId: node.backlogItemId,
+            graphId: snapshot.graph.id,
+            nodeId: node.id,
+          },
+          originator,
+        );
       }
+      restampWorkGraph(snapshot, originator);
       await persistNow(snapshot);
     } catch (err) {
       snapshot.nodes = previousNodes;
@@ -543,6 +608,7 @@ export async function removeWorkGraphNode(params: {
 
 export async function updateWorkGraphNode(
   params: WorkGraphUpdateNodeParams,
+  originator?: WorkOriginator,
 ): Promise<{ graph: WorkGraphProjection }> {
   const shouldReconcile = await withMutation(async () => {
     const snapshot = requireGraph(params.graphId);
@@ -591,6 +657,7 @@ export async function updateWorkGraphNode(
     }
     node.updatedAt = new Date().toISOString();
     snapshot.graph.updatedAt = node.updatedAt;
+    restampWorkGraph(snapshot, originator);
     await persistNow(snapshot);
     emit(snapshot);
     return referenceUpdated && !['planning', 'paused', 'archived'].includes(snapshot.graph.status);
@@ -599,9 +666,12 @@ export async function updateWorkGraphNode(
   return { graph: project(requireGraph(params.graphId)) };
 }
 
-export async function activateWorkGraph(params: {
-  graphId: string;
-}): Promise<{ graph: WorkGraphProjection }> {
+export async function activateWorkGraph(
+  params: {
+    graphId: string;
+  },
+  originator?: WorkOriginator,
+): Promise<{ graph: WorkGraphProjection }> {
   await withMutation(async () => {
     const snapshot = requireGraph(params.graphId);
     assertNoCycle(snapshot);
@@ -618,6 +688,7 @@ export async function activateWorkGraph(params: {
         node.updatedAt = now;
       }
     }
+    restampWorkGraph(snapshot, originator);
     await persistNow(snapshot);
     emit(snapshot);
   });
@@ -625,13 +696,17 @@ export async function activateWorkGraph(params: {
   return { graph: project(requireGraph(params.graphId)) };
 }
 
-export async function pauseWorkGraph(params: {
-  graphId: string;
-}): Promise<{ graph: WorkGraphProjection }> {
+export async function pauseWorkGraph(
+  params: {
+    graphId: string;
+  },
+  originator?: WorkOriginator,
+): Promise<{ graph: WorkGraphProjection }> {
   return withMutation(async () => {
     const snapshot = requireGraph(params.graphId);
     snapshot.graph.status = 'paused';
     snapshot.graph.updatedAt = new Date().toISOString();
+    restampWorkGraph(snapshot, originator);
     await persistNow(snapshot);
     emit(snapshot);
     return { graph: project(snapshot) };
@@ -1005,7 +1080,7 @@ function backfillSchedulerAuthorization(snapshot: WorkGraphSnapshot, node: WorkN
 }
 
 async function executeNodeUnlock(
-  snapshot: WorkGraphSnapshot,
+  snapshot: WorkGraphRecord,
   node: WorkNode,
   inbound: readonly WorkEdge[],
   now: string,
@@ -1148,7 +1223,11 @@ async function executeNodeUnlock(
   });
   const result = await enqueueBacklogItem(
     { itemId: node.backlogItemId },
-    { workGraphId: snapshot.graph.id, workNodeId: node.id },
+    {
+      workGraphId: snapshot.graph.id,
+      workNodeId: node.id,
+      dispatchOriginator: requireWorkGraphOriginator(snapshot),
+    },
   );
   await persistQueueNow();
   node.status = 'queued';
@@ -1383,14 +1462,17 @@ export async function schedulerTick(
   });
 }
 
-export async function gateResolve(params: {
-  graphId?: string;
-  gateId: string;
-  nodeId?: string;
-  edgeId?: string;
-  reason: string;
-  decision: 'approved' | 'rejected' | 'waived';
-}): Promise<{ graph: WorkGraphProjection }> {
+export async function gateResolve(
+  params: {
+    graphId?: string;
+    gateId: string;
+    nodeId?: string;
+    edgeId?: string;
+    reason: string;
+    decision: 'approved' | 'rejected' | 'waived';
+  },
+  originator?: WorkOriginator,
+): Promise<{ graph: WorkGraphProjection }> {
   const graphId = await withMutation(async () => {
     const matches = [...graphs.values()].flatMap((candidate) =>
       candidate.edges
@@ -1420,6 +1502,7 @@ export async function gateResolve(params: {
     });
     if (snapshot.graph.status === 'waiting' || snapshot.graph.status === 'needs-attention')
       snapshot.graph.status = 'active';
+    restampWorkGraph(snapshot, originator);
     await persistNow(snapshot);
     emit(snapshot);
     return snapshot.graph.id;

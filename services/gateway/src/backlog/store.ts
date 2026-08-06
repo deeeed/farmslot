@@ -1,6 +1,7 @@
 // backlog-store.ts — durable backlog intake layer with handoff into dispatch queue
 
 import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -60,6 +61,7 @@ import {
 } from '../methods/dispatch/ticket-ref.js';
 import { normalizeRunner, runnerSupportsModel } from '../runners/registry.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { isWorkOriginator, type WorkOriginator } from '../security/work-originator.js';
 import {
   normalizeTaskTemplateSelection,
   resolveWorkerTemplateSelection,
@@ -77,6 +79,16 @@ import { extractBacklogAcceptanceCriteria, stripBacklogAcceptanceCriteriaSection
 export { extractBacklogAcceptanceCriteria } from './spec.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
+type BacklogRecord = BacklogItem & { originator?: WorkOriginator };
+
+function setBacklogOriginator(record: BacklogRecord, originator: WorkOriginator): void {
+  Object.defineProperty(record, 'originator', {
+    value: structuredClone(originator),
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+}
 
 const VALID_STATUSES = new Set<BacklogStatus>([
   'candidate',
@@ -136,7 +148,7 @@ const DEV_INTERACTIVE_PROFILES = new Set(['lightweight', 'reviewed']);
 const REVIEW_RUNNERS = new Set<ReviewRunnerId>(['claude', 'codex', 'cursor', 'grok', 'opencode']);
 
 let _broadcast: BroadcastFn | null = null;
-const items: BacklogItem[] = [];
+const items: BacklogRecord[] = [];
 let backlogPersistChain: Promise<void> = Promise.resolve();
 let backlogMutationTail: Promise<void> = Promise.resolve();
 const autoDispatchTickInFlight = new Set<string>();
@@ -169,6 +181,7 @@ function resolveBacklogFile(): string {
 }
 
 const BACKLOG_FILE = resolveBacklogFile();
+const BACKLOG_PROVENANCE_MARKER = `${BACKLOG_FILE}.provenance-v1`;
 const BACKLOG_SPEC_ROOT =
   process.env.FARMSLOT_BACKLOG_SPEC_DIR ?? path.join(farmslotRoot, '.backlog', 'specs');
 
@@ -216,7 +229,11 @@ function sanitizeShipped(raw: Record<string, unknown>): NonNullable<BacklogItem[
 async function persist(): Promise<void> {
   await mkdir(path.dirname(BACKLOG_FILE), { recursive: true });
   const tmpFile = `${BACKLOG_FILE}.tmp`;
-  await writeFile(tmpFile, JSON.stringify(items, null, 2), 'utf-8');
+  const storedItems = items.map((item) => ({
+    ...item,
+    ...(item.originator ? { originator: item.originator } : {}),
+  }));
+  await writeFile(tmpFile, JSON.stringify(storedItems, null, 2), 'utf-8');
   await rename(tmpFile, BACKLOG_FILE);
 }
 
@@ -434,7 +451,7 @@ async function assertBacklogSpecReady(item: BacklogItem): Promise<void> {
   }
 }
 
-function normalizeStoredItem(raw: unknown): BacklogItem | null {
+function normalizeStoredItem(raw: unknown): BacklogRecord | null {
   if (!isRecord(raw)) return null;
   const id = typeof raw.id === 'string' && raw.id ? raw.id : null;
   const project = typeof raw.project === 'string' && raw.project ? raw.project : null;
@@ -526,7 +543,7 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
           : [],
       }
     : undefined;
-  return {
+  const normalized: BacklogRecord = {
     id,
     project,
     title,
@@ -576,6 +593,8 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
       ? { lastDispatchError: raw.lastDispatchError }
       : {}),
   };
+  if (isWorkOriginator(raw.originator)) setBacklogOriginator(normalized, raw.originator);
+  return normalized;
 }
 
 function ensureLaunchPlanState(item: BacklogItem): NonNullable<BacklogItem['launchPlanState']> {
@@ -936,17 +955,32 @@ async function reconcileBacklogLinks(): Promise<boolean> {
   return changed;
 }
 
-export async function loadBacklog(): Promise<void> {
+export async function loadBacklog(
+  legacyOriginator: WorkOriginator = { kind: 'principal', principalId: 'local-admin' },
+): Promise<void> {
   items.length = 0;
+  const migrationOpen = !existsSync(BACKLOG_PROVENANCE_MARKER);
+  let migrated = 0;
   try {
     const raw = await readFile(BACKLOG_FILE, 'utf-8');
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) throw new Error('backlog file must contain an array');
     for (const entry of parsed) {
       const normalized = normalizeStoredItem(entry);
-      if (normalized) items.push(normalized);
+      if (normalized) {
+        if (migrationOpen && !normalized.originator) {
+          setBacklogOriginator(normalized, legacyOriginator);
+          migrated += 1;
+        }
+        items.push(normalized);
+      }
     }
     console.log(`[backlog] loaded ${items.length} items from disk`);
+    if (migrationOpen) {
+      await persistNow('provenance-migration');
+      await writeFile(BACKLOG_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
+    }
+    console.log(`[provenance] backlog migrated ${migrated} item(s)`);
     if (await reconcileBacklogLinks()) schedulePersist('load-reconcile');
     const orphans = listOrphanedBacklogQueueItems();
     if (orphans.length > 0) {
@@ -957,6 +991,11 @@ export async function loadBacklog(): Promise<void> {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') {
+      if (migrationOpen) {
+        await mkdir(path.dirname(BACKLOG_PROVENANCE_MARKER), { recursive: true });
+        await writeFile(BACKLOG_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
+      }
+      console.log('[provenance] backlog migrated 0 item(s)');
       const orphans = listOrphanedBacklogQueueItems();
       if (orphans.length > 0) {
         console.warn(
@@ -989,7 +1028,25 @@ export function listBacklogItems(params: BacklogListParams = {}): BacklogListRes
     }
     return true;
   });
-  return { items: sortedBacklog(filtered) };
+  return { items: sortedBacklog(filtered).map(publicBacklogItem) };
+}
+
+function publicBacklogItem(record: BacklogRecord): BacklogItem {
+  return record;
+}
+
+function restampBacklogRecord(record: BacklogRecord, originator: WorkOriginator | undefined): void {
+  if (originator) setBacklogOriginator(record, originator);
+}
+
+function requireBacklogOriginator(record: BacklogRecord): WorkOriginator {
+  if (!record.originator) {
+    throw new Error(
+      `Backlog item '${record.sourceRef || record.id}' has no WorkOriginator; ` +
+        'the post-provenance record is corrupt and cannot dispatch.',
+    );
+  }
+  return structuredClone(record.originator);
 }
 
 function nextManualRef(): string {
@@ -1105,6 +1162,7 @@ async function normalizeSourceFields(
 
 export async function createBacklogItem(
   params: BacklogCreateParams,
+  originator: WorkOriginator = { kind: 'system' },
 ): Promise<{ item: BacklogItem }> {
   return withBacklogMutation(async () => {
     if (!params.project?.trim()) throw new Error('Backlog item project is required');
@@ -1132,7 +1190,7 @@ export async function createBacklogItem(
     const pendingReviewPlan = normalizePendingReviewPlan(params.pendingReviewPlan);
     const launchPlan = normalizeLaunchPlan(params.launchPlan);
     const now = new Date().toISOString();
-    const item: BacklogItem = {
+    const item: BacklogRecord = {
       id: randomUUID(),
       project: params.project.trim(),
       title: params.title.trim(),
@@ -1164,12 +1222,13 @@ export async function createBacklogItem(
       createdAt: now,
       updatedAt: now,
     };
+    setBacklogOriginator(item, originator);
     assertExecutionHintsCompatible(item);
     if (item.status === 'ready') await assertBacklogSpecReady(item);
     items.push(item);
     schedulePersist('create');
     broadcastBacklog();
-    return { item };
+    return { item: publicBacklogItem(item) };
   });
 }
 
@@ -1181,35 +1240,16 @@ function getItem(itemId: string): BacklogItem {
 
 export function getBacklogItemSnapshot(itemId: string): BacklogItem | null {
   const item = items.find((candidate) => candidate.id === itemId);
-  return item
-    ? {
-        ...item,
-        tags: item.tags ? [...item.tags] : undefined,
-        allowedSlots: item.allowedSlots ? [...item.allowedSlots] : undefined,
-        launchPlan: item.launchPlan ? cloneLaunchPlan(item.launchPlan) : undefined,
-        launchPlanState: item.launchPlanState
-          ? {
-              ...item.launchPlanState,
-              candidates: item.launchPlanState.candidates.map((candidate) => ({ ...candidate })),
-            }
-          : undefined,
-      }
-    : null;
+  return item ? publicBacklogItem(item) : null;
 }
 
 export function listBacklogItemSnapshots(): BacklogItem[] {
-  return items.map((item) => ({
-    ...item,
-    tags: item.tags ? [...item.tags] : undefined,
-    allowedSlots: item.allowedSlots ? [...item.allowedSlots] : undefined,
-    launchPlan: item.launchPlan ? cloneLaunchPlan(item.launchPlan) : undefined,
-    launchPlanState: item.launchPlanState
-      ? {
-          ...item.launchPlanState,
-          candidates: item.launchPlanState.candidates.map((candidate) => ({ ...candidate })),
-        }
-      : undefined,
-  }));
+  return items.map(publicBacklogItem);
+}
+
+export function backlogRecordOriginator(itemId: string): WorkOriginator | undefined {
+  const originator = items.find((item) => item.id === itemId)?.originator;
+  return originator ? structuredClone(originator) : undefined;
 }
 
 function assertBacklogItemWorkNodeLink(params: {
@@ -1234,11 +1274,14 @@ export function assertBacklogItemAttachedToWorkNode(params: {
   assertBacklogItemWorkNodeLink(params);
 }
 
-export async function attachBacklogItemToWorkNode(params: {
-  itemId: string;
-  graphId: string;
-  nodeId: string;
-}): Promise<BacklogItem> {
+export async function attachBacklogItemToWorkNode(
+  params: {
+    itemId: string;
+    graphId: string;
+    nodeId: string;
+  },
+  originator?: WorkOriginator,
+): Promise<BacklogItem> {
   return withBacklogMutation(async () => {
     const item = getItem(params.itemId);
     if (
@@ -1255,29 +1298,37 @@ export async function attachBacklogItemToWorkNode(params: {
     item.workGraphId = params.graphId;
     item.workNodeId = params.nodeId;
     item.updatedAt = new Date().toISOString();
+    restampBacklogRecord(item, originator);
     await persistNow('work-graph-attach');
     broadcastBacklog();
-    return item;
+    return publicBacklogItem(item);
   });
 }
 
-export async function detachBacklogItemFromWorkNode(params: {
-  itemId: string;
-  graphId: string;
-  nodeId: string;
-}): Promise<BacklogItem> {
+export async function detachBacklogItemFromWorkNode(
+  params: {
+    itemId: string;
+    graphId: string;
+    nodeId: string;
+  },
+  originator?: WorkOriginator,
+): Promise<BacklogItem> {
   return withBacklogMutation(async () => {
     const item = assertBacklogItemWorkNodeLink(params);
     delete item.workGraphId;
     delete item.workNodeId;
     item.updatedAt = new Date().toISOString();
+    restampBacklogRecord(item, originator);
     await persistNow('work-graph-detach');
     broadcastBacklog();
-    return item;
+    return publicBacklogItem(item);
   });
 }
 
-export async function updateBacklogItem(params: BacklogUpdateParams): Promise<BacklogUpdateResult> {
+export async function updateBacklogItem(
+  params: BacklogUpdateParams,
+  originator?: WorkOriginator,
+): Promise<BacklogUpdateResult> {
   return withBacklogMutation(async () => {
     const unknownKeys = Object.keys(params).filter((key) => !BACKLOG_UPDATE_KEYS.has(key));
     if (unknownKeys.length > 0) {
@@ -1286,7 +1337,7 @@ export async function updateBacklogItem(params: BacklogUpdateParams): Promise<Ba
     const itemIndex = items.findIndex((candidate) => candidate.id === params.itemId);
     if (itemIndex < 0) throw new Error(`Backlog item not found: ${params.itemId}`);
     const item = items[itemIndex]!;
-    const snapshot: BacklogItem = { ...item };
+    const snapshot: BacklogRecord = structuredClone(item);
     const nextSourceKind = params.sourceKind ?? item.sourceKind;
     const nextFlowType = params.flowType ?? item.flowType;
     if (!VALID_SOURCE_KINDS.has(nextSourceKind)) throw new Error('Invalid backlog source kind');
@@ -1427,13 +1478,14 @@ export async function updateBacklogItem(params: BacklogUpdateParams): Promise<Ba
       assertExecutionHintsCompatible(item);
       if (item.status === 'ready') await assertBacklogSpecReady(item);
       item.updatedAt = new Date().toISOString();
+      restampBacklogRecord(item, originator);
     } catch (err) {
       items[itemIndex] = snapshot;
       throw err;
     }
     schedulePersist('update');
     broadcastBacklog();
-    return { item };
+    return { item: publicBacklogItem(item) };
   });
 }
 
@@ -1467,6 +1519,7 @@ export async function deleteBacklogItem(itemId: string): Promise<OkResult> {
 
 export async function markBacklogItemReady(
   params: BacklogMarkReadyParams,
+  originator?: WorkOriginator,
 ): Promise<{ item: BacklogItem }> {
   return withBacklogMutation(async () => {
     const item = getItem(params.itemId);
@@ -1477,15 +1530,19 @@ export async function markBacklogItemReady(
     delete item.runId;
     delete item.lastObservedRunStatus;
     delete item.lastDispatchError;
+    restampBacklogRecord(item, originator);
     schedulePersist('mark-ready');
     broadcastBacklog();
-    return { item };
+    return { item: publicBacklogItem(item) };
   });
 }
 
-export async function archiveBacklogItem(params: {
-  itemId: string;
-}): Promise<{ item: BacklogItem }> {
+export async function archiveBacklogItem(
+  params: {
+    itemId: string;
+  },
+  originator?: WorkOriginator,
+): Promise<{ item: BacklogItem }> {
   return withBacklogMutation(async () => {
     const item = getItem(params.itemId);
     if (!ARCHIVABLE_BACKLOG_STATUSES.has(item.status)) {
@@ -1494,17 +1551,21 @@ export async function archiveBacklogItem(params: {
     item.status = 'archived';
     delete item.queuedQueueItemId;
     item.updatedAt = new Date().toISOString();
+    restampBacklogRecord(item, originator);
     schedulePersist('archive');
     broadcastBacklog();
-    return { item };
+    return { item: publicBacklogItem(item) };
   });
 }
 
-export async function closeShippedBacklogItem(params: {
-  itemId: string;
-  prRef?: string;
-  note?: string;
-}): Promise<{ item: BacklogItem }> {
+export async function closeShippedBacklogItem(
+  params: {
+    itemId: string;
+    prRef?: string;
+    note?: string;
+  },
+  originator?: WorkOriginator,
+): Promise<{ item: BacklogItem }> {
   return withBacklogMutation(async () => {
     const item = getItem(params.itemId);
     if (item.status === 'done' || item.status === 'archived') {
@@ -1553,9 +1614,10 @@ export async function closeShippedBacklogItem(params: {
     };
     delete item.queuedQueueItemId;
     item.updatedAt = new Date().toISOString();
+    restampBacklogRecord(item, originator);
     schedulePersist('close-shipped');
     broadcastBacklog();
-    return { item };
+    return { item: publicBacklogItem(item) };
   });
 }
 
@@ -1585,7 +1647,7 @@ export async function markBacklogItemNeedsAttention(params: {
     item.updatedAt = new Date().toISOString();
     await persistNow('work-graph-needs-attention');
     broadcastBacklog();
-    return { item };
+    return { item: publicBacklogItem(item) };
   });
 }
 
@@ -1598,7 +1660,7 @@ function launchCandidateKey(
 }
 
 async function materializeMissingComparisonCandidates(
-  item: BacklogItem,
+  item: BacklogRecord,
   baselineRun: Run,
 ): Promise<boolean> {
   if (!item.launchPlan) return false;
@@ -1615,6 +1677,7 @@ async function materializeMissingComparisonCandidates(
         comparison,
         baselineRun,
       ),
+      requireBacklogOriginator(item),
     );
     reserveCandidateAttempt(item, comparisonQueueItem);
     if (existingProjection) {
@@ -1781,7 +1844,12 @@ export async function enqueueBacklogItem(
     itemId: string;
     auto?: boolean;
   },
-  options: { workGraphId?: string; workNodeId?: string } = {},
+  options: {
+    workGraphId?: string;
+    workNodeId?: string;
+    dispatchOriginator?: WorkOriginator;
+  } = {},
+  originator?: WorkOriginator,
 ): Promise<BacklogEnqueueResult> {
   return withBacklogMutation(async () => {
     const item = getItem(params.itemId);
@@ -1797,6 +1865,8 @@ export async function enqueueBacklogItem(
       throw new Error('Backlog item is already linked to queue/run');
     const attemptedAt = new Date().toISOString();
     item.lastDispatchAttempt = attemptedAt;
+    const dispatchOriginator =
+      options.dispatchOriginator ?? originator ?? requireBacklogOriginator(item);
     try {
       await assertAllowedSlotsBelongToProject(item);
       if (params.auto) await assertAutoDispatchEligible(item);
@@ -1839,16 +1909,17 @@ export async function enqueueBacklogItem(
         }
         delete item.lastDispatchError;
         item.updatedAt = new Date().toISOString();
+        restampBacklogRecord(item, originator);
         await persistNow('enqueue-existing');
         broadcastBacklog();
-        return { item, queueItem: existingQueueItem };
+        return { item: publicBacklogItem(item), queueItem: existingQueueItem };
       }
       const queueParams = await buildBacklogQueueParams(
         item,
         options,
         baselineCandidate ?? undefined,
       );
-      const queueItem = addItem(queueParams);
+      const queueItem = addItem(queueParams, dispatchOriginator);
       reserveCandidateAttempt(item, queueItem);
       await persistQueueNow();
       item.status = 'queued';
@@ -1863,15 +1934,17 @@ export async function enqueueBacklogItem(
       }
       delete item.lastDispatchError;
       item.updatedAt = new Date().toISOString();
+      restampBacklogRecord(item, originator);
       await persistNow('enqueue');
       broadcastBacklog();
       tryDispatchNext().catch((err) => {
         console.error(`[backlog] queued item auto-dispatch failed: ${(err as Error).message}`);
       });
-      return { item, queueItem };
+      return { item: publicBacklogItem(item), queueItem };
     } catch (err) {
       item.lastDispatchError = (err as Error).message;
       item.updatedAt = new Date().toISOString();
+      restampBacklogRecord(item, originator);
       await persistNow('enqueue-failed');
       broadcastBacklog();
       throw err;
@@ -1879,9 +1952,12 @@ export async function enqueueBacklogItem(
   });
 }
 
-export async function dequeueBacklogItem(params: {
-  itemId: string;
-}): Promise<{ item: BacklogItem }> {
+export async function dequeueBacklogItem(
+  params: {
+    itemId: string;
+  },
+  originator?: WorkOriginator,
+): Promise<{ item: BacklogItem }> {
   return withBacklogMutation(async () => {
     const item = getItem(params.itemId);
     if (item.workGraphId || item.workNodeId) {
@@ -1920,15 +1996,16 @@ export async function dequeueBacklogItem(params: {
     item.status = 'ready';
     delete item.lastDispatchError;
     item.updatedAt = new Date().toISOString();
+    restampBacklogRecord(item, originator);
     await persistQueueNow();
     schedulePersist('dequeue');
     broadcastBacklog();
-    return { item };
+    return { item: publicBacklogItem(item) };
   });
 }
 
-function block(item: BacklogItem, reason: string): BacklogBlockedItem {
-  return { item, reason };
+function block(item: BacklogRecord, reason: string): BacklogBlockedItem {
+  return { item: publicBacklogItem(item), reason };
 }
 
 async function blockedReasonForReadyItem(item: BacklogItem): Promise<string | null> {
@@ -2001,7 +2078,7 @@ export async function upcomingBacklogItems(
   for (const item of limited) {
     const reason = await blockedReasonForReadyItem(item);
     if (reason) blocked.push(block(item, reason));
-    else eligible.push(item);
+    else eligible.push(publicBacklogItem(item));
   }
   return { ready: eligible, blocked };
 }
@@ -2177,6 +2254,7 @@ export async function linkDirectRunToMatchingBacklog(
  */
 export async function reconcileBacklogRun(
   params: BacklogReconcileRunParams,
+  originator?: WorkOriginator,
 ): Promise<BacklogReconcileRunResult> {
   const reject = (message: string, userAction?: string): never => {
     throw new GatewayMethodError('BACKLOG_RECONCILE_REJECTED', message, { userAction });
@@ -2255,6 +2333,7 @@ export async function reconcileBacklogRun(
     // event. The selected run becomes authoritative after all ownership and
     // identity checks above, even when the item currently has a terminal state.
     applyRunObservation(item, linkedRun);
+    restampBacklogRecord(item, originator);
     await persistNow('backlog-reconcile-run');
     const settledRun = updateRun(linkedRun.id, { backlogReconcilePending: undefined });
     await persistRunNow(settledRun, 'backlog-reconcile-run-settled');

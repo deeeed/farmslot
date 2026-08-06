@@ -26,6 +26,7 @@ import {
   deleteBacklogItem,
   dequeueBacklogItem,
   enqueueBacklogItem,
+  backlogRecordOriginator,
   getBacklogSpec,
   listBacklogItems,
   markBacklogItemReady,
@@ -34,19 +35,30 @@ import {
   updateBacklogItem,
 } from '../backlog/store.js';
 import { schedulerTick } from '../work-graph/store.js';
+import { currentSessionOriginator, workAuthorshipNotice } from '../security/work-originator.js';
 
-export const backlogCreate = (params: BacklogCreateParams) => createBacklogItem(params);
+export const backlogCreate = (params: BacklogCreateParams) =>
+  createBacklogItem(params, currentSessionOriginator());
 export const backlogList = (params: BacklogListParams = {}) => listBacklogItems(params);
-export const backlogUpdate = (params: BacklogUpdateParams) => updateBacklogItem(params);
+export const backlogUpdate = async (params: BacklogUpdateParams) => {
+  const previous = backlogRecordOriginator(params.itemId);
+  const originator = currentSessionOriginator();
+  const result = await updateBacklogItem(params, originator);
+  const authorshipNotice = workAuthorshipNotice(previous, originator);
+  return { ...result, ...(authorshipNotice ? { authorshipNotice } : {}) };
+};
 export const backlogDelete = (params: BacklogDeleteParams) => deleteBacklogItem(params.itemId);
 export const backlogMarkReady = async (params: BacklogMarkReadyParams) => {
-  const result = await markBacklogItemReady(params);
+  const result = await markBacklogItemReady(params, currentSessionOriginator());
   if (result.item.workGraphId) await schedulerTick({ graphId: result.item.workGraphId });
   return result;
 };
-export const backlogArchive = (params: BacklogArchiveParams) => archiveBacklogItem(params);
-export const backlogEnqueue = (params: BacklogEnqueueParams) => enqueueBacklogItem(params);
-export const backlogDequeue = (params: BacklogDequeueParams) => dequeueBacklogItem(params);
+export const backlogArchive = (params: BacklogArchiveParams) =>
+  archiveBacklogItem(params, currentSessionOriginator());
+export const backlogEnqueue = (params: BacklogEnqueueParams) =>
+  enqueueBacklogItem(params, {}, currentSessionOriginator());
+export const backlogDequeue = (params: BacklogDequeueParams) =>
+  dequeueBacklogItem(params, currentSessionOriginator());
 export const backlogAutoDispatchTick = (params: BacklogAutoDispatchTickParams = {}) =>
   autoDispatchBacklogReady(params);
 export const backlogUpcoming = (params: BacklogUpcomingParams = {}) => upcomingBacklogItems(params);
@@ -55,12 +67,12 @@ export const backlogReconcileRun = async (
   params: BacklogReconcileRunParams,
   emit: (event: string, payload: unknown) => void,
 ) => {
-  const result = await reconcileBacklogRun(params);
+  const result = await reconcileBacklogRun(params, currentSessionOriginator());
   emit(Events.RUN_UPDATED, { run: result.run });
   return result;
 };
 export const backlogCloseShipped = (params: BacklogCloseShippedParams) =>
-  closeShippedBacklogItem(params);
+  closeShippedBacklogItem(params, currentSessionOriginator());
 export const backlogRefine = (params: BacklogRefineParams) => startBacklogRefinement(params);
 export const backlogRefinementSessionGet = (params: BacklogRefinementSessionGetParams) =>
   getBacklogRefinementSession(params);
