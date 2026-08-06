@@ -85,6 +85,7 @@ import {
 import {
   hasRecoverablePublicationReviewer,
   isPublicationReviewRecoveryHeld,
+  markTerminalReviewArtifactOperatorRequired,
   recoverActiveRuns as recoverActiveRunsImpl,
   type RunRecoveryCollaborators,
   startOrphanReconciler as startOrphanReconcilerImpl,
@@ -558,6 +559,17 @@ export async function startRun(runId: string): Promise<void> {
         return;
       }
 
+      if (isTerminalReviewArtifactError(err)) {
+        console.warn(
+          `[run-engine] run ${runId.slice(0, 8)} step ${stepName} requires operator review: ${msg}`,
+        );
+        markTerminalReviewArtifactOperatorRequired({ updateRun }, interruptedRun, msg);
+        updateRunStep(runId, stepName, { detail: msg });
+        updateRun(runId, { status: 'blocked', error: msg });
+        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        return;
+      }
+
       if (err instanceof BlockedRunError) {
         console.log(
           `[run-engine] run ${runId.slice(0, 8)} step ${stepName} blocked without failure: ${err.message}`,
@@ -828,9 +840,11 @@ function rearmPublicationReviewRecovery(
   let settled = false;
   let inFlight = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let attempts = 0;
+  const previousRecovery = run.engineState?.publishGate?.reviewRecovery;
+  let attempts = previousRecovery?.attempts ?? 0;
   let failures = 0;
-  const startedAtMs = Date.now();
+  const persistedStartedAtMs = Date.parse(previousRecovery?.startedAt ?? '');
+  const startedAtMs = Number.isFinite(persistedStartedAtMs) ? persistedStartedAtMs : Date.now();
   const startedAt = new Date(startedAtMs).toISOString();
   const state = {
     replayPending: options?.replayPending ?? false,
@@ -922,25 +936,46 @@ function rearmPublicationReviewRecovery(
         return;
       }
       if (!state.replayPending) {
-        const recovered = await recoverInflightPublicationReviews(latest.id, latest.slotId);
-        if (recovered.length === 0) {
+        const recoveryResult = await recoverInflightPublicationReviews(latest.id, latest.slotId);
+        if (
+          recoveryResult.recoveredIds.length === 0 &&
+          recoveryResult.terminalErrors.length === 0
+        ) {
           failures = 0;
           schedule(latest);
           return;
         }
-        state.replayPending = true;
+        state.replayPending = recoveryResult.recoveredIds.length > 0;
+        if (recoveryResult.terminalErrors.length > 0) {
+          const terminalMessage = recoveryResult.terminalErrors
+            .map((error) => error.message)
+            .join('; ');
+          if (state.replayPending) {
+            try {
+              await replayHumanGateForRecovery(latest.id);
+            } catch (error) {
+              persistRecovery(getRun(latest.id) ?? latest, 'operator-required', {
+                lastError:
+                  `${terminalMessage}; gate replay failed: ${(error as Error).message}`.slice(
+                    0,
+                    200,
+                  ),
+              });
+              state.cleanup();
+              return;
+            }
+          }
+          persistRecovery(getRun(latest.id) ?? latest, 'operator-required', {
+            lastError: terminalMessage.slice(0, 200),
+          });
+          state.cleanup();
+          return;
+        }
       }
       await replayHumanGateForRecovery(latest.id);
       persistRecovery(getRun(latest.id) ?? latest, 'recovered');
       state.cleanup();
     } catch (err) {
-      if (isTerminalReviewArtifactError(err)) {
-        persistRecovery(getRun(latest.id) ?? latest, 'operator-required', {
-          lastError: err.message.slice(0, 200),
-        });
-        state.cleanup();
-        return;
-      }
       failures += 1;
       const message = (err as Error).message.slice(0, 200);
       console.warn(

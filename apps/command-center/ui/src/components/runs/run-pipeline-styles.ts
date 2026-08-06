@@ -11,6 +11,20 @@ export const runPipelineStyles = css`
   .pipeline-wrap {
     position: relative;
   }
+  .review-recovery {
+    margin: 0 0 ${unsafeCSS(spacing.sm)};
+    padding: 6px 8px;
+    border: 1px solid ${unsafeCSS(colors.statusWarn)}66;
+    border-radius: ${unsafeCSS(radii.sm)};
+    color: ${unsafeCSS(colors.statusWarn)};
+    background: ${unsafeCSS(colors.statusWarn)}12;
+    font-size: 11px;
+  }
+  .review-recovery.operator-required {
+    border-color: ${unsafeCSS(colors.statusFail)}66;
+    color: ${unsafeCSS(colors.statusFail)};
+    background: ${unsafeCSS(colors.statusFail)}12;
+  }
 
   .pipeline-svg {
     display: block;

@@ -84,21 +84,30 @@ Do not duplicate token parsing in harness JS — scenarios call `scripts/session
 
 ## Publication reviewer result contract
 
-New publication reviewers write two scoped artifacts before their terminal signal:
+Publication reviewer contexts launched with `reviewResultFile` write two scoped artifacts before
+their terminal signal:
 
 - `artifacts/review-feedback.<context>.md` — human-readable analysis.
 - `artifacts/review-result.<context>.json` — authoritative verdict and issue list.
 
 The JSON schema is deliberately small: `schemaVersion: 1`, `verdict: "pass" | "issues"`, and
 `issues: Array<{ file, line?, description }>`. A pass has no issues; an issues verdict has at least
-one. The reviewer terminal contract requires both files, so Markdown formatting is never positive
-evidence for the verdict.
+one. For those contexts, the terminal contract requires both files and the JSON is authoritative;
+Markdown formatting is not positive evidence for the verdict. Legacy in-flight contexts without
+`reviewResultFile` may still use the legacy Markdown parser during migration.
 
 Restart recovery distinguishes waiting from terminal-invalid state. A live reviewer with no terminal
-signal remains recoverable. Once a terminal signal exists, a missing or invalid structured result is
-stable: recovery marks the reviewer blocked, records `reviewRecovery.status = "operator-required"`,
-and stops polling. Evidence from the production gateway regression is retained in
-`evidence/review-recovery-terminal-invalid-b983afc6.json`.
+signal remains recoverable. Once a successful `complete`/`done` terminal signal exists, a missing or
+invalid structured result is stable: recovery marks the reviewer blocked, records
+`reviewRecovery.status = "operator-required"`, preserves valid sibling results, replays the human
+gate, and stops polling. Failed and blocked terminal signals keep their existing failed-review path.
+Reproduce the production gateway regression and regenerate its evidence with:
+
+```bash
+yarn exec tsx scripts/runner-validation/gateway/review-recovery-terminal-contract.mts
+```
+
+Evidence: `evidence/runner-validate-review-recovery-terminal-contract.json`.
 
 ## Session binding + attribution
 

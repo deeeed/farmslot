@@ -23,6 +23,7 @@ import {
 import {
   renderPipelineControls,
   renderPipelineProgressPanel,
+  renderReviewRecoveryStatus,
   renderRunPipelineSummary,
 } from './run-pipeline-panels.js';
 import {
@@ -97,7 +98,7 @@ export class RunPipeline extends LitElement {
 
     return html`
       <div class="pipeline-wrap">
-        ${isActive ? this.renderControls() : nothing}
+        ${isActive ? this.renderControls() : nothing} ${renderReviewRecoveryStatus(this.run)}
         <svg
           viewBox="0 0 ${layout.width} ${layout.height}"
           width="${layout.width}"

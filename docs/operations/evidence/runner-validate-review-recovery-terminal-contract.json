@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-06T15:31:48.373Z",
+  "scenario": "review-recovery-terminal-contract",
+  "sourceFailureRunId": "b983afc6-f9f3-4e6f-a365-2ff612f545fc",
+  "gatewayPath": [
+    "recoverActiveRuns",
+    "recoverInflightPublicationReviews",
+    "runReplayStep(human-gate, auto-recovery)"
+  ],
+  "fixture": {
+    "missingTerminal": "complete + Markdown + missing structured JSON",
+    "invalidTerminal": "complete + Markdown + invalid structured JSON",
+    "validSibling": "complete + Markdown + valid structured JSON",
+    "failedSibling": "failed + missing structured JSON",
+    "blockedSibling": "blocked + missing structured JSON"
+  },
+  "before": {
+    "contractSatisfied": false,
+    "recovery": {
+      "status": "watching",
+      "attempts": 38,
+      "startedAt": "2026-08-06T10:00:00.000Z",
+      "updatedAt": "2026-08-06T10:40:00.000Z",
+      "nextRetryAt": "2026-08-06T10:45:00.000Z"
+    },
+    "reviewIds": [],
+    "contextStatus": {
+      "rev-missing": "working",
+      "rev-invalid": "working",
+      "rev-valid": "working",
+      "rev-failed": "working",
+      "rev-blocked": "working"
+    },
+    "gateReplayed": false
+  },
+  "after": {
+    "contractSatisfied": true,
+    "recovery": {
+      "status": "operator-required",
+      "attempts": 38,
+      "startedAt": "2026-08-06T10:00:00.000Z",
+      "updatedAt": "2026-08-06T15:31:48.301Z",
+      "lastError": "Reviewer rev-missing completed with an invalid result artifact: artifacts/review-result.rev-missing.json is missing; Reviewer rev-invalid completed with an invalid result artifact: artifacts/review-re"
+    },
+    "reviewIds": ["independent-review-3"],
+    "contextStatus": {
+      "rev-missing": "blocked",
+      "rev-invalid": "blocked",
+      "rev-valid": "complete",
+      "rev-failed": "failed",
+      "rev-blocked": "blocked"
+    },
+    "gateReplayed": true
+  },
+  "pass": true
+}

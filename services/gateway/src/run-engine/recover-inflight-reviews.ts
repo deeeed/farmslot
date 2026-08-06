@@ -40,22 +40,21 @@ import {
 } from '../self-review/review-agent.js';
 import { killSelfReviewWindow } from '../self-review/snapshots.js';
 import { getSelfReviewConfig } from '../self-review/templates.js';
+import {
+  isSuccessfulTerminalReviewSignal,
+  isTerminalReviewArtifactError,
+  TerminalReviewArtifactError,
+} from '../self-review/terminal-result.js';
 import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { buildPublishGateReviewStatus, independentReviewNeedsContinuation } from './gate-policy.js';
 import { persistIndependentReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
 
-export class TerminalReviewArtifactError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TerminalReviewArtifactError';
-  }
-}
+export { isTerminalReviewArtifactError, TerminalReviewArtifactError };
 
-export function isTerminalReviewArtifactError(
-  error: unknown,
-): error is TerminalReviewArtifactError {
-  return error instanceof TerminalReviewArtifactError;
+export interface PublicationReviewRecoveryResult {
+  recoveredIds: string[];
+  terminalErrors: Array<{ contextId: string; message: string }>;
 }
 
 /**
@@ -403,9 +402,9 @@ async function readSlotHeadSha(
 export async function recoverInflightPublicationReviews(
   runId: string,
   slotId: string,
-): Promise<string[]> {
+): Promise<PublicationReviewRecoveryResult> {
   let run = getRun(runId);
-  if (!run) return [];
+  if (!run) return { recoveredIds: [], terminalErrors: [] };
   let reviews = run.engineState?.publishGate?.independentReviews ?? [];
   const settledContexts = (run.agentContexts ?? []).filter((ctx) =>
     reviewerContextIsSettled(ctx, reviews),
@@ -435,13 +434,13 @@ export async function recoverInflightPublicationReviews(
       `[run-engine] run ${runId.slice(0, 8)} — settled ${settledContexts.length} superseded reviewer context(s)`,
     );
     run = getRun(runId);
-    if (!run) return [];
+    if (!run) return { recoveredIds: [], terminalErrors: [] };
     reviews = run.engineState?.publishGate?.independentReviews ?? [];
   }
   const candidates = (run.agentContexts ?? []).filter((ctx) =>
     reviewerContextNeedsRecovery(ctx, reviews, { includeFailed: true }),
   );
-  if (candidates.length === 0) return [];
+  if (candidates.length === 0) return { recoveredIds: [], terminalErrors: [] };
   const vars = await loadSlotVars(slotId);
 
   const selfReviewConfig = await getSelfReviewConfig(run.project);
@@ -459,6 +458,7 @@ export async function recoverInflightPublicationReviews(
       : undefined;
 
   const recoveredIds: string[] = [];
+  const terminalErrors: PublicationReviewRecoveryResult['terminalErrors'] = [];
   for (const ctx of candidates) {
     try {
       const recovered = await ingestRecoveredReviewer(
@@ -470,7 +470,10 @@ export async function recoverInflightPublicationReviews(
       );
       if (recovered) recoveredIds.push(recovered);
     } catch (err) {
-      if (isTerminalReviewArtifactError(err)) throw err;
+      if (isTerminalReviewArtifactError(err)) {
+        terminalErrors.push({ contextId: ctx.id, message: err.message });
+        continue;
+      }
       // One unreadable reviewer (corrupt signal/feedback file, transient slot
       // read error) must not strand the human gate or block recovery of the
       // other reviewers — mirror executePublishGateReviewPlan, which degrades a
@@ -480,7 +483,7 @@ export async function recoverInflightPublicationReviews(
       );
     }
   }
-  return recoveredIds;
+  return { recoveredIds, terminalErrors };
 }
 
 /**
@@ -496,6 +499,15 @@ async function ingestRecoveredReviewer(
   recoveryContinuationPending: boolean,
 ): Promise<string | null> {
   const signal = await readReviewerTerminalSignal(vars, ctx);
+  if (signal && !isSuccessfulTerminalReviewSignal(signal)) {
+    await markAgentContextStatus(
+      runId,
+      'self-review',
+      signal.status === 'blocked' ? 'blocked' : 'failed',
+      { id: ctx.id, lastSignalAt: signal.timestamp },
+    );
+    return null;
+  }
   if (!signal && (ctx.status === 'working' || ctx.status === 'launching')) {
     const promptRecovery = await resumeReviewAgentPromptDelivery(vars, runId, ctx);
     if (promptRecovery === 'inactive') {
@@ -518,7 +530,7 @@ async function ingestRecoveredReviewer(
     reviewerFeedbackRelPath(ctx.id),
     ctx.reviewResultFile,
   );
-  if (signal && feedback.terminalInvalidReason) {
+  if ((signal || ctx.status === 'complete') && feedback.terminalInvalidReason) {
     await markAgentContextStatus(runId, 'self-review', 'blocked', { id: ctx.id });
     throw new TerminalReviewArtifactError(
       `Reviewer ${ctx.id} completed with an invalid result artifact: ${feedback.terminalInvalidReason}`,

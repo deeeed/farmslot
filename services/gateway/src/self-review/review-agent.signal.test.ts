@@ -3,17 +3,8 @@ import test from 'node:test';
 
 import { resumableSessionProbeCommand } from '../runners/session-process.js';
 
-import {
-  applyTerminalReviewSignal,
-  parseTerminalSelfReviewSignal,
-  shouldKeepWaitingForOverdueReview,
-} from './review-agent.js';
-
-test('live overdue reviewers remain non-terminal even while temporarily idle', () => {
-  assert.equal(shouldKeepWaitingForOverdueReview(true, false), true);
-  assert.equal(shouldKeepWaitingForOverdueReview(false, false), false);
-  assert.equal(shouldKeepWaitingForOverdueReview(true, true), true);
-});
+import { applyTerminalReviewSignal, parseTerminalSelfReviewSignal } from './review-agent.js';
+import { isSuccessfulTerminalReviewSignal } from './terminal-result.js';
 
 test('parseTerminalSelfReviewSignal ignores progress mark signals (status running)', () => {
   const raw = JSON.stringify({
@@ -61,6 +52,13 @@ test('terminal done reviewer signal preserves its parsed verdict', () => {
     verdict: 'pass',
     issues: [],
   });
+});
+
+test('only complete and done are successful reviewer terminal signals', () => {
+  assert.equal(isSuccessfulTerminalReviewSignal({ status: 'complete' }), true);
+  assert.equal(isSuccessfulTerminalReviewSignal({ status: 'done' }), true);
+  assert.equal(isSuccessfulTerminalReviewSignal({ status: 'failed' }), false);
+  assert.equal(isSuccessfulTerminalReviewSignal({ status: 'blocked' }), false);
 });
 
 test('parseTerminalSelfReviewSignal rejects legacy substring-only detection', () => {

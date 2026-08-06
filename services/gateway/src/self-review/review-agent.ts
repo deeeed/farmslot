@@ -46,7 +46,7 @@ import {
   resumableSessionProbeCommand,
 } from '../runners/session-process.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, updateRun } from '../runs/store.js';
 import {
   extractRunnerSessionUsage,
   unavailableRunnerSessionUsage,
@@ -86,6 +86,11 @@ import {
   waitForSessionTranscriptToSettle,
 } from './snapshots.js';
 import { expandSelfReviewTemplate } from './templates.js';
+import {
+  isSuccessfulTerminalReviewSignal,
+  isTerminalReviewArtifactError,
+  TerminalReviewArtifactError,
+} from './terminal-result.js';
 
 /** Progress mark writes status "running"; only terminal worker signals count as done. */
 export function parseTerminalSelfReviewSignal(raw: string) {
@@ -96,7 +101,7 @@ export function applyTerminalReviewSignal(
   feedback: ReviewAgentResult,
   signal: ReturnType<typeof parseTerminalSelfReviewSignal>,
 ): ReviewAgentResult {
-  if (!signal || signal.status === 'complete' || signal.status === 'done') return feedback;
+  if (!signal || isSuccessfulTerminalReviewSignal(signal)) return feedback;
   return { verdict: 'pass', issues: [], incomplete: true };
 }
 
@@ -112,13 +117,6 @@ async function readTerminalReviewSignal(
     )
   ).stdout.trim();
   return parseTerminalSelfReviewSignal(raw);
-}
-
-export function shouldKeepWaitingForOverdueReview(
-  reviewerProcessAlive: boolean,
-  _reviewerAtIdlePrompt: boolean,
-): boolean {
-  return reviewerProcessAlive;
 }
 
 export const LEGACY_REVIEW_FEEDBACK_REL_PATH = 'artifacts/review-feedback.md';
@@ -225,7 +223,14 @@ export async function resumeReviewAgentPromptDelivery(
   runId: string,
   context: Pick<
     AgentContext,
-    'id' | 'runner' | 'taskFile' | 'signalFile' | 'target' | 'attemptStartedAt' | 'startedAt'
+    | 'id'
+    | 'runner'
+    | 'taskFile'
+    | 'signalFile'
+    | 'reviewResultFile'
+    | 'target'
+    | 'attemptStartedAt'
+    | 'startedAt'
   >,
   dependencyOverrides: Partial<ReviewPromptRecoveryDependencies> = {},
 ): Promise<'delivered' | 'inactive' | 'unsupported'> {
@@ -533,10 +538,20 @@ async function recoverRunningReviewAgent(params: {
       abandonRecoveredReviewer,
     );
     if (!completed) return null;
+    const terminalSignal = await readTerminalReviewSignal(
+      params.vars,
+      params.taskDir,
+      signalBasename,
+    );
     const feedback = applyTerminalReviewSignal(
       await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath, resultRelPath),
-      await readTerminalReviewSignal(params.vars, params.taskDir, signalBasename),
+      terminalSignal,
     );
+    if (feedback.terminalInvalidReason && isSuccessfulTerminalReviewSignal(terminalSignal)) {
+      throw new TerminalReviewArtifactError(
+        `Reviewer ${context.id} completed with an invalid result artifact: ${feedback.terminalInvalidReason}`,
+      );
+    }
     await waitForSessionTranscriptToSettle(params.vars, context.runnerSessionPath ?? null);
     const usage = context.runnerSessionPath
       ? await extractRunnerSessionUsage({
@@ -999,10 +1014,20 @@ export async function runReviewAgent(
         });
 
     // 7. Read reviewer-specific feedback.
+    const terminalSignal = await readTerminalReviewSignal(
+      vars,
+      taskDir,
+      reviewChecklistTarget.signal,
+    );
     const feedback = applyTerminalReviewSignal(
       await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath),
-      await readTerminalReviewSignal(vars, taskDir, reviewChecklistTarget.signal),
+      terminalSignal,
     );
+    if (feedback.terminalInvalidReason && isSuccessfulTerminalReviewSignal(terminalSignal)) {
+      throw new TerminalReviewArtifactError(
+        `Reviewer ${allocated.id} completed with an invalid result artifact: ${feedback.terminalInvalidReason}`,
+      );
+    }
     if (feedback.incomplete) {
       return {
         ...feedback,
@@ -1074,10 +1099,15 @@ export async function runReviewAgent(
       completedAt,
     };
   } catch (err) {
-    await markAgentContextStatus(_runId, 'self-review', 'failed', {
-      id: allocated.id,
-      lastSignalAt: new Date().toISOString(),
-    });
+    await markAgentContextStatus(
+      _runId,
+      'self-review',
+      isTerminalReviewArtifactError(err) ? 'blocked' : 'failed',
+      {
+        id: allocated.id,
+        lastSignalAt: new Date().toISOString(),
+      },
+    );
     throw err;
   } finally {
     progressWatcher?.stop();
@@ -1123,7 +1153,6 @@ async function waitForReviewCompletion(
 ): Promise<boolean> {
   const start = Date.now();
   const pollInterval = 10_000; // 10s
-  let overdueWarned = false;
   // Re-enforce the minimum window size before polling: completion matching
   // reads the last pane lines, which a reflowed 5-row window truncates.
   await ensureTmuxWindowMinimumSize(vars, `${session}:${reviewWindow}`);
@@ -1208,7 +1237,8 @@ async function waitForReviewCompletion(
       }
     }
 
-    // Terminal reviewer signal (complete/blocked/failed) plus feedback artifact.
+    // Successful terminal signals require every configured feedback artifact.
+    // Failed/blocked signals take the existing failed-review path immediately.
     const signalRaw = (
       await execOnSlot(
         vars,
@@ -1224,6 +1254,18 @@ async function waitForReviewCompletion(
       );
     }
     if (terminalSignal) {
+      if (!isSuccessfulTerminalReviewSignal(terminalSignal)) {
+        await markAgentContextStatus(
+          runId,
+          'self-review',
+          terminalSignal.status === 'blocked' ? 'blocked' : 'failed',
+          {
+            id: reviewContextId,
+            lastSignalAt: new Date().toISOString(),
+          },
+        );
+        return true;
+      }
       if (await hasRequiredOutput()) {
         debugSelfReviewLog(
           `[self-review] terminal ${signalBasename} (status=${terminalSignal.status}) + feedback — agent completed`,
@@ -1234,8 +1276,14 @@ async function waitForReviewCompletion(
         });
         return true;
       }
-      debugSelfReviewLog(
-        `[self-review] terminal ${signalBasename} (status=${terminalSignal.status}) but ${feedbackRelPath} missing — continuing poll`,
+      await markAgentContextStatus(runId, 'self-review', 'blocked', {
+        id: reviewContextId,
+        lastSignalAt: new Date().toISOString(),
+      });
+      throw new TerminalReviewArtifactError(
+        `Reviewer ${reviewContextId} completed without all required review artifacts (${requiredOutputPaths
+          .map((outputPath) => path.posix.basename(outputPath))
+          .join(', ')})`,
       );
     }
 
@@ -1282,20 +1330,15 @@ async function waitForReviewCompletion(
     }
 
     if (Date.now() - start >= timeoutMs) {
-      if (!shouldKeepWaitingForOverdueReview(reviewerActive, reviewerAtIdlePrompt)) {
-        console.warn(
-          `[self-review] reviewer became inactive without feedback after ${timeoutMs}ms`,
-        );
-        return false;
-      }
-      if (!overdueWarned) {
-        overdueWarned = true;
-        const detail =
-          `Review exceeded ${timeoutMs / 60_000}min but the reviewer process is still active; ` +
-          'continuing to wait. The operator may inspect or cancel the review without failing the run.';
-        console.warn(`[self-review] ${detail}`);
-        updateRunStep(runId, 'self-review', { detail });
-      }
+      const state = reviewerAtIdlePrompt
+        ? 'idle at its prompt'
+        : reviewerActive
+          ? 'still active'
+          : 'inactive';
+      console.warn(
+        `[self-review] reviewer was ${state} without complete review artifacts after ${timeoutMs}ms`,
+      );
+      return false;
     }
   }
 }

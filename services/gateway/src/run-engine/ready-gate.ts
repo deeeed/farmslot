@@ -47,6 +47,7 @@ import { readReadyGatePreparedPackage } from '../run-completion/ready-gate-packa
 import { defaultAlternateReviewRunner } from '../runners/registry.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
+import { isTerminalReviewArtifactError } from '../self-review/terminal-result.js';
 
 import {
   applyBranchFreshnessToReadyGatePayload,
@@ -347,6 +348,7 @@ export async function executePublishGateReviewPlan(
         // re-reviews before the next configured reviewer starts.
       });
     } catch (err) {
+      if (isTerminalReviewArtifactError(err)) throw err;
       reviewRecoveryPending = true;
       const message = err instanceof Error ? err.message : String(err);
       console.warn(

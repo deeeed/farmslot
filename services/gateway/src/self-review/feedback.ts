@@ -124,12 +124,7 @@ export async function readReviewFeedback(
       console.warn(
         `[self-review] verdict=ISSUES but no issue bullets parsed — treating as incomplete`,
       );
-      return {
-        verdict: 'pass',
-        issues: [],
-        incomplete: true,
-        terminalInvalidReason: `${feedbackRelPath} declared ISSUES without machine-readable issue entries`,
-      };
+      return { verdict: 'pass', issues: [], incomplete: true };
     }
 
     return { verdict, issues };

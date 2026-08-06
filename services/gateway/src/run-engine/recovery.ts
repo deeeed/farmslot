@@ -22,7 +22,7 @@ import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 import { pendingDecisionForRun } from './decision-projection.js';
 import { pendingIndependentReviewContinuation } from './gate-policy.js';
 import {
-  isTerminalReviewArtifactError,
+  type PublicationReviewRecoveryResult,
   reviewerContextNeedsRecovery,
 } from './recover-inflight-reviews.js';
 import { recoveryReviewPlanForActiveFix } from './review-plan.js';
@@ -128,7 +128,10 @@ export interface RunRecoveryCollaborators {
     run: Run,
     options?: { replayPending?: boolean },
   ) => (() => void) | undefined;
-  recoverInflightPublicationReviews: (runId: string, slotId: string) => Promise<unknown[]>;
+  recoverInflightPublicationReviews: (
+    runId: string,
+    slotId: string,
+  ) => Promise<PublicationReviewRecoveryResult>;
   replayHumanGate: (runId: string) => Promise<void>;
 }
 
@@ -146,7 +149,7 @@ const STEP_TO_STATUS: Record<string, Run['status']> = {
   [S.CI_WATCH]: 'ci-watching',
 };
 
-function markTerminalReviewArtifactOperatorRequired(
+export function markTerminalReviewArtifactOperatorRequired(
   deps: Pick<RunRecoveryCollaborators, 'updateRun'>,
   run: Run,
   message: string,
@@ -168,6 +171,10 @@ function markTerminalReviewArtifactOperatorRequired(
       },
     },
   });
+}
+
+function terminalReviewRecoveryMessage(result: PublicationReviewRecoveryResult): string {
+  return result.terminalErrors.map((error) => error.message).join('; ');
 }
 
 function readCiRepo(projectJson: RawProjectJson | undefined): string | undefined {
@@ -240,7 +247,10 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
   console.log(`[run-engine] recovering ${active.length} active run(s)`);
 
   for (const run of active) {
-    if (run.engineState?.publishGate?.reviewRecovery?.status === 'watching') {
+    if (
+      run.engineState?.publishGate?.reviewRecovery?.status === 'watching' &&
+      !isPublicationReviewRecoveryHeld(run)
+    ) {
       run.engineState = {
         ...run.engineState,
         publishGate: {
@@ -335,14 +345,10 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       isPublicationReviewRecoveryHeld(run) &&
       hasRecoverablePublicationReviewer(run)
     ) {
-      let recoveredReviews: unknown[] = [];
+      let recoveryResult: PublicationReviewRecoveryResult;
       try {
-        recoveredReviews = await deps.recoverInflightPublicationReviews(run.id, run.slotId);
+        recoveryResult = await deps.recoverInflightPublicationReviews(run.id, run.slotId);
       } catch (err) {
-        if (isTerminalReviewArtifactError(err)) {
-          markTerminalReviewArtifactOperatorRequired(deps, run, err.message);
-          continue;
-        }
         console.warn(
           `[run-engine] run ${run.id.slice(0, 8)} — startup publication-review recovery failed: ${(err as Error).message.slice(0, 200)}`,
         );
@@ -350,15 +356,39 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         continue;
       }
 
-      if (recoveredReviews.length > 0) {
+      if (recoveryResult.recoveredIds.length > 0) {
         try {
           await deps.replayHumanGate(run.id);
         } catch (err) {
+          if (recoveryResult.terminalErrors.length > 0) {
+            markTerminalReviewArtifactOperatorRequired(
+              deps,
+              deps.getRun(run.id) ?? run,
+              `${terminalReviewRecoveryMessage(recoveryResult)}; gate replay failed: ${(err as Error).message}`,
+            );
+            continue;
+          }
           console.warn(
             `[run-engine] run ${run.id.slice(0, 8)} — recovered review gate replay failed; re-arming: ${(err as Error).message.slice(0, 200)}`,
           );
           deps.rearmPublicationReviewRecovery(run, { replayPending: true });
         }
+        if (recoveryResult.terminalErrors.length > 0) {
+          markTerminalReviewArtifactOperatorRequired(
+            deps,
+            deps.getRun(run.id) ?? run,
+            terminalReviewRecoveryMessage(recoveryResult),
+          );
+        }
+        continue;
+      }
+
+      if (recoveryResult.terminalErrors.length > 0) {
+        markTerminalReviewArtifactOperatorRequired(
+          deps,
+          deps.getRun(run.id) ?? run,
+          terminalReviewRecoveryMessage(recoveryResult),
+        );
         continue;
       }
 
@@ -435,21 +465,20 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         // handles it without re-presenting every gate on every restart.
         const gateDecisions = unresolved.filter((d) => d.type === 'engine_human_gate');
         if (gateDecisions.length > 0 && run.slotId) {
-          let recoveredReviews = 0;
+          let recoveryResult: PublicationReviewRecoveryResult = {
+            recoveredIds: [],
+            terminalErrors: [],
+          };
           try {
-            recoveredReviews = (await deps.recoverInflightPublicationReviews(run.id, run.slotId))
-              .length;
+            recoveryResult = await deps.recoverInflightPublicationReviews(run.id, run.slotId);
           } catch (err) {
-            if (isTerminalReviewArtifactError(err)) {
-              markTerminalReviewArtifactOperatorRequired(deps, run, err.message);
-              continue;
-            }
             // A failed ingestion must not abort recovery of the remaining
             // runs; the gate stays pending and the operator path still works.
             console.warn(
               `[run-engine] run ${run.id.slice(0, 8)} — startup review ingestion failed: ${(err as Error).message.slice(0, 200)}`,
             );
           }
+          const recoveredReviews = recoveryResult.recoveredIds.length;
           if (recoveredReviews > 0 || gateDecisions.length > 1) {
             console.log(
               `[run-engine] run ${run.id.slice(0, 8)} — re-entering human gate after restart (${recoveredReviews} recovered review(s), ${gateDecisions.length} pending gate decision(s))`,
@@ -460,8 +489,23 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
               // decisions before presenting a fresh one; the engine resume it
               // schedules is detached, so this stays bounded).
               await deps.replayHumanGate(run.id);
+              if (recoveryResult.terminalErrors.length > 0) {
+                markTerminalReviewArtifactOperatorRequired(
+                  deps,
+                  deps.getRun(run.id) ?? run,
+                  terminalReviewRecoveryMessage(recoveryResult),
+                );
+              }
               continue;
             } catch (err) {
+              if (recoveryResult.terminalErrors.length > 0) {
+                markTerminalReviewArtifactOperatorRequired(
+                  deps,
+                  deps.getRun(run.id) ?? run,
+                  `${terminalReviewRecoveryMessage(recoveryResult)}; gate replay failed: ${(err as Error).message}`,
+                );
+                continue;
+              }
               // Re-entry failed before establishing ownership — fall through
               // so whatever is STILL unresolved gets re-presented; suppressing
               // it would leave the operator with no actionable decision.
@@ -469,6 +513,14 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                 `[run-engine] run ${run.id.slice(0, 8)} — human-gate re-entry failed: ${(err as Error).message.slice(0, 200)}`,
               );
             }
+          }
+          if (recoveryResult.terminalErrors.length > 0) {
+            markTerminalReviewArtifactOperatorRequired(
+              deps,
+              deps.getRun(run.id) ?? run,
+              terminalReviewRecoveryMessage(recoveryResult),
+            );
+            continue;
           }
         }
         console.log(
