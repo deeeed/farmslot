@@ -75,6 +75,20 @@ let clientSeq = 0;
 const clients = new Map<WebSocket, ClientState>();
 let activeAuthRuntime: GatewayAuthRuntime | null = null;
 
+/**
+ * Inbound WebSocket frame limit (matches `ws` library default of 100 MiB).
+ * Oversized frames are rejected with close code 1009. Without a socket-level
+ * `error` listener, `ws` emits an unhandled `error` event and Node exits —
+ * that is what took the farmdev gateway down on large reconnect/re-present
+ * traffic. Keep the cap intentional and always attach the handler below.
+ */
+export const DEFAULT_WS_MAX_PAYLOAD_BYTES = 100 * 1024 * 1024;
+
+export type CreateWebSocketServerOptions = {
+  /** Override inbound max payload (bytes). Tests use a tiny value. */
+  maxPayload?: number;
+};
+
 function isActiveClient(state: ClientState): boolean {
   return clients.get(state.ws) === state && state.ws.readyState === WebSocket.OPEN;
 }
@@ -98,13 +112,21 @@ function nextEventSeq(): number {
 export function createWebSocketServer(
   httpServer: HttpServer,
   authRuntime: GatewayAuthRuntime,
+  options?: CreateWebSocketServerOptions,
 ): WebSocketServer {
   activeAuthRuntime = authRuntime;
+  const maxPayload = options?.maxPayload ?? DEFAULT_WS_MAX_PAYLOAD_BYTES;
   const wss = new WebSocketServer({
     server: httpServer,
+    maxPayload,
     verifyClient: (info, done) => {
       done(isGatewayOriginAllowed(info.origin, info.req.headers.host));
     },
+  });
+
+  // Server-level errors (bind/listen issues) must not become unhandled rejections.
+  wss.on('error', (err) => {
+    console.error(`[server] websocket server error: ${(err as Error).message}`);
   });
 
   wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
@@ -126,6 +148,18 @@ export function createWebSocketServer(
       authenticatedAt: authRuntime.auth.mode === 'none' ? Date.now() : undefined,
     };
     clients.set(ws, state);
+
+    // Critical: `ws` emits `error` for oversized frames (WS_ERR_UNSUPPORTED_MESSAGE_LENGTH)
+    // before closing with 1009. An unhandled socket error crashes the whole gateway process.
+    ws.on('error', (err) => {
+      const code = (err as NodeJS.ErrnoException).code;
+      console.error(
+        `[server] websocket error on ${state.id}` +
+          (state.clientKind ? ` (${state.clientKind})` : '') +
+          `: ${(err as Error).message}` +
+          (code ? ` [${code}]` : ''),
+      );
+    });
 
     // Send privileged hello snapshot only after auth when auth is enabled.
     if (authRuntime.auth.mode === 'none') sendHello(ws);

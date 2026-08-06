@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(server): handle WebSocket `error` events (including `WS_ERR_UNSUPPORTED_MESSAGE_LENGTH` / close 1009) so an oversized inbound frame closes that client instead of crashing the whole gateway process; make the 100 MiB `maxPayload` explicit.
 - fix(terminal): name the staged image path plainly in the Claude attachment prompt. The previous `@<path>` reference opened Claude Code's file-reference autocomplete, which consumed the submit Enter, so the instruction sat unsent in the composer while delivery reported success. Proven end to end against live Claude and Codex runner panes.
 - fix(terminal): route image-attachment upload and delivery through the same bare-session-aware target resolution the terminal input path uses, so an image pasted into a postmortem terminal is staged for and delivered to the bare PTY the operator is attached to instead of the still-active run's context pane.
 - fix(terminal): resolve the attachment runner from the selected agent context instead of the slot, bind each upload and delivery to the target it started against, clear buffered chunks of interrupted uploads on lifecycle cleanup under an explicit byte ceiling, and reject unknown cleanup scopes before deleting anything.
