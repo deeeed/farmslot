@@ -298,8 +298,9 @@ export async function executePrepareStep(
   // A new fix-bug/dev run owns a fresh branch. A replay from PREPARE owns the
   // existing branch instead: recreating it from main discards the very commits
   // and local evidence the operator is trying to recover.
+  const activeRecoveryAttempt = current.recoveryAttempts?.at(-1);
   const isPrepareReplay =
-    current.recoveryAttempts?.some((attempt) => attempt.stepName === 'prepare') ?? false;
+    activeRecoveryAttempt?.stepName === 'prepare' && activeRecoveryAttempt.status === 'started';
   const forceNewBranch =
     !isPrepareReplay && (current.flowType === 'fix-bug' || current.flowType === 'dev');
   const prepareController = new AbortController();
