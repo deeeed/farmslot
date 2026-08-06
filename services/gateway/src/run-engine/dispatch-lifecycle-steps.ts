@@ -295,8 +295,14 @@ export async function executePrepareStep(
   // a slot that cannot launch the selected worker binary.
   assertRunnerLaunchPrerequisites(await loadSlotVars(current.slotId), current.metrics.runner);
 
-  // fix-bug/dev create new branches — force-recreate if stale remote exists from a previous run
-  const forceNewBranch = current.flowType === 'fix-bug' || current.flowType === 'dev';
+  // A new fix-bug/dev run owns a fresh branch. A replay from PREPARE owns the
+  // existing branch instead: recreating it from main discards the very commits
+  // and local evidence the operator is trying to recover.
+  const activeRecoveryAttempt = current.recoveryAttempts?.at(-1);
+  const isPrepareReplay =
+    activeRecoveryAttempt?.stepName === 'prepare' && activeRecoveryAttempt.status === 'started';
+  const forceNewBranch =
+    !isPrepareReplay && (current.flowType === 'fix-bug' || current.flowType === 'dev');
   const prepareController = new AbortController();
   // activeMonitors[runId] is exclusively owned for the duration of one
   // step; an existing entry orphans the prior controller from cancellation.
@@ -326,6 +332,7 @@ export async function executePrepareStep(
       prepareController.signal,
       {
         ...(warmRecovery ? { stripClean: true } : {}),
+        ...(isPrepareReplay ? { preserveBranch: true } : {}),
         ...(current.startRef ? { startRef: { requestedRef: current.startRef.requestedRef } } : {}),
       },
     );

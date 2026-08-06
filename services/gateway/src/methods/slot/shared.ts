@@ -20,6 +20,8 @@ export type SlotPrepareResult = {
 };
 export interface SlotPrepareInternalOptions {
   stripClean?: boolean;
+  /** Reuse the run's existing work branch without resetting or cleaning it. */
+  preserveBranch?: boolean;
   startRef?: { requestedRef: string };
 }
 
