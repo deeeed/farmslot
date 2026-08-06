@@ -124,7 +124,7 @@ export function createWebSocketServer(
     },
   });
 
-  // Server-level errors (bind/listen issues) must not become unhandled rejections.
+  // Server-level errors must not become unhandled `error` events (Node throws and exits).
   wss.on('error', (err) => {
     console.error(`[server] websocket server error: ${(err as Error).message}`);
   });
