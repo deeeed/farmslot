@@ -120,6 +120,7 @@ export function runGatewaySafeInstruction({
 }) {
   const snippet = `
 import os from 'node:os';
+import { resolveCiFixRetainedSession } from './services/gateway/src/ci-monitor/inline-fix.ts';
 import { sendRunnerInstructionSafely } from './services/gateway/src/runners/registry.ts';
 
 const vars = {
@@ -146,6 +147,20 @@ const vars = {
   resourceVars: {},
 };
 
+const retained = resolveCiFixRetainedSession({
+  flowType: 'dev',
+  metrics: {
+    runnerSessionId: ${JSON.stringify(sessionId)},
+    runnerSessionPath: ${JSON.stringify(sessionPath)},
+  },
+  agentContexts: [{
+    role: 'dev',
+    runnerSessionId: ${JSON.stringify(sessionId)},
+    runnerSessionPath: ${JSON.stringify(sessionPath)},
+  }],
+});
+if (!retained.binding) throw new Error(retained.reason || 'CI fix retained session was not resolved');
+
 const delivered = await sendRunnerInstructionSafely(
   vars,
   ${JSON.stringify(target)},
@@ -156,13 +171,14 @@ const delivered = await sendRunnerInstructionSafely(
   {
     forceBusyPoll: true,
     retainedSession: {
-      sessionId: ${JSON.stringify(sessionId)},
-      sessionPath: ${JSON.stringify(sessionPath)},
+      sessionId: retained.binding.runnerSessionId,
+      sessionPath: retained.binding.runnerSessionPath,
     },
   },
 );
-console.log(JSON.stringify({ delivered }));
-if (!delivered) process.exit(1);
+process.stdout.write(JSON.stringify({ delivered }) + '\\n', () => {
+  process.exit(delivered ? 0 : 1);
+});
 `;
 
   const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
@@ -182,7 +198,9 @@ if (!delivered) process.exit(1);
   return {
     result: jsonLine ? JSON.parse(jsonLine) : null,
     exitCode: result.status,
-    error: result.stderr?.trim() || (!jsonLine ? stdout : null),
+    error:
+      result.stderr?.trim() ||
+      (!jsonLine ? stdout || 'safe-send wrapper returned no result' : null),
   };
 }
 

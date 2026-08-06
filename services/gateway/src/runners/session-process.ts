@@ -79,7 +79,10 @@ export function resolvePersistedRunnerSessionBinding(
 
 /** Resolve one run/context's retained session without mixing partial identities. */
 export function resolveRunRetainedSessionBinding(
-  run: Pick<Run, 'agentContexts' | 'metrics'>,
+  run: {
+    agentContexts?: Run['agentContexts'];
+    metrics: Pick<Run['metrics'], 'runnerSessionId' | 'runnerSessionPath'>;
+  },
   context?: Pick<AgentContext, 'runnerSessionId' | 'runnerSessionPath'> | null,
 ): PersistedRunnerSessionBindingResult {
   return resolvePersistedRunnerSessionBinding([

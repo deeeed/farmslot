@@ -797,7 +797,8 @@ export async function monitorRun(
           lastArtifactContractMessage = probe.message;
           try {
             const context = currentMonitorContext();
-            const retainedSession = resolveRunRetainedSessionBinding(initialRun, context);
+            const currentRun = getRun(runId) ?? initialRun;
+            const retainedSession = resolveRunRetainedSessionBinding(currentRun, context);
             const vars = await loadSlotVars(slotId);
             const target = (
               await resolveAgentTarget(slotId, {

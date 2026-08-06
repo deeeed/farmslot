@@ -9,6 +9,8 @@ type GrokPromptSignalProbe =
       promptAcceptedAt: number | null;
       activity: Extract<RunnerActivity, 'idle' | 'composing' | 'tool-running' | 'unknown'>;
       activityAt: number;
+      sessionId?: string;
+      sessionPath?: string;
     }
   | { status: 'unavailable' | 'ambiguous' };
 
@@ -40,6 +42,8 @@ export function parseGrokPromptSignalProbe(raw: string): GrokPromptSignalProbe {
     promptAcceptedAt: value.promptAcceptedAt,
     activity: value.activity,
     activityAt: value.activityAt,
+    ...(typeof value.sessionId === 'string' ? { sessionId: value.sessionId } : {}),
+    ...(typeof value.sessionPath === 'string' ? { sessionPath: value.sessionPath } : {}),
   };
 }
 
@@ -249,6 +253,8 @@ print(json.dumps({
     'promptAcceptedAt': accepted_at,
     'activity': activity,
     'activityAt': activity_at,
+    'sessionId': candidate['session_id'],
+    'sessionPath': str(session_dir),
 }))
 PY`;
 }
@@ -267,6 +273,7 @@ export function createGrokLogObservability(
         source: 'signal',
         confidence: 'high',
         observedAt: signal.activityAt,
+        ...(signal.sessionId ? { sessionId: signal.sessionId } : {}),
       };
     },
     async getContextPct() {
@@ -301,8 +308,26 @@ export function createGrokLogObservability(
             exactPromptMatch: true,
           };
     },
-    async getSessionDeliveryState() {
-      return null;
+    async getSessionDeliveryState(vars, target, sessionId, sessionPath) {
+      const signal = await probe(vars, target, 0, '');
+      if (
+        signal.status !== 'matched' ||
+        signal.sessionId !== sessionId ||
+        signal.sessionPath !== sessionPath
+      ) {
+        return null;
+      }
+      return {
+        value:
+          signal.activity === 'idle'
+            ? 'idle'
+            : signal.activity === 'unknown'
+              ? 'unknown'
+              : 'active',
+        source: 'signal',
+        confidence: 'high',
+        observedAt: signal.activityAt,
+      };
     },
   };
 }

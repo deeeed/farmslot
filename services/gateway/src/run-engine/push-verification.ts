@@ -13,7 +13,7 @@
 
 import { type ExecResult, isInteractiveDevRun, type Run } from '@farmslot/protocol';
 
-import { resolveAgentTarget } from '../agents/contexts.js';
+import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
@@ -264,9 +264,7 @@ export async function verifyWorkerPushedBranch(
   let nudged = false;
   try {
     const target = await resolveAgentTarget(slotId, { runId, role: 'primary' });
-    const primaryContext = run.agentContexts?.find(
-      (context) => context.target?.target === target.target,
-    );
+    const primaryContext = selectAgentContext(run, { role: 'primary' });
     const retainedSession = resolveRunRetainedSessionBinding(run, primaryContext);
     const instruction =
       mode === 'push'

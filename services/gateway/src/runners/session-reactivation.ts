@@ -192,6 +192,7 @@ async function reactivateRunnerSessionWithPrompt(
         {
           requirePromptDigest: true,
           promptAcceptanceBaselineMs,
+          retainedSession: { sessionId: options.sessionId, sessionPath },
         },
       );
       // Only exact post-respawn prompt evidence is accepted; generic activity,
@@ -331,6 +332,14 @@ export async function deliverPromptInPlace(
             requirePromptDigest: true,
             acceptExistingLaunchAck: options.acceptExistingLaunchAck,
             promptAcceptanceBaselineMs,
+            ...(options.sessionId && options.sessionPath
+              ? {
+                  retainedSession: {
+                    sessionId: options.sessionId,
+                    sessionPath: options.sessionPath,
+                  },
+                }
+              : {}),
           },
         );
         return acknowledgement.accepted
@@ -351,6 +360,14 @@ export async function deliverPromptInPlace(
             requirePromptDigest: true,
             acceptExistingLaunchAck: options.acceptExistingLaunchAck,
             promptAcceptanceBaselineMs,
+            ...(options.sessionId && options.sessionPath
+              ? {
+                  retainedSession: {
+                    sessionId: options.sessionId,
+                    sessionPath: options.sessionPath,
+                  },
+                }
+              : {}),
           },
         );
         if (acknowledgement.accepted) {
@@ -408,6 +425,14 @@ async function probeDelayedPromptAcknowledgement(
       acceptExistingLaunchAck: false,
       requirePromptDigest: true,
       promptAcceptanceBaselineMs: 0,
+      ...(options.sessionId && options.sessionPath
+        ? {
+            retainedSession: {
+              sessionId: options.sessionId,
+              sessionPath: options.sessionPath,
+            },
+          }
+        : {}),
     },
   );
   return acknowledgement.accepted ? { delivered: true, acknowledgement: 'structured' } : null;

@@ -5,6 +5,7 @@ import {
   type BotComment,
   type CIWatchFixProgress,
   primaryRoleForFlow,
+  type Run,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -80,6 +81,15 @@ const MAX_INLINE_CI_FIX_ATTEMPTS = 2;
 const MAX_INLINE_CI_FIX_TOTAL = 6;
 const INLINE_FIX_TIMEOUT_MS = 10 * 60_000;
 const INLINE_FIX_FALLBACK_POLL_MS = 30_000;
+
+export function resolveCiFixRetainedSession(
+  run: Pick<Run, 'agentContexts' | 'flowType' | 'metrics'> | undefined,
+) {
+  if (!run) return { binding: null, reason: null };
+  const primaryRole = primaryRoleForFlow(run.flowType);
+  const primaryContext = run.agentContexts?.find((context) => context.role === primaryRole);
+  return resolveRunRetainedSessionBinding(run, primaryContext);
+}
 
 export async function isInlineFixDedupedNow(
   runId: string,
@@ -502,11 +512,7 @@ async function attemptInlineCIFix(
       run?.flowType,
     );
     const session = primaryTarget.session;
-    const primaryRole = primaryRoleForFlow(run?.flowType);
-    const primaryContext = run?.agentContexts?.find((context) => context.role === primaryRole);
-    const retainedSession = run
-      ? resolveRunRetainedSessionBinding(run, primaryContext)
-      : { binding: null, reason: null };
+    const retainedSession = resolveCiFixRetainedSession(run);
     if (retainedSession.reason) {
       console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${retainedSession.reason}`);
     }

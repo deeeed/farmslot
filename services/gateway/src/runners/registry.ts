@@ -31,6 +31,7 @@ import {
 import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-signals.js';
 
 import { claudeHookObservability } from './claude-observability.js';
+import { codexSessionObservability } from './codex-observability.js';
 import { grokLogObservability } from './grok-observability.js';
 import {
   buildPendingDegradedAgreementEntry,
@@ -62,6 +63,7 @@ import type {
   ObservabilityScope,
   RunnerActivity,
   RunnerObservability,
+  RunnerSessionDeliveryState,
 } from './observability-types.js';
 import { lineHasAuthBlockerPhrase, readPaneStateFromCapture } from './pane-state-script.js';
 import {
@@ -353,7 +355,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
 
 const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
   claude: claudeHookObservability,
-  codex: claudeHookObservability,
+  codex: codexSessionObservability,
   grok: grokLogObservability,
 };
 
@@ -1465,6 +1467,7 @@ export async function runnerHasDurablePromptHandoff(
     requirePromptDigest?: boolean;
     acceptExistingLaunchAck?: boolean;
     promptAcceptanceBaselineMs?: number | null;
+    retainedSession?: { sessionId: string; sessionPath: string };
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
   const observability = getRunnerObservability(runner);
@@ -1488,6 +1491,28 @@ export async function runnerHasDurablePromptHandoff(
     return { accepted: false, reason: 'prompt acceptance baseline unavailable' };
   }
   try {
+    if (opts.retainedSession && observability.promptAcceptedInSession) {
+      const nativeReading = await observability.promptAcceptedInSession(
+        vars,
+        target,
+        opts.retainedSession.sessionId,
+        opts.retainedSession.sessionPath,
+        message,
+        promptAcceptedSinceMs,
+      );
+      if (
+        isObservabilityReadingAuthoritative(nativeReading) &&
+        nativeReading.value === true &&
+        nativeReading.exactPromptMatch === true &&
+        nativeReading.source === 'signal'
+      ) {
+        return {
+          accepted: true,
+          reason: 'exact prompt accepted by runner-native session history',
+          source: 'native-signal',
+        };
+      }
+    }
     const reading = await observability.promptAccepted(
       vars,
       target,
@@ -1924,8 +1949,13 @@ async function sendRunnerInstructionHookOnly(
     }
     if (promptReading?.value === true && promptReading.confidence === 'high') return true;
 
-    let activity: ObservabilityReading<RunnerActivity> | null;
-    if (retainedSession) {
+    let activity = await readRunnerActivityFromObservability(vars, target, runner);
+    if (
+      retainedSession &&
+      (!activity ||
+        activity.value === 'unknown' ||
+        activity.sessionId !== retainedSession.sessionId)
+    ) {
       const sessionState = await observability.getSessionDeliveryState(
         vars,
         target,
@@ -1942,8 +1972,6 @@ async function sendRunnerInstructionHookOnly(
               sessionId: retainedSession.sessionId,
             }
           : null;
-    } else {
-      activity = await readRunnerActivityFromObservability(vars, target, runner);
     }
     const idleDecision = selectIdleFromObservabilityAndPane(activity, false, true);
     if (idleDecision.degraded) {
@@ -2080,6 +2108,29 @@ export async function sendRunnerInstructionSafely(
     runner,
     hookPromptAcceptedSinceMs,
   );
+  if (opts.retainedSession && !isRunnerPaneRetired(runner)) {
+    const observability = getRunnerObservability(runner);
+    let retainedState: ObservabilityReading<RunnerSessionDeliveryState> | null = null;
+    try {
+      retainedState =
+        (await observability?.getSessionDeliveryState(
+          vars,
+          target,
+          opts.retainedSession.sessionId,
+          opts.retainedSession.sessionPath,
+        )) ?? null;
+    } catch (error) {
+      console.warn(
+        `[${logPrefix}] retained ${runner} session identity read failed for ${target}: ${(error as Error).message}`,
+      );
+    }
+    if (retainedState?.confidence !== 'high' || retainedState.value === 'unknown') {
+      console.warn(
+        `[${logPrefix}] retained ${runner} session identity is unavailable for ${target}; holding send`,
+      );
+      return false;
+    }
+  }
   // ADR-032 Phase 3: hook-capable runners that don't need the busy-composer poll (Claude) resolve
   // the decision from hooks only. Runners that require the poll (Codex) take the pane-fallback path
   // below.

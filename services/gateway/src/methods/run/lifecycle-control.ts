@@ -10,8 +10,9 @@ import {
   type RunResumeResult,
 } from '@farmslot/protocol';
 
+import { resolveAgentTarget } from '../../agents/contexts.js';
 import { execOnSlot } from '../../core/exec.js';
-import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { bumpRunGeneration, cancelRunEngine, startRun } from '../../run-engine/orchestrator.js';
 import {
   cancelTransitionDeps,
@@ -132,11 +133,13 @@ export async function runResume(params: RunResumeParams, emit: Emit): Promise<Ru
     try {
       const { loadSlotVars } = await import('../../core/config.js');
       const vars = await loadSlotVars(existing.slotId);
-      const session = await resolveTmuxSession(existing.slotId, vars);
+      const target = (
+        await resolveAgentTarget(existing.slotId, { runId: existing.id, role: 'primary' })
+      ).target;
       // Capture last few lines of tmux pane to check for idle prompt
       const { stdout } = await execOnSlot(
         vars,
-        tmuxShellSnippet(`capture-pane -t ${shellQuote(session)} -p -S '-5'`),
+        tmuxShellSnippet(`capture-pane -t ${shellQuote(target)} -p -S '-5'`),
       );
       // Strip ANSI escape codes and check for Claude Code prompt patterns
       const clean = stdout.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/[^\x20-\x7E\n❯⏵⏸]/g, '');
@@ -155,7 +158,7 @@ export async function runResume(params: RunResumeParams, emit: Emit): Promise<Ru
         // the ADR-031 intelligence-action audit, not just a console warning.
         const sent = await sendRunnerInstructionSafely(
           vars,
-          session,
+          target,
           runner,
           nudge,
           'run-resume',

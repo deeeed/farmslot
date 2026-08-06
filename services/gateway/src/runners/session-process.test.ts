@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import {
   buildFindRunnerDescendantPidCommand,
   resolvePersistedRunnerSessionBinding,
+  resolveRunRetainedSessionBinding,
 } from './session-process.js';
 
 const execFile = promisify(execFileCb);
@@ -75,6 +76,31 @@ test('persisted runner session binding rejects a partial higher-priority source'
     {
       binding: null,
       reason: 'context has incomplete retained session metadata',
+    },
+  );
+});
+
+test('run retained session binding prefers the selected agent context', () => {
+  assert.deepEqual(
+    resolveRunRetainedSessionBinding(
+      {
+        metrics: {
+          runnerSessionId: 'metrics-session',
+          runnerSessionPath: '/sessions/metrics.jsonl',
+        },
+        agentContexts: [],
+      },
+      {
+        runnerSessionId: 'context-session',
+        runnerSessionPath: '/sessions/context.jsonl',
+      },
+    ),
+    {
+      binding: {
+        runnerSessionId: 'context-session',
+        runnerSessionPath: '/sessions/context.jsonl',
+      },
+      reason: null,
     },
   );
 });

@@ -80,6 +80,39 @@ mock.module('./claude-observability.js', {
   },
 });
 
+mock.module('./codex-observability.js', {
+  namedExports: {
+    codexSessionObservability: {
+      promptAcceptanceMode: 'hook-digest',
+      async getActivity() {
+        callOrder.push('obs:getActivity');
+        return activityReading;
+      },
+      async getContextPct() {
+        return null;
+      },
+      async activeTool() {
+        return null;
+      },
+      async lastTurnCompletedAt() {
+        return null;
+      },
+      async promptAccepted() {
+        callOrder.push('obs:promptAccepted');
+        return promptAcceptedReading;
+      },
+      async promptAcceptedInSession() {
+        callOrder.push('obs:promptAcceptedInSession');
+        return null;
+      },
+      async getSessionDeliveryState() {
+        callOrder.push('obs:getSessionDeliveryState');
+        return sessionDeliveryReading;
+      },
+    },
+  },
+});
+
 mock.module('./grok-observability.js', {
   namedExports: {
     grokLogObservability: {
@@ -126,7 +159,8 @@ mock.module('./grok-observability.js', {
         };
       },
       async getSessionDeliveryState() {
-        return null;
+        callOrder.push('grok:getSessionDeliveryState');
+        return sessionDeliveryReading;
       },
     },
   },
@@ -772,6 +806,88 @@ test('sendRunnerInstructionSafely skips pane busy scrape when hook reports compo
   );
 });
 
+test('codex retained delivery fails closed without an exact session state', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  sessionDeliveryReading = null;
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]', 20, {
+    retainedSession: {
+      sessionId: 'session-dev',
+      sessionPath: '/sessions/session-dev.jsonl',
+    },
+  });
+
+  assert.equal(sent, false);
+  assert.ok(callOrder.includes('obs:getSessionDeliveryState'));
+  assert.equal(callOrder.includes('tmux:send-literal'), false);
+});
+
+test('codex retained delivery proceeds for the exact idle session', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    sessionId: 'session-dev',
+  };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  sessionDeliveryReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = '›\nContext 12%\n';
+
+  try {
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      target,
+      'codex',
+      message,
+      '[test]',
+      5_000,
+      {
+        retainedSession: {
+          sessionId: 'session-dev',
+          sessionPath: '/sessions/session-dev.jsonl',
+        },
+      },
+    );
+
+    assert.equal(sent, true);
+    assert.ok(callOrder.includes('obs:getSessionDeliveryState'));
+    assert.ok(callOrder.includes('tmux:send-literal'));
+  } finally {
+    sessionDeliveryReading = null;
+  }
+});
+
+test('grok retained delivery fails closed without an exact native session state', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  sessionDeliveryReading = null;
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]', 20, {
+    retainedSession: {
+      sessionId: 'session-dev',
+      sessionPath: '/sessions/session-dev',
+    },
+  });
+
+  assert.equal(sent, false);
+  assert.ok(callOrder.includes('grok:getSessionDeliveryState'));
+  assert.equal(callOrder.includes('tmux:send-literal'), false);
+});
+
 test('sendRunnerInstructionSafely prefers live pane over stale hook acceptance', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
@@ -1165,6 +1281,92 @@ test('claude (hook-only) exact retained session idle permits delivery after tran
   } finally {
     sessionDeliveryReading = null;
   }
+});
+
+test('claude (hook-only) uses fresh matching activity when retained session state is unavailable', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    sessionId: 'session-dev',
+  };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  sessionDeliveryReading = null;
+  paneText = '❯\nctx:12%\n';
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 5_000, {
+    retainedSession: {
+      sessionId: 'session-dev',
+      sessionPath: '/sessions/session-dev.jsonl',
+    },
+  });
+  assert.equal(sent, true);
+  assert.equal(callOrder.includes('obs:getSessionDeliveryState'), false);
+  assert.ok(callOrder.includes('tmux:send-literal'));
+});
+
+test('claude (hook-only) rejects fresh activity from a different retained session', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    sessionId: 'different-session',
+  };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  sessionDeliveryReading = null;
+  paneText = '❯\nctx:12%\n';
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+    retainedSession: {
+      sessionId: 'session-dev',
+      sessionPath: '/sessions/session-dev.jsonl',
+    },
+  });
+  assert.equal(sent, false);
+  assert.equal(callOrder.includes('obs:getSessionDeliveryState'), true);
+  assert.equal(callOrder.includes('tmux:send-literal'), false);
+});
+
+test('claude (hook-only) does not let sessionless statusline activity bypass retained binding', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'idle',
+    source: 'statusline',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  sessionDeliveryReading = null;
+  paneText = '❯\nctx:12%\n';
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+    retainedSession: {
+      sessionId: 'session-dev',
+      sessionPath: '/sessions/session-dev.jsonl',
+    },
+  });
+  assert.equal(sent, false);
+  assert.equal(callOrder.includes('obs:getSessionDeliveryState'), true);
+  assert.equal(callOrder.includes('tmux:send-literal'), false);
 });
 
 test('claude (hook-only) does not use retained idle without an exact session binding', async () => {

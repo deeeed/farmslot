@@ -79,6 +79,15 @@ export interface RunnerObservability {
     /** Exact prompt text for native providers whose session protocol exposes it. */
     promptText?: string,
   ): Promise<ObservabilityReading<boolean> | null>;
+  /** Exact prompt acceptance from one persisted runner-native session history. */
+  promptAcceptedInSession?(
+    vars: SlotVars,
+    target: string,
+    sessionId: string,
+    sessionPath: string,
+    promptText: string,
+    sinceMs: number,
+  ): Promise<ObservabilityReading<boolean> | null>;
   /**
    * Durable delivery state for one persisted runner session. Unlike transient
    * activity, a terminal Stop remains idle until a later event in that same

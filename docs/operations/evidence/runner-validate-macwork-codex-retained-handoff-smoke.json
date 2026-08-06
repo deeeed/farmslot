@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-06T09:08:20.347Z",
+  "host": "macwork",
+  "scenario": "retained-handoff-smoke",
+  "runner": "codex",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-ooNpmH",
+  "session": "runner-validate-codex-retained-handoff-smoke-49442",
+  "sessionId": "019fd654-3a26-7542-a499-ddd2e404e5ff",
+  "sessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-ooNpmH/.agent/codex-home/sessions/2026/08/06/rollout-2026-08-06T17-07-52-019fd654-3a26-7542-a499-ddd2e404e5ff.jsonl",
+  "initialCompleted": true,
+  "handoffDelivered": true,
+  "pass": true,
+  "error": null,
+  "paneTail": null
+}

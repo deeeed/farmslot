@@ -2,18 +2,28 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { DEFAULT_PROMPT, shSingleQuote } from '../lib/common.mjs';
+import { DEFAULT_PROMPT, PROMPT_MARKER, shSingleQuote, sleepMs } from '../lib/common.mjs';
 import * as digest from '../lib/digest.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { runGatewaySafeInstruction } from '../lib/gateway-post-launch.mjs';
 import { eventName, readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
+import { listSessionCandidates, resolveSessionBinding } from '../lib/session-attribution.mjs';
 import { capturePane, ensureShellSession, killSession, sendShellScript } from '../lib/tmux.mjs';
+import { resolveLaunchBlockers, sendTmuxLine } from '../lib/tmux-input.mjs';
 import { pollHookRows } from '../lib/wait.mjs';
 
 export const SCENARIO_ID = 'retained-safe-send-smoke';
 
 const FOLLOWUP_PROMPT = 'Reply with exactly RETAINED_SAFE_SEND_OK and nothing else.';
+
+function capturePaneBestEffort(paneId, lines) {
+  try {
+    return capturePane(paneId, lines);
+  } catch {
+    return null;
+  }
+}
 
 function ageObservability(obsDir, paneId) {
   const ageMs = 180_000;
@@ -43,8 +53,134 @@ function ageObservability(obsDir, paneId) {
   }
 }
 
+function waitForPaneText(paneId, text, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let pane = '';
+  while (Date.now() < deadline) {
+    pane = capturePane(paneId, 100);
+    if (pane.includes(text)) return pane;
+    sleepMs(1000);
+  }
+  throw new Error(`timed out waiting for ${JSON.stringify(text)} in runner pane`);
+}
+
+function waitForGrokSessionBinding({ repo, paneId, beforePaths, sinceMs, timeoutMs }) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const binding = resolveSessionBinding({
+      runner: 'grok',
+      repo,
+      runtimeDir: '.agent',
+      beforePaths,
+      sinceMs,
+      hookRows: [],
+      paneId,
+      slotId: 'runner-validate-local',
+    });
+    if (binding) return binding;
+    sleepMs(500);
+  }
+  return null;
+}
+
+function runGrokScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
+  const runner = runnerAdapter.RUNNER_ID;
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-validate-grok-retained-send-'));
+  const session = `runner-validate-grok-${SCENARIO_ID}-${process.pid}`;
+  let paneId = null;
+  const report = {
+    runner,
+    repo,
+    session,
+    initialCompleted: false,
+    mismatchedSessionRejected: false,
+    followupDelivered: false,
+    followupAccepted: false,
+    mismatchedSend: null,
+    pass: false,
+    error: null,
+    paneTail: null,
+  };
+
+  try {
+    runnerAdapter.prepareRepo(repo);
+    const beforePaths = listSessionCandidates(runner, repo, '.agent');
+    const shell = ensureShellSession(session, repo);
+    paneId = shell.paneId;
+    const dispatchMs = Date.now();
+    sendShellScript(paneId, repo, [runnerAdapter.buildInteractiveLaunchCommand()]);
+    const blockers = resolveLaunchBlockers(paneId, runner, Math.min(timeoutMs, 90_000));
+    if (!blockers.resolved) throw new Error('Grok did not reach an interactive composer');
+    sleepMs(2000);
+    sendTmuxLine(paneId, DEFAULT_PROMPT);
+    waitForPaneText(paneId, PROMPT_MARKER, timeoutMs);
+    report.initialCompleted = true;
+
+    const binding = waitForGrokSessionBinding({
+      repo,
+      paneId,
+      beforePaths,
+      sinceMs: dispatchMs,
+      timeoutMs: Math.min(timeoutMs, 30_000),
+    });
+    if (!binding?.runnerSessionId || !binding.runnerSessionPath) {
+      throw new Error('Grok did not expose an exact retained session binding');
+    }
+    sleepMs(1500);
+
+    const mismatchedSend = runGatewaySafeInstruction({
+      repo,
+      target: paneId,
+      runner,
+      message: FOLLOWUP_PROMPT,
+      sessionId: `${binding.runnerSessionId}-mismatch`,
+      sessionPath: binding.runnerSessionPath,
+      timeoutMs: 10_000,
+    });
+    report.mismatchedSend = mismatchedSend;
+    report.mismatchedSessionRejected = mismatchedSend.result?.delivered === false;
+    if (!report.mismatchedSessionRejected) {
+      throw new Error(
+        mismatchedSend.error || 'production safe-send accepted a mismatched Grok session binding',
+      );
+    }
+
+    const safeSend = runGatewaySafeInstruction({
+      repo,
+      target: paneId,
+      runner,
+      message: FOLLOWUP_PROMPT,
+      sessionId: binding.runnerSessionId,
+      sessionPath: binding.runnerSessionPath,
+      timeoutMs: Math.min(timeoutMs, 30_000),
+    });
+    report.followupDelivered = safeSend.result?.delivered === true;
+    if (!report.followupDelivered) {
+      throw new Error(safeSend.error || 'production safe-send rejected the exact Grok session');
+    }
+    report.paneTail = waitForPaneText(paneId, 'RETAINED_SAFE_SEND_OK', timeoutMs);
+    report.followupAccepted = true;
+    report.pass =
+      report.initialCompleted &&
+      report.mismatchedSessionRejected &&
+      report.followupDelivered &&
+      report.followupAccepted;
+  } catch (error) {
+    report.error = error?.message || String(error);
+    report.paneTail = paneId ? capturePaneBestEffort(paneId, 100) : null;
+  } finally {
+    if (!keepSession) killSession(session);
+  }
+
+  const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
+  return { scenario: SCENARIO_ID, runner, outPath, pass: report.pass, report };
+}
+
 export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
+  if (runner === 'grok') {
+    return runGrokScenario({ runnerAdapter, timeoutMs, keepSession, outDir });
+  }
   if (runner !== 'claude') {
     const report = {
       runner,
@@ -71,6 +207,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     mismatchedSessionRejected: false,
     followupDelivered: false,
     followupAccepted: false,
+    mismatchedSend: null,
     pass: false,
     error: null,
     paneTail: null,
@@ -105,11 +242,15 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       message: FOLLOWUP_PROMPT,
       sessionId: `${sessionId}-mismatch`,
       sessionPath,
-      timeoutMs: 200,
+      timeoutMs: 10_000,
     });
+    report.mismatchedSend = mismatchedSend;
     report.mismatchedSessionRejected = mismatchedSend.result?.delivered === false;
     if (!report.mismatchedSessionRejected) {
-      throw new Error('production safe-send accepted a mismatched retained session binding');
+      throw new Error(
+        mismatchedSend.error ||
+          'production safe-send accepted a mismatched retained session binding',
+      );
     }
     const safeSend = runGatewaySafeInstruction({
       repo,
@@ -118,7 +259,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       message: FOLLOWUP_PROMPT,
       sessionId,
       sessionPath,
-      timeoutMs: Math.min(timeoutMs, 60_000),
+      timeoutMs: Math.min(timeoutMs, 10_000),
     });
     report.followupDelivered = safeSend.result?.delivered === true;
     if (!report.followupDelivered) {
@@ -140,10 +281,10 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       report.mismatchedSessionRejected &&
       report.followupDelivered &&
       report.followupAccepted;
-    report.paneTail = capturePane(paneId, 40);
+    report.paneTail = capturePaneBestEffort(paneId, 40);
   } catch (error) {
     report.error = error?.message || String(error);
-    report.paneTail = paneId ? capturePane(paneId, 80) : null;
+    report.paneTail = paneId ? capturePaneBestEffort(paneId, 80) : null;
   } finally {
     if (!keepSession) killSession(session);
   }
