@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-06T14:53:59Z",
+  "runId": "b983afc6-f9f3-4e6f-a365-2ff612f545fc",
+  "gatewayPath": "recoverInflightPublicationReviews",
+  "input": {
+    "reviewerContext": "rev-codex",
+    "terminalSignal": "complete",
+    "feedbackVerdict": "ISSUES",
+    "feedbackIssueShape": "terminal-invalid"
+  },
+  "before": {
+    "recoveryStatus": "watching",
+    "attempts": 38,
+    "nextRetryAtPresent": true,
+    "reviewerStatus": "failed"
+  },
+  "after": {
+    "recoveryStatus": "operator-required",
+    "attempts": 1,
+    "nextRetryAtPresent": false,
+    "reviewerStatus": "blocked",
+    "updatedAt": "2026-08-06T14:51:48.836Z"
+  },
+  "pass": true
+}

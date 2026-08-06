@@ -21,7 +21,10 @@ import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
 import { pendingIndependentReviewContinuation } from './gate-policy.js';
-import { reviewerContextNeedsRecovery } from './recover-inflight-reviews.js';
+import {
+  isTerminalReviewArtifactError,
+  reviewerContextNeedsRecovery,
+} from './recover-inflight-reviews.js';
 import { recoveryReviewPlanForActiveFix } from './review-plan.js';
 
 const S = PipelineSteps;
@@ -142,6 +145,30 @@ const STEP_TO_STATUS: Record<string, Run['status']> = {
   [S.COMPLETE]: 'completing',
   [S.CI_WATCH]: 'ci-watching',
 };
+
+function markTerminalReviewArtifactOperatorRequired(
+  deps: Pick<RunRecoveryCollaborators, 'updateRun'>,
+  run: Run,
+  message: string,
+): void {
+  const now = new Date().toISOString();
+  const previous = run.engineState?.publishGate?.reviewRecovery;
+  deps.updateRun(run.id, {
+    engineState: {
+      ...run.engineState,
+      publishGate: {
+        ...run.engineState?.publishGate,
+        reviewRecovery: {
+          status: 'operator-required',
+          attempts: Math.max(1, previous?.attempts ?? 0),
+          startedAt: previous?.startedAt ?? now,
+          updatedAt: now,
+          lastError: message.slice(0, 200),
+        },
+      },
+    },
+  });
+}
 
 function readCiRepo(projectJson: RawProjectJson | undefined): string | undefined {
   const ci = projectJson?.ci;
@@ -312,6 +339,10 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       try {
         recoveredReviews = await deps.recoverInflightPublicationReviews(run.id, run.slotId);
       } catch (err) {
+        if (isTerminalReviewArtifactError(err)) {
+          markTerminalReviewArtifactOperatorRequired(deps, run, err.message);
+          continue;
+        }
         console.warn(
           `[run-engine] run ${run.id.slice(0, 8)} — startup publication-review recovery failed: ${(err as Error).message.slice(0, 200)}`,
         );
@@ -409,6 +440,10 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
             recoveredReviews = (await deps.recoverInflightPublicationReviews(run.id, run.slotId))
               .length;
           } catch (err) {
+            if (isTerminalReviewArtifactError(err)) {
+              markTerminalReviewArtifactOperatorRequired(deps, run, err.message);
+              continue;
+            }
             // A failed ingestion must not abort recovery of the remaining
             // runs; the gate stays pending and the operator path still works.
             console.warn(

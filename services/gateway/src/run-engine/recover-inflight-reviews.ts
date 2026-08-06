@@ -45,6 +45,19 @@ import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-s
 import { buildPublishGateReviewStatus, independentReviewNeedsContinuation } from './gate-policy.js';
 import { persistIndependentReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
 
+export class TerminalReviewArtifactError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TerminalReviewArtifactError';
+  }
+}
+
+export function isTerminalReviewArtifactError(
+  error: unknown,
+): error is TerminalReviewArtifactError {
+  return error instanceof TerminalReviewArtifactError;
+}
+
 /**
  * A reviewer context can need recovery while in-flight or after its runner was
  * reconciled to `complete`. A failed context is eligible only when the caller
@@ -457,6 +470,7 @@ export async function recoverInflightPublicationReviews(
       );
       if (recovered) recoveredIds.push(recovered);
     } catch (err) {
+      if (isTerminalReviewArtifactError(err)) throw err;
       // One unreadable reviewer (corrupt signal/feedback file, transient slot
       // read error) must not strand the human gate or block recovery of the
       // other reviewers — mirror executePublishGateReviewPlan, which degrades a
@@ -498,7 +512,18 @@ async function ingestRecoveredReviewer(
   // is scoped to the reviewer's context id alongside it.
   const taskDir = ctx.taskFile ? path.posix.dirname(ctx.taskFile) : null;
   if (!taskDir) return null;
-  const feedback = await readReviewFeedback(vars, taskDir, reviewerFeedbackRelPath(ctx.id));
+  const feedback = await readReviewFeedback(
+    vars,
+    taskDir,
+    reviewerFeedbackRelPath(ctx.id),
+    ctx.reviewResultFile,
+  );
+  if (signal && feedback.terminalInvalidReason) {
+    await markAgentContextStatus(runId, 'self-review', 'blocked', { id: ctx.id });
+    throw new TerminalReviewArtifactError(
+      `Reviewer ${ctx.id} completed with an invalid result artifact: ${feedback.terminalInvalidReason}`,
+    );
+  }
 
   const latest = getRun(runId)!;
   const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];

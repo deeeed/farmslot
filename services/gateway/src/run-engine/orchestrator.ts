@@ -78,7 +78,10 @@ import {
   executeReadyGate,
   readPreparedPackage,
 } from './ready-gate.js';
-import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
+import {
+  isTerminalReviewArtifactError,
+  recoverInflightPublicationReviews,
+} from './recover-inflight-reviews.js';
 import {
   hasRecoverablePublicationReviewer,
   isPublicationReviewRecoveryHeld,
@@ -931,6 +934,13 @@ function rearmPublicationReviewRecovery(
       persistRecovery(getRun(latest.id) ?? latest, 'recovered');
       state.cleanup();
     } catch (err) {
+      if (isTerminalReviewArtifactError(err)) {
+        persistRecovery(getRun(latest.id) ?? latest, 'operator-required', {
+          lastError: err.message.slice(0, 200),
+        });
+        state.cleanup();
+        return;
+      }
       failures += 1;
       const message = (err as Error).message.slice(0, 200);
       console.warn(

@@ -131,6 +131,7 @@ export function selfReviewChecklistMarkPrompt(
   taskMdPath: string,
   reviewTarget: { checklist: string; signal: string },
   feedbackRelPath: string,
+  resultRelPath?: string | null,
 ): string {
   const mark = `${taskDir}/mark`;
   const markWithTarget = `${mark} --checklist ${reviewTarget.checklist} --signal ${reviewTarget.signal}`;
@@ -138,7 +139,9 @@ export function selfReviewChecklistMarkPrompt(
     `Follow ${taskMdPath} top-to-bottom. After EVERY checklist step run ${markWithTarget} N ` +
     `(bootstrap with ${markWithTarget} start — same path as the checklist header). ` +
     `Skipping ${markWithTarget} leaves the run at 0/N in the UI. ` +
-    `Write ${taskDir}/${feedbackRelPath}, then ${markWithTarget} complete.`
+    `Write ${taskDir}/${feedbackRelPath}` +
+    (resultRelPath ? ` and ${taskDir}/${resultRelPath}` : '') +
+    `, then ${markWithTarget} complete.`
   );
 }
 
@@ -148,6 +151,30 @@ export function reviewerChecklistBasename(contextId: string): string {
 
 export function reviewerFeedbackRelPath(contextId: string): string {
   return `artifacts/review-feedback.${contextId}.md`;
+}
+
+export function reviewerResultRelPath(contextId: string): string {
+  return `artifacts/review-result.${contextId}.json`;
+}
+
+function structuredReviewResultInstructions(resultRelPath: string): string {
+  return `
+
+## Machine-readable review result
+
+Write \`${resultRelPath}\` as JSON before completing:
+
+\`\`\`json
+{
+  "schemaVersion": 1,
+  "verdict": "pass",
+  "issues": []
+}
+\`\`\`
+
+For an issues verdict, set \`verdict\` to \`"issues"\` and include at least one
+\`{ "file": "path", "line": 1, "description": "specific finding" }\` entry.
+The JSON verdict and issues are authoritative; the Markdown file is the human-readable report.`;
 }
 
 export function selectRecoverableReviewContext(
@@ -223,6 +250,7 @@ export async function resumeReviewAgentPromptDelivery(
   const taskDir = path.posix.dirname(taskMdPath);
   const reviewTarget = targetForChecklistBasename(path.posix.basename(taskMdPath));
   const feedbackRelPath = reviewerFeedbackRelPath(context.id);
+  const resultRelPath = context.reviewResultFile ?? null;
   const parentRun = getRun(runId);
   const prompt = `${await dependencies.resolveWorkerDispatchPrompt(
     parentRun?.project ?? vars.projectName,
@@ -230,7 +258,13 @@ export async function resumeReviewAgentPromptDelivery(
       taskFile: taskMdPath,
       taskDir,
     },
-  )}\n\n${selfReviewChecklistMarkPrompt(taskDir, taskMdPath, reviewTarget, feedbackRelPath)}`;
+  )}\n\n${selfReviewChecklistMarkPrompt(
+    taskDir,
+    taskMdPath,
+    reviewTarget,
+    feedbackRelPath,
+    resultRelPath,
+  )}`;
   const attemptStartedAtMs = Date.parse(context.attemptStartedAt ?? context.startedAt ?? '');
   const baselineMs = Number.isFinite(attemptStartedAtMs) ? attemptStartedAtMs : Date.now();
   const runtimeDir = await dependencies.resolveProjectRuntimeDir(parentRun?.project);
@@ -267,7 +301,11 @@ export async function waitForRecoveredReviewerOrCleanup(
   return false;
 }
 
-export function scopeReviewFeedbackPath(template: string, feedbackRelPath: string): string {
+export function scopeReviewFeedbackPath(
+  template: string,
+  feedbackRelPath: string,
+  resultRelPath?: string | null,
+): string {
   const scoped = template
     .replace(
       LEGACY_REVIEW_FEEDBACK_ARTIFACT_PATTERN,
@@ -277,8 +315,13 @@ export function scopeReviewFeedbackPath(template: string, feedbackRelPath: strin
       LEGACY_REVIEW_FEEDBACK_BASENAME_PATTERN,
       (_match, prefix: string) => `${prefix}${feedbackRelPath}`,
     );
-  if (scoped !== template) return scoped;
-  return `${template.trimEnd()}\n\nWrite reviewer feedback to ${feedbackRelPath}.`;
+  const feedbackScoped =
+    scoped !== template
+      ? scoped
+      : `${template.trimEnd()}\n\nWrite reviewer feedback to ${feedbackRelPath}.`;
+  return resultRelPath
+    ? `${feedbackScoped.trimEnd()}${structuredReviewResultInstructions(resultRelPath)}`
+    : feedbackScoped;
 }
 
 // Exported for self-review.test.ts to seed runSelfReviewRetryLoop fixtures. Not part of the
@@ -296,6 +339,8 @@ export interface ReviewAgentResult {
   startedAt?: string;
   completedAt?: string;
   incomplete?: boolean; // true when feedback file was never written (agent didn't finish)
+  /** Stable invalid artifact: recovery must stop and ask the operator, not poll again. */
+  terminalInvalidReason?: string;
 }
 
 async function persistReviewOutputArtifacts(params: {
@@ -304,6 +349,7 @@ async function persistReviewOutputArtifacts(params: {
   taskMdPath: string;
   signalBasename: string;
   feedbackRelPath: string;
+  resultRelPath?: string | null;
   artifactDir: string;
   feedbackIncomplete: boolean;
 }): Promise<{ artifactPaths: string[]; taskProgressArtifactPath: string }> {
@@ -313,6 +359,7 @@ async function persistReviewOutputArtifacts(params: {
     taskMdPath,
     signalBasename,
     feedbackRelPath,
+    resultRelPath,
     artifactDir,
     feedbackIncomplete,
   } = params;
@@ -360,6 +407,21 @@ async function persistReviewOutputArtifacts(params: {
       );
     }
     persistedArtifacts.push(feedbackRel);
+
+    if (resultRelPath) {
+      const resultRel = `${artifactDir}/review-result.json`;
+      const resultCopy = await execOnSlot(
+        vars,
+        `cp ${shellQuote(`${vars.remoteRepo}/${taskDir}/${resultRelPath}`)} ${shellQuote(`${vars.remoteRepo}/${taskDir}/${resultRel}`)}`,
+        { timeout: 10_000 },
+      );
+      if (resultCopy.exitCode !== 0) {
+        throw new Error(
+          `Failed to persist structured review result: ${resultCopy.stderr || resultCopy.stdout || `exit ${resultCopy.exitCode}`}`,
+        );
+      }
+      persistedArtifacts.push(resultRel);
+    }
   }
 
   return {
@@ -446,6 +508,7 @@ async function recoverRunningReviewAgent(params: {
   const reviewWindow = context.target.window;
   const signalBasename = path.posix.basename(context.signalFile);
   const feedbackRelPath = reviewerFeedbackRelPath(context.id);
+  const resultRelPath = context.reviewResultFile ?? null;
   const watcher = startProgressWatcher(params.vars, context.taskFile, params.runId, 'Review', {
     contextId: context.id,
     role: 'self-review',
@@ -465,12 +528,13 @@ async function recoverRunningReviewAgent(params: {
           context.id,
           signalBasename,
           feedbackRelPath,
+          resultRelPath,
         ),
       abandonRecoveredReviewer,
     );
     if (!completed) return null;
     const feedback = applyTerminalReviewSignal(
-      await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath),
+      await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath, resultRelPath),
       await readTerminalReviewSignal(params.vars, params.taskDir, signalBasename),
     );
     await waitForSessionTranscriptToSettle(params.vars, context.runnerSessionPath ?? null);
@@ -494,6 +558,7 @@ async function recoverRunningReviewAgent(params: {
       taskMdPath: context.taskFile,
       signalBasename,
       feedbackRelPath,
+      resultRelPath,
       artifactDir: reviewArtifactDir(recoveredLoopNumber, recoveredArtifactScope),
       feedbackIncomplete: feedback.incomplete ?? false,
     });
@@ -623,6 +688,7 @@ export async function runReviewAgent(
   const reviewWindow = allocated.windowName;
   const reviewChecklistTarget = targetForChecklistBasename(reviewerChecklistBasename(allocated.id));
   const feedbackRelPath = reviewerFeedbackRelPath(allocated.id);
+  const resultRelPath = reviewerResultRelPath(allocated.id);
   let reviewContext = await upsertAgentContext(_runId, 'self-review', {
     id: allocated.id,
     label: allocated.label,
@@ -630,6 +696,7 @@ export async function runReviewAgent(
     attemptStartedAt: startedAt,
     taskFile: taskDirRelPath(taskDir, reviewChecklistTarget.checklist),
     signalFile: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
+    reviewResultFile: resultRelPath,
     artifactScope: artifactScope ?? null,
     reviewLoopNumber: loopNumber,
     runner,
@@ -645,6 +712,7 @@ export async function runReviewAgent(
     // can't short-circuit on stale files (caused retry verdict to mirror pass 1).
     await removeSlotFiles(vars, [
       `${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`,
+      `${vars.remoteRepo}/${taskDir}/${resultRelPath}`,
       slotTaskRelPath(vars, taskDir, reviewChecklistTarget.signal),
     ]);
 
@@ -693,10 +761,12 @@ export async function runReviewAgent(
     const expandedTemplate = scopeReviewFeedbackPath(
       await expandSelfReviewTemplate(vars, taskDir, _runId, validationDepth),
       feedbackRelPath,
+      resultRelPath,
     );
     await writeTextFileOnSlot(vars, taskMdPath, expandedTemplate);
     await syncChecklistTargetForRole(vars, taskDir, 'self-review', {
       reportPath: feedbackRelPath,
+      additionalArtifactPaths: [resultRelPath],
       target: reviewChecklistTarget,
     });
 
@@ -714,6 +784,7 @@ export async function runReviewAgent(
       taskMdPath,
       reviewChecklistTarget,
       feedbackRelPath,
+      resultRelPath,
     );
     // Pre-flight: a claim whose persisted session file is gone (or was never
     // recorded) cannot resume — downgrade to a fresh cold launch up front
@@ -904,6 +975,7 @@ export async function runReviewAgent(
       allocated.id,
       reviewChecklistTarget.signal,
       feedbackRelPath,
+      resultRelPath,
     );
     if (!completed) {
       throw new Error(
@@ -928,7 +1000,7 @@ export async function runReviewAgent(
 
     // 7. Read reviewer-specific feedback.
     const feedback = applyTerminalReviewSignal(
-      await readReviewFeedback(vars, taskDir, feedbackRelPath),
+      await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath),
       await readTerminalReviewSignal(vars, taskDir, reviewChecklistTarget.signal),
     );
     if (feedback.incomplete) {
@@ -972,6 +1044,7 @@ export async function runReviewAgent(
       taskMdPath,
       signalBasename: reviewChecklistTarget.signal,
       feedbackRelPath,
+      resultRelPath,
       artifactDir,
       feedbackIncomplete: feedback.incomplete ?? false,
     });
@@ -1046,6 +1119,7 @@ async function waitForReviewCompletion(
   reviewContextId: string,
   signalBasename: string,
   feedbackRelPath: string,
+  resultRelPath?: string | null,
 ): Promise<boolean> {
   const start = Date.now();
   const pollInterval = 10_000; // 10s
@@ -1053,6 +1127,16 @@ async function waitForReviewCompletion(
   // Re-enforce the minimum window size before polling: completion matching
   // reads the last pane lines, which a reflowed 5-row window truncates.
   await ensureTmuxWindowMinimumSize(vars, `${session}:${reviewWindow}`);
+  const requiredOutputPaths = [feedbackRelPath, ...(resultRelPath ? [resultRelPath] : [])].map(
+    (relPath) => `${vars.remoteRepo}/${taskDir}/${relPath}`,
+  );
+  const hasRequiredOutput = async (): Promise<boolean> =>
+    (
+      await execOnSlot(
+        vars,
+        `${requiredOutputPaths.map((outputPath) => `test -f ${shellQuote(outputPath)}`).join(' && ')} && echo yes`,
+      )
+    ).stdout.trim() === 'yes';
 
   while (true) {
     await new Promise((r) => setTimeout(r, pollInterval));
@@ -1071,13 +1155,7 @@ async function waitForReviewCompletion(
 
     if (!hasWindow) {
       // Window disappearance is only success after the review artifact exists.
-      const hasFeedback = (
-        await execOnSlot(
-          vars,
-          `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
-        )
-      ).stdout.trim();
-      if (hasFeedback === 'yes') {
+      if (await hasRequiredOutput()) {
         debugSelfReviewLog(`[self-review] review window gone + feedback written — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
           id: reviewContextId,
@@ -1114,13 +1192,7 @@ async function waitForReviewCompletion(
       if (!agentAlive) {
         // Runner exited but window still exists — only declare done if feedback was written.
         // Without this gate, a false positive fires during runner startup before it has forked.
-        const hasFeedback = (
-          await execOnSlot(
-            vars,
-            `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
-          )
-        ).stdout.trim();
-        if (hasFeedback === 'yes') {
+        if (await hasRequiredOutput()) {
           debugSelfReviewLog(
             `[self-review] ${runner} process exited + feedback written — agent completed`,
           );
@@ -1152,13 +1224,7 @@ async function waitForReviewCompletion(
       );
     }
     if (terminalSignal) {
-      const hasFeedback = (
-        await execOnSlot(
-          vars,
-          `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
-        )
-      ).stdout.trim();
-      if (hasFeedback === 'yes') {
+      if (await hasRequiredOutput()) {
         debugSelfReviewLog(
           `[self-review] terminal ${signalBasename} (status=${terminalSignal.status}) + feedback — agent completed`,
         );
@@ -1190,13 +1256,7 @@ async function waitForReviewCompletion(
       !runnerPaneShowsCurrentInteractiveProgress(pane, runner);
     if (reviewerAtIdlePrompt) {
       // Double-check: the reviewer-specific feedback file exists = work is done.
-      const hasFeedback = (
-        await execOnSlot(
-          vars,
-          `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
-        )
-      ).stdout.trim();
-      if (hasFeedback === 'yes') {
+      if (await hasRequiredOutput()) {
         debugSelfReviewLog(`[self-review] idle prompt + feedback file — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
           id: reviewContextId,
@@ -1208,13 +1268,7 @@ async function waitForReviewCompletion(
 
     // Shell prompt without feedback is not success — Codex can bounce back to shell after an internal shortcut.
     if (pane.match(/[\$%]\s*$/m) && !pane.includes('⏵⏵')) {
-      const hasFeedback = (
-        await execOnSlot(
-          vars,
-          `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
-        )
-      ).stdout.trim();
-      if (hasFeedback === 'yes') {
+      if (await hasRequiredOutput()) {
         debugSelfReviewLog(`[self-review] shell prompt + feedback file — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
           id: reviewContextId,

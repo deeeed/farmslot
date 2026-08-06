@@ -82,6 +82,24 @@ Skipped scenarios record `skipReason` and count as pass so matrices stay honest.
 
 Do not duplicate token parsing in harness JS — scenarios call `scripts/session-usage.sh` via `lib/session-usage-harness.mjs` (same env contract as L1).
 
+## Publication reviewer result contract
+
+New publication reviewers write two scoped artifacts before their terminal signal:
+
+- `artifacts/review-feedback.<context>.md` — human-readable analysis.
+- `artifacts/review-result.<context>.json` — authoritative verdict and issue list.
+
+The JSON schema is deliberately small: `schemaVersion: 1`, `verdict: "pass" | "issues"`, and
+`issues: Array<{ file, line?, description }>`. A pass has no issues; an issues verdict has at least
+one. The reviewer terminal contract requires both files, so Markdown formatting is never positive
+evidence for the verdict.
+
+Restart recovery distinguishes waiting from terminal-invalid state. A live reviewer with no terminal
+signal remains recoverable. Once a terminal signal exists, a missing or invalid structured result is
+stable: recovery marks the reviewer blocked, records `reviewRecovery.status = "operator-required"`,
+and stops polling. Evidence from the production gateway regression is retained in
+`evidence/review-recovery-terminal-invalid-b983afc6.json`.
+
 ## Session binding + attribution
 
 Gateway binding priority (`session-path-resolution.ts`, `session-process.ts`):
