@@ -87,6 +87,14 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | --------------------------- | ------- | ----------- | --- | ---------------------------------------- |
 | `copilot.formatInstruction` | na      |             |     | Command Center copilot surface (web UI). |
 
+## credential.\*
+
+| Method              | Surface       | CLI command                  | TUI | Note |
+| ------------------- | ------------- | ---------------------------- | --- | ---- |
+| `credential.issue`  | typed-command | `farmslot credential issue`  |     |      |
+| `credential.list`   | typed-command | `farmslot credential list`   |     |      |
+| `credential.revoke` | typed-command | `farmslot credential revoke` |     |      |
+
 ## decision.\*
 
 | Method             | Surface       | CLI command                 | TUI | Note |
@@ -254,6 +262,15 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `pr.editComment`    | rpc-only      |               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `pr.deleteComment`  | rpc-only      |               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `pr.submitReview`   | rpc-only      |               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+
+## principal.\*
+
+| Method                 | Surface       | CLI command                     | TUI | Note |
+| ---------------------- | ------------- | ------------------------------- | --- | ---- |
+| `principal.create`     | typed-command | `farmslot principal create`     |     |      |
+| `principal.list`       | typed-command | `farmslot principal list`       |     |      |
+| `principal.grant`      | typed-command | `farmslot principal grant`      |     |      |
+| `principal.revokeRole` | typed-command | `farmslot principal revokeRole` |     |      |
 
 ## providerAccounts.\*
 

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat(auth): add principal and credential management, quiescent offline recovery, explicit pairing authority, and separate transport/authority reporting in auth status.
 - fix(run): `farmslot run cancel` prints the failed cancel effects instead of only `Cancelled <id>`, so a still-claimed slot or unsettled backlog is visible to operators who are not using `--json`.
 - fix(roadmap): a failed `roadmap.get` after resolving a unique prefix now surfaces transport/auth/server errors instead of silently returning an incomplete item.
 - fix(roadmap): `roadmap get <unique-prefix>` re-fetches by resolved id, so a prefix lookup carries the same delivery lineage and planning context as the full id instead of silently returning the bare list row.

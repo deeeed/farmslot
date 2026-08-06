@@ -1,3 +1,4 @@
+import type { RoleBinding, SelfPrincipalSummary } from './principal.js';
 import { Methods } from './registry.js';
 
 export const AuthMethods = {
@@ -26,12 +27,19 @@ export interface GatewayAuthConnectResult {
     /** Absent on gateways predating the lightweight liveness method. */
     gatewayPing?: boolean;
   };
+  /** Optional only for compatibility with older gateways. */
+  principal?: SelfPrincipalSummary;
 }
+
+export type PairingAuthority =
+  | { kind: 'existing-principal'; principalId: string }
+  | { kind: 'new-service-principal'; displayName: string; roles: RoleBinding[] };
 
 export interface PairingCreateParams {
   gatewayUrl: string;
   profileName?: string;
   ttlSeconds?: number;
+  authority: PairingAuthority;
 }
 
 export interface PairingCreateResult {

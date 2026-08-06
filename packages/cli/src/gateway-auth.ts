@@ -1,7 +1,11 @@
 // gateway-auth.ts — auth probing + login flows against a gateway (ADR-036).
 // Consumes the existing auth.connect / pairing.exchange protocol surface; no
 // new gateway methods.
-import type { GatewayAuthConnectResult, PairingExchangeResult } from '@farmslot/protocol';
+import type {
+  GatewayAuthConnectResult,
+  PairingExchangeResult,
+  SelfPrincipalSummary,
+} from '@farmslot/protocol';
 
 import { GatewayClient, GatewayConnectionError } from './gateway-client.js';
 import type { GatewayProfile } from './gateway-profiles.js';
@@ -14,6 +18,7 @@ export interface GatewayAuthProbe {
   state: GatewayAuthState;
   authMode?: string;
   detail?: string;
+  principal?: SelfPrincipalSummary;
 }
 
 /**
@@ -35,8 +40,8 @@ export async function probeGatewayAuth(
       ...(credential?.password ? { password: credential.password } : {}),
     });
     return result.authMode === 'none'
-      ? { state: 'no-auth', authMode: 'none' }
-      : { state: 'authenticated', authMode: result.authMode };
+      ? { state: 'no-auth', authMode: 'none', principal: result.principal }
+      : { state: 'authenticated', authMode: result.authMode, principal: result.principal };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     // Typed transport failure = unreachable; anything else came back from the
@@ -67,12 +72,20 @@ export function describeProbe(
 ): string {
   switch (probe.state) {
     case 'authenticated':
-      return `${profileName}: authenticated (${probe.authMode}) at ${profile.url}`;
+      return `${profileName}: authenticated (${probe.authMode})${formatPrincipal(probe.principal)} at ${profile.url}`;
     case 'no-auth':
-      return `${profileName}: reachable, no auth required at ${profile.url}`;
+      return `${profileName}: reachable, no auth required${formatPrincipal(probe.principal)} at ${profile.url}`;
     case 'inactive':
       return `${profileName}: not signed in at ${profile.url}${probe.detail ? ` — ${probe.detail}` : ''}`;
     case 'unreachable':
       return `${profileName}: unreachable at ${profile.url}${probe.detail ? ` — ${probe.detail}` : ''}`;
   }
+}
+
+function formatPrincipal(principal: SelfPrincipalSummary | undefined): string {
+  if (!principal) return '';
+  const roles = principal.roles.length
+    ? principal.roles.map((binding) => `${binding.role}:${binding.scope.kind}`).join(',')
+    : 'no roles';
+  return ` as ${principal.displayName} [${roles}]`;
 }

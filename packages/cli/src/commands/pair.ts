@@ -13,7 +13,11 @@ import { hostname, networkInterfaces } from 'node:os';
 import type { Command } from 'commander';
 import * as QRCode from 'qrcode';
 
-import { type PairingCreateResult, parseTailscaleDnsNameFromStatus } from '@farmslot/protocol';
+import {
+  type PairingAuthority,
+  type PairingCreateResult,
+  parseTailscaleDnsNameFromStatus,
+} from '@farmslot/protocol';
 
 import { bold, cyan, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';
@@ -30,6 +34,12 @@ interface PairingQrPayload {
 export interface ReachableAddress {
   url: string;
   name: string;
+}
+
+export interface PairOptions {
+  principal?: string;
+  newService?: string;
+  role?: Array<'admin' | 'operator'>;
 }
 
 /**
@@ -82,9 +92,19 @@ export function registerPairCommand(program: Command): void {
   program
     .command('pair')
     .description('Show a QR to pair the mobile companion app for tmux control')
-    .action(async (_opts: unknown, cmd: Command) => {
+    .option('--principal <principal-id>', 'pair as an existing principal')
+    .option('--new-service <display-name>', 'create a service principal when the code is redeemed')
+    .option('--role <role...>', 'required role bindings for --new-service')
+    .action(async (opts: PairOptions, cmd: Command) => {
       const { client, output, target } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
+      let authority: PairingAuthority;
+      try {
+        authority = pairingAuthority(opts);
+      } catch (error) {
+        emit.fail(error);
+        return;
+      }
       const port = new URL(target.url).port || '7777';
       const addresses = reachableAddresses(port);
       if (addresses.length === 0) {
@@ -107,6 +127,7 @@ export function registerPairCommand(program: Command): void {
               await client.call<PairingCreateResult>('pairing.create', {
                 gatewayUrl: address.url,
                 profileName: address.name,
+                authority,
               }),
             );
           }
@@ -141,4 +162,31 @@ export function registerPairCommand(program: Command): void {
       }
       output.write(`${dim(`  codes expire ${profiles[0]?.expiresAt ?? 'unknown'}`)}\n`);
     });
+}
+
+export function pairingAuthority(opts: PairOptions): PairingAuthority {
+  if (Boolean(opts.principal) === Boolean(opts.newService)) {
+    throw Object.assign(new Error('use exactly one of --principal or --new-service'), {
+      code: 'INVALID_PARAMS',
+      userAction: 're-run with --principal <id>, or --new-service <name> --role <role>',
+    });
+  }
+  if (opts.principal) return { kind: 'existing-principal', principalId: opts.principal };
+  const roles = opts.role;
+  if (!opts.newService || !roles?.length) {
+    throw Object.assign(new Error('--new-service requires at least one --role'), {
+      code: 'INVALID_PARAMS',
+      userAction: 're-run with --new-service <name> --role operator (or admin)',
+    });
+  }
+  for (const role of roles) {
+    if (role !== 'admin' && role !== 'operator') {
+      throw Object.assign(new Error(`invalid pairing role '${role}'`), { code: 'INVALID_PARAMS' });
+    }
+  }
+  return {
+    kind: 'new-service-principal',
+    displayName: opts.newService,
+    roles: roles.map((role) => ({ role, scope: { kind: 'global' } })),
+  };
 }
