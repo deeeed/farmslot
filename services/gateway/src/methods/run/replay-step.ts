@@ -149,6 +149,7 @@ function resetPublishGateApprovalForReplay(
   const {
     approvedAt: _approvedAt,
     approvedPackageHash: _approvedPackageHash,
+    reviewRecovery: _reviewRecovery,
     ...publishGateWithoutApproval
   } = engineState.publishGate;
   return {

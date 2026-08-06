@@ -1164,6 +1164,8 @@ async function slotPrepareInner(
   }
   if (preflightHook) {
     const preflightPidPath = path.join(vars.remoteRepo, runtimeDir, 'preflight.pid');
+    const preflightIdentityPath = path.join(vars.remoteRepo, runtimeDir, 'preflight.identity');
+    const preflightScope = randomUUID().replaceAll('-', '');
     const rawCleanupPatterns = getProjectFieldRaw(projectJson, 'cleanup_patterns');
     const cleanupPatterns = Array.isArray(rawCleanupPatterns)
       ? rawCleanupPatterns.map((p) => expandTemplate(String(p), vars, projectVars)).filter(Boolean)
@@ -1191,7 +1193,9 @@ async function slotPrepareInner(
       `cleanup_prepare_pid(){ rm -f "$PREP_PID_FILE"; }`,
       `trap cleanup_prepare_pid EXIT INT TERM`,
       ...varExports,
-      applyCommandEnv(preflightHook),
+      applyCommandEnv(
+        `export FARMSLOT_PREPARE_SCOPE=${shellQuote(preflightScope)} && ${preflightHook}`,
+      ),
     ].join('; ');
 
     // Build log tailing: watch preflight log files so heavy build output
@@ -1241,6 +1245,7 @@ async function slotPrepareInner(
         signal,
         windowLabel,
         phase: 'preflight',
+        prepareScope: { token: preflightScope, identityPath: preflightIdentityPath },
         onOutput: (outputStream, data) => {
           stream.output(outputStream === 'stderr' ? 'stderr' : 'stdout', data);
           phaseBuffer += stripAnsi(data);

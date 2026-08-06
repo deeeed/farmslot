@@ -46,7 +46,7 @@ import {
   resumableSessionProbeCommand,
 } from '../runners/session-process.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, updateRun } from '../runs/store.js';
 import {
   extractRunnerSessionUsage,
   unavailableRunnerSessionUsage,
@@ -86,6 +86,12 @@ import {
   waitForSessionTranscriptToSettle,
 } from './snapshots.js';
 import { expandSelfReviewTemplate } from './templates.js';
+import {
+  isSuccessfulTerminalReviewSignal,
+  isTerminalReviewArtifactError,
+  TerminalReviewArtifactError,
+  terminalReviewArtifactErrorForCompletion,
+} from './terminal-result.js';
 
 /** Progress mark writes status "running"; only terminal worker signals count as done. */
 export function parseTerminalSelfReviewSignal(raw: string) {
@@ -96,7 +102,7 @@ export function applyTerminalReviewSignal(
   feedback: ReviewAgentResult,
   signal: ReturnType<typeof parseTerminalSelfReviewSignal>,
 ): ReviewAgentResult {
-  if (!signal || signal.status === 'complete' || signal.status === 'done') return feedback;
+  if (!signal || isSuccessfulTerminalReviewSignal(signal)) return feedback;
   return { verdict: 'pass', issues: [], incomplete: true };
 }
 
@@ -114,13 +120,6 @@ async function readTerminalReviewSignal(
   return parseTerminalSelfReviewSignal(raw);
 }
 
-export function shouldKeepWaitingForOverdueReview(
-  reviewerProcessAlive: boolean,
-  _reviewerAtIdlePrompt: boolean,
-): boolean {
-  return reviewerProcessAlive;
-}
-
 export const LEGACY_REVIEW_FEEDBACK_REL_PATH = 'artifacts/review-feedback.md';
 const LEGACY_REVIEW_FEEDBACK_ARTIFACT_PATTERN =
   /(^|[^\w-])artifacts\/review-feedback\.md(?![\w./-])/g;
@@ -131,6 +130,7 @@ export function selfReviewChecklistMarkPrompt(
   taskMdPath: string,
   reviewTarget: { checklist: string; signal: string },
   feedbackRelPath: string,
+  resultRelPath?: string | null,
 ): string {
   const mark = `${taskDir}/mark`;
   const markWithTarget = `${mark} --checklist ${reviewTarget.checklist} --signal ${reviewTarget.signal}`;
@@ -138,7 +138,9 @@ export function selfReviewChecklistMarkPrompt(
     `Follow ${taskMdPath} top-to-bottom. After EVERY checklist step run ${markWithTarget} N ` +
     `(bootstrap with ${markWithTarget} start — same path as the checklist header). ` +
     `Skipping ${markWithTarget} leaves the run at 0/N in the UI. ` +
-    `Write ${taskDir}/${feedbackRelPath}, then ${markWithTarget} complete.`
+    `Write ${taskDir}/${feedbackRelPath}` +
+    (resultRelPath ? ` and ${taskDir}/${resultRelPath}` : '') +
+    `, then ${markWithTarget} complete.`
   );
 }
 
@@ -148,6 +150,30 @@ export function reviewerChecklistBasename(contextId: string): string {
 
 export function reviewerFeedbackRelPath(contextId: string): string {
   return `artifacts/review-feedback.${contextId}.md`;
+}
+
+export function reviewerResultRelPath(contextId: string): string {
+  return `artifacts/review-result.${contextId}.json`;
+}
+
+function structuredReviewResultInstructions(resultRelPath: string): string {
+  return `
+
+## Machine-readable review result
+
+Write \`${resultRelPath}\` as JSON before completing:
+
+\`\`\`json
+{
+  "schemaVersion": 1,
+  "verdict": "pass",
+  "issues": []
+}
+\`\`\`
+
+For an issues verdict, set \`verdict\` to \`"issues"\` and include at least one
+\`{ "file": "path", "line": 1, "description": "specific finding" }\` entry.
+The JSON verdict and issues are authoritative; the Markdown file is the human-readable report.`;
 }
 
 export function selectRecoverableReviewContext(
@@ -198,7 +224,14 @@ export async function resumeReviewAgentPromptDelivery(
   runId: string,
   context: Pick<
     AgentContext,
-    'id' | 'runner' | 'taskFile' | 'signalFile' | 'target' | 'attemptStartedAt' | 'startedAt'
+    | 'id'
+    | 'runner'
+    | 'taskFile'
+    | 'signalFile'
+    | 'reviewResultFile'
+    | 'target'
+    | 'attemptStartedAt'
+    | 'startedAt'
   >,
   dependencyOverrides: Partial<ReviewPromptRecoveryDependencies> = {},
 ): Promise<'delivered' | 'inactive' | 'unsupported'> {
@@ -223,6 +256,7 @@ export async function resumeReviewAgentPromptDelivery(
   const taskDir = path.posix.dirname(taskMdPath);
   const reviewTarget = targetForChecklistBasename(path.posix.basename(taskMdPath));
   const feedbackRelPath = reviewerFeedbackRelPath(context.id);
+  const resultRelPath = context.reviewResultFile ?? null;
   const parentRun = getRun(runId);
   const prompt = `${await dependencies.resolveWorkerDispatchPrompt(
     parentRun?.project ?? vars.projectName,
@@ -230,7 +264,13 @@ export async function resumeReviewAgentPromptDelivery(
       taskFile: taskMdPath,
       taskDir,
     },
-  )}\n\n${selfReviewChecklistMarkPrompt(taskDir, taskMdPath, reviewTarget, feedbackRelPath)}`;
+  )}\n\n${selfReviewChecklistMarkPrompt(
+    taskDir,
+    taskMdPath,
+    reviewTarget,
+    feedbackRelPath,
+    resultRelPath,
+  )}`;
   const attemptStartedAtMs = Date.parse(context.attemptStartedAt ?? context.startedAt ?? '');
   const baselineMs = Number.isFinite(attemptStartedAtMs) ? attemptStartedAtMs : Date.now();
   const runtimeDir = await dependencies.resolveProjectRuntimeDir(parentRun?.project);
@@ -260,14 +300,24 @@ export async function resumeReviewAgentPromptDelivery(
 
 export async function waitForRecoveredReviewerOrCleanup(
   waitForCompletion: () => Promise<boolean>,
-  abandonRecoveredReviewer: (reason: string) => Promise<unknown>,
+  abandonRecoveredReviewer: (reason: string, status?: 'failed' | 'blocked') => Promise<unknown>,
 ): Promise<boolean> {
-  if (await waitForCompletion()) return true;
+  try {
+    if (await waitForCompletion()) return true;
+  } catch (error) {
+    if (!isTerminalReviewArtifactError(error)) throw error;
+    await abandonRecoveredReviewer('invalid recovered reviewer artifact cleanup', 'blocked');
+    throw error;
+  }
   await abandonRecoveredReviewer('recovered reviewer timeout');
   return false;
 }
 
-export function scopeReviewFeedbackPath(template: string, feedbackRelPath: string): string {
+export function scopeReviewFeedbackPath(
+  template: string,
+  feedbackRelPath: string,
+  resultRelPath?: string | null,
+): string {
   const scoped = template
     .replace(
       LEGACY_REVIEW_FEEDBACK_ARTIFACT_PATTERN,
@@ -277,8 +327,13 @@ export function scopeReviewFeedbackPath(template: string, feedbackRelPath: strin
       LEGACY_REVIEW_FEEDBACK_BASENAME_PATTERN,
       (_match, prefix: string) => `${prefix}${feedbackRelPath}`,
     );
-  if (scoped !== template) return scoped;
-  return `${template.trimEnd()}\n\nWrite reviewer feedback to ${feedbackRelPath}.`;
+  const feedbackScoped =
+    scoped !== template
+      ? scoped
+      : `${template.trimEnd()}\n\nWrite reviewer feedback to ${feedbackRelPath}.`;
+  return resultRelPath
+    ? `${feedbackScoped.trimEnd()}${structuredReviewResultInstructions(resultRelPath)}`
+    : feedbackScoped;
 }
 
 // Exported for self-review.test.ts to seed runSelfReviewRetryLoop fixtures. Not part of the
@@ -296,6 +351,8 @@ export interface ReviewAgentResult {
   startedAt?: string;
   completedAt?: string;
   incomplete?: boolean; // true when feedback file was never written (agent didn't finish)
+  /** Stable invalid artifact: recovery must stop and ask the operator, not poll again. */
+  terminalInvalidReason?: string;
 }
 
 async function persistReviewOutputArtifacts(params: {
@@ -304,6 +361,7 @@ async function persistReviewOutputArtifacts(params: {
   taskMdPath: string;
   signalBasename: string;
   feedbackRelPath: string;
+  resultRelPath?: string | null;
   artifactDir: string;
   feedbackIncomplete: boolean;
 }): Promise<{ artifactPaths: string[]; taskProgressArtifactPath: string }> {
@@ -313,6 +371,7 @@ async function persistReviewOutputArtifacts(params: {
     taskMdPath,
     signalBasename,
     feedbackRelPath,
+    resultRelPath,
     artifactDir,
     feedbackIncomplete,
   } = params;
@@ -360,6 +419,21 @@ async function persistReviewOutputArtifacts(params: {
       );
     }
     persistedArtifacts.push(feedbackRel);
+
+    if (resultRelPath) {
+      const resultRel = `${artifactDir}/review-result.json`;
+      const resultCopy = await execOnSlot(
+        vars,
+        `cp ${shellQuote(`${vars.remoteRepo}/${taskDir}/${resultRelPath}`)} ${shellQuote(`${vars.remoteRepo}/${taskDir}/${resultRel}`)}`,
+        { timeout: 10_000 },
+      );
+      if (resultCopy.exitCode !== 0) {
+        throw new Error(
+          `Failed to persist structured review result: ${resultCopy.stderr || resultCopy.stdout || `exit ${resultCopy.exitCode}`}`,
+        );
+      }
+      persistedArtifacts.push(resultRel);
+    }
   }
 
   return {
@@ -391,8 +465,11 @@ async function recoverRunningReviewAgent(params: {
   )
     return null;
 
-  const abandonRecoveredReviewer = async (reason: string): Promise<null> => {
-    await markAgentContextStatus(params.runId, 'self-review', 'failed', { id: context.id });
+  const abandonRecoveredReviewer = async (
+    reason: string,
+    status: 'failed' | 'blocked' = 'failed',
+  ): Promise<null> => {
+    await markAgentContextStatus(params.runId, 'self-review', status, { id: context.id });
     try {
       await killSelfReviewWindow(params.vars, params.session, reason, context.target?.window);
     } catch (error) {
@@ -446,6 +523,7 @@ async function recoverRunningReviewAgent(params: {
   const reviewWindow = context.target.window;
   const signalBasename = path.posix.basename(context.signalFile);
   const feedbackRelPath = reviewerFeedbackRelPath(context.id);
+  const resultRelPath = context.reviewResultFile ?? null;
   const watcher = startProgressWatcher(params.vars, context.taskFile, params.runId, 'Review', {
     contextId: context.id,
     role: 'self-review',
@@ -465,14 +543,28 @@ async function recoverRunningReviewAgent(params: {
           context.id,
           signalBasename,
           feedbackRelPath,
+          resultRelPath,
         ),
       abandonRecoveredReviewer,
     );
     if (!completed) return null;
-    const feedback = applyTerminalReviewSignal(
-      await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath),
-      await readTerminalReviewSignal(params.vars, params.taskDir, signalBasename),
+    const terminalSignal = await readTerminalReviewSignal(
+      params.vars,
+      params.taskDir,
+      signalBasename,
     );
+    const feedback = applyTerminalReviewSignal(
+      await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath, resultRelPath),
+      terminalSignal,
+    );
+    const terminalArtifactError = terminalReviewArtifactErrorForCompletion(
+      context.id,
+      feedback.terminalInvalidReason,
+    );
+    if (terminalArtifactError) {
+      await abandonRecoveredReviewer('invalid recovered reviewer artifact cleanup', 'blocked');
+      throw terminalArtifactError;
+    }
     await waitForSessionTranscriptToSettle(params.vars, context.runnerSessionPath ?? null);
     const usage = context.runnerSessionPath
       ? await extractRunnerSessionUsage({
@@ -494,6 +586,7 @@ async function recoverRunningReviewAgent(params: {
       taskMdPath: context.taskFile,
       signalBasename,
       feedbackRelPath,
+      resultRelPath,
       artifactDir: reviewArtifactDir(recoveredLoopNumber, recoveredArtifactScope),
       feedbackIncomplete: feedback.incomplete ?? false,
     });
@@ -623,6 +716,7 @@ export async function runReviewAgent(
   const reviewWindow = allocated.windowName;
   const reviewChecklistTarget = targetForChecklistBasename(reviewerChecklistBasename(allocated.id));
   const feedbackRelPath = reviewerFeedbackRelPath(allocated.id);
+  const resultRelPath = reviewerResultRelPath(allocated.id);
   let reviewContext = await upsertAgentContext(_runId, 'self-review', {
     id: allocated.id,
     label: allocated.label,
@@ -630,6 +724,7 @@ export async function runReviewAgent(
     attemptStartedAt: startedAt,
     taskFile: taskDirRelPath(taskDir, reviewChecklistTarget.checklist),
     signalFile: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
+    reviewResultFile: resultRelPath,
     artifactScope: artifactScope ?? null,
     reviewLoopNumber: loopNumber,
     runner,
@@ -645,6 +740,7 @@ export async function runReviewAgent(
     // can't short-circuit on stale files (caused retry verdict to mirror pass 1).
     await removeSlotFiles(vars, [
       `${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`,
+      `${vars.remoteRepo}/${taskDir}/${resultRelPath}`,
       slotTaskRelPath(vars, taskDir, reviewChecklistTarget.signal),
     ]);
 
@@ -693,10 +789,12 @@ export async function runReviewAgent(
     const expandedTemplate = scopeReviewFeedbackPath(
       await expandSelfReviewTemplate(vars, taskDir, _runId, validationDepth),
       feedbackRelPath,
+      resultRelPath,
     );
     await writeTextFileOnSlot(vars, taskMdPath, expandedTemplate);
     await syncChecklistTargetForRole(vars, taskDir, 'self-review', {
       reportPath: feedbackRelPath,
+      additionalArtifactPaths: [resultRelPath],
       target: reviewChecklistTarget,
     });
 
@@ -714,6 +812,7 @@ export async function runReviewAgent(
       taskMdPath,
       reviewChecklistTarget,
       feedbackRelPath,
+      resultRelPath,
     );
     // Pre-flight: a claim whose persisted session file is gone (or was never
     // recorded) cannot resume — downgrade to a fresh cold launch up front
@@ -893,7 +992,7 @@ export async function runReviewAgent(
       contextId: allocated.id,
       role: 'self-review',
     });
-    const completed = await waitForReviewCompletion(
+    await waitForReviewCompletionOrThrow(
       vars,
       session,
       taskDir,
@@ -904,12 +1003,8 @@ export async function runReviewAgent(
       allocated.id,
       reviewChecklistTarget.signal,
       feedbackRelPath,
+      resultRelPath,
     );
-    if (!completed) {
-      throw new Error(
-        `Self-review agent did not complete within ${reviewTimeoutMs}ms (${reviewTimeoutMs / 60_000}min). Bump self_review.review_timeout_min in projects/${vars.projectName}/project.json if reviews need longer.`,
-      );
-    }
     await waitForSessionTranscriptToSettle(vars, sessionMeta.runnerSessionPath);
     const usage = sessionMeta.error
       ? unavailableRunnerSessionUsage({
@@ -927,10 +1022,20 @@ export async function runReviewAgent(
         });
 
     // 7. Read reviewer-specific feedback.
-    const feedback = applyTerminalReviewSignal(
-      await readReviewFeedback(vars, taskDir, feedbackRelPath),
-      await readTerminalReviewSignal(vars, taskDir, reviewChecklistTarget.signal),
+    const terminalSignal = await readTerminalReviewSignal(
+      vars,
+      taskDir,
+      reviewChecklistTarget.signal,
     );
+    const feedback = applyTerminalReviewSignal(
+      await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath),
+      terminalSignal,
+    );
+    const terminalArtifactError = terminalReviewArtifactErrorForCompletion(
+      allocated.id,
+      feedback.terminalInvalidReason,
+    );
+    if (terminalArtifactError) throw terminalArtifactError;
     if (feedback.incomplete) {
       return {
         ...feedback,
@@ -972,6 +1077,7 @@ export async function runReviewAgent(
       taskMdPath,
       signalBasename: reviewChecklistTarget.signal,
       feedbackRelPath,
+      resultRelPath,
       artifactDir,
       feedbackIncomplete: feedback.incomplete ?? false,
     });
@@ -1001,10 +1107,15 @@ export async function runReviewAgent(
       completedAt,
     };
   } catch (err) {
-    await markAgentContextStatus(_runId, 'self-review', 'failed', {
-      id: allocated.id,
-      lastSignalAt: new Date().toISOString(),
-    });
+    await markAgentContextStatus(
+      _runId,
+      'self-review',
+      isTerminalReviewArtifactError(err) ? 'blocked' : 'failed',
+      {
+        id: allocated.id,
+        lastSignalAt: new Date().toISOString(),
+      },
+    );
     throw err;
   } finally {
     progressWatcher?.stop();
@@ -1035,7 +1146,7 @@ export async function runReviewAgent(
   }
 }
 
-async function waitForReviewCompletion(
+export async function waitForReviewCompletion(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
   taskDir: string,
@@ -1046,16 +1157,51 @@ async function waitForReviewCompletion(
   reviewContextId: string,
   signalBasename: string,
   feedbackRelPath: string,
+  resultRelPath?: string | null,
+  pollInterval = 10_000,
 ): Promise<boolean> {
   const start = Date.now();
-  const pollInterval = 10_000; // 10s
-  let overdueWarned = false;
   // Re-enforce the minimum window size before polling: completion matching
   // reads the last pane lines, which a reflowed 5-row window truncates.
   await ensureTmuxWindowMinimumSize(vars, `${session}:${reviewWindow}`);
+  const requiredOutputPaths = [feedbackRelPath, ...(resultRelPath ? [resultRelPath] : [])].map(
+    (relPath) => `${vars.remoteRepo}/${taskDir}/${relPath}`,
+  );
+  const outputExists = async (outputPath: string): Promise<boolean> =>
+    (await execOnSlot(vars, `test -f ${shellQuote(outputPath)} && echo yes`)).stdout.trim() ===
+    'yes';
+  const terminalInvalid = async (reason: string): Promise<never> => {
+    await markAgentContextStatus(runId, 'self-review', 'blocked', {
+      id: reviewContextId,
+      lastSignalAt: new Date().toISOString(),
+    });
+    throw new TerminalReviewArtifactError(
+      `Reviewer ${reviewContextId} completed with an invalid result artifact: ${reason}`,
+    );
+  };
+  const completedOutputIsValid = async (completionEstablished: boolean): Promise<boolean> => {
+    if (!(await outputExists(requiredOutputPaths[0]!))) {
+      if (!completionEstablished) return false;
+      return terminalInvalid(`${feedbackRelPath} is missing`);
+    }
+    if (resultRelPath && !(await outputExists(requiredOutputPaths[1]!))) {
+      if (!completionEstablished) return false;
+      return terminalInvalid(`${resultRelPath} is missing`);
+    }
+    if (resultRelPath) {
+      const feedback = await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath);
+      if (feedback.terminalInvalidReason) {
+        if (!completionEstablished) return false;
+        return terminalInvalid(feedback.terminalInvalidReason);
+      }
+    }
+    return true;
+  };
+  let reviewerWasObservedActive = false;
 
   while (true) {
-    await new Promise((r) => setTimeout(r, pollInterval));
+    const remainingMs = Math.max(0, timeoutMs - (Date.now() - start));
+    await new Promise((r) => setTimeout(r, Math.min(pollInterval, remainingMs)));
     let reviewerActive = false;
 
     // Check if the review window still exists
@@ -1070,31 +1216,15 @@ async function waitForReviewCompletion(
       ).exitCode === 0;
 
     if (!hasWindow) {
-      // Window disappearance is only success after the review artifact exists.
-      const hasFeedback = (
-        await execOnSlot(
-          vars,
-          `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
-        )
-      ).stdout.trim();
-      if (hasFeedback === 'yes') {
-        debugSelfReviewLog(`[self-review] review window gone + feedback written — agent completed`);
-        await markAgentContextStatus(runId, 'self-review', 'complete', {
-          id: reviewContextId,
-          lastSignalAt: new Date().toISOString(),
-        });
-        return true;
-      }
-      console.warn(
-        `[self-review] review window gone before feedback file existed — waiting for timeout`,
-      );
-      if (Date.now() - start >= timeoutMs) {
-        console.warn(
-          `[self-review] review window disappeared without feedback after ${timeoutMs}ms`,
-        );
-        return false;
-      }
-      continue;
+      // Window disappearance establishes completion. Required artifacts must
+      // now be valid; unlike pane heuristics, this branch may fail closed.
+      await completedOutputIsValid(true);
+      debugSelfReviewLog(`[self-review] review window gone + feedback written — agent completed`);
+      await markAgentContextStatus(runId, 'self-review', 'complete', {
+        id: reviewContextId,
+        lastSignalAt: new Date().toISOString(),
+      });
+      return true;
     }
 
     // Check if the configured runner process is still running in the review pane.
@@ -1110,17 +1240,12 @@ async function waitForReviewCompletion(
     if (panePid) {
       const agentAlive = await isRunnerAliveUnderPane(vars, panePid, runner);
       reviewerActive = agentAlive;
+      reviewerWasObservedActive ||= agentAlive;
 
       if (!agentAlive) {
-        // Runner exited but window still exists — only declare done if feedback was written.
-        // Without this gate, a false positive fires during runner startup before it has forked.
-        const hasFeedback = (
-          await execOnSlot(
-            vars,
-            `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
-          )
-        ).stdout.trim();
-        if (hasFeedback === 'yes') {
+        // Only absence after observing the process is completion. A runner can
+        // be temporarily absent while its launcher is still starting.
+        if (await completedOutputIsValid(reviewerWasObservedActive)) {
           debugSelfReviewLog(
             `[self-review] ${runner} process exited + feedback written — agent completed`,
           );
@@ -1136,7 +1261,8 @@ async function waitForReviewCompletion(
       }
     }
 
-    // Terminal reviewer signal (complete/blocked/failed) plus feedback artifact.
+    // Successful terminal signals require every configured feedback artifact.
+    // Failed/blocked signals take the existing failed-review path immediately.
     const signalRaw = (
       await execOnSlot(
         vars,
@@ -1152,25 +1278,27 @@ async function waitForReviewCompletion(
       );
     }
     if (terminalSignal) {
-      const hasFeedback = (
-        await execOnSlot(
-          vars,
-          `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
-        )
-      ).stdout.trim();
-      if (hasFeedback === 'yes') {
-        debugSelfReviewLog(
-          `[self-review] terminal ${signalBasename} (status=${terminalSignal.status}) + feedback — agent completed`,
+      if (!isSuccessfulTerminalReviewSignal(terminalSignal)) {
+        await markAgentContextStatus(
+          runId,
+          'self-review',
+          terminalSignal.status === 'blocked' ? 'blocked' : 'failed',
+          {
+            id: reviewContextId,
+            lastSignalAt: new Date().toISOString(),
+          },
         );
-        await markAgentContextStatus(runId, 'self-review', 'complete', {
-          id: reviewContextId,
-          lastSignalAt: new Date().toISOString(),
-        });
         return true;
       }
+      await completedOutputIsValid(true);
       debugSelfReviewLog(
-        `[self-review] terminal ${signalBasename} (status=${terminalSignal.status}) but ${feedbackRelPath} missing — continuing poll`,
+        `[self-review] terminal ${signalBasename} (status=${terminalSignal.status}) + feedback — agent completed`,
       );
+      await markAgentContextStatus(runId, 'self-review', 'complete', {
+        id: reviewContextId,
+        lastSignalAt: new Date().toISOString(),
+      });
+      return true;
     }
 
     // Check pane output for signs of completion
@@ -1190,13 +1318,7 @@ async function waitForReviewCompletion(
       !runnerPaneShowsCurrentInteractiveProgress(pane, runner);
     if (reviewerAtIdlePrompt) {
       // Double-check: the reviewer-specific feedback file exists = work is done.
-      const hasFeedback = (
-        await execOnSlot(
-          vars,
-          `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
-        )
-      ).stdout.trim();
-      if (hasFeedback === 'yes') {
+      if (await completedOutputIsValid(false)) {
         debugSelfReviewLog(`[self-review] idle prompt + feedback file — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
           id: reviewContextId,
@@ -1208,13 +1330,7 @@ async function waitForReviewCompletion(
 
     // Shell prompt without feedback is not success — Codex can bounce back to shell after an internal shortcut.
     if (pane.match(/[\$%]\s*$/m) && !pane.includes('⏵⏵')) {
-      const hasFeedback = (
-        await execOnSlot(
-          vars,
-          `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
-        )
-      ).stdout.trim();
-      if (hasFeedback === 'yes') {
+      if (await completedOutputIsValid(false)) {
         debugSelfReviewLog(`[self-review] shell prompt + feedback file — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
           id: reviewContextId,
@@ -1228,20 +1344,57 @@ async function waitForReviewCompletion(
     }
 
     if (Date.now() - start >= timeoutMs) {
-      if (!shouldKeepWaitingForOverdueReview(reviewerActive, reviewerAtIdlePrompt)) {
-        console.warn(
-          `[self-review] reviewer became inactive without feedback after ${timeoutMs}ms`,
-        );
-        return false;
-      }
-      if (!overdueWarned) {
-        overdueWarned = true;
-        const detail =
-          `Review exceeded ${timeoutMs / 60_000}min but the reviewer process is still active; ` +
-          'continuing to wait. The operator may inspect or cancel the review without failing the run.';
-        console.warn(`[self-review] ${detail}`);
-        updateRunStep(runId, 'self-review', { detail });
-      }
+      const state = reviewerAtIdlePrompt
+        ? 'idle at its prompt'
+        : reviewerActive
+          ? 'still active'
+          : 'inactive';
+      console.warn(
+        `[self-review] reviewer was ${state} without complete review artifacts after ${timeoutMs}ms`,
+      );
+      return false;
     }
   }
+}
+
+export async function waitForReviewCompletionOrThrow(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  session: string,
+  taskDir: string,
+  timeoutMs: number,
+  runId: string,
+  runner: string,
+  reviewWindow: string,
+  reviewContextId: string,
+  signalBasename: string,
+  feedbackRelPath: string,
+  resultRelPath?: string | null,
+  pollInterval?: number,
+): Promise<void> {
+  const completed = await waitForReviewCompletion(
+    vars,
+    session,
+    taskDir,
+    timeoutMs,
+    runId,
+    runner,
+    reviewWindow,
+    reviewContextId,
+    signalBasename,
+    feedbackRelPath,
+    resultRelPath,
+    pollInterval,
+  );
+  if (completed) return;
+
+  try {
+    await killSelfReviewWindow(vars, session, 'review timeout cleanup', reviewWindow);
+  } catch (cleanupErr) {
+    console.warn(
+      `[self-review] review timeout cleanup failed for ${session}:${reviewWindow}: ${(cleanupErr as Error).message}`,
+    );
+  }
+  throw new Error(
+    `Self-review agent did not complete within ${timeoutMs}ms (${timeoutMs / 60_000}min). Bump self_review.review_timeout_min in projects/${vars.projectName}/project.json if reviews need longer.`,
+  );
 }

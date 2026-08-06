@@ -252,6 +252,7 @@ const GATEWAY_SERIAL_INVENTORY = [
   'src/methods/filesystem.test.ts', //                writes fixtures into the repo pool/
   'src/methods/run/replay-step.test.ts', //           rewrites the root .farm-status.json
   'src/methods/slot/release.test.ts', //              rewrites the root .farm-status.json
+  'src/methods/terminal-attachment-target.test.ts', // writes fixtures into the repo pool/
   'src/roadmap/store.test.ts', //                     real dirs under repo projects/
   'src/run-completion/artifact-mirror.test.ts', //    real JSON under repo pool/
   'src/run-engine/publish-package-refresh.test.ts', // real JSON under repo pool/

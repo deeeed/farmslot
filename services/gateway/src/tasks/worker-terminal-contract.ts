@@ -55,6 +55,7 @@ export function readWorkerTerminalProjectConfig(
 export function withTerminalReportPath(
   contract: WorkerTerminalContractDocument,
   reportPath: string,
+  additionalArtifactPaths: readonly string[] = [],
 ): WorkerTerminalContractDocument {
   const commands = { ...contract.commands };
   for (const command of ['complete', 'no-change'] as const) {
@@ -65,7 +66,7 @@ export function withTerminalReportPath(
     commands[command] = {
       ...current,
       report: reportPath,
-      artifacts: [...new Set(artifacts)],
+      artifacts: [...new Set([...artifacts, ...additionalArtifactPaths])],
     };
   }
   return { ...contract, commands };
@@ -78,6 +79,7 @@ export async function syncTerminalContractForFlowOnSlot(
   mode?: string | null,
   reportPath?: string,
   checklistBasename?: string,
+  additionalArtifactPaths: readonly string[] = [],
 ): Promise<void> {
   const projectVars = await loadProjectVars(vars.projectName);
   let contract = resolveWorkerTerminalContract(
@@ -85,7 +87,7 @@ export async function syncTerminalContractForFlowOnSlot(
     flowType,
     { mode },
   );
-  if (reportPath) contract = withTerminalReportPath(contract, reportPath);
+  if (reportPath) contract = withTerminalReportPath(contract, reportPath, additionalArtifactPaths);
   await writeTextFileOnSlot(
     vars,
     taskDirRelPath(

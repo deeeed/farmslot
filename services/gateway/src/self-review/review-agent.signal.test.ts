@@ -3,17 +3,12 @@ import test from 'node:test';
 
 import { resumableSessionProbeCommand } from '../runners/session-process.js';
 
+import { parseStructuredReviewFeedback } from './feedback.js';
+import { applyTerminalReviewSignal, parseTerminalSelfReviewSignal } from './review-agent.js';
 import {
-  applyTerminalReviewSignal,
-  parseTerminalSelfReviewSignal,
-  shouldKeepWaitingForOverdueReview,
-} from './review-agent.js';
-
-test('live overdue reviewers remain non-terminal even while temporarily idle', () => {
-  assert.equal(shouldKeepWaitingForOverdueReview(true, false), true);
-  assert.equal(shouldKeepWaitingForOverdueReview(false, false), false);
-  assert.equal(shouldKeepWaitingForOverdueReview(true, true), true);
-});
+  isSuccessfulTerminalReviewSignal,
+  terminalReviewArtifactErrorForCompletion,
+} from './terminal-result.js';
 
 test('parseTerminalSelfReviewSignal ignores progress mark signals (status running)', () => {
   const raw = JSON.stringify({
@@ -61,6 +56,52 @@ test('terminal done reviewer signal preserves its parsed verdict', () => {
     verdict: 'pass',
     issues: [],
   });
+});
+
+test('only complete and done are successful reviewer terminal signals', () => {
+  assert.equal(isSuccessfulTerminalReviewSignal({ status: 'complete' }), true);
+  assert.equal(isSuccessfulTerminalReviewSignal({ status: 'done' }), true);
+  assert.equal(isSuccessfulTerminalReviewSignal({ status: 'failed' }), false);
+  assert.equal(isSuccessfulTerminalReviewSignal({ status: 'blocked' }), false);
+});
+
+test('established completion makes an invalid structured result terminal', () => {
+  const error = terminalReviewArtifactErrorForCompletion(
+    'reviewer-1',
+    'review-result.json is invalid',
+  );
+
+  assert.match(error?.message ?? '', /review-result\.json is invalid/);
+});
+
+test('structured result parser preserves schema v1 issues and fails closed on corruption', () => {
+  assert.deepEqual(
+    parseStructuredReviewFeedback(
+      JSON.stringify({
+        schemaVersion: 1,
+        verdict: 'ISSUES',
+        issues: [{ file: 'src/review.ts', line: null, description: 'Keep this finding.' }],
+      }),
+      'artifacts/review-result.json',
+    ),
+    {
+      verdict: 'issues',
+      issues: [{ file: 'src/review.ts', description: 'Keep this finding.' }],
+    },
+  );
+  const invalidCardinality = parseStructuredReviewFeedback(
+    JSON.stringify({
+      schemaVersion: 1,
+      verdict: 'PASS',
+      issues: [{ file: 'src/review.ts', description: 'Pass cannot contain findings.' }],
+    }),
+    'artifacts/review-result.json',
+  );
+  assert.equal(invalidCardinality.incomplete, true);
+  const corrupt = parseStructuredReviewFeedback('{', 'artifacts/review-result.json');
+  assert.equal(corrupt.verdict, 'issues');
+  assert.equal(corrupt.incomplete, true);
+  assert.match(corrupt.terminalInvalidReason ?? '', /not valid JSON/);
 });
 
 test('parseTerminalSelfReviewSignal rejects legacy substring-only detection', () => {

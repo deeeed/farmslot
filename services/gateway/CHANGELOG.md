@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Require a machine-readable verdict and issue artifact from newly launched self-review and publication reviewers, bound live waits to the configured timeout without masking them on cleanup failure, preserve failed and valid sibling outcomes during restart recovery, and terminalize operator-required review failures with coherent replay and opaque-scope-verified process-group cleanup, including the pre-launcher-pid window without trusting recycled identities.
+
 - Route CI-watch follow-ups through the runner capability with the original worker's exact retained-session binding, and submit an already-buffered runner prompt before waiting for an empty composer, so retained work and independent reviews cannot stall after a dropped Enter.
 
 - fix(server): handle WebSocket `error` events (including `WS_ERR_UNSUPPORTED_MESSAGE_LENGTH` / close 1009) so an oversized inbound frame closes that client instead of crashing the whole gateway process; make the 100 MiB `maxPayload` explicit.

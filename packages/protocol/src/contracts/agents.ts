@@ -35,6 +35,8 @@ export interface AgentContext {
   runId: string;
   taskFile?: string | null;
   signalFile?: string | null;
+  /** Machine-readable reviewer verdict/issues artifact required for this reviewer attempt. */
+  reviewResultFile?: string | null;
   /** Artifact directory scope owned by this reviewer attempt (for restart recovery). */
   artifactScope?: string | null;
   /** Review loop that owns the persisted launch snapshot. */

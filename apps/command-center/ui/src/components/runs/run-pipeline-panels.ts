@@ -13,6 +13,16 @@ export interface PipelineControlHandlers {
   cancel: () => void | Promise<void>;
 }
 
+export function renderReviewRecoveryStatus(run: Run) {
+  const recovery = run.engineState?.publishGate?.reviewRecovery;
+  if (!recovery || recovery.status === 'recovered') return nothing;
+  return html`
+    <div class="review-recovery ${recovery.status}" role="status">
+      Review recovery: ${recovery.status}${recovery.lastError ? ` — ${recovery.lastError}` : ''}
+    </div>
+  `;
+}
+
 export function renderPipelineControls(
   run: Run,
   handlers: PipelineControlHandlers,

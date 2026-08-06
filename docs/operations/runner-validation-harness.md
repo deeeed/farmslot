@@ -50,22 +50,23 @@ Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabi
 
 ## Scenarios
 
-| Scenario                        | Proves                                                                | Claude/Codex | Cursor            | Grok                   |
-| ------------------------------- | --------------------------------------------------------------------- | ------------ | ----------------- | ---------------------- |
-| `hook-smoke`                    | SessionStart + UserPromptSubmit + Stop + `tmuxPane`                   | live tmux    | skip              | skip                   |
-| `pane-smoke`                    | Launch + response marker in pane                                      | skip         | `--print --trust` | `-p` single-turn       |
-| `interaction-smoke`             | Post-launch TUI flow (blockers + compose)                             | skip         | skip              | **interactive** launch |
-| `dispatch-prompt-smoke`         | Gateway `sendRunnerPostLaunchPrompt` (dispatch parity)                | skip         | skip              | **interactive** launch |
-| `dispatch-prompt-dropped-enter` | Buffered prompt recovery after a deterministically omitted submit key | Codex live   | skip              | skip                   |
-| `dispatch-prompt-mcp-race`      | MCP init race: fixture repro + live force-fail + fix pass             | skip         | skip              | **interactive** launch |
-| `dispatch-prompt-trust`         | Directory-trust / project-directory + classifier send_yes             | skip         | skip              | **fixture**            |
-| `prompt-accepted`               | Sentinel digest ↔ UserPromptSubmit                                    | live         | skip              | skip                   |
-| `retained-safe-send-smoke`      | Exact retained-session follow-up after activity expiry                | live         | skip              | live                   |
-| `turn-boundary`                 | Stop after UserPromptSubmit                                           | live         | skip              | skip                   |
-| `busy-composer`                 | Busy pane regex fixtures                                              | fixtures     | skip              | skip                   |
-| `mode-switch`                   | Bypass / permission mode                                              | live         | skip              | skip                   |
-| `session-attribution-smoke`     | Stale session rejected; hook path + model match                       | live tmux    | skip              | live tmux              |
-| `token-usage-smoke`             | Live `session-usage.sh` on resolved path + model match                | live tmux    | skip              | live tmux              |
+| Scenario                            | Proves                                                                | Claude/Codex | Cursor            | Grok                   |
+| ----------------------------------- | --------------------------------------------------------------------- | ------------ | ----------------- | ---------------------- |
+| `hook-smoke`                        | SessionStart + UserPromptSubmit + Stop + `tmuxPane`                   | live tmux    | skip              | skip                   |
+| `pane-smoke`                        | Launch + response marker in pane                                      | skip         | `--print --trust` | `-p` single-turn       |
+| `interaction-smoke`                 | Post-launch TUI flow (blockers + compose)                             | skip         | skip              | **interactive** launch |
+| `dispatch-prompt-smoke`             | Gateway `sendRunnerPostLaunchPrompt` (dispatch parity)                | skip         | skip              | **interactive** launch |
+| `dispatch-prompt-dropped-enter`     | Buffered prompt recovery after a deterministically omitted submit key | Codex live   | skip              | skip                   |
+| `dispatch-prompt-mcp-race`          | MCP init race: fixture repro + live force-fail + fix pass             | skip         | skip              | **interactive** launch |
+| `dispatch-prompt-trust`             | Directory-trust / project-directory + classifier send_yes             | skip         | skip              | **fixture**            |
+| `prompt-accepted`                   | Sentinel digest ↔ UserPromptSubmit                                    | live         | skip              | skip                   |
+| `review-recovery-terminal-contract` | Runner-agnostic recovery, wait, replay, and slot cleanup (once)       | gateway E2E  | not repeated      | not repeated           |
+| `retained-safe-send-smoke`          | Exact retained-session follow-up after activity expiry                | live         | skip              | live                   |
+| `turn-boundary`                     | Stop after UserPromptSubmit                                           | live         | skip              | skip                   |
+| `busy-composer`                     | Busy pane regex fixtures                                              | fixtures     | skip              | skip                   |
+| `mode-switch`                       | Bypass / permission mode                                              | live         | skip              | skip                   |
+| `session-attribution-smoke`         | Stale session rejected; hook path + model match                       | live tmux    | skip              | live tmux              |
+| `token-usage-smoke`                 | Live `session-usage.sh` on resolved path + model match                | live tmux    | skip              | live tmux              |
 
 Skipped scenarios record `skipReason` and count as pass so matrices stay honest.
 
@@ -81,6 +82,41 @@ Skipped scenarios record `skipReason` and count as pass so matrices stay honest.
 | L5    | Manual runner upgrade check                                    | [runner-token-usage.md](../reference/runner-token-usage.md) § Validation protocol        |
 
 Do not duplicate token parsing in harness JS — scenarios call `scripts/session-usage.sh` via `lib/session-usage-harness.mjs` (same env contract as L1).
+
+## Self-review result contract
+
+Every self-review context launched through `runReviewAgent`—ordinary self-review and
+publication-gate reviewers alike—receives `reviewResultFile` and writes two scoped artifacts before
+its terminal signal:
+
+- `artifacts/review-feedback.<context>.md` — human-readable analysis.
+- `artifacts/review-result.<context>.json` — authoritative verdict and issue list.
+
+The JSON schema is deliberately small: `schemaVersion: 1`, `verdict: "pass" | "issues"`, and
+`issues: Array<{ file, line?, description }>`. A pass has no issues; an issues verdict has at least
+one. For those contexts, the terminal contract requires both files and the JSON is authoritative;
+Markdown formatting is not positive evidence for the verdict. Legacy in-flight contexts without
+`reviewResultFile` may still use the legacy Markdown parser during migration.
+
+Restart recovery distinguishes waiting from terminal-invalid state. Active partial writes remain
+recoverable. Once completion is established by a successful `complete`/`done` signal or reviewer
+process/window completion, a missing or invalid structured result is stable: recovery marks the
+reviewer blocked, records `reviewRecovery.status = "operator-required"`, preserves valid sibling
+results, replays the human gate, and stops polling. Fresh failed and blocked terminal signals persist
+a visible failed-review outcome without retry; stale prior-attempt signals are ignored. An idle or
+shell-looking pane is not completion evidence, so partial artifacts remain recoverable while its
+runner is alive. The live wait still ends at `review_timeout_min`; a newly launched reviewer window
+is killed by its resolved tmux window ID before the caller raises the timeout, while an operator can
+end the wait earlier with a shared failed or blocked terminal signal. The registered scenario uses
+only its generated session, window, and child-process IDs for cleanup; it never scans or kills by a
+shared name pattern. Reproduce the production gateway regression against the broken baseline and
+current gateway paths with:
+
+```bash
+node scripts/runner-validation/run.mjs --scenario review-recovery-terminal-contract --out-dir docs/operations/evidence
+```
+
+Evidence: `evidence/runner-validate-<host>-gateway-review-recovery-terminal-contract.json`.
 
 ## Session binding + attribution
 
