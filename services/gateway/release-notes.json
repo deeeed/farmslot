@@ -1,11 +1,11 @@
 {
-  "version": "0.4.0",
-  "date": "2026-07-27",
+  "version": "0.5.0",
+  "date": "2026-08-06",
   "items": [
-    "fix(work-graph): a node left `succeeded` by a deleted run is reclaimed when its backlog item is reopened, so the item can be dispatched again. Previously the node kept its status, nothing reconsidered it, and redispatching silently did nothing. Narrow by design: it requires the run to be gone and the node to have held one, so a node marked succeeded manually or by a reference condition is untouched",
-    "fix(tasks): the interactive checklist renders as `**N. Text**` so the task schema parser keeps each step's label. `**N.** Text` made it strip the first bold group and discard the rest, so Command Center showed eight numbered steps with no titles",
-    "fix(run-engine): a dev run's terminal signal is now commit-verified. The push guard covered only pr-complete and update-branch, so a dev worker could finish with its work uncommitted in the slot worktree, where it is destroyed on reclaim. A push is still not required for dev — the publication step performs it — and interactive dev stays exempt, since publishing there is the operator's call",
-    "fix(gateway): the interactive dev checklist is an execution plan again, not the ticket's acceptance criteria. ACs are end-state assertions, so a worker could not mark progress against them and the operator could not follow the session; they stay in TASK.md as proof targets",
-    "fix(run-engine): a lightweight interactive dev run is held for its operator instead of completing itself. The dev pipeline runs MONITOR → SELF_REVIEW → COMPLETE → HUMAN_GATE, so the gate is a publication gate and cannot hold a run before completion; a worker terminal signal ran through COMPLETE, released the slot and killed the worker. The signal now pauses the run at MONITOR, which stops the pipeline before any slot cleanup, so the slot stays owned and the worker alive and every interactive action (done-no-pr, blocked, failed, abort, self-review) remains available"
+    "Independent review fails closed without an explicit PASS/ISSUES verdict, and reviews pin to one certified commit plus byte-exact untracked file manifests",
+    "Ready-gate recaptures the contribution diff at HEAD, refuses to restamp when the package changed, and soft-chips behind-main / merge conflicts",
+    "Roadmap delivery lineage is projected from the full backlog and run stores so historical runs stay visible with durable backlinks",
+    "Dispatch exclusive claim protocol and Codex multi-account seat bind/failover keep concurrent queue work and provider seats honest",
+    "Worktree branch diffs include uncommitted and untracked files; git.status exposes HEAD SHA so clients can invalidate committed-diff caches after rebases"
   ]
 }
