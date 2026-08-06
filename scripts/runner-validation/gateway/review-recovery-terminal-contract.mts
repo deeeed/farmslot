@@ -115,6 +115,8 @@ interface SlotCleanupSnapshot {
   trackedPrePidLauncherKilled: boolean;
   similarlyNamedNeighborPreserved: boolean;
   processGroupIdentityRemoved: boolean;
+  recycledWrongScopeGroupPreserved: boolean;
+  staleIdentityRemoved: boolean;
 }
 
 interface PipelineSnapshot {
@@ -594,8 +596,12 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
-function spawnGeneratedRunner(): number {
-  const child = spawn(runnerPath, ['30'], { detached: true, stdio: 'ignore' });
+function spawnGeneratedRunner(scope?: string): number {
+  const child = spawn(runnerPath, ['30'], {
+    detached: true,
+    env: scope ? { ...process.env, FARMSLOT_PREPARE_SCOPE: scope } : process.env,
+    stdio: 'ignore',
+  });
   assert.ok(child.pid && child.pid > 1, 'generated runner pid was not available');
   generatedRunnerPids.add(child.pid);
   child.unref();
@@ -612,13 +618,16 @@ async function waitForProcessExit(pid: number, timeoutMs = 1_000): Promise<boole
 
 async function runSlotCleanupContract(recovery: RecoveryModule): Promise<SlotCleanupSnapshot> {
   const runtimeDir = path.join(repoDir, '.agent');
-  const processGroupPath = path.join(runtimeDir, 'preflight.pgid');
+  const processGroupPath = path.join(runtimeDir, 'preflight.identity');
   const launcherPidPath = path.join(runtimeDir, 'launcher.pid');
   mkdirSync(runtimeDir, { recursive: true });
 
-  const trackedPid = spawnGeneratedRunner();
+  const trackedScope = '11111111111111111111111111111111';
+  const recycledScope = '22222222222222222222222222222222';
+  const staleScope = '33333333333333333333333333333333';
+  const trackedPid = spawnGeneratedRunner(trackedScope);
   const neighborPid = spawnGeneratedRunner();
-  writeText(processGroupPath, `${trackedPid}\n`);
+  writeText(processGroupPath, `${trackedPid}\t${trackedScope}\n`);
   const launcherPidAbsentBeforeCleanup = !existsSync(launcherPidPath);
 
   if (!recovery.cleanupSlotProcesses) {
@@ -627,15 +636,26 @@ async function runSlotCleanupContract(recovery: RecoveryModule): Promise<SlotCle
       trackedPrePidLauncherKilled: false,
       similarlyNamedNeighborPreserved: processIsAlive(neighborPid),
       processGroupIdentityRemoved: false,
+      recycledWrongScopeGroupPreserved: false,
+      staleIdentityRemoved: false,
     };
   }
 
   await recovery.cleanupSlotProcesses(slotId);
+  const trackedPrePidLauncherKilled = await waitForProcessExit(trackedPid);
+  const similarlyNamedNeighborPreserved = processIsAlive(neighborPid);
+  const processGroupIdentityRemoved = !existsSync(processGroupPath);
+
+  const recycledPid = spawnGeneratedRunner(recycledScope);
+  writeText(processGroupPath, `${recycledPid}\t${staleScope}\n`);
+  await recovery.cleanupSlotProcesses(slotId);
   return {
     launcherPidAbsentBeforeCleanup,
-    trackedPrePidLauncherKilled: await waitForProcessExit(trackedPid),
-    similarlyNamedNeighborPreserved: processIsAlive(neighborPid),
-    processGroupIdentityRemoved: !existsSync(processGroupPath),
+    trackedPrePidLauncherKilled,
+    similarlyNamedNeighborPreserved,
+    processGroupIdentityRemoved,
+    recycledWrongScopeGroupPreserved: processIsAlive(recycledPid),
+    staleIdentityRemoved: !existsSync(processGroupPath),
   };
 }
 

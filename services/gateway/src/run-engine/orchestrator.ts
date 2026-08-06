@@ -410,8 +410,10 @@ async function finalizeNonThrownTerminalRun(
       // agents) runs INSIDE the cleanup helper, behind its releasing fence and
       // only when this run still owns the slot exclusively — an incoming
       // nudge's reserved worker must never be killed by the dying owner.
-      // cleanupSlotProcesses is idempotent (kill 2>/dev/null + rm -f) so
-      // calling it on flows where prepare did not run is a no-op.
+      // cleanupSlotProcesses is idempotent: it signals a prepare group only
+      // when its opaque scope still matches a live member, while missing or
+      // stale identities are removed without signalling. Calling it on flows
+      // where prepare did not run is therefore a no-op.
       await cleanupSlotAfterRunFailure(slotId, runId, `non-thrown ${run.status}`, async () => {
         await cleanupSlotProcesses(slotId);
         const currentRun = getRun(runId);
@@ -1215,15 +1217,28 @@ export async function cleanupSlotProcesses(slotId: string): Promise<void> {
   const rd = `${vars.remoteRepo}/${runtimeDir}`;
   const port = vars.resourceVars.port;
 
-  // Kill the exact prepare process group first. Nohup descendants retain this
-  // group after the wrapper exits, including launchers that have not written
-  // their own pidfiles yet.
+  // Kill the exact prepare process group only while a live member still carries
+  // the opaque scope exported by this prepare. Nohup descendants retain both
+  // identities after the wrapper exits; a recycled PGID cannot satisfy the
+  // scope check.
   const killCmd = [
     'set -u',
-    `groupfile="${rd}/preflight.pgid";`,
-    `if [ -f "$groupfile" ]; then`,
-    `  pgid=$(tr -d '[:space:]' < "$groupfile");`,
-    `  case "$pgid" in ''|*[!0-9]*) ;; *) if [ "$pgid" -gt 1 ] && kill -TERM -- "-$pgid" 2>/dev/null; then echo "killed preflight group ($pgid)"; fi ;; esac;`,
+    `identityfile="${rd}/preflight.identity";`,
+    `if [ -f "$identityfile" ]; then`,
+    `  identity=$(cat "$identityfile" 2>/dev/null || true);`,
+    `  tab=$(printf '\t');`,
+    `  pgid=""; scope="";`,
+    `  case "$identity" in *"$tab"*) pgid=\${identity%%"$tab"*}; scope=\${identity#*"$tab"} ;; esac;`,
+    `  valid=false;`,
+    `  case "$pgid" in ''|*[!0-9]*) ;; *) case "$scope" in ''|*[!0-9a-f]*|*"$tab"*) ;; *) if [ "$pgid" -gt 1 ] && [ "\${#scope}" -eq 32 ]; then valid=true; fi ;; esac ;; esac;`,
+    `  matched=false;`,
+    `  if $valid; then`,
+    `    assignment="FARMSLOT_PREPARE_SCOPE=$scope";`,
+    `    for pid in $(ps -axo pid=,pgid= 2>/dev/null | awk -v wanted="$pgid" '$2 == wanted { print $1 }'); do`,
+    `      if ps eww -p "$pid" -o command= 2>/dev/null | tr ' ' '\n' | grep -Fxq -- "$assignment"; then matched=true; break; fi;`,
+    `    done;`,
+    `  fi;`,
+    `  if $matched && kill -TERM -- "-$pgid" 2>/dev/null; then echo "killed verified preflight group ($pgid)"; fi;`,
     `fi`,
     // Kill later process-specific identities when their pidfiles exist.
     `for pf in launcher.pid browser.pid chromium.pid webpack.pid; do`,
@@ -1238,7 +1253,7 @@ export async function cleanupSlotProcesses(slotId: string): Promise<void> {
       ? `if pids=$(lsof -ti ":${port}" 2>/dev/null); then if [ -n "$pids" ]; then kill $pids; fi; else rc=$?; if [ "$rc" -ne 1 ]; then exit "$rc"; fi; fi`
       : ':',
     // Clean pid files
-    `rm -f "${rd}/browser.pid" "${rd}/chromium.pid" "${rd}/extension.id" "${rd}/launcher.pid" "${rd}/preflight.pgid" "${rd}/webpack.pid"`,
+    `rm -f "${rd}/browser.pid" "${rd}/chromium.pid" "${rd}/extension.id" "${rd}/launcher.pid" "${rd}/preflight.identity" "${rd}/preflight.pgid" "${rd}/webpack.pid"`,
   ].join('\n');
 
   const result = await execOnSlot(vars, killCmd);
