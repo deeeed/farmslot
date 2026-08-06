@@ -24,6 +24,7 @@ export * from './search.js';
 export * from './slot.js';
 export * from './task.js';
 export * from './terminal.js';
+export * from './terminal-attachment.js';
 export * from './tmux.js';
 export * from './work-graph.js';
 export * from './worker-session-history.js';

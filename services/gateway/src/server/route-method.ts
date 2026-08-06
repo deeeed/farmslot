@@ -147,6 +147,9 @@ import {
   type StreamSubscribeParams,
   type StreamUnsubscribeParams,
   type TaskProgressParams,
+  type TerminalAttachmentCleanupParams,
+  type TerminalAttachmentDeliverParams,
+  type TerminalAttachmentUploadParams,
   type TerminalInputParams,
   type TerminalReinitParams,
   type TerminalResizeParams,
@@ -373,6 +376,11 @@ import {
   terminalSubscribe,
 } from '../methods/terminal.js';
 import {
+  terminalAttachmentCleanup,
+  terminalAttachmentDeliver,
+  terminalAttachmentUpload,
+} from '../methods/terminal-attachment.js';
+import {
   terminalWorkerInput,
   terminalWorkerResize,
   terminalWorkerSnapshot,
@@ -419,7 +427,11 @@ import { unsubscribePty } from '../runtime/pty-stream.js';
 import { resubscribeAgentScreenSessions } from '../runtime/screen-session.js';
 import { unsubscribe as unsubscribeTerminalPoll } from '../runtime/tmux-stream.js';
 // Method handlers
-import { type GatewayAuthRuntime, requireNodeSession } from '../security/auth.js';
+import {
+  type GatewayAuthRuntime,
+  requireAuthenticatedSession,
+  requireNodeSession,
+} from '../security/auth.js';
 
 import type { ClientState } from './client-state.js';
 import { routeRunMethod } from './run-route.js';
@@ -730,6 +742,17 @@ export async function routeMethod(
       return terminalReinit(p as TerminalReinitParams);
     case Methods.TERMINAL_SNAPSHOT:
       return terminalSnapshot(p as TerminalSnapshotParams);
+    case Methods.TERMINAL_ATTACHMENT_UPLOAD:
+      // Explicit re-assertion at the write boundary: staging operator-supplied bytes onto a
+      // slot must never depend on an upstream gate staying in place.
+      requireAuthenticatedSession(authRuntime, state);
+      return terminalAttachmentUpload(p as TerminalAttachmentUploadParams);
+    case Methods.TERMINAL_ATTACHMENT_DELIVER:
+      requireAuthenticatedSession(authRuntime, state);
+      return terminalAttachmentDeliver(p as TerminalAttachmentDeliverParams);
+    case Methods.TERMINAL_ATTACHMENT_CLEANUP:
+      requireAuthenticatedSession(authRuntime, state);
+      return terminalAttachmentCleanup(p as TerminalAttachmentCleanupParams);
     case Methods.TERMINAL_WORKER_SUBSCRIBE: {
       const sub = p as TerminalWorkerSubscribeParams;
       const key = terminalWorkerUnsubscribeKey(sub);

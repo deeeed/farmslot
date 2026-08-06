@@ -246,6 +246,12 @@ export interface TerminalChromeContext {
   onReconnect: () => void | Promise<void>;
   onInputKeydown: (event: KeyboardEvent) => void;
   onSend: () => void;
+  dropOverlay: unknown;
+  attachmentTray: unknown;
+  onDragEnter: (event: DragEvent) => void;
+  onDragOver: (event: DragEvent) => void;
+  onDragLeave: (event: DragEvent) => void;
+  onDrop: (event: DragEvent) => void;
 }
 
 export function renderTerminalChrome(ctx: TerminalChromeContext) {
@@ -306,7 +312,13 @@ export function renderTerminalChrome(ctx: TerminalChromeContext) {
         `
       : ''}
     ${ctx.toolbar}
-    <div class="terminal-wrap">
+    <div
+      class="terminal-wrap"
+      @dragenter=${ctx.onDragEnter}
+      @dragover=${ctx.onDragOver}
+      @dragleave=${ctx.onDragLeave}
+      @drop=${ctx.onDrop}
+    >
       ${(() => {
         const overlay = terminalAttachOverlay({
           hasTarget: ctx.hasTarget,
@@ -327,8 +339,9 @@ export function renderTerminalChrome(ctx: TerminalChromeContext) {
           : '';
       })()}
       <div class="terminal-container"></div>
-      ${ctx.copyToast ? html`<div class="copy-toast">Copied</div>` : ''}
+      ${ctx.copyToast ? html`<div class="copy-toast">Copied</div>` : ''} ${ctx.dropOverlay}
     </div>
+    ${ctx.attachmentTray}
     ${ctx.exited
       ? html`
           <div class="exit-bar">

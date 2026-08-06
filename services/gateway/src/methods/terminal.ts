@@ -162,10 +162,17 @@ async function resolveBareSession(slotId: string): Promise<{ target: string; ses
 // `bareSession: true` the agent-context lookup is skipped — required for postmortem callers
 // whose subscribe attached to the bare PTY but whose subsequent input/resize would
 // otherwise resolve to the active blocked run's primary role and silently miss the bare PTY.
-async function resolveAgentOrBareTarget(
+export async function resolveAgentOrBareTarget(
   slotId: string,
   params: { bareSession?: boolean } & Parameters<typeof resolveAgentTarget>[1],
-): Promise<{ target: string; session: string; role?: AgentRole; contextId?: string }> {
+): Promise<{
+  target: string;
+  session: string;
+  role?: AgentRole;
+  contextId?: string;
+  /** Only ever set by the agent-context branch; bare sessions have no context to read it from. */
+  runner?: string;
+}> {
   if (params?.bareSession === true) return resolveBareSession(slotId);
   return resolveAgentTarget(slotId, params);
 }

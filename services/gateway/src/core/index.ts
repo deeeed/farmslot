@@ -53,13 +53,16 @@ export { applyProjectCommandEnv, buildProjectCommandEnvPrefix } from './project-
 export { loadPromptTemplate } from './prompt-templates.js';
 export type { LatestValidRecipeRunPointer } from './recipe-artifacts.js';
 export { inferArtifactPurpose, sanitizeLatestValidRecipeRunPointer } from './recipe-artifacts.js';
-export type { SlotLocality } from './slot-io.js';
+export type { SlotLocality, SlotStatResult } from './slot-io.js';
 export {
   slotCopyDir,
   slotCopyFile,
+  slotDeletePath,
   slotFileExists,
   slotListDir,
+  slotMkdir,
   slotReadFile,
+  slotStat,
   slotWatchFile,
   slotWriteFile,
   slotWriteFiles,

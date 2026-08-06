@@ -5,6 +5,7 @@ import { property, query, state } from 'lit/decorators.js';
 
 import type { AgentRole, TmuxWorkerRef } from '@farmslot/protocol';
 
+import type { TerminalAttachment, TerminalAttachmentQueue } from './terminal-attachment-model.js';
 import type { TerminalAttachPhase } from './terminal-view-attach-model.js';
 import {
   parseWorkerRef,
@@ -51,6 +52,8 @@ export abstract class TerminalViewState extends LitElement {
   @state() protected _renameValue = '';
   @state() protected _selectMode = false;
   @state() protected _copyToast = false;
+  @state() protected _attachments: TerminalAttachment[] = [];
+  @state() protected _dragActive = false;
 
   @query('.terminal-container') protected _termContainer!: HTMLDivElement;
   @query('.input-field') protected _inputField!: HTMLInputElement;
@@ -82,6 +85,10 @@ export abstract class TerminalViewState extends LitElement {
   protected _ptyInputBound = false;
   protected _activeSubscribeIdentity: TerminalTargetIdentity | null = null;
   protected _activeSubscribePostmortem = false;
+  protected _attachmentQueue?: TerminalAttachmentQueue;
+  // dragenter/dragleave fire per descendant; count them so the overlay does not flicker.
+  protected _dragDepth = 0;
+  protected _pasteCaptureBound = false;
 
   protected _workerRef(): TmuxWorkerRef | null {
     return parseWorkerRef(this.workerRefJson);

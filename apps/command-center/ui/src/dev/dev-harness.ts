@@ -77,6 +77,7 @@ import '../components/work-graph/work-graph-panel.js';
 import '../components/resources/resource-panel.js';
 import '../components/device-grid/device-grid.js';
 import './chat-dev.js';
+import './terminal-attachment-dev.js';
 import './machine-health-dev.js';
 import './config-dev.js';
 import '../components/recipe-graph/recipe-graph.js';
@@ -133,6 +134,7 @@ type DevRoute =
   | 'slot-actions'
   | 'fleet-refresh'
   | 'terminal'
+  | 'terminal-attachment'
   | 'terminal-grid'
   | 'pr-board'
   | 'decisions'
@@ -224,6 +226,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup
   { route: 'slot-actions', label: 'Slot Actions', group: 'components' },
   { route: 'fleet-refresh', label: 'Fleet Refresh', group: 'components' },
   { route: 'terminal', label: 'Terminal', group: 'components' },
+  { route: 'terminal-attachment', label: 'Terminal Attachments', group: 'components' },
   { route: 'violations', label: 'Violations', group: 'components' },
   { route: 'progress', label: 'Progress', group: 'components' },
   { route: 'diff', label: 'Diff Viewer', group: 'components' },
@@ -373,6 +376,8 @@ export class DevHarness extends LitElement {
         return this.renderFleetRefresh();
       case 'terminal':
         return this.renderTerminal();
+      case 'terminal-attachment':
+        return this.renderTerminalAttachment();
       case 'terminal-grid':
         return this.renderTerminalGrid();
       case 'pr-board':
@@ -1283,6 +1288,13 @@ All checks passed.`;
     return html`
       <p class="section-label">Terminal output (mock)</p>
       <div class="terminal-placeholder">${mockOutput}</div>
+    `;
+  }
+
+  private renderTerminalAttachment() {
+    return html`
+      <p class="section-label">Terminal image attachment states (paste + drag/drop)</p>
+      <terminal-attachment-dev></terminal-attachment-dev>
     `;
   }
 

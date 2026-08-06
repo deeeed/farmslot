@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(terminal): name the staged image path plainly in the Claude attachment prompt. The previous `@<path>` reference opened Claude Code's file-reference autocomplete, which consumed the submit Enter, so the instruction sat unsent in the composer while delivery reported success. Proven end to end against live Claude and Codex runner panes.
+- fix(terminal): route image-attachment upload and delivery through the same bare-session-aware target resolution the terminal input path uses, so an image pasted into a postmortem terminal is staged for and delivered to the bare PTY the operator is attached to instead of the still-active run's context pane.
+- fix(terminal): resolve the attachment runner from the selected agent context instead of the slot, bind each upload and delivery to the target it started against, clear buffered chunks of interrupted uploads on lifecycle cleanup under an explicit byte ceiling, and reject unknown cleanup scopes before deleting anything.
+- feat(terminal): stage pasted/dropped terminal images under Farmslot-managed temporary storage (`terminal.attachment.upload`), deliver them through a runner attachment provider as a separate protocol action (`terminal.attachment.deliver`), and reclaim staged files on slot release plus a bounded stale sweep (`terminal.attachment.cleanup`).
 - fix(push-verification): autonomous-dev completion ignores untracked leftovers so farm scaffold dirt (e.g. AgenticService) cannot soft-lock after a clean task commit; tracked dirtiness still blocks.
 - chore: comment-only sweep — code comments describe rationale inline instead of citing ticket numbers (no behavior change).
 - refactor(gateway): ready-gate / publish-package decision labels use independent-review and runner-diversity wording (action ids unchanged for replay compatibility) (MANUAL-000008).

@@ -334,6 +334,18 @@
       "surface": "na",
       "note": "Web terminal PTY surface (Command Center)."
     },
+    "terminal.attachment.upload": {
+      "surface": "na",
+      "note": "Web terminal image paste/drag-drop (Command Center); carries browser-held image bytes."
+    },
+    "terminal.attachment.deliver": {
+      "surface": "na",
+      "note": "Web terminal image paste/drag-drop (Command Center); hands the staged path to the runner."
+    },
+    "terminal.attachment.cleanup": {
+      "surface": "na",
+      "note": "Web terminal image paste/drag-drop (Command Center); also called by slot release."
+    },
     "terminal.worker.subscribe": {
       "surface": "na",
       "note": "Web terminal PTY surface (Command Center)."

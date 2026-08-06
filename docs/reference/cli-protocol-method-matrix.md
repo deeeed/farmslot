@@ -390,20 +390,23 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## terminal.\*
 
-| Method                        | Surface | CLI command | TUI | Note                                       |
-| ----------------------------- | ------- | ----------- | --- | ------------------------------------------ |
-| `terminal.subscribe`          | na      |             |     | Web terminal PTY surface (Command Center). |
-| `terminal.unsubscribe`        | na      |             |     | Web terminal PTY surface (Command Center). |
-| `terminal.send`               | na      |             |     | Web terminal PTY surface (Command Center). |
-| `terminal.snapshot`           | na      |             |     | Web terminal PTY surface (Command Center). |
-| `terminal.input`              | na      |             |     | Web terminal PTY surface (Command Center). |
-| `terminal.resize`             | na      |             |     | Web terminal PTY surface (Command Center). |
-| `terminal.reinit`             | na      |             |     | Web terminal PTY surface (Command Center). |
-| `terminal.worker.subscribe`   | na      |             |     | Web terminal PTY surface (Command Center). |
-| `terminal.worker.unsubscribe` | na      |             |     | Web terminal PTY surface (Command Center). |
-| `terminal.worker.input`       | na      |             |     | Web terminal PTY surface (Command Center). |
-| `terminal.worker.resize`      | na      |             |     | Web terminal PTY surface (Command Center). |
-| `terminal.worker.snapshot`    | na      |             |     | Web terminal PTY surface (Command Center). |
+| Method                        | Surface | CLI command | TUI | Note                                                                                      |
+| ----------------------------- | ------- | ----------- | --- | ----------------------------------------------------------------------------------------- |
+| `terminal.subscribe`          | na      |             |     | Web terminal PTY surface (Command Center).                                                |
+| `terminal.unsubscribe`        | na      |             |     | Web terminal PTY surface (Command Center).                                                |
+| `terminal.send`               | na      |             |     | Web terminal PTY surface (Command Center).                                                |
+| `terminal.snapshot`           | na      |             |     | Web terminal PTY surface (Command Center).                                                |
+| `terminal.input`              | na      |             |     | Web terminal PTY surface (Command Center).                                                |
+| `terminal.resize`             | na      |             |     | Web terminal PTY surface (Command Center).                                                |
+| `terminal.reinit`             | na      |             |     | Web terminal PTY surface (Command Center).                                                |
+| `terminal.attachment.upload`  | na      |             |     | Web terminal image paste/drag-drop (Command Center); carries browser-held image bytes.    |
+| `terminal.attachment.deliver` | na      |             |     | Web terminal image paste/drag-drop (Command Center); hands the staged path to the runner. |
+| `terminal.attachment.cleanup` | na      |             |     | Web terminal image paste/drag-drop (Command Center); also called by slot release.         |
+| `terminal.worker.subscribe`   | na      |             |     | Web terminal PTY surface (Command Center).                                                |
+| `terminal.worker.unsubscribe` | na      |             |     | Web terminal PTY surface (Command Center).                                                |
+| `terminal.worker.input`       | na      |             |     | Web terminal PTY surface (Command Center).                                                |
+| `terminal.worker.resize`      | na      |             |     | Web terminal PTY surface (Command Center).                                                |
+| `terminal.worker.snapshot`    | na      |             |     | Web terminal PTY surface (Command Center).                                                |
 
 ## tmux.\*
 

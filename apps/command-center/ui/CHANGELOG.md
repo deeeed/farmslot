@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(terminal): bind and unbind the terminal's capture-phase image-paste listener on connect/disconnect rather than on first render and terminal disposal, so image paste survives a DOM move or an xterm re-initialization; the non-image Cmd+V path sends through the same unguarded sender as every other intercepted key combo again.
+- fix(terminal): pin each image attachment to the terminal target it was added on, hide attachments on worker terminals where the protocol cannot serve them, consume unsupported file drops instead of letting the browser navigate away, and cap the attachment tray height.
+- feat(terminal): paste (Ctrl+V/Cmd+V) or drag-and-drop an image onto a slot terminal to attach it to the running worker, with a card showing thumbnail, filename, size, determinate upload progress, distinct upload vs runner-delivery states, retry, and remove.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.5.0 - 2026-08-06

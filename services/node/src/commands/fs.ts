@@ -214,12 +214,17 @@ export async function fsHash(params: NodeFsPathParams): Promise<{ sha256: string
 
 export async function fsStat(
   params: NodeFsPathParams,
-): Promise<{ size: number; isFile: boolean; isDirectory: boolean }> {
+): Promise<{ size: number; isFile: boolean; isDirectory: boolean; mtimeMs: number }> {
   const { target } = confinedPath(params);
   // This is a metadata probe, not an acting read. lstat preserves the old
   // ability to inspect unreadable entries while avoiding symlink traversal.
   const info = await lstat(target);
-  return { size: info.size, isFile: info.isFile(), isDirectory: info.isDirectory() };
+  return {
+    size: info.size,
+    isFile: info.isFile(),
+    isDirectory: info.isDirectory(),
+    mtimeMs: info.mtimeMs,
+  };
 }
 
 export async function fsRealpath(params: NodeFsPathParams): Promise<{ path: string }> {

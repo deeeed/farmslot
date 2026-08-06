@@ -13,6 +13,19 @@ import '../progress-tracker/progress-tracker.js';
 
 import { gateway } from '../../gateway-client.js';
 
+import {
+  dropCarriesFiles,
+  type ImageCandidate,
+  imageCandidatesFromClipboard,
+  imageCandidatesFromDrop,
+  TerminalAttachmentQueue,
+  unsupportedDropFilenames,
+} from './terminal-attachment-model.js';
+import {
+  renderTerminalAttachmentTray,
+  renderTerminalDropOverlay,
+  terminalAttachmentStyles,
+} from './terminal-attachment-renderers.js';
 import { isRetryableTerminalSubscribeError, isRoleWindowMissingError } from './terminal-errors.js';
 import {
   extractOsc52Clipboard,
@@ -45,10 +58,16 @@ const TARGET_CHANGE_DEBOUNCE_MS = 50;
 
 @customElement('terminal-view')
 export class TerminalView extends TerminalViewState {
-  static styles = terminalViewStyles;
+  static styles = [terminalViewStyles, terminalAttachmentStyles];
 
   connectedCallback() {
     super.connectedCallback();
+    // Bound here, not in firstUpdated(): _dispose() unbinds on every disconnect, and
+    // firstUpdated cannot fire a second time, so a DOM move that re-connects this element
+    // would otherwise leave it live with image paste permanently dead. Lit assigns
+    // renderRoot in ReactiveElement.connectedCallback() before this runs.
+    this._bindPasteCapture();
+    this._initAttachmentQueue();
     this._connected = gateway.connectionState === 'connected';
     this._recoveryMessage = this._connected ? '' : 'Waiting for gateway';
     this._unsubConn = gateway.onConnectionChange((state) => this._handleGatewayConnection(state));
@@ -58,6 +77,11 @@ export class TerminalView extends TerminalViewState {
   disconnectedCallback() {
     super.disconnectedCallback();
     this._log('disconnectedCallback');
+    // Paired with connectedCallback's bind. Deliberately not in _dispose(): the HMR recovery
+    // path in updated() disposes the terminal while the element stays connected, and unbinding
+    // there would kill image paste for the rest of the element's life.
+    this.renderRoot.removeEventListener('paste', this._onPasteCapture, true);
+    this._pasteCaptureBound = false;
     this._dispose();
   }
 
@@ -132,6 +156,9 @@ export class TerminalView extends TerminalViewState {
       priorPostmortem,
     );
     this._teardownStreams(true, teardownTarget, teardownPostmortem);
+    // Cards describe work bound to the pane we are leaving; keeping them on screen would
+    // suggest the new target has attachments it never received.
+    this._attachmentQueue?.clear();
     this._terminal.clear();
     this._taskMarkdown = '';
     this._mode = 'none';
@@ -141,6 +168,139 @@ export class TerminalView extends TerminalViewState {
     if (gateway.connectionState === 'connected') {
       void this._subscribe();
     }
+  }
+
+  // --- Image attachments (paste + drag/drop) ---
+
+  /**
+   * Attachments are slot-scoped: the upload/delivery protocol resolves a slot plus an agent
+   * context, and a `tmux.worker` terminal has neither. Offering the affordance there would
+   * advertise a feature whose every request must fail, so the whole surface is disabled.
+   */
+  private _attachmentsSupported(): boolean {
+    return !this._workerRef() && Boolean(this.slotId);
+  }
+
+  private _initAttachmentQueue() {
+    if (this._attachmentQueue) return;
+    this._attachmentQueue = new TerminalAttachmentQueue(
+      {
+        uploadChunk: ({ target, ...params }) =>
+          gateway.request(Methods.TERMINAL_ATTACHMENT_UPLOAD, { ...target, ...params }),
+        deliver: ({ target, ...params }) =>
+          gateway.request(Methods.TERMINAL_ATTACHMENT_DELIVER, { ...target, ...params }),
+        readChunkBase64: (file, start, end) => readBlobBase64(file.slice(start, end)),
+        newId: () => crypto.randomUUID(),
+        revokePreview: (url) => URL.revokeObjectURL(url),
+      },
+      () => {
+        this._attachments = this._attachmentQueue?.list() ?? [];
+      },
+    );
+  }
+
+  private async _enqueueAttachments(candidates: ImageCandidate[]) {
+    this._initAttachmentQueue();
+    // Snapshot the terminal identity once. Every chunk and the delivery replay this exact
+    // target, so switching run/role/context mid-upload cannot retarget an in-flight image.
+    const target = this._targetParams();
+    for (const candidate of candidates) {
+      this._log('attachment', `${candidate.filename} ${candidate.file.size}B`);
+      await this._attachmentQueue!.add(candidate, URL.createObjectURL(candidate.file), target);
+    }
+  }
+
+  /**
+   * Ctrl+V and context-menu paste land on xterm's own textarea, and xterm's paste handler
+   * calls stopPropagation() before a bubbling listener could ever run. Listening in the
+   * capture phase on the component root is therefore the only way to see the clipboard
+   * payload — the terminal only has to have focus, exactly like a native terminal.
+   */
+  private _bindPasteCapture() {
+    if (this._pasteCaptureBound) return;
+    this.renderRoot.addEventListener('paste', this._onPasteCapture, true);
+    this._pasteCaptureBound = true;
+  }
+
+  private readonly _onPasteCapture = (event: Event) => {
+    this._handlePaste(event as ClipboardEvent);
+  };
+
+  /**
+   * Clipboard paste. Images become attachments; anything else is left untouched so ordinary
+   * text paste keeps flowing through xterm's existing paste path.
+   */
+  private _handlePaste(event: ClipboardEvent) {
+    if (!this._attachmentsSupported()) return;
+    const candidates = imageCandidatesFromClipboard(event.clipboardData);
+    if (candidates.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void this._enqueueAttachments(candidates);
+  }
+
+  /**
+   * Cmd+V path: the keydown handler consumes the event, so read the clipboard directly.
+   * `send` is the key handler's own unguarded sender — the non-image path must keep sending
+   * exactly like every other intercepted Cmd+key combo does.
+   */
+  private async _handleCommandPaste(send: (data: string) => void) {
+    const images = this._attachmentsSupported() ? await this._readClipboardImagesOrWarn() : [];
+    if (images.length > 0) {
+      await this._enqueueAttachments(images);
+      return;
+    }
+    const text = await navigator.clipboard.readText();
+    if (text) send(text);
+  }
+
+  /**
+   * Image reads need the `clipboard-read` permission, which text reads do not. A denied or
+   * unsupported read is an expected, recoverable state: report it and let the text path run,
+   * rather than turning Cmd+V into a no-op.
+   */
+  private async _readClipboardImagesOrWarn(): Promise<ImageCandidate[]> {
+    try {
+      return await readClipboardImages();
+    } catch (err) {
+      this._warn('clipboard image read (falling back to text paste)', err);
+      return [];
+    }
+  }
+
+  private _handleDragOver(event: DragEvent) {
+    if (!this._attachmentsSupported() || !dropCarriesFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  }
+
+  private _handleDragEnter(event: DragEvent) {
+    if (!this._attachmentsSupported() || !dropCarriesFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    this._dragDepth++;
+    this._dragActive = true;
+  }
+
+  private _handleDragLeave() {
+    this._dragDepth = Math.max(0, this._dragDepth - 1);
+    if (this._dragDepth === 0) this._dragActive = false;
+  }
+
+  private _handleDrop(event: DragEvent) {
+    this._dragDepth = 0;
+    this._dragActive = false;
+    if (!this._attachmentsSupported() || !dropCarriesFiles(event.dataTransfer)) return;
+    // Any file payload must be consumed here. Returning early on an unsupported type lets the
+    // browser's default handler open the file and navigate away from Command Center — after we
+    // already showed a drop target inviting the drop.
+    event.preventDefault();
+    const candidates = imageCandidatesFromDrop(event.dataTransfer);
+    if (candidates.length === 0) {
+      this._initAttachmentQueue();
+      this._attachmentQueue!.rejectUnsupported(unsupportedDropFilenames(event.dataTransfer));
+      return;
+    }
+    void this._enqueueAttachments(candidates);
   }
 
   private _initTerminal() {
@@ -433,13 +593,9 @@ export class TerminalView extends TerminalViewState {
             return false;
           }
           case 'v': {
-            // Cmd+V: paste from clipboard into the PTY
-            navigator.clipboard
-              .readText()
-              .then((text) => {
-                if (text) send(text);
-              })
-              .catch((err) => this._warn('clipboard paste', err));
+            // Cmd+V: images become attachments, everything else keeps the existing
+            // read-clipboard-text-and-send-to-PTY behavior.
+            this._handleCommandPaste(send).catch((err) => this._warn('clipboard paste', err));
             e.preventDefault();
             return false;
           }
@@ -670,6 +826,7 @@ export class TerminalView extends TerminalViewState {
     this._xtermSelectionDisposable?.dispose();
     clearTimeout(this._selectionCopyTimer);
     clearTimeout(this._copyToastTimer);
+    this._attachmentQueue?.clear();
     this._resizeObserver?.disconnect();
     this._terminal?.dispose();
     this._terminal = undefined;
@@ -1048,8 +1205,46 @@ export class TerminalView extends TerminalViewState {
       onReconnect: () => this._handleReconnect(),
       onInputKeydown: (event) => this._handleKeydown(event),
       onSend: () => this._handleSend(),
+      dropOverlay: renderTerminalDropOverlay(this._dragActive && this._attachmentsSupported()),
+      attachmentTray: renderTerminalAttachmentTray({
+        attachments: this._attachments,
+        dragActive: this._dragActive,
+        onRetry: (id) => {
+          void this._attachmentQueue?.send(id);
+        },
+        onRemove: (id) => this._attachmentQueue?.remove(id),
+      }),
+      onDragEnter: (event) => this._handleDragEnter(event),
+      onDragOver: (event) => this._handleDragOver(event),
+      onDragLeave: () => this._handleDragLeave(),
+      onDrop: (event) => this._handleDrop(event),
     });
   }
+}
+
+async function readBlobBase64(blob: Blob): Promise<string> {
+  const buffer = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  for (const byte of buffer) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/** Clipboard images for the Cmd+V path, where no native paste event is delivered. */
+async function readClipboardImages(): Promise<ImageCandidate[]> {
+  if (!navigator.clipboard.read) return [];
+  const candidates: ImageCandidate[] = [];
+  for (const item of await navigator.clipboard.read()) {
+    const mimeType = item.types.find((type) => type.startsWith('image/'));
+    if (!mimeType) continue;
+    const blob = await item.getType(mimeType);
+    const filename = `pasted-image.${mimeType.split('/')[1]}`;
+    candidates.push({
+      file: new File([blob], filename, { type: mimeType }),
+      filename,
+      mimeType,
+    });
+  }
+  return candidates;
 }
 
 declare global {
