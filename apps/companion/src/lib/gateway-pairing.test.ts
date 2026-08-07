@@ -82,7 +82,7 @@ test('multi-profile pairing exchanges once and shares one revocable device crede
         },
         {
           url: 'ws://macwork.tail73dab7.ts.net:7777/ws',
-          code: 'tailnet-code',
+          code: 'lan-code',
           profileName: 'MacBook (Tailscale)',
         },
       ],
@@ -122,6 +122,27 @@ test('multi-profile pairing exchanges once and shares one revocable device crede
       },
     ],
   );
+});
+
+test('multi-profile pairing rejects mixed device codes before exchange', async () => {
+  let exchangeCalled = false;
+  await assert.rejects(
+    exchangeGatewayPairingQr(
+      {
+        type: 'farmslot.gateway-pairing.v1',
+        profiles: [
+          { url: 'ws://192.168.0.18:7777/ws', code: 'lan-code' },
+          { url: 'ws://macwork.tail73dab7.ts.net:7777/ws', code: 'tailnet-code' },
+        ],
+      },
+      async () => {
+        exchangeCalled = true;
+        throw new Error('exchange should not run');
+      },
+    ),
+    /contains multiple device codes/u,
+  );
+  assert.equal(exchangeCalled, false);
 });
 
 test('sortPairingExchangeUrls tries Tailscale before LAN for QR exchange', () => {

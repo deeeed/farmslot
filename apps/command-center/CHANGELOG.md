@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- fix(pairing): mint one device code per multi-address Companion QR instead of one independently redeemable code per address.
 - fix(pairing): require an explicit existing-principal or new-service-principal authority before generating a Companion QR.
 - test(review-recovery): add a read-only CDP probe for active and inactive operator-required banner rendering.
 - chore: type-escape baseline pruned — `fleet/state.ts` no longer contains `as any` casts (RawSlot honest optionality).

@@ -1,7 +1,7 @@
 // commands/pair.ts — mint pairing codes and render a QR to pair the mobile app.
 //
-// The companion app (App Store / Play Store) scans this QR, exchanges each code
-// for a credential, and connects to the gateway for tmux control on the go. The
+// The companion app (App Store / Play Store) scans this QR, exchanges its one
+// device code for a credential, and connects to the gateway for tmux control. The
 // QR carries one profile per reachable address (LAN, and Tailscale when present);
 // the app tries each and keeps whichever connects (gateway-pairing.ts fallback).
 //
@@ -14,6 +14,7 @@ import type { Command } from 'commander';
 import * as QRCode from 'qrcode';
 
 import {
+  buildGatewayPairingQrPayload,
   type PairingAuthority,
   type PairingCreateResult,
   parseTailscaleDnsNameFromStatus,
@@ -23,13 +24,6 @@ import { bold, cyan, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
 import { withProgress } from '../progress.js';
-
-const PAIRING_QR_TYPE = 'farmslot.gateway-pairing.v1';
-
-interface PairingQrPayload {
-  type: typeof PAIRING_QR_TYPE;
-  profiles: PairingCreateResult[];
-}
 
 export interface ReachableAddress {
   url: string;
@@ -118,24 +112,25 @@ export function registerPairCommand(program: Command): void {
         return;
       }
 
-      const profiles = await withProgress(
-        'Creating pairing codes',
-        async () => {
-          const list: PairingCreateResult[] = [];
-          for (const address of addresses) {
-            list.push(
-              await client.call<PairingCreateResult>('pairing.create', {
-                gatewayUrl: address.url,
-                profileName: address.name,
-                authority,
-              }),
-            );
-          }
-          return list;
-        },
+      const primaryAddress = addresses[0]!;
+      const pairing = await withProgress(
+        'Creating pairing code',
+        () =>
+          client.call<PairingCreateResult>('pairing.create', {
+            gatewayUrl: primaryAddress.url,
+            profileName: primaryAddress.name,
+            authority,
+          }),
         !emit.machine,
       );
-      const payload: PairingQrPayload = { type: PAIRING_QR_TYPE, profiles };
+      const payload = buildGatewayPairingQrPayload(
+        pairing,
+        addresses.map((address) => ({
+          gatewayUrl: address.url,
+          profileName: address.name,
+        })),
+      );
+      const profiles = payload.profiles;
 
       if (emit.machine) {
         // Machine envelope (matrix: legacy raw-JSON output resolved); the QR
@@ -150,7 +145,9 @@ export function registerPairCommand(program: Command): void {
       for (const profile of profiles) {
         output.write(`  ${green('•')} ${profile.profileName}  ${cyan(profile.url)}\n`);
       }
-      const hasTailscale = profiles.some((profile) => profile.profileName.includes('(Tailscale)'));
+      const hasTailscale = profiles.some(
+        (profile) => profile.profileName?.includes('(Tailscale)') ?? false,
+      );
       if (hasTailscale) {
         output.write(
           `${dim('  Tailscale detected — scan on any device signed into this tailnet.')}\n`,

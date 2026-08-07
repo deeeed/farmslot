@@ -49,6 +49,41 @@ export interface PairingCreateResult {
   expiresAt: string;
 }
 
+export const GATEWAY_PAIRING_QR_TYPE = 'farmslot.gateway-pairing.v1' as const;
+
+export interface GatewayPairingQrProfile {
+  url: string;
+  code: string;
+  profileName?: string;
+  expiresAt?: string;
+}
+
+export interface GatewayPairingQrPayload {
+  type: typeof GATEWAY_PAIRING_QR_TYPE;
+  profiles: GatewayPairingQrProfile[];
+}
+
+export interface GatewayPairingQrTarget {
+  gatewayUrl: string;
+  profileName?: string;
+}
+
+export function buildGatewayPairingQrPayload(
+  pairing: PairingCreateResult,
+  targets: GatewayPairingQrTarget[],
+): GatewayPairingQrPayload {
+  if (targets.length === 0) throw new Error('Pairing QR requires at least one profile');
+  return {
+    type: GATEWAY_PAIRING_QR_TYPE,
+    profiles: targets.map((target) => ({
+      url: target.gatewayUrl,
+      code: pairing.code,
+      profileName: target.profileName?.trim() || pairing.profileName,
+      expiresAt: pairing.expiresAt,
+    })),
+  };
+}
+
 export interface PairingCandidatesParams {
   port?: number;
 }

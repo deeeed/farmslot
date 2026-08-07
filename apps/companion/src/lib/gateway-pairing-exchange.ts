@@ -1,5 +1,6 @@
 import {
   type Frame,
+  type GatewayPairingQrPayload,
   Methods,
   type PairingExchangeResult,
   type RequestFrame,
@@ -10,17 +11,7 @@ import { pairingWebSocketConnectionError } from './gateway-pairing-errors';
 import { profileFromPairingExchange } from './gateway-pairing-normalization';
 import { sortPairingExchangeUrls } from './gateway-pairing-urls';
 
-export interface GatewayPairingQrPayload {
-  type: 'farmslot.gateway-pairing.v1';
-  profiles: GatewayPairingQrProfile[];
-}
-
-export interface GatewayPairingQrProfile {
-  url: string;
-  code: string;
-  profileName?: string;
-  expiresAt?: string;
-}
+export type { GatewayPairingQrPayload, GatewayPairingQrProfile } from '@farmslot/protocol';
 
 const PAIRING_TIMEOUT_MS = 15_000;
 type PairingExchange = (urls: string[], code: string) => Promise<PairingExchangeResult>;
@@ -34,6 +25,9 @@ export async function exchangeGatewayPairingQr(
   );
   const primaryProfile = payload.profiles[0];
   if (!primaryProfile) throw new Error('Pairing QR does not contain any profiles');
+  if (payload.profiles.some((profile) => profile.code !== primaryProfile.code)) {
+    throw new Error('Pairing QR contains multiple device codes');
+  }
   const result = await exchange(exchangeUrls, primaryProfile.code);
   return payload.profiles.map((profile) =>
     profileFromPairingExchange(profile, {

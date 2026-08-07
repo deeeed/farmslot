@@ -22,7 +22,12 @@ import type {
   TmuxWorkerListResult,
   TmuxWorkerSummary,
 } from '@farmslot/protocol';
-import { Events, isTerminalRunStatus, Methods } from '@farmslot/protocol';
+import {
+  buildGatewayPairingQrPayload,
+  Events,
+  isTerminalRunStatus,
+  Methods,
+} from '@farmslot/protocol';
 
 import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
@@ -919,34 +924,21 @@ export class FarmApp extends LitElement {
     this.pairingExpiresAt = '';
     this.pairingProfileCount = 0;
     try {
-      const results = await Promise.all(
-        targets.map((target) =>
-          gateway.request<PairingCreateResult>(Methods.PAIRING_CREATE, {
-            gatewayUrl: target.gatewayUrl,
-            profileName: target.profileName,
-            ttlSeconds: 180,
-            authority,
-          }),
-        ),
-      );
-      const payload = {
-        type: 'farmslot.gateway-pairing.v1',
-        profiles: results.map((result) => ({
-          url: result.url,
-          code: result.code,
-          profileName: result.profileName,
-          expiresAt: result.expiresAt,
-        })),
-      };
+      const primaryTarget = targets[0]!;
+      const pairing = await gateway.request<PairingCreateResult>(Methods.PAIRING_CREATE, {
+        gatewayUrl: primaryTarget.gatewayUrl,
+        profileName: primaryTarget.profileName,
+        ttlSeconds: 180,
+        authority,
+      });
+      const payload = buildGatewayPairingQrPayload(pairing, targets);
       this.pairingQrDataUrl = await QRCode.toDataURL(JSON.stringify(payload), {
         errorCorrectionLevel: 'M',
         margin: 2,
         scale: 6,
       });
-      this.pairingExpiresAt = results
-        .map((result) => result.expiresAt)
-        .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0];
-      this.pairingProfileCount = results.length;
+      this.pairingExpiresAt = pairing.expiresAt;
+      this.pairingProfileCount = payload.profiles.length;
     } catch (err) {
       this.pairingError = err instanceof Error ? err.message : 'Failed to create pairing QR';
     } finally {
