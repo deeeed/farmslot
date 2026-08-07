@@ -31,10 +31,7 @@ function attempt(overrides: Partial<ReviewLoopAttempt> = {}): ReviewLoopAttempt 
   };
 }
 
-test('renderReviewAttempt shows the worker-fix line without a path when diffPath is absent', () => {
-  // Regression guard: a degraded fixDelta (ReviewDiffSnapshot source:'unavailable')
-  // has hasFixDelta=true but fixDeltaPath=null — the line must still render, with
-  // no ` · <path>` suffix. Prevents re-binding the line to fixDeltaPath.
+test('renderReviewAttempt shows a tracked worker fix without requiring a diff artifact', () => {
   const text = litText(renderReviewAttempt(attempt({ hasFixDelta: true, fixDeltaPath: null }), 1));
   assert.match(text, /worker fix applied/);
   assert.doesNotMatch(text, / · /);

@@ -150,7 +150,11 @@ test('reviewLoopAttempts normalizes self-review loop convergence', () => {
           loopNumber: 2,
           verdict: 'issues',
           unresolvedCount: 1,
-          fixDelta: { diffPath: 'artifacts/review-loop-2/fix-delta.diff' },
+          fixDelta: {
+            baseSha: 'base-sha',
+            headSha: 'head-sha',
+            diffPath: 'artifacts/review-loop-2/fix-delta.diff',
+          },
         },
         { loopNumber: 3, verdict: 'issues', unresolvedCount: 4 },
         { loopNumber: 4, verdict: 'pass', unresolvedCount: 0 },
@@ -179,9 +183,7 @@ test('reviewLoopAttempts normalizes self-review loop convergence', () => {
   assert.equal(attempts[0].fixDeltaPath, null);
 });
 
-test('reviewLoopAttempts flags a fixDelta with no diffPath (degraded snapshot)', () => {
-  // ReviewDiffSnapshot.source:'unavailable' yields a fixDelta without a diffPath.
-  // The fix line must still render (hasFixDelta) but without a ` · <path>` suffix.
+test('reviewLoopAttempts does not call an unavailable snapshot a worker fix', () => {
   const step = {
     name: 'self-review',
     status: 'done',
@@ -192,7 +194,7 @@ test('reviewLoopAttempts flags a fixDelta with no diffPath (degraded snapshot)',
     },
   } as RunStep;
   const attempt = reviewLoopAttempts(step)[0];
-  assert.equal(attempt.hasFixDelta, true);
+  assert.equal(attempt.hasFixDelta, false);
   assert.equal(attempt.fixDeltaPath, null);
 });
 
