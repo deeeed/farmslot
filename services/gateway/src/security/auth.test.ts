@@ -148,10 +148,10 @@ assert.equal(
 assert.equal(operatorResponse.statusCode, 403);
 
 const resolverFailureResponse = createFakeResponse();
-const resolveSessionPrincipal = cookieRuntime.resolver.resolveSessionPrincipal;
+const isSoloMode = cookieRuntime.resolver.isSoloMode;
 const consoleError = console.error;
 let resolverFailureLog = '';
-cookieRuntime.resolver.resolveSessionPrincipal = () => {
+cookieRuntime.resolver.isSoloMode = () => {
   throw new Error('credential store reload failed');
 };
 console.error = (...args: unknown[]) => {
@@ -170,7 +170,7 @@ try {
     false,
   );
 } finally {
-  cookieRuntime.resolver.resolveSessionPrincipal = resolveSessionPrincipal;
+  cookieRuntime.resolver.isSoloMode = isSoloMode;
   console.error = consoleError;
 }
 assert.equal(resolverFailureResponse.statusCode, 500);

@@ -507,6 +507,11 @@ test(
 
       const lockPath = join(runtime.store.env.FARMSLOT_HOME!, 'credentials.lock');
       writeFileSync(lockPath, `${process.pid}\n`, { mode: 0o600 });
+      const consoleError = console.error;
+      let lockDiagnostic = '';
+      console.error = (...args: unknown[]) => {
+        lockDiagnostic += `${args.map(String).join(' ')}\n`;
+      };
       try {
         const lockRefusal = await request(ws, Methods.PRINCIPAL_CREATE, {
           subject: { type: 'service', displayName: 'lock-refusal-probe' },
@@ -516,9 +521,12 @@ test(
         assert.equal(lockRefusal.error?.code, 'CREDENTIAL_STORE_REFUSED');
         assert.match(lockRefusal.error?.message ?? '', /Another Farmslot process is writing/u);
         assert.match(lockRefusal.error?.userAction ?? '', /wait for it to finish/u);
+        assert.doesNotMatch(JSON.stringify(lockRefusal), /\bpid\s+\d+\b/iu);
       } finally {
+        console.error = consoleError;
         unlinkSync(lockPath);
       }
+      assert.match(lockDiagnostic, new RegExp(`holder pid ${process.pid}\\b`, 'u'));
 
       const issueCredential = runtime.writer.issueCredential;
       runtime.writer.issueCredential = () => {

@@ -301,8 +301,8 @@ export function authorizeHttpRequest(params: {
   req: IncomingMessage;
   res: ServerResponse;
 }): boolean {
-  if (params.runtime.resolver.isSoloMode()) return true;
   try {
+    if (params.runtime.resolver.isSoloMode()) return true;
     const credential = getHttpCredential(params.req);
     const result = authenticateGatewayClient({
       runtime: params.runtime,

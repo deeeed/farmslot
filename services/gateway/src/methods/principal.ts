@@ -183,6 +183,7 @@ function translateWriterError<T>(fn: () => T): T {
     if (!(error instanceof CredentialStoreRefusalError)) {
       throw new GatewayInternalError('Credential store operation failed', error);
     }
+    if (error.diagnostic) console.error(`[credential-store] ${error.diagnostic}`);
     const message = error.message;
     const [headline, ...rest] = message.split('\nNext:');
     throw new GatewayMethodError('CREDENTIAL_STORE_REFUSED', headline, {
