@@ -89,6 +89,17 @@ function writeSnapshot(directory, key, record) {
   fs.renameSync(pendingPath, statePath);
 }
 
+function readSnapshot(directory, key) {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(directory, encodeURIComponent(key) + '.json'), 'utf8'),
+    );
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
 try {
   const raw = readStdin();
   const payload = raw.trim() ? JSON.parse(raw) : {};
@@ -109,6 +120,39 @@ try {
       sentAt = matched.sentAt;
     }
   }
+  const previousSession =
+    typeof payload.session_id === 'string' && payload.session_id
+      ? readSnapshot(path.join(obsDir, 'sessions'), payload.session_id)
+      : null;
+  const previousPane =
+    typeof process.env.TMUX_PANE === 'string' && process.env.TMUX_PANE
+      ? readSnapshot(path.join(obsDir, 'panes'), process.env.TMUX_PANE)
+      : null;
+  const startsTurn = event === 'UserPromptSubmit';
+  const preservesTurnAcrossSessionStart = event === 'SessionStart' && payload.source === 'compact';
+  const resetsTurn = event === 'SessionStart' && !preservesTurnAcrossSessionStart;
+  const stopsTurn =
+    event === 'Stop' ||
+    event === 'StopFailure' ||
+    (event === 'Notification' && payload.notification_type === 'idle_prompt');
+  const turnStartedAt = startsTurn
+    ? observedAt
+    : resetsTurn
+      ? undefined
+      : previousSession?.turnStartedAt;
+  const turnActive = startsTurn
+    ? true
+    : resetsTurn
+      ? false
+      : stopsTurn
+        ? false
+        : typeof previousSession?.turnActive === 'boolean'
+          ? previousSession.turnActive
+          : undefined;
+  const rootSessionId =
+    event === 'SessionStart'
+      ? payload.session_id
+      : previousPane?.rootSessionId || previousPane?.session_id || payload.session_id;
   const record = {
     schemaVersion: 1,
     observedAt,
@@ -122,9 +166,13 @@ try {
     effort: payload.effort,
     tool_name: payload.tool_name,
     notification_type: payload.notification_type,
+    source: payload.source,
     tmuxPane: process.env.TMUX_PANE || undefined,
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
     runner: process.env.FARMSLOT_RUNNER || 'claude',
+    ...(typeof turnStartedAt === 'number' ? { turnStartedAt } : {}),
+    ...(typeof turnActive === 'boolean' ? { turnActive } : {}),
+    ...(typeof rootSessionId === 'string' && rootSessionId ? { rootSessionId } : {}),
     ...(matchedDigest ? { runnerPromptDigest: matchedDigest } : {}),
     ...(sentAt ? { sentAt } : {}),
   };

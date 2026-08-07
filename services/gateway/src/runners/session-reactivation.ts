@@ -32,6 +32,7 @@ import { resolveRunnerSessionBinding, resumableSessionProbeCommand } from './ses
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 const RUNNER_SESSION_ACCEPTANCE_POLL_MS = 2_000;
+const RUNNER_TURN_TOKEN_GRACE_MS = 2_000;
 
 export interface RunnerSessionReactivationOptions {
   vars: SlotVars;
@@ -56,7 +57,7 @@ export interface RunnerSessionReactivationOptions {
 }
 
 export type RetainedSessionDeliveryResult =
-  | { delivered: true; acknowledgement: 'structured' | 'safe-send' }
+  | { delivered: true; acknowledgement: 'structured' | 'safe-send'; turnToken?: string }
   | {
       delivered: false;
       disposition: 'safe-send' | 'hold';
@@ -180,6 +181,7 @@ async function reactivateRunnerSessionWithPrompt(
       preserveWindowAfterExit: true,
     });
     let trustPromptConfirmed = false;
+    let acknowledgedWithoutTurnTokenAt: number | null = null;
 
     const deadline = Date.now() + (options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
     while (Date.now() < deadline) {
@@ -197,7 +199,23 @@ async function reactivateRunnerSessionWithPrompt(
       );
       // Only exact post-respawn prompt evidence is accepted; generic activity,
       // task signals, and pane text cannot acknowledge this resumed prompt.
-      if (accepted.accepted) return { delivered: true, acknowledgement: 'structured' };
+      if (
+        accepted.accepted &&
+        (accepted.turnToken || !getRunnerObservability(runner)?.getTurnState)
+      ) {
+        return {
+          delivered: true,
+          acknowledgement: 'structured',
+          ...(accepted.turnToken ? { turnToken: accepted.turnToken } : {}),
+        };
+      }
+      if (accepted.accepted) acknowledgedWithoutTurnTokenAt ??= Date.now();
+      if (
+        acknowledgedWithoutTurnTokenAt != null &&
+        Date.now() - acknowledgedWithoutTurnTokenAt >= RUNNER_TURN_TOKEN_GRACE_MS
+      ) {
+        return { delivered: true, acknowledgement: 'structured' };
+      }
       if (!trustPromptConfirmed) {
         const trustResult = await resolveLaunchBlockerWithFreshEvidence({
           runnerId: runner,
@@ -229,6 +247,9 @@ async function reactivateRunnerSessionWithPrompt(
         trustPromptConfirmed = trustResult.outcome === 'sent';
       }
       await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_ACCEPTANCE_POLL_MS));
+    }
+    if (acknowledgedWithoutTurnTokenAt != null) {
+      return { delivered: true, acknowledgement: 'structured' };
     }
     return {
       delivered: false,
@@ -319,7 +340,8 @@ export async function deliverPromptInPlace(
       // Pane-only runners have no exact prompt hook/native acknowledgement.
       // Probe the generic task signal once, then preserve the runner-specific
       // safe-send result instead of waiting for a capability they do not expose.
-      if (!getRunnerObservability(runner)) {
+      const observability = getRunnerObservability(runner);
+      if (!observability) {
         const acknowledgement = await runnerHasDurablePromptHandoff(
           options.vars,
           options.target,
@@ -343,10 +365,15 @@ export async function deliverPromptInPlace(
           },
         );
         return acknowledgement.accepted
-          ? { delivered: true, acknowledgement: 'structured' }
+          ? {
+              delivered: true,
+              acknowledgement: 'structured',
+              ...(acknowledgement.turnToken ? { turnToken: acknowledgement.turnToken } : {}),
+            }
           : { delivered: true, acknowledgement: 'safe-send' };
       }
       const acknowledgementDeadline = Date.now() + Math.min(timeoutMs, 30_000);
+      let acknowledgedWithoutTurnTokenAt: number | null = null;
       while (Date.now() < acknowledgementDeadline) {
         const acknowledgement = await runnerHasDurablePromptHandoff(
           options.vars,
@@ -371,7 +398,17 @@ export async function deliverPromptInPlace(
           },
         );
         if (acknowledgement.accepted) {
-          return { delivered: true, acknowledgement: 'structured' };
+          if (acknowledgement.turnToken || !observability.getTurnState) {
+            return {
+              delivered: true,
+              acknowledgement: 'structured',
+              ...(acknowledgement.turnToken ? { turnToken: acknowledgement.turnToken } : {}),
+            };
+          }
+          acknowledgedWithoutTurnTokenAt ??= Date.now();
+          if (Date.now() - acknowledgedWithoutTurnTokenAt >= RUNNER_TURN_TOKEN_GRACE_MS) {
+            return { delivered: true, acknowledgement: 'structured' };
+          }
         }
         await new Promise((resolve) =>
           setTimeout(
@@ -382,6 +419,9 @@ export async function deliverPromptInPlace(
             ),
           ),
         );
+      }
+      if (acknowledgedWithoutTurnTokenAt != null) {
+        return { delivered: true, acknowledgement: 'structured' };
       }
       return {
         delivered: false,
@@ -435,7 +475,13 @@ async function probeDelayedPromptAcknowledgement(
         : {}),
     },
   );
-  return acknowledgement.accepted ? { delivered: true, acknowledgement: 'structured' } : null;
+  return acknowledgement.accepted
+    ? {
+        delivered: true,
+        acknowledgement: 'structured',
+        ...(acknowledgement.turnToken ? { turnToken: acknowledgement.turnToken } : {}),
+      }
+    : null;
 }
 
 function unacknowledgedPriorSendHold(runner: string): RetainedSessionDeliveryResult {

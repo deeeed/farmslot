@@ -21,6 +21,8 @@ type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 export interface RunnerHandoffAckProbe {
   accepted: boolean;
   reason: string;
+  /** Exact runner turn accepted for this prompt, when the provider exposes it. */
+  turnToken?: string;
   source?:
     | 'hook-digest'
     | 'hook-turn'
@@ -144,6 +146,34 @@ export async function probeRunnerHandoffAck(
     acceptExistingLaunchAck?: boolean;
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
+  const paneId =
+    opts.preferHooks === false ? null : (opts.paneId ?? (await resolveTmuxPaneId(vars, target)));
+  let hooks: ReturnType<typeof parseHookJsonl> = [];
+  let digestMatched = false;
+  let digestReading: ReturnType<typeof promptAcceptedFromHooks> = null;
+  if (paneId !== null) {
+    const { hooksRaw } = await readRunnerObservabilityFiles(vars);
+    hooks = parseHookJsonl(hooksRaw);
+    const digest = runnerPromptDigest(message);
+    digestMatched = promptDigestMatchedFromHooks(hooks, digest, sinceMs, paneId);
+    digestReading = promptAcceptedFromHooks(hooks, digest, sinceMs, 500, Date.now(), paneId);
+    if (
+      opts.requirePromptDigest &&
+      digestMatched &&
+      isObservabilityReadingAuthoritative(digestReading) &&
+      digestReading.value === true &&
+      digestReading.confidence === 'high'
+    ) {
+      return {
+        accepted: true,
+        reason: paneId
+          ? `hook prompt digest matched on pane ${paneId}`
+          : 'hook prompt digest matched',
+        source: 'hook-digest',
+        ...(digestReading.turnToken ? { turnToken: digestReading.turnToken } : {}),
+      };
+    }
+  }
   if (opts.launchAckSignalPath && opts.launchAckBaseline) {
     const launchAck = await readLaunchAckSignalSnapshot(vars, opts.launchAckSignalPath);
     // Each caller supplies the signal file for this exact task/checklist. An
@@ -162,29 +192,18 @@ export async function probeRunnerHandoffAck(
     }
   }
 
+  if (opts.preferHooks !== false && paneId === null) {
+    return { accepted: false, reason: 'target pane unavailable for hook handoff' };
+  }
+
   if (opts.preferHooks === false) {
     return { accepted: false, reason: 'hook handoff disabled for runner' };
   }
 
-  const paneId = opts.paneId ?? (await resolveTmuxPaneId(vars, target));
-  const { hooksRaw } = await readRunnerObservabilityFiles(vars);
-  const hooks = parseHookJsonl(hooksRaw);
-  const digest = runnerPromptDigest(message);
-  const digestMatched = promptDigestMatchedFromHooks(hooks, digest, sinceMs, paneId);
-
   if (opts.requirePromptDigest) {
-    return digestMatched
-      ? {
-          accepted: true,
-          reason: paneId
-            ? `hook prompt digest matched on pane ${paneId}`
-            : 'hook prompt digest matched',
-          source: 'hook-digest',
-        }
-      : { accepted: false, reason: 'prompt digest did not match handoff evidence' };
+    return { accepted: false, reason: 'prompt digest did not match handoff evidence' };
   }
 
-  const digestReading = promptAcceptedFromHooks(hooks, digest, sinceMs, 500, Date.now(), paneId);
   if (isObservabilityReadingAuthoritative(digestReading) && digestReading.value === true) {
     return {
       accepted: true,
@@ -196,6 +215,7 @@ export async function probeRunnerHandoffAck(
           ? `hook turn started on pane ${paneId}`
           : 'hook turn started after prompt send',
       source: digestMatched ? 'hook-digest' : 'hook-turn',
+      ...(digestReading.turnToken ? { turnToken: digestReading.turnToken } : {}),
     };
   }
 

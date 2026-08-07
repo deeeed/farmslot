@@ -52,6 +52,30 @@ export const claudeHookObservability: RunnerObservability = {
     return deriveRunnerActivity(hooks, statusline);
   },
 
+  async getTurnState(vars, target, expectedTurnToken) {
+    if (expectedTurnToken) {
+      const separator = expectedTurnToken.lastIndexOf(':');
+      const expectedSessionId = separator > 0 ? expectedTurnToken.slice(0, separator).trim() : '';
+      if (!expectedSessionId) return null;
+      const paneId = await resolveTmuxPaneId(vars, target);
+      if (!paneId) return null;
+      const [sessionState, paneState] = await Promise.all([
+        readRunnerSessionObservabilityState(vars, expectedSessionId),
+        readRunnerPaneObservabilityState(vars, paneId),
+      ]);
+      if (sessionState?.session_id !== expectedSessionId) return null;
+      if (!(await sessionPaneMoveIsSafe(vars, sessionState.tmuxPane, paneId))) return null;
+      if (paneState?.rootSessionId && paneState.rootSessionId !== expectedSessionId) return null;
+      return deriveRunnerSessionDeliveryState(sessionState, expectedSessionId);
+    }
+    const paneId = await resolveTmuxPaneId(vars, target);
+    if (!paneId) return null;
+    const paneState = await readRunnerPaneObservabilityState(vars, paneId);
+    const sessionId = paneState?.session_id;
+    if (!sessionId) return null;
+    return deriveRunnerSessionDeliveryState(paneState, sessionId);
+  },
+
   async getContextPct(vars, target) {
     const { statusline } = await loadObservabilitySnapshot(vars, target);
     return contextPctFromStatusline(statusline);
