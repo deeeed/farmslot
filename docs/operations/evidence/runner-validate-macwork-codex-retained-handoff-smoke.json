@@ -1,29 +1,29 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-07T09:28:35.997Z",
+  "recordedAt": "2026-08-07T09:56:55.259Z",
   "host": "macwork",
   "scenario": "retained-handoff-smoke",
   "runner": "codex",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-b7B9Ra",
-  "session": "runner-validate-codex-retained-handoff-smoke-90580",
-  "sessionId": "019fdb8c-f80e-78d2-b526-363befc2443a",
-  "sessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-b7B9Ra/.agent/codex-home/sessions/2026/08/07/rollout-2026-08-07T17-27-56-019fdb8c-f80e-78d2-b526-363befc2443a.jsonl",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-VYIsQM",
+  "session": "runner-validate-codex-retained-handoff-smoke-86249",
+  "sessionId": "019fdba6-6e83-78c1-a394-7ba1feec4bfc",
+  "sessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-VYIsQM/.agent/codex-home/sessions/2026/08/07/rollout-2026-08-07T17-55-45-019fdba6-6e83-78c1-a394-7ba1feec4bfc.jsonl",
   "initialCompleted": true,
   "handoffDelivered": true,
   "repeatReviewSessionTrace": {
     "intent": "resume",
     "continuity": "resumed",
     "priorRunId": "review-generation-1",
-    "priorSessionId": "019fdb8c-f80e-78d2-b526-363befc2443a",
-    "sessionId": "019fdb8c-f80e-78d2-b526-363befc2443a"
+    "priorSessionId": "019fdba6-6e83-78c1-a394-7ba1feec4bfc",
+    "sessionId": "019fdba6-6e83-78c1-a394-7ba1feec4bfc"
   },
   "repeatReviewResumePlan": {
     "kind": "resume",
     "binding": {
       "priorRunId": "review-generation-1",
       "contextId": "review-context-1",
-      "runnerSessionId": "019fdb8c-f80e-78d2-b526-363befc2443a",
-      "runnerSessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-b7B9Ra/.agent/codex-home/sessions/2026/08/07/rollout-2026-08-07T17-27-56-019fdb8c-f80e-78d2-b526-363befc2443a.jsonl"
+      "runnerSessionId": "019fdba6-6e83-78c1-a394-7ba1feec4bfc",
+      "runnerSessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-VYIsQM/.agent/codex-home/sessions/2026/08/07/rollout-2026-08-07T17-55-45-019fdba6-6e83-78c1-a394-7ba1feec4bfc.jsonl"
     }
   },
   "repeatReviewResetPlan": {
@@ -37,6 +37,7 @@
     "kind": "fallback",
     "reason": "session-unavailable"
   },
+  "paneReplacedBeforeResume": true,
   "pass": true,
   "error": null,
   "paneTail": null

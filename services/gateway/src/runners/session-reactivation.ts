@@ -89,7 +89,6 @@ async function reactivateRunnerSessionWithPrompt(
       reason: `Runner '${runner}' has no structured session-delivery provider`,
     };
   }
-  let paneMutationStarted = false;
   try {
     const panes = await execOnSlot(
       options.vars,
@@ -173,7 +172,6 @@ async function reactivateRunnerSessionWithPrompt(
         initialPrompt: options.prompt,
       },
     )}`;
-    paneMutationStarted = true;
     await respawnTmuxWindowWithCommand(options.vars, options.target, command, {
       preserveWindowAfterExit: true,
     });
@@ -257,9 +255,9 @@ async function reactivateRunnerSessionWithPrompt(
   } catch (error) {
     return {
       delivered: false,
-      disposition: paneMutationStarted ? 'hold' : 'safe-send',
+      disposition: 'hold',
       reason: `Retained ${runner} handoff failed: ${(error as Error).message}`,
-      ...(paneMutationStarted ? { retryable: false } : {}),
+      retryable: false,
     };
   }
 }

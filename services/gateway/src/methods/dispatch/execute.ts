@@ -838,12 +838,12 @@ export async function dispatchExecute(
   let repeatReviewResumePlan = currentRun
     ? resolveRepeatReviewResumePlan(currentRun, priorReviewRun, runner)
     : ({ kind: 'reset' } as const);
-  let observedReviewSessionContinuity: ReviewSessionTrace['continuity'] | undefined;
+  let reviewSessionContinuity: ReviewSessionTrace['continuity'] | undefined;
   const recordReviewSession = (trace: ReviewSessionTrace): void => {
     if (!currentRun?.repeatReviewContext) return;
     const latest = getRun(currentRun.id);
     if (!latest?.repeatReviewContext) return;
-    observedReviewSessionContinuity = trace.continuity;
+    reviewSessionContinuity = trace.continuity;
     updateRunStore(currentRun.id, {
       repeatReviewContext: { ...latest.repeatReviewContext, session: trace },
     });
@@ -1455,9 +1455,7 @@ export async function dispatchExecute(
     taskId,
     runner,
     model,
-    ...(observedReviewSessionContinuity
-      ? { reviewSessionContinuity: observedReviewSessionContinuity }
-      : {}),
+    ...(reviewSessionContinuity ? { reviewSessionContinuity } : {}),
   });
   return {
     dispatched: true,

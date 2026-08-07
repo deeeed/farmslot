@@ -51,6 +51,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     repeatReviewResetPlan: null,
     repeatReviewSlotMismatchPlan: null,
     repeatReviewUnavailablePlan: null,
+    paneReplacedBeforeResume: false,
     pass: false,
     error: null,
     paneTail: null,
@@ -146,6 +147,15 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       );
     }
 
+    const priorPaneId = paneId;
+    killSession(session);
+    const replacement = ensureShellSession(session, repo);
+    paneId = replacement.paneId;
+    report.paneReplacedBeforeResume = paneId !== priorPaneId;
+    if (!report.paneReplacedBeforeResume) {
+      throw new Error('retained handoff did not replace the owning pane');
+    }
+
     const handoff = runGatewayRepeatReviewResume({
       repo,
       target,
@@ -175,6 +185,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       report.repeatReviewResetPlan?.kind === 'reset' &&
       report.repeatReviewSlotMismatchPlan?.reason === 'slot-mismatch' &&
       report.repeatReviewUnavailablePlan?.reason === 'session-unavailable' &&
+      report.paneReplacedBeforeResume &&
       report.handoffDelivered;
   } catch (error) {
     report.error = error?.message || String(error);

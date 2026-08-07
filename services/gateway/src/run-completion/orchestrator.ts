@@ -30,7 +30,10 @@ import { inferReviewSourceKind, reviewCompositeKey } from '../quality/review-sou
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun } from '../runs/store.js';
-import { extractRunnerSessionUsage } from '../runtime/session-usage.js';
+import {
+  extractRunnerSessionUsage,
+  usesReviewChainSessionTotal,
+} from '../runtime/session-usage.js';
 import {
   captureCurrentReviewSnapshot,
   unavailableReviewSnapshot,
@@ -209,14 +212,17 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
     const cacheCreation = usage.cacheCreation ?? null;
     const cacheRead = usage.cacheRead ?? null;
     const actualModel = usage.actualModel ?? null;
+    const chainSessionTotal = usesReviewChainSessionTotal(run);
     const metricsPatch: Partial<typeof run.metrics> = {};
-    if (costUsd !== null) metricsPatch.costEstimate = costUsd;
-    if (turns !== null) metricsPatch.sessionTurns = turns;
-    if (inputTokens !== null) metricsPatch.sessionInputTokens = inputTokens;
-    if (outputTokens !== null) metricsPatch.sessionOutputTokens = outputTokens;
-    if (cacheCreation !== null) metricsPatch.sessionCacheCreation = cacheCreation;
-    if (cacheRead !== null) metricsPatch.sessionCacheRead = cacheRead;
-    if (totalTokens !== null) metricsPatch.sessionTotalTokens = totalTokens;
+    if (!chainSessionTotal) {
+      if (costUsd !== null) metricsPatch.costEstimate = costUsd;
+      if (turns !== null) metricsPatch.sessionTurns = turns;
+      if (inputTokens !== null) metricsPatch.sessionInputTokens = inputTokens;
+      if (outputTokens !== null) metricsPatch.sessionOutputTokens = outputTokens;
+      if (cacheCreation !== null) metricsPatch.sessionCacheCreation = cacheCreation;
+      if (cacheRead !== null) metricsPatch.sessionCacheRead = cacheRead;
+      if (totalTokens !== null) metricsPatch.sessionTotalTokens = totalTokens;
+    }
     if (actualModel) metricsPatch.actualModel = actualModel;
     if (actualModel && run.metrics.model && !modelsMatch(run.metrics.model, actualModel)) {
       console.warn(
@@ -233,10 +239,13 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
     }
     if (Object.keys(metricsPatch).length > 0) {
       updateRun(runId, { metrics: { ...run.metrics, ...metricsPatch } });
-      console.log(
-        `[run-completion] session cost: $${costUsd?.toFixed(4) ?? '?'} turns=${turns ?? '?'} actualModel=${actualModel ?? '?'} (input=${inputTokens ?? '?'} output=${outputTokens ?? '?'})`,
-      );
     }
+    console.log(
+      chainSessionTotal
+        ? `[run-completion] retained review session usage is chain-total; per-run cost omitted for ${runId}`
+        : `[run-completion] session cost: $${costUsd?.toFixed(4) ?? '?'} turns=${turns ?? '?'} actualModel=${actualModel ?? '?'} (input=${inputTokens ?? '?'} output=${outputTokens ?? '?'})`,
+    );
+    if (chainSessionTotal) return { ...empty, actualModel };
     return {
       costUsd,
       inputTokens,

@@ -29,6 +29,7 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { usesReviewChainSessionTotal } from '../runtime/session-usage.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import {
@@ -142,9 +143,13 @@ export async function executeFinalizeStep(
           return [k, rest.join('=')];
         }),
       );
+      const chainSessionTotal = usesReviewChainSessionTotal(current);
+      if (chainSessionTotal) session.usage_scope = 'review-chain-total';
       const costRaw = session.cost_usd ?? session.costUsd;
       const cost = costRaw ? Number(costRaw) : current.metrics.costEstimate;
-      updateRun(runId, { metrics: { ...current.metrics, costEstimate: cost } });
+      if (!chainSessionTotal) {
+        updateRun(runId, { metrics: { ...current.metrics, costEstimate: cost } });
+      }
     }
   } catch (err) {
     console.warn(
