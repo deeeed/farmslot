@@ -6,7 +6,7 @@ import type {
   AssistantMessage as PiAssistantMessage,
   AssistantMessageEvent,
   Message as PiMessage,
-  Models as PiModels,
+  MutableModels as PiModels,
   Tool,
   ToolCall,
   ToolResultMessage,
@@ -25,7 +25,8 @@ import { getLLMConfig } from './config.js';
 // the per-call `apiKey` stream option, so the collection's own credential
 // store is never populated.
 let piModelsPromise: Promise<PiModels> | null = null;
-function piModels(): Promise<PiModels> {
+// Exported so tests can swap a faux provider into the live collection.
+export function piModels(): Promise<PiModels> {
   piModelsPromise ??= import('@earendil-works/pi-ai/providers/all').then((mod) =>
     mod.builtinModels(),
   );
@@ -295,9 +296,14 @@ export function throwOnTransportStop(
   httpHeaders: Record<string, string> | undefined,
 ): void {
   if (stopReason === 'error' || stopReason === 'aborted') {
-    throw new Error(
+    const err = new Error(
       formatProviderError(provider, model, source, stopReason, httpStatus, httpHeaders),
     );
+    // Preserve abort identity: AbortSignal-aware callers (chat-engine's stop
+    // button) distinguish a deliberate cancellation from a provider failure
+    // by err.name === 'AbortError'.
+    if (stopReason === 'aborted') err.name = 'AbortError';
+    throw err;
   }
 }
 
@@ -445,6 +451,10 @@ async function callChatViaPiAi(
   } as Parameters<PiModels['completeSimple']>[2];
 
   outer: for (let round = 0; round < maxToolRounds; round++) {
+    // Reset per round — a failure before this round's onResponse fires must
+    // not report the previous round's HTTP status/request id.
+    httpStatus = undefined;
+    httpHeaders = undefined;
     const context = {
       systemPrompt: opts.systemPrompt,
       messages: piMessages,
