@@ -522,9 +522,12 @@ async function handleMessage(
       const result = pairingExchange((frame.params ?? {}) as PairingExchangeParams, authRuntime);
       sendResponse(state.ws, frame.id, true, result);
     } catch (err) {
+      if (!(err instanceof GatewayMethodError)) {
+        console.error(`[server] pairing exchange failed on ${state.id}: ${(err as Error).message}`);
+      }
       sendResponse(state.ws, frame.id, false, undefined, {
         code: 'PAIRING_FAILED',
-        message: (err as Error).message,
+        message: err instanceof GatewayMethodError ? err.message : 'Pairing exchange failed',
       });
     }
     return;

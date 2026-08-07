@@ -21,6 +21,7 @@ import {
   type ResponseFrame,
 } from '@farmslot/protocol';
 
+import { pairingCreate } from '../fleet/pairing.js';
 import { createGatewayAuthRuntime, initializeGatewayIdentity } from '../security/auth.js';
 import { createWebSocketServer } from '../server.js';
 import { resolveWebhookWorkOriginator } from '../webhook.js';
@@ -355,6 +356,57 @@ test(
         assert.doesNotMatch(JSON.stringify(response), /rpc resolver reload proof/u);
       } finally {
         runtime.resolver.resolveSessionPrincipal = resolveSessionPrincipal;
+      }
+      ws.close();
+      await onceClose(ws);
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+test(
+  'unexpected pairing store faults return generic unauthenticated errors without leakage',
+  { timeout: 5_000 },
+  async () => {
+    const runtime = isolatedRuntime();
+    const admin = runtime.writer.createPrincipal({ type: 'person', displayName: 'pair-admin' }, [
+      { role: 'admin', scope: { kind: 'global' } },
+    ]);
+    runtime.writer.issueCredential(admin.id, 'pair-admin');
+    const pairing = pairingCreate(
+      {
+        gatewayUrl: 'ws://127.0.0.1:7777/ws',
+        authority: {
+          kind: 'new-service-principal',
+          displayName: 'paired-operator',
+          roles: [{ role: 'operator', scope: { kind: 'global' } }],
+        },
+      },
+      runtime,
+    );
+    const harness = await startServer(runtime);
+    try {
+      const ws = await connect(harness.url);
+      const expectedDenial = await request(ws, Methods.PAIRING_EXCHANGE, {
+        code: 'invalid-pairing-code',
+      });
+      assert.equal(expectedDenial.ok, false);
+      assert.equal(expectedDenial.error?.code, 'PAIRING_FAILED');
+      assert.equal(expectedDenial.error?.message, 'Pairing code is invalid or expired');
+
+      const createPrincipal = runtime.writer.createPrincipal;
+      runtime.writer.createPrincipal = () => {
+        throw new Error('credential store /private/farmslot/credentials.json locked by pid 4242');
+      };
+      try {
+        const response = await request(ws, Methods.PAIRING_EXCHANGE, { code: pairing.code });
+        assert.equal(response.ok, false);
+        assert.equal(response.error?.code, 'PAIRING_FAILED');
+        assert.equal(response.error?.message, 'Pairing exchange failed');
+        assert.doesNotMatch(JSON.stringify(response), /credentials\.json|pid 4242/u);
+      } finally {
+        runtime.writer.createPrincipal = createPrincipal;
       }
       ws.close();
       await onceClose(ws);

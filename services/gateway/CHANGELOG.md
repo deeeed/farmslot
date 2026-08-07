@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(server): surface unexpected RPC and JSON/binary node-frame principal-resolution faults without exposing internal messages.
+- fix(server): surface unexpected RPC and JSON/binary node-frame principal-resolution faults, and contain pre-auth pairing credential-store faults, without exposing internal messages.
 - fix(auth): rethrow unexpected HTTP principal-resolution failures instead of exposing them as authorization denials.
 - feat(auth): implement ADR-051 principals, durable independently revocable credentials, solo-to-activated lifecycle, default-deny role authorization, scoped pairing, work provenance, and fire-time reauthorization.
 - fix(improvement): resume analyses interrupted by a gateway restart instead of tombstoning them — the persisted `analyzing` placeholder is re-run in place (attempt-capped at 2) so tsx-watch restarts no longer kill accepted retrospective analyses.

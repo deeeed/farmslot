@@ -14,6 +14,7 @@ import {
   parseTailscaleDnsNameFromStatus,
 } from '@farmslot/protocol';
 
+import { GatewayMethodError } from '../core/method-error.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
 
 interface PairingRecord {
@@ -152,13 +153,15 @@ export function pairingExchange(
   params: PairingExchangeParams,
   runtime: GatewayAuthRuntime,
 ): PairingExchangeResult {
-  if (typeof params?.code !== 'string') throw new Error('pairing.exchange requires code');
+  if (typeof params?.code !== 'string') {
+    throw new GatewayMethodError('PAIRING_FAILED', 'pairing.exchange requires code');
+  }
   const code = params.code.trim();
-  if (!code) throw new Error('pairing.exchange requires code');
+  if (!code) throw new GatewayMethodError('PAIRING_FAILED', 'pairing.exchange requires code');
   const record = pairings.get(code);
   pairings.delete(code);
   if (!record || record.expiresAtMs <= Date.now()) {
-    throw new Error('Pairing code is invalid or expired');
+    throw new GatewayMethodError('PAIRING_FAILED', 'Pairing code is invalid or expired');
   }
   const principalId =
     record.authority.kind === 'existing-principal'
