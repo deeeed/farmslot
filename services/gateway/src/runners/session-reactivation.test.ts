@@ -48,7 +48,7 @@ mock.module('../core/exec.js', {
           stderr: '',
         };
       }
-      if (command.includes('max_scan_bytes =') && command.includes('session_path = Path(')) {
+      if (command.includes('expected_prompt =') && command.includes('session_path = Path(')) {
         return {
           exitCode: 0,
           stdout: JSON.stringify(

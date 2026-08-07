@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-07T04:03:23.557Z",
+  "host": "macwork",
+  "scenario": "self-review-fix-turn-lease",
+  "runner": "claude",
+  "baselineContract": "an unaccepted fix prompt receives no structured-turn lease",
+  "currentContract": "an accepted fix prompt receives a liveness-guarded structured runner turn lease",
+  "result": {
+    "elapsedMs": 35715,
+    "idleTimeoutMs": 10000,
+    "baselineTimedOut": true,
+    "unacceptedTurnLeaseRejected": true,
+    "acceptedTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+    "busyTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075294306",
+    "busyLeaseActiveBeforeFix": true,
+    "fixTurnSeparatedFromBusyTurn": true,
+    "leasedSignalStatus": "complete",
+    "activeTurnObserved": true,
+    "supersedingTurnProbe": {
+      "originalLeaseActive": false,
+      "supersedingLeaseActive": true,
+      "tokensDiffer": true
+    },
+    "turnReadings": [
+      {
+        "expectedTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+        "active": true,
+        "stateValue": "active",
+        "actualTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+        "runnerAlive": true
+      },
+      {
+        "expectedTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+        "active": true,
+        "stateValue": "active",
+        "actualTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+        "runnerAlive": true
+      },
+      {
+        "expectedTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+        "active": true,
+        "stateValue": "active",
+        "actualTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+        "runnerAlive": true
+      }
+    ]
+  },
+  "liveSnapshotProbe": {
+    "expectedTurnToken": "93dd705e-9cd4-483d-bc56-454e2b1299d5:1786075374653",
+    "leaseAllowed": true,
+    "turnReadings": [
+      {
+        "expectedTurnToken": "93dd705e-9cd4-483d-bc56-454e2b1299d5:1786075374653",
+        "active": true,
+        "stateValue": "active",
+        "actualTurnToken": "93dd705e-9cd4-483d-bc56-454e2b1299d5:1786075374653",
+        "runnerAlive": true
+      }
+    ]
+  },
+  "staleSnapshotProbe": {
+    "expectedTurnToken": "93dd705e-9cd4-483d-bc56-454e2b1299d5:1786075374653",
+    "leaseAllowed": false,
+    "turnReadings": [
+      {
+        "expectedTurnToken": "93dd705e-9cd4-483d-bc56-454e2b1299d5:1786075374653",
+        "active": false,
+        "stateValue": "active",
+        "actualTurnToken": "93dd705e-9cd4-483d-bc56-454e2b1299d5:1786075374653",
+        "runnerAlive": false
+      }
+    ]
+  },
+  "activeHook": "production-delivery",
+  "paneTail": "╭─── Claude Code v2.1.222 ─────────────────────────────────────────────────────╮\n│                                                    │ Tips for getting        │\n│                Welcome back Arthur!                │ started                 │\n│                                                    │ Run /init to create a … │\n│                       ▐▛███▜▌                      │ ─────────────────────── │\n│                      ▝▜█████▛▘                     │ What's new              │\n│                        ▘▘ ▝▝                       │ Fixed worktree-isolate… │\n│       Opus 5 with high effort · Claude Max ·       │ Fixed PreToolUse auto-… │\n│       abreton@siteed.net's Organization            │ Fixed `/usage-credits`… │\n│    /…/T/runner-validate-claude-turn-lease-PMlpc7   │ /release-notes for more │\n╰──────────────────────────────────────────────────────────────────────────────╯\n\n ⚠ 2 MCP servers need authentication · run /mcp\n\n❯ Reply with exactly READY, then wait for another instruction.\n\n⏺ READY\n\n❯ Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 8\n  ⎿  1 agent type available\n\n⏺ Bash(sleep 8)\n  ⎿  (No output)\n\n⏺ Done. Slept 8s, no output.\n╭─── Claude Code v2.1.222 ─────────────────────────────────────────────────────╮\n│                                                    │ Tips for getting        │\n│                Welcome back Arthur!                │ started                 │\n│                                                    │ Run /init to create a … │\n│                       ▐▛███▜▌                      │ ─────────────────────── │\n│                      ▝▜█████▛▘                     │ What's new              │\n│                        ▘▘ ▝▝                       │ Fixed worktree-isolate… │\n│       Opus 5 with high effort · Claude Max ·       │ Fixed PreToolUse auto-… │\n│       abreton@siteed.net's Organization            │ Fixed `/usage-credits`… │\n│    /…/T/runner-validate-claude-turn-lease-PMlpc7   │ /release-notes for more │\n╰──────────────────────────────────────────────────────────────────────────────╯\n\n\n❯ Reply with exactly READY, then wait for another instruction.\n\n⏺ READY\n\n❯ Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 8\n  ⎿  1 agent type available\n\n⏺ Bash(sleep 8)\n  ⎿  (No output)\n\n⏺ Done. Slept 8s, no output.\n\n✻ Worked for 30s\n\n❯ Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 14; printf '%s\\n' '{\"role\":\"self-review-fix\",\"status\":\"complete\",\"outco\n  me\":\"success\",\"disposition\":\"fixed\",\"timestamp\":\"2026-08-07T04:01:44.483Z\"}'\n  > task/SELF-REVIEW-FIX-SIGNAL.json\n\n⏺ Bash(sleep 14; printf '%s\\n'\n      '{\"role\":\"self-review-fix\",\"status\":\"complete\",\"outcome\":\"success\",\"dispos\n      ition\":\"fixed\",\"timestamp\":\"2026-08-07T04:01:44.483Z\"}' > task…)\n  ⎿  (No output)\n\n⏺ Done. Signal file written to task/SELF-REVIEW-FIX-SIGNAL.json.\n\n✻ Baked for 25s\n\n❯ Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 12\n\n⏺ Bash(sleep 12)\n  ⎿  (No output)\n\n⏺ Done. Slept 12s, no output.\n\n✻ Crunched for 32s\n\n────────────────────────────────────────────────────────────────────────────────\n❯ \n────────────────────────────────────────────────────────────────────────────────\n  fs · Opus 5 · ctx:4%\n  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+  "pass": true,
+  "error": null
+}

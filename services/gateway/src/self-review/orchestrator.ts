@@ -1239,13 +1239,14 @@ async function recoverSelfReviewFixPass({
       );
       const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix');
       try {
+        const deliveredTurnToken = delivery.status === 'delivered' ? delivery.turnToken : undefined;
         fixSignal = await waitForWorkerSignal(
           vars,
           taskDir,
           FEEDBACK_TIMEOUT_MS,
           rawSignal,
-          delivery.status === 'delivered' && delivery.turnToken
-            ? () => selfReviewFixTurnIsActive(vars, runId, workerRunner, delivery.turnToken!)
+          deliveredTurnToken
+            ? () => selfReviewFixTurnIsActive(vars, runId, workerRunner, deliveredTurnToken)
             : undefined,
         );
       } finally {

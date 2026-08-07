@@ -69,6 +69,8 @@ export interface RunnerObservability {
   getTurnState?(
     vars: SlotVars,
     target: string,
+    /** Exact leased turn to resolve when pane snapshots may be owned by a child session. */
+    expectedTurnToken?: string,
   ): Promise<ObservabilityReading<RunnerSessionDeliveryState> | null>;
   getContextPct(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
   activeTool(vars: SlotVars, target: string): Promise<ObservabilityReading<string> | null>;

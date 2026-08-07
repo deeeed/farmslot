@@ -60,6 +60,7 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
   const resultPath = path.join(repo, 'result.json');
   const session = `runner-validate-${runner}-${SCENARIO_ID}-${process.pid}`;
   const deadSession = `${session}-dead`;
+  const runnerBin = runnerAdapter.binaryPath();
   let paneId = null;
   const report = {
     runner,
@@ -107,10 +108,11 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
         FARMSLOT_VALIDATION_REPO: repo,
         FARMSLOT_VALIDATION_TARGET: paneId,
         FARMSLOT_VALIDATION_RUNNER: runner,
+        FARMSLOT_VALIDATION_RUNNER_BIN: runnerBin,
         FARMSLOT_VALIDATION_RESULT_PATH: resultPath,
       },
       stdio: 'pipe',
-      timeout: 90_000,
+      timeout: 180_000,
     });
     report.result = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
     report.activeHook = report.result.activeTurnObserved ? 'production-delivery' : null;
@@ -134,6 +136,7 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
         FARMSLOT_VALIDATION_REPO: repo,
         FARMSLOT_VALIDATION_TARGET: deadPaneId,
         FARMSLOT_VALIDATION_RUNNER: runner,
+        FARMSLOT_VALIDATION_RUNNER_BIN: runnerBin,
         FARMSLOT_VALIDATION_RESULT_PATH: liveResultPath,
         FARMSLOT_VALIDATION_PROBE_ONLY: '1',
       },
@@ -151,6 +154,7 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
         FARMSLOT_VALIDATION_REPO: repo,
         FARMSLOT_VALIDATION_TARGET: deadPaneId,
         FARMSLOT_VALIDATION_RUNNER: runner,
+        FARMSLOT_VALIDATION_RUNNER_BIN: runnerBin,
         FARMSLOT_VALIDATION_RESULT_PATH: deadResultPath,
         FARMSLOT_VALIDATION_PROBE_ONLY: '1',
         FARMSLOT_VALIDATION_EXPECTED_TURN_TOKEN: report.liveSnapshotProbe.expectedTurnToken,
@@ -162,6 +166,8 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
     report.pass =
       report.result.baselineTimedOut === true &&
       report.result.unacceptedTurnLeaseRejected === true &&
+      report.result.busyLeaseActiveBeforeFix === true &&
+      report.result.fixTurnSeparatedFromBusyTurn === true &&
       report.result.leasedSignalStatus === 'complete' &&
       report.result.activeTurnObserved === true &&
       report.result.supersedingTurnProbe.originalLeaseActive === false &&

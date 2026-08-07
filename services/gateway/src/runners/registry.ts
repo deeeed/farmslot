@@ -377,11 +377,12 @@ export async function readRunnerTurnState(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runnerId?: string | null,
+  expectedTurnToken?: string,
 ): Promise<ObservabilityReading<RunnerSessionDeliveryState> | null> {
   const observability = getRunnerObservability(runnerId);
   if (!observability?.getTurnState) return null;
   try {
-    return await observability.getTurnState(vars, target);
+    return await observability.getTurnState(vars, target, expectedTurnToken);
   } catch (error) {
     console.warn(
       `[runner-observability] turn-state read failed for ${vars.slotId}: ${(error as Error).message}`,
@@ -1564,7 +1565,7 @@ export async function runnerHasDurablePromptHandoff(
     const exactPromptAccepted =
       reading.exactPromptMatch === true &&
       reading.confidence === 'high' &&
-      (usesNativePromptAcceptance ? reading.source === 'signal' : reading.source === 'hook');
+      (reading.source === 'signal' || reading.source === 'hook');
     if (opts.requirePromptDigest && !exactPromptAccepted) {
       return {
         accepted: false,
@@ -1577,8 +1578,18 @@ export async function runnerHasDurablePromptHandoff(
       reason: nativeSignal
         ? 'exact prompt accepted by runner-native signal provider'
         : `runner ${reading.source} activity observed after prompt handoff`,
-      source: nativeSignal ? 'native-signal' : 'hook-activity',
-      ...(reading.turnToken ? { turnToken: reading.turnToken } : {}),
+      source: nativeSignal
+        ? 'native-signal'
+        : reading.exactPromptMatch
+          ? 'hook-digest'
+          : 'hook-activity',
+      // Native providers can fall back to an exact hook digest for delivery,
+      // but hook timestamps are not native turn ids and cannot lease work.
+      ...(!usesNativePromptAcceptance && reading.turnToken
+        ? { turnToken: reading.turnToken }
+        : nativeSignal && reading.turnToken
+          ? { turnToken: reading.turnToken }
+          : {}),
     };
   } catch (error) {
     console.warn(

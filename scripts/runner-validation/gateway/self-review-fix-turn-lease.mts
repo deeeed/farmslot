@@ -9,8 +9,9 @@ import type { SlotVars } from '@farmslot/slot-config';
 const repo = process.env.FARMSLOT_VALIDATION_REPO;
 const target = process.env.FARMSLOT_VALIDATION_TARGET;
 const runner = process.env.FARMSLOT_VALIDATION_RUNNER;
+const runnerBin = process.env.FARMSLOT_VALIDATION_RUNNER_BIN;
 const resultPath = process.env.FARMSLOT_VALIDATION_RESULT_PATH;
-assert.ok(repo && target && runner && resultPath, 'validation inputs are required');
+assert.ok(repo && target && runner && runnerBin && resultPath, 'validation inputs are required');
 
 process.env.NODE_TEST_CONTEXT = '1';
 process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
@@ -36,11 +37,11 @@ const vars: SlotVars = {
   host: 'localhost',
   sshUser: process.env.USER ?? '',
   osType: 'macos',
-  claudePath: '',
-  codexPath: '',
+  claudePath: runner === 'claude' ? runnerBin : '',
+  codexPath: runner === 'codex' ? runnerBin : '',
   opencodePath: '',
   cursorPath: '',
-  grokPath: '',
+  grokPath: runner === 'grok' ? runnerBin : '',
   dispatchCmd: '',
   recycleCmd: '',
   repo,
@@ -99,6 +100,7 @@ const unacceptedDelivery = await deliverPromptWithRetainedFallback({
   vars,
   target,
   runnerId: runner,
+  safetyTier: 'dangerous',
   prompt: 'This recovery prompt was never submitted to the runner.',
   launchAckSignalPath: fakeSignalPath,
   launchAckBaseline: fakeSignalBaseline,
@@ -107,6 +109,24 @@ const unacceptedDelivery = await deliverPromptWithRetainedFallback({
   forceBusyPoll: true,
 });
 
+// Start unrelated work first, then attempt the fix delivery while that turn is
+// active. The production safe-send contract must wait for a new accepted turn;
+// it must never lease the fix to this unrelated turn.
+const busyDelivery = await deliverPromptWithRetainedFallback({
+  vars,
+  target,
+  runnerId: runner,
+  safetyTier: 'dangerous',
+  prompt: 'Use the shell tool exactly once to run this command, and do nothing else: sleep 8',
+  timeoutMs: 30_000,
+  forceBusyPoll: true,
+});
+assert.equal(busyDelivery.delivered, true, 'unrelated busy turn must be accepted');
+const busyTurnToken = busyDelivery.delivered ? busyDelivery.turnToken : undefined;
+assert.ok(busyTurnToken, 'unrelated busy turn must expose its identity');
+const busyLeaseActiveBeforeFix = await runnerTurnLeaseIsActive(vars, target, runner, busyTurnToken);
+assert.equal(busyLeaseActiveBeforeFix, true, 'unrelated turn must be live before fix delivery');
+
 const signal = JSON.stringify({
   role: 'self-review-fix',
   status: 'complete',
@@ -114,19 +134,29 @@ const signal = JSON.stringify({
   disposition: 'fixed',
   timestamp: new Date().toISOString(),
 });
+const fixSignalPath = path.join(repo, 'task', 'SELF-REVIEW-FIX-SIGNAL.json');
+const fixSignalBaseline = await readLaunchAckSignalSnapshot(vars, fixSignalPath);
 const command = `sleep 14; printf '%s\\n' '${signal}' > task/SELF-REVIEW-FIX-SIGNAL.json`;
 const prompt = `Use the shell tool exactly once to run this command, and do nothing else: ${command}`;
 const acceptedDelivery = await deliverPromptWithRetainedFallback({
   vars,
   target,
   runnerId: runner,
+  safetyTier: 'dangerous',
   prompt,
+  launchAckSignalPath: fixSignalPath,
+  launchAckBaseline: fixSignalBaseline,
   timeoutMs: 30_000,
   forceBusyPoll: true,
 });
 assert.equal(acceptedDelivery.delivered, true, 'production delivery must accept the fix prompt');
 const acceptedTurnToken = acceptedDelivery.delivered ? acceptedDelivery.turnToken : undefined;
 assert.ok(acceptedTurnToken, 'exact production acceptance must expose a runner turn token');
+assert.notEqual(
+  acceptedTurnToken,
+  busyTurnToken,
+  'fix prompt must bind to a new turn after unrelated work finishes',
+);
 
 const startedAt = Date.now();
 const [baselineResult, leasedResult] = await Promise.all([
@@ -135,15 +165,21 @@ const [baselineResult, leasedResult] = await Promise.all([
 ]);
 
 const idleDeadline = Date.now() + 20_000;
+let workerReachedIdle = false;
 while (Date.now() < idleDeadline) {
   const state = await readRunnerTurnState(vars, target, runner);
-  if (state?.value === 'idle') break;
+  if (state?.value === 'idle') {
+    workerReachedIdle = true;
+    break;
+  }
   await new Promise((resolve) => setTimeout(resolve, 250));
 }
+assert.equal(workerReachedIdle, true, 'accepted fix turn must reach idle before superseding probe');
 const supersedingDelivery = await deliverPromptWithRetainedFallback({
   vars,
   target,
   runnerId: runner,
+  safetyTier: 'dangerous',
   prompt: 'Use the shell tool exactly once to run this command, and do nothing else: sleep 12',
   timeoutMs: 30_000,
   forceBusyPoll: true,
@@ -169,6 +205,9 @@ writeFileSync(
       unacceptedTurnLeaseRejected:
         unacceptedDelivery.delivered === true && unacceptedDelivery.turnToken === undefined,
       acceptedTurnToken,
+      busyTurnToken,
+      busyLeaseActiveBeforeFix,
+      fixTurnSeparatedFromBusyTurn: acceptedTurnToken !== busyTurnToken,
       leasedSignalStatus: leasedResult?.status ?? null,
       activeTurnObserved: turnReadings.some((reading) => reading.active),
       supersedingTurnProbe,

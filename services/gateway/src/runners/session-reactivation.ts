@@ -180,6 +180,7 @@ async function reactivateRunnerSessionWithPrompt(
       preserveWindowAfterExit: true,
     });
     let trustPromptConfirmed = false;
+    let acknowledgedWithoutTurnToken = false;
 
     const deadline = Date.now() + (options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
     while (Date.now() < deadline) {
@@ -207,6 +208,7 @@ async function reactivateRunnerSessionWithPrompt(
           ...(accepted.turnToken ? { turnToken: accepted.turnToken } : {}),
         };
       }
+      if (accepted.accepted) acknowledgedWithoutTurnToken = true;
       if (!trustPromptConfirmed) {
         const trustResult = await resolveLaunchBlockerWithFreshEvidence({
           runnerId: runner,
@@ -238,6 +240,9 @@ async function reactivateRunnerSessionWithPrompt(
         trustPromptConfirmed = trustResult.outcome === 'sent';
       }
       await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_ACCEPTANCE_POLL_MS));
+    }
+    if (acknowledgedWithoutTurnToken) {
+      return { delivered: true, acknowledgement: 'structured' };
     }
     return {
       delivered: false,

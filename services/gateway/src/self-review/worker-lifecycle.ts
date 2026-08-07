@@ -20,7 +20,7 @@ export async function runnerTurnLeaseIsActive(
   runner: string,
   expectedTurnToken: string,
 ): Promise<boolean> {
-  const state = await readRunnerTurnState(vars, target, runner);
+  const state = await readRunnerTurnState(vars, target, runner, expectedTurnToken);
   if (
     state?.confidence !== 'high' ||
     state.value !== 'active' ||

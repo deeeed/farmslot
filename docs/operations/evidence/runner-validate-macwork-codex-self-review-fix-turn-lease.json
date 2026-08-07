@@ -1,17 +1,20 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-07T03:16:03.475Z",
+  "recordedAt": "2026-08-07T04:09:07.718Z",
   "host": "macwork",
   "scenario": "self-review-fix-turn-lease",
   "runner": "codex",
   "baselineContract": "an unaccepted fix prompt receives no structured-turn lease",
   "currentContract": "an accepted fix prompt receives a liveness-guarded structured runner turn lease",
   "result": {
-    "elapsedMs": 34736,
+    "elapsedMs": 54684,
     "idleTimeoutMs": 10000,
     "baselineTimedOut": true,
     "unacceptedTurnLeaseRejected": true,
-    "acceptedTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
+    "acceptedTurnToken": "019fda66-2ad3-7762-85bf-c01c3189fb6b:019fda67-3214-73c0-be34-77e013f8483b",
+    "busyTurnToken": "019fda66-2ad3-7762-85bf-c01c3189fb6b:019fda66-ba1d-77f1-bf0e-5a01085845ce",
+    "busyLeaseActiveBeforeFix": true,
+    "fixTurnSeparatedFromBusyTurn": true,
     "leasedSignalStatus": "complete",
     "activeTurnObserved": true,
     "supersedingTurnProbe": {
@@ -21,56 +24,42 @@
     },
     "turnReadings": [
       {
-        "expectedTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
+        "expectedTurnToken": "019fda66-2ad3-7762-85bf-c01c3189fb6b:019fda67-3214-73c0-be34-77e013f8483b",
         "active": true,
         "stateValue": "active",
-        "actualTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
-        "runnerAlive": true
-      },
-      {
-        "expectedTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
-        "active": true,
-        "stateValue": "active",
-        "actualTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
-        "runnerAlive": true
-      },
-      {
-        "expectedTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
-        "active": true,
-        "stateValue": "active",
-        "actualTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
+        "actualTurnToken": "019fda66-2ad3-7762-85bf-c01c3189fb6b:019fda67-3214-73c0-be34-77e013f8483b",
         "runnerAlive": true
       }
     ]
   },
   "liveSnapshotProbe": {
-    "expectedTurnToken": "019fda38-067a-7dd3-8e8a-f7bea7999c03:019fda38-0789-70a1-94a6-315f2bd2e0d2",
+    "expectedTurnToken": "019fda68-2e68-7262-a513-b36bcb0196b0:019fda68-3165-7c52-ae5f-103fa6372767",
     "leaseAllowed": true,
     "turnReadings": [
       {
-        "expectedTurnToken": "019fda38-067a-7dd3-8e8a-f7bea7999c03:019fda38-0789-70a1-94a6-315f2bd2e0d2",
+        "expectedTurnToken": "019fda68-2e68-7262-a513-b36bcb0196b0:019fda68-3165-7c52-ae5f-103fa6372767",
         "active": true,
         "stateValue": "active",
-        "actualTurnToken": "019fda38-067a-7dd3-8e8a-f7bea7999c03:019fda38-0789-70a1-94a6-315f2bd2e0d2",
+        "actualTurnToken": "019fda68-2e68-7262-a513-b36bcb0196b0:019fda68-3165-7c52-ae5f-103fa6372767",
         "runnerAlive": true
       }
     ]
   },
   "staleSnapshotProbe": {
-    "expectedTurnToken": "019fda38-067a-7dd3-8e8a-f7bea7999c03:019fda38-0789-70a1-94a6-315f2bd2e0d2",
+    "expectedTurnToken": "019fda68-2e68-7262-a513-b36bcb0196b0:019fda68-3165-7c52-ae5f-103fa6372767",
     "leaseAllowed": false,
     "turnReadings": [
       {
-        "expectedTurnToken": "019fda38-067a-7dd3-8e8a-f7bea7999c03:019fda38-0789-70a1-94a6-315f2bd2e0d2",
+        "expectedTurnToken": "019fda68-2e68-7262-a513-b36bcb0196b0:019fda68-3165-7c52-ae5f-103fa6372767",
         "active": false,
         "stateValue": "active",
-        "actualTurnToken": "019fda38-067a-7dd3-8e8a-f7bea7999c03:019fda38-0789-70a1-94a6-315f2bd2e0d2",
+        "actualTurnToken": "019fda68-2e68-7262-a513-b36bcb0196b0:019fda68-3165-7c52-ae5f-103fa6372767",
         "runnerAlive": false
       }
     ]
   },
   "activeHook": "production-delivery",
-  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.kRfUmi/launch-fad3dc7d3b1a8cb5.sh\nOpenAI Codex v0.146.1\n[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:     gpt-5.6-sol xhigh   /model to change          │\n│ directory: …gn/T/runner-validate-codex-turn-lease-2RXHcP │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n\n[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭─────────────────────────────────────────────────╮\n│ ✨ Update available! 0.146.1 -> 0.147.0         │\n│ Run npm install -g @openai/codex to update.     │\n│                                                 │\n│ See full release notes:                         │\n│ https://github.com/openai/codex/releases/latest │\n╰─────────────────────────────────────────────────╯\n\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:     gpt-5.6-sol xhigh   /model to change          │\n│ directory: …gn/T/runner-validate-codex-turn-lease-2RXHcP │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit\n  https://chatgpt.com/codex?app-landing-page=true\n\n\n› Reply with exactly READY, then wait for another instruction.\n\n\n• READY\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 14; printf '%s\\n' '{\"role\":\"self-review-\n  fix\",\"status\":\"complete\",\"outcome\":\"success\",\"disposition\":\"fixed\",\"timestamp\n  \":\"2026-08-07T03:14:43.876Z\"}' > task/SELF-REVIEW-FIX-SIGNAL.json\n\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 12\n\n\n\n› Write tests for @filename\n\n  gpt-5.6-sol xhigh · /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/…",
+  "paneTail": "[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭─────────────────────────────────────────────────╮\n│ ✨ Update available! 0.146.1 -> 0.147.0         │\n│ Run npm install -g @openai/codex to update.     │\n│                                                 │\n│ See full release notes:                         │\n│ https://github.com/openai/codex/releases/latest │\n╰─────────────────────────────────────────────────╯\n\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:       gpt-5.6-sol xhigh   /model to change        │\n│ directory:   …/T/runner-validate-codex-turn-lease-3idbRr │\n│ permissions: YOLO mode                                   │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit\n  https://chatgpt.com/codex?app-landing-page=true\n\n\n› Reply with exactly READY, then wait for another instruction.\n\n\n• READY\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 8\n[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭─────────────────────────────────────────────────╮\n│ ✨ Update available! 0.146.1 -> 0.147.0         │\n│ Run npm install -g @openai/codex to update.     │\n│                                                 │\n│ See full release notes:                         │\n│ https://github.com/openai/codex/releases/latest │\n╰─────────────────────────────────────────────────╯\n\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:       gpt-5.6-sol xhigh   /model to change        │\n│ directory:   …/T/runner-validate-codex-turn-lease-3idbRr │\n│ permissions: YOLO mode                                   │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit\n  https://chatgpt.com/codex?app-landing-page=true\n\n\n› Reply with exactly READY, then wait for another instruction.\n\n\n• READY\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 8\n\n\n■ Conversation interrupted - tell the model what to do differently. Something\nwent wrong? Hit `/feedback` to report the issue.\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 14; printf '%s\\n' '{\"role\":\"self-review-\n  fix\",\"status\":\"complete\",\"outcome\":\"success\",\"disposition\":\"fixed\",\"timestamp\n  \":\"2026-08-07T04:06:48.248Z\"}' > task/SELF-REVIEW-FIX-SIGNAL.json\n\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 12\n\n\n• Ran sleep 12\n  └ (no output)\n\n────────────────────────────────────────────────────────────────────────────────\n\n\n› Write tests for @filename\n\n  gpt-5.6-sol xhigh · /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/…",
   "pass": true,
   "error": null
 }

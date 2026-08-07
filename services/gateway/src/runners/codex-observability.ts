@@ -5,8 +5,6 @@ import { claudeHookObservability } from './claude-observability.js';
 import { readRunnerPaneObservabilityState } from './observability-files.js';
 import type { RunnerObservability, SlotVars } from './observability-types.js';
 
-const SESSION_SCAN_BYTES = 2 * 1024 * 1024;
-
 type CodexPromptProbe =
   | { status: 'matched'; observedAt: number; turnId: string }
   | { status: 'not-found' | 'unavailable' | 'identity-mismatch' };
@@ -46,7 +44,6 @@ session_id = ${JSON.stringify(sessionId)}
 session_path = Path(${JSON.stringify(sessionPath)})
 expected_prompt = ${JSON.stringify(promptText)}
 since_ms = ${Math.floor(sinceMs)}
-max_scan_bytes = ${SESSION_SCAN_BYTES}
 
 if not session_path.is_file():
     print(json.dumps({'status': 'unavailable'}))
@@ -61,12 +58,6 @@ try:
         ):
             print(json.dumps({'status': 'identity-mismatch'}))
             raise SystemExit(0)
-        size = handle.seek(0, 2)
-        start = max(0, size - max_scan_bytes)
-        handle.seek(start)
-        if start:
-            handle.readline()
-        lines = handle.readlines()
 except (OSError, UnicodeDecodeError, json.JSONDecodeError):
     print(json.dumps({'status': 'unavailable'}))
     raise SystemExit(0)
@@ -83,53 +74,76 @@ def timestamp_ms(value):
         return None
     return int(parsed.timestamp() * 1000)
 
-latest_match = None
-current_turn = None
-for index, raw_line in enumerate(lines):
-    try:
-        record = json.loads(raw_line.decode('utf-8'))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        if index == 0 and start:
-            continue
-        if index == len(lines) - 1 and not raw_line.endswith(b'\\n'):
-            continue
-        print(json.dumps({'status': 'unavailable'}))
-        raise SystemExit(0)
-    payload = record.get('payload', {})
-    if record.get('type') == 'event_msg' and payload.get('type') == 'task_started':
-        turn_id = payload.get('turn_id')
-        if isinstance(turn_id, str) and turn_id:
-            current_turn = {'turnId': turn_id}
-        continue
-    if (
-        record.get('type') != 'response_item'
-        or payload.get('type') != 'message'
-        or payload.get('role') != 'user'
-    ):
-        continue
-    content = payload.get('content')
-    if not isinstance(content, list):
-        continue
-    parts = [
-        item.get('text') for item in content
-        if isinstance(item, dict) and item.get('type') == 'input_text'
-    ]
-    if not parts or not all(isinstance(part, str) for part in parts):
-        continue
-    observed_at = timestamp_ms(record.get('timestamp'))
-    if (
-        '\\n'.join(parts) == expected_prompt
-        and observed_at is not None
-        and observed_at >= since_ms
-        and current_turn is not None
-    ):
-        latest_match = {'observedAt': observed_at, 'turnId': current_turn['turnId']}
+def reverse_lines(handle, block_size=65536):
+    handle.seek(0, 2)
+    position = handle.tell()
+    remainder = b''
+    while position:
+        count = min(block_size, position)
+        position -= count
+        handle.seek(position)
+        parts = (handle.read(count) + remainder).split(b'\\n')
+        remainder = parts[0]
+        for line in reversed(parts[1:]):
+            if line:
+                yield line
+    if remainder:
+        yield remainder
 
-print(json.dumps(
-    {'status': 'matched', **latest_match}
-    if latest_match is not None
-    else {'status': 'not-found'}
-))
+# Find the newest exact prompt in the send window, then keep walking backward
+# to the native task_started boundary that owns it. Codex steering messages are
+# intentionally part of the active turn; safe-send waits for an unrelated busy
+# turn to finish before submitting a new prompt. No fixed byte tail may sever
+# the prompt from its owning boundary on a large rollout.
+matched_at = None
+try:
+    with session_path.open('rb') as handle:
+        for raw_line in reverse_lines(handle):
+            try:
+                record = json.loads(raw_line.decode('utf-8'))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            payload = record.get('payload', {})
+            observed_at = timestamp_ms(record.get('timestamp'))
+            if matched_at is None:
+                if observed_at is not None and observed_at < since_ms:
+                    break
+                if (
+                    record.get('type') != 'response_item'
+                    or payload.get('type') != 'message'
+                    or payload.get('role') != 'user'
+                ):
+                    continue
+                content = payload.get('content')
+                if not isinstance(content, list):
+                    continue
+                parts = [
+                    item.get('text') for item in content
+                    if isinstance(item, dict) and item.get('type') == 'input_text'
+                ]
+                if (
+                    parts
+                    and all(isinstance(part, str) for part in parts)
+                    and '\\n'.join(parts) == expected_prompt
+                    and observed_at is not None
+                    and observed_at >= since_ms
+                ):
+                    matched_at = observed_at
+                continue
+            if record.get('type') == 'event_msg' and payload.get('type') == 'task_started':
+                turn_id = payload.get('turn_id')
+                if isinstance(turn_id, str) and turn_id:
+                    print(json.dumps({
+                        'status': 'matched',
+                        'observedAt': matched_at,
+                        'turnId': turn_id,
+                    }))
+                    raise SystemExit(0)
+except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    print(json.dumps({'status': 'unavailable'}))
+    raise SystemExit(0)
+
+print(json.dumps({'status': 'not-found'}))
 PY`;
 }
 
@@ -390,8 +404,9 @@ async function readCodexPromptAcceptance(
 export const codexSessionObservability: RunnerObservability = {
   ...claudeHookObservability,
   promptAcceptanceMode: 'native-text',
-  async getTurnState(vars, target) {
+  async getTurnState(vars, target, expectedTurnToken) {
     const binding = await resolveCodexPaneBinding(vars, target);
+    if (expectedTurnToken && !expectedTurnToken.startsWith(`${binding?.sessionId}:`)) return null;
     return binding ? readCodexNativeTurnState(vars, binding.sessionId, binding.sessionPath) : null;
   },
   async resolveSessionId(vars, sessionPath) {
@@ -410,12 +425,29 @@ export const codexSessionObservability: RunnerObservability = {
       ? { sessionId: probe.sessionId, sessionPath: probe.sessionPath }
       : null;
   },
-  async promptAccepted(vars, target, _promptDigest, sinceMs, _paneRetired, promptText) {
+  async promptAccepted(vars, target, promptDigest, sinceMs, paneRetired, promptText) {
     if (!promptText) return null;
     const binding = await resolveCodexPaneBinding(vars, target);
-    return binding
+    const nativeReading = binding
       ? readCodexPromptAcceptance(vars, binding.sessionId, binding.sessionPath, promptText, sinceMs)
       : null;
+    if (nativeReading) return nativeReading;
+    // Native rollout history is authoritative when available. Exact Codex
+    // UserPromptSubmit hooks remain a delivery fallback when the native file
+    // is temporarily unreadable or its binding has not appeared yet; their
+    // timestamp token is deliberately omitted because native turn state uses
+    // Codex turn ids and the two token domains must never be compared.
+    const hookReading = await claudeHookObservability.promptAccepted(
+      vars,
+      target,
+      promptDigest,
+      sinceMs,
+      paneRetired,
+      promptText,
+    );
+    if (!hookReading) return null;
+    const { turnToken: _hookTurnToken, ...fallback } = hookReading;
+    return fallback;
   },
   async promptAcceptedInSession(vars, _target, sessionId, sessionPath, promptText, sinceMs) {
     return readCodexPromptAcceptance(vars, sessionId, sessionPath, promptText, sinceMs);

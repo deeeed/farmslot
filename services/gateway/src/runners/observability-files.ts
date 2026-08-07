@@ -196,18 +196,23 @@ export function deriveRunnerSessionDeliveryState(
   const event = hookEventName(record);
   const observedAt = observedAtFromRecord(record);
   if (!event || observedAt == null) return null;
-  const value: RunnerSessionDeliveryState =
-    event === 'Stop' || (event === 'Notification' && record.notification_type === 'idle_prompt')
-      ? 'idle'
-      : event === 'SubagentStop'
-        ? 'unknown'
-        : 'active';
+  const isIdle =
+    event === 'Stop' ||
+    event === 'StopFailure' ||
+    (event === 'Notification' && record.notification_type === 'idle_prompt');
+  const isActive =
+    event === 'UserPromptSubmit' ||
+    event === 'PreToolUse' ||
+    event === 'PostToolUse' ||
+    event === 'PostToolUseFailure' ||
+    (event === 'Notification' && record.notification_type !== 'idle_prompt');
+  const value: RunnerSessionDeliveryState = isIdle ? 'idle' : isActive ? 'active' : 'unknown';
   return {
     value,
     source: 'hook',
     confidence: 'high',
     observedAt,
-    ...(typeof record.turnStartedAt === 'number'
+    ...(value !== 'unknown' && typeof record.turnStartedAt === 'number'
       ? { turnToken: `${sessionId}:${record.turnStartedAt}` }
       : {}),
   };
@@ -456,18 +461,32 @@ export function promptAcceptedFromHooks(
   // retirement send path treat a dead hook stream as an authoritative decision, so return null and
   // let it degrade/hold. FLAG-OFF (default) keeps main's medium-`false` semantics for Phase-2.
   if (scoped.length === 0 && paneRetired) return null;
-  let latest: { observedAt: number; digest?: string; sessionId?: string } | null = null;
+  type PromptHookCandidate = {
+    observedAt: number;
+    digest?: string;
+    sessionId?: string;
+    turnStartedAt?: number;
+  };
+  let latest: PromptHookCandidate | null = null;
+  let latestMatch: PromptHookCandidate | null = null;
   for (const record of scoped) {
     const event = hookEventName(record);
     if (event !== 'UserPromptSubmit') continue;
     const observedAt = observedAtFromRecord(record);
     if (observedAt == null || observedAt < sinceMs) continue;
-    if (!latest || observedAt > latest.observedAt) {
-      latest = {
-        observedAt,
-        digest: record.runnerPromptDigest,
-        ...(record.session_id ? { sessionId: record.session_id } : {}),
-      };
+    const candidate = {
+      observedAt,
+      ...(record.runnerPromptDigest ? { digest: record.runnerPromptDigest } : {}),
+      ...(record.session_id ? { sessionId: record.session_id } : {}),
+      ...(typeof record.turnStartedAt === 'number' ? { turnStartedAt: record.turnStartedAt } : {}),
+    };
+    if (!latest || observedAt > latest.observedAt) latest = candidate;
+    if (
+      candidate.digest &&
+      (candidate.digest === promptDigest || candidate.digest.startsWith(promptDigest)) &&
+      (!latestMatch || observedAt > latestMatch.observedAt)
+    ) {
+      latestMatch = candidate;
     }
   }
   if (!latest) {
@@ -488,17 +507,22 @@ export function promptAcceptedFromHooks(
       observedAt: now,
     };
   }
-  const matched =
-    typeof latest.digest === 'string' &&
-    (latest.digest === promptDigest || latest.digest.startsWith(promptDigest));
-  if (matched) {
+  // Exact acceptance is durable for this send window. A later operator prompt
+  // must not erase the earlier matching UserPromptSubmit and cause recovery to
+  // relaunch a worker that already accepted the task.
+  if (latestMatch) {
     return {
       value: true,
       source: 'hook',
       confidence: 'high',
-      observedAt: latest.observedAt,
-      ...(latest.sessionId
-        ? { sessionId: latest.sessionId, turnToken: `${latest.sessionId}:${latest.observedAt}` }
+      observedAt: latestMatch.observedAt,
+      ...(latestMatch.sessionId
+        ? {
+            sessionId: latestMatch.sessionId,
+            ...(typeof latestMatch.turnStartedAt === 'number'
+              ? { turnToken: `${latestMatch.sessionId}:${latestMatch.turnStartedAt}` }
+              : {}),
+          }
         : {}),
     };
   }

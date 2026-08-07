@@ -124,10 +124,19 @@ try {
     typeof payload.session_id === 'string' && payload.session_id
       ? readSnapshot(path.join(obsDir, 'sessions'), payload.session_id)
       : null;
+  const turnCarriesIdentity =
+    event === 'PreToolUse' ||
+    event === 'PostToolUse' ||
+    event === 'PostToolUseFailure' ||
+    event === 'Notification' ||
+    event === 'Stop' ||
+    event === 'StopFailure';
   const turnStartedAt =
     event === 'UserPromptSubmit'
       ? observedAt
-      : previousSession?.turnStartedAt;
+      : turnCarriesIdentity
+        ? previousSession?.turnStartedAt
+        : undefined;
   const record = {
     schemaVersion: 1,
     observedAt,
