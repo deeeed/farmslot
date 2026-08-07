@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -314,6 +315,27 @@ test('presence coordination closes registration races, reclaims dead entries, an
   );
   releaseSecond();
   releaseFirst();
+});
+
+test('presence registration reclaims an exact stale entry after PID reuse', () => {
+  const env = isolatedEnv();
+  const presence = { pid: process.pid, farmslotRoot: '/gateway-reused', port: 8811 };
+  const directory = gatewayPresenceDirectory(env);
+  const suffix = createHash('sha256')
+    .update(`${presence.pid}\0${presence.farmslotRoot}\0${presence.port}`)
+    .digest('hex')
+    .slice(0, 16);
+  const path = join(directory, `${presence.pid}-${suffix}.json`);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(path, `${JSON.stringify({ ...presence, stalePidReuseBaseline: true })}\n`);
+
+  const release = registerGatewayPresence(presence, env);
+  try {
+    assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), presence);
+    assert.deepEqual(listLiveGateways(env), [presence]);
+  } finally {
+    release();
+  }
 });
 
 test('gateway SIGINT and SIGTERM cleanup remove identity-domain presence', async () => {

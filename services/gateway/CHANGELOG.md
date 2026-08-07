@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(server): fail a WebSocket connection closed when credential-state refresh fails during initialization instead of terminating the gateway process.
 - fix(auth): preserve deliberate RPC validation and credential-store refusal guidance, including live lock contention, while returning generic non-leaking errors for unexpected authorization and credential-store faults.
 - fix(server): surface unexpected auth-connect, routed RPC, and JSON/binary node-frame principal-resolution faults, contain pre-auth pairing credential-store faults, and fail closed per receiver when broadcast authorization cannot refresh the credential store, without exposing internal messages or unhandled promise rejections.
 - fix(auth): log unexpected HTTP principal-resolution failures and return a generic request-scoped 500 instead of exposing them as authorization denials or terminating the gateway.

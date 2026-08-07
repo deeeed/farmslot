@@ -133,8 +133,34 @@ export function createWebSocketServer(
   });
 
   wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
+    const clientId = `c${++clientSeq}`;
+    let initializedState: ClientState | undefined;
+
+    // Attach this before credential refresh so even a connection-initialization failure
+    // cannot turn a subsequent socket error into an unhandled process error.
+    ws.on('error', (err) => {
+      const code = (err as NodeJS.ErrnoException).code;
+      console.error(
+        `[server] websocket error on ${clientId}` +
+          (initializedState?.clientKind ? ` (${initializedState.clientKind})` : '') +
+          `: ${(err as Error).message}` +
+          (code ? ` [${code}]` : ''),
+      );
+    });
+
+    let soloMode: boolean;
+    try {
+      soloMode = authRuntime.resolver.isSoloMode();
+    } catch (err) {
+      console.error(
+        `[server] websocket connection initialization failed on ${clientId}: ${(err as Error).message}`,
+      );
+      ws.close(1011, 'internal gateway error');
+      return;
+    }
+
     const state: ClientState = {
-      id: `c${++clientSeq}`,
+      id: clientId,
       ws,
       terminalHandlers: new Map(),
       workerTerminalHandlers: new Map(),
@@ -145,30 +171,16 @@ export function createWebSocketServer(
       terminalSubscribeSeq: new Map(),
       screenHandlers: new Map(),
       thumbnailSubscribed: false,
-      authenticated: authRuntime.resolver.isSoloMode(),
-      clientKind: authRuntime.resolver.isSoloMode() ? 'ui' : undefined,
-      authMode: authRuntime.resolver.isSoloMode() ? 'none' : undefined,
-      authenticatedAt: authRuntime.resolver.isSoloMode() ? Date.now() : undefined,
+      authenticated: soloMode,
+      clientKind: soloMode ? 'ui' : undefined,
+      authMode: soloMode ? 'none' : undefined,
+      authenticatedAt: soloMode ? Date.now() : undefined,
     };
+    initializedState = state;
     clients.set(ws, state);
 
-    // Critical: `ws` emits `error` for oversized frames (WS_ERR_UNSUPPORTED_MESSAGE_LENGTH)
-    // before closing with 1009. An unhandled socket error crashes the whole gateway process.
-    ws.on('error', (err) => {
-      const code = (err as NodeJS.ErrnoException).code;
-      console.error(
-        `[server] websocket error on ${state.id}` +
-          (state.clientKind ? ` (${state.clientKind})` : '') +
-          `: ${(err as Error).message}` +
-          (code ? ` [${code}]` : ''),
-      );
-    });
-
     // Send privileged hello snapshot only after auth when auth is enabled.
-    if (
-      authRuntime.resolver.isSoloMode() &&
-      canReceiveBroadcast(authRuntime, state, Events.HELLO)
-    ) {
+    if (soloMode && canReceiveBroadcast(authRuntime, state, Events.HELLO)) {
       sendHello(ws);
     }
 

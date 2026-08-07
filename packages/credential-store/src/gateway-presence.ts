@@ -34,6 +34,7 @@ export function registerGatewayPresence(
   env: NodeJS.ProcessEnv = process.env,
 ): () => void {
   const entryPath = withCredentialLock(() => {
+    listLiveGatewaysUnlocked(env);
     const directory = gatewayPresenceDirectory(env);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const suffix = createHash('sha256')
@@ -41,6 +42,16 @@ export function registerGatewayPresence(
       .digest('hex')
       .slice(0, 16);
     const path = join(directory, `${presence.pid}-${suffix}.json`);
+    const existing = existsSync(path) ? readPresence(path) : null;
+    if (
+      existing?.pid === presence.pid &&
+      existing.farmslotRoot === presence.farmslotRoot &&
+      existing.port === presence.port
+    ) {
+      // PID reuse makes the dead record look live because the new process now owns that PID.
+      // Under the identity-domain lock, replacing the exact same process/root/port key is safe.
+      rmSync(path, { force: true });
+    }
     writeFileSync(path, `${JSON.stringify(presence)}\n`, { mode: 0o600, flag: 'wx' });
     return path;
   }, env);
