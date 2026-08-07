@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '../contracts/index.js';
-
+import type { Run } from '../../src/contracts/index.js';
 import {
   currentReviewChainEntry,
   observedReviewSessionContinuity,
   reviewChainForRun,
-} from './review-chain.js';
+} from '../../src/runs/review-chain.js';
 
 function repeatReviewRun(reviewScope: 'full' | 'incremental'): Run {
   return {

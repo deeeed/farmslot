@@ -25,7 +25,6 @@ export type RepeatReviewResumePlan =
   | { kind: 'fallback'; reason: ReviewSessionFallbackReason };
 
 export type RepeatReviewResumeAttempt =
-  | { kind: 'not-resumed'; plan: Exclude<RepeatReviewResumePlan, { kind: 'resume' }> }
   | {
       kind: 'resumed';
       plan: Extract<RepeatReviewResumePlan, { kind: 'resume' }>;
@@ -109,17 +108,14 @@ export function resolveRepeatReviewResumePlan(
 }
 
 /**
- * Resolve and execute one repeat-review resume through the shared runner contract.
+ * Execute one resolved repeat-review resume through the shared runner contract.
  * The workflow receives facts only; runner-specific mechanics stay in the adapter.
  */
 export async function attemptRepeatReviewResume(
-  current: Pick<Run, 'flowType' | 'project' | 'slotId' | 'repeatReviewContext'>,
-  prior: Run | null,
+  plan: Extract<RepeatReviewResumePlan, { kind: 'resume' }>,
   runner: string,
   delivery: Omit<RunnerSessionReactivationOptions, 'runnerId' | 'sessionId' | 'sessionPath'>,
 ): Promise<RepeatReviewResumeAttempt> {
-  const plan = resolveRepeatReviewResumePlan(current, prior, runner);
-  if (plan.kind !== 'resume') return { kind: 'not-resumed', plan };
   const result = await deliverPromptToRetainedRunnerSession({
     ...delivery,
     runnerId: runner,

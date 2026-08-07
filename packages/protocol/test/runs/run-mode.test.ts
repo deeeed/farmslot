@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { WorkerTemplateOption } from '../contracts/config.js';
-
-import { modeForFlow, resolveRunCreateMode, selectedTemplateMode } from './run-mode.js';
+import type { WorkerTemplateOption } from '../../src/contracts/config.js';
+import {
+  modeForFlow,
+  resolveRunCreateMode,
+  selectedTemplateMode,
+} from '../../src/runs/run-mode.js';
 
 const devOptions: WorkerTemplateOption[] = [
   { fileName: 'dev.md', label: 'dev (default)', isDefault: true, flowType: 'dev', variant: null },

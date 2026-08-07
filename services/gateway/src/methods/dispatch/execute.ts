@@ -1187,7 +1187,7 @@ export async function dispatchExecute(
         'launch',
         `Resuming reviewer session ${binding.runnerSessionId} from run ${binding.priorRunId.slice(0, 8)}...`,
       );
-      const attempt = await attemptRepeatReviewResume(currentRun!, priorReviewRun, runner, {
+      const attempt = await attemptRepeatReviewResume(repeatReviewResumePlan, runner, {
         vars,
         target: workerTarget,
         model,
@@ -1226,11 +1226,6 @@ export async function dispatchExecute(
           runnerSessionPath: binding.runnerSessionPath,
         };
         step('warn', attempt.reason);
-      } else {
-        repeatReviewResumePlan = attempt.plan;
-        repeatReviewFallbackReason =
-          attempt.plan.kind === 'fallback' ? attempt.plan.reason : 'missing-session';
-        step('launch', 'Reviewer session facts changed; launching a fresh reviewer');
       }
     }
     if (!resumedReviewSession && usesRoleWindow) {

@@ -224,7 +224,7 @@ export function runGatewayRepeatReviewResume({
 }) {
   const snippet = `
 import os from 'node:os';
-import { attemptRepeatReviewResume } from './services/gateway/src/run-engine/review-session-chain.ts';
+import { attemptRepeatReviewResume, resolveRepeatReviewResumePlan } from './services/gateway/src/run-engine/review-session-chain.ts';
 
 const vars = {
   slotId: ${JSON.stringify(slotId)},
@@ -297,7 +297,12 @@ const prior = {
     startedAt: new Date().toISOString(),
   }],
 };
-const result = await attemptRepeatReviewResume(current, prior, ${JSON.stringify(runner)}, {
+const plan = resolveRepeatReviewResumePlan(current, prior, ${JSON.stringify(runner)});
+if (plan.kind !== 'resume') {
+  console.log(JSON.stringify({ kind: 'not-resumed', plan }));
+  process.exit(${JSON.stringify(expectedKind)} === 'not-resumed' ? 0 : 1);
+}
+const result = await attemptRepeatReviewResume(plan, ${JSON.stringify(runner)}, {
   vars,
   target: ${JSON.stringify(target)},
   model: ${JSON.stringify(model)},

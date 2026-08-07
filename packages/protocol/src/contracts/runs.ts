@@ -296,8 +296,6 @@ export interface RepeatReviewContext {
   incrementalUnavailableReason?: string;
   /** Incremental may resume; every full review resets reviewer reasoning. */
   sessionIntent?: ReviewSessionIntent;
-  /** Same-run review-loop policy retained for persisted-record compatibility. */
-  sessionPolicy?: ReviewSessionPolicy;
   /** Dispatch-time observation of the requested reviewer-session transition. */
   session?: ReviewSessionTrace;
   /** Completed predecessors, oldest first. The current run is derived from this Run record. */

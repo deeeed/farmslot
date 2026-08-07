@@ -10,6 +10,7 @@ import {
   failedRunCancelEffects,
   type HumanGrade,
   observedReviewSessionContinuity,
+  type ReviewChainEntry,
   reviewChainForRun,
   type Run,
   type RunCancelEffect,
@@ -44,6 +45,14 @@ export function assertRunGateActionAvailable(
       userAction: 'List current actions with `farmslot run gate <runId>`.',
     },
   );
+}
+
+export function buildReviewChainResult(run: Run): { chain: ReviewChainEntry[] } {
+  return { chain: reviewChainForRun(run) };
+}
+
+export function formatReviewChainLine(entry: ReviewChainEntry): string {
+  return `G${entry.generation} ${entry.runId.slice(0, 8)}  ${entry.baseSha?.slice(0, 7) ?? '-'} -> ${entry.headSha?.slice(0, 7) ?? 'pending'}  ${entry.reviewScope}/${entry.validationDepth}  ${entry.verdict}  ${entry.unresolvedCount == null ? 'unresolved pending' : `${entry.unresolvedCount} unresolved`}  ${observedReviewSessionContinuity(entry)}`;
 }
 
 /** The run.create pipeline shared by the flag path and the wizard entry points. */
@@ -369,16 +378,14 @@ export function registerRunCommand(program: Command): void {
           () => client.call<{ run: Run }>('run.get', { runId }),
           !emit.machine,
         );
-        const chain = reviewChainForRun(current);
+        const result = buildReviewChainResult(current);
         if (emit.machine) {
-          emit.ok({ chain });
-        } else if (chain.length === 0) {
+          emit.ok(result);
+        } else if (result.chain.length === 0) {
           output.write('No repeat-review chain.\n');
         } else {
-          for (const entry of chain) {
-            output.write(
-              `G${entry.generation} ${entry.runId.slice(0, 8)}  ${entry.baseSha?.slice(0, 7) ?? '-'} -> ${entry.headSha?.slice(0, 7) ?? 'pending'}  ${entry.reviewScope}/${entry.validationDepth}  ${entry.verdict}  ${entry.unresolvedCount == null ? 'unresolved pending' : `${entry.unresolvedCount} unresolved`}  ${observedReviewSessionContinuity(entry)}\n`,
-            );
+          for (const entry of result.chain) {
+            output.write(`${formatReviewChainLine(entry)}\n`);
           }
         }
       } catch (err) {

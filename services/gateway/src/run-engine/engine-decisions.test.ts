@@ -37,6 +37,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     workGraphId: overrides.workGraphId,
     workNodeId: overrides.workNodeId,
     allowedSlots: overrides.allowedSlots,
+    repeatReviewContext: overrides.repeatReviewContext,
     metrics: overrides.metrics ?? {
       nudgeCount: 0,
       runner: 'claude',
@@ -48,7 +49,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     createdAt: overrides.createdAt ?? '2026-05-04T10:00:00.000Z',
     updatedAt: overrides.updatedAt ?? '2026-05-04T10:00:00.000Z',
     completedAt: overrides.completedAt,
-  } as Run;
+  };
 }
 
 function reviewDecision(overrides: Partial<ReviewGatePayload> = {}): RunDecision {
