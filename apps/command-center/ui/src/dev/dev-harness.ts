@@ -2510,6 +2510,18 @@ All checks passed.`;
           loopNumber: 1,
           verdict: 'issues',
           unresolvedCount: 2,
+          issues: [
+            {
+              file: 'src/formatBalance.ts',
+              line: 42,
+              description: 'Integer balances still render a redundant decimal suffix.',
+            },
+            {
+              file: 'src/formatBalance.test.ts',
+              line: 18,
+              description: 'The regression case is missing from the focused formatter suite.',
+            },
+          ],
           reviewSnapshot: {
             source: 'local-git',
             baseRef: 'main',
@@ -2540,6 +2552,57 @@ All checks passed.`;
           loopNumber: 2,
           verdict: 'pass',
           unresolvedCount: 0,
+          attempts: [
+            {
+              loopNumber: 1,
+              verdict: 'issues',
+              unresolvedCount: 2,
+              issues: [
+                {
+                  file: 'src/formatBalance.ts',
+                  line: 42,
+                  description: 'Integer balances still render a redundant decimal suffix.',
+                },
+                {
+                  file: 'src/formatBalance.test.ts',
+                  line: 18,
+                  description: 'The focused regression case is missing.',
+                },
+              ],
+              validationDepth: 'static-code',
+              reviewSnapshot: {
+                source: 'local-git',
+                baseRef: 'main',
+                baseSha: '6d90188f9f1c4a72b2d1f7a8a8bcb77a210f0050',
+                headRef: 'fix/proj-2418',
+                headSha: '9f8e7d6c5b4a3a21000000000000000000000000',
+                capturedAt: new Date().toISOString(),
+              },
+            },
+            {
+              loopNumber: 2,
+              verdict: 'pass',
+              unresolvedCount: 0,
+              validationDepth: 'static-code',
+              fixDelta: {
+                source: 'local-git',
+                baseSha: '9f8e7d6c5b4a3a21000000000000000000000000',
+                headSha: 'a1b2c3d4e5f6a7b8000000000000000000000000',
+                fixBaseSha: '9f8e7d6c5b4a3a21000000000000000000000000',
+                fixHeadSha: 'a1b2c3d4e5f6a7b8000000000000000000000000',
+                diffStat: { files: 2, additions: 14, deletions: 4 },
+                capturedAt: new Date().toISOString(),
+              },
+              reviewSnapshot: {
+                source: 'local-git',
+                baseRef: 'main',
+                baseSha: '6d90188f9f1c4a72b2d1f7a8a8bcb77a210f0050',
+                headRef: 'fix/proj-2418',
+                headSha: 'a1b2c3d4e5f6a7b8000000000000000000000000',
+                capturedAt: new Date().toISOString(),
+              },
+            },
+          ],
           reviewSnapshot: {
             source: 'local-git',
             baseRef: 'main',

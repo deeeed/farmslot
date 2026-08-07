@@ -6,6 +6,7 @@ import type {
   IndependentReviewAttempt,
   IndependentReviewStatus,
   ReviewDiffSnapshot,
+  ReviewFixDeltaSnapshot,
   RunnerSessionUsage,
 } from '@farmslot/protocol';
 
@@ -57,6 +58,19 @@ function reviewUsage(review: IndependentReviewStatus) {
 
 function reviewDisplayLabel(review: IndependentReviewStatus): string {
   return reviewSourceLabel(review);
+}
+
+function fixDeltaRange(delta: ReviewFixDeltaSnapshot | undefined) {
+  return {
+    base: delta?.fixBaseSha ?? delta?.baseSha,
+    head: delta?.fixHeadSha ?? delta?.headSha,
+  };
+}
+
+function hasMeaningfulFixDelta(delta: ReviewFixDeltaSnapshot | undefined): boolean {
+  const { base, head } = fixDeltaRange(delta);
+  if (!base || !head || base === head) return false;
+  return delta?.diffStat ? delta.diffStat.files > 0 : true;
 }
 
 function reviewAttemptHeading(
@@ -112,6 +126,53 @@ export class ReviewLoopTimeline extends LitElement {
       display: flex;
       flex-direction: column;
       gap: ${unsafeCSS(spacing.sm)};
+    }
+    .review-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .phase-strip {
+      display: flex;
+      align-items: stretch;
+      gap: 4px;
+      overflow-x: auto;
+      padding: 1px;
+    }
+    .phase {
+      min-width: 112px;
+      flex: 1 0 auto;
+      border: 1px solid ${unsafeCSS(colors.textMuted)}44;
+      border-radius: ${unsafeCSS(radii.sm)};
+      padding: 5px 7px;
+      background: ${unsafeCSS(colors.bgCard)};
+      color: ${unsafeCSS(colors.textSecondary)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+    }
+    .phase::after {
+      content: '\2192';
+      color: ${unsafeCSS(colors.textMuted)};
+      margin-left: 8px;
+    }
+    .phase:last-child::after {
+      content: '';
+      margin: 0;
+    }
+    .phase.pass {
+      border-color: ${unsafeCSS(colors.statusOk)}66;
+    }
+    .phase.warn,
+    .phase.no-change {
+      border-color: ${unsafeCSS(colors.statusWarn)}77;
+    }
+    .phase.pending {
+      border-style: dashed;
+      color: ${unsafeCSS(colors.textMuted)};
+    }
+    .phase-title {
+      color: ${unsafeCSS(colors.textPrimary)};
+      font-weight: 600;
+      margin-right: 5px;
     }
     .empty {
       color: ${unsafeCSS(colors.textMuted)};
@@ -184,6 +245,13 @@ export class ReviewLoopTimeline extends LitElement {
     .issue-file {
       color: ${unsafeCSS(colors.statusWarn)};
     }
+    .section-label {
+      color: ${unsafeCSS(colors.textSecondary)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
     .fix {
       border-left: 2px solid ${unsafeCSS(colors.accent)}88;
       padding-left: 8px;
@@ -224,12 +292,54 @@ export class ReviewLoopTimeline extends LitElement {
 
   private _renderReviewRows(review: IndependentReviewStatus) {
     const attempts = review.attempts ?? [];
-    if (attempts.length > 1) {
-      return attempts.map((attempt, index) =>
-        this._renderReview(review, attempt, index, attempts.length),
+    return html`
+      <div class="review-group">
+        ${this._renderPhaseStrip(review, attempts)}
+        ${attempts.length > 1
+          ? attempts.map((attempt, index) =>
+              this._renderReview(review, attempt, index, attempts.length),
+            )
+          : this._renderReview(review, attempts[0], 0, Math.max(1, attempts.length))}
+      </div>
+    `;
+  }
+
+  private _renderPhaseStrip(review: IndependentReviewStatus, attempts: IndependentReviewAttempt[]) {
+    if (!attempts.length) return nothing;
+    const phases = attempts.flatMap((attempt, index) => {
+      const pass = attempt.verdict === 'pass' && attempt.unresolvedCount === 0;
+      const reviewPhase = html`
+        <div class="phase ${pass ? 'pass' : 'warn'}">
+          <span class="phase-title">${index === 0 ? 'Review' : 'Re-review'} ${index + 1}</span>
+          ${pass ? 'passed' : `${attempt.unresolvedCount} finding(s)`}
+        </div>
+      `;
+      if (index === 0) return [reviewPhase];
+      const delta = attempt.fixDelta;
+      const meaningful = hasMeaningfulFixDelta(delta);
+      const { base, head } = fixDeltaRange(delta);
+      const fixPhase = html`
+        <div class="phase ${meaningful ? '' : 'no-change'}">
+          <span class="phase-title">Worker fix</span>
+          ${meaningful
+            ? `${delta?.diffStat?.files ?? 'tracked'} file(s) · ${shortSha(base)}..${shortSha(head)}`
+            : 'no tracked change'}
+        </div>
+      `;
+      return [fixPhase, reviewPhase];
+    });
+    const last = attempts.at(-1);
+    if (last && last.unresolvedCount > 0) {
+      phases.push(
+        html`<div class="phase pending"><span class="phase-title">Worker fix</span>pending</div>`,
+        html`<div class="phase pending"><span class="phase-title">Re-review</span>pending</div>`,
       );
     }
-    return this._renderReview(review, attempts[0], 0, Math.max(1, attempts.length));
+    return html`
+      <div class="phase-strip" aria-label="${reviewDisplayLabel(review)} resolution sequence">
+        ${phases}
+      </div>
+    `;
   }
 
   private _renderReview(
@@ -242,15 +352,11 @@ export class ReviewLoopTimeline extends LitElement {
     const loopNumber = attempt?.loopNumber ?? review.loopNumber;
     const verdict = attempt?.verdict ?? review.verdict;
     const unresolvedCount = attempt?.unresolvedCount ?? review.unresolvedCount;
-    const issues = attempt?.issues ?? review.issues;
+    const issues = attempt ? attempt.issues : review.issues;
     const validationDepth = attempt?.validationDepth ?? review.validationDepth;
-    const rowSnapshot = attempt?.reviewSnapshot ?? review.reviewSnapshot;
-    const rowFixDelta = attempt?.fixDelta ?? review.fixDelta;
-    const hasFixDeltaRange = Boolean(
-      rowFixDelta &&
-      (rowFixDelta.fixBaseSha || rowFixDelta.baseSha) &&
-      (rowFixDelta.fixHeadSha || rowFixDelta.headSha),
-    );
+    const rowSnapshot = attempt ? attempt.reviewSnapshot : review.reviewSnapshot;
+    const rowFixDelta = attempt ? attempt.fixDelta : review.fixDelta;
+    const hasFixDeltaRange = hasMeaningfulFixDelta(rowFixDelta);
     const fixDeltaMissingReason = hasFixDeltaRange ? '' : fixDeltaAbsenceReason(review, attempt);
     const rowUsage = attempt?.usage ?? reviewUsage(review);
     const pass = verdict === 'pass' && unresolvedCount === 0;
@@ -321,6 +427,7 @@ export class ReviewLoopTimeline extends LitElement {
         </div>
         ${issues?.length
           ? html`
+              <div class="section-label">Findings · ${issues.length}</div>
               <ul class="issues">
                 ${issues.map(
                   (issue) => html`
@@ -380,7 +487,7 @@ export class ReviewLoopTimeline extends LitElement {
         ${rowFixDelta && hasFixDeltaRange
           ? html`
               <div class="fix">
-                Worker fix delta
+                <span class="section-label">Worker fix</span>
                 ${shortSha(rowFixDelta.fixBaseSha ?? rowFixDelta.baseSha)}..${shortSha(
                   rowFixDelta.fixHeadSha ?? rowFixDelta.headSha,
                 )}

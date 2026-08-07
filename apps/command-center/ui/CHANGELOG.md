@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(review): visualize each findings → worker fix → re-review sequence in the shared ready-gate timeline and stop presenting zero-change handoffs as worker fixes.
 - feat(review): default PR reviews to static validation and render the prior-review generation, reviewed head, findings, and evidence before continuation.
 - feat(review): render the shared cross-generation review chain and reviewer-session continuity in run details.
 - fix(runs): show publication review recovery status and its operator-required error in the existing run pipeline details.

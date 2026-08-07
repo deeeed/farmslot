@@ -605,7 +605,7 @@ export function fixDeltaAbsenceReason(
   review: IndependentReviewStatus,
   attempt: IndependentReviewAttempt | undefined,
 ): string {
-  const rowFixDelta = attempt?.fixDelta ?? review.fixDelta;
+  const rowFixDelta = attempt ? attempt.fixDelta : review.fixDelta;
   const verdict = attempt?.verdict ?? review.verdict;
   const unresolvedCount = attempt?.unresolvedCount ?? review.unresolvedCount;
   const warn = unresolvedCount > 0 || verdict === 'issues' || verdict === 'failed';
