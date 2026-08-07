@@ -368,6 +368,84 @@ test(
 );
 
 test(
+  'auth.connect store faults return generic errors without unhandled rejection leakage',
+  { timeout: 5_000 },
+  async () => {
+    const runtime = isolatedRuntime();
+    const harness = await startServer(runtime);
+    try {
+      const resolveSecret = runtime.resolver.resolveSecret;
+      runtime.resolver.resolveSecret = () => {
+        throw new Error('credential store /private/review-auth-connect.json truncated');
+      };
+      try {
+        const ws = await connect(harness.url);
+        const response = await request(ws, Methods.AUTH_CONNECT, {
+          clientKind: 'ui',
+          token: 'fs_fault_injection',
+        });
+        assert.equal(response.ok, false);
+        assert.equal(response.error?.code, 'INTERNAL_ERROR');
+        assert.equal(response.error?.message, 'Internal gateway error');
+        assert.doesNotMatch(JSON.stringify(response), /review-auth-connect|credentials?/u);
+        ws.close();
+        await onceClose(ws);
+      } finally {
+        runtime.resolver.resolveSecret = resolveSecret;
+      }
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+test(
+  'route authorization faults return generic errors without internal message leakage',
+  { timeout: 5_000 },
+  async () => {
+    const runtime = isolatedRuntime();
+    const admin = runtime.writer.createPrincipal(
+      { type: 'person', displayName: 'route-fault-admin' },
+      [{ role: 'admin', scope: { kind: 'global' } }],
+    );
+    const adminIssue = runtime.writer.issueCredential(admin.id, 'route-fault-admin');
+    const harness = await startServer(runtime);
+    try {
+      const ws = await connect(harness.url);
+      const auth = await request(ws, Methods.AUTH_CONNECT, {
+        clientKind: 'ui',
+        token: adminIssue.secret,
+      });
+      assert.equal(auth.ok, true);
+
+      const resolveSessionPrincipal = runtime.resolver.resolveSessionPrincipal;
+      let resolutionCount = 0;
+      runtime.resolver.resolveSessionPrincipal = (session) => {
+        resolutionCount += 1;
+        if (resolutionCount === 2) {
+          throw new Error('credential store /private/review-route-fault.json truncated');
+        }
+        return resolveSessionPrincipal.call(runtime.resolver, session);
+      };
+      try {
+        const response = await request(ws, Methods.GATEWAY_PING, {});
+        assert.equal(resolutionCount, 2);
+        assert.equal(response.ok, false);
+        assert.equal(response.error?.code, 'INTERNAL_ERROR');
+        assert.equal(response.error?.message, 'Internal gateway error');
+        assert.doesNotMatch(JSON.stringify(response), /review-route-fault|credentials?/u);
+      } finally {
+        runtime.resolver.resolveSessionPrincipal = resolveSessionPrincipal;
+      }
+      ws.close();
+      await onceClose(ws);
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+test(
   'unexpected pairing store faults return generic unauthenticated errors without leakage',
   { timeout: 5_000 },
   async () => {

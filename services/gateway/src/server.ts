@@ -196,7 +196,12 @@ export function createWebSocketServer(
               `[server] non-JSON websocket frame routed as text: ${(err as Error).message}`,
             );
           }
-          handleMessage(state, raw, authRuntime, _req);
+          void handleMessage(state, raw, authRuntime, _req).catch((err) => {
+            console.error(
+              `[server] websocket request failed on ${state.id}: ${(err as Error).message}`,
+            );
+            ws.close(1011, 'internal gateway error');
+          });
           return;
         }
         if (peek.type === 'res' && typeof peek.id === 'string') {
@@ -292,7 +297,12 @@ export function createWebSocketServer(
         ws.close(1011, 'internal gateway error');
         return;
       }
-      handleMessage(state, raw, authRuntime, _req);
+      void handleMessage(state, raw, authRuntime, _req).catch((err) => {
+        console.error(
+          `[server] websocket request failed on ${state.id}: ${(err as Error).message}`,
+        );
+        ws.close(1011, 'internal gateway error');
+      });
     });
 
     ws.on('close', () => {
@@ -543,11 +553,21 @@ async function handleMessage(
       });
       return;
     }
-    const result = authenticateGatewayClient({
-      runtime: authRuntime,
-      connectParams: authParams,
-      clientIp: resolveRequestIp(req, authRuntime.store.env),
-    });
+    let result: ReturnType<typeof authenticateGatewayClient>;
+    try {
+      result = authenticateGatewayClient({
+        runtime: authRuntime,
+        connectParams: authParams,
+        clientIp: resolveRequestIp(req, authRuntime.store.env),
+      });
+    } catch (err) {
+      console.error(`[server] auth.connect failed on ${state.id}: ${(err as Error).message}`);
+      sendResponse(state.ws, frame.id, false, undefined, {
+        code: 'INTERNAL_ERROR',
+        message: 'Internal gateway error',
+      });
+      return;
+    }
     if (!result.ok) {
       const retry = result.retryAfterMs
         ? ` Retry after ${Math.ceil(result.retryAfterMs / 1000)}s.`
@@ -631,16 +651,20 @@ async function handleMessage(
     });
     sendResponse(state.ws, frame.id, true, result);
   } catch (err) {
-    const message = (err as Error).message;
-    let code = 'METHOD_ERROR';
+    const rawMessage = err instanceof Error ? err.message : String(err);
+    let message = 'Internal gateway error';
+    let code = 'INTERNAL_ERROR';
     let userAction: string | undefined;
     let details: unknown;
-    if (message.startsWith('Unknown method:')) {
+    if (rawMessage.startsWith('Unknown method:')) {
       code = 'METHOD_NOT_FOUND';
+      message = rawMessage;
     } else if (err instanceof GatewayAuthError) {
       code = err.code;
+      message = rawMessage;
     } else if (err instanceof GatewayMethodError || err instanceof SlotConfigError) {
       code = err.code;
+      message = rawMessage;
       userAction = err.userAction;
       details = err.details;
     } else if (err instanceof ChatActionRejectError) {
@@ -649,6 +673,9 @@ async function handleMessage(
       // distinguish it from ordinary precondition failures.
       const specific = (err as Error & { code?: string }).code;
       code = specific ?? chatActionRejectCode(err.reason);
+      message = rawMessage;
+    } else {
+      console.error(`[server] route method ${frame.method} failed on ${state.id}: ${rawMessage}`);
     }
     sendResponse(state.ws, frame.id, false, undefined, {
       code,
