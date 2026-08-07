@@ -196,7 +196,7 @@ function priorReviewSessionTotal(run: Run): SessionUsageNumbers | null {
   if (!prior) return null;
   const chainTotal = prior.metrics.reviewChainUsageTotal;
   if (chainTotal) return chainTotal;
-  return {
+  const legacyTotal = {
     costUsd: prior.metrics.costEstimate ?? null,
     turns: prior.metrics.sessionTurns ?? null,
     inputTokens: prior.metrics.sessionInputTokens ?? null,
@@ -205,6 +205,7 @@ function priorReviewSessionTotal(run: Run): SessionUsageNumbers | null {
     cacheRead: prior.metrics.sessionCacheRead ?? null,
     totalTokens: prior.metrics.sessionTotalTokens ?? null,
   };
+  return Object.values(legacyTotal).some((value) => value !== null) ? legacyTotal : null;
 }
 
 function usageDelta(current: number | null, prior: number | null | undefined): number | null {

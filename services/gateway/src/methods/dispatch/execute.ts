@@ -835,7 +835,7 @@ export async function dispatchExecute(
     ? (getRun(currentRun.repeatReviewContext.priorRunId) ?? null)
     : null;
   const repeatReviewSessionIntent = reviewSessionIntentForContext(currentRun?.repeatReviewContext);
-  let repeatReviewResumePlan = currentRun
+  const repeatReviewResumePlan = currentRun
     ? resolveRepeatReviewResumePlan(currentRun, priorReviewRun, runner)
     : ({ kind: 'reset' } as const);
   let reviewSessionContinuity: ReviewSessionTrace['continuity'] | undefined;
@@ -1202,7 +1202,6 @@ export async function dispatchExecute(
       if (attempt.kind === 'resumed') {
         resumedReviewSession = true;
         runnerProcessStarted = true;
-        repeatReviewResumePlan = attempt.plan;
         sessionMeta = {
           runnerSessionId: binding.runnerSessionId,
           runnerSessionPath: binding.runnerSessionPath,
@@ -1216,7 +1215,6 @@ export async function dispatchExecute(
         });
       } else if (attempt.kind === 'fallback') {
         repeatReviewFallbackReason = 'session-unavailable';
-        repeatReviewResumePlan = attempt.plan;
         step('launch', `${attempt.reason}; launching a fresh reviewer`);
       } else if (attempt.kind === 'hold') {
         // The adapter mutated the pane before acknowledgement timed out. Never
@@ -1225,7 +1223,6 @@ export async function dispatchExecute(
         // resolve the authoritative task signal.
         resumedReviewSession = true;
         runnerProcessStarted = true;
-        repeatReviewResumePlan = attempt.plan;
         sessionMeta = {
           runnerSessionId: binding.runnerSessionId,
           runnerSessionPath: binding.runnerSessionPath,
