@@ -15,6 +15,7 @@ import {
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
   type ReviewLoopTimelineSegment,
+  type ReviewSessionIntent,
   type ReviewValidationDepth,
   type RunnerSessionUsage,
   type SelfReviewIssue,
@@ -139,6 +140,8 @@ export interface SelfReviewOptions {
   publicationReview?: boolean | null;
   /** Overrides project self_review.session_policy for this review loop. */
   reviewSessionPolicy?: ReviewSessionPolicy | null;
+  /** Continue the same-run reviewer context or start this review generation clean. */
+  reviewSessionIntent?: ReviewSessionIntent | null;
   /** Continue an operator-approved fix loop from findings already produced by this run. */
   resumeFromResult?: SelfReviewResult;
 }
@@ -235,6 +238,8 @@ export async function executeSelfReview(
     options.reviewSessionPolicy ?? config.session_policy ?? DEFAULT_REVIEW_SESSION_POLICY;
   const reviewTimeoutMs = (config.review_timeout_min ?? DEFAULT_REVIEW_TIMEOUT_MIN) * 60_000;
   const start = Date.now();
+  let hasReusableReviewResult =
+    options.resumeFromResult?.verdict === 'pass' || options.resumeFromResult?.verdict === 'issues';
 
   // Resolve task dir on the worker repo
   const taskDir = await resolveWorkerTaskDir(vars, run.project, run.taskFile);
@@ -259,7 +264,9 @@ export async function executeSelfReview(
       artifactScope,
       sessionPolicy,
     });
-    if (recoveredFixResult)
+    if (recoveredFixResult) {
+      hasReusableReviewResult =
+        recoveredFixResult.verdict === 'pass' || recoveredFixResult.verdict === 'issues';
       return {
         ...recoveredFixResult,
         usage: recoveredFixResult.attempts?.at(-1)?.usage,
@@ -267,6 +274,7 @@ export async function executeSelfReview(
         model,
         crossRunner: isCrossRunnerReview,
       };
+    }
 
     if (options.resumeFromResult) {
       if (
@@ -342,6 +350,7 @@ export async function executeSelfReview(
       validationDepth,
       artifactScope,
       sessionPolicy,
+      options.reviewSessionIntent ?? 'reset',
     );
 
     if (result.incomplete) {
@@ -364,6 +373,11 @@ export async function executeSelfReview(
         durationMs: Date.now() - start,
       };
     }
+
+    // A pass or issues verdict is a valid review generation. Keep that
+    // reviewer claim for an explicit continuation even if worker-fix delivery
+    // later fails; launch/timeout/invalid-artifact failures never set this.
+    hasReusableReviewResult = true;
 
     if (result.verdict === 'pass') {
       debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — PASS (${Date.now() - start}ms)`);
@@ -408,11 +422,14 @@ export async function executeSelfReview(
       crossRunner: isCrossRunnerReview,
     };
   } finally {
-    // Review-loop exit: THIS reviewer's warm
-    // session never outlives its loop — pass, fail, or throw it turns
-    // forensic-only. Scoped to the loop's runner so a run hosting reviews by
-    // other runners keeps their sessions until their own loops exit.
-    invalidateWarmReviewerSessions(runId, reviewRunner);
+    // Publication reviews can be explicitly continued from the human gate, but
+    // only after a valid review generation. A failed launch, timeout, or invalid
+    // terminal artifact must not leave a claimable reviewer session behind.
+    const continuationEnabled =
+      sessionPolicy === 'warm-per-reviewer' || options.reviewSessionIntent === 'resume';
+    if (!(options.publicationReview === true && continuationEnabled && hasReusableReviewResult)) {
+      invalidateWarmReviewerSessions(runId, reviewRunner);
+    }
   }
 }
 

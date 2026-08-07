@@ -7,6 +7,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - fix(server): surface unexpected RPC and JSON/binary node-frame principal-resolution faults, and contain pre-auth pairing credential-store faults, without exposing internal messages.
 - fix(auth): rethrow unexpected HTTP principal-resolution failures instead of exposing them as authorization denials.
 - feat(auth): implement ADR-051 principals, durable independently revocable credentials, solo-to-activated lifecycle, default-deny role authorization, scoped pairing, work provenance, and fire-time reauthorization.
+- fix(review): retain a publication reviewer only after a valid review generation, and keep automatic review plans on the project session policy unless an operator explicitly chooses Continue or Fresh.
+- feat(review): keep and retarget one canonical reviewer tmux window per runner, and honor explicit continue-versus-fresh session intent for publication reviews.
 - fix(improvement): resume analyses interrupted by a gateway restart instead of tombstoning them — the persisted `analyzing` placeholder is re-run in place (attempt-capped at 2) so tsx-watch restarts no longer kill accepted retrospective analyses.
 
 - fix(llm): surface transport failures (`stopReason` error/aborted, including streaming `error` events) in `callLLMChat` instead of returning empty text — improvement analyses now terminalize as a real provider error rather than "LLM returned no response" / `no-changes`; user-initiated aborts keep `AbortError` identity, and chat results expose `stopReason` so callers can flag `length` truncation.

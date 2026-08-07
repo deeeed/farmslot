@@ -6,6 +6,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - fix(pairing): define one shared-code multi-address QR contract so one scan represents one revocable device authority.
 - feat(auth)!: add principal and credential contracts plus caller summaries; require explicit principal authority for pairing codes and configured GitHub/Jira auto-dispatch webhook identities.
+- feat(review): let each publication-review request explicitly continue or reset one same-run reviewer session per runner.
 - feat(runs): add optional `ImprovementDiffPayload.analysisAttempts` so startup recovery can bound crash-loop retries of interrupted improvement analyses.
 - feat(review): add repeat-review generation context, independent incremental/full scope, and static/full-live validation depth to run and dispatch contracts.
 - feat(review): expose one shared review-chain projection with explicit reviewer-session resume, reset, and safe-fallback provenance.

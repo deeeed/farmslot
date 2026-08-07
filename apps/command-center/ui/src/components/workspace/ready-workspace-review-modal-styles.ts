@@ -3,7 +3,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 export function readyWorkspaceReviewModalStyles(): string {
   return `
       ready-workspace .rdy-review-modal {
-        width: min(560px, calc(100vw - 48px));
+        width: min(760px, calc(100vw - 48px));
         background: ${colors.bgBase};
         border: 1px solid #2a2a44;
         border-radius: ${radii.lg};
@@ -11,6 +11,101 @@ export function readyWorkspaceReviewModalStyles(): string {
         padding: ${spacing.lg};
         display: grid;
         gap: ${spacing.md};
+      }
+      ready-workspace .rdy-review-flow-modal {
+        width: min(1180px, calc(100vw - 48px));
+        max-height: min(86vh, 900px);
+        overflow: hidden;
+        background: ${colors.bgBase};
+        border: 1px solid #2a2a44;
+        border-radius: ${radii.lg};
+        box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+        padding: ${spacing.lg};
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        gap: ${spacing.md};
+      }
+      ready-workspace .rdy-review-flow-modal h3 {
+        margin: 3px 0 0;
+        font-size: 18px;
+      }
+      ready-workspace .rdy-review-flow-modal p {
+        margin: 6px 0 0;
+        color: ${colors.textMuted};
+        font-size: 11px;
+        line-height: 1.5;
+      }
+      ready-workspace .rdy-review-flow-summary {
+        display: flex;
+        gap: ${spacing.sm};
+        flex-wrap: wrap;
+      }
+      ready-workspace .rdy-review-flow-summary span {
+        border: 1px solid #2a2a44;
+        border-radius: ${radii.sm};
+        background: ${colors.bgSurface};
+        color: ${colors.textSecondary};
+        padding: 6px 10px;
+        font-size: 11px;
+      }
+      ready-workspace .rdy-review-flow-summary span.attention {
+        border-color: ${colors.statusWarn}88;
+        color: ${colors.statusWarn};
+      }
+      ready-workspace .rdy-review-flow-layout {
+        display: grid;
+        grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+        gap: ${spacing.md};
+        min-height: 0;
+      }
+      ready-workspace .rdy-review-flow-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        overflow: auto;
+        padding-right: 4px;
+      }
+      ready-workspace .rdy-review-flow-nav button {
+        display: grid;
+        gap: 3px;
+        text-align: left;
+        border: 1px solid #2a2a44;
+        border-radius: ${radii.md};
+        background: ${colors.bgSurface};
+        color: ${colors.textPrimary};
+        font-family: ${fonts.mono};
+        padding: 9px 10px;
+        cursor: pointer;
+      }
+      ready-workspace .rdy-review-flow-nav button:hover,
+      ready-workspace .rdy-review-flow-nav button.active {
+        border-color: ${colors.accent};
+        background: ${colors.accent}12;
+      }
+      ready-workspace .rdy-review-flow-nav button span {
+        color: ${colors.textMuted};
+        font-size: 10px;
+      }
+      ready-workspace .rdy-review-flow-detail {
+        overflow: auto;
+        min-width: 0;
+        border: 1px solid #2a2a44;
+        border-radius: ${radii.md};
+        background: ${colors.bgSurface};
+        padding: ${spacing.md};
+      }
+      ready-workspace .rdy-review-flow-fix-summary {
+        margin-top: ${spacing.md};
+        border-top: 1px solid #2a2a44;
+        padding-top: ${spacing.md};
+      }
+      @media (max-width: 800px) {
+        ready-workspace .rdy-review-flow-layout {
+          grid-template-columns: 1fr;
+        }
+        ready-workspace .rdy-review-flow-nav {
+          max-height: 180px;
+        }
       }
       ready-workspace .rdy-review-modal-head {
         display: flex;
@@ -54,7 +149,7 @@ export function readyWorkspaceReviewModalStyles(): string {
       }
       ready-workspace .rdy-review-loop-row {
         display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+        grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
         gap: ${spacing.sm};
         align-items: center;
         border: 1px solid #2a2a44;
@@ -81,6 +176,11 @@ export function readyWorkspaceReviewModalStyles(): string {
         min-width: 0;
       }
       ready-workspace .rdy-review-depth-picker {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      ready-workspace .rdy-review-session-picker {
         display: flex;
         gap: 6px;
         flex-wrap: wrap;
@@ -165,6 +265,5 @@ export function readyWorkspaceReviewModalStyles(): string {
         min-height: 0;
         overflow: hidden;
       }
-      ready-workspace .rdy-package-summary,
   `;
 }
