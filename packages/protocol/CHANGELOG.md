@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(runs): add optional `ImprovementDiffPayload.analysisAttempts` so startup recovery can bound crash-loop retries of interrupted improvement analyses.
 - feat(agents): add the optional `reviewResultFile` path used for authoritative structured results by newly launched self-review and publication reviewers.
 - feat(terminal): add the terminal image-attachment contract — chunked upload params, separate delivery result with an explicit `unsupported` status, size/MIME limits, and cleanup scopes.
 

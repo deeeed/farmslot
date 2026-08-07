@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { ImprovementDiffPayload, Run } from '@farmslot/protocol';
 
-import { createRun, deleteRun, updateRun } from '../../runs/store.js';
+import { createRun, deleteRun, getRun, runRecordPath, updateRun } from '../../runs/store.js';
 
 import {
   __setImprovementAnalyzerForTest,
   composeImprovementAnalysisContent,
+  resumeInterruptedImprovementAnalyses,
   runProposeImprovement,
 } from './propose-improvement.js';
 
@@ -104,6 +105,202 @@ test('runProposeImprovement fires analyzer with composed rationale + learnings',
     captured[0].content,
     /## Worker learnings\nWorker discovered xcrun path drifts on macOS 15\./,
   );
+});
+
+function seedAnalyzingPlaceholder(runId: string, attempts: number | undefined): string {
+  const decisionId = `imp-${runId}-test`;
+  const run = getRun(runId)!;
+  updateRun(runId, {
+    decisions: [
+      ...(run.decisions ?? []),
+      {
+        id: decisionId,
+        type: 'improvement',
+        title: 'Analyzing learnings…',
+        description: 'test placeholder',
+        actions: [],
+        createdAt: new Date().toISOString(),
+        payload: {
+          kind: 'improvement',
+          learningContent: '',
+          proposedChanges: [],
+          rationale: '',
+          sourceRunId: runId,
+          project: 'example-mobile-farm',
+          analysisStatus: 'analyzing',
+          analysisStartedAt: new Date().toISOString(),
+          ...(attempts !== undefined ? { analysisAttempts: attempts } : {}),
+        },
+      } as Run['decisions'][number],
+    ],
+  });
+  return decisionId;
+}
+
+function improvementPayload(runId: string, decisionId: string): ImprovementDiffPayload {
+  const decision = getRun(runId)!.decisions.find((d) => d.id === decisionId)!;
+  return decision.payload as ImprovementDiffPayload;
+}
+
+test('resume re-runs an interrupted analysis on the same placeholder and persists the attempt bump', async (t) => {
+  const { run, taskDir } = createTempRunWithTask('Interrupted-run learning bullet.');
+  const decisionId = seedAnalyzingPlaceholder(run.id, 1);
+
+  const captured: Array<{ runId: string; content: string; placeholderId?: string }> = [];
+  let resolveAnalyzer!: () => void;
+  const analyzerDone = new Promise<void>((res) => {
+    resolveAnalyzer = res;
+  });
+  __setImprovementAnalyzerForTest(async (runId, content, placeholderId) => {
+    captured.push({ runId, content, placeholderId });
+    resolveAnalyzer();
+  });
+  t.after(async () => {
+    __setImprovementAnalyzerForTest(null);
+    await cleanupProposeRun(run.id, taskDir);
+  });
+
+  await resumeInterruptedImprovementAnalyses();
+  await analyzerDone;
+
+  assert.equal(captured.length, 1, 'analyzer was never invoked');
+  assert.equal(captured[0].runId, run.id);
+  assert.equal(captured[0].placeholderId, decisionId, 'must reuse the existing placeholder card');
+  assert.match(captured[0].content, /Interrupted-run learning bullet\./);
+  assert.equal(improvementPayload(run.id, decisionId).analysisAttempts, 2);
+});
+
+test('resume terminalizes a placeholder at the retry cap without re-running it', async (t) => {
+  const { run, taskDir } = createTempRunWithTask('Learning that will not be re-analyzed.');
+  const decisionId = seedAnalyzingPlaceholder(run.id, 2);
+
+  __setImprovementAnalyzerForTest(async () => {
+    assert.fail('analyzer must not run for a placeholder at the retry cap');
+  });
+  t.after(async () => {
+    __setImprovementAnalyzerForTest(null);
+    await cleanupProposeRun(run.id, taskDir);
+  });
+
+  await resumeInterruptedImprovementAnalyses();
+
+  const payload = improvementPayload(run.id, decisionId);
+  assert.equal(payload.analysisStatus, 'error');
+  assert.match(payload.analysisError ?? '', /retry limit/);
+  assert.equal(payload.analysisAttempts, 2, 'terminalization must preserve the attempt count');
+});
+
+test('resume treats a missing analysisAttempts as the first attempt (legacy placeholders)', async (t) => {
+  const { run, taskDir } = createTempRunWithTask('Legacy placeholder learning.');
+  const decisionId = seedAnalyzingPlaceholder(run.id, undefined);
+
+  let resolveAnalyzer!: () => void;
+  const analyzerDone = new Promise<void>((res) => {
+    resolveAnalyzer = res;
+  });
+  __setImprovementAnalyzerForTest(async () => {
+    resolveAnalyzer();
+  });
+  t.after(async () => {
+    __setImprovementAnalyzerForTest(null);
+    await cleanupProposeRun(run.id, taskDir);
+  });
+
+  await resumeInterruptedImprovementAnalyses();
+  await analyzerDone;
+  assert.equal(improvementPayload(run.id, decisionId).analysisAttempts, 2);
+});
+
+test('resume persists the attempt bump to disk before the analyzer starts', async (t) => {
+  const { run, taskDir } = createTempRunWithTask('Durability learning bullet.');
+  const decisionId = seedAnalyzingPlaceholder(run.id, 1);
+
+  let attemptsOnDiskAtAnalyzerStart: number | undefined;
+  let resolveAnalyzer!: () => void;
+  const analyzerDone = new Promise<void>((res) => {
+    resolveAnalyzer = res;
+  });
+  __setImprovementAnalyzerForTest(async (runId) => {
+    const persisted = JSON.parse(readFileSync(runRecordPath(runId), 'utf-8')) as Run;
+    const decision = persisted.decisions.find((d) => d.id === decisionId);
+    attemptsOnDiskAtAnalyzerStart = (decision?.payload as ImprovementDiffPayload | undefined)
+      ?.analysisAttempts;
+    resolveAnalyzer();
+  });
+  t.after(async () => {
+    __setImprovementAnalyzerForTest(null);
+    await cleanupProposeRun(run.id, taskDir);
+  });
+
+  await resumeInterruptedImprovementAnalyses();
+  await analyzerDone;
+
+  assert.equal(
+    attemptsOnDiskAtAnalyzerStart,
+    2,
+    'attempt bump must be durable on disk before analysis begins',
+  );
+});
+
+test('a second resume while an analysis is in flight neither re-runs nor tombstones it', async (t) => {
+  const { run, taskDir } = createTempRunWithTask('Idempotency learning bullet.');
+  const decisionId = seedAnalyzingPlaceholder(run.id, 1);
+
+  let invocations = 0;
+  let releaseAnalyzer!: () => void;
+  const analyzerGate = new Promise<void>((res) => {
+    releaseAnalyzer = res;
+  });
+  let analyzerStarted!: () => void;
+  const analyzerStartedGate = new Promise<void>((res) => {
+    analyzerStarted = res;
+  });
+  __setImprovementAnalyzerForTest(async () => {
+    invocations += 1;
+    analyzerStarted();
+    await analyzerGate;
+  });
+  t.after(async () => {
+    __setImprovementAnalyzerForTest(null);
+    releaseAnalyzer();
+    await cleanupProposeRun(run.id, taskDir);
+  });
+
+  await resumeInterruptedImprovementAnalyses();
+  await analyzerStartedGate;
+  // Second sweep while the first analysis is still in flight: the placeholder
+  // is still `analyzing` with attempts=2, which without the in-flight guard
+  // would be mistaken for a crash loop and tombstoned at the cap.
+  await resumeInterruptedImprovementAnalyses();
+
+  assert.equal(invocations, 1, 'in-flight analysis must not be re-run');
+  assert.equal(
+    improvementPayload(run.id, decisionId).analysisStatus,
+    'analyzing',
+    'in-flight analysis must not be tombstoned at the cap',
+  );
+});
+
+test('resume terminalizes as no-content when learnings vanished', async (t) => {
+  const { run, taskDir } = createTempRunWithTask(null);
+  const decisionId = seedAnalyzingPlaceholder(run.id, 1);
+
+  __setImprovementAnalyzerForTest(async () => {
+    assert.fail('analyzer must not run without learnings content');
+  });
+  t.after(async () => {
+    __setImprovementAnalyzerForTest(null);
+    await cleanupProposeRun(run.id, taskDir);
+  });
+
+  await resumeInterruptedImprovementAnalyses();
+  // The no-content terminal happens in the fire-and-forget tail; poll briefly.
+  for (let i = 0; i < 50; i++) {
+    if (improvementPayload(run.id, decisionId).analysisStatus !== 'analyzing') break;
+    await new Promise((res) => setTimeout(res, 20));
+  }
+  const payload = improvementPayload(run.id, decisionId);
+  assert.equal(payload.analysisStatus, 'no-content');
 });
 
 test('composeImprovementAnalysisContent omits rationale section when absent', () => {

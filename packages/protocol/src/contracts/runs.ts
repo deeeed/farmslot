@@ -741,6 +741,12 @@ export interface ImprovementDiffPayload {
   analysisStatus?: 'analyzing' | 'completed' | 'no-content' | 'no-changes' | 'error';
   analysisStartedAt?: string;
   analysisError?: string;
+  /**
+   * How many times analysis has been started for this placeholder (initial
+   * run + startup resumes). Bounds crash-loop retries: startup recovery
+   * re-runs an interrupted `analyzing` placeholder only while below the cap.
+   */
+  analysisAttempts?: number;
 }
 
 export interface CommentsTriageSummary {
