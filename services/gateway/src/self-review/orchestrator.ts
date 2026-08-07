@@ -89,6 +89,7 @@ import {
   ensureTmuxTargetReadyForRelaunch,
   isWorkerAlive,
   rediscoverAcceptingWorkerPane,
+  runnerTurnLeaseIsActive,
   type WorkerPaneRediscovery,
 } from './worker-lifecycle.js';
 export { handleSelfReviewFsChanged } from './progress.js';
@@ -415,6 +416,15 @@ export async function executeSelfReview(
   }
 }
 
+interface FixDeliveryAcceptance {
+  signalBaseline: string;
+  turnToken?: string;
+}
+
+type FixPromptDeliveryResult =
+  | { status: 'delivered'; turnToken?: string }
+  | { status: 'deferred' | 'relaunch-required' | 'unsupported' };
+
 // Dep surface for runSelfReviewRetryLoop. Real production wiring lives in
 // defaultSelfReviewRetryDeps below; tests pass a struct of mocks to exercise the
 // retry boundary without standing up tmux/worker infrastructure.
@@ -436,7 +446,7 @@ export interface SelfReviewRetryDeps {
     issues: SelfReviewIssue[],
     taskDir: string,
     runId: string,
-  ) => Promise<string>;
+  ) => Promise<FixDeliveryAcceptance>;
   startProgressWatcher: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
     filePath: string,
@@ -448,6 +458,7 @@ export interface SelfReviewRetryDeps {
     taskDir: string,
     timeoutMs: number,
     baseline: string,
+    turnActive?: () => Promise<boolean>,
   ) => Promise<WorkerSignal | undefined>;
   // Loop never reads the return values — narrow to Promise<void> so test mocks don't have to
   // synthesize the production AgentContext shape just to satisfy the type checker.
@@ -498,6 +509,21 @@ function setSelfReviewProgressDetail(runId: string, detail: string): void {
     ? PipelineSteps.HUMAN_GATE
     : PipelineSteps.SELF_REVIEW;
   updateRunStep(runId, step, { detail });
+}
+
+export async function selfReviewFixTurnIsActive(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runId: string,
+  workerRunner: string,
+  expectedTurnToken: string,
+): Promise<boolean> {
+  const run = getRun(runId);
+  const fixContext = run ? selectAgentContext(run, { role: 'self-review-fix' }) : null;
+  if (fixContext?.status !== 'working') return false;
+  const target = fixContext?.target?.target;
+  if (!target) return false;
+  const runner = fixContext.runner ?? workerRunner;
+  return runnerTurnLeaseIsActive(vars, target, runner, expectedTurnToken);
 }
 
 // Module-level constant — wiring is fixed at module load. Tests pass their own deps struct
@@ -649,8 +675,11 @@ export async function runSelfReviewRetryLoop({
       );
     }
     let fixSignalBaseline: string | undefined;
+    let fixTurnToken: string | undefined;
     try {
-      fixSignalBaseline = await deps.sendFeedbackToWorker(vars, result.issues, taskDir, runId);
+      const delivery = await deps.sendFeedbackToWorker(vars, result.issues, taskDir, runId);
+      fixSignalBaseline = delivery.signalBaseline;
+      fixTurnToken = delivery.turnToken;
     } catch (error) {
       if (!(error instanceof SelfReviewFixDeliveryError)) throw error;
       let deliveryError: unknown = error;
@@ -682,8 +711,10 @@ export async function runSelfReviewRetryLoop({
             undefined,
             { priorPromptSendAttempted: false },
           );
-          if (delivery === 'delivered') fixSignalBaseline = '';
-          else deliveryError = new Error(`fresh-worker fix delivery ${delivery}`);
+          if (delivery.status === 'delivered') {
+            fixSignalBaseline = '';
+            fixTurnToken = delivery.turnToken;
+          } else deliveryError = new Error(`fresh-worker fix delivery ${delivery.status}`);
         }
       }
       if (fixSignalBaseline === undefined) {
@@ -731,6 +762,9 @@ export async function runSelfReviewRetryLoop({
         taskDir,
         FEEDBACK_TIMEOUT_MS,
         fixSignalBaseline,
+        fixTurnToken
+          ? () => selfReviewFixTurnIsActive(vars, runId, workerRunner, fixTurnToken)
+          : undefined,
       );
       fixCompletedAt = new Date().toISOString();
       if (!fixSignal) {
@@ -1016,17 +1050,17 @@ export async function resumeSelfReviewFixPromptDelivery(
   options: {
     priorPromptSendAttempted?: boolean;
   } = {},
-): Promise<'delivered' | 'deferred' | 'relaunch-required' | 'unsupported'> {
+): Promise<FixPromptDeliveryResult> {
   const storedTarget = context.target?.target;
   const session = context.target?.session;
   const taskFile = context.taskFile;
   const runner = normalizeRunner(context.runner);
   if (!storedTarget || !session || !taskFile || !runner || !runnerNeedsPostLaunchPrompt(runner)) {
-    return 'unsupported';
+    return { status: 'unsupported' };
   }
 
   const run = deps.getRun(runId);
-  if (!run) return 'unsupported';
+  if (!run) return { status: 'unsupported' };
   const taskDir = path.posix.dirname(taskFile);
   // A gateway restart can leave the shared mark helper pointed back at TASK.md
   // even though the durable fix context still owns SELF-REVIEW-FIX.md. Restore
@@ -1051,7 +1085,7 @@ export async function resumeSelfReviewFixPromptDelivery(
     target,
   });
   const attemptStartedAt = context.attemptStartedAt?.trim();
-  if (!attemptStartedAt) return 'deferred';
+  if (!attemptStartedAt) return { status: 'deferred' };
   const basePrompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
   const prompt = selfReviewFixPrompt(basePrompt, taskDir, taskFile, attemptStartedAt);
   const primaryContext = selectAgentContext(run, { role: 'primary' });
@@ -1081,10 +1115,15 @@ export async function resumeSelfReviewFixPromptDelivery(
     sendLogPrefix: 'self-review-fix-recovery',
     forceBusyPoll: true,
   });
-  if (result.delivered) return 'delivered';
+  if (result.delivered) {
+    return {
+      status: 'delivered',
+      ...(result.turnToken ? { turnToken: result.turnToken } : {}),
+    };
+  }
   return result.disposition === 'hold' && result.retryable === false
-    ? 'relaunch-required'
-    : 'deferred';
+    ? { status: 'relaunch-required' }
+    : { status: 'deferred' };
 }
 
 async function recoverSelfReviewFixPass({
@@ -1155,18 +1194,18 @@ async function recoverSelfReviewFixPass({
       const fixContextMatchesWorker =
         normalizeRunner(fixContext.runner) === normalizeRunner(workerRunner) &&
         (!fixContext.model?.trim() || fixContext.model.trim() === expectedWorkerModel);
-      let delivery = fixContextMatchesWorker
+      let delivery: FixPromptDeliveryResult = fixContextMatchesWorker
         ? await resumeSelfReviewFixPromptDelivery(vars, runId, fixContext)
-        : 'relaunch-required';
+        : { status: 'relaunch-required' };
       if (!fixContextMatchesWorker) {
         debugSelfReviewLog(
           `[self-review] run ${runId.slice(0, 8)} — fix context ${fixContext.runner}/${fixContext.model ?? 'default'} does not match worker ${workerRunner}/${expectedWorkerModel}; relaunching with worker model`,
         );
       }
       debugSelfReviewLog(
-        `[self-review] run ${runId.slice(0, 8)} — recovered fix prompt ${delivery}`,
+        `[self-review] run ${runId.slice(0, 8)} — recovered fix prompt ${delivery.status}`,
       );
-      if (delivery === 'relaunch-required') {
+      if (delivery.status === 'relaunch-required') {
         const relaunched = await relaunchWorkerForFix(vars, workerRunner, model, runId);
         if (relaunched) {
           const relaunchedFixContext =
@@ -1181,13 +1220,13 @@ async function recoverSelfReviewFixPass({
             { priorPromptSendAttempted: false },
           );
         } else {
-          delivery = 'deferred';
+          delivery = { status: 'deferred' };
         }
         debugSelfReviewLog(
-          `[self-review] run ${runId.slice(0, 8)} — recovered fix prompt fresh-worker ${delivery}`,
+          `[self-review] run ${runId.slice(0, 8)} — recovered fix prompt fresh-worker ${delivery.status}`,
         );
       }
-      if (delivery === 'deferred') {
+      if (delivery.status === 'deferred') {
         setProgressDetail(
           runId,
           `Recovered reviewer findings; fix prompt delivery deferred while worker is busy...`,
@@ -1200,7 +1239,16 @@ async function recoverSelfReviewFixPass({
       );
       const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix');
       try {
-        fixSignal = await waitForWorkerSignal(vars, taskDir, FEEDBACK_TIMEOUT_MS, rawSignal);
+        const deliveredTurnToken = delivery.status === 'delivered' ? delivery.turnToken : undefined;
+        fixSignal = await waitForWorkerSignal(
+          vars,
+          taskDir,
+          FEEDBACK_TIMEOUT_MS,
+          rawSignal,
+          deliveredTurnToken
+            ? () => selfReviewFixTurnIsActive(vars, runId, workerRunner, deliveredTurnToken)
+            : undefined,
+        );
       } finally {
         fixWatcher.stop();
       }
@@ -1406,7 +1454,7 @@ async function sendFeedbackToWorker(
   issues: SelfReviewIssue[],
   taskDir: string,
   runId: string,
-): Promise<string> {
+): Promise<FixDeliveryAcceptance> {
   const run = getRun(runId);
   const project = run?.project;
   if (!project)
@@ -1520,6 +1568,7 @@ async function sendFeedbackToWorker(
     let lastRetainedHoldReason: string | null = null;
     let terminalRetainedHoldReason: string | null = null;
     let structuredDeliveryAccepted = false;
+    let acceptedTurnToken: string | undefined;
     let promptSendAttempted = false;
     const loggedRetainedHoldReasons = new Set<string>();
     const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
@@ -1551,6 +1600,7 @@ async function sendFeedbackToWorker(
       promptSendAttempted = true;
       if (retained.delivered) {
         structuredDeliveryAccepted = retained.acknowledgement === 'structured';
+        acceptedTurnToken = retained.turnToken;
         return true;
       }
       if (retained.disposition === 'hold') {
@@ -1623,7 +1673,12 @@ async function sendFeedbackToWorker(
         `${failureSummary} (${fixTaskFile}).${retainedSummary} Pane re-resolution found no accepting runner pane in session ${session} (windows seen: ${seenSummary}). Escape: replay the self-review step after restoring runner observability.`,
       );
     }
-    if (structuredDeliveryAccepted) return fixSignalBaseline;
+    if (structuredDeliveryAccepted) {
+      return {
+        signalBaseline: fixSignalBaseline,
+        ...(acceptedTurnToken ? { turnToken: acceptedTurnToken } : {}),
+      };
+    }
     // sent=true only proves keystrokes were injected and Enter pressed. A
     // context-saturated REPL swallows delivered prompts with a frozen pane —
     // require FURTHER pane activity after the send. The
@@ -1652,7 +1707,7 @@ async function sendFeedbackToWorker(
         `self-review fix task delivered but the worker pane never changed — runner is unresponsive (${fixTaskFile})`,
       );
     }
-    return fixSignalBaseline;
+    return { signalBaseline: fixSignalBaseline };
   } catch (err) {
     await restoreWorkerChecklistTargetFromSlot(
       vars,
@@ -1876,29 +1931,37 @@ async function relaunchWorkerForFix(
   return false;
 }
 
-async function waitForWorkerSignal(
+export async function waitForWorkerSignal(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
   timeoutMs: number,
   baseline: string,
+  turnActive?: () => Promise<boolean>,
 ): Promise<WorkerSignal | undefined> {
   const signalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
 
   const start = Date.now();
   let lastProgressAt = start;
   let lastObservedSignal = baseline;
+  let nextTurnStateCheckAt = start;
+  const turnStatePollMs = Math.min(10_000, Math.max(2_000, Math.floor(timeoutMs / 2)));
   const maxActiveMs = Math.max(timeoutMs, Math.min(FEEDBACK_MAX_ACTIVE_MS, timeoutMs * 4));
   while (Date.now() - start < maxActiveMs && Date.now() - lastProgressAt < timeoutMs) {
     await new Promise((r) => setTimeout(r, 2000));
     try {
       const raw = await readOptionalSlotFile(vars, signalPath);
-      if (!raw || raw === lastObservedSignal) continue;
-      lastObservedSignal = raw;
-      lastProgressAt = Date.now();
-      const signal = terminalWorkerSignalFromRaw(raw);
-      if (signal) return signal;
+      if (raw && raw !== lastObservedSignal) {
+        lastObservedSignal = raw;
+        lastProgressAt = Date.now();
+        const signal = terminalWorkerSignalFromRaw(raw);
+        if (signal) return signal;
+      }
     } catch (err) {
       console.warn(`[self-review] failed to parse ${signalPath}: ${(err as Error).message}`);
+    }
+    if (turnActive && Date.now() >= nextTurnStateCheckAt) {
+      nextTurnStateCheckAt = Date.now() + turnStatePollMs;
+      if (await turnActive()) lastProgressAt = Date.now();
     }
   }
   return undefined;

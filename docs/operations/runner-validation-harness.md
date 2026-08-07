@@ -63,6 +63,7 @@ Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabi
 | `review-recovery-terminal-contract` | Runner-agnostic recovery, wait, replay, and slot cleanup (once)       | gateway E2E  | not repeated      | not repeated           |
 | `retained-safe-send-smoke`          | Exact retained-session follow-up after activity expiry                | live         | skip              | live                   |
 | `turn-boundary`                     | Stop after UserPromptSubmit                                           | live         | skip              | skip                   |
+| `self-review-fix-turn-lease`        | Long tool call renews the self-review fix idle lease                  | live         | skip              | skip                   |
 | `busy-composer`                     | Busy pane regex fixtures                                              | fixtures     | skip              | skip                   |
 | `mode-switch`                       | Bypass / permission mode                                              | live         | skip              | skip                   |
 | `session-attribution-smoke`         | Stale session rejected; hook path + model match                       | live tmux    | skip              | live tmux              |

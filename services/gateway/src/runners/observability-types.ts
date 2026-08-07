@@ -13,6 +13,8 @@ export interface ObservabilityReading<T> {
   exactPromptMatch?: boolean;
   /** Persisted runner session that emitted the reading, when the provider exposes it. */
   sessionId?: string;
+  /** Stable identity of the runner turn that emitted the reading. */
+  turnToken?: string;
 }
 
 export type RunnerActivity = 'idle' | 'composing' | 'tool-running' | 'awaiting-input' | 'unknown';
@@ -31,11 +33,16 @@ export interface HookRecord {
   event?: string;
   tool_name?: string;
   notification_type?: string;
+  source?: string;
   tool_use_id?: string;
   session_id?: string;
   transcript_path?: string;
   cwd?: string;
   runnerPromptDigest?: string;
+  turnStartedAt?: number;
+  turnActive?: boolean;
+  /** Root runner session currently owning the tmux pane. */
+  rootSessionId?: string;
   sentAt?: number;
   tmuxPane?: string;
   slotId?: string;
@@ -58,6 +65,17 @@ export interface RunnerObservability {
   /** How this provider proves that the exact prompt was accepted. */
   promptAcceptanceMode?: 'hook-digest' | 'native-text';
   getActivity(vars: SlotVars, target: string): Promise<ObservabilityReading<RunnerActivity> | null>;
+  /**
+   * Durable state of the whole runner turn currently bound to a tmux target.
+   * Unlike transient activity, an active turn remains active across a long tool
+   * call until the runner emits its terminal turn event.
+   */
+  getTurnState?(
+    vars: SlotVars,
+    target: string,
+    /** Exact leased turn to resolve when pane snapshots may be owned by a child session. */
+    expectedTurnToken?: string,
+  ): Promise<ObservabilityReading<RunnerSessionDeliveryState> | null>;
   getContextPct(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
   activeTool(vars: SlotVars, target: string): Promise<ObservabilityReading<string> | null>;
   lastTurnCompletedAt(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;

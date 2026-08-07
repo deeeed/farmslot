@@ -29,12 +29,18 @@ test('Codex native probe validates internal session identity and returns a bound
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-codex-session-probe-'));
   const sessionPath = path.join(root, 'rollout-2026-08-06T09-00-00-session-id.jsonl');
   const sessionId = 'session-id';
+  const turnId = 'turn-id';
   const acceptedAt = '2026-08-06T09:01:00.000Z';
   try {
     await writeFile(
       sessionPath,
       [
         JSON.stringify({ type: 'session_meta', payload: { id: sessionId } }),
+        JSON.stringify({
+          timestamp: acceptedAt,
+          type: 'event_msg',
+          payload: { type: 'task_started', turn_id: turnId },
+        }),
         record(acceptedAt, prompt),
       ].join('\n'),
     );
@@ -62,6 +68,7 @@ test('Codex native probe validates internal session identity and returns a bound
     assert.deepEqual(parseCodexPromptProbe(matched.stdout.trim()), {
       status: 'matched',
       observedAt: Date.parse(acceptedAt),
+      turnId,
     });
     assert.ok(matched.stdout.length < 100, 'probe must return only a compact structured result');
 
