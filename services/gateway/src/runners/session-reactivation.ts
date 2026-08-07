@@ -197,7 +197,10 @@ async function reactivateRunnerSessionWithPrompt(
       );
       // Only exact post-respawn prompt evidence is accepted; generic activity,
       // task signals, and pane text cannot acknowledge this resumed prompt.
-      if (accepted.accepted) {
+      if (
+        accepted.accepted &&
+        (accepted.turnToken || !getRunnerObservability(runner)?.getTurnState)
+      ) {
         return {
           delivered: true,
           acknowledgement: 'structured',
@@ -325,7 +328,8 @@ export async function deliverPromptInPlace(
       // Pane-only runners have no exact prompt hook/native acknowledgement.
       // Probe the generic task signal once, then preserve the runner-specific
       // safe-send result instead of waiting for a capability they do not expose.
-      if (!getRunnerObservability(runner)) {
+      const observability = getRunnerObservability(runner);
+      if (!observability) {
         const acknowledgement = await runnerHasDurablePromptHandoff(
           options.vars,
           options.target,
@@ -357,6 +361,7 @@ export async function deliverPromptInPlace(
           : { delivered: true, acknowledgement: 'safe-send' };
       }
       const acknowledgementDeadline = Date.now() + Math.min(timeoutMs, 30_000);
+      let acknowledgedWithoutTurnToken = false;
       while (Date.now() < acknowledgementDeadline) {
         const acknowledgement = await runnerHasDurablePromptHandoff(
           options.vars,
@@ -381,11 +386,14 @@ export async function deliverPromptInPlace(
           },
         );
         if (acknowledgement.accepted) {
-          return {
-            delivered: true,
-            acknowledgement: 'structured',
-            ...(acknowledgement.turnToken ? { turnToken: acknowledgement.turnToken } : {}),
-          };
+          if (acknowledgement.turnToken || !observability.getTurnState) {
+            return {
+              delivered: true,
+              acknowledgement: 'structured',
+              ...(acknowledgement.turnToken ? { turnToken: acknowledgement.turnToken } : {}),
+            };
+          }
+          acknowledgedWithoutTurnToken = true;
         }
         await new Promise((resolve) =>
           setTimeout(
@@ -396,6 +404,9 @@ export async function deliverPromptInPlace(
             ),
           ),
         );
+      }
+      if (acknowledgedWithoutTurnToken) {
+        return { delivered: true, acknowledgement: 'structured' };
       }
       return {
         delivered: false,

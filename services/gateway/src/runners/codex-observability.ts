@@ -158,6 +158,7 @@ export function parseCodexTurnStateProbe(raw: string): CodexTurnStateProbe {
   throw new Error(`Invalid Codex turn-state probe: ${raw}`);
 }
 
+/** Read the latest native turn boundary backwards without a fixed tail limit. */
 export function buildCodexTurnStateProbeCommand(sessionId: string, sessionPath: string): string {
   return `
 python3 - <<'PY'
@@ -180,45 +181,58 @@ def timestamp_ms(value):
         return None
     return int(parsed.timestamp() * 1000)
 
+def reverse_lines(handle, block_size=65536):
+    handle.seek(0, 2)
+    position = handle.tell()
+    remainder = b''
+    while position:
+        count = min(block_size, position)
+        position -= count
+        handle.seek(position)
+        parts = (handle.read(count) + remainder).split(b'\\n')
+        remainder = parts[0]
+        for line in reversed(parts[1:]):
+            if line:
+                yield line
+    if remainder:
+        yield remainder
+
 try:
     with session_path.open('rb') as handle:
         first = json.loads(handle.readline().decode('utf-8'))
         if first.get('type') != 'session_meta' or first.get('payload', {}).get('id') != session_id:
             print(json.dumps({'status': 'identity-mismatch'}))
             raise SystemExit(0)
-        size = handle.seek(0, 2)
-        start = max(0, size - ${SESSION_SCAN_BYTES})
-        handle.seek(start)
-        if start:
-            handle.readline()
-        lines = handle.readlines()
+        for raw_line in reverse_lines(handle):
+            try:
+                record = json.loads(raw_line.decode('utf-8'))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if record.get('type') != 'event_msg':
+                continue
+            payload = record.get('payload', {})
+            event_type = payload.get('type')
+            turn_id = payload.get('turn_id')
+            observed_at = timestamp_ms(record.get('timestamp'))
+            if not isinstance(turn_id, str) or not turn_id or observed_at is None:
+                continue
+            if event_type == 'task_started':
+                print(json.dumps({
+                    'status': 'matched', 'state': 'active',
+                    'observedAt': observed_at, 'turnId': turn_id,
+                }))
+                raise SystemExit(0)
+            if event_type in ('task_complete', 'turn_aborted'):
+                print(json.dumps({
+                    'status': 'matched', 'state': 'idle',
+                    'observedAt': observed_at, 'turnId': turn_id,
+                }))
+                raise SystemExit(0)
 except (OSError, UnicodeDecodeError, json.JSONDecodeError):
     print(json.dumps({'status': 'unavailable'}))
     raise SystemExit(0)
 
-latest = None
-for index, raw_line in enumerate(lines):
-    try:
-        record = json.loads(raw_line.decode('utf-8'))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        if (index == 0 and start) or (index == len(lines) - 1 and not raw_line.endswith(b'\\n')):
-            continue
-        print(json.dumps({'status': 'unavailable'}))
-        raise SystemExit(0)
-    if record.get('type') != 'event_msg':
-        continue
-    payload = record.get('payload', {})
-    event_type = payload.get('type')
-    turn_id = payload.get('turn_id')
-    observed_at = timestamp_ms(record.get('timestamp'))
-    if not isinstance(turn_id, str) or not turn_id or observed_at is None:
-        continue
-    if event_type == 'task_started':
-        latest = {'turnId': turn_id, 'state': 'active', 'observedAt': observed_at}
-    elif event_type in ('task_complete', 'turn_aborted') and latest is not None and latest['turnId'] == turn_id:
-        latest = {'turnId': turn_id, 'state': 'idle', 'observedAt': observed_at}
-
-print(json.dumps({'status': 'matched', **latest} if latest is not None else {'status': 'unavailable'}))
+print(json.dumps({'status': 'unavailable'}))
 PY`;
 }
 
@@ -319,31 +333,66 @@ async function probeCodexSessionBinding(
   return parseCodexSessionBindingProbe(result.stdout.trim());
 }
 
+async function resolveCodexPaneBinding(vars: SlotVars, target: string) {
+  const paneId = await resolveTmuxPaneId(vars, target);
+  if (!paneId) return null;
+  const paneState = await readRunnerPaneObservabilityState(vars, paneId);
+  const sessionId = paneState?.session_id;
+  const sessionPath = paneState?.transcript_path;
+  return sessionId && sessionPath ? { sessionId, sessionPath } : null;
+}
+
+async function readCodexNativeTurnState(vars: SlotVars, sessionId: string, sessionPath: string) {
+  const result = await execOnSlot(vars, buildCodexTurnStateProbeCommand(sessionId, sessionPath), {
+    timeout: 10_000,
+  });
+  if (result.exitCode !== 0) return null;
+  const probe = parseCodexTurnStateProbe(result.stdout.trim());
+  return probe.status === 'matched'
+    ? {
+        value: probe.state,
+        source: 'signal' as const,
+        confidence: 'high' as const,
+        observedAt: probe.observedAt,
+        sessionId,
+        turnToken: `${sessionId}:${probe.turnId}`,
+      }
+    : null;
+}
+
+async function readCodexPromptAcceptance(
+  vars: SlotVars,
+  sessionId: string,
+  sessionPath: string,
+  promptText: string,
+  sinceMs: number,
+) {
+  const result = await execOnSlot(
+    vars,
+    buildCodexPromptProbeCommand(sessionId, sessionPath, promptText, sinceMs),
+    { timeout: 10_000 },
+  );
+  if (result.exitCode !== 0) return null;
+  const probe = parseCodexPromptProbe(result.stdout.trim());
+  return probe.status === 'matched'
+    ? {
+        value: true,
+        source: 'signal' as const,
+        confidence: 'high' as const,
+        observedAt: probe.observedAt,
+        exactPromptMatch: true,
+        sessionId,
+        turnToken: `${sessionId}:${probe.turnId}`,
+      }
+    : null;
+}
+
 export const codexSessionObservability: RunnerObservability = {
   ...claudeHookObservability,
+  promptAcceptanceMode: 'native-text',
   async getTurnState(vars, target) {
-    const paneId = await resolveTmuxPaneId(vars, target);
-    if (!paneId) return null;
-    const paneState = await readRunnerPaneObservabilityState(vars, paneId);
-    const sessionId = paneState?.session_id;
-    const sessionPath = paneState?.transcript_path;
-    if (!sessionId || !sessionPath)
-      return claudeHookObservability.getTurnState?.(vars, target) ?? null;
-    const result = await execOnSlot(vars, buildCodexTurnStateProbeCommand(sessionId, sessionPath), {
-      timeout: 10_000,
-    });
-    if (result.exitCode !== 0) return null;
-    const probe = parseCodexTurnStateProbe(result.stdout.trim());
-    return probe.status === 'matched'
-      ? {
-          value: probe.state,
-          source: 'signal',
-          confidence: 'high',
-          observedAt: probe.observedAt,
-          sessionId,
-          turnToken: `${sessionId}:${probe.turnId}`,
-        }
-      : null;
+    const binding = await resolveCodexPaneBinding(vars, target);
+    return binding ? readCodexNativeTurnState(vars, binding.sessionId, binding.sessionPath) : null;
   },
   async resolveSessionId(vars, sessionPath) {
     const result = await execOnSlot(vars, buildCodexSessionIdProbeCommand(sessionPath), {
@@ -361,24 +410,14 @@ export const codexSessionObservability: RunnerObservability = {
       ? { sessionId: probe.sessionId, sessionPath: probe.sessionPath }
       : null;
   },
-  async promptAcceptedInSession(vars, _target, sessionId, sessionPath, promptText, sinceMs) {
-    const result = await execOnSlot(
-      vars,
-      buildCodexPromptProbeCommand(sessionId, sessionPath, promptText, sinceMs),
-      { timeout: 10_000 },
-    );
-    if (result.exitCode !== 0) return null;
-    const probe = parseCodexPromptProbe(result.stdout.trim());
-    return probe.status === 'matched'
-      ? {
-          value: true,
-          source: 'signal',
-          confidence: 'high',
-          observedAt: probe.observedAt,
-          exactPromptMatch: true,
-          sessionId,
-          turnToken: `${sessionId}:${probe.turnId}`,
-        }
+  async promptAccepted(vars, target, _promptDigest, sinceMs, _paneRetired, promptText) {
+    if (!promptText) return null;
+    const binding = await resolveCodexPaneBinding(vars, target);
+    return binding
+      ? readCodexPromptAcceptance(vars, binding.sessionId, binding.sessionPath, promptText, sinceMs)
       : null;
+  },
+  async promptAcceptedInSession(vars, _target, sessionId, sessionPath, promptText, sinceMs) {
+    return readCodexPromptAcceptance(vars, sessionId, sessionPath, promptText, sinceMs);
   },
 };

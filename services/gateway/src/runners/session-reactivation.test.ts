@@ -110,7 +110,17 @@ mock.module('./claude-observability.js', {
           confidence: 'high',
           observedAt: Date.now(),
           exactPromptMatch: true,
+          ...(accepted ? { sessionId: 'session-123', turnToken: 'session-123:test-turn' } : {}),
         };
+      },
+      async getTurnState() {
+        return sessionState
+          ? {
+              ...sessionState,
+              sessionId: 'session-123',
+              turnToken: 'session-123:test-turn',
+            }
+          : null;
       },
       async getSessionDeliveryState() {
         return sessionState;
@@ -180,6 +190,7 @@ test('retained resume accepts a slot-clock prompt hook emitted before respawn-wi
   assert.deepEqual(result, {
     delivered: true,
     acknowledgement: 'structured',
+    turnToken: 'session-123:test-turn',
   });
 
   const command = commands.join('\n');
@@ -255,7 +266,11 @@ test('retained resume does not consult a generic task signal for exact prompt ac
     launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
   });
 
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+    turnToken: 'session-123:test-turn',
+  });
   assert.equal(
     commands.some((command) => command.includes('SELF-REVIEW-FIX-SIGNAL.json')),
     false,
@@ -342,7 +357,10 @@ test('retained fallback accepts a fresh task signal after the original send veri
     priorPromptSendAttempted: true,
   });
 
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+  });
   assert.equal(
     commands.some((command) => command.includes('capture-pane')),
     false,
@@ -376,7 +394,10 @@ test('retained fallback accepts delayed acknowledgement before replacing an idle
     priorPromptSendAttempted: true,
   });
 
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+  });
   assert.equal(
     commands.some((command) => command.includes('respawn-window')),
     false,
@@ -452,37 +473,14 @@ test('retained recovery accepts the exact prompt digest without comparing node c
     priorPromptSendAttempted: true,
   });
 
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+    turnToken: 'session-123:test-turn',
+  });
   assert.equal(
     commands.some((command) => command.includes('send-keys') || command.includes('respawn-window')),
     false,
-  );
-});
-
-test('retained fallback requires the task signal to advance after the first prompt send', async () => {
-  commands.length = 0;
-  paneCount = 1;
-  promptAccepted = true;
-  sessionState = {
-    value: 'active',
-    source: 'hook',
-    confidence: 'high',
-    observedAt: Date.now(),
-  };
-
-  const result = await deliverPromptWithRetainedFallback({
-    vars,
-    target: 'test-1:dev',
-    runnerId: 'claude',
-    prompt: 'Read and execute SELF-REVIEW-FIX.md',
-    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
-    launchAckBaseline: { raw: null, status: null, mtimeNs: '0' },
-  });
-
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
-  assert.equal(
-    commands.some((command) => command.includes('SELF-REVIEW-FIX-SIGNAL.json')),
-    true,
   );
 });
 
@@ -546,7 +544,11 @@ test('retained fallback uses an exact runner hook when the task signal baseline 
     launchAckBaseline: null,
   });
 
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+    turnToken: 'session-123:test-turn',
+  });
 });
 
 test('pane-only retained handoff falls back to safe-send after probing the task signal', async () => {

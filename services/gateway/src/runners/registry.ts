@@ -1550,29 +1550,6 @@ export async function runnerHasDurablePromptHandoff(
     return { accepted: false, reason: 'prompt acceptance baseline unavailable' };
   }
   try {
-    if (opts.retainedSession && observability.promptAcceptedInSession) {
-      const nativeReading = await observability.promptAcceptedInSession(
-        vars,
-        target,
-        opts.retainedSession.sessionId,
-        opts.retainedSession.sessionPath,
-        message,
-        promptAcceptedSinceMs,
-      );
-      if (
-        isObservabilityReadingAuthoritative(nativeReading) &&
-        nativeReading.value === true &&
-        nativeReading.exactPromptMatch === true &&
-        nativeReading.source === 'signal'
-      ) {
-        return {
-          accepted: true,
-          reason: 'exact prompt accepted by runner-native session history',
-          source: 'native-signal',
-          ...(nativeReading.turnToken ? { turnToken: nativeReading.turnToken } : {}),
-        };
-      }
-    }
     const reading = await observability.promptAccepted(
       vars,
       target,
