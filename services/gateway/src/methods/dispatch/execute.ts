@@ -1171,7 +1171,6 @@ export async function dispatchExecute(
   };
   let runnerProcessStarted = false;
   let resumedReviewSession = false;
-  let resumedReviewSessionUnconfirmed = false;
   let repeatReviewFallbackReason =
     repeatReviewResumePlan.kind === 'fallback' ? repeatReviewResumePlan.reason : null;
   try {
@@ -1208,6 +1207,13 @@ export async function dispatchExecute(
           runnerSessionId: binding.runnerSessionId,
           runnerSessionPath: binding.runnerSessionPath,
         };
+        recordReviewSession({
+          intent: 'resume',
+          continuity: 'resumed',
+          priorRunId: binding.priorRunId,
+          priorSessionId: binding.runnerSessionId,
+          sessionId: binding.runnerSessionId,
+        });
       } else if (attempt.kind === 'fallback') {
         repeatReviewFallbackReason = 'session-unavailable';
         repeatReviewResumePlan = attempt.plan;
@@ -1218,13 +1224,19 @@ export async function dispatchExecute(
         // executing. Keep ownership, expose the uncertainty, and let monitor
         // resolve the authoritative task signal.
         resumedReviewSession = true;
-        resumedReviewSessionUnconfirmed = true;
         runnerProcessStarted = true;
         repeatReviewResumePlan = attempt.plan;
         sessionMeta = {
           runnerSessionId: binding.runnerSessionId,
           runnerSessionPath: binding.runnerSessionPath,
         };
+        recordReviewSession({
+          intent: 'resume',
+          continuity: 'resume-unconfirmed',
+          priorRunId: binding.priorRunId,
+          priorSessionId: binding.runnerSessionId,
+          sessionId: binding.runnerSessionId,
+        });
         step('warn', attempt.reason);
       }
     }
@@ -1360,15 +1372,7 @@ export async function dispatchExecute(
       step('task', 'Task prompt delivered and verified');
     }
     if (currentRun?.repeatReviewContext) {
-      if (resumedReviewSession && repeatReviewResumePlan.kind === 'resume') {
-        recordReviewSession({
-          intent: 'resume',
-          continuity: resumedReviewSessionUnconfirmed ? 'resume-unconfirmed' : 'resumed',
-          priorRunId: repeatReviewResumePlan.binding.priorRunId,
-          priorSessionId: repeatReviewResumePlan.binding.runnerSessionId,
-          sessionId: repeatReviewResumePlan.binding.runnerSessionId,
-        });
-      } else if (repeatReviewSessionIntent === 'resume') {
+      if (!resumedReviewSession && repeatReviewSessionIntent === 'resume') {
         recordReviewSession({
           intent: 'resume',
           continuity: 'fallback-fresh',
@@ -1376,7 +1380,7 @@ export async function dispatchExecute(
           ...(sessionMeta.runnerSessionId ? { sessionId: sessionMeta.runnerSessionId } : {}),
           fallbackReason: repeatReviewFallbackReason ?? 'missing-session',
         });
-      } else {
+      } else if (!resumedReviewSession) {
         recordReviewSession({
           intent: 'reset',
           continuity: 'fresh',

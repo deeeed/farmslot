@@ -10,6 +10,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - feat(review): detect prior terminal reviews of the same PR, offer incremental/full continuation choices, freeze prior findings and exact diff provenance, and default static reviews to a prepare-free path.
 - feat(review): resume an incremental repeat review only through the runner's retained-session capability and exact prior binding; otherwise start fresh and record the fallback reason.
+- fix(review): record retained-review continuity immediately after handoff, keep pre-mutation handoff failures retryable, and report each resumed generation as a delta while preserving the raw chain total.
 - fix(self-review): bind worker-fix idle leases to the exact accepted runner turn and its live pane. Long tool calls stay alive; unaccepted prompts, dead workers, stale hooks, and unrelated turns cannot renew the lease.
 
 - fix(self-review): keep long worker-fix passes alive while their explicit fix checklist advances, even if the ambient worker checklist target changes.

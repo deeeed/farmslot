@@ -63,7 +63,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const beforePaths = listSessionCandidates(runner, repo, runtimeDir);
     const shell = ensureShellSession(session, repo);
     paneId = shell.paneId;
-    const target = tmux(['display-message', '-p', '-t', paneId, '#{session_name}:#{window_index}']);
+    let target = tmux(['display-message', '-p', '-t', paneId, '#{session_name}:#{window_index}']);
     const dispatchMs = Date.now();
     const beforeCount = readHookLines(logPath).length;
 
@@ -151,6 +151,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     killSession(session);
     const replacement = ensureShellSession(session, repo);
     paneId = replacement.paneId;
+    target = tmux(['display-message', '-p', '-t', paneId, '#{session_name}:#{window_index}']);
     report.paneReplacedBeforeResume = paneId !== priorPaneId;
     if (!report.paneReplacedBeforeResume) {
       throw new Error('retained handoff did not replace the owning pane');

@@ -1,29 +1,29 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-07T09:56:55.259Z",
+  "recordedAt": "2026-08-07T10:28:41.077Z",
   "host": "macwork",
   "scenario": "retained-handoff-smoke",
   "runner": "codex",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-VYIsQM",
-  "session": "runner-validate-codex-retained-handoff-smoke-86249",
-  "sessionId": "019fdba6-6e83-78c1-a394-7ba1feec4bfc",
-  "sessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-VYIsQM/.agent/codex-home/sessions/2026/08/07/rollout-2026-08-07T17-55-45-019fdba6-6e83-78c1-a394-7ba1feec4bfc.jsonl",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-CcZSwK",
+  "session": "runner-validate-codex-retained-handoff-smoke-70168",
+  "sessionId": "019fdbc3-ab80-70b3-b9c5-4c67f5d90ada",
+  "sessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-CcZSwK/.agent/codex-home/sessions/2026/08/07/rollout-2026-08-07T18-27-41-019fdbc3-ab80-70b3-b9c5-4c67f5d90ada.jsonl",
   "initialCompleted": true,
   "handoffDelivered": true,
   "repeatReviewSessionTrace": {
     "intent": "resume",
     "continuity": "resumed",
     "priorRunId": "review-generation-1",
-    "priorSessionId": "019fdba6-6e83-78c1-a394-7ba1feec4bfc",
-    "sessionId": "019fdba6-6e83-78c1-a394-7ba1feec4bfc"
+    "priorSessionId": "019fdbc3-ab80-70b3-b9c5-4c67f5d90ada",
+    "sessionId": "019fdbc3-ab80-70b3-b9c5-4c67f5d90ada"
   },
   "repeatReviewResumePlan": {
     "kind": "resume",
     "binding": {
       "priorRunId": "review-generation-1",
       "contextId": "review-context-1",
-      "runnerSessionId": "019fdba6-6e83-78c1-a394-7ba1feec4bfc",
-      "runnerSessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-VYIsQM/.agent/codex-home/sessions/2026/08/07/rollout-2026-08-07T17-55-45-019fdba6-6e83-78c1-a394-7ba1feec4bfc.jsonl"
+      "runnerSessionId": "019fdbc3-ab80-70b3-b9c5-4c67f5d90ada",
+      "runnerSessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-retained-CcZSwK/.agent/codex-home/sessions/2026/08/07/rollout-2026-08-07T18-27-41-019fdbc3-ab80-70b3-b9c5-4c67f5d90ada.jsonl"
     }
   },
   "repeatReviewResetPlan": {

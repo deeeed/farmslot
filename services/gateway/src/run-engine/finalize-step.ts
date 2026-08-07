@@ -29,7 +29,7 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
-import { usesReviewChainSessionTotal } from '../runtime/session-usage.js';
+import { parseSessionUsageOutput, usesReviewChainSessionTotal } from '../runtime/session-usage.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import {
@@ -147,9 +147,21 @@ export async function executeFinalizeStep(
       if (chainSessionTotal) session.usage_scope = 'review-chain-total';
       const costRaw = session.cost_usd ?? session.costUsd;
       const cost = costRaw ? Number(costRaw) : current.metrics.costEstimate;
-      if (!chainSessionTotal) {
-        updateRun(runId, { metrics: { ...current.metrics, costEstimate: cost } });
-      }
+      const latestMetrics = getRun(runId)?.metrics ?? current.metrics;
+      const usage = parseSessionUsageOutput(result.stdout, {
+        runner,
+        runnerSessionId: resolved?.runnerSessionId ?? latestMetrics.runnerSessionId,
+        runnerSessionPath,
+      });
+      updateRun(runId, {
+        metrics: chainSessionTotal
+          ? {
+              ...latestMetrics,
+              sessionUsageScope: 'review-chain-total',
+              reviewChainUsageTotal: usage,
+            }
+          : { ...latestMetrics, costEstimate: cost, sessionUsageScope: 'session-total' },
+      });
     }
   } catch (err) {
     console.warn(
