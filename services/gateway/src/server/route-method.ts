@@ -200,6 +200,8 @@ import {
 
 import { restoreTmuxWorker } from '../agents/runtime-recovery.js';
 import { restartBranchWatchesForMachine } from '../automation/branch-watcher.js';
+// Method handlers
+import { GatewayInternalError, GatewayMethodError } from '../core/method-error.js';
 import { getAllNodes, registerNode } from '../fleet/machine-registry.js';
 import { getAllMachineHealth, getMachineHealth, markMachineOnline } from '../fleet/node-health.js';
 import { pairingCandidates, pairingCreate } from '../fleet/pairing.js';
@@ -441,8 +443,6 @@ import { farmslotRoot } from '../projects/repo-root.js';
 import { unsubscribePty } from '../runtime/pty-stream.js';
 import { resubscribeAgentScreenSessions } from '../runtime/screen-session.js';
 import { unsubscribe as unsubscribeTerminalPoll } from '../runtime/tmux-stream.js';
-// Method handlers
-import { GatewayInternalError, GatewayMethodError } from '../core/method-error.js';
 import {
   type GatewayAuthRuntime,
   requireAuthenticatedSession,

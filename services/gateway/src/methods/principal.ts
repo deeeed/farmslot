@@ -21,8 +21,8 @@ import type {
 import { GatewayInternalError, GatewayMethodError } from '../core/method-error.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
 import {
-  CredentialStoreRefusalError,
   type CredentialRecord,
+  CredentialStoreRefusalError,
 } from '../security/credential-store.js';
 
 export function principalCreate(
