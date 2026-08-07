@@ -486,14 +486,17 @@ test('backlog load reconciles existing queue item to prevent duplicate enqueue a
     status: 'ready',
   });
   await backlog.flushBacklogForTests();
-  const queueItem = queue.addItem({
-    backlogItemId: created.item.id,
-    flowType: 'dev',
-    project: 'farmslot-farm',
-    ticketOrPr: created.item.sourceRef,
-    allowedSlots: ['no-such-slot'],
-    priority: 10,
-  });
+  const queueItem = queue.addItem(
+    {
+      backlogItemId: created.item.id,
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: created.item.sourceRef,
+      allowedSlots: ['no-such-slot'],
+      priority: 10,
+    },
+    { kind: 'system' },
+  );
 
   await backlog.loadBacklog();
   const reconciled = backlog
@@ -512,14 +515,17 @@ test('direct queue remove refuses backlog-linked queue items', async () => {
     flowType: 'dev',
     status: 'ready',
   });
-  const queueItem = queue.addItem({
-    backlogItemId: created.item.id,
-    flowType: 'dev',
-    project: 'farmslot-farm',
-    ticketOrPr: created.item.sourceRef,
-    allowedSlots: ['no-such-slot'],
-    priority: 10,
-  });
+  const queueItem = queue.addItem(
+    {
+      backlogItemId: created.item.id,
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: created.item.sourceRef,
+      allowedSlots: ['no-such-slot'],
+      priority: 10,
+    },
+    { kind: 'system' },
+  );
 
   assert.throws(
     () => queue.removeItem(queueItem.id),
@@ -530,13 +536,16 @@ test('direct queue remove refuses backlog-linked queue items', async () => {
 test('dispatch queue normalizes tags before persistence', async () => {
   const { queue } = await freshStores();
 
-  const queueItem = queue.addItem({
-    flowType: 'dev',
-    project: 'farmslot-farm',
-    ticketOrPr: 'FS-123',
-    tags: [' Roadmap ', '#Command Center', 'roadmap'],
-    priority: 10,
-  });
+  const queueItem = queue.addItem(
+    {
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: 'FS-123',
+      tags: [' Roadmap ', '#Command Center', 'roadmap'],
+      priority: 10,
+    },
+    { kind: 'system' },
+  );
 
   assert.deepEqual(queueItem.tags, ['command-center', 'roadmap']);
   assert.deepEqual(queue.getQueueSnapshot()[0]?.tags, ['command-center', 'roadmap']);
@@ -822,14 +831,17 @@ test('late completion echo from a previous slice cannot clobber the next slice',
   assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.status, 'ready');
 
   // Slice 2 queued: a late RUN_UPDATED echo from slice 1 must not clear the queue link.
-  const queueItem = queue.addItem({
-    backlogItemId: created.item.id,
-    flowType: 'dev',
-    project: 'farmslot-farm',
-    ticketOrPr: created.item.sourceRef,
-    allowedSlots: ['no-such-slot'],
-    priority: 10,
-  });
+  const queueItem = queue.addItem(
+    {
+      backlogItemId: created.item.id,
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: created.item.sourceRef,
+      allowedSlots: ['no-such-slot'],
+      priority: 10,
+    },
+    { kind: 'system' },
+  );
   backlog.mutateBacklogItemForTests(created.item.id, (item) => {
     item.status = 'queued';
     item.queuedQueueItemId = queueItem.id;

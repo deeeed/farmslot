@@ -143,9 +143,9 @@ assert.equal(
     }),
     res: operatorResponse,
   }),
-  false,
+  true,
 );
-assert.equal(operatorResponse.statusCode, 403);
+assert.equal(operatorResponse.statusCode, undefined);
 
 const resolverFailureResponse = createFakeResponse();
 const isSoloMode = cookieRuntime.resolver.isSoloMode;

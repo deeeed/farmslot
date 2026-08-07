@@ -57,7 +57,7 @@ function authorizeGatewayIngress(
     });
   }
   if (request.kind === 'http') {
-    if (isAdminPrincipal(principal)) return principal;
+    if (isAdminPrincipal(principal) || hasRole(principal, 'operator')) return principal;
     throw denial(runtime, session, 'HTTP resource access', principal);
   }
   const { method } = request;

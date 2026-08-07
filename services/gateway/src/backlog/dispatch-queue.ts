@@ -402,7 +402,7 @@ function assertEvalQueueItem(params: InternalDispatchQueueAddParams): void {
 
 export function addItem(
   params: InternalDispatchQueueAddParams,
-  originator: WorkOriginator = { kind: 'system' },
+  originator: WorkOriginator,
 ): QueueItem {
   assertAllowedSlots(params.allowedSlots, 'queue dispatch');
   assertEvalQueueItem(params);
@@ -776,7 +776,7 @@ export async function cancelGraphQueuedItem(params: {
 
 export function updateItem(
   params: DispatchQueueUpdateParams,
-  originator: WorkOriginator = { kind: 'system' },
+  originator: WorkOriginator,
 ): QueueItem {
   const item = queue.find((q) => q.id === params.itemId);
   if (!item) throw new Error(`Queue item not found: ${params.itemId}`);
@@ -796,10 +796,7 @@ export function updateItem(
   return publicQueueItem(item);
 }
 
-export function reorderItems(
-  itemIds: string[],
-  originator: WorkOriginator = { kind: 'system' },
-): QueueItem[] {
+export function reorderItems(itemIds: string[], originator: WorkOriginator): QueueItem[] {
   const uniqueIds = [...new Set(itemIds)];
   if (uniqueIds.length !== itemIds.length)
     throw new Error('Cannot reorder queue: duplicate item ids');

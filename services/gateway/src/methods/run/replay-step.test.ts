@@ -124,13 +124,16 @@ test('replaying a cancelled graph run reclaims the node instead of double-dispat
 
   // Cancelling releases the node, so the scheduler re-queues its work. That queue
   // item must not survive the run being revived, or the node dispatches twice.
-  addItem({
-    project: 'farmslot-farm',
-    flowType: 'update-branch',
-    ticketOrPr: 'PROJ-4102',
-    workGraphId: 'wg_replay_reclaim',
-    workNodeId: 'wn_replay_reclaim',
-  });
+  addItem(
+    {
+      project: 'farmslot-farm',
+      flowType: 'update-branch',
+      ticketOrPr: 'PROJ-4102',
+      workGraphId: 'wg_replay_reclaim',
+      workNodeId: 'wn_replay_reclaim',
+    },
+    { kind: 'system' },
+  );
   assert.ok(
     getQueueSnapshot().some((item) => item.workNodeId === 'wn_replay_reclaim'),
     'precondition: the graph has re-queued the node',
@@ -163,13 +166,16 @@ test('a replay that fails validation leaves the re-queued node intact', async (t
     workNodeId: 'wn_replay_strand',
   });
   updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-  addItem({
-    project: 'farmslot-farm',
-    flowType: 'update-branch',
-    ticketOrPr: 'PROJ-4103',
-    workGraphId: 'wg_replay_strand',
-    workNodeId: 'wn_replay_strand',
-  });
+  addItem(
+    {
+      project: 'farmslot-farm',
+      flowType: 'update-branch',
+      ticketOrPr: 'PROJ-4103',
+      workGraphId: 'wg_replay_strand',
+      workNodeId: 'wn_replay_strand',
+    },
+    { kind: 'system' },
+  );
 
   t.after(async () => {
     if (getRun(run.id)) {
@@ -219,13 +225,16 @@ test('replay revokes a claimed dispatching row and revives the cancelled run', a
           : step,
     ),
   });
-  addItem({
-    project: 'farmslot-farm',
-    flowType: 'update-branch',
-    ticketOrPr: 'PROJ-4104',
-    workGraphId: 'wg_replay_handoff',
-    workNodeId: 'wn_replay_handoff',
-  });
+  addItem(
+    {
+      project: 'farmslot-farm',
+      flowType: 'update-branch',
+      ticketOrPr: 'PROJ-4104',
+      workGraphId: 'wg_replay_handoff',
+      workNodeId: 'wn_replay_handoff',
+    },
+    { kind: 'system' },
+  );
   // Claim through the public API (not a direct status mutate) so holder/epoch
   // persistence matches production. Replay must revoke it and revive the run.
   const staged = getQueueSnapshot().find((item) => item.workNodeId === 'wn_replay_handoff');
@@ -314,13 +323,16 @@ test('replay refuses when replacement row already has a stamped runId', async (t
     workNodeId: 'wn_replay_stamped',
   });
   updateRun(cancelled.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-  addItem({
-    project: 'farmslot-farm',
-    flowType: 'update-branch',
-    ticketOrPr: 'PROJ-4104-stamped',
-    workGraphId: 'wg_replay_stamped',
-    workNodeId: 'wn_replay_stamped',
-  });
+  addItem(
+    {
+      project: 'farmslot-farm',
+      flowType: 'update-branch',
+      ticketOrPr: 'PROJ-4104-stamped',
+      workGraphId: 'wg_replay_stamped',
+      workNodeId: 'wn_replay_stamped',
+    },
+    { kind: 'system' },
+  );
   const staged = getQueueSnapshot().find((item) => item.workNodeId === 'wn_replay_stamped');
   assert.ok(staged);
   const claim = claimQueueItem(staged.id, 'dispatcher');
@@ -393,15 +405,18 @@ test('replay does not reclaim a sibling launch-plan candidate sharing the node',
   // Comparison candidates are built with the baseline's graph and node ids, so a
   // graph/node-only reclaim would delete this row — and the candidate projection
   // would keep the dead queue id, so the work never comes back.
-  addItem({
-    project: 'farmslot-farm',
-    flowType: 'update-branch',
-    ticketOrPr: 'PROJ-4105',
-    workGraphId: 'wg_replay_sibling',
-    workNodeId: 'wn_replay_sibling',
-    launchPlanId: 'lp_1',
-    launchCandidateId: 'cand_comparison',
-  });
+  addItem(
+    {
+      project: 'farmslot-farm',
+      flowType: 'update-branch',
+      ticketOrPr: 'PROJ-4105',
+      workGraphId: 'wg_replay_sibling',
+      workNodeId: 'wn_replay_sibling',
+      launchPlanId: 'lp_1',
+      launchCandidateId: 'cand_comparison',
+    },
+    { kind: 'system' },
+  );
 
   t.after(async () => {
     if (getRun(run.id)) {
@@ -456,15 +471,18 @@ test('replay does not reclaim a replacement plan reusing the same candidate id',
   // one. This row belongs to the CURRENT plan and must not be taken by a run from
   // the superseded plan — the current plan would keep a dead queue id, and the
   // revived run's observations are rejected as foreign-plan.
-  addItem({
-    project: 'farmslot-farm',
-    flowType: 'update-branch',
-    ticketOrPr: 'PROJ-4106',
-    workGraphId: 'wg_replay_plan',
-    workNodeId: 'wn_replay_plan',
-    launchPlanId: 'lp_current',
-    launchCandidateId: 'cand_shared',
-  });
+  addItem(
+    {
+      project: 'farmslot-farm',
+      flowType: 'update-branch',
+      ticketOrPr: 'PROJ-4106',
+      workGraphId: 'wg_replay_plan',
+      workNodeId: 'wn_replay_plan',
+      launchPlanId: 'lp_current',
+      launchCandidateId: 'cand_shared',
+    },
+    { kind: 'system' },
+  );
 
   t.after(async () => {
     if (getRun(run.id)) {
