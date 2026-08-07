@@ -63,6 +63,10 @@ export function checklistTargetForAgentRole(
   return target;
 }
 
+export function checklistMarkerCommand(taskDir: string, target: ChecklistTarget): string {
+  return `${taskDir}/mark --checklist ${target.checklist} --signal ${target.signal}`;
+}
+
 export function defaultWorkerChecklistTarget(taskAbsDir: string): ChecklistTarget {
   const checklist = existsSync(path.join(taskAbsDir, INTERACTIVE_CHECKLIST_MARKDOWN))
     ? INTERACTIVE_CHECKLIST_MARKDOWN
