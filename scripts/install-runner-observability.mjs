@@ -124,19 +124,28 @@ try {
     typeof payload.session_id === 'string' && payload.session_id
       ? readSnapshot(path.join(obsDir, 'sessions'), payload.session_id)
       : null;
-  const turnCarriesIdentity =
-    event === 'PreToolUse' ||
-    event === 'PostToolUse' ||
-    event === 'PostToolUseFailure' ||
-    event === 'Notification' ||
+  const previousPane =
+    typeof process.env.TMUX_PANE === 'string' && process.env.TMUX_PANE
+      ? readSnapshot(path.join(obsDir, 'panes'), process.env.TMUX_PANE)
+      : null;
+  const startsTurn = event === 'UserPromptSubmit';
+  const stopsTurn =
     event === 'Stop' ||
-    event === 'StopFailure';
+    event === 'StopFailure' ||
+    (event === 'Notification' && payload.notification_type === 'idle_prompt');
   const turnStartedAt =
-    event === 'UserPromptSubmit'
-      ? observedAt
-      : turnCarriesIdentity
-        ? previousSession?.turnStartedAt
+    startsTurn ? observedAt : previousSession?.turnStartedAt;
+  const turnActive = startsTurn
+    ? true
+    : stopsTurn
+      ? false
+      : typeof previousSession?.turnActive === 'boolean'
+        ? previousSession.turnActive
         : undefined;
+  const rootSessionId =
+    event === 'SessionStart'
+      ? payload.session_id
+      : previousPane?.rootSessionId || previousPane?.session_id || payload.session_id;
   const record = {
     schemaVersion: 1,
     observedAt,
@@ -154,6 +163,8 @@ try {
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
     runner: process.env.FARMSLOT_RUNNER || 'claude',
     ...(typeof turnStartedAt === 'number' ? { turnStartedAt } : {}),
+    ...(typeof turnActive === 'boolean' ? { turnActive } : {}),
+    ...(typeof rootSessionId === 'string' && rootSessionId ? { rootSessionId } : {}),
     ...(matchedDigest ? { runnerPromptDigest: matchedDigest } : {}),
     ...(sentAt ? { sentAt } : {}),
   };

@@ -192,6 +192,10 @@ export async function probeRunnerHandoffAck(
     }
   }
 
+  if (opts.preferHooks !== false && paneId === null) {
+    return { accepted: false, reason: 'target pane unavailable for hook handoff' };
+  }
+
   if (opts.preferHooks === false) {
     return { accepted: false, reason: 'hook handoff disabled for runner' };
   }

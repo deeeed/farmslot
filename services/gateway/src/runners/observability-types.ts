@@ -39,6 +39,9 @@ export interface HookRecord {
   cwd?: string;
   runnerPromptDigest?: string;
   turnStartedAt?: number;
+  turnActive?: boolean;
+  /** Root runner session currently owning the tmux pane. */
+  rootSessionId?: string;
   sentAt?: number;
   tmuxPane?: string;
   slotId?: string;

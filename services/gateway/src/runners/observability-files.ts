@@ -196,6 +196,17 @@ export function deriveRunnerSessionDeliveryState(
   const event = hookEventName(record);
   const observedAt = observedAtFromRecord(record);
   if (!event || observedAt == null) return null;
+  if (typeof record.turnActive === 'boolean') {
+    return {
+      value: record.turnActive ? 'active' : 'idle',
+      source: 'hook',
+      confidence: 'high',
+      observedAt,
+      ...(typeof record.turnStartedAt === 'number'
+        ? { turnToken: `${sessionId}:${record.turnStartedAt}` }
+        : {}),
+    };
+  }
   const isIdle =
     event === 'Stop' ||
     event === 'StopFailure' ||

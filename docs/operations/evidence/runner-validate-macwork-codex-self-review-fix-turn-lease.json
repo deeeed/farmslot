@@ -1,20 +1,21 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-07T04:09:07.718Z",
+  "recordedAt": "2026-08-07T04:51:02.213Z",
   "host": "macwork",
   "scenario": "self-review-fix-turn-lease",
   "runner": "codex",
   "baselineContract": "an unaccepted fix prompt receives no structured-turn lease",
   "currentContract": "an accepted fix prompt receives a liveness-guarded structured runner turn lease",
   "result": {
-    "elapsedMs": 54684,
+    "elapsedMs": 36819,
     "idleTimeoutMs": 10000,
     "baselineTimedOut": true,
     "unacceptedTurnLeaseRejected": true,
-    "acceptedTurnToken": "019fda66-2ad3-7762-85bf-c01c3189fb6b:019fda67-3214-73c0-be34-77e013f8483b",
-    "busyTurnToken": "019fda66-2ad3-7762-85bf-c01c3189fb6b:019fda66-ba1d-77f1-bf0e-5a01085845ce",
+    "acceptedTurnToken": "019fda8d-2157-7081-aa7a-b4753b881836:019fda8d-9f89-7612-9536-5e71c63e1355",
+    "busyTurnToken": "019fda8d-2157-7081-aa7a-b4753b881836:019fda8d-705f-7a60-88a2-60c4cd493894",
     "busyLeaseActiveBeforeFix": true,
     "fixTurnSeparatedFromBusyTurn": true,
+    "lifecycleLeaseProbe": null,
     "leasedSignalStatus": "complete",
     "activeTurnObserved": true,
     "supersedingTurnProbe": {
@@ -24,42 +25,69 @@
     },
     "turnReadings": [
       {
-        "expectedTurnToken": "019fda66-2ad3-7762-85bf-c01c3189fb6b:019fda67-3214-73c0-be34-77e013f8483b",
+        "expectedTurnToken": "019fda8d-2157-7081-aa7a-b4753b881836:019fda8d-9f89-7612-9536-5e71c63e1355",
         "active": true,
         "stateValue": "active",
-        "actualTurnToken": "019fda66-2ad3-7762-85bf-c01c3189fb6b:019fda67-3214-73c0-be34-77e013f8483b",
+        "actualTurnToken": "019fda8d-2157-7081-aa7a-b4753b881836:019fda8d-9f89-7612-9536-5e71c63e1355",
+        "runnerAlive": true
+      },
+      {
+        "expectedTurnToken": "019fda8d-2157-7081-aa7a-b4753b881836:019fda8d-9f89-7612-9536-5e71c63e1355",
+        "active": true,
+        "stateValue": "active",
+        "actualTurnToken": "019fda8d-2157-7081-aa7a-b4753b881836:019fda8d-9f89-7612-9536-5e71c63e1355",
+        "runnerAlive": true
+      },
+      {
+        "expectedTurnToken": "019fda8d-2157-7081-aa7a-b4753b881836:019fda8d-9f89-7612-9536-5e71c63e1355",
+        "active": true,
+        "stateValue": "active",
+        "actualTurnToken": "019fda8d-2157-7081-aa7a-b4753b881836:019fda8d-9f89-7612-9536-5e71c63e1355",
         "runnerAlive": true
       }
     ]
   },
   "liveSnapshotProbe": {
-    "expectedTurnToken": "019fda68-2e68-7262-a513-b36bcb0196b0:019fda68-3165-7c52-ae5f-103fa6372767",
+    "expectedTurnToken": "019fda8e-5d34-7d92-87a5-626b252c9fb3:019fda8e-5ecb-7831-b045-7b10b0357bd6",
     "leaseAllowed": true,
     "turnReadings": [
       {
-        "expectedTurnToken": "019fda68-2e68-7262-a513-b36bcb0196b0:019fda68-3165-7c52-ae5f-103fa6372767",
+        "expectedTurnToken": "019fda8e-5d34-7d92-87a5-626b252c9fb3:019fda8e-5ecb-7831-b045-7b10b0357bd6",
         "active": true,
         "stateValue": "active",
-        "actualTurnToken": "019fda68-2e68-7262-a513-b36bcb0196b0:019fda68-3165-7c52-ae5f-103fa6372767",
+        "actualTurnToken": "019fda8e-5d34-7d92-87a5-626b252c9fb3:019fda8e-5ecb-7831-b045-7b10b0357bd6",
         "runnerAlive": true
       }
     ]
   },
   "staleSnapshotProbe": {
-    "expectedTurnToken": "019fda68-2e68-7262-a513-b36bcb0196b0:019fda68-3165-7c52-ae5f-103fa6372767",
+    "expectedTurnToken": "019fda8e-5d34-7d92-87a5-626b252c9fb3:019fda8e-5ecb-7831-b045-7b10b0357bd6",
     "leaseAllowed": false,
     "turnReadings": [
       {
-        "expectedTurnToken": "019fda68-2e68-7262-a513-b36bcb0196b0:019fda68-3165-7c52-ae5f-103fa6372767",
+        "expectedTurnToken": "019fda8e-5d34-7d92-87a5-626b252c9fb3:019fda8e-5ecb-7831-b045-7b10b0357bd6",
         "active": false,
         "stateValue": "active",
-        "actualTurnToken": "019fda68-2e68-7262-a513-b36bcb0196b0:019fda68-3165-7c52-ae5f-103fa6372767",
+        "actualTurnToken": "019fda8e-5d34-7d92-87a5-626b252c9fb3:019fda8e-5ecb-7831-b045-7b10b0357bd6",
         "runnerAlive": false
       }
     ]
   },
+  "reoccupiedPaneProbe": {
+    "expectedTurnToken": "019fda8e-5d34-7d92-87a5-626b252c9fb3:019fda8e-5ecb-7831-b045-7b10b0357bd6",
+    "leaseAllowed": false,
+    "turnReadings": [
+      {
+        "expectedTurnToken": "019fda8e-5d34-7d92-87a5-626b252c9fb3:019fda8e-5ecb-7831-b045-7b10b0357bd6",
+        "active": false,
+        "stateValue": "active",
+        "actualTurnToken": "019fda8f-1f5e-7fd2-980d-46e807cf4c07:019fda8f-246c-7cc1-8421-8f0534f2d0a5",
+        "runnerAlive": true
+      }
+    ]
+  },
   "activeHook": "production-delivery",
-  "paneTail": "[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭─────────────────────────────────────────────────╮\n│ ✨ Update available! 0.146.1 -> 0.147.0         │\n│ Run npm install -g @openai/codex to update.     │\n│                                                 │\n│ See full release notes:                         │\n│ https://github.com/openai/codex/releases/latest │\n╰─────────────────────────────────────────────────╯\n\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:       gpt-5.6-sol xhigh   /model to change        │\n│ directory:   …/T/runner-validate-codex-turn-lease-3idbRr │\n│ permissions: YOLO mode                                   │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit\n  https://chatgpt.com/codex?app-landing-page=true\n\n\n› Reply with exactly READY, then wait for another instruction.\n\n\n• READY\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 8\n[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭─────────────────────────────────────────────────╮\n│ ✨ Update available! 0.146.1 -> 0.147.0         │\n│ Run npm install -g @openai/codex to update.     │\n│                                                 │\n│ See full release notes:                         │\n│ https://github.com/openai/codex/releases/latest │\n╰─────────────────────────────────────────────────╯\n\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:       gpt-5.6-sol xhigh   /model to change        │\n│ directory:   …/T/runner-validate-codex-turn-lease-3idbRr │\n│ permissions: YOLO mode                                   │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit\n  https://chatgpt.com/codex?app-landing-page=true\n\n\n› Reply with exactly READY, then wait for another instruction.\n\n\n• READY\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 8\n\n\n■ Conversation interrupted - tell the model what to do differently. Something\nwent wrong? Hit `/feedback` to report the issue.\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 14; printf '%s\\n' '{\"role\":\"self-review-\n  fix\",\"status\":\"complete\",\"outcome\":\"success\",\"disposition\":\"fixed\",\"timestamp\n  \":\"2026-08-07T04:06:48.248Z\"}' > task/SELF-REVIEW-FIX-SIGNAL.json\n\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 12\n\n\n• Ran sleep 12\n  └ (no output)\n\n────────────────────────────────────────────────────────────────────────────────\n\n\n› Write tests for @filename\n\n  gpt-5.6-sol xhigh · /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/…",
+  "paneTail": "│                                                          │\n│ model:       gpt-5.6-sol xhigh   /model to change        │\n[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭─────────────────────────────────────────────────╮\n│ ✨ Update available! 0.146.1 -> 0.147.0         │\n│ Run npm install -g @openai/codex to update.     │\n│                                                 │\n│ See full release notes:                         │\n│ https://github.com/openai/codex/releases/latest │\n╰─────────────────────────────────────────────────╯\n\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:       gpt-5.6-sol xhigh   /model to change        │\n│ directory:   …/T/runner-validate-codex-turn-lease-HBTUbw │\n│ permissions: YOLO mode                                   │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n\n› Reply with exactly READY, then wait for another instruction.\n\n\n• READY\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 8\n[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭─────────────────────────────────────────────────╮\n│ ✨ Update available! 0.146.1 -> 0.147.0         │\n│ Run npm install -g @openai/codex to update.     │\n│                                                 │\n│ See full release notes:                         │\n│ https://github.com/openai/codex/releases/latest │\n╰─────────────────────────────────────────────────╯\n\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:       gpt-5.6-sol xhigh   /model to change        │\n│ directory:   …/T/runner-validate-codex-turn-lease-HBTUbw │\n│ permissions: YOLO mode                                   │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n\n› Reply with exactly READY, then wait for another instruction.\n\n\n• READY\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 8\n\n\n■ Conversation interrupted - tell the model what to do differently. Something\nwent wrong? Hit `/feedback` to report the issue.\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 14; printf '%s\\n' '{\"role\":\"self-review-\n  fix\",\"status\":\"complete\",\"outcome\":\"success\",\"disposition\":\"fixed\",\"timestamp\n  \":\"2026-08-07T04:48:59.245Z\"}' > task/SELF-REVIEW-FIX-SIGNAL.json\n\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 12\n\n\n• Ran sleep 12\n  └ (no output)\n\n────────────────────────────────────────────────────────────────────────────────\n\n\n› Write tests for @filename\n\n  gpt-5.6-sol xhigh · /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/…",
   "pass": true,
   "error": null
 }

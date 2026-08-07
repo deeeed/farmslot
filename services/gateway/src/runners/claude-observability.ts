@@ -57,7 +57,15 @@ export const claudeHookObservability: RunnerObservability = {
       const separator = expectedTurnToken.lastIndexOf(':');
       const expectedSessionId = separator > 0 ? expectedTurnToken.slice(0, separator).trim() : '';
       if (!expectedSessionId) return null;
-      const sessionState = await readRunnerSessionObservabilityState(vars, expectedSessionId);
+      const paneId = await resolveTmuxPaneId(vars, target);
+      if (!paneId) return null;
+      const [sessionState, paneState] = await Promise.all([
+        readRunnerSessionObservabilityState(vars, expectedSessionId),
+        readRunnerPaneObservabilityState(vars, paneId),
+      ]);
+      if (sessionState?.session_id !== expectedSessionId) return null;
+      if (!(await sessionPaneMoveIsSafe(vars, sessionState.tmuxPane, paneId))) return null;
+      if (paneState?.rootSessionId && paneState.rootSessionId !== expectedSessionId) return null;
       return deriveRunnerSessionDeliveryState(sessionState, expectedSessionId);
     }
     const paneId = await resolveTmuxPaneId(vars, target);

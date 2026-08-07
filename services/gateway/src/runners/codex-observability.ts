@@ -429,7 +429,13 @@ export const codexSessionObservability: RunnerObservability = {
     if (!promptText) return null;
     const binding = await resolveCodexPaneBinding(vars, target);
     const nativeReading = binding
-      ? readCodexPromptAcceptance(vars, binding.sessionId, binding.sessionPath, promptText, sinceMs)
+      ? await readCodexPromptAcceptance(
+          vars,
+          binding.sessionId,
+          binding.sessionPath,
+          promptText,
+          sinceMs,
+        )
       : null;
     if (nativeReading) return nativeReading;
     // Native rollout history is authoritative when available. Exact Codex

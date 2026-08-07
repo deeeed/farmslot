@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -75,6 +76,32 @@ const turnActive = (expectedTurnToken: string) => async () => {
   });
   return active;
 };
+
+function emitClaudeLifecycleHook(expectedTurnToken: string, event: string): void {
+  const separator = expectedTurnToken.lastIndexOf(':');
+  const sessionId = expectedTurnToken.slice(0, separator);
+  const obsDir = path.join(repo, '.agent', '.observability');
+  const sessionPath = path.join(obsDir, 'sessions', `${encodeURIComponent(sessionId)}.json`);
+  const sessionState = JSON.parse(readFileSync(sessionPath, 'utf-8')) as {
+    transcript_path?: string;
+  };
+  execFileSync(process.execPath, [path.join(obsDir, 'bin', 'farmslot-observability-hook.mjs')], {
+    cwd: repo,
+    env: {
+      ...process.env,
+      FARMSLOT_OBS_DIR: obsDir,
+      FARMSLOT_SLOT_ID: vars.slotId,
+      FARMSLOT_RUNNER: runner,
+      TMUX_PANE: target,
+    },
+    input: JSON.stringify({
+      hook_event_name: event,
+      session_id: sessionId,
+      transcript_path: sessionState.transcript_path,
+      cwd: repo,
+    }),
+  });
+}
 
 if (process.env.FARMSLOT_VALIDATION_PROBE_ONLY === '1') {
   const state = await readRunnerTurnState(vars, target, runner);
@@ -158,6 +185,15 @@ assert.notEqual(
   'fix prompt must bind to a new turn after unrelated work finishes',
 );
 
+let lifecycleLeaseProbe: { preCompact: boolean; postCompact: boolean } | null = null;
+if (runner === 'claude') {
+  emitClaudeLifecycleHook(acceptedTurnToken, 'PreCompact');
+  const preCompact = await runnerTurnLeaseIsActive(vars, target, runner, acceptedTurnToken);
+  emitClaudeLifecycleHook(acceptedTurnToken, 'PostCompact');
+  const postCompact = await runnerTurnLeaseIsActive(vars, target, runner, acceptedTurnToken);
+  lifecycleLeaseProbe = { preCompact, postCompact };
+}
+
 const startedAt = Date.now();
 const [baselineResult, leasedResult] = await Promise.all([
   waitForWorkerSignal(vars, 'task', idleTimeoutMs, ''),
@@ -208,6 +244,7 @@ writeFileSync(
       busyTurnToken,
       busyLeaseActiveBeforeFix,
       fixTurnSeparatedFromBusyTurn: acceptedTurnToken !== busyTurnToken,
+      lifecycleLeaseProbe,
       leasedSignalStatus: leasedResult?.status ?? null,
       activeTurnObserved: turnReadings.some((reading) => reading.active),
       supersedingTurnProbe,

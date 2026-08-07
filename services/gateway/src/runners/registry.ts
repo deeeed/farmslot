@@ -1585,11 +1585,9 @@ export async function runnerHasDurablePromptHandoff(
           : 'hook-activity',
       // Native providers can fall back to an exact hook digest for delivery,
       // but hook timestamps are not native turn ids and cannot lease work.
-      ...(!usesNativePromptAcceptance && reading.turnToken
+      ...(reading.turnToken && (!usesNativePromptAcceptance || nativeSignal)
         ? { turnToken: reading.turnToken }
-        : nativeSignal && reading.turnToken
-          ? { turnToken: reading.turnToken }
-          : {}),
+        : {}),
     };
   } catch (error) {
     console.warn(

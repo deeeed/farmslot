@@ -1,20 +1,24 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-07T04:03:23.557Z",
+  "recordedAt": "2026-08-07T04:54:37.852Z",
   "host": "macwork",
   "scenario": "self-review-fix-turn-lease",
   "runner": "claude",
   "baselineContract": "an unaccepted fix prompt receives no structured-turn lease",
   "currentContract": "an accepted fix prompt receives a liveness-guarded structured runner turn lease",
   "result": {
-    "elapsedMs": 35715,
+    "elapsedMs": 21052,
     "idleTimeoutMs": 10000,
     "baselineTimedOut": true,
     "unacceptedTurnLeaseRejected": true,
-    "acceptedTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
-    "busyTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075294306",
+    "acceptedTurnToken": "df78977a-b137-4b7b-a62b-edaf9e0ae25d:1786078428569",
+    "busyTurnToken": "df78977a-b137-4b7b-a62b-edaf9e0ae25d:1786078411608",
     "busyLeaseActiveBeforeFix": true,
     "fixTurnSeparatedFromBusyTurn": true,
+    "lifecycleLeaseProbe": {
+      "preCompact": true,
+      "postCompact": true
+    },
     "leasedSignalStatus": "complete",
     "activeTurnObserved": true,
     "supersedingTurnProbe": {
@@ -24,56 +28,69 @@
     },
     "turnReadings": [
       {
-        "expectedTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+        "expectedTurnToken": "df78977a-b137-4b7b-a62b-edaf9e0ae25d:1786078428569",
         "active": true,
         "stateValue": "active",
-        "actualTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+        "actualTurnToken": "df78977a-b137-4b7b-a62b-edaf9e0ae25d:1786078428569",
         "runnerAlive": true
       },
       {
-        "expectedTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+        "expectedTurnToken": "df78977a-b137-4b7b-a62b-edaf9e0ae25d:1786078428569",
         "active": true,
         "stateValue": "active",
-        "actualTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+        "actualTurnToken": "df78977a-b137-4b7b-a62b-edaf9e0ae25d:1786078428569",
         "runnerAlive": true
       },
       {
-        "expectedTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+        "expectedTurnToken": "df78977a-b137-4b7b-a62b-edaf9e0ae25d:1786078428569",
         "active": true,
         "stateValue": "active",
-        "actualTurnToken": "7ec4ec09-5847-449b-9d20-a8bc5011e07a:1786075326472",
+        "actualTurnToken": "df78977a-b137-4b7b-a62b-edaf9e0ae25d:1786078428569",
         "runnerAlive": true
       }
     ]
   },
   "liveSnapshotProbe": {
-    "expectedTurnToken": "93dd705e-9cd4-483d-bc56-454e2b1299d5:1786075374653",
+    "expectedTurnToken": "313e7278-339d-4875-bc84-2de9bf9d22e0:1786078455624",
     "leaseAllowed": true,
     "turnReadings": [
       {
-        "expectedTurnToken": "93dd705e-9cd4-483d-bc56-454e2b1299d5:1786075374653",
+        "expectedTurnToken": "313e7278-339d-4875-bc84-2de9bf9d22e0:1786078455624",
         "active": true,
         "stateValue": "active",
-        "actualTurnToken": "93dd705e-9cd4-483d-bc56-454e2b1299d5:1786075374653",
+        "actualTurnToken": "313e7278-339d-4875-bc84-2de9bf9d22e0:1786078455624",
         "runnerAlive": true
       }
     ]
   },
   "staleSnapshotProbe": {
-    "expectedTurnToken": "93dd705e-9cd4-483d-bc56-454e2b1299d5:1786075374653",
+    "expectedTurnToken": "313e7278-339d-4875-bc84-2de9bf9d22e0:1786078455624",
     "leaseAllowed": false,
     "turnReadings": [
       {
-        "expectedTurnToken": "93dd705e-9cd4-483d-bc56-454e2b1299d5:1786075374653",
+        "expectedTurnToken": "313e7278-339d-4875-bc84-2de9bf9d22e0:1786078455624",
         "active": false,
         "stateValue": "active",
-        "actualTurnToken": "93dd705e-9cd4-483d-bc56-454e2b1299d5:1786075374653",
+        "actualTurnToken": "313e7278-339d-4875-bc84-2de9bf9d22e0:1786078455624",
         "runnerAlive": false
       }
     ]
   },
+  "reoccupiedPaneProbe": {
+    "expectedTurnToken": "313e7278-339d-4875-bc84-2de9bf9d22e0:1786078455624",
+    "leaseAllowed": false,
+    "turnReadings": [
+      {
+        "expectedTurnToken": "313e7278-339d-4875-bc84-2de9bf9d22e0:1786078455624",
+        "active": false,
+        "stateValue": "active",
+        "actualTurnToken": "9bc167e3-bfcd-4246-8889-3ac1d417f6bf:1786078468662",
+        "runnerAlive": true
+      }
+    ]
+  },
   "activeHook": "production-delivery",
-  "paneTail": "╭─── Claude Code v2.1.222 ─────────────────────────────────────────────────────╮\n│                                                    │ Tips for getting        │\n│                Welcome back Arthur!                │ started                 │\n│                                                    │ Run /init to create a … │\n│                       ▐▛███▜▌                      │ ─────────────────────── │\n│                      ▝▜█████▛▘                     │ What's new              │\n│                        ▘▘ ▝▝                       │ Fixed worktree-isolate… │\n│       Opus 5 with high effort · Claude Max ·       │ Fixed PreToolUse auto-… │\n│       abreton@siteed.net's Organization            │ Fixed `/usage-credits`… │\n│    /…/T/runner-validate-claude-turn-lease-PMlpc7   │ /release-notes for more │\n╰──────────────────────────────────────────────────────────────────────────────╯\n\n ⚠ 2 MCP servers need authentication · run /mcp\n\n❯ Reply with exactly READY, then wait for another instruction.\n\n⏺ READY\n\n❯ Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 8\n  ⎿  1 agent type available\n\n⏺ Bash(sleep 8)\n  ⎿  (No output)\n\n⏺ Done. Slept 8s, no output.\n╭─── Claude Code v2.1.222 ─────────────────────────────────────────────────────╮\n│                                                    │ Tips for getting        │\n│                Welcome back Arthur!                │ started                 │\n│                                                    │ Run /init to create a … │\n│                       ▐▛███▜▌                      │ ─────────────────────── │\n│                      ▝▜█████▛▘                     │ What's new              │\n│                        ▘▘ ▝▝                       │ Fixed worktree-isolate… │\n│       Opus 5 with high effort · Claude Max ·       │ Fixed PreToolUse auto-… │\n│       abreton@siteed.net's Organization            │ Fixed `/usage-credits`… │\n│    /…/T/runner-validate-claude-turn-lease-PMlpc7   │ /release-notes for more │\n╰──────────────────────────────────────────────────────────────────────────────╯\n\n\n❯ Reply with exactly READY, then wait for another instruction.\n\n⏺ READY\n\n❯ Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 8\n  ⎿  1 agent type available\n\n⏺ Bash(sleep 8)\n  ⎿  (No output)\n\n⏺ Done. Slept 8s, no output.\n\n✻ Worked for 30s\n\n❯ Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 14; printf '%s\\n' '{\"role\":\"self-review-fix\",\"status\":\"complete\",\"outco\n  me\":\"success\",\"disposition\":\"fixed\",\"timestamp\":\"2026-08-07T04:01:44.483Z\"}'\n  > task/SELF-REVIEW-FIX-SIGNAL.json\n\n⏺ Bash(sleep 14; printf '%s\\n'\n      '{\"role\":\"self-review-fix\",\"status\":\"complete\",\"outcome\":\"success\",\"dispos\n      ition\":\"fixed\",\"timestamp\":\"2026-08-07T04:01:44.483Z\"}' > task…)\n  ⎿  (No output)\n\n⏺ Done. Signal file written to task/SELF-REVIEW-FIX-SIGNAL.json.\n\n✻ Baked for 25s\n\n❯ Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 12\n\n⏺ Bash(sleep 12)\n  ⎿  (No output)\n\n⏺ Done. Slept 12s, no output.\n\n✻ Crunched for 32s\n\n────────────────────────────────────────────────────────────────────────────────\n❯ \n────────────────────────────────────────────────────────────────────────────────\n  fs · Opus 5 · ctx:4%\n  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+  "paneTail": "│                                                    │ Tips for getting        │\n│                Welcome back Arthur!                │ started                 │\n│                                                    │ Run /init to create a … │\n│                       ▐▛███▜▌                      │ ─────────────────────── │\n│                      ▝▜█████▛▘                     │ What's new              │\n│                        ▘▘ ▝▝                       │ Fixed worktree-isolate… │\n│       Opus 5 with high effort · Claude Max ·       │ Fixed PreToolUse auto-… │\n│       abreton@siteed.net's Organization            │ Fixed `/usage-credits`… │\n│    /…/T/runner-validate-claude-turn-lease-k12Xck   │ /release-notes for more │\n╰──────────────────────────────────────────────────────────────────────────────╯\n\n ⚠ 2 MCP servers need authentication · run /mcp\n\n❯ Reply with exactly READY, then wait for another instruction.\n\n⏺ READY\n\n❯ Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 8\n  ⎿  1 agent type available\n\n⏺ Bash(sleep 8)\n  ⎿  (No output)\n\n⏺ Done. sleep 8 ran, no output.\n\n╭─── Claude Code v2.1.222 ─────────────────────────────────────────────────────╮\n│                                                    │ Tips for getting        │\n│                Welcome back Arthur!                │ started                 │\n│                                                    │ Run /init to create a … │\n│                       ▐▛███▜▌                      │ ─────────────────────── │\n│                      ▝▜█████▛▘                     │ What's new              │\n│                        ▘▘ ▝▝                       │ Fixed worktree-isolate… │\n│       Opus 5 with high effort · Claude Max ·       │ Fixed PreToolUse auto-… │\n│       abreton@siteed.net's Organization            │ Fixed `/usage-credits`… │\n│    /…/T/runner-validate-claude-turn-lease-k12Xck   │ /release-notes for more │\n╰──────────────────────────────────────────────────────────────────────────────╯\n\n\n❯ Reply with exactly READY, then wait for another instruction.\n\n⏺ READY\n\n❯ Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 8\n  ⎿  1 agent type available\n\n⏺ Bash(sleep 8)\n  ⎿  (No output)\n\n⏺ Done. sleep 8 ran, no output.\n\n✻ Baked for 15s\n\n❯ Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 14; printf '%s\\n' '{\"role\":\"self-review-fix\",\"status\":\"complete\",\"outco\n  me\":\"success\",\"disposition\":\"fixed\",\"timestamp\":\"2026-08-07T04:53:32.803Z\"}'\n  > task/SELF-REVIEW-FIX-SIGNAL.json\n\n⏺ Bash(sleep 14; printf '%s\\n'\n      '{\"role\":\"self-review-fix\",\"status\":\"complete\",\"outcome\":\"success\",\"dispos\n      ition\":\"fixed\",\"timestamp\":\"2026-08-07T04:53:32.803Z\"}' > task…)\n  ⎿  (No output)\n\n⏺ Done. Signal file written to task/SELF-REVIEW-FIX-SIGNAL.json.\n\n✻ Brewed for 20s\n\n❯ Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 12\n\n⏺ Bash(sleep 12)\n  ⎿  (No output)\n\n⏺ Done. sleep 12 ran, no output.\n\n✻ Cogitated for 22s\n\n────────────────────────────────────────────────────────────────────────────────\n❯ \n────────────────────────────────────────────────────────────────────────────────\n  fs · Opus 5 · ctx:4%\n  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
   "pass": true,
   "error": null
 }

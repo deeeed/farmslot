@@ -11,13 +11,18 @@ import { capturePane, ensureShellSession, killSession } from '../lib/tmux.mjs';
 
 export const SCENARIO_ID = 'self-review-fix-turn-lease';
 
-function waitForActiveTurn(statePath, timeoutMs) {
+function waitForActiveTurn(statePath, timeoutMs, excludedSessionId = null) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
       const event = state.hook_event_name ?? state.event;
-      if (event === 'UserPromptSubmit' || event === 'PreToolUse') return state;
+      if (
+        (event === 'UserPromptSubmit' || event === 'PreToolUse') &&
+        (!excludedSessionId || state.session_id !== excludedSessionId)
+      ) {
+        return state;
+      }
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
     }
@@ -70,6 +75,7 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
     result: null,
     liveSnapshotProbe: null,
     staleSnapshotProbe: null,
+    reoccupiedPaneProbe: null,
     activeHook: null,
     paneTail: null,
     pass: false,
@@ -163,11 +169,39 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
       timeout: 30_000,
     });
     report.staleSnapshotProbe = JSON.parse(fs.readFileSync(deadResultPath, 'utf-8'));
+    runLaunchInTmux(
+      deadPaneId,
+      repo,
+      runner,
+      runnerAdapter,
+      'Use the shell tool exactly once to run this command, and do nothing else: sleep 60',
+    );
+    waitForActiveTurn(deadStatePath, 60_000, activeState.session_id);
+    const reoccupiedResultPath = path.join(repo, 'reoccupied-result.json');
+    execFileSync('yarn', ['exec', 'tsx', executor], {
+      cwd: root,
+      env: {
+        ...process.env,
+        FARMSLOT_VALIDATION_REPO: repo,
+        FARMSLOT_VALIDATION_TARGET: deadPaneId,
+        FARMSLOT_VALIDATION_RUNNER: runner,
+        FARMSLOT_VALIDATION_RUNNER_BIN: runnerBin,
+        FARMSLOT_VALIDATION_RESULT_PATH: reoccupiedResultPath,
+        FARMSLOT_VALIDATION_PROBE_ONLY: '1',
+        FARMSLOT_VALIDATION_EXPECTED_TURN_TOKEN: report.liveSnapshotProbe.expectedTurnToken,
+      },
+      stdio: 'pipe',
+      timeout: 30_000,
+    });
+    report.reoccupiedPaneProbe = JSON.parse(fs.readFileSync(reoccupiedResultPath, 'utf-8'));
     report.pass =
       report.result.baselineTimedOut === true &&
       report.result.unacceptedTurnLeaseRejected === true &&
       report.result.busyLeaseActiveBeforeFix === true &&
       report.result.fixTurnSeparatedFromBusyTurn === true &&
+      (runner !== 'claude' ||
+        (report.result.lifecycleLeaseProbe?.preCompact === true &&
+          report.result.lifecycleLeaseProbe?.postCompact === true)) &&
       report.result.leasedSignalStatus === 'complete' &&
       report.result.activeTurnObserved === true &&
       report.result.supersedingTurnProbe.originalLeaseActive === false &&
@@ -176,7 +210,12 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
       report.liveSnapshotProbe.leaseAllowed === true &&
       report.staleSnapshotProbe.leaseAllowed === false &&
       report.staleSnapshotProbe.expectedTurnToken === report.liveSnapshotProbe.expectedTurnToken &&
-      report.staleSnapshotProbe.turnReadings.some((reading) => reading.active === false);
+      report.staleSnapshotProbe.turnReadings.some((reading) => reading.active === false) &&
+      report.reoccupiedPaneProbe.leaseAllowed === false &&
+      report.reoccupiedPaneProbe.expectedTurnToken === report.liveSnapshotProbe.expectedTurnToken &&
+      report.reoccupiedPaneProbe.turnReadings.some(
+        (reading) => reading.runnerAlive === true && reading.active === false,
+      );
   } catch (error) {
     report.error = error?.message || String(error);
   } finally {
