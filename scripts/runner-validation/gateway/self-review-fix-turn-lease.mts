@@ -86,6 +86,7 @@ writeFileSync(
       elapsedMs: Date.now() - startedAt,
       idleTimeoutMs,
       baselineTimedOut: baselineResult === undefined,
+      unacceptedTurnLeaseRejected: baselineResult === undefined,
       leasedSignalStatus: leasedResult?.status ?? null,
       activeTurnObserved: turnReadings.some(
         (reading) => reading.value === 'active' && reading.confidence === 'high',

@@ -48,8 +48,9 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
   let paneId = null;
   const report = {
     runner,
-    baselineContract: 'signal-file progress only',
-    currentContract: 'signal-file progress plus liveness-guarded structured runner turn state',
+    baselineContract: 'an unaccepted fix prompt receives no structured-turn lease',
+    currentContract:
+      'an accepted fix prompt receives a liveness-guarded structured runner turn lease',
     result: null,
     staleSnapshotProbe: null,
     activeHook: null,
@@ -131,6 +132,7 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
     report.staleSnapshotProbe = JSON.parse(fs.readFileSync(deadResultPath, 'utf-8'));
     report.pass =
       report.result.baselineTimedOut === true &&
+      report.result.unacceptedTurnLeaseRejected === true &&
       report.result.leasedSignalStatus === 'complete' &&
       report.result.activeTurnObserved === true &&
       report.result.turnReadings.some((reading) => reading.runnerAlive === true) &&

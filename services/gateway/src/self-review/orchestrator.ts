@@ -1220,8 +1220,14 @@ async function recoverSelfReviewFixPass({
       );
       const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix');
       try {
-        fixSignal = await waitForWorkerSignal(vars, taskDir, FEEDBACK_TIMEOUT_MS, rawSignal, () =>
-          selfReviewFixTurnIsActive(vars, runId, workerRunner),
+        fixSignal = await waitForWorkerSignal(
+          vars,
+          taskDir,
+          FEEDBACK_TIMEOUT_MS,
+          rawSignal,
+          delivery === 'delivered'
+            ? () => selfReviewFixTurnIsActive(vars, runId, workerRunner)
+            : undefined,
         );
       } finally {
         fixWatcher.stop();

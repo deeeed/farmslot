@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(self-review): renew the worker-fix idle lease from the runner provider's structured whole-turn state while the exact pane still hosts that runner, so a live long-running tool call is not relaunched merely because one checklist step exceeds 30 minutes and a stale active hook cannot mask a dead worker.
+- fix(self-review): renew the worker-fix idle lease from the runner provider's structured whole-turn state only after exact fix-prompt delivery and while the exact pane still hosts that runner, so a live long-running tool call is not relaunched merely because one checklist step exceeds 30 minutes while unrelated work and stale active hooks cannot mask an unaccepted or dead worker.
 
 - fix(self-review): keep long worker-fix passes alive while their explicit fix checklist advances, even if the ambient worker checklist target changes.
 

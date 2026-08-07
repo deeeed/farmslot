@@ -1,15 +1,16 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-07T01:41:22.411Z",
+  "recordedAt": "2026-08-07T01:54:06.558Z",
   "host": "macwork",
   "scenario": "self-review-fix-turn-lease",
   "runner": "codex",
-  "baselineContract": "signal-file progress only",
-  "currentContract": "signal-file progress plus liveness-guarded structured runner turn state",
+  "baselineContract": "an unaccepted fix prompt receives no structured-turn lease",
+  "currentContract": "an accepted fix prompt receives a liveness-guarded structured runner turn lease",
   "result": {
-    "elapsedMs": 21229,
+    "elapsedMs": 19615,
     "idleTimeoutMs": 10000,
     "baselineTimedOut": true,
+    "unacceptedTurnLeaseRejected": true,
     "leasedSignalStatus": "complete",
     "activeTurnObserved": true,
     "turnReadings": [
@@ -41,7 +42,7 @@
     ]
   },
   "activeHook": "UserPromptSubmit",
-  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.wrYwRc/launch-741e48fb41784a0f.sh\nOpenAI Codex v0.146.1\n--------\nworkdir: /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validat\ne-codex-turn-lease-wbt8s7\nmodel: gpt-5.6-sol\nprovider: openai\napproval: never\nsandbox: workspace-write [workdir, /tmp, $TMPDIR]\nreasoning effort: none\nreasoning summaries: none\nsession id: 019fd9e1-4dc3-7c20-a792-f55e3135de69\n--------\nuser\nUse the shell tool exactly once to run this command, and do nothing else: sleep\n14; printf '%s\\n' '{\"role\":\"self-review\",\"status\":\"complete\",\"outcome\":\"success\"\n,\"disposition\":\"fixed\",\"timestamp\":\"2026-08-07T01:40:47.597Z\"}' > task/SELF-REVI\nEW-FIX-SIGNAL.json\nhook: SessionStart\nhook: SessionStart Completed\nhook: UserPromptSubmit\nhook: UserPromptSubmit Completed\ncodex\n\nhook: PreToolUse\nhook: PreToolUse Completed\nexec\n/bin/zsh -lc \"sleep 14; printf '%s\\\\n' '{\\\"role\\\":\\\"self-review\\\",\\\"status\\\":\\\"c\nomplete\\\",\\\"outcome\\\":\\\"success\\\",\\\"disposition\\\":\\\"fixed\\\",\\\"timestamp\\\":\\\"2026\n-08-07T01:40:47.597Z\\\"}' > task/SELF-REVIEW-FIX-SIGNAL.json\" in /private/var/fol\nders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-turn-lease-wbt8s7\n succeeded in 14103ms:\nhook: PostToolUse\nhook: PostToolUse Completed\ncodex\n\nhook: Stop\nhook: Stop Completed\ntokens used\n7,176\nbash-5.3$",
+  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.TMnJKj/launch-c341d7bd71c608bd.sh\nOpenAI Codex v0.146.1\n--------\nworkdir: /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validat\ne-codex-turn-lease-HmH5px\nmodel: gpt-5.6-sol\nprovider: openai\napproval: never\nsandbox: workspace-write [workdir, /tmp, $TMPDIR]\nreasoning effort: none\nreasoning summaries: none\nsession id: 019fd9ed-01f2-7bb0-8f8c-90eb44402c8e\n--------\nuser\nUse the shell tool exactly once to run this command, and do nothing else: sleep\n14; printf '%s\\n' '{\"role\":\"self-review\",\"status\":\"complete\",\"outcome\":\"success\"\n,\"disposition\":\"fixed\",\"timestamp\":\"2026-08-07T01:53:35.000Z\"}' > task/SELF-REVI\nEW-FIX-SIGNAL.json\nhook: SessionStart\nhook: SessionStart Completed\nhook: UserPromptSubmit\nhook: UserPromptSubmit Completed\ncodex\nI’m running the exact command now.\nhook: PreToolUse\nhook: PreToolUse Completed\nexec\n/bin/zsh -lc \"sleep 14; printf '%s\\\\n' '{\\\"role\\\":\\\"self-review\\\",\\\"status\\\":\\\"c\nomplete\\\",\\\"outcome\\\":\\\"success\\\",\\\"disposition\\\":\\\"fixed\\\",\\\"timestamp\\\":\\\"2026\n-08-07T01:53:35.000Z\\\"}' > task/SELF-REVIEW-FIX-SIGNAL.json\" in /private/var/fol\nders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-turn-lease-HmH5px\n succeeded in 14111ms:\nhook: PostToolUse\nhook: PostToolUse Completed\ncodex\n\nhook: Stop\nhook: Stop Completed",
   "pass": true,
   "error": null
 }
