@@ -169,8 +169,8 @@ export function pairingExchange(
       : runtime.writer.provisionPairedServicePrincipal(
           record.authority.displayName,
           record.authority.roles,
-        record.profileName,
-      );
+          record.profileName,
+        );
   pairings.delete(code);
   return {
     profile: {

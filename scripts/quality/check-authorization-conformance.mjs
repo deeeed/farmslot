@@ -428,7 +428,13 @@ function dispatchQueueReachabilityProblems(targetMethods, program, checker) {
   if (!callback) {
     return ['dispatch queue fire callback could not be resolved from initDispatchQueue'];
   }
-  const analysis = analyzeFunctionReachability(callback, new Map(), program, checker, targetMethods);
+  const analysis = analyzeFunctionReachability(
+    callback,
+    new Map(),
+    program,
+    checker,
+    targetMethods,
+  );
   return [...analysis.reachableMethods].map(
     (method) => `allowlisted method ${method} is reachable from the dispatch queue fire path`,
   );
