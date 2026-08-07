@@ -24,9 +24,11 @@ copilot/notified-decisions.json
 .farm-status.json
 .monitor_state.json
 .dispatch-queue.json
+/.dispatch-queue.json.provenance-v1
 .farm-cache/
 .roadmap/
 .backlog.json
+/.backlog.json.provenance-v1
 .backlog/
 .work-graphs/
 
