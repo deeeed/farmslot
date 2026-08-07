@@ -1,14 +1,10 @@
-import {
-  type Frame,
-  Methods,
-  type PairingExchangeResult,
-  type RequestFrame,
-  type ResponseFrame,
-} from '@farmslot/protocol';
+import type { PairingExchangeResult } from '@farmslot/protocol';
 
-import { pairingWebSocketConnectionError } from './gateway-pairing-errors';
-import { profileFromPairingExchange } from './gateway-pairing-normalization';
-import { sortPairingExchangeUrls } from './gateway-pairing-urls';
+import {
+  exchangeGatewayPairingQr,
+  type GatewayPairingQrPayload,
+  type GatewayPairingQrProfile,
+} from './gateway-pairing-exchange';
 import { inferGatewayProfileKindFromUrl } from './gateway-profile-kind';
 import {
   type GatewayProfile,
@@ -16,19 +12,8 @@ import {
   profileSecretStorageKey,
 } from './gateway-profiles';
 
-export interface GatewayPairingQrPayload {
-  type: 'farmslot.gateway-pairing.v1';
-  profiles: GatewayPairingQrProfile[];
-}
-
-export interface GatewayPairingQrProfile {
-  url: string;
-  code: string;
-  profileName?: string;
-  expiresAt?: string;
-}
-
-const PAIRING_TIMEOUT_MS = 15_000;
+export { exchangeGatewayPairingQr };
+export type { GatewayPairingQrPayload, GatewayPairingQrProfile };
 
 export function parseGatewayPairingQr(data: string): GatewayPairingQrPayload {
   let parsed: unknown;
@@ -62,24 +47,6 @@ export function parseGatewayPairingQr(data: string): GatewayPairingQrPayload {
     type: 'farmslot.gateway-pairing.v1',
     profiles,
   };
-}
-
-export async function exchangeGatewayPairingQr(
-  payload: GatewayPairingQrPayload,
-): Promise<PairingExchangeResult['profile'][]> {
-  const exchangeUrls = sortPairingExchangeUrls(
-    uniqueUrls(payload.profiles.map((profile) => profile.url)),
-  );
-  const results = await Promise.all(
-    payload.profiles.map(async (profile) => {
-      const result = await sendUnauthenticatedPairingExchangeWithFallback(
-        exchangeUrls,
-        profile.code,
-      );
-      return profileFromPairingExchange(profile, result);
-    }),
-  );
-  return results;
 }
 
 export function profileFromPairingResult(
@@ -129,93 +96,4 @@ function slugForProfileId(value: string): string {
     .replaceAll(/[^a-z0-9]+/g, '-')
     .replaceAll(/^-|-$/g, '');
   return slug || 'gateway';
-}
-
-async function sendUnauthenticatedPairingExchangeWithFallback(
-  urls: string[],
-  code: string,
-): Promise<PairingExchangeResult> {
-  let lastError: Error | null = null;
-  for (const url of urls) {
-    try {
-      return await sendUnauthenticatedPairingExchange(url, code);
-    } catch (error) {
-      lastError = error as Error;
-    }
-  }
-  throw lastError ?? new Error('Pairing exchange failed');
-}
-
-function uniqueUrls(urls: string[]): string[] {
-  return [...new Set(urls)];
-}
-
-function sendUnauthenticatedPairingExchange(
-  url: string,
-  code: string,
-): Promise<PairingExchangeResult> {
-  return new Promise<PairingExchangeResult>((resolve, reject) => {
-    const ws = new WebSocket(url);
-    const requestId = 'pairing-exchange';
-    let settled = false;
-    const timer = setTimeout(() => {
-      settleWithError(new Error('Pairing exchange timed out'));
-    }, PAIRING_TIMEOUT_MS);
-
-    const settleWithResult = (result: PairingExchangeResult) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      ws.close();
-      resolve(result);
-    };
-
-    const settleWithError = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      ws.close();
-      reject(error);
-    };
-
-    ws.onopen = () => {
-      const frame: RequestFrame = {
-        type: 'req',
-        id: requestId,
-        method: Methods.PAIRING_EXCHANGE,
-        params: { code },
-      };
-      ws.send(JSON.stringify(frame));
-    };
-
-    ws.onerror = () => {
-      settleWithError(pairingWebSocketConnectionError(url));
-    };
-
-    ws.onclose = () => {
-      if (!settled) {
-        settleWithError(new Error('Pairing WebSocket closed before exchange completed'));
-      }
-    };
-
-    ws.onmessage = (event: MessageEvent) => {
-      let frame: Frame;
-      try {
-        frame = JSON.parse(event.data as string);
-      } catch (error) {
-        settleWithError(
-          new Error(`Gateway returned malformed pairing response: ${(error as Error).message}`),
-        );
-        return;
-      }
-
-      if (frame.type !== 'res' || frame.id !== requestId) return;
-      const response = frame as ResponseFrame;
-      if (!response.ok) {
-        settleWithError(new Error(response.error?.message ?? 'Pairing exchange failed'));
-        return;
-      }
-      settleWithResult(response.payload as PairingExchangeResult);
-    };
-  });
 }

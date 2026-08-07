@@ -11,11 +11,17 @@ export function resolveGatewayCredential(
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): GatewayCredential | null {
+  const fileEnvironments = findGatewayEnvFiles(env, cwd).map(readEnvFile);
+  for (const fileEnv of fileEnvironments) {
+    const nodeToken = nonEmpty(fileEnv.FARMSLOT_NODE_TOKEN);
+    if (nodeToken) return { token: nodeToken };
+  }
+
   const envCredential = credentialFromEnv(env);
   if (envCredential) return envCredential;
 
-  for (const envFile of findGatewayEnvFiles(env, cwd)) {
-    const credential = credentialFromEnv(readEnvFile(envFile));
+  for (const fileEnv of fileEnvironments) {
+    const credential = credentialFromEnv(fileEnv);
     if (credential) return credential;
   }
   return null;

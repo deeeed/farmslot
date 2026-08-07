@@ -17,3 +17,20 @@ test('gateway credential is re-read from the node env file on every reconnect lo
   writeFileSync(path, 'FARMSLOT_NODE_TOKEN=second\n');
   assert.deepEqual(resolveGatewayCredential({}, nested), { token: 'second' });
 });
+
+test('rewritten node env credential outranks stale inherited launch credentials', () => {
+  const root = mkdtempSync(join(tmpdir(), 'farmslot-node-credential-stale-env-'));
+  const nested = join(root, 'services', 'node');
+  mkdirSync(nested, { recursive: true });
+  const path = join(root, '.env.local-auth');
+  const launchedEnv = {
+    FARMSLOT_NODE_TOKEN: 'stale-node-token',
+    FARMSLOT_GATEWAY_TOKEN: 'stale-gateway-token',
+  };
+
+  writeFileSync(path, 'FARMSLOT_NODE_TOKEN=first-file-token\n');
+  assert.deepEqual(resolveGatewayCredential(launchedEnv, nested), { token: 'first-file-token' });
+
+  writeFileSync(path, 'FARMSLOT_NODE_TOKEN=rotated-file-token\n');
+  assert.deepEqual(resolveGatewayCredential(launchedEnv, nested), { token: 'rotated-file-token' });
+});

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
-- feat(auth): re-resolve the gateway credential on every reconnect so activation and node credential rotation take effect without restarting the node.
+- feat(auth): re-resolve the gateway credential on every reconnect and prefer the freshly written `.env.local-auth` node token over stale inherited launch credentials, so activation and node credential rotation take effect without restarting the node.
 - feat(fs): report `mtimeMs` from `fs.stat` so the gateway can bound its stale-attachment sweep on remote slots.
 - fix(resources): replace each slot's complete resource-watch set on refresh, including empty sets, so removed device and process watches cannot keep publishing stale status.
 - perf(exec): resolve the exported operator login environment once and reuse it in no-rc command shells, preventing frequent resource health probes from repeatedly sourcing expensive startup files; restart the node after changing shell-managed environment or toolchains.

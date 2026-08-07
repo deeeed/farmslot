@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- fix(pairing): exchange a multi-address QR once so every imported profile shares one revocable device credential.
 - chore(deps): upgrade Companion to Expo SDK 57 / React Native 0.86 (expo@57.0.10, aligned expo-\* modules via `expo install --fix`).
 - chore: store-screenshot demo PR data carries the new `skipped` CI check-summary count (protocol `PRStatus.checkSummary` gained the field).
 - Route production Android submit to Play internal testing until the first production store release exists.
