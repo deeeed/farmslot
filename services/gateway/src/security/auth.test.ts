@@ -128,6 +128,48 @@ const queryTokenAuthorized = authorizeHttpRequest({
 });
 assert.equal(queryTokenAuthorized, true);
 
+const operator = cookieRuntime.writer.createPrincipal(
+  { type: 'person', displayName: 'http-operator' },
+  [{ role: 'operator', scope: { kind: 'global' } }],
+);
+const operatorIssue = cookieRuntime.writer.issueCredential(operator.id, 'http-operator');
+const operatorResponse = createFakeResponse();
+assert.equal(
+  authorizeHttpRequest({
+    runtime: cookieRuntime,
+    req: createFakeRequest({
+      cookie: `farmslot_gateway_credential=${operatorIssue.secret}`,
+      remoteAddress: '127.0.0.1',
+    }),
+    res: operatorResponse,
+  }),
+  false,
+);
+assert.equal(operatorResponse.statusCode, 403);
+
+const resolverFailureResponse = createFakeResponse();
+const resolveSessionPrincipal = cookieRuntime.resolver.resolveSessionPrincipal;
+cookieRuntime.resolver.resolveSessionPrincipal = () => {
+  throw new Error('credential store reload failed');
+};
+try {
+  assert.throws(
+    () =>
+      authorizeHttpRequest({
+        runtime: cookieRuntime,
+        req: createFakeRequest({
+          cookie: 'farmslot_gateway_credential=cookie-token',
+          remoteAddress: '127.0.0.1',
+        }),
+        res: resolverFailureResponse,
+      }),
+    /credential store reload failed/u,
+  );
+} finally {
+  cookieRuntime.resolver.resolveSessionPrincipal = resolveSessionPrincipal;
+}
+assert.equal(resolverFailureResponse.statusCode, undefined);
+
 const missingCookieResponse = createFakeResponse();
 const missingCookieAuthorized = authorizeHttpRequest({
   runtime: cookieRuntime,

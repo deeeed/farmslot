@@ -313,7 +313,8 @@ export function authorizeHttpRequest(params: {
       });
       return true;
     } catch (error) {
-      const denial = error as GatewayMethodError;
+      if (!(error instanceof GatewayMethodError)) throw error;
+      const denial = error;
       params.res.writeHead(403, { 'Content-Type': 'application/json' });
       params.res.end(
         JSON.stringify({
