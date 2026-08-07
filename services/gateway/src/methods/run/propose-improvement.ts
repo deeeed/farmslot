@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import {
   Events,
+  type ImprovementDiffPayload,
   type Run,
   type RunProposeImprovementParams,
   type RunProposeImprovementResult,
@@ -9,7 +10,7 @@ import {
 
 import { getFamilyRuns } from '../../family-observability/context.js';
 import { readCommentsTriageSummary } from '../../run-completion/orchestrator.js';
-import { getAllRuns, getRun } from '../../runs/store.js';
+import { getAllRuns, getRun, updateRun } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
@@ -99,6 +100,75 @@ async function composeFamilyLearnings(run: Run): Promise<string> {
     );
   }
   return sections.join('\n\n');
+}
+
+// Bounds crash-loop retries: an `analyzing` placeholder is re-run at most once
+// by startup recovery (initial attempt + one resume) before terminalizing.
+const MAX_ANALYSIS_ATTEMPTS = 2;
+
+/**
+ * Startup recovery for improvement analyses interrupted by a gateway restart.
+ * The persisted `analyzing` placeholder decision IS the durable job state: its
+ * run id + decision id are enough to re-run the analysis in place. Attempt
+ * bumps are persisted BEFORE the re-run so a crash loop cannot retry forever;
+ * placeholders at the cap terminalize as `error` instead.
+ *
+ * Ledger mutations (attempt bump / tombstone) happen synchronously so callers
+ * can sequence them before the first decision broadcast; the LLM re-runs
+ * themselves are fire-and-forget like every other analysis kickoff.
+ */
+export async function resumeInterruptedImprovementAnalyses(): Promise<void> {
+  const engine = await import('../../intelligence/improvement-engine.js');
+  let resumed = 0;
+  let terminalized = 0;
+  for (const run of getAllRuns()) {
+    for (const decision of run.decisions ?? []) {
+      if (decision.type !== 'improvement') continue;
+      const payload = decision.payload as ImprovementDiffPayload | undefined;
+      if (payload?.analysisStatus !== 'analyzing') continue;
+
+      const attempts = payload.analysisAttempts ?? 1;
+      if (attempts >= MAX_ANALYSIS_ATTEMPTS) {
+        engine.markImprovementTerminal(
+          run.id,
+          decision.id,
+          'error',
+          'Gateway restarted before analysis finished and the retry limit was reached. Re-trigger from the family page if you want to retry.',
+        );
+        terminalized += 1;
+        continue;
+      }
+
+      payload.analysisAttempts = attempts + 1;
+      payload.analysisStartedAt = new Date().toISOString();
+      updateRun(run.id, { decisions: run.decisions });
+      resumed += 1;
+
+      const analyzer = improvementAnalyzer ?? engine.analyzeAndPropose;
+      void (async () => {
+        const content = await composeFamilyLearnings(run);
+        if (!content.trim()) {
+          engine.markImprovementTerminal(
+            run.id,
+            decision.id,
+            'no-content',
+            'No learnings.md content was found for this run or its family root, so the improvement engine has nothing to analyze.',
+          );
+          return;
+        }
+        await analyzer(run.id, content, decision.id);
+      })().catch((err) => {
+        // Terminalize instead of leaving the card `analyzing` forever — the
+        // resume path has no request context to surface the failure through.
+        engine.markImprovementTerminal(run.id, decision.id, 'error', (err as Error).message);
+      });
+    }
+  }
+  if (resumed > 0 || terminalized > 0) {
+    console.log(
+      `[improvement] startup resume: ${resumed} analysis re-run(s) kicked, ${terminalized} at retry cap terminalized`,
+    );
+  }
 }
 
 export async function triggerImprovementAnalysis(runId: string, run: Run): Promise<void> {
