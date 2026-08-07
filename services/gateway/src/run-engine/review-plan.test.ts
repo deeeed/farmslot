@@ -275,7 +275,7 @@ test('resolveHumanGateReviewExecutionPlan preserves a default same-runner reques
       pendingPlan: [],
       decisions,
     }),
-    [{ order: 1, runner: 'same', validationDepth: 'full-live' }],
+    [{ order: 1, runner: 'same', validationDepth: 'static-code' }],
   );
 });
 

@@ -94,6 +94,7 @@ import {
   captureStateSlices,
   restoreStateSlices,
   updateBacklogItems,
+  updateDecisions,
   updateFleet,
   updatePRs,
   updateQueueItems,
@@ -1936,7 +1937,6 @@ All checks passed.`;
 
   private renderRunDetail() {
     const runs = [...mockPipelineRuns(), ...mockRuns()];
-    this._updateMockRuns(runs);
     const run = runs.find((r) => r.id === 'pipe-mid-monitor') ?? runs[0];
     const packetPath = 'artifacts/interactive/dev-run-detail.packet.json';
     const bodyPath = 'artifacts/interactive/dev-run-detail.md';
@@ -1962,6 +1962,66 @@ All checks passed.`;
     };
     const runWithPacket: Run = {
       ...run,
+      flowType: 'review-pr',
+      status: 'blocked',
+      ticketOrPr: 'deeeed/farmslot#500',
+      decisions: [
+        ...(run.decisions ?? []).map((decision) => ({
+          ...decision,
+          resolvedAt: decision.resolvedAt ?? '2026-08-06T23:59:00.000Z',
+          resolvedAction: decision.resolvedAction ?? decision.actions[0]?.id ?? 'resolved',
+        })),
+        {
+          id: 'dev-repeat-review-context',
+          type: 'engine_review_continuation',
+          title: 'deeeed/farmslot#500 — review continuation',
+          description: 'A prior terminal review exists. Choose how to continue.',
+          createdAt: '2026-08-07T00:00:00.000Z',
+          actions: [
+            {
+              id: 'reuse-incremental-static',
+              label: 'Continue — incremental static',
+              style: 'primary',
+            },
+            {
+              id: 'reuse-full-static',
+              label: 'Load context — full static',
+              style: 'secondary',
+            },
+            {
+              id: 'fresh-full-static',
+              label: 'Fresh context — full static',
+              style: 'secondary',
+            },
+          ],
+          payload: {
+            kind: 'review_continuation',
+            recommendedActionId: 'reuse-incremental-static',
+            fullLiveAvailable: false,
+            prior: {
+              version: 1,
+              chainId: 'prior-review-run',
+              generation: 2,
+              contextMode: 'reuse',
+              priorRunId: 'prior-review-run',
+              priorFamilyId: 'prior-review-family',
+              repository: 'deeeed/farmslot',
+              prNumber: 500,
+              priorReviewedHeadSha: 'aaaaaaaaaaaaaaaa',
+              currentHeadSha: 'bbbbbbbbbbbbbbbb',
+              verdict: 'request changes',
+              unresolvedFindings: [
+                { file: 'services/gateway/src/index.ts', line: 42, description: 'Recheck this.' },
+              ],
+              artifactRefs: [{ path: 'artifacts/review.md', purpose: 'review' }],
+              farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe proof' }],
+              reviewScope: 'incremental',
+              validationDepth: 'static-code',
+              sessionPolicy: 'warm-per-reviewer',
+            },
+          },
+        },
+      ],
       steps: [
         ...(run.steps ?? []),
         {
@@ -1980,6 +2040,28 @@ All checks passed.`;
         },
       ],
     };
+    this._updateMockRuns(
+      runs.map((candidate) => (candidate.id === run.id ? runWithPacket : candidate)),
+    );
+    const continuationDecision = runWithPacket.decisions.at(-1)!;
+    updateDecisions([
+      {
+        id: continuationDecision.id,
+        type: continuationDecision.type,
+        slotId: runWithPacket.slotId,
+        title: continuationDecision.title,
+        description: continuationDecision.description,
+        context: {
+          runId: runWithPacket.id,
+          project: runWithPacket.project,
+          flowType: runWithPacket.flowType,
+          ticketOrPr: runWithPacket.ticketOrPr,
+        },
+        actions: continuationDecision.actions,
+        createdAt: continuationDecision.createdAt,
+        payload: continuationDecision.payload,
+      },
+    ]);
     const artifactTextLoader = async (path: string): Promise<string> => {
       if (path === packetPath) return JSON.stringify(packet);
       if (path === bodyPath) {
@@ -1993,7 +2075,7 @@ All checks passed.`;
       throw new Error(`Missing mock artifact: ${path}`);
     };
     return html`
-      <p class="section-label">Run detail (local-first publish gate cockpit)</p>
+      <p class="section-label">Run detail (repeat-review continuation + operator packet)</p>
       <div
         style="height: calc(100vh - 200px); border: 1px solid ${colors.bgCard}; border-radius: 8px; overflow: hidden"
       >

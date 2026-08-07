@@ -16,6 +16,8 @@ import {
   DEFAULT_DEV_INTERACTIVE_PROFILE,
   FLOW_STEPS,
   type FlowType,
+  isReviewScope,
+  isReviewValidationDepth,
   isTerminalRunStatus,
   isValidDomainName,
   normalizeCiActionId,
@@ -549,6 +551,15 @@ export function createRun(
     );
   }
   const now = new Date().toISOString();
+  if (params.reviewScope !== undefined && !isReviewScope(params.reviewScope)) {
+    throw new Error(`Invalid reviewScope: ${String(params.reviewScope)}`);
+  }
+  if (
+    params.reviewValidationDepth !== undefined &&
+    !isReviewValidationDepth(params.reviewValidationDepth)
+  ) {
+    throw new Error(`Invalid reviewValidationDepth: ${String(params.reviewValidationDepth)}`);
+  }
   const id = randomUUID();
   const familyId = params.familyId ?? id;
   const { lane, variant } = normalizeRunClassification(params);
@@ -675,6 +686,9 @@ export function createRun(
       runnerSessionPath: null,
     },
     reviewTier: params.reviewTier,
+    reviewScope: params.flowType === 'review-pr' ? (params.reviewScope ?? 'full') : undefined,
+    reviewValidationDepth:
+      params.flowType === 'review-pr' ? (params.reviewValidationDepth ?? 'static-code') : undefined,
     safetyTier: resolvedTier,
     engineState,
     ticketData: params.ticketData,

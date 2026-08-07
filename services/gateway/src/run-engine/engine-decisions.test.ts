@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { ReadyGatePayload, ReviewGatePayload, Run, RunDecision } from '@farmslot/protocol';
 
 import {
   autoResolveEngineDecision,
   buildCollisionSuccessorParams,
+  buildRepeatReviewContext,
   collisionAutoResolveAction,
   collisionDecisionActions,
+  findLatestPriorReviewRun,
+  repeatReviewDecisionActions,
 } from './engine-decisions.js';
 
 function makeRun(overrides: Partial<Run> = {}): Run {
@@ -43,7 +46,55 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     },
     createdAt: overrides.createdAt ?? '2026-05-04T10:00:00.000Z',
     updatedAt: overrides.updatedAt ?? '2026-05-04T10:00:00.000Z',
+    completedAt: overrides.completedAt,
   } as Run;
+}
+
+function reviewDecision(overrides: Partial<ReviewGatePayload> = {}): RunDecision {
+  return {
+    id: 'review-gate',
+    type: 'engine_review_posting',
+    title: 'review',
+    description: '',
+    actions: [],
+    createdAt: '2026-08-06T10:00:00.000Z',
+    payload: {
+      kind: 'review',
+      prNumber: 42,
+      repo: 'Owner/Repo',
+      recommendation: 'request changes',
+      reviewMd: 'review.md',
+      lineComments: [{ path: 'src/a.ts', line: 7, body: 'Fix this.', severity: 'blocking' }],
+      reviewSnapshot: {
+        source: 'github-pr',
+        capturedAt: '2026-08-06T09:59:00.000Z',
+        headSha: 'aaaaaaaaaaaaaaaa',
+      },
+      artifactManifest: [{ path: 'artifacts/review.md', purpose: 'review' }],
+      ...overrides,
+    },
+  };
+}
+
+function readyDecision(): RunDecision {
+  const payload: ReadyGatePayload = {
+    kind: 'ready',
+    prNumber: 41,
+    repo: 'Owner/Repo',
+    diffStat: { files: 1, additions: 2, deletions: 0 },
+    workerReport: 'done',
+    branch: 'feature',
+    artifactManifest: [{ path: 'artifacts/recipe.json', purpose: 'recipe proof' }],
+  };
+  return {
+    id: 'ready-gate',
+    type: 'engine_human_gate',
+    title: 'ready',
+    description: '',
+    actions: [],
+    createdAt: '2026-08-06T08:00:00.000Z',
+    payload,
+  };
 }
 
 test('collision successor retains backlog and work-graph ownership', () => {
@@ -62,6 +113,138 @@ test('collision successor retains backlog and work-graph ownership', () => {
   assert.equal(params.workGraphId, 'graph-1');
   assert.equal(params.workNodeId, 'node-1');
   assert.deepEqual(params.allowedSlots, ['slot-1']);
+});
+
+test('findLatestPriorReviewRun matches canonical PR identity and completion order', () => {
+  const current = makeRun({
+    id: 'current',
+    project: 'farm-a',
+    flowType: 'review-pr',
+    ticketOrPr: 'Owner/Repo#42',
+  });
+  const older = makeRun({
+    id: 'older',
+    project: 'farm-a',
+    flowType: 'review-pr',
+    ticketOrPr: 'owner/repo#42',
+    status: 'done',
+    completedAt: '2026-08-06T10:00:00.000Z',
+  });
+  const latest = makeRun({
+    id: 'latest',
+    project: 'farm-a',
+    flowType: 'review-pr',
+    ticketOrPr: 'OWNER/REPO#42',
+    status: 'done',
+    completedAt: '2026-08-06T11:00:00.000Z',
+  });
+  const wrongProject = makeRun({
+    id: 'wrong-project',
+    project: 'farm-b',
+    flowType: 'review-pr',
+    ticketOrPr: 'owner/repo#42',
+    status: 'done',
+    completedAt: '2026-08-06T12:00:00.000Z',
+  });
+  const newerWithoutVerdict = makeRun({
+    id: 'newer-without-verdict',
+    project: 'farm-a',
+    flowType: 'review-pr',
+    ticketOrPr: 'owner/repo#42',
+    status: 'done',
+    completedAt: '2026-08-06T13:00:00.000Z',
+  });
+  older.decisions = [reviewDecision()];
+  latest.decisions = [reviewDecision()];
+  wrongProject.decisions = [reviewDecision()];
+
+  assert.equal(
+    findLatestPriorReviewRun(current, [older, wrongProject, latest, newerWithoutVerdict])?.id,
+    'latest',
+  );
+});
+
+test('buildRepeatReviewContext freezes prior findings, review range, and Farmslot evidence', () => {
+  const prior = makeRun({
+    id: 'prior-review',
+    familyId: 'family-1',
+    project: 'farm-a',
+    flowType: 'review-pr',
+    ticketOrPr: 'owner/repo#42',
+    status: 'done',
+    decisions: [reviewDecision()],
+  });
+  const origin = makeRun({
+    id: 'origin-run',
+    familyId: 'family-1',
+    project: 'farm-a',
+    flowType: 'fix-bug',
+    decisions: [readyDecision()],
+  });
+
+  const context = buildRepeatReviewContext(
+    makeRun({
+      id: 'current',
+      project: 'farm-a',
+      flowType: 'review-pr',
+      ticketOrPr: 'owner/repo#42',
+    }),
+    prior,
+    {
+      project: 'farm-a',
+      repository: 'owner/repo',
+      prNumber: 42,
+      headSha: 'bbbbbbbbbbbbbbbb',
+      baseRef: 'main',
+    },
+    [prior, origin],
+  );
+
+  assert.equal(context.reviewScope, 'incremental');
+  assert.equal(context.validationDepth, 'static-code');
+  assert.equal(context.priorReviewedHeadSha, 'aaaaaaaaaaaaaaaa');
+  assert.equal(context.currentHeadSha, 'bbbbbbbbbbbbbbbb');
+  assert.deepEqual(context.unresolvedFindings, [
+    { file: 'src/a.ts', line: 7, description: 'Fix this.' },
+  ]);
+  assert.equal(context.originatingRunId, 'origin-run');
+  assert.deepEqual(context.farmslotEvidenceRefs, [
+    { path: 'artifacts/recipe.json', purpose: 'recipe proof' },
+  ]);
+  assert.equal(repeatReviewDecisionActions(context)[0]?.id, 'reuse-incremental-static');
+  assert.equal(
+    repeatReviewDecisionActions(context).some((action) => action.id === 'fresh-full-live'),
+    false,
+  );
+});
+
+test('missing prior reviewed head disables only incremental continuation', () => {
+  const prior = makeRun({
+    id: 'prior-review',
+    project: 'farm-a',
+    flowType: 'review-pr',
+    ticketOrPr: 'owner/repo#42',
+    status: 'done',
+    decisions: [reviewDecision({ reviewSnapshot: undefined })],
+  });
+  const context = buildRepeatReviewContext(
+    makeRun({ project: 'farm-a', flowType: 'review-pr', ticketOrPr: 'owner/repo#42' }),
+    prior,
+    {
+      project: 'farm-a',
+      repository: 'owner/repo',
+      prNumber: 42,
+      headSha: 'bbbbbbbbbbbbbbbb',
+    },
+    [prior],
+  );
+
+  assert.equal(context.reviewScope, 'full');
+  assert.match(context.incrementalUnavailableReason ?? '', /head SHA/);
+  assert.deepEqual(
+    repeatReviewDecisionActions(context).map((action) => action.id),
+    ['reuse-full-static', 'fresh-full-static', 'fresh-full-live'],
+  );
 });
 
 test('collisionAutoResolveAction auto-resolves comparison skipPrepare retries', () => {

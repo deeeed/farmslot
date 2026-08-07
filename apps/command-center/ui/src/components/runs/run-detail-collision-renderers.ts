@@ -3,7 +3,12 @@ import { html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { marked } from 'marked';
 
-import type { CollisionPayload, Run, RunDecision } from '@farmslot/protocol';
+import type {
+  CollisionPayload,
+  ReviewContinuationPayload,
+  Run,
+  RunDecision,
+} from '@farmslot/protocol';
 
 import './run-pipeline-mini.js';
 
@@ -218,6 +223,46 @@ export function renderCollisionPriorRuns(decision: RunDecision, runs: readonly R
               (pruned or out of window)
             </div>
           `
+        : nothing}
+    </div>
+  `;
+}
+
+export function reviewContinuationSummary(payload: ReviewContinuationPayload): string[] {
+  const prior = payload.prior;
+  return [
+    `Generation ${prior.generation} · prior run ${prior.priorRunId.slice(0, 8)}`,
+    `Reviewed head ${prior.priorReviewedHeadSha?.slice(0, 12) ?? 'unavailable'} → current ${prior.currentHeadSha.slice(0, 12)}`,
+    `Prior verdict: ${prior.verdict} · ${prior.unresolvedFindings.length} unresolved`,
+    prior.farmslotEvidenceRefs.length > 0
+      ? `${prior.farmslotEvidenceRefs.length} frozen Farmslot evidence reference${prior.farmslotEvidenceRefs.length === 1 ? '' : 's'}`
+      : 'External PR: no frozen Farmslot evidence linked',
+  ];
+}
+
+export function renderReviewContinuation(decision: RunDecision) {
+  const payload = decision.payload as ReviewContinuationPayload | undefined;
+  if (!payload || payload.kind !== 'review_continuation') return nothing;
+  return html`
+    <div class="cpr-wrap">
+      <div class="cpr-label">
+        Recommended: <strong>${payload.recommendedActionId.replace(/-/g, ' ')}</strong>
+      </div>
+      ${reviewContinuationSummary(payload).map(
+        (line) => html`<div class="cdesc-line">${line}</div>`,
+      )}
+      ${payload.prior.incrementalUnavailableReason
+        ? html`<div class="cdesc-line" style="color:${colors.statusWarn}">
+            ${payload.prior.incrementalUnavailableReason}
+          </div>`
+        : nothing}
+      ${payload.prior.artifactRefs.length > 0
+        ? html`<div class="cdesc-line">
+            Prior artifacts:
+            ${payload.prior.artifactRefs.map(
+              (artifact) => html`<code title=${artifact.purpose}>${artifact.path}</code>`,
+            )}
+          </div>`
         : nothing}
     </div>
   `;

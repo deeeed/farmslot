@@ -3,6 +3,7 @@ import type {
   FlowType,
   ReviewDepthPolicy,
   ReviewLoopRequest,
+  ReviewValidationDepth,
   RunCreateResult,
   TaskTemplateSelection,
 } from '@farmslot/protocol';
@@ -38,6 +39,7 @@ export interface DispatchPayloadDraftInput {
   mode: 'interactive' | 'autonomous';
   devInteractiveProfile: DevInteractiveProfile;
   reviewTier: '' | 'light' | 'standard' | 'full';
+  reviewValidationDepth: ReviewValidationDepth;
   reviewDepth?: ReviewDepthPolicy;
   pendingReviewPlan?: ReviewLoopRequest[];
   comparison: Partial<ComparisonRunParams>;
@@ -74,6 +76,8 @@ export function buildDispatchWizardPayloadDraft(
     mode: input.mode,
     devInteractiveProfile: input.devInteractiveProfile,
     reviewTier: input.reviewTier || undefined,
+    reviewScope: input.flowType === 'review-pr' ? 'full' : undefined,
+    reviewValidationDepth: input.flowType === 'review-pr' ? input.reviewValidationDepth : undefined,
     reviewDepth: input.reviewDepth,
     pendingReviewPlan: input.pendingReviewPlan,
     comparison: input.comparison,

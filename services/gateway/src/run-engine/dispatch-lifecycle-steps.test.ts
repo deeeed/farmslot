@@ -2,9 +2,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  prepareSkipReason,
   safeRecipeToolingProvenance,
   safeReferenceRepoProvenance,
 } from './dispatch-lifecycle-steps.js';
+
+test('static PR review skips prepare while explicit full-live review does not', () => {
+  assert.equal(
+    prepareSkipReason({ flowType: 'review-pr', reviewValidationDepth: 'static-code' }, false),
+    'static-review',
+  );
+  assert.equal(
+    prepareSkipReason({ flowType: 'review-pr', reviewValidationDepth: undefined }, false),
+    'static-review',
+  );
+  assert.equal(
+    prepareSkipReason({ flowType: 'review-pr', reviewValidationDepth: 'full-live' }, false),
+    null,
+  );
+});
 
 test('safeRecipeToolingProvenance keeps the version contract without arbitrary doctor data', () => {
   assert.deepEqual(

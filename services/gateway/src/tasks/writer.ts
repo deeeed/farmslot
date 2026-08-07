@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -13,6 +13,7 @@ import {
   type FlowType,
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
+  type RepeatReviewContext,
   type Run,
   type TaskSchema,
   type TaskSchemaPhase,
@@ -66,6 +67,138 @@ const localHostname = os.hostname().replace(/\.local$/, '');
 export { FLOW_TO_TEMPLATE } from './worker-template-options.js';
 
 export const TEMPLATE_PROVENANCE_INPUT = 'inputs/template-provenance.json';
+export const PREVIOUS_REVIEW_JSON_INPUT = 'inputs/previous-review.json';
+export const PREVIOUS_REVIEW_MD_INPUT = 'inputs/previous-review.md';
+export const STATIC_REVIEW_INSTRUCTIONS_DIR = 'inputs/review-instructions';
+
+function previousReviewMarkdown(context: RepeatReviewContext): string {
+  const findings = context.unresolvedFindings.length
+    ? context.unresolvedFindings
+        .map(
+          (finding) =>
+            `- ${finding.file}${finding.line ? `:${finding.line}` : ''} — ${finding.description}`,
+        )
+        .join('\n')
+    : '- None recorded.';
+  const artifacts = context.artifactRefs.length
+    ? context.artifactRefs
+        .map((artifact) => `- \`${artifact.path}\` — ${artifact.purpose}`)
+        .join('\n')
+    : '- None inherited.';
+  const evidence = context.farmslotEvidenceRefs.length
+    ? context.farmslotEvidenceRefs
+        .map((artifact) => `- \`${artifact.path}\` — ${artifact.purpose}`)
+        .join('\n')
+    : '- No originating Farmslot evidence is linked.';
+  return `# Previous review context
+
+- Chain: \`${context.chainId}\`, generation ${context.generation}
+- Prior run: \`${context.priorRunId}\` (family \`${context.priorFamilyId}\`)
+- Pull request: \`${context.repository}#${context.prNumber}\`
+- Prior reviewed head: \`${context.priorReviewedHeadSha ?? 'unavailable'}\`
+- Current head: \`${context.currentHeadSha}\`
+- Prior verdict: ${context.verdict}
+- Context: ${context.contextMode}
+- Scope: ${context.reviewScope}
+- Validation depth: ${context.validationDepth}
+- Session policy: ${context.sessionPolicy}
+${context.incrementalUnavailableReason ? `- Incremental unavailable: ${context.incrementalUnavailableReason}\n` : ''}
+## Unresolved findings
+
+${findings}
+
+## Prior review artifacts
+
+${artifacts}
+
+## Originating Farmslot evidence
+
+${evidence}
+`;
+}
+
+export async function writePreviousReviewInputs(
+  taskAbsDir: string,
+  context: RepeatReviewContext | undefined,
+): Promise<string[]> {
+  if (!context || context.contextMode !== 'reuse') return [];
+  await writeFile(
+    path.join(taskAbsDir, PREVIOUS_REVIEW_JSON_INPUT),
+    `${JSON.stringify(context, null, 2)}\n`,
+    'utf-8',
+  );
+  await writeFile(
+    path.join(taskAbsDir, PREVIOUS_REVIEW_MD_INPUT),
+    previousReviewMarkdown(context),
+    'utf-8',
+  );
+  return [PREVIOUS_REVIEW_JSON_INPUT, PREVIOUS_REVIEW_MD_INPUT];
+}
+
+export async function writeStaticReviewInstructionInputs(
+  taskAbsDir: string,
+  projectVars: Awaited<ReturnType<typeof loadProjectVars>>,
+  run: Pick<Run, 'flowType' | 'reviewValidationDepth'>,
+): Promise<string[]> {
+  if (run.flowType !== 'review-pr' || run.reviewValidationDepth === 'full-live') return [];
+  const configured = projectVars.projectJson.static_review?.instruction_files ?? [];
+  const fixtureRoot = path.resolve(projectVars.projectFixturesDir);
+  const written: string[] = [];
+  for (const relativePath of configured) {
+    if (!relativePath.trim() || path.isAbsolute(relativePath)) {
+      throw new Error(`static_review.instruction_files must use non-empty relative paths`);
+    }
+    const sourcePath = path.resolve(fixtureRoot, relativePath);
+    if (sourcePath !== fixtureRoot && !sourcePath.startsWith(`${fixtureRoot}${path.sep}`)) {
+      throw new Error(`Static review instruction escapes project fixtures: ${relativePath}`);
+    }
+    const destination = path.join(STATIC_REVIEW_INSTRUCTIONS_DIR, relativePath);
+    const destinationPath = path.join(taskAbsDir, destination);
+    await mkdir(path.dirname(destinationPath), { recursive: true });
+    await writeFile(destinationPath, await readFile(sourcePath, 'utf-8'), 'utf-8');
+    written.push(destination);
+  }
+  return written;
+}
+
+function buildReviewExecutionContract(
+  run: Run,
+  previousReviewPaths: readonly string[],
+  instructionPaths: readonly string[],
+): string {
+  if (run.flowType !== 'review-pr') return '';
+  const scope = run.reviewScope ?? 'full';
+  const depth = run.reviewValidationDepth ?? 'static-code';
+  const range =
+    scope === 'incremental' && run.repeatReviewContext?.priorReviewedHeadSha
+      ? `${run.repeatReviewContext.priorReviewedHeadSha}..${run.repeatReviewContext.currentHeadSha}`
+      : `PR base..${run.repeatReviewContext?.currentHeadSha ?? 'frozen current head'}`;
+  const inherited = previousReviewPaths.length
+    ? `Read \`${PREVIOUS_REVIEW_MD_INPUT}\` and revalidate every unresolved finding. `
+    : '';
+  const instructions = instructionPaths.length
+    ? `Read the frozen project review guidance: ${instructionPaths.map((item) => `\`${item}\``).join(', ')}.`
+    : 'No additional project review guidance was configured.';
+  const session =
+    run.repeatReviewContext?.sessionPolicy === 'warm-per-reviewer'
+      ? 'The same-PR reviewer session may remain warm for incremental passes. Clear review-local reasoning before expanding to a full pass.'
+      : 'Start with fresh reviewer context.';
+  return `
+## Review execution contract
+
+- **Frozen scope:** \`${scope}\` over \`${range}\`.
+- **Validation depth:** \`${depth}\`.
+- ${inherited}Use the normal runner review capability against the frozen files under \`inputs/\`.
+- ${instructions}
+- Recheck prior findings and expand beyond the incremental range only when the delta invalidates an earlier assumption.
+- ${session}
+${
+  depth === 'static-code'
+    ? '- **Static review:** do not prepare or start the project, run CDP, execute recipes, capture screenshots, or perform runtime QA. Audit any linked frozen Farmslot evidence and report gaps without manufacturing replacement proof.'
+    : '- **Full-live escalation:** use the project validation workflow explicitly selected by the operator.'
+}
+`;
+}
 
 /** Error thrown when a task dir collision is detected */
 export class TaskCollisionError extends Error {
@@ -683,6 +816,12 @@ export async function writeTaskFile(
 
   emit('substep', { name: 'planning-context', detail: 'Resolving related planning context' });
   const planningContext = await resolveRunPlanningContext(run);
+  const previousReviewPaths = await writePreviousReviewInputs(taskAbsDir, run.repeatReviewContext);
+  const staticReviewInstructionPaths = await writeStaticReviewInstructionInputs(
+    taskAbsDir,
+    projectVars,
+    run,
+  );
 
   // Build branch name
   const branch =
@@ -984,7 +1123,7 @@ export async function writeTaskFile(
   // Related planning context is frozen into inputs/ before it is rendered, so the
   // independent-review brief can quote the same snapshot hash the worker saw.
   if (planningContext) await writePlanningContextInput(taskAbsDir, planningContext);
-  const withPlanningContext = `${withInteractivePrCompleteHandoff.trimEnd()}\n${buildPlanningContextSection(vars.TASK_DIR, planningContext)}\n`;
+  const withPlanningContext = `${withInteractivePrCompleteHandoff.trimEnd()}\n${buildPlanningContextSection(vars.TASK_DIR, planningContext)}\n${buildReviewExecutionContract(run, previousReviewPaths, staticReviewInstructionPaths)}\n`;
   const finalContent = applyArtifactOnlyTaskPolicy(withPlanningContext, run);
   if (shouldApplyArtifactOnlyTaskPolicy(run)) {
     assertArtifactOnlyTaskGuard(finalContent);

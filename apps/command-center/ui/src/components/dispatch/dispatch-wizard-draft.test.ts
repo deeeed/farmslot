@@ -63,7 +63,7 @@ test('publication review draft builds gate params for fix-bug and autonomous dev
       requireCrossRunner: true,
       requestedBy: 'dispatch',
     },
-    pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'full-live' }],
+    pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
   });
   assert.deepEqual(
     buildPublicationReviewGateParams('dev', 'claude', loops, runners, 'autonomous'),
@@ -74,7 +74,7 @@ test('publication review draft builds gate params for fix-bug and autonomous dev
         requireCrossRunner: true,
         requestedBy: 'dispatch',
       },
-      pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'full-live' }],
+      pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
     },
   );
 });

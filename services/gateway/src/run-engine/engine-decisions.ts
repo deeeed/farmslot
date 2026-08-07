@@ -5,6 +5,10 @@ import { randomUUID } from 'node:crypto';
 import {
   type DecisionAction,
   Events,
+  type EvidenceManifestEntry,
+  isTerminalRunStatus,
+  type RepeatReviewContext,
+  type ReviewGatePayload,
   type Run,
   type RunCreateParams,
   type RunDecision,
@@ -100,6 +104,267 @@ export function collisionDecisionActions(current: Pick<Run, 'lane'>): DecisionAc
       'Cancels the current dispatch without touching existing task dirs. Use when the collision was unexpected and you need to investigate the prior runs before re-dispatching.',
   });
   return actions;
+}
+
+interface CanonicalReviewIdentity {
+  project: string;
+  repository: string;
+  prNumber: number;
+}
+
+interface CurrentReviewSubject extends CanonicalReviewIdentity {
+  headSha: string;
+  baseRef?: string;
+}
+
+function canonicalReviewIdentity(
+  run: Pick<Run, 'project' | 'ticketOrPr' | 'flowType'>,
+): CanonicalReviewIdentity | null {
+  if (run.flowType !== 'review-pr') return null;
+  const match = run.ticketOrPr.trim().match(/^([^#]+)#(\d+)$/);
+  if (!match) return null;
+  return {
+    project: run.project,
+    repository: match[1].toLowerCase(),
+    prNumber: Number(match[2]),
+  };
+}
+
+function latestReviewGatePayload(run: Run): ReviewGatePayload | null {
+  const decision = [...run.decisions]
+    .reverse()
+    .find((candidate) => candidate.type === 'engine_review_posting');
+  const payload = decision?.payload;
+  return payload?.kind === 'review' ? payload : null;
+}
+
+function terminalReviewTimestamp(run: Run): string {
+  return run.completedAt ?? run.updatedAt ?? run.createdAt;
+}
+
+export function findLatestPriorReviewRun(
+  current: Pick<Run, 'id' | 'project' | 'ticketOrPr' | 'flowType'>,
+  allRuns: readonly Run[],
+): Run | null {
+  const identity = canonicalReviewIdentity(current);
+  if (!identity) return null;
+  return (
+    allRuns
+      .filter((candidate) => {
+        if (
+          candidate.id === current.id ||
+          !isTerminalRunStatus(candidate.status) ||
+          !latestReviewGatePayload(candidate)
+        )
+          return false;
+        const candidateIdentity = canonicalReviewIdentity(candidate);
+        return (
+          candidateIdentity?.project === identity.project &&
+          candidateIdentity.repository === identity.repository &&
+          candidateIdentity.prNumber === identity.prNumber
+        );
+      })
+      .sort((left, right) => {
+        const completionOrder = terminalReviewTimestamp(right).localeCompare(
+          terminalReviewTimestamp(left),
+        );
+        if (completionOrder !== 0) return completionOrder;
+        const creationOrder = right.createdAt.localeCompare(left.createdAt);
+        return creationOrder !== 0 ? creationOrder : right.id.localeCompare(left.id);
+      })[0] ?? null
+  );
+}
+
+function uniqueArtifactRefs(refs: readonly EvidenceManifestEntry[]): EvidenceManifestEntry[] {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    if (!ref.path || seen.has(ref.path)) return false;
+    seen.add(ref.path);
+    return true;
+  });
+}
+
+function farmslotOriginForReview(
+  prior: Run,
+  allRuns: readonly Run[],
+): { runId?: string; refs: EvidenceManifestEntry[] } {
+  const candidates = allRuns
+    .filter(
+      (candidate) =>
+        candidate.familyId === prior.familyId &&
+        candidate.flowType !== 'review-pr' &&
+        candidate.id !== prior.id,
+    )
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  for (const candidate of candidates) {
+    const refs = candidate.decisions.flatMap((decision) => {
+      const payload = decision.payload as
+        | { artifactManifest?: EvidenceManifestEntry[] }
+        | undefined;
+      return payload?.artifactManifest ?? [];
+    });
+    const evidence = uniqueArtifactRefs(
+      refs.filter((ref) => /recipe|evidence|screenshot|recording|video/i.test(ref.purpose)),
+    );
+    if (evidence.length > 0) return { runId: candidate.id, refs: evidence };
+  }
+  return { refs: [] };
+}
+
+export function buildRepeatReviewContext(
+  current: Pick<Run, 'id' | 'project' | 'ticketOrPr' | 'flowType'>,
+  prior: Run,
+  subject: CurrentReviewSubject,
+  allRuns: readonly Run[],
+): RepeatReviewContext {
+  const payload = latestReviewGatePayload(prior);
+  const priorHead = payload?.reviewSnapshot?.headSha?.trim() || undefined;
+  const artifactRefs = uniqueArtifactRefs([
+    ...(payload?.artifactManifest ?? []),
+    ...(payload?.reviewInputArtifactPaths ?? []).map((artifactPath) => ({
+      path: artifactPath,
+      purpose: 'review-input',
+    })),
+  ]);
+  const origin = farmslotOriginForReview(prior, allRuns);
+  const priorGeneration = prior.repeatReviewContext?.generation ?? 1;
+  return {
+    version: 1,
+    chainId: prior.repeatReviewContext?.chainId ?? prior.id,
+    generation: priorGeneration + 1,
+    contextMode: 'reuse',
+    priorRunId: prior.id,
+    priorFamilyId: prior.familyId,
+    repository: subject.repository,
+    prNumber: subject.prNumber,
+    ...(priorHead ? { priorReviewedHeadSha: priorHead } : {}),
+    currentHeadSha: subject.headSha,
+    ...(subject.baseRef ? { baseRef: subject.baseRef } : {}),
+    verdict: payload?.recommendation?.trim() || 'unknown',
+    unresolvedFindings: (payload?.lineComments ?? []).map((comment) => ({
+      file: comment.path,
+      line: comment.line,
+      description: comment.body,
+    })),
+    artifactRefs,
+    farmslotEvidenceRefs: origin.refs,
+    ...(origin.runId ? { originatingRunId: origin.runId } : {}),
+    reviewScope: priorHead ? 'incremental' : 'full',
+    validationDepth: 'static-code',
+    ...(!priorHead
+      ? { incrementalUnavailableReason: 'Prior review did not record a reviewed head SHA.' }
+      : {}),
+    sessionPolicy: 'warm-per-reviewer',
+  };
+}
+
+export function repeatReviewDecisionActions(context: RepeatReviewContext): DecisionAction[] {
+  const incrementalAvailable = Boolean(context.priorReviewedHeadSha);
+  const actions: DecisionAction[] = [
+    ...(incrementalAvailable
+      ? [
+          {
+            id: 'reuse-incremental-static',
+            label: 'Continue — incremental static',
+            style: 'primary' as const,
+            description:
+              'Load the latest review context and review only the prior reviewed head → current head delta, while rechecking unresolved findings.',
+          },
+        ]
+      : []),
+    {
+      id: 'reuse-full-static',
+      label: incrementalAvailable ? 'Load context — full static' : 'Continue — full static',
+      style: incrementalAvailable ? ('secondary' as const) : ('primary' as const),
+      description:
+        'Load the latest review context but review the complete current PR against its base.',
+    },
+    {
+      id: 'fresh-full-static',
+      label: 'Fresh context — full static',
+      style: 'secondary',
+      description: 'Start a cold full review without inheriting prior findings or artifacts.',
+    },
+  ];
+  if (context.farmslotEvidenceRefs.length === 0) {
+    actions.push({
+      id: 'fresh-full-live',
+      label: 'Fresh context — full live',
+      style: 'secondary',
+      description:
+        'Escalate an external PR without Farmslot evidence to a full review with live project validation.',
+    });
+  }
+  return actions;
+}
+
+export async function handleRepeatReviewDecision(
+  runId: string,
+  current: Run,
+  subject: Omit<CurrentReviewSubject, 'project'>,
+): Promise<RepeatReviewContext | null> {
+  if (current.flowType !== 'review-pr') return null;
+  if (
+    current.repeatReviewContext?.currentHeadSha === subject.headSha &&
+    current.repeatReviewContext.repository === subject.repository.toLowerCase() &&
+    current.repeatReviewContext.prNumber === subject.prNumber
+  ) {
+    return current.repeatReviewContext;
+  }
+  const allRuns = listRuns({}).runs;
+  const prior = findLatestPriorReviewRun(current, allRuns);
+  if (!prior) {
+    updateRun(runId, { reviewScope: 'full', reviewValidationDepth: 'static-code' });
+    return null;
+  }
+  const context = buildRepeatReviewContext(
+    current,
+    prior,
+    { ...subject, project: current.project, repository: subject.repository.toLowerCase() },
+    allRuns,
+  );
+  const actions = repeatReviewDecisionActions(context);
+  const recommendedActionId = context.priorReviewedHeadSha
+    ? 'reuse-incremental-static'
+    : 'reuse-full-static';
+  const actionId = await createEngineDecision(
+    runId,
+    'review_continuation',
+    `A prior terminal review exists for ${context.repository}#${context.prNumber}. Choose the context, scope, and validation depth for generation ${context.generation}.`,
+    actions,
+    {
+      kind: 'review_continuation',
+      recommendedActionId,
+      prior: context,
+      fullLiveAvailable: context.farmslotEvidenceRefs.length === 0,
+    },
+    {
+      canReplay: (existing) => {
+        const existingPayload = existing.payload;
+        return (
+          existingPayload?.kind === 'review_continuation' &&
+          existingPayload.prior.repository === context.repository &&
+          existingPayload.prior.prNumber === context.prNumber &&
+          existingPayload.prior.currentHeadSha === context.currentHeadSha
+        );
+      },
+    },
+  );
+  const reuse = actionId.startsWith('reuse-');
+  const selected: RepeatReviewContext = {
+    ...context,
+    contextMode: reuse ? 'reuse' : 'fresh',
+    reviewScope: actionId === 'reuse-incremental-static' ? 'incremental' : 'full',
+    validationDepth: actionId === 'fresh-full-live' ? 'full-live' : 'static-code',
+    sessionPolicy: reuse ? 'warm-per-reviewer' : 'fresh-per-pass',
+    ...(!reuse ? { unresolvedFindings: [], artifactRefs: [] } : {}),
+  };
+  updateRun(runId, {
+    repeatReviewContext: selected,
+    reviewScope: selected.reviewScope,
+    reviewValidationDepth: selected.validationDepth,
+  });
+  return selected;
 }
 
 export function autoResolveEngineDecision(

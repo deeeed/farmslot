@@ -518,6 +518,22 @@
       },
       "additionalProperties": false
     },
+    "static_review": {
+      "type": "object",
+      "description": "Optional project guidance frozen into static PR-review task inputs without running project prepare.",
+      "additionalProperties": false,
+      "properties": {
+        "instruction_files": {
+          "type": "array",
+          "description": "Relative paths under the project's fixtures directory.",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "hooks": {
       "type": "object",
       "description": "Shell commands executed by farmslot lifecycle scripts (orchestrator-side) on the worker machine, inside the slot's repo directory. Use {{var}} placeholders for resource variable substitution.",

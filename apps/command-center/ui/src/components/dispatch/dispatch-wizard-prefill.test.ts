@@ -31,7 +31,7 @@ test('parseDispatchWizardHash ignores invalid flow and unsupported review runner
   );
   assert.equal(result?.flowType, undefined);
   assert.deepEqual(result?.publicationReviewLoops, [
-    { id: 1, runner: 'codex', validationDepth: 'full-live' },
+    { id: 1, runner: 'codex', validationDepth: 'static-code' },
   ]);
 });
 
