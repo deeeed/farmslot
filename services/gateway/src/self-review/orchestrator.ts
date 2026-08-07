@@ -89,6 +89,7 @@ import { getSelfReviewConfig, resolveWorkerTaskDir } from './templates.js';
 import {
   ensureTmuxTargetReadyForRelaunch,
   isWorkerAlive,
+  paneHostsRunnerProcess,
   rediscoverAcceptingWorkerPane,
   type WorkerPaneRediscovery,
 } from './worker-lifecycle.js';
@@ -512,8 +513,10 @@ async function selfReviewFixTurnIsActive(
   if (fixContext?.status !== 'working') return false;
   const target = fixContext?.target?.target;
   if (!target) return false;
-  const state = await readRunnerTurnState(vars, target, fixContext.runner ?? workerRunner);
-  return state?.confidence === 'high' && state.value === 'active';
+  const runner = fixContext.runner ?? workerRunner;
+  const state = await readRunnerTurnState(vars, target, runner);
+  if (state?.confidence !== 'high' || state.value !== 'active') return false;
+  return await paneHostsRunnerProcess(vars, target, runner);
 }
 
 // Module-level constant — wiring is fixed at module load. Tests pass their own deps struct

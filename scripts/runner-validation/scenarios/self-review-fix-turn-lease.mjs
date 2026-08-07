@@ -44,12 +44,14 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
   const taskDir = path.join(repo, 'task');
   const resultPath = path.join(repo, 'result.json');
   const session = `runner-validate-${runner}-${SCENARIO_ID}-${process.pid}`;
+  const deadSession = `${session}-dead`;
   let paneId = null;
   const report = {
     runner,
     baselineContract: 'signal-file progress only',
-    currentContract: 'signal-file progress plus shared structured runner turn state',
+    currentContract: 'signal-file progress plus liveness-guarded structured runner turn state',
     result: null,
+    staleSnapshotProbe: null,
     activeHook: null,
     paneTail: null,
     pass: false,
@@ -98,16 +100,51 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
       timeout: 90_000,
     });
     report.result = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
+
+    const deadShell = ensureShellSession(deadSession, repo);
+    const deadPaneId = deadShell.paneId;
+    const deadPrompt =
+      'Use the shell tool exactly once to run this command, and do nothing else: sleep 60';
+    runLaunchInTmux(deadPaneId, repo, runner, runnerAdapter, deadPrompt);
+    const deadStatePath = path.join(
+      obsDirFor(repo, '.agent'),
+      'panes',
+      `${encodeURIComponent(deadPaneId)}.json`,
+    );
+    const activeState = waitForActiveTurn(deadStatePath, 60_000);
+    execFileSync('tmux', ['respawn-pane', '-k', '-t', deadPaneId, '-c', repo]);
+    fs.writeFileSync(deadStatePath, `${JSON.stringify(activeState)}\n`, 'utf-8');
+    const deadResultPath = path.join(repo, 'dead-result.json');
+    execFileSync('yarn', ['exec', 'tsx', executor], {
+      cwd: root,
+      env: {
+        ...process.env,
+        FARMSLOT_VALIDATION_REPO: repo,
+        FARMSLOT_VALIDATION_TARGET: deadPaneId,
+        FARMSLOT_VALIDATION_RUNNER: runner,
+        FARMSLOT_VALIDATION_RESULT_PATH: deadResultPath,
+        FARMSLOT_VALIDATION_PROBE_ONLY: '1',
+      },
+      stdio: 'pipe',
+      timeout: 30_000,
+    });
+    report.staleSnapshotProbe = JSON.parse(fs.readFileSync(deadResultPath, 'utf-8'));
     report.pass =
       report.result.baselineTimedOut === true &&
       report.result.leasedSignalStatus === 'complete' &&
-      report.result.activeTurnObserved === true;
+      report.result.activeTurnObserved === true &&
+      report.result.turnReadings.some((reading) => reading.runnerAlive === true) &&
+      report.staleSnapshotProbe.leaseAllowed === false &&
+      report.staleSnapshotProbe.turnReadings.some(
+        (reading) => reading.value === 'active' && reading.runnerAlive === false,
+      );
   } catch (error) {
     report.error = error?.message || String(error);
   } finally {
     report.paneTail = paneId ? capturePane(paneId, 60) : null;
     if (!keepSession) {
       killSession(session);
+      killSession(deadSession);
       fs.rmSync(repo, { recursive: true, force: true });
     }
   }

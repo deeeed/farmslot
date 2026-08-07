@@ -14,10 +14,12 @@ assert.ok(repo && target && runner && resultPath, 'validation inputs are require
 process.env.NODE_TEST_CONTEXT = '1';
 process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
 
-const [{ waitForWorkerSignal }, { readRunnerTurnState }] = await Promise.all([
-  import('../../../services/gateway/src/self-review/orchestrator.js'),
-  import('../../../services/gateway/src/runners/registry.js'),
-]);
+const [{ waitForWorkerSignal }, { readRunnerTurnState }, { paneHostsRunnerProcess }] =
+  await Promise.all([
+    import('../../../services/gateway/src/self-review/orchestrator.js'),
+    import('../../../services/gateway/src/runners/registry.js'),
+    import('../../../services/gateway/src/self-review/worker-lifecycle.js'),
+  ]);
 
 const vars: SlotVars = {
   slotId: 'runner-validation-self-review-fix-turn-lease',
@@ -43,16 +45,33 @@ const vars: SlotVars = {
   resourceVars: {},
 };
 const idleTimeoutMs = 10_000;
-const turnReadings: Array<{ value: string | null; confidence: string | null }> = [];
+const turnReadings: Array<{
+  value: string | null;
+  confidence: string | null;
+  runnerAlive: boolean | null;
+}> = [];
 
 const turnActive = async () => {
   const reading = await readRunnerTurnState(vars, target, runner);
+  const structuredActive = reading?.value === 'active' && reading.confidence === 'high';
+  const runnerAlive = structuredActive ? await paneHostsRunnerProcess(vars, target, runner) : null;
   turnReadings.push({
     value: reading?.value ?? null,
     confidence: reading?.confidence ?? null,
+    runnerAlive,
   });
-  return reading?.value === 'active' && reading.confidence === 'high';
+  return structuredActive && runnerAlive === true;
 };
+
+if (process.env.FARMSLOT_VALIDATION_PROBE_ONLY === '1') {
+  const leaseAllowed = await turnActive();
+  writeFileSync(
+    resultPath,
+    `${JSON.stringify({ leaseAllowed, turnReadings }, null, 2)}\n`,
+    'utf-8',
+  );
+  process.exit(0);
+}
 
 const startedAt = Date.now();
 const [baselineResult, leasedResult] = await Promise.all([

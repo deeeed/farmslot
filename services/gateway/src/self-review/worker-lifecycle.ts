@@ -102,7 +102,7 @@ export async function ensureTmuxTargetReadyForRelaunch(
   return `${session}:${recreateWindow}`;
 }
 
-async function paneHostsRunnerProcess(
+export async function paneHostsRunnerProcess(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,
