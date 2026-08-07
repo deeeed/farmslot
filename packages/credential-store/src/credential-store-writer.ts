@@ -120,6 +120,45 @@ export class CredentialStoreWriter {
     return this.issueCredentialWithSecret(principalId, displayName, origin, rawSecret);
   }
 
+  provisionPairedServicePrincipal(
+    displayName: string,
+    roles: RoleBinding[],
+    credentialDisplayName: string,
+  ): CredentialIssue {
+    const rawSecret = generateCredentialSecret();
+    return this.mutate((store) => {
+      if (store.activatedAt === null) {
+        throw new CredentialStoreRefusalError(
+          'Paired service principals require an activated credential store',
+        );
+      }
+      const principal: Principal = {
+        id: uniquePrincipalId(store, displayName),
+        subject: { type: 'service', displayName },
+        roles: cloneRoles(roles),
+      };
+      const issued = buildCredential(
+        principal.id,
+        credentialDisplayName,
+        'paired',
+        rawSecret,
+        new Date().toISOString(),
+      );
+      return {
+        next: {
+          ...store,
+          principals: [...store.principals, principal],
+          credentials: [...store.credentials, issued.record],
+        },
+        result: {
+          record: issued.record,
+          secret: issued.secret,
+          activationLatched: false,
+        },
+      };
+    });
+  }
+
   issueCredentialWithSecret(
     principalId: string,
     displayName: string,

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,6 +8,7 @@ import { type PairingCreateParams, parseTailscaleDnsNameFromStatus } from '@farm
 
 import { createGatewayAuthRuntime, initializeGatewayIdentity } from '../security/auth.js';
 import { parseCredentialWire } from '../security/credential-secret.js';
+import { loadCredentialStore } from '../security/credential-store.js';
 
 import { pairingCreate, pairingExchange } from './pairing.js';
 
@@ -156,6 +157,39 @@ test('new service principal is provisioned only when its pairing code is redeeme
   const principal = credential ? runtime.store.findPrincipal(credential.principalId) : undefined;
   assert.equal(principal?.subject.displayName, 'redeemed-phone');
   assert.deepEqual(principal?.roles, [{ role: 'operator', scope: { kind: 'global' } }]);
+});
+
+test('failed new-service pairing leaves the store unchanged and can be retried', () => {
+  const runtime = initializedRuntime();
+  const code = pairingCreate(
+    {
+      gatewayUrl: 'ws://127.0.0.1:7777/ws',
+      profileName: 'retry-phone',
+      authority: {
+        kind: 'new-service-principal',
+        displayName: 'retry-phone',
+        roles: [{ role: 'operator', scope: { kind: 'global' } }],
+      },
+    },
+    runtime,
+  );
+  const before = loadCredentialStore(runtime.store.path);
+  const blockedTemporaryPath = `${runtime.store.path}.${process.pid}.tmp`;
+  mkdirSync(blockedTemporaryPath);
+  try {
+    assert.throws(() => pairingExchange({ code: code.code }, runtime), /EISDIR/u);
+    assert.deepEqual(loadCredentialStore(runtime.store.path), before);
+  } finally {
+    rmSync(blockedTemporaryPath, { recursive: true });
+  }
+
+  const exchanged = pairingExchange({ code: code.code }, runtime);
+  const parsed = parseCredentialWire(exchanged.profile.secret);
+  assert.ok(parsed);
+  const after = loadCredentialStore(runtime.store.path);
+  assert.equal(after.principals.length, before.principals.length + 1);
+  assert.equal(after.credentials.length, before.credentials.length + 1);
+  assert.equal(after.credentials.at(-1)?.id, parsed.credentialId);
 });
 
 function initializedRuntime() {

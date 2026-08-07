@@ -159,18 +159,19 @@ export function pairingExchange(
   const code = params.code.trim();
   if (!code) throw new GatewayMethodError('PAIRING_FAILED', 'pairing.exchange requires code');
   const record = pairings.get(code);
-  pairings.delete(code);
   if (!record || record.expiresAtMs <= Date.now()) {
+    pairings.delete(code);
     throw new GatewayMethodError('PAIRING_FAILED', 'Pairing code is invalid or expired');
   }
-  const principalId =
+  const issue =
     record.authority.kind === 'existing-principal'
-      ? record.authority.principalId
-      : runtime.writer.createPrincipal(
-          { type: 'service', displayName: record.authority.displayName },
+      ? runtime.writer.issueCredential(record.authority.principalId, record.profileName, 'paired')
+      : runtime.writer.provisionPairedServicePrincipal(
+          record.authority.displayName,
           record.authority.roles,
-        ).id;
-  const issue = runtime.writer.issueCredential(principalId, record.profileName, 'paired');
+        record.profileName,
+      );
+  pairings.delete(code);
   return {
     profile: {
       name: record.profileName,

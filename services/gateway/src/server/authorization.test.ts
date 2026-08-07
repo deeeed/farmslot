@@ -587,8 +587,8 @@ test(
       assert.equal(expectedDenial.error?.code, 'PAIRING_FAILED');
       assert.equal(expectedDenial.error?.message, 'Pairing code is invalid or expired');
 
-      const createPrincipal = runtime.writer.createPrincipal;
-      runtime.writer.createPrincipal = () => {
+      const provisionPairedServicePrincipal = runtime.writer.provisionPairedServicePrincipal;
+      runtime.writer.provisionPairedServicePrincipal = () => {
         throw new Error('credential store /private/farmslot/credentials.json locked by pid 4242');
       };
       try {
@@ -598,7 +598,7 @@ test(
         assert.equal(response.error?.message, 'Pairing exchange failed');
         assert.doesNotMatch(JSON.stringify(response), /credentials\.json|pid 4242/u);
       } finally {
-        runtime.writer.createPrincipal = createPrincipal;
+        runtime.writer.provisionPairedServicePrincipal = provisionPairedServicePrincipal;
       }
       ws.close();
       await onceClose(ws);
