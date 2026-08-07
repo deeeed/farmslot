@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { ReadyGatePayload, ReviewGatePayload, Run, RunDecision } from '@farmslot/protocol';
 
 import {
+  applyRepeatReviewSelection,
   autoResolveEngineDecision,
   buildCollisionSuccessorParams,
   buildRepeatReviewContext,
@@ -202,6 +203,11 @@ test('buildRepeatReviewContext freezes prior findings, review range, and Farmslo
 
   assert.equal(context.reviewScope, 'incremental');
   assert.equal(context.validationDepth, 'static-code');
+  assert.equal(context.sessionIntent, 'resume');
+  assert.deepEqual(
+    context.priorGenerations?.map((entry) => entry.generation),
+    [1],
+  );
   assert.equal(context.priorReviewedHeadSha, 'aaaaaaaaaaaaaaaa');
   assert.equal(context.currentHeadSha, 'bbbbbbbbbbbbbbbb');
   assert.deepEqual(context.unresolvedFindings, [
@@ -240,10 +246,100 @@ test('missing prior reviewed head disables only incremental continuation', () =>
   );
 
   assert.equal(context.reviewScope, 'full');
+  assert.equal(context.sessionIntent, 'reset');
   assert.match(context.incrementalUnavailableReason ?? '', /head SHA/);
   assert.deepEqual(
     repeatReviewDecisionActions(context).map((action) => action.id),
     ['reuse-full-static', 'fresh-full-static', 'fresh-full-live'],
+  );
+});
+
+test('full repeat-review selections always reset reviewer reasoning', () => {
+  const prior = makeRun({
+    id: 'prior-review',
+    project: 'farm-a',
+    flowType: 'review-pr',
+    ticketOrPr: 'owner/repo#42',
+    status: 'done',
+    decisions: [reviewDecision()],
+  });
+  const context = buildRepeatReviewContext(
+    makeRun({ project: 'farm-a', flowType: 'review-pr', ticketOrPr: 'owner/repo#42' }),
+    prior,
+    {
+      project: 'farm-a',
+      repository: 'owner/repo',
+      prNumber: 42,
+      headSha: 'bbbbbbbbbbbbbbbb',
+    },
+    [prior],
+  );
+
+  assert.equal(
+    applyRepeatReviewSelection(context, 'reuse-incremental-static').sessionIntent,
+    'resume',
+  );
+  assert.equal(applyRepeatReviewSelection(context, 'reuse-full-static').sessionIntent, 'reset');
+  assert.equal(applyRepeatReviewSelection(context, 'fresh-full-static').sessionIntent, 'reset');
+  assert.equal(applyRepeatReviewSelection(context, 'fresh-full-live').sessionIntent, 'reset');
+});
+
+test('repeat-review context accumulates the complete predecessor chain', () => {
+  const first = makeRun({
+    id: 'review-1',
+    familyId: 'family-1',
+    project: 'farm-a',
+    flowType: 'review-pr',
+    ticketOrPr: 'owner/repo#42',
+    status: 'done',
+    decisions: [reviewDecision()],
+  });
+  const secondContext = buildRepeatReviewContext(
+    makeRun({ id: 'review-2', project: 'farm-a', flowType: 'review-pr' }),
+    first,
+    {
+      project: 'farm-a',
+      repository: 'owner/repo',
+      prNumber: 42,
+      headSha: 'bbbbbbbbbbbbbbbb',
+    },
+    [first],
+  );
+  const second = makeRun({
+    id: 'review-2',
+    familyId: 'family-1',
+    project: 'farm-a',
+    flowType: 'review-pr',
+    ticketOrPr: 'owner/repo#42',
+    status: 'done',
+    decisions: [
+      reviewDecision({
+        reviewSnapshot: {
+          source: 'github-pr',
+          capturedAt: '2026-08-06T10:59:00.000Z',
+          headSha: 'bbbbbbbbbbbbbbbb',
+        },
+      }),
+    ],
+    repeatReviewContext: secondContext,
+  });
+
+  const thirdContext = buildRepeatReviewContext(
+    makeRun({ id: 'review-3', project: 'farm-a', flowType: 'review-pr' }),
+    second,
+    {
+      project: 'farm-a',
+      repository: 'owner/repo',
+      prNumber: 42,
+      headSha: 'cccccccccccccccc',
+    },
+    [first, second],
+  );
+
+  assert.equal(thirdContext.generation, 3);
+  assert.deepEqual(
+    thirdContext.priorGenerations?.map((entry) => entry.generation),
+    [1, 2],
   );
 });
 

@@ -12,6 +12,7 @@ export * from './runs/decision-resolution.js';
 export * from './runs/evidence-summary.js';
 export * from './runs/family-iteration-ledger.js';
 export * from './runs/family-readiness.js';
+export * from './runs/review-chain.js';
 export * from './runs/run-mode.js';
 export * from './runs/slot-resolution.js';
 export * from './slots/dispatch-scoring.js';

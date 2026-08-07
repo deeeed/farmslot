@@ -77,7 +77,8 @@ test('review continuation summary exposes generation, heads, verdict, and eviden
       farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe' }],
       reviewScope: 'incremental',
       validationDepth: 'static-code',
-      sessionPolicy: 'warm-per-reviewer',
+      sessionIntent: 'resume',
+      priorGenerations: [],
     },
   };
 

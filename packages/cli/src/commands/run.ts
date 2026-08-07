@@ -9,6 +9,8 @@ import {
   type EventFrame,
   failedRunCancelEffects,
   type HumanGrade,
+  observedReviewSessionContinuity,
+  reviewChainForRun,
   type Run,
   type RunCancelEffect,
   type RunForceCompleteResult,
@@ -350,6 +352,35 @@ export function registerRunCommand(program: Command): void {
         );
         if (emit.machine) emit.ok(result);
         else output.write(`${JSON.stringify(result.run, null, 2)}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  run
+    .command('review-chain <runId>')
+    .description('Show the review generations and reviewer-session continuity for one run')
+    .action(async (runId: string, _opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const { run: current } = await withProgress(
+          `Loading review chain for ${runId.slice(0, 8)}`,
+          () => client.call<{ run: Run }>('run.get', { runId }),
+          !emit.machine,
+        );
+        const chain = reviewChainForRun(current);
+        if (emit.machine) {
+          emit.ok({ chain });
+        } else if (chain.length === 0) {
+          output.write('No repeat-review chain.\n');
+        } else {
+          for (const entry of chain) {
+            output.write(
+              `G${entry.generation} ${entry.runId.slice(0, 8)}  ${entry.baseSha?.slice(0, 7) ?? '-'} -> ${entry.headSha?.slice(0, 7) ?? 'pending'}  ${entry.reviewScope}/${entry.validationDepth}  ${entry.verdict}  ${entry.unresolvedCount == null ? 'unresolved pending' : `${entry.unresolvedCount} unresolved`}  ${observedReviewSessionContinuity(entry)}\n`,
+            );
+          }
+        }
       } catch (err) {
         emit.fail(err);
       }

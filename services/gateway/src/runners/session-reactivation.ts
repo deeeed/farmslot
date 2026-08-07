@@ -89,7 +89,6 @@ async function reactivateRunnerSessionWithPrompt(
       reason: `Runner '${runner}' has no structured session-delivery provider`,
     };
   }
-  let idleProven = false;
   let paneMutationStarted = false;
   try {
     const panes = await execOnSlot(
@@ -134,8 +133,6 @@ async function reactivateRunnerSessionWithPrompt(
         reason: `Retained ${runner} session ${options.sessionId} is ${state?.value ?? 'unknown'}; refusing to replace a session without terminal hook proof`,
       };
     }
-    idleProven = true;
-
     const probe = await execOnSlot(options.vars, resumableSessionProbeCommand(sessionPath), {
       timeout: 10_000,
     });
@@ -260,7 +257,7 @@ async function reactivateRunnerSessionWithPrompt(
   } catch (error) {
     return {
       delivered: false,
-      disposition: idleProven && !paneMutationStarted ? 'safe-send' : 'hold',
+      disposition: paneMutationStarted ? 'hold' : 'safe-send',
       reason: `Retained ${runner} handoff failed: ${(error as Error).message}`,
       ...(paneMutationStarted ? { retryable: false } : {}),
     };

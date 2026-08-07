@@ -13,7 +13,9 @@ import {
   modeForFlow,
   modelsMatch,
   normalizeRunTags,
+  observedReviewSessionContinuity,
   resolveRunSlotId,
+  reviewChainForRun,
 } from '@farmslot/protocol';
 
 import { isPrLinkageMissing } from '../../state.js';
@@ -227,6 +229,36 @@ export function renderRunGrade(grade: RunGrade): unknown {
         ? html`<span style="color:${colors.textMuted}">${grade.modelRecommendation}</span>`
         : nothing}
     </div>
+  `;
+}
+
+export function renderReviewChain(run: Run): unknown {
+  const chain = reviewChainForRun(run);
+  if (chain.length === 0) return nothing;
+  return html`
+    <section class="review-chain" aria-label="Review chain">
+      <div class="review-chain-title">Review chain · ${chain.length} generation(s)</div>
+      <div class="review-chain-grid">
+        ${chain.map((entry) => {
+          const range = `${entry.baseSha?.slice(0, 8) ?? 'base'} → ${entry.headSha?.slice(0, 8) ?? 'pending'}`;
+          const continuity = observedReviewSessionContinuity(entry);
+          return html`
+            <a class="review-chain-row" href=${`#run/${entry.runId}`}>
+              <span class="review-chain-generation">G${entry.generation}</span>
+              <span title=${`${entry.repository}#${entry.prNumber}`}>${range}</span>
+              <span>${entry.reviewScope} · ${entry.validationDepth}</span>
+              <span
+                >${entry.verdict} ·
+                ${entry.unresolvedCount == null
+                  ? 'unresolved pending'
+                  : `${entry.unresolvedCount} unresolved`}</span
+              >
+              <span class="review-chain-session ${continuity}">${continuity}</span>
+            </a>
+          `;
+        })}
+      </div>
+    </section>
   `;
 }
 
@@ -725,6 +757,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           `
         : nothing}
     </div>
+    ${renderReviewChain(r)}
     ${ctx.siblings.length
       ? html`
           <div class="grade-card">

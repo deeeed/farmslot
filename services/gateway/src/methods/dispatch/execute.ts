@@ -10,6 +10,8 @@ import {
   DEFAULT_CLAUDE_MODEL,
   type DispatchExecuteParams,
   primaryRoleForFlow,
+  reviewSessionIntentForContext,
+  type ReviewSessionTrace,
 } from '@farmslot/protocol';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
@@ -44,6 +46,10 @@ import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
 } from '../../live-recipe/context.js';
+import {
+  attemptRepeatReviewResume,
+  resolveRepeatReviewResumePlan,
+} from '../../run-engine/review-session-chain.js';
 import {
   assertRunnerLaunchPrerequisites,
   buildLaunchCommand,
@@ -825,6 +831,23 @@ export async function dispatchExecute(
         : null,
   });
   assertRunnerLaunchPrerequisites(vars, runner);
+  const priorReviewRun = currentRun?.repeatReviewContext?.priorRunId
+    ? (getRun(currentRun.repeatReviewContext.priorRunId) ?? null)
+    : null;
+  const repeatReviewSessionIntent = reviewSessionIntentForContext(currentRun?.repeatReviewContext);
+  let repeatReviewResumePlan = currentRun
+    ? resolveRepeatReviewResumePlan(currentRun, priorReviewRun, runner)
+    : ({ kind: 'reset' } as const);
+  let observedReviewSessionContinuity: ReviewSessionTrace['continuity'] | undefined;
+  const recordReviewSession = (trace: ReviewSessionTrace): void => {
+    if (!currentRun?.repeatReviewContext) return;
+    const latest = getRun(currentRun.id);
+    if (!latest?.repeatReviewContext) return;
+    observedReviewSessionContinuity = trace.continuity;
+    updateRunStore(currentRun.id, {
+      repeatReviewContext: { ...latest.repeatReviewContext, session: trace },
+    });
+  };
 
   step(
     'info',
@@ -1147,6 +1170,10 @@ export async function dispatchExecute(
     runnerSessionId: null,
   };
   let runnerProcessStarted = false;
+  let resumedReviewSession = false;
+  let resumedReviewSessionUnconfirmed = false;
+  let repeatReviewFallbackReason =
+    repeatReviewResumePlan.kind === 'fallback' ? repeatReviewResumePlan.reason : null;
   try {
     const roleWindowName = agentDispatchWindow(workerRole);
     const usesRoleWindow = Boolean(roleWindowName);
@@ -1154,11 +1181,63 @@ export async function dispatchExecute(
       if (!usesRoleWindow) return;
       await new Promise((resolve) => setTimeout(resolve, ROLE_WINDOW_STARTUP_SETTLE_MS));
     };
-    if (usesRoleWindow) {
+    if (repeatReviewResumePlan.kind === 'resume') {
+      const binding = repeatReviewResumePlan.binding;
+      step(
+        'launch',
+        `Resuming reviewer session ${binding.runnerSessionId} from run ${binding.priorRunId.slice(0, 8)}...`,
+      );
+      const attempt = await attemptRepeatReviewResume(currentRun!, priorReviewRun, runner, {
+        vars,
+        target: workerTarget,
+        model,
+        prompt: taskPrompt,
+        effort,
+        safetyTier,
+        runtimeDir: projectVars?.runtimeDir,
+        taskDir: workerTaskDir,
+        launchAckSignalPath: `${workerTaskDir}/SIGNAL.json`,
+        acceptExistingLaunchAck: false,
+        sendLogPrefix: '[repeat-review-resume]',
+      });
+      if (attempt.kind === 'resumed') {
+        resumedReviewSession = true;
+        runnerProcessStarted = true;
+        repeatReviewResumePlan = attempt.plan;
+        sessionMeta = {
+          runnerSessionId: binding.runnerSessionId,
+          runnerSessionPath: binding.runnerSessionPath,
+        };
+      } else if (attempt.kind === 'fallback') {
+        repeatReviewFallbackReason = 'session-unavailable';
+        repeatReviewResumePlan = attempt.plan;
+        step('launch', `${attempt.reason}; launching a fresh reviewer`);
+      } else if (attempt.kind === 'hold') {
+        // The adapter mutated the pane before acknowledgement timed out. Never
+        // launch a duplicate or terminalize/release a run whose reviewer may be
+        // executing. Keep ownership, expose the uncertainty, and let monitor
+        // resolve the authoritative task signal.
+        resumedReviewSession = true;
+        resumedReviewSessionUnconfirmed = true;
+        runnerProcessStarted = true;
+        repeatReviewResumePlan = attempt.plan;
+        sessionMeta = {
+          runnerSessionId: binding.runnerSessionId,
+          runnerSessionPath: binding.runnerSessionPath,
+        };
+        step('warn', attempt.reason);
+      } else {
+        repeatReviewResumePlan = attempt.plan;
+        repeatReviewFallbackReason =
+          attempt.plan.kind === 'fallback' ? attempt.plan.reason : 'missing-session';
+        step('launch', 'Reviewer session facts changed; launching a fresh reviewer');
+      }
+    }
+    if (!resumedReviewSession && usesRoleWindow) {
       workerTarget = await ensureWorkerRoleTarget(vars, session, runner, workerRole);
       await respawnRoleWindowWithCommand(vars, workerTarget, agentLaunch);
       await settleFreshRoleWindow();
-    } else {
+    } else if (!resumedReviewSession) {
       // Some shell init paths (e.g. anaconda's `(base)` prompt activation) query
       // the terminal for DA1/DA2 attributes during prompt setup. The terminal's
       // response (`\033[?1;2c`, `\033[>0;276;0c`) lands on stdin AFTER the
@@ -1224,7 +1303,7 @@ export async function dispatchExecute(
     // sitting at human-gate waiting for artifacts that were never produced.
     await assertRunnerProcessStarted(vars, workerTarget, runner);
     runnerProcessStarted = true;
-    if (runnerResolvesPreTaskLaunchBlockers(runner)) {
+    if (!resumedReviewSession && runnerResolvesPreTaskLaunchBlockers(runner)) {
       await resolveRunnerLaunchBlockers(vars, workerTarget, runner, 60_000, {
         providerAccountLabel: accountBind?.bind.accountLabel ?? null,
         runtimeDir: projectVars?.runtimeDir,
@@ -1236,11 +1315,13 @@ export async function dispatchExecute(
     step('launch', `${runner} launched in tmux target ${workerTarget}`);
     primaryTarget = await captureAgentPaneTarget(vars, session, workerTarget);
     const workerPaneId = await resolveTmuxPaneId(vars, primaryTarget.target ?? workerTarget);
-    sessionMeta = await captureRunnerSessionMetadata(vars, runner, sessionFilesBefore, {
-      sinceMs: currentRun ? (dispatchStartedAtMs(currentRun) ?? Date.now()) : Date.now(),
-      paneId: workerPaneId,
-      slotId: vars.slotId,
-    });
+    if (!resumedReviewSession) {
+      sessionMeta = await captureRunnerSessionMetadata(vars, runner, sessionFilesBefore, {
+        sinceMs: currentRun ? (dispatchStartedAtMs(currentRun) ?? Date.now()) : Date.now(),
+        paneId: workerPaneId,
+        slotId: vars.slotId,
+      });
+    }
 
     // For Claude runner: wait for prompt readiness then send task.
     //
@@ -1259,7 +1340,7 @@ export async function dispatchExecute(
     // AND now contains a unique marker from our prompt (`TASK.md`). Retry up to
     // 3 times before failing the step loudly so the run stops instead of hanging
     // in monitor.
-    if (runnerNeedsPostLaunchPrompt(runner)) {
+    if (!resumedReviewSession && runnerNeedsPostLaunchPrompt(runner)) {
       step('task', 'Waiting for agent ready...');
       const handoffAckSinceMs = Date.now();
       await sendRunnerPostLaunchPrompt(
@@ -1282,6 +1363,31 @@ export async function dispatchExecute(
         },
       );
       step('task', 'Task prompt delivered and verified');
+    }
+    if (currentRun?.repeatReviewContext) {
+      if (resumedReviewSession && repeatReviewResumePlan.kind === 'resume') {
+        recordReviewSession({
+          intent: 'resume',
+          continuity: resumedReviewSessionUnconfirmed ? 'resume-unconfirmed' : 'resumed',
+          priorRunId: repeatReviewResumePlan.binding.priorRunId,
+          priorSessionId: repeatReviewResumePlan.binding.runnerSessionId,
+          sessionId: repeatReviewResumePlan.binding.runnerSessionId,
+        });
+      } else if (repeatReviewSessionIntent === 'resume') {
+        recordReviewSession({
+          intent: 'resume',
+          continuity: 'fallback-fresh',
+          priorRunId: currentRun.repeatReviewContext.priorRunId,
+          ...(sessionMeta.runnerSessionId ? { sessionId: sessionMeta.runnerSessionId } : {}),
+          fallbackReason: repeatReviewFallbackReason ?? 'missing-session',
+        });
+      } else {
+        recordReviewSession({
+          intent: 'reset',
+          continuity: 'fresh',
+          ...(sessionMeta.runnerSessionId ? { sessionId: sessionMeta.runnerSessionId } : {}),
+        });
+      }
     }
   } catch (err) {
     if (params.runId && currentRun) {
@@ -1349,8 +1455,19 @@ export async function dispatchExecute(
     await watchSlot(params.slotId);
   }
 
-  emit('dispatch.done', { slotId: params.slotId, taskId, runner, model });
-  return { dispatched: true, launchCommand: agentLaunch };
+  emit('dispatch.done', {
+    slotId: params.slotId,
+    taskId,
+    runner,
+    model,
+    ...(observedReviewSessionContinuity
+      ? { reviewSessionContinuity: observedReviewSessionContinuity }
+      : {}),
+  });
+  return {
+    dispatched: true,
+    ...(resumedReviewSession ? {} : { launchCommand: agentLaunch }),
+  };
 }
 
 function extractField(content: string, pattern: RegExp): string {

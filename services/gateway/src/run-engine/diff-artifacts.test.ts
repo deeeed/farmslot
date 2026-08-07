@@ -196,7 +196,8 @@ test('incremental review input captures the exact prior-head to current-head ran
       farmslotEvidenceRefs: [],
       reviewScope: 'incremental',
       validationDepth: 'static-code',
-      sessionPolicy: 'warm-per-reviewer',
+      sessionIntent: 'resume',
+      priorGenerations: [],
     },
   });
 
@@ -258,7 +259,8 @@ test('incremental review input refuses to review a head that advanced after the 
       farmslotEvidenceRefs: [],
       reviewScope: 'incremental',
       validationDepth: 'static-code',
-      sessionPolicy: 'warm-per-reviewer',
+      sessionIntent: 'resume',
+      priorGenerations: [],
     },
   });
 
