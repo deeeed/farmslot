@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.15.0`
+Protocol version: `0.19.0`
 
 ## WebSocket frame shape
 
@@ -258,6 +258,9 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `stream.subscribe`                   | stream           | bounded-write | —      | —      | Stream Subscribe gateway method.                   |
 | `stream.unsubscribe`                 | stream           | bounded-write | —      | —      | Stream Unsubscribe gateway method.                 |
 | `task.progress`                      | task             | bounded-write | —      | —      | Task Progress gateway method.                      |
+| `terminal.attachment.cleanup`        | terminal         | bounded-write | —      | —      | Terminal Attachment Cleanup gateway method.        |
+| `terminal.attachment.deliver`        | terminal         | bounded-write | —      | —      | Terminal Attachment Deliver gateway method.        |
+| `terminal.attachment.upload`         | terminal         | bounded-write | —      | —      | Terminal Attachment Upload gateway method.         |
 | `terminal.input`                     | terminal         | bounded-write | —      | —      | Terminal Input gateway method.                     |
 | `terminal.reinit`                    | terminal         | bounded-write | —      | —      | Terminal Reinit gateway method.                    |
 | `terminal.resize`                    | terminal         | bounded-write | —      | —      | Terminal Resize gateway method.                    |
