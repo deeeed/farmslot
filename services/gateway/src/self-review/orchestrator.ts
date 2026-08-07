@@ -15,6 +15,7 @@ import {
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
   type ReviewLoopTimelineSegment,
+  type ReviewSessionIntent,
   type ReviewValidationDepth,
   type RunnerSessionUsage,
   type SelfReviewIssue,
@@ -139,6 +140,8 @@ export interface SelfReviewOptions {
   publicationReview?: boolean | null;
   /** Overrides project self_review.session_policy for this review loop. */
   reviewSessionPolicy?: ReviewSessionPolicy | null;
+  /** Continue the same-run reviewer context or start this review generation clean. */
+  reviewSessionIntent?: ReviewSessionIntent | null;
   /** Continue an operator-approved fix loop from findings already produced by this run. */
   resumeFromResult?: SelfReviewResult;
 }
@@ -342,6 +345,7 @@ export async function executeSelfReview(
       validationDepth,
       artifactScope,
       sessionPolicy,
+      options.reviewSessionIntent ?? 'reset',
     );
 
     if (result.incomplete) {
@@ -408,11 +412,11 @@ export async function executeSelfReview(
       crossRunner: isCrossRunnerReview,
     };
   } finally {
-    // Review-loop exit: THIS reviewer's warm
-    // session never outlives its loop — pass, fail, or throw it turns
-    // forensic-only. Scoped to the loop's runner so a run hosting reviews by
-    // other runners keeps their sessions until their own loops exit.
-    invalidateWarmReviewerSessions(runId, reviewRunner);
+    // Publication reviews can be explicitly continued from the human gate, so
+    // keep their same-run reviewer binding until cancel/completion/slot release.
+    if (!(options.publicationReview === true && sessionPolicy === 'warm-per-reviewer')) {
+      invalidateWarmReviewerSessions(runId, reviewRunner);
+    }
   }
 }
 

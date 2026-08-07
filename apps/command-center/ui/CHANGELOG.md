@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(review): let operators continue same-run reviewer context or start fresh when requesting each independent review, and make package refresh plus the review/rework path explicit in the pre-publication cockpit.
 - fix(review): visualize each findings → worker fix → re-review sequence in the shared ready-gate timeline and stop presenting zero-change handoffs as worker fixes.
 - feat(review): default PR reviews to static validation and render the prior-review generation, reviewed head, findings, and evidence before continuation.
 - feat(review): render the shared cross-generation review chain and reviewer-session continuity in run details.

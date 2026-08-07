@@ -75,7 +75,12 @@ export function readyWorkspaceLightStyles(): string {
         justify-content: center;
       }
       ${readyWorkspaceReviewModalStyles()}
-      ready-workspace .rdy-package-summary,
+      ready-workspace .rdy-package-summary {
+        display: grid;
+        gap: 7px;
+        font-size: 11px;
+        color: ${colors.textMuted};
+      }
       ready-workspace .rdy-review-strip {
         display: flex;
         flex-wrap: wrap;
@@ -85,6 +90,97 @@ export function readyWorkspaceLightStyles(): string {
         color: ${colors.textMuted};
       }
       ready-workspace .rdy-package-summary strong { color: ${colors.textPrimary}; }
+      ready-workspace .rdy-package-header,
+      ready-workspace .rdy-package-title,
+      ready-workspace .rdy-package-actions,
+      ready-workspace .rdy-package-facts,
+      ready-workspace .rdy-section-heading {
+        display: flex;
+        align-items: center;
+        gap: ${spacing.sm};
+        flex-wrap: wrap;
+      }
+      ready-workspace .rdy-package-header {
+        justify-content: space-between;
+      }
+      ready-workspace .rdy-package-title > strong {
+        font-size: 12px;
+      }
+      ready-workspace .rdy-package-status {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: ${spacing.sm};
+        border: 1px solid #2a2a44;
+        border-radius: ${radii.sm};
+        padding: 6px 8px;
+      }
+      ready-workspace .rdy-package-status.ready {
+        border-color: ${colors.statusOk}55;
+        background: ${colors.statusOk}0d;
+      }
+      ready-workspace .rdy-package-status.attention {
+        border-color: ${colors.statusWarn}66;
+        background: ${colors.statusWarn}0d;
+      }
+      ready-workspace .rdy-package-status.ready > strong { color: ${colors.statusOk}; }
+      ready-workspace .rdy-package-status.attention > strong { color: ${colors.statusWarn}; }
+      ready-workspace .rdy-package-facts > span {
+        border: 1px solid #2a2a44;
+        border-radius: 999px;
+        padding: 2px 7px;
+      }
+      ready-workspace .rdy-refresh-package {
+        border: 1px solid ${colors.accent};
+        border-radius: ${radii.sm};
+        background: ${colors.accent}22;
+        color: ${colors.accent};
+        cursor: pointer;
+        font-family: ${fonts.mono};
+        font-size: 11px;
+        font-weight: 600;
+        padding: 5px 9px;
+      }
+      ready-workspace .rdy-review-flow-button {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        border: 1px solid ${colors.accent};
+        border-radius: ${radii.sm};
+        background: ${colors.accent}18;
+        color: ${colors.accent};
+        font-family: ${fonts.mono};
+        font-weight: 700;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      ready-workspace .rdy-review-flow-button span {
+        border-left: 1px solid ${colors.accent}55;
+        padding-left: 7px;
+        color: ${colors.textSecondary};
+        font-size: 10px;
+        font-weight: 500;
+      }
+      ready-workspace .rdy-refresh-package:hover:not(:disabled) {
+        background: ${colors.accent}33;
+      }
+      ready-workspace .rdy-refresh-package:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+      ready-workspace .rdy-review-flow {
+        display: grid;
+        gap: 6px;
+      }
+      ready-workspace .rdy-section-heading {
+        justify-content: space-between;
+        color: ${colors.textMuted};
+        font-size: 10px;
+      }
+      ready-workspace .rdy-section-heading > strong {
+        color: ${colors.textPrimary};
+        font-size: 11px;
+      }
       ready-workspace .rdy-package-details {
         display: grid;
         gap: ${spacing.sm};

@@ -307,6 +307,8 @@ export interface ReviewLoopRequest {
   runner: 'same' | ReviewRunnerId;
   model?: string | null;
   validationDepth?: ReviewValidationDepth;
+  /** Resume this run's reviewer context, or reset it before this review generation. */
+  sessionIntent?: ReviewSessionIntent;
 }
 
 export type ReviewRunnerId = 'claude' | 'codex' | 'cursor' | 'grok' | 'opencode';

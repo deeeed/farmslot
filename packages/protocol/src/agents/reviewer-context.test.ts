@@ -12,12 +12,10 @@ import {
   selectLatestReviewerContext,
 } from './reviewer-context.js';
 
-test('reviewerWindowName keeps model out of the tab and numbers collisions', () => {
+test('reviewerWindowName keeps one canonical model-free tab per runner', () => {
   assert.equal(reviewerWindowName('codex'), 'rev-codex');
   assert.equal(reviewerWindowName('claude'), 'rev-claude');
   assert.equal(reviewerWindowName('Codex CLI'), 'rev-codex-cli');
-  assert.equal(reviewerWindowName('codex', 1), 'rev1-codex');
-  assert.equal(reviewerWindowName('codex', 2), 'rev2-codex');
   assert.ok(!reviewerWindowName('codex').includes('opus'));
 });
 
@@ -38,7 +36,6 @@ test('allocateReviewerContext coexists for multiple runners on one run', () => {
     runId,
     runner: 'codex',
     model: 'gpt-5',
-    existing: [],
   });
   assert.equal(first.windowName, 'rev-codex');
   assert.equal(first.id, 'rev-codex');
@@ -49,15 +46,6 @@ test('allocateReviewerContext coexists for multiple runners on one run', () => {
     runId,
     runner: 'claude',
     model: 'opus',
-    existing: [
-      {
-        id: first.id,
-        role: 'self-review',
-        runId,
-        runner: 'codex',
-        target: { session: 's', window: first.windowName, target: `s:${first.windowName}` },
-      },
-    ],
   });
   assert.equal(second.windowName, 'rev-claude');
   assert.notEqual(second.id, first.id);
@@ -65,53 +53,9 @@ test('allocateReviewerContext coexists for multiple runners on one run', () => {
   const freshSameRunner = allocateReviewerContext({
     runId,
     runner: 'codex',
-    mode: 'fresh',
-    existing: [
-      {
-        id: first.id,
-        role: 'self-review',
-        runId,
-        runner: 'codex',
-        target: { session: 's', window: first.windowName, target: `s:${first.windowName}` },
-      },
-      {
-        id: second.id,
-        role: 'self-review',
-        runId,
-        runner: 'claude',
-        target: { session: 's', window: second.windowName, target: `s:${second.windowName}` },
-      },
-    ],
   });
-  assert.equal(freshSameRunner.windowName, 'rev1-codex');
-});
-
-test('allocateReviewerContext warm reuses same-runner tab and ignores other runs', () => {
-  const runId = 'run-a';
-  const warm = allocateReviewerContext({
-    runId,
-    runner: 'codex',
-    mode: 'warm',
-    existing: [
-      {
-        id: 'rev-codex',
-        role: 'self-review',
-        runId,
-        runner: 'codex',
-        target: { session: 's', window: 'rev-codex', target: 's:rev-codex' },
-      },
-      {
-        id: 'rev-codex',
-        role: 'self-review',
-        runId: 'other-run',
-        runner: 'codex',
-        target: { session: 's', window: 'rev-codex', target: 's:rev-codex' },
-      },
-    ],
-  });
-  assert.equal(warm.windowName, 'rev-codex');
-  assert.equal(warm.id, 'rev-codex');
-  assert.equal(warm.runId, runId);
+  assert.equal(freshSameRunner.windowName, 'rev-codex');
+  assert.equal(freshSameRunner.id, first.id);
 });
 
 test('selectLatestReviewerContext picks newest reviewer independently of worker', () => {

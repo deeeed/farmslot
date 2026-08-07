@@ -104,7 +104,7 @@ function renderSelfReview(
       lane: 'worker',
       executor: 'reviewer',
       description:
-        'Spawn reviewer (second Claude session) in new tmux window on same slot. Reviews PR diff, reads code, runs tsc, can execute recipe.',
+        'Run the reviewer in its runner-owned tmux window on the same slot. Reviews the PR diff, reads code, runs checks, and can execute the recipe.',
       templateFile: 'self-review.md',
     },
     {

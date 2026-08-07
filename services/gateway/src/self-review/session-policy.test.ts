@@ -9,7 +9,6 @@ import {
   parseReviewSessionPolicy,
   registerWarmReviewerSession,
   resetWarmReviewerSessionsForTest,
-  reviewerAllocationMode,
   shouldAttemptWarmResume,
   type WarmReviewerScope,
 } from './session-policy.js';
@@ -51,8 +50,7 @@ test('policy parsing accepts the two modes and defaults everything else to fresh
   assert.equal(DEFAULT_REVIEW_SESSION_POLICY, 'fresh-per-pass');
 });
 
-test('fresh-per-pass preserves kill/relaunch behavior: fresh allocation, never a resume attempt', () => {
-  assert.equal(reviewerAllocationMode('fresh-per-pass'), 'fresh');
+test('fresh-per-pass preserves cold relaunch behavior and never attempts resume', () => {
   for (const loopNumber of [1, 2, 3, 5]) {
     assert.equal(shouldAttemptWarmResume('fresh-per-pass', loopNumber, true), false);
   }
@@ -63,17 +61,12 @@ test('fresh-per-pass preserves kill/relaunch behavior: fresh allocation, never a
 });
 
 test('warm-per-reviewer resumes only from loop 2 on reload-capable runners', () => {
-  assert.equal(reviewerAllocationMode('warm-per-reviewer'), 'warm');
   assert.equal(shouldAttemptWarmResume('warm-per-reviewer', 1, true), false); // nothing to resume
   assert.equal(shouldAttemptWarmResume('warm-per-reviewer', 2, true), true);
   assert.equal(shouldAttemptWarmResume('warm-per-reviewer', 2, false), false); // e.g. cursor
 });
 
-test('a non-reloadable runner under warm policy keeps tab identity but never resumes', () => {
-  // Cursor has no persisted session reload: warm policy still reuses its
-  // reviewer tab/context id (harmless — stable operator-facing identity), but
-  // every pass cold-launches because the resume gate is runner-capability-aware.
-  assert.equal(reviewerAllocationMode('warm-per-reviewer'), 'warm');
+test('a non-reloadable runner under warm policy never resumes', () => {
   for (const loopNumber of [1, 2, 3]) {
     assert.equal(shouldAttemptWarmResume('warm-per-reviewer', loopNumber, false), false);
   }
@@ -88,6 +81,12 @@ test('warm claim rejects reuse when any scope field differs', () => {
     null,
   );
   assert.equal(claimWarmReviewerSession({ ...scope, artifactScope: 'extra-review-1' }), null);
+  assert.ok(
+    claimWarmReviewerSession(
+      { ...scope, artifactScope: 'extra-review-1' },
+      { allowArtifactScopeChange: true },
+    ),
+  );
   assert.equal(claimWarmReviewerSession({ ...scope, runner: 'claude' }), null);
   assert.equal(claimWarmReviewerSession({ ...scope, subjectRef: 'feat/other' }), null);
 });

@@ -250,6 +250,7 @@ export class DispatchConfigEditor extends LitElement {
       order: index + 1,
       runner: loop.runner || 'same',
       validationDepth: loop.validationDepth ?? reviewValidationDepthForLoop(index, all.length),
+      ...(loop.sessionIntent ? { sessionIntent: loop.sessionIntent } : {}),
     }));
   }
 

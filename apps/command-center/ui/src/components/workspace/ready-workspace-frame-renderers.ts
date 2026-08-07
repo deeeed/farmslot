@@ -30,6 +30,7 @@ export interface ReadyWorkspaceFrameInput {
   renderTabContent: () => unknown;
   renderInputArtifactViewer: () => unknown;
   renderReviewRequestModal: () => unknown;
+  renderReviewFlowModal: () => unknown;
   beginRecovery: () => void;
   onResizeStart: (event: MouseEvent) => void;
   lightbox: {
@@ -118,6 +119,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
       @diff-modal-close=${input.diffModal.close}
     ></diff-viewer-modal>
     ${input.renderInputArtifactViewer()} ${input.renderReviewRequestModal()}
+    ${input.renderReviewFlowModal()}
   `;
 }
 

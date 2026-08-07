@@ -1,5 +1,5 @@
-// Review session policy: `fresh-per-pass` keeps today's
-// kill/relaunch behavior; `warm-per-reviewer` lets the SAME reviewer session be
+// Review session policy: `fresh-per-pass` starts fresh runner reasoning;
+// `warm-per-reviewer` lets the SAME reviewer session be
 // resumed for re-reviews within ONE run's review loop. Warm reuse is scoped
 // strictly to one run — same runId, task dir, artifact scope, runner, and
 // review subject lineage — and a session is never reusable once its run
@@ -53,15 +53,10 @@ export interface WarmReviewerSession extends WarmReviewerScope {
   forensicOnly: boolean;
 }
 
-/** Tab allocation for a pass: warm keeps one reviewer identity, fresh numbers a new tab. */
-export function reviewerAllocationMode(policy: ReviewSessionPolicy): 'warm' | 'fresh' {
-  return policy === 'warm-per-reviewer' ? 'warm' : 'fresh';
-}
-
 /**
  * Whether a pass may even LOOK for a resumable session. Pass 1 always cold-launches
  * (there is nothing to resume), and fresh-per-pass never resumes — preserving the
- * existing kill/relaunch behavior for every loop.
+ * existing fresh-runner behavior for every loop.
  */
 export function shouldAttemptWarmResume(
   policy: ReviewSessionPolicy,
@@ -95,13 +90,16 @@ export function registerWarmReviewerSession(
  * scope mismatch — reuse across runs, task dirs, artifact scopes, runners, or
  * review subjects is forbidden by design, not just unsupported.
  */
-export function claimWarmReviewerSession(scope: WarmReviewerScope): WarmReviewerSession | null {
+export function claimWarmReviewerSession(
+  scope: WarmReviewerScope,
+  options: { allowArtifactScopeChange?: boolean } = {},
+): WarmReviewerSession | null {
   const session = warmSessions.get(sessionKey(scope.runId, scope.runner));
   if (!session || session.forensicOnly) return null;
   if (
     session.runId !== scope.runId ||
     session.taskDir !== scope.taskDir ||
-    session.artifactScope !== scope.artifactScope ||
+    (!options.allowArtifactScopeChange && session.artifactScope !== scope.artifactScope) ||
     session.runner !== scope.runner ||
     session.subjectRef !== scope.subjectRef
   ) {

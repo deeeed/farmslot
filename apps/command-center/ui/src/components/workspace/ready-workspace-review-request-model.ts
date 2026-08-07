@@ -1,4 +1,8 @@
-import type { ReviewLoopRequest, ReviewValidationDepth } from '@farmslot/protocol';
+import type {
+  ReviewLoopRequest,
+  ReviewSessionIntent,
+  ReviewValidationDepth,
+} from '@farmslot/protocol';
 import { reviewValidationDepthForLoop } from '@farmslot/protocol';
 
 import type { ReviewLoopDraft, ReviewRunnerChoice } from './ready-workspace-modal-renderers.js';
@@ -10,7 +14,7 @@ export function readyRunnerLabel(runner: string, currentRunner: string): string 
 }
 
 export function createReadyReviewLoop(id: number, currentRunner: string): ReviewLoopDraft {
-  return { id, runner: currentRunner as ReviewRunnerChoice };
+  return { id, runner: currentRunner as ReviewRunnerChoice, sessionIntent: 'resume' };
 }
 
 export function addReadyReviewLoop(input: {
@@ -48,6 +52,14 @@ export function setReadyReviewLoopDepth(
   return loops.map((loop) => (loop.id === id ? { ...loop, validationDepth } : loop));
 }
 
+export function setReadyReviewLoopSessionIntent(
+  loops: ReviewLoopDraft[],
+  id: number,
+  sessionIntent: ReviewSessionIntent,
+): ReviewLoopDraft[] {
+  return loops.map((loop) => (loop.id === id ? { ...loop, sessionIntent } : loop));
+}
+
 export function readyReviewLoopRequestPayload(
   loops: ReviewLoopDraft[],
   currentRunner: string,
@@ -56,6 +68,7 @@ export function readyReviewLoopRequestPayload(
     order: index + 1,
     runner: (loop.runner || currentRunner) as ReviewRunnerChoice,
     validationDepth: loop.validationDepth ?? reviewValidationDepthForLoop(index, loops.length),
+    sessionIntent: loop.sessionIntent,
   }));
   return {
     loops: requests,

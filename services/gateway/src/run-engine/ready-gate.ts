@@ -344,6 +344,8 @@ export async function executePublishGateReviewPlan(
         validationDepth,
         artifactScope: reviewId,
         publicationReview: true,
+        reviewSessionIntent: planStep.sessionIntent ?? 'reset',
+        reviewSessionPolicy: 'warm-per-reviewer',
         // Configured review steps are true review loops: findings are fed back
         // to the original worker, the worker fixes them, then the same reviewer
         // re-reviews before the next configured reviewer starts.

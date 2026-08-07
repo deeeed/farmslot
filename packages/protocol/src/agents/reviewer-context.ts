@@ -19,15 +19,14 @@ export function reviewerRunnerToken(runner: string | null | undefined): string {
 }
 
 /**
- * Deterministic short reviewer tmux window name for one run.
- * - First instance of a runner: `rev-codex`
- * - Collisions / fresh tabs: `rev1-codex`, `rev2-codex`, …
- * Legacy `self-review` is never emitted here (kept for recognition only).
+ * Deterministic reviewer tmux window name for one run.
+ * One canonical window is retained per runner (`rev-codex`, `rev-grok`, …)
+ * and retargeted between review attempts. Legacy numbered names are recognized
+ * below for recovery only; this helper never emits them.
  */
-export function reviewerWindowName(runner: string | null | undefined, ordinal = 0): string {
+export function reviewerWindowName(runner: string | null | undefined): string {
   const token = reviewerRunnerToken(runner);
-  if (ordinal <= 0) return `rev-${token}`;
-  return `rev${ordinal}-${token}`;
+  return `rev-${token}`;
 }
 
 const REVIEWER_WINDOW_RE = /^rev(?:(\d+))?-([a-z0-9][a-z0-9-]{0,23})$/;
@@ -100,13 +99,6 @@ export interface AllocateReviewerContextInput {
   runId: string;
   runner: string;
   model?: string | null;
-  /** Existing contexts on this run (same-run only). */
-  existing: ReadonlyArray<Pick<AgentContext, 'id' | 'role' | 'runId' | 'runner' | 'target'>>;
-  /**
-   * `warm` reuses an existing same-runner reviewer tab when present.
-   * `fresh` always allocates a new numbered tab when the base name is taken.
-   */
-  mode?: 'warm' | 'fresh';
 }
 
 export interface AllocatedReviewerContext {
@@ -119,75 +111,16 @@ export interface AllocatedReviewerContext {
   model: string | null;
 }
 
-function existingReviewerWindows(
-  existing: AllocateReviewerContextInput['existing'],
-  runId: string,
-): Set<string> {
-  const names = new Set<string>();
-  for (const ctx of existing) {
-    if (ctx.runId && ctx.runId !== runId) continue;
-    if (!isReviewerAgentContext(ctx as AgentContext)) continue;
-    const window = ctx.target?.window?.trim() || (isReviewerWindowName(ctx.id) ? ctx.id : null);
-    if (window) names.add(window);
-    if (ctx.id === contextIdFor('self-review')) names.add(LEGACY_SELF_REVIEW_WINDOW);
-  }
-  return names;
-}
-
-function findWarmReviewer(
-  existing: AllocateReviewerContextInput['existing'],
-  runId: string,
-  runner: string,
-): { id: string; windowName: string } | null {
-  const token = reviewerRunnerToken(runner);
-  for (const ctx of existing) {
-    if (ctx.runId && ctx.runId !== runId) continue;
-    if (!isReviewerAgentRole(ctx.role) && !isReviewerWindowName(ctx.target?.window ?? ctx.id)) {
-      continue;
-    }
-    const window = ctx.target?.window?.trim() || (isReviewerWindowName(ctx.id) ? ctx.id : null);
-    if (!window) continue;
-    const parsed = parseReviewerWindowName(window);
-    if (parsed?.runnerToken === token) {
-      return { id: ctx.id, windowName: window };
-    }
-    if (window === LEGACY_SELF_REVIEW_WINDOW && reviewerRunnerToken(ctx.runner) === token) {
-      return { id: ctx.id, windowName: window };
-    }
-  }
-  return null;
-}
-
 /**
- * Allocate a same-run reviewer context id + short tmux window name.
- * Never reuses windows/ids from another runId.
+ * Resolve the one reviewer context/window owned by this runner. Review
+ * generations retarget this window; reset versus resume changes the runner
+ * session, never the tmux topology.
  */
 export function allocateReviewerContext(
   input: AllocateReviewerContextInput,
 ): AllocatedReviewerContext {
-  const { runId, runner, model = null, existing, mode = 'warm' } = input;
-  if (mode === 'warm') {
-    const warm = findWarmReviewer(existing, runId, runner);
-    if (warm) {
-      return {
-        id: warm.id,
-        role: 'self-review',
-        label: reviewerContextLabel(runner, warm.windowName, model),
-        windowName: warm.windowName,
-        runId,
-        runner,
-        model,
-      };
-    }
-  }
-
-  const taken = existingReviewerWindows(existing, runId);
-  let ordinal = 0;
-  let windowName = reviewerWindowName(runner, ordinal);
-  while (taken.has(windowName)) {
-    ordinal += 1;
-    windowName = reviewerWindowName(runner, ordinal);
-  }
+  const { runId, runner, model = null } = input;
+  const windowName = reviewerWindowName(runner);
 
   return {
     id: reviewerContextId(windowName),

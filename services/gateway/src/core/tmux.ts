@@ -189,6 +189,36 @@ export async function respawnTmuxWindowWithCommand(
   }
 }
 
+/** Ensure one stable, named tmux window exists before retargeting it. */
+export async function ensureTmuxWindow(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  session: string,
+  windowName: string,
+): Promise<'existing' | 'created'> {
+  const exactWindowExists = async () =>
+    (
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(
+          `list-windows -t ${shellQuote(`=${session}`)} -F '#{window_name}' 2>/dev/null | grep -Fxq ${shellQuote(windowName)}`,
+        ),
+      )
+    ).exitCode === 0;
+
+  if (await exactWindowExists()) return 'existing';
+  const created = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `new-window -t ${shellQuote(`=${session}`)} -n ${shellQuote(windowName)} -d 2>&1`,
+    ),
+  );
+  if (created.exitCode === 0) return 'created';
+  if (await exactWindowExists()) return 'existing';
+  throw new Error(
+    `Failed to create tmux window ${session}:${windowName}: ${created.stderr || created.stdout || `exit ${created.exitCode}`}`,
+  );
+}
+
 export const TMUX_ROLE_WINDOW_MIN_WIDTH = 80;
 export const TMUX_ROLE_WINDOW_MIN_HEIGHT = 24;
 
