@@ -303,7 +303,7 @@ function assertNoCycle(snapshot: WorkGraphSnapshot): void {
 
 export async function createWorkGraph(
   params: WorkGraphCreateParams,
-  originator: WorkOriginator = { kind: 'system' },
+  originator: WorkOriginator,
 ): Promise<{ graph: WorkGraphProjection }> {
   return withMutation(async () => {
     if (!params.project?.trim()) throw new Error('workGraph.create requires project');

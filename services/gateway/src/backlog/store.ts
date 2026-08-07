@@ -1173,7 +1173,7 @@ async function normalizeSourceFields(
 
 export async function createBacklogItem(
   params: BacklogCreateParams,
-  originator: WorkOriginator = { kind: 'system' },
+  originator: WorkOriginator,
 ): Promise<{ item: BacklogItem }> {
   return withBacklogMutation(async () => {
     if (!params.project?.trim()) throw new Error('Backlog item project is required');

@@ -111,14 +111,17 @@ async function freshStores() {
 
 test('linkDirectRunToMatchingBacklog soft-links candidate item matching sourceRef', async () => {
   const { backlog, runStore } = await freshStores();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Jira ticket already on the board',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_LINK,
-    flowType: 'fix-bug',
-    status: 'candidate',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Jira ticket already on the board',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_LINK,
+      flowType: 'fix-bug',
+      status: 'candidate',
+    },
+    { kind: 'system' },
+  );
   assert.equal(created.item.status, 'candidate');
   assert.equal(created.item.runId, undefined);
 
@@ -143,14 +146,17 @@ test('linkDirectRunToMatchingBacklog soft-links candidate item matching sourceRe
 
 test('linkDirectRunToMatchingBacklog warns when matching item is already run-linked', async () => {
   const { backlog, runStore } = await freshStores();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Already linked elsewhere',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_WARN,
-    flowType: 'fix-bug',
-    status: 'ready',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Already linked elsewhere',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_WARN,
+      flowType: 'fix-bug',
+      status: 'ready',
+    },
+    { kind: 'system' },
+  );
 
   // Establish the existing link through the soft-link path (no live-object mutate).
   const firstRun = runStore.createRun({
@@ -183,14 +189,17 @@ test('linkDirectRunToMatchingBacklog warns when matching item is already run-lin
 
 test('linkDirectRunToMatchingBacklog returns none when no sourceRef matches', async () => {
   const { backlog, runStore } = await freshStores();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Unrelated board item',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_NONE,
-    flowType: 'fix-bug',
-    status: 'candidate',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Unrelated board item',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_NONE,
+      flowType: 'fix-bug',
+      status: 'candidate',
+    },
+    { kind: 'system' },
+  );
 
   const run = runStore.createRun({
     flowType: 'fix-bug',
@@ -212,14 +221,17 @@ test('runCreate soft-links jira backlog item by sourceRef and stamps run.backlog
   const { backlog } = await freshStores();
   const { runCreate } = await import('../methods/run.js');
   const runStore = await import('../runs/store.js');
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Direct dispatch should attach this item',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_RUNCREATE,
-    flowType: 'fix-bug',
-    status: 'ready',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Direct dispatch should attach this item',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_RUNCREATE,
+      flowType: 'fix-bug',
+      status: 'ready',
+    },
+    { kind: 'system' },
+  );
 
   const { run } = await runCreate(
     {
@@ -257,16 +269,19 @@ test('runCreate carries matching backlog spec context through a direct soft-link
     '# Baseline\n\n## Acceptance Criteria\n\n- Capture production Sentry p75\n',
     'utf-8',
   );
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Direct dispatch with attached spec',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_RECONCILE,
-    flowType: 'dev',
-    status: 'ready',
-    specPath,
-    notes: 'Preserve the operator baseline context.',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Direct dispatch with attached spec',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_RECONCILE,
+      flowType: 'dev',
+      status: 'ready',
+      specPath,
+      notes: 'Preserve the operator baseline context.',
+    },
+    { kind: 'system' },
+  );
 
   const { run } = await runCreate(
     {
@@ -297,14 +312,17 @@ test('runCreate skips soft-link when params.backlogItemId is set (queue handoff 
   const { backlog } = await freshStores();
   const { runCreate } = await import('../methods/run.js');
   const runStore = await import('../runs/store.js');
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Queue claim owns this item via markBacklogRunStarted',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_SKIP,
-    flowType: 'fix-bug',
-    status: 'ready',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Queue claim owns this item via markBacklogRunStarted',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_SKIP,
+      flowType: 'fix-bug',
+      status: 'ready',
+    },
+    { kind: 'system' },
+  );
 
   // Passing backlogItemId is the queue-claim path: soft-link must not run
   // (markBacklogRunStarted owns the status/runId transition after create).
@@ -338,14 +356,17 @@ test('runCreate awaitPersist soft-links after durable stamp and persists backlog
   const { backlog } = await freshStores();
   const { runCreate } = await import('../methods/run.js');
   const runStore = await import('../runs/store.js');
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Non-backlog queue row still soft-links on awaitPersist path',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_AWAIT,
-    flowType: 'fix-bug',
-    status: 'ready',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Non-backlog queue row still soft-links on awaitPersist path',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_AWAIT,
+      flowType: 'fix-bug',
+      status: 'ready',
+    },
+    { kind: 'system' },
+  );
 
   // Production claim path for queue rows without backlogItemId (dispatch.queue.add
   // forbids backlog metadata): awaitPersist + durableStamp, then soft-link +
@@ -395,14 +416,17 @@ test('runCreate awaitPersist soft-links after durable stamp and persists backlog
 
 test('reconcileBacklogRun durably links a historical graph run and applies terminal status', async () => {
   const { backlog, runStore } = await freshStores();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Historical direct run missed its backlog handoff',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_RECONCILE,
-    flowType: 'fix-bug',
-    status: 'candidate',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Historical direct run missed its backlog handoff',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_RECONCILE,
+      flowType: 'fix-bug',
+      status: 'candidate',
+    },
+    { kind: 'system' },
+  );
   backlog.mutateBacklogItemForTests(created.item.id, (item) => {
     item.workGraphId = 'graph-1';
     item.workNodeId = 'node-1';
@@ -447,14 +471,17 @@ test('reconcileBacklogRun durably links a historical graph run and applies termi
 
 test('reconcileBacklogRun rejects source mismatches without linking either side', async () => {
   const { backlog, runStore } = await freshStores();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Canonical board identity',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_RECONCILE_MISMATCH,
-    flowType: 'fix-bug',
-    status: 'candidate',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Canonical board identity',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_RECONCILE_MISMATCH,
+      flowType: 'fix-bug',
+      status: 'candidate',
+    },
+    { kind: 'system' },
+  );
   const run = runStore.createRun({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
@@ -487,14 +514,17 @@ test('reconcileBacklogRun rejects source mismatches without linking either side'
 
 test('loadBacklog recovers a terminal item projection from an explicit pending repair', async () => {
   const { backlog, runStore } = await freshStores();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Backlog projection was interrupted after run persistence',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_RECONCILE,
-    flowType: 'fix-bug',
-    status: 'candidate',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Backlog projection was interrupted after run persistence',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_RECONCILE,
+      flowType: 'fix-bug',
+      status: 'candidate',
+    },
+    { kind: 'system' },
+  );
   await backlog.closeShippedBacklogItem({ itemId: created.item.id });
   const run = runStore.createRun({
     flowType: 'fix-bug',
@@ -530,14 +560,17 @@ test('loadBacklog recovers a terminal item projection from an explicit pending r
 
 test('loadBacklog keeps a queued retry authoritative over a historical run backlink', async () => {
   const { backlog, runStore } = await freshStores();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Completed work was explicitly queued for another pass',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_RECONCILE,
-    flowType: 'fix-bug',
-    status: 'candidate',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Completed work was explicitly queued for another pass',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_RECONCILE,
+      flowType: 'fix-bug',
+      status: 'candidate',
+    },
+    { kind: 'system' },
+  );
   const run = runStore.createRun({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
@@ -572,14 +605,17 @@ test('loadBacklog keeps a queued retry authoritative over a historical run backl
 
 test('reconcileBacklogRun rejects a second run backlink for the same item', async () => {
   const { backlog, runStore } = await freshStores();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Only one historical run may own the item',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_RECONCILE,
-    flowType: 'fix-bug',
-    status: 'candidate',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Only one historical run may own the item',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_RECONCILE,
+      flowType: 'fix-bug',
+      status: 'candidate',
+    },
+    { kind: 'system' },
+  );
   const first = runStore.createRun({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
@@ -618,14 +654,17 @@ test('reconcileBacklogRun rejects a second run backlink for the same item', asyn
 
 test('reconcileBacklogRun makes the selected run authoritative over a stale terminal item', async () => {
   const { backlog, runStore } = await freshStores();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Terminal projection lost its run identity',
-    sourceKind: 'jira',
-    sourceRef: SOURCE_REF_RECONCILE,
-    flowType: 'fix-bug',
-    status: 'candidate',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Terminal projection lost its run identity',
+      sourceKind: 'jira',
+      sourceRef: SOURCE_REF_RECONCILE,
+      flowType: 'fix-bug',
+      status: 'candidate',
+    },
+    { kind: 'system' },
+  );
   await backlog.closeShippedBacklogItem({ itemId: created.item.id });
   const run = runStore.createRun({
     flowType: 'fix-bug',

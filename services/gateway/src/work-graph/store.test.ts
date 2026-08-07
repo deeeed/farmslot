@@ -102,20 +102,26 @@ async function createReadyBacklogItem(
   title: string,
   project = 'farmslot-farm',
 ) {
-  return backlog.createBacklogItem({
-    project,
-    title,
-    sourceKind: 'manual',
-    flowType: 'dev',
-    status: 'ready',
-  });
+  return backlog.createBacklogItem(
+    {
+      project,
+      title,
+      sourceKind: 'manual',
+      flowType: 'dev',
+      status: 'ready',
+    },
+    { kind: 'system' },
+  );
 }
 
 test('work graph rejects cycles while authoring edges', async () => {
   const { backlog, workGraph } = await freshStores();
   const first = await createReadyBacklogItem(backlog, 'First graph task');
   const second = await createReadyBacklogItem(backlog, 'Second graph task');
-  const graph = await workGraph.createWorkGraph({ project: 'farmslot-farm', title: 'Cycle graph' });
+  const graph = await workGraph.createWorkGraph(
+    { project: 'farmslot-farm', title: 'Cycle graph' },
+    { kind: 'system' },
+  );
   await workGraph.addWorkGraphNode({
     graphId: graph.graph.graph.id,
     id: 'wn_first',
@@ -149,10 +155,13 @@ test('work graph can use an owner scope different from backlog project', async (
   const { backlog, workGraph } = await freshStores();
   const upstream = await createReadyBacklogItem(backlog, 'Gateway projection');
   const downstream = await createReadyBacklogItem(backlog, 'Client integration');
-  const graph = await workGraph.createWorkGraph({
-    project: 'cross-project-epic',
-    title: 'Cross project graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'cross-project-epic',
+      title: 'Cross project graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
 
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_gateway', backlogItemId: upstream.item.id });
@@ -168,38 +177,44 @@ test('work graph can use an owner scope different from backlog project', async (
 
 test('work graph keeps launch-plan backlog item as one node and queues baseline only', async () => {
   const { backlog, queue, workGraph } = await freshStores();
-  const item = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Compare launch candidates',
-    sourceKind: 'manual',
-    flowType: 'dev',
-    status: 'ready',
-    launchPlan: {
-      id: 'lp_graph',
-      version: 1,
-      candidates: [
-        {
-          id: 'baseline',
-          role: 'baseline',
-          runner: 'claude',
-          model: 'opus',
-          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
-        },
-        {
-          id: 'comparison',
-          role: 'comparison',
-          runner: 'claude',
-          model: 'sonnet',
-          variant: 'claude-sonnet',
-          slotPolicy: { kind: 'spread' },
-        },
-      ],
+  const item = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Compare launch candidates',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      status: 'ready',
+      launchPlan: {
+        id: 'lp_graph',
+        version: 1,
+        candidates: [
+          {
+            id: 'baseline',
+            role: 'baseline',
+            runner: 'claude',
+            model: 'opus',
+            slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+          },
+          {
+            id: 'comparison',
+            role: 'comparison',
+            runner: 'claude',
+            model: 'sonnet',
+            variant: 'claude-sonnet',
+            slotPolicy: { kind: 'spread' },
+          },
+        ],
+      },
     },
-  });
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Launch plan graph',
-  });
+    { kind: 'system' },
+  );
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Launch plan graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_launch', backlogItemId: item.item.id });
 
@@ -217,10 +232,13 @@ test('work graph keeps launch-plan backlog item as one node and queues baseline 
 test('reference blockers are v1 graph nodes but never dispatchable', async () => {
   const { backlog, queue, workGraph } = await freshStores();
   const downstream = await createReadyBacklogItem(backlog, 'Client release task');
-  const graph = await workGraph.createWorkGraph({
-    project: 'cross-project-epic',
-    title: 'External blocker graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'cross-project-epic',
+      title: 'External blocker graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({
     graphId,
@@ -309,10 +327,13 @@ test('reference blockers are v1 graph nodes but never dispatchable', async () =>
 test('reference updates reactivate done graphs and surface regressed dependencies', async () => {
   const { backlog, queue, runs, workGraph } = await freshStores();
   const downstream = await createReadyBacklogItem(backlog, 'Client already completed');
-  const graph = await workGraph.createWorkGraph({
-    project: 'cross-project-epic',
-    title: 'Completed reference graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'cross-project-epic',
+      title: 'Completed reference graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({
     graphId,
@@ -411,10 +432,13 @@ test('reference updates reactivate done graphs and surface regressed dependencie
 test('completed runs stay succeeded when historical reconciliation bypassed a start dependency', async () => {
   const { backlog, runs, workGraph } = await freshStores();
   const downstream = await createReadyBacklogItem(backlog, 'Historically completed work');
-  const graph = await workGraph.createWorkGraph({
-    project: 'cross-project-epic',
-    title: 'Historical reconciliation graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'cross-project-epic',
+      title: 'Historical reconciliation graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({
     graphId,
@@ -465,10 +489,13 @@ test('completed runs stay succeeded when historical reconciliation bypassed a st
 
 test('failed required edges targeting reference nodes keep graph attention visible', async () => {
   const { workGraph } = await freshStores();
-  const graph = await workGraph.createWorkGraph({
-    project: 'cross-project-epic',
-    title: 'Failed reference dependency graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'cross-project-epic',
+      title: 'Failed reference dependency graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   for (const id of ['wn_reference_upstream', 'wn_reference_downstream']) {
     await workGraph.addWorkGraphNode({
@@ -513,10 +540,13 @@ test('completion edges do not block downstream start enqueue', async () => {
   const contract = await createReadyBacklogItem(backlog, 'Shared contract');
   const gateway = await createReadyBacklogItem(backlog, 'Gateway projection');
   const client = await createReadyBacklogItem(backlog, 'Client can start early');
-  const graph = await workGraph.createWorkGraph({
-    project: 'cross-project-epic',
-    title: 'Completion blocker graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'cross-project-epic',
+      title: 'Completion blocker graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_contract', backlogItemId: contract.item.id });
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_gateway', backlogItemId: gateway.item.id });
@@ -562,10 +592,13 @@ test('satisfied completion rebase edges surface operator attention', async () =>
   const { backlog, workGraph } = await freshStores();
   const gateway = await createReadyBacklogItem(backlog, 'Gateway projection');
   const client = await createReadyBacklogItem(backlog, 'Client already started');
-  const graph = await workGraph.createWorkGraph({
-    project: 'cross-project-epic',
-    title: 'Completion rebase graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'cross-project-epic',
+      title: 'Completion rebase graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_gateway', backlogItemId: gateway.item.id });
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_client', backlogItemId: client.item.id });
@@ -622,10 +655,13 @@ test('failed completion edges move dependents to needs-attention', async () => {
   const { backlog, workGraph } = await freshStores();
   const gateway = await createReadyBacklogItem(backlog, 'Gateway projection');
   const client = await createReadyBacklogItem(backlog, 'Client blocked at completion');
-  const graph = await workGraph.createWorkGraph({
-    project: 'cross-project-epic',
-    title: 'Failed completion graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'cross-project-epic',
+      title: 'Failed completion graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_gateway', backlogItemId: gateway.item.id });
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_client', backlogItemId: client.item.id });
@@ -662,11 +698,14 @@ test('work graph rejects unsafe explicit ids', async () => {
 
   await assert.rejects(
     () =>
-      workGraph.createWorkGraph({
-        id: '../escape',
-        project: 'farmslot-farm',
-        title: 'Unsafe graph id',
-      }),
+      workGraph.createWorkGraph(
+        {
+          id: '../escape',
+          project: 'farmslot-farm',
+          title: 'Unsafe graph id',
+        },
+        { kind: 'system' },
+      ),
     /Invalid identifier/,
   );
 });
@@ -682,10 +721,13 @@ test('scheduler ignores stale backlog runs that were not graph-authorized', asyn
     backlogItemId: upstream.item.id,
   });
   runs.updateRun(staleRun.id, { status: 'done', completedAt: new Date().toISOString() });
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Stale run graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Stale run graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({
     graphId,
@@ -725,10 +767,13 @@ test('scheduler ignores stale backlog runs that were not graph-authorized', asyn
 test('graph-linked backlog items reject manual enqueue and auto-dispatch skips them', async () => {
   const { backlog, queue, workGraph } = await freshStores();
   const item = await createReadyBacklogItem(backlog, 'Graph owned task');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Protected graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Protected graph',
+    },
+    { kind: 'system' },
+  );
   await workGraph.addWorkGraphNode({
     graphId: graph.graph.graph.id,
     id: 'wn_owned',
@@ -750,10 +795,13 @@ test('graph-linked backlog items reject manual enqueue and auto-dispatch skips t
 test('scheduler respects graph node auto-dispatch opt-out until re-enabled', async () => {
   const { backlog, queue, workGraph } = await freshStores();
   const item = await createReadyBacklogItem(backlog, 'Operator staged graph task');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Operator controlled graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Operator controlled graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({
     graphId,
@@ -779,10 +827,13 @@ test('scheduler respects graph node auto-dispatch opt-out until re-enabled', asy
 test('manual schedulerTick forceEnqueue bypasses auto-dispatch opt-out', async () => {
   const { backlog, queue, workGraph } = await freshStores();
   const item = await createReadyBacklogItem(backlog, 'Manual force enqueue graph task');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Manual force enqueue graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Manual force enqueue graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({
     graphId,
@@ -811,10 +862,13 @@ test('scheduler reconciles restart/idempotency and does not duplicate graph enqu
   const { backlog, runs, workGraph } = await freshStores();
   const upstream = await createReadyBacklogItem(backlog, 'Upstream task');
   const downstream = await createReadyBacklogItem(backlog, 'Downstream task');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Fan out graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Fan out graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_upstream', backlogItemId: upstream.item.id });
   await workGraph.addWorkGraphNode({
@@ -867,18 +921,24 @@ test('scheduler reconciles restart/idempotency and does not duplicate graph enqu
 
 test('scheduler isolates an unenqueueable node and continues scheduling siblings', async () => {
   const { backlog, workGraph } = await freshStores();
-  const blocked = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Candidate task',
-    sourceKind: 'manual',
-    flowType: 'dev',
-    status: 'candidate',
-  });
+  const blocked = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Candidate task',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      status: 'candidate',
+    },
+    { kind: 'system' },
+  );
   const ready = await createReadyBacklogItem(backlog, 'Ready sibling task');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Isolation graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Isolation graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_blocked', backlogItemId: blocked.item.id });
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_ready', backlogItemId: ready.item.id });
@@ -915,10 +975,13 @@ test('scheduler isolates an unenqueueable node and continues scheduling siblings
 test('scheduler retries enqueue when completed ledger is stale after backlog reset', async () => {
   const { backlog, queue, runs, workGraph } = await freshStores();
   const created = await createReadyBacklogItem(backlog, 'Retry stale ledger');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Retry stale ledger graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Retry stale ledger graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   const nodeId = 'wn_retry';
   await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
@@ -956,10 +1019,13 @@ test('scheduler retries enqueue when completed ledger is stale after backlog res
 test('scheduler resets an orphaned running node once its run is deleted', async () => {
   const { backlog, queue, runs, workGraph } = await freshStores();
   const created = await createReadyBacklogItem(backlog, 'Orphaned running node');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Orphan running graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Orphan running graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   const nodeId = 'wn_orphan_running';
   await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
@@ -1007,10 +1073,13 @@ test('scheduler resets an orphaned running node once its run is deleted', async 
 test('operator cancellation holds graph work until an explicit retry', async () => {
   const { backlog, backlogMethods, queue, runs, workGraph } = await freshStores();
   const created = await createReadyBacklogItem(backlog, 'Cancelled graph node');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Cancelled graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Cancelled graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   const nodeId = 'wn_cancelled';
   await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
@@ -1075,10 +1144,13 @@ test('operator cancellation holds graph work until an explicit retry', async () 
 test('collision redirect keeps the successor authoritative for the graph node', async () => {
   const { backlog, queue, runs, workGraph } = await freshStores();
   const created = await createReadyBacklogItem(backlog, 'Redirected graph node');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Redirected graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Redirected graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   const nodeId = 'wn_redirected';
   await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
@@ -1123,14 +1195,20 @@ test('manual gate resolution rejects ambiguous gate ids and can disambiguate by 
   const firstDownstream = await createReadyBacklogItem(backlog, 'First downstream');
   const secondUpstream = await createReadyBacklogItem(backlog, 'Second upstream');
   const secondDownstream = await createReadyBacklogItem(backlog, 'Second downstream');
-  const firstGraph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'First gated graph',
-  });
-  const secondGraph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Second gated graph',
-  });
+  const firstGraph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'First gated graph',
+    },
+    { kind: 'system' },
+  );
+  const secondGraph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Second gated graph',
+    },
+    { kind: 'system' },
+  );
   const firstGraphId = firstGraph.graph.graph.id;
   const secondGraphId = secondGraph.graph.graph.id;
   await workGraph.addWorkGraphNode({
@@ -1198,10 +1276,13 @@ test('manual gate evaluation uses the latest resolution for the edge', async () 
   const { backlog, workGraph } = await freshStores();
   const upstream = await createReadyBacklogItem(backlog, 'Gate upstream');
   const downstream = await createReadyBacklogItem(backlog, 'Gate downstream');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Corrected gate graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Corrected gate graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({
     graphId,
@@ -1261,17 +1342,23 @@ test('manual gate evaluation uses the latest resolution for the edge', async () 
 test('mark-ready unlock is idempotent across repeated scheduler ticks', async () => {
   const { backlog, runs, workGraph } = await freshStores();
   const upstream = await createReadyBacklogItem(backlog, 'Mark ready upstream');
-  const downstream = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Mark ready downstream',
-    sourceKind: 'manual',
-    flowType: 'dev',
-    status: 'candidate',
-  });
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Mark ready graph',
-  });
+  const downstream = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Mark ready downstream',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      status: 'candidate',
+    },
+    { kind: 'system' },
+  );
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Mark ready graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({
     graphId,
@@ -1322,10 +1409,13 @@ test('failed required upstream edges move dependents to needs-attention', async 
   const { backlog, runs, workGraph } = await freshStores();
   const upstream = await createReadyBacklogItem(backlog, 'Failed upstream task');
   const downstream = await createReadyBacklogItem(backlog, 'Blocked downstream task');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Failure graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Failure graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({
     graphId,
@@ -1378,10 +1468,13 @@ test('implicit backlog node ids stay unique for long similar titles', async () =
     backlog,
     'Roadmap graph composer implementation shared prefix UI slice',
   );
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Implicit node id graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Implicit node id graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
 
   await workGraph.addWorkGraphNode({ graphId, backlogItemId: first.item.id });
@@ -1395,10 +1488,13 @@ test('planning graph removal detaches backlog nodes and removes incident edges',
   const { backlog, workGraph } = await freshStores();
   const first = await createReadyBacklogItem(backlog, 'Composable first task');
   const second = await createReadyBacklogItem(backlog, 'Composable second task');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Editable planning graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Editable planning graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
 
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_first', backlogItemId: first.item.id });
@@ -1440,10 +1536,13 @@ test('planning graph removal detaches backlog nodes and removes incident edges',
 test('active graph removal is rejected', async () => {
   const { backlog, workGraph } = await freshStores();
   const item = await createReadyBacklogItem(backlog, 'Active graph task');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Active graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Active graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_active', backlogItemId: item.item.id });
   await workGraph.activateWorkGraph({ graphId });
@@ -1461,10 +1560,13 @@ test('active graph removal is rejected', async () => {
 test('a succeeded node is reclaimed once its run is deleted and the item reopened', async () => {
   const { backlog, queue, runs, workGraph } = await freshStores();
   const created = await createReadyBacklogItem(backlog, 'Redispatch after delete');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Redispatch graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Redispatch graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   const nodeId = 'wn_succeeded_reclaim';
   await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
@@ -1512,10 +1614,13 @@ test('waiting node after fail+delete reclaims and re-enqueues despite completed 
   // so Dispatch reported "still waiting on upstream" and never re-queued.
   const { backlog, queue, runs, workGraph } = await freshStores();
   const created = await createReadyBacklogItem(backlog, 'Waiting stuck after delete');
-  const graph = await workGraph.createWorkGraph({
-    project: 'farmslot-farm',
-    title: 'Waiting reclaim graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'farmslot-farm',
+      title: 'Waiting reclaim graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   const nodeId = 'wn_waiting_reclaim';
   await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
@@ -1593,10 +1698,13 @@ test('a merged upstream unblocks its dependent', async () => {
   const { backlog, runs, workGraph } = await freshStores();
   const upstream = await createReadyBacklogItem(backlog, 'Upstream that ships');
   const downstream = await createReadyBacklogItem(backlog, 'Dependent waiting on the merge');
-  const graph = await workGraph.createWorkGraph({
-    project: 'cross-project-epic',
-    title: 'Merged evidence graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'cross-project-epic',
+      title: 'Merged evidence graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_upstream', backlogItemId: upstream.item.id });
   await workGraph.addWorkGraphNode({
@@ -1657,10 +1765,13 @@ test('a targeted tick recomputes a graph stranded in needs-attention', async () 
   const { backlog, workGraph } = await freshStores();
   const upstream = await createReadyBacklogItem(backlog, 'Upstream');
   const downstream = await createReadyBacklogItem(backlog, 'Dependent');
-  const graph = await workGraph.createWorkGraph({
-    project: 'cross-project-epic',
-    title: 'Stranded graph',
-  });
+  const graph = await workGraph.createWorkGraph(
+    {
+      project: 'cross-project-epic',
+      title: 'Stranded graph',
+    },
+    { kind: 'system' },
+  );
   const graphId = graph.graph.graph.id;
   await workGraph.addWorkGraphNode({ graphId, id: 'wn_upstream', backlogItemId: upstream.item.id });
   await workGraph.addWorkGraphNode({

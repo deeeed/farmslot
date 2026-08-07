@@ -1467,7 +1467,7 @@ async function promoteRoadmapItemUnlocked(
 
 export async function promoteRoadmapItem(
   params: RoadmapPromoteParams,
-  originator: WorkOriginator = { kind: 'system' },
+  originator: WorkOriginator,
 ): Promise<RoadmapPromoteResult> {
   return withRoadmapMutation(() => promoteRoadmapItemUnlocked(params, originator));
 }
