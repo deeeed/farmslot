@@ -19,6 +19,11 @@ const callbackFixturePath = resolve(
   repoRoot,
   'scripts/quality/fixtures/authorization-conformance-callback.ts',
 );
+const queueFixturePath = resolve(
+  repoRoot,
+  'scripts/quality/fixtures/authorization-conformance-queue.ts',
+);
+const dispatchQueuePath = resolve(repoRoot, 'services/gateway/src/index.ts');
 const routePaths = [
   'services/gateway/src/server/route-method.ts',
   'services/gateway/src/server/run-route.ts',
@@ -100,6 +105,7 @@ const rawAllowlist = JSON.parse(readFileSync(allowlistPath, 'utf8'));
 const problems = [];
 problems.push(...webhookOriginatorProblems());
 problems.push(...callbackIndirectionFixtureProblems(program, checker));
+problems.push(...queueFixtureProblems(program, checker));
 
 if (!Array.isArray(rawAllowlist) || rawAllowlist.length !== 8) {
   problems.push('authorization allowlist must be a top-level array with exactly eight entries');
@@ -146,6 +152,14 @@ for (const entry of entries) {
   }
   normalizedEntries.push({ ...entry, reachabilityHash });
 }
+
+problems.push(
+  ...dispatchQueueReachabilityProblems(
+    new Set(normalizedEntries.map((entry) => entry.method)),
+    program,
+    checker,
+  ),
+);
 
 for (const method of routed) {
   if (!allMethods.includes(method)) problems.push(`routed method is unclassified: ${method}`);
@@ -315,7 +329,7 @@ function analysisProgram() {
     throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'));
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dirname(configPath));
   const program = ts.createProgram({
-    rootNames: [...parsed.fileNames, callbackFixturePath],
+    rootNames: [...parsed.fileNames, callbackFixturePath, queueFixturePath],
     options: parsed.options,
   });
   return { program, checker: program.getTypeChecker() };
@@ -336,11 +350,20 @@ function analyzeCaseReachability(path, method, registryMap, program, checker) {
   findCase(file);
   if (!root) return null;
 
+  return analyzeFunctionReachability(root, registryMap, program, checker, new Set([method]));
+}
+
+function analyzeFunctionReachability(root, registryMap, program, checker, targetMethods) {
   const reachable = new Set([nodeIdentity(root)]);
+  const reachableMethods = new Set();
   const findings = new Set();
   const visitedDeclarations = new Set();
 
   const visit = (node) => {
+    if (ts.isCaseClause(node)) {
+      const method = caseMethod(node.expression, node.getSourceFile(), registryMap);
+      if (targetMethods.has(method)) reachableMethods.add(method);
+    }
     if (ts.isCallExpression(node)) inspectCall(node);
     if (ts.isIdentifier(node) && authoritySensitiveNames.has(node.text)) {
       findings.add(`reads safety-tier or stored-action authority at ${nodeLocation(node)}`);
@@ -395,7 +418,53 @@ function analyzeCaseReachability(path, method, registryMap, program, checker) {
   };
 
   visit(root);
-  return { reachable, findings };
+  return { reachable, findings, reachableMethods };
+}
+
+function dispatchQueueReachabilityProblems(targetMethods, program, checker) {
+  const file = program.getSourceFile(dispatchQueuePath);
+  if (!file) return [`TypeScript program did not include ${dispatchQueuePath}`];
+  const callback = findDispatchQueueCallback(file);
+  if (!callback) {
+    return ['dispatch queue fire callback could not be resolved from initDispatchQueue'];
+  }
+  const analysis = analyzeFunctionReachability(callback, new Map(), program, checker, targetMethods);
+  return [...analysis.reachableMethods].map(
+    (method) => `allowlisted method ${method} is reachable from the dispatch queue fire path`,
+  );
+}
+
+function queueFixtureProblems(program, checker) {
+  const file = program.getSourceFile(queueFixturePath);
+  if (!file) return ['authorization queue-fire negative fixture was not included'];
+  const callback = findDispatchQueueCallback(file);
+  if (!callback) return ['authorization queue-fire negative fixture has no dispatch callback'];
+  const analysis = analyzeFunctionReachability(
+    callback,
+    new Map(),
+    program,
+    checker,
+    new Set(['nodes.list']),
+  );
+  if (analysis.reachableMethods.has('nodes.list')) return [];
+  return ['authorization queue-fire negative fixture was not rejected'];
+}
+
+function findDispatchQueueCallback(file) {
+  let callback;
+  const visit = (node) => {
+    if (callback) return;
+    if (ts.isCallExpression(node) && calledName(node.expression) === 'initDispatchQueue') {
+      const candidate = node.arguments[1];
+      if (candidate && (ts.isArrowFunction(candidate) || ts.isFunctionExpression(candidate))) {
+        callback = candidate;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return callback;
 }
 
 function callbackIndirectionFixtureProblems(program, checker) {
