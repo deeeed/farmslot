@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 
-import { callLLM, fallbackDoneTextDelta, TIER_MAP } from './index.js';
+import { callLLM, fallbackDoneTextDelta, throwOnTransportStop, TIER_MAP } from './index.js';
 
 const piModels = builtinModels();
 const getModelById = (provider: string, model: string): unknown =>
@@ -25,6 +25,27 @@ test('streaming fallback emits done text only when deltas were absent', () => {
   assert.equal(fallbackDoneTextDelta('partial', 'final answer', 'stop'), null);
   assert.equal(fallbackDoneTextDelta('', 'tool preface', 'toolUse'), null);
   assert.equal(fallbackDoneTextDelta('', '', 'stop'), null);
+});
+
+test('throwOnTransportStop throws on transport stopReasons with provider context', () => {
+  for (const stopReason of ['error', 'aborted']) {
+    assert.throws(
+      () =>
+        throwOnTransportStop('openai-codex', 'standard', 'auth-profile', stopReason, 401, {
+          'x-request-id': 'req-1',
+        }),
+      (err: Error) =>
+        err.message.includes(`reason=${stopReason}`) &&
+        err.message.includes('http=401') &&
+        err.message.includes('x-request-id=req-1'),
+    );
+  }
+});
+
+test('throwOnTransportStop passes clean and truncation stopReasons through', () => {
+  for (const stopReason of ['stop', 'length', 'toolUse', undefined]) {
+    throwOnTransportStop('openai-codex', 'standard', 'auth-profile', stopReason, 200, undefined);
+  }
 });
 
 test('callLLM can fail closed instead of using CLI fallback without API auth', async () => {

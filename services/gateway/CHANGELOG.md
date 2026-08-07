@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(llm): surface transport failures (`stopReason` error/aborted, including streaming `error` events) in `callLLMChat` instead of returning empty text — improvement analyses now terminalize as a real provider error rather than "LLM returned no response" / `no-changes`; chat results also expose `stopReason` so callers can flag `length` truncation.
+
 - fix(self-review): keep long worker-fix passes alive while their explicit fix checklist advances, even if the ambient worker checklist target changes.
 
 - fix(run-engine): preserve an existing fix-bug/dev feature branch without reset or clean when replaying from prepare instead of recreating it from main or discarding unpublished work.
