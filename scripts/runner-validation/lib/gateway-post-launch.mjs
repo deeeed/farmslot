@@ -206,8 +206,8 @@ process.stdout.write(JSON.stringify({ delivered }) + '\\n', () => {
   };
 }
 
-/** Invoke the production retained-session handoff against a local tmux target. */
-export function runGatewayRetainedHandoff({
+/** Execute the production repeat-review resume path against a local runner session. */
+export function runGatewayRepeatReviewResume({
   repo,
   target,
   runner,
@@ -216,14 +216,18 @@ export function runGatewayRetainedHandoff({
   prompt,
   runnerPath,
   model,
+  slotId = 'runner-validate-local',
+  currentSlotId = slotId,
+  sessionIntent = 'resume',
+  expectedKind = 'resumed',
   timeoutMs = 120_000,
 }) {
   const snippet = `
 import os from 'node:os';
-import { deliverPromptToRetainedRunnerSession } from './services/gateway/src/runners/session-reactivation.ts';
+import { attemptRepeatReviewResume, resolveRepeatReviewResumePlan } from './services/gateway/src/run-engine/review-session-chain.ts';
 
 const vars = {
-  slotId: 'runner-validate-local',
+  slotId: ${JSON.stringify(slotId)},
   machine: os.hostname(),
   platform: 'local',
   host: 'localhost',
@@ -246,19 +250,68 @@ const vars = {
   resourceVars: {},
 };
 
-const result = await deliverPromptToRetainedRunnerSession({
+const current = {
+  flowType: 'review-pr',
+  project: 'farmslot-farm',
+  slotId: ${JSON.stringify(currentSlotId)},
+  repeatReviewContext: {
+    version: 1,
+    chainId: 'review-generation-1',
+    generation: 2,
+    priorRunId: 'review-generation-1',
+    priorFamilyId: 'review-family',
+    repository: 'deeeed/farmslot',
+    prNumber: 1,
+    priorReviewedHeadSha: '1111111',
+    currentHeadSha: '2222222',
+    verdict: 'pass',
+    unresolvedFindings: [],
+    artifactRefs: [],
+    farmslotEvidenceRefs: [],
+    contextMode: 'reuse',
+    reviewScope: 'incremental',
+    validationDepth: 'static-code',
+    sessionIntent: ${JSON.stringify(sessionIntent)},
+    priorGenerations: [],
+  },
+};
+const prior = {
+  id: 'review-generation-1',
+  familyId: 'review-family',
+  flowType: 'review-pr',
+  status: 'done',
+  project: 'farmslot-farm',
+  slotId: ${JSON.stringify(slotId)},
+  ticketOrPr: 'deeeed/farmslot#1',
+  repeatReviewContext: null,
+  agentContexts: [{
+    id: 'review-context-1',
+    role: 'review',
+    label: 'Independent review',
+    runner: ${JSON.stringify(runner)},
+    slotId: ${JSON.stringify(slotId)},
+    runId: 'review-generation-1',
+    runnerSessionId: ${JSON.stringify(sessionId)},
+    runnerSessionPath: ${JSON.stringify(sessionPath)},
+    status: 'complete',
+    startedAt: new Date().toISOString(),
+  }],
+};
+const plan = resolveRepeatReviewResumePlan(current, prior, ${JSON.stringify(runner)});
+if (plan.kind !== 'resume') {
+  console.log(JSON.stringify({ kind: 'not-resumed', plan }));
+  process.exit(${JSON.stringify(expectedKind)} === 'not-resumed' ? 0 : 1);
+}
+const result = await attemptRepeatReviewResume(plan, ${JSON.stringify(runner)}, {
   vars,
   target: ${JSON.stringify(target)},
-  runnerId: ${JSON.stringify(runner)},
-  sessionId: ${JSON.stringify(sessionId)},
-  sessionPath: ${JSON.stringify(sessionPath)},
   model: ${JSON.stringify(model)},
   prompt: ${JSON.stringify(prompt)},
   runtimeDir: '.agent',
   timeoutMs: ${timeoutMs},
 });
 console.log(JSON.stringify(result));
-if (!result.delivered) process.exit(1);
+if (result.kind !== ${JSON.stringify(expectedKind)}) process.exit(1);
 `;
 
   const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {

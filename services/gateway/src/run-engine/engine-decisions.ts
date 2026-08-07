@@ -8,6 +8,8 @@ import {
   type EvidenceManifestEntry,
   isTerminalRunStatus,
   type RepeatReviewContext,
+  type ReviewChainEntry,
+  reviewChainForRun,
   type ReviewGatePayload,
   type Run,
   type RunCreateParams,
@@ -211,6 +213,37 @@ function farmslotOriginForReview(
   return { refs: [] };
 }
 
+function priorReviewChain(
+  prior: Run,
+  subject: CurrentReviewSubject,
+  payload: ReviewGatePayload | null,
+  artifactRefs: EvidenceManifestEntry[],
+): ReviewChainEntry[] {
+  const existing = reviewChainForRun(prior);
+  if (existing.length > 0) return existing;
+  return [
+    {
+      chainId: prior.id,
+      generation: 1,
+      runId: prior.id,
+      familyId: prior.familyId,
+      repository: subject.repository,
+      prNumber: subject.prNumber,
+      ...(payload?.reviewSnapshot?.baseSha ? { baseSha: payload.reviewSnapshot.baseSha } : {}),
+      ...(payload?.reviewSnapshot?.headSha ? { headSha: payload.reviewSnapshot.headSha } : {}),
+      reviewScope: prior.reviewScope ?? 'full',
+      validationDepth: prior.reviewValidationDepth ?? 'static-code',
+      verdict: payload?.recommendation?.trim() || 'pending',
+      unresolvedCount: payload ? payload.lineComments.length : null,
+      artifactRefs,
+      runner: prior.metrics.runner ?? null,
+      model: prior.metrics.actualModel ?? prior.metrics.model ?? null,
+      createdAt: prior.createdAt,
+      ...(prior.completedAt ? { completedAt: prior.completedAt } : {}),
+    },
+  ];
+}
+
 export function buildRepeatReviewContext(
   current: Pick<Run, 'id' | 'project' | 'ticketOrPr' | 'flowType'>,
   prior: Run,
@@ -254,7 +287,8 @@ export function buildRepeatReviewContext(
     ...(!priorHead
       ? { incrementalUnavailableReason: 'Prior review did not record a reviewed head SHA.' }
       : {}),
-    sessionPolicy: 'warm-per-reviewer',
+    sessionIntent: priorHead ? 'resume' : 'reset',
+    priorGenerations: priorReviewChain(prior, subject, payload, artifactRefs),
   };
 }
 
@@ -296,6 +330,21 @@ export function repeatReviewDecisionActions(context: RepeatReviewContext): Decis
     });
   }
   return actions;
+}
+
+export function applyRepeatReviewSelection(
+  context: RepeatReviewContext,
+  actionId: string,
+): RepeatReviewContext {
+  const reuse = actionId.startsWith('reuse-');
+  return {
+    ...context,
+    contextMode: reuse ? 'reuse' : 'fresh',
+    reviewScope: actionId === 'reuse-incremental-static' ? 'incremental' : 'full',
+    validationDepth: actionId === 'fresh-full-live' ? 'full-live' : 'static-code',
+    sessionIntent: actionId === 'reuse-incremental-static' ? 'resume' : 'reset',
+    ...(!reuse ? { unresolvedFindings: [], artifactRefs: [] } : {}),
+  };
 }
 
 export async function handleRepeatReviewDecision(
@@ -350,15 +399,7 @@ export async function handleRepeatReviewDecision(
       },
     },
   );
-  const reuse = actionId.startsWith('reuse-');
-  const selected: RepeatReviewContext = {
-    ...context,
-    contextMode: reuse ? 'reuse' : 'fresh',
-    reviewScope: actionId === 'reuse-incremental-static' ? 'incremental' : 'full',
-    validationDepth: actionId === 'fresh-full-live' ? 'full-live' : 'static-code',
-    sessionPolicy: reuse ? 'warm-per-reviewer' : 'fresh-per-pass',
-    ...(!reuse ? { unresolvedFindings: [], artifactRefs: [] } : {}),
-  };
+  const selected = applyRepeatReviewSelection(context, actionId);
   updateRun(runId, {
     repeatReviewContext: selected,
     reviewScope: selected.reviewScope,

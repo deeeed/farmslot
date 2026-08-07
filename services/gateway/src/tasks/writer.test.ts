@@ -68,7 +68,8 @@ test('writePreviousReviewInputs freezes reusable review context as JSON and a co
     farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe proof' }],
     reviewScope: 'incremental',
     validationDepth: 'static-code',
-    sessionPolicy: 'warm-per-reviewer',
+    sessionIntent: 'resume',
+    priorGenerations: [],
   });
 
   assert.deepEqual(written, [PREVIOUS_REVIEW_JSON_INPUT, PREVIOUS_REVIEW_MD_INPUT]);

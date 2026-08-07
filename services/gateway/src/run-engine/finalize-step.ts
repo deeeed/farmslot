@@ -144,7 +144,10 @@ export async function executeFinalizeStep(
       );
       const costRaw = session.cost_usd ?? session.costUsd;
       const cost = costRaw ? Number(costRaw) : current.metrics.costEstimate;
-      updateRun(runId, { metrics: { ...current.metrics, costEstimate: cost } });
+      const latestMetrics = getRun(runId)?.metrics ?? current.metrics;
+      updateRun(runId, {
+        metrics: { ...latestMetrics, costEstimate: cost, sessionUsageScope: 'session-total' },
+      });
     }
   } catch (err) {
     console.warn(

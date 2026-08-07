@@ -94,6 +94,61 @@ export const runDetailStyles = css`
     font-weight: 600;
     cursor: help;
   }
+  .review-chain {
+    background: ${unsafeCSS(colors.bgCard)};
+    border: 1px solid ${unsafeCSS(colors.accent)}33;
+    border-radius: ${unsafeCSS(radii.md)};
+    margin-bottom: ${unsafeCSS(spacing.lg)};
+    padding: ${unsafeCSS(spacing.md)};
+  }
+  .review-chain-title {
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: ${unsafeCSS(spacing.sm)};
+  }
+  .review-chain-grid {
+    display: grid;
+    gap: 4px;
+  }
+  .review-chain-row {
+    align-items: center;
+    color: ${unsafeCSS(colors.textSecondary)};
+    display: grid;
+    font-size: 11px;
+    gap: ${unsafeCSS(spacing.sm)};
+    grid-template-columns: 34px minmax(120px, 0.8fr) minmax(150px, 1fr) minmax(150px, 1fr) auto;
+    padding: 5px 6px;
+    text-decoration: none;
+  }
+  .review-chain-row:hover {
+    background: ${unsafeCSS(colors.bgCardHover)};
+  }
+  .review-chain-generation {
+    color: ${unsafeCSS(colors.accent)};
+    font-weight: 700;
+  }
+  .review-chain-session {
+    border: 1px solid ${unsafeCSS(colors.textMuted)}55;
+    border-radius: 999px;
+    padding: 1px 6px;
+  }
+  .review-chain-session.resumed {
+    border-color: ${unsafeCSS(colors.statusOk)}88;
+    color: ${unsafeCSS(colors.statusOk)};
+  }
+  .review-chain-session.fresh {
+    border-color: ${unsafeCSS(colors.accent)}88;
+    color: ${unsafeCSS(colors.accent)};
+  }
+  .review-chain-session.fallback-fresh {
+    border-color: ${unsafeCSS(colors.statusWarn)}88;
+    color: ${unsafeCSS(colors.statusWarn)};
+  }
+  .review-chain-session.resume-unconfirmed {
+    border-color: ${unsafeCSS(colors.statusFail)}88;
+    color: ${unsafeCSS(colors.statusFail)};
+  }
   .pipeline-section {
     margin-bottom: ${unsafeCSS(spacing.lg)};
     flex-shrink: 0;

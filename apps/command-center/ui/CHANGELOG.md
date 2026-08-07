@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - feat(review): default PR reviews to static validation and render the prior-review generation, reviewed head, findings, and evidence before continuation.
+- feat(review): render the shared cross-generation review chain and reviewer-session continuity in run details.
 - fix(runs): show publication review recovery status and its operator-required error in the existing run pipeline details.
 - fix(terminal): bind and unbind the terminal's capture-phase image-paste listener on connect/disconnect rather than on first render and terminal disposal, so image paste survives a DOM move or an xterm re-initialization; the non-image Cmd+V path sends through the same unguarded sender as every other intercepted key combo again.
 - fix(terminal): pin each image attachment to the terminal target it was added on, hide attachments on worker terminals where the protocol cannot serve them, consume unsupported file drops instead of letting the browser navigate away, and cap the attachment tray height.

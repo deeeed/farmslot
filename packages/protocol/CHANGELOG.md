@@ -6,6 +6,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - feat(runs): add optional `ImprovementDiffPayload.analysisAttempts` so startup recovery can bound crash-loop retries of interrupted improvement analyses.
 - feat(review): add repeat-review generation context, independent incremental/full scope, and static/full-live validation depth to run and dispatch contracts.
+- feat(review): expose one shared review-chain projection with explicit reviewer-session resume, reset, and safe-fallback provenance.
+- feat(review): distinguish per-generation retained-review usage from raw review-chain session totals.
 - feat(agents): add the optional `reviewResultFile` path used for authoritative structured results by newly launched self-review and publication reviewers.
 - feat(terminal): add the terminal image-attachment contract — chunked upload params, separate delivery result with an explicit `unsupported` status, size/MIME limits, and cleanup scopes.
 

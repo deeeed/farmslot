@@ -14,6 +14,7 @@ import {
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
   type RepeatReviewContext,
+  reviewSessionIntentForContext,
   type Run,
   type TaskSchema,
   type TaskSchemaPhase,
@@ -101,7 +102,7 @@ function previousReviewMarkdown(context: RepeatReviewContext): string {
 - Context: ${context.contextMode}
 - Scope: ${context.reviewScope}
 - Validation depth: ${context.validationDepth}
-- Session policy: ${context.sessionPolicy}
+- Session intent: ${reviewSessionIntentForContext(context)}
 ${context.incrementalUnavailableReason ? `- Incremental unavailable: ${context.incrementalUnavailableReason}\n` : ''}
 ## Unresolved findings
 
@@ -180,8 +181,8 @@ function buildReviewExecutionContract(
     ? `Read the frozen project review guidance: ${instructionPaths.map((item) => `\`${item}\``).join(', ')}.`
     : 'No additional project review guidance was configured.';
   const session =
-    run.repeatReviewContext?.sessionPolicy === 'warm-per-reviewer'
-      ? 'The same-PR reviewer session may remain warm for incremental passes. Clear review-local reasoning before expanding to a full pass.'
+    reviewSessionIntentForContext(run.repeatReviewContext) === 'resume'
+      ? 'Resume the same-PR reviewer session when the gateway confirms the exact persisted session binding; otherwise continue from the frozen prior-review inputs with fresh context.'
       : 'Start with fresh reviewer context.';
   return `
 ## Review execution contract

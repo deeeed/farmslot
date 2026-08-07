@@ -230,6 +230,50 @@ export function reviewValidationDepthForLoop(
   return 'static-code';
 }
 
+/** Whether a repeat review should resume prior reviewer reasoning or start clean. */
+export type ReviewSessionIntent = 'resume' | 'reset';
+
+/** What actually happened when the reviewer generation launched. */
+export type ReviewSessionContinuity = 'fresh' | 'resumed' | 'fallback-fresh' | 'resume-unconfirmed';
+
+export type ReviewSessionFallbackReason =
+  | 'unsupported-runner'
+  | 'slot-mismatch'
+  | 'runner-mismatch'
+  | 'missing-session'
+  | 'session-unavailable';
+
+export interface ReviewSessionTrace {
+  intent: ReviewSessionIntent;
+  continuity: ReviewSessionContinuity;
+  priorRunId?: string;
+  priorSessionId?: string;
+  sessionId?: string;
+  fallbackReason?: ReviewSessionFallbackReason;
+}
+
+/** Frozen summary for one run in a repeated-PR review chain. */
+export interface ReviewChainEntry {
+  chainId: string;
+  generation: number;
+  runId: string;
+  familyId: string;
+  repository: string;
+  prNumber: number;
+  baseSha?: string;
+  headSha?: string;
+  reviewScope: ReviewScope;
+  validationDepth: ReviewValidationDepth;
+  verdict: string;
+  unresolvedCount: number | null;
+  artifactRefs: EvidenceManifestEntry[];
+  runner?: string | null;
+  model?: string | null;
+  session?: ReviewSessionTrace;
+  createdAt: string;
+  completedAt?: string;
+}
+
 export interface RepeatReviewContext {
   version: 1;
   chainId: string;
@@ -250,8 +294,12 @@ export interface RepeatReviewContext {
   reviewScope: ReviewScope;
   validationDepth: ReviewValidationDepth;
   incrementalUnavailableReason?: string;
-  /** Same-PR reviewer continuity. The runner must clear review-local reasoning before a full pass. */
-  sessionPolicy: ReviewSessionPolicy;
+  /** Incremental may resume; every full review resets reviewer reasoning. */
+  sessionIntent?: ReviewSessionIntent;
+  /** Dispatch-time observation of the requested reviewer-session transition. */
+  session?: ReviewSessionTrace;
+  /** Completed predecessors, oldest first. The current run is derived from this Run record. */
+  priorGenerations?: ReviewChainEntry[];
 }
 
 export interface ReviewLoopRequest {
@@ -1027,6 +1075,10 @@ export interface RunMetrics {
   sessionCacheCreation?: number;
   sessionCacheRead?: number;
   sessionTotalTokens?: number;
+  /** Whether the session fields are raw transcript totals or a retained-review generation delta. */
+  sessionUsageScope?: 'session-total' | 'review-generation-delta' | 'review-chain-total';
+  /** Raw retained transcript total used as the next review generation's subtraction baseline. */
+  reviewChainUsageTotal?: RunnerSessionUsage;
   actualModel?: string;
 }
 

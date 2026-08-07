@@ -16,7 +16,9 @@ import {
   Events,
   isTerminalRunStatus,
   Methods,
+  observedReviewSessionContinuity,
   type RecipeRunArtifactGroup,
+  reviewChainForRun,
   type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
@@ -507,6 +509,7 @@ export default function RunDetailScreen() {
   }
 
   const statusColor = STATUS_COLORS[run.status] ?? colors.textMuted;
+  const reviewChain = reviewChainForRun(run);
   const replayAllowed =
     ['failed', 'done', 'cancelled'].includes(run.status) &&
     Boolean(client) &&
@@ -692,6 +695,35 @@ export default function RunDetailScreen() {
             <Text style={baseStyles.textMuted}>{formatDuration(run.metrics?.durationMs)}</Text>
           </View>
         </View>
+
+        {reviewChain.length > 0 ? (
+          <View style={styles.workspaceCard}>
+            <Text style={styles.sectionTitle}>Review chain</Text>
+            <View style={styles.workspaceSignalRow}>
+              {reviewChain.map((entry) => (
+                <View key={entry.runId} style={styles.workspaceSignalChip}>
+                  <Text style={styles.workspaceSignalLabel}>Generation {entry.generation}</Text>
+                  <Text style={styles.workspaceSignalValue} numberOfLines={1}>
+                    {entry.baseSha ? `${entry.baseSha.slice(0, 7)} → ` : ''}
+                    {entry.headSha?.slice(0, 7) ?? 'pending'}
+                  </Text>
+                  <Text style={styles.workspaceSignalValue} numberOfLines={1}>
+                    {entry.reviewScope} · {entry.validationDepth}
+                  </Text>
+                  <Text style={styles.workspaceSignalValue} numberOfLines={1}>
+                    {entry.verdict} ·{' '}
+                    {entry.unresolvedCount == null
+                      ? 'unresolved pending'
+                      : `${entry.unresolvedCount} unresolved`}
+                  </Text>
+                  <Text style={styles.workspaceSignalValue} numberOfLines={1}>
+                    {observedReviewSessionContinuity(entry)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
 
         <View onLayout={rememberNavLayout}>
           <ReviewPackageTabs
