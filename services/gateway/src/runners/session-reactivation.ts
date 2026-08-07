@@ -56,7 +56,7 @@ export interface RunnerSessionReactivationOptions {
 }
 
 export type RetainedSessionDeliveryResult =
-  | { delivered: true; acknowledgement: 'structured' | 'safe-send' }
+  | { delivered: true; acknowledgement: 'structured' | 'safe-send'; turnToken?: string }
   | {
       delivered: false;
       disposition: 'safe-send' | 'hold';
@@ -197,7 +197,13 @@ async function reactivateRunnerSessionWithPrompt(
       );
       // Only exact post-respawn prompt evidence is accepted; generic activity,
       // task signals, and pane text cannot acknowledge this resumed prompt.
-      if (accepted.accepted) return { delivered: true, acknowledgement: 'structured' };
+      if (accepted.accepted) {
+        return {
+          delivered: true,
+          acknowledgement: 'structured',
+          ...(accepted.turnToken ? { turnToken: accepted.turnToken } : {}),
+        };
+      }
       if (!trustPromptConfirmed) {
         const trustResult = await resolveLaunchBlockerWithFreshEvidence({
           runnerId: runner,
@@ -343,7 +349,11 @@ export async function deliverPromptInPlace(
           },
         );
         return acknowledgement.accepted
-          ? { delivered: true, acknowledgement: 'structured' }
+          ? {
+              delivered: true,
+              acknowledgement: 'structured',
+              ...(acknowledgement.turnToken ? { turnToken: acknowledgement.turnToken } : {}),
+            }
           : { delivered: true, acknowledgement: 'safe-send' };
       }
       const acknowledgementDeadline = Date.now() + Math.min(timeoutMs, 30_000);
@@ -371,7 +381,11 @@ export async function deliverPromptInPlace(
           },
         );
         if (acknowledgement.accepted) {
-          return { delivered: true, acknowledgement: 'structured' };
+          return {
+            delivered: true,
+            acknowledgement: 'structured',
+            ...(acknowledgement.turnToken ? { turnToken: acknowledgement.turnToken } : {}),
+          };
         }
         await new Promise((resolve) =>
           setTimeout(
@@ -435,7 +449,13 @@ async function probeDelayedPromptAcknowledgement(
         : {}),
     },
   );
-  return acknowledgement.accepted ? { delivered: true, acknowledgement: 'structured' } : null;
+  return acknowledgement.accepted
+    ? {
+        delivered: true,
+        acknowledgement: 'structured',
+        ...(acknowledgement.turnToken ? { turnToken: acknowledgement.turnToken } : {}),
+      }
+    : null;
 }
 
 function unacknowledgedPriorSendHold(runner: string): RetainedSessionDeliveryResult {

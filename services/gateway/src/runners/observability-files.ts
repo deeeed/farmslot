@@ -207,6 +207,9 @@ export function deriveRunnerSessionDeliveryState(
     source: 'hook',
     confidence: 'high',
     observedAt,
+    ...(typeof record.turnStartedAt === 'number'
+      ? { turnToken: `${sessionId}:${record.turnStartedAt}` }
+      : {}),
   };
 }
 
@@ -453,14 +456,18 @@ export function promptAcceptedFromHooks(
   // retirement send path treat a dead hook stream as an authoritative decision, so return null and
   // let it degrade/hold. FLAG-OFF (default) keeps main's medium-`false` semantics for Phase-2.
   if (scoped.length === 0 && paneRetired) return null;
-  let latest: { observedAt: number; digest?: string } | null = null;
+  let latest: { observedAt: number; digest?: string; sessionId?: string } | null = null;
   for (const record of scoped) {
     const event = hookEventName(record);
     if (event !== 'UserPromptSubmit') continue;
     const observedAt = observedAtFromRecord(record);
     if (observedAt == null || observedAt < sinceMs) continue;
     if (!latest || observedAt > latest.observedAt) {
-      latest = { observedAt, digest: record.runnerPromptDigest };
+      latest = {
+        observedAt,
+        digest: record.runnerPromptDigest,
+        ...(record.session_id ? { sessionId: record.session_id } : {}),
+      };
     }
   }
   if (!latest) {
@@ -490,6 +497,9 @@ export function promptAcceptedFromHooks(
       source: 'hook',
       confidence: 'high',
       observedAt: latest.observedAt,
+      ...(latest.sessionId
+        ? { sessionId: latest.sessionId, turnToken: `${latest.sessionId}:${latest.observedAt}` }
+        : {}),
     };
   }
   const turnStarted = promptTurnStartedFromHooks(

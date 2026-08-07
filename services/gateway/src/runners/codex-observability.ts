@@ -1,18 +1,24 @@
 import { execOnSlot } from '../core/exec.js';
+import { resolveTmuxPaneId } from '../core/tmux.js';
 
 import { claudeHookObservability } from './claude-observability.js';
+import { readRunnerPaneObservabilityState } from './observability-files.js';
 import type { RunnerObservability, SlotVars } from './observability-types.js';
 
 const SESSION_SCAN_BYTES = 2 * 1024 * 1024;
 
 type CodexPromptProbe =
-  | { status: 'matched'; observedAt: number }
+  | { status: 'matched'; observedAt: number; turnId: string }
   | { status: 'not-found' | 'unavailable' | 'identity-mismatch' };
 
 export function parseCodexPromptProbe(raw: string): CodexPromptProbe {
   const parsed = JSON.parse(raw) as Record<string, unknown>;
-  if (parsed.status === 'matched' && typeof parsed.observedAt === 'number') {
-    return { status: 'matched', observedAt: parsed.observedAt };
+  if (
+    parsed.status === 'matched' &&
+    typeof parsed.observedAt === 'number' &&
+    typeof parsed.turnId === 'string'
+  ) {
+    return { status: 'matched', observedAt: parsed.observedAt, turnId: parsed.turnId };
   }
   if (
     parsed.status === 'not-found' ||
@@ -78,6 +84,7 @@ def timestamp_ms(value):
     return int(parsed.timestamp() * 1000)
 
 latest_match = None
+current_turn = None
 for index, raw_line in enumerate(lines):
     try:
         record = json.loads(raw_line.decode('utf-8'))
@@ -89,6 +96,11 @@ for index, raw_line in enumerate(lines):
         print(json.dumps({'status': 'unavailable'}))
         raise SystemExit(0)
     payload = record.get('payload', {})
+    if record.get('type') == 'event_msg' and payload.get('type') == 'task_started':
+        turn_id = payload.get('turn_id')
+        if isinstance(turn_id, str) and turn_id:
+            current_turn = {'turnId': turn_id}
+        continue
     if (
         record.get('type') != 'response_item'
         or payload.get('type') != 'message'
@@ -105,14 +117,108 @@ for index, raw_line in enumerate(lines):
     if not parts or not all(isinstance(part, str) for part in parts):
         continue
     observed_at = timestamp_ms(record.get('timestamp'))
-    if '\\n'.join(parts) == expected_prompt and observed_at is not None and observed_at >= since_ms:
-        latest_match = max(latest_match or 0, observed_at)
+    if (
+        '\\n'.join(parts) == expected_prompt
+        and observed_at is not None
+        and observed_at >= since_ms
+        and current_turn is not None
+    ):
+        latest_match = {'observedAt': observed_at, 'turnId': current_turn['turnId']}
 
 print(json.dumps(
-    {'status': 'matched', 'observedAt': latest_match}
+    {'status': 'matched', **latest_match}
     if latest_match is not None
     else {'status': 'not-found'}
 ))
+PY`;
+}
+
+type CodexTurnStateProbe =
+  | { status: 'matched'; state: 'active' | 'idle'; observedAt: number; turnId: string }
+  | { status: 'unavailable' | 'identity-mismatch' };
+
+export function parseCodexTurnStateProbe(raw: string): CodexTurnStateProbe {
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  if (
+    parsed.status === 'matched' &&
+    (parsed.state === 'active' || parsed.state === 'idle') &&
+    typeof parsed.observedAt === 'number' &&
+    typeof parsed.turnId === 'string'
+  ) {
+    return {
+      status: 'matched',
+      state: parsed.state,
+      observedAt: parsed.observedAt,
+      turnId: parsed.turnId,
+    };
+  }
+  if (parsed.status === 'unavailable' || parsed.status === 'identity-mismatch') {
+    return { status: parsed.status };
+  }
+  throw new Error(`Invalid Codex turn-state probe: ${raw}`);
+}
+
+export function buildCodexTurnStateProbeCommand(sessionId: string, sessionPath: string): string {
+  return `
+python3 - <<'PY'
+import json
+from datetime import datetime
+from pathlib import Path
+
+session_id = ${JSON.stringify(sessionId)}
+session_path = Path(${JSON.stringify(sessionPath)})
+
+def timestamp_ms(value):
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value[:-1] + '+00:00' if value.endswith('Z') else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return int(parsed.timestamp() * 1000)
+
+try:
+    with session_path.open('rb') as handle:
+        first = json.loads(handle.readline().decode('utf-8'))
+        if first.get('type') != 'session_meta' or first.get('payload', {}).get('id') != session_id:
+            print(json.dumps({'status': 'identity-mismatch'}))
+            raise SystemExit(0)
+        size = handle.seek(0, 2)
+        start = max(0, size - ${SESSION_SCAN_BYTES})
+        handle.seek(start)
+        if start:
+            handle.readline()
+        lines = handle.readlines()
+except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    print(json.dumps({'status': 'unavailable'}))
+    raise SystemExit(0)
+
+latest = None
+for index, raw_line in enumerate(lines):
+    try:
+        record = json.loads(raw_line.decode('utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        if (index == 0 and start) or (index == len(lines) - 1 and not raw_line.endswith(b'\\n')):
+            continue
+        print(json.dumps({'status': 'unavailable'}))
+        raise SystemExit(0)
+    if record.get('type') != 'event_msg':
+        continue
+    payload = record.get('payload', {})
+    event_type = payload.get('type')
+    turn_id = payload.get('turn_id')
+    observed_at = timestamp_ms(record.get('timestamp'))
+    if not isinstance(turn_id, str) or not turn_id or observed_at is None:
+        continue
+    if event_type == 'task_started':
+        latest = {'turnId': turn_id, 'state': 'active', 'observedAt': observed_at}
+    elif event_type in ('task_complete', 'turn_aborted') and latest is not None and latest['turnId'] == turn_id:
+        latest = {'turnId': turn_id, 'state': 'idle', 'observedAt': observed_at}
+
+print(json.dumps({'status': 'matched', **latest} if latest is not None else {'status': 'unavailable'}))
 PY`;
 }
 
@@ -215,6 +321,30 @@ async function probeCodexSessionBinding(
 
 export const codexSessionObservability: RunnerObservability = {
   ...claudeHookObservability,
+  async getTurnState(vars, target) {
+    const paneId = await resolveTmuxPaneId(vars, target);
+    if (!paneId) return null;
+    const paneState = await readRunnerPaneObservabilityState(vars, paneId);
+    const sessionId = paneState?.session_id;
+    const sessionPath = paneState?.transcript_path;
+    if (!sessionId || !sessionPath)
+      return claudeHookObservability.getTurnState?.(vars, target) ?? null;
+    const result = await execOnSlot(vars, buildCodexTurnStateProbeCommand(sessionId, sessionPath), {
+      timeout: 10_000,
+    });
+    if (result.exitCode !== 0) return null;
+    const probe = parseCodexTurnStateProbe(result.stdout.trim());
+    return probe.status === 'matched'
+      ? {
+          value: probe.state,
+          source: 'signal',
+          confidence: 'high',
+          observedAt: probe.observedAt,
+          sessionId,
+          turnToken: `${sessionId}:${probe.turnId}`,
+        }
+      : null;
+  },
   async resolveSessionId(vars, sessionPath) {
     const result = await execOnSlot(vars, buildCodexSessionIdProbeCommand(sessionPath), {
       timeout: 10_000,
@@ -246,6 +376,8 @@ export const codexSessionObservability: RunnerObservability = {
           confidence: 'high',
           observedAt: probe.observedAt,
           exactPromptMatch: true,
+          sessionId,
+          turnToken: `${sessionId}:${probe.turnId}`,
         }
       : null;
   },

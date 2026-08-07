@@ -13,6 +13,8 @@ export interface ObservabilityReading<T> {
   exactPromptMatch?: boolean;
   /** Persisted runner session that emitted the reading, when the provider exposes it. */
   sessionId?: string;
+  /** Stable identity of the runner turn that emitted the reading. */
+  turnToken?: string;
 }
 
 export type RunnerActivity = 'idle' | 'composing' | 'tool-running' | 'awaiting-input' | 'unknown';
@@ -36,6 +38,7 @@ export interface HookRecord {
   transcript_path?: string;
   cwd?: string;
   runnerPromptDigest?: string;
+  turnStartedAt?: number;
   sentAt?: number;
   tmuxPane?: string;
   slotId?: string;

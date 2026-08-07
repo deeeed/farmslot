@@ -11,6 +11,7 @@ type GrokPromptSignalProbe =
       promptAcceptedAt: number | null;
       activity: Extract<RunnerActivity, 'idle' | 'composing' | 'tool-running' | 'unknown'>;
       activityAt: number;
+      turnStartedAt?: number | null;
       sessionId?: string;
       sessionPath?: string;
     }
@@ -35,7 +36,10 @@ export function parseGrokPromptSignalProbe(raw: string): GrokPromptSignalProbe {
       value.activity !== 'composing' &&
       value.activity !== 'tool-running' &&
       value.activity !== 'unknown') ||
-    typeof value.activityAt !== 'number'
+    typeof value.activityAt !== 'number' ||
+    (value.turnStartedAt !== undefined &&
+      value.turnStartedAt !== null &&
+      typeof value.turnStartedAt !== 'number')
   ) {
     throw new Error(`Invalid Grok prompt signal probe: ${raw}`);
   }
@@ -44,6 +48,7 @@ export function parseGrokPromptSignalProbe(raw: string): GrokPromptSignalProbe {
     promptAcceptedAt: value.promptAcceptedAt,
     activity: value.activity,
     activityAt: value.activityAt,
+    ...(value.turnStartedAt === undefined ? {} : { turnStartedAt: value.turnStartedAt }),
     ...(typeof value.sessionId === 'string' ? { sessionId: value.sessionId } : {}),
     ...(typeof value.sessionPath === 'string' ? { sessionPath: value.sessionPath } : {}),
   };
@@ -270,6 +275,7 @@ print(json.dumps({
     'promptAcceptedAt': accepted_at,
     'activity': activity,
     'activityAt': activity_at,
+    'turnStartedAt': latest_start['at'] if latest_start is not None else None,
     'sessionId': candidate['session_id'],
     'sessionPath': str(session_dir),
 }))
@@ -294,6 +300,9 @@ export function createGrokLogObservability(
         confidence: 'high',
         observedAt: signal.activityAt,
         ...(signal.sessionId ? { sessionId: signal.sessionId } : {}),
+        ...(signal.sessionId && typeof signal.turnStartedAt === 'number'
+          ? { turnToken: `${signal.sessionId}:${signal.turnStartedAt}` }
+          : {}),
       };
     },
     async getTurnState(vars, target) {
@@ -310,6 +319,9 @@ export function createGrokLogObservability(
         confidence: 'high',
         observedAt: signal.activityAt,
         ...(signal.sessionId ? { sessionId: signal.sessionId } : {}),
+        ...(signal.sessionId && typeof signal.turnStartedAt === 'number'
+          ? { turnToken: `${signal.sessionId}:${signal.turnStartedAt}` }
+          : {}),
       };
     },
     async getContextPct() {
@@ -342,6 +354,12 @@ export function createGrokLogObservability(
             confidence: 'high',
             observedAt: signal.promptAcceptedAt,
             exactPromptMatch: true,
+            ...(signal.sessionId
+              ? {
+                  sessionId: signal.sessionId,
+                  turnToken: `${signal.sessionId}:${signal.promptAcceptedAt}`,
+                }
+              : {}),
           };
     },
     async getSessionDeliveryState(vars, target, sessionId, _sessionPath) {
@@ -359,6 +377,9 @@ export function createGrokLogObservability(
         source: 'signal',
         confidence: 'high',
         observedAt: signal.activityAt,
+        ...(typeof signal.turnStartedAt === 'number'
+          ? { turnToken: `${sessionId}:${signal.turnStartedAt}` }
+          : {}),
       };
     },
   };

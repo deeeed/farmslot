@@ -21,6 +21,8 @@ type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 export interface RunnerHandoffAckProbe {
   accepted: boolean;
   reason: string;
+  /** Exact runner turn accepted for this prompt, when the provider exposes it. */
+  turnToken?: string;
   source?:
     | 'hook-digest'
     | 'hook-turn'
@@ -171,20 +173,24 @@ export async function probeRunnerHandoffAck(
   const hooks = parseHookJsonl(hooksRaw);
   const digest = runnerPromptDigest(message);
   const digestMatched = promptDigestMatchedFromHooks(hooks, digest, sinceMs, paneId);
+  const digestReading = promptAcceptedFromHooks(hooks, digest, sinceMs, 500, Date.now(), paneId);
 
   if (opts.requirePromptDigest) {
-    return digestMatched
+    return digestMatched &&
+      isObservabilityReadingAuthoritative(digestReading) &&
+      digestReading.value === true &&
+      digestReading.confidence === 'high'
       ? {
           accepted: true,
           reason: paneId
             ? `hook prompt digest matched on pane ${paneId}`
             : 'hook prompt digest matched',
           source: 'hook-digest',
+          ...(digestReading.turnToken ? { turnToken: digestReading.turnToken } : {}),
         }
       : { accepted: false, reason: 'prompt digest did not match handoff evidence' };
   }
 
-  const digestReading = promptAcceptedFromHooks(hooks, digest, sinceMs, 500, Date.now(), paneId);
   if (isObservabilityReadingAuthoritative(digestReading) && digestReading.value === true) {
     return {
       accepted: true,
@@ -196,6 +202,7 @@ export async function probeRunnerHandoffAck(
           ? `hook turn started on pane ${paneId}`
           : 'hook turn started after prompt send',
       source: digestMatched ? 'hook-digest' : 'hook-turn',
+      ...(digestReading.turnToken ? { turnToken: digestReading.turnToken } : {}),
     };
   }
 

@@ -1,32 +1,44 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-07T01:54:06.558Z",
+  "recordedAt": "2026-08-07T02:29:36.018Z",
   "host": "macwork",
   "scenario": "self-review-fix-turn-lease",
   "runner": "codex",
   "baselineContract": "an unaccepted fix prompt receives no structured-turn lease",
   "currentContract": "an accepted fix prompt receives a liveness-guarded structured runner turn lease",
   "result": {
-    "elapsedMs": 19615,
+    "elapsedMs": 33362,
     "idleTimeoutMs": 10000,
     "baselineTimedOut": true,
     "unacceptedTurnLeaseRejected": true,
+    "acceptedTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
     "leasedSignalStatus": "complete",
     "activeTurnObserved": true,
+    "supersedingTurnProbe": {
+      "originalLeaseActive": false,
+      "supersedingLeaseActive": true,
+      "tokensDiffer": true
+    },
     "turnReadings": [
       {
-        "value": "active",
-        "confidence": "high",
+        "expectedTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
+        "active": true,
+        "stateValue": "active",
+        "actualTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
         "runnerAlive": true
       },
       {
-        "value": "active",
-        "confidence": "high",
+        "expectedTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
+        "active": true,
+        "stateValue": "active",
+        "actualTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
         "runnerAlive": true
       },
       {
-        "value": "active",
-        "confidence": "high",
+        "expectedTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
+        "active": true,
+        "stateValue": "active",
+        "actualTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
         "runnerAlive": true
       }
     ]
@@ -35,14 +47,16 @@
     "leaseAllowed": false,
     "turnReadings": [
       {
-        "value": "active",
-        "confidence": "high",
+        "expectedTurnToken": "019fda0d-e2e3-78a3-b397-9e03329fddb7:1786069773979",
+        "active": false,
+        "stateValue": "active",
+        "actualTurnToken": "019fda0d-e2e3-78a3-b397-9e03329fddb7:019fda0d-e353-7120-84cd-9069b27aab3c",
         "runnerAlive": false
       }
     ]
   },
-  "activeHook": "UserPromptSubmit",
-  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.TMnJKj/launch-c341d7bd71c608bd.sh\nOpenAI Codex v0.146.1\n--------\nworkdir: /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validat\ne-codex-turn-lease-HmH5px\nmodel: gpt-5.6-sol\nprovider: openai\napproval: never\nsandbox: workspace-write [workdir, /tmp, $TMPDIR]\nreasoning effort: none\nreasoning summaries: none\nsession id: 019fd9ed-01f2-7bb0-8f8c-90eb44402c8e\n--------\nuser\nUse the shell tool exactly once to run this command, and do nothing else: sleep\n14; printf '%s\\n' '{\"role\":\"self-review\",\"status\":\"complete\",\"outcome\":\"success\"\n,\"disposition\":\"fixed\",\"timestamp\":\"2026-08-07T01:53:35.000Z\"}' > task/SELF-REVI\nEW-FIX-SIGNAL.json\nhook: SessionStart\nhook: SessionStart Completed\nhook: UserPromptSubmit\nhook: UserPromptSubmit Completed\ncodex\nI’m running the exact command now.\nhook: PreToolUse\nhook: PreToolUse Completed\nexec\n/bin/zsh -lc \"sleep 14; printf '%s\\\\n' '{\\\"role\\\":\\\"self-review\\\",\\\"status\\\":\\\"c\nomplete\\\",\\\"outcome\\\":\\\"success\\\",\\\"disposition\\\":\\\"fixed\\\",\\\"timestamp\\\":\\\"2026\n-08-07T01:53:35.000Z\\\"}' > task/SELF-REVIEW-FIX-SIGNAL.json\" in /private/var/fol\nders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-turn-lease-HmH5px\n succeeded in 14111ms:\nhook: PostToolUse\nhook: PostToolUse Completed\ncodex\n\nhook: Stop\nhook: Stop Completed",
+  "activeHook": "production-delivery",
+  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.0Ab1xn/launch-db9a65d0fb32bab2.sh\nOpenAI Codex v0.146.1\n[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:     gpt-5.6-sol xhigh   /model to change          │\n│ directory: …gn/T/runner-validate-codex-turn-lease-boigCh │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n\n[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭─────────────────────────────────────────────────╮\n│ ✨ Update available! 0.146.1 -> 0.147.0         │\n│ Run npm install -g @openai/codex to update.     │\n│                                                 │\n│ See full release notes:                         │\n│ https://github.com/openai/codex/releases/latest │\n╰─────────────────────────────────────────────────╯\n\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:     gpt-5.6-sol xhigh   /model to change          │\n│ directory: …gn/T/runner-validate-codex-turn-lease-boigCh │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n\n› Reply with exactly READY, then wait for another instruction.\n\n\n• READY\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 14; printf '%s\\n' '{\"role\":\"self-review-\n  fix\",\"status\":\"complete\",\"outcome\":\"success\",\"disposition\":\"fixed\",\"timestamp\n  \":\"2026-08-07T02:28:51.164Z\"}' > task/SELF-REVIEW-FIX-SIGNAL.json\n\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 12\n\n\n• Working (10s • esc to interrupt)\n\n\n› Explain this codebase\n\n  gpt-5.6-sol xhigh · /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/…",
   "pass": true,
   "error": null
 }

@@ -1498,6 +1498,41 @@ export async function runnerHasDurablePromptHandoff(
 ): Promise<RunnerHandoffAckProbe> {
   const observability = getRunnerObservability(runner);
   const usesNativePromptAcceptance = observability?.promptAcceptanceMode === 'native-text';
+  const promptAcceptedSinceMs =
+    opts.promptAcceptanceBaselineMs === undefined ? sinceMs : opts.promptAcceptanceBaselineMs;
+  if (
+    promptAcceptedSinceMs != null &&
+    opts.retainedSession &&
+    observability?.promptAcceptedInSession
+  ) {
+    try {
+      const nativeReading = await observability.promptAcceptedInSession(
+        vars,
+        target,
+        opts.retainedSession.sessionId,
+        opts.retainedSession.sessionPath,
+        message,
+        promptAcceptedSinceMs,
+      );
+      if (
+        isObservabilityReadingAuthoritative(nativeReading) &&
+        nativeReading.value === true &&
+        nativeReading.exactPromptMatch === true &&
+        nativeReading.source === 'signal'
+      ) {
+        return {
+          accepted: true,
+          reason: 'exact prompt accepted by runner-native session history',
+          source: 'native-signal',
+          ...(nativeReading.turnToken ? { turnToken: nativeReading.turnToken } : {}),
+        };
+      }
+    } catch (error) {
+      console.warn(
+        `[runner-observability] native promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
+      );
+    }
+  }
   const paneId = usesNativePromptAcceptance ? null : await resolveTmuxPaneId(vars, target);
   const handoff = await probeRunnerHandoffAck(vars, target, message, sinceMs, {
     paneId,
@@ -1511,8 +1546,6 @@ export async function runnerHasDurablePromptHandoff(
     return handoff;
   }
   if (!observability) return { accepted: false, reason: 'no runner observability provider' };
-  const promptAcceptedSinceMs =
-    opts.promptAcceptanceBaselineMs === undefined ? sinceMs : opts.promptAcceptanceBaselineMs;
   if (promptAcceptedSinceMs == null) {
     return { accepted: false, reason: 'prompt acceptance baseline unavailable' };
   }
@@ -1536,6 +1569,7 @@ export async function runnerHasDurablePromptHandoff(
           accepted: true,
           reason: 'exact prompt accepted by runner-native session history',
           source: 'native-signal',
+          ...(nativeReading.turnToken ? { turnToken: nativeReading.turnToken } : {}),
         };
       }
     }
@@ -1567,6 +1601,7 @@ export async function runnerHasDurablePromptHandoff(
         ? 'exact prompt accepted by runner-native signal provider'
         : `runner ${reading.source} activity observed after prompt handoff`,
       source: nativeSignal ? 'native-signal' : 'hook-activity',
+      ...(reading.turnToken ? { turnToken: reading.turnToken } : {}),
     };
   } catch (error) {
     console.warn(

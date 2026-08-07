@@ -53,7 +53,11 @@ mock.module('../core/exec.js', {
           exitCode: 0,
           stdout: JSON.stringify(
             promptAccepted
-              ? { status: 'matched', observedAt: promptAcceptedAt ?? Date.now() }
+              ? {
+                  status: 'matched',
+                  observedAt: promptAcceptedAt ?? Date.now(),
+                  turnId: 'test-turn',
+                }
               : { status: 'not-found' },
           ),
           stderr: '',
@@ -173,7 +177,10 @@ test('retained resume accepts a slot-clock prompt hook emitted before respawn-wi
     prompt: 'Read and execute TASK.md',
     runtimeDir: '.farmslot/runtime/test-project',
   });
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+  });
 
   const command = commands.join('\n');
   const resumeIndex = command.indexOf('--resume');
@@ -218,7 +225,11 @@ Press enter to confirm or esc to go back
     runtimeDir: '.farmslot/runtime/test-project',
   });
 
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.deepEqual(result, {
+    delivered: true,
+    acknowledgement: 'structured',
+    turnToken: 'session-123:test-turn',
+  });
   assert.equal(trustSendCount, 1);
 });
 

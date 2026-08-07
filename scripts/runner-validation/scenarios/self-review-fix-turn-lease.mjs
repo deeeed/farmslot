@@ -26,6 +26,21 @@ function waitForActiveTurn(statePath, timeoutMs) {
   throw new Error('runner did not expose an active structured turn');
 }
 
+function waitForIdleTurn(statePath, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      const event = state.hook_event_name ?? state.event;
+      if (event === 'Stop') return state;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    sleepMs(100);
+  }
+  throw new Error('runner did not expose an idle structured turn');
+}
+
 export async function runScenario({ runnerAdapter, keepSession, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
   if (runnerAdapter.OBSERVABILITY_SCOPE !== 'event-driven') {
@@ -66,23 +81,19 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
     paneId = shell.paneId;
     installHooks(runner, repo, '.agent', 'runner-validation-self-review-fix-turn-lease');
 
-    const signal = JSON.stringify({
-      role: 'self-review',
-      status: 'complete',
-      outcome: 'success',
-      disposition: 'fixed',
-      timestamp: new Date().toISOString(),
-    });
-    const command = `sleep 14; printf '%s\\n' '${signal}' > task/SELF-REVIEW-FIX-SIGNAL.json`;
-    const prompt = `Use the shell tool exactly once to run this command, and do nothing else: ${command}`;
-    runLaunchInTmux(paneId, repo, runner, runnerAdapter, prompt);
-
     const statePath = path.join(
       obsDirFor(repo, '.agent'),
       'panes',
       `${encodeURIComponent(paneId)}.json`,
     );
-    report.activeHook = waitForActiveTurn(statePath, 60_000).hook_event_name;
+    runLaunchInTmux(
+      paneId,
+      repo,
+      runner,
+      runnerAdapter,
+      'Reply with exactly READY, then wait for another instruction.',
+    );
+    waitForIdleTurn(statePath, 60_000);
 
     const executor = path.join(
       root,
@@ -101,6 +112,7 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
       timeout: 90_000,
     });
     report.result = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
+    report.activeHook = report.result.activeTurnObserved ? 'production-delivery' : null;
 
     const deadShell = ensureShellSession(deadSession, repo);
     const deadPaneId = deadShell.paneId;
@@ -125,6 +137,7 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
         FARMSLOT_VALIDATION_RUNNER: runner,
         FARMSLOT_VALIDATION_RESULT_PATH: deadResultPath,
         FARMSLOT_VALIDATION_PROBE_ONLY: '1',
+        FARMSLOT_VALIDATION_EXPECTED_TURN_TOKEN: `${activeState.session_id}:${activeState.turnStartedAt}`,
       },
       stdio: 'pipe',
       timeout: 30_000,
@@ -135,11 +148,11 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
       report.result.unacceptedTurnLeaseRejected === true &&
       report.result.leasedSignalStatus === 'complete' &&
       report.result.activeTurnObserved === true &&
-      report.result.turnReadings.some((reading) => reading.runnerAlive === true) &&
+      report.result.supersedingTurnProbe.originalLeaseActive === false &&
+      report.result.supersedingTurnProbe.supersedingLeaseActive === true &&
+      report.result.supersedingTurnProbe.tokensDiffer === true &&
       report.staleSnapshotProbe.leaseAllowed === false &&
-      report.staleSnapshotProbe.turnReadings.some(
-        (reading) => reading.value === 'active' && reading.runnerAlive === false,
-      );
+      report.staleSnapshotProbe.turnReadings.some((reading) => reading.active === false);
   } catch (error) {
     report.error = error?.message || String(error);
   } finally {

@@ -89,6 +89,17 @@ function writeSnapshot(directory, key, record) {
   fs.renameSync(pendingPath, statePath);
 }
 
+function readSnapshot(directory, key) {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(directory, encodeURIComponent(key) + '.json'), 'utf8'),
+    );
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
 try {
   const raw = readStdin();
   const payload = raw.trim() ? JSON.parse(raw) : {};
@@ -109,6 +120,14 @@ try {
       sentAt = matched.sentAt;
     }
   }
+  const previousSession =
+    typeof payload.session_id === 'string' && payload.session_id
+      ? readSnapshot(path.join(obsDir, 'sessions'), payload.session_id)
+      : null;
+  const turnStartedAt =
+    event === 'UserPromptSubmit'
+      ? observedAt
+      : previousSession?.turnStartedAt;
   const record = {
     schemaVersion: 1,
     observedAt,
@@ -125,6 +144,7 @@ try {
     tmuxPane: process.env.TMUX_PANE || undefined,
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
     runner: process.env.FARMSLOT_RUNNER || 'claude',
+    ...(typeof turnStartedAt === 'number' ? { turnStartedAt } : {}),
     ...(matchedDigest ? { runnerPromptDigest: matchedDigest } : {}),
     ...(sentAt ? { sentAt } : {}),
   };

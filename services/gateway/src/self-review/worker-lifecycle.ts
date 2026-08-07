@@ -7,11 +7,29 @@ import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { firstWindowTarget, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
+  readRunnerTurnState,
   resolvePrimaryWorkerTarget,
   runnerPaneLooksIdle,
   runnerProcessPatternSource,
 } from '../runners/registry.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
+
+export async function runnerTurnLeaseIsActive(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  expectedTurnToken: string,
+): Promise<boolean> {
+  const state = await readRunnerTurnState(vars, target, runner);
+  if (
+    state?.confidence !== 'high' ||
+    state.value !== 'active' ||
+    state.turnToken !== expectedTurnToken
+  ) {
+    return false;
+  }
+  return paneHostsRunnerProcess(vars, target, runner);
+}
 
 function recreateRoleWindowName(roleWindowName?: string | null, flowType?: string | null): string {
   const named = roleWindowName?.trim();
