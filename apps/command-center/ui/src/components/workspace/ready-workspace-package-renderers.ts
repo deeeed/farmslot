@@ -8,7 +8,6 @@ import {
   publishEvidenceDisplayRows,
   summarizeReviewCounts,
 } from '../../utils/review-gate-display.js';
-import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
 
 export interface ReadyPackagePanelContext {
   payload: ReadyGatePayload;
@@ -23,12 +22,10 @@ export interface ReadyPackagePanelContext {
   recovering: boolean;
   publicationTarget: PublicationTarget;
   openPackageArtifact: (artifact: ArtifactRef) => void;
+  openReviewFlow: () => void;
   toggleExpanded: () => void;
   refreshPackage: () => void | Promise<void>;
   setPublicationTarget: (target: PublicationTarget) => void;
-  artifactUrl: (artifact: ArtifactRef) => string;
-  openReviewArtifact: (detail: ReviewLoopArtifactOpenDetail) => void;
-  openReviewDiff: (detail: ReviewLoopArtifactOpenDetail) => void;
 }
 
 export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
@@ -36,71 +33,91 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
   const selectedEvidenceCount = ctx.publishEvidence.filter((artifact) =>
     ctx.selectedEvidence.has(artifact.path),
   ).length;
+  const reviewReady =
+    reviewSummary.trustedPassingReviews >= reviewSummary.requiredReviews &&
+    reviewSummary.unresolvedFindings === 0;
+  const reviewStatus = reviewReady
+    ? 'Review requirement satisfied'
+    : reviewSummary.unresolvedFindings > 0
+      ? `${reviewSummary.unresolvedFindings} finding${reviewSummary.unresolvedFindings === 1 ? '' : 's'} require resolution`
+      : `${Math.max(0, reviewSummary.requiredReviews - reviewSummary.trustedPassingReviews)} passing review${reviewSummary.requiredReviews - reviewSummary.trustedPassingReviews === 1 ? '' : 's'} still required`;
   return html`
     <div class="rdy-package-panel">
       ${ctx.payload.gateSummary
         ? html`<gate-summary-panel .summary=${ctx.payload.gateSummary}></gate-summary-panel>`
         : nothing}
       <div class="rdy-package-summary">
-        <strong>Pre-publication cockpit</strong>
-        ${ctx.packageArtifact && ctx.payload.prPackage
-          ? html`
-              <button
-                class="rdy-cockpit-link"
-                title="Open PR package markdown"
-                @click=${() => ctx.openPackageArtifact(ctx.packageArtifact!)}
+        <div class="rdy-package-header">
+          <div class="rdy-package-title">
+            <strong>Pre-publication cockpit</strong>
+            ${ctx.packageArtifact && ctx.payload.prPackage
+              ? html`
+                  <button
+                    class="rdy-cockpit-link"
+                    title="Open PR package markdown"
+                    @click=${() => ctx.openPackageArtifact(ctx.packageArtifact!)}
+                  >
+                    ${ctx.payload.prPackage.id} · ${ctx.payload.prPackage.packageHash.slice(0, 12)}
+                  </button>
+                `
+              : html`<span
+                  >${ctx.payload.prPackage?.id ?? 'Package unavailable'} ·
+                  ${ctx.payload.prPackage?.packageHash?.slice(0, 12) ?? 'no hash'}</span
+                >`}
+          </div>
+          <div class="rdy-package-actions">
+            <button class="rdy-review-flow-button" @click=${ctx.openReviewFlow}>
+              Review flow
+              <span
+                >${reviewSummary.totalAttempts}
+                attempt${reviewSummary.totalAttempts === 1 ? '' : 's'}</span
               >
-                Package ${ctx.payload.prPackage.id} ·
-                ${ctx.payload.prPackage.packageHash.slice(0, 12)}
-              </button>
-            `
-          : html`<span
-              >Package ${ctx.payload.prPackage?.id ?? 'unavailable'} ·
-              ${ctx.payload.prPackage?.packageHash?.slice(0, 12) ?? 'no hash'}</span
-            >`}
-        <span
-          >${reviewSummary.fixLoopCertified ? 'Trusted passing reviews' : 'Fresh passing reviews'}
-          ${reviewSummary.trustedPassingReviews}/${reviewSummary.requiredReviews}</span
-        >
-        ${reviewSummary.fixLoopCertified
-          ? html`<span>Full-live fix-loop certification present</span>`
-          : nothing}
-        <span>Attempts ${reviewSummary.totalAttempts}</span>
-        ${reviewSummary.staleIgnoredReviews
-          ? html`<span>Stale ignored ${reviewSummary.staleIgnoredReviews}</span>`
-          : nothing}
-        ${reviewSummary.externalRequired
-          ? html`<span
-              >Runner diversity
-              ${reviewSummary.externalFreshPassingReviews ? 'present' : 'required'}</span
-            >`
-          : nothing}
-        ${ctx.publishEvidence.length
-          ? html`<span
-              >Evidence selected ${selectedEvidenceCount}/${ctx.publishEvidence.length}</span
-            >`
-          : nothing}
-        <span>${reviewSummary.unresolvedFindings} unresolved</span>
-        <button class="rdy-cockpit-link" @click=${ctx.toggleExpanded}>
-          ${ctx.expanded ? 'Hide details' : 'Show details'}
-        </button>
-        ${ctx.resolved
-          ? nothing
-          : html`
-              <button
-                class="rdy-cockpit-link"
-                ?disabled=${ctx.refreshingPackage || ctx.acting || ctx.recovering}
-                title="Rebuild pr-package.json from the current workspace artifacts, PR body, evidence, diff, and HEAD"
-                @click=${ctx.refreshPackage}
-              >
-                ${ctx.refreshingPackage ? 'Refreshing package…' : 'Refresh package'}
-              </button>
-            `}
+            </button>
+            <button class="rdy-cockpit-link" @click=${ctx.toggleExpanded}>
+              ${ctx.expanded ? 'Hide package details' : 'Package details'}
+            </button>
+            ${ctx.resolved
+              ? nothing
+              : html`
+                  <button
+                    class="rdy-refresh-package"
+                    ?disabled=${ctx.refreshingPackage || ctx.acting || ctx.recovering}
+                    title="Rebuild the publication package from the current HEAD, diff, evidence, and PR body"
+                    @click=${ctx.refreshPackage}
+                  >
+                    ${ctx.refreshingPackage ? 'Refreshing…' : 'Refresh current package'}
+                  </button>
+                `}
+          </div>
+        </div>
+        <div class="rdy-package-status ${reviewReady ? 'ready' : 'attention'}">
+          <strong>${reviewStatus}</strong>
+          <span
+            >${reviewSummary.trustedPassingReviews}/${reviewSummary.requiredReviews} passing ·
+            ${reviewSummary.totalAttempts}
+            attempt${reviewSummary.totalAttempts === 1 ? '' : 's'}</span
+          >
+        </div>
+        <div class="rdy-package-facts">
+          ${reviewSummary.fixLoopCertified ? html`<span>Full-live fix loop</span>` : nothing}
+          ${reviewSummary.staleIgnoredReviews
+            ? html`<span>${reviewSummary.staleIgnoredReviews} stale ignored</span>`
+            : nothing}
+          ${reviewSummary.externalRequired
+            ? html`<span
+                >Runner diversity
+                ${reviewSummary.externalFreshPassingReviews ? 'present' : 'required'}</span
+              >`
+            : nothing}
+          ${ctx.publishEvidence.length
+            ? html`<span>Evidence ${selectedEvidenceCount}/${ctx.publishEvidence.length}</span>`
+            : nothing}
+        </div>
       </div>
       ${ctx.expanded
         ? html`
             <div class="rdy-package-details">
-              ${renderReadyReviewTimeline(ctx)} ${renderReadyPublishEvidenceDetails(ctx)}
+              ${renderReadyPublishEvidenceDetails(ctx)}
               <div class="rdy-draft-grid">
                 <div class="rdy-publish-target-field">
                   <span>Publication target</span>
@@ -157,36 +174,6 @@ export function renderReadyPublishEvidenceDetails(
         )}
       </div>
     </section>
-  `;
-}
-
-export function renderReadyReviewTimeline(
-  ctx: Pick<
-    ReadyPackagePanelContext,
-    'payload' | 'artifactUrl' | 'openReviewArtifact' | 'openReviewDiff'
-  >,
-) {
-  const reviews = ctx.payload.independentReviews ?? [];
-  return html`
-    <div class="rdy-review-timeline">
-      <review-loop-timeline
-        .reviews=${reviews}
-        compact
-        .artifactUrl=${ctx.artifactUrl}
-        @review-artifact-open=${(event: CustomEvent<ReviewLoopArtifactOpenDetail>) =>
-          ctx.openReviewArtifact(event.detail)}
-        @review-diff-open=${(event: CustomEvent<ReviewLoopArtifactOpenDetail>) =>
-          ctx.openReviewDiff(event.detail)}
-      ></review-loop-timeline>
-      ${ctx.payload.selfReviewSummary
-        ? html`
-            <div class="rdy-review-card">
-              <div class="rdy-review-card-head"><strong>Fix summary</strong></div>
-              <div class="rdy-review-card-meta">${ctx.payload.selfReviewSummary}</div>
-            </div>
-          `
-        : nothing}
-    </div>
   `;
 }
 

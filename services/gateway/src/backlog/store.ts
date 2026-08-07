@@ -358,6 +358,10 @@ function normalizePendingReviewPlan(value: unknown): ReviewLoopRequest[] | undef
     if (validationDepth !== undefined && !isReviewValidationDepth(validationDepth)) {
       throw new Error(`pendingReviewPlan[${index}].validationDepth is invalid`);
     }
+    const sessionIntent =
+      entry.sessionIntent === 'resume' || entry.sessionIntent === 'reset'
+        ? entry.sessionIntent
+        : undefined;
     return {
       order,
       runner: runner as ReviewLoopRequest['runner'],
@@ -365,6 +369,7 @@ function normalizePendingReviewPlan(value: unknown): ReviewLoopRequest[] | undef
         ? { model: entry.model.trim() }
         : {}),
       ...(validationDepth ? { validationDepth } : {}),
+      ...(sessionIntent ? { sessionIntent } : {}),
     };
   });
   return plan.length > 0 ? plan : undefined;

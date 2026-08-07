@@ -5,6 +5,7 @@ import type {
   ReadyGateInputSnapshot,
   ReadyGatePayload,
   RecipeRunArtifactGroup,
+  ReviewSessionIntent,
   ReviewValidationDepth,
 } from '@farmslot/protocol';
 import { buildRunResolveDecisionParams, Methods } from '@farmslot/protocol';
@@ -68,6 +69,7 @@ import {
   removeReadyReviewLoop,
   setReadyReviewLoopDepth,
   setReadyReviewLoopRunner,
+  setReadyReviewLoopSessionIntent,
 } from './ready-workspace-review-request-model.js';
 import {
   excludeReadyEvidenceVideos,
@@ -659,6 +661,10 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
 
   _setReviewLoopDepth(id: number, validationDepth: ReviewValidationDepth) {
     this._reviewLoops = setReadyReviewLoopDepth(this._reviewLoops, id, validationDepth);
+  }
+
+  _setReviewLoopSessionIntent(id: number, sessionIntent: ReviewSessionIntent) {
+    this._reviewLoops = setReadyReviewLoopSessionIntent(this._reviewLoops, id, sessionIntent);
   }
 
   async _submitReviewRequest() {

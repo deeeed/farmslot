@@ -39,8 +39,18 @@ export function reviewPlanFromSelection(
     const validationDepth = isReviewValidationDepth(record.validationDepth)
       ? record.validationDepth
       : reviewValidationDepthForLoop(index, rawLoops.length);
+    const sessionIntent =
+      record.sessionIntent === 'resume' || record.sessionIntent === 'reset'
+        ? record.sessionIntent
+        : undefined;
     return [
-      { order: index + 1, runner: runner as ReviewLoopRequest['runner'], model, validationDepth },
+      {
+        order: index + 1,
+        runner: runner as ReviewLoopRequest['runner'],
+        model,
+        validationDepth,
+        ...(sessionIntent ? { sessionIntent } : {}),
+      },
     ];
   });
   if (loops.length) return loops;

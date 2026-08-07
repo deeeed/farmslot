@@ -344,6 +344,11 @@ export async function executePublishGateReviewPlan(
         validationDepth,
         artifactScope: reviewId,
         publicationReview: true,
+        reviewSessionIntent: planStep.sessionIntent ?? 'reset',
+        // An explicit operator Continue/Fresh choice starts a retained review
+        // work order: Fresh resets generation 1, while fixes/re-reviews can
+        // still reuse that reviewer. Automatic plans keep the project policy.
+        ...(planStep.sessionIntent ? { reviewSessionPolicy: 'warm-per-reviewer' as const } : {}),
         // Configured review steps are true review loops: findings are fed back
         // to the original worker, the worker fixes them, then the same reviewer
         // re-reviews before the next configured reviewer starts.

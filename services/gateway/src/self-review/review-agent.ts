@@ -8,6 +8,7 @@ import {
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
   type ReviewLoopTimelineSegment,
+  type ReviewSessionIntent,
   type ReviewValidationDepth,
   type RunnerSessionUsage,
   type SelfReviewIssue,
@@ -17,6 +18,7 @@ import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.j
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
+  ensureTmuxWindow,
   ensureTmuxWindowMinimumSize,
   resolveExactTmuxWindowPane,
   resolveTmuxSession,
@@ -67,8 +69,8 @@ import { startProgressWatcher } from './progress.js';
 import {
   claimWarmReviewerSession,
   DEFAULT_REVIEW_SESSION_POLICY,
+  invalidateWarmReviewerSessions,
   registerWarmReviewerSession,
-  reviewerAllocationMode,
   type ReviewSessionPolicy,
   shouldAttemptWarmResume,
   type WarmReviewerScope,
@@ -528,7 +530,6 @@ async function recoverRunningReviewAgent(params: {
     contextId: context.id,
     role: 'self-review',
   });
-  let completedSuccessfully = false;
   try {
     const completed = await waitForRecoveredReviewerOrCleanup(
       () =>
@@ -592,7 +593,6 @@ async function recoverRunningReviewAgent(params: {
     });
     const startedAt = context.attemptStartedAt ?? context.startedAt ?? new Date().toISOString();
     const completedAt = new Date().toISOString();
-    completedSuccessfully = true;
     return {
       ...feedback,
       validationDepth: params.validationDepth,
@@ -627,20 +627,8 @@ async function recoverRunningReviewAgent(params: {
       params.taskDir,
       latest ? { flowType: latest.flowType, mode: latest.mode ?? undefined } : undefined,
     );
-    if (completedSuccessfully) {
-      try {
-        await killSelfReviewWindow(
-          params.vars,
-          params.session,
-          'post-recovery cleanup',
-          reviewWindow,
-        );
-      } catch (cleanupErr) {
-        console.warn(
-          `[self-review] recovered reviewer cleanup failed: ${(cleanupErr as Error).message}`,
-        );
-      }
-    }
+    // Keep the canonical reviewer window after successful recovery. The next
+    // review retargets it; run/slot teardown owns final cleanup.
   }
 }
 
@@ -656,6 +644,7 @@ export async function runReviewAgent(
   validationDepth: ReviewValidationDepth = 'full-live',
   artifactScope?: string | null,
   sessionPolicy: ReviewSessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
+  sessionIntent: ReviewSessionIntent = 'reset',
 ): Promise<ReviewAgentResult> {
   const session = await resolveTmuxSession(vars.slotId, vars);
   const recovered = await recoverRunningReviewAgent({
@@ -677,7 +666,6 @@ export async function runReviewAgent(
   const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
   let progressWatcher: { stop(): void } | null = null;
   let activeTaskSet = false;
-  let completedSuccessfully = false;
   const sessionFilesBefore = await bestEffortListRunnerSessionFiles(vars, runner);
   let sessionMeta: ReviewSessionMeta = {
     runnerSessionPath: null,
@@ -685,8 +673,9 @@ export async function runReviewAgent(
     error: sessionFilesBefore.error,
   };
   const parentRunForAlloc = getRun(_runId);
-  // Warm reuse is same-run only: scope must match on every field or the claim
-  // returns null and this pass behaves exactly like fresh-per-pass.
+  // Warm reuse is same-run only. Fix/re-review passes require the same artifact
+  // scope; an explicit next-generation continuation may advance that scope
+  // while run, task, runner, and subject lineage remain identical.
   const warmScope: WarmReviewerScope = {
     runId: _runId,
     taskDir,
@@ -694,13 +683,19 @@ export async function runReviewAgent(
     runner,
     subjectRef: parentRunForAlloc?.branch ?? null,
   };
-  let warmSession = shouldAttemptWarmResume(
-    sessionPolicy,
-    loopNumber,
-    runnerSupportsSessionReload(runner),
-  )
-    ? claimWarmReviewerSession(warmScope)
-    : null;
+  const continuingPriorGeneration = sessionIntent === 'resume' && loopNumber === 1;
+  const retainReviewerSession = sessionPolicy === 'warm-per-reviewer' || continuingPriorGeneration;
+  if (sessionIntent === 'reset' && loopNumber === 1) {
+    invalidateWarmReviewerSessions(_runId, runner);
+  }
+  const runnerCanResume = runnerSupportsSessionReload(runner);
+  let warmSession =
+    runnerCanResume &&
+    (continuingPriorGeneration || shouldAttemptWarmResume(sessionPolicy, loopNumber, true))
+      ? claimWarmReviewerSession(warmScope, {
+          allowArtifactScopeChange: continuingPriorGeneration,
+        })
+      : null;
   // Set once the resumed session actually launched — the cold-fallback path and
   // fresh passes leave it false so registration binds the freshly captured id.
   let warmResumed = false;
@@ -708,10 +703,6 @@ export async function runReviewAgent(
     runId: _runId,
     runner,
     model,
-    existing: parentRunForAlloc?.agentContexts ?? [],
-    // warm-per-reviewer keeps one reviewer identity (context id + tab name)
-    // across the run's review loops; fresh-per-pass numbers a new tab per pass.
-    mode: reviewerAllocationMode(sessionPolicy),
   });
   const reviewWindow = allocated.windowName;
   const reviewChecklistTarget = targetForChecklistBasename(reviewerChecklistBasename(allocated.id));
@@ -733,8 +724,9 @@ export async function runReviewAgent(
   });
 
   try {
-    // 1. Kill only this reviewer tab before relaunch (other same-run reviewers stay).
-    await killSelfReviewWindow(vars, session, 'pre-launch cleanup', reviewWindow);
+    // 1. Keep one stable window per runner. Each pass retargets this window via
+    // respawn-window; reset versus resume changes runner context, not topology.
+    const windowDisposition = await ensureTmuxWindow(vars, session, reviewWindow);
 
     // 1b. Clear prior-pass artifacts so waitForReviewCompletion / readReviewFeedback
     // can't short-circuit on stale files (caused retry verdict to mirror pass 1).
@@ -744,21 +736,8 @@ export async function runReviewAgent(
       slotTaskRelPath(vars, taskDir, reviewChecklistTarget.signal),
     ]);
 
-    // 2. Create new window in same session with a short operator-addressable name.
-    const newWinResult = await execOnSlot(
-      vars,
-      tmuxShellSnippet(
-        `new-window -t ${shellQuote(session)} -n ${shellQuote(reviewWindow)} -d 2>&1`,
-      ),
-    );
-    debugSelfReviewLog(
-      `[self-review] new-window: exit=${newWinResult.exitCode} out=${newWinResult.stdout.trim()} err=${newWinResult.stderr.trim()}`,
-    );
-    if (newWinResult.exitCode !== 0) {
-      throw new Error(
-        `Failed to create self-review tmux window ${session}:${reviewWindow}: ${newWinResult.stderr || newWinResult.stdout || `exit ${newWinResult.exitCode}`}`,
-      );
-    }
+    // 2. Bind the stable operator-addressable window to this review context.
+    debugSelfReviewLog(`[self-review] reviewer window ${reviewWindow}: ${windowDisposition}`);
     reviewContext =
       (await upsertAgentContext(_runId, 'self-review', {
         id: allocated.id,
@@ -841,7 +820,9 @@ export async function runReviewAgent(
     // The cold-fallback path must NOT use this preamble — a fresh reviewer is not
     // "the same reviewer session" and needs the full review contract.
     const warmPrompt = warmSession
-      ? `You are the same reviewer session that produced the findings in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, artifactScope)}/review-feedback.md. The worker has applied fixes since. Re-review ONLY the worker's fixes against your previous findings — do not re-review unchanged code — then complete the checklist's output contract (feedback + signal) as written.\n\n${basePrompt}`
+      ? continuingPriorGeneration
+        ? `Continue your prior review of this same run. Review only changes since your previous reviewed head and confirm prior findings remain resolved. Prior review artifacts are in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}. Complete the checklist's current output contract (feedback + signal) as written.\n\n${basePrompt}`
+        : `You are the same reviewer session that produced the findings in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}/review-feedback.md. The worker has applied fixes since. Re-review ONLY the worker's fixes against your previous findings — do not re-review unchanged code — then complete the checklist's output contract (feedback + signal) as written.\n\n${basePrompt}`
       : basePrompt;
     let taskPrompt = warmPrompt;
 
@@ -1046,8 +1027,7 @@ export async function runReviewAgent(
         completedAt: new Date().toISOString(),
       };
     }
-    completedSuccessfully = true;
-    if (sessionPolicy === 'warm-per-reviewer') {
+    if (retainReviewerSession) {
       // Record this pass's session so the next loop of THIS run can resume it.
       // On a warm-resumed pass keep the CLAIMED binding: session capture is
       // diff-based, so concurrent same-runner activity on the slot could
@@ -1120,8 +1100,9 @@ export async function runReviewAgent(
   } finally {
     progressWatcher?.stop();
     // Cleanup must not mask the original throw above — log and continue so the outer error
-    // propagates intact to the run-engine catch. Keep failed review panes alive for
-    // forensics/manual recovery; only successful review agents are torn down.
+    // propagates intact to the run-engine catch. The canonical reviewer window
+    // remains available for same-run continuation and operator inspection;
+    // run/slot teardown owns its final cleanup.
     try {
       await unwatchContext(vars.slotId, allocated.id);
     } catch (cleanupErr) {
@@ -1135,13 +1116,6 @@ export async function runReviewAgent(
         taskDir,
         parentRun ? { flowType: parentRun.flowType, mode: parentRun.mode ?? undefined } : undefined,
       );
-    }
-    if (completedSuccessfully) {
-      try {
-        await killSelfReviewWindow(vars, session, 'post-run cleanup', reviewWindow);
-      } catch (cleanupErr) {
-        console.warn(`[self-review] cleanup killWindow failed: ${(cleanupErr as Error).message}`);
-      }
     }
   }
 }

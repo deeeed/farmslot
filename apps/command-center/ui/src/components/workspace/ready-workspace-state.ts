@@ -52,7 +52,9 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _refreshingPackage = false;
   @state() _publicationTarget: PublicationTarget = 'ready';
   @state() _reviewModalOpen = false;
-  @state() _reviewLoops: ReviewLoopDraft[] = [{ id: 1, runner: '' }];
+  @state() _reviewFlowModalOpen = false;
+  @state() _reviewFlowSelection: 'overall' | number = 'overall';
+  @state() _reviewLoops: ReviewLoopDraft[] = [{ id: 1, runner: '', sessionIntent: 'reset' }];
   @state() _inputArtifactViewerOpen = false;
   @state() _selectedInputArtifactId = '';
   @state() _legacyTaskPromptText = '';
@@ -87,6 +89,9 @@ export abstract class ReadyWorkspaceState extends LitElement {
     if (this._reviewModalOpen) {
       event.preventDefault();
       this._closeReviewRequestModal();
+    } else if (this._reviewFlowModalOpen) {
+      event.preventDefault();
+      this._reviewFlowModalOpen = false;
     }
   };
 

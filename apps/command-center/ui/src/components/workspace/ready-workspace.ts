@@ -18,6 +18,7 @@ import '../reviews/review-loop-timeline.js';
 import './recipe-runner-controls.js';
 
 import { gateway } from '../../gateway-client.js';
+import { summarizeReviewCounts } from '../../utils/review-gate-display.js';
 import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
 
@@ -33,6 +34,7 @@ import {
 } from './ready-workspace-frame-renderers.js';
 import {
   renderReadyInputArtifactViewer,
+  renderReadyReviewFlowModal,
   renderReadyReviewRequestModal,
   type ReviewRunnerChoice,
 } from './ready-workspace-modal-renderers.js';
@@ -94,6 +96,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       renderTabContent: () => this._renderTabContent(payload),
       renderInputArtifactViewer: () => this._renderInputArtifactViewer(payload),
       renderReviewRequestModal: () => this._renderReviewRequestModal(),
+      renderReviewFlowModal: () => this._renderReviewFlowModal(payload),
       beginRecovery: () => void this._beginRecovery(),
       onResizeStart: this._splitResizer.start,
       lightbox: {
@@ -162,7 +165,34 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       removeLoop: (id) => this._removeReviewLoop(id),
       setRunner: (id, runner) => this._setReviewLoopRunner(id, runner),
       setDepth: (id, validationDepth) => this._setReviewLoopDepth(id, validationDepth),
+      setSessionIntent: (id, sessionIntent) => this._setReviewLoopSessionIntent(id, sessionIntent),
       submit: () => this._submitReviewRequest(),
+    });
+  }
+
+  private _renderReviewFlowModal(payload: ReadyGatePayload) {
+    const reviewCounts = summarizeReviewCounts(payload);
+    return renderReadyReviewFlowModal({
+      open: this._reviewFlowModalOpen,
+      reviews: payload.independentReviews ?? [],
+      passingReviews: reviewCounts.trustedPassingReviews,
+      unresolvedFindings: reviewCounts.unresolvedFindings,
+      staleIgnoredReviews: reviewCounts.staleIgnoredReviews,
+      selected: this._reviewFlowSelection,
+      selfReviewSummary: payload.selfReviewSummary,
+      artifactUrl: (artifact) => this._artifactUrl(artifact.path, artifact),
+      close: () => {
+        this._reviewFlowModalOpen = false;
+      },
+      select: (selection) => {
+        this._reviewFlowSelection = selection;
+      },
+      openReviewArtifact: (detail) => this._openReviewArtifact(payload, detail),
+      openReviewDiff: (detail) =>
+        this._openDiffModal(
+          workspaceArtifactBasename(detail.artifact.path, 'Review diff'),
+          detail.artifact,
+        ),
     });
   }
 
@@ -201,6 +231,10 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       recovering: this._isRecovering,
       publicationTarget: this._publicationTarget,
       openPackageArtifact: (artifact) => this._openArtifact(payload, artifact),
+      openReviewFlow: () => {
+        this._reviewFlowSelection = 'overall';
+        this._reviewFlowModalOpen = true;
+      },
       toggleExpanded: () => {
         this._packagePanelExpanded = !this._packagePanelExpanded;
       },
@@ -208,13 +242,6 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       setPublicationTarget: (target) => {
         this._publicationTarget = target;
       },
-      artifactUrl: (artifact) => this._artifactUrl(artifact.path, artifact),
-      openReviewArtifact: (detail) => this._openReviewArtifact(payload, detail),
-      openReviewDiff: (detail) =>
-        this._openDiffModal(
-          workspaceArtifactBasename(detail.artifact.path, 'Review diff'),
-          detail.artifact,
-        ),
     });
   }
 
