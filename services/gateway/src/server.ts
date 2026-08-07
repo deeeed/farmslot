@@ -173,19 +173,19 @@ export function createWebSocketServer(
     }
 
     ws.on('message', (raw: Buffer, isBinary: boolean) => {
-      // Handle binary frames from nodes (screen capture relay)
-      if (isBinary && raw.length > 7 && raw[0] === NODE_FRAME_MAGIC) {
-        if (!isNodeSubjectSession(authRuntime, state)) {
-          console.warn(`[auth] rejected pre-auth node binary frame from ${state.id}`);
-          ws.close(1008, 'node authentication required');
+      try {
+        // Handle binary frames from nodes (screen capture relay)
+        if (isBinary && raw.length > 7 && raw[0] === NODE_FRAME_MAGIC) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
+            console.warn(`[auth] rejected pre-auth node binary frame from ${state.id}`);
+            ws.close(1008, 'node authentication required');
+            return;
+          }
+          handleNodeBinaryFrame(raw);
           return;
         }
-        handleNodeBinaryFrame(raw);
-        return;
-      }
 
-      // Route node responses (type: 'res' from gateway-initiated requests)
-      try {
+        // Route node responses (type: 'res' from gateway-initiated requests)
         let peek;
         try {
           peek = JSON.parse(raw.toString());
@@ -287,7 +287,7 @@ export function createWebSocketServer(
         }
       } catch (err) {
         console.error(
-          `[server] structured websocket frame failed on ${state.id}: ${(err as Error).message}`,
+          `[server] node websocket frame failed on ${state.id}: ${(err as Error).message}`,
         );
         ws.close(1011, 'internal gateway error');
         return;

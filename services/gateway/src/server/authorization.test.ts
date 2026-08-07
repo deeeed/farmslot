@@ -287,6 +287,45 @@ test(
 );
 
 test(
+  'unexpected resolver faults close binary node frames as internal failures',
+  { timeout: 5_000 },
+  async () => {
+    const runtime = isolatedRuntime();
+    const node = runtime.writer.createPrincipal(
+      { type: 'node', displayName: 'binary-fault-node', machine: 'binary-fault-node' },
+      [],
+    );
+    const nodeIssue = runtime.writer.issueCredential(node.id, 'binary-fault-node');
+    const harness = await startServer(runtime);
+    try {
+      const ws = await connect(harness.url);
+      const auth = await request(ws, Methods.AUTH_CONNECT, {
+        clientKind: 'node',
+        token: nodeIssue.secret,
+      });
+      assert.equal(auth.ok, true);
+
+      const resolveSessionPrincipal = runtime.resolver.resolveSessionPrincipal;
+      runtime.resolver.resolveSessionPrincipal = () => {
+        throw new Error('binary node resolver reload proof');
+      };
+      try {
+        const close = onceClose(ws);
+        ws.send(Buffer.from([NODE_FRAME_MAGIC, 0, 0, 1, 0, 1, 1, 0x73, 0]));
+        const closed = await close;
+        assert.equal(closed.code, 1011);
+        assert.equal(closed.reason, 'internal gateway error');
+        assert.doesNotMatch(closed.reason, /binary node resolver reload proof/u);
+      } finally {
+        runtime.resolver.resolveSessionPrincipal = resolveSessionPrincipal;
+      }
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+test(
   'unexpected resolver faults return generic authenticated RPC errors without leakage',
   { timeout: 5_000 },
   async () => {
