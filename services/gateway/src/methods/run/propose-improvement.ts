@@ -10,7 +10,7 @@ import {
 
 import { getFamilyRuns } from '../../family-observability/context.js';
 import { readCommentsTriageSummary } from '../../run-completion/orchestrator.js';
-import { getAllRuns, getRun, updateRun } from '../../runs/store.js';
+import { getAllRuns, getRun, persistRunNow, updateRun } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
@@ -106,6 +106,11 @@ async function composeFamilyLearnings(run: Run): Promise<string> {
 // by startup recovery (initial attempt + one resume) before terminalizing.
 const MAX_ANALYSIS_ATTEMPTS = 2;
 
+// Placeholder ids with an analysis in flight in this process — a second
+// resume call (or any future re-entry) must neither double-run the analysis
+// nor mistake the in-flight bump for a crash-loop and tombstone it at the cap.
+const inFlightResumes = new Set<string>();
+
 /**
  * Startup recovery for improvement analyses interrupted by a gateway restart.
  * The persisted `analyzing` placeholder decision IS the durable job state: its
@@ -126,6 +131,7 @@ export async function resumeInterruptedImprovementAnalyses(): Promise<void> {
       if (decision.type !== 'improvement') continue;
       const payload = decision.payload as ImprovementDiffPayload | undefined;
       if (payload?.analysisStatus !== 'analyzing') continue;
+      if (inFlightResumes.has(decision.id)) continue;
 
       const attempts = payload.analysisAttempts ?? 1;
       if (attempts >= MAX_ANALYSIS_ATTEMPTS) {
@@ -141,9 +147,14 @@ export async function resumeInterruptedImprovementAnalyses(): Promise<void> {
 
       payload.analysisAttempts = attempts + 1;
       payload.analysisStartedAt = new Date().toISOString();
-      updateRun(run.id, { decisions: run.decisions });
+      const updated = updateRun(run.id, { decisions: run.decisions });
+      // updateRun persists in the background; the bump must be DURABLE before
+      // the re-run starts, or a crash mid-analysis leaves the old count on
+      // disk and the cap never engages across a crash loop.
+      await persistRunNow(updated, 'improvement-resume');
       resumed += 1;
 
+      inFlightResumes.add(decision.id);
       const analyzer = improvementAnalyzer ?? engine.analyzeAndPropose;
       void (async () => {
         const content = await composeFamilyLearnings(run);
@@ -157,11 +168,15 @@ export async function resumeInterruptedImprovementAnalyses(): Promise<void> {
           return;
         }
         await analyzer(run.id, content, decision.id);
-      })().catch((err) => {
-        // Terminalize instead of leaving the card `analyzing` forever — the
-        // resume path has no request context to surface the failure through.
-        engine.markImprovementTerminal(run.id, decision.id, 'error', (err as Error).message);
-      });
+      })()
+        .catch((err) => {
+          // Terminalize instead of leaving the card `analyzing` forever — the
+          // resume path has no request context to surface the failure through.
+          engine.markImprovementTerminal(run.id, decision.id, 'error', (err as Error).message);
+        })
+        .finally(() => {
+          inFlightResumes.delete(decision.id);
+        });
     }
   }
   if (resumed > 0 || terminalized > 0) {

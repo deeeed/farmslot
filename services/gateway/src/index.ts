@@ -634,6 +634,19 @@ async function main(): Promise<void> {
     );
   }
 
+  // Resume improvement analyses interrupted by the restart — the persisted
+  // `analyzing` placeholder is the durable job state, so re-run it (bounded
+  // by its attempt cap) instead of tombstoning the card. Awaited BEFORE run
+  // recovery kicks off so the durable attempt bumps / cap tombstones land
+  // ahead of any other recovery mutation; the LLM re-runs themselves are
+  // fire-and-forget.
+  try {
+    const { resumeInterruptedImprovementAnalyses } =
+      await import('./methods/run/propose-improvement.js');
+    await resumeInterruptedImprovementAnalyses();
+  } catch (err) {
+    console.error(`[improvement] analysis resume error: ${(err as Error).message}`);
+  }
   // Recover active runs after the port is open so slow recovery cannot make the
   // UI's Vite proxy see ECONNREFUSED while the gateway is still booting.
   if (ENABLE_ORCHESTRATION) {
@@ -646,18 +659,6 @@ async function main(): Promise<void> {
     console.log(
       '[run-engine] orchestration disabled (validation stack; FARMSLOT_DISABLE_ORCHESTRATION=1)',
     );
-  }
-  // Resume improvement analyses interrupted by the restart — the persisted
-  // `analyzing` placeholder is the durable job state, so re-run it (bounded
-  // by its attempt cap) instead of tombstoning the card. Awaited so the
-  // ledger mutations (attempt bumps / cap tombstones) land before the first
-  // post-recovery decision broadcast; the LLM re-runs are fire-and-forget.
-  try {
-    const { resumeInterruptedImprovementAnalyses } =
-      await import('./methods/run/propose-improvement.js');
-    await resumeInterruptedImprovementAnalyses();
-  } catch (err) {
-    console.error(`[improvement] analysis resume error: ${(err as Error).message}`);
   }
   if (ENABLE_ORCHESTRATION) {
     reconcileStalePrepareLocks().catch((err) => {

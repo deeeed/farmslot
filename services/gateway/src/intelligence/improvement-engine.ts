@@ -503,6 +503,11 @@ export async function analyzeAndPropose(
           { id: 'apply', label: 'Apply', style: 'primary' },
           { id: 'dismiss', label: 'Dismiss', style: 'secondary' },
         ];
+        // Carry the attempt count across the replacement — the success payload
+        // is built fresh from the LLM proposal and would otherwise drop it.
+        payload.analysisAttempts = (
+          placeholder.payload as ImprovementDiffPayload | undefined
+        )?.analysisAttempts;
         placeholder.payload = payload;
         updateRun(runId, { decisions: updatedRun.decisions });
         const pendingDecision = pendingDecisionForRun(updatedRun, placeholder);

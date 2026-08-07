@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import type { ImprovementDiffPayload, Run } from '@farmslot/protocol';
 
-import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
+import { createRun, deleteRun, getRun, runRecordPath, updateRun } from '../../runs/store.js';
 
 import {
   __setImprovementAnalyzerForTest,
@@ -209,6 +209,76 @@ test('resume treats a missing analysisAttempts as the first attempt (legacy plac
   await resumeInterruptedImprovementAnalyses();
   await analyzerDone;
   assert.equal(improvementPayload(run.id, decisionId).analysisAttempts, 2);
+});
+
+test('resume persists the attempt bump to disk before the analyzer starts', async (t) => {
+  const { run, taskDir } = createTempRunWithTask('Durability learning bullet.');
+  const decisionId = seedAnalyzingPlaceholder(run.id, 1);
+
+  let attemptsOnDiskAtAnalyzerStart: number | undefined;
+  let resolveAnalyzer!: () => void;
+  const analyzerDone = new Promise<void>((res) => {
+    resolveAnalyzer = res;
+  });
+  __setImprovementAnalyzerForTest(async (runId) => {
+    const persisted = JSON.parse(readFileSync(runRecordPath(runId), 'utf-8')) as Run;
+    const decision = persisted.decisions.find((d) => d.id === decisionId);
+    attemptsOnDiskAtAnalyzerStart = (decision?.payload as ImprovementDiffPayload | undefined)
+      ?.analysisAttempts;
+    resolveAnalyzer();
+  });
+  t.after(async () => {
+    __setImprovementAnalyzerForTest(null);
+    await cleanupProposeRun(run.id, taskDir);
+  });
+
+  await resumeInterruptedImprovementAnalyses();
+  await analyzerDone;
+
+  assert.equal(
+    attemptsOnDiskAtAnalyzerStart,
+    2,
+    'attempt bump must be durable on disk before analysis begins',
+  );
+});
+
+test('a second resume while an analysis is in flight neither re-runs nor tombstones it', async (t) => {
+  const { run, taskDir } = createTempRunWithTask('Idempotency learning bullet.');
+  const decisionId = seedAnalyzingPlaceholder(run.id, 1);
+
+  let invocations = 0;
+  let releaseAnalyzer!: () => void;
+  const analyzerGate = new Promise<void>((res) => {
+    releaseAnalyzer = res;
+  });
+  let analyzerStarted!: () => void;
+  const analyzerStartedGate = new Promise<void>((res) => {
+    analyzerStarted = res;
+  });
+  __setImprovementAnalyzerForTest(async () => {
+    invocations += 1;
+    analyzerStarted();
+    await analyzerGate;
+  });
+  t.after(async () => {
+    __setImprovementAnalyzerForTest(null);
+    releaseAnalyzer();
+    await cleanupProposeRun(run.id, taskDir);
+  });
+
+  await resumeInterruptedImprovementAnalyses();
+  await analyzerStartedGate;
+  // Second sweep while the first analysis is still in flight: the placeholder
+  // is still `analyzing` with attempts=2, which without the in-flight guard
+  // would be mistaken for a crash loop and tombstoned at the cap.
+  await resumeInterruptedImprovementAnalyses();
+
+  assert.equal(invocations, 1, 'in-flight analysis must not be re-run');
+  assert.equal(
+    improvementPayload(run.id, decisionId).analysisStatus,
+    'analyzing',
+    'in-flight analysis must not be tombstoned at the cap',
+  );
 });
 
 test('resume terminalizes as no-content when learnings vanished', async (t) => {
