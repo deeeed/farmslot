@@ -181,6 +181,24 @@ test('deriveRunnerSessionDeliveryState treats SubagentStop as unknown parent sta
   assert.equal(reading?.value, 'unknown');
 });
 
+test('deriveRunnerSessionDeliveryState does not reopen a stopped turn for lifecycle hooks', () => {
+  const reading = deriveRunnerSessionDeliveryState(
+    {
+      hook_event_name: 'PostCompact',
+      session_id: 'wanted',
+      observedAt: NOW - 1_000,
+      turnStartedAt: NOW - 10_000,
+    },
+    'wanted',
+  );
+  assert.deepEqual(reading, {
+    value: 'unknown',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: NOW - 1_000,
+  });
+});
+
 test('deriveRunnerSessionDeliveryState uses structured notification types', () => {
   const idle = deriveRunnerSessionDeliveryState(
     {
@@ -303,6 +321,40 @@ test('promptAcceptedFromHooks matches digest after grace window', () => {
     source: 'hook',
     confidence: 'high',
     observedAt: NOW - 1_000,
+  });
+});
+
+test('promptAcceptedFromHooks preserves an exact acceptance after a later prompt', () => {
+  const since = NOW - 10_000;
+  const reading = promptAcceptedFromHooks(
+    [
+      {
+        hook_event_name: 'UserPromptSubmit',
+        observedAt: NOW - 2_000,
+        runnerPromptDigest: 'abc123',
+        session_id: 'session-1',
+        turnStartedAt: NOW - 2_000,
+      },
+      {
+        hook_event_name: 'UserPromptSubmit',
+        observedAt: NOW - 1_000,
+        runnerPromptDigest: 'different',
+        session_id: 'session-1',
+        turnStartedAt: NOW - 1_000,
+      },
+    ],
+    'abc123',
+    since,
+    0,
+    NOW,
+  );
+  assert.deepEqual(reading, {
+    value: true,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: NOW - 2_000,
+    sessionId: 'session-1',
+    turnToken: `session-1:${NOW - 2_000}`,
   });
 });
 

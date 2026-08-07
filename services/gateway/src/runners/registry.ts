@@ -373,6 +373,24 @@ export function getRunnerObservability(runnerId?: string | null): RunnerObservab
   return KNOWN_RUNNER_OBSERVABILITY[normalizeRunner(runnerId)] ?? null;
 }
 
+export async function readRunnerTurnState(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runnerId?: string | null,
+  expectedTurnToken?: string,
+): Promise<ObservabilityReading<RunnerSessionDeliveryState> | null> {
+  const observability = getRunnerObservability(runnerId);
+  if (!observability?.getTurnState) return null;
+  try {
+    return await observability.getTurnState(vars, target, expectedTurnToken);
+  } catch (error) {
+    console.warn(
+      `[runner-observability] turn-state read failed for ${vars.slotId}: ${(error as Error).message}`,
+    );
+    return null;
+  }
+}
+
 export async function captureRunnerPromptAcceptanceBaseline(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -1481,26 +1499,14 @@ export async function runnerHasDurablePromptHandoff(
 ): Promise<RunnerHandoffAckProbe> {
   const observability = getRunnerObservability(runner);
   const usesNativePromptAcceptance = observability?.promptAcceptanceMode === 'native-text';
-  const paneId = usesNativePromptAcceptance ? null : await resolveTmuxPaneId(vars, target);
-  const handoff = await probeRunnerHandoffAck(vars, target, message, sinceMs, {
-    paneId,
-    launchAckSignalPath: opts.launchAckSignalPath,
-    launchAckBaseline: opts.launchAckBaseline,
-    requirePromptDigest: opts.requirePromptDigest,
-    acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
-    preferHooks: !usesNativePromptAcceptance,
-  });
-  if (handoff.accepted) {
-    return handoff;
-  }
-  if (!observability) return { accepted: false, reason: 'no runner observability provider' };
   const promptAcceptedSinceMs =
     opts.promptAcceptanceBaselineMs === undefined ? sinceMs : opts.promptAcceptanceBaselineMs;
-  if (promptAcceptedSinceMs == null) {
-    return { accepted: false, reason: 'prompt acceptance baseline unavailable' };
-  }
-  try {
-    if (opts.retainedSession && observability.promptAcceptedInSession) {
+  if (
+    promptAcceptedSinceMs != null &&
+    opts.retainedSession &&
+    observability?.promptAcceptedInSession
+  ) {
+    try {
       const nativeReading = await observability.promptAcceptedInSession(
         vars,
         target,
@@ -1519,9 +1525,32 @@ export async function runnerHasDurablePromptHandoff(
           accepted: true,
           reason: 'exact prompt accepted by runner-native session history',
           source: 'native-signal',
+          ...(nativeReading.turnToken ? { turnToken: nativeReading.turnToken } : {}),
         };
       }
+    } catch (error) {
+      console.warn(
+        `[runner-observability] native promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
+      );
     }
+  }
+  const paneId = usesNativePromptAcceptance ? null : await resolveTmuxPaneId(vars, target);
+  const handoff = await probeRunnerHandoffAck(vars, target, message, sinceMs, {
+    paneId,
+    launchAckSignalPath: opts.launchAckSignalPath,
+    launchAckBaseline: opts.launchAckBaseline,
+    requirePromptDigest: opts.requirePromptDigest,
+    acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
+    preferHooks: !usesNativePromptAcceptance,
+  });
+  if (handoff.accepted) {
+    return handoff;
+  }
+  if (!observability) return { accepted: false, reason: 'no runner observability provider' };
+  if (promptAcceptedSinceMs == null) {
+    return { accepted: false, reason: 'prompt acceptance baseline unavailable' };
+  }
+  try {
     const reading = await observability.promptAccepted(
       vars,
       target,
@@ -1536,7 +1565,7 @@ export async function runnerHasDurablePromptHandoff(
     const exactPromptAccepted =
       reading.exactPromptMatch === true &&
       reading.confidence === 'high' &&
-      (usesNativePromptAcceptance ? reading.source === 'signal' : reading.source === 'hook');
+      (reading.source === 'signal' || reading.source === 'hook');
     if (opts.requirePromptDigest && !exactPromptAccepted) {
       return {
         accepted: false,
@@ -1549,7 +1578,16 @@ export async function runnerHasDurablePromptHandoff(
       reason: nativeSignal
         ? 'exact prompt accepted by runner-native signal provider'
         : `runner ${reading.source} activity observed after prompt handoff`,
-      source: nativeSignal ? 'native-signal' : 'hook-activity',
+      source: nativeSignal
+        ? 'native-signal'
+        : reading.exactPromptMatch
+          ? 'hook-digest'
+          : 'hook-activity',
+      // Native providers can fall back to an exact hook digest for delivery,
+      // but hook timestamps are not native turn ids and cannot lease work.
+      ...(reading.turnToken && (!usesNativePromptAcceptance || nativeSignal)
+        ? { turnToken: reading.turnToken }
+        : {}),
     };
   } catch (error) {
     console.warn(

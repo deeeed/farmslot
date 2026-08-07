@@ -255,6 +255,7 @@ describe('Grok structured prompt observability', () => {
         promptAcceptedAt: Date.parse(acceptedAt),
         activity: 'tool-running',
         activityAt: Date.parse('2026-08-01T12:00:01.500+00:00'),
+        turnStartedAt: Date.parse(acceptedAt),
         sessionId,
         sessionPath: await realpath(sessionDir),
       });
@@ -285,6 +286,7 @@ describe('Grok structured prompt observability', () => {
         promptAcceptedAt: null,
         activity: 'idle',
         activityAt: Date.parse('2026-08-01T12:00:02+00:00'),
+        turnStartedAt: Date.parse(acceptedAt),
         sessionId,
         sessionPath: await realpath(sessionDir),
       });
