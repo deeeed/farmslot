@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(review): retain a publication reviewer only after a valid review generation, and keep automatic review plans on the project session policy unless an operator explicitly chooses Continue or Fresh.
 - feat(review): keep and retarget one canonical reviewer tmux window per runner, and honor explicit continue-versus-fresh session intent for publication reviews.
 - fix(improvement): resume analyses interrupted by a gateway restart instead of tombstoning them — the persisted `analyzing` placeholder is re-run in place (attempt-capped at 2) so tsx-watch restarts no longer kill accepted retrospective analyses.
 

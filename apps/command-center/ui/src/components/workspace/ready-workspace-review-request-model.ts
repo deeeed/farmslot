@@ -14,7 +14,7 @@ export function readyRunnerLabel(runner: string, currentRunner: string): string 
 }
 
 export function createReadyReviewLoop(id: number, currentRunner: string): ReviewLoopDraft {
-  return { id, runner: currentRunner as ReviewRunnerChoice, sessionIntent: 'resume' };
+  return { id, runner: currentRunner as ReviewRunnerChoice, sessionIntent: 'reset' };
 }
 
 export function addReadyReviewLoop(input: {

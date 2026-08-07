@@ -199,6 +199,9 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
 export interface ReadyReviewFlowModalContext {
   open: boolean;
   reviews: IndependentReviewStatus[];
+  passingReviews: number;
+  unresolvedFindings: number;
+  staleIgnoredReviews: number;
   selected: 'overall' | number;
   selfReviewSummary?: string;
   artifactUrl: (artifact: ArtifactRef) => string;
@@ -212,10 +215,6 @@ export function renderReadyReviewFlowModal(ctx: ReadyReviewFlowModalContext) {
   if (!ctx.open) return nothing;
   const selectedReviews =
     ctx.selected === 'overall' ? ctx.reviews : ctx.reviews.slice(ctx.selected, ctx.selected + 1);
-  const passing = ctx.reviews.filter(
-    (review) => review.verdict === 'pass' && review.unresolvedCount === 0,
-  ).length;
-  const unresolved = ctx.reviews.reduce((sum, review) => sum + review.unresolvedCount, 0);
   return html`
     <div
       class="rdy-modal-backdrop"
@@ -234,10 +233,13 @@ export function renderReadyReviewFlowModal(ctx: ReadyReviewFlowModalContext) {
         </header>
         <div class="rdy-review-flow-summary">
           <span><strong>${ctx.reviews.length}</strong> reviews</span>
-          <span><strong>${passing}</strong> passing</span>
-          <span class=${unresolved ? 'attention' : ''}
-            ><strong>${unresolved}</strong> findings recorded</span
+          <span><strong>${ctx.passingReviews}</strong> trusted passing</span>
+          <span class=${ctx.unresolvedFindings ? 'attention' : ''}
+            ><strong>${ctx.unresolvedFindings}</strong> unresolved</span
           >
+          ${ctx.staleIgnoredReviews
+            ? html`<span><strong>${ctx.staleIgnoredReviews}</strong> stale ignored</span>`
+            : nothing}
         </div>
         <div class="rdy-review-flow-layout">
           <nav class="rdy-review-flow-nav" aria-label="Review selection">

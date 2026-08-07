@@ -19,46 +19,46 @@ test('ready workspace review request model labels and creates loops', () => {
   assert.deepEqual(createReadyReviewLoop(2, 'claude'), {
     id: 2,
     runner: 'claude',
-    sessionIntent: 'resume',
+    sessionIntent: 'reset',
   });
 });
 
 test('ready workspace review request model mutates loops with max and minimum guards', () => {
   let state = addReadyReviewLoop({
-    loops: [{ id: 1, runner: 'claude', sessionIntent: 'resume' }],
+    loops: [{ id: 1, runner: 'claude', sessionIntent: 'reset' }],
     nextId: 2,
     currentRunner: 'claude',
   });
   assert.deepEqual(state, {
     loops: [
-      { id: 1, runner: 'claude', sessionIntent: 'resume' },
-      { id: 2, runner: 'claude', sessionIntent: 'resume' },
+      { id: 1, runner: 'claude', sessionIntent: 'reset' },
+      { id: 2, runner: 'claude', sessionIntent: 'reset' },
     ],
     nextId: 3,
   });
   assert.deepEqual(removeReadyReviewLoop(state.loops, 1), [
-    { id: 2, runner: 'claude', sessionIntent: 'resume' },
+    { id: 2, runner: 'claude', sessionIntent: 'reset' },
   ]);
   assert.deepEqual(
     removeReadyReviewLoop([{ id: 1, runner: 'claude', sessionIntent: 'resume' }], 1),
     [{ id: 1, runner: 'claude', sessionIntent: 'resume' }],
   );
   assert.deepEqual(setReadyReviewLoopRunner(state.loops, 2, 'codex'), [
-    { id: 1, runner: 'claude', sessionIntent: 'resume' },
-    { id: 2, runner: 'codex', sessionIntent: 'resume' },
+    { id: 1, runner: 'claude', sessionIntent: 'reset' },
+    { id: 2, runner: 'codex', sessionIntent: 'reset' },
   ]);
   assert.deepEqual(setReadyReviewLoopDepth(state.loops, 1, 'full-live'), [
     {
       id: 1,
       runner: 'claude',
-      sessionIntent: 'resume',
+      sessionIntent: 'reset',
       validationDepth: 'full-live',
     },
-    { id: 2, runner: 'claude', sessionIntent: 'resume' },
-  ]);
-  assert.deepEqual(setReadyReviewLoopSessionIntent(state.loops, 2, 'reset'), [
-    { id: 1, runner: 'claude', sessionIntent: 'resume' },
     { id: 2, runner: 'claude', sessionIntent: 'reset' },
+  ]);
+  assert.deepEqual(setReadyReviewLoopSessionIntent(state.loops, 2, 'resume'), [
+    { id: 1, runner: 'claude', sessionIntent: 'reset' },
+    { id: 2, runner: 'claude', sessionIntent: 'resume' },
   ]);
 
   state = addReadyReviewLoop({

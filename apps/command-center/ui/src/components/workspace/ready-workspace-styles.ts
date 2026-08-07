@@ -93,8 +93,7 @@ export function readyWorkspaceLightStyles(): string {
       ready-workspace .rdy-package-header,
       ready-workspace .rdy-package-title,
       ready-workspace .rdy-package-actions,
-      ready-workspace .rdy-package-facts,
-      ready-workspace .rdy-section-heading {
+      ready-workspace .rdy-package-facts {
         display: flex;
         align-items: center;
         gap: ${spacing.sm};
@@ -167,19 +166,6 @@ export function readyWorkspaceLightStyles(): string {
       ready-workspace .rdy-refresh-package:disabled {
         cursor: not-allowed;
         opacity: 0.5;
-      }
-      ready-workspace .rdy-review-flow {
-        display: grid;
-        gap: 6px;
-      }
-      ready-workspace .rdy-section-heading {
-        justify-content: space-between;
-        color: ${colors.textMuted};
-        font-size: 10px;
-      }
-      ready-workspace .rdy-section-heading > strong {
-        color: ${colors.textPrimary};
-        font-size: 11px;
       }
       ready-workspace .rdy-package-details {
         display: grid;
@@ -259,11 +245,6 @@ export function readyWorkspaceLightStyles(): string {
       ready-workspace .rdy-review-pill.warn {
         border-color: ${colors.statusWarn}66;
         color: ${colors.statusWarn};
-      }
-      ready-workspace .rdy-review-timeline {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: ${spacing.sm};
       }
       ready-workspace .rdy-review-card {
         border: 1px solid #2a2a44;

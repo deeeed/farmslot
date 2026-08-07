@@ -684,6 +684,7 @@ export async function runReviewAgent(
     subjectRef: parentRunForAlloc?.branch ?? null,
   };
   const continuingPriorGeneration = sessionIntent === 'resume' && loopNumber === 1;
+  const retainReviewerSession = sessionPolicy === 'warm-per-reviewer' || continuingPriorGeneration;
   if (sessionIntent === 'reset' && loopNumber === 1) {
     invalidateWarmReviewerSessions(_runId, runner);
   }
@@ -1026,7 +1027,7 @@ export async function runReviewAgent(
         completedAt: new Date().toISOString(),
       };
     }
-    if (sessionPolicy === 'warm-per-reviewer') {
+    if (retainReviewerSession) {
       // Record this pass's session so the next loop of THIS run can resume it.
       // On a warm-resumed pass keep the CLAIMED binding: session capture is
       // diff-based, so concurrent same-runner activity on the slot could

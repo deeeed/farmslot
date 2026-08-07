@@ -238,6 +238,8 @@ export async function executeSelfReview(
     options.reviewSessionPolicy ?? config.session_policy ?? DEFAULT_REVIEW_SESSION_POLICY;
   const reviewTimeoutMs = (config.review_timeout_min ?? DEFAULT_REVIEW_TIMEOUT_MIN) * 60_000;
   const start = Date.now();
+  let hasReusableReviewResult =
+    options.resumeFromResult?.verdict === 'pass' || options.resumeFromResult?.verdict === 'issues';
 
   // Resolve task dir on the worker repo
   const taskDir = await resolveWorkerTaskDir(vars, run.project, run.taskFile);
@@ -262,7 +264,9 @@ export async function executeSelfReview(
       artifactScope,
       sessionPolicy,
     });
-    if (recoveredFixResult)
+    if (recoveredFixResult) {
+      hasReusableReviewResult =
+        recoveredFixResult.verdict === 'pass' || recoveredFixResult.verdict === 'issues';
       return {
         ...recoveredFixResult,
         usage: recoveredFixResult.attempts?.at(-1)?.usage,
@@ -270,6 +274,7 @@ export async function executeSelfReview(
         model,
         crossRunner: isCrossRunnerReview,
       };
+    }
 
     if (options.resumeFromResult) {
       if (
@@ -369,6 +374,11 @@ export async function executeSelfReview(
       };
     }
 
+    // A pass or issues verdict is a valid review generation. Keep that
+    // reviewer claim for an explicit continuation even if worker-fix delivery
+    // later fails; launch/timeout/invalid-artifact failures never set this.
+    hasReusableReviewResult = true;
+
     if (result.verdict === 'pass') {
       debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — PASS (${Date.now() - start}ms)`);
       return {
@@ -412,9 +422,12 @@ export async function executeSelfReview(
       crossRunner: isCrossRunnerReview,
     };
   } finally {
-    // Publication reviews can be explicitly continued from the human gate, so
-    // keep their same-run reviewer binding until cancel/completion/slot release.
-    if (!(options.publicationReview === true && sessionPolicy === 'warm-per-reviewer')) {
+    // Publication reviews can be explicitly continued from the human gate, but
+    // only after a valid review generation. A failed launch, timeout, or invalid
+    // terminal artifact must not leave a claimable reviewer session behind.
+    const continuationEnabled =
+      sessionPolicy === 'warm-per-reviewer' || options.reviewSessionIntent === 'resume';
+    if (!(options.publicationReview === true && continuationEnabled && hasReusableReviewResult)) {
       invalidateWarmReviewerSessions(runId, reviewRunner);
     }
   }

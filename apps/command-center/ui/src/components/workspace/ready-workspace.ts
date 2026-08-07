@@ -18,6 +18,7 @@ import '../reviews/review-loop-timeline.js';
 import './recipe-runner-controls.js';
 
 import { gateway } from '../../gateway-client.js';
+import { summarizeReviewCounts } from '../../utils/review-gate-display.js';
 import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
 
@@ -170,9 +171,13 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   }
 
   private _renderReviewFlowModal(payload: ReadyGatePayload) {
+    const reviewCounts = summarizeReviewCounts(payload);
     return renderReadyReviewFlowModal({
       open: this._reviewFlowModalOpen,
       reviews: payload.independentReviews ?? [],
+      passingReviews: reviewCounts.trustedPassingReviews,
+      unresolvedFindings: reviewCounts.unresolvedFindings,
+      staleIgnoredReviews: reviewCounts.staleIgnoredReviews,
       selected: this._reviewFlowSelection,
       selfReviewSummary: payload.selfReviewSummary,
       artifactUrl: (artifact) => this._artifactUrl(artifact.path, artifact),
