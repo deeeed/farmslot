@@ -86,6 +86,20 @@ Use `/clear` only when you intentionally want to keep the same interactive proce
 
 Reusing an already-open model prompt for a new benchmark run is unsafe by default because hidden prior context can bleed into the next result.
 
+### Declared continuation exception
+
+A same-PR review follow-up is not a new task when the orchestrator can prove all of these:
+
+- same canonical repository and PR chain;
+- same reviewer runner, slot, and persisted session identity;
+- prior reviewed HEAD and current HEAD are frozen;
+- review policy explicitly requests `incremental`, not `full`.
+
+In that case, keep the single reviewer pane/session warm and send a compact follow-up containing the
+prior findings plus the exact prior-head→current-head range. Do not `/clear`: the retained reasoning
+is the intended input. Record a new verdict for the new HEAD; never inherit approval. If any identity
+or capability check fails, return to the normal fresh-process/reset rule and record the fallback.
+
 ## State Machine
 
 Use [scripts/pane-state.sh](scripts/pane-state.sh) first.
