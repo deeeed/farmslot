@@ -186,7 +186,19 @@ export function createWebSocketServer(
 
       // Route node responses (type: 'res' from gateway-initiated requests)
       try {
-        const peek = JSON.parse(raw.toString());
+        let peek;
+        try {
+          peek = JSON.parse(raw.toString());
+        } catch (err) {
+          // Parse failures are not structured node frames; preserve legacy text handling.
+          if (process.env.DEBUG_GATEWAY_FRAMES) {
+            console.warn(
+              `[server] non-JSON websocket frame routed as text: ${(err as Error).message}`,
+            );
+          }
+          handleMessage(state, raw, authRuntime, _req);
+          return;
+        }
         if (peek.type === 'res' && typeof peek.id === 'string') {
           if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node response from ${state.id}`);
@@ -274,12 +286,11 @@ export function createWebSocketServer(
           return;
         }
       } catch (err) {
-        // JSON parse failure — not a structured frame, fall through to text handling.
-        if (process.env.DEBUG_GATEWAY_FRAMES) {
-          console.warn(
-            `[server] non-JSON websocket frame routed as text: ${(err as Error).message}`,
-          );
-        }
+        console.error(
+          `[server] structured websocket frame failed on ${state.id}: ${(err as Error).message}`,
+        );
+        ws.close(1011, 'internal gateway error');
+        return;
       }
       handleMessage(state, raw, authRuntime, _req);
     });
@@ -584,7 +595,17 @@ async function handleMessage(
   try {
     requireAuthenticatedSession(authRuntime, state);
   } catch (err) {
-    const authErr = err as GatewayAuthError;
+    if (!(err instanceof GatewayAuthError)) {
+      console.error(
+        `[server] authenticated session resolution failed on ${state.id}: ${(err as Error).message}`,
+      );
+      sendResponse(state.ws, frame.id, false, undefined, {
+        code: 'INTERNAL_ERROR',
+        message: 'Internal gateway error',
+      });
+      return;
+    }
+    const authErr = err;
     sendResponse(state.ws, frame.id, false, undefined, {
       code: authErr.code,
       message: authErr.message,

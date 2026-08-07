@@ -229,6 +229,102 @@ test('all seven node frame paths accept node principals and refuse non-node prin
   }
 });
 
+test(
+  'unexpected resolver faults close structured node frames as internal failures',
+  { timeout: 5_000 },
+  async () => {
+    const runtime = isolatedRuntime();
+    const node = runtime.writer.createPrincipal(
+      { type: 'node', displayName: 'fault-node', machine: 'fault-node' },
+      [],
+    );
+    const nodeIssue = runtime.writer.issueCredential(node.id, 'fault-node');
+    const harness = await startServer(runtime);
+    try {
+      const ws = await connect(harness.url);
+      const auth = await request(ws, Methods.AUTH_CONNECT, {
+        clientKind: 'node',
+        token: nodeIssue.secret,
+      });
+      assert.equal(auth.ok, true);
+
+      const resolveSessionPrincipal = runtime.resolver.resolveSessionPrincipal;
+      runtime.resolver.resolveSessionPrincipal = () => {
+        throw new Error('node resolver reload proof');
+      };
+      try {
+        const close = onceClose(ws);
+        ws.send(
+          JSON.stringify({
+            type: 'event',
+            event: 'node.metrics',
+            payload: {
+              machine: 'fault-node',
+              metrics: {
+                cpuPercent: 0,
+                memoryPercent: 0,
+                memoryUsedGb: 0,
+                memoryTotalGb: 1,
+                diskPercent: 0,
+                loadAvg1: 0,
+                loadAvg5: 0,
+                collectedAt: new Date(0).toISOString(),
+              },
+            },
+          }),
+        );
+        const closed = await close;
+        assert.equal(closed.code, 1011);
+        assert.equal(closed.reason, 'internal gateway error');
+        assert.doesNotMatch(closed.reason, /node resolver reload proof/u);
+      } finally {
+        runtime.resolver.resolveSessionPrincipal = resolveSessionPrincipal;
+      }
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+test(
+  'unexpected resolver faults return generic authenticated RPC errors without leakage',
+  { timeout: 5_000 },
+  async () => {
+    const runtime = isolatedRuntime();
+    const admin = runtime.writer.createPrincipal({ type: 'person', displayName: 'fault-admin' }, [
+      { role: 'admin', scope: { kind: 'global' } },
+    ]);
+    const adminIssue = runtime.writer.issueCredential(admin.id, 'fault-admin');
+    const harness = await startServer(runtime);
+    try {
+      const ws = await connect(harness.url);
+      const auth = await request(ws, Methods.AUTH_CONNECT, {
+        clientKind: 'ui',
+        token: adminIssue.secret,
+      });
+      assert.equal(auth.ok, true);
+
+      const resolveSessionPrincipal = runtime.resolver.resolveSessionPrincipal;
+      runtime.resolver.resolveSessionPrincipal = () => {
+        throw new Error('rpc resolver reload proof');
+      };
+      try {
+        const response = await request(ws, Methods.GATEWAY_PING, {});
+        assert.equal(response.ok, false);
+        assert.equal(response.error?.code, 'INTERNAL_ERROR');
+        assert.equal(response.error?.message, 'Internal gateway error');
+        assert.doesNotMatch(JSON.stringify(response), /rpc resolver reload proof/u);
+      } finally {
+        runtime.resolver.resolveSessionPrincipal = resolveSessionPrincipal;
+      }
+      ws.close();
+      await onceClose(ws);
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
 test('latching activation closes every open solo session immediately', async () => {
   const runtime = isolatedRuntime();
   const harness = await startServer(runtime);
