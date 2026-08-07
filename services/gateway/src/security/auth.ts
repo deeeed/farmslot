@@ -168,7 +168,15 @@ export function initializeGatewayIdentity(
 }
 
 export function startCredentialFreshnessPolling(runtime: GatewayAuthRuntime): () => void {
-  const timer = setInterval(() => runtime.store.ensureFresh(), 2_000);
+  const timer = setInterval(() => {
+    try {
+      runtime.store.ensureFresh();
+    } catch (err) {
+      // A failed load leaves the last-known-good projection and freshness stamp intact,
+      // so the next interval can retry after the store is repaired.
+      console.error(`[auth] credential freshness polling failed: ${(err as Error).message}`);
+    }
+  }, 2_000);
   timer.unref();
   return () => clearInterval(timer);
 }

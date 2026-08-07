@@ -759,6 +759,7 @@ function installCredentialSessionInvalidation(authRuntime: GatewayAuthRuntime): 
         closeSessions(() => true);
         return;
       }
+      let authorizationFaultLogged = false;
       closeSessions((state) => {
         if (
           state.authentication?.kind === 'credential' &&
@@ -766,9 +767,21 @@ function installCredentialSessionInvalidation(authRuntime: GatewayAuthRuntime): 
         ) {
           return true;
         }
-        const resolution = authRuntime.resolver.resolveSessionPrincipal(state);
-        if (!resolution.ok) return true;
-        return change.changedPrincipalIds.includes(resolution.principal.id);
+        try {
+          const resolution = authRuntime.resolver.resolveSessionPrincipal(state);
+          if (!resolution.ok) return true;
+          return change.changedPrincipalIds.includes(resolution.principal.id);
+        } catch (err) {
+          // If current authority cannot be established, this session must fail closed;
+          // the next connection can authenticate after the store is repaired.
+          if (!authorizationFaultLogged) {
+            console.error(
+              `[server] credential session invalidation failed: ${(err as Error).message}`,
+            );
+            authorizationFaultLogged = true;
+          }
+          return true;
+        }
       });
     });
   });
