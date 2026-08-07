@@ -76,11 +76,13 @@ const turnActive = (expectedTurnToken: string) => async () => {
 };
 
 if (process.env.FARMSLOT_VALIDATION_PROBE_ONLY === '1') {
-  const expectedTurnToken = process.env.FARMSLOT_VALIDATION_EXPECTED_TURN_TOKEN ?? '';
+  const state = await readRunnerTurnState(vars, target, runner);
+  const expectedTurnToken =
+    process.env.FARMSLOT_VALIDATION_EXPECTED_TURN_TOKEN ?? state?.turnToken ?? '';
   const leaseAllowed = expectedTurnToken ? await turnActive(expectedTurnToken)() : false;
   writeFileSync(
     resultPath,
-    `${JSON.stringify({ leaseAllowed, turnReadings }, null, 2)}\n`,
+    `${JSON.stringify({ expectedTurnToken, leaseAllowed, turnReadings }, null, 2)}\n`,
     'utf-8',
   );
   process.exit(0);

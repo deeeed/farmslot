@@ -67,6 +67,7 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
     currentContract:
       'an accepted fix prompt receives a liveness-guarded structured runner turn lease',
     result: null,
+    liveSnapshotProbe: null,
     staleSnapshotProbe: null,
     activeHook: null,
     paneTail: null,
@@ -125,6 +126,21 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
       `${encodeURIComponent(deadPaneId)}.json`,
     );
     const activeState = waitForActiveTurn(deadStatePath, 60_000);
+    const liveResultPath = path.join(repo, 'live-result.json');
+    execFileSync('yarn', ['exec', 'tsx', executor], {
+      cwd: root,
+      env: {
+        ...process.env,
+        FARMSLOT_VALIDATION_REPO: repo,
+        FARMSLOT_VALIDATION_TARGET: deadPaneId,
+        FARMSLOT_VALIDATION_RUNNER: runner,
+        FARMSLOT_VALIDATION_RESULT_PATH: liveResultPath,
+        FARMSLOT_VALIDATION_PROBE_ONLY: '1',
+      },
+      stdio: 'pipe',
+      timeout: 30_000,
+    });
+    report.liveSnapshotProbe = JSON.parse(fs.readFileSync(liveResultPath, 'utf-8'));
     execFileSync('tmux', ['respawn-pane', '-k', '-t', deadPaneId, '-c', repo]);
     fs.writeFileSync(deadStatePath, `${JSON.stringify(activeState)}\n`, 'utf-8');
     const deadResultPath = path.join(repo, 'dead-result.json');
@@ -137,7 +153,7 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
         FARMSLOT_VALIDATION_RUNNER: runner,
         FARMSLOT_VALIDATION_RESULT_PATH: deadResultPath,
         FARMSLOT_VALIDATION_PROBE_ONLY: '1',
-        FARMSLOT_VALIDATION_EXPECTED_TURN_TOKEN: `${activeState.session_id}:${activeState.turnStartedAt}`,
+        FARMSLOT_VALIDATION_EXPECTED_TURN_TOKEN: report.liveSnapshotProbe.expectedTurnToken,
       },
       stdio: 'pipe',
       timeout: 30_000,
@@ -151,7 +167,9 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
       report.result.supersedingTurnProbe.originalLeaseActive === false &&
       report.result.supersedingTurnProbe.supersedingLeaseActive === true &&
       report.result.supersedingTurnProbe.tokensDiffer === true &&
+      report.liveSnapshotProbe.leaseAllowed === true &&
       report.staleSnapshotProbe.leaseAllowed === false &&
+      report.staleSnapshotProbe.expectedTurnToken === report.liveSnapshotProbe.expectedTurnToken &&
       report.staleSnapshotProbe.turnReadings.some((reading) => reading.active === false);
   } catch (error) {
     report.error = error?.message || String(error);

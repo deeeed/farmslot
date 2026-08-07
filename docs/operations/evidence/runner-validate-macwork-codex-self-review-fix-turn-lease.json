@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-07T02:29:36.018Z",
+  "recordedAt": "2026-08-07T03:16:03.475Z",
   "host": "macwork",
   "scenario": "self-review-fix-turn-lease",
   "runner": "codex",
   "baselineContract": "an unaccepted fix prompt receives no structured-turn lease",
   "currentContract": "an accepted fix prompt receives a liveness-guarded structured runner turn lease",
   "result": {
-    "elapsedMs": 33362,
+    "elapsedMs": 34736,
     "idleTimeoutMs": 10000,
     "baselineTimedOut": true,
     "unacceptedTurnLeaseRejected": true,
-    "acceptedTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
+    "acceptedTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
     "leasedSignalStatus": "complete",
     "activeTurnObserved": true,
     "supersedingTurnProbe": {
@@ -21,42 +21,56 @@
     },
     "turnReadings": [
       {
-        "expectedTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
+        "expectedTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
         "active": true,
         "stateValue": "active",
-        "actualTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
+        "actualTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
         "runnerAlive": true
       },
       {
-        "expectedTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
+        "expectedTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
         "active": true,
         "stateValue": "active",
-        "actualTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
+        "actualTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
         "runnerAlive": true
       },
       {
-        "expectedTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
+        "expectedTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
         "active": true,
         "stateValue": "active",
-        "actualTurnToken": "019fda0d-160a-7330-9ae2-54ef3a6c1a2a:019fda0d-4a5f-7053-a8d1-000567b7522d",
+        "actualTurnToken": "019fda37-1f08-7bb1-82ea-d7755d55a300:019fda37-4b8f-7e91-b0f1-c410173cabc5",
+        "runnerAlive": true
+      }
+    ]
+  },
+  "liveSnapshotProbe": {
+    "expectedTurnToken": "019fda38-067a-7dd3-8e8a-f7bea7999c03:019fda38-0789-70a1-94a6-315f2bd2e0d2",
+    "leaseAllowed": true,
+    "turnReadings": [
+      {
+        "expectedTurnToken": "019fda38-067a-7dd3-8e8a-f7bea7999c03:019fda38-0789-70a1-94a6-315f2bd2e0d2",
+        "active": true,
+        "stateValue": "active",
+        "actualTurnToken": "019fda38-067a-7dd3-8e8a-f7bea7999c03:019fda38-0789-70a1-94a6-315f2bd2e0d2",
         "runnerAlive": true
       }
     ]
   },
   "staleSnapshotProbe": {
+    "expectedTurnToken": "019fda38-067a-7dd3-8e8a-f7bea7999c03:019fda38-0789-70a1-94a6-315f2bd2e0d2",
     "leaseAllowed": false,
     "turnReadings": [
       {
-        "expectedTurnToken": "019fda0d-e2e3-78a3-b397-9e03329fddb7:1786069773979",
+        "expectedTurnToken": "019fda38-067a-7dd3-8e8a-f7bea7999c03:019fda38-0789-70a1-94a6-315f2bd2e0d2",
         "active": false,
         "stateValue": "active",
-        "actualTurnToken": "019fda0d-e2e3-78a3-b397-9e03329fddb7:019fda0d-e353-7120-84cd-9069b27aab3c",
+        "actualTurnToken": "019fda38-067a-7dd3-8e8a-f7bea7999c03:019fda38-0789-70a1-94a6-315f2bd2e0d2",
         "runnerAlive": false
       }
     ]
   },
   "activeHook": "production-delivery",
-  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.0Ab1xn/launch-db9a65d0fb32bab2.sh\nOpenAI Codex v0.146.1\n[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:     gpt-5.6-sol xhigh   /model to change          │\n│ directory: …gn/T/runner-validate-codex-turn-lease-boigCh │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n\n[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭─────────────────────────────────────────────────╮\n│ ✨ Update available! 0.146.1 -> 0.147.0         │\n│ Run npm install -g @openai/codex to update.     │\n│                                                 │\n│ See full release notes:                         │\n│ https://github.com/openai/codex/releases/latest │\n╰─────────────────────────────────────────────────╯\n\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:     gpt-5.6-sol xhigh   /model to change          │\n│ directory: …gn/T/runner-validate-codex-turn-lease-boigCh │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n\n› Reply with exactly READY, then wait for another instruction.\n\n\n• READY\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 14; printf '%s\\n' '{\"role\":\"self-review-\n  fix\",\"status\":\"complete\",\"outcome\":\"success\",\"disposition\":\"fixed\",\"timestamp\n  \":\"2026-08-07T02:28:51.164Z\"}' > task/SELF-REVIEW-FIX-SIGNAL.json\n\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 12\n\n\n• Working (10s • esc to interrupt)\n\n\n› Explain this codebase\n\n  gpt-5.6-sol xhigh · /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/…",
+  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.kRfUmi/launch-fad3dc7d3b1a8cb5.sh\nOpenAI Codex v0.146.1\n[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:     gpt-5.6-sol xhigh   /model to change          │\n│ directory: …gn/T/runner-validate-codex-turn-lease-2RXHcP │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n\n[farmslot-observability] codex account label=ambient source=ambient-no-config\n╭─────────────────────────────────────────────────╮\n│ ✨ Update available! 0.146.1 -> 0.147.0         │\n│ Run npm install -g @openai/codex to update.     │\n│                                                 │\n│ See full release notes:                         │\n│ https://github.com/openai/codex/releases/latest │\n╰─────────────────────────────────────────────────╯\n\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.1)                               │\n│                                                          │\n│ model:     gpt-5.6-sol xhigh   /model to change          │\n│ directory: …gn/T/runner-validate-codex-turn-lease-2RXHcP │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit\n  https://chatgpt.com/codex?app-landing-page=true\n\n\n› Reply with exactly READY, then wait for another instruction.\n\n\n• READY\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 14; printf '%s\\n' '{\"role\":\"self-review-\n  fix\",\"status\":\"complete\",\"outcome\":\"success\",\"disposition\":\"fixed\",\"timestamp\n  \":\"2026-08-07T03:14:43.876Z\"}' > task/SELF-REVIEW-FIX-SIGNAL.json\n\n\n\n› Use the shell tool exactly once to run this command, and do nothing else:\n  sleep 12\n\n\n\n› Write tests for @filename\n\n  gpt-5.6-sol xhigh · /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/…",
   "pass": true,
   "error": null
 }
