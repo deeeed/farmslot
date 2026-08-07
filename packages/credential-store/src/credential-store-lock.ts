@@ -31,6 +31,13 @@ export interface CredentialStoreLockOptions {
   beforeRead?: () => void;
 }
 
+export class CredentialStoreRefusalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CredentialStoreRefusalError';
+  }
+}
+
 export function withCredentialStoreLock<T>(
   fn: (store: CredentialStore) => { next: CredentialStore; result: T },
   options: CredentialStoreLockOptions = {},
@@ -94,7 +101,7 @@ function acquireCredentialStoreLock(lockPath: string): () => void {
       if (fd !== null) closeSync(fd);
     }
   }
-  throw new Error(
+  throw new CredentialStoreRefusalError(
     `Another Farmslot process is writing the credential store (pid ${holder}).\n` +
       'Next: wait for it to finish, or stop that process and retry.',
   );

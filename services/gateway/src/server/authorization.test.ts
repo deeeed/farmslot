@@ -1,7 +1,7 @@
 process.env.NODE_TEST_CONTEXT = '1';
 
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -504,6 +504,21 @@ test(
       assert.equal(refusal.error?.code, 'CREDENTIAL_STORE_REFUSED');
       assert.match(refusal.error?.message ?? '', /last active admin credential/u);
       assert.match(refusal.error?.userAction ?? '', /issue a replacement admin credential first/u);
+
+      const lockPath = join(runtime.store.env.FARMSLOT_HOME!, 'credentials.lock');
+      writeFileSync(lockPath, `${process.pid}\n`, { mode: 0o600 });
+      try {
+        const lockRefusal = await request(ws, Methods.PRINCIPAL_CREATE, {
+          subject: { type: 'service', displayName: 'lock-refusal-probe' },
+          roles: [],
+        });
+        assert.equal(lockRefusal.ok, false);
+        assert.equal(lockRefusal.error?.code, 'CREDENTIAL_STORE_REFUSED');
+        assert.match(lockRefusal.error?.message ?? '', /Another Farmslot process is writing/u);
+        assert.match(lockRefusal.error?.userAction ?? '', /wait for it to finish/u);
+      } finally {
+        unlinkSync(lockPath);
+      }
 
       const issueCredential = runtime.writer.issueCredential;
       runtime.writer.issueCredential = () => {

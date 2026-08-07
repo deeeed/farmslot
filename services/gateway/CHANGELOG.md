@@ -4,9 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(auth): preserve deliberate RPC validation and credential-store refusal guidance while returning generic non-leaking errors for unexpected authorization and credential-store faults.
+- fix(auth): preserve deliberate RPC validation and credential-store refusal guidance, including live lock contention, while returning generic non-leaking errors for unexpected authorization and credential-store faults.
 - fix(server): surface unexpected auth-connect, routed RPC, and JSON/binary node-frame principal-resolution faults, contain pre-auth pairing credential-store faults, and fail closed per receiver when broadcast authorization cannot refresh the credential store, without exposing internal messages or unhandled promise rejections.
-- fix(auth): rethrow unexpected HTTP principal-resolution failures instead of exposing them as authorization denials.
+- fix(auth): log unexpected HTTP principal-resolution failures and return a generic request-scoped 500 instead of exposing them as authorization denials or terminating the gateway.
 - feat(auth): implement ADR-051 principals, durable independently revocable credentials, solo-to-activated lifecycle, default-deny role authorization, scoped pairing, work provenance, and fire-time reauthorization.
 - fix(review): retain a publication reviewer only after a valid review generation, and keep automatic review plans on the project session policy unless an operator explicitly chooses Continue or Fresh.
 - feat(review): keep and retarget one canonical reviewer tmux window per runner, and honor explicit continue-versus-fresh session intent for publication reviews.

@@ -13,7 +13,11 @@ import { join } from 'node:path';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
-import { processIsAlive, withCredentialLock } from './credential-store-lock.js';
+import {
+  CredentialStoreRefusalError,
+  processIsAlive,
+  withCredentialLock,
+} from './credential-store-lock.js';
 
 export interface GatewayPresence {
   pid: number;
@@ -59,7 +63,7 @@ export function assertNoLiveGatewaysUnlocked(env: NodeJS.ProcessEnv = process.en
   const live = listLiveGatewaysUnlocked(env);
   if (live.length === 0) return;
   const locations = live.map((entry) => `${entry.farmslotRoot} on port ${entry.port}`).join(', ');
-  throw new Error(
+  throw new CredentialStoreRefusalError(
     `Cannot modify the credential store: ${live.length} ${live.length === 1 ? 'gateway is' : 'gateways are'} running (${locations}).\n` +
       'Next: stop them, then re-run this command.',
   );

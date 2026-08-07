@@ -13,7 +13,7 @@ import {
   type CredentialStore,
   type CredentialStoreRuntime,
 } from './credential-store.js';
-import { withCredentialStoreLock } from './credential-store-lock.js';
+import { CredentialStoreRefusalError, withCredentialStoreLock } from './credential-store-lock.js';
 import { assertNoLiveGatewaysUnlocked } from './gateway-presence.js';
 
 export const VIRTUAL_PRINCIPAL_IDS = ['local-admin', 'local-node', 'system'] as const;
@@ -34,13 +34,6 @@ export interface EnvironmentCredentialReconciliation {
   credentialId: string;
   created: boolean;
   otherActiveCredentialIds: string[];
-}
-
-export class CredentialStoreRefusalError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'CredentialStoreRefusalError';
-  }
 }
 
 export function readCredentialStoreOffline(env: NodeJS.ProcessEnv = process.env): CredentialStore {

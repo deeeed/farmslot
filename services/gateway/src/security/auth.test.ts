@@ -149,26 +149,34 @@ assert.equal(operatorResponse.statusCode, 403);
 
 const resolverFailureResponse = createFakeResponse();
 const resolveSessionPrincipal = cookieRuntime.resolver.resolveSessionPrincipal;
+const consoleError = console.error;
+let resolverFailureLog = '';
 cookieRuntime.resolver.resolveSessionPrincipal = () => {
   throw new Error('credential store reload failed');
 };
+console.error = (...args: unknown[]) => {
+  resolverFailureLog = args.map(String).join(' ');
+};
 try {
-  assert.throws(
-    () =>
-      authorizeHttpRequest({
-        runtime: cookieRuntime,
-        req: createFakeRequest({
-          cookie: 'farmslot_gateway_credential=cookie-token',
-          remoteAddress: '127.0.0.1',
-        }),
-        res: resolverFailureResponse,
+  assert.equal(
+    authorizeHttpRequest({
+      runtime: cookieRuntime,
+      req: createFakeRequest({
+        cookie: 'farmslot_gateway_credential=cookie-token',
+        remoteAddress: '127.0.0.1',
       }),
-    /credential store reload failed/u,
+      res: resolverFailureResponse,
+    }),
+    false,
   );
 } finally {
   cookieRuntime.resolver.resolveSessionPrincipal = resolveSessionPrincipal;
+  console.error = consoleError;
 }
-assert.equal(resolverFailureResponse.statusCode, undefined);
+assert.equal(resolverFailureResponse.statusCode, 500);
+assert.equal(resolverFailureResponse.body, JSON.stringify({ error: 'Internal error' }));
+assert.doesNotMatch(resolverFailureResponse.body, /credential store reload failed/u);
+assert.match(resolverFailureLog, /credential store reload failed/u);
 
 const missingCookieResponse = createFakeResponse();
 const missingCookieAuthorized = authorizeHttpRequest({

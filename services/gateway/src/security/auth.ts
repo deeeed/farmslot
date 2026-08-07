@@ -294,40 +294,44 @@ export function authorizeHttpRequest(params: {
   res: ServerResponse;
 }): boolean {
   if (params.runtime.resolver.isSoloMode()) return true;
-  const credential = getHttpCredential(params.req);
-  const result = authenticateGatewayClient({
-    runtime: params.runtime,
-    connectParams: {
-      clientKind: 'companion',
-      ...(credential?.transport === 'token' ? { token: credential.value } : {}),
-      ...(credential?.transport === 'password' ? { password: credential.value } : {}),
-    },
-    clientIp: resolveRequestIp(params.req, params.runtime.store.env),
-  });
-  if (result.ok) {
-    try {
+  try {
+    const credential = getHttpCredential(params.req);
+    const result = authenticateGatewayClient({
+      runtime: params.runtime,
+      connectParams: {
+        clientKind: 'companion',
+        ...(credential?.transport === 'token' ? { token: credential.value } : {}),
+        ...(credential?.transport === 'password' ? { password: credential.value } : {}),
+      },
+      clientIp: resolveRequestIp(params.req, params.runtime.store.env),
+    });
+    if (result.ok) {
       authorizeGatewayHttp(params.runtime, {
         authenticated: true,
         clientKind: 'companion',
         authentication: result.authentication,
       });
       return true;
-    } catch (error) {
-      if (!(error instanceof GatewayMethodError)) throw error;
-      const denial = error;
+    }
+    sendAuthFailure(params.res, result);
+    return false;
+  } catch (error) {
+    if (error instanceof GatewayMethodError) {
       params.res.writeHead(403, { 'Content-Type': 'application/json' });
       params.res.end(
         JSON.stringify({
           error: 'Forbidden',
-          message: denial.message,
-          ...(denial.userAction ? { userAction: denial.userAction } : {}),
+          message: error.message,
+          ...(error.userAction ? { userAction: error.userAction } : {}),
         }),
       );
       return false;
     }
+    console.error(`[http/auth] error: ${(error as Error).message}`);
+    params.res.writeHead(500, { 'Content-Type': 'application/json' });
+    params.res.end(JSON.stringify({ error: 'Internal error' }));
+    return false;
   }
-  sendAuthFailure(params.res, result);
-  return false;
 }
 
 export function resolveRequestIp(
