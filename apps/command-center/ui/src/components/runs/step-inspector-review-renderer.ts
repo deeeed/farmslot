@@ -7,9 +7,8 @@ import type { ReviewLoopAttempt } from './step-inspector-model.js';
 /**
  * Render one review-loop attempt row. Extracted from <step-inspector> so the
  * fixDelta binding is unit-testable without a DOM: the "worker fix applied"
- * line must show whenever a fixDelta exists (`hasFixDelta`), with the ` · <path>`
- * suffix only when a diffPath is present. A degraded snapshot (diffPath absent)
- * still shows the line. See step-inspector-review-renderer.test.ts.
+ * line shows only for a tracked SHA range, with the ` · <path>` suffix when a
+ * diff artifact is available.
  */
 export function renderReviewAttempt(attempt: ReviewLoopAttempt, index: number): unknown {
   const { verdict, unresolvedCount: unresolved, issues, completedAt, loopNumber } = attempt;

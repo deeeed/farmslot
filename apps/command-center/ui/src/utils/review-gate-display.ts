@@ -615,6 +615,9 @@ export function fixDeltaAbsenceReason(
         ? `No worker fix delta captured; reviewed package did not include a fix range (${rowFixDelta.missingReason}).`
         : 'No worker fix delta captured; reviewed package did not include a fix range.';
     }
+    if (!hasMeaningfulReviewFixDelta(rowFixDelta)) {
+      return 'No tracked worker change was recorded for this review loop.';
+    }
     return 'No worker fix delta captured; reviewed package did not include a complete fix range.';
   }
   if (review.feedbackSent === false) {
@@ -622,4 +625,25 @@ export function fixDeltaAbsenceReason(
   }
   if (warn) return 'No worker fix delta captured for this review loop.';
   return '';
+}
+
+export function hasMeaningfulReviewFixDelta(delta: unknown): boolean {
+  if (!delta || typeof delta !== 'object') return false;
+  const snapshot = delta as Record<string, unknown>;
+  const base =
+    typeof snapshot.fixBaseSha === 'string'
+      ? snapshot.fixBaseSha
+      : typeof snapshot.baseSha === 'string'
+        ? snapshot.baseSha
+        : undefined;
+  const head =
+    typeof snapshot.fixHeadSha === 'string'
+      ? snapshot.fixHeadSha
+      : typeof snapshot.headSha === 'string'
+        ? snapshot.headSha
+        : undefined;
+  if (!base || !head || base === head) return false;
+  if (!snapshot.diffStat || typeof snapshot.diffStat !== 'object') return true;
+  const files = (snapshot.diffStat as Record<string, unknown>).files;
+  return typeof files !== 'number' || files > 0;
 }

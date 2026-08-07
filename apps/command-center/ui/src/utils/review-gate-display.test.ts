@@ -9,6 +9,7 @@ import {
   compactHumanGateLabel,
   fixDeltaAbsenceReason,
   formatTokenCount,
+  hasMeaningfulReviewFixDelta,
   publishEvidenceDisplayRows,
   readyReviewBlockingDisplayReason,
   reviewAttemptLabel,
@@ -188,6 +189,17 @@ test('fixDeltaAbsenceReason explains audit-only and unavailable fix ranges', () 
     },
   }).independentReviews![0];
   assert.match(fixDeltaAbsenceReason(unavailable, undefined), /fix-base-unavailable/);
+
+  const unchanged = payload({
+    fixDelta: {
+      source: 'local-git',
+      capturedAt: '2026-05-18T00:00:00.000Z',
+      baseSha: 'same-sha',
+      headSha: 'same-sha',
+    },
+  }).independentReviews![0];
+  assert.equal(hasMeaningfulReviewFixDelta(unchanged.fixDelta), false);
+  assert.match(fixDeltaAbsenceReason(unchanged, undefined), /No tracked worker change/);
 });
 
 test('summarizeReviewCounts mirrors gateway fix-loop certification by trusting passing reviews', () => {

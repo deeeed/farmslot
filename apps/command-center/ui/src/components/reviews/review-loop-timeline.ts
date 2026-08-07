@@ -14,6 +14,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import {
   fixDeltaAbsenceReason,
+  hasMeaningfulReviewFixDelta,
   reviewAttemptLabel,
   reviewPolicyLabel,
   reviewSourceLabel,
@@ -65,12 +66,6 @@ function fixDeltaRange(delta: ReviewFixDeltaSnapshot | undefined) {
     base: delta?.fixBaseSha ?? delta?.baseSha,
     head: delta?.fixHeadSha ?? delta?.headSha,
   };
-}
-
-function hasMeaningfulFixDelta(delta: ReviewFixDeltaSnapshot | undefined): boolean {
-  const { base, head } = fixDeltaRange(delta);
-  if (!base || !head || base === head) return false;
-  return delta?.diffStat ? delta.diffStat.files > 0 : true;
 }
 
 function reviewAttemptHeading(
@@ -150,7 +145,7 @@ export class ReviewLoopTimeline extends LitElement {
       font-size: ${unsafeCSS(fonts.sizeXs)};
     }
     .phase::after {
-      content: '\2192';
+      content: '\\2192';
       color: ${unsafeCSS(colors.textMuted)};
       margin-left: 8px;
     }
@@ -308,28 +303,36 @@ export class ReviewLoopTimeline extends LitElement {
     if (!attempts.length) return nothing;
     const phases = attempts.flatMap((attempt, index) => {
       const pass = attempt.verdict === 'pass' && attempt.unresolvedCount === 0;
+      const warn =
+        attempt.unresolvedCount > 0 || attempt.verdict === 'issues' || attempt.verdict === 'failed';
+      const loopNumber = attempt.loopNumber;
       const reviewPhase = html`
-        <div class="phase ${pass ? 'pass' : 'warn'}">
-          <span class="phase-title">${index === 0 ? 'Review' : 'Re-review'} ${index + 1}</span>
-          ${pass ? 'passed' : `${attempt.unresolvedCount} finding(s)`}
+        <div class="phase ${pass ? 'pass' : warn ? 'warn' : ''}">
+          <span class="phase-title">${index === 0 ? 'Review' : 'Re-review'} ${loopNumber}</span>
+          ${pass ? 'passed' : warn ? `${attempt.unresolvedCount} finding(s)` : attempt.verdict}
         </div>
       `;
       if (index === 0) return [reviewPhase];
       const delta = attempt.fixDelta;
-      const meaningful = hasMeaningfulFixDelta(delta);
+      const meaningful = hasMeaningfulReviewFixDelta(delta);
       const { base, head } = fixDeltaRange(delta);
       const fixPhase = html`
         <div class="phase ${meaningful ? '' : 'no-change'}">
           <span class="phase-title">Worker fix</span>
           ${meaningful
-            ? `${delta?.diffStat?.files ?? 'tracked'} file(s) · ${shortSha(base)}..${shortSha(head)}`
+            ? `${delta?.diffStat ? `${delta.diffStat.files} file(s) · ` : ''}${shortSha(base)}..${shortSha(head)}`
             : 'no tracked change'}
         </div>
       `;
       return [fixPhase, reviewPhase];
     });
     const last = attempts.at(-1);
-    if (last && last.unresolvedCount > 0) {
+    if (
+      last &&
+      last.unresolvedCount > 0 &&
+      review.feedbackSent !== false &&
+      review.recoveryContinuationPending === true
+    ) {
       phases.push(
         html`<div class="phase pending"><span class="phase-title">Worker fix</span>pending</div>`,
         html`<div class="phase pending"><span class="phase-title">Re-review</span>pending</div>`,
@@ -356,9 +359,9 @@ export class ReviewLoopTimeline extends LitElement {
     const validationDepth = attempt?.validationDepth ?? review.validationDepth;
     const rowSnapshot = attempt ? attempt.reviewSnapshot : review.reviewSnapshot;
     const rowFixDelta = attempt ? attempt.fixDelta : review.fixDelta;
-    const hasFixDeltaRange = hasMeaningfulFixDelta(rowFixDelta);
+    const hasFixDeltaRange = hasMeaningfulReviewFixDelta(rowFixDelta);
     const fixDeltaMissingReason = hasFixDeltaRange ? '' : fixDeltaAbsenceReason(review, attempt);
-    const rowUsage = attempt?.usage ?? reviewUsage(review);
+    const rowUsage = attempt ? attempt.usage : reviewUsage(review);
     const pass = verdict === 'pass' && unresolvedCount === 0;
     const warn = unresolvedCount > 0 || verdict === 'issues' || verdict === 'failed';
     const diffArtifact = snapshotDiffArtifact(rowSnapshot, `review-loop-${loopNumber}-input-diff`);
@@ -366,12 +369,12 @@ export class ReviewLoopTimeline extends LitElement {
       rowFixDelta,
       `review-loop-${loopNumber}-fix-delta`,
     );
-    const artifacts: ArtifactRef[] = (attempt?.artifactPaths ?? review.artifactPaths ?? []).map(
-      (path) => ({
-        path,
-        purpose: `review-loop-${loopNumber}`,
-      }),
-    );
+    const artifacts: ArtifactRef[] = (
+      attempt ? (attempt.artifactPaths ?? []) : (review.artifactPaths ?? [])
+    ).map((path) => ({
+      path,
+      purpose: `review-loop-${loopNumber}`,
+    }));
     const priorIssueAttempts = attempt
       ? []
       : (review.attempts ?? []).filter((entry) => entry.issues?.length);
