@@ -4,6 +4,8 @@ import type {
   FlowType,
   ReviewDepthPolicy,
   ReviewLoopRequest,
+  ReviewScope,
+  ReviewValidationDepth,
   RunCreateParams,
   TaskTemplateSelection,
 } from '@farmslot/protocol';
@@ -32,6 +34,8 @@ export interface DispatchPayloadDraft {
   skipPrepare?: boolean;
   prepareProfile?: string;
   reviewTier?: string;
+  reviewScope?: ReviewScope;
+  reviewValidationDepth?: ReviewValidationDepth;
   nudgeReuse?: boolean;
   freshReuse?: boolean;
   reviewDepth?: ReviewDepthPolicy;
@@ -73,6 +77,8 @@ export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreatePara
     mode: input.mode,
     ...devInteractiveFields(input),
     reviewTier: input.reviewTier,
+    reviewScope: input.reviewScope,
+    reviewValidationDepth: input.reviewValidationDepth,
     reviewDepth: input.reviewDepth,
     pendingReviewPlan: input.pendingReviewPlan,
     ...input.comparison,
@@ -97,6 +103,8 @@ export function buildDispatchQueueAddParams(input: DispatchPayloadDraft): Dispat
     branch: input.branch,
     mode: input.mode,
     ...devInteractiveFields(input),
+    reviewScope: input.reviewScope,
+    reviewValidationDepth: input.reviewValidationDepth,
     reviewDepth: input.reviewDepth,
     pendingReviewPlan: input.pendingReviewPlan,
     ...input.comparison,

@@ -140,6 +140,10 @@ export interface RunCreateParams {
   /** Force a review tier for review-pr flow. '' or omitted = auto (LLM picks strategy).
    * light → smoke; standard → smoke|targeted; full → targeted|full-qa. */
   reviewTier?: string;
+  /** Code breadth for review-pr. Omitted review-pr runs default to full. */
+  reviewScope?: import('../contracts/index.js').ReviewScope;
+  /** Runtime validation depth for review-pr. Omitted review-pr runs default to static-code. */
+  reviewValidationDepth?: import('../contracts/index.js').ReviewValidationDepth;
   /** Fix-bug local-first publication gate review depth requested at dispatch time. */
   reviewDepth?: import('../contracts/index.js').ReviewDepthPolicy;
   /** Ordered independent review loops to run before the first ready gate is shown. */

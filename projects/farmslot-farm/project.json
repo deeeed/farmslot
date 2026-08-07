@@ -13,6 +13,9 @@
     "runtime_dir": ".sandbox/farmslot-farm/agent",
     "artifact_dir": ".sandbox/farmslot-farm/task"
   },
+  "static_review": {
+    "instruction_files": ["runtime/review-quality.md"]
+  },
   "node_support": {
     "paths": ["projects/farmslot-farm/setup"]
   },

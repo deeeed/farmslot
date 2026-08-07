@@ -22,6 +22,7 @@ import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import {
   renderCollisionDescription,
   renderCollisionPriorRuns,
+  renderReviewContinuation,
 } from './run-detail-collision-renderers.js';
 import { renderInteractiveHandoffGate } from './run-detail-interactive-handoff-renderers.js';
 
@@ -129,6 +130,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
   const isSlotPicker = kind === 'slot_picker';
   const isBranchNudge = kind === 'branch_affinity_nudge';
   const isCollision = pending.type === 'engine_collision';
+  const isReviewContinuation = pending.type === 'engine_review_continuation';
   const isInteractiveHandoff = pending.type === 'monitor_interactive_handoff';
   const isRetrospective = pending.type === 'retrospective' || kind === 'retrospective';
   const hasPayload = isReview || isReady;
@@ -145,13 +147,15 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
           ? "Worker on this PR's branch is busy — choose how to dispatch"
           : isCollision
             ? 'Task dir collision — prior runs exist'
-            : isInteractiveHandoff
-              ? 'Interactive handoff — not publication gate'
-              : isRetrospective
-                ? 'Retrospective ready for review'
-                : recoveredTimeout
-                  ? 'CI timeout recovered'
-                  : 'Action required';
+            : isReviewContinuation
+              ? 'Prior review found — choose how to continue'
+              : isInteractiveHandoff
+                ? 'Interactive handoff — not publication gate'
+                : isRetrospective
+                  ? 'Retrospective ready for review'
+                  : recoveredTimeout
+                    ? 'CI timeout recovered'
+                    : 'Action required';
   const retrospectivePayload = isRetrospective
     ? (pending.payload as
         | {
@@ -163,7 +167,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
     : undefined;
 
   return html`
-    <div class=${`gate-section ${isReady ? 'ready-gate' : ''}`}>
+    <div class=${`gate-section ${isReady || isReviewContinuation ? 'ready-gate' : ''}`}>
       <div class="gate-header">
         <span class="gate-icon">!</span>
         <div style="flex:1">
@@ -337,7 +341,9 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                               `}
                         ${isCollision
                           ? renderCollisionPriorRuns(pending, context.allRuns)
-                          : nothing}
+                          : isReviewContinuation
+                            ? renderReviewContinuation(pending)
+                            : nothing}
                         ${recoveredTimeout
                           ? html`
                               <div

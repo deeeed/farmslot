@@ -418,6 +418,8 @@ async function main(): Promise<void> {
       launchAttempt: item.launchAttempt,
       devChecklist: item.devChecklist,
       reviewDepth: item.reviewDepth,
+      reviewScope: item.reviewScope,
+      reviewValidationDepth: item.reviewValidationDepth,
       pendingReviewPlan: item.pendingReviewPlan,
     } satisfies import('@farmslot/protocol').RunCreateParams;
     const { run } = await runCreate(runParams, broadcastEvent, {

@@ -204,6 +204,14 @@ export const DEFAULT_REVIEW_SESSION_POLICY: ReviewSessionPolicy = 'fresh-per-pas
 
 export type ReviewValidationDepth = 'static-code' | 'full-live';
 
+export type ReviewScope = 'incremental' | 'full';
+
+export const REVIEW_SCOPES: readonly ReviewScope[] = ['incremental', 'full'];
+
+export function isReviewScope(value: unknown): value is ReviewScope {
+  return typeof value === 'string' && (REVIEW_SCOPES as readonly string[]).includes(value);
+}
+
 export const REVIEW_VALIDATION_DEPTHS: readonly ReviewValidationDepth[] = [
   'static-code',
   'full-live',
@@ -215,8 +223,35 @@ export function isReviewValidationDepth(value: unknown): value is ReviewValidati
   );
 }
 
-export function reviewValidationDepthForLoop(index: number, total: number): ReviewValidationDepth {
-  return index === Math.max(0, total - 1) ? 'full-live' : 'static-code';
+export function reviewValidationDepthForLoop(
+  _index: number,
+  _total: number,
+): ReviewValidationDepth {
+  return 'static-code';
+}
+
+export interface RepeatReviewContext {
+  version: 1;
+  chainId: string;
+  generation: number;
+  contextMode: 'reuse' | 'fresh';
+  priorRunId: string;
+  priorFamilyId: string;
+  repository: string;
+  prNumber: number;
+  priorReviewedHeadSha?: string;
+  currentHeadSha: string;
+  baseRef?: string;
+  verdict: string;
+  unresolvedFindings: SelfReviewIssue[];
+  artifactRefs: EvidenceManifestEntry[];
+  farmslotEvidenceRefs: EvidenceManifestEntry[];
+  originatingRunId?: string;
+  reviewScope: ReviewScope;
+  validationDepth: ReviewValidationDepth;
+  incrementalUnavailableReason?: string;
+  /** Same-PR reviewer continuity. The runner must clear review-local reasoning before a full pass. */
+  sessionPolicy: ReviewSessionPolicy;
 }
 
 export interface ReviewLoopRequest {
@@ -805,6 +840,13 @@ export interface CollisionPayload {
   dirOwners?: Record<string, string>;
 }
 
+export interface ReviewContinuationPayload {
+  kind: 'review_continuation';
+  recommendedActionId: string;
+  prior: RepeatReviewContext;
+  fullLiveAvailable: boolean;
+}
+
 export type RunDecisionPayload =
   | ReviewGatePayload
   | ReadyGatePayload
@@ -813,7 +855,8 @@ export type RunDecisionPayload =
   | BranchAffinityNudgePayload
   | ImprovementDiffPayload
   | RetrospectivePayload
-  | CollisionPayload;
+  | CollisionPayload
+  | ReviewContinuationPayload;
 
 export interface RunDecision {
   id: string;
@@ -1363,6 +1406,12 @@ export interface Run {
   tags?: string[];
   summary?: string; // LLM-generated 1-line description
   reviewTier?: string; // forced tier for review-pr: '' (auto — LLM picks strategy) | 'light' (→ smoke) | 'standard' (→ smoke|targeted) | 'full' (→ targeted|full-qa)
+  /** Code breadth for review-pr. Independent from runtime validation depth. */
+  reviewScope?: ReviewScope;
+  /** Static by default; full-live is an explicit operator escalation. */
+  reviewValidationDepth?: ReviewValidationDepth;
+  /** Frozen provenance for a repeated review of the same canonical PR. */
+  repeatReviewContext?: RepeatReviewContext;
   safetyTier?: SafetyTier; // runner execution safety tier (ADR-023). undefined on legacy runs.
   /**
    * Slots the run is allowed to land on, resolved from the UI's global filters
@@ -1572,6 +1621,7 @@ export interface FamilyDiffProvenance {
   error?: string;
   repository?: string;
   prNumber?: number;
+  reviewScope?: ReviewScope;
 }
 
 export function isFamilyDiffProvenance(value: unknown): value is FamilyDiffProvenance {
@@ -1609,6 +1659,7 @@ export function isFamilyDiffProvenance(value: unknown): value is FamilyDiffProve
     isOptionalString(rec.baseSha) &&
     isOptionalString(rec.headRef) &&
     isOptionalString(rec.headSha) &&
+    (rec.reviewScope == null || isReviewScope(rec.reviewScope)) &&
     isOptionalString(rec.capturedAt) &&
     isOptionalString(rec.configFallbackReason) &&
     isOptionalString(rec.configFallbackError) &&
@@ -1626,6 +1677,7 @@ export interface FamilyInputCommitMetadata {
   baseSha?: string;
   headRef?: string;
   headSha?: string;
+  reviewScope?: ReviewScope;
   capturedAt: string;
   source: 'github-pr' | 'local-git' | 'unavailable';
   missingReason?: string;
