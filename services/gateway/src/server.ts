@@ -686,14 +686,24 @@ function sendEvent(ws: WebSocket, event: string, payload: unknown): void {
 
 export function broadcast(frame: EventFrame): void {
   const msg = JSON.stringify(frame);
+  let authorizationFaultLogged = false;
   for (const [ws, state] of clients) {
-    if (
-      ws.readyState === WebSocket.OPEN &&
-      activeAuthRuntime !== null &&
-      canReceiveBroadcast(activeAuthRuntime, state, frame.event)
-    ) {
-      ws.send(msg);
+    if (ws.readyState !== WebSocket.OPEN || activeAuthRuntime === null) continue;
+    let canReceive: boolean;
+    try {
+      canReceive = canReceiveBroadcast(activeAuthRuntime, state, frame.event);
+    } catch (err) {
+      // Live authorization must fail closed for this receiver without turning every
+      // timer, monitor, and request that broadcasts into an uncaught crash path.
+      if (!authorizationFaultLogged) {
+        console.error(
+          `[server] broadcast authorization failed for ${frame.event}: ${(err as Error).message}`,
+        );
+        authorizationFaultLogged = true;
+      }
+      continue;
     }
+    if (canReceive) ws.send(msg);
   }
 }
 

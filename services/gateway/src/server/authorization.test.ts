@@ -11,6 +11,8 @@ import WebSocket from 'ws';
 
 import {
   type CredentialIssueResult,
+  type EventFrame,
+  Events,
   type GatewayAuthConnectResult,
   Methods,
   NODE_FRAME_MAGIC,
@@ -23,7 +25,7 @@ import {
 
 import { pairingCreate } from '../fleet/pairing.js';
 import { createGatewayAuthRuntime, initializeGatewayIdentity } from '../security/auth.js';
-import { createWebSocketServer } from '../server.js';
+import { broadcastEvent, createWebSocketServer } from '../server.js';
 import { resolveWebhookWorkOriginator } from '../webhook.js';
 
 test('authorization denial survives the response frame with a teaching Next action', async () => {
@@ -416,6 +418,73 @@ test(
   },
 );
 
+test(
+  'broadcast authorization filters operators and contains receiver resolution faults',
+  { timeout: 5_000 },
+  async () => {
+    const runtime = isolatedRuntime();
+    const admin = runtime.writer.createPrincipal(
+      { type: 'person', displayName: 'broadcast-admin' },
+      [{ role: 'admin', scope: { kind: 'global' } }],
+    );
+    const adminIssue = runtime.writer.issueCredential(admin.id, 'broadcast-admin');
+    const operator = runtime.writer.createPrincipal(
+      { type: 'person', displayName: 'broadcast-operator' },
+      [{ role: 'operator', scope: { kind: 'global' } }],
+    );
+    const operatorIssue = runtime.writer.issueCredential(operator.id, 'broadcast-operator');
+    const harness = await startServer(runtime);
+    try {
+      const adminWs = await connect(harness.url);
+      const adminAuth = await request(adminWs, Methods.AUTH_CONNECT, {
+        clientKind: 'ui',
+        token: adminIssue.secret,
+      });
+      assert.equal(adminAuth.ok, true);
+      const operatorWs = await connect(harness.url);
+      const operatorAuth = await request(operatorWs, Methods.AUTH_CONNECT, {
+        clientKind: 'ui',
+        token: operatorIssue.secret,
+      });
+      assert.equal(operatorAuth.ok, true);
+
+      const allowedRun = waitForEvent(operatorWs, Events.RUN_UPDATED, 'operator-allowed');
+      broadcastEvent(Events.RUN_UPDATED, { proof: 'operator-allowed' });
+      await allowedRun;
+
+      const adminDecision = waitForEvent(adminWs, Events.DECISION_NEW, 'operator-denied');
+      const operatorDecision = expectNoEvent(operatorWs, Events.DECISION_NEW, 'operator-denied');
+      broadcastEvent(Events.DECISION_NEW, { proof: 'operator-denied' });
+      await adminDecision;
+      await operatorDecision;
+
+      const resolveSessionPrincipal = runtime.resolver.resolveSessionPrincipal;
+      runtime.resolver.resolveSessionPrincipal = (session) => {
+        if (
+          session.authentication?.kind === 'credential' &&
+          session.authentication.credentialId === adminIssue.record.id
+        ) {
+          throw new Error('broadcast credential store /private/credentials.json truncated');
+        }
+        return resolveSessionPrincipal.call(runtime.resolver, session);
+      };
+      try {
+        const continuedRun = waitForEvent(operatorWs, Events.RUN_UPDATED, 'fault-contained');
+        assert.doesNotThrow(() => broadcastEvent(Events.RUN_UPDATED, { proof: 'fault-contained' }));
+        await continuedRun;
+      } finally {
+        runtime.resolver.resolveSessionPrincipal = resolveSessionPrincipal;
+      }
+
+      adminWs.close();
+      operatorWs.close();
+      await Promise.all([onceClose(adminWs), onceClose(operatorWs)]);
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
 test('latching activation closes every open solo session immediately', async () => {
   const runtime = isolatedRuntime();
   const harness = await startServer(runtime);
@@ -549,6 +618,48 @@ async function request(ws: WebSocket, method: string, params: unknown): Promise<
 function onceClose(ws: WebSocket): Promise<{ code: number; reason: string }> {
   return new Promise((resolve) => {
     ws.once('close', (code, reason) => resolve({ code, reason: reason.toString() }));
+  });
+}
+
+function waitForEvent(ws: WebSocket, event: string, proof: string): Promise<EventFrame> {
+  return new Promise((resolve, reject) => {
+    const onMessage = (data: WebSocket.RawData) => {
+      const frame = JSON.parse(data.toString()) as EventFrame;
+      if (
+        frame.type !== 'event' ||
+        frame.event !== event ||
+        (frame.payload as { proof?: unknown } | undefined)?.proof !== proof
+      ) {
+        return;
+      }
+      ws.off('message', onMessage);
+      resolve(frame);
+    };
+    ws.on('message', onMessage);
+    ws.once('error', reject);
+  });
+}
+
+function expectNoEvent(ws: WebSocket, event: string, proof: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onMessage = (data: WebSocket.RawData) => {
+      const frame = JSON.parse(data.toString()) as EventFrame;
+      if (
+        frame.type !== 'event' ||
+        frame.event !== event ||
+        (frame.payload as { proof?: unknown } | undefined)?.proof !== proof
+      ) {
+        return;
+      }
+      clearTimeout(timer);
+      ws.off('message', onMessage);
+      reject(new Error(`operator received forbidden ${event} event`));
+    };
+    const timer = setTimeout(() => {
+      ws.off('message', onMessage);
+      resolve();
+    }, 25);
+    ws.on('message', onMessage);
   });
 }
 
