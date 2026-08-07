@@ -22,7 +22,7 @@ import { handleBranchFsChanged } from './automation/branch-watcher.js';
 import { tryDispatchNext } from './backlog/dispatch-queue.js';
 import { autoDispatchBacklogReady, listBacklogItems } from './backlog/store.js';
 import { ChatActionRejectError } from './chat/chat-actions.js';
-import { GatewayMethodError } from './core/method-error.js';
+import { GatewayInternalError, GatewayMethodError } from './core/method-error.js';
 import { setSlotUpdateHook } from './core/state.js';
 import { unregisterByWs } from './fleet/machine-registry.js';
 import { getMachineHealth, markMachineOffline, updateMachineMetrics } from './fleet/node-health.js';
@@ -652,19 +652,21 @@ async function handleMessage(
     sendResponse(state.ws, frame.id, true, result);
   } catch (err) {
     const rawMessage = err instanceof Error ? err.message : String(err);
-    let message = 'Internal gateway error';
-    let code = 'INTERNAL_ERROR';
+    let message = rawMessage;
+    let code = 'METHOD_ERROR';
     let userAction: string | undefined;
     let details: unknown;
-    if (rawMessage.startsWith('Unknown method:')) {
+    if (err instanceof GatewayInternalError) {
+      const causeMessage = err.cause instanceof Error ? err.cause.message : String(err.cause);
+      code = 'INTERNAL_ERROR';
+      message = 'Internal gateway error';
+      console.error(`[server] route method ${frame.method} failed on ${state.id}: ${causeMessage}`);
+    } else if (rawMessage.startsWith('Unknown method:')) {
       code = 'METHOD_NOT_FOUND';
-      message = rawMessage;
     } else if (err instanceof GatewayAuthError) {
       code = err.code;
-      message = rawMessage;
     } else if (err instanceof GatewayMethodError || err instanceof SlotConfigError) {
       code = err.code;
-      message = rawMessage;
       userAction = err.userAction;
       details = err.details;
     } else if (err instanceof ChatActionRejectError) {
@@ -673,9 +675,6 @@ async function handleMessage(
       // distinguish it from ordinary precondition failures.
       const specific = (err as Error & { code?: string }).code;
       code = specific ?? chatActionRejectCode(err.reason);
-      message = rawMessage;
-    } else {
-      console.error(`[server] route method ${frame.method} failed on ${state.id}: ${rawMessage}`);
     }
     sendResponse(state.ws, frame.id, false, undefined, {
       code,

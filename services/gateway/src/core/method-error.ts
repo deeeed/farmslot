@@ -15,3 +15,14 @@ export class GatewayMethodError extends Error {
     this.details = options?.details;
   }
 }
+
+/** Marks an unexpected implementation fault that must never cross the RPC response boundary. */
+export class GatewayInternalError extends Error {
+  constructor(
+    message: string,
+    readonly cause: unknown,
+  ) {
+    super(message);
+    this.name = 'GatewayInternalError';
+  }
+}

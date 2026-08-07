@@ -36,6 +36,13 @@ export interface EnvironmentCredentialReconciliation {
   otherActiveCredentialIds: string[];
 }
 
+export class CredentialStoreRefusalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CredentialStoreRefusalError';
+  }
+}
+
 export function readCredentialStoreOffline(env: NodeJS.ProcessEnv = process.env): CredentialStore {
   return withCredentialStoreLock((store) => ({ next: store, result: structuredClone(store) }), {
     env,
@@ -58,10 +65,12 @@ export class CredentialStoreWriter {
     const result = this.mutate((store) => {
       const id = requestedId ?? uniquePrincipalId(store, subject.displayName);
       if ((VIRTUAL_PRINCIPAL_IDS as readonly string[]).includes(id)) {
-        throw new Error(`Principal id '${id}' is reserved for a virtual principal`);
+        throw new CredentialStoreRefusalError(
+          `Principal id '${id}' is reserved for a virtual principal`,
+        );
       }
       if (store.principals.some((principal) => principal.id === id)) {
-        throw new Error(`Principal '${id}' already exists`);
+        throw new CredentialStoreRefusalError(`Principal '${id}' already exists`);
       }
       const principal: Principal = {
         id,
@@ -80,7 +89,9 @@ export class CredentialStoreWriter {
     return this.mutate((store) => {
       const principal = requiredPrincipal(store, principalId);
       if (principal.subject.type === 'node') {
-        throw new Error(`Node principal '${principalId}' cannot hold role bindings`);
+        throw new CredentialStoreRefusalError(
+          `Node principal '${principalId}' cannot hold role bindings`,
+        );
       }
       const binding = { role, scope } satisfies RoleBinding;
       const roles = principal.roles.some((existing) => sameBinding(existing, binding))
@@ -144,7 +155,9 @@ export class CredentialStoreWriter {
         };
       }
       if (principal.subject.type === 'node' && principal.roles.length > 0) {
-        throw new Error(`Node principal '${principal.id}' cannot hold role bindings`);
+        throw new CredentialStoreRefusalError(
+          `Node principal '${principal.id}' cannot hold role bindings`,
+        );
       }
       return {
         next,
@@ -161,7 +174,9 @@ export class CredentialStoreWriter {
   revokeCredential(credentialId: string): CredentialRecord {
     return this.mutate((store) => {
       const credential = store.credentials.find((record) => record.id === credentialId);
-      if (!credential) throw new Error(`Credential '${credentialId}' does not exist`);
+      if (!credential) {
+        throw new CredentialStoreRefusalError(`Credential '${credentialId}' does not exist`);
+      }
       if (credential.revokedAt !== null) return { next: store, result: credential };
       const revoked = { ...credential, revokedAt: new Date().toISOString() };
       const next = {
@@ -250,7 +265,7 @@ export class CredentialStoreWriter {
     ) {
       return;
     }
-    throw new Error(
+    throw new CredentialStoreRefusalError(
       `Refusing to revoke ${target}: it is the last active admin credential,\n` +
         'and removing it would leave this gateway with no way to issue or revoke anything.\n' +
         'Next: issue a replacement admin credential first, then revoke this one:\n' +
@@ -297,7 +312,7 @@ function buildOwnerPrincipal(store: CredentialStore): Principal {
 
 function requiredPrincipal(store: CredentialStore, id: string): Principal {
   const principal = store.principals.find((candidate) => candidate.id === id);
-  if (!principal) throw new Error(`Principal '${id}' does not exist`);
+  if (!principal) throw new CredentialStoreRefusalError(`Principal '${id}' does not exist`);
   return principal;
 }
 
@@ -318,7 +333,9 @@ function uniquePrincipalId(store: CredentialStore, displayName: string): string 
       .replace(/[^a-z0-9]+/gu, '-')
       .replace(/^-|-$/gu, '') || 'principal';
   if ((VIRTUAL_PRINCIPAL_IDS as readonly string[]).includes(base)) {
-    throw new Error(`Principal id '${base}' is reserved for a virtual principal`);
+    throw new CredentialStoreRefusalError(
+      `Principal id '${base}' is reserved for a virtual principal`,
+    );
   }
   let candidate = base;
   let suffix = 2;
@@ -331,7 +348,7 @@ function uniquePrincipalId(store: CredentialStore, displayName: string): string 
 
 function validateNodeRoles(subject: PrincipalSubject, roles: RoleBinding[]): void {
   if (subject.type === 'node' && roles.length > 0) {
-    throw new Error('Node principals must be created with roles: []');
+    throw new CredentialStoreRefusalError('Node principals must be created with roles: []');
   }
 }
 

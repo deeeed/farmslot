@@ -442,6 +442,7 @@ import { unsubscribePty } from '../runtime/pty-stream.js';
 import { resubscribeAgentScreenSessions } from '../runtime/screen-session.js';
 import { unsubscribe as unsubscribeTerminalPoll } from '../runtime/tmux-stream.js';
 // Method handlers
+import { GatewayInternalError, GatewayMethodError } from '../core/method-error.js';
 import {
   type GatewayAuthRuntime,
   requireAuthenticatedSession,
@@ -499,7 +500,13 @@ export async function routeMethod(
   context: RouteMethodContext,
 ): Promise<unknown> {
   const { authRuntime, state } = context;
-  const actingPrincipal = authorizeGatewayMethod(authRuntime, state, method);
+  let actingPrincipal;
+  try {
+    actingPrincipal = authorizeGatewayMethod(authRuntime, state, method);
+  } catch (error) {
+    if (error instanceof GatewayMethodError) throw error;
+    throw new GatewayInternalError('RPC authorization resolution failed', error);
+  }
   return runWithSessionOriginator(actingPrincipal, () =>
     routeAuthorizedMethod(method, params, context),
   );

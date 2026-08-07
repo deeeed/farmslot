@@ -18,9 +18,12 @@ import type {
   RoleScope,
 } from '@farmslot/protocol';
 
-import { GatewayMethodError } from '../core/method-error.js';
+import { GatewayInternalError, GatewayMethodError } from '../core/method-error.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
-import type { CredentialRecord } from '../security/credential-store.js';
+import {
+  CredentialStoreRefusalError,
+  type CredentialRecord,
+} from '../security/credential-store.js';
 
 export function principalCreate(
   params: PrincipalCreateParams,
@@ -177,9 +180,10 @@ function translateWriterError<T>(fn: () => T): T {
   try {
     return fn();
   } catch (error) {
-    // Writer errors are deliberate invariant/validation refusals. Translate them to the
-    // structured RPC error shape so the CLI retains the writer's Next: instruction.
-    const message = (error as Error).message;
+    if (!(error instanceof CredentialStoreRefusalError)) {
+      throw new GatewayInternalError('Credential store operation failed', error);
+    }
+    const message = error.message;
     const [headline, ...rest] = message.split('\nNext:');
     throw new GatewayMethodError('CREDENTIAL_STORE_REFUSED', headline, {
       ...(rest.length ? { userAction: rest.join('\nNext:').trim() } : {}),

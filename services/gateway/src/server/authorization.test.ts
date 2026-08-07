@@ -446,6 +446,95 @@ test(
 );
 
 test(
+  'authenticated handler validation remains descriptive after resolver fault containment',
+  { timeout: 5_000 },
+  async () => {
+    const runtime = isolatedRuntime();
+    const admin = runtime.writer.createPrincipal(
+      { type: 'person', displayName: 'handler-validation-admin' },
+      [{ role: 'admin', scope: { kind: 'global' } }],
+    );
+    const adminIssue = runtime.writer.issueCredential(admin.id, 'handler-validation-admin');
+    const harness = await startServer(runtime);
+    try {
+      const ws = await connect(harness.url);
+      const auth = await request(ws, Methods.AUTH_CONNECT, {
+        clientKind: 'ui',
+        token: adminIssue.secret,
+      });
+      assert.equal(auth.ok, true);
+
+      const response = await request(ws, Methods.PAIRING_CREATE, {
+        gatewayUrl: 'ws://127.0.0.1:7777/ws',
+      });
+      assert.equal(response.ok, false);
+      assert.equal(response.error?.code, 'METHOD_ERROR');
+      assert.equal(response.error?.message, 'pairing.create requires authority');
+      ws.close();
+      await onceClose(ws);
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+test(
+  'credential RPC distinguishes deliberate writer refusals from unexpected store faults',
+  { timeout: 5_000 },
+  async () => {
+    const runtime = isolatedRuntime();
+    const admin = runtime.writer.createPrincipal(
+      { type: 'person', displayName: 'credential-writer-admin' },
+      [{ role: 'admin', scope: { kind: 'global' } }],
+    );
+    const adminIssue = runtime.writer.issueCredential(admin.id, 'credential-writer-admin');
+    const harness = await startServer(runtime);
+    try {
+      const ws = await connect(harness.url);
+      const auth = await request(ws, Methods.AUTH_CONNECT, {
+        clientKind: 'ui',
+        token: adminIssue.secret,
+      });
+      assert.equal(auth.ok, true);
+
+      const refusal = await request(ws, Methods.CREDENTIAL_REVOKE, {
+        credentialId: adminIssue.record.id,
+      });
+      assert.equal(refusal.ok, false);
+      assert.equal(refusal.error?.code, 'CREDENTIAL_STORE_REFUSED');
+      assert.match(refusal.error?.message ?? '', /last active admin credential/u);
+      assert.match(refusal.error?.userAction ?? '', /issue a replacement admin credential first/u);
+
+      const issueCredential = runtime.writer.issueCredential;
+      runtime.writer.issueCredential = () => {
+        throw new Error(
+          'Unable to load credential store /private/review-principal-store.json: truncated JSON',
+        );
+      };
+      try {
+        const fault = await request(ws, Methods.CREDENTIAL_ISSUE, {
+          principalId: admin.id,
+          displayName: 'fault-probe',
+        });
+        assert.equal(fault.ok, false);
+        assert.equal(fault.error?.code, 'INTERNAL_ERROR');
+        assert.equal(fault.error?.message, 'Internal gateway error');
+        assert.doesNotMatch(
+          JSON.stringify(fault),
+          /review-principal-store|credentials?|truncated/u,
+        );
+      } finally {
+        runtime.writer.issueCredential = issueCredential;
+      }
+      ws.close();
+      await onceClose(ws);
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+test(
   'unexpected pairing store faults return generic unauthenticated errors without leakage',
   { timeout: 5_000 },
   async () => {

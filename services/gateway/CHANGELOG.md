@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(auth): preserve deliberate RPC validation and credential-store refusal guidance while returning generic non-leaking errors for unexpected authorization and credential-store faults.
 - fix(server): surface unexpected auth-connect, routed RPC, and JSON/binary node-frame principal-resolution faults, contain pre-auth pairing credential-store faults, and fail closed per receiver when broadcast authorization cannot refresh the credential store, without exposing internal messages or unhandled promise rejections.
 - fix(auth): rethrow unexpected HTTP principal-resolution failures instead of exposing them as authorization denials.
 - feat(auth): implement ADR-051 principals, durable independently revocable credentials, solo-to-activated lifecycle, default-deny role authorization, scoped pairing, work provenance, and fire-time reauthorization.
