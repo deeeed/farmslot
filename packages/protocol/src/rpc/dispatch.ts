@@ -164,6 +164,8 @@ export interface DispatchQueueAddParams {
   startRefSource?: import('../contracts/index.js').RunStartRefSource;
   /** Same semantics as RunCreateParams.reviewDepth — persisted onto the created run. */
   reviewDepth?: import('../contracts/index.js').ReviewDepthPolicy;
+  reviewScope?: import('../contracts/index.js').ReviewScope;
+  reviewValidationDepth?: import('../contracts/index.js').ReviewValidationDepth;
   /** Same semantics as RunCreateParams.pendingReviewPlan — additional independent reviews for auto-dispatch. */
   pendingReviewPlan?: import('../contracts/index.js').ReviewLoopRequest[];
   /** Internal ADR-044 launch-plan linkage. Public dispatch.queue.add rejects these fields. */

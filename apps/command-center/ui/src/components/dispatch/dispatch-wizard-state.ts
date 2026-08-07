@@ -10,6 +10,7 @@ import type {
   ProfileFitSuggestion,
   ProjectConfig,
   QueueItem,
+  ReviewValidationDepth,
   Run,
   SlotStatus,
   TemplatePreview,
@@ -77,6 +78,7 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _profileFitSuggestion: ProfileFitSuggestion | null = null;
   @state() _devInteractiveProfile: DevInteractiveProfile = 'lightweight';
   @state() _reviewTier: '' | 'light' | 'standard' | 'full' = '';
+  @state() _reviewValidationDepth: ReviewValidationDepth = 'static-code';
   @state() _publicationReviewLoops: PublicationReviewLoopDraft[] = [];
   _nextPublicationReviewLoopId = 1;
   @state() _candidates: DispatchCandidatesResult['candidates'] = [];

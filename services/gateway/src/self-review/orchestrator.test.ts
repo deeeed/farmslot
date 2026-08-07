@@ -348,7 +348,7 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
     },
   );
 
-  assert.equal(result, 'delivered');
+  assert.deepEqual(result, { status: 'delivered' });
   assert.equal(restored, true);
   assert.equal(checklistTargetRestored, true);
   assert.equal(persistedTarget, 'ff-1:bugfix-restored');
@@ -392,7 +392,7 @@ test('restart recovery requests a fresh worker after an unacknowledged retained 
     },
   );
 
-  assert.equal(result, 'relaunch-required');
+  assert.deepEqual(result, { status: 'relaunch-required' });
 });
 
 test('resolveSelfReviewRunnerModel keeps self-review on the worker runner by default', () => {
@@ -484,7 +484,7 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
       calls.relaunches += 1;
       return opts.relaunchOk ?? true;
     },
-    resumeFixPromptDelivery: async () => 'delivered',
+    resumeFixPromptDelivery: async () => ({ status: 'delivered' }),
     ...(opts.contextPct !== undefined
       ? { getWorkerContextPct: async () => opts.contextPct ?? null }
       : {}),
@@ -497,7 +497,7 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
       // (just-cleared) signal file so the next waitForWorkerSignal blocks on a fresh value.
       const baseline = `baseline-${calls.sendFeedback}`;
       calls.feedbackBaselines.push(baseline);
-      return baseline;
+      return { signalBaseline: baseline };
     },
     startProgressWatcher: () => ({ stop: () => {} }),
     waitForWorkerSignal: async (_vars, _taskDir, _timeout, baseline) => {

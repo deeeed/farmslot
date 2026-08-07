@@ -17,6 +17,7 @@ import {
   type ReadyGatePrPackage,
   type ReviewDepthPolicy,
   type Run,
+  type RunnerSessionUsage,
 } from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
@@ -30,7 +31,10 @@ import { inferReviewSourceKind, reviewCompositeKey } from '../quality/review-sou
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun } from '../runs/store.js';
-import { extractRunnerSessionUsage } from '../runtime/session-usage.js';
+import {
+  extractRunnerSessionUsage,
+  usesReviewChainSessionTotal,
+} from '../runtime/session-usage.js';
 import {
   captureCurrentReviewSnapshot,
   unavailableReviewSnapshot,
@@ -174,6 +178,41 @@ export interface SessionCostSnapshot {
   actualModel: string | null;
 }
 
+type SessionUsageNumbers = Pick<
+  RunnerSessionUsage,
+  | 'costUsd'
+  | 'turns'
+  | 'inputTokens'
+  | 'outputTokens'
+  | 'cacheCreation'
+  | 'cacheRead'
+  | 'totalTokens'
+>;
+
+function priorReviewSessionTotal(run: Run): SessionUsageNumbers | null {
+  const priorRunId = run.repeatReviewContext?.priorRunId;
+  if (!priorRunId) return null;
+  const prior = getRun(priorRunId);
+  if (!prior) return null;
+  const chainTotal = prior.metrics.reviewChainUsageTotal;
+  if (chainTotal) return chainTotal;
+  const legacyTotal = {
+    costUsd: prior.metrics.costEstimate ?? null,
+    turns: prior.metrics.sessionTurns ?? null,
+    inputTokens: prior.metrics.sessionInputTokens ?? null,
+    outputTokens: prior.metrics.sessionOutputTokens ?? null,
+    cacheCreation: prior.metrics.sessionCacheCreation ?? null,
+    cacheRead: prior.metrics.sessionCacheRead ?? null,
+    totalTokens: prior.metrics.sessionTotalTokens ?? null,
+  };
+  return Object.values(legacyTotal).some((value) => value !== null) ? legacyTotal : null;
+}
+
+function usageDelta(current: number | null, prior: number | null | undefined): number | null {
+  if (current === null || prior == null || current < prior) return null;
+  return current - prior;
+}
+
 export async function extractAndPersistSessionCost(runId: string): Promise<SessionCostSnapshot> {
   const empty: SessionCostSnapshot = {
     costUsd: null,
@@ -209,14 +248,56 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
     const cacheCreation = usage.cacheCreation ?? null;
     const cacheRead = usage.cacheRead ?? null;
     const actualModel = usage.actualModel ?? null;
+    const chainSessionTotal = usesReviewChainSessionTotal(run);
     const metricsPatch: Partial<typeof run.metrics> = {};
-    if (costUsd !== null) metricsPatch.costEstimate = costUsd;
-    if (turns !== null) metricsPatch.sessionTurns = turns;
-    if (inputTokens !== null) metricsPatch.sessionInputTokens = inputTokens;
-    if (outputTokens !== null) metricsPatch.sessionOutputTokens = outputTokens;
-    if (cacheCreation !== null) metricsPatch.sessionCacheCreation = cacheCreation;
-    if (cacheRead !== null) metricsPatch.sessionCacheRead = cacheRead;
-    if (totalTokens !== null) metricsPatch.sessionTotalTokens = totalTokens;
+    let accounted = {
+      costUsd,
+      turns,
+      inputTokens,
+      outputTokens,
+      cacheCreation,
+      cacheRead,
+      totalTokens,
+    };
+    if (chainSessionTotal) {
+      const priorTotal = priorReviewSessionTotal(run);
+      metricsPatch.reviewChainUsageTotal = usage;
+      if (priorTotal) {
+        accounted = {
+          costUsd: usageDelta(costUsd, priorTotal.costUsd),
+          turns: usageDelta(turns, priorTotal.turns),
+          inputTokens: usageDelta(inputTokens, priorTotal.inputTokens),
+          outputTokens: usageDelta(outputTokens, priorTotal.outputTokens),
+          cacheCreation: usageDelta(cacheCreation, priorTotal.cacheCreation),
+          cacheRead: usageDelta(cacheRead, priorTotal.cacheRead),
+          totalTokens: usageDelta(totalTokens, priorTotal.totalTokens),
+        };
+        metricsPatch.sessionUsageScope = 'review-generation-delta';
+      } else {
+        metricsPatch.sessionUsageScope = 'review-chain-total';
+      }
+    } else {
+      metricsPatch.sessionUsageScope = 'session-total';
+    }
+    if (!chainSessionTotal || metricsPatch.sessionUsageScope === 'review-generation-delta') {
+      const {
+        costUsd: accountedCost,
+        turns: accountedTurns,
+        inputTokens: accountedInput,
+        outputTokens: accountedOutput,
+        cacheCreation: accountedCacheCreation,
+        cacheRead: accountedCacheRead,
+        totalTokens: accountedTotal,
+      } = accounted;
+      if (accountedCost !== null) metricsPatch.costEstimate = accountedCost;
+      if (accountedTurns !== null) metricsPatch.sessionTurns = accountedTurns;
+      if (accountedInput !== null) metricsPatch.sessionInputTokens = accountedInput;
+      if (accountedOutput !== null) metricsPatch.sessionOutputTokens = accountedOutput;
+      if (accountedCacheCreation !== null)
+        metricsPatch.sessionCacheCreation = accountedCacheCreation;
+      if (accountedCacheRead !== null) metricsPatch.sessionCacheRead = accountedCacheRead;
+      if (accountedTotal !== null) metricsPatch.sessionTotalTokens = accountedTotal;
+    }
     if (actualModel) metricsPatch.actualModel = actualModel;
     if (actualModel && run.metrics.model && !modelsMatch(run.metrics.model, actualModel)) {
       console.warn(
@@ -233,18 +314,14 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
     }
     if (Object.keys(metricsPatch).length > 0) {
       updateRun(runId, { metrics: { ...run.metrics, ...metricsPatch } });
-      console.log(
-        `[run-completion] session cost: $${costUsd?.toFixed(4) ?? '?'} turns=${turns ?? '?'} actualModel=${actualModel ?? '?'} (input=${inputTokens ?? '?'} output=${outputTokens ?? '?'})`,
-      );
     }
+    console.log(
+      chainSessionTotal
+        ? `[run-completion] retained review usage scope=${metricsPatch.sessionUsageScope} chainCost=$${costUsd?.toFixed(4) ?? '?'} generationCost=$${accounted.costUsd?.toFixed(4) ?? '?'} run=${runId}`
+        : `[run-completion] session cost: $${costUsd?.toFixed(4) ?? '?'} turns=${turns ?? '?'} actualModel=${actualModel ?? '?'} (input=${inputTokens ?? '?'} output=${outputTokens ?? '?'})`,
+    );
     return {
-      costUsd,
-      inputTokens,
-      outputTokens,
-      totalTokens,
-      turns,
-      cacheCreation,
-      cacheRead,
+      ...accounted,
       actualModel,
     };
   } catch (err) {

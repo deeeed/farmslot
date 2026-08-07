@@ -32,7 +32,7 @@ import {
   type SourceDiffFilter,
 } from '../core/source-diff-filter.js';
 import { shellQuote } from '../core/tmux.js';
-import { fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
+import { fetchGitHubCompareFiles, fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 
 import {
@@ -885,6 +885,12 @@ interface ReviewInputCaptureDeps {
     prNumber: number,
     opts?: { signal?: AbortSignal },
   ) => ReturnType<typeof fetchPRDiffFiles>;
+  fetchGitHubCompareFiles?: (
+    repo: string,
+    baseSha: string,
+    headSha: string,
+    opts?: { signal?: AbortSignal },
+  ) => ReturnType<typeof fetchGitHubCompareFiles>;
 }
 
 interface ReviewInputPRMetadata {
@@ -900,6 +906,7 @@ interface ReviewInputPRMetadata {
 const defaultReviewInputCaptureDeps: ReviewInputCaptureDeps = {
   fetchGitHubPR,
   fetchPRDiffFiles,
+  fetchGitHubCompareFiles,
 };
 
 function unavailableInputDiff(
@@ -964,6 +971,7 @@ async function readExistingAvailableReviewInputArtifacts(
 async function readFreshReviewInputArtifacts(
   inputsDir: string,
   prRef: { repo: string; prNumber: number },
+  run: Pick<Run, 'reviewScope' | 'repeatReviewContext'>,
   nowMs = Date.now(),
 ): Promise<ArtifactRef[] | null> {
   const diffStatPath = path.join(inputsDir, 'diff-stat.json');
@@ -973,6 +981,17 @@ async function readFreshReviewInputArtifacts(
     if (!isFamilyDiffProvenance(parsed) || parsed.kind !== 'review-input') return null;
     if (parsed.repository && parsed.repository !== prRef.repo) return null;
     if (parsed.prNumber != null && parsed.prNumber !== prRef.prNumber) return null;
+    if ((parsed.reviewScope ?? 'full') !== (run.reviewScope ?? 'full')) return null;
+    if (
+      run.repeatReviewContext?.currentHeadSha &&
+      parsed.headSha !== run.repeatReviewContext.currentHeadSha
+    )
+      return null;
+    if (
+      run.reviewScope === 'incremental' &&
+      parsed.baseSha !== run.repeatReviewContext?.priorReviewedHeadSha
+    )
+      return null;
     if (!parsed.capturedAt) return null;
     const capturedAtMs = Date.parse(parsed.capturedAt);
     if (!Number.isFinite(capturedAtMs) || capturedAtMs > nowMs) return null;
@@ -1090,7 +1109,7 @@ async function captureReviewInputArtifactsForRunUnlocked(
       { path: 'inputs/diff-stat.json', purpose: 'input-diff-stat' },
     ];
   }
-  const freshExisting = await readFreshReviewInputArtifacts(inputsDir, prRef);
+  const freshExisting = await readFreshReviewInputArtifacts(inputsDir, prRef, run);
   if (freshExisting) return freshExisting;
   const captureState: { fetchedPrMetadata?: ReviewInputPRMetadata } = {};
   try {
@@ -1105,9 +1124,28 @@ async function captureReviewInputArtifactsForRunUnlocked(
           signal: controller.signal,
         });
         captureState.fetchedPrMetadata = fetchedPr;
-        const fetchedFiles = await deps.fetchPRDiffFiles(prRef.repo, prRef.prNumber, {
-          signal: controller.signal,
-        });
+        if (
+          run.repeatReviewContext?.currentHeadSha &&
+          run.repeatReviewContext.currentHeadSha !== fetchedPr.headSha
+        ) {
+          throw new Error(
+            `Review head advanced from ${run.repeatReviewContext.currentHeadSha} to ${fetchedPr.headSha}; choose continuation again.`,
+          );
+        }
+        const incrementalBase =
+          run.reviewScope === 'incremental'
+            ? run.repeatReviewContext?.priorReviewedHeadSha
+            : undefined;
+        const fetchedFiles = incrementalBase
+          ? await (deps.fetchGitHubCompareFiles ?? fetchGitHubCompareFiles)(
+              prRef.repo,
+              incrementalBase,
+              fetchedPr.headSha,
+              { signal: controller.signal },
+            )
+          : await deps.fetchPRDiffFiles(prRef.repo, prRef.prNumber, {
+              signal: controller.signal,
+            });
         return { pr: fetchedPr, files: fetchedFiles };
       })(),
       captureTimeoutMs,
@@ -1117,10 +1155,17 @@ async function captureReviewInputArtifactsForRunUnlocked(
     const inputCommit: FamilyInputCommitMetadata = {
       repository: prRef.repo,
       prNumber: prRef.prNumber,
-      baseRef: pr.baseRef,
-      baseSha: pr.baseSha,
+      baseRef:
+        run.reviewScope === 'incremental'
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : pr.baseRef,
+      baseSha:
+        run.reviewScope === 'incremental'
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
+      reviewScope: run.reviewScope ?? 'full',
       capturedAt: now,
       source: 'github-pr',
     };
@@ -1143,10 +1188,17 @@ async function captureReviewInputArtifactsForRunUnlocked(
       ...(stat.files > 0 ? { artifactPath: 'inputs/diff.txt' } : {}),
       repository: prRef.repo,
       prNumber: prRef.prNumber,
-      baseRef: pr.baseRef,
-      baseSha: pr.baseSha,
+      baseRef:
+        run.reviewScope === 'incremental'
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : pr.baseRef,
+      baseSha:
+        run.reviewScope === 'incremental'
+          ? run.repeatReviewContext?.priorReviewedHeadSha
+          : pr.baseSha,
       headRef: pr.branch,
       headSha: pr.headSha,
+      reviewScope: run.reviewScope ?? 'full',
       capturedAt: now,
       configSource: sourceFilterSettings.configSource,
       ...(sourceFilterSettings.configFallbackReason
@@ -1170,6 +1222,7 @@ async function captureReviewInputArtifactsForRunUnlocked(
       { path: 'inputs/diff-stat.json', purpose: 'input-diff-stat' },
     ];
   } catch (err) {
+    if ((err as Error).message.startsWith('Review head advanced from ')) throw err;
     const existing = await readExistingAvailableReviewInputArtifacts(inputsDir);
     if (existing) return existing;
     const pr = captureState.fetchedPrMetadata ?? null;
@@ -1177,6 +1230,7 @@ async function captureReviewInputArtifactsForRunUnlocked(
     const unavailable: FamilyInputCommitMetadata = {
       repository: prRef.repo,
       prNumber: prRef.prNumber,
+      reviewScope: run.reviewScope ?? 'full',
       ...(pr
         ? {
             baseRef: pr.baseRef,

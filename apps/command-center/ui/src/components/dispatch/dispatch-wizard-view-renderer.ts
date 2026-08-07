@@ -63,6 +63,7 @@ interface DispatchWizardViewContext {
   model: string;
   effort: EffortLevel;
   reviewTier: '' | 'light' | 'standard' | 'full';
+  reviewValidationDepth: ReviewValidationDepth;
   skipPrepare: boolean;
   prepareProfiles: readonly PrepareProfileOption[];
   prepareProfile: string;
@@ -111,6 +112,7 @@ interface DispatchWizardViewContext {
   setModel: (model: string) => void;
   setEffort: (effort: EffortLevel) => void;
   setReviewTier: (reviewTier: '' | 'light' | 'standard' | 'full') => void;
+  setReviewValidationDepth: (depth: ReviewValidationDepth) => void;
   setSkipPrepare: (skipPrepare: boolean) => void;
   setPrepareProfile: (prepareProfile: string) => void;
   applySuggestedPrepareProfile: (prepareProfile: string) => void;
@@ -208,6 +210,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               model: ctx.model,
               effort: ctx.effort,
               reviewTier: ctx.reviewTier,
+              reviewValidationDepth: ctx.reviewValidationDepth,
               skipPrepare: ctx.skipPrepare,
               prepareProfiles: ctx.prepareProfiles,
               prepareProfile: ctx.prepareProfile,
@@ -223,6 +226,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               setModel: ctx.setModel,
               setEffort: ctx.setEffort,
               setReviewTier: ctx.setReviewTier,
+              setReviewValidationDepth: ctx.setReviewValidationDepth,
               setSkipPrepare: ctx.setSkipPrepare,
               setPrepareProfile: ctx.setPrepareProfile,
               setDevInteractiveProfile: ctx.setDevInteractiveProfile,

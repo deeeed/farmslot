@@ -205,6 +205,10 @@ export interface RawProjectJson {
     };
     review_input_timeout_ms?: number;
   };
+  static_review?: {
+    /** Project-fixture files copied into a static review task as frozen reviewer guidance. */
+    instruction_files?: string[];
+  };
   hooks?: Record<string, string | Record<string, string>>;
   health?: Record<string, string>;
   monitoring?: {

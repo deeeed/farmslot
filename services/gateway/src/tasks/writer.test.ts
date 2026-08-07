@@ -36,10 +36,76 @@ import {
   formatPrTitleSuffix,
   generateTaskSchema,
   isBotAuthor,
+  PREVIOUS_REVIEW_JSON_INPUT,
+  PREVIOUS_REVIEW_MD_INPUT,
   renderCommentSummary,
+  STATIC_REVIEW_INSTRUCTIONS_DIR,
   TEMPLATE_PROVENANCE_INPUT,
+  writePreviousReviewInputs,
+  writeStaticReviewInstructionInputs,
   writeTaskFile,
 } from './writer.js';
+
+test('writePreviousReviewInputs freezes reusable review context as JSON and a concise brief', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'previous-review-inputs-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(path.join(dir, 'inputs'), { recursive: true });
+
+  const written = await writePreviousReviewInputs(dir, {
+    version: 1,
+    chainId: 'chain-1',
+    generation: 2,
+    contextMode: 'reuse',
+    priorRunId: 'prior-run',
+    priorFamilyId: 'family-1',
+    repository: 'owner/repo',
+    prNumber: 42,
+    priorReviewedHeadSha: 'prior-head',
+    currentHeadSha: 'current-head',
+    verdict: 'request changes',
+    unresolvedFindings: [{ file: 'src/a.ts', line: 7, description: 'Fix this.' }],
+    artifactRefs: [{ path: 'artifacts/review.md', purpose: 'review' }],
+    farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe proof' }],
+    reviewScope: 'incremental',
+    validationDepth: 'static-code',
+    sessionIntent: 'resume',
+    priorGenerations: [],
+  });
+
+  assert.deepEqual(written, [PREVIOUS_REVIEW_JSON_INPUT, PREVIOUS_REVIEW_MD_INPUT]);
+  const json = JSON.parse(await readFile(path.join(dir, PREVIOUS_REVIEW_JSON_INPUT), 'utf-8'));
+  assert.equal(json.currentHeadSha, 'current-head');
+  const markdown = await readFile(path.join(dir, PREVIOUS_REVIEW_MD_INPUT), 'utf-8');
+  assert.match(markdown, /Scope: incremental/);
+  assert.match(markdown, /src\/a\.ts:7 — Fix this\./);
+  assert.match(markdown, /artifacts\/recipe\.json/);
+});
+
+test('writeStaticReviewInstructionInputs freezes configured project guidance without prepare', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'static-review-instructions-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const fixtures = path.join(dir, 'fixtures');
+  await mkdir(path.join(fixtures, 'runtime'), { recursive: true });
+  await writeFile(path.join(fixtures, 'runtime/domain-rules.md'), '# Domain rules\n', 'utf-8');
+
+  const written = await writeStaticReviewInstructionInputs(
+    dir,
+    {
+      projectName: 'farm-a',
+      projectConfig: path.join(dir, 'project.json'),
+      projectFixturesDir: fixtures,
+      projectTemplatesDir: path.join(dir, 'templates'),
+      projectJson: { static_review: { instruction_files: ['runtime/domain-rules.md'] } },
+      runtimeDir: '.agent',
+      artifactDir: '.task',
+      recipeDir: '.agent/recipes',
+    },
+    { flowType: 'review-pr', reviewValidationDepth: 'static-code' },
+  );
+
+  assert.deepEqual(written, [`${STATIC_REVIEW_INSTRUCTIONS_DIR}/runtime/domain-rules.md`]);
+  assert.equal(await readFile(path.join(dir, written[0]!), 'utf-8'), '# Domain rules\n');
+});
 
 test('buildTaskFolderPrefix keeps production collisions ticket-scoped', () => {
   assert.equal(buildTaskFolderPrefix('PROJ-1234'), 'proj-1234-');

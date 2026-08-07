@@ -7,6 +7,14 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - fix(server): surface unexpected RPC and JSON/binary node-frame principal-resolution faults without exposing internal messages.
 - fix(auth): rethrow unexpected HTTP principal-resolution failures instead of exposing them as authorization denials.
 - feat(auth): implement ADR-051 principals, durable independently revocable credentials, solo-to-activated lifecycle, default-deny role authorization, scoped pairing, work provenance, and fire-time reauthorization.
+- fix(improvement): resume analyses interrupted by a gateway restart instead of tombstoning them — the persisted `analyzing` placeholder is re-run in place (attempt-capped at 2) so tsx-watch restarts no longer kill accepted retrospective analyses.
+
+- fix(llm): surface transport failures (`stopReason` error/aborted, including streaming `error` events) in `callLLMChat` instead of returning empty text — improvement analyses now terminalize as a real provider error rather than "LLM returned no response" / `no-changes`; user-initiated aborts keep `AbortError` identity, and chat results expose `stopReason` so callers can flag `length` truncation.
+
+- feat(review): detect prior terminal reviews of the same PR, offer incremental/full continuation choices, freeze prior findings and exact diff provenance, and default static reviews to a prepare-free path.
+- feat(review): resume an incremental repeat review only through the runner's retained-session capability and exact prior binding; otherwise start fresh and record the fallback reason.
+- fix(review): record retained-review continuity immediately after handoff, keep pre-mutation handoff failures retryable, and report each resumed generation as a delta while preserving the raw chain total.
+- fix(self-review): bind worker-fix idle leases to the exact accepted runner turn and its live pane. Long tool calls stay alive; unaccepted prompts, dead workers, stale hooks, and unrelated turns cannot renew the lease.
 - fix(self-review): keep long worker-fix passes alive while their explicit fix checklist advances, even if the ambient worker checklist target changes.
 
 - fix(run-engine): preserve an existing fix-bug/dev feature branch without reset or clean when replaying from prepare instead of recreating it from main or discarding unpublished work.

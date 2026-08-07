@@ -4,6 +4,8 @@ import type {
   FlowType,
   ReviewDepthPolicy,
   ReviewLoopRequest,
+  ReviewScope,
+  ReviewValidationDepth,
   RunCompletionPolicy,
   RunLane,
   RunStartRefProvenance,
@@ -87,6 +89,8 @@ export interface QueueItem {
   startRef?: RunStartRefProvenance | null;
   /** Fix-bug publication review depth requested when the queue item was created. */
   reviewDepth?: ReviewDepthPolicy;
+  reviewScope?: ReviewScope;
+  reviewValidationDepth?: ReviewValidationDepth;
   /** Ordered independent review loops to run before the first ready gate. */
   pendingReviewPlan?: ReviewLoopRequest[];
   evalCell?: EvalQueueCell;

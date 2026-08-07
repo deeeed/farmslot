@@ -34,11 +34,21 @@ import {
 } from '../intelligence/engine.js';
 import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
 import { CHECKLIST_MARKER_INPUT } from '../tasks/sidecars.js';
-import { TaskCollisionError, TEMPLATE_PROVENANCE_INPUT, writeTaskFile } from '../tasks/writer.js';
+import {
+  PREVIOUS_REVIEW_JSON_INPUT,
+  PREVIOUS_REVIEW_MD_INPUT,
+  TaskCollisionError,
+  TEMPLATE_PROVENANCE_INPUT,
+  writeTaskFile,
+} from '../tasks/writer.js';
 
 import { requiresCollisionPrecheck } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
-import { createEngineDecision, handleCollisionDecision } from './engine-decisions.js';
+import {
+  createEngineDecision,
+  handleCollisionDecision,
+  handleRepeatReviewDecision,
+} from './engine-decisions.js';
 import { normalizeEvalReplayForTaskWrite } from './eval-replay-normalization.js';
 import { detectProfileFit } from './profile-fit-gate.js';
 import { detectProjectMismatch } from './project-fit-gate.js';
@@ -414,7 +424,7 @@ export async function executeWriteTaskStep(
 ): Promise<StepIO> {
   const { broadcastFn, stepPartialIO } = deps;
   const run = currentRun;
-  const current = await normalizeEvalReplayForTaskWrite(runId, getRun(runId)!);
+  let current = await normalizeEvalReplayForTaskWrite(runId, getRun(runId)!);
   const inputs: Record<string, unknown> = {
     flowType: current.flowType,
     hasTicketData: !!current.ticketData,
@@ -485,12 +495,27 @@ export async function executeWriteTaskStep(
   };
 
   // For PR flows: fetch PR metadata + set branch
+  let fetchedPr: Awaited<ReturnType<typeof fetchPRData>> = null;
   if (PR_BOUND_FLOW_TYPES.has(current.flowType) && !current.ticketData) {
     emitWithBroadcast('substep', {
       name: 'fetch-pr-data',
       detail: `Fetching PR ${current.ticketOrPr}`,
     });
-    await fetchPRData(runId);
+    fetchedPr = await fetchPRData(runId);
+  }
+  if (current.flowType === 'review-pr') {
+    const prRef = parseGitHubRef(current.ticketOrPr);
+    if (prRef) {
+      const subject = fetchedPr ?? (await fetchPRData(runId));
+      if (subject) {
+        await handleRepeatReviewDecision(runId, current, {
+          repository: prRef.repo,
+          prNumber: prRef.number,
+          headSha: subject.headSha,
+          baseRef: subject.baseRef,
+        });
+      }
+    }
   }
   // For feature flows without GRADE step: fetch ticket data so TASK.md gets real title/description
   if (current.flowType === 'dev' && !current.ticketData) {
@@ -504,6 +529,11 @@ export async function executeWriteTaskStep(
       await refreshRunLinks(runId);
     }
   }
+
+  // Metadata fetches and the repeat-review decision both update the canonical
+  // run. Task generation must consume that resolved snapshot, not the stale
+  // object captured before the operator chose the review scope.
+  current = getRun(runId)!;
 
   const fetchedRun = getRun(runId)!;
   if (fetchedRun.ticketData) {
@@ -520,7 +550,11 @@ export async function executeWriteTaskStep(
   // Phase 1 pre-filter: recipe strategy selection for review-pr flows
   // Skip when tier is manually selected — human already made an informed choice
   let recipeStrategyResult = null as Awaited<ReturnType<typeof resolveRecipeStrategy>> | null;
-  if (current.flowType === 'review-pr' && !current.reviewTier) {
+  if (
+    current.flowType === 'review-pr' &&
+    current.reviewValidationDepth === 'full-live' &&
+    !current.reviewTier
+  ) {
     emitWithBroadcast('substep', {
       name: 'recipe-strategy',
       detail: 'Selecting review recipe strategy',
@@ -613,6 +647,12 @@ export async function executeWriteTaskStep(
       artifacts.push(
         { path: 'inputs/dev-intake.json', purpose: 'dev-intake' },
         { path: 'CHECKLIST.md', purpose: 'interactive-checklist' },
+      );
+    }
+    if (afterWrite.repeatReviewContext?.contextMode === 'reuse') {
+      artifacts.push(
+        { path: PREVIOUS_REVIEW_JSON_INPUT, purpose: 'previous-review-context' },
+        { path: PREVIOUS_REVIEW_MD_INPUT, purpose: 'previous-review-summary' },
       );
     }
     artifacts.push(...extraArtifacts);

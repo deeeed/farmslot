@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit';
 
-import type { DevInteractiveProfile, FlowType } from '@farmslot/protocol';
+import type { DevInteractiveProfile, FlowType, ReviewValidationDepth } from '@farmslot/protocol';
 
 import '../shared/runner-model-effort-picker.js';
 import '../shared/slot-prepare-options.js';
@@ -52,6 +52,7 @@ export interface DispatchWizardPrimaryControlsRenderContext {
   model: string;
   effort: EffortLevel;
   reviewTier: ReviewTier;
+  reviewValidationDepth: ReviewValidationDepth;
   skipPrepare: boolean;
   prepareProfiles: readonly PrepareProfileOption[];
   prepareProfile: string;
@@ -67,6 +68,7 @@ export interface DispatchWizardPrimaryControlsRenderContext {
   setModel: (model: string) => void;
   setEffort: (effort: EffortLevel) => void;
   setReviewTier: (reviewTier: ReviewTier) => void;
+  setReviewValidationDepth: (depth: ReviewValidationDepth) => void;
   setSkipPrepare: (skipPrepare: boolean) => void;
   setPrepareProfile: (prepareProfile: string) => void;
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
@@ -221,6 +223,26 @@ function renderReviewTierSelector(ctx: DispatchWizardPrimaryControlsRenderContex
         )}
       </div>
       <div class="section-help">${REVIEW_TIER_HELP[ctx.reviewTier]}</div>
+      <div class="section-label" style="margin-top:8px">Validation</div>
+      <div class="pill-row">
+        <button
+          class="pill ${ctx.reviewValidationDepth === 'static-code' ? 'selected' : ''}"
+          @click=${() => ctx.setReviewValidationDepth('static-code')}
+        >
+          Static
+        </button>
+        <button
+          class="pill ${ctx.reviewValidationDepth === 'full-live' ? 'selected' : ''}"
+          @click=${() => ctx.setReviewValidationDepth('full-live')}
+        >
+          Full live
+        </button>
+      </div>
+      <div class="section-help">
+        ${ctx.reviewValidationDepth === 'static-code'
+          ? 'Default — audit the frozen PR diff and linked Farmslot evidence without preparing the app.'
+          : 'Explicit escalation — prepare the project and run live validation.'}
+      </div>
     </div>
   `;
 }

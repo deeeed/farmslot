@@ -952,6 +952,7 @@ export class DispatchWizard extends DispatchWizardState {
       mode,
       devInteractiveProfile: this._devInteractiveProfile,
       reviewTier: this._reviewTier,
+      reviewValidationDepth: this._reviewValidationDepth,
       ...buildPublicationReviewGateParams(
         this._flowType,
         this._runner,
@@ -1137,6 +1138,7 @@ export class DispatchWizard extends DispatchWizardState {
       model: this._model,
       effort: this._effort,
       reviewTier: this._reviewTier,
+      reviewValidationDepth: this._reviewValidationDepth,
       skipPrepare: this._skipPrepare,
       prepareProfiles: projectPrepareProfiles(this._projectConfigs, this._project),
       prepareProfile: this._prepareProfile,
@@ -1222,6 +1224,9 @@ export class DispatchWizard extends DispatchWizardState {
       },
       setReviewTier: (reviewTier) => {
         this._reviewTier = reviewTier;
+      },
+      setReviewValidationDepth: (depth) => {
+        this._reviewValidationDepth = depth;
       },
       setSkipPrepare: (skipPrepare) => {
         this._skipPrepare = skipPrepare;

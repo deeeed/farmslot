@@ -214,15 +214,16 @@ export async function executePrepareStep(
   // Eval replays must always run prepare because that step installs and
   // verifies the pinned recipe harness; reject before any slot/project lookup
   // so this invariant is hermetic.
-  const skipPrepare = flags?.skipPrepare === true;
+  const skipReason = prepareSkipReason(current, flags?.skipPrepare === true);
+  const skipPrepare = skipReason !== null;
   if (skipPrepare && current.engineState?.evalExperiment) {
     throw new Error(
       'Eval replay cannot skip prepare; prepare installs and verifies the pinned recipe harness.',
     );
   }
   if (skipPrepare) {
-    console.log(`[run-engine] skipping prepare for ${runId.slice(0, 8)} (operator skip)`);
-    return { inputs, outputs: { skipped: true, reason: 'operator-skip' } };
+    console.log(`[run-engine] skipping prepare for ${runId.slice(0, 8)} (${skipReason})`);
+    return { inputs, outputs: { skipped: true, reason: skipReason } };
   }
 
   // Machine-pressure snapshot at prepare start — the analytics emitter reads this from
@@ -404,6 +405,16 @@ export async function executePrepareStep(
       ...(lastOutput ? { lastOutput } : {}),
     },
   };
+}
+
+export function prepareSkipReason(
+  run: Pick<Run, 'flowType' | 'reviewValidationDepth'>,
+  operatorSkip: boolean,
+): 'static-review' | 'operator-skip' | null {
+  if (run.flowType === 'review-pr' && run.reviewValidationDepth !== 'full-live') {
+    return 'static-review';
+  }
+  return operatorSkip ? 'operator-skip' : null;
 }
 
 export interface DispatchStepContext {

@@ -204,6 +204,14 @@ export const DEFAULT_REVIEW_SESSION_POLICY: ReviewSessionPolicy = 'fresh-per-pas
 
 export type ReviewValidationDepth = 'static-code' | 'full-live';
 
+export type ReviewScope = 'incremental' | 'full';
+
+export const REVIEW_SCOPES: readonly ReviewScope[] = ['incremental', 'full'];
+
+export function isReviewScope(value: unknown): value is ReviewScope {
+  return typeof value === 'string' && (REVIEW_SCOPES as readonly string[]).includes(value);
+}
+
 export const REVIEW_VALIDATION_DEPTHS: readonly ReviewValidationDepth[] = [
   'static-code',
   'full-live',
@@ -215,8 +223,83 @@ export function isReviewValidationDepth(value: unknown): value is ReviewValidati
   );
 }
 
-export function reviewValidationDepthForLoop(index: number, total: number): ReviewValidationDepth {
-  return index === Math.max(0, total - 1) ? 'full-live' : 'static-code';
+export function reviewValidationDepthForLoop(
+  _index: number,
+  _total: number,
+): ReviewValidationDepth {
+  return 'static-code';
+}
+
+/** Whether a repeat review should resume prior reviewer reasoning or start clean. */
+export type ReviewSessionIntent = 'resume' | 'reset';
+
+/** What actually happened when the reviewer generation launched. */
+export type ReviewSessionContinuity = 'fresh' | 'resumed' | 'fallback-fresh' | 'resume-unconfirmed';
+
+export type ReviewSessionFallbackReason =
+  | 'unsupported-runner'
+  | 'slot-mismatch'
+  | 'runner-mismatch'
+  | 'missing-session'
+  | 'session-unavailable';
+
+export interface ReviewSessionTrace {
+  intent: ReviewSessionIntent;
+  continuity: ReviewSessionContinuity;
+  priorRunId?: string;
+  priorSessionId?: string;
+  sessionId?: string;
+  fallbackReason?: ReviewSessionFallbackReason;
+}
+
+/** Frozen summary for one run in a repeated-PR review chain. */
+export interface ReviewChainEntry {
+  chainId: string;
+  generation: number;
+  runId: string;
+  familyId: string;
+  repository: string;
+  prNumber: number;
+  baseSha?: string;
+  headSha?: string;
+  reviewScope: ReviewScope;
+  validationDepth: ReviewValidationDepth;
+  verdict: string;
+  unresolvedCount: number | null;
+  artifactRefs: EvidenceManifestEntry[];
+  runner?: string | null;
+  model?: string | null;
+  session?: ReviewSessionTrace;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface RepeatReviewContext {
+  version: 1;
+  chainId: string;
+  generation: number;
+  contextMode: 'reuse' | 'fresh';
+  priorRunId: string;
+  priorFamilyId: string;
+  repository: string;
+  prNumber: number;
+  priorReviewedHeadSha?: string;
+  currentHeadSha: string;
+  baseRef?: string;
+  verdict: string;
+  unresolvedFindings: SelfReviewIssue[];
+  artifactRefs: EvidenceManifestEntry[];
+  farmslotEvidenceRefs: EvidenceManifestEntry[];
+  originatingRunId?: string;
+  reviewScope: ReviewScope;
+  validationDepth: ReviewValidationDepth;
+  incrementalUnavailableReason?: string;
+  /** Incremental may resume; every full review resets reviewer reasoning. */
+  sessionIntent?: ReviewSessionIntent;
+  /** Dispatch-time observation of the requested reviewer-session transition. */
+  session?: ReviewSessionTrace;
+  /** Completed predecessors, oldest first. The current run is derived from this Run record. */
+  priorGenerations?: ReviewChainEntry[];
 }
 
 export interface ReviewLoopRequest {
@@ -741,6 +824,12 @@ export interface ImprovementDiffPayload {
   analysisStatus?: 'analyzing' | 'completed' | 'no-content' | 'no-changes' | 'error';
   analysisStartedAt?: string;
   analysisError?: string;
+  /**
+   * How many times analysis has been started for this placeholder (initial
+   * run + startup resumes). Bounds crash-loop retries: startup recovery
+   * re-runs an interrupted `analyzing` placeholder only while below the cap.
+   */
+  analysisAttempts?: number;
 }
 
 export interface CommentsTriageSummary {
@@ -799,6 +888,13 @@ export interface CollisionPayload {
   dirOwners?: Record<string, string>;
 }
 
+export interface ReviewContinuationPayload {
+  kind: 'review_continuation';
+  recommendedActionId: string;
+  prior: RepeatReviewContext;
+  fullLiveAvailable: boolean;
+}
+
 export type RunDecisionPayload =
   | ReviewGatePayload
   | ReadyGatePayload
@@ -807,7 +903,8 @@ export type RunDecisionPayload =
   | BranchAffinityNudgePayload
   | ImprovementDiffPayload
   | RetrospectivePayload
-  | CollisionPayload;
+  | CollisionPayload
+  | ReviewContinuationPayload;
 
 export interface RunDecision {
   id: string;
@@ -978,6 +1075,10 @@ export interface RunMetrics {
   sessionCacheCreation?: number;
   sessionCacheRead?: number;
   sessionTotalTokens?: number;
+  /** Whether the session fields are raw transcript totals or a retained-review generation delta. */
+  sessionUsageScope?: 'session-total' | 'review-generation-delta' | 'review-chain-total';
+  /** Raw retained transcript total used as the next review generation's subtraction baseline. */
+  reviewChainUsageTotal?: RunnerSessionUsage;
   actualModel?: string;
 }
 
@@ -1357,6 +1458,12 @@ export interface Run {
   tags?: string[];
   summary?: string; // LLM-generated 1-line description
   reviewTier?: string; // forced tier for review-pr: '' (auto — LLM picks strategy) | 'light' (→ smoke) | 'standard' (→ smoke|targeted) | 'full' (→ targeted|full-qa)
+  /** Code breadth for review-pr. Independent from runtime validation depth. */
+  reviewScope?: ReviewScope;
+  /** Static by default; full-live is an explicit operator escalation. */
+  reviewValidationDepth?: ReviewValidationDepth;
+  /** Frozen provenance for a repeated review of the same canonical PR. */
+  repeatReviewContext?: RepeatReviewContext;
   safetyTier?: SafetyTier; // runner execution safety tier (ADR-023). undefined on legacy runs.
   /**
    * Slots the run is allowed to land on, resolved from the UI's global filters
@@ -1566,6 +1673,7 @@ export interface FamilyDiffProvenance {
   error?: string;
   repository?: string;
   prNumber?: number;
+  reviewScope?: ReviewScope;
 }
 
 export function isFamilyDiffProvenance(value: unknown): value is FamilyDiffProvenance {
@@ -1603,6 +1711,7 @@ export function isFamilyDiffProvenance(value: unknown): value is FamilyDiffProve
     isOptionalString(rec.baseSha) &&
     isOptionalString(rec.headRef) &&
     isOptionalString(rec.headSha) &&
+    (rec.reviewScope == null || isReviewScope(rec.reviewScope)) &&
     isOptionalString(rec.capturedAt) &&
     isOptionalString(rec.configFallbackReason) &&
     isOptionalString(rec.configFallbackError) &&
@@ -1620,6 +1729,7 @@ export interface FamilyInputCommitMetadata {
   baseSha?: string;
   headRef?: string;
   headSha?: string;
+  reviewScope?: ReviewScope;
   capturedAt: string;
   source: 'github-pr' | 'local-git' | 'unavailable';
   missingReason?: string;

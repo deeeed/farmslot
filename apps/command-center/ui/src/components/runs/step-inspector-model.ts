@@ -5,6 +5,7 @@ import type {
   SelfReviewIssue,
 } from '@farmslot/protocol';
 
+import { hasMeaningfulReviewFixDelta } from '../../utils/review-gate-display.js';
 import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
 import { formatDuration } from './run-utils.js';
@@ -94,7 +95,7 @@ export function reviewLoopAttempts(step: RunStep): ReviewLoopAttempt[] {
       unresolvedCount: typeof attempt.unresolvedCount === 'number' ? attempt.unresolvedCount : 0,
       issues,
       completedAt: typeof attempt.completedAt === 'string' ? attempt.completedAt : '',
-      hasFixDelta: fixDelta !== null,
+      hasFixDelta: hasMeaningfulReviewFixDelta(fixDelta),
       fixDeltaPath: fixDelta && typeof fixDelta.diffPath === 'string' ? fixDelta.diffPath : null,
     };
   });

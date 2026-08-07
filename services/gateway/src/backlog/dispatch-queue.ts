@@ -470,6 +470,8 @@ export function addItem(
     completionPolicy: params.completionPolicy,
     startRef,
     reviewDepth: params.reviewDepth,
+    reviewScope: params.reviewScope,
+    reviewValidationDepth: params.reviewValidationDepth,
     pendingReviewPlan: params.pendingReviewPlan,
     evalCell: params.evalCell,
     priority: params.priority ?? 10,

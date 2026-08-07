@@ -50,7 +50,9 @@ function buildPrIntegrationNote(
   };
 }
 
-export async function fetchPRData(runId: string): Promise<void> {
+export async function fetchPRData(
+  runId: string,
+): Promise<Awaited<ReturnType<typeof fetchGitHubPR>> | null> {
   const run = getRun(runId)!;
 
   // Use prNumber if available (chained runs have issue ref in ticketOrPr but real PR in prNumber)
@@ -60,7 +62,7 @@ export async function fetchPRData(runId: string): Promise<void> {
     const repo = repoMatch?.[1] ?? '';
     if (repo) prRef = `${repo}#${run.prNumber}`;
   }
-  if (!prRef) return;
+  if (!prRef) return null;
 
   console.log(`[run-engine] fetching PR data for ${prRef}`);
 
@@ -169,6 +171,7 @@ export async function fetchPRData(runId: string): Promise<void> {
   await refreshRunLinks(runId);
   const linkedRefs = ticketData.linkedTickets?.map((t) => t.ref).join(',') || 'none';
   console.log(`[run-engine] PR data set: branch=${prData.branch}, linked=${linkedRefs}`);
+  return prData;
 }
 
 export async function fetchTicketData(run: Run): Promise<RunTicketData | null> {

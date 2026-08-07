@@ -94,6 +94,7 @@ import {
   captureStateSlices,
   restoreStateSlices,
   updateBacklogItems,
+  updateDecisions,
   updateFleet,
   updatePRs,
   updateQueueItems,
@@ -1936,7 +1937,6 @@ All checks passed.`;
 
   private renderRunDetail() {
     const runs = [...mockPipelineRuns(), ...mockRuns()];
-    this._updateMockRuns(runs);
     const run = runs.find((r) => r.id === 'pipe-mid-monitor') ?? runs[0];
     const packetPath = 'artifacts/interactive/dev-run-detail.packet.json';
     const bodyPath = 'artifacts/interactive/dev-run-detail.md';
@@ -1962,6 +1962,116 @@ All checks passed.`;
     };
     const runWithPacket: Run = {
       ...run,
+      flowType: 'review-pr',
+      status: 'blocked',
+      ticketOrPr: 'deeeed/farmslot#500',
+      repeatReviewContext: {
+        version: 1,
+        chainId: 'prior-review-run',
+        generation: 2,
+        contextMode: 'reuse',
+        priorRunId: 'prior-review-run',
+        priorFamilyId: 'prior-review-family',
+        repository: 'deeeed/farmslot',
+        prNumber: 500,
+        priorReviewedHeadSha: 'aaaaaaaaaaaaaaaa',
+        currentHeadSha: 'bbbbbbbbbbbbbbbb',
+        verdict: 'request changes',
+        unresolvedFindings: [
+          { file: 'services/gateway/src/index.ts', line: 42, description: 'Recheck this.' },
+        ],
+        artifactRefs: [{ path: 'artifacts/review.md', purpose: 'review' }],
+        farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe proof' }],
+        reviewScope: 'incremental',
+        validationDepth: 'static-code',
+        sessionIntent: 'resume',
+        session: {
+          intent: 'resume',
+          continuity: 'resumed',
+          priorRunId: 'prior-review-run',
+          priorSessionId: 'review-session-1',
+          sessionId: 'review-session-1',
+        },
+        priorGenerations: [
+          {
+            chainId: 'prior-review-run',
+            generation: 1,
+            runId: 'prior-review-run',
+            familyId: 'prior-review-family',
+            repository: 'deeeed/farmslot',
+            prNumber: 500,
+            baseSha: '9999999999999999',
+            headSha: 'aaaaaaaaaaaaaaaa',
+            reviewScope: 'full',
+            validationDepth: 'static-code',
+            verdict: 'request changes',
+            unresolvedCount: 1,
+            artifactRefs: [{ path: 'artifacts/review.md', purpose: 'review' }],
+            runner: 'codex',
+            model: 'gpt-5.6-sol',
+            createdAt: '2026-08-06T23:00:00.000Z',
+            completedAt: '2026-08-06T23:30:00.000Z',
+          },
+        ],
+      },
+      decisions: [
+        ...(run.decisions ?? []).map((decision) => ({
+          ...decision,
+          resolvedAt: decision.resolvedAt ?? '2026-08-06T23:59:00.000Z',
+          resolvedAction: decision.resolvedAction ?? decision.actions[0]?.id ?? 'resolved',
+        })),
+        {
+          id: 'dev-repeat-review-context',
+          type: 'engine_review_continuation',
+          title: 'deeeed/farmslot#500 — review continuation',
+          description: 'A prior terminal review exists. Choose how to continue.',
+          createdAt: '2026-08-07T00:00:00.000Z',
+          actions: [
+            {
+              id: 'reuse-incremental-static',
+              label: 'Continue — incremental static',
+              style: 'primary',
+            },
+            {
+              id: 'reuse-full-static',
+              label: 'Load context — full static',
+              style: 'secondary',
+            },
+            {
+              id: 'fresh-full-static',
+              label: 'Fresh context — full static',
+              style: 'secondary',
+            },
+          ],
+          payload: {
+            kind: 'review_continuation',
+            recommendedActionId: 'reuse-incremental-static',
+            fullLiveAvailable: false,
+            prior: {
+              version: 1,
+              chainId: 'prior-review-run',
+              generation: 2,
+              contextMode: 'reuse',
+              priorRunId: 'prior-review-run',
+              priorFamilyId: 'prior-review-family',
+              repository: 'deeeed/farmslot',
+              prNumber: 500,
+              priorReviewedHeadSha: 'aaaaaaaaaaaaaaaa',
+              currentHeadSha: 'bbbbbbbbbbbbbbbb',
+              verdict: 'request changes',
+              unresolvedFindings: [
+                { file: 'services/gateway/src/index.ts', line: 42, description: 'Recheck this.' },
+              ],
+              artifactRefs: [{ path: 'artifacts/review.md', purpose: 'review' }],
+              farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe proof' }],
+              reviewScope: 'incremental',
+              validationDepth: 'static-code',
+              sessionIntent: 'resume',
+              priorGenerations: [],
+            },
+          },
+        },
+      ],
       steps: [
         ...(run.steps ?? []),
         {
@@ -1980,6 +2090,28 @@ All checks passed.`;
         },
       ],
     };
+    this._updateMockRuns(
+      runs.map((candidate) => (candidate.id === run.id ? runWithPacket : candidate)),
+    );
+    const continuationDecision = runWithPacket.decisions.at(-1)!;
+    updateDecisions([
+      {
+        id: continuationDecision.id,
+        type: continuationDecision.type,
+        slotId: runWithPacket.slotId,
+        title: continuationDecision.title,
+        description: continuationDecision.description,
+        context: {
+          runId: runWithPacket.id,
+          project: runWithPacket.project,
+          flowType: runWithPacket.flowType,
+          ticketOrPr: runWithPacket.ticketOrPr,
+        },
+        actions: continuationDecision.actions,
+        createdAt: continuationDecision.createdAt,
+        payload: continuationDecision.payload,
+      },
+    ]);
     const artifactTextLoader = async (path: string): Promise<string> => {
       if (path === packetPath) return JSON.stringify(packet);
       if (path === bodyPath) {
@@ -1993,7 +2125,7 @@ All checks passed.`;
       throw new Error(`Missing mock artifact: ${path}`);
     };
     return html`
-      <p class="section-label">Run detail (local-first publish gate cockpit)</p>
+      <p class="section-label">Run detail (repeat-review continuation + operator packet)</p>
       <div
         style="height: calc(100vh - 200px); border: 1px solid ${colors.bgCard}; border-radius: 8px; overflow: hidden"
       >
@@ -2378,6 +2510,18 @@ All checks passed.`;
           loopNumber: 1,
           verdict: 'issues',
           unresolvedCount: 2,
+          issues: [
+            {
+              file: 'src/formatBalance.ts',
+              line: 42,
+              description: 'Integer balances still render a redundant decimal suffix.',
+            },
+            {
+              file: 'src/formatBalance.test.ts',
+              line: 18,
+              description: 'The regression case is missing from the focused formatter suite.',
+            },
+          ],
           reviewSnapshot: {
             source: 'local-git',
             baseRef: 'main',
@@ -2408,6 +2552,57 @@ All checks passed.`;
           loopNumber: 2,
           verdict: 'pass',
           unresolvedCount: 0,
+          attempts: [
+            {
+              loopNumber: 1,
+              verdict: 'issues',
+              unresolvedCount: 2,
+              issues: [
+                {
+                  file: 'src/formatBalance.ts',
+                  line: 42,
+                  description: 'Integer balances still render a redundant decimal suffix.',
+                },
+                {
+                  file: 'src/formatBalance.test.ts',
+                  line: 18,
+                  description: 'The focused regression case is missing.',
+                },
+              ],
+              validationDepth: 'static-code',
+              reviewSnapshot: {
+                source: 'local-git',
+                baseRef: 'main',
+                baseSha: '6d90188f9f1c4a72b2d1f7a8a8bcb77a210f0050',
+                headRef: 'fix/proj-2418',
+                headSha: '9f8e7d6c5b4a3a21000000000000000000000000',
+                capturedAt: new Date().toISOString(),
+              },
+            },
+            {
+              loopNumber: 2,
+              verdict: 'pass',
+              unresolvedCount: 0,
+              validationDepth: 'static-code',
+              fixDelta: {
+                source: 'local-git',
+                baseSha: '9f8e7d6c5b4a3a21000000000000000000000000',
+                headSha: 'a1b2c3d4e5f6a7b8000000000000000000000000',
+                fixBaseSha: '9f8e7d6c5b4a3a21000000000000000000000000',
+                fixHeadSha: 'a1b2c3d4e5f6a7b8000000000000000000000000',
+                diffStat: { files: 2, additions: 14, deletions: 4 },
+                capturedAt: new Date().toISOString(),
+              },
+              reviewSnapshot: {
+                source: 'local-git',
+                baseRef: 'main',
+                baseSha: '6d90188f9f1c4a72b2d1f7a8a8bcb77a210f0050',
+                headRef: 'fix/proj-2418',
+                headSha: 'a1b2c3d4e5f6a7b8000000000000000000000000',
+                capturedAt: new Date().toISOString(),
+              },
+            },
+          ],
           reviewSnapshot: {
             source: 'local-git',
             baseRef: 'main',

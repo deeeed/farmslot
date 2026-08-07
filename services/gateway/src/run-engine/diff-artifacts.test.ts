@@ -170,6 +170,118 @@ test('captureReviewInputArtifactsForRun writes PR input metadata, diff, and stat
   assert.equal(diffStat.headSha, 'head-sha');
 });
 
+test('incremental review input captures the exact prior-head to current-head range', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'review-input-incremental-'));
+  const calls: string[] = [];
+  const run = makeRun({
+    flowType: 'review-pr',
+    ticketOrPr: 'owner/repo#123',
+    prNumber: 123,
+    taskFile: path.join(dir, 'TASK.md'),
+    reviewScope: 'incremental',
+    repeatReviewContext: {
+      version: 1,
+      chainId: 'prior-run',
+      generation: 2,
+      contextMode: 'reuse',
+      priorRunId: 'prior-run',
+      priorFamilyId: 'family-1',
+      repository: 'owner/repo',
+      prNumber: 123,
+      priorReviewedHeadSha: 'prior-head',
+      currentHeadSha: 'current-head',
+      verdict: 'request changes',
+      unresolvedFindings: [],
+      artifactRefs: [],
+      farmslotEvidenceRefs: [],
+      reviewScope: 'incremental',
+      validationDepth: 'static-code',
+      sessionIntent: 'resume',
+      priorGenerations: [],
+    },
+  });
+
+  await captureReviewInputArtifactsForRun(run, {
+    fetchGitHubPR: async () => ({
+      branch: 'fix/current',
+      title: 'PR title',
+      body: '',
+      baseRef: 'main',
+      baseSha: 'base-sha',
+      headSha: 'current-head',
+      number: 123,
+    }),
+    fetchPRDiffFiles: async () => {
+      calls.push('full');
+      return [];
+    },
+    fetchGitHubCompareFiles: async (repo, baseSha, headSha) => {
+      calls.push(`${repo}:${baseSha}..${headSha}`);
+      return [
+        { filename: 'src/delta.ts', status: 'modified', additions: 3, deletions: 1, patch: '@@' },
+      ];
+    },
+  });
+
+  assert.deepEqual(calls, ['owner/repo:prior-head..current-head']);
+  const commit = JSON.parse(await readFile(path.join(dir, 'inputs/commit.json'), 'utf-8'));
+  assert.equal(commit.reviewScope, 'incremental');
+  assert.equal(commit.baseSha, 'prior-head');
+  assert.equal(commit.headSha, 'current-head');
+  const stat = JSON.parse(await readFile(path.join(dir, 'inputs/diff-stat.json'), 'utf-8'));
+  assert.equal(stat.reviewScope, 'incremental');
+  assert.equal(stat.baseSha, 'prior-head');
+  assert.equal(stat.headSha, 'current-head');
+});
+
+test('incremental review input refuses to review a head that advanced after the operator choice', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'review-input-stale-head-'));
+  const run = makeRun({
+    flowType: 'review-pr',
+    ticketOrPr: 'owner/repo#123',
+    prNumber: 123,
+    taskFile: path.join(dir, 'TASK.md'),
+    reviewScope: 'incremental',
+    repeatReviewContext: {
+      version: 1,
+      chainId: 'prior-run',
+      generation: 2,
+      contextMode: 'reuse',
+      priorRunId: 'prior-run',
+      priorFamilyId: 'family-1',
+      repository: 'owner/repo',
+      prNumber: 123,
+      priorReviewedHeadSha: 'prior-head',
+      currentHeadSha: 'selected-head',
+      verdict: 'request changes',
+      unresolvedFindings: [],
+      artifactRefs: [],
+      farmslotEvidenceRefs: [],
+      reviewScope: 'incremental',
+      validationDepth: 'static-code',
+      sessionIntent: 'resume',
+      priorGenerations: [],
+    },
+  });
+
+  await assert.rejects(
+    captureReviewInputArtifactsForRun(run, {
+      fetchGitHubPR: async () => ({
+        branch: 'fix/current',
+        title: 'PR title',
+        body: '',
+        baseRef: 'main',
+        baseSha: 'base-sha',
+        headSha: 'advanced-head',
+        number: 123,
+      }),
+      fetchPRDiffFiles: async () => [],
+      fetchGitHubCompareFiles: async () => [],
+    }),
+    /Review head advanced from selected-head to advanced-head/,
+  );
+});
+
 test('captureReviewInputArtifactsForRun prefers stored PR number over issue ref', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'review-input-artifacts-stored-pr-'));
   const seen: string[] = [];

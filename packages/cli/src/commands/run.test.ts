@@ -4,7 +4,73 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { assertRunGateActionAvailable, buildRunCreateParams, parseTaskPath } from './run.js';
+import type { Run } from '@farmslot/protocol';
+
+import {
+  assertRunGateActionAvailable,
+  buildReviewChainResult,
+  buildRunCreateParams,
+  formatReviewChainLine,
+  parseTaskPath,
+} from './run.js';
+
+function repeatReviewRun(): Run {
+  return {
+    id: 'review-run-2',
+    familyId: 'review-family',
+    lane: 'production',
+    flowType: 'review-pr',
+    status: 'done',
+    project: 'farmslot-farm',
+    ticketOrPr: 'deeeed/farmslot#505',
+    slotId: 'mini-ff-1',
+    branch: 'feat/review',
+    taskFile: null,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, runner: 'codex', model: 'gpt-5.6' },
+    repeatReviewContext: {
+      version: 1,
+      chainId: 'review-run-1',
+      generation: 2,
+      priorRunId: 'review-run-1',
+      priorFamilyId: 'review-family',
+      repository: 'deeeed/farmslot',
+      prNumber: 505,
+      priorReviewedHeadSha: '111111111111',
+      currentHeadSha: '222222222222',
+      verdict: 'pending',
+      unresolvedFindings: [],
+      artifactRefs: [],
+      farmslotEvidenceRefs: [],
+      contextMode: 'reuse',
+      reviewScope: 'incremental',
+      validationDepth: 'static-code',
+      sessionIntent: 'resume',
+      session: {
+        intent: 'resume',
+        continuity: 'resumed',
+        priorRunId: 'review-run-1',
+        priorSessionId: 'session-1',
+        sessionId: 'session-1',
+      },
+    },
+    createdAt: '2026-08-07T00:00:00.000Z',
+    updatedAt: '2026-08-07T00:00:00.000Z',
+  };
+}
+
+test('run review-chain exposes stable JSON and human output shapes', () => {
+  const result = buildReviewChainResult(repeatReviewRun());
+
+  assert.equal(result.chain.length, 1);
+  assert.equal(result.chain[0]?.generation, 2);
+  assert.equal(result.chain[0]?.session?.continuity, 'resumed');
+  assert.equal(
+    formatReviewChainLine(result.chain[0]!),
+    'G2 review-r  1111111 -> 2222222  incremental/static-code  pending  unresolved pending  resumed',
+  );
+});
 
 test('run gate rejects actions that the pending decision does not offer', () => {
   const decision = {

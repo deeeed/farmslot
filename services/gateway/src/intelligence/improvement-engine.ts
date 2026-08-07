@@ -25,7 +25,7 @@ import { farmslotRoot } from '../fleet/state.js';
 import { getLLMConfig } from '../llm/config.js';
 import { callLLMChat } from '../llm/index.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
-import { getAllRuns, getRun, updateRun } from '../runs/store.js';
+import { getRun, updateRun } from '../runs/store.js';
 
 // ─── Chat State (with TTL) ───
 
@@ -249,40 +249,6 @@ export function initImprovementEngine(broadcast: BroadcastFn): void {
 }
 
 /**
- * Recovery sweep called at gateway startup. Any improvement decision left in
- * `analyzing` state was mid-LLM when the gateway last died — the in-flight
- * fetch didn't survive the process exit, so the card is permanently stuck
- * unless we terminalize it. Marks each as `error` so the operator sees a
- * dismissible card instead of a silent "Analyzing…" forever.
- */
-export function recoverStaleImprovementPlaceholders(): void {
-  const startedAt = Date.now();
-  const allRuns = getAllRuns();
-  let recovered = 0;
-  for (const run of allRuns) {
-    for (const d of run.decisions ?? []) {
-      if (d.type !== 'improvement') continue;
-      const status = (d.payload as ImprovementDiffPayload | undefined)?.analysisStatus;
-      if (status === 'analyzing') {
-        markImprovementTerminal(
-          run.id,
-          d.id,
-          'error',
-          'Gateway restarted before analysis finished. Re-trigger from the family page if you want to retry.',
-        );
-        recovered += 1;
-      }
-    }
-  }
-  const elapsed = Date.now() - startedAt;
-  if (recovered > 0 || elapsed > 100) {
-    console.log(
-      `[improvement] startup sweep: ${recovered} terminalized across ${allRuns.length} runs in ${elapsed}ms`,
-    );
-  }
-}
-
-/**
  * Emit an "analyzing" placeholder improvement decision so the inbox shows
  * progress immediately when the operator clicks Accept for Learning. Returns
  * the new decision id, or null if the run was not found.
@@ -307,6 +273,7 @@ export function emitImprovementPlaceholder(runId: string): string | null {
       project: run.project,
       analysisStatus: 'analyzing',
       analysisStartedAt: new Date().toISOString(),
+      analysisAttempts: 1,
     },
   };
   const decisions = [...(run.decisions ?? []), placeholder];
@@ -367,6 +334,7 @@ export function markImprovementTerminal(
     project: run.project,
     analysisStatus: status,
     analysisStartedAt: existing?.analysisStartedAt,
+    analysisAttempts: existing?.analysisAttempts,
     ...(status === 'error' ? { analysisError: message } : {}),
   };
   updateRun(runId, { decisions: run.decisions });
@@ -501,7 +469,9 @@ export async function analyzeAndPropose(
         rationale:
           result.text.length > 0
             ? `LLM analysis:\n${result.text.slice(0, 500)}\n\nNo structured changes proposed. Refine via chat.`
-            : 'LLM returned no response. Refine via chat.',
+            : result.stopReason === 'length'
+              ? 'LLM hit the max-token cap before emitting any text (stopReason=length). Retry or refine via chat.'
+              : 'LLM returned no response. Refine via chat.',
         sourceRunId: runId,
         project,
       };
@@ -533,6 +503,11 @@ export async function analyzeAndPropose(
           { id: 'apply', label: 'Apply', style: 'primary' },
           { id: 'dismiss', label: 'Dismiss', style: 'secondary' },
         ];
+        // Carry the attempt count across the replacement — the success payload
+        // is built fresh from the LLM proposal and would otherwise drop it.
+        payload.analysisAttempts = (
+          placeholder.payload as ImprovementDiffPayload | undefined
+        )?.analysisAttempts;
         placeholder.payload = payload;
         updateRun(runId, { decisions: updatedRun.decisions });
         const pendingDecision = pendingDecisionForRun(updatedRun, placeholder);

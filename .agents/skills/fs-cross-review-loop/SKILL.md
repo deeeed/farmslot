@@ -1,6 +1,6 @@
 ---
 name: fs-cross-review-loop
-description: 'Interactive tmux-only cross-runner review orchestrator for day-to-day PR hardening. Coordinates a worker pane, a fresh same/similar-runner review pane, and an optional different-runner review pane until all blocking findings, including nits, are fixed.'
+description: 'Interactive tmux-only cross-runner review orchestrator for day-to-day PR hardening. Coordinates a worker pane, retained reviewer sessions for incremental follow-ups, and optional fresh full-review lanes until all blocking findings, including nits, are fixed.'
 status: manual-usable
 ---
 
@@ -8,16 +8,16 @@ status: manual-usable
 
 This skill is a **tmux-only interactive orchestrator** for day-to-day bugfix/PR hardening.
 
-The orchestrator must **never execute the work itself**. It does not inspect the repo directly, run tests, run `git diff`, edit files, judge code, or decide that a finding is technically wrong. Its job is only to coordinate independent review panes, capture their output, relay findings back to the worker pane, reset the review panes after each fix pass, and repeat until the PR is clean.
+The orchestrator must **never execute the work itself**. It does not inspect the repo directly, run tests, run `git diff`, edit files, judge code, or decide that a finding is technically wrong. Its job is only to coordinate independent review panes, capture their output, relay findings back to the worker pane, continue or reset each reviewer according to explicit review policy, and repeat until the PR is clean.
 
-Gateway automation is a later productization path. The manual tmux workflow in this skill is usable now.
+The gateway and this manual tmux workflow use the same review-session policy.
 
 ## Core Model
 
 Use up to three tmux panes:
 
 1. **Worker pane**: the main agent that writes code, runs relevant validation, updates evidence, and fixes review findings.
-2. **Same/similar-runner review pane**: a fresh reviewer using the same runner family or a similar runner profile as the worker, but with a clean review prompt and no authority to edit.
+2. **Same/similar-runner review pane**: an independent reviewer using the same runner family or a similar runner profile as the worker. Keep its exact session for same-PR incremental follow-ups; reset it for a requested full review.
 3. **Different-runner review pane**: optional. A reviewer from a different runner family, for example Claude reviewing Codex work or Codex reviewing Claude work. Define whether this pane is enabled during the interaction.
 
 The leader/orchestrator is a router, not a reviewer and not an executor:
@@ -27,7 +27,7 @@ The leader/orchestrator is a router, not a reviewer and not an executor:
 - collect review output;
 - consolidate every blocking finding into one clear fix request without changing reviewer meaning;
 - send that request to the worker pane;
-- after the worker fixes the findings, reset the review pane(s) and make them review the current PR from scratch;
+- after the worker fixes findings, reuse the exact reviewer session for an incremental review of the frozen prior-head→current-head range, or reset it when full review was selected;
 - stop only when required reviewers return clean and the worker has fresh validation/evidence.
 
 ## Hard Orchestrator Boundary
@@ -77,6 +77,7 @@ At the start, identify or ask for exactly these decisions:
 - different-runner review pane: enabled or skipped; if enabled, pane ID and runner type;
 - max review cycles before escalating to the human, default `3`;
 - whether recipe/evidence review is in scope, default `yes` for bugfix PRs;
+- continuation policy, default `incremental` after the first full review; allow `full` to force fresh reasoning;
 - whether reviewers may run commands, default `read-only shell inspection only`; validators belong to the worker.
 
 This setup interaction is about pane routing and loop policy only. The orchestrator must not inspect the repository or pre-review the diff while setting up the loop.
@@ -101,13 +102,16 @@ These tmux commands are the only command category the orchestrator should run di
 ## Manual Loop Protocol
 
 1. Wait for the worker pane to report ready for review.
-2. Reset the review panes to fresh context.
-3. Ask the same/similar review pane to review the current PR from scratch.
-4. Ask the optional different-runner review pane to review from scratch when enabled.
-5. Capture reviewer findings.
-6. Dispatch one consolidated fix request back to the worker pane.
-7. Wait for the worker to fix, validate, and report ready.
-8. Reset reviewers and repeat from scratch until required reviewers return clean.
+2. For generation 1, start a fresh full review and record reviewer, runner, session, PR identity, and reviewed HEAD.
+3. Ask the optional different-runner review pane to review independently when enabled.
+4. Capture reviewer findings and the exact reviewed range.
+5. Dispatch one consolidated fix request back to the worker pane.
+6. Wait for the worker to fix, validate, commit, and report the new HEAD.
+7. For the same PR/runner/session, continue the retained reviewer with the prior findings and exact prior-head→new-head range. Do not `/clear` merely because HEAD changed.
+8. Reset or relaunch when full review was selected or identity/continuity cannot be proven, and record that fallback.
+9. Repeat until required reviewers approve the current HEAD.
+
+Retained context is an efficiency mechanism, never inherited approval. Every generation records its own verdict and immutable diff range.
 
 ## Severity Policy — mandatory fixes
 
@@ -157,7 +161,14 @@ Use this shape for each review pane. The reviewer owns inspection; the orchestra
 
 You are an independent reviewer. You are in read-only review mode unless explicitly told otherwise.
 
-Review the current branch from scratch. Do not rely on any previous verdict.
+Review mode: {{full|incremental}}
+Target HEAD: {{current_head}}
+Prior reviewed HEAD: {{prior_head_or_none}}
+
+For `full`, review the current branch from scratch with reset reasoning.
+For `incremental`, retain the same reviewer session, verify prior findings, and review the exact
+`{{prior_head}}..{{current_head}}` delta. Expand beyond that delta only when the fix changes an
+affected contract or creates a new risk. A prior verdict is context, not approval of the new HEAD.
 
 The orchestrator will not run commands or inspect code for you. If you need evidence, request it in your verdict for the worker to provide.
 
@@ -186,6 +197,10 @@ PASS or ISSUES
 ## Validation Review
 
 - validation is sufficient, weak, missing, or not applicable
+
+## Reviewed Range
+
+- full: base..current HEAD, or incremental: prior HEAD..current HEAD
 
 Rules:
 
@@ -225,6 +240,7 @@ Stop with `clean` only when:
 
 - worker reports implementation complete;
 - required review panes return `PASS` with no blocking nits/P2/P3/P0/P1;
+- every `PASS` names the current HEAD and reviewed range;
 - recipe/evidence expectations are satisfied or explicitly documented as not applicable;
 - worker confirms the full `yarn quality` has been run once on the final committed SHA;
 - no reviewer has unresolved concrete findings.
@@ -268,6 +284,7 @@ When an artifact directory exists, write or ask the worker to write the coordina
 - `artifacts/cross-review-loop.md`
   - cycle number;
   - reviewer pane IDs;
+  - reviewer session identity, review mode, and reviewed head range;
   - reviewer verdicts;
   - findings sent to worker;
   - worker fix summary;
@@ -291,13 +308,14 @@ Update the artifacts at these points:
 
 Keep `CROSS-REVIEW-LOOP.json` valid JSON matching `templates/CROSS-REVIEW-LOOP.schema.json`. Keep `cross-review-loop.md` readable enough for PR evidence review.
 
-## Future Gateway Automation
+## Shared Gateway Contract
 
-The same protocol can later be productized in the gateway:
+The manual loop and gateway share this protocol:
 
 - dispatch-time review-depth config chooses no cross review, same/similar review only, or same plus different runner;
-- gateway controls panes and message routing;
-- review panes are fresh every cycle;
+- gateway controls panes and message routing through runner capabilities;
+- the first/full generation resets reasoning; same-chain incremental generations retain the exact
+  eligible reviewer session and fall back fresh when continuity cannot be proven;
 - the gateway does not review code itself;
 - family observability shows review/fix cycles;
 - cost analytics tracks reviewer token spend separately from worker and Co-Pilot spend.

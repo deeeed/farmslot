@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { CollisionPayload, Run, RunStep } from '@farmslot/protocol';
+import type { CollisionPayload, ReviewContinuationPayload, Run, RunStep } from '@farmslot/protocol';
 
 import {
   collisionLastStepLabel,
   resolveCollisionDirOwners,
+  reviewContinuationSummary,
 } from './run-detail-collision-renderers.js';
 
 function run(overrides: Partial<Run> = {}): Run {
@@ -52,6 +53,41 @@ test('resolveCollisionDirOwners honors gateway supplied dir owners', () => {
   );
 
   assert.equal(result.get('bug-123'), owner);
+});
+
+test('review continuation summary exposes generation, heads, verdict, and evidence provenance', () => {
+  const payload: ReviewContinuationPayload = {
+    kind: 'review_continuation',
+    recommendedActionId: 'reuse-incremental-static',
+    fullLiveAvailable: false,
+    prior: {
+      version: 1,
+      chainId: 'chain-1',
+      generation: 2,
+      contextMode: 'reuse',
+      priorRunId: 'prior-run-1234',
+      priorFamilyId: 'family-1',
+      repository: 'owner/repo',
+      prNumber: 42,
+      priorReviewedHeadSha: 'aaaaaaaaaaaaaaa',
+      currentHeadSha: 'bbbbbbbbbbbbbbb',
+      verdict: 'request changes',
+      unresolvedFindings: [{ file: 'src/a.ts', line: 3, description: 'Fix this' }],
+      artifactRefs: [{ path: 'review.md', purpose: 'review' }],
+      farmslotEvidenceRefs: [{ path: 'artifacts/recipe.json', purpose: 'recipe' }],
+      reviewScope: 'incremental',
+      validationDepth: 'static-code',
+      sessionIntent: 'resume',
+      priorGenerations: [],
+    },
+  };
+
+  assert.deepEqual(reviewContinuationSummary(payload), [
+    'Generation 2 · prior run prior-ru',
+    'Reviewed head aaaaaaaaaaaa → current bbbbbbbbbbbb',
+    'Prior verdict: request changes · 1 unresolved',
+    '1 frozen Farmslot evidence reference',
+  ]);
 });
 
 test('resolveCollisionDirOwners falls back to newest project-local task dir owner', () => {

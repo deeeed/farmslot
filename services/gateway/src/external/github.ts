@@ -168,6 +168,37 @@ export async function fetchPRDiffFiles(
   }));
 }
 
+export async function fetchGitHubCompareFiles(
+  repo: string,
+  baseSha: string,
+  headSha: string,
+  opts?: GhRequestOpts,
+): Promise<PRDiffFile[]> {
+  if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repo)) {
+    throw new Error(`Invalid repo format: ${repo}. Expected owner/repo.`);
+  }
+  if (!/^[0-9a-f]{7,40}$/i.test(baseSha) || !/^[0-9a-f]{7,40}$/i.test(headSha)) {
+    throw new Error('GitHub compare requires concrete base and head commit SHAs.');
+  }
+  const result = await ghRequest(['api', `repos/${repo}/compare/${baseSha}...${headSha}`], opts);
+  const comparison = JSON.parse(result.stdout) as {
+    files?: Array<{
+      filename: string;
+      status: string;
+      additions: number;
+      deletions: number;
+      patch?: string;
+    }>;
+  };
+  return (comparison.files ?? []).map((file) => ({
+    filename: file.filename,
+    status: file.status,
+    additions: file.additions,
+    deletions: file.deletions,
+    patch: file.patch,
+  }));
+}
+
 function extractSection(text: string, headings: string[]): string {
   for (const h of headings) {
     const pattern = new RegExp(`(?:^|\\n)#+\\s*${h}[:\\s]*\\n([\\s\\S]*?)(?=\\n#|$)`, 'i');

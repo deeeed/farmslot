@@ -1,4 +1,4 @@
-import type { RunnerSessionUsage } from '@farmslot/protocol';
+import type { Run, RunnerSessionUsage } from '@farmslot/protocol';
 import { runSessionUsage } from '@farmslot/slot-config';
 
 import type { SlotVars } from '../core/config.js';
@@ -16,6 +16,12 @@ function parseStringLine(lines: string[], prefix: string): string | null {
   if (!line) return null;
   const value = line.slice(prefix.length).trim();
   return value && value !== 'unknown' ? value : null;
+}
+
+/** A retained transcript spans review generations, so its total is not a per-run metric. */
+export function usesReviewChainSessionTotal(run: Pick<Run, 'repeatReviewContext'>): boolean {
+  const continuity = run.repeatReviewContext?.session?.continuity;
+  return continuity === 'resumed' || continuity === 'resume-unconfirmed';
 }
 
 export function parseSessionUsageOutput(
