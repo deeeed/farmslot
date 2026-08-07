@@ -58,6 +58,15 @@ export interface RunnerObservability {
   /** How this provider proves that the exact prompt was accepted. */
   promptAcceptanceMode?: 'hook-digest' | 'native-text';
   getActivity(vars: SlotVars, target: string): Promise<ObservabilityReading<RunnerActivity> | null>;
+  /**
+   * Durable state of the whole runner turn currently bound to a tmux target.
+   * Unlike transient activity, an active turn remains active across a long tool
+   * call until the runner emits its terminal turn event.
+   */
+  getTurnState?(
+    vars: SlotVars,
+    target: string,
+  ): Promise<ObservabilityReading<RunnerSessionDeliveryState> | null>;
   getContextPct(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
   activeTool(vars: SlotVars, target: string): Promise<ObservabilityReading<string> | null>;
   lastTurnCompletedAt(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;

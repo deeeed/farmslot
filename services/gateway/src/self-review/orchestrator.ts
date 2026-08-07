@@ -46,6 +46,7 @@ import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/l
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
   normalizeRunner,
+  readRunnerTurnState,
   runnerDefaultModel,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
@@ -448,6 +449,7 @@ export interface SelfReviewRetryDeps {
     taskDir: string,
     timeoutMs: number,
     baseline: string,
+    turnActive?: () => Promise<boolean>,
   ) => Promise<WorkerSignal | undefined>;
   // Loop never reads the return values — narrow to Promise<void> so test mocks don't have to
   // synthesize the production AgentContext shape just to satisfy the type checker.
@@ -498,6 +500,20 @@ function setSelfReviewProgressDetail(runId: string, detail: string): void {
     ? PipelineSteps.HUMAN_GATE
     : PipelineSteps.SELF_REVIEW;
   updateRunStep(runId, step, { detail });
+}
+
+async function selfReviewFixTurnIsActive(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runId: string,
+  workerRunner: string,
+): Promise<boolean> {
+  const run = getRun(runId);
+  const fixContext = run ? selectAgentContext(run, { role: 'self-review-fix' }) : null;
+  if (fixContext?.status !== 'working') return false;
+  const target = fixContext?.target?.target;
+  if (!target) return false;
+  const state = await readRunnerTurnState(vars, target, fixContext.runner ?? workerRunner);
+  return state?.confidence === 'high' && state.value === 'active';
 }
 
 // Module-level constant — wiring is fixed at module load. Tests pass their own deps struct
@@ -731,6 +747,7 @@ export async function runSelfReviewRetryLoop({
         taskDir,
         FEEDBACK_TIMEOUT_MS,
         fixSignalBaseline,
+        () => selfReviewFixTurnIsActive(vars, runId, workerRunner),
       );
       fixCompletedAt = new Date().toISOString();
       if (!fixSignal) {
@@ -1200,7 +1217,9 @@ async function recoverSelfReviewFixPass({
       );
       const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix');
       try {
-        fixSignal = await waitForWorkerSignal(vars, taskDir, FEEDBACK_TIMEOUT_MS, rawSignal);
+        fixSignal = await waitForWorkerSignal(vars, taskDir, FEEDBACK_TIMEOUT_MS, rawSignal, () =>
+          selfReviewFixTurnIsActive(vars, runId, workerRunner),
+        );
       } finally {
         fixWatcher.stop();
       }
@@ -1876,29 +1895,37 @@ async function relaunchWorkerForFix(
   return false;
 }
 
-async function waitForWorkerSignal(
+export async function waitForWorkerSignal(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
   timeoutMs: number,
   baseline: string,
+  turnActive?: () => Promise<boolean>,
 ): Promise<WorkerSignal | undefined> {
   const signalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
 
   const start = Date.now();
   let lastProgressAt = start;
   let lastObservedSignal = baseline;
+  let nextTurnStateCheckAt = start;
+  const turnStatePollMs = Math.min(10_000, Math.max(2_000, Math.floor(timeoutMs / 2)));
   const maxActiveMs = Math.max(timeoutMs, Math.min(FEEDBACK_MAX_ACTIVE_MS, timeoutMs * 4));
   while (Date.now() - start < maxActiveMs && Date.now() - lastProgressAt < timeoutMs) {
     await new Promise((r) => setTimeout(r, 2000));
     try {
       const raw = await readOptionalSlotFile(vars, signalPath);
-      if (!raw || raw === lastObservedSignal) continue;
-      lastObservedSignal = raw;
-      lastProgressAt = Date.now();
-      const signal = terminalWorkerSignalFromRaw(raw);
-      if (signal) return signal;
+      if (raw && raw !== lastObservedSignal) {
+        lastObservedSignal = raw;
+        lastProgressAt = Date.now();
+        const signal = terminalWorkerSignalFromRaw(raw);
+        if (signal) return signal;
+      }
     } catch (err) {
       console.warn(`[self-review] failed to parse ${signalPath}: ${(err as Error).message}`);
+    }
+    if (turnActive && Date.now() >= nextTurnStateCheckAt) {
+      nextTurnStateCheckAt = Date.now() + turnStatePollMs;
+      if (await turnActive()) lastProgressAt = Date.now();
     }
   }
   return undefined;

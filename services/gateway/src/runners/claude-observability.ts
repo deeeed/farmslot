@@ -52,6 +52,15 @@ export const claudeHookObservability: RunnerObservability = {
     return deriveRunnerActivity(hooks, statusline);
   },
 
+  async getTurnState(vars, target) {
+    const paneId = await resolveTmuxPaneId(vars, target);
+    if (!paneId) return null;
+    const paneState = await readRunnerPaneObservabilityState(vars, paneId);
+    const sessionId = paneState?.session_id;
+    if (!sessionId) return null;
+    return deriveRunnerSessionDeliveryState(paneState, sessionId);
+  },
+
   async getContextPct(vars, target) {
     const { statusline } = await loadObservabilitySnapshot(vars, target);
     return contextPctFromStatusline(statusline);

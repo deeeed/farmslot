@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-07T01:26:21.394Z",
+  "host": "macwork",
+  "scenario": "self-review-fix-turn-lease",
+  "runner": "codex",
+  "baselineContract": "signal-file progress only",
+  "currentContract": "signal-file progress plus shared structured runner turn state",
+  "result": {
+    "elapsedMs": 18619,
+    "idleTimeoutMs": 10000,
+    "baselineTimedOut": true,
+    "leasedSignalStatus": "complete",
+    "activeTurnObserved": true,
+    "turnReadings": [
+      {
+        "value": "active",
+        "confidence": "high"
+      },
+      {
+        "value": "active",
+        "confidence": "high"
+      },
+      {
+        "value": "active",
+        "confidence": "high"
+      }
+    ]
+  },
+  "activeHook": "UserPromptSubmit",
+  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.nIEiGb/launch-b527e850e4d14687.sh\nOpenAI Codex v0.146.1\n--------\nworkdir: /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validat\ne-codex-turn-lease-p7ihgv\nmodel: gpt-5.6-sol\nprovider: openai\napproval: never\nsandbox: workspace-write [workdir, /tmp, $TMPDIR]\nreasoning effort: none\nreasoning summaries: none\nsession id: 019fd9d3-b1e7-7b81-abf9-e8d0edf4d362\n--------\nuser\nUse the shell tool exactly once to run this command, and do nothing else: sleep\n14; printf '%s\\n' '{\"role\":\"self-review\",\"status\":\"complete\",\"outcome\":\"success\"\n,\"disposition\":\"fixed\",\"timestamp\":\"2026-08-07T01:25:56.170Z\"}' > task/SELF-REVI\nEW-FIX-SIGNAL.json\nhook: SessionStart\nhook: SessionStart Completed\nhook: UserPromptSubmit\nhook: UserPromptSubmit Completed\ncodex\n\nhook: PreToolUse\nhook: PreToolUse Completed\nexec\n/bin/zsh -lc \"sleep 14; printf '%s\\\\n' '{\\\"role\\\":\\\"self-review\\\",\\\"status\\\":\\\"c\nomplete\\\",\\\"outcome\\\":\\\"success\\\",\\\"disposition\\\":\\\"fixed\\\",\\\"timestamp\\\":\\\"2026\n-08-07T01:25:56.170Z\\\"}' > task/SELF-REVIEW-FIX-SIGNAL.json\" in /private/var/fol\nders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-turn-lease-p7ihgv\n succeeded in 14110ms:\nhook: PostToolUse\nhook: PostToolUse Completed",
+  "pass": true,
+  "error": null
+}

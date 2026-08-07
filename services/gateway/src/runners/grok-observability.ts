@@ -296,6 +296,22 @@ export function createGrokLogObservability(
         ...(signal.sessionId ? { sessionId: signal.sessionId } : {}),
       };
     },
+    async getTurnState(vars, target) {
+      const signal = await probe(vars, target, null, null);
+      if (signal.status !== 'matched') return null;
+      return {
+        value:
+          signal.activity === 'idle'
+            ? 'idle'
+            : signal.activity === 'unknown'
+              ? 'unknown'
+              : 'active',
+        source: 'signal',
+        confidence: 'high',
+        observedAt: signal.activityAt,
+        ...(signal.sessionId ? { sessionId: signal.sessionId } : {}),
+      };
+    },
     async getContextPct() {
       return null;
     },

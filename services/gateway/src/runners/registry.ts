@@ -373,6 +373,23 @@ export function getRunnerObservability(runnerId?: string | null): RunnerObservab
   return KNOWN_RUNNER_OBSERVABILITY[normalizeRunner(runnerId)] ?? null;
 }
 
+export async function readRunnerTurnState(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runnerId?: string | null,
+): Promise<ObservabilityReading<RunnerSessionDeliveryState> | null> {
+  const observability = getRunnerObservability(runnerId);
+  if (!observability?.getTurnState) return null;
+  try {
+    return await observability.getTurnState(vars, target);
+  } catch (error) {
+    console.warn(
+      `[runner-observability] turn-state read failed for ${vars.slotId}: ${(error as Error).message}`,
+    );
+    return null;
+  }
+}
+
 export async function captureRunnerPromptAcceptanceBaseline(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
