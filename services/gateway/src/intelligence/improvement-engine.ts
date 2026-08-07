@@ -501,7 +501,9 @@ export async function analyzeAndPropose(
         rationale:
           result.text.length > 0
             ? `LLM analysis:\n${result.text.slice(0, 500)}\n\nNo structured changes proposed. Refine via chat.`
-            : 'LLM returned no response. Refine via chat.',
+            : result.stopReason === 'length'
+              ? 'LLM hit the max-token cap before emitting any text (stopReason=length). Retry or refine via chat.'
+              : 'LLM returned no response. Refine via chat.',
         sourceRunId: runId,
         project,
       };

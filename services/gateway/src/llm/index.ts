@@ -6,7 +6,7 @@ import type {
   AssistantMessage as PiAssistantMessage,
   AssistantMessageEvent,
   Message as PiMessage,
-  Models as PiModels,
+  MutableModels as PiModels,
   Tool,
   ToolCall,
   ToolResultMessage,
@@ -25,7 +25,8 @@ import { getLLMConfig } from './config.js';
 // the per-call `apiKey` stream option, so the collection's own credential
 // store is never populated.
 let piModelsPromise: Promise<PiModels> | null = null;
-function piModels(): Promise<PiModels> {
+// Exported so tests can swap a faux provider into the live collection.
+export function piModels(): Promise<PiModels> {
   piModelsPromise ??= import('@earendil-works/pi-ai/providers/all').then((mod) =>
     mod.builtinModels(),
   );
@@ -274,16 +275,36 @@ async function callViaPiAi(
   // valid AssistantMessage with empty content and stopReason 'error'/'aborted'.
   // Treat those as failures so callers don't silently get an empty response.
   const stopReason = (response as { stopReason?: string }).stopReason;
-  if (stopReason === 'error' || stopReason === 'aborted') {
-    throw new Error(
-      formatProviderError(provider, model, source, stopReason, httpStatus, httpHeaders),
-    );
-  }
+  throwOnTransportStop(provider, model, source, stopReason, httpStatus, httpHeaders);
 
   // Surface stopReason on the success path too — callers building structured
   // outputs (e.g. pr-body-recipe) need to distinguish a clean 'stop' finish
   // from a 'length' truncation.
   return { text, usage, stopReason };
+}
+
+// pi-ai returns transport failures as a valid AssistantMessage with empty
+// content and stopReason 'error'/'aborted' rather than throwing. Every path
+// that receives an AssistantMessage must run this guard, or a 401/429/5xx is
+// indistinguishable from "the model said nothing" downstream.
+export function throwOnTransportStop(
+  provider: string,
+  model: string,
+  source: string,
+  stopReason: string | undefined,
+  httpStatus: number | undefined,
+  httpHeaders: Record<string, string> | undefined,
+): void {
+  if (stopReason === 'error' || stopReason === 'aborted') {
+    const err = new Error(
+      formatProviderError(provider, model, source, stopReason, httpStatus, httpHeaders),
+    );
+    // Preserve abort identity: AbortSignal-aware callers (chat-engine's stop
+    // button) distinguish a deliberate cancellation from a provider failure
+    // by err.name === 'AbortError'.
+    if (stopReason === 'aborted') err.name = 'AbortError';
+    throw err;
+  }
 }
 
 // Headers shouldn't normally exceed a few KB; cap the base64 decode + JSON
@@ -417,7 +438,23 @@ async function callChatViaPiAi(
   let toolRoundsUsed = 0;
   const toolTrace: ChatToolTraceEntry[] = [];
 
+  let httpStatus: number | undefined;
+  let httpHeaders: Record<string, string> | undefined;
+  const roundOptions = {
+    apiKey,
+    maxTokens,
+    signal: opts.signal,
+    onResponse: ({ status, headers }: { status: number; headers: Record<string, string> }) => {
+      httpStatus = status;
+      httpHeaders = headers;
+    },
+  } as Parameters<PiModels['completeSimple']>[2];
+
   outer: for (let round = 0; round < maxToolRounds; round++) {
+    // Reset per round — a failure before this round's onResponse fires must
+    // not report the previous round's HTTP status/request id.
+    httpStatus = undefined;
+    httpHeaders = undefined;
     const context = {
       systemPrompt: opts.systemPrompt,
       messages: piMessages,
@@ -426,16 +463,18 @@ async function callChatViaPiAi(
 
     if (opts.onDelta) {
       // Streaming path — capture real AssistantMessage from the done event
-      const stream = models.streamSimple(piModel, context, {
-        apiKey,
-        maxTokens,
-        signal: opts.signal,
-      });
+      const stream = models.streamSimple(piModel, context, roundOptions);
       let roundText = '';
       for await (const event of stream as AsyncIterable<AssistantMessageEvent>) {
         if (event.type === 'text_delta') {
           roundText += event.delta;
           opts.onDelta(event.delta);
+        }
+        if (event.type === 'error') {
+          // Streams terminate with a dedicated 'error' event (stopReason
+          // 'error'/'aborted') instead of 'done' — ignoring it would end the
+          // loop with an empty stub message and no failure surfaced.
+          throwOnTransportStop(provider, model, source, event.reason, httpStatus, httpHeaders);
         }
         if (event.type === 'done') {
           realAssistantMsg = event.message;
@@ -471,11 +510,15 @@ async function callChatViaPiAi(
       }
     } else {
       // Non-streaming path
-      const response = await models.completeSimple(piModel, context, {
-        apiKey,
-        maxTokens,
-        signal: opts.signal,
-      });
+      const response = await models.completeSimple(piModel, context, roundOptions);
+      throwOnTransportStop(
+        provider,
+        model,
+        source,
+        (response as { stopReason?: string }).stopReason,
+        httpStatus,
+        httpHeaders,
+      );
       realAssistantMsg = response;
       const toolCalls = (response.content as Array<{ type: string }>).filter(
         (b) => b.type === 'toolCall',
@@ -550,7 +593,16 @@ async function callChatViaPiAi(
     );
   }
 
-  return { text, usage, piMessages: outPiMessages, ...(toolTrace.length > 0 ? { toolTrace } : {}) };
+  // Surface stopReason like the single-turn path — callers need to
+  // distinguish a clean 'stop' finish from a 'length' truncation.
+  const stopReason = (newAssistantMsg as { stopReason?: string }).stopReason;
+  return {
+    text,
+    usage,
+    stopReason,
+    piMessages: outPiMessages,
+    ...(toolTrace.length > 0 ? { toolTrace } : {}),
+  };
 }
 
 function extractText(msg: PiAssistantMessage): string {

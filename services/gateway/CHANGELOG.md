@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(llm): surface transport failures (`stopReason` error/aborted, including streaming `error` events) in `callLLMChat` instead of returning empty text — improvement analyses now terminalize as a real provider error rather than "LLM returned no response" / `no-changes`; user-initiated aborts keep `AbortError` identity, and chat results expose `stopReason` so callers can flag `length` truncation.
+
 - fix(self-review): bind worker-fix idle leases to the exact accepted runner turn and its live pane. Long tool calls stay alive; unaccepted prompts, dead workers, stale hooks, and unrelated turns cannot renew the lease.
 
 - fix(self-review): keep long worker-fix passes alive while their explicit fix checklist advances, even if the ambient worker checklist target changes.
