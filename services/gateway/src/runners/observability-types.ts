@@ -33,6 +33,7 @@ export interface HookRecord {
   event?: string;
   tool_name?: string;
   notification_type?: string;
+  source?: string;
   tool_use_id?: string;
   session_id?: string;
   transcript_path?: string;

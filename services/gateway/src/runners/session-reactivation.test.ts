@@ -446,7 +446,7 @@ test('retained fallback refuses a stale task signal during explicit recovery', a
   );
 });
 
-test('retained recovery accepts the exact prompt digest without comparing node clocks', async () => {
+test('retained recovery prefers the exact prompt digest despite an unchanged task signal', async () => {
   commands.length = 0;
   paneCount = 1;
   promptAccepted = true;

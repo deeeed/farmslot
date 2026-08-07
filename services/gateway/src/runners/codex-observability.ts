@@ -406,8 +406,9 @@ export const codexSessionObservability: RunnerObservability = {
   promptAcceptanceMode: 'native-text',
   async getTurnState(vars, target, expectedTurnToken) {
     const binding = await resolveCodexPaneBinding(vars, target);
-    if (expectedTurnToken && !expectedTurnToken.startsWith(`${binding?.sessionId}:`)) return null;
-    return binding ? readCodexNativeTurnState(vars, binding.sessionId, binding.sessionPath) : null;
+    if (!binding) return null;
+    if (expectedTurnToken && !expectedTurnToken.startsWith(`${binding.sessionId}:`)) return null;
+    return readCodexNativeTurnState(vars, binding.sessionId, binding.sessionPath);
   },
   async resolveSessionId(vars, sessionPath) {
     const result = await execOnSlot(vars, buildCodexSessionIdProbeCommand(sessionPath), {

@@ -18,17 +18,19 @@ process.env.NODE_TEST_CONTEXT = '1';
 process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
 
 const [
-  { waitForWorkerSignal },
+  { selfReviewFixTurnIsActive, waitForWorkerSignal },
   { deliverPromptWithRetainedFallback },
   { readLaunchAckSignalSnapshot },
   { readRunnerTurnState },
-  { paneHostsRunnerProcess, runnerTurnLeaseIsActive },
+  { paneHostsRunnerProcess },
+  { createRun, updateRunAgentContexts },
 ] = await Promise.all([
   import('../../../services/gateway/src/self-review/orchestrator.js'),
   import('../../../services/gateway/src/runners/session-reactivation.js'),
   import('../../../services/gateway/src/runners/prompt-delivery-evidence.js'),
   import('../../../services/gateway/src/runners/registry.js'),
   import('../../../services/gateway/src/self-review/worker-lifecycle.js'),
+  import('../../../services/gateway/src/runs/store.js'),
 ]);
 
 const vars: SlotVars = {
@@ -55,6 +57,28 @@ const vars: SlotVars = {
   resourceVars: {},
 };
 const idleTimeoutMs = 10_000;
+const validationRun = createRun(
+  {
+    flowType: 'fix-bug',
+    project: vars.projectName,
+    ticketOrPr: 'RUNNER-VALIDATION-SELF-REVIEW-FIX-TURN-LEASE',
+    slotId: vars.slotId,
+    runner,
+  },
+  { deferBackgroundPersist: true },
+);
+updateRunAgentContexts(validationRun.id, () => [
+  {
+    id: 'self-review-fix',
+    role: 'self-review-fix',
+    label: 'Self-review fix',
+    status: 'working',
+    slotId: vars.slotId,
+    runId: validationRun.id,
+    runner,
+    target: { session: vars.session, target },
+  },
+]);
 const turnReadings: Array<{
   expectedTurnToken: string;
   active: boolean;
@@ -66,7 +90,7 @@ const turnReadings: Array<{
 const turnActive = (expectedTurnToken: string) => async () => {
   const state = await readRunnerTurnState(vars, target, runner);
   const runnerAlive = await paneHostsRunnerProcess(vars, target, runner);
-  const active = await runnerTurnLeaseIsActive(vars, target, runner, expectedTurnToken);
+  const active = await selfReviewFixTurnIsActive(vars, validationRun.id, runner, expectedTurnToken);
   turnReadings.push({
     expectedTurnToken,
     active,
@@ -77,7 +101,7 @@ const turnActive = (expectedTurnToken: string) => async () => {
   return active;
 };
 
-function emitClaudeLifecycleHook(expectedTurnToken: string, event: string): void {
+function emitClaudeLifecycleHook(expectedTurnToken: string, event: string, source?: string): void {
   const separator = expectedTurnToken.lastIndexOf(':');
   const sessionId = expectedTurnToken.slice(0, separator);
   const obsDir = path.join(repo, '.agent', '.observability');
@@ -96,6 +120,7 @@ function emitClaudeLifecycleHook(expectedTurnToken: string, event: string): void
     },
     input: JSON.stringify({
       hook_event_name: event,
+      source,
       session_id: sessionId,
       transcript_path: sessionState.transcript_path,
       cwd: repo,
@@ -151,7 +176,12 @@ const busyDelivery = await deliverPromptWithRetainedFallback({
 assert.equal(busyDelivery.delivered, true, 'unrelated busy turn must be accepted');
 const busyTurnToken = busyDelivery.delivered ? busyDelivery.turnToken : undefined;
 assert.ok(busyTurnToken, 'unrelated busy turn must expose its identity');
-const busyLeaseActiveBeforeFix = await runnerTurnLeaseIsActive(vars, target, runner, busyTurnToken);
+const busyLeaseActiveBeforeFix = await selfReviewFixTurnIsActive(
+  vars,
+  validationRun.id,
+  runner,
+  busyTurnToken,
+);
 assert.equal(busyLeaseActiveBeforeFix, true, 'unrelated turn must be live before fix delivery');
 
 const signal = JSON.stringify({
@@ -185,13 +215,34 @@ assert.notEqual(
   'fix prompt must bind to a new turn after unrelated work finishes',
 );
 
-let lifecycleLeaseProbe: { preCompact: boolean; postCompact: boolean } | null = null;
+let lifecycleLeaseProbe: {
+  preCompact: boolean;
+  compactSessionStart: boolean;
+  postCompact: boolean;
+} | null = null;
 if (runner === 'claude') {
   emitClaudeLifecycleHook(acceptedTurnToken, 'PreCompact');
-  const preCompact = await runnerTurnLeaseIsActive(vars, target, runner, acceptedTurnToken);
+  const preCompact = await selfReviewFixTurnIsActive(
+    vars,
+    validationRun.id,
+    runner,
+    acceptedTurnToken,
+  );
+  emitClaudeLifecycleHook(acceptedTurnToken, 'SessionStart', 'compact');
+  const compactSessionStart = await selfReviewFixTurnIsActive(
+    vars,
+    validationRun.id,
+    runner,
+    acceptedTurnToken,
+  );
   emitClaudeLifecycleHook(acceptedTurnToken, 'PostCompact');
-  const postCompact = await runnerTurnLeaseIsActive(vars, target, runner, acceptedTurnToken);
-  lifecycleLeaseProbe = { preCompact, postCompact };
+  const postCompact = await selfReviewFixTurnIsActive(
+    vars,
+    validationRun.id,
+    runner,
+    acceptedTurnToken,
+  );
+  lifecycleLeaseProbe = { preCompact, compactSessionStart, postCompact };
 }
 
 const startedAt = Date.now();
@@ -226,8 +277,18 @@ const supersedingTurnToken = supersedingDelivery.delivered
   : undefined;
 assert.ok(supersedingTurnToken, 'superseding turn must expose its identity');
 const supersedingTurnProbe = {
-  originalLeaseActive: await runnerTurnLeaseIsActive(vars, target, runner, acceptedTurnToken),
-  supersedingLeaseActive: await runnerTurnLeaseIsActive(vars, target, runner, supersedingTurnToken),
+  originalLeaseActive: await selfReviewFixTurnIsActive(
+    vars,
+    validationRun.id,
+    runner,
+    acceptedTurnToken,
+  ),
+  supersedingLeaseActive: await selfReviewFixTurnIsActive(
+    vars,
+    validationRun.id,
+    runner,
+    supersedingTurnToken,
+  ),
   tokensDiffer: supersedingTurnToken !== acceptedTurnToken,
 };
 
@@ -237,6 +298,7 @@ writeFileSync(
     {
       elapsedMs: Date.now() - startedAt,
       idleTimeoutMs,
+      productionPredicateRunId: validationRun.id,
       baselineTimedOut: baselineResult === undefined,
       unacceptedTurnLeaseRejected:
         unacceptedDelivery.delivered === true && unacceptedDelivery.turnToken === undefined,

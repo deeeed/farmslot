@@ -511,7 +511,7 @@ function setSelfReviewProgressDetail(runId: string, detail: string): void {
   updateRunStep(runId, step, { detail });
 }
 
-async function selfReviewFixTurnIsActive(
+export async function selfReviewFixTurnIsActive(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runId: string,
   workerRunner: string,

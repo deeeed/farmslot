@@ -129,19 +129,26 @@ try {
       ? readSnapshot(path.join(obsDir, 'panes'), process.env.TMUX_PANE)
       : null;
   const startsTurn = event === 'UserPromptSubmit';
+  const preservesTurnAcrossSessionStart = event === 'SessionStart' && payload.source === 'compact';
+  const resetsTurn = event === 'SessionStart' && !preservesTurnAcrossSessionStart;
   const stopsTurn =
     event === 'Stop' ||
     event === 'StopFailure' ||
     (event === 'Notification' && payload.notification_type === 'idle_prompt');
-  const turnStartedAt =
-    startsTurn ? observedAt : previousSession?.turnStartedAt;
+  const turnStartedAt = startsTurn
+    ? observedAt
+    : resetsTurn
+      ? undefined
+      : previousSession?.turnStartedAt;
   const turnActive = startsTurn
     ? true
-    : stopsTurn
+    : resetsTurn
       ? false
-      : typeof previousSession?.turnActive === 'boolean'
-        ? previousSession.turnActive
-        : undefined;
+      : stopsTurn
+        ? false
+        : typeof previousSession?.turnActive === 'boolean'
+          ? previousSession.turnActive
+          : undefined;
   const rootSessionId =
     event === 'SessionStart'
       ? payload.session_id
@@ -159,6 +166,7 @@ try {
     effort: payload.effort,
     tool_name: payload.tool_name,
     notification_type: payload.notification_type,
+    source: payload.source,
     tmuxPane: process.env.TMUX_PANE || undefined,
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
     runner: process.env.FARMSLOT_RUNNER || 'claude',

@@ -75,6 +75,7 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
     result: null,
     liveSnapshotProbe: null,
     staleSnapshotProbe: null,
+    restartBoundaryProbe: null,
     reoccupiedPaneProbe: null,
     activeHook: null,
     paneTail: null,
@@ -169,6 +170,47 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
       timeout: 30_000,
     });
     report.staleSnapshotProbe = JSON.parse(fs.readFileSync(deadResultPath, 'utf-8'));
+    if (runner === 'claude') {
+      const obsDir = obsDirFor(repo, '.agent');
+      execFileSync(
+        process.execPath,
+        [path.join(obsDir, 'bin', 'farmslot-observability-hook.mjs')],
+        {
+          cwd: repo,
+          env: {
+            ...process.env,
+            FARMSLOT_OBS_DIR: obsDir,
+            FARMSLOT_SLOT_ID: 'runner-validation-self-review-fix-turn-lease',
+            FARMSLOT_RUNNER: runner,
+            TMUX_PANE: deadPaneId,
+          },
+          input: JSON.stringify({
+            hook_event_name: 'SessionStart',
+            source: 'resume',
+            session_id: activeState.session_id,
+            transcript_path: activeState.transcript_path,
+            cwd: repo,
+          }),
+        },
+      );
+      const restartResultPath = path.join(repo, 'restart-result.json');
+      execFileSync('yarn', ['exec', 'tsx', executor], {
+        cwd: root,
+        env: {
+          ...process.env,
+          FARMSLOT_VALIDATION_REPO: repo,
+          FARMSLOT_VALIDATION_TARGET: deadPaneId,
+          FARMSLOT_VALIDATION_RUNNER: runner,
+          FARMSLOT_VALIDATION_RUNNER_BIN: runnerBin,
+          FARMSLOT_VALIDATION_RESULT_PATH: restartResultPath,
+          FARMSLOT_VALIDATION_PROBE_ONLY: '1',
+          FARMSLOT_VALIDATION_EXPECTED_TURN_TOKEN: report.liveSnapshotProbe.expectedTurnToken,
+        },
+        stdio: 'pipe',
+        timeout: 30_000,
+      });
+      report.restartBoundaryProbe = JSON.parse(fs.readFileSync(restartResultPath, 'utf-8'));
+    }
     runLaunchInTmux(
       deadPaneId,
       repo,
@@ -201,6 +243,7 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
       report.result.fixTurnSeparatedFromBusyTurn === true &&
       (runner !== 'claude' ||
         (report.result.lifecycleLeaseProbe?.preCompact === true &&
+          report.result.lifecycleLeaseProbe?.compactSessionStart === true &&
           report.result.lifecycleLeaseProbe?.postCompact === true)) &&
       report.result.leasedSignalStatus === 'complete' &&
       report.result.activeTurnObserved === true &&
@@ -211,6 +254,11 @@ export async function runScenario({ runnerAdapter, keepSession, outDir }) {
       report.staleSnapshotProbe.leaseAllowed === false &&
       report.staleSnapshotProbe.expectedTurnToken === report.liveSnapshotProbe.expectedTurnToken &&
       report.staleSnapshotProbe.turnReadings.some((reading) => reading.active === false) &&
+      (runner !== 'claude' ||
+        (report.restartBoundaryProbe.leaseAllowed === false &&
+          report.restartBoundaryProbe.turnReadings.some(
+            (reading) => reading.stateValue === 'idle' && reading.actualTurnToken === null,
+          ))) &&
       report.reoccupiedPaneProbe.leaseAllowed === false &&
       report.reoccupiedPaneProbe.expectedTurnToken === report.liveSnapshotProbe.expectedTurnToken &&
       report.reoccupiedPaneProbe.turnReadings.some(

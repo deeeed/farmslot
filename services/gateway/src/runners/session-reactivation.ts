@@ -32,6 +32,7 @@ import { resolveRunnerSessionBinding, resumableSessionProbeCommand } from './ses
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 const RUNNER_SESSION_ACCEPTANCE_POLL_MS = 2_000;
+const RUNNER_TURN_TOKEN_GRACE_MS = 2_000;
 
 export interface RunnerSessionReactivationOptions {
   vars: SlotVars;
@@ -180,7 +181,7 @@ async function reactivateRunnerSessionWithPrompt(
       preserveWindowAfterExit: true,
     });
     let trustPromptConfirmed = false;
-    let acknowledgedWithoutTurnToken = false;
+    let acknowledgedWithoutTurnTokenAt: number | null = null;
 
     const deadline = Date.now() + (options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
     while (Date.now() < deadline) {
@@ -208,7 +209,13 @@ async function reactivateRunnerSessionWithPrompt(
           ...(accepted.turnToken ? { turnToken: accepted.turnToken } : {}),
         };
       }
-      if (accepted.accepted) acknowledgedWithoutTurnToken = true;
+      if (accepted.accepted) acknowledgedWithoutTurnTokenAt ??= Date.now();
+      if (
+        acknowledgedWithoutTurnTokenAt != null &&
+        Date.now() - acknowledgedWithoutTurnTokenAt >= RUNNER_TURN_TOKEN_GRACE_MS
+      ) {
+        return { delivered: true, acknowledgement: 'structured' };
+      }
       if (!trustPromptConfirmed) {
         const trustResult = await resolveLaunchBlockerWithFreshEvidence({
           runnerId: runner,
@@ -241,7 +248,7 @@ async function reactivateRunnerSessionWithPrompt(
       }
       await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_ACCEPTANCE_POLL_MS));
     }
-    if (acknowledgedWithoutTurnToken) {
+    if (acknowledgedWithoutTurnTokenAt != null) {
       return { delivered: true, acknowledgement: 'structured' };
     }
     return {
@@ -366,7 +373,7 @@ export async function deliverPromptInPlace(
           : { delivered: true, acknowledgement: 'safe-send' };
       }
       const acknowledgementDeadline = Date.now() + Math.min(timeoutMs, 30_000);
-      let acknowledgedWithoutTurnToken = false;
+      let acknowledgedWithoutTurnTokenAt: number | null = null;
       while (Date.now() < acknowledgementDeadline) {
         const acknowledgement = await runnerHasDurablePromptHandoff(
           options.vars,
@@ -398,7 +405,10 @@ export async function deliverPromptInPlace(
               ...(acknowledgement.turnToken ? { turnToken: acknowledgement.turnToken } : {}),
             };
           }
-          acknowledgedWithoutTurnToken = true;
+          acknowledgedWithoutTurnTokenAt ??= Date.now();
+          if (Date.now() - acknowledgedWithoutTurnTokenAt >= RUNNER_TURN_TOKEN_GRACE_MS) {
+            return { delivered: true, acknowledgement: 'structured' };
+          }
         }
         await new Promise((resolve) =>
           setTimeout(
@@ -410,7 +420,7 @@ export async function deliverPromptInPlace(
           ),
         );
       }
-      if (acknowledgedWithoutTurnToken) {
+      if (acknowledgedWithoutTurnTokenAt != null) {
         return { delivered: true, acknowledgement: 'structured' };
       }
       return {
