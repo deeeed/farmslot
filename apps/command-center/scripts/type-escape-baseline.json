@@ -2,10 +2,6 @@
   "version": 2,
   "baseline": [
     {
-      "key": "apps/command-center/ui/src/components/decisions/decision-inbox.ts:as-unknown:as unknown",
-      "count": 1
-    },
-    {
       "key": "apps/command-center/ui/src/components/runs/run-pipeline-mini.ts:as-any:as any",
       "count": 1
     },

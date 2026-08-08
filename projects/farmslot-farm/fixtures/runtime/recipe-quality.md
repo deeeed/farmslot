@@ -134,6 +134,9 @@ Never proof:
     `node - <<'HEREDOC'\n…\nHEREDOC <file>`.  The HEREDOC form does **not** put `<file>` on
     `process.argv[1]`; `node -e` does.  For multi-line scripts use a temporary file or the
     dedicated cdp.mjs / recipe-doctor.mjs helpers.
+12. **`ui.wait_for` text must not be text the HUD itself renders.** The HUD renders recipe `intent`
+    strings and labels into the DOM, so an assertion on that text can pass without the real UI ever
+    rendering. Choose assertion text that appears in no recipe `intent` or label.
 
 ## PR evidence package (gateway embeds this in created PRs)
 

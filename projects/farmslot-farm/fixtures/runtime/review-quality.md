@@ -12,6 +12,7 @@ Farmslot reviews cover:
 |---------|-----------|
 | Command Center UI | Recipe v1 + CDP; screenshots/video; **read pixels** — never trust filenames alone |
 | Gateway / protocol | `yarn typecheck`, `node:test`, behavior traceable in code |
+| CLI / terminal TUI | `node:test`, forced-TTY/mock-timer checks, live `--json` envelope probes; no Recipe/CDP requirement when no browser surface exists |
 | Mobile Companion | iOS/Android recipe when PR touches `apps/companion`; real Metro flag flips — no store injection |
 | Publication evidence | `evidence-manifest.json`, hosted `raw.githubusercontent.com` URLs, `artifacts_repo` upload |
 
@@ -100,6 +101,10 @@ If the author omitted a recipe for a UI change, flag it — do not invent proof.
 | Slot helper exec hidden in `@farmslot/slot-config` / `farmslot internal` when it needs `execOnSlot` or `execLocal` | **must_fix** | implement as gateway method routed through `route-method.ts` |
 | Script port changes slot-vs-orchestrator locality or swallows missing project config | **must_fix** | match original `run_on`/local split and preserve hard-fail behavior |
 | Slow read-heavy gateway method only validated through 5s `cdp.mjs gateway` client | suggestion | confirm with real `farmslot --url` CLI before calling it hung |
+| CLI-local verb (`internal`, `bug`) added to method-matrix/method-map without a real gateway RPC | **must_fix** | keep in-process CLI verbs out of gateway guards |
+| New `@farmslot/protocol` export live-tested with stale `dist/` | suggestion | run `yarn workspace @farmslot/protocol build` before `yarn farmslot` validation |
+| Human CLI output judged through a pipe/capture | suggestion | piped stdout is machine mode; use a real TTY for human-mode proof |
+| CLI progress/spinners gated only on `output.json`, or writing human progress to stdout in machine mode | **must_fix** | use the shared machine-mode predicate; human progress goes to stderr only; verify `--json` envelope purity |
 | Missing `artifacts_repo` / broken publication upload | suggestion | config + SSH host + public repo |
 | capture-helper TCC denied in tmux without CDP fallback note | suggestion | `capture-helper-tmux-check.sh` |
 | CDP/HUD abort before `command` node runs, presented as fail-closed pre-fix proof | **must_fix** | harness failure ≠ behavioral proof; require `command` node execution + assertion failure in `trace.json` |
@@ -160,4 +165,4 @@ Also write `{{TASK_DIR}}/artifacts/line-comments.json` with `must_fix` | `sugges
 
 ## Cross-review
 
-Independent review is required before merge (see repo `CLAUDE.md`). Reviewers use this doc + `fs-recipe-quality`; workers fix **all** blocking findings including nits when cross-review is active.
+Independent review is required before merge (see repo `CLAUDE.md`). Reviewers use this doc + `fs-recipe-quality`; workers fix **all** blocking findings including nits when cross-review is active. During closeout, diff the reviewed SHA against HEAD and verify each finding is actually addressed before marking it resolved.
