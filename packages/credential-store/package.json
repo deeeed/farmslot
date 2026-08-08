@@ -1,0 +1,27 @@
+{
+  "name": "@farmslot/credential-store",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint \"src/**/*.ts\"",
+    "quality": "prettier --check . && eslint \"src/**/*.ts\" && tsc --noEmit"
+  },
+  "dependencies": {
+    "@farmslot/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "eslint": "^10.3.0",
+    "prettier": "^3.8.3",
+    "typescript": "^5.6.0"
+  },
+  "license": "MIT"
+}

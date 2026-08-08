@@ -54,6 +54,8 @@ export interface BacklogUpdateParams extends BacklogUpdateInput {
 }
 export interface BacklogUpdateResult {
   item: BacklogItem;
+  /** Present when this session took authorship from a different principal. */
+  authorshipNotice?: string;
 }
 
 export interface BacklogCloseShippedParams {

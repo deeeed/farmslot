@@ -19,6 +19,7 @@
   "dependencies": {
     "@clack/prompts": "^1.7.0",
     "@farmslot/agent-runtime": "workspace:*",
+    "@farmslot/credential-store": "workspace:*",
     "@farmslot/protocol": "workspace:*",
     "@farmslot/recipe-harness": "workspace:*",
     "@farmslot/run-bundle": "workspace:*",

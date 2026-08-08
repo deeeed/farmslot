@@ -4,6 +4,12 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(auth): restrict raw `/api/file` slot-file HTTP reads to admin principals; operator credentials retain confined `/api/run-artifact` reads.
+- fix(server): fail a WebSocket connection closed when credential-state refresh fails during initialization instead of terminating the gateway process.
+- fix(auth): preserve deliberate RPC validation and sanitized credential-store lock-refusal guidance while retaining holder PIDs only in server diagnostics and returning generic non-leaking errors for unexpected authorization and credential-store faults.
+- fix(server): surface unexpected auth-connect, routed RPC, and JSON/binary node-frame principal-resolution faults, contain pre-auth pairing credential-store faults, and fail closed per receiver when broadcast authorization cannot refresh the credential store, without exposing internal messages or unhandled promise rejections.
+- fix(auth): contain the first HTTP solo-mode credential refresh and later principal-resolution failures inside the request boundary, logging the cause while returning a generic 500 instead of terminating the gateway or exposing store paths.
+- feat(auth): implement ADR-051 principals, durable independently revocable credentials, solo-to-activated lifecycle, default-deny role authorization, scoped pairing, work provenance, and fire-time reauthorization.
 - fix(review): retain a publication reviewer only after a valid review generation, and keep automatic review plans on the project session policy unless an operator explicitly chooses Continue or Fresh.
 - feat(review): keep and retarget one canonical reviewer tmux window per runner, and honor explicit continue-versus-fresh session intent for publication reviews.
 - fix(improvement): resume analyses interrupted by a gateway restart instead of tombstoning them — the persisted `analyzing` placeholder is re-run in place (attempt-capped at 2) so tsx-watch restarts no longer kill accepted retrospective analyses.
@@ -14,10 +20,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - feat(review): resume an incremental repeat review only through the runner's retained-session capability and exact prior binding; otherwise start fresh and record the fallback reason.
 - fix(review): record retained-review continuity immediately after handoff, keep pre-mutation handoff failures retryable, and report each resumed generation as a delta while preserving the raw chain total.
 - fix(self-review): bind worker-fix idle leases to the exact accepted runner turn and its live pane. Long tool calls stay alive; unaccepted prompts, dead workers, stale hooks, and unrelated turns cannot renew the lease.
-
 - fix(self-review): keep long worker-fix passes alive while their explicit fix checklist advances, even if the ambient worker checklist target changes.
 
 - fix(run-engine): preserve an existing fix-bug/dev feature branch without reset or clean when replaying from prepare instead of recreating it from main or discarding unpublished work.
+- fix(auth): require auto-dispatch webhooks to name a stored admin service principal, preserve authority across rejected backlog updates, return defensive backlog and queue snapshots, and log provenance migration only when it runs.
 
 - Require a machine-readable verdict and issue artifact from newly launched self-review and publication reviewers, bound live waits to the configured timeout without masking them on cleanup failure, preserve failed and valid sibling outcomes during restart recovery, and terminalize operator-required review failures with coherent replay and opaque-scope-verified process-group cleanup, including the pre-launcher-pid window without trusting recycled identities.
 

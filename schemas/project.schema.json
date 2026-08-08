@@ -850,6 +850,16 @@
           "type": "string",
           "description": "Token for Jira webhook validation."
         },
+        "github_principal_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stored admin service principal responsible for GitHub webhook work. Required when GitHub auto-dispatch is enabled."
+        },
+        "jira_principal_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stored admin service principal responsible for Jira webhook work. Required when Jira auto-dispatch is enabled."
+        },
         "auto_dispatch": {
           "type": "boolean",
           "description": "Auto-dispatch runs from webhooks.",

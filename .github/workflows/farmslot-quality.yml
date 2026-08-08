@@ -188,6 +188,9 @@ jobs:
       - name: Protocol method matrix guard
         run: yarn quality:method-matrix
 
+      - name: Authorization conformance guard
+        run: yarn quality:authorization
+
       - name: Retired-scripts guard
         run: yarn quality:retired-scripts
 

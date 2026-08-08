@@ -1,7 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import WebSocket from 'ws';
 
@@ -56,12 +53,10 @@ import {
 } from './commands/system-metrics.js';
 import * as tmux from './commands/tmux.js';
 import { startTmuxWorkerWatch, stopTmuxWorkerWatch } from './commands/tmux-worker-watch.js';
+import { resolveGatewayCredential } from './gateway-credential.js';
 
 const GATEWAY_URL = process.env.GATEWAY_URL ?? 'ws://localhost:7777';
 const MACHINE_NAME = process.env.MACHINE_NAME ?? hostname();
-const GATEWAY_CREDENTIAL = resolveGatewayCredential();
-const GATEWAY_TOKEN = GATEWAY_CREDENTIAL?.token;
-const GATEWAY_PASSWORD = GATEWAY_CREDENTIAL?.password;
 const MAX_BACKOFF = 30_000;
 
 let ws: WebSocket | null = null;
@@ -138,12 +133,15 @@ function sendGatewayRequest<T>(method: string, params: unknown): Promise<T> {
 
 async function authenticateThenRegister(): Promise<void> {
   try {
+    // Re-read on every connection attempt so issued/rotated node credentials take
+    // effect on reconnect without restarting the daemon.
+    const gatewayCredential = resolveGatewayCredential();
     await sendGatewayRequest<GatewayAuthConnectResult>(Methods.AUTH_CONNECT, {
       clientKind: 'node',
       clientName: MACHINE_NAME,
       protocolVersion: PROTOCOL_VERSION,
-      ...(GATEWAY_TOKEN ? { token: GATEWAY_TOKEN } : {}),
-      ...(GATEWAY_PASSWORD ? { password: GATEWAY_PASSWORD } : {}),
+      ...(gatewayCredential?.token ? { token: gatewayCredential.token } : {}),
+      ...(gatewayCredential?.password ? { password: gatewayCredential.password } : {}),
     });
     const connectFrame: RequestFrame = {
       type: 'req',
@@ -667,82 +665,3 @@ if (process.platform === 'darwin') {
 }
 
 connect();
-
-interface GatewayCredential {
-  token?: string;
-  password?: string;
-}
-
-function resolveGatewayCredential(): GatewayCredential | null {
-  const envCredential = credentialFromEnv(process.env);
-  if (envCredential) return envCredential;
-
-  for (const envFile of findGatewayEnvFiles()) {
-    const parsed = readEnvFile(envFile);
-    const credential = credentialFromEnv(parsed);
-    if (credential) return credential;
-  }
-
-  return null;
-}
-
-function credentialFromEnv(
-  env: NodeJS.ProcessEnv | Record<string, string>,
-): GatewayCredential | null {
-  const token = nonEmpty(env.FARMSLOT_NODE_TOKEN) ?? nonEmpty(env.FARMSLOT_GATEWAY_TOKEN);
-  const password = nonEmpty(env.FARMSLOT_GATEWAY_PASSWORD);
-  if (token || password) return { token, password };
-  return null;
-}
-
-function findGatewayEnvFiles(): string[] {
-  const roots = new Set<string>();
-  if (process.env.FARMSLOT_ROOT) roots.add(resolve(process.env.FARMSLOT_ROOT));
-
-  let cwd = resolve(process.cwd());
-  while (true) {
-    roots.add(cwd);
-    const parent = dirname(cwd);
-    if (parent === cwd) break;
-    cwd = parent;
-  }
-
-  // Source path: <repo>/services/node/src/index.ts.
-  // Built path, if introduced later: <repo>/services/node/dist/…
-  const sourceDir = dirname(fileURLToPath(import.meta.url));
-  roots.add(resolve(sourceDir, '../../../..'));
-
-  const files: string[] = [];
-  for (const root of roots) {
-    for (const name of ['.env.local-auth', '.env']) {
-      const file = resolve(root, name);
-      if (existsSync(file) && !files.includes(file)) files.push(file);
-    }
-  }
-  return files;
-}
-
-function readEnvFile(path: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const rawLine of readFileSync(path, 'utf8').split('\n')) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const normalized = line.startsWith('export ') ? line.slice('export '.length).trim() : line;
-    const eqIdx = normalized.indexOf('=');
-    if (eqIdx <= 0) continue;
-    const key = normalized.slice(0, eqIdx).trim();
-    let value = normalized.slice(eqIdx + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    result[key] = value;
-  }
-  return result;
-}
-
-function nonEmpty(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}

@@ -103,19 +103,22 @@ test('backlog refinement prepares prompt with bounded context and fs-backlog-spe
       '',
     ].join('\n'),
   );
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Refine backlog contract',
-    sourceKind: 'manual',
-    flowType: 'dev',
-    notes: 'Operator notes for refinement',
-    specPath,
-    roadmapItemId: 'ri_linked',
-    runner: 'claude',
-    model: 'sonnet',
-    priority: 5,
-    tags: ['refinement'],
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Refine backlog contract',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      notes: 'Operator notes for refinement',
+      specPath,
+      roadmapItemId: 'ri_linked',
+      runner: 'claude',
+      model: 'sonnet',
+      priority: 5,
+      tags: ['refinement'],
+    },
+    { kind: 'system' },
+  );
 
   const result = await refinement.startBacklogRefinement({
     itemId: created.item.id,
@@ -170,20 +173,26 @@ test('backlog refinement preserves source identity for manual and external items
       '',
     ].join('\n'),
   );
-  const manual = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Manual with spec',
-    sourceKind: 'manual',
-    flowType: 'dev',
-    specPath: manualSpec,
-  });
-  const external = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'External jira',
-    sourceKind: 'jira',
-    sourceRef: 'TAT-4242',
-    flowType: 'fix-bug',
-  });
+  const manual = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Manual with spec',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      specPath: manualSpec,
+    },
+    { kind: 'system' },
+  );
+  const external = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'External jira',
+      sourceKind: 'jira',
+      sourceRef: 'TAT-4242',
+      flowType: 'fix-bug',
+    },
+    { kind: 'system' },
+  );
 
   const beforeManual = lifecycleSnapshot(manual.item);
   const beforeExternal = lifecycleSnapshot(external.item);
@@ -206,12 +215,15 @@ test('backlog refinement preserves source identity for manual and external items
 
 test('backlog refinement reuses one existing tmux session instead of creating a second', async () => {
   const { backlog, refinement } = await fresh();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Session reuse',
-    sourceKind: 'manual',
-    flowType: 'dev',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Session reuse',
+      sourceKind: 'manual',
+      flowType: 'dev',
+    },
+    { kind: 'system' },
+  );
   const session = refinement.__backlogRefinementTest.backlogRefinementSessionName(created.item);
   await killTmuxSessionIfPresent(session);
 
@@ -241,13 +253,16 @@ test('backlog refinement reuses one existing tmux session instead of creating a 
 
 test('completing or reopening refinement does not mutate lifecycle or linkage', async () => {
   const { backlog, refinement } = await fresh();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Stable lifecycle',
-    sourceKind: 'manual',
-    flowType: 'dev',
-    roadmapItemId: 'ri_keep',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Stable lifecycle',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      roadmapItemId: 'ri_keep',
+    },
+    { kind: 'system' },
+  );
   // Simulate linkage fields that refinement must never touch.
   await backlog.updateBacklogItem({
     itemId: created.item.id,
@@ -281,14 +296,17 @@ test('completing or reopening refinement does not mutate lifecycle or linkage', 
 
 test('backlog refinement does not inherit item.model across a runner override', async () => {
   const { backlog, refinement } = await fresh();
-  const bothSet = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Cross-runner model both set',
-    sourceKind: 'manual',
-    flowType: 'dev',
-    runner: 'claude',
-    model: 'sonnet',
-  });
+  const bothSet = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Cross-runner model both set',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      runner: 'claude',
+      model: 'sonnet',
+    },
+    { kind: 'system' },
+  );
   const refinedBoth = await refinement.startBacklogRefinement({
     itemId: bothSet.item.id,
     launch: false,
@@ -299,13 +317,16 @@ test('backlog refinement does not inherit item.model across a runner override', 
   assert.match(refinedBoth.model ?? '', /gpt|sol|codex/i);
 
   // item.model without item.runner is a normal shape — still must not inherit across override.
-  const modelOnly = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Cross-runner model only',
-    sourceKind: 'manual',
-    flowType: 'dev',
-    model: 'sonnet',
-  });
+  const modelOnly = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Cross-runner model only',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      model: 'sonnet',
+    },
+    { kind: 'system' },
+  );
   const refinedModelOnly = await refinement.startBacklogRefinement({
     itemId: modelOnly.item.id,
     launch: false,
@@ -317,12 +338,15 @@ test('backlog refinement does not inherit item.model across a runner override', 
 
 test('backlog refinement rejects unsupported known-runner/model pairs but allows custom runners', async () => {
   const { backlog, refinement } = await fresh();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Bad model pair',
-    sourceKind: 'manual',
-    flowType: 'dev',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Bad model pair',
+      sourceKind: 'manual',
+      flowType: 'dev',
+    },
+    { kind: 'system' },
+  );
   await assert.rejects(
     () =>
       refinement.startBacklogRefinement({
@@ -346,12 +370,15 @@ test('backlog refinement rejects unsupported known-runner/model pairs but allows
 
 test('backlog refinement rejects unknown safety tiers', async () => {
   const { backlog, refinement } = await fresh();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Bad safety tier',
-    sourceKind: 'manual',
-    flowType: 'dev',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Bad safety tier',
+      sourceKind: 'manual',
+      flowType: 'dev',
+    },
+    { kind: 'system' },
+  );
   await assert.rejects(
     () =>
       refinement.startBacklogRefinement({
@@ -365,13 +392,19 @@ test('backlog refinement rejects unknown safety tiers', async () => {
 
 test('backlog refinement fails closed when an attached spec path cannot be read', async () => {
   const { backlog, refinement } = await fresh();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Broken attached spec',
-    sourceKind: 'manual',
-    flowType: 'dev',
-    specPath: path.relative(farmslotRoot, path.join(specRoot, 'farmslot-farm', 'missing-spec.md')),
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Broken attached spec',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      specPath: path.relative(
+        farmslotRoot,
+        path.join(specRoot, 'farmslot-farm', 'missing-spec.md'),
+      ),
+    },
+    { kind: 'system' },
+  );
   await assert.rejects(
     () => refinement.startBacklogRefinement({ itemId: created.item.id, launch: false }),
     /ENOENT|no such file|attached spec|specPath|Backlog item has no attached spec|must stay within/i,
@@ -380,12 +413,15 @@ test('backlog refinement fails closed when an attached spec path cannot be read'
 
 test('backlog refinement shell prelude clears ambient tmux and scopes the runner', async () => {
   const { backlog, refinement } = await fresh();
-  const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
-    title: 'Prelude check',
-    sourceKind: 'manual',
-    flowType: 'dev',
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Prelude check',
+      sourceKind: 'manual',
+      flowType: 'dev',
+    },
+    { kind: 'system' },
+  );
   const command = refinement.__backlogRefinementTest.buildBacklogRefinementShellCommand(
     created.item,
     '.backlog/refinement-prompts/example.md',

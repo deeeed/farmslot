@@ -14,6 +14,13 @@ export const Methods = {
   PAIRING_CREATE: 'pairing.create',
   PAIRING_CANDIDATES: 'pairing.candidates',
   PAIRING_EXCHANGE: 'pairing.exchange',
+  PRINCIPAL_CREATE: 'principal.create',
+  PRINCIPAL_LIST: 'principal.list',
+  PRINCIPAL_GRANT: 'principal.grant',
+  PRINCIPAL_REVOKE_ROLE: 'principal.revokeRole',
+  CREDENTIAL_ISSUE: 'credential.issue',
+  CREDENTIAL_LIST: 'credential.list',
+  CREDENTIAL_REVOKE: 'credential.revoke',
 
   // Slot lifecycle
   SLOT_CHECK: 'slot.check',

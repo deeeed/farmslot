@@ -91,6 +91,7 @@ export function registerAuthCommands(program: Command): void {
               profile: name,
               state: probe.state,
               authMode: probe.authMode,
+              principal: probe.principal ?? null,
               credentialStored: verifiedCredential,
             });
           } else {
@@ -186,6 +187,7 @@ export function registerAuthCommands(program: Command): void {
             url: r.profile.url,
             state: r.probe.state,
             authMode: r.probe.authMode ?? null,
+            principal: r.probe.principal ?? null,
             detail: r.probe.detail,
           })),
         });

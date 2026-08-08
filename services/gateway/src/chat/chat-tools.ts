@@ -498,7 +498,9 @@ export async function executeTool(
           ...(failed.length
             ? {
                 partiallyApplied: true,
-                failedEffects: failed.map((effect) => `${effect.name}: ${effect.detail ?? 'failed'}`),
+                failedEffects: failed.map(
+                  (effect) => `${effect.name}: ${effect.detail ?? 'failed'}`,
+                ),
               }
             : {}),
         };
@@ -548,17 +550,21 @@ export async function executeTool(
       }
       case 'queue_add': {
         const { addItem } = await import('../backlog/dispatch-queue.js');
+        const { currentSessionOriginator } = await import('../security/work-originator.js');
         const flowType = parseFlowType(args.flow_type);
         if (!flowType) throw new Error(`Invalid flow_type: ${String(args.flow_type ?? '')}`);
-        const item = addItem({
-          flowType,
-          project: String(args.project),
-          ticketOrPr: String(args.ticket_or_pr),
-          slotId: args.slot_id as string | undefined,
-          model: args.model as string | undefined,
-          runner: args.runner as string | undefined,
-          priority: 10,
-        });
+        const item = addItem(
+          {
+            flowType,
+            project: String(args.project),
+            ticketOrPr: String(args.ticket_or_pr),
+            slotId: args.slot_id as string | undefined,
+            model: args.model as string | undefined,
+            runner: args.runner as string | undefined,
+            priority: 10,
+          },
+          currentSessionOriginator(),
+        );
         result = { queued: true, itemId: item.id.slice(0, 8) };
         break;
       }

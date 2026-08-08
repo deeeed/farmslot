@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { hostname, networkInterfaces } from 'node:os';
 
 import {
+  type PairingAuthority,
   type PairingCandidate,
   type PairingCandidatesParams,
   type PairingCandidatesResult,
@@ -13,6 +14,7 @@ import {
   parseTailscaleDnsNameFromStatus,
 } from '@farmslot/protocol';
 
+import { GatewayMethodError } from '../core/method-error.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
 
 interface PairingRecord {
@@ -20,6 +22,7 @@ interface PairingRecord {
   gatewayUrl: string;
   profileName: string;
   expiresAtMs: number;
+  authority: PairingAuthority;
 }
 
 const pairings = new Map<string, PairingRecord>();
@@ -75,25 +78,54 @@ export function pairingCreate(
   params: PairingCreateParams,
   runtime: GatewayAuthRuntime,
 ): PairingCreateResult {
+  if (typeof params?.gatewayUrl !== 'string') {
+    throw new Error('pairing.create requires gatewayUrl');
+  }
   const gatewayUrl = params.gatewayUrl.trim();
   if (!gatewayUrl.startsWith('ws://') && !gatewayUrl.startsWith('wss://')) {
     throw new Error('pairing.create requires gatewayUrl starting with ws:// or wss://');
   }
-  if (runtime.auth.mode === 'none') {
-    throw new Error('Pairing requires gateway token/password auth to be enabled');
+  if (!params.authority || typeof params.authority !== 'object') {
+    throw new Error('pairing.create requires authority');
   }
-  if (!resolveRuntimeSecret(runtime)) {
-    throw new Error('Gateway auth credential is not available for pairing');
+  if (runtime.resolver.isSoloMode()) {
+    throw new Error(
+      'Pairing requires an activated gateway with an active admin credential; issue the owner credential first.',
+    );
+  }
+  if (params.authority.kind === 'existing-principal') {
+    if (typeof params.authority.principalId !== 'string' || !params.authority.principalId) {
+      throw new Error('existing-principal authority requires principalId');
+    }
+    const principal = runtime.store.findPrincipal(params.authority.principalId);
+    if (!principal) {
+      throw new Error(`Pairing principal '${params.authority.principalId}' does not exist`);
+    }
+  } else if (params.authority.kind === 'new-service-principal') {
+    if (
+      typeof params.authority.displayName !== 'string' ||
+      !params.authority.displayName.trim() ||
+      !validPairingRoles(params.authority.roles)
+    ) {
+      throw new Error('new-service-principal authority requires displayName and roles');
+    }
+  } else {
+    throw new Error('pairing.create authority kind is invalid');
   }
 
-  const ttlSeconds = Math.min(
-    Math.max(Number(params.ttlSeconds ?? DEFAULT_TTL_SECONDS), 30),
-    MAX_TTL_SECONDS,
-  );
+  const requestedTtl = Number(params.ttlSeconds ?? DEFAULT_TTL_SECONDS);
+  if (!Number.isFinite(requestedTtl)) throw new Error('pairing.create ttlSeconds must be numeric');
+  const ttlSeconds = Math.min(Math.max(requestedTtl, 30), MAX_TTL_SECONDS);
   const code = randomBytes(24).toString('base64url');
   const expiresAtMs = Date.now() + ttlSeconds * 1000;
   const profileName = params.profileName?.trim() || 'Farmslot Remote';
-  pairings.set(code, { code, gatewayUrl, profileName, expiresAtMs });
+  pairings.set(code, {
+    code,
+    gatewayUrl,
+    profileName,
+    expiresAtMs,
+    authority: structuredClone(params.authority),
+  });
   pruneExpiredPairings();
   return {
     url: gatewayUrl,
@@ -103,36 +135,52 @@ export function pairingCreate(
   };
 }
 
+function validPairingRoles(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (binding) =>
+        binding !== null &&
+        typeof binding === 'object' &&
+        ((binding as { role?: unknown }).role === 'admin' ||
+          (binding as { role?: unknown }).role === 'operator') &&
+        (binding as { scope?: { kind?: unknown } }).scope?.kind === 'global',
+    )
+  );
+}
+
 export function pairingExchange(
   params: PairingExchangeParams,
   runtime: GatewayAuthRuntime,
 ): PairingExchangeResult {
+  if (typeof params?.code !== 'string') {
+    throw new GatewayMethodError('PAIRING_FAILED', 'pairing.exchange requires code');
+  }
   const code = params.code.trim();
-  if (!code) throw new Error('pairing.exchange requires code');
+  if (!code) throw new GatewayMethodError('PAIRING_FAILED', 'pairing.exchange requires code');
   const record = pairings.get(code);
-  pairings.delete(code);
   if (!record || record.expiresAtMs <= Date.now()) {
-    throw new Error('Pairing code is invalid or expired');
+    pairings.delete(code);
+    throw new GatewayMethodError('PAIRING_FAILED', 'Pairing code is invalid or expired');
   }
-  const secret = resolveRuntimeSecret(runtime);
-  if (!secret || runtime.auth.mode === 'none') {
-    throw new Error('Gateway auth credential is not available for pairing');
-  }
+  const issue =
+    record.authority.kind === 'existing-principal'
+      ? runtime.writer.issueCredential(record.authority.principalId, record.profileName, 'paired')
+      : runtime.writer.provisionPairedServicePrincipal(
+          record.authority.displayName,
+          record.authority.roles,
+          record.profileName,
+        );
+  pairings.delete(code);
   return {
     profile: {
       name: record.profileName,
       url: record.gatewayUrl,
-      authMode: runtime.auth.mode,
-      secret,
+      authMode: 'token',
+      secret: issue.secret,
     },
     expiresAt: new Date(record.expiresAtMs).toISOString(),
   };
-}
-
-function resolveRuntimeSecret(runtime: GatewayAuthRuntime): string | null {
-  if (runtime.auth.mode === 'token') return runtime.auth.token ?? null;
-  if (runtime.auth.mode === 'password') return runtime.auth.password ?? null;
-  return null;
 }
 
 function pruneExpiredPairings(): void {

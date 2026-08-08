@@ -38,17 +38,16 @@ export function gatewayHttpOrigin(locationLike = currentLocation()): string {
 /** Append gateway credentials to same-origin gateway API URLs (query token for img/fetch). */
 export function gatewayApiUrl(path: string): string {
   const gatewayOrigin = gatewayHttpOrigin();
-  const absolute =
-    path.startsWith('http://') || path.startsWith('https://')
-      ? new URL(path)
-      : new URL(path, gatewayOrigin);
+  const absolute = absoluteGatewayUrl(path, gatewayOrigin);
   const credential =
     typeof localStorage !== 'undefined' ? localStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY) : null;
   const fallbackPassword =
     typeof localStorage !== 'undefined' ? localStorage.getItem(GATEWAY_PASSWORD_STORAGE_KEY) : null;
-  const queryCredential = credential ?? fallbackPassword;
-  if (absolute.origin === gatewayOrigin && queryCredential && !absolute.searchParams.has('token')) {
-    absolute.searchParams.set('token', queryCredential);
+  const hasQueryCredential =
+    absolute.searchParams.has('token') || absolute.searchParams.has('password');
+  if (absolute.origin === gatewayOrigin && !hasQueryCredential) {
+    if (credential) absolute.searchParams.set('token', credential);
+    else if (fallbackPassword) absolute.searchParams.set('password', fallbackPassword);
   }
   return absolute.toString();
 }
@@ -112,7 +111,37 @@ export function gatewayHttpFetch(
   init?: RequestInit,
   locationLike: GatewayHttpLocation | null = readGatewayHttpLocation(),
 ): Promise<Response> {
-  return fetch(gatewayProxiedFetchUrl(pathOrUrl, locationLike), init);
+  const gatewayOrigin = gatewayHttpOrigin();
+  const absolute = absoluteGatewayUrl(pathOrUrl, gatewayOrigin);
+  const url = sameOriginGatewayHttpUrl(absolute.toString(), locationLike, gatewayOrigin);
+  const headers = new Headers(init?.headers);
+  if (
+    absolute.origin === gatewayOrigin &&
+    !headers.has('Authorization') &&
+    typeof localStorage !== 'undefined'
+  ) {
+    const token = localStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY)?.trim();
+    const password = localStorage.getItem(GATEWAY_PASSWORD_STORAGE_KEY)?.trim();
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    } else if (password) {
+      headers.set('Authorization', `Basic ${encodeBasicPassword(password)}`);
+    }
+  }
+  return fetch(url, { ...init, headers });
+}
+
+function absoluteGatewayUrl(pathOrUrl: string, gatewayOrigin: string): URL {
+  return pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')
+    ? new URL(pathOrUrl)
+    : new URL(pathOrUrl, gatewayOrigin);
+}
+
+function encodeBasicPassword(password: string): string {
+  const bytes = new TextEncoder().encode(`:${password}`);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 function currentLocation(): GatewayOriginLocation {

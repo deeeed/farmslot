@@ -9,7 +9,12 @@ import { promisify } from 'node:util';
 
 import { validateRecipeActionManifestDocument } from '@farmslot/protocol';
 
-import { commandCenterActionManifest, commandCenterRecipeParams } from './run-recipe.mjs';
+import {
+  commandCenterActionManifest,
+  commandCenterRecipeParams,
+  recipeGraphUsesAnyAction,
+  recipeUsesAnyAction,
+} from './run-recipe.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const execFileAsync = promisify(execFile);
@@ -58,6 +63,66 @@ test('Command Center passes declared runtime values through canonical recipe par
     ),
     { cdp_port: 9323, slot_id: 'slot-explicit', run_id: 'run-123' },
   );
+});
+
+test('Command Center state-only recipes do not require a browser HUD', () => {
+  const uiActions = new Set(['app.hud', 'ui.navigate', 'ui.screenshot']);
+  assert.equal(
+    recipeUsesAnyAction(
+      { workflow: { nodes: { check: { action: 'command' }, done: { action: 'end' } } } },
+      uiActions,
+    ),
+    false,
+  );
+  assert.equal(
+    recipeUsesAnyAction({ workflow: { nodes: { visit: { action: 'ui.navigate' } } } }, uiActions),
+    true,
+  );
+});
+
+test('Command Center detects UI actions reachable only through called recipes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-command-center-ui-graph-'));
+  const library = path.join(root, 'recipe-library');
+  try {
+    await mkdir(path.join(library, 'recipes', 'task'), { recursive: true });
+    await writeFile(
+      path.join(library, 'recipes', 'task', 'ui-child.recipe.json'),
+      `${JSON.stringify({
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        description: 'Navigates the Command Center from a called recipe.',
+        workflow: {
+          entry: 'visit',
+          nodes: {
+            visit: {
+              action: 'ui.navigate',
+              intent: 'Open the task surface.',
+              url: '#/tasks',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      })}\n`,
+    );
+    const recipe = {
+      workflow: {
+        entry: 'call',
+        nodes: {
+          call: { action: 'call', ref: 'task.ui-child', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    };
+    const uiActions = new Set(['app.hud', 'ui.navigate', 'ui.screenshot']);
+
+    assert.equal(recipeUsesAnyAction(recipe, uiActions), false);
+    assert.equal(
+      await recipeGraphUsesAnyAction(recipe, uiActions, [{ name: 'task-local', root: library }]),
+      true,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('Command Center runs an adjacent task recipe library without manual configuration', async () => {

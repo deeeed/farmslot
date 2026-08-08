@@ -44,6 +44,9 @@ import {
   type ConfigTemplatePreviewParams,
   type ConfigTemplatesParams,
   type CopilotFormatInstructionParams,
+  type CredentialIssueParams,
+  type CredentialListParams,
+  type CredentialRevokeParams,
   type DecisionResolveParams,
   type DiagnosticsRunParams,
   type DispatchCandidatesParams,
@@ -100,6 +103,9 @@ import {
   type PRDeleteCommentParams,
   type PREditCommentParams,
   type PRForSlotParams,
+  type PrincipalCreateParams,
+  type PrincipalGrantParams,
+  type PrincipalRevokeRoleParams,
   type PRListParams,
   PROTOCOL_VERSION,
   type ProviderAccountsSnapshotParams,
@@ -194,6 +200,8 @@ import {
 
 import { restoreTmuxWorker } from '../agents/runtime-recovery.js';
 import { restartBranchWatchesForMachine } from '../automation/branch-watcher.js';
+// Method handlers
+import { GatewayInternalError, GatewayMethodError } from '../core/method-error.js';
 import { getAllNodes, registerNode } from '../fleet/machine-registry.js';
 import { getAllMachineHealth, getMachineHealth, markMachineOnline } from '../fleet/node-health.js';
 import { pairingCandidates, pairingCreate } from '../fleet/pairing.js';
@@ -318,6 +326,15 @@ import {
   prReviewComments,
   prSubmitReview,
 } from '../methods/pr/review-comments.js';
+import {
+  credentialIssue,
+  credentialList,
+  credentialRevoke,
+  principalCreate,
+  principalGrant,
+  principalList,
+  principalRevokeRole,
+} from '../methods/principal.js';
 import { providerAccountsSnapshot } from '../methods/provider-accounts.js';
 import {
   recipeCancel,
@@ -426,12 +443,13 @@ import { farmslotRoot } from '../projects/repo-root.js';
 import { unsubscribePty } from '../runtime/pty-stream.js';
 import { resubscribeAgentScreenSessions } from '../runtime/screen-session.js';
 import { unsubscribe as unsubscribeTerminalPoll } from '../runtime/tmux-stream.js';
-// Method handlers
 import {
   type GatewayAuthRuntime,
   requireAuthenticatedSession,
   requireNodeSession,
 } from '../security/auth.js';
+import { authorizeGatewayMethod } from '../security/authorization.js';
+import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import type { ClientState } from './client-state.js';
 import { routeRunMethod } from './run-route.js';
@@ -481,6 +499,24 @@ export async function routeMethod(
   params: unknown,
   context: RouteMethodContext,
 ): Promise<unknown> {
+  const { authRuntime, state } = context;
+  let actingPrincipal;
+  try {
+    actingPrincipal = authorizeGatewayMethod(authRuntime, state, method);
+  } catch (error) {
+    if (error instanceof GatewayMethodError) throw error;
+    throw new GatewayInternalError('RPC authorization resolution failed', error);
+  }
+  return runWithSessionOriginator(actingPrincipal, () =>
+    routeAuthorizedMethod(method, params, context),
+  );
+}
+
+async function routeAuthorizedMethod(
+  method: string,
+  params: unknown,
+  context: RouteMethodContext,
+): Promise<unknown> {
   const { authRuntime, broadcast, emit, isActiveClient, nextEventSeq, state } = context;
   // RPC dispatch boundary — params arrive untyped from the wire;
   // each handler receives its typed params via assertion.
@@ -495,7 +531,23 @@ export async function routeMethod(
     case Methods.GATEWAY_STATUS:
       return gatewayStatus(p as GatewayStatusParams);
     case Methods.GATEWAY_DOCTOR:
-      return gatewayDoctor(p as GatewayDoctorParams);
+      return gatewayDoctor(p as GatewayDoctorParams, authRuntime);
+
+    // Principal and credential management (authorization gate above is admin-only).
+    case Methods.PRINCIPAL_CREATE:
+      return principalCreate(p as PrincipalCreateParams, authRuntime);
+    case Methods.PRINCIPAL_LIST:
+      return principalList(authRuntime);
+    case Methods.PRINCIPAL_GRANT:
+      return principalGrant(p as PrincipalGrantParams, authRuntime);
+    case Methods.PRINCIPAL_REVOKE_ROLE:
+      return principalRevokeRole(p as PrincipalRevokeRoleParams, authRuntime);
+    case Methods.CREDENTIAL_ISSUE:
+      return credentialIssue(p as CredentialIssueParams, authRuntime);
+    case Methods.CREDENTIAL_LIST:
+      return credentialList(p as CredentialListParams, authRuntime);
+    case Methods.CREDENTIAL_REVOKE:
+      return credentialRevoke(p as CredentialRevokeParams, authRuntime);
 
     // Fleet
     case Methods.FLEET_STATUS:

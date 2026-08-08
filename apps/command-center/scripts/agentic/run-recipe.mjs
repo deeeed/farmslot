@@ -28,6 +28,7 @@ import {
   createCaptureHelperVideoRecorder,
   createCdpVideoRecorder,
   createRecipeRunner,
+  loadRecipeLibraries,
   resolveRecipeLibrarySources,
   resolveRecipeTrustInput,
 } from '@farmslot/recipe-harness';
@@ -290,6 +291,57 @@ export function commandCenterActionManifest(manifest, implementedActions) {
     actions,
     ...(observers.length ? { observers } : {}),
   };
+}
+
+export function recipeUsesAnyAction(recipe, actions) {
+  const pending = [recipe];
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (!value || typeof value !== 'object') continue;
+    if (!Array.isArray(value) && typeof value.action === 'string' && actions.has(value.action)) {
+      return true;
+    }
+    pending.push(...(Array.isArray(value) ? value : Object.values(value)));
+  }
+  return false;
+}
+
+function recipeCallRefs(recipe) {
+  const refs = [];
+  const pending = [recipe];
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (!value || typeof value !== 'object') continue;
+    if (
+      !Array.isArray(value) &&
+      value.action === 'call' &&
+      typeof value.ref === 'string' &&
+      value.ref.trim()
+    ) {
+      refs.push(value.ref.trim());
+    }
+    pending.push(...(Array.isArray(value) ? value : Object.values(value)));
+  }
+  return refs;
+}
+
+export async function recipeGraphUsesAnyAction(recipe, actions, librarySources = []) {
+  if (recipeUsesAnyAction(recipe, actions)) return true;
+  const pending = recipeCallRefs(recipe);
+  if (pending.length === 0 || librarySources.length === 0) return false;
+
+  const { recipes } = await loadRecipeLibraries(librarySources, { adapter: 'web' });
+  const visited = new Set();
+  while (pending.length > 0) {
+    const ref = pending.pop();
+    if (visited.has(ref)) continue;
+    visited.add(ref);
+    const dependency = recipes.get(ref);
+    if (!dependency) continue;
+    if (recipeUsesAnyAction(dependency.document, actions)) return true;
+    pending.push(...recipeCallRefs(dependency.document));
+  }
+  return false;
 }
 
 function hashFromNavigateTarget(target) {
@@ -684,23 +736,32 @@ async function main() {
       ? withCapturableRecordingTarget(webVideoRecorder)
       : webVideoRecorder;
 
-  const hudEnabled = filteredActions.includes('app.hud');
   const trust = resolveCommandCenterRecipeTrust();
   const invocationTrust = trust.source?.trust ?? COMMAND_CENTER_RECIPE_SOURCE.trust;
   const librarySources = applyTaskLocalInvocationTrust(
     await resolveRecipeLibrarySources({ recipePath }),
     invocationTrust,
   );
+  const hudEnabled =
+    filteredActions.includes('app.hud') &&
+    (options.recordVideo ||
+      (await recipeGraphUsesAnyAction(recipeRaw, new Set(uiActions), librarySources)));
+  const activeActions = hudEnabled
+    ? filteredActions
+    : filteredActions.filter((action) => action !== 'app.hud');
+  const activeManifest = hudEnabled
+    ? filteredManifest
+    : commandCenterActionManifest(manifest, new Set(activeActions));
   const runner = createRecipeRunner({
-    actionManifest: filteredManifest,
+    actionManifest: activeManifest,
     defaultSource: COMMAND_CENTER_RECIPE_SOURCE,
     adapters: [
       ...createStandardUiAdapters({
         transport,
-        actions: filteredActions,
+        actions: activeActions,
       }),
       ...createStandardCoreAdapters({
-        actions: filteredActions,
+        actions: activeActions,
       }),
     ],
     hud: hudEnabled

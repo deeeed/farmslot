@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { exchangeGatewayPairingQr } from './gateway-pairing-exchange';
 import { profileFromPairingExchange } from './gateway-pairing-normalization';
 import { sortPairingExchangeUrls } from './gateway-pairing-urls';
 import {
@@ -66,6 +67,82 @@ test('profileFromPairingExchange keeps the QR mobile URL over gateway self URL',
   assert.equal(profile.url, 'wss://phone-reachable.example/ws');
   assert.equal(profile.authMode, 'token');
   assert.equal(profile.secret, 'secret-token');
+});
+
+test('multi-profile pairing exchanges once and shares one revocable device credential', async () => {
+  const calls: Array<{ urls: string[]; code: string }> = [];
+  const profiles = await exchangeGatewayPairingQr(
+    {
+      type: 'farmslot.gateway-pairing.v1',
+      profiles: [
+        {
+          url: 'ws://192.168.0.18:7777/ws',
+          code: 'lan-code',
+          profileName: 'MacBook (LAN)',
+        },
+        {
+          url: 'ws://macwork.tail73dab7.ts.net:7777/ws',
+          code: 'lan-code',
+          profileName: 'MacBook (Tailscale)',
+        },
+      ],
+    },
+    async (urls, code) => {
+      calls.push({ urls, code });
+      return {
+        profile: {
+          name: 'Gateway self URL',
+          url: 'ws://localhost:7777/ws',
+          authMode: 'token',
+          secret: 'one-device-secret',
+        },
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      };
+    },
+  );
+
+  assert.deepEqual(calls, [
+    {
+      urls: ['ws://macwork.tail73dab7.ts.net:7777/ws', 'ws://192.168.0.18:7777/ws'],
+      code: 'lan-code',
+    },
+  ]);
+  assert.deepEqual(
+    profiles.map(({ name, url, secret }) => ({ name, url, secret })),
+    [
+      {
+        name: 'MacBook (LAN)',
+        url: 'ws://192.168.0.18:7777/ws',
+        secret: 'one-device-secret',
+      },
+      {
+        name: 'MacBook (Tailscale)',
+        url: 'ws://macwork.tail73dab7.ts.net:7777/ws',
+        secret: 'one-device-secret',
+      },
+    ],
+  );
+});
+
+test('multi-profile pairing rejects mixed device codes before exchange', async () => {
+  let exchangeCalled = false;
+  await assert.rejects(
+    exchangeGatewayPairingQr(
+      {
+        type: 'farmslot.gateway-pairing.v1',
+        profiles: [
+          { url: 'ws://192.168.0.18:7777/ws', code: 'lan-code' },
+          { url: 'ws://macwork.tail73dab7.ts.net:7777/ws', code: 'tailnet-code' },
+        ],
+      },
+      async () => {
+        exchangeCalled = true;
+        throw new Error('exchange should not run');
+      },
+    ),
+    /contains multiple device codes/u,
+  );
+  assert.equal(exchangeCalled, false);
 });
 
 test('sortPairingExchangeUrls tries Tailscale before LAN for QR exchange', () => {

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- fix(pairing): reuse one device code across every address advertised by `farmslot pair`.
+- feat(auth): add principal and credential management, quiescent offline recovery, explicit pairing authority, and separate transport/authority reporting in auth status.
 - fix(run): `farmslot run cancel` prints the failed cancel effects instead of only `Cancelled <id>`, so a still-claimed slot or unsettled backlog is visible to operators who are not using `--json`.
 - feat(review): add `farmslot run review-chain` for the shared generation, verdict, diff-head, and reviewer-session trace.
 - fix(roadmap): a failed `roadmap.get` after resolving a unique prefix now surfaces transport/auth/server errors instead of silently returning an incomplete item.

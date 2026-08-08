@@ -344,16 +344,19 @@ test('roadmap store deletes unpromoted items and rejects promoted deletes', asyn
       body: refinedBody('Promoted items keep backlog provenance.'),
     },
   });
-  const promoted = await promoteRoadmapItem({
-    itemId: refined.item.id,
-    expectedHash: refined.item.fileHash,
-    specs: [
-      {
-        title: 'Keep promoted backlog spec',
-        body: '## Context\n\nKeep it linked.\n\n## Acceptance Criteria\n\n- Linked backlog item survives.',
-      },
-    ],
-  });
+  const promoted = await promoteRoadmapItem(
+    {
+      itemId: refined.item.id,
+      expectedHash: refined.item.fileHash,
+      specs: [
+        {
+          title: 'Keep promoted backlog spec',
+          body: '## Context\n\nKeep it linked.\n\n## Acceptance Criteria\n\n- Linked backlog item survives.',
+        },
+      ],
+    },
+    { kind: 'system' },
+  );
 
   await assert.rejects(
     () =>
@@ -637,30 +640,33 @@ test('roadmap store promotes a refined item into ready backlog markdown specs', 
     },
   });
 
-  const promoted = await promoteRoadmapItem({
-    itemId: roadmap.item.id,
-    expectedHash: roadmap.item.fileHash,
-    specs: [
-      {
-        title: 'Create roadmap API',
-        tags: ['Command Center'],
-        body: [
-          '## Context',
-          '',
-          'Implement the markdown-backed API.',
-          '',
-          '## Acceptance Criteria',
-          '',
-          '- List, get, save, and promote roadmap items.',
-          '- Created backlog specs include provenance.',
-          '',
-          '## Dispatch Notes',
-          '',
-          'Keep this independent from ADR generation.',
-        ].join('\n'),
-      },
-    ],
-  });
+  const promoted = await promoteRoadmapItem(
+    {
+      itemId: roadmap.item.id,
+      expectedHash: roadmap.item.fileHash,
+      specs: [
+        {
+          title: 'Create roadmap API',
+          tags: ['Command Center'],
+          body: [
+            '## Context',
+            '',
+            'Implement the markdown-backed API.',
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- List, get, save, and promote roadmap items.',
+            '- Created backlog specs include provenance.',
+            '',
+            '## Dispatch Notes',
+            '',
+            'Keep this independent from ADR generation.',
+          ].join('\n'),
+        },
+      ],
+    },
+    { kind: 'system' },
+  );
 
   assert.equal(promoted.roadmapItem.stage, 'promoted');
   assert.equal(promoted.backlogItems.length, 1);
@@ -699,38 +705,41 @@ test('roadmap store promotes target project specs into separate project backlogs
     },
   });
 
-  const promoted = await promoteRoadmapItem({
-    itemId: roadmap.item.id,
-    expectedHash: roadmap.item.fileHash,
-    specs: [
-      {
-        project: mobileProject,
-        title: 'Update mobile perps analytics',
-        body: [
-          '## Context',
-          '',
-          'Apply the controller analytics update in mobile.',
-          '',
-          '## Acceptance Criteria',
-          '',
-          '- Mobile uses the controller analytics exports.',
-        ].join('\n'),
-      },
-      {
-        project: extensionProject,
-        title: 'Update extension perps analytics',
-        body: [
-          '## Context',
-          '',
-          'Apply the controller analytics update in extension.',
-          '',
-          '## Acceptance Criteria',
-          '',
-          '- Extension uses the controller analytics exports.',
-        ].join('\n'),
-      },
-    ],
-  });
+  const promoted = await promoteRoadmapItem(
+    {
+      itemId: roadmap.item.id,
+      expectedHash: roadmap.item.fileHash,
+      specs: [
+        {
+          project: mobileProject,
+          title: 'Update mobile perps analytics',
+          body: [
+            '## Context',
+            '',
+            'Apply the controller analytics update in mobile.',
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- Mobile uses the controller analytics exports.',
+          ].join('\n'),
+        },
+        {
+          project: extensionProject,
+          title: 'Update extension perps analytics',
+          body: [
+            '## Context',
+            '',
+            'Apply the controller analytics update in extension.',
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- Extension uses the controller analytics exports.',
+          ].join('\n'),
+        },
+      ],
+    },
+    { kind: 'system' },
+  );
 
   assert.equal(promoted.roadmapItem.stage, 'promoted');
   assert.deepEqual(promoted.backlogItems.map((item) => item.project).sort(), [
@@ -759,16 +768,19 @@ test('roadmap promotion requires spec projects when multiple target projects exi
 
   await assert.rejects(
     () =>
-      promoteRoadmapItem({
-        itemId: roadmap.item.id,
-        expectedHash: roadmap.item.fileHash,
-        specs: [
-          {
-            title: 'Missing project',
-            body: '## Context\n\nAmbiguous.\n\n## Acceptance Criteria\n\n- Project is required.',
-          },
-        ],
-      }),
+      promoteRoadmapItem(
+        {
+          itemId: roadmap.item.id,
+          expectedHash: roadmap.item.fileHash,
+          specs: [
+            {
+              title: 'Missing project',
+              body: '## Context\n\nAmbiguous.\n\n## Acceptance Criteria\n\n- Project is required.',
+            },
+          ],
+        },
+        { kind: 'system' },
+      ),
     /Backlog spec project is required/,
   );
 });
@@ -785,17 +797,20 @@ test('roadmap promotion accepts an explicit project for an unscoped global item'
     },
   });
 
-  const promoted = await promoteRoadmapItem({
-    itemId: roadmap.item.id,
-    expectedHash: roadmap.item.fileHash,
-    specs: [
-      {
-        project: 'farmslot-farm',
-        title: 'Implement the coordinated change',
-        body: '## Context\n\nCoordinated work.\n\n## Acceptance Criteria\n\n- Change ships.',
-      },
-    ],
-  });
+  const promoted = await promoteRoadmapItem(
+    {
+      itemId: roadmap.item.id,
+      expectedHash: roadmap.item.fileHash,
+      specs: [
+        {
+          project: 'farmslot-farm',
+          title: 'Implement the coordinated change',
+          body: '## Context\n\nCoordinated work.\n\n## Acceptance Criteria\n\n- Change ships.',
+        },
+      ],
+    },
+    { kind: 'system' },
+  );
 
   assert.equal(promoted.backlogItems[0]?.project, 'farmslot-farm');
   assert.equal(promoted.roadmapItem.promotion?.[0]?.project, 'farmslot-farm');
@@ -813,17 +828,20 @@ test('roadmap promotion accepts an explicit project for an unassigned item', asy
     },
   });
 
-  const promoted = await promoteRoadmapItem({
-    itemId: roadmap.item.id,
-    expectedHash: roadmap.item.fileHash,
-    specs: [
-      {
-        project: 'farmslot-farm',
-        title: 'Implement the idea',
-        body: '## Context\n\nScoped work.\n\n## Acceptance Criteria\n\n- Change ships.',
-      },
-    ],
-  });
+  const promoted = await promoteRoadmapItem(
+    {
+      itemId: roadmap.item.id,
+      expectedHash: roadmap.item.fileHash,
+      specs: [
+        {
+          project: 'farmslot-farm',
+          title: 'Implement the idea',
+          body: '## Context\n\nScoped work.\n\n## Acceptance Criteria\n\n- Change ships.',
+        },
+      ],
+    },
+    { kind: 'system' },
+  );
 
   assert.equal(promoted.backlogItems[0]?.project, 'farmslot-farm');
 });
@@ -842,17 +860,20 @@ test('roadmap promotion rejects an unknown concrete project', async () => {
 
   await assert.rejects(
     () =>
-      promoteRoadmapItem({
-        itemId: roadmap.item.id,
-        expectedHash: roadmap.item.fileHash,
-        specs: [
-          {
-            project: 'farmslot-farm-typo',
-            title: 'Invalid target',
-            body: '## Context\n\nScoped work.\n\n## Acceptance Criteria\n\n- Change ships.',
-          },
-        ],
-      }),
+      promoteRoadmapItem(
+        {
+          itemId: roadmap.item.id,
+          expectedHash: roadmap.item.fileHash,
+          specs: [
+            {
+              project: 'farmslot-farm-typo',
+              title: 'Invalid target',
+              body: '## Context\n\nScoped work.\n\n## Acceptance Criteria\n\n- Change ships.',
+            },
+          ],
+        },
+        { kind: 'system' },
+      ),
     /Unknown backlog spec project: farmslot-farm-typo/,
   );
 });
@@ -872,17 +893,20 @@ test('roadmap promotion rejects non-concrete projects for an unscoped global ite
   for (const project of ['global', 'unassigned']) {
     await assert.rejects(
       () =>
-        promoteRoadmapItem({
-          itemId: roadmap.item.id,
-          expectedHash: roadmap.item.fileHash,
-          specs: [
-            {
-              project,
-              title: 'Invalid coordination target',
-              body: '## Context\n\nCoordinate work.\n\n## Acceptance Criteria\n\n- Change ships.',
-            },
-          ],
-        }),
+        promoteRoadmapItem(
+          {
+            itemId: roadmap.item.id,
+            expectedHash: roadmap.item.fileHash,
+            specs: [
+              {
+                project,
+                title: 'Invalid coordination target',
+                body: '## Context\n\nCoordinate work.\n\n## Acceptance Criteria\n\n- Change ships.',
+              },
+            ],
+          },
+          { kind: 'system' },
+        ),
       /must be concrete/,
     );
   }
@@ -903,28 +927,31 @@ test('roadmap promotion validates every spec before writing backlog side effects
 
   await assert.rejects(
     () =>
-      promoteRoadmapItem({
-        itemId: roadmap.item.id,
-        expectedHash: roadmap.item.fileHash,
-        specs: [
-          {
-            title: 'Valid first spec',
-            body: [
-              '## Context',
-              '',
-              'A valid spec should not be written when a later draft is invalid.',
-              '',
-              '## Acceptance Criteria',
-              '',
-              '- This valid spec is prevalidated.',
-            ].join('\n'),
-          },
-          {
-            title: 'Invalid second spec',
-            body: '## Context\n\nMissing acceptance criteria.',
-          },
-        ],
-      }),
+      promoteRoadmapItem(
+        {
+          itemId: roadmap.item.id,
+          expectedHash: roadmap.item.fileHash,
+          specs: [
+            {
+              title: 'Valid first spec',
+              body: [
+                '## Context',
+                '',
+                'A valid spec should not be written when a later draft is invalid.',
+                '',
+                '## Acceptance Criteria',
+                '',
+                '- This valid spec is prevalidated.',
+              ].join('\n'),
+            },
+            {
+              title: 'Invalid second spec',
+              body: '## Context\n\nMissing acceptance criteria.',
+            },
+          ],
+        },
+        { kind: 'system' },
+      ),
     /Backlog spec requires a non-empty ## Acceptance Criteria section/,
   );
 
@@ -950,13 +977,16 @@ test('roadmap.list and roadmap.get carry the gateway delivery projection', async
   });
 
   // Canonical link only — no promotion entry, exactly the ri_790ea3508ba4 shape.
-  const created = await backlog.createBacklogItem({
-    project: 'roadmap-delivery-fixture-farm',
-    title: 'Implements the roadmap item',
-    sourceKind: 'manual',
-    flowType: 'dev',
-    roadmapItemId: saved.item.id,
-  });
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'roadmap-delivery-fixture-farm',
+      title: 'Implements the roadmap item',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      roadmapItemId: saved.item.id,
+    },
+    { kind: 'system' },
+  );
   // Out-of-band close-out is the exact shape the reported drift had: shipped
   // provenance on the backlog row, no promotion entry on the roadmap item.
   await backlog.closeShippedBacklogItem({

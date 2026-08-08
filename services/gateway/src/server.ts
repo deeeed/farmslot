@@ -22,7 +22,7 @@ import { handleBranchFsChanged } from './automation/branch-watcher.js';
 import { tryDispatchNext } from './backlog/dispatch-queue.js';
 import { autoDispatchBacklogReady, listBacklogItems } from './backlog/store.js';
 import { ChatActionRejectError } from './chat/chat-actions.js';
-import { GatewayMethodError } from './core/method-error.js';
+import { GatewayInternalError, GatewayMethodError } from './core/method-error.js';
 import { setSlotUpdateHook } from './core/state.js';
 import { unregisterByWs } from './fleet/machine-registry.js';
 import { getMachineHealth, markMachineOffline, updateMachineMetrics } from './fleet/node-health.js';
@@ -57,6 +57,7 @@ import {
   resolveRequestIp,
   sanitizeAuthFailureReason,
 } from './security/auth.js';
+import { canReceiveBroadcast, isNodeSubjectSession } from './security/authorization.js';
 import { isGatewayOriginAllowed } from './security/origin.js';
 import { handleSelfReviewFsChanged } from './self-review/orchestrator.js';
 import type { ClientState } from './server/client-state.js';
@@ -74,6 +75,7 @@ const ENABLE_RESOURCE_POLL_ALL =
 let clientSeq = 0;
 const clients = new Map<WebSocket, ClientState>();
 let activeAuthRuntime: GatewayAuthRuntime | null = null;
+const invalidationInstalled = new WeakSet<GatewayAuthRuntime>();
 
 /**
  * Inbound WebSocket frame limit (matches `ws` library default of 100 MiB).
@@ -115,6 +117,7 @@ export function createWebSocketServer(
   options?: CreateWebSocketServerOptions,
 ): WebSocketServer {
   activeAuthRuntime = authRuntime;
+  installCredentialSessionInvalidation(authRuntime);
   const maxPayload = options?.maxPayload ?? DEFAULT_WS_MAX_PAYLOAD_BYTES;
   const wss = new WebSocketServer({
     server: httpServer,
@@ -130,8 +133,34 @@ export function createWebSocketServer(
   });
 
   wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
+    const clientId = `c${++clientSeq}`;
+    let initializedState: ClientState | undefined;
+
+    // Attach this before credential refresh so even a connection-initialization failure
+    // cannot turn a subsequent socket error into an unhandled process error.
+    ws.on('error', (err) => {
+      const code = (err as NodeJS.ErrnoException).code;
+      console.error(
+        `[server] websocket error on ${clientId}` +
+          (initializedState?.clientKind ? ` (${initializedState.clientKind})` : '') +
+          `: ${(err as Error).message}` +
+          (code ? ` [${code}]` : ''),
+      );
+    });
+
+    let soloMode: boolean;
+    try {
+      soloMode = authRuntime.resolver.isSoloMode();
+    } catch (err) {
+      console.error(
+        `[server] websocket connection initialization failed on ${clientId}: ${(err as Error).message}`,
+      );
+      ws.close(1011, 'internal gateway error');
+      return;
+    }
+
     const state: ClientState = {
-      id: `c${++clientSeq}`,
+      id: clientId,
       ws,
       terminalHandlers: new Map(),
       workerTerminalHandlers: new Map(),
@@ -142,51 +171,53 @@ export function createWebSocketServer(
       terminalSubscribeSeq: new Map(),
       screenHandlers: new Map(),
       thumbnailSubscribed: false,
-      authenticated: authRuntime.auth.mode === 'none',
-      clientKind: authRuntime.auth.mode === 'none' ? 'ui' : undefined,
-      authMode: authRuntime.auth.mode === 'none' ? 'none' : undefined,
-      authenticatedAt: authRuntime.auth.mode === 'none' ? Date.now() : undefined,
+      authenticated: soloMode,
+      clientKind: soloMode ? 'ui' : undefined,
+      authMode: soloMode ? 'none' : undefined,
+      authenticatedAt: soloMode ? Date.now() : undefined,
     };
+    initializedState = state;
     clients.set(ws, state);
 
-    // Critical: `ws` emits `error` for oversized frames (WS_ERR_UNSUPPORTED_MESSAGE_LENGTH)
-    // before closing with 1009. An unhandled socket error crashes the whole gateway process.
-    ws.on('error', (err) => {
-      const code = (err as NodeJS.ErrnoException).code;
-      console.error(
-        `[server] websocket error on ${state.id}` +
-          (state.clientKind ? ` (${state.clientKind})` : '') +
-          `: ${(err as Error).message}` +
-          (code ? ` [${code}]` : ''),
-      );
-    });
-
     // Send privileged hello snapshot only after auth when auth is enabled.
-    if (authRuntime.auth.mode === 'none') sendHello(ws);
+    if (soloMode && canReceiveBroadcast(authRuntime, state, Events.HELLO)) {
+      sendHello(ws);
+    }
 
     ws.on('message', (raw: Buffer, isBinary: boolean) => {
-      // Handle binary frames from nodes (screen capture relay)
-      if (isBinary && raw.length > 7 && raw[0] === NODE_FRAME_MAGIC) {
-        if (
-          authRuntime.auth.mode !== 'none' &&
-          (!state.authenticated || state.clientKind !== 'node')
-        ) {
-          console.warn(`[auth] rejected pre-auth node binary frame from ${state.id}`);
-          ws.close(1008, 'node authentication required');
+      try {
+        // Handle binary frames from nodes (screen capture relay)
+        if (isBinary && raw.length > 7 && raw[0] === NODE_FRAME_MAGIC) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
+            console.warn(`[auth] rejected pre-auth node binary frame from ${state.id}`);
+            ws.close(1008, 'node authentication required');
+            return;
+          }
+          handleNodeBinaryFrame(raw);
           return;
         }
-        handleNodeBinaryFrame(raw);
-        return;
-      }
 
-      // Route node responses (type: 'res' from gateway-initiated requests)
-      try {
-        const peek = JSON.parse(raw.toString());
+        // Route node responses (type: 'res' from gateway-initiated requests)
+        let peek;
+        try {
+          peek = JSON.parse(raw.toString());
+        } catch (err) {
+          // Parse failures are not structured node frames; preserve legacy text handling.
+          if (process.env.DEBUG_GATEWAY_FRAMES) {
+            console.warn(
+              `[server] non-JSON websocket frame routed as text: ${(err as Error).message}`,
+            );
+          }
+          void handleMessage(state, raw, authRuntime, _req).catch((err) => {
+            console.error(
+              `[server] websocket request failed on ${state.id}: ${(err as Error).message}`,
+            );
+            ws.close(1011, 'internal gateway error');
+          });
+          return;
+        }
         if (peek.type === 'res' && typeof peek.id === 'string') {
-          if (
-            authRuntime.auth.mode !== 'none' &&
-            (!state.authenticated || state.clientKind !== 'node')
-          ) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node response from ${state.id}`);
             ws.close(1008, 'node authentication required');
             return;
@@ -196,10 +227,7 @@ export function createWebSocketServer(
         }
         // Route node fs.changed events to task watcher or branch watcher
         if (peek.type === 'event' && peek.event === 'node.fs.changed') {
-          if (
-            authRuntime.auth.mode !== 'none' &&
-            (!state.authenticated || state.clientKind !== 'node')
-          ) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node event from ${state.id}`);
             ws.close(1008, 'node authentication required');
             return;
@@ -214,10 +242,7 @@ export function createWebSocketServer(
         }
         // Route node exec output events to per-request streaming callbacks
         if (peek.type === 'event' && peek.event === 'node.exec.output') {
-          if (
-            authRuntime.auth.mode !== 'none' &&
-            (!state.authenticated || state.clientKind !== 'node')
-          ) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node event from ${state.id}`);
             ws.close(1008, 'node authentication required');
             return;
@@ -227,10 +252,7 @@ export function createWebSocketServer(
         }
         // Route node resource.changed events to resource manager
         if (peek.type === 'event' && peek.event === 'node.resource.changed') {
-          if (
-            authRuntime.auth.mode !== 'none' &&
-            (!state.authenticated || state.clientKind !== 'node')
-          ) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node event from ${state.id}`);
             ws.close(1008, 'node authentication required');
             return;
@@ -242,10 +264,7 @@ export function createWebSocketServer(
         // Route node-pushed tmux worker inventory/status updates. The node owns
         // sampling so the gateway can broadcast changes without polling every pane.
         if (peek.type === 'event' && peek.event === 'node.tmux.workers.changed') {
-          if (
-            authRuntime.auth.mode !== 'none' &&
-            (!state.authenticated || state.clientKind !== 'node')
-          ) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node event from ${state.id}`);
             ws.close(1008, 'node authentication required');
             return;
@@ -268,10 +287,7 @@ export function createWebSocketServer(
         }
         // Route node metrics events to node health
         if (peek.type === 'event' && peek.event === 'node.metrics') {
-          if (
-            authRuntime.auth.mode !== 'none' &&
-            (!state.authenticated || state.clientKind !== 'node')
-          ) {
+          if (!isNodeSubjectSession(authRuntime, state)) {
             console.warn(`[auth] rejected pre-auth node event from ${state.id}`);
             ws.close(1008, 'node authentication required');
             return;
@@ -287,14 +303,18 @@ export function createWebSocketServer(
           return;
         }
       } catch (err) {
-        // JSON parse failure — not a structured frame, fall through to text handling.
-        if (process.env.DEBUG_GATEWAY_FRAMES) {
-          console.warn(
-            `[server] non-JSON websocket frame routed as text: ${(err as Error).message}`,
-          );
-        }
+        console.error(
+          `[server] node websocket frame failed on ${state.id}: ${(err as Error).message}`,
+        );
+        ws.close(1011, 'internal gateway error');
+        return;
       }
-      handleMessage(state, raw, authRuntime, _req);
+      void handleMessage(state, raw, authRuntime, _req).catch((err) => {
+        console.error(
+          `[server] websocket request failed on ${state.id}: ${(err as Error).message}`,
+        );
+        ws.close(1011, 'internal gateway error');
+      });
     });
 
     ws.on('close', () => {
@@ -524,9 +544,12 @@ async function handleMessage(
       const result = pairingExchange((frame.params ?? {}) as PairingExchangeParams, authRuntime);
       sendResponse(state.ws, frame.id, true, result);
     } catch (err) {
+      if (!(err instanceof GatewayMethodError)) {
+        console.error(`[server] pairing exchange failed on ${state.id}: ${(err as Error).message}`);
+      }
       sendResponse(state.ws, frame.id, false, undefined, {
         code: 'PAIRING_FAILED',
-        message: (err as Error).message,
+        message: err instanceof GatewayMethodError ? err.message : 'Pairing exchange failed',
       });
     }
     return;
@@ -542,11 +565,21 @@ async function handleMessage(
       });
       return;
     }
-    const result = authenticateGatewayClient({
-      runtime: authRuntime,
-      connectParams: authParams,
-      clientIp: resolveRequestIp(req),
-    });
+    let result: ReturnType<typeof authenticateGatewayClient>;
+    try {
+      result = authenticateGatewayClient({
+        runtime: authRuntime,
+        connectParams: authParams,
+        clientIp: resolveRequestIp(req, authRuntime.store.env),
+      });
+    } catch (err) {
+      console.error(`[server] auth.connect failed on ${state.id}: ${(err as Error).message}`);
+      sendResponse(state.ws, frame.id, false, undefined, {
+        code: 'INTERNAL_ERROR',
+        message: 'Internal gateway error',
+      });
+      return;
+    }
     if (!result.ok) {
       const retry = result.retryAfterMs
         ? ` Retry after ${Math.ceil(result.retryAfterMs / 1000)}s.`
@@ -557,10 +590,19 @@ async function handleMessage(
       });
       return;
     }
+    if (clientKind === 'node' && result.principal?.subject.type !== 'node') {
+      sendResponse(state.ws, frame.id, false, undefined, {
+        code: 'AUTH_FORBIDDEN',
+        message: 'auth.connect with clientKind node requires a node-subject principal',
+        userAction: 'issue a node credential and reconnect',
+      });
+      return;
+    }
     state.authenticated = true;
     state.clientKind = clientKind;
     state.authMode = result.mode ?? authRuntime.auth.mode;
     state.authenticatedAt = Date.now();
+    state.authentication = result.authentication;
     console.log(`[auth] ${clientKind} authenticated using ${state.authMode}`);
     sendResponse(state.ws, frame.id, true, {
       ok: true,
@@ -568,19 +610,37 @@ async function handleMessage(
       authMode: state.authMode,
       authenticatedAt: state.authenticatedAt,
       capabilities: {
-        httpBearerAuth: authRuntime.auth.mode !== 'none',
+        httpBearerAuth: !authRuntime.resolver.isSoloMode(),
         voiceInstructionFormatting: true,
         gatewayPing: true,
       },
+      principal: result.principal
+        ? {
+            id: result.principal.id,
+            displayName: result.principal.subject.displayName,
+            subjectKind: result.principal.subject.type,
+            roles: result.principal.roles,
+          }
+        : undefined,
     });
-    await sendHello(state.ws);
+    if (canReceiveBroadcast(authRuntime, state, Events.HELLO)) await sendHello(state.ws);
     return;
   }
 
   try {
     requireAuthenticatedSession(authRuntime, state);
   } catch (err) {
-    const authErr = err as GatewayAuthError;
+    if (!(err instanceof GatewayAuthError)) {
+      console.error(
+        `[server] authenticated session resolution failed on ${state.id}: ${(err as Error).message}`,
+      );
+      sendResponse(state.ws, frame.id, false, undefined, {
+        code: 'INTERNAL_ERROR',
+        message: 'Internal gateway error',
+      });
+      return;
+    }
+    const authErr = err;
     sendResponse(state.ws, frame.id, false, undefined, {
       code: authErr.code,
       message: authErr.message,
@@ -603,11 +663,17 @@ async function handleMessage(
     });
     sendResponse(state.ws, frame.id, true, result);
   } catch (err) {
-    const message = (err as Error).message;
+    const rawMessage = err instanceof Error ? err.message : String(err);
+    let message = rawMessage;
     let code = 'METHOD_ERROR';
     let userAction: string | undefined;
     let details: unknown;
-    if (message.startsWith('Unknown method:')) {
+    if (err instanceof GatewayInternalError) {
+      const causeMessage = err.cause instanceof Error ? err.cause.message : String(err.cause);
+      code = 'INTERNAL_ERROR';
+      message = 'Internal gateway error';
+      console.error(`[server] route method ${frame.method} failed on ${state.id}: ${causeMessage}`);
+    } else if (rawMessage.startsWith('Unknown method:')) {
       code = 'METHOD_NOT_FOUND';
     } else if (err instanceof GatewayAuthError) {
       code = err.code;
@@ -658,13 +724,24 @@ function sendEvent(ws: WebSocket, event: string, payload: unknown): void {
 
 export function broadcast(frame: EventFrame): void {
   const msg = JSON.stringify(frame);
+  let authorizationFaultLogged = false;
   for (const [ws, state] of clients) {
-    if (
-      ws.readyState === WebSocket.OPEN &&
-      (activeAuthRuntime?.auth.mode === 'none' || state.authenticated)
-    ) {
-      ws.send(msg);
+    if (ws.readyState !== WebSocket.OPEN || activeAuthRuntime === null) continue;
+    let canReceive: boolean;
+    try {
+      canReceive = canReceiveBroadcast(activeAuthRuntime, state, frame.event);
+    } catch (err) {
+      // Live authorization must fail closed for this receiver without turning every
+      // timer, monitor, and request that broadcasts into an uncaught crash path.
+      if (!authorizationFaultLogged) {
+        console.error(
+          `[server] broadcast authorization failed for ${frame.event}: ${(err as Error).message}`,
+        );
+        authorizationFaultLogged = true;
+      }
+      continue;
     }
+    if (canReceive) ws.send(msg);
   }
 }
 
@@ -674,5 +751,50 @@ export function broadcastEvent(event: string, payload: unknown): void {
     event,
     payload,
     seq: ++eventSeq,
+  });
+}
+
+export function closeSessions(predicate: (state: ClientState) => boolean): void {
+  for (const state of clients.values()) {
+    if (predicate(state)) state.ws.close(1008, 'authorization changed; re-authentication required');
+  }
+}
+
+function installCredentialSessionInvalidation(authRuntime: GatewayAuthRuntime): void {
+  if (invalidationInstalled.has(authRuntime)) return;
+  invalidationInstalled.add(authRuntime);
+  authRuntime.store.onChange((change) => {
+    // Let the mutation's response frame (especially the one-time issuance
+    // secret that latches activation) flush before invalidating sockets.
+    setImmediate(() => {
+      if (change.activationLatched) {
+        closeSessions(() => true);
+        return;
+      }
+      let authorizationFaultLogged = false;
+      closeSessions((state) => {
+        if (
+          state.authentication?.kind === 'credential' &&
+          change.revokedCredentialIds.includes(state.authentication.credentialId)
+        ) {
+          return true;
+        }
+        try {
+          const resolution = authRuntime.resolver.resolveSessionPrincipal(state);
+          if (!resolution.ok) return true;
+          return change.changedPrincipalIds.includes(resolution.principal.id);
+        } catch (err) {
+          // If current authority cannot be established, this session must fail closed;
+          // the next connection can authenticate after the store is repaired.
+          if (!authorizationFaultLogged) {
+            console.error(
+              `[server] credential session invalidation failed: ${(err as Error).message}`,
+            );
+            authorizationFaultLogged = true;
+          }
+          return true;
+        }
+      });
+    });
   });
 }

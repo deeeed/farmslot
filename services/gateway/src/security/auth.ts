@@ -1,8 +1,21 @@
-import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import net from 'node:net';
+import os from 'node:os';
 
-import type { GatewayAuthClientKind, GatewayAuthConnectParams } from '@farmslot/protocol';
+import type {
+  AuthenticationRef,
+  GatewayAuthClientKind,
+  GatewayAuthConnectParams,
+  Principal,
+} from '@farmslot/protocol';
+
+import { GatewayMethodError } from '../core/method-error.js';
+
+import { authorizeGatewayHttp, type GatewayHttpResource } from './authorization.js';
+import { CredentialStoreRuntime } from './credential-store.js';
+import { CredentialStoreWriter } from './credential-store-writer.js';
+import { reconcileEnvironmentCredential } from './env-credential-migration.js';
+import { PrincipalResolver } from './principal-resolver.js';
 
 export type GatewayAuthMode = 'none' | 'token' | 'password';
 
@@ -18,11 +31,15 @@ export interface GatewayAuthSession {
   clientKind?: GatewayAuthClientKind;
   authMode?: GatewayAuthMode;
   authenticatedAt?: number;
+  authentication?: AuthenticationRef;
 }
 
 export interface GatewayAuthRuntime {
   auth: ResolvedGatewayAuth;
   limiter: GatewayAuthRateLimiter;
+  store: CredentialStoreRuntime;
+  writer: CredentialStoreWriter;
+  resolver: PrincipalResolver;
 }
 
 export interface GatewayAuthResult {
@@ -31,6 +48,8 @@ export interface GatewayAuthResult {
   reason?: string;
   rateLimited?: boolean;
   retryAfterMs?: number;
+  authentication?: AuthenticationRef;
+  principal?: Principal;
 }
 
 export class GatewayAuthError extends Error {
@@ -47,6 +66,7 @@ const DEFAULT_RATE_LIMIT_MAX = 8;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const AUTH_HEADER_PREFIX = 'Bearer ';
 const HTTP_AUTH_COOKIE = 'farmslot_gateway_credential';
+const HTTP_PASSWORD_COOKIE = 'farmslot_gateway_password';
 const TRUST_PROXY_HEADERS_ENV = 'FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS';
 
 interface RateLimitBucket {
@@ -114,10 +134,60 @@ export function resolveGatewayAuth(env: NodeJS.ProcessEnv = process.env): Resolv
 }
 
 export function createGatewayAuthRuntime(env: NodeJS.ProcessEnv = process.env): GatewayAuthRuntime {
+  const auth = resolveGatewayAuth(env);
+  const store = new CredentialStoreRuntime(env);
+  const resolver = new PrincipalResolver(store, {
+    bindIsLoopbackOnly: isLoopbackHost(env.GATEWAY_HOST?.trim() || '127.0.0.1'),
+    trustProxyHeaders: shouldTrustProxyHeaders(env),
+    machine: os.hostname().replace(/\.local$/u, ''),
+  });
   return {
-    auth: resolveGatewayAuth(env),
+    auth,
     limiter: new GatewayAuthRateLimiter(),
+    store,
+    writer: new CredentialStoreWriter(store),
+    resolver,
   };
+}
+
+export function initializeGatewayIdentity(
+  runtime: GatewayAuthRuntime,
+  params: { host?: string; machine?: string; log?: (message: string) => void } = {},
+): void {
+  runtime.resolver.setFacts({
+    bindIsLoopbackOnly: isLoopbackHost(params.host?.trim() || '127.0.0.1'),
+    trustProxyHeaders: shouldTrustProxyHeaders(runtime.store.env),
+    machine: params.machine ?? os.hostname().replace(/\.local$/u, ''),
+  });
+  reconcileEnvironmentCredential({
+    auth: runtime.auth,
+    writer: runtime.writer,
+    resolver: runtime.resolver,
+    log: params.log,
+  });
+}
+
+export function startCredentialFreshnessPolling(runtime: GatewayAuthRuntime): () => void {
+  const timer = setInterval(() => {
+    try {
+      runtime.store.ensureFresh();
+    } catch (err) {
+      // A failed load leaves the last-known-good projection and freshness stamp intact,
+      // so the next interval can retry after the store is repaired.
+      console.error(`[auth] credential freshness polling failed: ${(err as Error).message}`);
+    }
+  }, 2_000);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+export function latchActivationForExposure(
+  runtime: GatewayAuthRuntime,
+  host: string | undefined,
+): boolean {
+  const nonLoopbackBind = !isLoopbackHost(host?.trim() || '0.0.0.0');
+  if (!nonLoopbackBind && !shouldTrustProxyHeaders(runtime.store.env)) return false;
+  return runtime.writer.latchActivation();
 }
 
 export function assertGatewayBindAllowed(params: {
@@ -155,36 +225,47 @@ export function authenticateGatewayClient(params: {
   // With proxy trust on there is a reverse proxy in front, clientIp comes from
   // X-Forwarded-For and a remote client could forge 127.0.0.1 — never exempt then, so
   // brute-force protection stays on for remote callers.
-  const rateLimitApplies = shouldTrustProxyHeaders() || !isLoopbackClientIp(params.clientIp);
+  const rateLimitApplies =
+    shouldTrustProxyHeaders(params.runtime.store.env) || !isLoopbackClientIp(params.clientIp);
   if (rateLimitApplies) {
     const rateLimited = limiter.check(params.clientIp);
     if (rateLimited) return rateLimited;
   }
 
-  if (auth.mode === 'none') {
+  if (
+    params.runtime.resolver.isSoloMode() &&
+    !params.connectParams.token &&
+    !params.connectParams.password
+  ) {
     limiter.reset(params.clientIp);
-    return { ok: true, mode: 'none' };
+    const resolution = params.runtime.resolver.resolveSessionPrincipal({
+      authenticated: true,
+      clientKind: params.connectParams.clientKind,
+    });
+    return resolution.ok
+      ? { ok: true, mode: 'none', principal: resolution.principal }
+      : { ok: false, reason: resolution.reason };
   }
 
-  if (auth.mode === 'token') {
-    if (!auth.token) return { ok: false, reason: 'token_missing_config' };
-    if (!params.connectParams.token) return { ok: false, reason: 'token_missing' };
-    if (!safeEqualSecret(params.connectParams.token, auth.token)) {
-      if (rateLimitApplies) limiter.recordFailure(params.clientIp);
-      return { ok: false, reason: 'token_mismatch' };
-    }
-    limiter.reset(params.clientIp);
-    return { ok: true, mode: 'token' };
+  const token = params.connectParams.token;
+  const password = params.connectParams.password;
+  const transport = token ? 'token' : password ? 'password' : undefined;
+  const presented = token ?? password;
+  if (!transport || !presented) {
+    return { ok: false, reason: `${auth.mode === 'password' ? 'password' : 'token'}_missing` };
   }
-
-  if (!auth.password) return { ok: false, reason: 'password_missing_config' };
-  if (!params.connectParams.password) return { ok: false, reason: 'password_missing' };
-  if (!safeEqualSecret(params.connectParams.password, auth.password)) {
+  const resolution = params.runtime.resolver.resolveSecret(presented, transport);
+  if (!resolution.ok) {
     if (rateLimitApplies) limiter.recordFailure(params.clientIp);
-    return { ok: false, reason: 'password_mismatch' };
+    return { ok: false, reason: 'credential_mismatch' };
   }
   limiter.reset(params.clientIp);
-  return { ok: true, mode: 'password' };
+  return {
+    ok: true,
+    mode: transport,
+    authentication: resolution.authentication,
+    principal: resolution.principal,
+  };
 }
 
 // A loopback client IP, tolerant of the IPv4-mapped IPv6 form Node reports
@@ -202,13 +283,15 @@ export function requireAuthenticatedSession(
   runtime: GatewayAuthRuntime,
   session: GatewayAuthSession,
 ): void {
-  if (runtime.auth.mode === 'none') return;
   if (!session.authenticated) throw new GatewayAuthError('Authentication required');
+  const resolution = runtime.resolver.resolveSessionPrincipal(session);
+  if (!resolution.ok) throw new GatewayAuthError('Authentication required');
 }
 
 export function requireNodeSession(runtime: GatewayAuthRuntime, session: GatewayAuthSession): void {
   requireAuthenticatedSession(runtime, session);
-  if (runtime.auth.mode !== 'none' && session.clientKind !== 'node') {
+  const resolution = runtime.resolver.resolveSessionPrincipal(session);
+  if (!resolution.ok || resolution.principal.subject.type !== 'node') {
     throw new GatewayAuthError('Node client authentication required', 'AUTH_FORBIDDEN');
   }
 }
@@ -217,26 +300,55 @@ export function authorizeHttpRequest(params: {
   runtime: GatewayAuthRuntime;
   req: IncomingMessage;
   res: ServerResponse;
+  resource: GatewayHttpResource;
 }): boolean {
-  if (params.runtime.auth.mode === 'none') return true;
-  const credential = getHttpCredential(params.req);
-  const result = authenticateGatewayClient({
-    runtime: params.runtime,
-    connectParams: {
-      clientKind: 'companion',
-      token: credential,
-      password: credential,
-    },
-    clientIp: resolveRequestIp(params.req),
-  });
-  if (result.ok) return true;
-  sendAuthFailure(params.res, result);
-  return false;
+  try {
+    if (params.runtime.resolver.isSoloMode()) return true;
+    const credential = getHttpCredential(params.req);
+    const result = authenticateGatewayClient({
+      runtime: params.runtime,
+      connectParams: {
+        clientKind: 'companion',
+        ...(credential?.transport === 'token' ? { token: credential.value } : {}),
+        ...(credential?.transport === 'password' ? { password: credential.value } : {}),
+      },
+      clientIp: resolveRequestIp(params.req, params.runtime.store.env),
+    });
+    if (result.ok) {
+      authorizeGatewayHttp(params.runtime, {
+        authenticated: true,
+        clientKind: 'companion',
+        authentication: result.authentication,
+      }, params.resource);
+      return true;
+    }
+    sendAuthFailure(params.res, result);
+    return false;
+  } catch (error) {
+    if (error instanceof GatewayMethodError) {
+      params.res.writeHead(403, { 'Content-Type': 'application/json' });
+      params.res.end(
+        JSON.stringify({
+          error: 'Forbidden',
+          message: error.message,
+          ...(error.userAction ? { userAction: error.userAction } : {}),
+        }),
+      );
+      return false;
+    }
+    console.error(`[http/auth] error: ${(error as Error).message}`);
+    params.res.writeHead(500, { 'Content-Type': 'application/json' });
+    params.res.end(JSON.stringify({ error: 'Internal error' }));
+    return false;
+  }
 }
 
-export function resolveRequestIp(req: IncomingMessage): string {
+export function resolveRequestIp(
+  req: IncomingMessage,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const socketAddress = req.socket.remoteAddress || 'unknown';
-  if (!shouldTrustProxyHeaders()) return socketAddress;
+  if (!shouldTrustProxyHeaders(env)) return socketAddress;
 
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string' && forwarded.trim()) {
@@ -252,7 +364,7 @@ export function sanitizeAuthFailureReason(reason: string | undefined): string {
   return reason;
 }
 
-function shouldTrustProxyHeaders(env: NodeJS.ProcessEnv = process.env): boolean {
+export function shouldTrustProxyHeaders(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env[TRUST_PROXY_HEADERS_ENV]?.trim().toLowerCase();
   return raw === '1' || raw === 'true' || raw === 'yes';
 }
@@ -268,18 +380,6 @@ function requireCredentialForMode(auth: ResolvedGatewayAuth): ResolvedGatewayAut
   return auth;
 }
 
-function safeEqualSecret(actual: string, expected: string): boolean {
-  const actualBuffer = Buffer.from(actual);
-  const expectedBuffer = Buffer.from(expected);
-  if (actualBuffer.length !== expectedBuffer.length) {
-    const padded = Buffer.alloc(expectedBuffer.length);
-    actualBuffer.copy(padded, 0, 0, Math.min(actualBuffer.length, expectedBuffer.length));
-    timingSafeEqual(padded, expectedBuffer);
-    return false;
-  }
-  return timingSafeEqual(actualBuffer, expectedBuffer);
-}
-
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
@@ -289,7 +389,7 @@ function isGatewayAuthMode(value: string): value is GatewayAuthMode {
   return value === 'none' || value === 'token' || value === 'password';
 }
 
-function isLoopbackHost(host: string): boolean {
+export function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
   if (normalized === 'localhost') return true;
   if (normalized === '::1' || normalized === '[::1]') return true;
@@ -297,38 +397,50 @@ function isLoopbackHost(host: string): boolean {
   return false;
 }
 
-function getHttpCredential(req: IncomingMessage): string | undefined {
+export function getHttpCredential(
+  req: IncomingMessage,
+): { value: string; transport: 'token' | 'password' } | undefined {
   const auth = req.headers.authorization;
   if (typeof auth === 'string') {
     if (auth.startsWith(AUTH_HEADER_PREFIX)) {
-      return nonEmpty(auth.slice(AUTH_HEADER_PREFIX.length));
+      const value = nonEmpty(auth.slice(AUTH_HEADER_PREFIX.length));
+      return value ? { value, transport: 'token' } : undefined;
     }
     if (auth.startsWith('Basic ')) {
       const decoded = Buffer.from(auth.slice('Basic '.length), 'base64').toString('utf8');
       const separator = decoded.indexOf(':');
-      return nonEmpty(separator >= 0 ? decoded.slice(separator + 1) : decoded);
+      const value = nonEmpty(separator >= 0 ? decoded.slice(separator + 1) : decoded);
+      return value ? { value, transport: 'password' } : undefined;
     }
   }
-  const queryCredential = getQueryCredential(req.url);
-  if (queryCredential) return queryCredential;
-  return getCookieValue(req.headers.cookie, HTTP_AUTH_COOKIE);
+  const queryToken = getQueryCredential(req.url, 'token');
+  const queryPassword = getQueryCredential(req.url, 'password');
+  if (queryToken && queryPassword) return undefined;
+  if (queryToken) return { value: queryToken, transport: 'token' };
+  if (queryPassword) return { value: queryPassword, transport: 'password' };
+  const cookieToken = getCookieValue(req.headers.cookie, HTTP_AUTH_COOKIE);
+  const cookiePassword = getCookieValue(req.headers.cookie, HTTP_PASSWORD_COOKIE);
+  if (cookieToken && cookiePassword) return undefined;
+  if (cookieToken) return { value: cookieToken, transport: 'token' };
+  return cookiePassword ? { value: cookiePassword, transport: 'password' } : undefined;
 }
 
-// Query-string credentials exist only for header-incapable clients (React Native
-// <Image>/Source, which cannot send an Authorization header). They are accepted
-// last (after header and before cookie) and compared with the same constant-time
-// check + rate limiter as header auth. Query tokens are intrinsically more
-// exposed than headers (browser history, Referer, intermediary access logs), so
-// the gateway must never log raw req.url, and the companion only appends a query
-// token on Image/Source URLs — fetch() calls stay header-only (gatewayFetch).
-function getQueryCredential(url: string | undefined): string | undefined {
+// Query-string credentials exist only for header-incapable resources. The
+// parameter name preserves the transport distinction: `token` can resolve issued
+// credentials, while `password` is legacy environment-password compatibility.
+// Query secrets are intrinsically more exposed than headers, so the gateway must
+// never log raw req.url and fetch-capable clients keep credentials in headers.
+function getQueryCredential(
+  url: string | undefined,
+  name: 'token' | 'password',
+): string | undefined {
   if (!url) return undefined;
   const queryStart = url.indexOf('?');
   if (queryStart < 0) return undefined;
   const hashStart = url.indexOf('#', queryStart);
   const query = url.slice(queryStart + 1, hashStart >= 0 ? hashStart : undefined);
   const params = new URLSearchParams(query);
-  return nonEmpty(params.get('token') ?? undefined);
+  return nonEmpty(params.get(name) ?? undefined);
 }
 
 function getCookieValue(

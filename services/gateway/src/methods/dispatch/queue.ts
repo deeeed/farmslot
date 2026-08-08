@@ -15,12 +15,14 @@ import type {
 import {
   addItem,
   listItems,
+  queueRecordOriginator,
   removeItem,
   reorderItems,
   updateItem,
 } from '../../backlog/dispatch-queue.js';
 import { removeOrphanBacklogQueueItem } from '../../backlog/store.js';
 import { loadProjectVars, loadSlotVars } from '../../core/index.js';
+import { currentSessionOriginator, workAuthorshipNotice } from '../../security/work-originator.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
@@ -99,11 +101,14 @@ export async function dispatchQueueAdd(
       ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
     }).reference;
   }
-  const item = addItem({
-    ...params,
-    ...(normalizedTaskTemplate ? { taskTemplate: normalizedTaskTemplate } : {}),
-    ...(executionTemplate ? { executionTemplate: { ...executionTemplate } } : {}),
-  });
+  const item = addItem(
+    {
+      ...params,
+      ...(normalizedTaskTemplate ? { taskTemplate: normalizedTaskTemplate } : {}),
+      ...(executionTemplate ? { executionTemplate: { ...executionTemplate } } : {}),
+    },
+    currentSessionOriginator(),
+  );
   return { item };
 }
 
@@ -123,11 +128,15 @@ export async function dispatchQueueRemoveOrphan(
 }
 
 export function dispatchQueueUpdate(params: DispatchQueueUpdateParams): DispatchQueueUpdateResult {
-  return { item: updateItem(params) };
+  const previous = queueRecordOriginator(params.itemId);
+  const originator = currentSessionOriginator();
+  const item = updateItem(params, originator);
+  const authorshipNotice = workAuthorshipNotice(previous, originator);
+  return { item, ...(authorshipNotice ? { authorshipNotice } : {}) };
 }
 
 export function dispatchQueueReorder(
   params: DispatchQueueReorderParams,
 ): DispatchQueueReorderResult {
-  return { items: reorderItems(params.itemIds) };
+  return { items: reorderItems(params.itemIds, currentSessionOriginator()) };
 }

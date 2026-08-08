@@ -4430,6 +4430,7 @@ __metadata:
   dependencies:
     "@clack/prompts": "npm:^1.7.0"
     "@farmslot/agent-runtime": "workspace:*"
+    "@farmslot/credential-store": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-harness": "workspace:*"
     "@farmslot/run-bundle": "workspace:*"
@@ -4490,6 +4491,18 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@farmslot/credential-store@workspace:*, @farmslot/credential-store@workspace:packages/credential-store":
+  version: 0.0.0-use.local
+  resolution: "@farmslot/credential-store@workspace:packages/credential-store"
+  dependencies:
+    "@farmslot/protocol": "workspace:*"
+    "@types/node": "npm:^22.0.0"
+    eslint: "npm:^10.3.0"
+    prettier: "npm:^3.8.3"
+    typescript: "npm:^5.6.0"
+  languageName: unknown
+  linkType: soft
+
 "@farmslot/docs@workspace:apps/docs":
   version: 0.0.0-use.local
   resolution: "@farmslot/docs@workspace:apps/docs"
@@ -4544,6 +4557,7 @@ __metadata:
     "@earendil-works/pi-ai": "npm:0.82.1"
     "@farmslot/agent-runtime": "workspace:*"
     "@farmslot/capabilities": "workspace:*"
+    "@farmslot/credential-store": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/run-bundle": "workspace:*"
     "@farmslot/slot-config": "workspace:*"

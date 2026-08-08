@@ -19,6 +19,34 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "principal.create": {
+      "surface": "typed-command",
+      "command": "farmslot principal create"
+    },
+    "principal.list": {
+      "surface": "typed-command",
+      "command": "farmslot principal list"
+    },
+    "principal.grant": {
+      "surface": "typed-command",
+      "command": "farmslot principal grant"
+    },
+    "principal.revokeRole": {
+      "surface": "typed-command",
+      "command": "farmslot principal revokeRole"
+    },
+    "credential.issue": {
+      "surface": "typed-command",
+      "command": "farmslot credential issue"
+    },
+    "credential.list": {
+      "surface": "typed-command",
+      "command": "farmslot credential list"
+    },
+    "credential.revoke": {
+      "surface": "typed-command",
+      "command": "farmslot credential revoke"
+    },
     "fleet.status": {
       "surface": "typed-command",
       "command": "farmslot fleet",

@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { parseTailscaleDnsNameFromStatus } from '@farmslot/protocol';
 
-import { reachableAddressesForPairing } from './pair.js';
+import { pairingAuthority, reachableAddressesForPairing } from './pair.js';
 
 test('parseTailscaleDnsNameFromStatus extracts MagicDNS without trailing dot', () => {
   assert.equal(
@@ -32,4 +32,17 @@ test('reachableAddressesForPairing includes LAN and Tailscale profiles', () => {
   );
   assert.match(addresses[0]!.name, /\(LAN\)$/);
   assert.match(addresses[1]!.name, /\(Tailscale\)$/);
+});
+
+test('pairing CLI has no implicit authority default', () => {
+  assert.throws(() => pairingAuthority({}), /exactly one/u);
+  assert.throws(
+    () => pairingAuthority({ principal: 'owner', newService: 'phone' }),
+    /exactly one/u,
+  );
+  assert.throws(() => pairingAuthority({ newService: 'phone' }), /requires at least one --role/u);
+  assert.deepEqual(pairingAuthority({ principal: 'owner' }), {
+    kind: 'existing-principal',
+    principalId: 'owner',
+  });
 });

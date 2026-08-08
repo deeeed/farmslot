@@ -133,4 +133,9 @@ export interface GatewayDoctorResult {
     fail: number;
   };
   sections: GatewayDoctorSection[];
+  identityState?:
+    | 'solo-mode'
+    | 'never-latched-non-loopback'
+    | 'activated-with-admin'
+    | 'activated-without-admin';
 }
