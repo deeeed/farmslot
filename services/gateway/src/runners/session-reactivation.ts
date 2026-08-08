@@ -22,9 +22,11 @@ import {
   resolveLaunchBlockerWithFreshEvidence,
   resolveSafeSendTimeoutMs,
   runnerHasDurablePromptHandoff,
+  runnerNeedsPostLaunchPrompt,
   runnerRetainedSessionHandoff,
   type RunnerSendRecoveryContext,
   sendRunnerInstructionSafely,
+  sendRunnerPostLaunchPrompt,
   WORKER_ENV_PREFIX,
 } from './registry.js';
 import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
@@ -64,6 +66,10 @@ export type RetainedSessionDeliveryResult =
       reason: string;
       retryable?: boolean;
     };
+
+type LiveRunnerDeliveryOptions = RunnerSessionReactivationOptions & {
+  promptMarker: string;
+};
 
 /**
  * Replace an idle retained TUI with a resumed instance that receives its next
@@ -542,4 +548,77 @@ export async function deliverPromptWithRetainedFallback(
     return deliverPromptInPlace(resolvedOptions);
   }
   return retained;
+}
+
+/**
+ * Deliver to the runner session the caller actually owns.
+ *
+ * A complete persisted binding requests retained continuity. No binding means
+ * the workflow intentionally launched a fresh replacement and must use the
+ * same verified post-launch contract as initial dispatch. A partial binding is
+ * unsafe: it proves neither continuity nor a fresh session, so fail closed.
+ */
+export async function deliverPromptToLiveRunner(
+  options: LiveRunnerDeliveryOptions,
+): Promise<RetainedSessionDeliveryResult> {
+  const sessionId = options.sessionId?.trim() ?? '';
+  const sessionPath = options.sessionPath?.trim() ?? '';
+  if (sessionId && sessionPath) return deliverPromptWithRetainedFallback(options);
+  if (sessionId || sessionPath) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: 'Runner session binding is incomplete; refusing to guess retained or fresh delivery',
+      retryable: false,
+    };
+  }
+
+  const runner = normalizeRunner(options.runnerId);
+  if (!runnerNeedsPostLaunchPrompt(runner)) return deliverPromptInPlace(options);
+
+  try {
+    const delayedAcknowledgement = await probeDelayedPromptAcknowledgement(options);
+    if (delayedAcknowledgement) return delayedAcknowledgement;
+    if (options.priorPromptSendAttempted) {
+      return unacknowledgedPriorSendHold(runner);
+    }
+    const handoffAckSinceMs = Date.now();
+    await sendRunnerPostLaunchPrompt(
+      options.vars,
+      options.target,
+      runner,
+      options.prompt,
+      options.promptMarker,
+      options.sendLogPrefix ?? 'live-runner-handoff',
+      {
+        readyTimeoutMs: options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS,
+        maxAttempts: 5,
+        ...(options.taskDir
+          ? {
+              blockerSnapshotPath: `${options.taskDir}/artifacts/runner-blockers/live-runner-handoff.txt`,
+            }
+          : {}),
+        ...(options.launchAckSignalPath
+          ? {
+              signalPath: options.launchAckSignalPath,
+              launchAckSignalPath: options.launchAckSignalPath,
+            }
+          : {}),
+        launchAckBaseline: options.launchAckBaseline,
+        requirePromptDigest: true,
+        acceptExistingLaunchAck: options.acceptExistingLaunchAck,
+        handoffAckSinceMs,
+        softAcceptOnHandoffAck: true,
+        ...(options.runtimeDir ? { runtimeDir: options.runtimeDir } : {}),
+      },
+    );
+    return { delivered: true, acknowledgement: 'structured' };
+  } catch (error) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `Fresh ${runner} handoff failed: ${(error as Error).message}`,
+      retryable: true,
+    };
+  }
 }

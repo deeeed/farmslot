@@ -34,6 +34,7 @@ function register(
     runnerSessionId: `sess-${loopNumber}`,
     runnerSessionPath: null,
     lastLoopNumber: loopNumber,
+    lastReviewedHeadSha: `head-${loopNumber}`,
     ...overrides,
   });
 }
@@ -132,6 +133,7 @@ test('runner-scoped invalidation ends one reviewer loop without touching another
     runnerSessionId: 'sess-claude',
     runnerSessionPath: null,
     lastLoopNumber: 1,
+    lastReviewedHeadSha: 'head-1',
   });
   // Codex review loop exits: only the codex session turns forensic.
   assert.equal(invalidateWarmReviewerSessions('run-a', 'codex'), 1);
@@ -154,6 +156,7 @@ test('slot release invalidates every warm session on the slot', () => {
     runnerSessionId: 'sess-x',
     runnerSessionPath: null,
     lastLoopNumber: 1,
+    lastReviewedHeadSha: 'head-1',
   });
   assert.equal(invalidateWarmReviewerSessionsForSlot('slot-1'), 2);
   assert.equal(claimWarmReviewerSession(scope), null);

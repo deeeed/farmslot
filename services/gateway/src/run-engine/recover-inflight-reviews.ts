@@ -690,13 +690,29 @@ export function recoveredReviewAlreadyIngested(
   existing: Pick<
     IndependentReviewStatus,
     'completedAt' | 'verdict' | 'unresolvedCount' | 'feedbackSent' | 'recoveryContinuationPending'
-  >,
-  recovered: Pick<IndependentReviewStatus, 'completedAt'>,
+  > &
+    Partial<Pick<IndependentReviewStatus, 'attempts'>>,
+  recovered: Pick<IndependentReviewStatus, 'completedAt'> &
+    Partial<Pick<IndependentReviewStatus, 'attempts' | 'verdict' | 'unresolvedCount'>>,
 ): boolean {
   // A delivery placeholder records the time the orchestration failed, which
   // can be later than the reviewer's already-written terminal signal. It is
   // not an ingested verdict and must never suppress that recovered result.
   if (isFailedReviewPlaceholder(existing)) return false;
+  const existingAttempt = existing.attempts?.at(-1);
+  const recoveredAttempt = recovered.attempts?.at(-1);
+  if (
+    existingAttempt?.startedAt &&
+    recoveredAttempt?.startedAt &&
+    existingAttempt.startedAt === recoveredAttempt.startedAt &&
+    existing.verdict === recovered.verdict &&
+    existing.unresolvedCount === recovered.unresolvedCount
+  ) {
+    // The terminal signal can be written milliseconds after the live result
+    // was persisted. `startedAt` identifies the review generation; treating
+    // the later signal timestamp as a new pass duplicates the final attempt.
+    return true;
+  }
   const existingAt = Date.parse(existing.completedAt ?? '');
   const recoveredAt = Date.parse(recovered.completedAt ?? '');
   return Number.isFinite(existingAt) && Number.isFinite(recoveredAt) && recoveredAt <= existingAt;

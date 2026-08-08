@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(runs): allow a blocked run with no unresolved operator decisions to replay its pipeline after review recovery instead of leaving the finish-line controls disabled.
 - feat(pairing): choose scoped existing-principal or new service-principal authority when creating a pairing code.
 - fix(pairing): encode one shared pairing code across every advertised gateway address instead of minting address-specific credentials.
 - fix(auth): preserve password-mode transport compatibility with Basic auth on fetch requests and an explicit password query only for headerless resources, without treating passwords as bearer tokens.

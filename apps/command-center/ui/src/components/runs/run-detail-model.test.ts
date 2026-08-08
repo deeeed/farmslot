@@ -257,6 +257,25 @@ test('canReplayRunSteps allows terminal runs when actions are not blocked', () =
   assert.equal(canReplayRunSteps(makeRun({ status: 'failed' })), true);
   assert.equal(canReplayRunSteps(makeRun({ status: 'done' })), true);
   assert.equal(canReplayRunSteps(makeRun({ status: 'cancelled' })), true);
+  assert.equal(canReplayRunSteps(makeRun({ status: 'blocked' })), true);
+  assert.equal(
+    canReplayRunSteps(
+      makeRun({
+        status: 'blocked',
+        decisions: [
+          {
+            id: 'decision-1',
+            type: 'engine_human_gate',
+            title: 'Publication gate',
+            description: 'Waiting for operator',
+            actions: [],
+            createdAt: '2026-05-14T00:00:00.000Z',
+          },
+        ],
+      }),
+    ),
+    false,
+  );
   assert.equal(canReplayRunSteps(makeRun({ status: 'monitoring' })), false);
   assert.equal(canReplayRunSteps(makeRun({ status: 'failed' }), true), false);
   assert.equal(canReplayRunSteps(null), false);

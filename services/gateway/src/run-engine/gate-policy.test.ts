@@ -8,6 +8,7 @@ import {
   isOwnPrApprovalError,
   noChangeDispositionLabel,
   noChangeRejectionMessage,
+  normalizeExhaustedReviewContinuation,
   shouldForceNoChangeHumanGate,
   staleReviewsAreEvidenceOnly,
   supersedeStaleHumanGateDecisions,
@@ -58,6 +59,28 @@ test('supersedeStaleHumanGateDecisions closes only unresolved gate decisions and
 test('supersedeStaleHumanGateDecisions is a no-op when nothing is pending', () => {
   const decisions: RunDecision[] = [];
   assert.equal(supersedeStaleHumanGateDecisions(decisions), 0);
+});
+
+test('exhausted review normalization restores only the final undelivered findings', () => {
+  const review = makeApprovingReview({
+    verdict: 'issues',
+    unresolvedCount: 2,
+    issues: [
+      { file: 'a.ts', description: 'first' },
+      { file: 'b.ts', description: 'second' },
+    ],
+    feedbackSent: true,
+    attempts: [
+      { loopNumber: 1, verdict: 'issues', unresolvedCount: 1 },
+      { loopNumber: 2, verdict: 'issues', unresolvedCount: 2 },
+    ],
+  });
+  assert.deepEqual(normalizeExhaustedReviewContinuation(review), {
+    ...review,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+  });
+  assert.equal(normalizeExhaustedReviewContinuation(makeApprovingReview()).verdict, 'pass');
 });
 
 function makeApprovingReview(

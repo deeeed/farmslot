@@ -37,6 +37,49 @@ test('recovery ignores the same terminal reviewer signal but accepts a later con
   );
 });
 
+test('recovery deduplicates one review generation even when its terminal signal is later', () => {
+  const attempt = {
+    loopNumber: 4,
+    verdict: 'issues' as const,
+    unresolvedCount: 2,
+    startedAt: '2026-08-03T15:30:00.000Z',
+  };
+  assert.equal(
+    recoveredReviewAlreadyIngested(
+      {
+        completedAt: '2026-08-03T16:00:00.000Z',
+        verdict: 'issues',
+        unresolvedCount: 2,
+        attempts: [attempt],
+      },
+      {
+        completedAt: '2026-08-03T16:00:00.400Z',
+        verdict: 'issues',
+        unresolvedCount: 2,
+        attempts: [attempt],
+      },
+    ),
+    true,
+  );
+  assert.equal(
+    recoveredReviewAlreadyIngested(
+      {
+        completedAt: '2026-08-03T16:00:00.000Z',
+        verdict: 'issues',
+        unresolvedCount: 2,
+        attempts: [attempt],
+      },
+      {
+        completedAt: '2026-08-03T16:05:00.000Z',
+        verdict: 'pass',
+        unresolvedCount: 0,
+        attempts: [{ ...attempt, startedAt: '2026-08-03T16:01:00.000Z', verdict: 'pass' }],
+      },
+    ),
+    false,
+  );
+});
+
 test('recovery replaces a later failed delivery placeholder with the reviewer verdict', () => {
   assert.equal(
     recoveredReviewAlreadyIngested(

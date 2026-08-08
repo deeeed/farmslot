@@ -40,18 +40,15 @@ import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/l
 import {
   normalizeRunner,
   resolvePrimaryWorkerTarget,
-  runnerLineLooksWaiting,
-  runnerNeedsPostLaunchPrompt,
   runnerProcessPatternSource,
   type RunnerSendRecoveryContext,
-  sendRunnerInstructionSafely,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
 import {
   isRunnerAliveUnderPane,
   resolveRunRetainedSessionBinding,
-  retainedSessionSendOption,
 } from '../runners/session-process.js';
+import { deliverPromptToLiveRunner } from '../runners/session-reactivation.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { retryDeferredFixDelivery } from '../self-review/orchestrator.js';
@@ -100,25 +97,33 @@ export async function sendCiFixNudge(input: {
   timeoutMs?: number;
   forceBusyPoll?: boolean;
   recovery?: RunnerSendRecoveryContext;
+  taskDir?: string;
 }): Promise<{
   sent: boolean;
   retainedSession: ReturnType<typeof resolveCiFixRetainedSession>;
 }> {
   const retainedSession = resolveCiFixRetainedSession(input.run);
-  const sent = await sendRunnerInstructionSafely(
-    input.vars,
-    input.target,
-    input.runner,
-    input.prompt,
-    'ci-monitor',
-    input.timeoutMs,
-    {
-      ...(input.forceBusyPoll ? { forceBusyPoll: true } : {}),
-      ...(input.recovery ? { recovery: input.recovery } : {}),
-      ...retainedSessionSendOption(retainedSession),
-    },
-  );
-  return { sent, retainedSession };
+  if (retainedSession.reason) return { sent: false, retainedSession };
+  const runtimeDir = input.run ? await resolveProjectRuntimeDir(input.run.project) : undefined;
+  const delivery = await deliverPromptToLiveRunner({
+    vars: input.vars,
+    target: input.target,
+    runnerId: input.runner,
+    sessionId: retainedSession.binding?.runnerSessionId,
+    sessionPath: retainedSession.binding?.runnerSessionPath,
+    model: input.run?.metrics.model,
+    effort: input.run?.effort,
+    safetyTier: input.run?.safetyTier,
+    prompt: input.prompt,
+    promptMarker: CI_FIX_CHECKLIST_TARGET.checklist,
+    runtimeDir,
+    taskDir: input.taskDir,
+    timeoutMs: input.timeoutMs,
+    recovery: input.recovery,
+    sendLogPrefix: 'ci-monitor',
+    forceBusyPoll: input.forceBusyPoll,
+  });
+  return { sent: delivery.delivered, retainedSession };
 }
 
 export async function isInlineFixDedupedNow(
@@ -234,6 +239,8 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
     status: 'working',
     runner,
     model,
+    runnerSessionId: null,
+    runnerSessionPath: null,
     target: {
       session: primaryTarget.session,
       window,
@@ -242,51 +249,17 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
     },
   });
 
-  if (!runnerNeedsPostLaunchPrompt(runner)) {
-    // Never trust the respawn blindly: a failed launch command leaves a bare
-    // shell in the pane, and every subsequent nudge lands in zsh instead of a
-    // runner. Verify the runner is actually alive before reporting success.
-    const verifyDeadline = Date.now() + RUNNER_LAUNCH_READY_TIMEOUT_MS;
-    while (Date.now() < verifyDeadline) {
-      if (await isWorkerSessionAlive(slotId, runner, runId)) return true;
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    console.warn(
-      `[ci-monitor] run ${runId.slice(0, 8)} — relaunch left no live ${runner} session in ${workerTarget}; treating relaunch as failed`,
-    );
-    // The context was optimistically marked working above — correct it so a
-    // failed launch doesn't leave a stale working status behind.
-    await markAgentContextStatus(runId, workerRole, 'failed');
-    return false;
-  }
-
-  const readyTimeout = RUNNER_LAUNCH_READY_TIMEOUT_MS;
-  const readyStart = Date.now();
-  while (Date.now() - readyStart < readyTimeout) {
+  // Verify only that the runner process exists. Exact prompt acceptance is
+  // proved by deliverPromptToLiveRunner after this fresh binding is cleared;
+  // rendered TUI text is never launch or delivery evidence.
+  const verifyDeadline = Date.now() + RUNNER_LAUNCH_READY_TIMEOUT_MS;
+  while (Date.now() < verifyDeadline) {
     await new Promise((r) => setTimeout(r, 2000));
-    if (await isWorkerSessionAlive(slotId, runner, runId)) {
-      return true;
-    }
-    const pane = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(workerTarget)} 2>/dev/null | tail -8`),
-      )
-    ).stdout;
-    const tailLines = pane
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .slice(-5);
-    if (tailLines.some((line) => runnerLineLooksWaiting(line, runner))) {
-      return true;
-    }
+    if (await isWorkerSessionAlive(slotId, runner, runId)) return true;
   }
   console.warn(
-    `[ci-monitor] run ${runId.slice(0, 8)} — relaunched ${runner} session never became ready in ${workerTarget}; treating relaunch as failed`,
+    `[ci-monitor] run ${runId.slice(0, 8)} — relaunch left no live ${runner} session in ${workerTarget}; treating relaunch as failed`,
   );
-  // Same correction as the prompt-in-launch branch: don't leave the
-  // optimistically-working primary context behind on a failed relaunch.
   await markAgentContextStatus(runId, workerRole, 'failed');
   return false;
 }
@@ -556,6 +529,7 @@ async function attemptInlineCIFix(
         runner,
         prompt: nudgeCmd,
         run,
+        taskDir: writeResult.taskDir,
         recovery: { runId },
       });
       retainedSession = initialDelivery.retainedSession;
@@ -584,6 +558,7 @@ async function attemptInlineCIFix(
                 runner,
                 prompt: nudgeCmd,
                 run: getRun(runId) ?? run,
+                taskDir: writeResult.taskDir,
                 forceBusyPoll: true,
                 recovery: { runId },
               })

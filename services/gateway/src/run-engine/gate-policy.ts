@@ -82,6 +82,36 @@ export function independentReviewNeedsContinuation(
   );
 }
 
+/**
+ * Repair the old exhausted-loop shape where `feedbackSent` described an
+ * earlier generation even though the final ISSUES attempt had never reached
+ * the worker. A sent fix necessarily creates another attempt, so a multi-
+ * attempt review that still ends in ISSUES has pending final findings.
+ */
+export function normalizeExhaustedReviewContinuation(
+  review: IndependentReviewStatus,
+): IndependentReviewStatus {
+  const finalAttempt = review.attempts?.at(-1);
+  if (
+    review.source === 'self-review' ||
+    review.verdict !== 'issues' ||
+    review.unresolvedCount <= 0 ||
+    (review.issues?.length ?? 0) === 0 ||
+    review.feedbackSent !== true ||
+    review.recoveryContinuationPending === true ||
+    (review.attempts?.length ?? 0) < 2 ||
+    finalAttempt?.verdict !== 'issues' ||
+    finalAttempt.unresolvedCount <= 0
+  ) {
+    return review;
+  }
+  return {
+    ...review,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+  };
+}
+
 /** Return the newest continuation that no later terminal review superseded. */
 export function pendingIndependentReviewContinuation(
   reviews: readonly IndependentReviewStatus[],

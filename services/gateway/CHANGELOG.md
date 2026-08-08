@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(review): preserve the final unresolved findings when a review loop exhausts, deduplicate restart recovery by review generation instead of terminal-signal timing, route fresh and retained follow-ups through one runner-capability delivery contract, and give warm continuations an authoritative prior-HEAD-to-current-HEAD scope.
 - fix(auth): restrict raw `/api/file` slot-file HTTP reads to admin principals; operator credentials retain confined `/api/run-artifact` reads.
 - fix(server): fail a WebSocket connection closed when credential-state refresh fails during initialization instead of terminating the gateway process.
 - fix(auth): preserve deliberate RPC validation and sanitized credential-store lock-refusal guidance while retaining holder PIDs only in server diagnostics and returning generic non-leaking errors for unexpected authorization and credential-store faults.

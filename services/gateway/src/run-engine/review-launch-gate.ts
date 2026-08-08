@@ -10,6 +10,8 @@ import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
 
+import { independentReviewNeedsContinuation } from './gate-policy.js';
+
 type GitExecutor = (command: string) => Promise<ExecResult>;
 
 function isRecoverableReviewLaunchCode(
@@ -140,7 +142,11 @@ export async function assertIndependentReviewLaunchState(
   const priorReview = latestIndependentReview(reviews);
   const reviewedCommit =
     priorReview?.reviewSnapshot?.headSha?.trim() || priorReview?.reviewedHeadSha?.trim();
-  if (priorReview?.verdict === 'issues' && reviewedCommit === headSha) {
+  if (
+    priorReview?.verdict === 'issues' &&
+    reviewedCommit === headSha &&
+    !independentReviewNeedsContinuation(priorReview)
+  ) {
     const feedbackPath =
       priorReview.artifactPaths?.find((artifactPath) =>
         /(?:review-feedback|self-review)\.md$/u.test(artifactPath),

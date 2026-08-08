@@ -30,10 +30,12 @@ export function isActiveInteractiveDevRun(run: Run): boolean {
 }
 
 export function canReplayRunSteps(
-  run: Pick<Run, 'status'> | null | undefined,
+  run: Pick<Run, 'status' | 'decisions'> | null | undefined,
   actionsBlocked = false,
 ): boolean {
-  return Boolean(run && !actionsBlocked && isTerminalRunStatus(run.status));
+  if (!run || actionsBlocked) return false;
+  if (isTerminalRunStatus(run.status)) return true;
+  return run.status === 'blocked' && !run.decisions.some((decision) => !decision.resolvedAt);
 }
 
 export function pendingCITimeoutDecision(run: Pick<Run, 'decisions'>): RunDecision | null {

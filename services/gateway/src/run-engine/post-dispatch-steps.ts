@@ -44,6 +44,7 @@ import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import {
   CLOSE_AS_SHIPPED_ACTION,
   isPublishApprovalAction,
+  normalizeExhaustedReviewContinuation,
   reviewFinalSnapshotMatchesPreparedPackage,
   shouldForceNoChangeHumanGate,
   stampPublishGateReviewStatusForPackage,
@@ -146,7 +147,6 @@ export function shouldSkipRetrospectiveAtComplete(run: Pick<Run, 'flowType'>): b
   return FLOW_STEPS[run.flowType].includes(S.CI_WATCH);
 }
 const MAX_PUBLISH_GATE_REVIEW_LOOPS = 5;
-const MAX_HUMAN_GATE_REVIEW_REQUEST_LOOPS = 3;
 
 function stampFreshReviewsForPreparedPackage(
   runId: string,
@@ -774,6 +774,23 @@ export async function executeHumanGateStep(
       // a completed review is never silently discarded.
       let recoveredReviewIds: string[] = [];
       if (current.slotId) {
+        const beforeRecovery = getRun(runId)!;
+        const storedReviews = beforeRecovery.engineState?.publishGate?.independentReviews ?? [];
+        const normalizedReviews = storedReviews.map(normalizeExhaustedReviewContinuation);
+        if (normalizedReviews.some((review, index) => review !== storedReviews[index])) {
+          updateRun(runId, {
+            engineState: {
+              ...beforeRecovery.engineState,
+              publishGate: {
+                ...beforeRecovery.engineState?.publishGate,
+                independentReviews: normalizedReviews,
+              },
+            },
+          });
+          console.log(
+            `[run-engine] run ${runId.slice(0, 8)} — restored pending final findings from an exhausted review loop`,
+          );
+        }
         const recoveryResult = await recoverInflightPublicationReviews(runId, current.slotId);
         recoveredReviewIds = recoveryResult.recoveredIds;
         if (recoveredReviewIds.length) {
@@ -947,7 +964,6 @@ export async function executeHumanGateStep(
       }
     }
     let gateAction = await executeReadyGate(runId);
-    let reviewRequestLoops = 0;
     while (
       publicationApprovalGate &&
       !isPublishApprovalAction(gateAction) &&
@@ -958,12 +974,6 @@ export async function executeHumanGateStep(
         continue;
       }
       if (gateAction === 'request-extra-review' || gateAction === 'request-cross-runner-review') {
-        if (reviewRequestLoops >= MAX_HUMAN_GATE_REVIEW_REQUEST_LOOPS) {
-          throw blockedRunError(
-            `Publication gate review request limit reached (${MAX_HUMAN_GATE_REVIEW_REQUEST_LOOPS})`,
-            gateAction,
-          );
-        }
         const beforeReviewPlan = getRun(runId)!;
         const reviewedPackage = await readReadyGatePreparedPackage(beforeReviewPlan);
         // Prefer the latest request-extra-review / request-cross-runner-review
@@ -976,8 +986,11 @@ export async function executeHumanGateStep(
           pendingPlan: beforeReviewPlan.engineState?.publishGate?.pendingReviewPlan ?? [],
           decisions: beforeReviewPlan.decisions ?? [],
         });
-        const remainingBudget = Math.max(0, MAX_PUBLISH_GATE_REVIEW_LOOPS - reviewRequestLoops);
-        const boundedPlan = plan.slice(0, remainingBudget);
+        // Each operator request is already bounded. Do not apply a second
+        // cumulative ceiling across the lifetime of a human gate: a long-lived
+        // incremental review loop may legitimately need more requests, and
+        // rejecting an accepted decision here terminally blocks the run.
+        const boundedPlan = plan.slice(0, MAX_PUBLISH_GATE_REVIEW_LOOPS);
         if (!boundedPlan.length) {
           gateAction = await executeReadyGate(runId);
           continue;
@@ -994,13 +1007,10 @@ export async function executeHumanGateStep(
           boundedPlan,
           'human-gate',
         );
-        reviewRequestLoops += await reconcilePublishGateReviewPlanResult(
-          runId,
-          boundedPlan,
-          reviewPlanResult,
-          context,
-          { reviewedPackage, stampFreshReviews: true },
-        );
+        await reconcilePublishGateReviewPlanResult(runId, boundedPlan, reviewPlanResult, context, {
+          reviewedPackage,
+          stampFreshReviews: true,
+        });
         gateAction = await executeReadyGate(runId);
         continue;
       }

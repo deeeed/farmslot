@@ -27,7 +27,7 @@ A green recipe status does **not** prove visible UI. Before marking an AC PROVEN
 6. **Reject UI state injection** — proof must come from real recipe/CDP/user flow, not mid-run store/DOM writes.
 
 Verdict per AC: `PROVEN` | `WEAK` | `UNTESTABLE` | `MISSING`.  
-`WEAK` or `MISSING` without reclassification → `REQUEST_CHANGES` or explicit human escalation.
+`WEAK` or `MISSING` without reclassification -> `REQUEST_CHANGES` or explicit human escalation.
 
 ## Recipe scope
 
@@ -63,7 +63,7 @@ If the author omitted a recipe for a UI change, flag it — do not invent proof.
 |---------|----------|--------|
 | Inline protocol types instead of `@farmslot/protocol` | suggestion | cite import path |
 | Empty `catch {}` or log-and-continue | **must_fix** | root cause or explicit recovery |
-| UI/store/DOM injection for “validation” | **must_fix** | require real user flow |
+| UI/store/DOM injection for "validation" | **must_fix** | require real user flow |
 | Typecheck-only claim for UI change | **must_fix** | require CDP/recipe proof |
 | `tsc -b` / emitting `.js` into source trees | **must_fix** | use `yarn typecheck` |
 | Hardcoded project logic in `scripts/` | suggestion | should be `project.json` hook |
@@ -73,6 +73,8 @@ If the author omitted a recipe for a UI change, flag it — do not invent proof.
 | Slow read-heavy gateway method only validated through 5s `cdp.mjs gateway` client | suggestion | confirm with real `farmslot --url` CLI before calling it hung |
 | Missing `artifacts_repo` / broken publication upload | suggestion | config + SSH host + public repo |
 | capture-helper TCC denied in tmux without CDP fallback note | suggestion | `capture-helper-tmux-check.sh` |
+| CI warm handoff implemented via `nudgeReuse` | **must_fix** | `nudgeReuse` requires `agent=working` and rejects `lifecycle=held`; use `warmSessionReuse` which probes liveness on held/ci-watch slots |
+| FIND_SLOT warm takeover rebinds `current_run_id` | **must_fix** | reserve `handoff_run_id` only (mirrors nudge pattern); rebinding `current_run_id` prevents DISPATCH from terminalizing the parent after handoff |
 
 ## CDP / capture-helper
 
