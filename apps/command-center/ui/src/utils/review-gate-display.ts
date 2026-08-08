@@ -602,11 +602,12 @@ export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
 }
 
 /**
- * True when a review still owes a worker fix and a re-review. Driven by
- * `recoveryContinuationPending` alone: an exhausted or recovery-restored loop
- * records `feedbackSent: false` because its final findings were never
- * delivered, and those rows need the pending phases exactly as much as a
- * continuation whose feedback did reach the worker.
+ * True when a review still owes a worker fix and a re-review: the engine
+ * marked `recoveryContinuationPending` AND the final attempt left unresolved
+ * findings. `feedbackSent` deliberately plays no part — an exhausted or
+ * recovery-restored loop records `feedbackSent: false` because its final
+ * findings were never delivered, and those rows need the pending phases
+ * exactly as much as a continuation whose feedback did reach the worker.
  */
 export function reviewHasPendingContinuationPhases(
   review: Pick<IndependentReviewStatus, 'recoveryContinuationPending'>,
