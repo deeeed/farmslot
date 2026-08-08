@@ -14,7 +14,7 @@ import {
   reviewerContextIsSettled,
   reviewerContextNeedsRecovery,
 } from './recover-inflight-reviews.js';
-import { deleteTestRunIfPresent } from './test-fixtures.js';
+import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
 
 test('exhausted review continuations are normalized and persisted once per recovery pass', async (t) => {
   const run = createRun({
@@ -134,7 +134,6 @@ test('recovery replaces a later failed delivery placeholder with the reviewer ve
     false,
   );
 });
-import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
 
 function reviewerContext(overrides: Partial<AgentContext> = {}): AgentContext {
   return {

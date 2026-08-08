@@ -15,6 +15,24 @@ Farmslot reviews cover:
 | Mobile Companion | iOS/Android recipe when PR touches `apps/companion`; real Metro flag flips — no store injection |
 | Publication evidence | `evidence-manifest.json`, hosted `raw.githubusercontent.com` URLs, `artifacts_repo` upload |
 
+## Secondary regression scan (required on every review)
+
+Independent review must look **beyond the stated ACs** for regressions introduced by the change.
+Before writing your verdict, check each category:
+
+| Category | What to look for |
+|----------|------------------|
+| Resource bounds | Unbounded reads introduced where limits existed before (e.g. whole-file hash buffering instead of streaming) |
+| Error semantics | HTTP status mapping changes (404/410, 413/400); swallowed or remapped application-level errors |
+| Silent exits | Subprocess / git / shell calls that can exit non-zero without surfacing the failure to the caller |
+| Adapter weakening | Root-detection adapters (`.git` locators, path-confinement guards) narrowed or made best-effort without documentation |
+| Sibling call sites | Fix applied to one call site while sibling callers share the same defect class — enumerate the blast radius |
+| RPC collapse side effects | Multiple RPCs collapsed into one handle-backed operation: verify both resource bounds and original error semantics are preserved |
+| Metadata-probe semantics | Probe-before-read patterns changed such that TOCTOU window widens or probe result is no longer authoritative |
+
+Flag any regression as `must_fix` even when it falls outside the original ticket scope. Do not assume
+the author audited the class — enumerate it explicitly in **Code Quality** and **Fix Quality** sections.
+
 ## Evidence audit (mandatory for UI PRs)
 
 A green recipe status does **not** prove visible UI. Before marking an AC PROVEN:
@@ -28,6 +46,17 @@ A green recipe status does **not** prove visible UI. Before marking an AC PROVEN
 
 Verdict per AC: `PROVEN` | `WEAK` | `UNTESTABLE` | `MISSING`.  
 `WEAK` or `MISSING` without reclassification → `REQUEST_CHANGES` or explicit human escalation.
+
+## Reading review artifacts
+
+Persisted review artifact arrays can lead with a **diff** file, not the review narrative. When inspecting
+review output, prefer named files in this order:
+
+1. `review-feedback.md` — structured reviewer feedback
+2. `self-review.md` — worker self-review
+3. `review.md` — full review report
+
+Do **not** blindly read the first element of an artifact array — it may be a raw diff with no AC verdicts.
 
 ## Recipe scope
 
@@ -73,6 +102,10 @@ If the author omitted a recipe for a UI change, flag it — do not invent proof.
 | Slow read-heavy gateway method only validated through 5s `cdp.mjs gateway` client | suggestion | confirm with real `farmslot --url` CLI before calling it hung |
 | Missing `artifacts_repo` / broken publication upload | suggestion | config + SSH host + public repo |
 | capture-helper TCC denied in tmux without CDP fallback note | suggestion | `capture-helper-tmux-check.sh` |
+| CDP/HUD abort before `command` node runs, presented as fail-closed pre-fix proof | **must_fix** | harness failure ≠ behavioral proof; require `command` node execution + assertion failure in `trace.json` |
+| Backlog soft-link resolves by `backlogItemId` instead of `(project, sourceRef)`, or links graph-linked / launch-plan / queued / already-run-linked items without refusing | **must_fix** | link via sourceRef only; soft-link must warn and refuse those states to avoid stealing handoff ownership |
+| CI warm handoff implemented via `nudgeReuse` | **must_fix** | `nudgeReuse` requires `agent=working` and rejects `lifecycle=held`; use `warmSessionReuse` which probes liveness on held/ci-watch slots |
+| FIND_SLOT warm takeover rebinds `current_run_id` | **must_fix** | reserve `handoff_run_id` only (mirrors nudge pattern); rebinding `current_run_id` prevents DISPATCH from terminalizing the parent after handoff |
 
 ## CDP / capture-helper
 
@@ -119,8 +152,9 @@ node projects/farmslot-farm/setup/upload-pr-evidence.mjs --task-dir <dir> --pr <
 4. **Acceptance Criteria Validation** — table with PASS/FAIL/UNTESTABLE + evidence pointer
 5. **Code Quality** — farmslot antipatterns from this doc
 6. **Fix Quality** — best approach vs pragmatic; would-not-ship items
-7. **Live Validation** — doctor, typecheck, tests, optional recipe re-run
-8. **Recommended Action** — APPROVE | REQUEST_CHANGES | COMMENT
+7. **Secondary Regression Scan** — results of the blast-radius table above; CLEAN or flagged items with severity
+8. **Live Validation** — doctor, typecheck, tests, optional recipe re-run
+9. **Recommended Action** — APPROVE | REQUEST_CHANGES | COMMENT
 
 Also write `{{TASK_DIR}}/artifacts/line-comments.json` with `must_fix` | `suggestion` | `nitpick` severities.
 
