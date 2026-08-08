@@ -805,7 +805,7 @@ async function withProtectedHttpServer(
   fn: (origin: string) => Promise<void>,
 ): Promise<void> {
   const server = createServer((req, res) => {
-    if (!authorizeHttpRequest({ runtime, req, res })) return;
+    if (!authorizeHttpRequest({ runtime, req, res, resource: 'run-artifact' })) return;
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('protected resource');
   });

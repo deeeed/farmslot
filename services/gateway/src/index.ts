@@ -535,13 +535,13 @@ async function main(): Promise<void> {
     }
     // Serve raw files: /api/file?slotId=X&path=Y
     if (req.url?.startsWith('/api/file?')) {
-      if (!authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res })) return;
+      if (!authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res, resource: 'file' })) return;
       serveFile(req, res);
       return;
     }
     // Serve run artifacts: /api/run-artifact?runId=X&path=Y (relative to task artifacts dir)
     if (req.url?.startsWith('/api/run-artifact?')) {
-      if (!authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res })) return;
+      if (!authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res, resource: 'run-artifact' })) return;
       serveRunArtifact(req, res);
       return;
     }

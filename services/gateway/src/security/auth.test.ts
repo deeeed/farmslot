@@ -102,6 +102,7 @@ const cookieAuthorized = authorizeHttpRequest({
     remoteAddress: '127.0.0.1',
   }),
   res: cookieResponse,
+  resource: 'run-artifact',
 });
 assert.equal(cookieAuthorized, true);
 assert.equal(cookieResponse.statusCode, undefined);
@@ -114,6 +115,7 @@ const encodedCookieAuthorized = authorizeHttpRequest({
     remoteAddress: '127.0.0.1',
   }),
   res: encodedCookieResponse,
+  resource: 'run-artifact',
 });
 assert.equal(encodedCookieAuthorized, true);
 
@@ -125,6 +127,7 @@ const queryTokenAuthorized = authorizeHttpRequest({
     remoteAddress: '127.0.0.1',
   }),
   res: queryTokenResponse,
+  resource: 'run-artifact',
 });
 assert.equal(queryTokenAuthorized, true);
 
@@ -142,10 +145,27 @@ assert.equal(
       remoteAddress: '127.0.0.1',
     }),
     res: operatorResponse,
+    resource: 'run-artifact',
   }),
   true,
 );
 assert.equal(operatorResponse.statusCode, undefined);
+
+const operatorFileResponse = createFakeResponse();
+assert.equal(
+  authorizeHttpRequest({
+    runtime: cookieRuntime,
+    req: createFakeRequest({
+      url: '/api/file?slotId=slot-1&path=.env.local-auth',
+      cookie: `farmslot_gateway_credential=${operatorIssue.secret}`,
+      remoteAddress: '127.0.0.1',
+    }),
+    res: operatorFileResponse,
+    resource: 'file',
+  }),
+  false,
+);
+assert.equal(operatorFileResponse.statusCode, 403);
 
 const resolverFailureResponse = createFakeResponse();
 const isSoloMode = cookieRuntime.resolver.isSoloMode;
@@ -166,6 +186,7 @@ try {
         remoteAddress: '127.0.0.1',
       }),
       res: resolverFailureResponse,
+      resource: 'run-artifact',
     }),
     false,
   );
@@ -183,6 +204,7 @@ const missingCookieAuthorized = authorizeHttpRequest({
   runtime: cookieRuntime,
   req: createFakeRequest({ cookie: 'other=value', remoteAddress: '127.0.0.1' }),
   res: missingCookieResponse,
+  resource: 'run-artifact',
 });
 assert.equal(missingCookieAuthorized, false);
 assert.equal(missingCookieResponse.statusCode, 401);

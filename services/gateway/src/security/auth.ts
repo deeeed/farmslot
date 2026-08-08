@@ -11,7 +11,7 @@ import type {
 
 import { GatewayMethodError } from '../core/method-error.js';
 
-import { authorizeGatewayHttp } from './authorization.js';
+import { authorizeGatewayHttp, type GatewayHttpResource } from './authorization.js';
 import { CredentialStoreRuntime } from './credential-store.js';
 import { CredentialStoreWriter } from './credential-store-writer.js';
 import { reconcileEnvironmentCredential } from './env-credential-migration.js';
@@ -300,6 +300,7 @@ export function authorizeHttpRequest(params: {
   runtime: GatewayAuthRuntime;
   req: IncomingMessage;
   res: ServerResponse;
+  resource: GatewayHttpResource;
 }): boolean {
   try {
     if (params.runtime.resolver.isSoloMode()) return true;
@@ -318,7 +319,7 @@ export function authorizeHttpRequest(params: {
         authenticated: true,
         clientKind: 'companion',
         authentication: result.authentication,
-      });
+      }, params.resource);
       return true;
     }
     sendAuthFailure(params.res, result);

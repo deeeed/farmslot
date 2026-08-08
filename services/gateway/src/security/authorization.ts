@@ -28,13 +28,16 @@ export function authorizeGatewayMethod(
 export function authorizeGatewayHttp(
   runtime: GatewayAuthRuntime,
   session: GatewayAuthSession,
+  resource: GatewayHttpResource,
 ): Principal {
-  return authorizeGatewayIngress(runtime, session, { kind: 'http' });
+  return authorizeGatewayIngress(runtime, session, { kind: 'http', resource });
 }
+
+export type GatewayHttpResource = 'file' | 'run-artifact';
 
 type GatewayIngressRequest =
   | { kind: 'method'; method: string }
-  | { kind: 'http' }
+  | { kind: 'http'; resource: GatewayHttpResource }
   | { kind: 'node-frame' };
 
 function authorizeGatewayIngress(
@@ -57,8 +60,9 @@ function authorizeGatewayIngress(
     });
   }
   if (request.kind === 'http') {
-    if (isAdminPrincipal(principal) || hasRole(principal, 'operator')) return principal;
-    throw denial(runtime, session, 'HTTP resource access', principal);
+    if (isAdminPrincipal(principal)) return principal;
+    if (request.resource === 'run-artifact' && hasRole(principal, 'operator')) return principal;
+    throw denial(runtime, session, `HTTP ${request.resource} access`, principal);
   }
   const { method } = request;
   if (principal.subject.type === 'node') {
