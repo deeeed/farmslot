@@ -297,11 +297,11 @@ export class DecisionInbox extends LitElement {
       const msg = !res.validationPassed
         ? `Applied but validation FAILED:\n${(res.validationOutput ?? '').slice(0, 300)}`
         : refusals.length > 0
-          ? `Applied ${(res.applied as unknown[]).length}, refused ${refusals.length} change(s) — card stays pending:\n${refusals
+          ? `Applied ${res.applied.length}, refused ${refusals.length} change(s) — card stays pending:\n${refusals
               .map((r) => `${r.filePath}: ${r.reason}`)
               .join('\n')
               .slice(0, 300)}\nRefine the card so it re-reads the current file, then re-apply.`
-          : `Applied ${(res.applied as unknown[]).length} file(s). Validation passed.`;
+          : `Applied ${res.applied.length} file(s). Validation passed.`;
       this._applyToast = new Map([
         ...this._applyToast,
         [decisionId, passed ? `ok:${msg}` : `fail:${msg}`],
