@@ -218,6 +218,15 @@ export interface ImprovementApplyResult {
   applied: import('../contracts/index.js').ImprovementFileChange[];
   validationPassed: boolean;
   validationOutput?: string;
+  /**
+   * Changes the apply refused, with the reason. `stale-anchor`: the file on
+   * disk no longer matches the card's `before` snapshot (another card or a
+   * human edit landed since proposal) — refine the card so it re-reads the
+   * current file. `suspicious-shrink`: `after` deletes a large share of the
+   * file, the signature of a truncated LLM payload — re-propose with the
+   * complete content, or make deliberate large deletions by hand.
+   */
+  refused?: { filePath: string; reason: 'stale-anchor' | 'suspicious-shrink' }[];
 }
 
 export interface LLMConfigGetResult {

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(improvement): make `improvement.apply` safe for real boards — refuse stale-anchor applies (file changed since the card's `before` snapshot) and suspicious-shrink payloads (truncated LLM submissions), reject `run.resolveDecision {actionId: apply}` so a card can no longer resolve without writing anything, emit `run.decision.resolved` only when the engine actually resolved the card, and run git/validation subprocesses async instead of blocking the event loop (MANUAL-000098).
+
 - fix(review): preserve the final unresolved findings whenever a review loop exhausts or a mid-loop worker relaunch fails, deduplicate restart recovery by review generation instead of terminal-signal timing, route fresh and retained follow-ups — including CI fix nudges whose session binding was lost — through one runner-capability delivery contract, and give warm continuations an authoritative prior-HEAD-to-current-HEAD scope.
 - fix(auth): restrict raw `/api/file` slot-file HTTP reads to admin principals; operator credentials retain confined `/api/run-artifact` reads.
 - fix(server): fail a WebSocket connection closed when credential-state refresh fails during initialization instead of terminating the gateway process.

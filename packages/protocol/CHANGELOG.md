@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(intelligence): `ImprovementApplyResult.refused` — per-file apply refusals (`stale-anchor` | `suspicious-shrink`) so clients can show why a card stayed pending (MANUAL-000098).
+
 - fix(pairing): define one shared-code multi-address QR contract so one scan represents one revocable device authority.
 - feat(auth)!: add principal and credential contracts plus caller summaries; require explicit principal authority for pairing codes and configured GitHub/Jira auto-dispatch webhook identities.
 - feat(review): let each publication-review request explicitly continue or reset one same-run reviewer session per runner.

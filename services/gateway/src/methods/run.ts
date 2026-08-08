@@ -1195,6 +1195,15 @@ export async function runResolveDecision(
   if (!decision.actions.some((action) => action.id === params.actionId)) {
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
   }
+  if (decision.type === 'improvement' && params.actionId === 'apply') {
+    // Resolving here would mark the card applied WITHOUT writing any file —
+    // apply must go through improvement.apply, which writes, validates, and
+    // only then resolves.
+    throw new Error(
+      `Improvement decisions are applied via the improvement.apply method, not resolveDecision; ` +
+        `resolving '${params.decisionId}' here would record it as applied without changing any file.`,
+    );
+  }
   if (decision.type === 'monitor_interactive_handoff' && params.actionId !== 'abort') {
     const signal = await readFreshTerminalSignalForRun(existing.id, existing.slotId);
     if (!signal) {

@@ -2,17 +2,27 @@
 // On retrospective accept, analyzes learnings and proposes template diffs.
 // Uses tool-equipped LLM chat so the model can read/search project files itself.
 
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+
+// Truncation-guard thresholds for applyImprovement: an `after` payload that
+// deletes more than 40% of an existing file AND more than this many bytes is
+// treated as a truncated LLM submission, not a deliberate edit.
+const SHRINK_GUARD_RATIO = 0.6;
+const SHRINK_GUARD_MIN_LOSS_BYTES = 400;
 
 import type { Message as PiMessage, Tool } from '@earendil-works/pi-ai';
 import { Type } from '@sinclair/typebox';
 
 import {
   Events,
+  type ImprovementApplyResult,
   type ImprovementDiffPayload,
   type ImprovementFileChange,
   type RunDecision,
@@ -674,11 +684,7 @@ Otherwise respond conversationally.`;
 export async function applyImprovement(
   runId: string,
   decisionId: string,
-): Promise<{
-  applied: ImprovementFileChange[];
-  validationPassed: boolean;
-  validationOutput?: string;
-}> {
+): Promise<ImprovementApplyResult> {
   const run = getRun(runId);
   if (!run) throw new Error(`Run ${runId} not found`);
 
@@ -691,6 +697,7 @@ export async function applyImprovement(
   }
 
   const applied: ImprovementFileChange[] = [];
+  const refused: { filePath: string; reason: 'stale-anchor' | 'suspicious-shrink' }[] = [];
 
   for (const change of payload.proposedChanges) {
     const expectedPrefix = `projects/${payload.project}/`;
@@ -702,10 +709,47 @@ export async function applyImprovement(
       continue;
     }
     const fullPath = path.join(farmslotRoot, change.filePath);
+
+    // Anchor check: the card's `after` is a full-file snapshot frozen at
+    // proposal time. If the file on disk no longer matches the card's
+    // `before`, applying would silently discard whatever landed since
+    // (another card, a human edit). Refuse and keep the card pending so the
+    // operator refines it against the current file instead.
+    let currentContent: string | null = null;
+    try {
+      currentContent = await readFile(fullPath, 'utf-8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    if ((currentContent ?? '') !== (change.before ?? '')) {
+      refused.push({ filePath: change.filePath, reason: 'stale-anchor' });
+      console.warn(`[improvement] refused stale-anchor apply for ${change.filePath}`);
+      continue;
+    }
+
+    // Truncation guard: several LLM-generated `after` payloads have arrived
+    // cut off mid-file. A large shrink of an existing file is that signature,
+    // not a plausible guidance edit — refuse it. Deliberate large deletions
+    // go through a hand edit or a re-proposed card with the full content.
+    const before = change.before ?? '';
+    if (
+      before.length > 0 &&
+      change.after.length < before.length * SHRINK_GUARD_RATIO &&
+      before.length - change.after.length > SHRINK_GUARD_MIN_LOSS_BYTES
+    ) {
+      refused.push({ filePath: change.filePath, reason: 'suspicious-shrink' });
+      console.warn(
+        `[improvement] refused suspicious-shrink apply for ${change.filePath} ` +
+          `(${before.length} -> ${change.after.length} bytes)`,
+      );
+      continue;
+    }
+
     try {
       await writeFile(fullPath, change.after, 'utf-8');
-      // Force-add: project files may be gitignored by the parent repo
-      execFileSync('git', ['add', '-f', '--', change.filePath], { cwd: farmslotRoot });
+      // Force-add: project files may be gitignored by the parent repo.
+      // Async so a slow git invocation cannot stall the gateway event loop.
+      await execFileAsync('git', ['add', '-f', '--', change.filePath], { cwd: farmslotRoot });
       applied.push(change);
       console.log(`[improvement] applied: ${change.filePath}`);
     } catch (err) {
@@ -736,12 +780,13 @@ export async function applyImprovement(
       }
     }
 
-    const output = execFileSync(validateCmd, validateArgs, {
+    // Async so a 60s validation cannot stall every other gateway request.
+    const { stdout } = await execFileAsync(validateCmd, validateArgs, {
       cwd: validateCwd,
       encoding: 'utf-8',
       timeout: 60000,
     });
-    validationOutput = output;
+    validationOutput = stdout;
   } catch (err) {
     validationPassed = false;
     validationOutput =
@@ -757,7 +802,10 @@ export async function applyImprovement(
     cleanupChatSession(decisionId);
   } else {
     const reason = !allApplied
-      ? `${applied.length}/${payload.proposedChanges.length} files applied`
+      ? `${applied.length}/${payload.proposedChanges.length} files applied` +
+        (refused.length
+          ? ` (refused: ${refused.map((r) => `${r.filePath}=${r.reason}`).join(', ')})`
+          : '')
       : 'validation failed';
     console.warn(`[improvement] decision ${decisionId} stays pending: ${reason}`);
   }
@@ -768,7 +816,12 @@ export async function applyImprovement(
     await appendToLearningsHistory(payload, runId, validationPassed);
   }
 
-  return { applied, validationPassed, validationOutput };
+  return {
+    applied,
+    validationPassed,
+    validationOutput,
+    ...(refused.length ? { refused } : {}),
+  };
 }
 
 async function appendToLearningsHistory(
