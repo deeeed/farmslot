@@ -44,11 +44,13 @@
   `REPO` → script directory (primary checkout). For any manual invocation outside a hook, always
   export `FARMSLOT_SLOT_REPO=<worktree-path>` (or `REPO=<worktree-path>`) so the runner sees the
   branch under test, not the operator's primary checkout.
-- **CDP Chrome is always required — even for `command`-only / backend-only recipes.** The Command
-  Center recipe runner enables `app.hud` whenever the action is in the manifest. A recipe containing
-  only `command` nodes still fails at HUD startup if no CDP Chrome is listening. Always run
+- **CDP Chrome is required whenever the HUD engages — UI actions or `--record-video`.** The
+  Command Center recipe runner enables `app.hud` only when the recipe uses UI actions or
+  `--record-video` is set (see the CLI-only HUD note above); a pure `command`-only recipe
+  without video runs with the HUD auto-disabled. When either condition holds, run
   `bash apps/command-center/scripts/debug-chrome.sh` (or confirm Chrome is already listening on
-  the configured CDP port) before any recipe run, regardless of platform.
+  the configured CDP port) before the recipe run — a HUD-startup failure means Chrome is not
+  listening or video was requested unintentionally.
 - **`yarn farmslot` cold-start cost (~10–15 s per node):** a recipe with many `command` nodes that
   shell out via `yarn farmslot` will take 6–7 min even when the gateway RPC is fast. Prefer
   `node apps/command-center/scripts/cdp.mjs gateway <method> '<params>'` for gateway RPC
