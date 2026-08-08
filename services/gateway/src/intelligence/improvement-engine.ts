@@ -13,8 +13,9 @@ const execFileAsync = promisify(execFile);
 
 // Truncation-guard thresholds for applyImprovement: an `after` payload that
 // deletes more than 40% of an existing file AND more than this many bytes is
-// treated as a truncated LLM submission, not a deliberate edit.
-const SHRINK_GUARD_RATIO = 0.6;
+// treated as a truncated LLM submission, not a deliberate edit. MIN_RATIO is
+// the smallest acceptable after/before size ratio.
+const SHRINK_GUARD_MIN_RATIO = 0.6;
 const SHRINK_GUARD_MIN_LOSS_BYTES = 400;
 
 import type { Message as PiMessage, Tool } from '@earendil-works/pi-ai';
@@ -697,7 +698,7 @@ export async function applyImprovement(
   }
 
   const applied: ImprovementFileChange[] = [];
-  const refused: { filePath: string; reason: 'stale-anchor' | 'suspicious-shrink' }[] = [];
+  const refused: NonNullable<ImprovementApplyResult['refused']> = [];
 
   for (const change of payload.proposedChanges) {
     const expectedPrefix = `projects/${payload.project}/`;
@@ -734,7 +735,7 @@ export async function applyImprovement(
     const before = change.before ?? '';
     if (
       before.length > 0 &&
-      change.after.length < before.length * SHRINK_GUARD_RATIO &&
+      change.after.length < before.length * SHRINK_GUARD_MIN_RATIO &&
       before.length - change.after.length > SHRINK_GUARD_MIN_LOSS_BYTES
     ) {
       refused.push({ filePath: change.filePath, reason: 'suspicious-shrink' });
@@ -753,45 +754,57 @@ export async function applyImprovement(
       applied.push(change);
       console.log(`[improvement] applied: ${change.filePath}`);
     } catch (err) {
+      // Account the failure in `refused` so applied+refused covers every
+      // change and the caller can see why the card stayed pending; the
+      // console line carries the underlying cause.
+      refused.push({ filePath: change.filePath, reason: 'write-error' });
       console.warn(`[improvement] failed to write ${change.filePath}: ${(err as Error).message}`);
     }
   }
 
-  // Run project-specific validation if available, fall back to command-center typecheck
+  // Run project-specific validation if available, fall back to command-center typecheck.
+  // Nothing written means nothing to validate — skip the (up to 60s) subprocess
+  // when every change was refused.
   let validationPassed = true;
   let validationOutput = '';
-  try {
-    const projectJson = path.join(farmslotRoot, 'projects', payload.project, 'project.json');
-    let validateCmd = 'yarn';
-    let validateArgs = ['typecheck'];
-    let validateCwd = path.join(farmslotRoot, 'apps/command-center');
+  if (applied.length === 0) {
+    validationOutput = 'skipped — no files applied';
+  } else {
+    try {
+      const projectJson = path.join(farmslotRoot, 'projects', payload.project, 'project.json');
+      let validateCmd = 'yarn';
+      let validateArgs = ['typecheck'];
+      let validateCwd = path.join(farmslotRoot, 'apps/command-center');
 
-    if (existsSync(projectJson)) {
-      try {
-        const projConfig = JSON.parse(await readFile(projectJson, 'utf-8'));
-        if (projConfig.hooks?.validate) {
-          const parts = projConfig.hooks.validate.split(/\s+/);
-          validateCmd = parts[0];
-          validateArgs = parts.slice(1);
-          validateCwd = farmslotRoot;
+      if (existsSync(projectJson)) {
+        try {
+          const projConfig = JSON.parse(await readFile(projectJson, 'utf-8'));
+          if (projConfig.hooks?.validate) {
+            const parts = projConfig.hooks.validate.split(/\s+/);
+            validateCmd = parts[0];
+            validateArgs = parts.slice(1);
+            validateCwd = farmslotRoot;
+          }
+        } catch {
+          /* use default */
         }
-      } catch {
-        /* use default */
       }
-    }
 
-    // Async so a 60s validation cannot stall every other gateway request.
-    const { stdout } = await execFileAsync(validateCmd, validateArgs, {
-      cwd: validateCwd,
-      encoding: 'utf-8',
-      timeout: 60000,
-    });
-    validationOutput = stdout;
-  } catch (err) {
-    validationPassed = false;
-    validationOutput =
-      (err as { stdout?: string; stderr?: string }).stdout ?? (err as Error).message;
-    console.warn(`[improvement] validation failed after apply: ${validationOutput.slice(0, 200)}`);
+      // Async so a 60s validation cannot stall every other gateway request.
+      const { stdout } = await execFileAsync(validateCmd, validateArgs, {
+        cwd: validateCwd,
+        encoding: 'utf-8',
+        timeout: 60000,
+      });
+      validationOutput = stdout;
+    } catch (err) {
+      validationPassed = false;
+      validationOutput =
+        (err as { stdout?: string; stderr?: string }).stdout ?? (err as Error).message;
+      console.warn(
+        `[improvement] validation failed after apply: ${validationOutput.slice(0, 200)}`,
+      );
+    }
   }
 
   // Only resolve if ALL files applied AND validation passed

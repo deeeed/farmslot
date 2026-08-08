@@ -288,11 +288,20 @@ export class DecisionInbox extends LitElement {
         applied: unknown[];
         validationPassed: boolean;
         validationOutput?: string;
+        refused?: { filePath: string; reason: string }[];
       };
-      const passed = res.validationPassed;
-      const msg = passed
-        ? `Applied ${(res.applied as unknown[]).length} file(s). Validation passed.`
-        : `Applied but validation FAILED:\n${(res.validationOutput ?? '').slice(0, 300)}`;
+      const refusals = res.refused ?? [];
+      // Refusals keep the card pending server-side; "0 files applied,
+      // validation passed" must read as a failure, not success.
+      const passed = res.validationPassed && refusals.length === 0;
+      const msg = !res.validationPassed
+        ? `Applied but validation FAILED:\n${(res.validationOutput ?? '').slice(0, 300)}`
+        : refusals.length > 0
+          ? `Refused ${refusals.length} change(s) — card stays pending:\n${refusals
+              .map((r) => `${r.filePath}: ${r.reason}`)
+              .join('\n')
+              .slice(0, 300)}\nRefine the card so it re-reads the current file, then re-apply.`
+          : `Applied ${(res.applied as unknown[]).length} file(s). Validation passed.`;
       this._applyToast = new Map([
         ...this._applyToast,
         [decisionId, passed ? `ok:${msg}` : `fail:${msg}`],

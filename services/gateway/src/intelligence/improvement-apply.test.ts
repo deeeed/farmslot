@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -161,6 +161,72 @@ test('apply creates a new file when the card declares an empty before', async (t
 
   assert.equal(result.applied.length, 1);
   assert.equal(await readFile(path.join(farmslotRoot, rel), 'utf-8'), 'brand new guidance\n');
+});
+
+test('apply accounts a write failure as write-error refusal', async (t) => {
+  setupProject();
+  const rel = `projects/${TEST_PROJECT}/fixtures/blocked.md`;
+  const abs = path.join(farmslotRoot, rel);
+  writeFileSync(abs, 'old content\n');
+  // Read-only file: the anchor read succeeds, the write fails with EACCES.
+  chmodSync(abs, 0o444);
+  const { run, decisionId } = seedImprovementRun([
+    { filePath: rel, before: 'old content\n', after: 'old content\nplus an addition\n' },
+  ]);
+  t.after(async () => {
+    chmodSync(abs, 0o644);
+    await cleanupRun(run.id);
+    teardownProject();
+  });
+
+  const result = await applyImprovement(run.id, decisionId);
+
+  assert.equal(result.applied.length, 0);
+  assert.deepEqual(result.refused, [{ filePath: rel, reason: 'write-error' }]);
+  assert.equal(
+    getRun(run.id)?.decisions.find((d) => d.id === decisionId)?.resolvedAction,
+    undefined,
+    'card must stay pending',
+  );
+});
+
+test('apply skips validation when every change was refused', async (t) => {
+  setupProject();
+  const rel = `projects/${TEST_PROJECT}/fixtures/guide.md`;
+  writeFileSync(path.join(farmslotRoot, rel), 'drifted content\n');
+  const { run, decisionId } = seedImprovementRun([
+    { filePath: rel, before: 'original content\n', after: 'anything\n' },
+  ]);
+  t.after(async () => {
+    await cleanupRun(run.id);
+    teardownProject();
+  });
+
+  const result = await applyImprovement(run.id, decisionId);
+
+  assert.equal(result.applied.length, 0);
+  assert.equal(result.validationOutput, 'skipped — no files applied');
+});
+
+test('resolveDecision still resolves dismiss on improvement cards', async (t) => {
+  setupProject();
+  const rel = `projects/${TEST_PROJECT}/fixtures/guide.md`;
+  writeFileSync(path.join(farmslotRoot, rel), 'old content\n');
+  const { run, decisionId } = seedImprovementRun([
+    { filePath: rel, before: 'old content\n', after: 'old content\nmore\n' },
+  ]);
+  t.after(async () => {
+    await cleanupRun(run.id);
+    teardownProject();
+  });
+
+  await runResolveDecision({ runId: run.id, decisionId, actionId: 'dismiss' }, () => {});
+
+  assert.equal(
+    getRun(run.id)?.decisions.find((d) => d.id === decisionId)?.resolvedAction,
+    'dismiss',
+  );
+  assert.equal(await readFile(path.join(farmslotRoot, rel), 'utf-8'), 'old content\n');
 });
 
 test('resolveDecision rejects apply on improvement cards instead of silently resolving', async (t) => {

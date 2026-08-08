@@ -225,8 +225,9 @@ export interface ImprovementApplyResult {
    * current file. `suspicious-shrink`: `after` deletes a large share of the
    * file, the signature of a truncated LLM payload — re-propose with the
    * complete content, or make deliberate large deletions by hand.
+   * `write-error`: the write or git stage failed (see gateway logs).
    */
-  refused?: { filePath: string; reason: 'stale-anchor' | 'suspicious-shrink' }[];
+  refused?: { filePath: string; reason: 'stale-anchor' | 'suspicious-shrink' | 'write-error' }[];
 }
 
 export interface LLMConfigGetResult {
