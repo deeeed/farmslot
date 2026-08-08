@@ -31,9 +31,14 @@ export async function improvementApply(
   emit: EmitFn,
 ): Promise<ImprovementApplyResult> {
   const result = await applyImprovement(params.runId, params.decisionId);
-  const allApplied = result.applied.length > 0 && result.validationPassed;
-  // Emit resolution events so the UI removes the decision and updates run state
-  if (allApplied) {
+  // Emit resolution only when the ENGINE resolved the card (all files applied
+  // + validation passed). `applied.length > 0` alone covers partial applies,
+  // where the card deliberately stays pending — emitting resolved for those
+  // made the UI drop a card the store still considers open.
+  const resolved =
+    getRun(params.runId)?.decisions?.find((d) => d.id === params.decisionId)?.resolvedAction ===
+    'applied';
+  if (resolved) {
     emit('run.decision.resolved', { runId: params.runId, decisionId: params.decisionId });
   }
   // Always emit run.updated with the full run object so subscribers get the latest state
