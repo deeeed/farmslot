@@ -158,6 +158,31 @@ export function reviewerResultRelPath(contextId: string): string {
   return `artifacts/review-result.${contextId}.json`;
 }
 
+function continuationReviewScope(params: {
+  priorHeadSha: string | null;
+  currentHeadSha: string | null;
+  priorArtifactDir: string;
+}): string {
+  const reviewRange =
+    params.priorHeadSha && params.currentHeadSha
+      ? `${params.priorHeadSha}..${params.currentHeadSha}`
+      : 'unavailable';
+  return `## Authoritative continuation scope
+
+This is an incremental continuation of the same review, not a new full-branch review.
+
+- Previous reviewed HEAD: \`${params.priorHeadSha ?? 'unavailable'}\`
+- Current HEAD: \`${params.currentHeadSha ?? 'unavailable'}\`
+- Exact review range: \`${reviewRange}\`
+- Prior review artifacts: \`${params.priorArtifactDir}\`
+
+This scope overrides generic full-branch diff instructions below. When the exact range is
+available, inspect \`git diff --stat ${reviewRange}\` and \`git diff ${reviewRange}\` instead of
+\`main...HEAD\`. Recheck the prior findings and validate affected surfaces only. Expand beyond
+that range only when the delta invalidates a prior assumption, and explain why in the report.
+`;
+}
+
 function structuredReviewResultInstructions(resultRelPath: string): string {
   return `
 
@@ -765,11 +790,21 @@ export async function runReviewAgent(
     // The template is in projects/<project>/templates/worker/self-review.md with {{VAR}} placeholders.
     // Long multiline prompts get bracketed-pasted by tmux — so we write to a file.
     const taskMdPath = taskDirRelPath(taskDir, reviewChecklistTarget.checklist);
-    const expandedTemplate = scopeReviewFeedbackPath(
+    let expandedTemplate = scopeReviewFeedbackPath(
       await expandSelfReviewTemplate(vars, taskDir, _runId, validationDepth),
       feedbackRelPath,
       resultRelPath,
     );
+    if (warmSession) {
+      expandedTemplate = `${continuationReviewScope({
+        priorHeadSha: warmSession.lastReviewedHeadSha,
+        currentHeadSha: reviewSnapshot.snapshot.headSha ?? null,
+        priorArtifactDir: `${taskDir}/${reviewArtifactDir(
+          warmSession.lastLoopNumber,
+          warmSession.artifactScope,
+        )}`,
+      })}\n${expandedTemplate}`;
+    }
     await writeTextFileOnSlot(vars, taskMdPath, expandedTemplate);
     await syncChecklistTargetForRole(vars, taskDir, 'self-review', {
       reportPath: feedbackRelPath,
@@ -1048,6 +1083,7 @@ export async function runReviewAgent(
           runnerSessionId: reusableSessionId,
           runnerSessionPath: reusableSessionPath ?? null,
           lastLoopNumber: loopNumber,
+          lastReviewedHeadSha: reviewSnapshot.snapshot.headSha ?? null,
         });
       }
     }

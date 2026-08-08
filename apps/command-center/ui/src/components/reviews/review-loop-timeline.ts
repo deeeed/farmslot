@@ -16,6 +16,7 @@ import {
   fixDeltaAbsenceReason,
   hasMeaningfulReviewFixDelta,
   reviewAttemptLabel,
+  reviewHasPendingContinuationPhases,
   reviewPolicyLabel,
   reviewSourceLabel,
 } from '../../utils/review-gate-display.js';
@@ -326,13 +327,7 @@ export class ReviewLoopTimeline extends LitElement {
       `;
       return [fixPhase, reviewPhase];
     });
-    const last = attempts.at(-1);
-    if (
-      last &&
-      last.unresolvedCount > 0 &&
-      review.feedbackSent !== false &&
-      review.recoveryContinuationPending === true
-    ) {
+    if (reviewHasPendingContinuationPhases(review, attempts.at(-1))) {
       phases.push(
         html`<div class="phase pending"><span class="phase-title">Worker fix</span>pending</div>`,
         html`<div class="phase pending"><span class="phase-title">Re-review</span>pending</div>`,

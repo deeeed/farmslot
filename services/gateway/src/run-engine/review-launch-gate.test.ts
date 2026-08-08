@@ -89,6 +89,16 @@ test('independent publication re-review allows a clean advanced HEAD', async () 
   );
 });
 
+test('independent publication continuation can deliver pending findings at the same HEAD', async () => {
+  const review = issuesReview('abc123');
+  review.feedbackSent = false;
+  review.recoveryContinuationPending = true;
+  review.issues = [{ file: 'src/example.ts', description: 'Fix the pending finding' }];
+  await assert.doesNotReject(
+    assertIndependentReviewLaunchState([review], gitExecutor('', 'abc123')),
+  );
+});
+
 test('independent publication re-review trusts the immutable snapshot over a restamped compatibility HEAD', async () => {
   const review = issuesReview('def456');
   review.reviewSnapshot = {

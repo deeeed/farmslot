@@ -76,6 +76,7 @@ import {
   startRun,
 } from '../run-engine/orchestrator.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
+import { normalizeExhaustedReviewContinuationsForRun } from '../run-engine/recover-inflight-reviews.js';
 import { assertIndependentReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
 import {
   probeWorkerSignalForRun,
@@ -1217,8 +1218,9 @@ export async function runResolveDecision(
         },
       );
     }
+    const normalizedReviews = normalizeExhaustedReviewContinuationsForRun(existing.id);
     await (dependencies.assertReviewLaunchAllowed ?? assertIndependentReviewLaunchStateForSlot)(
-      existing.engineState?.publishGate?.independentReviews ?? [],
+      normalizedReviews,
       existing.slotId,
     );
   }

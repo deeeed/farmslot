@@ -722,6 +722,8 @@ test('buildPublishGateReviewStatus coalesces retry attempts into one configured 
       crossRunner: true,
       validationDepth: 'static-code',
       retryCount: 2,
+      feedbackSent: true,
+      recoveryContinuationPending: false,
       attempts: [
         {
           loopNumber: 1,
@@ -801,6 +803,8 @@ test('buildPublishGateReviewStatus coalesces retry attempts into one configured 
     ],
   );
   assert.deepEqual(status.issues, [{ file: 'a.ts', description: 'still flaky' }]);
+  assert.equal(status.feedbackSent, true);
+  assert.equal(status.recoveryContinuationPending, false);
   assert.equal(status.reviewSnapshot?.headSha, 'new');
   assert.deepEqual(status.artifactPaths, [
     'artifacts/review-loop-1/review.diff',

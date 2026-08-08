@@ -52,7 +52,7 @@ import {
   runnerNeedsPostLaunchPrompt,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
-import { deliverPromptWithRetainedFallback } from '../runners/session-reactivation.js';
+import { deliverPromptToLiveRunner } from '../runners/session-reactivation.js';
 import { getRunnerStatusProvider } from '../runners/status-provider.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
@@ -640,7 +640,9 @@ export async function runSelfReviewRetryLoop({
           attempts,
           retryCount,
           maxRetries,
-          feedbackSent,
+          // These findings never reached a worker. A `feedbackSent` carried over
+          // from an earlier generation would make recovery skip continuation.
+          feedbackSent: false,
           recoveryContinuationPending: true,
           durationMs: Date.now() - start,
         };
@@ -674,7 +676,9 @@ export async function runSelfReviewRetryLoop({
           attempts,
           retryCount,
           maxRetries,
-          feedbackSent,
+          // Same as the dead-worker relaunch above: this generation's findings
+          // were never delivered, so continuation must not be suppressed.
+          feedbackSent: false,
           recoveryContinuationPending: true,
           durationMs: Date.now() - start,
         };
@@ -948,6 +952,11 @@ export async function runSelfReviewRetryLoop({
     };
   }
 
+  // Reaching this return with unresolved issues means the latest review
+  // generation has not been handed to the worker. `feedbackSent` may still be
+  // true from an earlier generation, but persisting that historical value
+  // makes recovery believe there is nothing left to deliver.
+  const latestFindingsPendingDelivery = result.verdict === 'issues' && result.issues.length > 0;
   return {
     verdict: result.verdict,
     issues: result.issues,
@@ -959,7 +968,8 @@ export async function runSelfReviewRetryLoop({
     timeline: attempts.flatMap((attempt) => attempt.timeline ?? []),
     retryCount,
     maxRetries,
-    feedbackSent,
+    feedbackSent: latestFindingsPendingDelivery ? false : feedbackSent,
+    recoveryContinuationPending: latestFindingsPendingDelivery,
     durationMs: Date.now() - start,
   };
 }
@@ -1013,7 +1023,7 @@ interface FixPromptRecoveryDeps {
     run: Pick<NonNullable<ReturnType<typeof getRun>>, 'flowType' | 'agentContexts'>,
     target: AgentContext['target'],
   ) => Promise<void>;
-  deliver: typeof deliverPromptWithRetainedFallback;
+  deliver: typeof deliverPromptToLiveRunner;
 }
 
 const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
@@ -1030,7 +1040,7 @@ const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
       await upsertAgentContext(runId, workerRole, { target });
     }
   },
-  deliver: deliverPromptWithRetainedFallback,
+  deliver: deliverPromptToLiveRunner,
 };
 
 function selfReviewFixProgressContract(taskDir: string, taskFile: string): string {
@@ -1120,6 +1130,7 @@ export async function resumeSelfReviewFixPromptDelivery(
     model: context.model ?? run.metrics.model,
     effort: run.effort,
     prompt,
+    promptMarker: SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist,
     safetyTier: run.safetyTier,
     runtimeDir,
     taskDir,
@@ -1613,7 +1624,10 @@ async function sendFeedbackToWorker(
         sendLogPrefix: 'self-review',
         forceBusyPoll,
       };
-      const retained = await deliverPromptWithRetainedFallback(deliveryOptions);
+      const retained = await deliverPromptToLiveRunner({
+        ...deliveryOptions,
+        promptMarker: SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist,
+      });
       promptSendAttempted = true;
       if (retained.delivered) {
         structuredDeliveryAccepted = retained.acknowledgement === 'structured';

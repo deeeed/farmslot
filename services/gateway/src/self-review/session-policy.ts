@@ -49,6 +49,7 @@ export interface WarmReviewerSession extends WarmReviewerScope {
   runnerSessionId: string;
   runnerSessionPath: string | null;
   lastLoopNumber: number;
+  lastReviewedHeadSha: string | null;
   /** Kept for inspection only — a forensic session can never be claimed. */
   forensicOnly: boolean;
 }

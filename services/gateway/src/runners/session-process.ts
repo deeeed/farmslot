@@ -46,10 +46,18 @@ export type PersistedRunnerSessionBindingResult =
   | {
       binding: { runnerSessionId: string; runnerSessionPath: string };
       reason: null;
+      incompleteBinding?: never;
     }
   | {
       binding: null;
       reason: string | null;
+      /**
+       * Set only when a candidate carried half a retained identity. That proves
+       * neither continuity nor a fresh session, so callers must fail closed. An
+       * absent binding without this flag is a legitimate fresh session and may
+       * be delivered through the fresh post-launch contract.
+       */
+      incompleteBinding?: true;
     };
 
 /**
@@ -68,6 +76,7 @@ export function resolvePersistedRunnerSessionBinding(
       return {
         binding: null,
         reason: `${candidate.label} has incomplete retained session metadata`,
+        incompleteBinding: true,
       };
     }
     return {

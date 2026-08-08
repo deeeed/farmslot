@@ -47,7 +47,11 @@ import {
 } from '../self-review/terminal-result.js';
 import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
-import { buildPublishGateReviewStatus, independentReviewNeedsContinuation } from './gate-policy.js';
+import {
+  buildPublishGateReviewStatus,
+  independentReviewNeedsContinuation,
+  normalizeExhaustedReviewContinuation,
+} from './gate-policy.js';
 import { persistIndependentReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
 
 export { isTerminalReviewArtifactError, TerminalReviewArtifactError };
@@ -686,17 +690,63 @@ async function persistRecoveredFailedReviewer(
   return persisted.id;
 }
 
+/**
+ * Repair and persist exhausted-loop continuations for a run's stored publish
+ * gate reviews, returning the reviews the caller should act on. Shared by both
+ * recovery entry points — human-gate re-entry and an operator review request —
+ * so the read/normalize/persist shape stays defined once. Idempotent: a second
+ * pass over already-normalized reviews persists nothing.
+ */
+export function normalizeExhaustedReviewContinuationsForRun(
+  runId: string,
+): IndependentReviewStatus[] {
+  const run = getRun(runId);
+  const storedReviews = run?.engineState?.publishGate?.independentReviews ?? [];
+  if (!run) return storedReviews;
+  const normalized = storedReviews.map(normalizeExhaustedReviewContinuation);
+  if (!normalized.some((review, index) => review !== storedReviews[index])) return storedReviews;
+  updateRun(runId, {
+    engineState: {
+      ...run.engineState,
+      publishGate: {
+        ...run.engineState?.publishGate,
+        independentReviews: normalized,
+      },
+    },
+  });
+  console.log(
+    `[run-engine] run ${runId.slice(0, 8)} — restored pending final findings from an exhausted review loop`,
+  );
+  return normalized;
+}
+
 export function recoveredReviewAlreadyIngested(
   existing: Pick<
     IndependentReviewStatus,
     'completedAt' | 'verdict' | 'unresolvedCount' | 'feedbackSent' | 'recoveryContinuationPending'
-  >,
-  recovered: Pick<IndependentReviewStatus, 'completedAt'>,
+  > &
+    Partial<Pick<IndependentReviewStatus, 'attempts'>>,
+  recovered: Pick<IndependentReviewStatus, 'completedAt'> &
+    Partial<Pick<IndependentReviewStatus, 'attempts' | 'verdict' | 'unresolvedCount'>>,
 ): boolean {
   // A delivery placeholder records the time the orchestration failed, which
   // can be later than the reviewer's already-written terminal signal. It is
   // not an ingested verdict and must never suppress that recovered result.
   if (isFailedReviewPlaceholder(existing)) return false;
+  const existingAttempt = existing.attempts?.at(-1);
+  const recoveredAttempt = recovered.attempts?.at(-1);
+  if (
+    existingAttempt?.startedAt &&
+    recoveredAttempt?.startedAt &&
+    existingAttempt.startedAt === recoveredAttempt.startedAt &&
+    existing.verdict === recovered.verdict &&
+    existing.unresolvedCount === recovered.unresolvedCount
+  ) {
+    // The terminal signal can be written milliseconds after the live result
+    // was persisted. `startedAt` identifies the review generation; treating
+    // the later signal timestamp as a new pass duplicates the final attempt.
+    return true;
+  }
   const existingAt = Date.parse(existing.completedAt ?? '');
   const recoveredAt = Date.parse(recovered.completedAt ?? '');
   return Number.isFinite(existingAt) && Number.isFinite(recoveredAt) && recoveredAt <= existingAt;
