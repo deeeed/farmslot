@@ -18,11 +18,12 @@ Read this before authoring `{{TASK_DIR}}/artifacts/recipe.json`.
 > ```
 > The `recipe_run` hook in `project.json` already injects this; manual invocations must do so too.
 
-> **CDP / HUD pre-condition:** The Command Center recipe runner always enables `app.hud` when
-> the action is present in the action manifest — including backend-only `command`/RPC recipes.
-> A CDP-enabled Chrome instance **must** be listening on `--cdp-port` before any `cli`/`gateway`
-> platform recipe run.  If the run fails with an `app.hud` or HUD-related error before the first
-> `command` node, Chrome is not listening:
+> **CDP / HUD pre-condition:** The Command Center recipe runner enables `app.hud` only when the
+> recipe uses UI actions or `--record-video` is set; a pure `command`/RPC recipe without video
+> runs with the HUD auto-disabled and needs no browser page. Whenever either condition holds
+> (any UI node, or video evidence), a CDP-enabled Chrome instance **must** be listening on
+> `--cdp-port` before the run. If a run fails with an `app.hud` error before the first
+> `command` node, Chrome is not listening (or video was requested unintentionally):
 > ```bash
 > bash {{REPO}}/apps/command-center/scripts/debug-chrome.sh
 > ```

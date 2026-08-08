@@ -79,12 +79,14 @@ polling (`app.status`, `observeUi`, etc.) will time out if the app is not launch
 
 - Use `prepare-profile.sh full` (or the `companion-full` prepare profile) which performs a
   native build + app launch, not only Metro readiness.
-- After prepare, verify the bridge is reachable before running a companion recipe:
+- After prepare, verify the bridge is reachable before running a companion recipe — run the
+  bridge smoke from `apps/companion` (Metro must be up with the recipe relay middleware and the
+  dev client launched with `EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE=1`; see `apps/companion/AGENTS.md`):
   ```bash
-  node apps/command-center/scripts/cdp.mjs gateway companion.bridge status '{}'
-  # expect: { "ok": true, ... } — if this times out, the app is not connected
+  cd apps/companion && yarn recipe:run:bridge
+  # a passing bridge smoke proves the app is connected; a timeout means it is not
   ```
-- Only after the bridge responds should you run `validate-recipe.sh --platform ios` (or `android`).
+- Only after the bridge smoke passes should you run `validate-recipe.sh --platform ios` (or `android`).
 
 ### Bridge command names differ from recipe action names
 
@@ -123,5 +125,5 @@ in `recipe-coverage.md`.
 - Metro: `lsof -nP -iTCP:<metro-port> -sTCP:LISTEN`
 - iOS: `xcrun simctl list devices booted | grep -q '<simulator-name>'`
 - Android: `adb -s '<serial>' get-state`
-- Bridge: `node apps/command-center/scripts/cdp.mjs gateway companion.bridge status '{}'` (must return `ok: true`)
+- Bridge: `cd apps/companion && yarn recipe:run:bridge` (passing smoke = app connected)
 - Companion recipes: `projects/farmslot-farm` `recipe_run` hook when slot is configured for that project.

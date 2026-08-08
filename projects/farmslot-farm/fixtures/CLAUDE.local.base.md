@@ -23,13 +23,13 @@
 - **Recipe proof applies to all surfaces — not only UI:** CLI (`command` → `yarn farmslot <cmd>`), gateway RPC
   (`command` → `node apps/command-center/scripts/cdp.mjs gateway <method> '<params>'`), and log assertions
   are first-class recipe nodes. “Backend-only” is not a valid reason to omit a recipe.
-- **CLI-only recipes (no CDP page running):** use the core-only action manifest rather than the full Command Center manifest. The full manifest enables HUD before executing the first node, which fails when no browser page is attached:
-  ```bash
-  # wrong for command-only recipes — enables HUD from the full manifest:
-  # --action-manifest docs/examples/recipes/farmslot-v1.action-manifest.json
-  # correct: supply the core-only manifest or omit HUD-gated actions
-  ```
-  Confirm with `recipe-doctor.mjs --json` before running — it reports whether a CDP page is reachable.
+- **CLI-only recipes and the HUD:** with the standard manifest the runner enables the HUD only
+  when the recipe uses UI actions **or** `--record-video` is set (`run-recipe.mjs` gates
+  `app.hud` on those two conditions). A pure `command`/RPC recipe without video needs no
+  browser page. If a command-only run fails on an `app.hud` error before its first node, you
+  either passed `--record-video` (drop it, or start CDP Chrome) or the recipe references a UI
+  action it does not need. Confirm with `recipe-doctor.mjs --json` — it reports whether a CDP
+  page is reachable.
 - Slot helper/script verb ports that shell out belong in gateway methods routed through `route-method.ts` when they need `execOnSlot` / `execLocal`; do not hide connected-node exec behind `@farmslot/slot-config` or `farmslot internal`.
   Match the original script locality: commands previously wrapped in `run_on`/remote execute on the slot host, while local tmux/session-usage style commands stay on the orchestrator. Preserve script hard-fail behavior for missing project config; do not default through swallowed catches. For slow read-heavy verbs, validate with the real `farmslot --url` CLI rather than the 5s `cdp.mjs gateway` client.
 - Never run emitting TypeScript builds that write `.js`, `.d.ts`, or `.map` files into source trees.
