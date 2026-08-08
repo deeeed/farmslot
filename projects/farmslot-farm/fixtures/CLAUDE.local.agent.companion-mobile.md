@@ -69,6 +69,44 @@ Per-worktree device pins live in gitignored `apps/companion/scripts/agentic/agen
      bash scripts/agentic/start.sh --android
    ```
 
+## Companion bridge proof — critical gotchas
+
+### The app/dev client must be launched, not just Metro
+
+`companion-warm` prepare starts Metro and the simulator, but the React Native bridge is only
+available after the **dev client (Expo Go or the native build) connects to Metro**. Bridge
+polling (`app.status`, `observeUi`, etc.) will time out if the app is not launched.
+
+- Use `prepare-profile.sh full` (or the `companion-full` prepare profile) which performs a
+  native build + app launch, not only Metro readiness.
+- After prepare, verify the bridge is reachable before running a companion recipe:
+  ```bash
+  node apps/command-center/scripts/cdp.mjs gateway companion.bridge status '{}'
+  # expect: { "ok": true, ... } — if this times out, the app is not connected
+  ```
+- Only after the bridge responds should you run `validate-recipe.sh --platform ios` (or `android`).
+
+### Bridge command names differ from recipe action names
+
+When probing the bridge directly (e.g. via `cdp.mjs gateway`), use **bridge-level command names**:
+
+| Direct probe (bridge-level) | Recipe action name |
+|-----------------------------|--------------------|
+| `status` | `app.status` |
+| `observeUi` | `app.observeUi` |
+
+The React Native bridge transport maps recipe action names (e.g. `app.status`) to their
+bridge-level names before sending. Using the recipe action name in a direct probe will fail;
+using the bridge-level name in a recipe document will fail validation against the action manifest.
+
+### Companion action manifest scope
+
+The companion action manifest does not currently expose all Command Center actions. Specifically,
+`ui.press` with `observe:false` and the observation policy variants are not yet repo-supported
+recipe actions on the companion surface. Do not attempt to mirror Command Center observation
+policy proof in companion recipes — validate `observeUi` directly instead, and note the gap
+in `recipe-coverage.md`.
+
 ## What not to do
 
 - Do not add simulator boot to default `sandbox` prepare or `yarn farmdev`.
@@ -76,6 +114,8 @@ Per-worktree device pins live in gitignored `apps/companion/scripts/agentic/agen
 - Do not inject UI state to fake companion outcomes — drive real taps/keystrokes for evidence.
 - Do not assume `projects/farmslot-farm` pool slots exist on every machine; when absent,
   pin devices in `agentic.local.conf` and document the choice in the task report.
+- Do not poll the bridge with recipe action names (`app.status`) in direct CDP probes — use
+  the bridge-level name (`status`) for direct probes and reserve action names for recipe documents.
 
 ## Validation
 
@@ -83,4 +123,5 @@ Per-worktree device pins live in gitignored `apps/companion/scripts/agentic/agen
 - Metro: `lsof -nP -iTCP:<metro-port> -sTCP:LISTEN`
 - iOS: `xcrun simctl list devices booted | grep -q '<simulator-name>'`
 - Android: `adb -s '<serial>' get-state`
+- Bridge: `node apps/command-center/scripts/cdp.mjs gateway companion.bridge status '{}'` (must return `ok: true`)
 - Companion recipes: `projects/farmslot-farm` `recipe_run` hook when slot is configured for that project.
