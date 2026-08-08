@@ -297,7 +297,7 @@ export class DecisionInbox extends LitElement {
       const msg = !res.validationPassed
         ? `Applied but validation FAILED:\n${(res.validationOutput ?? '').slice(0, 300)}`
         : refusals.length > 0
-          ? `Refused ${refusals.length} change(s) — card stays pending:\n${refusals
+          ? `Applied ${(res.applied as unknown[]).length}, refused ${refusals.length} change(s) — card stays pending:\n${refusals
               .map((r) => `${r.filePath}: ${r.reason}`)
               .join('\n')
               .slice(0, 300)}\nRefine the card so it re-reads the current file, then re-apply.`
