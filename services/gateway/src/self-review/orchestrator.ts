@@ -640,7 +640,9 @@ export async function runSelfReviewRetryLoop({
           attempts,
           retryCount,
           maxRetries,
-          feedbackSent,
+          // These findings never reached a worker. A `feedbackSent` carried over
+          // from an earlier generation would make recovery skip continuation.
+          feedbackSent: false,
           recoveryContinuationPending: true,
           durationMs: Date.now() - start,
         };
@@ -674,7 +676,9 @@ export async function runSelfReviewRetryLoop({
           attempts,
           retryCount,
           maxRetries,
-          feedbackSent,
+          // Same as the dead-worker relaunch above: this generation's findings
+          // were never delivered, so continuation must not be suppressed.
+          feedbackSent: false,
           recoveryContinuationPending: true,
           durationMs: Date.now() - start,
         };

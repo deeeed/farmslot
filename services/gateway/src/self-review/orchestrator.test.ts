@@ -661,6 +661,55 @@ test('runSelfReviewRetryLoop: exhausts retries when every re-review still finds 
   );
 });
 
+test('runSelfReviewRetryLoop: a failed mid-loop relaunch drops a prior generation feedbackSent', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: [],
+    workerAlive: false,
+    relaunchOk: false,
+  });
+
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 3,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 1,
+    feedbackAlreadySent: true,
+    deps,
+  });
+
+  assert.equal(result.verdict, 'issues');
+  assert.equal(
+    result.feedbackSent,
+    false,
+    'these findings never reached a worker; a prior generation must not suppress continuation',
+  );
+  assert.equal(result.recoveryContinuationPending, true);
+  assert.equal(calls.relaunches, 1);
+  assert.equal(calls.sendFeedback, 0);
+});
+
+test('runSelfReviewRetryLoop: a failed high-context relaunch drops a prior generation feedbackSent', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: [],
+    contextPct: 95,
+    relaunchOk: false,
+  });
+
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 3,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 1,
+    feedbackAlreadySent: true,
+    deps,
+  });
+
+  assert.equal(result.feedbackSent, false);
+  assert.equal(result.recoveryContinuationPending, true);
+  assert.equal(calls.relaunches, 1);
+  assert.equal(calls.sendFeedback, 0);
+});
+
 test('runSelfReviewRetryLoop: stops as soon as a re-review verdict is pass', async () => {
   const { deps, calls } = buildDeps({
     reviewVerdicts: ['pass'],

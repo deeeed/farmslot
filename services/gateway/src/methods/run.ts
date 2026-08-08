@@ -66,7 +66,6 @@ import {
   assertPublicationReviewPolicySatisfied,
   assertUnavailableSnapshotOverrideAvailable,
   isPublishApprovalAction,
-  normalizeExhaustedReviewContinuation,
   validatePackageApprovalSelection,
 } from '../run-engine/gate-policy.js';
 import {
@@ -77,6 +76,7 @@ import {
   startRun,
 } from '../run-engine/orchestrator.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
+import { normalizeExhaustedReviewContinuationsForRun } from '../run-engine/recover-inflight-reviews.js';
 import { assertIndependentReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
 import {
   probeWorkerSignalForRun,
@@ -1218,19 +1218,7 @@ export async function runResolveDecision(
         },
       );
     }
-    const storedReviews = existing.engineState?.publishGate?.independentReviews ?? [];
-    const normalizedReviews = storedReviews.map(normalizeExhaustedReviewContinuation);
-    if (normalizedReviews.some((review, index) => review !== storedReviews[index])) {
-      updateRun(existing.id, {
-        engineState: {
-          ...existing.engineState,
-          publishGate: {
-            ...existing.engineState?.publishGate,
-            independentReviews: normalizedReviews,
-          },
-        },
-      });
-    }
+    const normalizedReviews = normalizeExhaustedReviewContinuationsForRun(existing.id);
     await (dependencies.assertReviewLaunchAllowed ?? assertIndependentReviewLaunchStateForSlot)(
       normalizedReviews,
       existing.slotId,

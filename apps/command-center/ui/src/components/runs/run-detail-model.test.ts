@@ -257,11 +257,15 @@ test('canReplayRunSteps allows terminal runs when actions are not blocked', () =
   assert.equal(canReplayRunSteps(makeRun({ status: 'failed' })), true);
   assert.equal(canReplayRunSteps(makeRun({ status: 'done' })), true);
   assert.equal(canReplayRunSteps(makeRun({ status: 'cancelled' })), true);
-  assert.equal(canReplayRunSteps(makeRun({ status: 'blocked' })), true);
+  assert.equal(canReplayRunSteps(makeRun({ status: 'blocked', slotId: 'slot-1' })), true);
+  // A blocked run must re-enter its own slot; without one, replay would only
+  // surface a backend reclaim failure.
+  assert.equal(canReplayRunSteps(makeRun({ status: 'blocked', slotId: null })), false);
   assert.equal(
     canReplayRunSteps(
       makeRun({
         status: 'blocked',
+        slotId: 'slot-1',
         decisions: [
           {
             id: 'decision-1',

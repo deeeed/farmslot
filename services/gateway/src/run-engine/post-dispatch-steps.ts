@@ -44,7 +44,6 @@ import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import {
   CLOSE_AS_SHIPPED_ACTION,
   isPublishApprovalAction,
-  normalizeExhaustedReviewContinuation,
   reviewFinalSnapshotMatchesPreparedPackage,
   shouldForceNoChangeHumanGate,
   stampPublishGateReviewStatusForPackage,
@@ -62,6 +61,7 @@ import {
   resumeInterruptedPublicationReview,
 } from './ready-gate.js';
 import {
+  normalizeExhaustedReviewContinuationsForRun,
   recoverInflightPublicationReviews,
   TerminalReviewArtifactError,
 } from './recover-inflight-reviews.js';
@@ -147,6 +147,17 @@ export function shouldSkipRetrospectiveAtComplete(run: Pick<Run, 'flowType'>): b
   return FLOW_STEPS[run.flowType].includes(S.CI_WATCH);
 }
 const MAX_PUBLISH_GATE_REVIEW_LOOPS = 5;
+/**
+ * Operator review requests are deliberately uncapped — a long incremental review
+ * loop may legitimately need many, and rejecting an accepted decision terminally
+ * blocks the run. Past this count the gate is more likely stuck in a runaway
+ * review/fix cycle than doing deliberate work, so log it once for triage.
+ */
+const HUMAN_GATE_REVIEW_REQUEST_WARN_THRESHOLD = 10;
+
+export function shouldWarnHumanGateReviewRequestRunaway(requestCount: number): boolean {
+  return requestCount === HUMAN_GATE_REVIEW_REQUEST_WARN_THRESHOLD;
+}
 
 function stampFreshReviewsForPreparedPackage(
   runId: string,
@@ -774,23 +785,7 @@ export async function executeHumanGateStep(
       // a completed review is never silently discarded.
       let recoveredReviewIds: string[] = [];
       if (current.slotId) {
-        const beforeRecovery = getRun(runId)!;
-        const storedReviews = beforeRecovery.engineState?.publishGate?.independentReviews ?? [];
-        const normalizedReviews = storedReviews.map(normalizeExhaustedReviewContinuation);
-        if (normalizedReviews.some((review, index) => review !== storedReviews[index])) {
-          updateRun(runId, {
-            engineState: {
-              ...beforeRecovery.engineState,
-              publishGate: {
-                ...beforeRecovery.engineState?.publishGate,
-                independentReviews: normalizedReviews,
-              },
-            },
-          });
-          console.log(
-            `[run-engine] run ${runId.slice(0, 8)} — restored pending final findings from an exhausted review loop`,
-          );
-        }
+        normalizeExhaustedReviewContinuationsForRun(runId);
         const recoveryResult = await recoverInflightPublicationReviews(runId, current.slotId);
         recoveredReviewIds = recoveryResult.recoveredIds;
         if (recoveredReviewIds.length) {
@@ -964,6 +959,7 @@ export async function executeHumanGateStep(
       }
     }
     let gateAction = await executeReadyGate(runId);
+    let reviewRequestLoops = 0;
     while (
       publicationApprovalGate &&
       !isPublishApprovalAction(gateAction) &&
@@ -974,6 +970,12 @@ export async function executeHumanGateStep(
         continue;
       }
       if (gateAction === 'request-extra-review' || gateAction === 'request-cross-runner-review') {
+        reviewRequestLoops += 1;
+        if (shouldWarnHumanGateReviewRequestRunaway(reviewRequestLoops)) {
+          console.warn(
+            `[run-engine] run ${runId.slice(0, 8)} — ${reviewRequestLoops} human-gate review requests on this gate; check for a runaway review/fix cycle`,
+          );
+        }
         const beforeReviewPlan = getRun(runId)!;
         const reviewedPackage = await readReadyGatePreparedPackage(beforeReviewPlan);
         // Prefer the latest request-extra-review / request-cross-runner-review

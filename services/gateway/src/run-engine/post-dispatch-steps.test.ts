@@ -21,6 +21,7 @@ import {
   type PostDispatchStepContext,
   readyGateReviewSubjectMatches,
   shouldSkipRetrospectiveAtComplete,
+  shouldWarnHumanGateReviewRequestRunaway,
 } from './post-dispatch-steps.js';
 import { shouldPrepareLocalFirstPackage } from './publication-policy.js';
 import {
@@ -48,6 +49,13 @@ function restartReplayContext(): PostDispatchStepContext {
     stepPartialIO: new Map(),
   };
 }
+
+test('human-gate review requests warn once at the runaway threshold and never block', () => {
+  // Requests stay uncapped — the threshold only fires an observability warning.
+  assert.equal(shouldWarnHumanGateReviewRequestRunaway(9), false);
+  assert.equal(shouldWarnHumanGateReviewRequestRunaway(10), true);
+  assert.equal(shouldWarnHumanGateReviewRequestRunaway(11), false);
+});
 
 test('complete-step retrospective gating defers only CI-watch flows', () => {
   assert.equal(

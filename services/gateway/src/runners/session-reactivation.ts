@@ -576,6 +576,12 @@ export async function deliverPromptToLiveRunner(
   const runner = normalizeRunner(options.runnerId);
   if (!runnerNeedsPostLaunchPrompt(runner)) return deliverPromptInPlace(options);
 
+  // `forceBusyPoll` and `recovery` are options of safe-send's busy-composer
+  // poll loop, which is what the in-place contract uses to reach an occupied
+  // retained session. The post-launch contract below does not run that loop —
+  // it waits for the runner's own send-ready state before every attempt — so
+  // there is nothing to forward them to. Thread them here only if this path
+  // ever gains a busy-composer wait.
   try {
     const delayedAcknowledgement = await probeDelayedPromptAcknowledgement(options);
     if (delayedAcknowledgement) return delayedAcknowledgement;

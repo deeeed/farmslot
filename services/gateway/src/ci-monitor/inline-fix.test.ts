@@ -9,7 +9,11 @@ import test from 'node:test';
 import { farmslotRoot } from '../core/config.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 
-import { resolveCiFixRetainedSession, resolveCiFixTemplatePath } from './inline-fix.js';
+import {
+  resolveCiFixRetainedSession,
+  resolveCiFixTemplatePath,
+  sendCiFixNudge,
+} from './inline-fix.js';
 
 test('CI fix delivery resolves the primary worker retained session', () => {
   const retained = resolveCiFixRetainedSession(
@@ -32,6 +36,51 @@ test('CI fix delivery resolves the primary worker retained session', () => {
     },
     reason: null,
   });
+});
+
+test('CI fix delivery flags a half-persisted retained session as unresolvable', () => {
+  const retained = resolveCiFixRetainedSession(
+    makeRun({
+      flowType: 'dev',
+      metrics: {
+        nudgeCount: 0,
+        runner: 'codex',
+        model: 'gpt-5.6-sol',
+        runnerSessionId: 'session-1',
+        runnerSessionPath: null,
+      },
+    }),
+  );
+
+  assert.equal(retained.binding, null);
+  assert.equal(retained.incompleteBinding, true);
+});
+
+test('CI fix nudge fails closed only on an incomplete retained binding', async () => {
+  const run = makeRun({
+    flowType: 'dev',
+    metrics: {
+      nudgeCount: 0,
+      runner: 'codex',
+      model: 'gpt-5.6-sol',
+      runnerSessionId: 'session-1',
+      runnerSessionPath: null,
+    },
+  });
+
+  // Returns before any slot I/O, so no runner/tmux fixtures are needed. A run
+  // with no retained facts at all takes the fresh-delivery path instead, which
+  // requires a live slot and is proved by the live CI-fix scenario.
+  const result = await sendCiFixNudge({
+    vars: null as never,
+    target: 'session:0.0',
+    runner: 'codex',
+    prompt: 'fix CI',
+    run,
+  });
+
+  assert.equal(result.sent, false);
+  assert.equal(result.retainedSession.incompleteBinding, true);
 });
 
 test('resolveCiFixTemplatePath prefers project-owned ci-fix.md', async () => {

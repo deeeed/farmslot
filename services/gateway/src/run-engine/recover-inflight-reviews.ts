@@ -47,7 +47,11 @@ import {
 } from '../self-review/terminal-result.js';
 import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
-import { buildPublishGateReviewStatus, independentReviewNeedsContinuation } from './gate-policy.js';
+import {
+  buildPublishGateReviewStatus,
+  independentReviewNeedsContinuation,
+  normalizeExhaustedReviewContinuation,
+} from './gate-policy.js';
 import { persistIndependentReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
 
 export { isTerminalReviewArtifactError, TerminalReviewArtifactError };
@@ -684,6 +688,36 @@ async function persistRecoveredFailedReviewer(
     `[run-engine] run ${runId.slice(0, 8)} — recovered terminal ${signal.status} publication review ${persisted.id} from reviewer context ${ctx.id}`,
   );
   return persisted.id;
+}
+
+/**
+ * Repair and persist exhausted-loop continuations for a run's stored publish
+ * gate reviews, returning the reviews the caller should act on. Shared by both
+ * recovery entry points — human-gate re-entry and an operator review request —
+ * so the read/normalize/persist shape stays defined once. Idempotent: a second
+ * pass over already-normalized reviews persists nothing.
+ */
+export function normalizeExhaustedReviewContinuationsForRun(
+  runId: string,
+): IndependentReviewStatus[] {
+  const run = getRun(runId);
+  const storedReviews = run?.engineState?.publishGate?.independentReviews ?? [];
+  if (!run) return storedReviews;
+  const normalized = storedReviews.map(normalizeExhaustedReviewContinuation);
+  if (!normalized.some((review, index) => review !== storedReviews[index])) return storedReviews;
+  updateRun(runId, {
+    engineState: {
+      ...run.engineState,
+      publishGate: {
+        ...run.engineState?.publishGate,
+        independentReviews: normalized,
+      },
+    },
+  });
+  console.log(
+    `[run-engine] run ${runId.slice(0, 8)} — restored pending final findings from an exhausted review loop`,
+  );
+  return normalized;
 }
 
 export function recoveredReviewAlreadyIngested(

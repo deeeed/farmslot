@@ -85,8 +85,10 @@ export function independentReviewNeedsContinuation(
 /**
  * Repair the old exhausted-loop shape where `feedbackSent` described an
  * earlier generation even though the final ISSUES attempt had never reached
- * the worker. A sent fix necessarily creates another attempt, so a multi-
- * attempt review that still ends in ISSUES has pending final findings.
+ * the worker. A sent fix necessarily creates another attempt, so an exhausted
+ * review whose last attempt still ends in ISSUES has pending final findings —
+ * including the single-attempt case, where the loop stopped before any fix
+ * generation landed and `feedbackSent: true` can only be legacy carry-over.
  */
 export function normalizeExhaustedReviewContinuation(
   review: IndependentReviewStatus,
@@ -99,8 +101,8 @@ export function normalizeExhaustedReviewContinuation(
     (review.issues?.length ?? 0) === 0 ||
     review.feedbackSent !== true ||
     review.recoveryContinuationPending === true ||
-    (review.attempts?.length ?? 0) < 2 ||
-    finalAttempt?.verdict !== 'issues' ||
+    !finalAttempt ||
+    finalAttempt.verdict !== 'issues' ||
     finalAttempt.unresolvedCount <= 0
   ) {
     return review;

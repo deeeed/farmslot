@@ -103,7 +103,16 @@ export async function sendCiFixNudge(input: {
   retainedSession: ReturnType<typeof resolveCiFixRetainedSession>;
 }> {
   const retainedSession = resolveCiFixRetainedSession(input.run);
-  if (retainedSession.reason) return { sent: false, retainedSession };
+  // A half-persisted binding proves neither continuity nor a fresh session, so
+  // it is the only unresolvable case. A fully absent binding (lost or never
+  // written agent context) still has a live pane, and `deliverPromptToLiveRunner`
+  // routes it through the same verified fresh post-launch contract as dispatch.
+  if (retainedSession.incompleteBinding) {
+    console.warn(
+      `[ci-monitor] run ${input.run?.id.slice(0, 8) ?? 'unknown'} — skipping CI fix delivery: ${retainedSession.reason}`,
+    );
+    return { sent: false, retainedSession };
+  }
   const runtimeDir = input.run ? await resolveProjectRuntimeDir(input.run.project) : undefined;
   const delivery = await deliverPromptToLiveRunner({
     vars: input.vars,

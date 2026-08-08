@@ -77,8 +77,27 @@ test('persisted runner session binding rejects a partial higher-priority source'
     {
       binding: null,
       reason: 'context has incomplete retained session metadata',
+      incompleteBinding: true,
     },
   );
+});
+
+test('run retained session binding marks a missing agent context as safe for fresh delivery', () => {
+  const result = resolveRunRetainedSessionBinding(
+    {
+      metrics: {
+        runnerSessionId: 'metrics-session',
+        runnerSessionPath: '/sessions/metrics.jsonl',
+      },
+      agentContexts: [],
+    },
+    null,
+  );
+
+  // An absent context record carries no half identity, so callers may deliver
+  // through the fresh post-launch contract instead of failing closed.
+  assert.equal(result.binding, null);
+  assert.equal(result.incompleteBinding, undefined);
 });
 
 test('run retained session binding prefers the selected agent context', () => {

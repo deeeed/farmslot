@@ -13,6 +13,7 @@ import {
   publishEvidenceDisplayRows,
   readyReviewBlockingDisplayReason,
   reviewAttemptLabel,
+  reviewHasPendingContinuationPhases,
   reviewPolicyLabel,
   reviewSegmentLabel,
   summarizeReviewCounts,
@@ -174,6 +175,30 @@ test('review labels use Independent review with runner diversity as policy metad
   assert.equal(reviewPolicyLabel({ crossRunner: true, runner: 'codex' }), 'runner: codex');
   assert.equal(reviewPolicyLabel({ crossRunner: true }), 'runner diversity');
   assert.equal(reviewPolicyLabel({ crossRunner: false, runner: 'codex' }), null);
+});
+
+test('pending continuation phases cover undelivered exhausted findings', () => {
+  const attempt = { unresolvedCount: 2 };
+  // Exhausted / recovery-restored rows record feedbackSent: false because the
+  // final findings never reached the worker — they still owe fix + re-review.
+  assert.equal(
+    reviewHasPendingContinuationPhases({ recoveryContinuationPending: true }, attempt),
+    true,
+  );
+  assert.equal(
+    reviewHasPendingContinuationPhases({ recoveryContinuationPending: false }, attempt),
+    false,
+  );
+  assert.equal(
+    reviewHasPendingContinuationPhases({ recoveryContinuationPending: true }, undefined),
+    false,
+  );
+  assert.equal(
+    reviewHasPendingContinuationPhases({ recoveryContinuationPending: true }, {
+      unresolvedCount: 0,
+    }),
+    false,
+  );
 });
 
 test('fixDeltaAbsenceReason explains audit-only and unavailable fix ranges', () => {

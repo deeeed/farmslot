@@ -14,10 +14,13 @@ import {
 test('remote observability install prefers the prepared immutable node-support bundle', () => {
   const command = buildRunnerObservabilityInstallCommand(
     {
-      host: 'mini.local',
-      machine: 'mini',
+      // A hostname no farm machine ever has: locality is decided against the
+      // EXECUTING machine's os.hostname(), so naming a real host (mini) makes
+      // the expected remote command disappear when the test runs on that host.
+      host: 'remote-fixture-host.local',
+      machine: 'remote-fixture-host',
       remoteRepo: '/Volumes/FD/farm/farmslot-1',
-      slotId: 'mini-ff-1',
+      slotId: 'remote-fixture-host-ff-1',
     } as never,
     'claude',
     '/Volumes/FD/farm/farmslot-1',

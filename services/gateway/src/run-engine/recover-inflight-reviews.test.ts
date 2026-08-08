@@ -1,16 +1,55 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { AgentContext, WorkerSignal } from '@farmslot/protocol';
+import type { AgentContext, IndependentReviewStatus, WorkerSignal } from '@farmslot/protocol';
+
+import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import {
   buildRecoveredReview,
   isRecoverableReviewerContext,
+  normalizeExhaustedReviewContinuationsForRun,
   recoveredReviewAlreadyIngested,
   recoveredReviewArtifactScope,
   reviewerContextIsSettled,
   reviewerContextNeedsRecovery,
 } from './recover-inflight-reviews.js';
+import { deleteTestRunIfPresent } from './test-fixtures.js';
+
+test('exhausted review continuations are normalized and persisted once per recovery pass', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'owner/repo#4242',
+    runner: 'claude',
+    slotId: 'remote-mobile-1',
+  });
+  t.after(() => deleteTestRunIfPresent(run.id));
+
+  const exhausted: IndependentReviewStatus = {
+    id: 'extra-review-1',
+    source: 'human-gate',
+    crossRunner: false,
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    issues: [{ file: 'a.ts', description: 'unresolved' }],
+    feedbackSent: true,
+    attempts: [{ loopNumber: 1, verdict: 'issues', unresolvedCount: 1 }],
+  };
+  updateRun(run.id, { engineState: { publishGate: { independentReviews: [exhausted] } } });
+
+  const normalized = normalizeExhaustedReviewContinuationsForRun(run.id);
+  assert.equal(normalized[0].feedbackSent, false);
+  assert.equal(normalized[0].recoveryContinuationPending, true);
+  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.independentReviews, normalized);
+
+  // Idempotent: the second entry point over already-normalized reviews returns
+  // the stored array untouched rather than rewriting it.
+  const second = normalizeExhaustedReviewContinuationsForRun(run.id);
+  assert.equal(second, getRun(run.id)?.engineState?.publishGate?.independentReviews);
+});
 
 test('recovery ignores the same terminal reviewer signal but accepts a later continuation', () => {
   assert.equal(

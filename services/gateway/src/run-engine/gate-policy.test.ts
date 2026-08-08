@@ -83,6 +83,30 @@ test('exhausted review normalization restores only the final undelivered finding
   assert.equal(normalizeExhaustedReviewContinuation(makeApprovingReview()).verdict, 'pass');
 });
 
+test('exhausted review normalization also repairs a single-attempt ISSUES row', () => {
+  const review = makeApprovingReview({
+    verdict: 'issues',
+    unresolvedCount: 1,
+    issues: [{ file: 'a.ts', description: 'only finding' }],
+    feedbackSent: true,
+    attempts: [{ loopNumber: 1, verdict: 'issues', unresolvedCount: 1 }],
+  });
+  assert.deepEqual(normalizeExhaustedReviewContinuation(review), {
+    ...review,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+  });
+  // A row with no attempt at all carries no evidence of an undelivered
+  // generation and stays untouched.
+  const attemptless = makeApprovingReview({
+    verdict: 'issues',
+    unresolvedCount: 1,
+    issues: [{ file: 'a.ts', description: 'only finding' }],
+    feedbackSent: true,
+  });
+  assert.equal(normalizeExhaustedReviewContinuation(attemptless), attemptless);
+});
+
 function makeApprovingReview(
   overrides: Partial<IndependentReviewStatus> = {},
 ): IndependentReviewStatus {
