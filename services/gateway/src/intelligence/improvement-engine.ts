@@ -259,6 +259,12 @@ export function initImprovementEngine(broadcast: BroadcastFn): void {
   broadcastFn = broadcast;
 }
 
+/** Broadcast through the engine's gateway-wide channel — used by the learnings
+ * router so its cards reach every client regardless of request context. */
+export function improvementBroadcast(event: string, payload: unknown): void {
+  broadcastFn(event, payload);
+}
+
 /**
  * Emit an "analyzing" placeholder improvement decision so the inbox shows
  * progress immediately when the operator clicks Accept for Learning. Returns
@@ -707,6 +713,10 @@ export async function applyImprovement(
       !change.filePath.startsWith(expectedPrefix)
     ) {
       console.warn(`[improvement] rejected filePath outside ${expectedPrefix}: ${change.filePath}`);
+      // The applier only ever writes under projects/<project>/ — an
+      // out-of-project fix is a human-gated proposal for the owning repo, so
+      // the refusal must be operator-visible instead of a silent skip.
+      refused.push({ filePath: change.filePath, reason: 'out-of-project' });
       continue;
     }
     const fullPath = path.join(farmslotRoot, change.filePath);

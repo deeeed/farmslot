@@ -102,6 +102,51 @@ async function composeFamilyLearnings(run: Run): Promise<string> {
   return sections.join('\n\n');
 }
 
+/**
+ * MANUAL-000075: every improvement analysis first routes the learnings through
+ * the system/domain classifier. SYSTEM entries continue into the improvement
+ * engine (projects/<project>/ applier); DOMAIN entries and holds surface as a
+ * separate human-gated learnings-draft card. When nothing classifies system,
+ * the improvement placeholder terminalizes instead of analyzing noise.
+ */
+async function routeThenAnalyze(
+  runId: string,
+  run: Run,
+  learnings: string,
+  placeholderId: string,
+  analyze: ImprovementAnalyzer,
+  rationale?: string,
+): Promise<void> {
+  const router = await import('../../intelligence/learnings-router.js');
+  const engine = await import('../../intelligence/improvement-engine.js');
+  const routed = await router.routeLearnings(run.project, learnings);
+  try {
+    await router.emitLearningsDraftDecision(runId, routed);
+  } catch (err) {
+    // The draft card failing (e.g. inbox IO) must not take the system arm down
+    // with it — the domain entries are still recoverable from this log line
+    // and the run's learnings.md; the system analysis proceeds regardless.
+    console.warn(
+      `[learnings-router] draft card emission failed for ${runId.slice(0, 8)}: ${(err as Error).message}`,
+    );
+  }
+  if (routed.systemContent) {
+    await analyze(
+      runId,
+      composeImprovementAnalysisContent(rationale, routed.systemContent),
+      placeholderId,
+    );
+    return;
+  }
+  const routedAway = routed.buckets.domain.length + routed.buckets.unclassified.length;
+  engine.markImprovementTerminal(
+    runId,
+    placeholderId,
+    'no-changes',
+    `All ${routedAway} learning entr(ies) routed to domain drafts or teaching holds — nothing for the project-template improvement path.`,
+  );
+}
+
 // Bounds crash-loop retries: an `analyzing` placeholder is re-run at most once
 // by startup recovery (initial attempt + one resume) before terminalizing.
 const MAX_ANALYSIS_ATTEMPTS = 2;
@@ -167,7 +212,7 @@ export async function resumeInterruptedImprovementAnalyses(): Promise<void> {
           );
           return;
         }
-        await analyzer(run.id, content, decision.id);
+        await routeThenAnalyze(run.id, run, content, decision.id, analyzer);
       })()
         .catch((err) => {
           // Terminalize instead of leaving the card `analyzing` forever — the
@@ -219,7 +264,7 @@ export async function triggerImprovementAnalysis(runId: string, run: Run): Promi
       }
       return;
     }
-    await engine.analyzeAndPropose(runId, content, placeholderId ?? undefined);
+    await routeThenAnalyze(runId, run, content, placeholderId, engine.analyzeAndPropose);
   } catch (err) {
     const message = (err as Error).message;
     console.warn(`[improvement] analysis failed: ${message}`);
@@ -270,19 +315,30 @@ export async function runProposeImprovement(
     );
   }
 
-  const analysisContent = composeImprovementAnalysisContent(params.rationale, learningsContent);
-
   // Fire-and-forget: the LLM roundtrip can take minutes. Emit a placeholder
   // immediately so the inbox shows progress + survives reload, then thread its
-  // id through to analyzeAndPropose so the success/no-changes/error branches
-  // replace this same card in place rather than spawning a fresh decision.
+  // id through so the success/no-changes/error branches replace this same card
+  // in place rather than spawning a fresh decision. The learnings are routed
+  // (system vs domain) before the improvement engine sees them; the rationale
+  // rejoins the system-only content inside routeThenAnalyze.
   const engine = await import('../../intelligence/improvement-engine.js');
   const placeholderId = engine.emitImprovementPlaceholder(params.runId);
   const analyzer: Promise<ImprovementAnalyzer> = improvementAnalyzer
     ? Promise.resolve(improvementAnalyzer)
     : Promise.resolve(engine.analyzeAndPropose satisfies ImprovementAnalyzer);
   void analyzer
-    .then((fn) => fn(params.runId, analysisContent, placeholderId ?? undefined))
+    .then((fn) =>
+      placeholderId
+        ? routeThenAnalyze(
+            params.runId,
+            existing,
+            learningsContent,
+            placeholderId,
+            fn,
+            params.rationale,
+          )
+        : undefined,
+    )
     .catch((err) => {
       const message = (err as Error).message || 'Unknown error';
       console.warn(

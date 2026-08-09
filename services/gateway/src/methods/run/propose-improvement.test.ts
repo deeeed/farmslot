@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import type { ImprovementDiffPayload, Run } from '@farmslot/protocol';
 
+import { __setLearningsClassifierForTest } from '../../intelligence/learnings-router.js';
 import { createRun, deleteRun, getRun, runRecordPath, updateRun } from '../../runs/store.js';
 
 import {
@@ -40,6 +41,11 @@ async function cleanupProposeRun(runId: string, tmp: string): Promise<void> {
   await deleteRun(runId);
   rmSync(tmp, { recursive: true, force: true });
 }
+
+// MANUAL-000075: analyses now route learnings through the system/domain
+// classifier first. Pin every entry to `system` so these tests keep asserting
+// the analyzer contract deterministically, without an LLM.
+__setLearningsClassifierForTest(async (entries) => entries.map(() => 'system' as const));
 
 test('runProposeImprovement throws when run has no taskFile', async (t) => {
   const run = createRun({

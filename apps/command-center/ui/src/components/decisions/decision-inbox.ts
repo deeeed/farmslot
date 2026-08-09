@@ -7,6 +7,7 @@ import type {
   DecisionType,
   ImprovementDiffPayload,
   ImprovementFileChange,
+  LearningsDraftPayload,
   PendingDecision,
   RetrospectivePayload,
   RunMeta,
@@ -353,6 +354,42 @@ export class DecisionInbox extends LitElement {
     } finally {
       this._chatSending = new Set([...this._chatSending].filter((id) => id !== decisionId));
     }
+  }
+
+  private _renderLearningsDraftCard(d: PendingDecision) {
+    const payload = d.payload as LearningsDraftPayload | undefined;
+    if (!payload || payload.kind !== 'learnings-draft') return nothing;
+    return html`
+      ${payload.drafts.map(
+        (draft) => html`
+          <div class="improvement-rationale">
+            <strong>${draft.id}</strong> → <code>${draft.targetPath}</code>
+            <div><em>Symptom:</em> ${draft.symptom}</div>
+            <div><em>Cause:</em> ${draft.cause}</div>
+            <div><em>Action:</em> ${draft.action}</div>
+            <div style="opacity:0.7">source: ${draft.sourceEntry.slice(0, 220)}</div>
+          </div>
+        `,
+      )}
+      ${payload.holds.map(
+        (hold) => html`
+          <div class="improvement-rationale" style="border-left-color:${colors.statusWarn};">
+            <strong>Held:</strong> ${hold.reason}
+            <div style="opacity:0.7">${hold.entry.slice(0, 220)}</div>
+          </div>
+        `,
+      )}
+      ${payload.receipt
+        ? html`<div class="improvement-rationale" style="opacity:0.8">
+            Inbox receipt:
+            ${payload.receipt.status === 'appended'
+              ? `appended for package ${payload.receipt.packageId}`
+              : payload.receipt.status === 'already-processed'
+                ? `already processed (${payload.receipt.packageId})`
+                : `skipped — ${payload.receipt.reason}`}
+          </div>`
+        : nothing}
+    `;
   }
 
   private _renderImprovementCard(d: PendingDecision) {
@@ -722,6 +759,9 @@ export class DecisionInbox extends LitElement {
                   ${this._renderChecks(d)}
                   ${d.type === 'retrospective' ? this._renderRetrospectiveCard(d) : nothing}
                   ${d.type === 'improvement' ? this._renderImprovementCard(d) : nothing}
+                  ${d.type === 'engine_learnings_draft'
+                    ? this._renderLearningsDraftCard(d)
+                    : nothing}
                   <div class="decision-actions">
                     ${workspaceCta
                       ? html`

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(decisions): render learnings-draft cards — domain antipattern drafts with target paths, teaching holds, and the inbox receipt status (MANUAL-000075).
+
 - feat(dispatch): replace the execution-template pills with a reusable filterable catalog picker — Domain/Run-mode filters with visible result counts, per-row source/domain/platform/digest provenance, filter-named empty states, and loud domain-restricted/unavailable source notices (MANUAL-000076).
 - style(runs): reformat run-detail-model and review-gate-display test to satisfy the repo Prettier gate (no behavior change).
 - fix(runs): allow a blocked run that still holds a slot and has no unresolved operator decisions to replay its pipeline after review recovery, and show the pending worker-fix/re-review phases for exhausted review loops whose findings were never delivered.

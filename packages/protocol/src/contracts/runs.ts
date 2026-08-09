@@ -897,6 +897,42 @@ export interface ReviewContinuationPayload {
   fullLiveAvailable: boolean;
 }
 
+/** One human-gated skill-antipattern draft routed from a DOMAIN learning entry.
+ * Farmslot never writes to the skills repo — the draft carries the exact text
+ * and target path for a human to open as a PR there (MANUAL-000075). */
+export interface LearningsAntipatternDraft {
+  /** Stable slug identifying the antipattern (also the target file name). */
+  id: string;
+  /** Skills-repo-relative path, e.g. domains/agentic/skills/recipe-pr-qa-review/references/antipatterns/<repo-key>/<slug>.md */
+  targetPath: string;
+  symptom: string;
+  cause: string;
+  action: string;
+  /** The original learnings.md bullet this draft was derived from. */
+  sourceEntry: string;
+}
+
+/** A learning entry the router refused to guess about — visible, never dropped. */
+export interface LearningsHold {
+  entry: string;
+  reason: string;
+}
+
+export type LearningsDraftReceipt =
+  | { status: 'appended'; packageId: string; appendedAt: string }
+  | { status: 'already-processed'; packageId: string }
+  | { status: 'skipped'; reason: string };
+
+export interface LearningsDraftPayload {
+  kind: 'learnings-draft';
+  project: string;
+  sourceRunId: string;
+  drafts: LearningsAntipatternDraft[];
+  holds: LearningsHold[];
+  /** Inbox processed.jsonl outcome when a captured package correlates to the run. */
+  receipt?: LearningsDraftReceipt;
+}
+
 export type RunDecisionPayload =
   | ReviewGatePayload
   | ReadyGatePayload
@@ -904,6 +940,7 @@ export type RunDecisionPayload =
   | SlotPickerPayload
   | BranchAffinityNudgePayload
   | ImprovementDiffPayload
+  | LearningsDraftPayload
   | RetrospectivePayload
   | CollisionPayload
   | ReviewContinuationPayload;
