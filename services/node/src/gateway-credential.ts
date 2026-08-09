@@ -85,3 +85,13 @@ function readEnvFile(path: string): Record<string, string> {
 function nonEmpty(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
+
+/**
+ * Rejections that no amount of fast retrying can fix: the presented
+ * credential resolves but is not allowed to act as a node (post-ADR-051), or
+ * authentication failed outright (bad/absent credential, or the gateway is
+ * rate-limiting). Transport errors never match these.
+ */
+export function isDeterministicAuthRejection(message: string): boolean {
+  return /node-subject principal|authentication failed/i.test(message);
+}

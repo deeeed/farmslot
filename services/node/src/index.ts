@@ -53,7 +53,7 @@ import {
 } from './commands/system-metrics.js';
 import * as tmux from './commands/tmux.js';
 import { startTmuxWorkerWatch, stopTmuxWorkerWatch } from './commands/tmux-worker-watch.js';
-import { resolveGatewayCredential } from './gateway-credential.js';
+import { isDeterministicAuthRejection, resolveGatewayCredential } from './gateway-credential.js';
 
 const GATEWAY_URL = process.env.GATEWAY_URL ?? 'ws://localhost:7777';
 const MACHINE_NAME = process.env.MACHINE_NAME ?? hostname();
@@ -71,7 +71,10 @@ function connect(): void {
 
   ws.on('open', () => {
     console.log('Connected to gateway');
-    backoff = 500;
+    // Backoff is NOT reset here: a socket that opens and is then rejected by
+    // auth would otherwise retry at the floor forever (observed post-ADR-051
+    // as a 500ms spin). It resets in authenticateThenRegister once auth
+    // actually succeeds.
     authenticateThenRegister();
   });
 
@@ -143,6 +146,9 @@ async function authenticateThenRegister(): Promise<void> {
       ...(gatewayCredential?.token ? { token: gatewayCredential.token } : {}),
       ...(gatewayCredential?.password ? { password: gatewayCredential.password } : {}),
     });
+    // Auth accepted — this connection is healthy, so future transport drops
+    // start their retry climb from the floor again.
+    backoff = 500;
     const connectFrame: RequestFrame = {
       type: 'req',
       id: 'connect-0',
@@ -156,7 +162,18 @@ async function authenticateThenRegister(): Promise<void> {
     };
     ws?.send(JSON.stringify(connectFrame));
   } catch (err) {
-    console.error(`Gateway authentication failed: ${(err as Error).message}`);
+    const message = (err as Error).message;
+    console.error(`Gateway authentication failed: ${message}`);
+    if (isDeterministicAuthRejection(message)) {
+      // Retrying faster cannot fix a credential the gateway will always
+      // reject — go straight to the ceiling and tell the operator the fix.
+      backoff = MAX_BACKOFF;
+      console.error(
+        `This gateway requires a node-subject credential for "${MACHINE_NAME}". ` +
+          `Fix: farmslot credential issue --subject node --machine ${MACHINE_NAME} --write-node-env ` +
+          `(remote machines: deliver the secret via deploy-node.sh), then the next retry picks it up.`,
+      );
+    }
     ws?.close();
   }
 }
