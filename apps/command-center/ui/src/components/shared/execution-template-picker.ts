@@ -167,8 +167,15 @@ export class ExecutionTemplatePicker extends LitElement {
     const option = row.option;
     return html`<tr
       class="row ${row.selected ? 'selected' : ''}"
+      tabindex="0"
+      role="row"
       aria-selected=${row.selected ? 'true' : 'false'}
       @click=${() => this.whenReady(() => this.emit('template-select', { id: option.id }))}
+      @keydown=${(event: KeyboardEvent) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        this.whenReady(() => this.emit('template-select', { id: option.id }));
+      }}
     >
       <td>
         <div class="tpl-title">
