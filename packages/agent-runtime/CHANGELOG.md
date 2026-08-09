@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix(execution-templates): an explicit template id excluded only by the domain gate now fails naming the enabling source and domains; the participation gate is exported (`executionTemplateSourceParticipates`/`executionTemplateEntryParticipates`) as the single authority (MANUAL-000076).
+
 ## 0.7.0 - 2026-08-03
 
 - Publish against `@farmslot/protocol` 0.18.0 so downstream recipe tooling resolves one protocol version.

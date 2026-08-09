@@ -10,6 +10,7 @@ AUTH_ENV_FILE="$FARMSLOT_ROOT/.env.local-auth"
 
 load_simple_env_file() {
   local file="$1"
+  local keep_existing="${2:-}"
   local raw line key value
   while IFS= read -r raw || [ -n "$raw" ]; do
     line="${raw#"${raw%%[![:space:]]*}"}"
@@ -35,6 +36,9 @@ load_simple_env_file() {
     if [ "${#value}" -ge 2 ] && { [ "${value:0:1}" = '"' ] || [ "${value:0:1}" = "'" ]; } && [ "${value: -1}" = "${value:0:1}" ]; then
       value="${value:1:${#value}-2}"
     fi
+    if [ -n "$keep_existing" ] && [ -n "${!key+x}" ]; then
+      continue
+    fi
     export "$key=$value"
   done < "$file"
 }
@@ -54,6 +58,17 @@ if [ -n "$_vite_override" ]; then export VITE_PORT="$_vite_override"; fi
 if [ -f "$AUTH_ENV_FILE" ]; then
   set -a; source "$AUTH_ENV_FILE"; set +a
   echo "[dev] Loaded gateway auth from $AUTH_ENV_FILE"
+fi
+
+# Load the checkout's .env last, non-overriding (shell and the files above win) —
+# the same order the CLI's loadCheckoutEnv uses (.env.ports, then .env). The gateway
+# resolves execution-template source roots (CONSENSYS_RECIPE_COOK_ROOT,
+# PERPS_RECIPE_LIBRARY_ROOT, …) from its own process env, so the dev stack must see
+# the checkout .env exactly like `yarn farmslot` already does.
+CHECKOUT_ENV_FILE="$FARMSLOT_ROOT/.env"
+if [ -f "$CHECKOUT_ENV_FILE" ]; then
+  load_simple_env_file "$CHECKOUT_ENV_FILE" keep-existing
+  echo "[dev] Loaded checkout env from $CHECKOUT_ENV_FILE"
 fi
 
 if [[ ! "${GATEWAY_PORT:-}" =~ ^[0-9]+$ || ! "${VITE_PORT:-}" =~ ^[0-9]+$ ]]; then

@@ -119,6 +119,23 @@ test('configured capability lists domains, sources, selection, and unavailable r
     assert.deepEqual(capability.unavailableSources, [
       { id: 'team:optional', reason: 'missing-environment' },
     ]);
+    // The requested domain matches, so nothing is domain-filtered.
+    assert.deepEqual(capability.filteredSources, []);
+
+    // Without a domain the perps source must surface as filtered — loudly,
+    // with the domains that would re-enable it — instead of vanishing.
+    const noDomain = configuredExecutionTemplateOptions(projectVars, {
+      flow: 'fix-bug',
+      platform: 'ios',
+      runMode: 'autonomous',
+    });
+    assert.deepEqual(noDomain.filteredSources, [
+      { id: 'team:perps', reason: 'domain-restricted', domains: ['perps'] },
+    ]);
+    assert.equal(
+      noDomain.options.some((option) => option.sourceId === 'team:perps'),
+      false,
+    );
   });
 });
 

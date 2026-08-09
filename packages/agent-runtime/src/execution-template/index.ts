@@ -34,7 +34,12 @@ export {
   packageFlowTreeTemplateSource,
   projectWorkerTemplateSource,
 } from './resolve.js';
-export { listCompatibleExecutionTemplates, selectExecutionTemplate } from './select.js';
+export {
+  executionTemplateEntryParticipates,
+  executionTemplateSourceParticipates,
+  listCompatibleExecutionTemplates,
+  selectExecutionTemplate,
+} from './select.js';
 export {
   executionTemplateReference,
   materializeExecutionTemplate,

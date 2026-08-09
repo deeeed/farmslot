@@ -78,6 +78,19 @@ export interface UnavailableExecutionTemplateSource {
   reason: 'missing-environment' | 'missing-root' | 'invalid-root';
 }
 
+/**
+ * A configured source that resolved fine but sat out this query because it is
+ * restricted to domains the caller did not request. Distinct from
+ * `unavailableSources` (root-resolution failures): these sources exist and
+ * would participate for one of the listed domains.
+ */
+export interface DomainRestrictedExecutionTemplateSource {
+  id: string;
+  reason: 'domain-restricted';
+  /** Requesting any of these domains makes the source participate. */
+  domains: string[];
+}
+
 export interface ExecutionTemplateOptions {
   configured: true;
   options: ExecutionTemplateCatalogOption[];
@@ -85,4 +98,6 @@ export interface ExecutionTemplateOptions {
   selectedId?: string;
   selectionReason?: string;
   unavailableSources: UnavailableExecutionTemplateSource[];
+  /** Sources dropped by the domain gate for this query — never silently hidden. */
+  filteredSources: DomainRestrictedExecutionTemplateSource[];
 }
