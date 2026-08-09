@@ -225,9 +225,14 @@ export interface ImprovementApplyResult {
    * current file. `suspicious-shrink`: `after` deletes a large share of the
    * file, the signature of a truncated LLM payload — re-propose with the
    * complete content, or make deliberate large deletions by hand.
+   * `truncated-tail`: the payload grew the file but lost its trailing
+   * newline — the mid-line-cut signature of a truncated submission.
    * `write-error`: the write or git stage failed (see gateway logs).
    */
-  refused?: { filePath: string; reason: 'stale-anchor' | 'suspicious-shrink' | 'write-error' }[];
+  refused?: {
+    filePath: string;
+    reason: 'stale-anchor' | 'suspicious-shrink' | 'truncated-tail' | 'write-error';
+  }[];
 }
 
 export interface LLMConfigGetResult {
