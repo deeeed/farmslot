@@ -10,8 +10,7 @@
 // never both arms for one entry, never a silent drop. Every route terminates at
 // a human gate.
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { appendFile, mkdir, readFile, rmdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -53,6 +52,9 @@ export interface LearningsEntry {
  * malformed content is held, not dropped.
  */
 export function splitLearningsEntries(blob: string): LearningsEntry[] {
+  // Workers on other platforms may hand over CRLF content; normalize so no
+  // entry text carries embedded carriage returns into prompts or cards.
+  const normalized = blob.replace(/\r\n?/g, '\n');
   const entries: LearningsEntry[] = [];
   let section: string | null = null;
   let current: string[] | null = null;
@@ -68,7 +70,7 @@ export function splitLearningsEntries(blob: string): LearningsEntry[] {
     prose = [];
   };
 
-  for (const line of blob.split('\n')) {
+  for (const line of normalized.split('\n')) {
     if (/^##\s/.test(line)) {
       flushCurrent();
       flushProse();
@@ -80,7 +82,7 @@ export function splitLearningsEntries(blob: string): LearningsEntry[] {
       flushProse();
       continue;
     }
-    if (/^- /.test(line)) {
+    if (/^[-*] /.test(line)) {
       flushCurrent();
       flushProse();
       current = [line];
@@ -106,13 +108,20 @@ export function splitLearningsEntries(blob: string): LearningsEntry[] {
 // Conservative fast path: only unmistakable orchestration/template/tooling
 // language classifies as SYSTEM without an LLM round; everything else is the
 // model's call, and anything the model fumbles lands in the teaching hold.
+// Deliberately excludes the bare platform name — a product note that merely
+// mentions farmslot must not bypass the model into the system arm.
 const SYSTEM_HEURISTIC_RE =
-  /\b(task template|worker template|task file|TASK\.md|checklist step|recipe schema|schema_version|farmslot|gateway dispatch|artifact contract|learnings\.md)\b/i;
+  /\b(task template|worker template|task file|TASK\.md|checklist step|recipe schema|schema_version|gateway dispatch|artifact contract|learnings\.md)\b/i;
 
 function heuristicKind(entry: LearningsEntry): LearningsEntryKind | null {
   return SYSTEM_HEURISTIC_RE.test(entry.text) ? 'system' : null;
 }
 
+// Entry text is WORKER-AUTHORED and untrusted. The blast radius of a
+// prompt-injected entry is bounded by construction: classifier output is
+// coerced to three tokens (anything else → teaching hold), drafter output is
+// shape/slug-validated prose on a dismiss-only human-gated card, and neither
+// path executes or writes anything outside the card.
 const CLASSIFY_SYSTEM_PROMPT = `You route learning entries from completed agent runs into exactly one bucket each:
 
 - "system": a problem or lesson about OUR run orchestration — task templates, checklists, flow steps, harness/CLI usage contracts, artifact expectations, stale tool instructions.
@@ -136,6 +145,10 @@ async function classifyViaLLM(entries: LearningsEntry[]): Promise<LearningsEntry
     maxTokens: 400,
     allowCliFallback: false,
   });
+  // Non-greedy: bucket tokens form a flat array with no brackets inside, and
+  // the FIRST array wins so trailing model prose cannot widen the match. The
+  // drafter below is greedy instead because its object fields may legitimately
+  // contain `]` inside strings.
   const match = result.text.match(/\[[\s\S]*?\]/);
   if (!match) throw new Error('learnings classifier returned no JSON array');
   const parsed: unknown = JSON.parse(match[0]);
@@ -188,9 +201,9 @@ export async function classifyLearningsEntries(
 
 // ─── Domain drafts ───
 
-type AntipatternDrafter = (
-  entries: LearningsEntry[],
-) => Promise<Array<{ id: string; symptom: string; cause: string; action: string } | null>>;
+/** Returns raw candidates — shape/slug validation happens once, in
+ * routeLearnings, so injected drafters get the same gate as the LLM. */
+type AntipatternDrafter = (entries: LearningsEntry[]) => Promise<unknown[]>;
 
 const DRAFT_SYSTEM_PROMPT = `You convert QA/product learning entries into skill antipattern drafts. For EACH numbered entry produce one object:
 {"id": "<kebab-case-slug, 3-60 chars>", "symptom": "<what the operator observes>", "cause": "<why it happens>", "action": "<what to do instead>"}
@@ -210,15 +223,29 @@ async function draftViaLLM(entries: LearningsEntry[]): ReturnType<AntipatternDra
     maxTokens: 1800,
     allowCliFallback: false,
   });
-  const match = result.text.match(/\[[\s\S]*\]/);
-  if (!match) throw new Error('antipattern drafter returned no JSON array');
-  const parsed: unknown = JSON.parse(match[0]);
+  // Draft objects may contain `]` inside strings (lazy match truncates) and
+  // trailing model prose may contain `]` too (greedy match over-captures) —
+  // try the lazy candidate first and fall back to the greedy one, taking
+  // whichever parses.
+  let parsed: unknown = null;
+  for (const pattern of [/\[[\s\S]*?\]/, /\[[\s\S]*\]/]) {
+    const match = result.text.match(pattern);
+    if (!match) continue;
+    try {
+      parsed = JSON.parse(match[0]);
+      break;
+    } catch {
+      // Candidate did not parse — the alternate capture strategy may.
+      continue;
+    }
+  }
+  if (parsed === null) throw new Error('antipattern drafter returned no parseable JSON array');
   if (!Array.isArray(parsed) || parsed.length !== entries.length) {
     throw new Error(
       `antipattern drafter returned ${Array.isArray(parsed) ? parsed.length : 'non-array'} drafts for ${entries.length} entries`,
     );
   }
-  return parsed.map((raw) => validAntipatternDraft(raw));
+  return parsed;
 }
 
 /** Shape/slug gate for generated drafts — authoritative in routeLearnings so
@@ -297,6 +324,42 @@ async function findCapturedPackage(inboxRoot: string, run: Run): Promise<InboxCo
   return null;
 }
 
+/**
+ * Advisory cross-process lock around the read-then-append on processed.jsonl —
+ * `mkdir` of the lock directory is atomic, so two gateways sharing one inbox
+ * (operator + worktree sandbox) cannot interleave the dedupe check and the
+ * append.
+ */
+async function withInboxLock<T>(inboxRoot: string, fn: () => Promise<T>): Promise<T> {
+  const lockDir = path.join(inboxRoot, 'indexes', '.processed.jsonl.lock');
+  await mkdir(path.dirname(lockDir), { recursive: true });
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    try {
+      await mkdir(lockDir);
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `timed out acquiring inbox receipt lock ${lockDir} — remove the directory if its holder crashed`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    await rmdir(lockDir).catch((err: Error) => {
+      // Release failure leaves a stale lock that the next caller reports with
+      // a removal hint after its timeout — warn here rather than masking fn's
+      // own result or error from the finally block.
+      console.warn(`[learnings-router] failed to release inbox lock ${lockDir}: ${err.message}`);
+    });
+  }
+}
+
 /** Append exactly one processed.jsonl receipt per captured package (AC5). */
 export async function appendProcessedReceipt(
   run: Run,
@@ -317,36 +380,37 @@ export async function appendProcessedReceipt(
   }
 
   const processedPath = path.join(inbox.root, 'indexes', 'processed.jsonl');
-  const existing = await readFile(processedPath, 'utf-8').catch((err: NodeJS.ErrnoException) => {
-    if (err.code === 'ENOENT') return '';
-    throw err;
-  });
-  for (const line of existing.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const record = JSON.parse(line) as { packageId?: string };
-      if (record.packageId === correlation.packageId) {
-        return { status: 'already-processed', packageId: correlation.packageId };
+  return withInboxLock(inbox.root, async () => {
+    const existing = await readFile(processedPath, 'utf-8').catch((err: NodeJS.ErrnoException) => {
+      if (err.code === 'ENOENT') return '';
+      throw err;
+    });
+    for (const line of existing.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const record = JSON.parse(line) as { packageId?: string };
+        if (record.packageId === correlation.packageId) {
+          return { status: 'already-processed' as const, packageId: correlation.packageId };
+        }
+      } catch {
+        // Malformed receipt lines cannot be matched; the append below stays
+        // exactly-once for every parseable record.
+        continue;
       }
-    } catch {
-      // Malformed receipt lines cannot be matched; the append below stays
-      // exactly-once for every parseable record.
-      continue;
     }
-  }
 
-  const appendedAt = new Date().toISOString();
-  const receiptLine = {
-    packageId: correlation.packageId,
-    processedAt: appendedAt,
-    by: 'farmslot-gateway',
-    outcome: 'proposal',
-    link: `run:${run.id} decision:${decisionId}`,
-    note: 'learnings router emitted a skill-antipattern draft for this package',
-  };
-  await mkdir(path.dirname(processedPath), { recursive: true });
-  await appendFile(processedPath, `${JSON.stringify(receiptLine)}\n`, 'utf-8');
-  return { status: 'appended', packageId: correlation.packageId, appendedAt };
+    const appendedAt = new Date().toISOString();
+    const receiptLine = {
+      packageId: correlation.packageId,
+      processedAt: appendedAt,
+      by: 'farmslot-gateway',
+      outcome: 'proposal',
+      link: `run:${run.id} decision:${decisionId}`,
+      note: 'learnings router emitted a skill-antipattern draft for this package',
+    };
+    await appendFile(processedPath, `${JSON.stringify(receiptLine)}\n`, 'utf-8');
+    return { status: 'appended' as const, packageId: correlation.packageId, appendedAt };
+  });
 }
 
 // ─── Routing + card emission ───
@@ -441,6 +505,19 @@ export async function emitLearningsDraftDecision(
   const run = getRun(runId);
   if (!run) return null;
 
+  // Restart-recovery re-runs an interrupted analysis through this same path; a
+  // run keeps at most ONE open learnings-draft card, so a resume never stacks
+  // duplicate dismiss-only cards (dismissing the first re-arms emission).
+  const existingOpen = (run.decisions ?? []).find(
+    (decision) => decision.type === LEARNINGS_DRAFT_DECISION_TYPE && !decision.resolvedAt,
+  );
+  if (existingOpen) {
+    console.log(
+      `[learnings-router] run ${runId.slice(0, 8)} already has an open learnings-draft card (${existingOpen.id}) — skipping duplicate emission`,
+    );
+    return existingOpen.id;
+  }
+
   const decisionId = `lrn-${runId}-${randomUUID()}`;
   const receipt: LearningsDraftReceipt | undefined =
     routed.drafts.length > 0 ? await appendProcessedReceipt(run, decisionId) : undefined;
@@ -456,11 +533,13 @@ export async function emitLearningsDraftDecision(
   const parts: string[] = [];
   if (routed.drafts.length > 0) {
     parts.push(
-      `${routed.drafts.length} domain antipattern draft(s) for the recipe-pr-qa-review skill — open a PR on the skills repo to land them`,
+      `${routed.drafts.length} domain antipattern ${routed.drafts.length === 1 ? 'draft' : 'drafts'} for the recipe-pr-qa-review skill — open a PR on the skills repo to land them`,
     );
   }
   if (routed.holds.length > 0) {
-    parts.push(`${routed.holds.length} entr(ies) held for teaching — nothing was dropped`);
+    parts.push(
+      `${routed.holds.length} ${routed.holds.length === 1 ? 'entry' : 'entries'} held for teaching — nothing was dropped`,
+    );
   }
   const decision: RunDecision = {
     id: decisionId,
@@ -479,9 +558,4 @@ export async function emitLearningsDraftDecision(
     slotId: run.slotId,
   });
   return decisionId;
-}
-
-/** Default inbox home hint used in docs/errors; receipts only activate via env. */
-export function defaultInboxHint(): string {
-  return path.join(homedir(), 'dev', 'experimental-distributed-learnings');
 }

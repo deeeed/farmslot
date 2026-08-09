@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { LearningsDraftPayload, Run } from '@farmslot/protocol';
+import type { LearningsDraftPayload } from '@farmslot/protocol';
 import { invalidateProjectVarsCache } from '@farmslot/slot-config';
 
 import { farmslotRoot } from '../fleet/state.js';
@@ -15,6 +15,7 @@ import {
   __setAntipatternDrafterForTest,
   __setLearningsClassifierForTest,
   antipatternTargetPath,
+  appendProcessedReceipt,
   classifyLearningsEntries,
   emitLearningsDraftDecision,
   routeLearnings,
@@ -199,8 +200,26 @@ test('AC5: emitting a draft appends exactly one processed.jsonl receipt per capt
   const routed = await routeLearnings(TEST_PROJECT, '- product screens flake on slow seeds\n');
   const firstDecision = await emitLearningsDraftDecision(run.id, routed);
   assert.ok(firstDecision);
-  const secondDecision = await emitLearningsDraftDecision(run.id, routed);
-  assert.ok(secondDecision);
+
+  // Restart-recovery re-emission: while the first card is open, a second emit
+  // must return the SAME card instead of stacking a duplicate.
+  const duplicateEmit = await emitLearningsDraftDecision(run.id, routed);
+  assert.equal(duplicateEmit, firstDecision);
+  let decisions = (getRun(run.id)!.decisions ?? []).filter(
+    (decision) => decision.type === 'engine_learnings_draft',
+  );
+  assert.equal(decisions.length, 1, 'open card must not be duplicated');
+
+  // Dismissing re-arms emission; the receipt dedupe still holds package-wide.
+  updateRun(run.id, {
+    decisions: (getRun(run.id)!.decisions ?? []).map((decision) =>
+      decision.id === firstDecision
+        ? { ...decision, resolvedAt: new Date().toISOString(), resolvedAction: 'dismiss' }
+        : decision,
+    ),
+  });
+  const thirdDecision = await emitLearningsDraftDecision(run.id, routed);
+  assert.ok(thirdDecision && thirdDecision !== firstDecision);
 
   const processed = await readFile(path.join(inbox, 'indexes', 'processed.jsonl'), 'utf-8');
   const lines = processed.split('\n').filter((line) => line.trim());
@@ -210,20 +229,56 @@ test('AC5: emitting a draft appends exactly one processed.jsonl receipt per capt
   assert.equal(record.outcome, 'proposal');
   assert.match(record.link, new RegExp(`run:${run.id}`));
 
-  const runState = getRun(run.id) as Run;
-  const decisions = (runState.decisions ?? []).filter(
+  decisions = (getRun(run.id)!.decisions ?? []).filter(
     (decision) => decision.type === 'engine_learnings_draft',
   );
   assert.equal(decisions.length, 2);
   const firstPayload = decisions[0]!.payload as LearningsDraftPayload;
-  const secondPayload = decisions[1]!.payload as LearningsDraftPayload;
+  const thirdPayload = decisions[1]!.payload as LearningsDraftPayload;
   assert.equal(firstPayload.receipt?.status, 'appended');
-  assert.equal(secondPayload.receipt?.status, 'already-processed');
+  assert.equal(thirdPayload.receipt?.status, 'already-processed');
   // Every route terminates at a human gate: dismiss only, no auto-merge arm.
   assert.deepEqual(
     decisions.map((decision) => decision.actions.map((action) => action.id)),
     [['dismiss'], ['dismiss']],
   );
+});
+
+test('concurrent receipt appends stay exactly-once under the inbox lock', async (t) => {
+  setupProject({ repoKey: 'testrepo' });
+  const inbox = mkdtempSync(path.join(tmpdir(), 'lrn-inbox-race-'));
+  const ticket = 'LRN-77';
+  mkdirSync(path.join(inbox, 'indexes', 'by-ticket'), { recursive: true });
+  writeFileSync(
+    path.join(inbox, 'indexes', 'by-ticket', `${ticket.toLowerCase()}.jsonl`),
+    `${JSON.stringify({ packageId: 'pkg-race', taskKey: 'lrn-77', ticket })}\n`,
+  );
+  process.env.FARMSLOT_LEARNINGS_INBOX = inbox;
+  const run = createRun({ flowType: 'dev', project: TEST_PROJECT, ticketOrPr: ticket });
+  t.after(async () => {
+    delete process.env.FARMSLOT_LEARNINGS_INBOX;
+    teardownProject();
+    await cleanupRun(run.id);
+    rmSync(inbox, { recursive: true, force: true });
+  });
+
+  const results = await Promise.all(
+    Array.from({ length: 5 }, (_, index) => appendProcessedReceipt(run, `dec-${index}`)),
+  );
+  const appended = results.filter((receipt) => receipt.status === 'appended');
+  const deduped = results.filter((receipt) => receipt.status === 'already-processed');
+  assert.equal(appended.length, 1, 'exactly one concurrent caller may append');
+  assert.equal(deduped.length, 4);
+  const processed = await readFile(path.join(inbox, 'indexes', 'processed.jsonl'), 'utf-8');
+  assert.equal(processed.split('\n').filter((line) => line.trim()).length, 1);
+});
+
+test('CRLF blobs and asterisk bullets split cleanly', () => {
+  const entries = splitLearningsEntries('- unix bullet\r\n  continued\r\n\r\n* star bullet\r\n');
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0]?.text, '- unix bullet\n  continued');
+  assert.equal(entries[1]?.text, '* star bullet');
+  assert.doesNotMatch(entries[0]!.text, /\r/);
 });
 
 test('no inbox configured yields an explicit skipped receipt, and nothing is dropped end-to-end', async (t) => {

@@ -138,12 +138,11 @@ async function routeThenAnalyze(
     );
     return;
   }
-  const routedAway = routed.buckets.domain.length + routed.buckets.unclassified.length;
   engine.markImprovementTerminal(
     runId,
     placeholderId,
     'no-changes',
-    `All ${routedAway} learning entr(ies) routed to domain drafts or teaching holds — nothing for the project-template improvement path.`,
+    `Routed ${routed.drafts.length} domain ${routed.drafts.length === 1 ? 'draft' : 'drafts'} and ${routed.holds.length} teaching ${routed.holds.length === 1 ? 'hold' : 'holds'} — nothing classified for the project-template improvement path.`,
   );
 }
 
