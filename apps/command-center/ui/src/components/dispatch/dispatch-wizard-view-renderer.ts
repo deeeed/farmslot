@@ -14,9 +14,9 @@ import type {
   SlotStatus,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
-import { EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX } from '@farmslot/protocol';
 
 import '../queue/dispatch-queue-panel.js';
+import '../shared/execution-template-picker.js';
 import '../shared/hydrating-placeholder.js';
 
 import type { EffortLevel } from '../../utils/runner-options.js';
@@ -307,125 +307,28 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
     </div>`;
   }
   if (ctx.executionTemplates) {
-    const domains = ctx.executionTemplates.availableDomains;
-    const runWhenReady = (action: () => void): void => {
-      if (!ctx.templateOptionsLoading) action();
-    };
     return html`<div
       class="template-selector-region ${ctx.templateOptionsLoading ? 'refreshing' : ''}"
       aria-busy=${ctx.templateOptionsLoading ? 'true' : 'false'}
     >
-      ${domains.length > 0
-        ? html`
-            <div class="config-group">
-              <div class="section-label">Domain</div>
-              <div class="pill-row">
-                <button
-                  class="pill ${ctx.domain === '' ? 'selected' : ''}"
-                  aria-disabled=${ctx.templateOptionsLoading}
-                  @click=${() => runWhenReady(() => ctx.setDomain(''))}
-                >
-                  general
-                </button>
-                ${domains.map(
-                  (domain) => html`
-                    <button
-                      class="pill ${ctx.domain === domain ? 'selected' : ''}"
-                      aria-disabled=${ctx.templateOptionsLoading}
-                      @click=${() => runWhenReady(() => ctx.setDomain(domain))}
-                    >
-                      ${domain}
-                    </button>
-                  `,
-                )}
-              </div>
-            </div>
-          `
-        : nothing}
-      <div class="config-group">
-        <div class="section-label">Run mode</div>
-        <div class="pill-row">
-          ${(['autonomous', 'interactive'] as const).map(
-            (mode) => html`
-              <button
-                class="pill ${ctx.mode === mode ? 'selected' : ''}"
-                aria-disabled=${ctx.templateOptionsLoading}
-                @click=${() => runWhenReady(() => ctx.setMode(mode))}
-              >
-                ${mode}
-              </button>
-            `,
-          )}
-        </div>
-      </div>
       <div class="config-group">
         <div class="section-label">Execution template</div>
-        <div class="pill-row">
-          ${ctx.executionTemplates.options.length === 0
-            ? html`<span class="section-help">No compatible execution template.</span>`
-            : ctx.executionTemplates.options.map(
-                (option) => html`
-                  <div class="template-option">
-                    <button
-                      class="pill template-select ${ctx.selectedExecutionTemplateId === option.id
-                        ? 'selected'
-                        : ''}"
-                      title=${`${option.id} · ${option.sourceId} · ${option.sha256.slice(0, 12)}`}
-                      aria-disabled=${ctx.templateOptionsLoading}
-                      @click=${() => runWhenReady(() => ctx.setExecutionTemplateId(option.id))}
-                    >
-                      ${option.title}
-                      ${option.description
-                        ? html`<span class="pill-description">${option.description}</span>`
-                        : nothing}
-                      <span class="pill-key">
-                        ${option.sourceId} · ${option.platforms.join('/')} ·
-                        ${option.runMode ?? 'any mode'}
-                        ${option.labels
-                          .filter((label) =>
-                            label.startsWith(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX),
-                          )
-                          .map((label) => ` · ${label}`)}
-                      </span>
-                    </button>
-                    <button
-                      class="template-preview"
-                      title=${`Preview ${option.title}`}
-                      aria-label=${`Preview ${option.title}`}
-                      aria-disabled=${ctx.templateOptionsLoading}
-                      @click=${(event: MouseEvent) =>
-                        runWhenReady(() =>
-                          ctx.previewExecutionTemplate(option, event.currentTarget as HTMLElement),
-                        )}
-                    >
-                      <svg
-                        aria-hidden="true"
-                        viewBox="0 0 24 24"
-                        width="16"
-                        height="16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
-                      >
-                        <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
-                        <circle cx="12" cy="12" r="2.8"></circle>
-                      </svg>
-                    </button>
-                  </div>
-                `,
-              )}
-        </div>
-        <div class="section-help">
-          ${ctx.executionTemplates.selectionReason
-            ? `Default selection: ${ctx.executionTemplates.selectionReason}. `
-            : ''}
-          The gateway validates the exact source and digest before claiming the slot.
-          ${ctx.executionTemplates.unavailableSources.length > 0
-            ? ` Unavailable sources: ${ctx.executionTemplates.unavailableSources
-                .map((source) => `${source.id} (${source.reason})`)
-                .join(', ')}.`
-            : ''}
-        </div>
+        <execution-template-picker
+          .catalog=${ctx.executionTemplates}
+          .selectedId=${ctx.selectedExecutionTemplateId}
+          .domain=${ctx.domain}
+          .mode=${ctx.mode}
+          .loading=${ctx.templateOptionsLoading}
+          @template-select=${(event: CustomEvent<{ id: string }>) =>
+            ctx.setExecutionTemplateId(event.detail.id)}
+          @domain-change=${(event: CustomEvent<{ domain: string }>) =>
+            ctx.setDomain(event.detail.domain)}
+          @mode-change=${(event: CustomEvent<{ mode: 'interactive' | 'autonomous' }>) =>
+            ctx.setMode(event.detail.mode)}
+          @template-preview=${(
+            event: CustomEvent<{ option: ExecutionTemplateCatalogOption; trigger?: HTMLElement }>,
+          ) => ctx.previewExecutionTemplate(event.detail.option, event.detail.trigger)}
+        ></execution-template-picker>
       </div>
     </div>`;
   }

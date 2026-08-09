@@ -38,6 +38,7 @@ import {
   sha256Text,
 } from './snapshot.js';
 import { resolveConfiguredExecutionTemplateSources } from './source-config.js';
+import { ExecutionTemplateSelectionError } from './types.js';
 
 function withTemp(fn: (root: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), 'farmslot-exec-tpl-'));
@@ -331,6 +332,134 @@ test('configured selection prefers one exact-domain candidate before a general c
       listExecutionTemplates({ sources: [tradingSource] })[0]?.labels.includes('domain:trading'),
       true,
     );
+  });
+});
+
+test('explicit id excluded only by the source domain gate names the enabling domain', () => {
+  withTemp((root) => {
+    const generalRoot = join(root, 'general');
+    const perpsRoot = join(root, 'perps');
+    mkdirSync(join(generalRoot, 'review-pr'), { recursive: true });
+    mkdirSync(join(perpsRoot, 'review-pr'), { recursive: true });
+    writeFileSync(join(generalRoot, 'review-pr', 'default.md'), '# General\n\n- [ ] Run\n');
+    writeFileSync(join(perpsRoot, 'review-pr', 'autonomous.mobile.md'), '# Perps\n\n- [ ] Run\n');
+
+    const perpsSource = packageFlowTreeTemplateSource('perps', perpsRoot);
+    perpsSource.kind = 'workspace';
+    perpsSource.domains = ['perps'];
+    const sources = [packageFlowTreeTemplateSource('canonical', generalRoot), perpsSource];
+
+    assert.throws(
+      () =>
+        selectExecutionTemplate({
+          sources,
+          flow: 'review-pr',
+          platform: 'mobile',
+          runMode: 'autonomous',
+          explicitId: 'review-pr/autonomous.mobile',
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof ExecutionTemplateSelectionError);
+        assert.equal(error.code, 'missing-or-incompatible');
+        assert.match(error.message, /domain-restricted/);
+        assert.match(error.message, /package:perps \(domain: perps\)/);
+        return true;
+      },
+    );
+
+    const selected = selectExecutionTemplate({
+      sources,
+      flow: 'review-pr',
+      platform: 'mobile',
+      runMode: 'autonomous',
+      domain: 'perps',
+      explicitId: 'review-pr/autonomous.mobile',
+    });
+    assert.equal(selected.entry.sourceId, 'package:perps');
+    assert.equal(selected.reason, 'explicit');
+  });
+});
+
+test('entry-label domain gates are named, wrong domains still point at the right one, and plain misses stay generic', () => {
+  withTemp((root) => {
+    const catalogRoot = join(root, 'catalog');
+    mkdirSync(join(catalogRoot, 'dev'), { recursive: true });
+    writeFileSync(
+      join(catalogRoot, 'dev', 'special.md'),
+      '---\nlabels: [domain:money-movement]\n---\n\n# Special\n\n- [ ] Run\n',
+    );
+    writeFileSync(join(catalogRoot, 'dev', 'default.md'), '# General\n\n- [ ] Run\n');
+    const sources = [packageFlowTreeTemplateSource('catalog', catalogRoot)];
+    const base = {
+      sources,
+      flow: 'dev',
+      platform: 'mobile',
+      runMode: 'autonomous' as const,
+    };
+
+    assert.throws(
+      () => selectExecutionTemplate({ ...base, explicitId: 'dev/special' }),
+      /domain-restricted.*money-movement/s,
+    );
+
+    // The wrong requested domain must still name the enabling one.
+    assert.throws(
+      () => selectExecutionTemplate({ ...base, domain: 'perps', explicitId: 'dev/special' }),
+      /money-movement/,
+    );
+
+    // A genuinely absent id keeps the generic message — no invented domains.
+    assert.throws(
+      () => selectExecutionTemplate({ ...base, explicitId: 'dev/nope' }),
+      (error: unknown) => {
+        assert.ok(error instanceof ExecutionTemplateSelectionError);
+        assert.match(error.message, /is missing or incompatible/);
+        assert.doesNotMatch(error.message, /domain-restricted/);
+        return true;
+      },
+    );
+  });
+});
+
+test('mixed source-domain and entry-label gates name only domains that actually work', () => {
+  withTemp((root) => {
+    const catalogRoot = join(root, 'catalog');
+    mkdirSync(join(catalogRoot, 'dev'), { recursive: true });
+    // Source restricted to perps; the entry also carries a money-movement
+    // frontmatter label (plus the injected domain:perps). Only perps passes
+    // BOTH gates — the diagnostic must not advertise money-movement, which the
+    // source gate would reject.
+    writeFileSync(
+      join(catalogRoot, 'dev', 'mixed.md'),
+      '---\nlabels: [domain:money-movement]\n---\n\n# Mixed\n\n- [ ] Run\n',
+    );
+    const mixedSource = packageFlowTreeTemplateSource('mixed', catalogRoot);
+    mixedSource.kind = 'workspace';
+    mixedSource.domains = ['perps'];
+    const base = {
+      sources: [mixedSource],
+      flow: 'dev',
+      platform: 'mobile',
+      runMode: 'autonomous' as const,
+      explicitId: 'dev/mixed',
+    };
+
+    for (const domain of [undefined, 'money-movement']) {
+      assert.throws(
+        () => selectExecutionTemplate({ ...base, ...(domain ? { domain } : {}) }),
+        (error: unknown) => {
+          assert.ok(error instanceof ExecutionTemplateSelectionError);
+          assert.match(error.message, /domain-restricted/);
+          assert.match(error.message, /\(domain: perps\)/);
+          assert.doesNotMatch(error.message, /money-movement/);
+          return true;
+        },
+      );
+    }
+
+    const selected = selectExecutionTemplate({ ...base, domain: 'perps' });
+    assert.equal(selected.entry.id, 'dev/mixed');
+    assert.equal(selected.reason, 'explicit');
   });
 });
 

@@ -6,6 +6,8 @@ import type {
   DispatchCandidatesResult,
   EvalExperimentCreateResult,
   EvalTrialStartResult,
+  ExecutionTemplateCatalogOption,
+  ExecutionTemplateOptions,
   FamilyObservabilityRunSummary,
   FamilyObservabilitySnapshot,
   FleetStatus,
@@ -33,6 +35,7 @@ import '../components/pr-dashboard/pr-board.js';
 import '../components/decisions/decision-inbox.js';
 import '../components/terminal/terminal-view.js';
 import '../components/terminal/split-view.js';
+import '../components/shared/execution-template-picker.js';
 import '../components/shared/summary-bar.js';
 import '../components/violations/violation-feed.js';
 import '../components/progress-tracker/progress-tracker.js';
@@ -153,6 +156,7 @@ type DevRoute =
   | 'slot-load-run'
   | 'recipe-provenance-matrix'
   | 'dispatch-wizard'
+  | 'execution-template-picker'
   | 'dispatch-queue'
   | 'backlog'
   | 'roadmap'
@@ -205,6 +209,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup
   { route: 'workspace', label: 'Workspace', group: 'screens' },
   { route: 'slot-view', label: 'Slot View', group: 'screens' },
   { route: 'dispatch-wizard', label: 'Dispatch Wizard', group: 'screens' },
+  { route: 'execution-template-picker', label: 'Execution Template Picker', group: 'components' },
   { route: 'dispatch-queue', label: 'Dispatch Queue', group: 'screens' },
   { route: 'backlog', label: 'Backlog', group: 'screens' },
   { route: 'roadmap', label: 'Roadmap', group: 'screens' },
@@ -265,6 +270,9 @@ const VALID_DEV_ROUTES = new Set<DevRoute>(DEV_ROUTES.map(({ route }) => route))
 @customElement('dev-harness')
 export class DevHarness extends LitElement {
   @state() private route: DevRoute = 'index';
+  @state() private _pickerDomain = 'perps';
+  @state() private _pickerMode: 'autonomous' | 'interactive' = 'autonomous';
+  @state() private _pickerSelectedId = '';
   @state() private _captureMode = false;
   @state() private _selectedFile = '';
   @state() private _recipeProvenanceScenarioId = 'decision-review';
@@ -413,6 +421,8 @@ export class DevHarness extends LitElement {
         return this.renderRecipeProvenanceMatrix();
       case 'dispatch-wizard':
         return this.renderDispatchWizard();
+      case 'execution-template-picker':
+        return this.renderExecutionTemplatePicker();
       case 'dispatch-queue':
         return this.renderDispatchQueue();
       case 'backlog':
@@ -3202,6 +3212,141 @@ All checks passed.`;
           .mockProjectConfigs=${projectConfigs}
           .mockPriorRuns=${priorRuns}
         ></dispatch-wizard>
+      </div>
+    `;
+  }
+
+  // Simulates the gateway's domain/run-mode catalog query so the picker's
+  // refiltering, empty, and partially-unavailable states are demoable offline.
+  private _pickerCatalog(
+    domain: string,
+    mode: 'autonomous' | 'interactive',
+  ): ExecutionTemplateOptions {
+    const all: ExecutionTemplateCatalogOption[] = [
+      {
+        id: 'fix-bug/default',
+        sourceId: 'project:example-mobile-farm',
+        sourceKind: 'project',
+        flow: 'fix-bug',
+        runMode: 'autonomous',
+        platforms: ['mobile'],
+        labels: [],
+        relativePath: 'fix-bug.md',
+        sha256: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90',
+        title: 'Project fix-bug default',
+      },
+      {
+        id: 'fix-bug/settlement-interactive.mobile',
+        sourceId: 'team:money-movement',
+        sourceKind: 'workspace',
+        flow: 'fix-bug',
+        runMode: 'interactive',
+        platforms: ['mobile'],
+        labels: ['domain:money-movement'],
+        relativePath: 'fix-bug/settlement-interactive.mobile.md',
+        sha256: 'b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1',
+        title: 'Money-movement settlement walkthrough',
+      },
+      {
+        id: 'fix-bug/autonomous.mobile',
+        sourceId: 'package:consensys-recipe-cook',
+        sourceKind: 'package',
+        flow: 'fix-bug',
+        runMode: 'autonomous',
+        platforms: ['mobile'],
+        labels: [],
+        relativePath: 'fix-bug/autonomous.mobile.md',
+        sha256: 'c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2',
+        title: 'Recipe-cook autonomous mobile',
+        description: 'Shared catalog checklist for autonomous mobile bug proofs.',
+      },
+      {
+        id: 'fix-bug/sentry-cuf-autonomous.mobile',
+        sourceId: 'team:perps',
+        sourceKind: 'workspace',
+        flow: 'fix-bug',
+        runMode: 'autonomous',
+        platforms: ['mobile'],
+        labels: ['domain:perps'],
+        relativePath: 'fix-bug/sentry-cuf-autonomous.mobile.md',
+        sha256: 'd4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3',
+        title: 'Perps Sentry CUF proof',
+        description: 'Choose for autonomous Perps bug reproduction on Mobile.',
+      },
+      {
+        id: 'fix-bug/settlement-autonomous.mobile',
+        sourceId: 'team:money-movement',
+        sourceKind: 'workspace',
+        flow: 'fix-bug',
+        runMode: 'autonomous',
+        platforms: ['mobile'],
+        labels: ['domain:money-movement'],
+        relativePath: 'fix-bug/settlement-autonomous.mobile.md',
+        sha256: 'e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
+        title: 'Money-movement settlement proof',
+      },
+    ];
+    const domainSources: Record<string, string> = {
+      'team:perps': 'perps',
+      'team:money-movement': 'money-movement',
+    };
+    const options = all.filter((option) => {
+      if (option.runMode !== mode) return false;
+      const optionDomain = option.labels
+        .find((label) => label.startsWith('domain:'))
+        ?.slice('domain:'.length);
+      return optionDomain === undefined || optionDomain === domain;
+    });
+    const filteredSources = Object.entries(domainSources)
+      .filter(([, sourceDomain]) => sourceDomain !== domain)
+      .map(([id, sourceDomain]) => ({
+        id,
+        reason: 'domain-restricted' as const,
+        domains: [sourceDomain],
+      }));
+    return {
+      configured: true,
+      options,
+      availableDomains: ['money-movement', 'perps'],
+      ...(options.length > 0
+        ? { selectedId: options[0]!.id, selectionReason: 'configured-default' }
+        : {}),
+      unavailableSources: [{ id: 'team:optional', reason: 'missing-environment' }],
+      filteredSources,
+    };
+  }
+
+  private renderExecutionTemplatePicker() {
+    const catalog = this._pickerCatalog(this._pickerDomain, this._pickerMode);
+    return html`
+      <div class="dev-section">
+        <h2>Execution Template Picker — multi-domain, multi-mode catalog</h2>
+        <p>
+          Domain and Run mode live inside the picker; switching them refilters the table, updates
+          the count, and surfaces domain-restricted and unavailable sources. The
+          <code>interactive</code> mode with a domain shows the filter-named empty state.
+        </p>
+        <execution-template-picker
+          .catalog=${catalog}
+          .selectedId=${this._pickerSelectedId}
+          .domain=${this._pickerDomain}
+          .mode=${this._pickerMode}
+          @template-select=${(event: CustomEvent<{ id: string }>) => {
+            // Unlike the dispatch wizard (which resets selection on filter
+            // change), the harness keeps the selection so the picker's
+            // invalid-selection state stays demoable.
+            this._pickerSelectedId = event.detail.id;
+          }}
+          @domain-change=${(event: CustomEvent<{ domain: string }>) => {
+            this._pickerDomain = event.detail.domain;
+          }}
+          @mode-change=${(event: CustomEvent<{ mode: 'autonomous' | 'interactive' }>) => {
+            this._pickerMode = event.detail.mode;
+          }}
+          @template-preview=${(event: CustomEvent<{ option: ExecutionTemplateCatalogOption }>) => {
+            alert(`Preview requested: ${event.detail.option.id}`);
+          }}
+        ></execution-template-picker>
       </div>
     `;
   }

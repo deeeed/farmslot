@@ -5,7 +5,9 @@ import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 export const dispatchWizardStyles = css`
   :host {
     /* Preserve the three template selector groups while their catalog refreshes. */
-    --template-selector-min-height: 174px;
+    /* Sized for the catalog picker's filter row + table header + a few rows so
+       a refetch does not collapse the region and jump the layout. */
+    --template-selector-min-height: 220px;
     display: flex;
     flex-direction: column;
     height: 100%;

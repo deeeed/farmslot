@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(execution-templates): `ExecutionTemplateOptions.filteredSources` reports sources dropped by the domain gate (`domain-restricted` + enabling domains) instead of hiding them (MANUAL-000076).
 - feat(intelligence): add `truncated-tail` to `ImprovementApplyResult.refused` reasons (MANUAL-000104).
 
 - feat(intelligence): `ImprovementApplyResult.refused` — per-file apply refusals (`stale-anchor` | `suspicious-shrink`) so clients can show why a card stayed pending (MANUAL-000098).

@@ -186,6 +186,11 @@ function formatCatalogHuman(catalog: ExecutionTemplateOptions): string {
   for (const source of catalog.unavailableSources) {
     lines.push(`${yellow('unavailable')} ${source.id}: ${source.reason}`);
   }
+  for (const source of catalog.filteredSources ?? []) {
+    lines.push(
+      `${yellow('filtered')} ${source.id}: ${source.reason} (pass --domain ${source.domains.join('|')})`,
+    );
+  }
   if (catalog.selectionReason) lines.push(`${dim('selection')} ${catalog.selectionReason}`);
   return `${lines.join('\n')}\n`;
 }

@@ -2,10 +2,12 @@ import path from 'node:path';
 
 import {
   type ExecutionTemplateEntry,
+  executionTemplateEntryParticipates,
   executionTemplateReference,
   ExecutionTemplateSelectionError,
   type ExecutionTemplateSource,
   executionTemplateSourceDirty,
+  executionTemplateSourceParticipates,
   executionTemplateSourceRevision,
   listCompatibleExecutionTemplates,
   listExecutionTemplates,
@@ -73,19 +75,54 @@ function configuredCatalog(projectVars: ProjectVars): {
   };
 }
 
-function sourceParticipates(source: ExecutionTemplateSource, domain: string | undefined): boolean {
-  return !source.domains || (domain !== undefined && source.domains.includes(domain));
-}
-
-function entryParticipates(entry: ExecutionTemplateEntry, domain: string | undefined): boolean {
-  const domainLabels = entry.labels.filter((label) =>
-    label.startsWith(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX),
-  );
-  return (
-    domainLabels.length === 0 ||
-    (domain !== undefined &&
-      domainLabels.includes(`${EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX}${domain}`))
-  );
+function domainFilteredSources(
+  sources: ExecutionTemplateSource[],
+  query: ExecutionTemplateCatalogQuery,
+): ExecutionTemplateOptions['filteredSources'] {
+  const enablingBySource = new Map<string, Set<string>>();
+  const participating: ExecutionTemplateSource[] = [];
+  for (const source of sources) {
+    if (executionTemplateSourceParticipates(source, query.domain)) {
+      participating.push(source);
+    } else {
+      enablingBySource.set(source.id, new Set(source.domains ?? []));
+    }
+  }
+  // Entry-label gates inside participating sources hide templates just as
+  // silently as a dropped source; report them under their source id too.
+  const relevant = listExecutionTemplates({
+    sources: participating,
+    flow: query.flow,
+    includeShadowed: false,
+    ...(query.platform ? { platform: query.platform } : {}),
+    ...(query.runMode ? { runMode: query.runMode } : {}),
+  });
+  for (const entry of relevant) {
+    if (executionTemplateEntryParticipates(entry, query.domain)) continue;
+    const entryDomains = entry.labels
+      .filter((label) => label.startsWith(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX))
+      .map((label) => label.slice(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX.length));
+    // Same intersection rule as the explicit-id diagnostic in select.ts: when
+    // the source also declares domains, only domains passing BOTH gates may be
+    // advertised — an empty intersection is an unreachable authoring error.
+    const source = sources.find((candidate) => candidate.id === entry.sourceId);
+    const advertised =
+      source?.domains && source.domains.length > 0
+        ? entryDomains.filter((domain) => source.domains!.includes(domain))
+        : entryDomains;
+    if (advertised.length === 0) continue;
+    const domains = enablingBySource.get(entry.sourceId) ?? new Set<string>();
+    for (const domain of advertised) domains.add(domain);
+    enablingBySource.set(entry.sourceId, domains);
+  }
+  return [...enablingBySource.entries()]
+    .filter(([, domains]) => domains.size > 0)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, domains]) => ({
+      id,
+      reason: 'domain-restricted' as const,
+      domains: [...domains].sort((a, b) => a.localeCompare(b)),
+    }));
 }
 
 function catalogOption(entry: ExecutionTemplateEntry): ExecutionTemplateCatalogOption {
@@ -134,12 +171,14 @@ export function configuredExecutionTemplateOptions(
           ...(query.domain ? { domain: query.domain } : {}),
         })
       : listExecutionTemplates({
-          sources: sources.filter((source) => sourceParticipates(source, query.domain)),
+          sources: sources.filter((source) =>
+            executionTemplateSourceParticipates(source, query.domain),
+          ),
           flow: query.flow,
           includeShadowed: false,
           ...(query.platform ? { platform: query.platform } : {}),
           ...(query.runMode ? { runMode: query.runMode } : {}),
-        }).filter((entry) => entryParticipates(entry, query.domain));
+        }).filter((entry) => executionTemplateEntryParticipates(entry, query.domain));
 
   let selected: SelectedExecutionTemplate | undefined;
   if (query.platform && query.runMode) {
@@ -176,6 +215,7 @@ export function configuredExecutionTemplateOptions(
         }
       : {}),
     unavailableSources: unavailable,
+    filteredSources: domainFilteredSources(sources, query),
   };
 }
 
