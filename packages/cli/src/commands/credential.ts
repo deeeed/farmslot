@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 import type { Command } from 'commander';
 
@@ -58,6 +58,10 @@ export function registerCredentialCommands(program: Command): void {
         const { output, client, target } = resolveContext(cmd);
         const emit = createEmitter(output, cmd);
         try {
+          // Pre-flight the secret-file path BEFORE consuming the one-time
+          // issuance: the common operator errors (file exists, parent dir
+          // missing) must fail while re-running is still free.
+          if (opts.secretFile) assertSecretFileCreatable(opts.secretFile);
           const principalId = await prepareIssuePrincipal(opts, client);
           const displayName = opts.name?.trim() || opts.principal;
           const issue = opts.offline
@@ -67,9 +71,32 @@ export function registerCredentialCommands(program: Command): void {
                 displayName,
               });
           if (opts.writeNodeEnv) writeNodeCredential(issue.secret);
-          const secretFilePath = opts.secretFile
-            ? writeSecretFile(opts.secretFile, issue.secret)
-            : undefined;
+          let secretFilePath: string | undefined;
+          if (opts.secretFile) {
+            try {
+              secretFilePath = writeSecretFile(opts.secretFile, issue.secret);
+            } catch (writeError) {
+              // The one-time secret would otherwise be lost with the
+              // credential live. Fail closed: revoke what we just issued so
+              // the operator simply re-runs; only if the revoke ALSO fails
+              // does the secret fall back to the normal one-time display.
+              const revoked = await tryRevokeIssuedCredential(opts.offline, client, issue);
+              if (revoked) {
+                throw Object.assign(
+                  new Error(
+                    `secret file write failed (${(writeError as Error).message}); ` +
+                      `credential '${issue.credential.id}' was revoked — fix the path and re-run`,
+                  ),
+                  { code: 'SECRET_FILE_WRITE_FAILED' },
+                );
+              }
+              output.write(
+                `WARNING: secret file write failed (${(writeError as Error).message}) and the ` +
+                  `revoke also failed. Secret (shown once): ${issue.secret}\n` +
+                  `Revoke manually if unused: farmslot credential revoke ${issue.credential.id}\n`,
+              );
+            }
+          }
           let persistedProfile: string | undefined;
           if (!opts.offline && issue.activationLatched) {
             persistedProfile = persistOwnerCredential(
@@ -79,10 +106,7 @@ export function registerCredentialCommands(program: Command): void {
             );
           }
           if (emit.machine) {
-            emit.ok({
-              ...credentialIssueMachineResult(issue),
-              ...(secretFilePath ? { secretFile: secretFilePath } : {}),
-            });
+            emit.ok(credentialIssueMachineResult(issue, secretFilePath));
           } else {
             output.write(
               `Issued credential '${issue.credential.displayName}' for '${issue.credential.principalId}'.\n`,
@@ -235,18 +259,58 @@ function optionalRole(value: string | undefined): Role | undefined {
   throw Object.assign(new Error('--role must be admin or operator'), { code: 'INVALID_PARAMS' });
 }
 
-export function credentialIssueMachineResult(issue: CredentialIssueResult): {
+export function credentialIssueMachineResult(
+  issue: CredentialIssueResult,
+  secretFile?: string,
+): {
   credential: CredentialIssueResult['credential'];
   activationLatched: boolean;
   adminGrant?: CredentialIssueResult['credential'];
   secretReturned: true;
+  secretFile?: string;
 } {
   return {
     credential: issue.credential,
     activationLatched: issue.activationLatched ?? false,
     ...(issue.adminGrant ? { adminGrant: issue.adminGrant.credential } : {}),
     secretReturned: true,
+    ...(secretFile ? { secretFile } : {}),
   };
+}
+
+/** Pre-flight for --secret-file: same failures as the exclusive-create write,
+ * raised BEFORE the one-time issuance is consumed. Inherently TOCTOU — the
+ * write itself stays exclusive — but catches the common operator mistakes.
+ * Exported for tests. */
+export function assertSecretFileCreatable(requestedPath: string): void {
+  const absolute = resolve(requestedPath);
+  if (existsSync(absolute)) {
+    throw Object.assign(new Error(`--secret-file target already exists: ${absolute}`), {
+      code: 'INVALID_PARAMS',
+    });
+  }
+  if (!existsSync(dirname(absolute))) {
+    throw Object.assign(
+      new Error(`--secret-file parent directory does not exist: ${dirname(absolute)}`),
+      { code: 'INVALID_PARAMS' },
+    );
+  }
+}
+
+/** Best-effort revoke of a credential whose secret could not be delivered. */
+async function tryRevokeIssuedCredential(
+  offline: boolean | undefined,
+  client: { call<T>(method: string, params: unknown): Promise<T> },
+  issue: CredentialIssueResult,
+): Promise<boolean> {
+  try {
+    if (offline) offlineWriter().revokeCredential(issue.credential.id);
+    else await client.call('credential.revoke', { credentialId: issue.credential.id });
+    return true;
+  } catch (revokeError) {
+    console.error(`credential revoke after failed secret delivery: ${String(revokeError)}`);
+    return false;
+  }
 }
 
 function offlineIssue(principalId: string, displayName: string): CredentialIssueResult {

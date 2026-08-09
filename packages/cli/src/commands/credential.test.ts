@@ -9,6 +9,7 @@ import type { CredentialIssueResult } from '@farmslot/protocol';
 import { loadProfiles, saveProfiles } from '../gateway-profiles.js';
 
 import {
+  assertSecretFileCreatable,
   credentialIssueMachineResult,
   persistOwnerCredential,
   writeSecretFile,
@@ -83,4 +84,17 @@ test('writeSecretFile writes 0600, byte-exact, and refuses to overwrite', () => 
   // original secret must survive.
   assert.throws(() => writeSecretFile(target, 'other'), /EEXIST/);
   assert.equal(readFileSync(target, 'utf8'), 'fs_secret_+/=value');
+});
+
+test('secret-file pre-flight rejects existing targets and missing parents before issuance', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'farmslot-secret-preflight-'));
+  const fresh = join(dir, 'new.secret');
+  assertSecretFileCreatable(fresh); // must not throw
+
+  writeSecretFile(fresh, 's');
+  assert.throws(() => assertSecretFileCreatable(fresh), /already exists/);
+  assert.throws(
+    () => assertSecretFileCreatable(join(dir, 'no-such-dir', 'x.secret')),
+    /parent directory does not exist/,
+  );
 });
