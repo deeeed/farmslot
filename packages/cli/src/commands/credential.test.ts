@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,7 +8,12 @@ import type { CredentialIssueResult } from '@farmslot/protocol';
 
 import { loadProfiles, saveProfiles } from '../gateway-profiles.js';
 
-import { credentialIssueMachineResult, persistOwnerCredential } from './credential.js';
+import {
+  assertSecretFileCreatable,
+  credentialIssueMachineResult,
+  persistOwnerCredential,
+  writeSecretFile,
+} from './credential.js';
 
 test('credential issue machine output never contains either one-time secret', () => {
   const issue: CredentialIssueResult = {
@@ -64,4 +69,32 @@ test('activation persists the owner secret without overwriting an unrelated acti
     if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = previousHome;
   }
+});
+
+test('writeSecretFile writes 0600, byte-exact, and refuses to overwrite', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'farmslot-secret-file-'));
+  const target = join(dir, 'node.secret');
+
+  const written = writeSecretFile(target, 'fs_secret_+/=value');
+
+  assert.equal(written, target);
+  assert.equal(readFileSync(target, 'utf8'), 'fs_secret_+/=value', 'no trailing newline');
+  assert.equal(statSync(target).mode & 0o777, 0o600);
+  // Exclusive create: a second write to the same path must refuse, and the
+  // original secret must survive.
+  assert.throws(() => writeSecretFile(target, 'other'), /EEXIST/);
+  assert.equal(readFileSync(target, 'utf8'), 'fs_secret_+/=value');
+});
+
+test('secret-file pre-flight rejects existing targets and missing parents before issuance', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'farmslot-secret-preflight-'));
+  const fresh = join(dir, 'new.secret');
+  assertSecretFileCreatable(fresh); // must not throw
+
+  writeSecretFile(fresh, 's');
+  assert.throws(() => assertSecretFileCreatable(fresh), /already exists/);
+  assert.throws(
+    () => assertSecretFileCreatable(join(dir, 'no-such-dir', 'x.secret')),
+    /parent directory does not exist/,
+  );
 });
