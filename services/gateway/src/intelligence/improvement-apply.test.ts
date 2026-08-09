@@ -20,8 +20,8 @@ const TEST_PROJECT_DIR = path.join(farmslotRoot, 'projects', TEST_PROJECT);
 
 function setupProject(options: { validateHook?: boolean } = {}): void {
   mkdirSync(path.join(TEST_PROJECT_DIR, 'fixtures'), { recursive: true });
-  // Cheapest possible validation hook so applies resolve fast in tests; tests
-  // for the markdown-only fallback skip omit it.
+  // Cheapest possible validation hook so applies resolve fast in tests; the
+  // markdown-only fallback tests omit it.
   writeFileSync(
     path.join(TEST_PROJECT_DIR, 'project.json'),
     options.validateHook === false ? '{}\n' : '{"hooks":{"validate":"true"}}\n',
@@ -190,6 +190,25 @@ test('apply refuses a grown-but-tail-truncated payload', async (t) => {
 
   assert.equal(result.applied.length, 0);
   assert.deepEqual(result.refused, [{ filePath: rel, reason: 'truncated-tail' }]);
+});
+
+test('truncated-tail does not fire when before also lacks a trailing newline', async (t) => {
+  setupProject();
+  const rel = `projects/${TEST_PROJECT}/fixtures/guide.md`;
+  const before = '# Guide\nfirst rule'; // no trailing newline on disk either
+  writeFileSync(path.join(farmslotRoot, rel), before);
+  const { run, decisionId } = seedImprovementRun([
+    { filePath: rel, before, after: '# Guide\nfirst rule\nsecond rule' },
+  ]);
+  t.after(async () => {
+    await cleanupRun(run.id);
+    teardownProject();
+  });
+
+  const result = await applyImprovement(run.id, decisionId);
+
+  assert.equal(result.refused, undefined, 'newline-less before must not trip the tail guard');
+  assert.equal(result.applied.length, 1);
 });
 
 test('markdown-only apply skips the fallback typecheck when no project hook exists', async (t) => {
