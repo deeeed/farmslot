@@ -30,10 +30,7 @@ export function isActiveInteractiveDevRun(run: Run): boolean {
 }
 
 export function canReplayRunSteps(
-  run:
-    | Pick<Run, 'status' | 'decisions' | 'slotId' | 'steps' | 'agentContexts'>
-    | null
-    | undefined,
+  run: Pick<Run, 'status' | 'decisions' | 'slotId' | 'steps' | 'agentContexts'> | null | undefined,
   actionsBlocked = false,
 ): boolean {
   if (!run || actionsBlocked) return false;

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- style(runs): reformat run-detail-model and review-gate-display test to satisfy the repo Prettier gate (no behavior change).
 - fix(runs): allow a blocked run that still holds a slot and has no unresolved operator decisions to replay its pipeline after review recovery, and show the pending worker-fix/re-review phases for exhausted review loops whose findings were never delivered.
 - feat(pairing): choose scoped existing-principal or new service-principal authority when creating a pairing code.
 - fix(pairing): encode one shared pairing code across every advertised gateway address instead of minting address-specific credentials.

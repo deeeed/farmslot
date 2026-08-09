@@ -194,9 +194,12 @@ test('pending continuation phases cover undelivered exhausted findings', () => {
     false,
   );
   assert.equal(
-    reviewHasPendingContinuationPhases({ recoveryContinuationPending: true }, {
-      unresolvedCount: 0,
-    }),
+    reviewHasPendingContinuationPhases(
+      { recoveryContinuationPending: true },
+      {
+        unresolvedCount: 0,
+      },
+    ),
     false,
   );
 });

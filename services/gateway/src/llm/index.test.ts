@@ -7,7 +7,9 @@ import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import {
   callLLM,
   callLLMChat,
+  ensureOAuthCredentialSeeded,
   fallbackDoneTextDelta,
+  piCredentialStore,
   piModels,
   throwOnTransportStop,
   TIER_MAP,
@@ -121,4 +123,60 @@ test('callLLM can fail closed instead of using CLI fallback without API auth', a
     }),
     /CLI fallback disabled/,
   );
+});
+
+test('throwOnTransportStop includes the provider errorMessage when present', () => {
+  assert.throws(
+    () =>
+      throwOnTransportStop(
+        'openai-codex',
+        'standard',
+        'codex-cli:auth.json',
+        'error',
+        undefined,
+        undefined,
+        'Provider is not configured: openai-codex',
+      ),
+    (err: Error) => err.message.includes('message="Provider is not configured: openai-codex"'),
+  );
+});
+
+test('oauth seeding writes a full bundle once and re-seeds only on rotation', async () => {
+  const provider = `oauth-seed-test-${process.pid}`;
+  // Partial bundles never seed — pi-ai requires access+refresh+expires.
+  await ensureOAuthCredentialSeeded(provider, { access: 'a1' });
+  assert.equal(await piCredentialStore.read(provider), undefined);
+
+  await ensureOAuthCredentialSeeded(provider, { access: 'a1', refresh: 'r1', expires: 123 });
+  assert.deepEqual(await piCredentialStore.read(provider), {
+    type: 'oauth',
+    access: 'a1',
+    refresh: 'r1',
+    expires: 123,
+  });
+
+  // Same access token → no rewrite (mutate the store to detect one).
+  await piCredentialStore.modify(provider, async () => ({
+    type: 'oauth',
+    access: 'sentinel',
+    refresh: 'r1',
+    expires: 123,
+  }));
+  await ensureOAuthCredentialSeeded(provider, { access: 'a1', refresh: 'r1', expires: 123 });
+  assert.deepEqual((await piCredentialStore.read(provider)) ?? {}, {
+    type: 'oauth',
+    access: 'sentinel',
+    refresh: 'r1',
+    expires: 123,
+  });
+
+  // Rotated access token → re-seed.
+  await ensureOAuthCredentialSeeded(provider, { access: 'a2', refresh: 'r2', expires: 456 });
+  assert.deepEqual(await piCredentialStore.read(provider), {
+    type: 'oauth',
+    access: 'a2',
+    refresh: 'r2',
+    expires: 456,
+  });
+  await piCredentialStore.delete(provider);
 });

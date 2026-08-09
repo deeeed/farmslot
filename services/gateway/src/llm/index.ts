@@ -2,14 +2,15 @@
 // Uses pi-ai for provider-agnostic calls with auth cascade.
 // Falls back to claude CLI when no API key is available.
 
-import type {
-  AssistantMessage as PiAssistantMessage,
-  AssistantMessageEvent,
-  Message as PiMessage,
-  MutableModels as PiModels,
-  Tool,
-  ToolCall,
-  ToolResultMessage,
+import {
+  type AssistantMessage as PiAssistantMessage,
+  type AssistantMessageEvent,
+  InMemoryCredentialStore,
+  type Message as PiMessage,
+  type MutableModels as PiModels,
+  type Tool,
+  type ToolCall,
+  type ToolResultMessage,
 } from '@earendil-works/pi-ai';
 
 import type { ChatToolTraceEntry, StepLLMUsage } from '@farmslot/protocol';
@@ -21,16 +22,47 @@ import { getLLMConfig } from './config.js';
 
 // pi-ai ≥0.82 replaces the module-level getModel/completeSimple/streamSimple
 // functions with a Models collection. One lazily-created collection with every
-// built-in provider registered serves all calls; auth stays explicit through
-// the per-call `apiKey` stream option, so the collection's own credential
-// store is never populated.
+// built-in provider registered serves all calls. API-key providers get their
+// auth through the per-call `apiKey` stream option; OAUTH-ONLY providers
+// (openai-codex) IGNORE that override — pi-ai honors it only for providers
+// with an apiKey auth handler — so their credentials must be seeded into the
+// collection's store (see ensureOAuthCredentialSeeded). Relying on the
+// override alone left the store empty and every codex call failed
+// pre-transport with "Provider is not configured" (MANUAL-000101).
+// Exported read access is a test seam; production code only writes via
+// ensureOAuthCredentialSeeded.
+export const piCredentialStore = new InMemoryCredentialStore();
 let piModelsPromise: Promise<PiModels> | null = null;
 // Exported so tests can swap a faux provider into the live collection.
 export function piModels(): Promise<PiModels> {
   piModelsPromise ??= import('@earendil-works/pi-ai/providers/all').then((mod) =>
-    mod.builtinModels(),
+    mod.builtinModels({ credentials: piCredentialStore }),
   );
   return piModelsPromise;
+}
+
+// Last seeded access token per provider — re-seed only on rotation so the
+// store write (serialized per provider) is not on every call's hot path.
+const seededOAuthAccess = new Map<string, string>();
+
+// Exported as a test seam alongside piModels().
+export async function ensureOAuthCredentialSeeded(
+  provider: string,
+  oauth: { access: string; refresh?: string; expires?: number } | undefined,
+): Promise<void> {
+  // pi-ai's OAuthCredential requires access+refresh+expires; without a full
+  // bundle there is nothing valid to seed and the call will surface the
+  // provider-not-configured error with its message attached.
+  if (!oauth?.refresh || oauth.expires === undefined) return;
+  if (seededOAuthAccess.get(provider) === oauth.access) return;
+  const { access, refresh, expires } = oauth;
+  await piCredentialStore.modify(provider, async () => ({
+    type: 'oauth',
+    access,
+    refresh,
+    expires,
+  }));
+  seededOAuthAccess.set(provider, access);
 }
 
 // Token threshold at which we log a warning to nudge the user to start a new session.
@@ -189,6 +221,7 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMCallResult> {
   const auth = await resolveAuth(provider);
 
   if (auth) {
+    await ensureOAuthCredentialSeeded(provider, auth.oauth);
     return callViaPiAi(provider, resolvedModel, auth.apiKey, auth.source, opts, maxTokens);
   }
 
@@ -275,7 +308,15 @@ async function callViaPiAi(
   // valid AssistantMessage with empty content and stopReason 'error'/'aborted'.
   // Treat those as failures so callers don't silently get an empty response.
   const stopReason = (response as { stopReason?: string }).stopReason;
-  throwOnTransportStop(provider, model, source, stopReason, httpStatus, httpHeaders);
+  throwOnTransportStop(
+    provider,
+    model,
+    source,
+    stopReason,
+    httpStatus,
+    httpHeaders,
+    (response as { errorMessage?: string }).errorMessage,
+  );
 
   // Surface stopReason on the success path too — callers building structured
   // outputs (e.g. pr-body-recipe) need to distinguish a clean 'stop' finish
@@ -294,10 +335,19 @@ export function throwOnTransportStop(
   stopReason: string | undefined,
   httpStatus: number | undefined,
   httpHeaders: Record<string, string> | undefined,
+  errorMessage?: string,
 ): void {
   if (stopReason === 'error' || stopReason === 'aborted') {
     const err = new Error(
-      formatProviderError(provider, model, source, stopReason, httpStatus, httpHeaders),
+      formatProviderError(
+        provider,
+        model,
+        source,
+        stopReason,
+        httpStatus,
+        httpHeaders,
+        errorMessage,
+      ),
     );
     // Preserve abort identity: AbortSignal-aware callers (chat-engine's stop
     // button) distinguish a deliberate cancellation from a provider failure
@@ -319,8 +369,12 @@ function formatProviderError(
   stopReason: string,
   status: number | undefined,
   headers: Record<string, string> | undefined,
+  errorMessage?: string,
 ): string {
   const parts = [`[llm] ${provider}/${model} via ${source} stopped with reason=${stopReason}`];
+  // pi-ai's error AssistantMessage names the actual cause (e.g. "Provider is
+  // not configured") — dropping it cost a whole investigation once.
+  if (errorMessage) parts.push(`message=${JSON.stringify(errorMessage.slice(0, 300))}`);
   if (status !== undefined) parts.push(`http=${status}`);
   // Provider-specific error headers worth surfacing in the message.
   const hints: string[] = [];
@@ -367,6 +421,7 @@ export async function callLLMChat(opts: LLMChatOptions): Promise<LLMCallResult> 
   const auth = await resolveAuth(provider);
 
   if (auth) {
+    await ensureOAuthCredentialSeeded(provider, auth.oauth);
     return callChatViaPiAi(provider, resolvedModel, auth.apiKey, auth.source, opts, maxTokens);
   }
 
@@ -474,7 +529,15 @@ async function callChatViaPiAi(
           // Streams terminate with a dedicated 'error' event (stopReason
           // 'error'/'aborted') instead of 'done' — ignoring it would end the
           // loop with an empty stub message and no failure surfaced.
-          throwOnTransportStop(provider, model, source, event.reason, httpStatus, httpHeaders);
+          throwOnTransportStop(
+            provider,
+            model,
+            source,
+            event.reason,
+            httpStatus,
+            httpHeaders,
+            (event.error as { errorMessage?: string } | undefined)?.errorMessage,
+          );
         }
         if (event.type === 'done') {
           realAssistantMsg = event.message;
@@ -518,6 +581,7 @@ async function callChatViaPiAi(
         (response as { stopReason?: string }).stopReason,
         httpStatus,
         httpHeaders,
+        (response as { errorMessage?: string }).errorMessage,
       );
       realAssistantMsg = response;
       const toolCalls = (response.content as Array<{ type: string }>).filter(
