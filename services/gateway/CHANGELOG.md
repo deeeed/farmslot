@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(intelligence): learnings router — every improvement analysis first classifies learnings entries as system vs domain; system entries continue into the projects/<project>/ improvement path, domain entries become a human-gated skill-antipattern draft card (with exactly-once inbox processed.jsonl receipts when a captured package correlates), ambiguous entries become visible teaching holds, and out-of-project apply paths now refuse loudly as `out-of-project` instead of skipping silently (MANUAL-000075).
+
 - fix(tasks): execution-template catalog reports domain-filtered sources via `filteredSources` and reuses the agent-runtime participation gate instead of a private copy (MANUAL-000076).
 - fix(llm): restore the openai-codex provider — pi-ai ignores the per-call apiKey for oauth-only providers, so the 0.82 Models migration left its credential store empty and every codex call failed pre-transport as "Provider is not configured" (laundered as no-changes until #501). The gateway now owns the collection's credential store and seeds the codex OAuth bundle from auth.json, re-seeding on token rotation; provider error messages are included in transport-stop errors (MANUAL-000101).
 

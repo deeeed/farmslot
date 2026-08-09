@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import type { ImprovementDiffPayload, Run } from '@farmslot/protocol';
 
+import { __setLearningsClassifierForTest } from '../../intelligence/learnings-router.js';
 import { createRun, deleteRun, getRun, runRecordPath, updateRun } from '../../runs/store.js';
 
 import {
@@ -40,6 +41,12 @@ async function cleanupProposeRun(runId: string, tmp: string): Promise<void> {
   await deleteRun(runId);
   rmSync(tmp, { recursive: true, force: true });
 }
+
+// MANUAL-000075: analyses now route learnings through the system/domain
+// classifier first. Pin every entry to `system` so these tests keep asserting
+// the analyzer contract deterministically, without an LLM.
+__setLearningsClassifierForTest(async (entries) => entries.map(() => 'system' as const));
+after(() => __setLearningsClassifierForTest(null));
 
 test('runProposeImprovement throws when run has no taskFile', async (t) => {
   const run = createRun({
@@ -168,6 +175,50 @@ test('resume re-runs an interrupted analysis on the same placeholder and persist
   assert.equal(captured[0].placeholderId, decisionId, 'must reuse the existing placeholder card');
   assert.match(captured[0].content, /Interrupted-run learning bullet\./);
   assert.equal(improvementPayload(run.id, decisionId).analysisAttempts, 2);
+});
+
+test('a resume of an all-domain run emits ONE draft card and never stacks duplicates', async (t) => {
+  const { run, taskDir } = createTempRunWithTask('Product screens flake on slow seeds.');
+  const decisionId = seedAnalyzingPlaceholder(run.id, 1);
+
+  const { __setAntipatternDrafterForTest } = await import('../../intelligence/learnings-router.js');
+  __setLearningsClassifierForTest(async (entries) => entries.map(() => 'domain' as const));
+  // example-mobile-farm has no vars.antipattern_repo_key, so the domain entry
+  // becomes a teaching hold — still exactly one learnings-draft card.
+  __setImprovementAnalyzerForTest(async () => {
+    assert.fail('analyzer must not run when nothing classifies system');
+  });
+  t.after(async () => {
+    __setLearningsClassifierForTest(async (entries) => entries.map(() => 'system' as const));
+    __setAntipatternDrafterForTest(null);
+    __setImprovementAnalyzerForTest(null);
+    await cleanupProposeRun(run.id, taskDir);
+  });
+
+  await resumeInterruptedImprovementAnalyses();
+  // The routed no-system arm terminalizes the placeholder asynchronously; poll
+  // the persisted decision instead of racing a fixed sleep.
+  for (let i = 0; i < 100; i += 1) {
+    if (improvementPayload(run.id, decisionId).analysisStatus === 'no-changes') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(improvementPayload(run.id, decisionId).analysisStatus, 'no-changes');
+
+  const draftCards = () =>
+    (getRun(run.id)?.decisions ?? []).filter((d) => d.type === 'engine_learnings_draft');
+  assert.equal(draftCards().length, 1, 'exactly one learnings-draft card after resume');
+
+  // A second interrupted resume (crash loop) must not stack another card.
+  const payload = improvementPayload(run.id, decisionId);
+  payload.analysisStatus = 'analyzing';
+  payload.analysisAttempts = 1;
+  updateRun(run.id, { decisions: getRun(run.id)!.decisions });
+  await resumeInterruptedImprovementAnalyses();
+  for (let i = 0; i < 100; i += 1) {
+    if (improvementPayload(run.id, decisionId).analysisStatus === 'no-changes') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(draftCards().length, 1, 'crash-loop resume must not duplicate the draft card');
 });
 
 test('resume terminalizes a placeholder at the retry cap without re-running it', async (t) => {

@@ -75,6 +75,29 @@ async function cleanupRun(runId: string): Promise<void> {
   await deleteRun(runId);
 }
 
+test('an out-of-project filePath refuses visibly and never resolves the card (AC4)', async (t) => {
+  setupProject();
+  const { run, decisionId } = seedImprovementRun([
+    {
+      filePath: 'services/gateway/src/index.ts',
+      before: '',
+      after: 'malicious or misplaced content',
+    },
+  ]);
+  t.after(async () => {
+    teardownProject();
+    await cleanupRun(run.id);
+  });
+
+  const result = await applyImprovement(run.id, decisionId);
+  assert.equal(result.applied.length, 0);
+  assert.deepEqual(result.refused, [
+    { filePath: 'services/gateway/src/index.ts', reason: 'out-of-project' },
+  ]);
+  const decision = (getRun(run.id)?.decisions ?? []).find((d) => d.id === decisionId);
+  assert.equal(decision?.resolvedAction, undefined, 'card must stay pending for the human gate');
+});
+
 test('apply writes an anchored change and resolves the decision', async (t) => {
   setupProject();
   const rel = `projects/${TEST_PROJECT}/fixtures/guide.md`;

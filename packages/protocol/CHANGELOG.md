@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(runs): `LearningsDraftPayload` (`kind: 'learnings-draft'`) with antipattern drafts, teaching holds, and inbox receipt status; `ImprovementApplyResult.refused` gains `out-of-project` (MANUAL-000075).
+
 - feat(execution-templates): `ExecutionTemplateOptions.filteredSources` reports sources dropped by the domain gate (`domain-restricted` + enabling domains) instead of hiding them (MANUAL-000076).
 - feat(intelligence): add `truncated-tail` to `ImprovementApplyResult.refused` reasons (MANUAL-000104).
 

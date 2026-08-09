@@ -2310,6 +2310,47 @@ export function mockDecisions(): PendingDecision[] {
       createdAt: new Date(Date.now() - 1 * 60000).toISOString(),
     },
     {
+      id: 'dec-lrn-001',
+      type: 'engine_learnings_draft',
+      slotId: 'runner-mobile-1',
+      title: 'Learnings routed: domain drafts & holds',
+      description:
+        '1 domain antipattern draft for the recipe-pr-qa-review skill — open a PR on the skills repo to land it; 1 entry held for teaching — nothing was dropped. Farmslot never writes to the skills repo — this card is the human gate.',
+      context: {},
+      payload: {
+        kind: 'learnings-draft',
+        project: 'example-mobile-farm',
+        sourceRunId: 'run-abc123',
+        drafts: [
+          {
+            id: 'forced-gc-before-node-counts',
+            targetPath:
+              'domains/agentic/skills/recipe-pr-qa-review/references/antipatterns/example-mobile/forced-gc-before-node-counts.md',
+            symptom: 'Node counts climb every navigation cycle and look like a memory leak.',
+            cause:
+              'Performance.getMetrics counts unreachable-but-uncollected objects, so DOM churn inflates the number.',
+            action: 'Force HeapProfiler.collectGarbage before each sample; compare post-GC only.',
+            sourceEntry:
+              '- **`Performance.getMetrics` is not a retention measurement.** Forcing GC before each sample turned +454 nodes/cycle into +0.',
+          },
+        ],
+        holds: [
+          {
+            entry: '- Something ambiguous about frame pacing during seed replay.',
+            reason:
+              'unclassified — the router could not confidently pick system vs domain; reword the entry or route it manually',
+          },
+        ],
+        receipt: {
+          status: 'appended',
+          packageId: 'pkg-20260724-demo',
+          appendedAt: new Date(Date.now() - 60000).toISOString(),
+        },
+      },
+      actions: [{ id: 'dismiss', label: 'Dismiss', style: 'secondary' }],
+      createdAt: new Date(Date.now() - 2 * 60000).toISOString(),
+    },
+    {
       id: 'dec-retro-001',
       type: 'retrospective',
       slotId: 'runner-mobile-2',

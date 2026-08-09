@@ -231,7 +231,12 @@ export interface ImprovementApplyResult {
    */
   refused?: {
     filePath: string;
-    reason: 'stale-anchor' | 'suspicious-shrink' | 'truncated-tail' | 'write-error';
+    reason:
+      | 'stale-anchor'
+      | 'suspicious-shrink'
+      | 'truncated-tail'
+      | 'out-of-project'
+      | 'write-error';
   }[];
 }
 
