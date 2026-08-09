@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat(credential): `credential issue --secret-file <path>` writes the one-time secret to a new 0600 file (exclusive create, byte-exact) so remote node provisioning is scriptable without pseudo-TTY scraping; the machine envelope reports the path, never the secret (MANUAL-000102).
 - fix(pairing): reuse one device code across every address advertised by `farmslot pair`.
 - feat(auth): add principal and credential management, quiescent offline recovery, explicit pairing authority, and separate transport/authority reporting in auth status.
 - fix(run): `farmslot run cancel` prints the failed cancel effects instead of only `Cancelled <id>`, so a still-claimed slot or unsettled backlog is visible to operators who are not using `--json`.

@@ -35,6 +35,10 @@ export function registerCredentialCommands(program: Command): void {
     .option('--role <role>', 'grant admin or operator before issuance')
     .option('--scope <scope>', 'required with --role; only global is supported')
     .option('--write-node-env', 'write the credential to FARMSLOT_NODE_TOKEN in .env.local-auth')
+    .option(
+      '--secret-file <path>',
+      'write the raw secret to a new file (0600, refuses to overwrite) for scripted remote provisioning',
+    )
     .option('--offline', 'operate on the store while every gateway is stopped')
     .action(
       async (
@@ -46,6 +50,7 @@ export function registerCredentialCommands(program: Command): void {
           role?: string;
           scope?: string;
           writeNodeEnv?: boolean;
+          secretFile?: string;
           offline?: boolean;
         },
         cmd: Command,
@@ -62,6 +67,9 @@ export function registerCredentialCommands(program: Command): void {
                 displayName,
               });
           if (opts.writeNodeEnv) writeNodeCredential(issue.secret);
+          const secretFilePath = opts.secretFile
+            ? writeSecretFile(opts.secretFile, issue.secret)
+            : undefined;
           let persistedProfile: string | undefined;
           if (!opts.offline && issue.activationLatched) {
             persistedProfile = persistOwnerCredential(
@@ -71,12 +79,19 @@ export function registerCredentialCommands(program: Command): void {
             );
           }
           if (emit.machine) {
-            emit.ok(credentialIssueMachineResult(issue));
+            emit.ok({
+              ...credentialIssueMachineResult(issue),
+              ...(secretFilePath ? { secretFile: secretFilePath } : {}),
+            });
           } else {
             output.write(
               `Issued credential '${issue.credential.displayName}' for '${issue.credential.principalId}'.\n`,
             );
-            output.write(`Secret (shown once): ${issue.secret}\n`);
+            if (secretFilePath) {
+              output.write(`Secret written to ${secretFilePath} (0600, shown nowhere else).\n`);
+            } else {
+              output.write(`Secret (shown once): ${issue.secret}\n`);
+            }
             if (issue.adminGrant) {
               output.write(
                 `Issued owner credential '${issue.adminGrant.credential.displayName}' (admin, global) and wrote it to gateway profile '${persistedProfile}'.\n`,
@@ -252,6 +267,19 @@ function summarize(record: ReturnType<CredentialStoreWriter['revokeCredential']>
     createdAt: record.createdAt,
     revokedAt: record.revokedAt,
   };
+}
+
+/**
+ * Write the raw secret to a NEW file (0600). Exclusive create: overwriting an
+ * existing path is refused so a script can never clobber another secret or a
+ * regular file; callers pick a unique path and delete it after delivery.
+ * Returns the absolute path. The secret is written without a trailing newline
+ * so `cat`/stdin pipelines deliver it byte-exact.
+ */
+export function writeSecretFile(requestedPath: string, secret: string): string {
+  const absolute = resolve(requestedPath);
+  writeFileSync(absolute, secret, { mode: 0o600, flag: 'wx' });
+  return absolute;
 }
 
 function writeNodeCredential(secret: string): void {
