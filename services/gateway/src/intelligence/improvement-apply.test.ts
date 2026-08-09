@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -18,10 +18,14 @@ import { applyImprovement } from './improvement-engine.js';
 const TEST_PROJECT = `.improve-apply-test-${process.pid}`;
 const TEST_PROJECT_DIR = path.join(farmslotRoot, 'projects', TEST_PROJECT);
 
-function setupProject(): void {
+function setupProject(options: { validateHook?: boolean } = {}): void {
   mkdirSync(path.join(TEST_PROJECT_DIR, 'fixtures'), { recursive: true });
-  // Cheapest possible validation hook so applies resolve fast in tests.
-  writeFileSync(path.join(TEST_PROJECT_DIR, 'project.json'), '{"hooks":{"validate":"true"}}\n');
+  // Cheapest possible validation hook so applies resolve fast in tests; tests
+  // for the markdown-only fallback skip omit it.
+  writeFileSync(
+    path.join(TEST_PROJECT_DIR, 'project.json'),
+    options.validateHook === false ? '{}\n' : '{"hooks":{"validate":"true"}}\n',
+  );
 }
 
 function teardownProject(): void {
@@ -96,6 +100,11 @@ test('apply writes an anchored change and resolves the decision', async (t) => {
     getRun(run.id)?.decisions.find((d) => d.id === decisionId)?.resolvedAction,
     'applied',
   );
+  assert.equal(
+    existsSync(path.join(TEST_PROJECT_DIR, 'learnings', 'LEARNINGS.md')),
+    false,
+    'apply must not auto-append to the human-curated LEARNINGS.md',
+  );
 });
 
 test('apply refuses a stale anchor and leaves the file and card untouched', async (t) => {
@@ -161,6 +170,49 @@ test('apply creates a new file when the card declares an empty before', async (t
 
   assert.equal(result.applied.length, 1);
   assert.equal(await readFile(path.join(farmslotRoot, rel), 'utf-8'), 'brand new guidance\n');
+});
+
+test('apply refuses a grown-but-tail-truncated payload', async (t) => {
+  setupProject();
+  const rel = `projects/${TEST_PROJECT}/fixtures/guide.md`;
+  const before = '# Guide\nfirst rule\n';
+  writeFileSync(path.join(farmslotRoot, rel), before);
+  const { run, decisionId } = seedImprovementRun([
+    // Grows the file (shrink guard silent) but the tail is cut mid-line.
+    { filePath: rel, before, after: '# Guide\nfirst rule\nsecond rule that ends mid-sent' },
+  ]);
+  t.after(async () => {
+    await cleanupRun(run.id);
+    teardownProject();
+  });
+
+  const result = await applyImprovement(run.id, decisionId);
+
+  assert.equal(result.applied.length, 0);
+  assert.deepEqual(result.refused, [{ filePath: rel, reason: 'truncated-tail' }]);
+});
+
+test('markdown-only apply skips the fallback typecheck when no project hook exists', async (t) => {
+  setupProject({ validateHook: false });
+  const rel = `projects/${TEST_PROJECT}/fixtures/guide.md`;
+  writeFileSync(path.join(farmslotRoot, rel), 'old content\n');
+  const { run, decisionId } = seedImprovementRun([
+    { filePath: rel, before: 'old content\n', after: 'old content\nmore guidance\n' },
+  ]);
+  t.after(async () => {
+    await cleanupRun(run.id);
+    teardownProject();
+  });
+
+  const result = await applyImprovement(run.id, decisionId);
+
+  assert.equal(result.applied.length, 1);
+  assert.equal(result.validationPassed, true);
+  assert.equal(result.validationOutput, 'skipped — markdown-only apply, no project validate hook');
+  assert.equal(
+    getRun(run.id)?.decisions.find((d) => d.id === decisionId)?.resolvedAction,
+    'applied',
+  );
 });
 
 test('apply accounts a write failure as write-error refusal', async (t) => {
