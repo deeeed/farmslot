@@ -90,7 +90,7 @@ resolve_farmslot_deps() {
   resolver="$(mktemp "${TMPDIR:-/tmp}/deploy-node-resolve-XXXXXX.mjs")"
   trap 'rm -f "$resolver"' RETURN
   cat > "$resolver" <<'RESOLVER'
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 const [, , repoRoot] = process.argv;
@@ -127,17 +127,21 @@ while (queue.length > 0) {
 
 // A package "ships from dist/" if it declares a build script AND its main/exports
 // point into dist/ (e.g. protocol). Source-only packages (e.g. capabilities, whose
-// main/exports point straight at src/*.ts) never need a build. dist/ is gitignored,
-// so on a fresh checkout — or after protocol changes without a rebuild — it can be
-// missing even though the workspace resolves fine locally via tsx path aliasing.
+// main/exports point straight at src/*.ts) never need a build. dist/ is gitignored
+// and can be missing (fresh checkout) or STALE (edited source, no rebuild) even
+// though the workspace resolves fine locally via tsx path aliasing — both ship
+// broken, so every dist-shipping package builds on every deploy.
 for (const name of seen) {
   const dir = dirByName.get(name);
   const pkg = readJson(path.join(packagesDir, dir, 'package.json'));
   const hasBuildScript = Boolean(pkg.scripts?.build);
   const mainIsDist = typeof pkg.main === 'string' && pkg.main.startsWith('dist/');
   const exportsIsDist = pkg.exports ? JSON.stringify(pkg.exports).includes('"dist/') : false;
-  const distMissing = !existsSync(path.join(packagesDir, dir, 'dist'));
-  const needsBuild = hasBuildScript && (mainIsDist || exportsIsDist) && distMissing;
+  // Always rebuild dist-shipping packages: an EXISTING dist can be stale
+  // (built before a source edit — e.g. a protocol version bump), and shipping
+  // it produces exactly the node/gateway version mismatch this script exists
+  // to prevent. Builds are incremental, so the always-build cost is seconds.
+  const needsBuild = hasBuildScript && (mainIsDist || exportsIsDist);
   process.stdout.write(`${name}\t${dir}\t${needsBuild ? '1' : '0'}\n`);
 }
 RESOLVER
@@ -147,16 +151,16 @@ RESOLVER
 FARMSLOT_DEPS="$(resolve_farmslot_deps)"
 echo "[deploy] workspace packages to bundle: $(echo "$FARMSLOT_DEPS" | cut -f1 | tr '\n' ' ')"
 
-# --- Build any @farmslot/* dep that ships from dist/ but hasn't been built ---
-# Without this, a package with no dist/ (fresh checkout, or edited-but-unbuilt
-# protocol) "deploys" successfully — the rsync step below just has nothing to
-# copy — and the node crashes at runtime with the exact ERR_MODULE_NOT_FOUND
-# this script exists to prevent. Fail loudly here instead of shipping it.
+# --- Build every @farmslot/* dep that ships from dist/ ---
+# A missing dist/ crashes the node at startup (ERR_MODULE_NOT_FOUND); a STALE
+# dist/ is worse — it deploys cleanly and then mismatches the gateway at
+# runtime (e.g. a protocol version bump built nowhere). Builds are incremental,
+# so always building is cheap; fail loudly if one cannot build.
 while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
   [[ -z "$pkg_name" || "$needs_build" != "1" ]] && continue
-  echo "[deploy] building $pkg_name (dist/ missing)..."
+  echo "[deploy] building $pkg_name (ships from dist/)..."
   if ! (cd "$REPO_ROOT" && yarn workspace "$pkg_name" build < /dev/null); then
-    echo "[deploy] ERROR: failed to build $pkg_name — refusing to deploy a distless package" >&2
+    echo "[deploy] ERROR: failed to build $pkg_name — refusing to deploy a missing or stale dist" >&2
     exit 1
   fi
   if [[ ! -d "$PACKAGES_DIR/$pkg_dir/dist" ]]; then
