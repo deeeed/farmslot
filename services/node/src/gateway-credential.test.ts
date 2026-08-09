@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { resolveGatewayCredential } from './gateway-credential.js';
+import { isDeterministicAuthRejection, resolveGatewayCredential } from './gateway-credential.js';
 
 test('gateway credential is re-read from the node env file on every reconnect lookup', () => {
   const root = mkdtempSync(join(tmpdir(), 'farmslot-node-credential-'));
@@ -33,4 +33,25 @@ test('rewritten node env credential outranks stale inherited launch credentials'
 
   writeFileSync(path, 'FARMSLOT_NODE_TOKEN=rotated-file-token\n');
   assert.deepEqual(resolveGatewayCredential(launchedEnv, nested), { token: 'rotated-file-token' });
+});
+
+test('deterministic auth rejections back off; transport errors do not', () => {
+  // Post-ADR-051 node-subject rejection and outright auth failures cannot be
+  // fixed by retrying faster.
+  assert.equal(
+    isDeterministicAuthRejection(
+      'auth.connect with clientKind node requires a node-subject principal',
+    ),
+    true,
+  );
+  assert.equal(
+    isDeterministicAuthRejection(
+      'Gateway authentication failed: invalid credentials. Retry after 30s.',
+    ),
+    true,
+  );
+  // Transport-class failures keep the normal reconnect climb.
+  assert.equal(isDeterministicAuthRejection('Gateway WebSocket is not open'), false);
+  assert.equal(isDeterministicAuthRejection('read ECONNRESET'), false);
+  assert.equal(isDeterministicAuthRejection('Internal gateway error'), false);
 });

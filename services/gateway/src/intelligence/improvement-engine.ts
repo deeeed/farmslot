@@ -746,6 +746,16 @@ export async function applyImprovement(
       continue;
     }
 
+    // A truncation can also GROW the file overall (new sections added, tail
+    // cut mid-line — observed live 2026-08-08: 2122 -> 2326 bytes yet the
+    // final section ended mid-sentence). A before that ends in a newline and
+    // an after that does not is that signature; complete files end with one.
+    if (before.endsWith('\n') && change.after.length > 0 && !change.after.endsWith('\n')) {
+      refused.push({ filePath: change.filePath, reason: 'truncated-tail' });
+      console.warn(`[improvement] refused truncated-tail apply for ${change.filePath}`);
+      continue;
+    }
+
     try {
       await writeFile(fullPath, change.after, 'utf-8');
       // Force-add: project files may be gitignored by the parent repo.
@@ -770,40 +780,51 @@ export async function applyImprovement(
   if (applied.length === 0) {
     validationOutput = 'skipped — no files applied';
   } else {
-    try {
-      const projectJson = path.join(farmslotRoot, 'projects', payload.project, 'project.json');
-      let validateCmd = 'yarn';
-      let validateArgs = ['typecheck'];
-      let validateCwd = path.join(farmslotRoot, 'apps/command-center');
+    const projectJson = path.join(farmslotRoot, 'projects', payload.project, 'project.json');
+    let validateCmd = 'yarn';
+    let validateArgs = ['typecheck'];
+    let validateCwd = path.join(farmslotRoot, 'apps/command-center');
+    let projectOwnsValidation = false;
 
-      if (existsSync(projectJson)) {
-        try {
-          const projConfig = JSON.parse(await readFile(projectJson, 'utf-8'));
-          if (projConfig.hooks?.validate) {
-            const parts = projConfig.hooks.validate.split(/\s+/);
-            validateCmd = parts[0];
-            validateArgs = parts.slice(1);
-            validateCwd = farmslotRoot;
-          }
-        } catch {
-          /* use default */
+    if (existsSync(projectJson)) {
+      try {
+        const projConfig = JSON.parse(await readFile(projectJson, 'utf-8'));
+        if (projConfig.hooks?.validate) {
+          const parts = projConfig.hooks.validate.split(/\s+/);
+          validateCmd = parts[0];
+          validateArgs = parts.slice(1);
+          validateCwd = farmslotRoot;
+          projectOwnsValidation = true;
         }
+      } catch {
+        /* use default */
       }
+    }
 
-      // Async so a 60s validation cannot stall every other gateway request.
-      const { stdout } = await execFileAsync(validateCmd, validateArgs, {
-        cwd: validateCwd,
-        encoding: 'utf-8',
-        timeout: 60000,
-      });
-      validationOutput = stdout;
-    } catch (err) {
-      validationPassed = false;
-      validationOutput =
-        (err as { stdout?: string; stderr?: string }).stdout ?? (err as Error).message;
-      console.warn(
-        `[improvement] validation failed after apply: ${validationOutput.slice(0, 200)}`,
-      );
+    if (!projectOwnsValidation && applied.every((change) => change.filePath.endsWith('.md'))) {
+      // Markdown-only applies cannot break a TypeScript build, and the
+      // FALLBACK validation is exactly that (command-center typecheck) —
+      // 60s cold, and it once stamped a false FAILED purely from cold-start
+      // time. A project-declared hooks.validate still runs: it may
+      // legitimately lint markdown.
+      validationOutput = 'skipped — markdown-only apply, no project validate hook';
+    } else {
+      try {
+        // Async so a 60s validation cannot stall every other gateway request.
+        const { stdout } = await execFileAsync(validateCmd, validateArgs, {
+          cwd: validateCwd,
+          encoding: 'utf-8',
+          timeout: 60000,
+        });
+        validationOutput = stdout;
+      } catch (err) {
+        validationPassed = false;
+        validationOutput =
+          (err as { stdout?: string; stderr?: string }).stdout ?? (err as Error).message;
+        console.warn(
+          `[improvement] validation failed after apply: ${validationOutput.slice(0, 200)}`,
+        );
+      }
     }
   }
 
@@ -824,61 +845,12 @@ export async function applyImprovement(
   }
   updateRun(runId, { decisions: run.decisions });
 
-  // Append to project LEARNINGS.md for historical tracking
-  if (applied.length > 0) {
-    await appendToLearningsHistory(payload, runId, validationPassed);
-  }
-
   return {
     applied,
     validationPassed,
     validationOutput,
     ...(refused.length ? { refused } : {}),
   };
-}
-
-async function appendToLearningsHistory(
-  payload: ImprovementDiffPayload,
-  runId: string,
-  validationPassed: boolean,
-): Promise<void> {
-  const learningsDir = path.join(farmslotRoot, 'projects', payload.project, 'learnings');
-  const learningsPath = path.join(learningsDir, 'LEARNINGS.md');
-
-  const date = new Date().toISOString().slice(0, 10);
-  const filesChanged = payload.proposedChanges.map((c) => c.filePath).join(', ');
-  const validation = validationPassed ? 'passed' : 'FAILED';
-
-  const entry = `
----
-
-## Improvement: ${runId.slice(0, 8)} (${date}) — auto-applied, validation ${validation}
-
-**Learning:** ${payload.learningContent.split('\n')[0].slice(0, 200)}
-
-**Rationale:** ${payload.rationale}
-
-**Files changed:** ${filesChanged}
-`;
-
-  try {
-    if (!existsSync(learningsDir)) {
-      const { mkdir } = await import('node:fs/promises');
-      await mkdir(learningsDir, { recursive: true });
-    }
-
-    if (existsSync(learningsPath)) {
-      const existing = await readFile(learningsPath, 'utf-8');
-      await writeFile(learningsPath, existing.trimEnd() + '\n' + entry, 'utf-8');
-    } else {
-      const header = `# ${payload.project} Learnings\n\nHistorical record of accepted template improvements.\n`;
-      await writeFile(learningsPath, header + entry, 'utf-8');
-    }
-
-    console.log(`[improvement] appended to ${learningsPath}`);
-  } catch (err) {
-    console.warn(`[improvement] failed to append learnings history: ${(err as Error).message}`);
-  }
 }
 
 export function cleanupChatSession(decisionId: string): void {

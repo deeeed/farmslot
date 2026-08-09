@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(intelligence): add `truncated-tail` to `ImprovementApplyResult.refused` reasons (MANUAL-000104).
+
 - feat(intelligence): `ImprovementApplyResult.refused` — per-file apply refusals (`stale-anchor` | `suspicious-shrink`) so clients can show why a card stayed pending (MANUAL-000098).
 
 - fix(pairing): define one shared-code multi-address QR contract so one scan represents one revocable device authority.
