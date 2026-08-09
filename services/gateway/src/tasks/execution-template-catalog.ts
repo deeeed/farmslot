@@ -18,6 +18,7 @@ import {
   selectExecutionTemplate,
 } from '@farmslot/agent-runtime';
 import {
+  EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX,
   type ExecutionTemplateCatalogOption,
   type ExecutionTemplateOptions,
   type ExecutionTemplateRunMode,
@@ -76,14 +77,42 @@ function configuredCatalog(projectVars: ProjectVars): {
 
 function domainFilteredSources(
   sources: ExecutionTemplateSource[],
-  domain: string | undefined,
+  query: ExecutionTemplateCatalogQuery,
 ): ExecutionTemplateOptions['filteredSources'] {
-  return sources
-    .filter((source) => !executionTemplateSourceParticipates(source, domain))
-    .map((source) => ({
-      id: source.id,
+  const enablingBySource = new Map<string, Set<string>>();
+  const participating: ExecutionTemplateSource[] = [];
+  for (const source of sources) {
+    if (executionTemplateSourceParticipates(source, query.domain)) {
+      participating.push(source);
+    } else {
+      enablingBySource.set(source.id, new Set(source.domains ?? []));
+    }
+  }
+  // Entry-label gates inside participating sources hide templates just as
+  // silently as a dropped source; report them under their source id too.
+  const relevant = listExecutionTemplates({
+    sources: participating,
+    flow: query.flow,
+    includeShadowed: false,
+    ...(query.platform ? { platform: query.platform } : {}),
+    ...(query.runMode ? { runMode: query.runMode } : {}),
+  });
+  for (const entry of relevant) {
+    if (executionTemplateEntryParticipates(entry, query.domain)) continue;
+    const domains = enablingBySource.get(entry.sourceId) ?? new Set<string>();
+    for (const label of entry.labels) {
+      if (label.startsWith(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX)) {
+        domains.add(label.slice(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX.length));
+      }
+    }
+    enablingBySource.set(entry.sourceId, domains);
+  }
+  return [...enablingBySource.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, domains]) => ({
+      id,
       reason: 'domain-restricted' as const,
-      domains: [...(source.domains ?? [])].sort((a, b) => a.localeCompare(b)),
+      domains: [...domains].sort((a, b) => a.localeCompare(b)),
     }));
 }
 
@@ -177,7 +206,7 @@ export function configuredExecutionTemplateOptions(
         }
       : {}),
     unavailableSources: unavailable,
-    filteredSources: domainFilteredSources(sources, query.domain),
+    filteredSources: domainFilteredSources(sources, query),
   };
 }
 

@@ -21,6 +21,21 @@ function withProject(fn: (projectVars: ProjectVars) => void): void {
     const teamRoot = path.join(root, 'team', 'checklists', 'fix-bug');
     mkdirSync(path.join(templatesDir, 'worker'), { recursive: true });
     mkdirSync(teamRoot, { recursive: true });
+    // Entry-label gate inside a general source: hidden by domain filtering
+    // even though the source itself always participates.
+    writeFileSync(
+      path.join(templatesDir, 'worker', 'fix-bug-mm.md'),
+      `---
+labels: [domain:money-movement]
+runMode: autonomous
+platforms: [ios]
+---
+
+# Money-movement proof
+
+- [ ] Validate settlement.
+`,
+    );
     writeFileSync(
       path.join(teamRoot, 'perps.mobile.md'),
       `---
@@ -119,22 +134,49 @@ test('configured capability lists domains, sources, selection, and unavailable r
     assert.deepEqual(capability.unavailableSources, [
       { id: 'team:optional', reason: 'missing-environment' },
     ]);
-    // The requested domain matches, so nothing is domain-filtered.
-    assert.deepEqual(capability.filteredSources, []);
+    // The requested perps domain still hides the money-movement entry-labelled
+    // project template; only fully-matching queries report nothing filtered.
+    assert.deepEqual(capability.filteredSources, [
+      {
+        id: 'project:example-farm',
+        reason: 'domain-restricted',
+        domains: ['money-movement'],
+      },
+    ]);
 
-    // Without a domain the perps source must surface as filtered — loudly,
-    // with the domains that would re-enable it — instead of vanishing.
+    // Without a domain both gates must surface loudly — the source-level perps
+    // drop AND the entry-label money-movement drop — instead of vanishing.
     const noDomain = configuredExecutionTemplateOptions(projectVars, {
       flow: 'fix-bug',
       platform: 'ios',
       runMode: 'autonomous',
     });
     assert.deepEqual(noDomain.filteredSources, [
+      {
+        id: 'project:example-farm',
+        reason: 'domain-restricted',
+        domains: ['money-movement'],
+      },
       { id: 'team:perps', reason: 'domain-restricted', domains: ['perps'] },
     ]);
     assert.equal(
       noDomain.options.some((option) => option.sourceId === 'team:perps'),
       false,
+    );
+
+    // A query matching every gate reports an empty filtered list.
+    const moneyMovement = configuredExecutionTemplateOptions(projectVars, {
+      flow: 'fix-bug',
+      platform: 'ios',
+      runMode: 'autonomous',
+      domain: 'money-movement',
+    });
+    assert.deepEqual(moneyMovement.filteredSources, [
+      { id: 'team:perps', reason: 'domain-restricted', domains: ['perps'] },
+    ]);
+    assert.equal(
+      moneyMovement.options.some((option) => option.id === 'fix-bug/mm'),
+      true,
     );
   });
 });

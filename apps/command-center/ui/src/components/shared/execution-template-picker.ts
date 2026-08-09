@@ -3,10 +3,12 @@
 // and Run-mode filters inside the picker, visible result counts, and per-row
 // provenance. Selection/filter changes are emitted as events — the host owns
 // state and refetching; the gateway stays the selection/validation authority.
-import { css, html, LitElement, nothing } from 'lit';
+import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
 import type { ExecutionTemplateCatalogOption, ExecutionTemplateOptions } from '@farmslot/protocol';
+
+import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 import {
   deriveExecutionTemplatePickerView,
@@ -38,36 +40,36 @@ export class ExecutionTemplatePicker extends LitElement {
   static styles = css`
     :host {
       display: block;
-      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
-      font-size: 12px;
-      color: #ccc;
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: ${unsafeCSS(fonts.sizeSm)};
+      color: ${unsafeCSS(colors.textPrimary)};
     }
     .filters {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 6px;
-      margin-bottom: 6px;
+      gap: ${unsafeCSS(spacing.md)};
+      margin-bottom: ${unsafeCSS(spacing.md)};
     }
     .filter-label {
-      color: #666;
+      color: ${unsafeCSS(colors.textMuted)};
       text-transform: uppercase;
-      font-size: 10px;
+      font-size: ${unsafeCSS(fonts.sizeXs)};
       letter-spacing: 0.06em;
     }
     .pill {
-      background: #1a1a2e;
-      border: 1px solid #2a2a3e;
+      background: ${unsafeCSS(colors.bgCard)};
+      border: 1px solid ${unsafeCSS(colors.bgCardHover)};
       border-radius: 999px;
-      color: #ccc;
+      color: ${unsafeCSS(colors.textPrimary)};
       cursor: pointer;
       font: inherit;
       padding: 3px 10px;
     }
     .pill.selected {
-      border-color: #6366f1;
-      color: #fff;
-      background: #232345;
+      border-color: ${unsafeCSS(colors.accent)};
+      color: ${unsafeCSS(colors.textPrimary)};
+      background: ${unsafeCSS(colors.bgCardHover)};
     }
     .pill:disabled {
       opacity: 0.6;
@@ -75,7 +77,7 @@ export class ExecutionTemplatePicker extends LitElement {
     }
     .result-count {
       margin-left: auto;
-      color: #888;
+      color: ${unsafeCSS(colors.textSecondary)};
     }
     table {
       width: 100%;
@@ -83,68 +85,73 @@ export class ExecutionTemplatePicker extends LitElement {
     }
     th {
       text-align: left;
-      color: #666;
+      color: ${unsafeCSS(colors.textMuted)};
       font-weight: normal;
-      font-size: 10px;
+      font-size: ${unsafeCSS(fonts.sizeXs)};
       text-transform: uppercase;
       letter-spacing: 0.06em;
-      padding: 4px 8px;
-      border-bottom: 1px solid #2a2a3e;
+      padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+      border-bottom: 1px solid ${unsafeCSS(colors.bgCardHover)};
     }
     td {
-      padding: 5px 8px;
-      border-bottom: 1px solid #1a1a2e;
+      padding: 5px ${unsafeCSS(spacing.md)};
+      border-bottom: 1px solid ${unsafeCSS(colors.bgCard)};
       vertical-align: top;
     }
     tr.row {
       cursor: pointer;
     }
     tr.row:hover {
-      background: #12121a;
+      background: ${unsafeCSS(colors.bgSurface)};
     }
     tr.row.selected {
-      background: #1c1c38;
-      outline: 1px solid #6366f1;
+      background: ${unsafeCSS(colors.bgCardHover)};
+      outline: 1px solid ${unsafeCSS(colors.accent)};
       outline-offset: -1px;
     }
     .tpl-title {
-      color: #fff;
+      color: ${unsafeCSS(colors.textPrimary)};
     }
     .tpl-id,
     .provenance {
-      color: #888;
-      font-size: 11px;
+      color: ${unsafeCSS(colors.textSecondary)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+    }
+    .tpl-description {
+      color: ${unsafeCSS(colors.textSecondary)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+      max-width: 46ch;
     }
     .badge {
-      border: 1px solid #2a2a3e;
-      border-radius: 3px;
-      color: #9ca3af;
-      font-size: 10px;
-      padding: 0 4px;
-      margin-right: 3px;
+      border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+      border-radius: ${unsafeCSS(radii.sm)};
+      color: ${unsafeCSS(colors.textSecondary)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+      padding: 0 ${unsafeCSS(spacing.sm)};
+      margin-right: ${unsafeCSS(spacing.xs)};
     }
     .badge.default {
-      border-color: #00ff88;
-      color: #00ff88;
+      border-color: ${unsafeCSS(colors.statusOk)};
+      color: ${unsafeCSS(colors.statusOk)};
     }
     .preview-btn {
       background: none;
       border: none;
-      color: #6366f1;
+      color: ${unsafeCSS(colors.accent)};
       cursor: pointer;
-      padding: 2px;
+      padding: ${unsafeCSS(spacing.xs)};
     }
     .empty,
     .notice {
-      color: #ffcc00;
-      padding: 6px 2px;
+      color: ${unsafeCSS(colors.statusWarn)};
+      padding: ${unsafeCSS(spacing.md)} ${unsafeCSS(spacing.xs)};
     }
     .selection-summary {
-      color: #888;
-      padding: 4px 2px;
+      color: ${unsafeCSS(colors.textSecondary)};
+      padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.xs)};
     }
     .invalid {
-      color: #ff4444;
+      color: ${unsafeCSS(colors.statusFail)};
     }
   `;
 
@@ -170,6 +177,9 @@ export class ExecutionTemplatePicker extends LitElement {
             : nothing}
         </div>
         <div class="tpl-id">${option.id}</div>
+        ${option.description
+          ? html`<div class="tpl-description">${option.description}</div>`
+          : nothing}
       </td>
       <td>${option.sourceId}</td>
       <td>${row.domains.length > 0 ? row.domains.join(', ') : 'general'}</td>

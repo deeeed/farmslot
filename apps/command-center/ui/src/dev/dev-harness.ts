@@ -3332,6 +3332,9 @@ All checks passed.`;
           .domain=${this._pickerDomain}
           .mode=${this._pickerMode}
           @template-select=${(event: CustomEvent<{ id: string }>) => {
+            // Unlike the dispatch wizard (which resets selection on filter
+            // change), the harness keeps the selection so the picker's
+            // invalid-selection state stays demoable.
             this._pickerSelectedId = event.detail.id;
           }}
           @domain-change=${(event: CustomEvent<{ domain: string }>) => {
