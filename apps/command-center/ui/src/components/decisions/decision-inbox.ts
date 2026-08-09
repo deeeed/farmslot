@@ -62,6 +62,8 @@ function typeLabel(type: DecisionType | string): string {
       return 'Early review comments';
     case 'improvement':
       return 'Improvement';
+    case 'engine_learnings_draft':
+      return '#06b6d4';
     case 'recipe_strategy':
       return 'Recipe strategy';
     default:
@@ -367,7 +369,9 @@ export class DecisionInbox extends LitElement {
             <div><em>Symptom:</em> ${draft.symptom}</div>
             <div><em>Cause:</em> ${draft.cause}</div>
             <div><em>Action:</em> ${draft.action}</div>
-            <div style="opacity:0.7">source: ${draft.sourceEntry.slice(0, 220)}</div>
+            <div style="opacity:0.7" title=${draft.sourceEntry}>
+              source: ${draft.sourceEntry.slice(0, 220)}
+            </div>
           </div>
         `,
       )}
@@ -375,7 +379,7 @@ export class DecisionInbox extends LitElement {
         (hold) => html`
           <div class="improvement-rationale" style="border-left-color:${colors.statusWarn};">
             <strong>Held:</strong> ${hold.reason}
-            <div style="opacity:0.7">${hold.entry.slice(0, 220)}</div>
+            <div style="opacity:0.7" title=${hold.entry}>${hold.entry.slice(0, 220)}</div>
           </div>
         `,
       )}

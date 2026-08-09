@@ -10,7 +10,7 @@
 // never both arms for one entry, never a silent drop. Every route terminates at
 // a human gate.
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, readFile, rmdir } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -340,6 +340,30 @@ async function withInboxLock<T>(inboxRoot: string, fn: () => Promise<T>): Promis
       break;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      // A holder that crashed leaves the lock behind forever; anything older
+      // than the whole acquisition window cannot belong to a live append (the
+      // guarded section is a small read+append), so take it over.
+      let lockAgeMs: number | null = null;
+      try {
+        lockAgeMs = Date.now() - (await stat(lockDir)).mtimeMs;
+      } catch (statErr) {
+        // Lock vanished between EEXIST and stat — retry acquisition.
+        if ((statErr as NodeJS.ErrnoException).code !== 'ENOENT') throw statErr;
+        continue;
+      }
+      if (lockAgeMs > 30_000) {
+        console.warn(
+          `[learnings-router] removing stale inbox lock ${lockDir} (age ${Math.round(lockAgeMs / 1000)}s)`,
+        );
+        await rmdir(lockDir).catch((rmErr: NodeJS.ErrnoException) => {
+          // A concurrent taker may have removed it first — ENOENT is the
+          // expected race outcome; anything else still surfaces via timeout.
+          if (rmErr.code !== 'ENOENT') {
+            console.warn(`[learnings-router] stale lock removal failed: ${rmErr.message}`);
+          }
+        });
+        continue;
+      }
       if (Date.now() > deadline) {
         throw new Error(
           `timed out acquiring inbox receipt lock ${lockDir} — remove the directory if its holder crashed`,

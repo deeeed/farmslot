@@ -120,14 +120,16 @@ async function routeThenAnalyze(
   const router = await import('../../intelligence/learnings-router.js');
   const engine = await import('../../intelligence/improvement-engine.js');
   const routed = await router.routeLearnings(run.project, learnings);
+  let emissionError: string | null = null;
   try {
     await router.emitLearningsDraftDecision(runId, routed);
   } catch (err) {
     // The draft card failing (e.g. inbox IO) must not take the system arm down
-    // with it — the domain entries are still recoverable from this log line
-    // and the run's learnings.md; the system analysis proceeds regardless.
+    // with it; the payload is logged for recovery and the terminal message
+    // below stops claiming a card that does not exist.
+    emissionError = (err as Error).message;
     console.warn(
-      `[learnings-router] draft card emission failed for ${runId.slice(0, 8)}: ${(err as Error).message}`,
+      `[learnings-router] draft card emission failed for ${runId.slice(0, 8)}: ${emissionError}; unrecovered payload: ${JSON.stringify({ drafts: routed.drafts, holds: routed.holds })}`,
     );
   }
   if (routed.systemContent) {
@@ -142,7 +144,9 @@ async function routeThenAnalyze(
     runId,
     placeholderId,
     'no-changes',
-    `Routed ${routed.drafts.length} domain ${routed.drafts.length === 1 ? 'draft' : 'drafts'} and ${routed.holds.length} teaching ${routed.holds.length === 1 ? 'hold' : 'holds'} — nothing classified for the project-template improvement path.`,
+    emissionError
+      ? `Nothing classified for the project-template improvement path, and the learnings-draft card FAILED to emit (${emissionError}) — the routed drafts/holds are only in the gateway log; re-trigger after fixing the cause.`
+      : `Routed ${routed.drafts.length} domain ${routed.drafts.length === 1 ? 'draft' : 'drafts'} and ${routed.holds.length} teaching ${routed.holds.length === 1 ? 'hold' : 'holds'} — nothing classified for the project-template improvement path.`,
   );
 }
 
