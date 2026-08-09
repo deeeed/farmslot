@@ -62,6 +62,9 @@ const MAX_BACKOFF = 30_000;
 let ws: WebSocket | null = null;
 let backoff = 500;
 let disposed = false;
+// One hint per distinct auth-rejection cause per process — the rejection
+// itself still logs every cycle.
+let lastAuthHint: string | null = null;
 
 function connect(): void {
   if (disposed) return;
@@ -147,8 +150,10 @@ async function authenticateThenRegister(): Promise<void> {
       ...(gatewayCredential?.password ? { password: gatewayCredential.password } : {}),
     });
     // Auth accepted — this connection is healthy, so future transport drops
-    // start their retry climb from the floor again.
+    // start their retry climb from the floor again, and a later auth
+    // regression earns a fresh hint.
     backoff = 500;
+    lastAuthHint = null;
     const connectFrame: RequestFrame = {
       type: 'req',
       id: 'connect-0',
@@ -165,14 +170,19 @@ async function authenticateThenRegister(): Promise<void> {
     const message = (err as Error).message;
     console.error(`Gateway authentication failed: ${message}`);
     if (isDeterministicAuthRejection(message)) {
-      // Retrying faster cannot fix a credential the gateway will always
-      // reject — go straight to the ceiling and tell the operator the fix.
+      // Retrying faster cannot fix these — go straight to the ceiling. The
+      // credential-issue hint applies ONLY to the node-subject rejection;
+      // generic auth failures (bad token, rate limit) get no misleading
+      // advice, and each distinct cause prints its hint once per process.
       backoff = MAX_BACKOFF;
-      console.error(
-        `This gateway requires a node-subject credential for "${MACHINE_NAME}". ` +
-          `Fix: farmslot credential issue --subject node --machine ${MACHINE_NAME} --write-node-env ` +
-          `(remote machines: deliver the secret via deploy-node.sh), then the next retry picks it up.`,
-      );
+      if (/node-subject principal/i.test(message) && lastAuthHint !== 'node-subject') {
+        lastAuthHint = 'node-subject';
+        console.error(
+          `This gateway requires a node-subject credential for "${MACHINE_NAME}". ` +
+            `Fix: farmslot credential issue --subject node --machine ${MACHINE_NAME} --write-node-env ` +
+            `(remote machines: deliver the secret via deploy-node.sh), then the next retry picks it up.`,
+        );
+      }
     }
     ws?.close();
   }
