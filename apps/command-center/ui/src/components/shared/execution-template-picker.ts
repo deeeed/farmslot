@@ -69,7 +69,7 @@ export class ExecutionTemplatePicker extends LitElement {
       color: #fff;
       background: #232345;
     }
-    .pill[aria-disabled='true'] {
+    .pill:disabled {
       opacity: 0.6;
       cursor: wait;
     }
@@ -183,7 +183,7 @@ export class ExecutionTemplatePicker extends LitElement {
           class="preview-btn"
           title=${`Preview ${option.title}`}
           aria-label=${`Preview ${option.title}`}
-          aria-disabled=${this.loading ? 'true' : 'false'}
+          ?disabled=${this.loading}
           @click=${(event: MouseEvent) => {
             event.stopPropagation();
             this.whenReady(() =>
@@ -224,7 +224,7 @@ export class ExecutionTemplatePicker extends LitElement {
           ? html`<span class="filter-label">Domain</span>
               <button
                 class="pill ${this.domain === '' ? 'selected' : ''}"
-                aria-disabled=${this.loading ? 'true' : 'false'}
+                ?disabled=${this.loading}
                 @click=${() => this.whenReady(() => this.emit('domain-change', { domain: '' }))}
               >
                 general
@@ -233,7 +233,7 @@ export class ExecutionTemplatePicker extends LitElement {
                 (domain) =>
                   html`<button
                     class="pill ${this.domain === domain ? 'selected' : ''}"
-                    aria-disabled=${this.loading ? 'true' : 'false'}
+                    ?disabled=${this.loading}
                     @click=${() => this.whenReady(() => this.emit('domain-change', { domain }))}
                   >
                     ${domain}
@@ -241,16 +241,20 @@ export class ExecutionTemplatePicker extends LitElement {
               )}`
           : nothing}
         <span class="filter-label">Mode</span>
-        ${(['autonomous', 'interactive'] as const).map(
-          (mode) =>
-            html`<button
-              class="pill ${this.mode === mode ? 'selected' : ''}"
-              aria-disabled=${this.loading ? 'true' : 'false'}
-              @click=${() => this.whenReady(() => this.emit('mode-change', { mode }))}
-            >
-              ${mode}
-            </button>`,
-        )}
+        ${
+          /* 'validation' is a recipe-harness run mode, never operator-dispatched,
+            so the picker offers only the two dispatchable modes. */
+          (['autonomous', 'interactive'] as const).map(
+            (mode) =>
+              html`<button
+                class="pill ${this.mode === mode ? 'selected' : ''}"
+                ?disabled=${this.loading}
+                @click=${() => this.whenReady(() => this.emit('mode-change', { mode }))}
+              >
+                ${mode}
+              </button>`,
+          )
+        }
         <span class="result-count" data-testid="picker-result-count">
           ${view.resultCount} compatible · ${view.activeFilterSummary}
         </span>

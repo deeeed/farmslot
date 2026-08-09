@@ -421,6 +421,48 @@ test('entry-label domain gates are named, wrong domains still point at the right
   });
 });
 
+test('mixed source-domain and entry-label gates name only domains that actually work', () => {
+  withTemp((root) => {
+    const catalogRoot = join(root, 'catalog');
+    mkdirSync(join(catalogRoot, 'dev'), { recursive: true });
+    // Source restricted to perps; the entry also carries a money-movement
+    // frontmatter label (plus the injected domain:perps). Only perps passes
+    // BOTH gates — the diagnostic must not advertise money-movement, which the
+    // source gate would reject.
+    writeFileSync(
+      join(catalogRoot, 'dev', 'mixed.md'),
+      '---\nlabels: [domain:money-movement]\n---\n\n# Mixed\n\n- [ ] Run\n',
+    );
+    const mixedSource = packageFlowTreeTemplateSource('mixed', catalogRoot);
+    mixedSource.kind = 'workspace';
+    mixedSource.domains = ['perps'];
+    const base = {
+      sources: [mixedSource],
+      flow: 'dev',
+      platform: 'mobile',
+      runMode: 'autonomous' as const,
+      explicitId: 'dev/mixed',
+    };
+
+    for (const domain of [undefined, 'money-movement']) {
+      assert.throws(
+        () => selectExecutionTemplate({ ...base, ...(domain ? { domain } : {}) }),
+        (error: unknown) => {
+          assert.ok(error instanceof ExecutionTemplateSelectionError);
+          assert.match(error.message, /domain-restricted/);
+          assert.match(error.message, /\(domain: perps\)/);
+          assert.doesNotMatch(error.message, /money-movement/);
+          return true;
+        },
+      );
+    }
+
+    const selected = selectExecutionTemplate({ ...base, domain: 'perps' });
+    assert.equal(selected.entry.id, 'dev/mixed');
+    assert.equal(selected.reason, 'explicit');
+  });
+});
+
 test('configured defaults are ordered and incompatible targets fail instead of falling through', () => {
   withTemp((root) => {
     const source = join(root, 'catalog');

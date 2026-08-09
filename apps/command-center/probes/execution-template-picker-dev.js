@@ -2,9 +2,8 @@
 // selection-invalidation, and empty/partial states through actual clicks
 // (MANUAL-000076 AC7/AC8/AC11).
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const picker = () =>
-  document.querySelector('dev-harness')?.shadowRoot?.querySelector('execution-template-picker') ??
-  document.querySelector('execution-template-picker');
+// dev-harness renders light DOM; the picker itself is the only shadow root.
+const picker = () => document.querySelector('execution-template-picker');
 const read = () => {
   const sr = picker().shadowRoot;
   const text = (selector) =>

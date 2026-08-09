@@ -106,14 +106,21 @@ function domainExcludedExplicitMatches(
     if (!entry.platforms.includes('*') && !entry.platforms.includes(options.platform)) continue;
     if (entry.runMode !== null && entry.runMode !== options.runMode) continue;
     const source = options.sources.find((candidate) => candidate.id === entry.sourceId);
-    const enabling = new Set<string>([
-      ...(source?.domains ?? []),
-      ...domainLabels(entry).map((label) =>
-        label.slice(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX.length),
-      ),
-    ]);
-    if (enabling.size === 0) continue;
-    if (options.domain !== undefined && enabling.has(options.domain)) continue;
+    const sourceDomains = source?.domains ?? [];
+    const entryDomains = domainLabels(entry).map((label) =>
+      label.slice(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX.length),
+    );
+    // Both gates must pass, so when both restrict, only their intersection can
+    // enable the entry; an empty intersection is an unreachable authoring error
+    // and no domain honestly "enables" it.
+    let enabling: string[];
+    if (sourceDomains.length > 0 && entryDomains.length > 0) {
+      enabling = sourceDomains.filter((domain) => entryDomains.includes(domain));
+    } else {
+      enabling = sourceDomains.length > 0 ? sourceDomains : entryDomains;
+    }
+    if (enabling.length === 0) continue;
+    if (options.domain !== undefined && enabling.includes(options.domain)) continue;
     matches.push({ sourceId: entry.sourceId, domains: [...enabling].sort() });
   }
   return matches;
