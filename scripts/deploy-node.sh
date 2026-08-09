@@ -127,9 +127,10 @@ while (queue.length > 0) {
 
 // A package "ships from dist/" if it declares a build script AND its main/exports
 // point into dist/ (e.g. protocol). Source-only packages (e.g. capabilities, whose
-// main/exports point straight at src/*.ts) never need a build. dist/ is gitignored,
-// so on a fresh checkout — or after protocol changes without a rebuild — it can be
-// missing even though the workspace resolves fine locally via tsx path aliasing.
+// main/exports point straight at src/*.ts) never need a build. dist/ is gitignored
+// and can be missing (fresh checkout) or STALE (edited source, no rebuild) even
+// though the workspace resolves fine locally via tsx path aliasing — both ship
+// broken, so every dist-shipping package builds on every deploy.
 for (const name of seen) {
   const dir = dirByName.get(name);
   const pkg = readJson(path.join(packagesDir, dir, 'package.json'));
@@ -159,7 +160,7 @@ while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
   [[ -z "$pkg_name" || "$needs_build" != "1" ]] && continue
   echo "[deploy] building $pkg_name (ships from dist/)..."
   if ! (cd "$REPO_ROOT" && yarn workspace "$pkg_name" build < /dev/null); then
-    echo "[deploy] ERROR: failed to build $pkg_name — refusing to deploy a distless package" >&2
+    echo "[deploy] ERROR: failed to build $pkg_name — refusing to deploy a missing or stale dist" >&2
     exit 1
   fi
   if [[ ! -d "$PACKAGES_DIR/$pkg_dir/dist" ]]; then
