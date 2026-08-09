@@ -34,6 +34,14 @@
   Match the original script locality: commands previously wrapped in `run_on`/remote execute on the slot host, while local tmux/session-usage style commands stay on the orchestrator. Preserve script hard-fail behavior for missing project config; do not default through swallowed catches. For slow read-heavy verbs, validate with the real `farmslot --url` CLI rather than the 5s `cdp.mjs gateway` client.
 - Before adding or updating method-matrix/method-map guards, confirm the surface is actually a gateway RPC. CLI-local verbs such as `internal`/`bug` run in-process and should not be registered as gateway methods unless a real RPC is added.
 - When changing exports in `@farmslot/protocol`, run `yarn workspace @farmslot/protocol build` before live `yarn farmslot` checks; the CLI runs through `tsx` but resolves protocol imports from built `dist/`.
+- **Public state reads:** return copies. Remove internal provenance fields from them.
+- **Rollback snapshots:** restore the provenance fields after `structuredClone`.
+- **Durable webhooks:** resolve the origin principal before you persist, and again when you fire.
+  Never invent an id. Never use ambient `system`.
+- **Recipe capabilities:** read them from the resolved call graph. Not from the root document
+  alone. Not from every recipe in the library.
+- **Gateway proof:** track the TypeScript entrypoint process itself. A CLI wrapper can detach its
+  child and hide the proof daemon.
 - CLI output mode is TTY-sensitive: piping/capturing stdout sets machine mode (`!stdout.isTTY`) and emits the JSON/envelope contract. Validate human-mode branches only from a real TTY, not a bash pipe.
 - Never run emitting TypeScript builds that write `.js`, `.d.ts`, or `.map` files into source trees.
 - **Interactive-mode terminal signal:** “operator-owned completion” does not mean withholding the worker terminal
