@@ -62,8 +62,6 @@ function typeLabel(type: DecisionType | string): string {
       return 'Early review comments';
     case 'improvement':
       return 'Improvement';
-    case 'engine_learnings_draft':
-      return '#06b6d4';
     case 'recipe_strategy':
       return 'Recipe strategy';
     default:
@@ -87,6 +85,8 @@ function humanizeTypeSuffix(type: string): string {
 
 function typeColor(type: DecisionType | string): string {
   switch (type) {
+    case 'engine_learnings_draft':
+      return '#06b6d4';
     case 'collision_check':
       return colors.statusWarn;
     case 'plan_confirmation':

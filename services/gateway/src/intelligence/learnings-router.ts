@@ -340,9 +340,9 @@ async function withInboxLock<T>(inboxRoot: string, fn: () => Promise<T>): Promis
       break;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      // A holder that crashed leaves the lock behind forever; anything older
-      // than the whole acquisition window cannot belong to a live append (the
-      // guarded section is a small read+append), so take it over.
+      // A holder that crashed leaves the lock behind forever. The guarded
+      // section is a small read+append, so a lock aged far beyond any live
+      // append (30s, 6× the 5s acquire deadline) is safe to take over.
       let lockAgeMs: number | null = null;
       try {
         lockAgeMs = Date.now() - (await stat(lockDir)).mtimeMs;

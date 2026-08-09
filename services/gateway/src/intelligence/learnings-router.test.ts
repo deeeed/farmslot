@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -271,6 +271,33 @@ test('concurrent receipt appends stay exactly-once under the inbox lock', async 
   assert.equal(deduped.length, 4);
   const processed = await readFile(path.join(inbox, 'indexes', 'processed.jsonl'), 'utf-8');
   assert.equal(processed.split('\n').filter((line) => line.trim()).length, 1);
+});
+
+test('a stale inbox lock from a crashed holder is taken over instead of blocking receipts', async (t) => {
+  setupProject({ repoKey: 'testrepo' });
+  const inbox = mkdtempSync(path.join(tmpdir(), 'lrn-inbox-stale-'));
+  const ticket = 'LRN-88';
+  mkdirSync(path.join(inbox, 'indexes', 'by-ticket'), { recursive: true });
+  writeFileSync(
+    path.join(inbox, 'indexes', 'by-ticket', `${ticket.toLowerCase()}.jsonl`),
+    `${JSON.stringify({ packageId: 'pkg-stale', taskKey: 'lrn-88', ticket })}\n`,
+  );
+  // Simulate a crashed holder: lock directory whose mtime is minutes old.
+  const lockDir = path.join(inbox, 'indexes', '.processed.jsonl.lock');
+  mkdirSync(lockDir, { recursive: true });
+  const oldTime = new Date(Date.now() - 5 * 60_000);
+  utimesSync(lockDir, oldTime, oldTime);
+  process.env.FARMSLOT_LEARNINGS_INBOX = inbox;
+  const run = createRun({ flowType: 'dev', project: TEST_PROJECT, ticketOrPr: ticket });
+  t.after(async () => {
+    delete process.env.FARMSLOT_LEARNINGS_INBOX;
+    teardownProject();
+    await cleanupRun(run.id);
+    rmSync(inbox, { recursive: true, force: true });
+  });
+
+  const receipt = await appendProcessedReceipt(run, 'dec-stale');
+  assert.equal(receipt.status, 'appended');
 });
 
 test('CRLF blobs and asterisk bullets split cleanly', () => {
