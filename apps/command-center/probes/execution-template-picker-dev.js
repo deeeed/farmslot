@@ -4,7 +4,14 @@
 // so a silent regression fails the probe instead of hiding in the JSON dump.
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // dev-harness renders light DOM; the picker itself is the only shadow root.
-const picker = () => document.querySelector('execution-template-picker');
+const picker = () => {
+  const element = document.querySelector('execution-template-picker');
+  if (!element)
+    throw new Error(
+      'execution-template-picker not mounted — open #dev/execution-template-picker first',
+    );
+  return element;
+};
 const read = () => {
   const sr = picker().shadowRoot;
   const text = (selector) =>

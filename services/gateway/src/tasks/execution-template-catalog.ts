@@ -99,15 +99,24 @@ function domainFilteredSources(
   });
   for (const entry of relevant) {
     if (executionTemplateEntryParticipates(entry, query.domain)) continue;
+    const entryDomains = entry.labels
+      .filter((label) => label.startsWith(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX))
+      .map((label) => label.slice(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX.length));
+    // Same intersection rule as the explicit-id diagnostic in select.ts: when
+    // the source also declares domains, only domains passing BOTH gates may be
+    // advertised — an empty intersection is an unreachable authoring error.
+    const source = sources.find((candidate) => candidate.id === entry.sourceId);
+    const advertised =
+      source?.domains && source.domains.length > 0
+        ? entryDomains.filter((domain) => source.domains!.includes(domain))
+        : entryDomains;
+    if (advertised.length === 0) continue;
     const domains = enablingBySource.get(entry.sourceId) ?? new Set<string>();
-    for (const label of entry.labels) {
-      if (label.startsWith(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX)) {
-        domains.add(label.slice(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX.length));
-      }
-    }
+    for (const domain of advertised) domains.add(domain);
     enablingBySource.set(entry.sourceId, domains);
   }
   return [...enablingBySource.entries()]
+    .filter(([, domains]) => domains.size > 0)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([id, domains]) => ({
       id,
