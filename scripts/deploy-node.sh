@@ -90,7 +90,7 @@ resolve_farmslot_deps() {
   resolver="$(mktemp "${TMPDIR:-/tmp}/deploy-node-resolve-XXXXXX.mjs")"
   trap 'rm -f "$resolver"' RETURN
   cat > "$resolver" <<'RESOLVER'
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 const [, , repoRoot] = process.argv;
@@ -136,8 +136,11 @@ for (const name of seen) {
   const hasBuildScript = Boolean(pkg.scripts?.build);
   const mainIsDist = typeof pkg.main === 'string' && pkg.main.startsWith('dist/');
   const exportsIsDist = pkg.exports ? JSON.stringify(pkg.exports).includes('"dist/') : false;
-  const distMissing = !existsSync(path.join(packagesDir, dir, 'dist'));
-  const needsBuild = hasBuildScript && (mainIsDist || exportsIsDist) && distMissing;
+  // Always rebuild dist-shipping packages: an EXISTING dist can be stale
+  // (built before a source edit — e.g. a protocol version bump), and shipping
+  // it produces exactly the node/gateway version mismatch this script exists
+  // to prevent. Builds are incremental, so the always-build cost is seconds.
+  const needsBuild = hasBuildScript && (mainIsDist || exportsIsDist);
   process.stdout.write(`${name}\t${dir}\t${needsBuild ? '1' : '0'}\n`);
 }
 RESOLVER
@@ -147,14 +150,14 @@ RESOLVER
 FARMSLOT_DEPS="$(resolve_farmslot_deps)"
 echo "[deploy] workspace packages to bundle: $(echo "$FARMSLOT_DEPS" | cut -f1 | tr '\n' ' ')"
 
-# --- Build any @farmslot/* dep that ships from dist/ but hasn't been built ---
-# Without this, a package with no dist/ (fresh checkout, or edited-but-unbuilt
-# protocol) "deploys" successfully — the rsync step below just has nothing to
-# copy — and the node crashes at runtime with the exact ERR_MODULE_NOT_FOUND
-# this script exists to prevent. Fail loudly here instead of shipping it.
+# --- Build every @farmslot/* dep that ships from dist/ ---
+# A missing dist/ crashes the node at startup (ERR_MODULE_NOT_FOUND); a STALE
+# dist/ is worse — it deploys cleanly and then mismatches the gateway at
+# runtime (e.g. a protocol version bump built nowhere). Builds are incremental,
+# so always building is cheap; fail loudly if one cannot build.
 while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
   [[ -z "$pkg_name" || "$needs_build" != "1" ]] && continue
-  echo "[deploy] building $pkg_name (dist/ missing)..."
+  echo "[deploy] building $pkg_name (ships from dist/)..."
   if ! (cd "$REPO_ROOT" && yarn workspace "$pkg_name" build < /dev/null); then
     echo "[deploy] ERROR: failed to build $pkg_name — refusing to deploy a distless package" >&2
     exit 1
