@@ -21,6 +21,14 @@ import {
 export interface ResolvedAuth {
   apiKey: string;
   source: string; // e.g. "farmslot:anthropic:default", "openclaw:anthropic:default", "env:ANTHROPIC_API_KEY"
+  /**
+   * Present when the credential is an OAuth token rather than an API key.
+   * pi-ai's Models collection honors the per-call `apiKey` override ONLY for
+   * providers with an apiKey auth handler; oauth-only providers (openai-codex)
+   * resolve from the collection's credential store, so callers must seed it
+   * with this bundle before completeSimple/streamSimple.
+   */
+  oauth?: { access: string; refresh?: string; expires?: number };
 }
 
 const PROVIDER_ENV_VARS: Record<string, string[]> = {
@@ -71,15 +79,15 @@ export async function resolveAuth(provider: string): Promise<ResolvedAuth | null
 
   // 4. Codex CLI auth (~/.codex/auth.json) — OAuth access token
   if (provider === 'openai-codex') {
-    const token = readCodexCliToken();
-    if (token) return { apiKey: token, source: 'codex-cli:auth.json' };
+    const oauth = readCodexCliOAuth();
+    if (oauth) return { apiKey: oauth.access, source: 'codex-cli:auth.json', oauth };
   }
 
   // 5. No auth found
   return null;
 }
 
-function readCodexCliToken(): string | null {
+function readCodexCliOAuth(): { access: string; refresh?: string; expires?: number } | null {
   const authPath = path.join(homedir(), '.codex', 'auth.json');
   try {
     if (!existsSync(authPath)) return null;
@@ -87,15 +95,24 @@ function readCodexCliToken(): string | null {
     const token = raw?.tokens?.access_token;
     if (typeof token !== 'string' || token.length < 50) return null;
     // Check JWT expiry — tokens have an `exp` claim (seconds since epoch)
+    let expires: number | undefined;
     const parts = token.split('.');
     if (parts.length === 3) {
       const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
-      if (typeof payload.exp === 'number' && payload.exp * 1000 < Date.now()) {
-        console.warn('[llm] codex CLI access token expired — run `codex auth` to refresh');
-        return null;
+      if (typeof payload.exp === 'number') {
+        expires = payload.exp * 1000;
+        if (expires < Date.now()) {
+          console.warn('[llm] codex CLI access token expired — run `codex auth` to refresh');
+          return null;
+        }
       }
     }
-    return token;
+    const refresh = raw?.tokens?.refresh_token;
+    return {
+      access: token,
+      ...(typeof refresh === 'string' && refresh ? { refresh } : {}),
+      ...(expires !== undefined ? { expires } : {}),
+    };
   } catch (err) {
     console.warn('[llm] codex auth.json read failed:', (err as Error).message);
     return null;

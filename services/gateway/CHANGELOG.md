@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(llm): restore the openai-codex provider — pi-ai ignores the per-call apiKey for oauth-only providers, so the 0.82 Models migration left its credential store empty and every codex call failed pre-transport as "Provider is not configured" (laundered as no-changes until #501). The gateway now owns the collection's credential store and seeds the codex OAuth bundle from auth.json, re-seeding on token rotation; provider error messages are included in transport-stop errors (MANUAL-000101).
+
 - fix(improvement): make `improvement.apply` safe for real boards — refuse stale-anchor applies (file changed since the card's `before` snapshot) and suspicious-shrink payloads (truncated LLM submissions), reject `run.resolveDecision {actionId: apply}` so a card can no longer resolve without writing anything, emit `run.decision.resolved` only when the engine actually resolved the card, and run git/validation subprocesses async instead of blocking the event loop (MANUAL-000098).
 
 - fix(review): preserve the final unresolved findings whenever a review loop exhausts or a mid-loop worker relaunch fails, deduplicate restart recovery by review generation instead of terminal-signal timing, route fresh and retained follow-ups — including CI fix nudges whose session binding was lost — through one runner-capability delivery contract, and give warm continuations an authoritative prior-HEAD-to-current-HEAD scope.
