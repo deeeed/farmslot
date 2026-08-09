@@ -11,6 +11,7 @@ import path from 'node:path';
 
 import { refreshIfExpiringSoon } from './auth-refresh.js';
 import {
+  type AuthProfileCredential,
   extractRawAccessToken,
   getFarmslotStorePath,
   getOpenClawStorePath,
@@ -45,6 +46,19 @@ export function getProviderEnvVars(): Record<string, string[]> {
   return PROVIDER_ENV_VARS;
 }
 
+/** OAuth bundle for pi-ai credential-store seeding, when the stored
+ * credential is oauth-type. api_key/token credentials return undefined. */
+function oauthBundle(
+  credential: AuthProfileCredential,
+): { access: string; refresh?: string; expires?: number } | undefined {
+  if (credential.type !== 'oauth') return undefined;
+  return {
+    access: credential.access,
+    ...(credential.refresh ? { refresh: credential.refresh } : {}),
+    ...(credential.expires !== undefined ? { expires: credential.expires } : {}),
+  };
+}
+
 export async function resolveAuth(provider: string): Promise<ResolvedAuth | null> {
   // 1. Farmslot's own store. OAuth credentials get a proactive refresh when
   // they're within the expiry window so the caller never sees an expired
@@ -56,7 +70,10 @@ export async function resolveAuth(provider: string): Promise<ResolvedAuth | null
     for (const { profileId, credential } of profiles) {
       const fresh = await refreshIfExpiringSoon(profileId, credential);
       const key = extractRawAccessToken(fresh);
-      if (key) return { apiKey: key, source: `farmslot:${profileId}` };
+      if (key) {
+        const oauth = oauthBundle(fresh);
+        return { apiKey: key, source: `farmslot:${profileId}`, ...(oauth ? { oauth } : {}) };
+      }
     }
   }
 
@@ -66,7 +83,10 @@ export async function resolveAuth(provider: string): Promise<ResolvedAuth | null
     const profiles = listProfilesForProvider(openclawStore, provider);
     for (const { profileId, credential } of profiles) {
       const key = extractRawAccessToken(credential);
-      if (key) return { apiKey: key, source: `openclaw:${profileId}` };
+      if (key) {
+        const oauth = oauthBundle(credential);
+        return { apiKey: key, source: `openclaw:${profileId}`, ...(oauth ? { oauth } : {}) };
+      }
     }
   }
 
