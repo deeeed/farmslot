@@ -78,8 +78,10 @@ export function registerCredentialCommands(program: Command): void {
             } catch (writeError) {
               // The one-time secret would otherwise be lost with the
               // credential live. Fail closed: revoke what we just issued so
-              // the operator simply re-runs; only if the revoke ALSO fails
-              // does the secret fall back to the normal one-time display.
+              // the operator simply re-runs. Both outcomes surface through
+              // the SINGLE failure envelope (never prose + ok) — if the
+              // revoke ALSO fails, the secret rides in error.details as the
+              // last-resort one-time delivery.
               const revoked = await tryRevokeIssuedCredential(opts.offline, client, issue);
               if (revoked) {
                 throw Object.assign(
@@ -90,10 +92,16 @@ export function registerCredentialCommands(program: Command): void {
                   { code: 'SECRET_FILE_WRITE_FAILED' },
                 );
               }
-              output.write(
-                `WARNING: secret file write failed (${(writeError as Error).message}) and the ` +
-                  `revoke also failed. Secret (shown once): ${issue.secret}\n` +
-                  `Revoke manually if unused: farmslot credential revoke ${issue.credential.id}\n`,
+              throw Object.assign(
+                new Error(
+                  `secret file write failed (${(writeError as Error).message}) and the revoke ` +
+                    `also failed — the credential is LIVE. One-time secret: ${issue.secret}`,
+                ),
+                {
+                  code: 'SECRET_FILE_WRITE_FAILED_CREDENTIAL_LIVE',
+                  userAction: `Store the secret from this error now, or revoke: farmslot credential revoke ${issue.credential.id}`,
+                  details: { credentialId: issue.credential.id, secret: issue.secret },
+                },
               );
             }
           }
