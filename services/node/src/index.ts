@@ -24,7 +24,6 @@ import {
   fsRead,
   fsReadBase64,
   fsReadChunk,
-  fsWriteChunk,
   fsRealpath,
   fsRename,
   fsStat,
@@ -32,6 +31,7 @@ import {
   fsWatchStop,
   fsWatchStopAll,
   fsWrite,
+  fsWriteChunk,
   fsWriteFiles,
 } from './commands/fs.js';
 import {

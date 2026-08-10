@@ -266,12 +266,6 @@ import { copilotFormatInstruction } from '../methods/copilot.js';
 import { decisionList, decisionResolve } from '../methods/decisions.js';
 import { diagnosticsRun } from '../methods/diagnostics.js';
 import {
-  fileTransferCancel,
-  fileTransferList,
-  fileTransferRemoteE2e,
-  fileTransferSmoke,
-} from '../methods/file-transfer.js';
-import {
   dispatchCandidates,
   dispatchMatchProject,
   dispatchPreview,
@@ -283,6 +277,12 @@ import {
   dispatchQueueUpdate,
   refreshBranches,
 } from '../methods/dispatch.js';
+import {
+  fileTransferCancel,
+  fileTransferList,
+  fileTransferRemoteE2e,
+  fileTransferSmoke,
+} from '../methods/file-transfer.js';
 import {
   fsDelete,
   fsList,
