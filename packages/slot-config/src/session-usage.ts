@@ -5,7 +5,7 @@
 // effects on HOME. HOME is resolved at call time so tests can set process.env.HOME
 // before invoking runSessionUsage and see the correct temp directory.
 
-import { readdir, readFile, realpath as fsRealpath, stat, writeFile } from 'node:fs/promises';
+import { open, readdir, readFile, realpath as fsRealpath, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -630,6 +630,259 @@ function formatTotals(totals: SessionTotals): string[] {
     lines.push(`cost_usd=${totals.cost_usd.toFixed(4)}`);
   }
   return lines;
+}
+
+// ─── Incremental sample (poll-time budget / soft ceilings) ───────────────────
+
+/**
+ * Durable append-only sample state for poll-time turn/token soft budgets.
+ * Offset is the next byte to read; incomplete trailing JSONL is never advanced past.
+ */
+export type IncrementalSessionUsageState = {
+  path: string | null;
+  size: number;
+  mtimeMs: number;
+  /** Byte offset of the first unconsumed byte (after last complete newline). */
+  offset: number;
+  turns: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreation: number;
+  cacheRead: number;
+  sampledAt?: string;
+  unavailableReason?: string;
+};
+
+export type IncrementalSessionUsageResult = {
+  turns: number | null;
+  totalTokens: number | null;
+  availability: 'available' | 'unavailable' | 'cached';
+  unavailableReason?: string;
+  nextState: IncrementalSessionUsageState;
+};
+
+export function emptyIncrementalSessionUsageState(): IncrementalSessionUsageState {
+  return {
+    path: null,
+    size: 0,
+    mtimeMs: 0,
+    offset: 0,
+    turns: 0,
+    totalTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreation: 0,
+    cacheRead: 0,
+  };
+}
+
+/** Infer runner family for transcript format (shared with path heuristics). */
+export function inferSessionUsageRunner(
+  runner: string | null | undefined,
+  pathHint: string,
+): 'claude' | 'codex' | 'other' {
+  const r = (runner ?? '').toLowerCase();
+  if (r.includes('claude')) return 'claude';
+  if (r.includes('codex')) return 'codex';
+  if (pathHint.includes('.claude/')) return 'claude';
+  if (pathHint.includes('.codex/')) return 'codex';
+  return 'other';
+}
+
+function recomputeClaudeTotal(state: IncrementalSessionUsageState): number {
+  return state.inputTokens + state.cacheCreation + state.cacheRead + state.outputTokens;
+}
+
+/** Apply one Claude JSONL object to incremental totals (assistant usage rows). */
+export function applyClaudeUsageObject(
+  state: IncrementalSessionUsageState,
+  obj: Record<string, unknown>,
+): IncrementalSessionUsageState {
+  if (obj.type !== 'assistant') return state;
+  const msg = (obj.message as Record<string, unknown>) ?? {};
+  const usage = (msg.usage as Record<string, unknown>) ?? {};
+  if (!Object.keys(usage).length) return state;
+  const next = { ...state };
+  next.turns += 1;
+  next.inputTokens += (usage.input_tokens as number) ?? 0;
+  next.outputTokens += (usage.output_tokens as number) ?? 0;
+  next.cacheCreation += (usage.cache_creation_input_tokens as number) ?? 0;
+  next.cacheRead += (usage.cache_read_input_tokens as number) ?? 0;
+  next.totalTokens = recomputeClaudeTotal(next);
+  return next;
+}
+
+/** Apply one Codex JSONL object to incremental totals. */
+export function applyCodexUsageObject(
+  state: IncrementalSessionUsageState,
+  obj: Record<string, unknown>,
+): IncrementalSessionUsageState {
+  const next = { ...state };
+  const typ = obj.type as string;
+  const payload = (obj.payload as Record<string, unknown>) ?? {};
+
+  if (typ === 'response_item' && payload.type === 'message' && payload.role === 'assistant') {
+    next.turns += 1;
+  } else if (typ === 'turn.completed' && obj.usage) {
+    next.turns += 1;
+    const usage = obj.usage as Record<string, unknown>;
+    next.inputTokens = (usage.input_tokens as number) ?? next.inputTokens;
+    next.outputTokens = (usage.output_tokens as number) ?? next.outputTokens;
+    next.totalTokens = codexUsageTotal(usage);
+  } else if (typ === 'event_msg' && payload.type === 'token_count') {
+    const info = (payload.info as Record<string, unknown>) ?? {};
+    const usage =
+      (info.total_token_usage as Record<string, unknown> | undefined) ||
+      (info.last_token_usage as Record<string, unknown> | undefined);
+    if (usage) {
+      next.inputTokens = (usage.input_tokens as number) ?? next.inputTokens;
+      next.outputTokens = (usage.output_tokens as number) ?? next.outputTokens;
+      next.cacheRead = (usage.cached_input_tokens as number) ?? next.cacheRead;
+      next.totalTokens = codexUsageTotal(usage);
+    }
+  }
+  return next;
+}
+
+/**
+ * Incrementally sample a local transcript file.
+ *
+ * Only complete newline-terminated JSONL records advance the durable offset.
+ * Incomplete trailing bytes (split writes) leave the offset at the incomplete
+ * record so the next poll re-reads and counts it when finished.
+ */
+export async function sampleSessionUsageIncremental(params: {
+  filePath: string;
+  runner?: string | null;
+  prior: IncrementalSessionUsageState;
+}): Promise<IncrementalSessionUsageResult> {
+  const { filePath, runner, prior } = params;
+  try {
+    const st = await stat(filePath);
+    if (st.isDirectory()) {
+      const next = {
+        ...emptyIncrementalSessionUsageState(),
+        path: filePath,
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+        unavailableReason: 'directory session transcripts are not incrementally sampled',
+        sampledAt: new Date().toISOString(),
+      };
+      return {
+        turns: null,
+        totalTokens: null,
+        availability: 'unavailable',
+        unavailableReason: next.unavailableReason,
+        nextState: next,
+      };
+    }
+
+    if (prior.path === filePath && prior.size === st.size && prior.mtimeMs === st.mtimeMs) {
+      return {
+        turns: prior.turns,
+        totalTokens: prior.totalTokens,
+        availability: prior.turns > 0 || prior.totalTokens > 0 ? 'cached' : 'available',
+        nextState: { ...prior, sampledAt: new Date().toISOString() },
+      };
+    }
+
+    // Truncation / rotate — restart from byte 0.
+    let state: IncrementalSessionUsageState =
+      prior.path === filePath && prior.offset <= st.size
+        ? { ...prior, path: filePath, size: st.size, mtimeMs: st.mtimeMs }
+        : {
+            ...emptyIncrementalSessionUsageState(),
+            path: filePath,
+            size: st.size,
+            mtimeMs: st.mtimeMs,
+          };
+
+    const start = state.offset;
+    if (start >= st.size) {
+      state.size = st.size;
+      state.mtimeMs = st.mtimeMs;
+      state.sampledAt = new Date().toISOString();
+      return {
+        turns: state.turns,
+        totalTokens: state.totalTokens,
+        availability: 'available',
+        nextState: state,
+      };
+    }
+
+    const length = st.size - start;
+    const buf = Buffer.alloc(length);
+    const fh = await open(filePath, 'r');
+    try {
+      await fh.read(buf, 0, length, start);
+    } finally {
+      await fh.close();
+    }
+
+    // Last complete record ends at the last newline. Incomplete trailing suffix
+    // must not advance the durable offset.
+    let lastNl = -1;
+    for (let i = buf.length - 1; i >= 0; i--) {
+      if (buf[i] === 0x0a) {
+        lastNl = i;
+        break;
+      }
+    }
+    if (lastNl < 0) {
+      // No complete line yet — keep offset, refresh size/mtime for next poll.
+      state.size = st.size;
+      state.mtimeMs = st.mtimeMs;
+      state.sampledAt = new Date().toISOString();
+      return {
+        turns: state.turns,
+        totalTokens: state.totalTokens,
+        availability: 'available',
+        nextState: state,
+      };
+    }
+
+    const completeEnd = lastNl + 1;
+    const completeText = buf.subarray(0, completeEnd).toString('utf8');
+    const kind = inferSessionUsageRunner(runner, filePath);
+    for (const line of completeText.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const obj = JSON.parse(trimmed) as Record<string, unknown>;
+        if (kind === 'claude') state = applyClaudeUsageObject(state, obj);
+        else if (kind === 'codex') state = applyCodexUsageObject(state, obj);
+      } catch {
+        // Complete but malformed line — skip (same as safeJsonLines).
+      }
+    }
+
+    state.offset = start + completeEnd;
+    state.size = st.size;
+    state.mtimeMs = st.mtimeMs;
+    state.path = filePath;
+    state.sampledAt = new Date().toISOString();
+    return {
+      turns: state.turns,
+      totalTokens: state.totalTokens,
+      availability: 'available',
+      nextState: state,
+    };
+  } catch (err) {
+    const next = {
+      ...prior,
+      path: filePath,
+      unavailableReason: (err as Error).message,
+      sampledAt: new Date().toISOString(),
+    };
+    return {
+      turns: null,
+      totalTokens: null,
+      availability: 'unavailable',
+      unavailableReason: next.unavailableReason,
+      nextState: next,
+    };
+  }
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────

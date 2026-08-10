@@ -30,13 +30,9 @@ function isActionableSlotId(value: unknown): value is string {
 }
 
 function isActionableMonitorType(value: unknown): value is MonitorViolation['type'] {
-  return (
-    value === 'stuck' ||
-    value === 'idle' ||
-    value === 'waiting' ||
-    value === 'error' ||
-    value === 'budget'
-  );
+  // budget remains a protocol type for Command Center / gateway feeds, but is not
+  // a Companion push notification (device recipe deferred; operator sees gateway).
+  return value === 'stuck' || value === 'idle' || value === 'waiting' || value === 'error';
 }
 
 export function normalizeMonitorViolation(input: MonitorViolationInput): MonitorViolation | null {

@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { runSessionUsage } from './session-usage.js';
+import {
+  emptyIncrementalSessionUsageState,
+  runSessionUsage,
+  sampleSessionUsageIncremental,
+} from './session-usage.js';
 
 // Each test uses its own isolated temp dir as HOME so fixture files cannot
 // bleed across tests. The original process.env.HOME is restored after each.
@@ -367,4 +371,39 @@ test('runSessionUsage throws when report is called without a prior snapshot', as
       ),
     /No snapshot found/,
   );
+});
+
+test('sampleSessionUsageIncremental preserves incomplete trailing JSONL across polls', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'incr-usage-'));
+  const file = path.join(dir, 'session.jsonl');
+  const line = (a: number, b: number) =>
+    JSON.stringify({
+      type: 'assistant',
+      message: { usage: { input_tokens: a, output_tokens: b } },
+    });
+  const line1 = line(10, 2);
+  const line2 = line(5, 1);
+  writeFileSync(file, `${line1}\n`, 'utf8');
+  const first = await sampleSessionUsageIncremental({
+    filePath: file,
+    runner: 'claude',
+    prior: emptyIncrementalSessionUsageState(),
+  });
+  assert.equal(first.turns, 1);
+  const mid = Math.floor(line2.length / 2);
+  appendFileSync(file, line2.slice(0, mid), 'utf8');
+  const midSample = await sampleSessionUsageIncremental({
+    filePath: file,
+    runner: 'claude',
+    prior: first.nextState,
+  });
+  assert.equal(midSample.turns, 1);
+  assert.equal(midSample.nextState.offset, first.nextState.offset);
+  appendFileSync(file, `${line2.slice(mid)}\n`, 'utf8');
+  const second = await sampleSessionUsageIncremental({
+    filePath: file,
+    runner: 'claude',
+    prior: midSample.nextState,
+  });
+  assert.equal(second.turns, 2);
 });

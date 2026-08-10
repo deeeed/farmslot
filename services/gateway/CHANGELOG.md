@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- feat(run-monitor): per-flow turn/token soft budget for mechanical flows — `monitoring.flows.*.max_turns` / `max_total_tokens`, built-in `update-branch` defaults (80 turns / 8M tokens), one-shot `budget` violation + confirmed-send worker nudge; poll-time sampling is size/mtime-cached with local incremental JSONL offsets and remote `session-usage.sh` via `execOnSlot` (MANUAL-000096).
+- feat(run-monitor): per-flow turn/token soft budget for mechanical flows — `monitoring.flows.*.max_turns` / `max_total_tokens`, built-in `update-branch` defaults (80 turns / 8M tokens), one-shot `budget` violation + confirmed-send worker nudge; sampling uses shared `@farmslot/slot-config` complete-line incremental transcripts (no lost split-writes) and remote `session-usage.sh` path candidates via `execOnSlot` (MANUAL-000096).
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - fix(artifacts): treat cleaned or never-created run artifact roots as a quiet not-found result while preserving diagnostics for real filesystem failures.
