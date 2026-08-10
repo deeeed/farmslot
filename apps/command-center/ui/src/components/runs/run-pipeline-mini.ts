@@ -1,4 +1,4 @@
-import { css, html, LitElement, unsafeCSS } from 'lit';
+import { css, html, LitElement, unsafeCSS, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type { FlowType, Run, RunStep } from '@farmslot/protocol';
@@ -59,6 +59,16 @@ export class RunPipelineMini extends LitElement {
     this._releaseTransfer?.();
     this._releaseTransfer = null;
     super.disconnectedCallback();
+  }
+
+  override willUpdate(changed: PropertyValues): void {
+    // List rows reuse the element; recompute when the bound run changes.
+    if (changed.has('run')) {
+      const previous = changed.get('run') as Run | undefined;
+      if (previous?.id !== this.run?.id) {
+        this.transferProgress = primaryTransferForRun(this.run?.id);
+      }
+    }
   }
 
   static styles = css`

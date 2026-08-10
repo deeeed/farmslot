@@ -570,6 +570,8 @@ export class AggregateTransferSession {
   private bytesTransferred = 0;
   private readonly totalBytes: number;
   private readonly filesTotal: number;
+  private readonly abort: AbortController;
+  private terminal = false;
   private readonly base: Omit<
     FileTransferProgress,
     'state' | 'bytesTransferred' | 'totalBytes' | 'filesCompleted'
@@ -587,6 +589,7 @@ export class AggregateTransferSession {
   }) {
     this.transferId = randomUUID();
     this.filesTotal = Math.max(0, args.filesTotal);
+    // 0 = indeterminate (do not fake total=bytesTransferred — that paints 100% early).
     this.totalBytes = Math.max(0, args.totalBytes ?? 0);
     this.base = {
       transferId: this.transferId,
@@ -598,7 +601,7 @@ export class AggregateTransferSession {
       filesTotal: this.filesTotal,
       cancellable: true,
     };
-    registerActive(this.transferId, {
+    this.abort = registerActive(this.transferId, {
       ...this.base,
       bytesTransferred: 0,
       totalBytes: this.totalBytes,
@@ -612,15 +615,28 @@ export class AggregateTransferSession {
     return this.filesCompleted;
   }
 
+  get signal(): AbortSignal {
+    return this.abort.signal;
+  }
+
+  /** Throw if cancelTransfer() aborted this aggregate. */
+  throwIfCancelled(): void {
+    if (this.abort.signal.aborted) {
+      throw new FileTransferCancelledError(this.transferId);
+    }
+  }
+
   /** Bytes from fully completed files (not including the in-flight file). */
   private completedBytes = 0;
 
   noteFileProgress(fileBytesTransferred: number, _fileTotal: number): void {
+    this.throwIfCancelled();
     this.bytesTransferred = this.completedBytes + Math.max(0, fileBytesTransferred);
     this.publish('running', false);
   }
 
   noteFileComplete(fileSize: number): void {
+    this.throwIfCancelled();
     this.filesCompleted += 1;
     this.completedBytes += Math.max(0, fileSize);
     this.bytesTransferred = this.completedBytes;
@@ -628,12 +644,31 @@ export class AggregateTransferSession {
   }
 
   complete(): void {
+    if (this.terminal) return;
+    if (this.abort.signal.aborted) {
+      this.markCancelled();
+      return;
+    }
+    this.terminal = true;
     this.publish('done', true);
     unregisterActive(this.transferId);
   }
 
   fail(error: string): void {
+    if (this.terminal) return;
+    if (this.abort.signal.aborted) {
+      this.markCancelled();
+      return;
+    }
+    this.terminal = true;
     this.publish('failed', true, error);
+    unregisterActive(this.transferId);
+  }
+
+  private markCancelled(): void {
+    if (this.terminal) return;
+    this.terminal = true;
+    this.publish('cancelled', true, 'cancelled');
     unregisterActive(this.transferId);
   }
 
@@ -641,7 +676,8 @@ export class AggregateTransferSession {
     const progress: FileTransferProgress = {
       ...this.base,
       bytesTransferred: this.bytesTransferred,
-      totalBytes: this.totalBytes > 0 ? this.totalBytes : this.bytesTransferred,
+      // Keep unknown totals as 0 so UI reports indeterminate (0%) instead of 100%.
+      totalBytes: this.totalBytes,
       filesCompleted: this.filesCompleted,
       filesTotal: this.filesTotal,
       state,
@@ -650,11 +686,19 @@ export class AggregateTransferSession {
     if (error) progress.error = error;
     const now = Date.now();
     const entry = activeTransfers.get(this.transferId);
+    const prevBytes = entry?.progress.bytesTransferred ?? 0;
+    const prevFiles = entry?.progress.filesCompleted ?? 0;
+    const bytesAdvanced = progress.bytesTransferred !== prevBytes;
+    const filesAdvanced = progress.filesCompleted !== prevFiles;
     if (entry) entry.progress = progress;
+    const intervalOk =
+      now - this.lastBroadcastAt >= FILE_TRANSFER_PROGRESS_BROADCAST_MIN_INTERVAL_MS;
     const should =
       force ||
       state !== 'running' ||
-      now - this.lastBroadcastAt >= FILE_TRANSFER_PROGRESS_BROADCAST_MIN_INTERVAL_MS;
+      // First non-zero byte, percent/file advance, or 2Hz cadence.
+      (bytesAdvanced && (intervalOk || prevBytes === 0)) ||
+      (filesAdvanced && intervalOk);
     if (should) {
       this.lastBroadcastAt = now;
       broadcastFn(Events.FILE_TRANSFER_PROGRESS, progress);

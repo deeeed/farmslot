@@ -9,9 +9,9 @@ import {
   FILE_TRANSFER_PROGRESS_BROADCAST_MIN_INTERVAL_MS,
   FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES,
   FILE_TRANSFER_STATES,
-  type FileTransferProgress,
-  FileTransferMethods,
   fileTransferIdleTimeoutMs,
+  FileTransferMethods,
+  type FileTransferProgress,
   Methods,
 } from '../../src/index.js';
 

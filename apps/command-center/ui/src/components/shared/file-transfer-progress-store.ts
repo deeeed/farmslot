@@ -1,9 +1,10 @@
 // Shared transfer progress store for Command Center surfaces (banner, run detail,
 // pipeline package-refresh / finalize). One gateway subscription, many listeners.
+//
+// Gateway is loaded lazily so pure Node unit tests can import pipeline/renderer
+// modules without evaluating browser `location` from gateway-client.
 
 import { Events, type FileTransferProgress } from '@farmslot/protocol';
-
-import { gateway } from '../../gateway-client.js';
 
 import {
   type FileTransferUiEntry,
@@ -22,15 +23,12 @@ const listeners = new Set<Listener>();
 let unsubGateway: (() => void) | null = null;
 let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let refCount = 0;
+let subscribeInFlight: Promise<void> | null = null;
 
 function notify(): void {
+  // Do not catch — broken listeners must surface (repo exception contract).
   for (const listener of listeners) {
-    try {
-      listener();
-    } catch (err) {
-      // Surface listener failures — do not swallow (repo exception contract).
-      console.error('[file-transfer-store] listener failed', err);
-    }
+    listener();
   }
 }
 
@@ -40,15 +38,28 @@ function onProgress(progress: FileTransferProgress): void {
 }
 
 function ensureSubscribed(): void {
-  if (unsubGateway) return;
-  unsubGateway = gateway.subscribe<FileTransferProgress>(Events.FILE_TRANSFER_PROGRESS, onProgress);
-  pruneTimer = setInterval(() => {
-    const next = pruneFileTransfers(entries);
-    if (next.length !== entries.length || next.some((e, i) => e !== entries[i])) {
-      entries = next;
-      notify();
-    }
-  }, 1000);
+  if (unsubGateway || subscribeInFlight) return;
+  if (!pruneTimer) {
+    pruneTimer = setInterval(() => {
+      const next = pruneFileTransfers(entries);
+      if (next.length !== entries.length || next.some((e, i) => e !== entries[i])) {
+        entries = next;
+        notify();
+      }
+    }, 1000);
+  }
+  subscribeInFlight = import('../../gateway-client.js')
+    .then(({ gateway }) => {
+      if (unsubGateway) return;
+      if (refCount === 0 && listeners.size === 0) return;
+      unsubGateway = gateway.subscribe<FileTransferProgress>(
+        Events.FILE_TRANSFER_PROGRESS,
+        onProgress,
+      );
+    })
+    .finally(() => {
+      subscribeInFlight = null;
+    });
 }
 
 function maybeUnsubscribe(): void {

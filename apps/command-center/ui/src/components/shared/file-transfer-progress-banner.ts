@@ -178,6 +178,11 @@ export class FileTransferProgressBanner extends LitElement {
     super.disconnectedCallback();
   }
 
+  override willUpdate(changed: Map<string | number | symbol, unknown>): void {
+    // Reused inline run-detail hosts change run-id without reconnecting.
+    if (changed.has('runId')) this._syncFromStore();
+  }
+
   private _syncFromStore(): void {
     this._entries = getFileTransfersForRun(this.runId || null);
   }

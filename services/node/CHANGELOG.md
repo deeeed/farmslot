@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- fix(fs): `fs.writeChunk` loops until the full buffer is written and returns actual `bytesWritten` (MANUAL-000095 self-review).
+
 - feat(fs): `fs.writeChunk` for progress-aware remote uploads (MANUAL-000095 follow-up).
 
 - feat(fs): `fs.readChunk` — confined ranged base64 reads for progress-aware large transfers (MANUAL-000095).

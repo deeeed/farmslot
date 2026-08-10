@@ -159,3 +159,28 @@ test('fsReadChunk returns a bounded base64 slice and eof', async (t) => {
   assert.equal(last.bytesRead, 20);
   assert.equal(last.eof, true);
 });
+
+test('fsWriteChunk reports the actual written length and can multi-chunk a file', async (t) => {
+  const { fsWriteChunk, fsReadChunk } = await import('./fs.js');
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-wchunk-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const payload = Buffer.alloc(90, 7);
+  const first = await fsWriteChunk({
+    root,
+    relPath: 'out.bin',
+    offset: 0,
+    content: payload.subarray(0, 50).toString('base64'),
+    truncate: true,
+  });
+  assert.equal(first.bytesWritten, 50);
+  const second = await fsWriteChunk({
+    root,
+    relPath: 'out.bin',
+    offset: 50,
+    content: payload.subarray(50).toString('base64'),
+  });
+  assert.equal(second.bytesWritten, 40);
+  const read = await fsReadChunk({ root, relPath: 'out.bin', offset: 0, length: 90 });
+  assert.equal(read.bytesRead, 90);
+  assert.deepEqual(Buffer.from(read.content, 'base64'), payload);
+});

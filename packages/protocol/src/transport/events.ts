@@ -415,4 +415,3 @@ export interface WorkGraphUpdatedPayload {
 }
 
 export interface FileTransferProgressPayload extends FileTransferProgress {}
-

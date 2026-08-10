@@ -260,8 +260,23 @@ export async function fsWriteChunk(params: {
         ? constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW
         : constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW;
     handle = await open(target, flags, 0o666);
-    await handle.write(buf, 0, buf.byteLength, params.offset);
-    return { ok: true, bytesWritten: buf.byteLength, offset: params.offset };
+    // Loop until the full buffer is written — FileHandle.write may return a short write.
+    let written = 0;
+    while (written < buf.byteLength) {
+      const result = await handle.write(
+        buf,
+        written,
+        buf.byteLength - written,
+        params.offset + written,
+      );
+      if (result.bytesWritten <= 0) {
+        throw new Error(
+          `fs.writeChunk short write at offset ${params.offset + written} (0 bytes)`,
+        );
+      }
+      written += result.bytesWritten;
+    }
+    return { ok: true, bytesWritten: written, offset: params.offset };
   } catch (error) {
     return actionableNoFollowError(error, params.relPath);
   } finally {

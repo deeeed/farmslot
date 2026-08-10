@@ -104,4 +104,3 @@ export interface NodeFsWriteChunkResult {
   bytesWritten: number;
   offset: number;
 }
-

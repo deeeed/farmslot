@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(transfer): diagnostics smoke `forceFail` + result `failed` for failed-state UI proof (MANUAL-000095 self-review).
+
 - feat(transfer): cancel/list RPC, size-scaled idle timeout, aggregate file counts, diagnostics smoke rename, cancelled state (MANUAL-000095 follow-up).
 
 - feat(transfer): chunked file-transfer contract — `FILE_TRANSFER_CHUNK_MAX_BYTES`, small-file threshold, idle timeout, `FileTransferProgress` event payload, `file.transfer.smoke` method, and `fs.readChunk` node params (MANUAL-000095).

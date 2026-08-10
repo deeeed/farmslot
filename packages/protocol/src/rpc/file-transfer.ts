@@ -53,7 +53,10 @@ export function fileTransferIdleTimeoutMs(totalBytes: number): number {
   const mib = bytes / (1024 * 1024);
   const scaled =
     FILE_TRANSFER_IDLE_TIMEOUT_MS + Math.ceil(mib) * FILE_TRANSFER_IDLE_TIMEOUT_PER_MIB_MS;
-  return Math.min(FILE_TRANSFER_IDLE_TIMEOUT_MAX_MS, Math.max(FILE_TRANSFER_IDLE_TIMEOUT_MS, scaled));
+  return Math.min(
+    FILE_TRANSFER_IDLE_TIMEOUT_MAX_MS,
+    Math.max(FILE_TRANSFER_IDLE_TIMEOUT_MS, scaled),
+  );
 }
 
 /** Determinate transfer progress broadcast to open Command Center clients. */
@@ -115,6 +118,11 @@ export interface FileTransferSmokeParams {
   phase?: FileTransferPhase;
   /** When true, leave a partial file and resume mid-transfer (smoke of resume path). */
   exerciseResume?: boolean;
+  /**
+   * When true, emit intermediate progress then fail the transfer so UI/recipe can
+   * prove the failed card (not only terminal DONE).
+   */
+  forceFail?: boolean;
 }
 
 export interface FileTransferSmokeResult {
@@ -124,6 +132,9 @@ export interface FileTransferSmokeResult {
   progressEvents: number;
   intermediateEvents: number;
   cancelled?: boolean;
+  /** Present when smoke was run with forceFail and intentionally failed after progress. */
+  failed?: boolean;
+  error?: string;
 }
 
 export interface FileTransferRemoteE2eParams {

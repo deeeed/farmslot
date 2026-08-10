@@ -285,3 +285,40 @@ test('readRemoteFileChunkedToBuffer rejects early EOF when totalBytes is known',
     /Assembled size 10 !== totalBytes 100|Early EOF/,
   );
 });
+
+test('AggregateTransferSession cancel aborts before done and keeps indeterminate total', async () => {
+  const { AggregateTransferSession, cancelTransfer } = await import('./file-transfer.js');
+  const events: Array<{ state: string; totalBytes: number; bytes: number }> = [];
+  setFileTransferBroadcast((_e, payload) => {
+    const p = payload as {
+      state: string;
+      totalBytes: number;
+      bytesTransferred: number;
+    };
+    events.push({ state: p.state, totalBytes: p.totalBytes, bytes: p.bytesTransferred });
+  });
+  try {
+    const agg = new AggregateTransferSession({
+      path: '/remote/dir',
+      phase: 'mirror',
+      filesTotal: 3,
+      // no totalBytes → indeterminate (0), not equal to current bytes
+    });
+    agg.noteFileProgress(1, 10);
+    const mid = events.filter((e) => e.state === 'running' && e.bytes > 0);
+    assert.ok(mid.length >= 1);
+    assert.equal(mid[0]!.totalBytes, 0, 'unknown size must stay totalBytes=0');
+    const cancel = cancelTransfer(agg.transferId);
+    assert.equal(cancel.state, 'cancelled');
+    assert.throws(() => agg.noteFileComplete(10), /cancelled/i);
+    agg.complete();
+    const terminal = events.filter((e) => e.state === 'cancelled' || e.state === 'done');
+    assert.ok(
+      terminal.some((e) => e.state === 'cancelled'),
+      `expected cancelled terminal, got ${JSON.stringify(events)}`,
+    );
+    assert.ok(!terminal.some((e) => e.state === 'done'));
+  } finally {
+    setFileTransferBroadcast(() => {});
+  }
+});

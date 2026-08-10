@@ -75,28 +75,9 @@ export async function fileTransferSmoke(
 
   try {
     await writeTransferFixture(src, totalBytes);
-    let result = await copyFileChunked({
-      path: src,
-      label: params.label ?? 'after.mp4',
-      phase,
-      runId: params.runId,
-      slotId: params.slotId,
-      totalBytes,
-      localPath: dest,
-      keepPartialOnFailure: Boolean(params.exerciseResume),
-      readChunk: async (offset, length) => {
-        if (chunkDelayMs > 0) {
-          await new Promise((r) => setTimeout(r, chunkDelayMs));
-        }
-        return readLocalFileChunk(src, offset, length);
-      },
-    });
-
-    if (params.exerciseResume) {
-      // Truncate mid-file and resume to prove keepPartial + resumeFromOffset.
-      const mid = Math.floor(totalBytes / 2);
-      await truncate(dest, mid);
-      result = await copyFileChunked({
+    let chunksSeen = 0;
+    try {
+      let result = await copyFileChunked({
         path: src,
         label: params.label ?? 'after.mp4',
         phase,
@@ -104,30 +85,71 @@ export async function fileTransferSmoke(
         slotId: params.slotId,
         totalBytes,
         localPath: dest,
-        resumeFromOffset: mid,
-        readChunk: async (offset, length) => readLocalFileChunk(src, offset, length),
+        keepPartialOnFailure: Boolean(params.exerciseResume),
+        readChunk: async (offset, length) => {
+          if (chunkDelayMs > 0) {
+            await new Promise((r) => setTimeout(r, chunkDelayMs));
+          }
+          const chunk = await readLocalFileChunk(src, offset, length);
+          chunksSeen += 1;
+          // After at least one intermediate chunk, fail so UI can paint failed state.
+          if (params.forceFail && chunksSeen >= 2) {
+            throw new Error('forced smoke failure after intermediate progress');
+          }
+          return chunk;
+        },
       });
+
+      if (params.exerciseResume) {
+        // Truncate mid-file and resume to prove keepPartial + resumeFromOffset.
+        const mid = Math.floor(totalBytes / 2);
+        await truncate(dest, mid);
+        result = await copyFileChunked({
+          path: src,
+          label: params.label ?? 'after.mp4',
+          phase,
+          runId: params.runId,
+          slotId: params.slotId,
+          totalBytes,
+          localPath: dest,
+          resumeFromOffset: mid,
+          readChunk: async (offset, length) => readLocalFileChunk(src, offset, length),
+        });
+      }
+
+      const assembled = await readFile(dest);
+      const sha256 = createHash('sha256').update(assembled).digest('hex');
+      if (assembled.byteLength !== totalBytes || sha256 !== result.sha256) {
+        throw new Error(
+          `diagnostics.fileTransfer.smoke integrity failed: size ${assembled.byteLength}/${totalBytes}, sha ${sha256}/${result.sha256}`,
+        );
+      }
+
+      const intermediateEvents = result.progressEvents.filter(
+        (p) => p.state === 'running' && p.bytesTransferred > 0 && p.bytesTransferred < p.totalBytes,
+      ).length;
+
+      return {
+        transferId: result.transferId,
+        size: result.size,
+        sha256: result.sha256,
+        progressEvents: result.progressEvents.length,
+        intermediateEvents,
+      };
+    } catch (err) {
+      if (!params.forceFail) throw err;
+      // forceFail path: progress events already published failed; return for recipe asserts.
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        transferId: 'force-fail',
+        size: 0,
+        sha256: '',
+        progressEvents: chunksSeen,
+        intermediateEvents: Math.max(0, chunksSeen - 1),
+        failed: true,
+        error: message,
+      };
     }
-
-    const assembled = await readFile(dest);
-    const sha256 = createHash('sha256').update(assembled).digest('hex');
-    if (assembled.byteLength !== totalBytes || sha256 !== result.sha256) {
-      throw new Error(
-        `diagnostics.fileTransfer.smoke integrity failed: size ${assembled.byteLength}/${totalBytes}, sha ${sha256}/${result.sha256}`,
-      );
-    }
-
-    const intermediateEvents = result.progressEvents.filter(
-      (p) => p.state === 'running' && p.bytesTransferred > 0 && p.bytesTransferred < p.totalBytes,
-    ).length;
-
-    return {
-      transferId: result.transferId,
-      size: result.size,
-      sha256: result.sha256,
-      progressEvents: result.progressEvents.length,
-      intermediateEvents,
-    };
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -276,7 +298,7 @@ export async function fileTransferRemoteE2e(
       );
     }
 
-    // Intermediate events: use list during a second slow-ish copy by reading via chunked path with delay? 
+    // Intermediate events: use list during a second slow-ish copy by reading via chunked path with delay?
     // Approximate: force multi-chunk by size; progressEvents from listActive won't retain.
     // Collect via temporary subscription: monkey-patch setFileTransferBroadcast
     const collected: FileTransferProgress[] = [];

@@ -269,6 +269,8 @@ export interface SlotCopyFileOptions {
   /** Verify assembled bytes against remote fs.hash when true (default for chunked). */
   verifyRemoteHash?: boolean;
   onProgress?: (progress: import('@farmslot/protocol').FileTransferProgress) => void;
+  /** Parent aggregate / operator cancel signal. */
+  abortSignal?: AbortSignal;
 }
 
 export async function slotCopyFile(
@@ -324,6 +326,7 @@ export async function slotCopyFile(
     resumeFromOffset: options.resumeFromOffset,
     keepPartialOnFailure: options.keepPartialOnFailure,
     onProgress: options.onProgress,
+    abortSignal: options.abortSignal,
     fetchRemoteSha256: verifyHash
       ? async () => {
           const hashed = (await sendNodeRequest(node, 'fs.hash', pathParams, {
@@ -434,7 +437,7 @@ export async function slotWriteFileBuffer(
   const pathParams = nodePathParams(remotePath);
   const totalBytes = data.byteLength;
   if (totalBytes <= FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES) {
-    await sendNodeRequest(
+    const written = (await sendNodeRequest(
       node,
       'fs.writeChunk',
       {
@@ -444,7 +447,15 @@ export async function slotWriteFileBuffer(
         truncate: true,
       },
       { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
-    );
+    )) as { bytesWritten?: number };
+    if (
+      typeof written.bytesWritten === 'number' &&
+      written.bytesWritten !== totalBytes
+    ) {
+      throw new Error(
+        `fs.writeChunk short write: got ${written.bytesWritten}, expected ${totalBytes}`,
+      );
+    }
     return;
   }
   const { randomUUID } = await import('node:crypto');
@@ -500,7 +511,7 @@ export async function slotWriteFileBuffer(
       }
       const end = Math.min(offset + FILE_TRANSFER_CHUNK_MAX_BYTES, totalBytes);
       const slice = data.subarray(offset, end);
-      await sendNodeRequest(
+      const written = (await sendNodeRequest(
         node,
         'fs.writeChunk',
         {
@@ -510,7 +521,15 @@ export async function slotWriteFileBuffer(
           truncate: offset === 0,
         },
         { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
-      );
+      )) as { bytesWritten?: number };
+      if (
+        typeof written.bytesWritten === 'number' &&
+        written.bytesWritten !== slice.byteLength
+      ) {
+        throw new Error(
+          `fs.writeChunk short write at offset ${offset}: got ${written.bytesWritten}, expected ${slice.byteLength}`,
+        );
+      }
       offset = end;
       bytesTransferred = offset;
       publish('running');
@@ -657,26 +676,35 @@ export async function slotCopyDir(
     (options.excludeRelativePaths ?? []).map(normalizeRelativeCopyPath),
   );
 
-  async function countRemoteFiles(sourceDir: string, depth: number): Promise<number> {
-    if (depth > MAX_ARTIFACT_TREE_DEPTH) return 0;
+  async function countRemoteFiles(
+    sourceDir: string,
+    depth: number,
+  ): Promise<{ files: number; bytes: number }> {
+    if (depth > MAX_ARTIFACT_TREE_DEPTH) return { files: 0, bytes: 0 };
     const listResult = (await sendNodeRequest(node, 'fs.list', {
       root: remoteDir,
       relPath: path.relative(remoteDir, sourceDir) || '.',
-    })) as { entries: Array<{ name: string; type: string }> };
-    let n = 0;
+    })) as { entries: Array<{ name: string; type: string; size?: number }> };
+    let files = 0;
+    let bytes = 0;
     for (const entry of listResult.entries) {
       if (depth === 0 && excluded.has(entry.name)) continue;
       const sourcePath = path.join(sourceDir, entry.name);
       if (isExcludedRelativePath(remoteDir, sourcePath, excludedRelativePaths)) continue;
-      if (entry.type === 'file') n += 1;
-      else if (entry.type === 'directory' || entry.type === 'dir') {
-        n += await countRemoteFiles(sourcePath, depth + 1);
+      if (entry.type === 'file') {
+        files += 1;
+        if (typeof entry.size === 'number' && entry.size > 0) bytes += entry.size;
+      } else if (entry.type === 'directory' || entry.type === 'dir') {
+        const nested = await countRemoteFiles(sourcePath, depth + 1);
+        files += nested.files;
+        bytes += nested.bytes;
       }
     }
-    return n;
+    return { files, bytes };
   }
 
-  const filesTotal = await countRemoteFiles(remoteDir, 0);
+  const totals = await countRemoteFiles(remoteDir, 0);
+  const filesTotal = totals.files;
   const aggregate = new AggregateTransferSession({
     path: remoteDir,
     label: options.labelPrefix ?? path.basename(remoteDir),
@@ -684,6 +712,7 @@ export async function slotCopyDir(
     runId: options.runId,
     slotId: options.slotId,
     filesTotal,
+    totalBytes: totals.bytes > 0 ? totals.bytes : undefined,
   });
 
   async function copyRecursive(
@@ -694,6 +723,7 @@ export async function slotCopyDir(
     if (depth > MAX_ARTIFACT_TREE_DEPTH) {
       throw new Error(`slotCopyDir exceeded max recursion depth under ${sourceDir}`);
     }
+    aggregate.throwIfCancelled();
     const listResult = (await sendNodeRequest(node, 'fs.list', {
       root: remoteDir,
       relPath: path.relative(remoteDir, sourceDir) || '.',
@@ -703,6 +733,7 @@ export async function slotCopyDir(
 
     let count = 0;
     for (const entry of listResult.entries) {
+      aggregate.throwIfCancelled();
       if (depth === 0 && excluded.has(entry.name)) continue;
       const sourcePath = path.join(sourceDir, entry.name);
       const targetPath = path.join(targetDir, entry.name);
@@ -729,6 +760,7 @@ export async function slotCopyDir(
             parentTransferId: aggregate.transferId,
             filesCompleted: aggregate.filesDone,
             filesTotal,
+            abortSignal: aggregate.signal,
             onProgress: (p) => {
               if (p.state === 'running') {
                 aggregate.noteFileProgress(p.bytesTransferred, p.totalBytes);
@@ -737,6 +769,13 @@ export async function slotCopyDir(
           });
           aggregate.noteFileComplete(typeof entry.size === 'number' ? entry.size : 0);
         } catch (err) {
+          const { FileTransferCancelledError } = await import('./file-transfer.js');
+          if (err instanceof FileTransferCancelledError || aggregate.signal.aborted) {
+            aggregate.fail(err instanceof Error ? err.message : String(err));
+            throw err instanceof FileTransferCancelledError
+              ? err
+              : new FileTransferCancelledError(aggregate.transferId);
+          }
           const entryError = new SlotCopyDirEntryError(sourcePath, targetPath, err);
           if (options.onEntryFailure) {
             options.onEntryFailure(entryError);
@@ -772,7 +811,7 @@ export async function slotCopyDir(
     aggregate.complete();
     return copied;
   } catch (err) {
-    // Always fail/unregister the aggregate — per-file catch only covers entry errors.
+    // Always terminate/unregister the aggregate — cancel and non-file errors alike.
     aggregate.fail(err instanceof Error ? err.message : String(err));
     throw err;
   }

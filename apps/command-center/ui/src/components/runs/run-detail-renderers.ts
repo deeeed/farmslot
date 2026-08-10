@@ -22,7 +22,6 @@ import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { isSlotPinned } from '../../utils/pinned-slots.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
-import '../shared/file-transfer-progress-banner.js';
 
 import { ticketUrlForRun } from './family-observability-link-model.js';
 import { familyRunHash } from './family-observability-url-state.js';

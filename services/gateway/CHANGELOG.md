@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(transfer): honor aggregate cancel (abort between files), keep unknown-size aggregates indeterminate, precompute dir totals, validate writeChunk bytesWritten, route terminal attachments through slotWriteFileBuffer, and add forceFail smoke for failed UI proof (MANUAL-000095 self-review).
+
 - fix(transfer): restore intermediate progress broadcasts, reject truncated chunked buffer reads, fail/unregister aggregate dir sessions, wire upload cancel + aggregate byte progress, and keep HTTP 413 oversize mapping under `slotReadFileBuffer` (MANUAL-000095 self-review).
 
 - fix(transfer): stamp runId/slotId/phase on review-gate and slot-release artifact copies so pipeline transfer UI can bind (MANUAL-000095).
