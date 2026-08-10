@@ -1432,9 +1432,7 @@ export default function TerminalScreen() {
     }
     const sent = await sendTerminalText(voiceEditableInstruction, setVoiceWarning);
     if (sent) {
-      resetVoiceCopilotAfterSend(
-        'Instruction sent. Tap mic to dictate the next worker instruction.',
-      );
+      resetVoiceCopilotAfterSend('Sent. Tap mic to dictate another instruction.');
     }
   }, [
     resetVoiceCopilotAfterSend,
