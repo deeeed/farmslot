@@ -142,8 +142,8 @@ export function hasValidPrNumber(run: Pick<Run, 'prNumber'>): boolean {
   return run.prNumber != null && run.prNumber > 0;
 }
 
-export function shouldForceNoChangeHumanGate(run: Pick<Run, 'metrics' | 'flowType'>): boolean {
-  return run.flowType === 'fix-bug' && isNoCodeTerminalDisposition(run.metrics.disposition);
+export function shouldForceNoChangeHumanGate(run: Pick<Run, 'metrics'>): boolean {
+  return isNoCodeTerminalDisposition(run.metrics.disposition);
 }
 
 export function noChangeDispositionLabel(

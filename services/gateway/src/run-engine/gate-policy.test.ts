@@ -155,7 +155,7 @@ test('isOwnPrApprovalError detects GitHub self-approval failures', () => {
   );
 });
 
-test('shouldForceNoChangeHumanGate forces only fix-bug no-code dispositions', () => {
+test('shouldForceNoChangeHumanGate routes every no-code disposition to operator confirmation', () => {
   assert.equal(
     shouldForceNoChangeHumanGate(
       makeRun({
@@ -195,7 +195,7 @@ test('shouldForceNoChangeHumanGate forces only fix-bug no-code dispositions', ()
         metrics: { nudgeCount: 0, model: 'gpt-5.5', runner: 'codex', disposition: 'already_fixed' },
       }),
     ),
-    false,
+    true,
   );
 });
 
