@@ -291,7 +291,7 @@ export function registerBacklogCommand(program: Command): void {
               const item = await resolveItem(ctx, ref);
               const result = await ctx.client.call<BacklogUpdateResult>('backlog.update', {
                 itemId: item.id,
-                ...(opts.project ? { project: opts.project, allowedSlots: null } : {}),
+                ...(opts.project ? { project: opts.project } : {}),
                 ...(opts.title ? { title: opts.title } : {}),
                 ...(opts.notes ? { notes: opts.notes } : {}),
                 ...(opts.priority ? { priority: Number(opts.priority) } : {}),

@@ -118,7 +118,7 @@ import {
   canArchiveBacklogItemForUi,
   canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
-  canEditBacklogItemForUi,
+  canEditBacklogDispatchForUi,
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
   CUSTOM_REFINEMENT_CHOICE,
@@ -1458,23 +1458,31 @@ export class BacklogPanel extends LitElement {
     this._metadataDrafts = { ...this._metadataDrafts, [item.id]: next };
   }
 
-  private _renderProjectChoice(value: string, onSelect: (project: string) => void, testId: string) {
+  private _renderProjectChoice(
+    value: string,
+    onSelect: (project: string) => void,
+    testId: string,
+    disabled = false,
+  ) {
     const options = this._projects;
     const customProjectActive = Boolean(value) && !options.includes(value);
+    const customOption = '__custom__';
     return html`<label>
       Project
       ${renderChoiceButtons({
-        options: [...options, ''],
-        value: customProjectActive ? '' : value,
-        onSelect,
-        labels: { '': 'Custom' },
+        options: [...options, customOption],
+        value: customProjectActive ? customOption : value,
+        onSelect: (project) => onSelect(project === customOption ? '' : project),
+        labels: { [customOption]: 'Custom' },
         testId: `${testId}-options`,
+        disabled,
       })}
       ${customProjectActive || !value
         ? html`<input
             data-testid=${testId}
             placeholder="custom project name"
             .value=${value}
+            ?disabled=${disabled}
             @input=${(e: Event) => onSelect((e.target as HTMLInputElement).value)}
           />`
         : nothing}
@@ -1485,13 +1493,21 @@ export class BacklogPanel extends LitElement {
     draft: BacklogMetadataDraft,
     onChange: (patch: Partial<BacklogMetadataDraft>) => void,
     testId: string,
+    dispatchScopeDisabled = false,
   ) {
     return html`<div class="create-grid" data-testid=${testId}>
+      ${dispatchScopeDisabled
+        ? html`<div class="wide muted">
+            Project, source, flow, and dispatch settings are locked while this item is linked to
+            execution. Descriptive metadata remains editable.
+          </div>`
+        : nothing}
       <div class="wide">
         ${this._renderProjectChoice(
           draft.project,
           (project) => onChange({ project }),
           `${testId}-project`,
+          dispatchScopeDisabled,
         )}
       </div>
       <label class="span-2">
@@ -1501,6 +1517,7 @@ export class BacklogPanel extends LitElement {
           value: draft.sourceKind,
           onSelect: (sourceKind) => onChange({ sourceKind }),
           testId: `${testId}-source`,
+          disabled: dispatchScopeDisabled,
         })}
       </label>
       <label class="span-2">
@@ -1510,6 +1527,7 @@ export class BacklogPanel extends LitElement {
           value: draft.flowType,
           onSelect: (flowType) => onChange({ flowType }),
           testId: `${testId}-flow`,
+          disabled: dispatchScopeDisabled,
         })}
       </label>
       <label class="wide">
@@ -1518,6 +1536,7 @@ export class BacklogPanel extends LitElement {
           data-testid=${`${testId}-source-ref`}
           placeholder="TAT-3463, owner/repo#1, or a URL"
           .value=${draft.sourceRef}
+          ?disabled=${dispatchScopeDisabled}
           @input=${(event: Event) =>
             onChange({ sourceRef: (event.target as HTMLInputElement).value })}
         />
@@ -1570,6 +1589,7 @@ export class BacklogPanel extends LitElement {
           type="checkbox"
           title=${AUTO_DISPATCH_TOOLTIP}
           .checked=${draft.autoDispatch}
+          ?disabled=${dispatchScopeDisabled}
           @change=${(event: Event) =>
             onChange({ autoDispatch: (event.target as HTMLInputElement).checked })}
         />
@@ -2675,25 +2695,24 @@ export class BacklogPanel extends LitElement {
       this._error = 'Backlog item title is required.';
       return;
     }
+    const priority = Number(draft.priority);
+    if (!Number.isFinite(priority) || priority < 1) {
+      this._error = 'Backlog item priority must be at least 1.';
+      return;
+    }
+    const savedDraft = metadataDraftFromItem(item);
+    const update: BacklogUpdateInput & { itemId: string } = { itemId: item.id };
+    if (draft.project.trim() !== savedDraft.project) update.project = draft.project.trim();
+    if (draft.title.trim() !== savedDraft.title) update.title = draft.title.trim();
+    if (draft.sourceKind !== savedDraft.sourceKind) update.sourceKind = draft.sourceKind;
+    if (draft.sourceRef !== savedDraft.sourceRef) update.sourceRef = draft.sourceRef;
+    if (draft.flowType !== savedDraft.flowType) update.flowType = draft.flowType;
+    if (draft.notes !== savedDraft.notes) update.notes = draft.notes;
+    if (draft.tags !== savedDraft.tags) update.tags = tagsFromInput(draft.tags);
+    if (priority !== Number(savedDraft.priority)) update.priority = priority;
+    if (draft.autoDispatch !== savedDraft.autoDispatch) update.autoDispatch = draft.autoDispatch;
     const saved = await this._runItemAction(item.id, 'item fields', () =>
-      gateway.request<BacklogUpdateResult>(Methods.BACKLOG_UPDATE, {
-        itemId: item.id,
-        project: draft.project.trim(),
-        title: draft.title.trim(),
-        sourceKind: draft.sourceKind,
-        sourceRef: draft.sourceRef,
-        flowType: draft.flowType,
-        notes: draft.notes,
-        tags: tagsFromInput(draft.tags),
-        priority: priorityFromInput(draft.priority),
-        autoDispatch: draft.autoDispatch,
-        ...(draft.project.trim() !== item.project
-          ? {
-              // Project-owned dispatch fields are cleared atomically by the gateway.
-              allowedSlots: null,
-            }
-          : {}),
-      }),
+      gateway.request<BacklogUpdateResult>(Methods.BACKLOG_UPDATE, update),
     );
     if (!saved) return;
     const { [item.id]: _saved, ...remainingDrafts } = this._metadataDrafts;
@@ -3407,21 +3426,19 @@ export class BacklogPanel extends LitElement {
         </header>
       </section>`;
     }
-    const mode =
-      this._selectedItemMode === 'edit' && canEditBacklogItemForUi(item) ? 'edit' : 'view';
+    const mode = this._selectedItemMode;
+    const dispatchEditable = canEditBacklogDispatchForUi(item);
     return html`<section class="detail-panel" aria-label="Selected backlog item">
       <header class="detail-top">
         <div class="detail-title-row">
           <h2>${item.title}</h2>
-          ${canEditBacklogItemForUi(item)
-            ? html`<button
-                class="secondary detail-edit"
-                type="button"
-                @click=${() => this._setSelectedItemMode(mode === 'edit' ? 'view' : 'edit')}
-              >
-                ${mode === 'edit' ? 'Done' : 'Edit'}
-              </button>`
-            : nothing}
+          <button
+            class="secondary detail-edit"
+            type="button"
+            @click=${() => this._setSelectedItemMode(mode === 'edit' ? 'view' : 'edit')}
+          >
+            ${mode === 'edit' ? 'Done' : 'Edit'}
+          </button>
         </div>
         <p class="muted detail-meta">
           <strong class="item-ref">${item.sourceRef}</strong> · ${item.project} · ${item.flowType} ·
@@ -3452,16 +3469,17 @@ export class BacklogPanel extends LitElement {
       ></linked-run-summary>
       ${this._renderSpecAttachment(item)} ${this._renderLaunchPlanSummary(item)}
       ${mode === 'edit'
-        ? this._renderEditDispatchConfig(item)
-        : this._renderDispatchConfigSummary(item, false, true)}
-      ${mode === 'edit'
         ? this._renderMetadataEditor(
             this._metadataDraft(item),
             (patch) => this._updateMetadataDraft(item, patch),
             'backlog-edit-metadata',
+            !dispatchEditable,
           )
         : nothing}
-      ${mode === 'edit' ? this._renderLaunchPlanEditor(item.id, item) : nothing}
+      ${mode === 'edit' && dispatchEditable
+        ? this._renderEditDispatchConfig(item)
+        : this._renderDispatchConfigSummary(item, false, true)}
+      ${mode === 'edit' && dispatchEditable ? this._renderLaunchPlanEditor(item.id, item) : nothing}
       ${mode === 'edit'
         ? nothing
         : html`<div>

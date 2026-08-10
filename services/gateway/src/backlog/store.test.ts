@@ -462,32 +462,26 @@ test('launch plan queues baseline first and materializes comparison candidates i
   assert.deepEqual(codex?.allowedSlots, ['macwork-ff-1', 'macwork-ff-2']);
 });
 
-test('manual backlog enqueue rejects invalid allowedSlots before queueing', async () => {
+test('manual backlog create rejects invalid allowedSlots before persistence', async () => {
   const { backlog, queue } = await freshStores();
-  const created = await backlog.createBacklogItem(
-    {
-      project: 'farmslot-farm',
-      title: 'Invalid isolated slot',
-      sourceKind: 'manual',
-      flowType: 'dev',
-      status: 'ready',
-      allowedSlots: ['no-such-slot'],
-    },
-    { kind: 'system' },
-  );
-
   await assert.rejects(
-    () => backlog.enqueueBacklogItem({ itemId: created.item.id }),
+    () =>
+      backlog.createBacklogItem(
+        {
+          project: 'farmslot-farm',
+          title: 'Invalid isolated slot',
+          sourceKind: 'manual',
+          flowType: 'dev',
+          status: 'ready',
+          allowedSlots: ['no-such-slot'],
+        },
+        { kind: 'system' },
+      ),
     /allowed slot not found: no-such-slot/,
   );
 
-  assert.equal(
-    queue.getQueueSnapshot().filter((item) => item.backlogItemId === created.item.id).length,
-    0,
-  );
-  const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
-  assert.equal(item?.status, 'ready');
-  assert.match(item?.lastDispatchError ?? '', /allowed slot not found/);
+  assert.equal(queue.getQueueSnapshot().length, 0);
+  assert.equal(backlog.listBacklogItems({ includeArchived: true }).items.length, 0);
 });
 
 test('backlog auto-dispatch reports guardrail blocks instead of enqueueing unsafe ready items', async () => {
@@ -700,6 +694,7 @@ test('backlog.update changes the owning project and clears project-owned dispatc
       taskTemplate: { fileName: 'dev-interactive.md', variant: 'interactive' },
       app: 'command-center',
       prepareProfile: 'sandbox',
+      scripted: { mode: 'command', commandRef: 'project-command' },
       launchPlan: {
         id: 'project-owned-plan',
         version: 1,
@@ -725,6 +720,7 @@ test('backlog.update changes the owning project and clears project-owned dispatc
   assert.equal(updated.item.taskTemplate, undefined);
   assert.equal(updated.item.app, undefined);
   assert.equal(updated.item.prepareProfile, undefined);
+  assert.equal(updated.item.scripted, undefined);
   assert.equal(updated.item.launchPlan, undefined);
 });
 
@@ -776,6 +772,8 @@ test('backlog.update clears a project template when the flow changes', async () 
       sourceKind: 'manual',
       flowType: 'dev',
       taskTemplate: { fileName: 'dev-interactive.md', variant: 'interactive' },
+      mode: 'interactive',
+      devInteractiveProfile: 'reviewed',
     },
     { kind: 'system' },
   );
@@ -787,6 +785,32 @@ test('backlog.update clears a project template when the flow changes', async () 
 
   assert.equal(updated.item.flowType, 'fix-bug');
   assert.equal(updated.item.taskTemplate, undefined);
+  assert.equal(updated.item.mode, undefined);
+  assert.equal(updated.item.devInteractiveProfile, undefined);
+});
+
+test('backlog.update allows metadata repair when an untouched slot restriction is stale', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Repair stale metadata',
+      sourceKind: 'manual',
+      flowType: 'dev',
+    },
+    { kind: 'system' },
+  );
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.allowedSlots = ['removed-slot'];
+  });
+
+  const updated = await backlog.updateBacklogItem({
+    itemId: created.item.id,
+    notes: 'Metadata remains repairable.',
+  });
+
+  assert.equal(updated.item.notes, 'Metadata remains repairable.');
+  assert.deepEqual(updated.item.allowedSlots, ['removed-slot']);
 });
 
 test('backlog.archive moves finished backlog items to archived', async () => {

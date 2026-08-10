@@ -4,7 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
-- feat(backlog): let `backlog update --project` repair an item's owning farm and clear old slot restrictions.
+- feat(backlog): let `backlog update --project` repair an item's owning farm; the gateway clears project-owned slots, templates, app, prepare, scripted-runner, and launch-plan configuration.
 
 - feat(execution-template): `options` human output lists domain-filtered sources with the `--domain` value that re-enables them (MANUAL-000076).
 - feat(credential): `credential issue --secret-file <path>` writes the one-time secret to a new 0600 file (exclusive create, byte-exact) so remote node provisioning is scriptable without pseudo-TTY scraping; the machine envelope reports the path, never the secret (MANUAL-000102).

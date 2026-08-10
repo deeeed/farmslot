@@ -1237,6 +1237,7 @@ export async function createBacklogItem(
     };
     setBacklogOriginator(item, originator);
     assertExecutionHintsCompatible(item);
+    await assertAllowedSlotsBelongToProject(item);
     if (item.status === 'ready') await assertBacklogSpecReady(item);
     items.push(item);
     schedulePersist('create');
@@ -1387,6 +1388,7 @@ export async function updateBacklogItem(
         delete item.taskTemplate;
         delete item.app;
         delete item.prepareProfile;
+        delete item.scripted;
         delete item.launchPlan;
         delete item.launchPlanState;
       }
@@ -1407,7 +1409,11 @@ export async function updateBacklogItem(
           nextFlowType,
           nextProject,
         );
-        if (flowChanged && params.taskTemplate === undefined) delete item.taskTemplate;
+        if (flowChanged) {
+          if (params.taskTemplate === undefined) delete item.taskTemplate;
+          if (params.mode === undefined) delete item.mode;
+          if (params.devInteractiveProfile === undefined) delete item.devInteractiveProfile;
+        }
       } else if (nextProject !== snapshot.project) {
         item.sourceRef = await normalizeSourceFields(
           nextSourceKind,
@@ -1532,7 +1538,13 @@ export async function updateBacklogItem(
         }
       }
       assertExecutionHintsCompatible(item);
-      await assertAllowedSlotsBelongToProject(item);
+      if (
+        params.project !== undefined ||
+        params.allowedSlots !== undefined ||
+        params.launchPlan !== undefined
+      ) {
+        await assertAllowedSlotsBelongToProject(item);
+      }
       if (item.status === 'ready') await assertBacklogSpecReady(item);
       item.updatedAt = new Date().toISOString();
       restampBacklogRecord(item, originator);

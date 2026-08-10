@@ -108,7 +108,7 @@ export function canDequeueBacklogItemForUi(item: Pick<BacklogItem, 'status'>): b
   return item.status === 'queued' || item.status === 'dispatching';
 }
 
-export function canEditBacklogItemForUi(
+export function canEditBacklogDispatchForUi(
   item: Pick<BacklogItem, 'status' | 'queuedQueueItemId' | 'runId'>,
 ): boolean {
   return EDITABLE_BACKLOG_STATUSES.has(item.status) && !item.queuedQueueItemId && !item.runId;
