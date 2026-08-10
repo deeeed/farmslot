@@ -89,6 +89,7 @@ function expandTemplateInternal(
   for (const field of [
     'port',
     'cdp_port',
+    'vite_port',
     'simulator',
     'avd',
     'adb_serial',
@@ -244,6 +245,7 @@ export function knownTemplatePlaceholders(
   for (const key of [
     'port',
     'cdp_port',
+    'vite_port',
     'simulator',
     'avd',
     'adb_serial',

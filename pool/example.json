@@ -44,7 +44,8 @@
         },
         "dev-server": {
           "port": 8085,
-          "metro_port": 8086
+          "metro_port": 8086,
+          "vite_port": 5885
         }
       }
     }

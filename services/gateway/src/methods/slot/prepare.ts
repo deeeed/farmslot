@@ -38,6 +38,12 @@ import {
   buildNodeSupportPublishCommand,
   buildNodeSupportVerifyCommand,
 } from '../../node-support/publish-command.js';
+import {
+  assertNoOperatorCollision,
+  operatorPortsFromEnv,
+  renderEnvPorts,
+  resolveSandboxPorts,
+} from '../../prepare/farmslot-port-provisioning.js';
 import { assertStartRefWorkBranchIsLocalOnly } from '../../projects/start-ref-policy.js';
 import {
   resolveStartRefInRepo,
@@ -1156,6 +1162,40 @@ async function slotPrepareInner(
       ),
     );
     step('tmux', `Created tmux session ${session}`);
+  }
+
+  // 4b. Materialize checkout-local .env.ports from pool-owned resources
+  //     (MANUAL-000085). Slots that declare resources.dev-server.vite_port get
+  //     the file written BEFORE the sandbox preflight so a fresh checkout never
+  //     fails on hand-created state. Operator-port collisions fail the prepare.
+  const sandboxPorts = resolveSandboxPorts(vars.resourceVars, vars.slotId);
+  if (sandboxPorts) {
+    assertNoOperatorCollision(sandboxPorts, operatorPortsFromEnv(), vars.slotId);
+    const envPortsPath = `${vars.remoteRepo}/.env.ports`;
+    const existingR = await execOnSlot(vars, `cat ${shellQuote(envPortsPath)} 2>/dev/null || true`);
+    const rendered = renderEnvPorts(
+      existingR.stdout.trim() === '' ? null : existingR.stdout,
+      sandboxPorts,
+      vars.slotId,
+    );
+    const printfArgs = rendered
+      .split('\n')
+      .slice(0, -1)
+      .map((line) => shellQuote(line))
+      .join(' ');
+    const writeR = await execOnSlot(
+      vars,
+      `printf '%s\\n' ${printfArgs} > ${shellQuote(envPortsPath)}`,
+    );
+    if (writeR.exitCode !== 0) {
+      throw new Error(
+        `Failed to write ${envPortsPath} on ${vars.slotId}: ${writeR.stderr.trim() || `exit ${writeR.exitCode}`}`,
+      );
+    }
+    step(
+      'preflight',
+      `.env.ports provisioned from pool (gateway ${sandboxPorts.gatewayPort}, vite ${sandboxPorts.vitePort})`,
+    );
   }
 
   // 5a. Kill any pre-existing dev server so preflight starts with a clean port.
