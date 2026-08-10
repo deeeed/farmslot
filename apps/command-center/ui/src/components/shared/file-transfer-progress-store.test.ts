@@ -6,6 +6,7 @@ import type { FileTransferProgress } from '@farmslot/protocol';
 import {
   filterTransfersForRun,
   formatPipelineTransferMeta,
+  transferForPipelineNode,
   type FileTransferUiEntry,
   upsertFileTransfer,
 } from './file-transfer-progress-model.js';
@@ -54,6 +55,45 @@ test('filterTransfersForRun is strict — excludes unscoped transfers', () => {
     'b',
     'c',
   ]);
+});
+
+test('transferForPipelineNode separates package-refresh from finalize', () => {
+  const mirror: FileTransferUiEntry = {
+    ...progress({
+      transferId: 'm',
+      phase: 'mirror',
+      label: 'artifacts',
+      state: 'running',
+      runId: 'r',
+    }),
+    updatedAt: 1,
+  };
+  const release: FileTransferUiEntry = {
+    ...progress({
+      transferId: 'rel',
+      phase: 'mirror',
+      label: 'release-artifacts',
+      state: 'running',
+      runId: 'r',
+    }),
+    updatedAt: 2,
+  };
+  const upload: FileTransferUiEntry = {
+    ...progress({
+      transferId: 'u',
+      phase: 'upload',
+      label: 'attach.png',
+      state: 'running',
+      runId: 'r',
+    }),
+    updatedAt: 3,
+  };
+  assert.equal(transferForPipelineNode(mirror, 'package-refresh')?.transferId, 'm');
+  assert.equal(transferForPipelineNode(mirror, 'finalize'), null);
+  assert.equal(transferForPipelineNode(release, 'package-refresh'), null);
+  assert.equal(transferForPipelineNode(release, 'finalize')?.transferId, 'rel');
+  assert.equal(transferForPipelineNode(upload, 'package-refresh'), null);
+  assert.equal(transferForPipelineNode(upload, 'finalize')?.transferId, 'u');
 });
 
 test('formatPipelineTransferMeta reports failed and cancelled', () => {

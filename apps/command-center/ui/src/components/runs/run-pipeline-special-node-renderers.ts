@@ -6,6 +6,7 @@ import { colors } from '../../styles/theme-tokens.js';
 import {
   type FileTransferUiEntry,
   formatPipelineTransferMeta,
+  transferForPipelineNode,
   transferPercent as fileTransferPercent,
 } from '../shared/file-transfer-progress-model.js';
 
@@ -368,7 +369,7 @@ export function renderPackageRefreshPipelineNode(
   const isDone = vis === 'done';
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
-  const transfer = ctx.transferProgress ?? null;
+  const transfer = transferForPipelineNode(ctx.transferProgress, 'package-refresh');
   const transferActive = transfer?.state === 'running';
   const tone = pipelineStepTone(n.step, { runError: ctx.run.error });
   const { fill: fillColor, stroke: strokeColor } = transferActive
@@ -546,7 +547,7 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
   const isDone = vis === 'done';
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
-  const transfer = ctx.transferProgress ?? null;
+  const transfer = transferForPipelineNode(ctx.transferProgress, 'finalize');
   const transferActive = transfer?.state === 'running';
   // Package-change / re-review publish failures are reworkable (orange), not terminal red.
   const tone = pipelineStepTone(

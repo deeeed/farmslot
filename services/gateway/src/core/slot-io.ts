@@ -294,12 +294,13 @@ export async function slotCopyFile(
     })) as { size: number; isFile: boolean };
     size = st.size;
     if (!st.isFile) {
+      // Authoritative metadata — never fall through to one-shot file read.
       throw new Error(`slotCopyFile remote path is not a file: ${remotePath}`);
     }
   } catch (err) {
-    // Fall through to one-shot read when stat is unavailable; large files still
-    // benefit if forceChunked, otherwise preserve prior best-effort behavior.
-    if (options.forceChunked) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    // Only swallow transport/stat unavailability. "not a file" and forceChunked stay hard.
+    if (options.forceChunked || message.includes('is not a file')) throw err;
   }
 
   const useChunked = options.forceChunked || size > threshold;
@@ -825,6 +826,9 @@ export async function slotCopyDir(
 
   try {
     const copied = await copyRecursive(remoteDir, localDir, 0);
+    // Yield so observers (UI / listActiveTransfers) can sample final filesCompleted
+    // before the aggregate unregisters on complete().
+    await new Promise<void>((resolve) => setImmediate(resolve));
     aggregate.complete();
     return copied;
   } catch (err) {

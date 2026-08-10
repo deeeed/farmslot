@@ -55,6 +55,28 @@ export function filterTransfersForRun(
   return entries.filter((e) => e.runId === runId);
 }
 
+/**
+ * Bind a transfer to a pipeline special node so one run-scoped session cannot
+ * animate both package-refresh and finalize at once.
+ * - package-refresh: mirror phase, not release packaging
+ * - finalize: upload phase, or release-artifacts mirror
+ */
+export function transferForPipelineNode(
+  entry: FileTransferUiEntry | null | undefined,
+  node: 'package-refresh' | 'finalize',
+): FileTransferUiEntry | null {
+  if (!entry) return null;
+  const label = entry.label ?? '';
+  if (node === 'package-refresh') {
+    if (entry.phase !== 'mirror') return null;
+    if (label.startsWith('release-artifacts')) return null;
+    return entry;
+  }
+  if (entry.phase === 'upload') return entry;
+  if (entry.phase === 'mirror' && label.startsWith('release-artifacts')) return entry;
+  return null;
+}
+
 export function formatPipelineTransferMeta(entry: FileTransferUiEntry): string {
   const pct =
     entry.totalBytes > 0

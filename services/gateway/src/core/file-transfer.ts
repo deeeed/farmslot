@@ -405,8 +405,6 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
     const idlePromise = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(idleTimeoutError()), remainingWallMs);
     });
-    void readPromise.catch(() => undefined);
-    void idlePromise.catch(() => undefined);
     try {
       return await Promise.race([readPromise, idlePromise]);
     } catch (err) {
@@ -421,7 +419,14 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
       }
       throw err;
     } finally {
+      // Cancel the idle timer when the race settles. Attach a late-read handler only
+      // after settle so a still-in-flight RPC rejection is not an unhandled rejection
+      // and is not observed as a silent swallowed error on the race winner path.
       if (timer) clearTimeout(timer);
+      void readPromise.then(
+        () => undefined,
+        () => undefined,
+      );
     }
   };
 
@@ -827,8 +832,6 @@ export async function readRemoteFileChunkedToBuffer(
     const idlePromise = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(idleTimeoutError()), remainingWallMs);
     });
-    void readPromise.catch(() => undefined);
-    void idlePromise.catch(() => undefined);
     try {
       return await Promise.race([readPromise, idlePromise]);
     } catch (err) {
@@ -842,6 +845,10 @@ export async function readRemoteFileChunkedToBuffer(
       throw err;
     } finally {
       if (timer) clearTimeout(timer);
+      void readPromise.then(
+        () => undefined,
+        () => undefined,
+      );
     }
   };
 

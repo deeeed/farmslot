@@ -305,32 +305,44 @@ export async function fileTransferRemoteE2e(
       );
     }
 
-    // 2) Multi-file remote dir copy with aggregate — poll active transfers only (no disk fallback).
+    // 2) Multi-file remote dir copy with aggregate — sample active transfers tightly
+    // (tiny fixtures finish faster than a 20ms interval).
     const localTree = path.join(localDir, 'dir');
     let maxFilesCompleted = 0;
     let aggregateSawFilesTotal = false;
     {
-      const poll = setInterval(() => {
+      const sample = () => {
         for (const t of listActiveTransfers({ runId })) {
-          if (t.filesTotal != null && t.filesTotal >= 3) aggregateSawFilesTotal = true;
-          if ((t.filesCompleted ?? 0) > maxFilesCompleted) maxFilesCompleted = t.filesCompleted ?? 0;
+          if ((t.filesTotal ?? 0) >= 3) aggregateSawFilesTotal = true;
+          if ((t.filesCompleted ?? 0) > maxFilesCompleted) {
+            maxFilesCompleted = t.filesCompleted ?? 0;
+          }
         }
-      }, 20);
-      try {
-        const copied = await slotCopyDir(remoteCtx, path.posix.join(remoteRoot, 'dir'), localTree, {
-          phase: 'mirror',
-          runId,
-          slotId,
-          labelPrefix: 'dir',
-        });
-        if (copied < 3) throw new Error(`expected ≥3 files copied, got ${copied}`);
-        if (!aggregateSawFilesTotal || maxFilesCompleted < 3) {
-          throw new Error(
-            `aggregate progress not observed: sawFilesTotal=${aggregateSawFilesTotal} maxFilesCompleted=${maxFilesCompleted}`,
-          );
-        }
-      } finally {
-        clearInterval(poll);
+      };
+      const copyPromise = slotCopyDir(remoteCtx, path.posix.join(remoteRoot, 'dir'), localTree, {
+        phase: 'mirror',
+        runId,
+        slotId,
+        labelPrefix: 'dir',
+      });
+      // Interleave sampling so we observe aggregate progress before unregister.
+      let copiedCount = 0;
+      let copyDone = false;
+      void copyPromise.then((copied) => {
+        copiedCount = copied;
+        copyDone = true;
+      });
+      while (!copyDone) {
+        sample();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      sample();
+      if (copiedCount < 3) throw new Error(`expected ≥3 files copied, got ${copiedCount}`);
+      await copyPromise;
+      if (!aggregateSawFilesTotal || maxFilesCompleted < 3) {
+        throw new Error(
+          `aggregate progress not observed: sawFilesTotal=${aggregateSawFilesTotal} maxFilesCompleted=${maxFilesCompleted}`,
+        );
       }
     }
 
@@ -352,15 +364,105 @@ export async function fileTransferRemoteE2e(
       createHash('sha256').update(uploaded).digest('hex') ===
       createHash('sha256').update(uploadPayload).digest('hex');
 
-    // 4) HTTP proxy production engine proof without rewriting shared pool JSON.
-    // serveFile remote branch uses slotReadFileBuffer forceChunked — already exercised above.
-    const httpFileProxy: FileTransferRemoteE2eResult['httpFileProxy'] = {
-      status: 200,
-      bytes: bufRead.byteLength,
-      usedChunkedPath: proxyIntermediate >= 2 && bufRead.byteLength === largeBytes,
-    };
-    if (!httpFileProxy.usedChunkedPath) {
-      throw new Error('HTTP proxy engine path did not prove multi-chunk progress');
+    // 4) Real authenticated HTTP /api/file against an isolated pool slot (never
+    // rewrite the shared farmslot-demo.json). Host is forced non-local so serveFile
+    // takes the remote slotReadFileBuffer branch.
+    let httpFileProxy: FileTransferRemoteE2eResult['httpFileProxy'];
+    {
+      const { writeFile, rm } = await import('node:fs/promises');
+      const { farmslotRoot } = await import('../fleet/state.js');
+      const httpSlotId = `e2e-http-${Date.now()}`;
+      const httpRepo = path.posix.join('/tmp', httpSlotId);
+      const poolPath = path.join(farmslotRoot, 'pool', `${httpSlotId}.json`);
+      const relFile = 'artifacts/http-proxy.bin';
+      // Multi-chunk sized but each writeChunk stays within the node max.
+      const httpPayload = Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES * 2 + 64, 9);
+      await writeFile(
+        poolPath,
+        `${JSON.stringify(
+          {
+            machine,
+            project: 'farmslot-farm',
+            platform: 'cli',
+            os: 'linux',
+            host: '203.0.113.77',
+            ssh_user: 'e2e',
+            slots: [{ id: httpSlotId, enabled: true, repo: httpRepo, session: httpSlotId }],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      try {
+        await sendNodeRequest(node, 'fs.mkdir', { root: httpRepo, relPath: 'artifacts' }, {
+          timeout: 30_000,
+        });
+        let httpOff = 0;
+        while (httpOff < httpPayload.byteLength) {
+          const end = Math.min(httpOff + FILE_TRANSFER_CHUNK_MAX_BYTES, httpPayload.byteLength);
+          await sendNodeRequest(
+            node,
+            'fs.writeChunk',
+            {
+              root: httpRepo,
+              relPath: relFile,
+              offset: httpOff,
+              content: httpPayload.subarray(httpOff, end).toString('base64'),
+              truncate: httpOff === 0,
+            },
+            { timeout: 60_000 },
+          );
+          httpOff = end;
+        }
+        const port = process.env.GATEWAY_PORT || '8801';
+        const url = `http://127.0.0.1:${port}/api/file?slotId=${encodeURIComponent(httpSlotId)}&path=${encodeURIComponent(relFile)}`;
+        const headers: Record<string, string> = {};
+        if (process.env.FARMSLOT_GATEWAY_TOKEN) {
+          headers.Authorization = `Bearer ${process.env.FARMSLOT_GATEWAY_TOKEN}`;
+        }
+        const res = await fetch(url, { headers });
+        const body = Buffer.from(await res.arrayBuffer());
+        // Chunked path is proven when status is OK and payload matches multi-chunk size
+        // (one-shot threshold is smaller than this fixture).
+        const usedChunkedPath =
+          res.status === 200 &&
+          body.byteLength === httpPayload.byteLength &&
+          httpPayload.byteLength > FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES;
+        httpFileProxy = {
+          status: res.status,
+          bytes: body.byteLength,
+          usedChunkedPath,
+        };
+        if (res.status !== 200) {
+          throw new Error(
+            `HTTP /api/file status ${res.status}: ${body.toString('utf8').slice(0, 200)}`,
+          );
+        }
+        if (body.byteLength !== httpPayload.byteLength) {
+          throw new Error(
+            `HTTP /api/file size mismatch ${body.byteLength} !== ${httpPayload.byteLength}`,
+          );
+        }
+        if (!usedChunkedPath) {
+          throw new Error('HTTP /api/file did not exercise multi-chunk remote path');
+        }
+      } finally {
+        await rm(poolPath, { force: true });
+        try {
+          await sendNodeRequest(
+            node,
+            'fs.delete',
+            { root: httpRepo, relPath: '.' },
+            { timeout: 30_000 },
+          );
+        } catch (cleanupErr) {
+          console.warn(
+            `[file-transfer] remote e2e http fixture cleanup failed: ${
+              cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
+            }`,
+          );
+        }
+      }
     }
 
     return {
