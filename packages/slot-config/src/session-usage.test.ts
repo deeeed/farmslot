@@ -373,6 +373,39 @@ test('runSessionUsage throws when report is called without a prior snapshot', as
   );
 });
 
+test('sampleSessionUsageIncremental skips oversized record without a newline to keep forward progress', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'incr-oversize-'));
+  const file = path.join(dir, 'session.jsonl');
+  // One giant line > 1MiB with no newline, then a valid record.
+  const giant = `{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1},"pad":"${'x'.repeat(1024 * 1024)}"}}`;
+  const good = JSON.stringify({
+    type: 'assistant',
+    message: { usage: { input_tokens: 10, output_tokens: 2 } },
+  });
+  writeFileSync(file, `${giant}\n${good}\n`, 'utf8');
+  let state = emptyIncrementalSessionUsageState();
+  const first = await sampleSessionUsageIncremental({
+    filePath: file,
+    runner: 'claude',
+    prior: state,
+  });
+  // First window should skip the oversized blob (offset advances).
+  assert.ok(first.nextState.offset > 0, 'offset must advance past oversized window');
+  // Continue until the good record is counted (may take multiple polls).
+  state = first.nextState;
+  let turns = first.turns ?? 0;
+  for (let i = 0; i < 5 && turns < 1; i++) {
+    const next = await sampleSessionUsageIncremental({
+      filePath: file,
+      runner: 'claude',
+      prior: state,
+    });
+    state = next.nextState;
+    turns = next.turns ?? 0;
+  }
+  assert.ok(turns >= 1, `expected to count the valid record after skip, turns=${turns}`);
+});
+
 test('sampleSessionUsageIncremental bounds bytes read per sample', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'incr-bound-'));
   const file = path.join(dir, 'session.jsonl');

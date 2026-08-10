@@ -109,13 +109,16 @@ export function buildUsageBudgetNudgeMessage(message: string): string {
 }
 
 /**
- * Soft ceilings apply to per-run growth, not retained parent-session totals.
- * First successful sample only captures a baseline (warm handoff or cold start);
- * later samples evaluate delta = current - baseline.
+ * Soft ceilings apply to per-run growth on **warm retained sessions** only.
+ * Cold starts charge absolute sample totals (work before the first poll is not free).
+ * Warm handoffs capture a first-poll baseline so parent transcript totals do not
+ * false-trigger the child flow budget.
  */
 export function applyBudgetUsageBaseline(input: {
   turns: number | null;
   totalTokens: number | null;
+  /** When false, charge absolute sample values (cold start). */
+  warmSession: boolean;
   baselineCaptured?: boolean;
   baselineTurns?: number;
   baselineTotalTokens?: number;
@@ -123,7 +126,7 @@ export function applyBudgetUsageBaseline(input: {
   /** Turns counted toward the soft ceiling (null if unavailable). */
   chargeTurns: number | null;
   chargeTotalTokens: number | null;
-  /** True when this sample only established the baseline (no charge yet). */
+  /** True when this sample only established a warm baseline (no charge yet). */
   establishingBaseline: boolean;
   baselineCaptured: boolean;
   baselineTurns: number;
@@ -137,6 +140,18 @@ export function applyBudgetUsageBaseline(input: {
       baselineCaptured: input.baselineCaptured === true,
       baselineTurns: input.baselineTurns ?? 0,
       baselineTotalTokens: input.baselineTotalTokens ?? 0,
+    };
+  }
+
+  // Cold start: charge absolute totals from the first sample onward.
+  if (!input.warmSession) {
+    return {
+      chargeTurns: input.turns,
+      chargeTotalTokens: input.totalTokens,
+      establishingBaseline: false,
+      baselineCaptured: true,
+      baselineTurns: 0,
+      baselineTotalTokens: 0,
     };
   }
 

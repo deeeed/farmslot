@@ -1654,6 +1654,11 @@ export async function pollBudgetGuardStep(params: {
   /** When false, skip tmux nudge (CLI/local proof without a live pane). */
   sendNudge: boolean;
   /**
+   * Force warm-session baseline accounting (tests/probes). Production uses
+   * `engineState.flags.warmSessionReuse` on the run when omitted.
+   */
+  warmSession?: boolean;
+  /**
    * Optional local host stub for recipe/CLI probes when the pool slot is not
    * required (transcript path is forced). Production monitor always loads real vars.
    */
@@ -1674,10 +1679,15 @@ export async function pollBudgetGuardStep(params: {
   let violation: MonitorViolation | null = null;
   let nudgeSent = false;
 
-  // Per-run delta vs retained parent transcript (warm handoff) or first poll.
+  // Warm retained sessions baseline parent totals; cold starts charge absolute usage.
+  const liveRun = getRun(params.runId);
+  const warmSession =
+    params.warmSession === true ||
+    liveRun?.engineState?.flags?.warmSessionReuse === true;
   const baseline = applyBudgetUsageBaseline({
     turns: sample.turns,
     totalTokens: sample.totalTokens,
+    warmSession,
     baselineCaptured: sample.nextState.baselineCaptured ?? params.budgetUsage.baselineCaptured,
     baselineTurns: sample.nextState.baselineTurns ?? params.budgetUsage.baselineTurns,
     baselineTotalTokens:

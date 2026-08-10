@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- fix(session-usage): skip full-window records with no newline so oversized JSONL cannot freeze the offset; export `advanceIncrementalFromBytes` for remote seek/read (MANUAL-000096).
+
 - fix(session-usage): cap incremental samples at 1MiB of new bytes per call so poll-time budget checks stay memory-bounded (MANUAL-000096).
 
 - feat(session-usage): incremental complete-line transcript sampling (`sampleSessionUsageIncremental`) for soft turn/token budgets; incomplete trailing JSONL does not advance the durable offset (MANUAL-000096).

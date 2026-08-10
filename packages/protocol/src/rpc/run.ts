@@ -482,13 +482,20 @@ export interface RunBudgetGuardProbeParams {
   /** Soft ceilings; default to update-branch built-ins when omitted. */
   maxTurns?: number;
   maxTotalTokens?: number;
-  /** When set, reuse this run instead of creating an ephemeral probe run. */
+  /**
+   * When set, reuse this probe run (must have been created by a prior probe
+   * call — production runs cannot be mutated).
+   */
   runId?: string;
   slotId?: string;
   /** Attempt a tmux budget nudge (default false for recipe probes). */
   sendNudge?: boolean;
   /** Prior budgetWarned; default false. Second call with true proves warn-once. */
   budgetWarned?: boolean;
+  /** When true, capture warm-session baseline on first sample. */
+  warmSession?: boolean;
+  /** Delete the ephemeral probe run after this call (cleanup). */
+  cleanup?: boolean;
 }
 
 export interface RunBudgetGuardProbeResult {

@@ -102,6 +102,7 @@ test('applyBudgetUsageBaseline captures warm parent totals without charging', ()
   const first = applyBudgetUsageBaseline({
     turns: 500,
     totalTokens: 50_000_000,
+    warmSession: true,
     baselineCaptured: false,
   });
   assert.equal(first.establishingBaseline, true);
@@ -111,6 +112,7 @@ test('applyBudgetUsageBaseline captures warm parent totals without charging', ()
   const later = applyBudgetUsageBaseline({
     turns: 560,
     totalTokens: 51_000_000,
+    warmSession: true,
     baselineCaptured: true,
     baselineTurns: 500,
     baselineTotalTokens: 50_000_000,
@@ -120,10 +122,28 @@ test('applyBudgetUsageBaseline captures warm parent totals without charging', ()
   assert.equal(later.chargeTotalTokens, 1_000_000);
 });
 
-test('applyBudgetUsageBaseline only warns after child delta exceeds ceiling', () => {
+test('applyBudgetUsageBaseline charges cold-start absolute totals on first sample', () => {
+  const cold = applyBudgetUsageBaseline({
+    turns: 500,
+    totalTokens: 117_000_000,
+    warmSession: false,
+    baselineCaptured: false,
+  });
+  assert.equal(cold.establishingBaseline, false);
+  assert.equal(cold.chargeTurns, 500);
+  assert.equal(cold.chargeTotalTokens, 117_000_000);
+  const evaluation = evaluateFlowUsageBudget(
+    { turns: cold.chargeTurns, totalTokens: cold.chargeTotalTokens },
+    FLOW_USAGE_BUDGET_DEFAULTS['update-branch']!,
+  );
+  assert.equal(evaluation.exceeded, true);
+});
+
+test('applyBudgetUsageBaseline only warns after warm child delta exceeds ceiling', () => {
   const delta = applyBudgetUsageBaseline({
     turns: 590,
     totalTokens: 52_000_000,
+    warmSession: true,
     baselineCaptured: true,
     baselineTurns: 500,
     baselineTotalTokens: 50_000_000,

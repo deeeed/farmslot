@@ -96,6 +96,7 @@ import {
 import { assertScriptedRunnerConfig } from '../runners/scripted-config.js';
 import {
   createRun,
+  deleteRun,
   getAllRuns,
   getRun,
   listRuns,
@@ -1168,9 +1169,14 @@ export async function runProbeWorkerSignal(
   return probeWorkerSignalForRun(params.runId, run.slotId, ctx);
 }
 
+const BUDGET_PROBE_TICKET_PREFIX = 'MANUAL-000096-budget-probe';
+
 /**
  * Live soft-budget probe used by recipes. Exercises the same pollBudgetGuardStep
  * entry as monitorRun, persists budgetWarned on a run, and returns side effects.
+ *
+ * Ephemeral probe runs are only creatable by this method (ticket prefix) and may
+ * be deleted via `cleanup: true`. Arbitrary production runIds cannot be mutated.
  */
 export async function runBudgetGuardProbe(
   params: RunBudgetGuardProbeParams,
@@ -1192,7 +1198,7 @@ export async function runBudgetGuardProbe(
     const created = createRun({
       flowType: 'update-branch',
       project: 'farmslot-farm',
-      ticketOrPr: 'MANUAL-000096-budget-probe',
+      ticketOrPr: `${BUDGET_PROBE_TICKET_PREFIX}-${Date.now()}`,
       slotId,
       runner,
       branch: 'feat/manual-000096-add-budget-guard-update-branch',
@@ -1205,10 +1211,22 @@ export async function runBudgetGuardProbe(
         runnerSessionPath: params.runnerSessionPath,
       },
       status: 'monitoring',
+      engineState: {
+        ...created.engineState,
+        flags: {
+          ...created.engineState?.flags,
+          ...(params.warmSession ? { warmSessionReuse: true as const } : {}),
+        },
+      },
     });
   } else {
     const existing = getRun(runId);
     if (!existing) throw new Error(`Run not found: ${runId}`);
+    if (!String(existing.ticketOrPr ?? '').startsWith(BUDGET_PROBE_TICKET_PREFIX)) {
+      throw new Error(
+        `run.budgetGuard.probe refuses to mutate non-probe run ${runId.slice(0, 8)} (ticket=${existing.ticketOrPr})`,
+      );
+    }
     updateRun(runId, {
       metrics: {
         ...existing.metrics,
@@ -1251,6 +1269,7 @@ export async function runBudgetGuardProbe(
     budgetUsage: priorUsage,
     agentStatus: 'working',
     sendNudge: params.sendNudge === true,
+    warmSession: params.warmSession === true || current.engineState?.flags?.warmSessionReuse === true,
     localVarsStub: { host: 'localhost', machine: 'local', slotId },
   });
 
@@ -1287,8 +1306,11 @@ export async function runBudgetGuardProbe(
     emittedViolation: tick.violation != null,
   };
 
-  // Ephemeral probe runs stay in the store so a second call can prove warn-once
-  // persistence; callers may ignore the runId. Tagged ticketOrPr for cleanup.
+  if (params.cleanup === true) {
+    // deleteRun refuses active statuses — terminalize the probe run first.
+    updateRun(runId, { status: 'cancelled', completedAt: new Date().toISOString() });
+    await deleteRun(runId);
+  }
   void ephemeral;
   return result;
 }

@@ -753,6 +753,82 @@ export function applyCodexUsageObject(
 }
 
 /**
+ * Apply one window of newly read transcript bytes to incremental state.
+ * Only complete newline-terminated JSONL records advance the durable offset.
+ * Incomplete trailing bytes leave the offset at the incomplete record.
+ * If a single record exceeds the max window (no newline in a full window),
+ * the window is skipped so sampling always makes forward progress.
+ */
+export function advanceIncrementalFromBytes(
+  prior: IncrementalSessionUsageState,
+  buf: Buffer,
+  runner: string | null | undefined,
+  meta: {
+    startOffset: number;
+    fileSize: number;
+    mtimeMs: number;
+    filePath: string;
+    maxWindow: number;
+  },
+): IncrementalSessionUsageState {
+  let state: IncrementalSessionUsageState = {
+    ...prior,
+    path: meta.filePath,
+    size: meta.fileSize,
+    mtimeMs: meta.mtimeMs,
+  };
+  const kind = inferSessionUsageRunner(runner, meta.filePath);
+  if (kind === 'other') {
+    return {
+      ...state,
+      offset: meta.startOffset,
+      unavailableReason: `incremental budget sampling unsupported for runner (path=${meta.filePath})`,
+      sampledAt: new Date().toISOString(),
+    };
+  }
+
+  let lastNl = -1;
+  for (let i = buf.length - 1; i >= 0; i--) {
+    if (buf[i] === 0x0a) {
+      lastNl = i;
+      break;
+    }
+  }
+
+  if (lastNl < 0) {
+    // No complete line in this window.
+    if (buf.length >= meta.maxWindow) {
+      // Full window without a newline = oversized record; skip the window to
+      // guarantee forward progress (usage inside the blob is not counted).
+      state.offset = meta.startOffset + buf.length;
+      state.sampledAt = new Date().toISOString();
+      return state;
+    }
+    // Partial trailing write — keep offset, wait for more bytes.
+    state.offset = meta.startOffset;
+    state.sampledAt = new Date().toISOString();
+    return state;
+  }
+
+  const completeEnd = lastNl + 1;
+  const completeText = buf.subarray(0, completeEnd).toString('utf8');
+  for (const line of completeText.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const obj = JSON.parse(trimmed) as Record<string, unknown>;
+      if (kind === 'claude') state = applyClaudeUsageObject(state, obj);
+      else if (kind === 'codex') state = applyCodexUsageObject(state, obj);
+    } catch {
+      // Complete but malformed line — skip.
+    }
+  }
+  state.offset = meta.startOffset + completeEnd;
+  state.sampledAt = new Date().toISOString();
+  return state;
+}
+
+/**
  * Incrementally sample a local transcript file.
  *
  * Only complete newline-terminated JSONL records advance the durable offset.
@@ -837,53 +913,27 @@ export async function sampleSessionUsageIncremental(params: {
       await fh.close();
     }
 
-    // Last complete record ends at the last newline. Incomplete trailing suffix
-    // must not advance the durable offset (including when the cap truncates mid-line).
-    let lastNl = -1;
-    for (let i = buf.length - 1; i >= 0; i--) {
-      if (buf[i] === 0x0a) {
-        lastNl = i;
-        break;
-      }
-    }
-    if (lastNl < 0) {
-      // No complete line in this window — keep offset, refresh size/mtime.
-      state.size = st.size;
-      state.mtimeMs = st.mtimeMs;
-      state.sampledAt = new Date().toISOString();
+    const advanced = advanceIncrementalFromBytes(state, buf, runner, {
+      startOffset: start,
+      fileSize: st.size,
+      mtimeMs: st.mtimeMs,
+      filePath,
+      maxWindow: INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
+    });
+    if (advanced.unavailableReason) {
       return {
-        turns: state.turns,
-        totalTokens: state.totalTokens,
-        availability: 'available',
-        nextState: state,
+        turns: null,
+        totalTokens: null,
+        availability: 'unavailable',
+        unavailableReason: advanced.unavailableReason,
+        nextState: advanced,
       };
     }
-
-    const completeEnd = lastNl + 1;
-    const completeText = buf.subarray(0, completeEnd).toString('utf8');
-    const kind = inferSessionUsageRunner(runner, filePath);
-    for (const line of completeText.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const obj = JSON.parse(trimmed) as Record<string, unknown>;
-        if (kind === 'claude') state = applyClaudeUsageObject(state, obj);
-        else if (kind === 'codex') state = applyCodexUsageObject(state, obj);
-      } catch {
-        // Complete but malformed line — skip (same as safeJsonLines).
-      }
-    }
-
-    state.offset = start + completeEnd;
-    state.size = st.size;
-    state.mtimeMs = st.mtimeMs;
-    state.path = filePath;
-    state.sampledAt = new Date().toISOString();
     return {
-      turns: state.turns,
-      totalTokens: state.totalTokens,
+      turns: advanced.turns,
+      totalTokens: advanced.totalTokens,
       availability: 'available',
-      nextState: state,
+      nextState: advanced,
     };
   } catch (err) {
     const next = {

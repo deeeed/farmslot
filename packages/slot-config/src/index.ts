@@ -9,9 +9,11 @@ export type {
   SessionAction,
 } from './session-usage.js';
 export {
+  advanceIncrementalFromBytes,
   applyClaudeUsageObject,
   applyCodexUsageObject,
   emptyIncrementalSessionUsageState,
+  INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
   inferSessionUsageRunner,
   runSessionUsage,
   sampleSessionUsageIncremental,

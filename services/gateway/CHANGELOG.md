@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(run-monitor): cold starts charge absolute usage; warm baselines only when `warmSessionReuse`; remote sampling seeks new bytes only; probe RPC refuses non-probe runs and supports cleanup (MANUAL-000096).
+
 - fix(run-monitor): soft budgets charge per-run growth after a first-poll baseline (warm-handoff parents no longer false-trigger); remote `~/farmslot-node` script path expands via `$HOME` (MANUAL-000096).
 
 - feat(runs): `run.budgetGuard.probe` — live soft-budget probe using `pollBudgetGuardStep`, persists `monitorState.budgetWarned`, emits `MONITOR_VIOLATION` (MANUAL-000096).

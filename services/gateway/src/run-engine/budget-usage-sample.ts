@@ -1,21 +1,21 @@
 // budget-usage-sample.ts — Gateway wrapper around shared session-usage sampling
 // for the soft turn/token budget guard.
 //
-// Local: packages/slot-config sampleSessionUsageIncremental (complete-line offset).
-// Remote: session-usage.sh via execOnSlot with remote farmslot-node / remoteRepo
-//         path candidates (never assume the gateway host path exists on the slot).
+// Local + remote: bounded incremental complete-line sampling (shared advance
+// helper). Remote reads only new bytes from the durable offset via a short
+// Python seek/read on the slot (no full-transcript reparse on each poll).
 
 import {
+  advanceIncrementalFromBytes,
   emptyIncrementalSessionUsageState,
+  INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
   type IncrementalSessionUsageState,
   sampleSessionUsageIncremental,
 } from '@farmslot/slot-config';
 
 import type { SlotVars } from '../core/config.js';
-import { farmslotRoot } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
-import { parseSessionUsageOutput } from '../runtime/session-usage.js';
 
 /** Durable monitor sample state (also persisted on Run.monitorState). */
 export type BudgetUsageSampleState = IncrementalSessionUsageState;
@@ -31,9 +31,6 @@ export type BudgetUsageSampleResult = {
 export function emptyBudgetUsageSampleState(): BudgetUsageSampleState {
   return emptyIncrementalSessionUsageState();
 }
-
-/** Remote agent install root used by slot hooks (see packages/slot-config hooks). */
-const REMOTE_FARMSLOT_DIR = '~/farmslot-node';
 
 async function remoteFileStat(
   vars: SlotVars,
@@ -52,17 +49,36 @@ async function remoteFileStat(
   return { size, mtimeMs: mtimeSec * 1000 };
 }
 
-function remoteSessionUsageScriptCandidates(vars: SlotVars): string[] {
-  const candidates: string[] = [];
-  // Prefer the deployed agent tree on remote nodes (hooks use the same root).
-  candidates.push(`${REMOTE_FARMSLOT_DIR}/scripts/session-usage.sh`);
-  // Slot worktree checkout when scripts are vendored with the repo.
-  if (vars.remoteRepo) {
-    candidates.push(`${vars.remoteRepo}/scripts/session-usage.sh`);
+/**
+ * Read up to maxBytes from offset on a remote path (binary-safe base64).
+ * Uses a short Python seek/read so we never re-parse the whole transcript.
+ */
+async function remoteReadBytes(
+  vars: SlotVars,
+  filePath: string,
+  offset: number,
+  maxBytes: number,
+): Promise<Buffer | null> {
+  const py = [
+    'import base64,sys',
+    `p=${JSON.stringify(filePath)}`,
+    `o=${Math.max(0, Math.floor(offset))}`,
+    `n=${Math.max(0, Math.floor(maxBytes))}`,
+    'f=open(p,"rb")',
+    'f.seek(o)',
+    'b=f.read(n)',
+    'f.close()',
+    'sys.stdout.write(base64.b64encode(b).decode("ascii"))',
+  ].join(';');
+  const result = await execOnSlot(vars, `python3 -c ${shellQuote(py)} 2>/dev/null`);
+  if (result.exitCode !== 0) return null;
+  const b64 = result.stdout.trim();
+  if (!b64) return Buffer.alloc(0);
+  try {
+    return Buffer.from(b64, 'base64');
+  } catch {
+    return null;
   }
-  // Last resort: same absolute path as the gateway host (shared NFS layouts).
-  candidates.push(`${farmslotRoot}/scripts/session-usage.sh`);
-  return candidates;
 }
 
 /** Build a remote bash script path argument that expands `~/` via `$HOME`. */
@@ -73,51 +89,11 @@ export function remoteSessionUsageScriptArg(script: string): string {
   return shellQuote(script);
 }
 
-async function remoteSessionUsageTotal(
-  vars: SlotVars,
-  slotId: string,
-  runnerSessionPath: string,
-  runner: string | null | undefined,
-): Promise<{ turns: number | null; totalTokens: number | null; error?: string }> {
-  const env = [
-    `RUNNER_SESSION_PATH=${shellQuote(runnerSessionPath)}`,
-    runner ? `RUNNER_SESSION_RUNNER=${shellQuote(runner)}` : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
-
-  const errors: string[] = [];
-  for (const script of remoteSessionUsageScriptCandidates(vars)) {
-    const cmd = `${env} bash ${remoteSessionUsageScriptArg(script)} ${shellQuote(slotId)} total 2>&1`;
-    const result = await execOnSlot(vars, cmd);
-    if (result.exitCode === 0 && result.stdout.trim()) {
-      const usage = parseSessionUsageOutput(result.stdout, {
-        runner: runner ?? null,
-        runnerSessionPath,
-      });
-      return {
-        turns: usage.turns ?? null,
-        totalTokens: usage.totalTokens ?? null,
-      };
-    }
-    errors.push(
-      `${script}: exit ${result.exitCode} ${result.stdout.replace(/\s+/g, ' ').slice(0, 120)}`,
-    );
-  }
-  return {
-    turns: null,
-    totalTokens: null,
-    error: `remote session-usage failed (${errors.join(' | ')})`,
-  };
-}
-
 /**
  * Sample session turns/tokens for the soft budget guard.
  *
- * - Local: shared incremental complete-line sampler (no full re-read; incomplete
- *   trailing JSONL does not advance the durable offset).
- * - Remote: session-usage.sh via execOnSlot with remote path candidates; skipped
- *   when size/mtime unchanged.
+ * - Local: shared incremental complete-line sampler (bounded new-byte window).
+ * - Remote: same incremental accounting using remote seek/read of new bytes only.
  */
 export async function sampleBudgetUsage(params: {
   slotId: string;
@@ -126,7 +102,7 @@ export async function sampleBudgetUsage(params: {
   runnerSessionPath?: string | null;
   prior: BudgetUsageSampleState;
 }): Promise<BudgetUsageSampleResult> {
-  const { slotId, vars, runner, runnerSessionPath, prior } = params;
+  const { vars, runner, runnerSessionPath, prior } = params;
   if (!runnerSessionPath) {
     const next = {
       ...emptyBudgetUsageSampleState(),
@@ -150,61 +126,104 @@ export async function sampleBudgetUsage(params: {
     });
   }
 
-  // Remote: size/mtime cache then full session-usage on the slot.
+  // Remote incremental path (same complete-line / oversized-skip rules as local).
   try {
     const remoteStat = await remoteFileStat(vars, runnerSessionPath);
-    if (
-      remoteStat &&
-      prior.path === runnerSessionPath &&
-      prior.size === remoteStat.size &&
-      prior.mtimeMs === remoteStat.mtimeMs &&
-      (prior.turns > 0 || prior.totalTokens > 0)
-    ) {
-      return {
-        turns: prior.turns,
-        totalTokens: prior.totalTokens,
-        availability: 'cached',
-        nextState: { ...prior, sampledAt: new Date().toISOString() },
-      };
-    }
-
-    const usage = await remoteSessionUsageTotal(vars, slotId, runnerSessionPath, runner);
-    if (usage.error) {
+    if (!remoteStat) {
       const next = {
-        ...emptyBudgetUsageSampleState(),
+        ...prior,
         path: runnerSessionPath,
-        size: remoteStat?.size ?? 0,
-        mtimeMs: remoteStat?.mtimeMs ?? 0,
-        unavailableReason: usage.error,
+        unavailableReason: 'remote transcript stat failed',
         sampledAt: new Date().toISOString(),
       };
       return {
         turns: null,
         totalTokens: null,
         availability: 'unavailable',
-        unavailableReason: usage.error,
+        unavailableReason: next.unavailableReason,
         nextState: next,
       };
     }
 
-    const next: BudgetUsageSampleState = {
-      path: runnerSessionPath,
-      size: remoteStat?.size ?? 0,
-      mtimeMs: remoteStat?.mtimeMs ?? 0,
-      offset: remoteStat?.size ?? 0,
-      turns: usage.turns ?? 0,
-      totalTokens: usage.totalTokens ?? 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheCreation: 0,
-      cacheRead: 0,
-      sampledAt: new Date().toISOString(),
-    };
+    if (
+      prior.path === runnerSessionPath &&
+      prior.size === remoteStat.size &&
+      prior.mtimeMs === remoteStat.mtimeMs &&
+      prior.offset >= remoteStat.size
+    ) {
+      return {
+        turns: prior.turns,
+        totalTokens: prior.totalTokens,
+        availability: prior.turns > 0 || prior.totalTokens > 0 ? 'cached' : 'available',
+        nextState: { ...prior, sampledAt: new Date().toISOString() },
+      };
+    }
+
+    // Truncation / rotate — restart accumulation.
+    let state: BudgetUsageSampleState =
+      prior.path === runnerSessionPath && prior.offset <= remoteStat.size
+        ? { ...prior, path: runnerSessionPath, size: remoteStat.size, mtimeMs: remoteStat.mtimeMs }
+        : {
+            ...emptyBudgetUsageSampleState(),
+            path: runnerSessionPath,
+            size: remoteStat.size,
+            mtimeMs: remoteStat.mtimeMs,
+          };
+
+    const start = state.offset;
+    if (start >= remoteStat.size) {
+      state.size = remoteStat.size;
+      state.mtimeMs = remoteStat.mtimeMs;
+      state.sampledAt = new Date().toISOString();
+      return {
+        turns: state.turns,
+        totalTokens: state.totalTokens,
+        availability: 'available',
+        nextState: state,
+      };
+    }
+
+    const toRead = Math.min(
+      remoteStat.size - start,
+      INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
+    );
+    const buf = await remoteReadBytes(vars, runnerSessionPath, start, toRead);
+    if (buf == null) {
+      const next = {
+        ...state,
+        unavailableReason: 'remote transcript byte read failed',
+        sampledAt: new Date().toISOString(),
+      };
+      return {
+        turns: null,
+        totalTokens: null,
+        availability: 'unavailable',
+        unavailableReason: next.unavailableReason,
+        nextState: next,
+      };
+    }
+
+    const advanced = advanceIncrementalFromBytes(state, buf, runner, {
+      startOffset: start,
+      fileSize: remoteStat.size,
+      mtimeMs: remoteStat.mtimeMs,
+      filePath: runnerSessionPath,
+      maxWindow: INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
+    });
+    if (advanced.unavailableReason) {
+      return {
+        turns: null,
+        totalTokens: null,
+        availability: 'unavailable',
+        unavailableReason: advanced.unavailableReason,
+        nextState: advanced,
+      };
+    }
     return {
-      turns: usage.turns,
-      totalTokens: usage.totalTokens,
+      turns: advanced.turns,
+      totalTokens: advanced.totalTokens,
       availability: 'available',
-      nextState: next,
+      nextState: advanced,
     };
   } catch (err) {
     const next = {
