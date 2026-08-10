@@ -12,6 +12,7 @@ import {
   canArchiveBacklogItemForUi,
   canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
+  canEditBacklogItemForUi,
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
   CUSTOM_REFINEMENT_CHOICE,
@@ -162,6 +163,17 @@ test('backlog panel dequeue action is only enabled for queued dispatch lifecycle
   for (const status of enabled) assert.equal(canDequeueBacklogItemForUi({ status }), true, status);
   for (const status of disabled)
     assert.equal(canDequeueBacklogItemForUi({ status }), false, status);
+});
+
+test('backlog edit is limited to unlinked pre-dispatch items', () => {
+  assert.equal(canEditBacklogItemForUi({ status: 'candidate' }), true);
+  assert.equal(canEditBacklogItemForUi({ status: 'ready' }), true);
+  assert.equal(canEditBacklogItemForUi({ status: 'running' }), false);
+  assert.equal(canEditBacklogItemForUi({ status: 'failed', runId: 'run-1' }), false);
+  assert.equal(
+    canEditBacklogItemForUi({ status: 'needs-attention', queuedQueueItemId: 'queue-1' }),
+    false,
+  );
 });
 
 test('backlog panel mark-ready action is enabled for candidate, failed, and needs-attention', () => {

@@ -33,6 +33,7 @@ import {
   type BacklogUpdateParams,
   type BacklogUpdateResult,
   type DevInteractiveProfile,
+  EDITABLE_BACKLOG_STATUSES,
   Events,
   isReviewValidationDepth,
   isTerminalRunStatus,
@@ -1365,6 +1366,7 @@ export async function updateBacklogItem(
     const nextProject = params.project === undefined ? item.project : params.project.trim();
     const nextSourceKind = params.sourceKind ?? item.sourceKind;
     const nextFlowType = params.flowType ?? item.flowType;
+    const flowChanged = nextFlowType !== item.flowType;
     if (!nextProject) throw new Error('Backlog item project is required');
     if (!VALID_SOURCE_KINDS.has(nextSourceKind)) throw new Error('Invalid backlog source kind');
     try {
@@ -1372,10 +1374,21 @@ export async function updateBacklogItem(
         if (item.workGraphId || item.workNodeId) {
           throw new Error('Cannot change project while the backlog item is linked to a work graph');
         }
-        if (!['candidate', 'ready', 'failed', 'needs-attention'].includes(item.status)) {
+        if (item.runId || item.queuedQueueItemId) {
+          throw new Error(
+            'Cannot change project while the backlog item is linked to a queue or run',
+          );
+        }
+        if (!EDITABLE_BACKLOG_STATUSES.has(item.status)) {
           throw new Error(`Cannot change project while backlog item is ${item.status}`);
         }
         item.project = nextProject;
+        delete item.allowedSlots;
+        delete item.taskTemplate;
+        delete item.app;
+        delete item.prepareProfile;
+        delete item.launchPlan;
+        delete item.launchPlanState;
       }
       if (params.title !== undefined) {
         if (!params.title.trim()) throw new Error('Backlog item title is required');
@@ -1394,6 +1407,7 @@ export async function updateBacklogItem(
           nextFlowType,
           nextProject,
         );
+        if (flowChanged && params.taskTemplate === undefined) delete item.taskTemplate;
       } else if (nextProject !== snapshot.project) {
         item.sourceRef = await normalizeSourceFields(
           nextSourceKind,

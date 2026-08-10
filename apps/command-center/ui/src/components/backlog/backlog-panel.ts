@@ -118,6 +118,7 @@ import {
   canArchiveBacklogItemForUi,
   canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
+  canEditBacklogItemForUi,
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
   CUSTOM_REFINEMENT_CHOICE,
@@ -263,6 +264,11 @@ function defaultDispatchDraft(): BacklogDispatchDraft {
     devInteractiveProfile: '',
     pendingReviewPlan: [],
   };
+}
+
+function priorityFromInput(value: string): number {
+  const priority = Number(value);
+  return Number.isFinite(priority) && priority > 0 ? priority : 10;
 }
 
 function slotsText(item: BacklogItem): string {
@@ -1363,15 +1369,15 @@ export class BacklogPanel extends LitElement {
 
   private _setCreatePanelOpen(open: boolean) {
     if (open && !this._createPanelOpen) {
-      this._draftProject = syncedBacklogDraftProject({
-        currentProject: '',
+      const project = syncedBacklogDraftProject({
+        currentProject: this._draftProject,
         availableProjects: this._projects,
         globalProjects: this._globalFilters.projects,
       });
-      this._draftAllowedSlots = [];
-      this._draftDispatch = defaultDispatchDraft();
-      if (this._draftProject) {
-        void this._ensureDispatchConfigDataFor(this._draftProject, this._draftFlow);
+      if (project !== this._draftProject) {
+        this._setDraftProject(project);
+      } else if (project) {
+        void this._ensureDispatchConfigDataFor(project, this._draftFlow);
       }
     }
     this._createPanelOpen = open;
@@ -1383,6 +1389,7 @@ export class BacklogPanel extends LitElement {
   }
 
   private _setDraftProject(project: string) {
+    if (project === this._draftProject) return;
     this._draftProject = project;
     const projectSlotIds = new Set(this._slotOptions(project).map((slot) => slot.slot));
     this._draftAllowedSlots = this._draftAllowedSlots.filter((slotId) =>
@@ -1395,7 +1402,9 @@ export class BacklogPanel extends LitElement {
       mode: '',
       devInteractiveProfile: '',
     };
-    if (project) void this._ensureDispatchConfigDataFor(project, this._draftFlow);
+    if (project && this._projects.includes(project)) {
+      void this._ensureDispatchConfigDataFor(project, this._draftFlow);
+    }
   }
 
   private _createMetadataDraft(): BacklogMetadataDraft {
@@ -1512,11 +1521,13 @@ export class BacklogPanel extends LitElement {
           @input=${(event: Event) =>
             onChange({ sourceRef: (event.target as HTMLInputElement).value })}
         />
+        <span class="meta">Used as the title when Title is blank.</span>
       </label>
       <label class="wide">
         Title
         <input
           data-testid=${`${testId}-title`}
+          placeholder="Concise operator-facing task title"
           .value=${draft.title}
           @input=${(event: Event) => onChange({ title: (event.target as HTMLInputElement).value })}
         />
@@ -1525,10 +1536,12 @@ export class BacklogPanel extends LitElement {
         Task context markdown
         <textarea
           data-testid=${`${testId}-notes`}
+          placeholder="Task context, constraints, and acceptance criteria"
           .value=${draft.notes}
           @input=${(event: Event) =>
             onChange({ notes: (event.target as HTMLTextAreaElement).value })}
         ></textarea>
+        <span class="meta">Used as the title when both Title and ref are blank.</span>
       </label>
       <label class="span-2">
         Tags
@@ -2402,9 +2415,16 @@ export class BacklogPanel extends LitElement {
   }
 
   private _renderEditDispatchConfig(item: BacklogItem) {
-    const disabled = this._dispatchConfigBusy === item.id;
+    const draft = this._metadataDraft(item);
+    const scopeChanged = draft.project.trim() !== item.project || draft.flowType !== item.flowType;
+    const disabled = this._dispatchConfigBusy === item.id || scopeChanged;
     return html`<section class="form-section" aria-label="Edit dispatch config">
       <div class="field-label">Dispatch config</div>
+      <div class="muted">
+        ${scopeChanged
+          ? 'Save the project or flow change before editing its dispatch configuration.'
+          : 'Dispatch configuration changes save immediately.'}
+      </div>
       ${this._dispatchConfigError
         ? html`<div class="error">${this._dispatchConfigError}</div>`
         : nothing}
@@ -2540,7 +2560,7 @@ export class BacklogPanel extends LitElement {
         flowType: this._draftFlow,
         notes: this._draftNotes || undefined,
         tags: tagsFromInput(this._draftTags),
-        priority: Number(this._draftPriority) || 10,
+        priority: priorityFromInput(this._draftPriority),
         allowedSlots: this._allowedSlotsFromDraft(),
         autoDispatch: this._draftAutoDispatch,
         runner: this._draftDispatch.runner || undefined,
@@ -2665,12 +2685,11 @@ export class BacklogPanel extends LitElement {
         flowType: draft.flowType,
         notes: draft.notes,
         tags: tagsFromInput(draft.tags),
-        priority: Number(draft.priority) || 10,
+        priority: priorityFromInput(draft.priority),
         autoDispatch: draft.autoDispatch,
         ...(draft.project.trim() !== item.project
           ? {
-              // Slot restrictions belong to the old project. The new project pool is
-              // unrestricted until the operator explicitly chooses slots again.
+              // Project-owned dispatch fields are cleared atomically by the gateway.
               allowedSlots: null,
             }
           : {}),
@@ -2692,7 +2711,19 @@ export class BacklogPanel extends LitElement {
 
   private _metadataDirty(item: BacklogItem): boolean {
     const draft = this._metadataDrafts[item.id];
-    return Boolean(draft && JSON.stringify(draft) !== JSON.stringify(metadataDraftFromItem(item)));
+    if (!draft) return false;
+    const saved = metadataDraftFromItem(item);
+    return (
+      draft.project !== saved.project ||
+      draft.title !== saved.title ||
+      draft.sourceKind !== saved.sourceKind ||
+      draft.sourceRef !== saved.sourceRef ||
+      draft.flowType !== saved.flowType ||
+      draft.notes !== saved.notes ||
+      draft.tags !== saved.tags ||
+      draft.priority !== saved.priority ||
+      draft.autoDispatch !== saved.autoDispatch
+    );
   }
 
   private _launchPlanDirty(item: BacklogItem): boolean {
@@ -3376,18 +3407,21 @@ export class BacklogPanel extends LitElement {
         </header>
       </section>`;
     }
-    const mode = this._selectedItemMode;
+    const mode =
+      this._selectedItemMode === 'edit' && canEditBacklogItemForUi(item) ? 'edit' : 'view';
     return html`<section class="detail-panel" aria-label="Selected backlog item">
       <header class="detail-top">
         <div class="detail-title-row">
           <h2>${item.title}</h2>
-          <button
-            class="secondary detail-edit"
-            type="button"
-            @click=${() => this._setSelectedItemMode(mode === 'edit' ? 'view' : 'edit')}
-          >
-            ${mode === 'edit' ? 'Done' : 'Edit'}
-          </button>
+          ${canEditBacklogItemForUi(item)
+            ? html`<button
+                class="secondary detail-edit"
+                type="button"
+                @click=${() => this._setSelectedItemMode(mode === 'edit' ? 'view' : 'edit')}
+              >
+                ${mode === 'edit' ? 'Done' : 'Edit'}
+              </button>`
+            : nothing}
         </div>
         <p class="muted detail-meta">
           <strong class="item-ref">${item.sourceRef}</strong> · ${item.project} · ${item.flowType} ·

@@ -5,6 +5,7 @@ import {
   type BacklogRefinementSessionGetResult,
   type BacklogRefineResult,
   type BacklogStatus,
+  EDITABLE_BACKLOG_STATUSES,
   isTerminalRunStatus,
   type Run,
 } from '@farmslot/protocol';
@@ -105,6 +106,12 @@ const TERMINAL_CLEANUP_BACKLOG_STATUSES: ReadonlySet<BacklogItem['status']> = ne
 
 export function canDequeueBacklogItemForUi(item: Pick<BacklogItem, 'status'>): boolean {
   return item.status === 'queued' || item.status === 'dispatching';
+}
+
+export function canEditBacklogItemForUi(
+  item: Pick<BacklogItem, 'status' | 'queuedQueueItemId' | 'runId'>,
+): boolean {
+  return EDITABLE_BACKLOG_STATUSES.has(item.status) && !item.queuedQueueItemId && !item.runId;
 }
 
 export function canMarkReadyBacklogItemForUi(item: Pick<BacklogItem, 'status'>): boolean {

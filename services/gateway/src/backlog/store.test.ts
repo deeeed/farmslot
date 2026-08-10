@@ -688,7 +688,7 @@ test('backlog.update rejects public lifecycle and run linkage mutation', async (
   );
 });
 
-test('backlog.update changes the owning project before dispatch', async () => {
+test('backlog.update changes the owning project and clears project-owned dispatch config', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem(
     {
@@ -696,6 +696,21 @@ test('backlog.update changes the owning project before dispatch', async () => {
       title: 'Correct project ownership',
       sourceKind: 'manual',
       flowType: 'dev',
+      allowedSlots: ['macwork-ff-1'],
+      taskTemplate: { fileName: 'dev-interactive.md', variant: 'interactive' },
+      app: 'command-center',
+      prepareProfile: 'sandbox',
+      launchPlan: {
+        id: 'project-owned-plan',
+        version: 1,
+        candidates: [
+          {
+            id: 'baseline',
+            role: 'baseline',
+            slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+          },
+        ],
+      },
     },
     { kind: 'system' },
   );
@@ -706,6 +721,72 @@ test('backlog.update changes the owning project before dispatch', async () => {
   });
 
   assert.equal(updated.item.project, 'metamask-core-farm');
+  assert.equal(updated.item.allowedSlots, undefined);
+  assert.equal(updated.item.taskTemplate, undefined);
+  assert.equal(updated.item.app, undefined);
+  assert.equal(updated.item.prepareProfile, undefined);
+  assert.equal(updated.item.launchPlan, undefined);
+});
+
+test('backlog.update rejects project changes while queue or run linkage exists', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Keep linked ownership stable',
+      sourceKind: 'manual',
+      flowType: 'dev',
+    },
+    { kind: 'system' },
+  );
+
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'failed';
+    item.runId = 'run-1';
+  });
+  await assert.rejects(
+    () =>
+      backlog.updateBacklogItem({
+        itemId: created.item.id,
+        project: 'metamask-core-farm',
+      }),
+    /linked to a queue or run/,
+  );
+
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'running';
+    delete item.runId;
+  });
+  await assert.rejects(
+    () =>
+      backlog.updateBacklogItem({
+        itemId: created.item.id,
+        project: 'metamask-core-farm',
+      }),
+    /while backlog item is running/,
+  );
+});
+
+test('backlog.update clears a project template when the flow changes', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Change dispatch flow',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      taskTemplate: { fileName: 'dev-interactive.md', variant: 'interactive' },
+    },
+    { kind: 'system' },
+  );
+
+  const updated = await backlog.updateBacklogItem({
+    itemId: created.item.id,
+    flowType: 'fix-bug',
+  });
+
+  assert.equal(updated.item.flowType, 'fix-bug');
+  assert.equal(updated.item.taskTemplate, undefined);
 });
 
 test('backlog.archive moves finished backlog items to archived', async () => {
