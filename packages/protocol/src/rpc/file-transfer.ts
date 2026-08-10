@@ -126,6 +126,24 @@ export interface FileTransferSmokeResult {
   cancelled?: boolean;
 }
 
+export interface FileTransferRemoteE2eParams {
+  /** Connected node machine id (default: first connected node). */
+  machine?: string;
+  /** Large fixture size (default: 3 chunks + a few bytes). */
+  largeBytes?: number;
+  runId?: string;
+  slotId?: string;
+}
+
+export interface FileTransferRemoteE2eResult {
+  machine: string;
+  remoteDownload: { size: number; sha256: string; intermediateEvents: number };
+  remoteDir: { filesCopied: number; aggregateSawFilesTotal: boolean; maxFilesCompleted: number };
+  remoteBufferRead: { size: number; sha256: string };
+  remoteUpload: { size: number; roundTripSha256Match: boolean };
+  httpFileProxy?: { status: number; bytes: number; usedChunkedPath: boolean };
+}
+
 /**
  * Admin/diagnostics smoke path. Prefer this name in new code.
  * `file.transfer.smoke` remains a routed alias for older recipes.
@@ -133,6 +151,7 @@ export interface FileTransferSmokeResult {
 export const FileTransferMethods = {
   smoke: 'diagnostics.fileTransfer.smoke',
   smokeAlias: 'file.transfer.smoke',
+  remoteE2e: 'diagnostics.fileTransfer.remoteE2e',
   cancel: 'file.transfer.cancel',
   list: 'file.transfer.list',
 } as const;

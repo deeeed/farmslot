@@ -65,6 +65,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
     reason: 'scans task directories and reads decision artifacts',
   },
   'decision.resolve': { classification: 'admin' },
+  'diagnostics.fileTransfer.remoteE2e': { classification: 'admin' },
   'diagnostics.fileTransfer.smoke': { classification: 'admin' },
   'diagnostics.run': { classification: 'admin' },
   'dispatch.candidates': { classification: 'admin' },

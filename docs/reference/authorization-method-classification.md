@@ -58,6 +58,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `credential.revoke`                  | admin          |                                                          |
 | `decision.list`                      | admin          | scans task directories and reads decision artifacts      |
 | `decision.resolve`                   | admin          |                                                          |
+| `diagnostics.fileTransfer.remoteE2e` | admin          |                                                          |
 | `diagnostics.fileTransfer.smoke`     | admin          |                                                          |
 | `diagnostics.run`                    | admin          |                                                          |
 | `dispatch.candidates`                | admin          |                                                          |

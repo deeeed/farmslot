@@ -268,6 +268,7 @@ import { diagnosticsRun } from '../methods/diagnostics.js';
 import {
   fileTransferCancel,
   fileTransferList,
+  fileTransferRemoteE2e,
   fileTransferSmoke,
 } from '../methods/file-transfer.js';
 import {
@@ -1078,6 +1079,8 @@ async function routeAuthorizedMethod(
     case Methods.FILE_TRANSFER_SMOKE:
     case Methods.DIAGNOSTICS_FILE_TRANSFER_SMOKE:
       return fileTransferSmoke(p as import('@farmslot/protocol').FileTransferSmokeParams);
+    case Methods.DIAGNOSTICS_FILE_TRANSFER_REMOTE_E2E:
+      return fileTransferRemoteE2e(p as import('@farmslot/protocol').FileTransferRemoteE2eParams);
     case Methods.FILE_TRANSFER_CANCEL:
       return fileTransferCancel(p as import('@farmslot/protocol').FileTransferCancelParams);
     case Methods.FILE_TRANSFER_LIST:
