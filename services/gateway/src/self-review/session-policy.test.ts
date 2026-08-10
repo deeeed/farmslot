@@ -41,7 +41,7 @@ function register(
 
 beforeEach(() => resetWarmReviewerSessionsForTest());
 
-test('policy parsing accepts the two modes and defaults everything else to fresh', () => {
+test('policy parsing accepts the two modes, rejects everything else, and the default is warm', () => {
   assert.equal(parseReviewSessionPolicy('fresh-per-pass'), 'fresh-per-pass');
   assert.equal(parseReviewSessionPolicy('warm-per-reviewer'), 'warm-per-reviewer');
   assert.equal(parseReviewSessionPolicy(undefined), undefined);

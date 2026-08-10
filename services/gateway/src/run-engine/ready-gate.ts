@@ -347,9 +347,10 @@ export async function executePublishGateReviewPlan(
         reviewSessionIntent: planStep.sessionIntent ?? 'reset',
         // An explicit operator Continue/Fresh choice starts a retained review
         // work order: Fresh resets generation 1, while fixes/re-reviews can
-        // still reuse that reviewer. Warm reuse is the project-policy default
-        // now, so no per-step policy override is needed here — the intent
-        // above alone distinguishes continue vs reset.
+        // still reuse that reviewer. The override is NOT redundant with the
+        // warm default — a project configured fresh-per-pass must still honor
+        // the operator's explicit retained-session choice.
+        ...(planStep.sessionIntent ? { reviewSessionPolicy: 'warm-per-reviewer' as const } : {}),
         // Configured review steps are true review loops: findings are fed back
         // to the original worker, the worker fixes them, then the same reviewer
         // re-reviews before the next configured reviewer starts.
