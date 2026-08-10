@@ -1449,7 +1449,15 @@ export class BacklogPanel extends LitElement {
   }
 
   private _metadataDraft(item: BacklogItem): BacklogMetadataDraft {
-    return this._metadataDrafts[item.id] ?? metadataDraftFromItem(item);
+    const saved = metadataDraftFromItem(item);
+    const draft = this._metadataDrafts[item.id];
+    if (!draft || canEditBacklogDispatchForUi(item)) return draft ?? saved;
+    return {
+      ...saved,
+      title: draft.title,
+      notes: draft.notes,
+      tags: draft.tags,
+    };
   }
 
   private _updateMetadataDraft(item: BacklogItem, patch: Partial<BacklogMetadataDraft>) {
@@ -1498,8 +1506,8 @@ export class BacklogPanel extends LitElement {
     return html`<div class="create-grid" data-testid=${testId}>
       ${dispatchScopeDisabled
         ? html`<div class="wide muted">
-            Project, source, flow, and dispatch settings are locked while this item is linked to
-            execution. Descriptive metadata remains editable.
+            Project, source, flow, priority, and dispatch settings are locked while this item is
+            linked to execution. Title, context, and tags remain editable.
           </div>`
         : nothing}
       <div class="wide">
@@ -2320,7 +2328,7 @@ export class BacklogPanel extends LitElement {
   }
 
   private _renderDispatchConfigModal(item: BacklogItem) {
-    if (!this._dispatchConfigOpen) return nothing;
+    if (!this._dispatchConfigOpen || !canEditBacklogDispatchForUi(item)) return nothing;
     const disabled = this._dispatchConfigBusy === item.id || !canEditBacklogDispatchForUi(item);
     const templateState = this._templateOptionsStateForItem(item);
     return html`

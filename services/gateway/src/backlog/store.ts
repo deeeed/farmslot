@@ -1127,14 +1127,22 @@ function launchCandidateByRole(item: BacklogItem, role: BacklogLaunchCandidate['
   return item.launchPlan?.candidates.find((candidate) => candidate.role === role);
 }
 
-async function assertSlotsBelongToProject(project: string, allowedSlots?: string[]): Promise<void> {
-  if (!allowedSlots || allowedSlots.length === 0) return;
+type SlotOwnership = { id: string; project: string };
+
+async function loadSlotOwnership(): Promise<SlotOwnership[]> {
   const configuredSlots = (await loadPoolConfigs()).flatMap((pool) => pool.slots);
-  const slots = configuredSlots.length > 0 ? configuredSlots : (await loadFleetStatus()).slots;
+  if (configuredSlots.length > 0) return configuredSlots;
+  return (await loadFleetStatus()).slots.map((slot) => ({ id: slot.slot, project: slot.project }));
+}
+
+function assertSlotsBelongToProject(
+  slots: SlotOwnership[],
+  project: string,
+  allowedSlots?: string[],
+): void {
+  if (!allowedSlots || allowedSlots.length === 0) return;
   for (const slotId of allowedSlots) {
-    const slot = slots.find(
-      (candidate) => ('id' in candidate ? candidate.id : candidate.slot) === slotId,
-    );
+    const slot = slots.find((candidate) => candidate.id === slotId);
     if (!slot) throw new Error(`allowed slot not found: ${slotId}`);
     if (slot.project !== project) {
       throw new Error(`allowed slot ${slotId} belongs to project ${slot.project}, not ${project}`);
@@ -1143,9 +1151,10 @@ async function assertSlotsBelongToProject(project: string, allowedSlots?: string
 }
 
 async function assertAllowedSlotsBelongToProject(item: BacklogItem): Promise<void> {
-  await assertSlotsBelongToProject(item.project, item.allowedSlots);
+  const slots = await loadSlotOwnership();
+  assertSlotsBelongToProject(slots, item.project, item.allowedSlots);
   for (const candidate of item.launchPlan?.candidates ?? []) {
-    await assertSlotsBelongToProject(item.project, slotsForLaunchPolicy(candidate.slotPolicy));
+    assertSlotsBelongToProject(slots, item.project, slotsForLaunchPolicy(candidate.slotPolicy));
   }
 }
 
