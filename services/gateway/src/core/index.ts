@@ -62,9 +62,11 @@ export {
   slotListDir,
   slotMkdir,
   slotReadFile,
+  slotReadFileBuffer,
   slotStat,
   slotWatchFile,
   slotWriteFile,
+  slotWriteFileBuffer,
   slotWriteFiles,
 } from './slot-io.js';
 export {
