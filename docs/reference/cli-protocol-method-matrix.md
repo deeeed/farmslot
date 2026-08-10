@@ -104,9 +104,11 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## diagnostics.\*
 
-| Method            | Surface  | CLI command | TUI | Note                                                                                           |
-| ----------------- | -------- | ----------- | --- | ---------------------------------------------------------------------------------------------- |
-| `diagnostics.run` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| Method                               | Surface  | CLI command | TUI | Note                                                                                           |
+| ------------------------------------ | -------- | ----------- | --- | ---------------------------------------------------------------------------------------------- |
+| `diagnostics.fileTransfer.smoke`     | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `diagnostics.fileTransfer.remoteE2e` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `diagnostics.run`                    | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 
 ## dispatch.\*
 
@@ -138,6 +140,14 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | -------------------------- | -------- | ----------- | --- | ---------------------------------------------------------------------------------------------- |
 | `family.observability.get` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `family.report.generate`   | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+
+## file.\*
+
+| Method                 | Surface  | CLI command | TUI | Note                                                                                                                                  |
+| ---------------------- | -------- | ----------- | --- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `file.transfer.smoke`  | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Prefer diagnostics.fileTransfer.smoke. |
+| `file.transfer.cancel` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                        |
+| `file.transfer.list`   | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                        |
 
 ## finetune.\*
 
