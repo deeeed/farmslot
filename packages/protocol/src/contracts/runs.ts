@@ -192,6 +192,9 @@ export interface ReviewDepthPolicy {
  * Reviewer session lifecycle across one run's review loops:
  * `fresh-per-pass` relaunches a cold reviewer every pass; `warm-per-reviewer`
  * resumes the same reviewer runner session for re-reviews within the run.
+ * Warm is the default: after the worker fixes findings, the re-review resumes
+ * the reviewer's context instead of rebuilding the whole review. First passes
+ * are always cold; runners without session reload fall back to cold.
  */
 export type ReviewSessionPolicy = 'fresh-per-pass' | 'warm-per-reviewer';
 
@@ -200,7 +203,7 @@ export const REVIEW_SESSION_POLICIES: readonly ReviewSessionPolicy[] = [
   'warm-per-reviewer',
 ];
 
-export const DEFAULT_REVIEW_SESSION_POLICY: ReviewSessionPolicy = 'fresh-per-pass';
+export const DEFAULT_REVIEW_SESSION_POLICY: ReviewSessionPolicy = 'warm-per-reviewer';
 
 export type ReviewValidationDepth = 'static-code' | 'full-live';
 

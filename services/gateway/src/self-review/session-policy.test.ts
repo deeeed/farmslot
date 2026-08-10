@@ -48,7 +48,14 @@ test('policy parsing accepts the two modes and defaults everything else to fresh
   assert.equal(parseReviewSessionPolicy(null), undefined);
   assert.equal(parseReviewSessionPolicy('warm'), undefined);
   assert.equal(parseReviewSessionPolicy(1), undefined);
-  assert.equal(DEFAULT_REVIEW_SESSION_POLICY, 'fresh-per-pass');
+  // Warm is the default: re-reviews resume the reviewer's context instead of
+  // rebuilding the whole review after every worker fix.
+  assert.equal(DEFAULT_REVIEW_SESSION_POLICY, 'warm-per-reviewer');
+  // The default engages warm resume exactly where it matters: loop > 1 with a
+  // reload-capable runner. First passes and no-reload runners stay cold.
+  assert.equal(shouldAttemptWarmResume(DEFAULT_REVIEW_SESSION_POLICY, 2, true), true);
+  assert.equal(shouldAttemptWarmResume(DEFAULT_REVIEW_SESSION_POLICY, 1, true), false);
+  assert.equal(shouldAttemptWarmResume(DEFAULT_REVIEW_SESSION_POLICY, 2, false), false);
 });
 
 test('fresh-per-pass preserves cold relaunch behavior and never attempts resume', () => {

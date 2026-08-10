@@ -1066,8 +1066,8 @@ test('runSelfReviewRetryLoop: records worker-fix timeline segment before re-revi
 test('runSelfReviewRetryLoop threads sessionPolicy into every re-review launch', async () => {
   // The retry loop is the code that actually relaunches reviewers, so it must
   // forward the resolved policy to runReviewAgent — and default to
-  // fresh-per-pass when the caller omits it — or warm mode silently never
-  // applies to re-reviews.
+  // warm-per-reviewer when the caller omits it — or re-reviews rebuild the
+  // whole review from scratch after every worker fix.
   const warm = buildDeps({
     reviewVerdicts: ['pass'],
     fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
@@ -1093,7 +1093,7 @@ test('runSelfReviewRetryLoop threads sessionPolicy into every re-review launch',
     retryCount: 0,
     deps: dflt.deps,
   });
-  assert.deepEqual(dflt.calls.sessionPolicies, ['fresh-per-pass']);
+  assert.deepEqual(dflt.calls.sessionPolicies, ['warm-per-reviewer']);
 });
 
 test('retryDeferredFixDelivery adopts the re-resolved pane when the stored target is dead', async () => {
