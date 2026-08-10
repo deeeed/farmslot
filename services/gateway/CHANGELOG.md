@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(review): fix→re-review rounds resume the warm reviewer session by default (`warm-per-reviewer`) instead of relaunching a cold reviewer every pass; automatic publication reviews with a valid verdict now also keep their reviewer session claimable for human-gate continuation. Set `self_review.session_policy: "fresh-per-pass"` to opt out per project.
+
 - feat(prepare): provision checkout-local `.env.ports` from pool-owned slot resources — slots that declare `resources.dev-server.vite_port` get the file written before the sandbox preflight, with operator-port collisions refused (MANUAL-000085).
 
 - feat(intelligence): learnings router — every improvement analysis first classifies learnings entries as system vs domain; system entries continue into the projects/<project>/ improvement path, domain entries become a human-gated skill-antipattern draft card (with exactly-once inbox processed.jsonl receipts when a captured package correlates), ambiguous entries become visible teaching holds, and out-of-project apply paths now refuse loudly as `out-of-project` instead of skipping silently (MANUAL-000075).

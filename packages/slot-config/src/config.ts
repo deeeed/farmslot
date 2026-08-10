@@ -342,8 +342,8 @@ export interface RawProjectJson {
     max_retries?: number;
     review_timeout_min?: number;
     // Reviewer session lifecycle across one run's review loops:
-    // 'fresh-per-pass' (default) relaunches per pass; 'warm-per-reviewer'
-    // resumes the same reviewer session for re-reviews within the run.
+    // 'warm-per-reviewer' (default) resumes the same reviewer session for
+    // re-reviews within the run; 'fresh-per-pass' relaunches cold every pass.
     session_policy?: ReviewSessionPolicy;
   };
   publication_review?: Partial<

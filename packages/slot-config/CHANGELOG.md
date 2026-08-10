@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- docs(config): the `self_review.session_policy` schema comment names `warm-per-reviewer` as the default.
+
 - feat(config): `loadMachineSlots(machine)` lists a machine's pool slots from the same pool dir as every other lookup, failing closed on a missing machine (MANUAL-000085).
 - feat(resources): `vite_port` joins the optional dev-server resource placeholders (`{{vite_port}}`) for sandbox UI port provisioning (MANUAL-000085).
 
