@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(monitor): `MonitorViolation.type` gains `budget` (per-flow turn/token soft ceiling); `RunMonitorState.budgetWarned` records the one-shot warn (MANUAL-000096).
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.20.0 - 2026-08-10

@@ -1274,6 +1274,8 @@ export interface RunMonitorState {
   lastPollAt: string;
   startedAt: string;
   lastPaneHash?: string;
+  /** True after a one-shot usage-budget warning was emitted for this monitor session. */
+  budgetWarned?: boolean;
 }
 
 export interface RunLink {

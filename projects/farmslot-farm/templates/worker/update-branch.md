@@ -23,6 +23,20 @@ This is an **update-branch** run: bring this PR branch up to date against its ba
 branch and continue CI/finalization. The intent is not "make a merge commit from
 main" — it is "update this branch, resolve any fallout, keep CI green."
 
+## SCOPE BUDGET (hard rule)
+
+This flow is **near-mechanical**. Stay inside the checklist — do not open drive-by
+refactors, broad refactors of unrelated packages, or multi-PR scope.
+
+Soft ceilings (monitor warns once when exceeded; do not treat as license to keep going):
+
+- **Turn budget:** ~80 turns (`monitoring.flows.update-branch.max_turns`)
+- **Token budget:** ~8M total tokens (`monitoring.flows.update-branch.max_total_tokens`)
+
+If you are past those ceilings, you have expanded past branch-update work. Stop new
+workstreams, finish the current checklist item or signal blocked, and write
+`SIGNAL.json`. A 100M-token update-branch run is a failure mode, not thoroughness.
+
 ## Strategy
 
 `BRANCH_UPDATE_STRATEGY` selects how to update the branch:

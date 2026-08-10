@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(run-monitor): per-flow turn/token soft budget for mechanical flows — `monitoring.flows.*.max_turns` / `max_total_tokens`, built-in `update-branch` defaults (80 turns / 8M tokens), one-shot `budget` violation + worker nudge when session usage exceeds the ceiling (MANUAL-000096).
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 - fix(artifacts): treat cleaned or never-created run artifact roots as a quiet not-found result while preserving diagnostics for real filesystem failures.
 

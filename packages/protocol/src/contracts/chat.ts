@@ -267,7 +267,8 @@ export interface MonitorViolation {
   role?: AgentRole;
   contextId?: string;
   target?: string;
-  type: 'stuck' | 'skipped' | 'idle' | 'waiting' | 'error';
+  /** `budget` = per-flow turn/token soft ceiling (warn-once; does not hard-kill). */
+  type: 'stuck' | 'skipped' | 'idle' | 'waiting' | 'error' | 'budget';
   message: string;
   nudgeSent: string | null;
   timestamp: string;

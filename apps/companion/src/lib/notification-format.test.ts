@@ -39,6 +39,13 @@ test('rejects monitor event types that are not useful as mobile notifications', 
   assert.equal(normalizeMonitorViolation({ ...baseViolation, type: 'skipped' }), null);
 });
 
+test('accepts budget monitor violations as actionable mobile notifications', () => {
+  const normalized = normalizeMonitorViolation({ ...baseViolation, type: 'budget' });
+  assert.ok(normalized);
+  assert.equal(normalized.type, 'budget');
+  assert.equal(monitorViolationTitle(normalized), 'Usage budget · runner-mobile-2');
+});
+
 test('monitor violation dedupe is scoped by slot, type, role, and context', () => {
   const one = monitorViolationDedupeKey({
     ...baseViolation,

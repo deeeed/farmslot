@@ -19,6 +19,7 @@ const MONITOR_TYPE_LABELS: Record<MonitorViolation['type'], string> = {
   idle: 'Worker idle',
   waiting: 'Worker waiting',
   error: 'Worker error',
+  budget: 'Usage budget',
 };
 
 function isActionableSlotId(value: unknown): value is string {
@@ -29,7 +30,13 @@ function isActionableSlotId(value: unknown): value is string {
 }
 
 function isActionableMonitorType(value: unknown): value is MonitorViolation['type'] {
-  return value === 'stuck' || value === 'idle' || value === 'waiting' || value === 'error';
+  return (
+    value === 'stuck' ||
+    value === 'idle' ||
+    value === 'waiting' ||
+    value === 'error' ||
+    value === 'budget'
+  );
 }
 
 export function normalizeMonitorViolation(input: MonitorViolationInput): MonitorViolation | null {

@@ -354,6 +354,46 @@ test('resolveMonitorConfig ignores an invalid per-flow override and uses the pro
   assert.equal(cfg.totalTimeoutMs, 120 * 60_000);
 });
 
+test('resolveMonitorConfig applies built-in update-branch turn/token soft budgets', () => {
+  const cfg = resolveMonitorConfig(undefined, 'proj', 'update-branch');
+  assert.equal(cfg.maxTurns, 80);
+  assert.equal(cfg.maxTotalTokens, 8_000_000);
+});
+
+test('resolveMonitorConfig leaves open-ended flows without a usage budget', () => {
+  const cfg = resolveMonitorConfig({ total_timeout_min: 90 }, 'proj', 'dev');
+  assert.equal(cfg.maxTurns, null);
+  assert.equal(cfg.maxTotalTokens, null);
+});
+
+test('resolveMonitorConfig honors project max_turns / max_total_tokens overrides', () => {
+  const cfg = resolveMonitorConfig(
+    {
+      flows: {
+        'update-branch': { max_turns: 40, max_total_tokens: 2_000_000 },
+      },
+    },
+    'proj',
+    'update-branch',
+  );
+  assert.equal(cfg.maxTurns, 40);
+  assert.equal(cfg.maxTotalTokens, 2_000_000);
+});
+
+test('resolveMonitorConfig ignores invalid usage budget overrides and keeps defaults', () => {
+  const cfg = resolveMonitorConfig(
+    {
+      flows: {
+        'update-branch': { max_turns: -3, max_total_tokens: 0 },
+      },
+    },
+    'proj',
+    'update-branch',
+  );
+  assert.equal(cfg.maxTurns, 80);
+  assert.equal(cfg.maxTotalTokens, 8_000_000);
+});
+
 // ─── Terminal-signal auto-recovery (deliverable 2) ───
 
 const handoffRun = {

@@ -998,7 +998,7 @@
         },
         "flows": {
           "type": "object",
-          "description": "Per-flow timeout overrides keyed by FlowType (dev, fix-bug, review-pr, pr-complete, update-branch). Falls back to the top-level monitoring value, then the built-in default. Only total_timeout_min and stuck_timeout_min are overridable; poll_interval_min, idle_timeout_min, and max_nudges stay project-wide.",
+          "description": "Per-flow overrides keyed by FlowType (dev, fix-bug, review-pr, pr-complete, update-branch). Timeout fields fall back to the top-level monitoring value, then the built-in default. Turn/token soft budgets fall back to built-in defaults for mechanical flows (update-branch). poll_interval_min, idle_timeout_min, and max_nudges stay project-wide.",
           "propertyNames": {
             "enum": ["fix-bug", "review-pr", "dev", "pr-complete", "update-branch"]
           },
@@ -1014,6 +1014,16 @@
                 "type": "integer",
                 "minimum": 1,
                 "description": "Overrides monitoring.stuck_timeout_min for this flow."
+              },
+              "max_turns": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Soft turn ceiling for this flow. The run monitor extracts session usage, emits a one-shot budget violation + nudge when exceeded, and does not hard-kill the worker. Built-in default for update-branch is 80."
+              },
+              "max_total_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Soft total-token ceiling for this flow (session total tokens). Same warn-once monitor behaviour as max_turns. Built-in default for update-branch is 8000000."
               }
             },
             "additionalProperties": false

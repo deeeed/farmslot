@@ -64,7 +64,16 @@ import {
 } from '../tasks/worker-signals.js';
 import { loadTerminalContractForRun } from '../tasks/worker-terminal-contract.js';
 
+import { extractAndPersistSessionCost } from '../run-completion/orchestrator.js';
+
 import { pendingDecisionForRun } from './decision-projection.js';
+import {
+  buildUsageBudgetNudgeMessage,
+  evaluateFlowUsageBudget,
+  FLOW_USAGE_BUDGET_DEFAULTS,
+  formatUsageBudgetMessage,
+  hasUsageBudget,
+} from './flow-usage-budget.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -82,6 +91,10 @@ interface MonitorConfig {
   idleTimeoutMs: number;
   totalTimeoutMs: number;
   maxNudges: number;
+  /** Soft turn ceiling (null = no budget for this flow). */
+  maxTurns: number | null;
+  /** Soft total-token ceiling (null = no budget for this flow). */
+  maxTotalTokens: number | null;
 }
 
 const DEFAULT_CONFIG: MonitorConfig = {
@@ -90,6 +103,8 @@ const DEFAULT_CONFIG: MonitorConfig = {
   idleTimeoutMs: 15 * 60_000, // 15 min
   totalTimeoutMs: 90 * 60_000, // 90 min
   maxNudges: 5,
+  maxTurns: null,
+  maxTotalTokens: null,
 };
 
 function readNumericMonitorField(
@@ -115,8 +130,9 @@ type MonitoringSection = NonNullable<RawProjectJson['monitoring']>;
 
 /**
  * Resolve monitor thresholds from the raw project `monitoring` section, applying
- * per-flow overrides. Only total/stuck timeouts are per-flow overridable; a flow
- * value falls back to the top-level project value, which falls back to the default.
+ * per-flow overrides. Total/stuck timeouts fall back to the project value, then
+ * the built-in default. Turn/token soft budgets fall back to
+ * {@link FLOW_USAGE_BUDGET_DEFAULTS} for mechanical flows when unset.
  * Pure — no I/O — so config-loader tests can exercise it directly.
  */
 export function resolveMonitorConfig(
@@ -124,7 +140,14 @@ export function resolveMonitorConfig(
   project: string,
   flowType?: FlowType,
 ): MonitorConfig {
-  if (!monitoring) return DEFAULT_CONFIG;
+  const flowDefaults = flowType ? FLOW_USAGE_BUDGET_DEFAULTS[flowType] : undefined;
+  if (!monitoring) {
+    return {
+      ...DEFAULT_CONFIG,
+      maxTurns: flowDefaults?.maxTurns ?? null,
+      maxTotalTokens: flowDefaults?.maxTotalTokens ?? null,
+    };
+  }
   const flow = flowType ? monitoring.flows?.[flowType] : undefined;
   const flowLabel = (field: string): string => (flowType ? `flows.${flowType}.${field}` : field);
 
@@ -166,7 +189,37 @@ export function resolveMonitorConfig(
     maxNudges: readNumericMonitorField(monitoring.max_nudges, 'max_nudges', 5, project, {
       allowZero: true,
     }),
+    maxTurns: readOptionalBudgetField(
+      flow?.max_turns,
+      flowLabel('max_turns'),
+      flowDefaults?.maxTurns ?? null,
+      project,
+    ),
+    maxTotalTokens: readOptionalBudgetField(
+      flow?.max_total_tokens,
+      flowLabel('max_total_tokens'),
+      flowDefaults?.maxTotalTokens ?? null,
+      project,
+    ),
   };
+}
+
+/** Positive integer budget ceiling, or fallback (null = no budget). Invalid values warn and fall back. */
+function readOptionalBudgetField(
+  value: unknown,
+  field: string,
+  fallback: number | null,
+  project: string,
+): number | null {
+  if (value === undefined || value === null) return fallback;
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.warn(
+      `[run-monitor] ignoring invalid monitoring.${field}=${JSON.stringify(value)} for ${project}; using ${fallback ?? 'no budget'}`,
+    );
+    return fallback;
+  }
+  return Math.floor(n);
 }
 
 async function loadMonitorConfig(project: string, flowType?: FlowType): Promise<MonitorConfig> {
@@ -188,6 +241,8 @@ interface MonitorState {
   lastPaneChangeAt: number;
   lastStepCount: number;
   startedAt: number;
+  /** One-shot usage-budget warning already emitted for this monitor session. */
+  budgetWarned: boolean;
 }
 
 // ADR-027 Phase 3: monitor state lives on Run.monitorState (already persisted).
@@ -711,12 +766,14 @@ export async function monitorRun(
         lastPaneChangeAt: new Date(persisted.lastPollAt).getTime(),
         lastStepCount: 0,
         startedAt: new Date(persisted.startedAt).getTime(),
+        budgetWarned: persisted.budgetWarned === true,
       }
     : {
         lastPaneHash: '',
         lastPaneChangeAt: now,
         lastStepCount: 0,
         startedAt: now,
+        budgetWarned: false,
       };
   // Also restore nudge count from persisted state
   if (persisted && persisted.nudgeCount > run.metrics.nudgeCount) {
@@ -1052,6 +1109,68 @@ export async function monitorRun(
         violationContext?.id,
       );
 
+      // 2b. Per-flow turn/token soft budget — warn once, never hard-kill.
+      if (hasUsageBudget(config) && !state.budgetWarned) {
+        try {
+          const cost = await extractAndPersistSessionCost(runId);
+          const evaluation = evaluateFlowUsageBudget(
+            { turns: cost.turns, totalTokens: cost.totalTokens },
+            { maxTurns: config.maxTurns, maxTotalTokens: config.maxTotalTokens },
+          );
+          if (evaluation.exceeded) {
+            state.budgetWarned = true;
+            const budgetRun = getRun(runId) ?? initialRun;
+            const budgetContext = currentMonitorContext();
+            const message = formatUsageBudgetMessage(budgetRun.flowType, evaluation);
+            const budgetViolation: MonitorViolation = {
+              slotId,
+              role: budgetContext?.role,
+              contextId: budgetContext?.id,
+              type: 'budget',
+              message,
+              nudgeSent: null,
+              timestamp: new Date().toISOString(),
+            };
+            broadcastFn(Events.MONITOR_VIOLATION, { violation: budgetViolation });
+            allViolations.push({
+              type: budgetViolation.type,
+              message: budgetViolation.message,
+              timestamp: budgetViolation.timestamp,
+            });
+            snapshots.push({
+              timestamp: budgetViolation.timestamp,
+              trigger: 'violation',
+              violation: { type: budgetViolation.type, message: budgetViolation.message },
+            });
+            console.warn(
+              `[run-monitor] run ${runId.slice(0, 8)} — ${message}`,
+            );
+            // Budget nudge is informational and does not consume max_nudges.
+            if (
+              !shouldSkipMonitorNudge(budgetRun, budgetViolation, agentStatus) &&
+              runnerSupportsTmuxNudgesForLaunch(
+                budgetRun.metrics.runner,
+                launchCommandForRun(budgetRun),
+              )
+            ) {
+              await sendBudgetNudge(
+                runId,
+                slotId,
+                message,
+                budgetContext?.role,
+                budgetContext?.id,
+              );
+              budgetViolation.nudgeSent = new Date().toISOString();
+              snapshots.push({ timestamp: new Date().toISOString(), trigger: 'nudge' });
+            }
+          }
+        } catch (err) {
+          console.warn(
+            `[run-monitor] usage budget check failed for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
+          );
+        }
+      }
+
       // 3. Handle violations
       for (const v of violations) {
         broadcastFn(Events.MONITOR_VIOLATION, { violation: v });
@@ -1152,6 +1271,7 @@ export async function monitorRun(
             lastPollAt: new Date().toISOString(),
             startedAt: new Date(state.startedAt).toISOString(),
             lastPaneHash: state.lastPaneHash,
+            budgetWarned: state.budgetWarned,
           },
         });
       }
@@ -1404,8 +1524,54 @@ function buildNudgeMessage(violation: MonitorViolation): string {
       return '[Orchestrator] You appear idle. Report current status in TASK.md.';
     case 'waiting':
       return '[Orchestrator] Continue without waiting. Follow TASK.md exactly.';
+    case 'budget':
+      return buildUsageBudgetNudgeMessage(violation.message);
     default:
       return '[Orchestrator] Continue working on the current task.';
+  }
+}
+
+/**
+ * One-shot budget warning into the worker pane. Does not increment metrics.nudgeCount
+ * (stuck/idle max_nudges is a separate escalation budget).
+ */
+async function sendBudgetNudge(
+  runId: string,
+  slotId: string,
+  message: string,
+  role?: AgentRole,
+  contextId?: string,
+): Promise<void> {
+  const run = getRun(runId);
+  if (!run) return;
+  if (!runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))) return;
+
+  try {
+    const vars = await loadSlotVars(slotId);
+    const context = selectAgentContext(run, { role, contextId });
+    const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
+    const retainedSession = resolveRunRetainedSessionBinding(run, context);
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      session,
+      run.metrics.runner ?? 'claude',
+      buildUsageBudgetNudgeMessage(message),
+      'run-monitor-budget',
+      undefined,
+      {
+        recovery: { runId, emit: broadcastFn },
+        ...retainedSessionSendOption(retainedSession),
+      },
+    );
+    if (!sent) return;
+    console.log(
+      `[run-monitor] budget nudge sent to run ${runId.slice(0, 8)}: ${message.slice(0, 120)}`,
+    );
+    broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+  } catch (err) {
+    console.error(
+      `[run-monitor] budget nudge failed for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
+    );
   }
 }
 

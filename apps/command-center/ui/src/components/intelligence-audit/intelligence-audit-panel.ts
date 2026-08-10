@@ -50,7 +50,7 @@ function statusColor(value: string): string {
 
 function monitorSignalColor(type: MonitorViolation['type']): string {
   if (type === 'error' || type === 'stuck') return colors.statusFail;
-  if (type === 'idle' || type === 'waiting') return colors.textSecondary;
+  if (type === 'idle' || type === 'waiting' || type === 'budget') return colors.textSecondary;
   return colors.textMuted;
 }
 
