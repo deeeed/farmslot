@@ -12,6 +12,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - feat(transfer): chunked file-transfer contract — `FILE_TRANSFER_CHUNK_MAX_BYTES`, small-file threshold, idle timeout, `FileTransferProgress` event payload, `file.transfer.smoke` method, and `fs.readChunk` node params (MANUAL-000095).
 
+- feat(review)!: `DEFAULT_REVIEW_SESSION_POLICY` is now `warm-per-reviewer` — after a worker fixes findings, the re-review resumes the reviewer session instead of rebuilding the review; first passes stay cold and no-reload runners fall back to cold.
+
 - feat(runs): `LearningsDraftPayload` (`kind: 'learnings-draft'`) with antipattern drafts, teaching holds, and inbox receipt status; `ImprovementApplyResult.refused` gains `out-of-project` (MANUAL-000075).
 
 - feat(execution-templates): `ExecutionTemplateOptions.filteredSources` reports sources dropped by the domain gate (`domain-restricted` + enabling domains) instead of hiding them (MANUAL-000076).
