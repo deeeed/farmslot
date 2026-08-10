@@ -24,6 +24,7 @@ import {
   fsRead,
   fsReadBase64,
   fsReadChunk,
+  fsWriteChunk,
   fsRealpath,
   fsRename,
   fsStat,
@@ -452,6 +453,17 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
         const offset = requireNumber(params, 'offset');
         const length = requireNumber(params, 'length');
         const result = await fsReadChunk({ root, relPath, offset, length });
+        sendResponse(frame.id, true, result);
+        break;
+      }
+
+      case 'fs.writeChunk': {
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const offset = requireNumber(params, 'offset');
+        const content = requireString(params, 'content');
+        const truncate = params.truncate === true;
+        const result = await fsWriteChunk({ root, relPath, offset, content, truncate });
         sendResponse(frame.id, true, result);
         break;
       }

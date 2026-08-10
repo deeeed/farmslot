@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(transfer): cancel control, multi-file counts, run-detail inline transfer panel (MANUAL-000095 follow-up).
+
 - feat(transfer): determinate file-transfer progress banner (filename, bytes/percent, phase, failed) driven by `file.transfer.progress` events (MANUAL-000095).
 
 - feat(decisions): render learnings-draft cards — domain antipattern drafts with target paths, teaching holds, and the inbox receipt status (MANUAL-000075).

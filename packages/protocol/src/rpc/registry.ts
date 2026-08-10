@@ -98,7 +98,10 @@ export const Methods = {
   ROADMAP_PROMOTE: 'roadmap.promote',
 
   // File transfer (progress-aware large copies)
-  FILE_TRANSFER_SMOKE: 'file.transfer.smoke',
+  FILE_TRANSFER_SMOKE: 'file.transfer.smoke', // alias — prefer DIAGNOSTICS_FILE_TRANSFER_SMOKE
+  DIAGNOSTICS_FILE_TRANSFER_SMOKE: 'diagnostics.fileTransfer.smoke',
+  FILE_TRANSFER_CANCEL: 'file.transfer.cancel',
+  FILE_TRANSFER_LIST: 'file.transfer.list',
 
   // Terminal
   TERMINAL_SUBSCRIBE: 'terminal.subscribe',

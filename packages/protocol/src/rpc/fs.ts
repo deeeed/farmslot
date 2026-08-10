@@ -88,5 +88,20 @@ export interface NodeFsReadChunkResult {
   offset: number;
   bytesRead: number;
   eof: boolean;
+  /** Payload encoding; base64 is the default JSON-safe path. */
+  encoding?: 'base64' | 'binary';
+}
+
+export interface NodeFsWriteChunkParams extends NodeFsPathParams {
+  offset: number;
+  content: string;
+  /** When true (or offset is 0), create/truncate before writing. */
+  truncate?: boolean;
+}
+
+export interface NodeFsWriteChunkResult {
+  ok: true;
+  bytesWritten: number;
+  offset: number;
 }
 

@@ -1,10 +1,11 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 
 import {
   Events,
   type FileTransferProgress,
   type FileTransferProgressPayload,
+  Methods,
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
@@ -20,7 +21,13 @@ import {
 
 @customElement('file-transfer-progress-banner')
 export class FileTransferProgressBanner extends LitElement {
+  /** When set, only show transfers for this run (run-detail embed). */
+  @property({ type: String, attribute: 'run-id' }) runId = '';
+  /** Inline layout for run-detail instead of fixed corner toast. */
+  @property({ type: Boolean }) inline = false;
+
   @state() private _entries: FileTransferUiEntry[] = [];
+  @state() private _cancelBusy: string | null = null;
 
   private _unsub: (() => void) | null = null;
   private _pruneTimer: ReturnType<typeof setInterval> | null = null;
@@ -29,12 +36,19 @@ export class FileTransferProgressBanner extends LitElement {
     :host {
       display: block;
       pointer-events: none;
+      font-family: ${unsafeCSS(fonts.mono)};
+    }
+    :host(:not([inline])) {
       position: fixed;
       right: 16px;
       bottom: 16px;
       z-index: 1200;
       max-width: min(420px, calc(100vw - 32px));
-      font-family: ${unsafeCSS(fonts.mono)};
+    }
+    :host([inline]) {
+      pointer-events: auto;
+      margin: ${unsafeCSS(spacing.sm)} 0;
+      max-width: 100%;
     }
     .ftp-stack {
       display: flex;
@@ -48,6 +62,9 @@ export class FileTransferProgressBanner extends LitElement {
       background: ${unsafeCSS(colors.bgCard)};
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
       padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+    }
+    :host([inline]) .ftp-card {
+      box-shadow: none;
     }
     .ftp-header {
       display: flex;
@@ -85,7 +102,8 @@ export class FileTransferProgressBanner extends LitElement {
       background: ${unsafeCSS(colors.statusOk)}22;
       color: ${unsafeCSS(colors.statusOk)};
     }
-    .ftp-status.failed {
+    .ftp-status.failed,
+    .ftp-status.cancelled {
       background: ${unsafeCSS(colors.statusFail)}22;
       color: ${unsafeCSS(colors.statusFail)};
     }
@@ -102,7 +120,8 @@ export class FileTransferProgressBanner extends LitElement {
       background: ${unsafeCSS(colors.accent)};
       transition: width 120ms linear;
     }
-    .ftp-bar.failed > span {
+    .ftp-bar.failed > span,
+    .ftp-bar.cancelled > span {
       background: ${unsafeCSS(colors.statusFail)};
     }
     .ftp-bar.done > span {
@@ -119,6 +138,30 @@ export class FileTransferProgressBanner extends LitElement {
       font-size: 10px;
       color: ${unsafeCSS(colors.textSecondary)};
       margin-top: 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .ftp-cancel {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border: 1px solid #4a4a66;
+      background: transparent;
+      color: ${unsafeCSS(colors.textSecondary)};
+      border-radius: ${unsafeCSS(radii.sm)};
+      padding: 2px 8px;
+      cursor: pointer;
+    }
+    .ftp-cancel:hover {
+      color: ${unsafeCSS(colors.statusFail)};
+      border-color: ${unsafeCSS(colors.statusFail)};
+    }
+    .ftp-cancel:disabled {
+      opacity: 0.5;
+      cursor: default;
     }
   `;
 
@@ -142,16 +185,38 @@ export class FileTransferProgressBanner extends LitElement {
   }
 
   private _onProgress(progress: FileTransferProgress): void {
+    if (this.runId && progress.runId && progress.runId !== this.runId) return;
     this._entries = pruneFileTransfers(upsertFileTransfer(this._entries, progress));
   }
 
+  private async _cancel(transferId: string): Promise<void> {
+    this._cancelBusy = transferId;
+    try {
+      await gateway.request(Methods.FILE_TRANSFER_CANCEL, { transferId });
+    } finally {
+      this._cancelBusy = null;
+    }
+  }
+
   override render() {
-    if (this._entries.length === 0) return nothing;
+    const entries = this.runId
+      ? this._entries.filter((e) => !e.runId || e.runId === this.runId)
+      : this._entries;
+    if (entries.length === 0) return nothing;
     return html`
-      <div class="ftp-stack" data-testid="file-transfer-progress-banner">
-        ${this._entries.map((entry) => {
+      <div
+        class="ftp-stack"
+        data-testid=${this.inline
+          ? 'file-transfer-progress-inline'
+          : 'file-transfer-progress-banner'}
+      >
+        ${entries.map((entry) => {
           const pct = transferPercent(entry);
           const name = entry.label || entry.path.split('/').pop() || entry.path;
+          const files =
+            entry.filesTotal != null && entry.filesTotal > 0
+              ? ` · file ${entry.filesCompleted ?? 0}/${entry.filesTotal}`
+              : '';
           return html`
             <div
               class="ftp-card"
@@ -166,12 +231,30 @@ export class FileTransferProgressBanner extends LitElement {
               </div>
               <div class="ftp-meta">
                 ${formatTransferBytes(entry.bytesTransferred)} /
-                ${formatTransferBytes(entry.totalBytes)} (${pct}%)
+                ${formatTransferBytes(entry.totalBytes)} (${pct}%)${files}
               </div>
-              <div class="ftp-bar ${entry.state}" role="progressbar" aria-valuenow=${pct} aria-valuemin="0" aria-valuemax="100">
+              <div
+                class="ftp-bar ${entry.state}"
+                role="progressbar"
+                aria-valuenow=${pct}
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
                 <span style="width: ${pct}%"></span>
               </div>
-              <div class="ftp-phase">phase: ${entry.phase}</div>
+              <div class="ftp-phase">
+                <span>phase: ${entry.phase}${entry.runId ? ` · run ${entry.runId.slice(0, 8)}` : ''}</span>
+                ${entry.state === 'running' && entry.cancellable !== false
+                  ? html`<button
+                      class="ftp-cancel"
+                      data-testid="file-transfer-cancel"
+                      ?disabled=${this._cancelBusy === entry.transferId}
+                      @click=${() => void this._cancel(entry.transferId)}
+                    >
+                      cancel
+                    </button>`
+                  : nothing}
+              </div>
               ${entry.error
                 ? html`<div class="ftp-error" data-testid="file-transfer-progress-error">
                     ${entry.error}

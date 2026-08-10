@@ -30,7 +30,11 @@ import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 
 import { isLocal } from './exec.js';
-import { copyFileChunked } from './file-transfer.js';
+import {
+  AggregateTransferSession,
+  copyFileChunked,
+  readRemoteFileChunkedToBuffer,
+} from './file-transfer.js';
 
 export const MAX_ARTIFACT_TREE_DEPTH = 12;
 // Subset of SlotVars — SlotVars satisfies this via structural typing
@@ -253,10 +257,17 @@ export interface SlotCopyFileOptions {
   phase?: FileTransferPhase;
   runId?: string;
   slotId?: string;
+  parentTransferId?: string;
+  filesCompleted?: number;
+  filesTotal?: number;
   /** Force chunked path even for small files (tests). */
   forceChunked?: boolean;
   /** Override small-file threshold (tests). */
   smallFileThresholdBytes?: number;
+  resumeFromOffset?: number;
+  keepPartialOnFailure?: boolean;
+  /** Verify assembled bytes against remote fs.hash when true (default for chunked). */
+  verifyRemoteHash?: boolean;
 }
 
 export async function slotCopyFile(
@@ -297,14 +308,28 @@ export async function slotCopyFile(
     return;
   }
 
+  const verifyHash = options.verifyRemoteHash !== false;
   await copyFileChunked({
     path: remotePath,
     label: options.label ?? path.basename(remotePath),
     phase: options.phase ?? 'download',
     runId: options.runId,
     slotId: options.slotId,
+    parentTransferId: options.parentTransferId,
+    filesCompleted: options.filesCompleted,
+    filesTotal: options.filesTotal,
     totalBytes: size > 0 ? size : undefined,
     localPath,
+    resumeFromOffset: options.resumeFromOffset,
+    keepPartialOnFailure: options.keepPartialOnFailure,
+    fetchRemoteSha256: verifyHash
+      ? async () => {
+          const hashed = (await sendNodeRequest(node, 'fs.hash', pathParams, {
+            timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
+          })) as { sha256: string };
+          return hashed.sha256;
+        }
+      : undefined,
     readChunk: async (offset, length) => {
       const chunk = (await sendNodeRequest(
         node,
@@ -315,6 +340,161 @@ export async function slotCopyFile(
       return chunk;
     },
   });
+}
+
+/**
+ * Read a remote file into a Buffer with progress (HTTP artifact proxy, etc.).
+ * Small files still use one-shot readBase64.
+ */
+export async function slotReadFileBuffer(
+  ctx: SlotLocality,
+  remotePath: string,
+  options: {
+    label?: string;
+    phase?: FileTransferPhase;
+    runId?: string;
+    slotId?: string;
+    maxBytes?: number;
+    forceChunked?: boolean;
+  } = {},
+): Promise<Buffer> {
+  if (local(ctx)) {
+    const { readFile } = await import('node:fs/promises');
+    const buf = await readFile(remotePath);
+    if (options.maxBytes != null && buf.byteLength > options.maxBytes) {
+      throw new Error(`Remote artifact too large to proxy (${buf.byteLength} bytes)`);
+    }
+    return buf;
+  }
+  const node = requireNode(ctx.machine);
+  const pathParams = nodePathParams(remotePath);
+  let size = 0;
+  try {
+    const st = (await sendNodeRequest(node, 'fs.stat', pathParams, {
+      timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
+    })) as { size: number };
+    size = st.size;
+    if (options.maxBytes != null && size > options.maxBytes) {
+      throw new Error(`Remote artifact too large to proxy (${size} bytes)`);
+    }
+  } catch (err) {
+    if (options.forceChunked) throw err;
+  }
+  const threshold = FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES;
+  if (!options.forceChunked && size > 0 && size <= threshold) {
+    const result = (await sendNodeRequest(node, 'fs.readBase64', {
+      ...pathParams,
+      maxBytes: options.maxBytes,
+    }, {
+      timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
+    })) as { content: string };
+    return Buffer.from(result.content, 'base64');
+  }
+  const { buffer } = await readRemoteFileChunkedToBuffer({
+    path: remotePath,
+    label: options.label ?? path.basename(remotePath),
+    phase: options.phase ?? 'download',
+    runId: options.runId,
+    slotId: options.slotId,
+    totalBytes: size > 0 ? size : undefined,
+    maxBytes: options.maxBytes,
+    readChunk: async (offset, length) =>
+      (await sendNodeRequest(
+        node,
+        'fs.readChunk',
+        { ...pathParams, offset, length },
+        { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
+      )) as NodeFsReadChunkResult,
+  });
+  return buffer;
+}
+
+/** Upload a large buffer to a remote slot path with progress events. */
+export async function slotWriteFileBuffer(
+  ctx: SlotLocality,
+  remotePath: string,
+  data: Buffer,
+  options: {
+    label?: string;
+    phase?: FileTransferPhase;
+    runId?: string;
+    slotId?: string;
+  } = {},
+): Promise<void> {
+  if (local(ctx)) {
+    await fsWriteFile(remotePath, data);
+    return;
+  }
+  const node = requireNode(ctx.machine);
+  const pathParams = nodePathParams(remotePath);
+  const totalBytes = data.byteLength;
+  if (totalBytes <= FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES) {
+    await sendNodeRequest(
+      node,
+      'fs.writeChunk',
+      {
+        ...pathParams,
+        offset: 0,
+        content: data.toString('base64'),
+        truncate: true,
+      },
+      { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
+    );
+    return;
+  }
+  const { randomUUID } = await import('node:crypto');
+  const { emitFileTransferProgress } = await import('./file-transfer.js');
+  const transferId = randomUUID();
+  let bytesTransferred = 0;
+  const label = options.label ?? path.basename(remotePath);
+  const phase = options.phase ?? 'upload';
+  const publish = (
+    state: 'running' | 'done' | 'failed',
+    error?: string,
+  ) => {
+    emitFileTransferProgress(
+      {
+        transferId,
+        path: remotePath,
+        label,
+        phase,
+        runId: options.runId,
+        slotId: options.slotId,
+        bytesTransferred,
+        totalBytes,
+        state,
+        error,
+        cancellable: state === 'running',
+      },
+      { force: true },
+    );
+  };
+  try {
+    publish('running');
+    let offset = 0;
+    while (offset < totalBytes) {
+      const end = Math.min(offset + FILE_TRANSFER_CHUNK_MAX_BYTES, totalBytes);
+      const slice = data.subarray(offset, end);
+      await sendNodeRequest(
+        node,
+        'fs.writeChunk',
+        {
+          ...pathParams,
+          offset,
+          content: slice.toString('base64'),
+          truncate: offset === 0,
+        },
+        { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
+      );
+      offset = end;
+      bytesTransferred = offset;
+      publish('running');
+    }
+    publish('done');
+  } catch (err) {
+    publish('failed', err instanceof Error ? err.message : String(err));
+    throw err;
+  }
 }
 
 /** Exported for tests asserting the chunk budget stays under the WS max payload. */
@@ -443,6 +623,35 @@ export async function slotCopyDir(
     (options.excludeRelativePaths ?? []).map(normalizeRelativeCopyPath),
   );
 
+  async function countRemoteFiles(sourceDir: string, depth: number): Promise<number> {
+    if (depth > MAX_ARTIFACT_TREE_DEPTH) return 0;
+    const listResult = (await sendNodeRequest(node, 'fs.list', {
+      root: remoteDir,
+      relPath: path.relative(remoteDir, sourceDir) || '.',
+    })) as { entries: Array<{ name: string; type: string }> };
+    let n = 0;
+    for (const entry of listResult.entries) {
+      if (depth === 0 && excluded.has(entry.name)) continue;
+      const sourcePath = path.join(sourceDir, entry.name);
+      if (isExcludedRelativePath(remoteDir, sourcePath, excludedRelativePaths)) continue;
+      if (entry.type === 'file') n += 1;
+      else if (entry.type === 'directory' || entry.type === 'dir') {
+        n += await countRemoteFiles(sourcePath, depth + 1);
+      }
+    }
+    return n;
+  }
+
+  const filesTotal = await countRemoteFiles(remoteDir, 0);
+  const aggregate = new AggregateTransferSession({
+    path: remoteDir,
+    label: options.labelPrefix ?? path.basename(remoteDir),
+    phase: options.phase ?? 'download',
+    runId: options.runId,
+    slotId: options.slotId,
+    filesTotal,
+  });
+
   async function copyRecursive(
     sourceDir: string,
     targetDir: string,
@@ -455,7 +664,7 @@ export async function slotCopyDir(
       root: remoteDir,
       relPath: path.relative(remoteDir, sourceDir) || '.',
     })) as {
-      entries: Array<{ name: string; type: string }>;
+      entries: Array<{ name: string; type: string; size?: number }>;
     };
 
     let count = 0;
@@ -483,13 +692,18 @@ export async function slotCopyDir(
               : path.relative(remoteDir, sourcePath),
             runId: options.runId,
             slotId: options.slotId,
+            parentTransferId: aggregate.transferId,
+            filesCompleted: aggregate.filesDone,
+            filesTotal,
           });
+          aggregate.noteFileComplete(typeof entry.size === 'number' ? entry.size : 0);
         } catch (err) {
           const entryError = new SlotCopyDirEntryError(sourcePath, targetPath, err);
           if (options.onEntryFailure) {
             options.onEntryFailure(entryError);
             continue;
           }
+          aggregate.fail(entryError.message);
           throw entryError;
         }
         count++;
@@ -514,7 +728,13 @@ export async function slotCopyDir(
     return count;
   }
 
-  return copyRecursive(remoteDir, localDir, 0);
+  try {
+    const copied = await copyRecursive(remoteDir, localDir, 0);
+    aggregate.complete();
+    return copied;
+  } catch (err) {
+    throw err;
+  }
 }
 
 // ─── slotWatchFile ───

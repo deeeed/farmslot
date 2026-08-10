@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- feat(fs): `fs.writeChunk` for progress-aware remote uploads (MANUAL-000095 follow-up).
+
 - feat(fs): `fs.readChunk` — confined ranged base64 reads for progress-aware large transfers (MANUAL-000095).
 
 - fix(auth): back off to the reconnect ceiling on deterministic auth rejections (node-subject required / auth failed) instead of spinning at 500ms, and print the credential-issue fix line once per rejection; backoff now resets on successful auth, not on socket open (MANUAL-000103).

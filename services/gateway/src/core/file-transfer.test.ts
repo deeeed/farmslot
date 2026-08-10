@@ -12,8 +12,10 @@ import {
 } from '@farmslot/protocol';
 
 import {
+  cancelTransfer,
   copyFileChunked,
   emitFileTransferProgress,
+  FileTransferCancelledError,
   FileTransferIdleTimeoutError,
   FileTransferIntegrityError,
   readLocalFileChunk,
@@ -183,4 +185,45 @@ test('emitFileTransferProgress fans out via the configured broadcaster', () => {
 
 test('small-file threshold is below multi-chunk fixture sizes used in tests', () => {
   assert.ok(FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES < FILE_TRANSFER_CHUNK_MAX_BYTES * 2);
+});
+
+test('cancelTransfer aborts a running multi-chunk copy', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-xfer-cancel-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const size = FILE_TRANSFER_CHUNK_MAX_BYTES * 4;
+  const src = path.join(dir, 'src.bin');
+  const dest = path.join(dir, 'dest.bin');
+  await writeTransferFixture(src, size);
+
+  let transferId = '';
+  const copyPromise = copyFileChunked({
+    path: src,
+    phase: 'download',
+    totalBytes: size,
+    localPath: dest,
+    keepPartialOnFailure: true,
+    readChunk: async (offset, length) => {
+      await new Promise((r) => setTimeout(r, 30));
+      return readLocalFileChunk(src, offset, length);
+    },
+    onProgress: (p) => {
+      transferId = p.transferId;
+      if (p.state === 'running' && p.bytesTransferred > 0) {
+        cancelTransfer(p.transferId);
+      }
+    },
+  });
+
+  await assert.rejects(copyPromise, (err: unknown) => {
+    assert.ok(err instanceof FileTransferCancelledError || (err as Error).name === 'FileTransferCancelledError');
+    return true;
+  });
+  assert.ok(transferId);
+});
+
+test('size-scaled idle timeout grows with totalBytes', async () => {
+  const { fileTransferIdleTimeoutMs, FILE_TRANSFER_IDLE_TIMEOUT_MS } = await import(
+    '@farmslot/protocol'
+  );
+  assert.ok(fileTransferIdleTimeoutMs(10 * 1024 * 1024) > FILE_TRANSFER_IDLE_TIMEOUT_MS);
 });

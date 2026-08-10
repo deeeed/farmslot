@@ -228,7 +228,40 @@ export async function fsReadChunk(params: NodeFsReadChunkParams): Promise<NodeFs
       offset: params.offset,
       bytesRead,
       eof: params.offset + bytesRead >= info.size,
+      encoding: 'base64',
     };
+  } catch (error) {
+    return actionableNoFollowError(error, params.relPath);
+  } finally {
+    await handle?.close();
+  }
+}
+
+/**
+ * Write a bounded base64 chunk at an absolute offset. offset=0 with truncate creates/truncates.
+ * Subsequent chunks append/overwrite at offset under path confinement.
+ */
+export async function fsWriteChunk(params: {
+  root: string;
+  relPath: string;
+  offset: number;
+  content: string;
+  truncate?: boolean;
+}): Promise<{ ok: true; bytesWritten: number; offset: number }> {
+  if (!Number.isInteger(params.offset) || params.offset < 0) {
+    throw new Error(`fs.writeChunk offset must be a non-negative integer (got ${params.offset})`);
+  }
+  const { target } = confinedPath(params);
+  const buf = Buffer.from(params.content, 'base64');
+  let handle;
+  try {
+    const flags =
+      params.truncate || params.offset === 0
+        ? constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW
+        : constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW;
+    handle = await open(target, flags, 0o666);
+    await handle.write(buf, 0, buf.byteLength, params.offset);
+    return { ok: true, bytesWritten: buf.byteLength, offset: params.offset };
   } catch (error) {
     return actionableNoFollowError(error, params.relPath);
   } finally {

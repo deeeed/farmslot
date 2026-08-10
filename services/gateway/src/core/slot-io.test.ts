@@ -158,6 +158,10 @@ class FakeNodeWebSocket {
         }
         return;
       }
+      if (frame.method === 'fs.hash') {
+        handleNodeResponse(frame.id, true, { sha256: 'deadbeef', size: 0 });
+        return;
+      }
       handleNodeResponse(frame.id, false, null, `unexpected method ${frame.method}`);
     });
   }
@@ -560,7 +564,13 @@ test('remote slotCopyFile uses chunked fs.readChunk above the small-file thresho
     { host: '203.0.113.9', machine: 'copy-large-machine', sshTarget: 't@203.0.113.9' },
     '/remote/large.bin',
     dest,
-    { forceChunked: true, smallFileThresholdBytes: 50, phase: 'mirror', label: 'large.bin' },
+    {
+      forceChunked: true,
+      smallFileThresholdBytes: 50,
+      phase: 'mirror',
+      label: 'large.bin',
+      verifyRemoteHash: false,
+    },
   );
 
   assert.deepEqual(await readFile(dest), payload);

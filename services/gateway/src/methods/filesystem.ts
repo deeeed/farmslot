@@ -705,17 +705,23 @@ export async function serveFile(req: IncomingMessage, res: ServerResponse): Prom
       const stats = await handle.stat();
       serveLocalFileWithRange(req, res, handle, mime, stats.size);
     } else {
-      // Remote: read via node fs.readBase64
-      const node = getNode(machine);
-      if (!node) throw new Error(`No node connected for machine ${machine}`);
-      const result = (await sendNodeRequest(node, 'fs.readBase64', {
-        root: repoPath,
-        relPath: filePath,
-        maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
-      })) as {
-        content: string;
-      };
-      const buf = Buffer.from(result.content, 'base64');
+      // Remote: progress-aware chunked read (small files still one-shot inside helper)
+      const { slotReadFileBuffer } = await import('../core/slot-io.js');
+      const vars = await (await import('../core/config.js')).loadSlotVars(slotId);
+      const remoteAbs = path.posix.join(
+        repoPath.replace(/\\/g, '/').replace(/\/+$/, ''),
+        filePath.replace(/^\/+/, ''),
+      );
+      const buf = await slotReadFileBuffer(
+        { host: vars.host, machine: vars.machine, sshTarget: vars.sshTarget },
+        remoteAbs,
+        {
+          label: path.basename(filePath),
+          phase: 'download',
+          slotId,
+          maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
+        },
+      );
       serveBufferWithRange(req, res, buf, mime);
     }
   } catch (err) {
@@ -898,12 +904,23 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
           slotRelativePath,
         );
         if (!remoteTargetPath) throw new Error('Path traversal not allowed');
-        const result = (await sendNodeRequest(node, 'fs.readBase64', {
-          root: normalizedRemoteBasePath,
-          relPath: slotRelativePath,
-          maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
-        })) as { content: string; size: number };
-        const buffer = Buffer.from(result.content, 'base64');
+        const { slotReadFileBuffer } = await import('../core/slot-io.js');
+        const vars = await (await import('../core/config.js')).loadSlotVars(run.slotId!);
+        const remoteAbs = path.posix.join(
+          normalizedRemoteBasePath.replace(/\\/g, '/').replace(/\/+$/, ''),
+          slotRelativePath.replace(/^\/+/, ''),
+        );
+        const buffer = await slotReadFileBuffer(
+          { host: vars.host, machine: vars.machine, sshTarget: vars.sshTarget },
+          remoteAbs,
+          {
+            label: path.basename(slotRelativePath),
+            phase: 'download',
+            runId,
+            slotId: run.slotId ?? undefined,
+            maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
+          },
+        );
         serveBufferWithRange(req, res, buffer, mime);
       };
 
@@ -1000,14 +1017,23 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
       (error as NodeJS.ErrnoException).code = 'EACCES';
       throw error;
     }
-    const result = (await sendNodeRequest(node, 'fs.readBase64', {
-      root: normalizedRemoteBasePath,
-      relPath: relativePath,
-      maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
-    })) as {
-      content: string;
-    };
-    const buffer = Buffer.from(result.content, 'base64');
+    const { slotReadFileBuffer } = await import('../core/slot-io.js');
+    const vars = await (await import('../core/config.js')).loadSlotVars(run.slotId);
+    const remoteAbs = path.posix.join(
+      normalizedRemoteBasePath.replace(/\\/g, '/').replace(/\/+$/, ''),
+      relativePath.replace(/^\/+/, ''),
+    );
+    const buffer = await slotReadFileBuffer(
+      { host: vars.host, machine: vars.machine, sshTarget: vars.sshTarget },
+      remoteAbs,
+      {
+        label: path.basename(relativePath),
+        phase: 'download',
+        runId,
+        slotId: run.slotId,
+        maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
+      },
+    );
     serveBufferWithRange(req, res, buffer, mime);
   } catch (err) {
     const error = err as NodeJS.ErrnoException;
