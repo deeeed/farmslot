@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(review): fix→re-review rounds resume the warm reviewer session by default (`warm-per-reviewer`) instead of relaunching a cold reviewer every pass; set `self_review.session_policy: "fresh-per-pass"` to opt out per project.
+- fix(review): fix→re-review rounds resume the warm reviewer session by default (`warm-per-reviewer`) instead of relaunching a cold reviewer every pass; automatic publication reviews with a valid verdict now also keep their reviewer session claimable for human-gate continuation. Set `self_review.session_policy: "fresh-per-pass"` to opt out per project.
 
 - feat(prepare): provision checkout-local `.env.ports` from pool-owned slot resources — slots that declare `resources.dev-server.vite_port` get the file written before the sandbox preflight, with operator-port collisions refused (MANUAL-000085).
 
