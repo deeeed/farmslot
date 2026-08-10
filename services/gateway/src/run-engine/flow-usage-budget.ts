@@ -104,6 +104,62 @@ export function formatUsageBudgetMessage(
 export function buildUsageBudgetNudgeMessage(message: string): string {
   return (
     `[Orchestrator] USAGE BUDGET WARNING: ${message} ` +
-    'Do not start new workstreams. Complete or block the current checklist item and write SIGNAL.json.'
+    'Do not start new workstreams. Complete or block the current checklist item and run the appropriate mark terminal command.'
   );
+}
+
+/**
+ * Soft ceilings apply to per-run growth, not retained parent-session totals.
+ * First successful sample only captures a baseline (warm handoff or cold start);
+ * later samples evaluate delta = current - baseline.
+ */
+export function applyBudgetUsageBaseline(input: {
+  turns: number | null;
+  totalTokens: number | null;
+  baselineCaptured?: boolean;
+  baselineTurns?: number;
+  baselineTotalTokens?: number;
+}): {
+  /** Turns counted toward the soft ceiling (null if unavailable). */
+  chargeTurns: number | null;
+  chargeTotalTokens: number | null;
+  /** True when this sample only established the baseline (no charge yet). */
+  establishingBaseline: boolean;
+  baselineCaptured: boolean;
+  baselineTurns: number;
+  baselineTotalTokens: number;
+} {
+  if (input.turns == null && input.totalTokens == null) {
+    return {
+      chargeTurns: null,
+      chargeTotalTokens: null,
+      establishingBaseline: false,
+      baselineCaptured: input.baselineCaptured === true,
+      baselineTurns: input.baselineTurns ?? 0,
+      baselineTotalTokens: input.baselineTotalTokens ?? 0,
+    };
+  }
+
+  if (!input.baselineCaptured) {
+    return {
+      chargeTurns: 0,
+      chargeTotalTokens: 0,
+      establishingBaseline: true,
+      baselineCaptured: true,
+      baselineTurns: input.turns ?? 0,
+      baselineTotalTokens: input.totalTokens ?? 0,
+    };
+  }
+
+  const baseTurns = input.baselineTurns ?? 0;
+  const baseTokens = input.baselineTotalTokens ?? 0;
+  return {
+    chargeTurns: input.turns != null ? Math.max(0, input.turns - baseTurns) : null,
+    chargeTotalTokens:
+      input.totalTokens != null ? Math.max(0, input.totalTokens - baseTokens) : null,
+    establishingBaseline: false,
+    baselineCaptured: true,
+    baselineTurns: baseTurns,
+    baselineTotalTokens: baseTokens,
+  };
 }

@@ -65,6 +65,14 @@ function remoteSessionUsageScriptCandidates(vars: SlotVars): string[] {
   return candidates;
 }
 
+/** Build a remote bash script path argument that expands `~/` via `$HOME`. */
+export function remoteSessionUsageScriptArg(script: string): string {
+  if (script.startsWith('~/')) {
+    return `"$HOME/${script.slice(2).replace(/"/g, '\\"')}"`;
+  }
+  return shellQuote(script);
+}
+
 async function remoteSessionUsageTotal(
   vars: SlotVars,
   slotId: string,
@@ -80,7 +88,7 @@ async function remoteSessionUsageTotal(
 
   const errors: string[] = [];
   for (const script of remoteSessionUsageScriptCandidates(vars)) {
-    const cmd = `${env} bash ${shellQuote(script)} ${shellQuote(slotId)} total 2>&1`;
+    const cmd = `${env} bash ${remoteSessionUsageScriptArg(script)} ${shellQuote(slotId)} total 2>&1`;
     const result = await execOnSlot(vars, cmd);
     if (result.exitCode === 0 && result.stdout.trim()) {
       const usage = parseSessionUsageOutput(result.stdout, {

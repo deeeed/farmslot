@@ -638,6 +638,9 @@ function formatTotals(totals: SessionTotals): string[] {
  * Durable append-only sample state for poll-time turn/token soft budgets.
  * Offset is the next byte to read; incomplete trailing JSONL is never advanced past.
  */
+/** Max new transcript bytes processed per incremental sample (bounds memory). */
+export const INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE = 1024 * 1024;
+
 export type IncrementalSessionUsageState = {
   path: string | null;
   size: number;
@@ -652,6 +655,10 @@ export type IncrementalSessionUsageState = {
   cacheRead: number;
   sampledAt?: string;
   unavailableReason?: string;
+  /** Soft-budget baseline for warm-handoff / first-poll delta accounting. */
+  baselineCaptured?: boolean;
+  baselineTurns?: number;
+  baselineTotalTokens?: number;
 };
 
 export type IncrementalSessionUsageResult = {
@@ -778,7 +785,14 @@ export async function sampleSessionUsageIncremental(params: {
       };
     }
 
-    if (prior.path === filePath && prior.size === st.size && prior.mtimeMs === st.mtimeMs) {
+    // Cache only when the file is unchanged *and* we have already consumed through
+    // EOF (bounded samples may leave offset < size while size/mtime stay fixed).
+    if (
+      prior.path === filePath &&
+      prior.size === st.size &&
+      prior.mtimeMs === st.mtimeMs &&
+      prior.offset >= st.size
+    ) {
       return {
         turns: prior.turns,
         totalTokens: prior.totalTokens,
@@ -811,7 +825,10 @@ export async function sampleSessionUsageIncremental(params: {
       };
     }
 
-    const length = st.size - start;
+    // Bound memory: process at most MAX bytes of new data per sample. Further
+    // growth is consumed on later polls (offset advances).
+    const unread = st.size - start;
+    const length = Math.min(unread, INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE);
     const buf = Buffer.alloc(length);
     const fh = await open(filePath, 'r');
     try {
@@ -821,7 +838,7 @@ export async function sampleSessionUsageIncremental(params: {
     }
 
     // Last complete record ends at the last newline. Incomplete trailing suffix
-    // must not advance the durable offset.
+    // must not advance the durable offset (including when the cap truncates mid-line).
     let lastNl = -1;
     for (let i = buf.length - 1; i >= 0; i--) {
       if (buf[i] === 0x0a) {
@@ -830,7 +847,7 @@ export async function sampleSessionUsageIncremental(params: {
       }
     }
     if (lastNl < 0) {
-      // No complete line yet — keep offset, refresh size/mtime for next poll.
+      // No complete line in this window — keep offset, refresh size/mtime.
       state.size = st.size;
       state.mtimeMs = st.mtimeMs;
       state.sampledAt = new Date().toISOString();

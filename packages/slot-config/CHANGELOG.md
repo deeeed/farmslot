@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- fix(session-usage): cap incremental samples at 1MiB of new bytes per call so poll-time budget checks stay memory-bounded (MANUAL-000096).
+
 - feat(session-usage): incremental complete-line transcript sampling (`sampleSessionUsageIncremental`) for soft turn/token budgets; incomplete trailing JSONL does not advance the durable offset (MANUAL-000096).
 
 - feat(monitoring): per-flow `max_turns` / `max_total_tokens` soft budgets on `monitoring.flows.*` (MANUAL-000096).

@@ -373,6 +373,38 @@ test('runSessionUsage throws when report is called without a prior snapshot', as
   );
 });
 
+test('sampleSessionUsageIncremental bounds bytes read per sample', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'incr-bound-'));
+  const file = path.join(dir, 'session.jsonl');
+  // Many short lines totaling > 1MB so a single sample cannot ingest all bytes.
+  const line = JSON.stringify({
+    type: 'assistant',
+    message: { usage: { input_tokens: 1, output_tokens: 1 } },
+  });
+  const row = `${line}\n`;
+  const target = 1024 * 1024 + 50_000;
+  const reps = Math.ceil(target / row.length);
+  writeFileSync(file, row.repeat(reps), 'utf8');
+  const first = await sampleSessionUsageIncremental({
+    filePath: file,
+    runner: 'claude',
+    prior: emptyIncrementalSessionUsageState(),
+  });
+  assert.ok(first.nextState.offset > 0);
+  assert.ok(
+    first.nextState.offset <= 1024 * 1024 + row.length,
+    `offset ${first.nextState.offset} should be bounded near 1MiB window`,
+  );
+  assert.ok((first.turns ?? 0) > 0);
+  // Second sample continues from offset (more turns accumulate).
+  const second = await sampleSessionUsageIncremental({
+    filePath: file,
+    runner: 'claude',
+    prior: first.nextState,
+  });
+  assert.ok((second.turns ?? 0) > (first.turns ?? 0));
+});
+
 test('sampleSessionUsageIncremental preserves incomplete trailing JSONL across polls', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'incr-usage-'));
   const file = path.join(dir, 'session.jsonl');

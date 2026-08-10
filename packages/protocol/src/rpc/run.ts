@@ -496,6 +496,11 @@ export interface RunBudgetGuardProbeResult {
   budgetWarned: boolean;
   sampleTurns: number | null;
   sampleTotalTokens: number | null;
+  /** Per-run charge after warm/cold baseline delta. */
+  chargeTurns: number | null;
+  chargeTotalTokens: number | null;
+  establishingBaseline: boolean;
+  baselineTurns: number | null;
   availability: string;
   violationType: string | null;
   violationMessage: string | null;

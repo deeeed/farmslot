@@ -1283,6 +1283,13 @@ export interface RunMonitorBudgetUsageState {
   cacheRead: number;
   sampledAt?: string;
   unavailableReason?: string;
+  /**
+   * First successful sample for this monitor session (warm-handoff parent totals
+   * or cold-start initial point). Soft ceilings apply to (turns - baselineTurns).
+   */
+  baselineCaptured?: boolean;
+  baselineTurns?: number;
+  baselineTotalTokens?: number;
 }
 
 export interface RunMonitorState {

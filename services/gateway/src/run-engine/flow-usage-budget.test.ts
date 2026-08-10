@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  applyBudgetUsageBaseline,
   buildUsageBudgetNudgeMessage,
   evaluateFlowUsageBudget,
   FLOW_USAGE_BUDGET_DEFAULTS,
@@ -95,4 +96,41 @@ test('buildUsageBudgetNudgeMessage prefixes orchestrator budget warning', () => 
     buildUsageBudgetNudgeMessage('update-branch usage budget exceeded'),
     /^\[Orchestrator\] USAGE BUDGET WARNING:/,
   );
+});
+
+test('applyBudgetUsageBaseline captures warm parent totals without charging', () => {
+  const first = applyBudgetUsageBaseline({
+    turns: 500,
+    totalTokens: 50_000_000,
+    baselineCaptured: false,
+  });
+  assert.equal(first.establishingBaseline, true);
+  assert.equal(first.chargeTurns, 0);
+  assert.equal(first.baselineTurns, 500);
+
+  const later = applyBudgetUsageBaseline({
+    turns: 560,
+    totalTokens: 51_000_000,
+    baselineCaptured: true,
+    baselineTurns: 500,
+    baselineTotalTokens: 50_000_000,
+  });
+  assert.equal(later.establishingBaseline, false);
+  assert.equal(later.chargeTurns, 60);
+  assert.equal(later.chargeTotalTokens, 1_000_000);
+});
+
+test('applyBudgetUsageBaseline only warns after child delta exceeds ceiling', () => {
+  const delta = applyBudgetUsageBaseline({
+    turns: 590,
+    totalTokens: 52_000_000,
+    baselineCaptured: true,
+    baselineTurns: 500,
+    baselineTotalTokens: 50_000_000,
+  });
+  const evaluation = evaluateFlowUsageBudget(
+    { turns: delta.chargeTurns, totalTokens: delta.chargeTotalTokens },
+    FLOW_USAGE_BUDGET_DEFAULTS['update-branch']!,
+  );
+  assert.equal(evaluation.exceeded, true);
 });

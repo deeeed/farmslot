@@ -72,6 +72,7 @@ import {
 } from './budget-usage-sample.js';
 import { pendingDecisionForRun } from './decision-projection.js';
 import {
+  applyBudgetUsageBaseline,
   buildUsageBudgetNudgeMessage,
   evaluateFlowUsageBudget,
   FLOW_USAGE_BUDGET_DEFAULTS,
@@ -782,6 +783,9 @@ export async function monitorRun(
         cacheRead: persisted.budgetUsage.cacheRead ?? 0,
         sampledAt: persisted.budgetUsage.sampledAt,
         unavailableReason: persisted.budgetUsage.unavailableReason,
+        baselineCaptured: persisted.budgetUsage.baselineCaptured,
+        baselineTurns: persisted.budgetUsage.baselineTurns,
+        baselineTotalTokens: persisted.budgetUsage.baselineTotalTokens,
       }
     : emptyBudgetUsageSampleState();
   const state: MonitorState = persisted
@@ -1621,6 +1625,10 @@ export type PollBudgetGuardStepResult = {
   budgetUsage: BudgetUsageSampleState;
   sampleTurns: number | null;
   sampleTotalTokens: number | null;
+  /** Turns charged toward the soft ceiling after baseline delta. */
+  chargeTurns: number | null;
+  chargeTotalTokens: number | null;
+  establishingBaseline: boolean;
   availability: string;
   unavailableReason?: string;
   unavailableReasonChanged: boolean;
@@ -1666,55 +1674,77 @@ export async function pollBudgetGuardStep(params: {
   let violation: MonitorViolation | null = null;
   let nudgeSent = false;
 
-  const decision = applyBudgetWarnOnce({
+  // Per-run delta vs retained parent transcript (warm handoff) or first poll.
+  const baseline = applyBudgetUsageBaseline({
     turns: sample.turns,
     totalTokens: sample.totalTokens,
-    maxTurns: params.maxTurns,
-    maxTotalTokens: params.maxTotalTokens,
-    budgetWarned,
-    flowType: params.flowType,
+    baselineCaptured: sample.nextState.baselineCaptured ?? params.budgetUsage.baselineCaptured,
+    baselineTurns: sample.nextState.baselineTurns ?? params.budgetUsage.baselineTurns,
+    baselineTotalTokens:
+      sample.nextState.baselineTotalTokens ?? params.budgetUsage.baselineTotalTokens,
   });
+  const budgetUsage: BudgetUsageSampleState = {
+    ...sample.nextState,
+    baselineCaptured: baseline.baselineCaptured,
+    baselineTurns: baseline.baselineTurns,
+    baselineTotalTokens: baseline.baselineTotalTokens,
+  };
 
-  if (decision.emit) {
-    budgetWarned = true;
-    const run = getRun(params.runId);
-    const context = run
-      ? selectAgentContext(run, { role: primaryRoleForFlow(params.flowType) })
-      : undefined;
-    violation = {
-      slotId: params.slotId,
-      role: context?.role,
-      contextId: context?.id,
-      type: 'budget',
-      message: decision.message,
-      nudgeSent: null,
-      timestamp: new Date().toISOString(),
-    };
-    if (
-      params.sendNudge &&
-      run &&
-      !shouldSkipMonitorNudge(run, violation, params.agentStatus) &&
-      runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))
-    ) {
-      const sent = await sendBudgetNudge(
-        params.runId,
-        params.slotId,
-        decision.message,
-        context?.role,
-        context?.id,
-      );
-      if (sent) {
-        violation.nudgeSent = new Date().toISOString();
-        nudgeSent = true;
+  // Establishing baseline never warns — child flow has not yet spent its allowance.
+  if (!baseline.establishingBaseline && sample.availability !== 'unavailable') {
+    const decision = applyBudgetWarnOnce({
+      turns: baseline.chargeTurns,
+      totalTokens: baseline.chargeTotalTokens,
+      maxTurns: params.maxTurns,
+      maxTotalTokens: params.maxTotalTokens,
+      budgetWarned,
+      flowType: params.flowType,
+    });
+
+    if (decision.emit) {
+      budgetWarned = true;
+      const run = getRun(params.runId);
+      const context = run
+        ? selectAgentContext(run, { role: primaryRoleForFlow(params.flowType) })
+        : undefined;
+      violation = {
+        slotId: params.slotId,
+        role: context?.role,
+        contextId: context?.id,
+        type: 'budget',
+        message: decision.message,
+        nudgeSent: null,
+        timestamp: new Date().toISOString(),
+      };
+      if (
+        params.sendNudge &&
+        run &&
+        !shouldSkipMonitorNudge(run, violation, params.agentStatus) &&
+        runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))
+      ) {
+        const sent = await sendBudgetNudge(
+          params.runId,
+          params.slotId,
+          decision.message,
+          context?.role,
+          context?.id,
+        );
+        if (sent) {
+          violation.nudgeSent = new Date().toISOString();
+          nudgeSent = true;
+        }
       }
     }
   }
 
   return {
     budgetWarned,
-    budgetUsage: sample.nextState,
+    budgetUsage,
     sampleTurns: sample.turns,
     sampleTotalTokens: sample.totalTokens,
+    chargeTurns: baseline.chargeTurns,
+    chargeTotalTokens: baseline.chargeTotalTokens,
+    establishingBaseline: baseline.establishingBaseline,
     availability: sample.availability,
     unavailableReason: sample.unavailableReason,
     unavailableReasonChanged: Boolean(

@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { emptyBudgetUsageSampleState, sampleBudgetUsage } from './budget-usage-sample.js';
+import {
+  emptyBudgetUsageSampleState,
+  remoteSessionUsageScriptArg,
+  sampleBudgetUsage,
+} from './budget-usage-sample.js';
 
 const localVars = { host: 'localhost', machine: 'local', slotId: 's1' } as never;
 
@@ -97,4 +101,11 @@ test('sampleBudgetUsage is unavailable without a transcript path', async () => {
   });
   assert.equal(result.availability, 'unavailable');
   assert.equal(result.turns, null);
+});
+
+test('remoteSessionUsageScriptArg expands tilde via $HOME without single-quoting it away', () => {
+  const arg = remoteSessionUsageScriptArg('~/farmslot-node/scripts/session-usage.sh');
+  assert.match(arg, /\$HOME\//);
+  assert.equal(arg.includes("'$HOME"), false);
+  assert.match(remoteSessionUsageScriptArg('/abs/path/session-usage.sh'), /^'/);
 });

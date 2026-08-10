@@ -1233,6 +1233,9 @@ export async function runBudgetGuardProbe(
         cacheRead: current.monitorState.budgetUsage.cacheRead ?? 0,
         sampledAt: current.monitorState.budgetUsage.sampledAt,
         unavailableReason: current.monitorState.budgetUsage.unavailableReason,
+        baselineCaptured: current.monitorState.budgetUsage.baselineCaptured,
+        baselineTurns: current.monitorState.budgetUsage.baselineTurns,
+        baselineTotalTokens: current.monitorState.budgetUsage.baselineTotalTokens,
       }
     : emptyBudgetUsageSampleState();
 
@@ -1272,6 +1275,10 @@ export async function runBudgetGuardProbe(
     budgetWarned: tick.budgetWarned,
     sampleTurns: tick.sampleTurns,
     sampleTotalTokens: tick.sampleTotalTokens,
+    chargeTurns: tick.chargeTurns,
+    chargeTotalTokens: tick.chargeTotalTokens,
+    establishingBaseline: tick.establishingBaseline,
+    baselineTurns: tick.budgetUsage.baselineTurns ?? null,
     availability: tick.availability,
     violationType: tick.violation?.type ?? null,
     violationMessage: tick.violation?.message ?? null,

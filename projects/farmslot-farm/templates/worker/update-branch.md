@@ -34,8 +34,10 @@ Soft ceilings (monitor warns once when exceeded; do not treat as license to keep
 - **Token budget:** ~8M total tokens (`monitoring.flows.update-branch.max_total_tokens`)
 
 If you are past those ceilings, you have expanded past branch-update work. Stop new
-workstreams, finish the current checklist item or signal blocked, and write
-`SIGNAL.json`. A 100M-token update-branch run is a failure mode, not thoroughness.
+workstreams, finish the current checklist item, then run
+`{{TASK_DIR}}/mark complete --mark-last` or `{{TASK_DIR}}/mark blocked --reason "…"`.
+Never hand-write `SIGNAL.json`. A 100M-token update-branch run is a failure mode,
+not thoroughness.
 
 ## Strategy
 
