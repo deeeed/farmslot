@@ -292,10 +292,13 @@ async function gatewayRpc(method, paramsJson) {
   const params = paramsJson ? JSON.parse(paramsJson) : {};
   const ws = new WebSocket(GATEWAY_URL);
   return new Promise((resolve, reject) => {
+    // Long-running methods (slot.prepare) need more than the default; override
+    // per call with FARMSLOT_RPC_TIMEOUT_MS.
+    const rpcTimeoutMs = Number(process.env.FARMSLOT_RPC_TIMEOUT_MS) || 5000;
     const timer = setTimeout(() => {
       ws.close();
-      reject(new Error('gateway RPC timeout'));
-    }, 5000);
+      reject(new Error(`gateway RPC timeout after ${rpcTimeoutMs}ms`));
+    }, rpcTimeoutMs);
     let authed = false;
     ws.once('open', () =>
       ws.send(
