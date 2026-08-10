@@ -327,18 +327,25 @@ export async function fileTransferRemoteE2e(
       });
       // Interleave sampling so we observe aggregate progress before unregister.
       let copiedCount = 0;
+      let copyError: unknown;
       let copyDone = false;
-      void copyPromise.then((copied) => {
-        copiedCount = copied;
-        copyDone = true;
-      });
+      void copyPromise.then(
+        (copied) => {
+          copiedCount = copied;
+          copyDone = true;
+        },
+        (err) => {
+          copyError = err;
+          copyDone = true;
+        },
+      );
       while (!copyDone) {
         sample();
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
       sample();
+      if (copyError) throw copyError;
       if (copiedCount < 3) throw new Error(`expected ≥3 files copied, got ${copiedCount}`);
-      await copyPromise;
       if (!aggregateSawFilesTotal || maxFilesCompleted < 3) {
         throw new Error(
           `aggregate progress not observed: sawFilesTotal=${aggregateSawFilesTotal} maxFilesCompleted=${maxFilesCompleted}`,
