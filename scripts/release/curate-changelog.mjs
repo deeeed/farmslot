@@ -99,16 +99,19 @@ function printProposalSummary(proposal) {
 
 function main() {
   const args = process.argv.slice(2);
+  const groupIndex = args.indexOf('--group');
+  const bumpIndex = args.indexOf('--bump');
+  const outIndex = args.indexOf('--out');
   const groupArg =
     args.find((arg) => arg.startsWith('--group='))?.slice('--group='.length) ??
-    args[args.indexOf('--group') + 1];
+    (groupIndex >= 0 ? args[groupIndex + 1] : undefined);
   const bumpArg =
     args.find((arg) => arg.startsWith('--bump='))?.slice('--bump='.length) ??
-    args[args.indexOf('--bump') + 1] ??
+    (bumpIndex >= 0 ? args[bumpIndex + 1] : undefined) ??
     'patch';
   const outArg =
     args.find((arg) => arg.startsWith('--out='))?.slice('--out='.length) ??
-    args[args.indexOf('--out') + 1] ??
+    (outIndex >= 0 ? args[outIndex + 1] : undefined) ??
     '.release-cut/proposal.json';
 
   if (!groupArg) {

@@ -123,15 +123,20 @@ function planCut(proposal) {
     if (protocolVersion) {
       const versionTs = path.join(repoRoot, 'packages/protocol/src/version.ts');
       const content = readFileSync(versionTs, 'utf8');
+      const versionPattern = /export const PROTOCOL_VERSION = '[^']+';/;
+      if (!versionPattern.test(content)) {
+        throw new Error('Failed to find PROTOCOL_VERSION in packages/protocol/src/version.ts');
+      }
       const next = content.replace(
-        /export const PROTOCOL_VERSION = '[^']+';/,
+        versionPattern,
         `export const PROTOCOL_VERSION = '${protocolVersion}';`,
       );
-      if (next === content) {
-        throw new Error('Failed to update PROTOCOL_VERSION in packages/protocol/src/version.ts');
+      if (next !== content) {
+        writes.push({ path: versionTs, content: next });
+        console.log(`[plan] PROTOCOL_VERSION → ${protocolVersion}`);
+      } else {
+        console.log(`[skip] PROTOCOL_VERSION already ${protocolVersion}`);
       }
-      writes.push({ path: versionTs, content: next });
-      console.log(`[plan] PROTOCOL_VERSION → ${protocolVersion}`);
     }
   }
 
