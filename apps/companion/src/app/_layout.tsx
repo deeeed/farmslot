@@ -141,11 +141,7 @@ function FloatingCopilotButton() {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const isTabsRoute =
-    pathname.startsWith('/runs') ||
-    pathname.startsWith('/fleet') ||
-    pathname.startsWith('/prs') ||
-    pathname.startsWith('/inbox') ||
-    pathname.startsWith('/settings');
+    /^\/(runs|fleet|prs|inbox|settings|advanced|backlog|copilot|workers)(\/|$)/.test(pathname);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const positionRef = useRef<{ x: number; y: number } | null>(null);
   const dragStartRef = useRef({ x: 0, y: 0 });
@@ -277,7 +273,7 @@ function FloatingCopilotButton() {
   const shouldHide =
     // Terminal owns its own voice/input overlay; keep the global Co-Pilot
     // button out of the xterm touch surface.
-    pathname.includes('/copilot') || pathname.includes('/terminal/');
+    /(^|\/)copilot(\/|$)/.test(pathname) || /(^|\/)terminal(\/|$)/.test(pathname);
   if (shouldHide) return null;
   return (
     <View
