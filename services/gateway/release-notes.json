@@ -1,12 +1,11 @@
 {
-  "version": "0.5.0",
-  "date": "2026-08-06",
+  "version": "0.6.0",
+  "date": "2026-08-10",
   "items": [
-    "Independent review fails closed without an explicit PASS/ISSUES verdict, and reviews pin to one certified commit plus byte-exact untracked file manifests",
-    "Ready-gate recaptures the contribution diff at HEAD, refuses to restamp when the package changed, and soft-chips behind-main / merge conflicts",
-    "Roadmap delivery lineage is projected from the full backlog and run stores so historical runs stay visible with durable backlinks",
-    "Dispatch exclusive claim protocol and Codex multi-account seat bind/failover keep concurrent queue work and provider seats honest",
-    "Worktree branch diffs include uncommitted and untracked files; git.status exposes HEAD SHA so clients can invalidate committed-diff caches after rebases",
-    "BREAKING for node hosts: exec/filesystem RPCs require coordinated gateway+node upgrade (argv + path contract); upgrade both sides together before fleet use"
+    "Resume reviewer context across fix loops while keeping explicit fresh-review control.",
+    "Transfer large files with chunked progress, resume, cancellation, integrity checks, and atomic replacement.",
+    "Enforce principal-scoped authorization and safer pairing across gateway clients.",
+    "Validate backlog project and slot ownership while clearing incompatible dispatch settings.",
+    "Route system learnings, domain guidance, and interrupted analyses into recoverable operator workflows."
   ]
 }

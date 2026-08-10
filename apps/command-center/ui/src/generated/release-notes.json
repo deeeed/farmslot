@@ -1,11 +1,11 @@
 {
-  "version": "0.5.0",
-  "date": "2026-08-06",
+  "version": "0.6.0",
+  "date": "2026-08-10",
   "items": [
-    "Source control shows every change vs the PR base (committed and local), with per-file C/S/M/U chips and live refresh when HEAD rewrites without an ahead-count change",
-    "Roadmap, Backlog, Work Graph, and Runs share one dense sortable inventory table with selection detail, delivery badges, and fresh lineage backlinks",
-    "Runs detail keeps the live review summary, clears stale worker progress when you switch runs, and labels a paused review launch honestly instead of implying a reviewer is running",
-    "Fleet machine Setup shows per-runner seats (identity and quota) without timing out on remote nodes, and model pickers stay scoped per runner (Codex GPT-5.6, Cursor Grok, Grok 4.5)",
-    "Independent review language is consistent across gates and timelines; PR cards treat path-skipped CI as unknown rather than forever-pending"
+    "Manage backlog ownership, run modes, templates, and slots from the same create/edit controls.",
+    "Track large file transfers with live progress, cancellation, and accurate pipeline stages.",
+    "Continue or reset independent reviews while following each findings, fix, and re-review generation.",
+    "Pair scoped Companion credentials safely and deliver terminal image attachments reliably.",
+    "Recover blocked runs and interrupted improvement analyses without stale recovery loops."
   ]
 }
