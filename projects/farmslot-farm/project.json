@@ -71,15 +71,6 @@
           "health_check": "cd apps/command-center && yarn typecheck && echo ok"
         }
       },
-      "full": {
-        "label": "Alias for typecheck (legacy farmslot-farm name)",
-        "description": "Backward-compatible name for the typecheck-only prepare profile.",
-        "phases": ["git", "fixtures", "deps", "preflight", "health"],
-        "hooks": {
-          "preflight": "cd apps/command-center && yarn typecheck",
-          "health_check": "cd apps/command-center && yarn typecheck && echo ok"
-        }
-      },
       "companion-warm": {
         "label": "Companion warm — Metro + dev client",
         "description": "Boot isolated simulator when configured, start Metro on the slot-configured port, and verify the slot-configured gateway URL. No native rebuild.",

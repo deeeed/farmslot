@@ -4,6 +4,9 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- feat(config): `loadMachineSlots(machine)` lists a machine's pool slots from the same pool dir as every other lookup, failing closed on a missing machine (MANUAL-000085).
+- feat(resources): `vite_port` joins the optional dev-server resource placeholders (`{{vite_port}}`) for sandbox UI port provisioning (MANUAL-000085).
+
 - feat(review): allow projects to declare fixture-backed static review instruction files that are frozen into review tasks without prepare.
 - fix(dispatch): attach runtime-owned runner arguments through the selected runner-path placeholder so trailing shell commands cannot consume them.
 - fix(monitoring): validate per-flow timeout overrides and allow non-Metro slots to omit `metro_port` unless a selected hook actually references it.

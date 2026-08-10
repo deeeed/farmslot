@@ -111,6 +111,16 @@ test('expandTemplate renders missing optional resource placeholders as empty str
     expandTemplate('{{port}} {{simulator}} {{avd}} {{adb_serial}} {{ADB_SERIAL}}', slotVars),
     '8061 mm-1   ',
   );
+
+  // vite_port is optional too: renders when the slot declares it, empty when not.
+  assert.equal(
+    expandTemplate('{{vite_port}}', {
+      ...slotVars,
+      resourceVars: { ...slotVars.resourceVars, vite_port: '5875' },
+    }),
+    '5875',
+  );
+  assert.equal(expandTemplate('{{vite_port}}', slotVars), '');
 });
 
 test('shared template expansion names missing lowercase and uppercase Metro resources', () => {
