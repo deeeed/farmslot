@@ -170,6 +170,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `run.archive`                        | admin          |                                                          |
 | `run.autoRecovery.stop`              | admin          |                                                          |
 | `run.backfillSummaries`              | admin          |                                                          |
+| `run.budgetGuard.probe`              | admin          |                                                          |
 | `run.bulkDelete`                     | admin          |                                                          |
 | `run.bundle.export`                  | admin          |                                                          |
 | `run.bundle.import`                  | admin          |                                                          |

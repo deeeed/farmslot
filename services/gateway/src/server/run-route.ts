@@ -33,6 +33,7 @@ import {
   type RunInteractiveDevResolveParams,
   type RunListParams,
   type RunPauseParams,
+  type RunBudgetGuardProbeParams,
   type RunProbeWorkerSignalParams,
   type RunProposeImprovementParams,
   type RunRecipeRunsForRunParams,
@@ -60,6 +61,7 @@ import { familyObservabilityGet, familyReportGenerate } from '../methods/family-
 import { intelligenceActionsSummary } from '../methods/intelligence.js';
 import { operatorSnapshot, runContextBundle, runRecoveryProposal } from '../methods/operator.js';
 import {
+  runBudgetGuardProbe,
   runCreate,
   runInteractiveDevResolve,
   runProbeWorkerSignal,
@@ -183,6 +185,8 @@ export async function routeRunMethod(
       return handled(runRecipeRunsForRun(p as RunRecipeRunsForRunParams));
     case Methods.RUN_PROBE_WORKER_SIGNAL:
       return handled(runProbeWorkerSignal(p as RunProbeWorkerSignalParams));
+    case Methods.RUN_BUDGET_GUARD_PROBE:
+      return handled(runBudgetGuardProbe(p as RunBudgetGuardProbeParams, emit));
     case Methods.RUN_RESOLVE_DECISION: {
       const params = p as RunResolveDecisionParams;
       // Forward all per-request emits as broadcasts so RUN_UPDATED, the inner

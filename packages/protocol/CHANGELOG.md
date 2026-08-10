@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(runs): `run.budgetGuard.probe` RPC samples a transcript through the soft budget guard, persists `budgetWarned`, and returns violation/nudge side effects for live recipe proof (MANUAL-000096).
+
 - feat(monitor): `MonitorViolation.type` gains `budget` (per-flow turn/token soft ceiling); `RunMonitorState.budgetWarned` + optional `budgetUsage` sample cache for the one-shot soft guard (MANUAL-000096).
 
 - Active-development baseline; add user-facing changes here before release or package publication.

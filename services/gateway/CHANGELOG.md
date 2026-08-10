@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(runs): `run.budgetGuard.probe` — live soft-budget probe using `pollBudgetGuardStep`, persists `monitorState.budgetWarned`, emits `MONITOR_VIOLATION` (MANUAL-000096).
+
 - feat(run-monitor): per-flow turn/token soft budget for mechanical flows — `monitoring.flows.*.max_turns` / `max_total_tokens`, built-in `update-branch` defaults (80 turns / 8M tokens), one-shot `budget` violation + confirmed-send worker nudge; sampling uses shared `@farmslot/slot-config` complete-line incremental transcripts (no lost split-writes) and remote `session-usage.sh` path candidates via `execOnSlot` (MANUAL-000096).
 
 - Active-development baseline; add user-facing changes here before release or package publication.

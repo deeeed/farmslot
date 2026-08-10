@@ -21,6 +21,8 @@ import {
   type RunCreateResult,
   type RunInteractiveDevResolveParams,
   type RunInteractiveDevResolveResult,
+  type RunBudgetGuardProbeParams,
+  type RunBudgetGuardProbeResult,
   type RunProbeWorkerSignalParams,
   type RunProbeWorkerSignalResult,
   type RunRehydratePrNumberParams,
@@ -78,9 +80,12 @@ import {
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import { normalizeExhaustedReviewContinuationsForRun } from '../run-engine/recover-inflight-reviews.js';
 import { assertIndependentReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
+import { emptyBudgetUsageSampleState } from '../run-engine/budget-usage-sample.js';
 import {
+  pollBudgetGuardStep,
   probeWorkerSignalForRun,
   readFreshTerminalSignalForRun,
+  resolveMonitorConfig,
   resolveMonitorDecision,
 } from '../run-engine/run-monitor.js';
 import {
@@ -1161,6 +1166,124 @@ export async function runProbeWorkerSignal(
   if (!run) throw new Error(`Run not found: ${params.runId}`);
   const ctx = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
   return probeWorkerSignalForRun(params.runId, run.slotId, ctx);
+}
+
+/**
+ * Live soft-budget probe used by recipes. Exercises the same pollBudgetGuardStep
+ * entry as monitorRun, persists budgetWarned on a run, and returns side effects.
+ */
+export async function runBudgetGuardProbe(
+  params: RunBudgetGuardProbeParams,
+  emit: (event: string, payload: unknown) => void = () => {},
+): Promise<RunBudgetGuardProbeResult> {
+  if (!params.runnerSessionPath?.trim()) {
+    throw new Error('runnerSessionPath is required');
+  }
+  const cfg = resolveMonitorConfig(undefined, 'farmslot-farm', 'update-branch');
+  const maxTurns = params.maxTurns ?? cfg.maxTurns ?? 80;
+  const maxTotalTokens = params.maxTotalTokens ?? cfg.maxTotalTokens ?? 8_000_000;
+  const slotId = params.slotId ?? 'mini-ff-1';
+  const runner = params.runner ?? 'claude';
+
+  let runId = params.runId;
+  let ephemeral = false;
+  if (!runId) {
+    ephemeral = true;
+    const created = createRun({
+      flowType: 'update-branch',
+      project: 'farmslot-farm',
+      ticketOrPr: 'MANUAL-000096-budget-probe',
+      slotId,
+      runner,
+      branch: 'feat/manual-000096-add-budget-guard-update-branch',
+    });
+    runId = created.id;
+    updateRun(runId, {
+      metrics: {
+        ...created.metrics,
+        runner,
+        runnerSessionPath: params.runnerSessionPath,
+      },
+      status: 'monitoring',
+    });
+  } else {
+    const existing = getRun(runId);
+    if (!existing) throw new Error(`Run not found: ${runId}`);
+    updateRun(runId, {
+      metrics: {
+        ...existing.metrics,
+        runner: runner ?? existing.metrics.runner,
+        runnerSessionPath: params.runnerSessionPath,
+      },
+    });
+  }
+
+  const current = getRun(runId)!;
+  const priorUsage = current.monitorState?.budgetUsage
+    ? {
+        path: current.monitorState.budgetUsage.path ?? null,
+        size: current.monitorState.budgetUsage.size ?? 0,
+        mtimeMs: current.monitorState.budgetUsage.mtimeMs ?? 0,
+        offset: current.monitorState.budgetUsage.offset ?? 0,
+        turns: current.monitorState.budgetUsage.turns ?? 0,
+        totalTokens: current.monitorState.budgetUsage.totalTokens ?? 0,
+        inputTokens: current.monitorState.budgetUsage.inputTokens ?? 0,
+        outputTokens: current.monitorState.budgetUsage.outputTokens ?? 0,
+        cacheCreation: current.monitorState.budgetUsage.cacheCreation ?? 0,
+        cacheRead: current.monitorState.budgetUsage.cacheRead ?? 0,
+        sampledAt: current.monitorState.budgetUsage.sampledAt,
+        unavailableReason: current.monitorState.budgetUsage.unavailableReason,
+      }
+    : emptyBudgetUsageSampleState();
+
+  const tick = await pollBudgetGuardStep({
+    runId,
+    slotId,
+    flowType: 'update-branch',
+    runner,
+    runnerSessionPath: params.runnerSessionPath,
+    maxTurns,
+    maxTotalTokens,
+    budgetWarned: params.budgetWarned ?? current.monitorState?.budgetWarned === true,
+    budgetUsage: priorUsage,
+    agentStatus: 'working',
+    sendNudge: params.sendNudge === true,
+    localVarsStub: { host: 'localhost', machine: 'local', slotId },
+  });
+
+  if (tick.violation) {
+    emit(Events.MONITOR_VIOLATION, { violation: tick.violation });
+  }
+
+  updateRun(runId, {
+    monitorState: {
+      nudgeCount: current.metrics.nudgeCount ?? 0,
+      lastPollAt: new Date().toISOString(),
+      startedAt: current.monitorState?.startedAt ?? new Date().toISOString(),
+      lastPaneHash: current.monitorState?.lastPaneHash,
+      budgetWarned: tick.budgetWarned,
+      budgetUsage: tick.budgetUsage,
+    },
+  });
+
+  const after = getRun(runId)!;
+  const result: RunBudgetGuardProbeResult = {
+    runId,
+    budgetWarned: tick.budgetWarned,
+    sampleTurns: tick.sampleTurns,
+    sampleTotalTokens: tick.sampleTotalTokens,
+    availability: tick.availability,
+    violationType: tick.violation?.type ?? null,
+    violationMessage: tick.violation?.message ?? null,
+    nudgeSent: tick.nudgeSent,
+    persistedBudgetWarned: after.monitorState?.budgetWarned === true,
+    emittedViolation: tick.violation != null,
+  };
+
+  // Ephemeral probe runs stay in the store so a second call can prove warn-once
+  // persistence; callers may ignore the runId. Tagged ticketOrPr for cleanup.
+  void ephemeral;
+  return result;
 }
 
 /**
