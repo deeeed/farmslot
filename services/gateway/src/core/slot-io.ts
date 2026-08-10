@@ -361,6 +361,7 @@ export async function slotReadFileBuffer(
     slotId?: string;
     maxBytes?: number;
     forceChunked?: boolean;
+    onProgress?: (progress: import('@farmslot/protocol').FileTransferProgress) => void;
   } = {},
 ): Promise<Buffer> {
   if (local(ctx)) {
@@ -406,6 +407,7 @@ export async function slotReadFileBuffer(
     slotId: options.slotId,
     totalBytes: size > 0 ? size : undefined,
     maxBytes: options.maxBytes,
+    onProgress: options.onProgress,
     readChunk: async (offset, length) =>
       (await sendNodeRequest(
         node,

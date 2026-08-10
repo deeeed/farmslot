@@ -803,6 +803,48 @@ export async function readRemoteFileChunkedToBuffer(
     if (state === 'running') lastProgressAt = clock.now();
   };
 
+  const idleTimeoutError = () =>
+    new FileTransferIdleTimeoutError({
+      transferId,
+      bytesTransferred,
+      totalBytes,
+      idleTimeoutMs,
+    });
+
+  const assertNotIdle = () => {
+    if (clock.now() - lastProgressAt > idleTimeoutMs) {
+      throw idleTimeoutError();
+    }
+  };
+
+  // Same idle race + RPC-timeout translation as copyFileChunked (HTTP/proxy path).
+  const readChunkWithIdle = async (offset: number, length: number): Promise<ChunkReadResult> => {
+    assertNotIdle();
+    const remainingLogical = Math.max(1, idleTimeoutMs - (clock.now() - lastProgressAt));
+    const remainingWallMs = Math.min(remainingLogical, idleTimeoutMs);
+    const readPromise = params.readChunk(offset, length);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const idlePromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(idleTimeoutError()), remainingWallMs);
+    });
+    void readPromise.catch(() => undefined);
+    void idlePromise.catch(() => undefined);
+    try {
+      return await Promise.race([readPromise, idlePromise]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        !(err instanceof FileTransferIdleTimeoutError) &&
+        /timeout after \d+ms|Node mini timeout|RPC timeout|request timed out/i.test(message)
+      ) {
+        throw idleTimeoutError();
+      }
+      throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
   try {
     publish('running');
     let offset = 0;
@@ -811,15 +853,12 @@ export async function readRemoteFileChunkedToBuffer(
       if (combinedSignal.aborted) {
         throw new FileTransferCancelledError(transferId);
       }
-      if (clock.now() - lastProgressAt > idleTimeoutMs) {
-        throw new FileTransferIdleTimeoutError({
-          transferId,
-          bytesTransferred,
-          totalBytes,
-          idleTimeoutMs,
-        });
+      assertNotIdle();
+      const chunk = await readChunkWithIdle(offset, chunkMax);
+      if (combinedSignal.aborted) {
+        throw new FileTransferCancelledError(transferId);
       }
-      const chunk = await params.readChunk(offset, chunkMax);
+      assertNotIdle();
       if (params.maxBytes != null && chunk.size > params.maxBytes) {
         throw new Error(`Remote artifact too large to proxy (${chunk.size} bytes)`);
       }
@@ -828,9 +867,19 @@ export async function readRemoteFileChunkedToBuffer(
           `Chunk offset mismatch: expected ${offset}, got ${chunk.offset}`,
         );
       }
+      if (chunk.bytesRead < 0 || chunk.bytesRead > chunkMax) {
+        throw new FileTransferIntegrityError(
+          `Invalid bytesRead ${chunk.bytesRead} (chunk max ${chunkMax}) for ${params.path}`,
+        );
+      }
       if (totalBytes === 0 && chunk.size > 0) totalBytes = chunk.size;
+      if (totalBytes > 0 && chunk.size > 0 && chunk.size !== totalBytes) {
+        throw new FileTransferIntegrityError(
+          `Remote size changed during transfer for ${params.path}: was ${totalBytes}, now ${chunk.size}`,
+        );
+      }
       if (chunk.bytesRead === 0) {
-        if (totalBytes > 0 && offset < totalBytes) {
+        if (!chunk.eof && (totalBytes === 0 || offset < totalBytes)) {
           throw new FileTransferIntegrityError(
             `Early EOF at offset ${offset} of ${totalBytes} for ${params.path}`,
           );

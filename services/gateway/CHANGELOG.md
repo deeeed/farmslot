@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(transfer): align buffer/proxy chunked reads with copy idle race and chunk bounds; remote e2e counts production onProgress only and never rewrites shared pool JSON (MANUAL-000095 self-review).
+
 - fix(transfer): stage large downloads to a sibling partial and atomically replace only after integrity; preserve prior-good finals on fail/cancel; race hung chunk reads for idle last-progress errors; restore 0o600 on progress-aware attachment writes (MANUAL-000095 self-review).
 
 - fix(transfer): honor aggregate cancel (abort between files), keep unknown-size aggregates indeterminate, precompute dir totals, validate writeChunk bytesWritten, route terminal attachments through slotWriteFileBuffer, and add forceFail smoke for failed UI proof (MANUAL-000095 self-review).

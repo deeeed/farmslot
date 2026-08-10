@@ -386,6 +386,50 @@ test('readRemoteFileChunkedToBuffer rejects early EOF when totalBytes is known',
   );
 });
 
+test('readRemoteFileChunkedToBuffer races hung reads against idle timeout', async () => {
+  const { readRemoteFileChunkedToBuffer } = await import('./file-transfer.js');
+  await assert.rejects(
+    () =>
+      readRemoteFileChunkedToBuffer({
+        path: '/remote/hang.bin',
+        phase: 'download',
+        totalBytes: 100,
+        idleTimeoutMs: 40,
+        readChunk: async () =>
+          new Promise(() => {
+            /* never resolves — wall-clock idle must fire */
+          }),
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof FileTransferIdleTimeoutError);
+      assert.equal(err.bytesTransferred, 0);
+      assert.equal(err.totalBytes, 100);
+      return true;
+    },
+  );
+});
+
+test('readRemoteFileChunkedToBuffer rejects oversize chunk responses', async () => {
+  const { readRemoteFileChunkedToBuffer } = await import('./file-transfer.js');
+  await assert.rejects(
+    () =>
+      readRemoteFileChunkedToBuffer({
+        path: '/remote/fat.bin',
+        phase: 'download',
+        totalBytes: 100,
+        chunkMaxBytes: 4,
+        readChunk: async () => ({
+          content: Buffer.alloc(8, 1).toString('base64'),
+          size: 100,
+          offset: 0,
+          bytesRead: 8,
+          eof: false,
+        }),
+      }),
+    /Invalid bytesRead 8 \(chunk max 4\)/,
+  );
+});
+
 test('AggregateTransferSession cancel aborts before done and keeps indeterminate total', async () => {
   const { AggregateTransferSession, cancelTransfer } = await import('./file-transfer.js');
   const events: Array<{ state: string; totalBytes: number; bytes: number }> = [];

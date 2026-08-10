@@ -5,15 +5,16 @@ import { access, lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 
 import { dirname, isAbsolute, join, posix, resolve, sep } from 'node:path';
 
 import { expandTilde, type FileWatchHandle, watchFile } from '@farmslot/capabilities/fs-watch';
-import type {
-  NodeFsPathParams,
-  NodeFsReadBase64Params,
-  NodeFsReadChunkParams,
-  NodeFsReadChunkResult,
-  NodeFsRenameParams,
-  NodeFsWriteFileEntry,
-  NodeFsWriteFilesParams,
-  NodeFsWriteParams,
+import {
+  FILE_TRANSFER_CHUNK_MAX_BYTES,
+  type NodeFsPathParams,
+  type NodeFsReadBase64Params,
+  type NodeFsReadChunkParams,
+  type NodeFsReadChunkResult,
+  type NodeFsRenameParams,
+  type NodeFsWriteFileEntry,
+  type NodeFsWriteFilesParams,
+  type NodeFsWriteParams,
 } from '@farmslot/protocol';
 
 export interface FsEntry {
@@ -198,8 +199,8 @@ export async function fsReadBase64(
 
 /**
  * Read a bounded byte range as base64 for progress-aware large transfers.
- * Callers must keep `length` ≤ FILE_TRANSFER_CHUNK_MAX_BYTES so frames stay
- * well under the gateway WebSocket max payload.
+ * Fail-closed: `length` must not exceed FILE_TRANSFER_CHUNK_MAX_BYTES so frames
+ * stay well under the gateway WebSocket max payload.
  */
 export async function fsReadChunk(params: NodeFsReadChunkParams): Promise<NodeFsReadChunkResult> {
   if (!Number.isInteger(params.offset) || params.offset < 0) {
@@ -207,6 +208,11 @@ export async function fsReadChunk(params: NodeFsReadChunkParams): Promise<NodeFs
   }
   if (!Number.isInteger(params.length) || params.length <= 0) {
     throw new Error(`fs.readChunk length must be a positive integer (got ${params.length})`);
+  }
+  if (params.length > FILE_TRANSFER_CHUNK_MAX_BYTES) {
+    throw new Error(
+      `fs.readChunk length ${params.length} exceeds FILE_TRANSFER_CHUNK_MAX_BYTES (${FILE_TRANSFER_CHUNK_MAX_BYTES})`,
+    );
   }
   const { target } = confinedPath(params);
   let handle;
@@ -255,6 +261,11 @@ export async function fsWriteChunk(params: {
   }
   const { target } = confinedPath(params);
   const buf = Buffer.from(params.content, 'base64');
+  if (buf.byteLength > FILE_TRANSFER_CHUNK_MAX_BYTES) {
+    throw new Error(
+      `fs.writeChunk payload ${buf.byteLength} exceeds FILE_TRANSFER_CHUNK_MAX_BYTES (${FILE_TRANSFER_CHUNK_MAX_BYTES})`,
+    );
+  }
   const createMode =
     typeof params.mode === 'number' && Number.isInteger(params.mode) ? params.mode : 0o666;
   let handle;

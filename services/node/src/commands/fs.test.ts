@@ -200,3 +200,32 @@ test('fsWriteChunk applies explicit mode for private attachment-style files', as
   const mode = (await stat(path.join(root, 'secret.bin'))).mode & 0o777;
   assert.equal(mode, 0o600);
 });
+
+test('fsReadChunk and fsWriteChunk fail closed above FILE_TRANSFER_CHUNK_MAX_BYTES', async (t) => {
+  const { fsReadChunk, fsWriteChunk } = await import('./fs.js');
+  const { FILE_TRANSFER_CHUNK_MAX_BYTES } = await import('@farmslot/protocol');
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-cap-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'big.bin'), Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES + 10, 1));
+  await assert.rejects(
+    () =>
+      fsReadChunk({
+        root,
+        relPath: 'big.bin',
+        offset: 0,
+        length: FILE_TRANSFER_CHUNK_MAX_BYTES + 1,
+      }),
+    /exceeds FILE_TRANSFER_CHUNK_MAX_BYTES/,
+  );
+  await assert.rejects(
+    () =>
+      fsWriteChunk({
+        root,
+        relPath: 'out.bin',
+        offset: 0,
+        content: Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES + 1, 2).toString('base64'),
+        truncate: true,
+      }),
+    /exceeds FILE_TRANSFER_CHUNK_MAX_BYTES/,
+  );
+});
