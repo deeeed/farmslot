@@ -116,6 +116,7 @@ const GRAPH_ENQUEUE_ERROR =
   'Backlog item is linked to a work graph; use workGraph.schedulerTick or detach it first';
 const BACKLOG_UPDATE_KEYS = new Set([
   'itemId',
+  'project',
   'title',
   'sourceKind',
   'sourceRef',
@@ -1361,10 +1362,21 @@ export async function updateBacklogItem(
     if (itemIndex < 0) throw new Error(`Backlog item not found: ${params.itemId}`);
     const item = items[itemIndex]!;
     const snapshot = cloneBacklogRecord(item);
+    const nextProject = params.project === undefined ? item.project : params.project.trim();
     const nextSourceKind = params.sourceKind ?? item.sourceKind;
     const nextFlowType = params.flowType ?? item.flowType;
+    if (!nextProject) throw new Error('Backlog item project is required');
     if (!VALID_SOURCE_KINDS.has(nextSourceKind)) throw new Error('Invalid backlog source kind');
     try {
+      if (nextProject !== item.project) {
+        if (item.workGraphId || item.workNodeId) {
+          throw new Error('Cannot change project while the backlog item is linked to a work graph');
+        }
+        if (!['candidate', 'ready', 'failed', 'needs-attention'].includes(item.status)) {
+          throw new Error(`Cannot change project while backlog item is ${item.status}`);
+        }
+        item.project = nextProject;
+      }
       if (params.title !== undefined) {
         if (!params.title.trim()) throw new Error('Backlog item title is required');
         item.title = params.title.trim();
@@ -1380,7 +1392,14 @@ export async function updateBacklogItem(
           nextSourceKind,
           params.sourceRef ?? item.sourceRef,
           nextFlowType,
-          item.project,
+          nextProject,
+        );
+      } else if (nextProject !== snapshot.project) {
+        item.sourceRef = await normalizeSourceFields(
+          nextSourceKind,
+          item.sourceRef,
+          nextFlowType,
+          nextProject,
         );
       }
       if (params.sourceUrl !== undefined) {
@@ -1499,6 +1518,7 @@ export async function updateBacklogItem(
         }
       }
       assertExecutionHintsCompatible(item);
+      await assertAllowedSlotsBelongToProject(item);
       if (item.status === 'ready') await assertBacklogSpecReady(item);
       item.updatedAt = new Date().toISOString();
       restampBacklogRecord(item, originator);

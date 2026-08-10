@@ -201,14 +201,25 @@ test('backlog draft project follows a single global project filter', () => {
   );
 });
 
-test('backlog draft project keeps current project without a single global project filter', () => {
+test('backlog draft project requires an explicit owner for a multi-project scope', () => {
   assert.equal(
     syncedBacklogDraftProject({
       currentProject: 'custom-farm',
       availableProjects: ['metamask-extension-farm', 'metamask-mobile-farm'],
       globalProjects: ['metamask-extension-farm', 'metamask-mobile-farm'],
     }),
-    'custom-farm',
+    '',
+  );
+});
+
+test('backlog draft project preserves an explicit owner inside a multi-project scope', () => {
+  assert.equal(
+    syncedBacklogDraftProject({
+      currentProject: 'metamask-mobile-farm',
+      availableProjects: ['metamask-extension-farm', 'metamask-mobile-farm'],
+      globalProjects: ['metamask-extension-farm', 'metamask-mobile-farm'],
+    }),
+    'metamask-mobile-farm',
   );
 });
 

@@ -273,6 +273,7 @@ export interface BacklogCreateInput {
 }
 
 export interface BacklogUpdateInput {
+  project?: string;
   title?: string;
   sourceKind?: BacklogSourceKind;
   sourceRef?: string;

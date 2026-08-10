@@ -688,6 +688,26 @@ test('backlog.update rejects public lifecycle and run linkage mutation', async (
   );
 });
 
+test('backlog.update changes the owning project before dispatch', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Correct project ownership',
+      sourceKind: 'manual',
+      flowType: 'dev',
+    },
+    { kind: 'system' },
+  );
+
+  const updated = await backlog.updateBacklogItem({
+    itemId: created.item.id,
+    project: 'metamask-core-farm',
+  });
+
+  assert.equal(updated.item.project, 'metamask-core-farm');
+});
+
 test('backlog.archive moves finished backlog items to archived', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem(

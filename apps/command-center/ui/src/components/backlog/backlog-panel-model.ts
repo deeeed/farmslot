@@ -193,7 +193,20 @@ export function parseBacklogStatusFilter(raw: string | null): ReadonlySet<Backlo
   return valid.length > 0 ? new Set(valid) : DEFAULT_BACKLOG_STATUS_FILTER;
 }
 
-export const syncedBacklogDraftProject = syncedDraftProject;
+export function syncedBacklogDraftProject(input: {
+  currentProject: string;
+  availableProjects: readonly string[];
+  globalProjects: readonly string[];
+}): string {
+  const globalProjects = [...new Set(input.globalProjects.map((project) => project.trim()))].filter(
+    Boolean,
+  );
+  if (globalProjects.length > 1) {
+    const current = input.currentProject.trim();
+    return current && globalProjects.includes(current) ? current : '';
+  }
+  return syncedDraftProject(input);
+}
 
 /** Pure view-model for the backlog "Refine with runner" picker launch/resume UI. */
 export function backlogRefinementPickerView(state: {

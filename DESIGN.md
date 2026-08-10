@@ -3,7 +3,7 @@
 ## Source of truth
 
 - Status: Draft
-- Last refreshed: 2026-08-03
+- Last refreshed: 2026-08-10
 - Primary product surfaces: Command Center operator UI and recipe-derived visual review boards.
 - Evidence reviewed: `CLAUDE.md`, `apps/command-center/CLAUDE.md`, `apps/command-center/ui/src/styles/theme-tokens.ts`, `apps/command-center/ui/src/components/app-shell.ts`, `apps/command-center/ui/src/components/dispatch/dispatch-wizard-view-renderer.ts`, `apps/command-center/ui/src/components/shared/whats-new-modal.ts`, `apps/command-center/ui/src/components/recipe-graph/recipe-graph.ts`, `apps/command-center/ui/src/components/work-graph/work-graph-panel.ts`, `packages/protocol/src/contracts/execution-templates.ts`, `packages/protocol/src/contracts/work-graph.ts`, `apps/companion/DESIGN.md`, and `docs/adr/052-recipe-derived-visual-review-boards.md`.
 
@@ -49,8 +49,8 @@
 
 ## Components
 
-- Existing components to reuse: app shell route patterns, recipe graph SVG patterns, shared theme tokens.
-- New/changed components: compact inventory tables on Roadmap, Backlog, and Runs; `work-graph-panel` and `work-graph-layout` for dependency visualization; `execution-template-preview-modal` for exact, read-only dispatch template inspection; a lightweight recipe-derived visual review board for screen hierarchy and normalized point/area feedback.
+- Existing components to reuse: app shell route patterns, recipe graph SVG patterns, shared theme tokens, planning controls, and `dispatch-config-editor` for every backlog create/edit dispatch surface.
+- New/changed components: compact inventory tables on Roadmap, Backlog, and Runs; shared Backlog create/edit metadata fields whose owning project scopes both templates and eligible slots; `work-graph-panel` and `work-graph-layout` for dependency visualization; `execution-template-preview-modal` for exact, read-only dispatch template inspection; a lightweight recipe-derived visual review board for screen hierarchy and normalized point/area feedback.
 - Variants and states: empty graph list, project filter, graph status badges, selected node, waiting/gated/running/succeeded/failed/skipped nodes, pending/satisfied/failed/waived edges; execution-template preview loading, content, stale-source error, and closed states; visual-review boards default to one remembered capture platform with an explicit Compare mode that groups platform variants under one surface, and navigation maps start at the top level with independently expandable branches.
 - Token/component ownership: Command Center owns UI tokens; protocol owns graph and execution-template data shapes.
 

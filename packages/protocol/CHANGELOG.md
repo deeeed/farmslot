@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(backlog): allow pre-dispatch backlog updates to change the owning project.
+
 - feat(transfer): remote e2e result carries HTTP `readChunkCount`/`transferMode` and production `artifactMirror` progress proof fields (MANUAL-000095 self-review).
 
 - feat(fs): optional `mode` on `NodeFsWriteChunkParams` for private remote writes (MANUAL-000095 self-review).
