@@ -53,7 +53,12 @@ import {
 import { loadProjectVars } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import type { InternalDispatchQueueAddParams } from '../core/queue-types.js';
-import { farmslotRoot, loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
+import {
+  farmslotRoot,
+  loadFleetStatus,
+  loadPoolConfigs,
+  loadProjectConfig,
+} from '../fleet/state.js';
 import {
   assertTicketRefMatchesProjectRepo,
   JIRA_KEY_RE,
@@ -1124,9 +1129,12 @@ function launchCandidateByRole(item: BacklogItem, role: BacklogLaunchCandidate['
 
 async function assertSlotsBelongToProject(project: string, allowedSlots?: string[]): Promise<void> {
   if (!allowedSlots || allowedSlots.length === 0) return;
-  const fleet = await loadFleetStatus();
+  const configuredSlots = (await loadPoolConfigs()).flatMap((pool) => pool.slots);
+  const slots = configuredSlots.length > 0 ? configuredSlots : (await loadFleetStatus()).slots;
   for (const slotId of allowedSlots) {
-    const slot = fleet.slots.find((candidate) => candidate.slot === slotId);
+    const slot = slots.find(
+      (candidate) => ('id' in candidate ? candidate.id : candidate.slot) === slotId,
+    );
     if (!slot) throw new Error(`allowed slot not found: ${slotId}`);
     if (slot.project !== project) {
       throw new Error(`allowed slot ${slotId} belongs to project ${slot.project}, not ${project}`);

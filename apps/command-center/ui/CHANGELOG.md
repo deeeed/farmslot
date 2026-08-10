@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- fix(backlog): share backlog metadata and dispatch controls across create/edit, with explicit run mode and project-owned template selection.
+- fix(backlog): share backlog metadata and dispatch controls across create/edit, with explicit run mode and project-owned template selection; keep descriptive metadata editable after execution while locking dispatch ownership.
 - fix(backlog): require an owner under multi-project creation scope and clear project-owned dispatch fields when that owner changes.
 
 - fix(transfer): mini pipeline package-refresh segment uses the same purpose filter as the full renderer so finalize uploads and release-artifact mirrors are not misattributed (MANUAL-000095 self-review).

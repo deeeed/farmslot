@@ -484,6 +484,44 @@ test('manual backlog create rejects invalid allowedSlots before persistence', as
   assert.equal(backlog.listBacklogItems({ includeArchived: true }).items.length, 0);
 });
 
+test('manual backlog enqueue rejects a persisted allowedSlot that became invalid', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Stale isolated slot',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      status: 'ready',
+      allowedSlots: ['macwork-ff-1'],
+    },
+    { kind: 'system' },
+  );
+  await backlog.flushBacklogForTests();
+  const stored = JSON.parse(await readFile(process.env.FARMSLOT_BACKLOG_FILE!, 'utf-8')) as Array<{
+    id: string;
+    allowedSlots?: string[];
+  }>;
+  const storedItem = stored.find((item) => item.id === created.item.id);
+  assert.ok(storedItem);
+  storedItem.allowedSlots = ['no-such-slot'];
+  await writeFile(process.env.FARMSLOT_BACKLOG_FILE!, JSON.stringify(stored), 'utf-8');
+  await backlog.loadBacklog();
+
+  await assert.rejects(
+    () => backlog.enqueueBacklogItem({ itemId: created.item.id }),
+    /allowed slot not found: no-such-slot/,
+  );
+
+  assert.equal(
+    queue.getQueueSnapshot().filter((item) => item.backlogItemId === created.item.id).length,
+    0,
+  );
+  const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item?.status, 'ready');
+  assert.match(item?.lastDispatchError ?? '', /allowed slot not found/);
+});
+
 test('backlog auto-dispatch reports guardrail blocks instead of enqueueing unsafe ready items', async () => {
   const { backlog } = await freshStores();
 

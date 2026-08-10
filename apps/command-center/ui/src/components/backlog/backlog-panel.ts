@@ -1578,6 +1578,7 @@ export class BacklogPanel extends LitElement {
           type="number"
           min="1"
           .value=${draft.priority}
+          ?disabled=${dispatchScopeDisabled}
           @input=${(event: Event) =>
             onChange({ priority: (event.target as HTMLInputElement).value })}
         />
@@ -1611,6 +1612,7 @@ export class BacklogPanel extends LitElement {
   }
 
   private _setDispatchConfigOpen(open: boolean) {
+    if (open && this._selectedItem && !canEditBacklogDispatchForUi(this._selectedItem)) return;
     this._dispatchConfigOpen = open;
     this._dispatchConfigError = '';
     this._writeUrlState();
@@ -2267,7 +2269,8 @@ export class BacklogPanel extends LitElement {
           : html`<button
               class="secondary"
               type="button"
-              ?disabled=${this._dispatchConfigBusy === item.id}
+              ?disabled=${this._dispatchConfigBusy === item.id ||
+              !canEditBacklogDispatchForUi(item)}
               @click=${() => this._setDispatchConfigOpen(true)}
             >
               Edit dispatch config
@@ -2318,7 +2321,7 @@ export class BacklogPanel extends LitElement {
 
   private _renderDispatchConfigModal(item: BacklogItem) {
     if (!this._dispatchConfigOpen) return nothing;
-    const disabled = this._dispatchConfigBusy === item.id;
+    const disabled = this._dispatchConfigBusy === item.id || !canEditBacklogDispatchForUi(item);
     const templateState = this._templateOptionsStateForItem(item);
     return html`
       <div
@@ -2701,16 +2704,27 @@ export class BacklogPanel extends LitElement {
       return;
     }
     const savedDraft = metadataDraftFromItem(item);
+    const dispatchEditable = canEditBacklogDispatchForUi(item);
     const update: BacklogUpdateInput & { itemId: string } = { itemId: item.id };
-    if (draft.project.trim() !== savedDraft.project) update.project = draft.project.trim();
+    if (dispatchEditable && draft.project.trim() !== savedDraft.project) {
+      update.project = draft.project.trim();
+    }
     if (draft.title.trim() !== savedDraft.title) update.title = draft.title.trim();
-    if (draft.sourceKind !== savedDraft.sourceKind) update.sourceKind = draft.sourceKind;
-    if (draft.sourceRef !== savedDraft.sourceRef) update.sourceRef = draft.sourceRef;
-    if (draft.flowType !== savedDraft.flowType) update.flowType = draft.flowType;
+    if (dispatchEditable && draft.sourceKind !== savedDraft.sourceKind) {
+      update.sourceKind = draft.sourceKind;
+    }
+    if (dispatchEditable && draft.sourceRef !== savedDraft.sourceRef) {
+      update.sourceRef = draft.sourceRef;
+    }
+    if (dispatchEditable && draft.flowType !== savedDraft.flowType) {
+      update.flowType = draft.flowType;
+    }
     if (draft.notes !== savedDraft.notes) update.notes = draft.notes;
     if (draft.tags !== savedDraft.tags) update.tags = tagsFromInput(draft.tags);
-    if (priority !== Number(savedDraft.priority)) update.priority = priority;
-    if (draft.autoDispatch !== savedDraft.autoDispatch) update.autoDispatch = draft.autoDispatch;
+    if (dispatchEditable && priority !== Number(savedDraft.priority)) update.priority = priority;
+    if (dispatchEditable && draft.autoDispatch !== savedDraft.autoDispatch) {
+      update.autoDispatch = draft.autoDispatch;
+    }
     const saved = await this._runItemAction(item.id, 'item fields', () =>
       gateway.request<BacklogUpdateResult>(Methods.BACKLOG_UPDATE, update),
     );
@@ -2732,14 +2746,15 @@ export class BacklogPanel extends LitElement {
     const draft = this._metadataDrafts[item.id];
     if (!draft) return false;
     const saved = metadataDraftFromItem(item);
+    const descriptiveMetadataChanged =
+      draft.title !== saved.title || draft.notes !== saved.notes || draft.tags !== saved.tags;
+    if (!canEditBacklogDispatchForUi(item)) return descriptiveMetadataChanged;
     return (
+      descriptiveMetadataChanged ||
       draft.project !== saved.project ||
-      draft.title !== saved.title ||
       draft.sourceKind !== saved.sourceKind ||
       draft.sourceRef !== saved.sourceRef ||
       draft.flowType !== saved.flowType ||
-      draft.notes !== saved.notes ||
-      draft.tags !== saved.tags ||
       draft.priority !== saved.priority ||
       draft.autoDispatch !== saved.autoDispatch
     );
@@ -3357,13 +3372,15 @@ export class BacklogPanel extends LitElement {
             >
               Save item
             </button>
-            <button
-              class="secondary"
-              ?disabled=${this._busy.endsWith(item.id) || !this._launchPlanDirty(item)}
-              @click=${() => this._saveLaunchPlan(item)}
-            >
-              Save launch plan
-            </button>
+            ${canEditBacklogDispatchForUi(item)
+              ? html`<button
+                  class="secondary"
+                  ?disabled=${this._busy.endsWith(item.id) || !this._launchPlanDirty(item)}
+                  @click=${() => this._saveLaunchPlan(item)}
+                >
+                  Save launch plan
+                </button>`
+              : nothing}
             ${showEditDelete
               ? html`<button
                   class=${this._confirmCleanupClass('delete', item.id, 'danger')}

@@ -31,8 +31,8 @@ export const ARCHIVABLE_BACKLOG_STATUSES: ReadonlySet<BacklogStatus> = new Set([
   'needs-attention',
 ]);
 
-// Project-owned dispatch configuration may only change before a queue/run owns
-// the item. Descriptive metadata remains editable after execution.
+// Clients use these statuses together with queue/run linkage to decide whether
+// project-owned dispatch configuration remains editable.
 export const EDITABLE_BACKLOG_STATUSES: ReadonlySet<BacklogStatus> = new Set([
   'candidate',
   'ready',
