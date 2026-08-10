@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(backlog): validate project changes against source and slot ownership, clear all project-owned dispatch configuration, and validate slot ownership only when relevant fields change.
+
 - fix(transfer): preserve bounded root/relPath on remote HTTP artifact reads; clean drain/error listeners under multi-chunk backpressure; observe HTTP chunk mode via response headers; prove remote `refreshArtifactMirror` with progress + byte equality (MANUAL-000095 self-review).
 
 - fix(transfer): real isolated-pool `/api/file` remote e2e; preserve not-a-file stat errors; yield before aggregate complete; large refreshArtifactMirror integrity test (MANUAL-000095 self-review).

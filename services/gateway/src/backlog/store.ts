@@ -33,6 +33,7 @@ import {
   type BacklogUpdateParams,
   type BacklogUpdateResult,
   type DevInteractiveProfile,
+  EDITABLE_BACKLOG_STATUSES,
   Events,
   isReviewValidationDepth,
   isTerminalRunStatus,
@@ -52,7 +53,12 @@ import {
 import { loadProjectVars } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import type { InternalDispatchQueueAddParams } from '../core/queue-types.js';
-import { farmslotRoot, loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
+import {
+  farmslotRoot,
+  loadFleetStatus,
+  loadPoolConfigs,
+  loadProjectConfig,
+} from '../fleet/state.js';
 import {
   assertTicketRefMatchesProjectRepo,
   JIRA_KEY_RE,
@@ -116,6 +122,7 @@ const GRAPH_ENQUEUE_ERROR =
   'Backlog item is linked to a work graph; use workGraph.schedulerTick or detach it first';
 const BACKLOG_UPDATE_KEYS = new Set([
   'itemId',
+  'project',
   'title',
   'sourceKind',
   'sourceRef',
@@ -1120,11 +1127,22 @@ function launchCandidateByRole(item: BacklogItem, role: BacklogLaunchCandidate['
   return item.launchPlan?.candidates.find((candidate) => candidate.role === role);
 }
 
-async function assertSlotsBelongToProject(project: string, allowedSlots?: string[]): Promise<void> {
+type SlotOwnership = { id: string; project: string };
+
+async function loadSlotOwnership(): Promise<SlotOwnership[]> {
+  const configuredSlots = (await loadPoolConfigs()).flatMap((pool) => pool.slots);
+  if (configuredSlots.length > 0) return configuredSlots;
+  return (await loadFleetStatus()).slots.map((slot) => ({ id: slot.slot, project: slot.project }));
+}
+
+function assertSlotsBelongToProject(
+  slots: SlotOwnership[],
+  project: string,
+  allowedSlots?: string[],
+): void {
   if (!allowedSlots || allowedSlots.length === 0) return;
-  const fleet = await loadFleetStatus();
   for (const slotId of allowedSlots) {
-    const slot = fleet.slots.find((candidate) => candidate.slot === slotId);
+    const slot = slots.find((candidate) => candidate.id === slotId);
     if (!slot) throw new Error(`allowed slot not found: ${slotId}`);
     if (slot.project !== project) {
       throw new Error(`allowed slot ${slotId} belongs to project ${slot.project}, not ${project}`);
@@ -1133,9 +1151,10 @@ async function assertSlotsBelongToProject(project: string, allowedSlots?: string
 }
 
 async function assertAllowedSlotsBelongToProject(item: BacklogItem): Promise<void> {
-  await assertSlotsBelongToProject(item.project, item.allowedSlots);
+  const slots = await loadSlotOwnership();
+  assertSlotsBelongToProject(slots, item.project, item.allowedSlots);
   for (const candidate of item.launchPlan?.candidates ?? []) {
-    await assertSlotsBelongToProject(item.project, slotsForLaunchPolicy(candidate.slotPolicy));
+    assertSlotsBelongToProject(slots, item.project, slotsForLaunchPolicy(candidate.slotPolicy));
   }
 }
 
@@ -1235,6 +1254,7 @@ export async function createBacklogItem(
     };
     setBacklogOriginator(item, originator);
     assertExecutionHintsCompatible(item);
+    await assertAllowedSlotsBelongToProject(item);
     if (item.status === 'ready') await assertBacklogSpecReady(item);
     items.push(item);
     schedulePersist('create');
@@ -1361,10 +1381,34 @@ export async function updateBacklogItem(
     if (itemIndex < 0) throw new Error(`Backlog item not found: ${params.itemId}`);
     const item = items[itemIndex]!;
     const snapshot = cloneBacklogRecord(item);
+    const nextProject = params.project === undefined ? item.project : params.project.trim();
     const nextSourceKind = params.sourceKind ?? item.sourceKind;
     const nextFlowType = params.flowType ?? item.flowType;
+    const flowChanged = nextFlowType !== item.flowType;
+    if (!nextProject) throw new Error('Backlog item project is required');
     if (!VALID_SOURCE_KINDS.has(nextSourceKind)) throw new Error('Invalid backlog source kind');
     try {
+      if (nextProject !== item.project) {
+        if (item.workGraphId || item.workNodeId) {
+          throw new Error('Cannot change project while the backlog item is linked to a work graph');
+        }
+        if (item.runId || item.queuedQueueItemId) {
+          throw new Error(
+            'Cannot change project while the backlog item is linked to a queue or run',
+          );
+        }
+        if (!EDITABLE_BACKLOG_STATUSES.has(item.status)) {
+          throw new Error(`Cannot change project while backlog item is ${item.status}`);
+        }
+        item.project = nextProject;
+        delete item.allowedSlots;
+        delete item.taskTemplate;
+        delete item.app;
+        delete item.prepareProfile;
+        delete item.scripted;
+        delete item.launchPlan;
+        delete item.launchPlanState;
+      }
       if (params.title !== undefined) {
         if (!params.title.trim()) throw new Error('Backlog item title is required');
         item.title = params.title.trim();
@@ -1380,7 +1424,19 @@ export async function updateBacklogItem(
           nextSourceKind,
           params.sourceRef ?? item.sourceRef,
           nextFlowType,
-          item.project,
+          nextProject,
+        );
+        if (flowChanged) {
+          if (params.taskTemplate === undefined) delete item.taskTemplate;
+          if (params.mode === undefined) delete item.mode;
+          if (params.devInteractiveProfile === undefined) delete item.devInteractiveProfile;
+        }
+      } else if (nextProject !== snapshot.project) {
+        item.sourceRef = await normalizeSourceFields(
+          nextSourceKind,
+          item.sourceRef,
+          nextFlowType,
+          nextProject,
         );
       }
       if (params.sourceUrl !== undefined) {
@@ -1499,6 +1555,13 @@ export async function updateBacklogItem(
         }
       }
       assertExecutionHintsCompatible(item);
+      if (
+        params.project !== undefined ||
+        params.allowedSlots !== undefined ||
+        params.launchPlan !== undefined
+      ) {
+        await assertAllowedSlotsBelongToProject(item);
+      }
       if (item.status === 'ready') await assertBacklogSpecReady(item);
       item.updatedAt = new Date().toISOString();
       restampBacklogRecord(item, originator);

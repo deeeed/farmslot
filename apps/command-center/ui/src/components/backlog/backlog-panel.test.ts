@@ -12,6 +12,7 @@ import {
   canArchiveBacklogItemForUi,
   canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
+  canEditBacklogDispatchForUi,
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
   CUSTOM_REFINEMENT_CHOICE,
@@ -164,6 +165,17 @@ test('backlog panel dequeue action is only enabled for queued dispatch lifecycle
     assert.equal(canDequeueBacklogItemForUi({ status }), false, status);
 });
 
+test('backlog dispatch editing is limited to unlinked pre-dispatch items', () => {
+  assert.equal(canEditBacklogDispatchForUi({ status: 'candidate' }), true);
+  assert.equal(canEditBacklogDispatchForUi({ status: 'ready' }), true);
+  assert.equal(canEditBacklogDispatchForUi({ status: 'running' }), false);
+  assert.equal(canEditBacklogDispatchForUi({ status: 'failed', runId: 'run-1' }), false);
+  assert.equal(
+    canEditBacklogDispatchForUi({ status: 'needs-attention', queuedQueueItemId: 'queue-1' }),
+    false,
+  );
+});
+
 test('backlog panel mark-ready action is enabled for candidate, failed, and needs-attention', () => {
   const enabled: BacklogStatus[] = ['candidate', 'failed', 'needs-attention'];
   const disabled: BacklogStatus[] = [
@@ -201,14 +213,25 @@ test('backlog draft project follows a single global project filter', () => {
   );
 });
 
-test('backlog draft project keeps current project without a single global project filter', () => {
+test('backlog draft project requires an explicit owner for a multi-project scope', () => {
   assert.equal(
     syncedBacklogDraftProject({
       currentProject: 'custom-farm',
       availableProjects: ['metamask-extension-farm', 'metamask-mobile-farm'],
       globalProjects: ['metamask-extension-farm', 'metamask-mobile-farm'],
     }),
-    'custom-farm',
+    '',
+  );
+});
+
+test('backlog draft project preserves an explicit owner inside a multi-project scope', () => {
+  assert.equal(
+    syncedBacklogDraftProject({
+      currentProject: 'metamask-mobile-farm',
+      availableProjects: ['metamask-extension-farm', 'metamask-mobile-farm'],
+      globalProjects: ['metamask-extension-farm', 'metamask-mobile-farm'],
+    }),
+    'metamask-mobile-farm',
   );
 });
 

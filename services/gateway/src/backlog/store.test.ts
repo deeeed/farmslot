@@ -462,19 +462,51 @@ test('launch plan queues baseline first and materializes comparison candidates i
   assert.deepEqual(codex?.allowedSlots, ['macwork-ff-1', 'macwork-ff-2']);
 });
 
-test('manual backlog enqueue rejects invalid allowedSlots before queueing', async () => {
+test('manual backlog create rejects invalid allowedSlots before persistence', async () => {
+  const { backlog, queue } = await freshStores();
+  await assert.rejects(
+    () =>
+      backlog.createBacklogItem(
+        {
+          project: 'farmslot-farm',
+          title: 'Invalid isolated slot',
+          sourceKind: 'manual',
+          flowType: 'dev',
+          status: 'ready',
+          allowedSlots: ['no-such-slot'],
+        },
+        { kind: 'system' },
+      ),
+    /allowed slot not found: no-such-slot/,
+  );
+
+  assert.equal(queue.getQueueSnapshot().length, 0);
+  assert.equal(backlog.listBacklogItems({ includeArchived: true }).items.length, 0);
+});
+
+test('manual backlog enqueue rejects a persisted allowedSlot that became invalid', async () => {
   const { backlog, queue } = await freshStores();
   const created = await backlog.createBacklogItem(
     {
       project: 'farmslot-farm',
-      title: 'Invalid isolated slot',
+      title: 'Stale isolated slot',
       sourceKind: 'manual',
       flowType: 'dev',
       status: 'ready',
-      allowedSlots: ['no-such-slot'],
+      allowedSlots: ['macwork-ff-1'],
     },
     { kind: 'system' },
   );
+  await backlog.flushBacklogForTests();
+  const stored = JSON.parse(await readFile(process.env.FARMSLOT_BACKLOG_FILE!, 'utf-8')) as Array<{
+    id: string;
+    allowedSlots?: string[];
+  }>;
+  const storedItem = stored.find((item) => item.id === created.item.id);
+  assert.ok(storedItem);
+  storedItem.allowedSlots = ['no-such-slot'];
+  await writeFile(process.env.FARMSLOT_BACKLOG_FILE!, JSON.stringify(stored), 'utf-8');
+  await backlog.loadBacklog();
 
   await assert.rejects(
     () => backlog.enqueueBacklogItem({ itemId: created.item.id }),
@@ -686,6 +718,145 @@ test('backlog.update rejects public lifecycle and run linkage mutation', async (
       } as never),
     /cannot mutate lifecycle/,
   );
+});
+
+test('backlog.update changes the owning project and clears project-owned dispatch config', async () => {
+  const { backlog } = await freshStores();
+  const targetProject = `backlog-test-farm-${process.pid}`;
+  const targetProjectDir = path.join(farmslotRoot, 'projects', targetProject);
+  await mkdir(targetProjectDir, { recursive: true });
+  await writeFile(path.join(targetProjectDir, 'project.json'), '{}', 'utf-8');
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Correct project ownership',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      allowedSlots: ['macwork-ff-1'],
+      taskTemplate: { fileName: 'dev-interactive.md', variant: 'interactive' },
+      app: 'command-center',
+      prepareProfile: 'sandbox',
+      scripted: { mode: 'command', commandRef: 'project-command' },
+      launchPlan: {
+        id: 'project-owned-plan',
+        version: 1,
+        candidates: [
+          {
+            id: 'baseline',
+            role: 'baseline',
+            slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+          },
+        ],
+      },
+    },
+    { kind: 'system' },
+  );
+
+  try {
+    const updated = await backlog.updateBacklogItem({
+      itemId: created.item.id,
+      project: targetProject,
+    });
+
+    assert.equal(updated.item.project, targetProject);
+    assert.equal(updated.item.allowedSlots, undefined);
+    assert.equal(updated.item.taskTemplate, undefined);
+    assert.equal(updated.item.app, undefined);
+    assert.equal(updated.item.prepareProfile, undefined);
+    assert.equal(updated.item.scripted, undefined);
+    assert.equal(updated.item.launchPlan, undefined);
+  } finally {
+    await rm(targetProjectDir, { recursive: true, force: true });
+  }
+});
+
+test('backlog.update rejects project changes while queue or run linkage exists', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Keep linked ownership stable',
+      sourceKind: 'manual',
+      flowType: 'dev',
+    },
+    { kind: 'system' },
+  );
+
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'failed';
+    item.runId = 'run-1';
+  });
+  await assert.rejects(
+    () =>
+      backlog.updateBacklogItem({
+        itemId: created.item.id,
+        project: 'metamask-core-farm',
+      }),
+    /linked to a queue or run/,
+  );
+
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.status = 'running';
+    delete item.runId;
+  });
+  await assert.rejects(
+    () =>
+      backlog.updateBacklogItem({
+        itemId: created.item.id,
+        project: 'metamask-core-farm',
+      }),
+    /while backlog item is running/,
+  );
+});
+
+test('backlog.update clears a project template when the flow changes', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Change dispatch flow',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      taskTemplate: { fileName: 'dev-interactive.md', variant: 'interactive' },
+      mode: 'interactive',
+      devInteractiveProfile: 'reviewed',
+    },
+    { kind: 'system' },
+  );
+
+  const updated = await backlog.updateBacklogItem({
+    itemId: created.item.id,
+    flowType: 'fix-bug',
+  });
+
+  assert.equal(updated.item.flowType, 'fix-bug');
+  assert.equal(updated.item.taskTemplate, undefined);
+  assert.equal(updated.item.mode, undefined);
+  assert.equal(updated.item.devInteractiveProfile, undefined);
+});
+
+test('backlog.update allows metadata repair when an untouched slot restriction is stale', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Repair stale metadata',
+      sourceKind: 'manual',
+      flowType: 'dev',
+    },
+    { kind: 'system' },
+  );
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.allowedSlots = ['removed-slot'];
+  });
+
+  const updated = await backlog.updateBacklogItem({
+    itemId: created.item.id,
+    notes: 'Metadata remains repairable.',
+  });
+
+  assert.equal(updated.item.notes, 'Metadata remains repairable.');
+  assert.deepEqual(updated.item.allowedSlots, ['removed-slot']);
 });
 
 test('backlog.archive moves finished backlog items to archived', async () => {

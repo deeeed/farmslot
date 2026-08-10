@@ -25,9 +25,12 @@ import type {
   ConfigTemplateOptionsResult,
   FlowType,
   ProjectConfig,
+  ReviewDepthPolicy,
+  ReviewLoopRequest,
   Run,
   SafetyTier,
   SlotStatus,
+  TaskTemplateSelection,
   WorkerTemplateOption,
   WorkGraphActivateResult,
   WorkGraphProjection,
@@ -115,6 +118,7 @@ import {
   canArchiveBacklogItemForUi,
   canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
+  canEditBacklogDispatchForUi,
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
   CUSTOM_REFINEMENT_CHOICE,
@@ -206,9 +210,65 @@ interface DraftLaunchPlan {
   candidates: DraftLaunchCandidate[];
 }
 
+interface BacklogMetadataDraft {
+  project: string;
+  title: string;
+  sourceKind: BacklogSourceKind;
+  sourceRef: string;
+  flowType: FlowType;
+  notes: string;
+  tags: string;
+  priority: string;
+  autoDispatch: boolean;
+}
+
+interface BacklogDispatchDraft {
+  runner: string;
+  model: string;
+  effort: string;
+  taskTemplate: TaskTemplateSelection | null;
+  prepareProfile: string;
+  mode: 'interactive' | 'autonomous' | '';
+  devInteractiveProfile: 'lightweight' | 'reviewed' | '';
+  reviewDepth?: ReviewDepthPolicy;
+  pendingReviewPlan: ReviewLoopRequest[];
+}
+
 interface LaunchSlotSelectorState {
   key: string;
   index: number;
+}
+
+function metadataDraftFromItem(item: BacklogItem): BacklogMetadataDraft {
+  return {
+    project: item.project,
+    title: item.title,
+    sourceKind: item.sourceKind,
+    sourceRef: item.sourceRef,
+    flowType: item.flowType,
+    notes: item.notes ?? '',
+    tags: (item.tags ?? []).join(', '),
+    priority: String(item.priority),
+    autoDispatch: item.autoDispatch === true,
+  };
+}
+
+function defaultDispatchDraft(): BacklogDispatchDraft {
+  return {
+    runner: '',
+    model: '',
+    effort: '',
+    taskTemplate: null,
+    prepareProfile: '',
+    mode: '',
+    devInteractiveProfile: '',
+    pendingReviewPlan: [],
+  };
+}
+
+function priorityFromInput(value: string): number {
+  const priority = Number(value);
+  return Number.isFinite(priority) && priority > 0 ? priority : 10;
 }
 
 function slotsText(item: BacklogItem): string {
@@ -275,6 +335,7 @@ export class BacklogPanel extends LitElement {
   @state() private _draftPriority = '10';
   @state() private _draftAllowedSlots: string[] = [];
   @state() private _draftAutoDispatch = false;
+  @state() private _draftDispatch = defaultDispatchDraft();
   @state() private _createPanelOpen = false;
   @state() private _selectedItemId = '';
   @state() private _selectedItemMode: BacklogDetailMode = 'view';
@@ -299,7 +360,7 @@ export class BacklogPanel extends LitElement {
   @state() private _configTemplateOptionsError: Record<string, string> = {};
   @state() private _configTemplateOptionsLoading: Record<string, boolean> = {};
   @state() private _launchSlotSelector: LaunchSlotSelectorState | null = null;
-  @state() private _notesDrafts: Record<string, string> = {};
+  @state() private _metadataDrafts: Record<string, BacklogMetadataDraft> = {};
   @state() private _launchDrafts: Record<string, DraftLaunchPlan> = {
     [NEW_PLAN_KEY]: defaultLaunchPlanDraft(),
   };
@@ -504,6 +565,13 @@ export class BacklogPanel extends LitElement {
       .slot-picker-field {
         display: grid;
         gap: 4px;
+      }
+      .form-section {
+        border-top: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        display: grid;
+        gap: ${unsafeCSS(spacing.md)};
+        margin-top: ${unsafeCSS(spacing.md)};
+        padding-top: ${unsafeCSS(spacing.md)};
       }
       .slot-picker-summary {
         border: 1px solid ${unsafeCSS(colors.textMuted)}33;
@@ -1218,7 +1286,7 @@ export class BacklogPanel extends LitElement {
       this._writeUrlState();
     }
     const selected = this._selectedItem;
-    if (this._dispatchConfigOpen && selected) {
+    if ((this._dispatchConfigOpen || this._selectedItemMode === 'edit') && selected) {
       void this._ensureDispatchConfigData(selected).catch((error) => {
         this._dispatchConfigError = error instanceof Error ? error.message : String(error);
       });
@@ -1300,6 +1368,18 @@ export class BacklogPanel extends LitElement {
   }
 
   private _setCreatePanelOpen(open: boolean) {
+    if (open && !this._createPanelOpen) {
+      const project = syncedBacklogDraftProject({
+        currentProject: this._draftProject,
+        availableProjects: this._projects,
+        globalProjects: this._globalFilters.projects,
+      });
+      if (project !== this._draftProject) {
+        this._setDraftProject(project);
+      } else if (project) {
+        void this._ensureDispatchConfigDataFor(project, this._draftFlow);
+      }
+    }
     this._createPanelOpen = open;
     if (!open) {
       this._launchSlotSelector = null;
@@ -1309,35 +1389,221 @@ export class BacklogPanel extends LitElement {
   }
 
   private _setDraftProject(project: string) {
+    if (project === this._draftProject) return;
     this._draftProject = project;
     const projectSlotIds = new Set(this._slotOptions(project).map((slot) => slot.slot));
     this._draftAllowedSlots = this._draftAllowedSlots.filter((slotId) =>
       projectSlotIds.has(slotId),
     );
+    this._draftDispatch = {
+      ...this._draftDispatch,
+      taskTemplate: null,
+      prepareProfile: '',
+      mode: '',
+      devInteractiveProfile: '',
+    };
+    if (project && this._projects.includes(project)) {
+      void this._ensureDispatchConfigDataFor(project, this._draftFlow);
+    }
   }
 
-  private _renderProjectPicker() {
+  private _createMetadataDraft(): BacklogMetadataDraft {
+    return {
+      project: this._draftProject,
+      title: this._draftTitle,
+      sourceKind: this._draftSourceKind,
+      sourceRef: this._draftSourceRef,
+      flowType: this._draftFlow,
+      notes: this._draftNotes,
+      tags: this._draftTags,
+      priority: this._draftPriority,
+      autoDispatch: this._draftAutoDispatch,
+    };
+  }
+
+  private _updateCreateMetadata(patch: Partial<BacklogMetadataDraft>) {
+    if (patch.project !== undefined && patch.project !== this._draftProject) {
+      this._setDraftProject(patch.project);
+    }
+    if (patch.title !== undefined) this._draftTitle = patch.title;
+    if (patch.sourceKind !== undefined) this._draftSourceKind = patch.sourceKind;
+    if (patch.sourceRef !== undefined) this._draftSourceRef = patch.sourceRef;
+    if (patch.flowType !== undefined && patch.flowType !== this._draftFlow) {
+      this._draftFlow = patch.flowType;
+      this._draftDispatch = {
+        ...this._draftDispatch,
+        taskTemplate: null,
+        mode: '',
+        devInteractiveProfile: '',
+        reviewDepth: undefined,
+        pendingReviewPlan: [],
+      };
+      if (this._draftProject) {
+        void this._ensureDispatchConfigDataFor(this._draftProject, this._draftFlow);
+      }
+    }
+    if (patch.notes !== undefined) this._draftNotes = patch.notes;
+    if (patch.tags !== undefined) this._draftTags = patch.tags;
+    if (patch.priority !== undefined) this._draftPriority = patch.priority;
+    if (patch.autoDispatch !== undefined) this._draftAutoDispatch = patch.autoDispatch;
+  }
+
+  private _metadataDraft(item: BacklogItem): BacklogMetadataDraft {
+    const saved = metadataDraftFromItem(item);
+    const draft = this._metadataDrafts[item.id];
+    if (!draft || canEditBacklogDispatchForUi(item)) return draft ?? saved;
+    return {
+      ...saved,
+      title: draft.title,
+      notes: draft.notes,
+      tags: draft.tags,
+    };
+  }
+
+  private _updateMetadataDraft(item: BacklogItem, patch: Partial<BacklogMetadataDraft>) {
+    const current = this._metadataDraft(item);
+    const next = { ...current, ...patch };
+    this._metadataDrafts = { ...this._metadataDrafts, [item.id]: next };
+  }
+
+  private _renderProjectChoice(
+    value: string,
+    onSelect: (project: string) => void,
+    testId: string,
+    disabled = false,
+  ) {
     const options = this._projects;
-    const customProjectActive =
-      Boolean(this._draftProject) && !options.includes(this._draftProject);
+    const customProjectActive = Boolean(value) && !options.includes(value);
+    const customOption = '__custom__';
     return html`<label>
       Project
       ${renderChoiceButtons({
-        options: [...options, ''],
-        value: customProjectActive ? '' : this._draftProject,
-        onSelect: (project) => this._setDraftProject(project),
-        labels: { '': 'Custom' },
-        testId: 'backlog-new-project-options',
+        options: [...options, customOption],
+        value: customProjectActive ? customOption : value,
+        onSelect: (project) => onSelect(project === customOption ? '' : project),
+        labels: { [customOption]: 'Custom' },
+        testId: `${testId}-options`,
+        disabled,
       })}
-      ${customProjectActive || !this._draftProject
+      ${customProjectActive || !value
         ? html`<input
-            data-testid="backlog-new-project"
+            data-testid=${testId}
             placeholder="custom project name"
-            .value=${this._draftProject}
-            @input=${(e: Event) => this._setDraftProject((e.target as HTMLInputElement).value)}
+            .value=${value}
+            ?disabled=${disabled}
+            @input=${(e: Event) => onSelect((e.target as HTMLInputElement).value)}
           />`
         : nothing}
     </label>`;
+  }
+
+  private _renderMetadataEditor(
+    draft: BacklogMetadataDraft,
+    onChange: (patch: Partial<BacklogMetadataDraft>) => void,
+    testId: string,
+    dispatchScopeDisabled = false,
+  ) {
+    return html`<div class="create-grid" data-testid=${testId}>
+      ${dispatchScopeDisabled
+        ? html`<div class="wide muted">
+            Project, source, flow, priority, and dispatch settings are locked while this item is
+            linked to execution. Title, context, and tags remain editable.
+          </div>`
+        : nothing}
+      <div class="wide">
+        ${this._renderProjectChoice(
+          draft.project,
+          (project) => onChange({ project }),
+          `${testId}-project`,
+          dispatchScopeDisabled,
+        )}
+      </div>
+      <label class="span-2">
+        Source
+        ${renderChoiceButtons({
+          options: SOURCES,
+          value: draft.sourceKind,
+          onSelect: (sourceKind) => onChange({ sourceKind }),
+          testId: `${testId}-source`,
+          disabled: dispatchScopeDisabled,
+        })}
+      </label>
+      <label class="span-2">
+        Flow
+        ${renderChoiceButtons({
+          options: FLOWS,
+          value: draft.flowType,
+          onSelect: (flowType) => onChange({ flowType }),
+          testId: `${testId}-flow`,
+          disabled: dispatchScopeDisabled,
+        })}
+      </label>
+      <label class="wide">
+        Jira / GitHub ref
+        <input
+          data-testid=${`${testId}-source-ref`}
+          placeholder="TAT-3463, owner/repo#1, or a URL"
+          .value=${draft.sourceRef}
+          ?disabled=${dispatchScopeDisabled}
+          @input=${(event: Event) =>
+            onChange({ sourceRef: (event.target as HTMLInputElement).value })}
+        />
+        <span class="meta">Used as the title when Title is blank.</span>
+      </label>
+      <label class="wide">
+        Title
+        <input
+          data-testid=${`${testId}-title`}
+          placeholder="Concise operator-facing task title"
+          .value=${draft.title}
+          @input=${(event: Event) => onChange({ title: (event.target as HTMLInputElement).value })}
+        />
+      </label>
+      <label class="wide notes-field">
+        Task context markdown
+        <textarea
+          data-testid=${`${testId}-notes`}
+          placeholder="Task context, constraints, and acceptance criteria"
+          .value=${draft.notes}
+          @input=${(event: Event) =>
+            onChange({ notes: (event.target as HTMLTextAreaElement).value })}
+        ></textarea>
+        <span class="meta">Used as the title when both Title and ref are blank.</span>
+      </label>
+      <label class="span-2">
+        Tags
+        <input
+          data-testid=${`${testId}-tags`}
+          placeholder="roadmap, command-center"
+          .value=${draft.tags}
+          @input=${(event: Event) => onChange({ tags: (event.target as HTMLInputElement).value })}
+        />
+      </label>
+      <label>
+        Priority
+        <input
+          data-testid=${`${testId}-priority`}
+          type="number"
+          min="1"
+          .value=${draft.priority}
+          ?disabled=${dispatchScopeDisabled}
+          @input=${(event: Event) =>
+            onChange({ priority: (event.target as HTMLInputElement).value })}
+        />
+      </label>
+      <label title=${AUTO_DISPATCH_TOOLTIP}>
+        Auto-dispatch
+        <input
+          data-testid=${`${testId}-auto-dispatch`}
+          type="checkbox"
+          title=${AUTO_DISPATCH_TOOLTIP}
+          .checked=${draft.autoDispatch}
+          ?disabled=${dispatchScopeDisabled}
+          @change=${(event: Event) =>
+            onChange({ autoDispatch: (event.target as HTMLInputElement).checked })}
+        />
+      </label>
+    </div>`;
   }
 
   private _toggleStatusFilter(status: BacklogStatus) {
@@ -1354,6 +1620,7 @@ export class BacklogPanel extends LitElement {
   }
 
   private _setDispatchConfigOpen(open: boolean) {
+    if (open && this._selectedItem && !canEditBacklogDispatchForUi(this._selectedItem)) return;
     this._dispatchConfigOpen = open;
     this._dispatchConfigError = '';
     this._writeUrlState();
@@ -1538,6 +1805,12 @@ export class BacklogPanel extends LitElement {
   private _setSelectedItemMode(mode: BacklogDetailMode) {
     this._selectedItemMode = mode;
     this._writeUrlState();
+    const item = this._selectedItem;
+    if (mode === 'edit' && item) {
+      void this._ensureDispatchConfigData(item).catch((error) => {
+        this._dispatchConfigError = error instanceof Error ? error.message : String(error);
+      });
+    }
   }
 
   private _slotOptions(project: string): SlotStatus[] {
@@ -1567,12 +1840,16 @@ export class BacklogPanel extends LitElement {
   }
 
   private async _ensureDispatchConfigData(item: BacklogItem): Promise<void> {
+    return this._ensureDispatchConfigDataFor(item.project, item.flowType);
+  }
+
+  private async _ensureDispatchConfigDataFor(project: string, flowType: FlowType): Promise<void> {
     if (this._configProjectConfigs.length === 0) {
       const result = await gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {});
       this._configProjectConfigs = result.projects;
     }
 
-    const key = templateOptionsRequestKey(item.project, item.flowType);
+    const key = templateOptionsRequestKey(project, flowType);
     if (this._configTemplateOptions[key] || this._configTemplateOptionsLoading[key]) return;
     this._configTemplateOptionsLoading = { ...this._configTemplateOptionsLoading, [key]: true };
     this._configTemplateOptionsError = { ...this._configTemplateOptionsError, [key]: '' };
@@ -1580,8 +1857,8 @@ export class BacklogPanel extends LitElement {
       const result = await gateway.request<ConfigTemplateOptionsResult>(
         Methods.CONFIG_TEMPLATE_OPTIONS,
         {
-          project: item.project,
-          flowType: item.flowType,
+          project,
+          flowType,
         },
       );
       this._configTemplateOptions = { ...this._configTemplateOptions, [key]: result.options };
@@ -1620,6 +1897,24 @@ export class BacklogPanel extends LitElement {
       ...backlogPatch
     } = detail;
     return this._updateDispatchConfig(item, backlogPatch);
+  }
+
+  private _updateCreateDispatchConfig(detail: DispatchConfigChangeDetail) {
+    const next = { ...this._draftDispatch };
+    if (detail.runner !== undefined) next.runner = detail.runner ?? '';
+    if (detail.model !== undefined) next.model = detail.model ?? '';
+    if (detail.effort !== undefined) next.effort = detail.effort ?? '';
+    if (detail.taskTemplate !== undefined) next.taskTemplate = detail.taskTemplate;
+    if (detail.prepareProfile !== undefined) next.prepareProfile = detail.prepareProfile ?? '';
+    if (detail.mode !== undefined) next.mode = detail.mode ?? '';
+    if (detail.devInteractiveProfile !== undefined) {
+      next.devInteractiveProfile = detail.devInteractiveProfile ?? '';
+    }
+    if (detail.reviewDepth !== undefined) next.reviewDepth = detail.reviewDepth ?? undefined;
+    if (detail.pendingReviewPlan !== undefined) {
+      next.pendingReviewPlan = detail.pendingReviewPlan ?? [];
+    }
+    this._draftDispatch = next;
   }
 
   private _allowedSlotsFromDraft(): string[] | undefined {
@@ -1982,7 +2277,8 @@ export class BacklogPanel extends LitElement {
           : html`<button
               class="secondary"
               type="button"
-              ?disabled=${this._dispatchConfigBusy === item.id}
+              ?disabled=${this._dispatchConfigBusy === item.id ||
+              !canEditBacklogDispatchForUi(item)}
               @click=${() => this._setDispatchConfigOpen(true)}
             >
               Edit dispatch config
@@ -2032,8 +2328,8 @@ export class BacklogPanel extends LitElement {
   }
 
   private _renderDispatchConfigModal(item: BacklogItem) {
-    if (!this._dispatchConfigOpen) return nothing;
-    const disabled = this._dispatchConfigBusy === item.id;
+    if (!this._dispatchConfigOpen || !canEditBacklogDispatchForUi(item)) return nothing;
+    const disabled = this._dispatchConfigBusy === item.id || !canEditBacklogDispatchForUi(item);
     const templateState = this._templateOptionsStateForItem(item);
     return html`
       <div
@@ -2066,28 +2362,7 @@ export class BacklogPanel extends LitElement {
           ${this._dispatchConfigError
             ? html`<div class="error">${this._dispatchConfigError}</div>`
             : nothing}
-          <dispatch-config-editor
-            .project=${item.project}
-            .flowType=${item.flowType}
-            .runner=${item.runner ?? ''}
-            .model=${item.model ?? ''}
-            .effort=${item.effort ?? ''}
-            .mode=${item.mode ?? ''}
-            .devInteractiveProfile=${item.devInteractiveProfile ?? ''}
-            .taskTemplate=${item.taskTemplate ?? null}
-            .templateOptions=${this._templateOptionsForItem(item)}
-            .prepareProfile=${item.prepareProfile ?? ''}
-            .prepareProfiles=${projectPrepareProfiles(this._configProjectConfigs, item.project)}
-            .pendingReviewPlan=${item.pendingReviewPlan ?? []}
-            .controls=${BACKLOG_DISPATCH_CONFIG_CONTROLS}
-            .disabled=${disabled}
-            @dispatch-config-change=${(event: CustomEvent<DispatchConfigChangeDetail>) =>
-              this._updateDispatchConfigFromEditor(item, event.detail)}
-          ></dispatch-config-editor>
-          ${templateState.loading
-            ? html`<div class="muted">Loading task templates...</div>`
-            : nothing}
-          ${templateState.error ? html`<div class="error">${templateState.error}</div>` : nothing}
+          ${this._renderDispatchConfigEditor(item, disabled, templateState)}
           <div class="config-grid">
             <label class="config-field">
               <span>Priority</span>
@@ -2138,6 +2413,68 @@ export class BacklogPanel extends LitElement {
         </section>
       </div>
     `;
+  }
+
+  private _renderDispatchConfigEditor(
+    item: BacklogItem,
+    disabled: boolean,
+    templateState = this._templateOptionsStateForItem(item),
+  ) {
+    return html`
+      <dispatch-config-editor
+        .project=${item.project}
+        .flowType=${item.flowType}
+        .runner=${item.runner ?? ''}
+        .model=${item.model ?? ''}
+        .effort=${item.effort ?? ''}
+        .mode=${item.mode ?? ''}
+        .devInteractiveProfile=${item.devInteractiveProfile ?? ''}
+        .taskTemplate=${item.taskTemplate ?? null}
+        .selectedTaskTemplateFileName=${item.taskTemplate?.fileName ?? ''}
+        .templateOptions=${this._templateOptionsForItem(item)}
+        .prepareProfile=${item.prepareProfile ?? ''}
+        .prepareProfiles=${projectPrepareProfiles(this._configProjectConfigs, item.project)}
+        .pendingReviewPlan=${item.pendingReviewPlan ?? []}
+        .controls=${BACKLOG_DISPATCH_CONFIG_CONTROLS}
+        .disabled=${disabled}
+        @dispatch-config-change=${(event: CustomEvent<DispatchConfigChangeDetail>) =>
+          this._updateDispatchConfigFromEditor(item, event.detail)}
+      ></dispatch-config-editor>
+      ${templateState.loading ? html`<div class="muted">Loading task templates...</div>` : nothing}
+      ${templateState.error ? html`<div class="error">${templateState.error}</div>` : nothing}
+    `;
+  }
+
+  private _renderEditDispatchConfig(item: BacklogItem) {
+    const draft = this._metadataDraft(item);
+    const scopeChanged = draft.project.trim() !== item.project || draft.flowType !== item.flowType;
+    const disabled = this._dispatchConfigBusy === item.id || scopeChanged;
+    return html`<section class="form-section" aria-label="Edit dispatch config">
+      <div class="field-label">Dispatch config</div>
+      <div class="muted">
+        ${scopeChanged
+          ? 'Save the project or flow change before editing its dispatch configuration.'
+          : 'Dispatch configuration changes save immediately.'}
+      </div>
+      ${this._dispatchConfigError
+        ? html`<div class="error">${this._dispatchConfigError}</div>`
+        : nothing}
+      ${this._renderDispatchConfigEditor(item, disabled)}
+      <div class="slot-picker">
+        <div>
+          <div class="field-label">Allowed slots</div>
+          <div class="muted">Filtered by the global project and machine selectors.</div>
+        </div>
+        <slot-choice-list
+          .project=${item.project}
+          .slots=${this._dispatchSlotOptions(item)}
+          .selectedSlots=${item.allowedSlots ?? []}
+          .disabled=${disabled}
+          @slot-choice-change=${(event: CustomEvent<SlotChoiceChangeDetail>) =>
+            this._updateDispatchConfig(item, { allowedSlots: event.detail.allowedSlots })}
+        ></slot-choice-list>
+      </div>
+    </section>`;
   }
 
   private _renderSpecAttachment(item: BacklogItem) {
@@ -2254,9 +2591,21 @@ export class BacklogPanel extends LitElement {
         flowType: this._draftFlow,
         notes: this._draftNotes || undefined,
         tags: tagsFromInput(this._draftTags),
-        priority: Number(this._draftPriority) || 10,
+        priority: priorityFromInput(this._draftPriority),
         allowedSlots: this._allowedSlotsFromDraft(),
         autoDispatch: this._draftAutoDispatch,
+        runner: this._draftDispatch.runner || undefined,
+        model: this._draftDispatch.model || undefined,
+        effort: this._draftDispatch.effort || undefined,
+        taskTemplate: this._draftDispatch.taskTemplate ?? undefined,
+        prepareProfile: this._draftDispatch.prepareProfile || undefined,
+        mode: this._draftDispatch.mode || undefined,
+        devInteractiveProfile: this._draftDispatch.devInteractiveProfile || undefined,
+        reviewDepth: this._draftDispatch.reviewDepth,
+        pendingReviewPlan:
+          this._draftDispatch.pendingReviewPlan.length > 0
+            ? this._draftDispatch.pendingReviewPlan
+            : undefined,
         launchPlan: this._launchPlanFromDraft(NEW_PLAN_KEY),
       });
       this._draftTitle = '';
@@ -2264,6 +2613,7 @@ export class BacklogPanel extends LitElement {
       this._draftNotes = '';
       this._draftTags = '';
       this._draftAllowedSlots = [];
+      this._draftDispatch = defaultDispatchDraft();
       this._setLaunchDraft(NEW_PLAN_KEY, defaultLaunchPlanDraft());
       this._message = 'Backlog item created';
       this._setCreatePanelOpen(false);
@@ -2340,21 +2690,55 @@ export class BacklogPanel extends LitElement {
       this._selectedItemMode = 'view';
       this._writeUrlState();
     }
-    const { [item.id]: _notes, ...remainingNotes } = this._notesDrafts;
+    const { [item.id]: _metadata, ...remainingMetadata } = this._metadataDrafts;
     const { [item.id]: _launchPlan, ...remainingLaunchPlans } = this._launchDrafts;
-    this._notesDrafts = remainingNotes;
+    this._metadataDrafts = remainingMetadata;
     this._launchDrafts = remainingLaunchPlans;
   }
 
-  private async _saveNotes(item: BacklogItem) {
-    await this._runItemAction(item.id, 'notes', () =>
-      gateway.request<BacklogUpdateResult>(Methods.BACKLOG_UPDATE, {
-        itemId: item.id,
-        notes: this._notesDrafts[item.id] ?? item.notes ?? '',
-      }),
+  private async _saveMetadata(item: BacklogItem) {
+    const draft = this._metadataDraft(item);
+    if (!draft.project.trim()) {
+      this._error = 'Backlog item project is required.';
+      return;
+    }
+    if (!draft.title.trim()) {
+      this._error = 'Backlog item title is required.';
+      return;
+    }
+    const priority = Number(draft.priority);
+    if (!Number.isFinite(priority) || priority < 1) {
+      this._error = 'Backlog item priority must be at least 1.';
+      return;
+    }
+    const savedDraft = metadataDraftFromItem(item);
+    const dispatchEditable = canEditBacklogDispatchForUi(item);
+    const update: BacklogUpdateInput & { itemId: string } = { itemId: item.id };
+    if (dispatchEditable && draft.project.trim() !== savedDraft.project) {
+      update.project = draft.project.trim();
+    }
+    if (draft.title.trim() !== savedDraft.title) update.title = draft.title.trim();
+    if (dispatchEditable && draft.sourceKind !== savedDraft.sourceKind) {
+      update.sourceKind = draft.sourceKind;
+    }
+    if (dispatchEditable && draft.sourceRef !== savedDraft.sourceRef) {
+      update.sourceRef = draft.sourceRef;
+    }
+    if (dispatchEditable && draft.flowType !== savedDraft.flowType) {
+      update.flowType = draft.flowType;
+    }
+    if (draft.notes !== savedDraft.notes) update.notes = draft.notes;
+    if (draft.tags !== savedDraft.tags) update.tags = tagsFromInput(draft.tags);
+    if (dispatchEditable && priority !== Number(savedDraft.priority)) update.priority = priority;
+    if (dispatchEditable && draft.autoDispatch !== savedDraft.autoDispatch) {
+      update.autoDispatch = draft.autoDispatch;
+    }
+    const saved = await this._runItemAction(item.id, 'item fields', () =>
+      gateway.request<BacklogUpdateResult>(Methods.BACKLOG_UPDATE, update),
     );
-    const { [item.id]: _saved, ...remainingDrafts } = this._notesDrafts;
-    this._notesDrafts = remainingDrafts;
+    if (!saved) return;
+    const { [item.id]: _saved, ...remainingDrafts } = this._metadataDrafts;
+    this._metadataDrafts = remainingDrafts;
   }
 
   private async _saveLaunchPlan(item: BacklogItem) {
@@ -2366,9 +2750,21 @@ export class BacklogPanel extends LitElement {
     );
   }
 
-  private _notesDirty(item: BacklogItem): boolean {
+  private _metadataDirty(item: BacklogItem): boolean {
+    const draft = this._metadataDrafts[item.id];
+    if (!draft) return false;
+    const saved = metadataDraftFromItem(item);
+    const descriptiveMetadataChanged =
+      draft.title !== saved.title || draft.notes !== saved.notes || draft.tags !== saved.tags;
+    if (!canEditBacklogDispatchForUi(item)) return descriptiveMetadataChanged;
     return (
-      this._notesDrafts[item.id] !== undefined && this._notesDrafts[item.id] !== (item.notes ?? '')
+      descriptiveMetadataChanged ||
+      draft.project !== saved.project ||
+      draft.sourceKind !== saved.sourceKind ||
+      draft.sourceRef !== saved.sourceRef ||
+      draft.flowType !== saved.flowType ||
+      draft.priority !== saved.priority ||
+      draft.autoDispatch !== saved.autoDispatch
     );
   }
 
@@ -2402,8 +2798,10 @@ export class BacklogPanel extends LitElement {
     try {
       const result = await action();
       this._message = typeof result === 'string' && result.trim() ? result : `${label} complete`;
+      return true;
     } catch (err) {
       this._error = (err as Error).message;
+      return false;
     } finally {
       this._busy = '';
     }
@@ -2498,95 +2896,58 @@ export class BacklogPanel extends LitElement {
     const slotOptions = this._slotOptions(this._draftProject);
     const selectedSlots = this._allowedSlotsFromDraft() ?? [];
     const canCreate = Boolean(this._draftProject && this._draftTitleForSubmit());
+    const templateKey = templateOptionsRequestKey(this._draftProject, this._draftFlow);
+    const templateOptions = this._configTemplateOptions[templateKey] ?? [];
+    const templateLoading = this._configTemplateOptionsLoading[templateKey] ?? false;
+    const templateError = this._configTemplateOptionsError[templateKey] ?? '';
     return html`<form @submit=${this._createItem}>
-      <div class="create-grid">
-        <div class="wide">${this._renderProjectPicker()}</div>
-        <label class="span-2">
-          Source
-          ${renderChoiceButtons({
-            options: SOURCES,
-            value: this._draftSourceKind,
-            onSelect: (source) => {
-              this._draftSourceKind = source;
-            },
-          })}
-        </label>
-        <label class="span-2">
-          Flow
-          ${renderChoiceButtons({
-            options: FLOWS,
-            value: this._draftFlow,
-            onSelect: (flow) => {
-              this._draftFlow = flow;
-            },
-          })}
-        </label>
-        <label class="wide">
-          Jira / GitHub ref
-          <input
-            placeholder="TAT-3463, owner/repo#1, or a URL"
-            .value=${this._draftSourceRef}
-            @input=${(e: Event) => (this._draftSourceRef = (e.target as HTMLInputElement).value)}
-          />
-          <span class="meta">Used as the title when title is blank.</span>
-        </label>
-        <label class="wide">
-          Title
-          <input
-            placeholder="Optional when ref or notes describe the task"
-            .value=${this._draftTitle}
-            @input=${(e: Event) => (this._draftTitle = (e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label class="wide notes-field">
-          Task context markdown
-          <textarea
-            placeholder="Add the actual wrapping context, implementation details, acceptance criteria, links, caveats, and dispatch instructions."
-            .value=${this._draftNotes}
-            @input=${(e: Event) => (this._draftNotes = (e.target as HTMLTextAreaElement).value)}
-          ></textarea>
-          <span class="meta">Used as the title fallback when both title and ref are blank.</span>
-        </label>
-        <label class="span-2">
-          Tags
-          <input
-            placeholder="roadmap, command-center"
-            .value=${this._draftTags}
-            @input=${(e: Event) => (this._draftTags = (e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label>
-          Priority
-          <input
-            type="number"
-            .value=${this._draftPriority}
-            @input=${(e: Event) => (this._draftPriority = (e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label title=${AUTO_DISPATCH_TOOLTIP}>
-          Auto-dispatch
-          <input
-            type="checkbox"
-            title=${AUTO_DISPATCH_TOOLTIP}
-            .checked=${this._draftAutoDispatch}
-            @change=${(e: Event) =>
-              (this._draftAutoDispatch = (e.target as HTMLInputElement).checked)}
-          />
-        </label>
-        <div class="slot-picker-field wide">
-          <span class="field-label">Allowed slots</span>
-          <div class="slot-picker-summary">
-            <div class="badges">${this._renderAllowedSlotChips(selectedSlots)}</div>
-            <button class="secondary" type="button" @click=${() => this._setSlotSelectorOpen(true)}>
-              Choose
-            </button>
-          </div>
-          <span class="meta">
-            ${slotOptions.length} project slot${slotOptions.length === 1 ? '' : 's'} match the
-            selected project.
-          </span>
+      ${this._renderMetadataEditor(
+        this._createMetadataDraft(),
+        (patch) => this._updateCreateMetadata(patch),
+        'backlog-create-metadata',
+      )}
+      ${this._globalFilters.projects.length > 1 && !this._draftProject
+        ? html`<span class="meta">
+            Choose one owning project. The top-bar projects only filter the visible workspace.
+          </span>`
+        : nothing}
+      <div class="slot-picker-field">
+        <span class="field-label">Allowed slots</span>
+        <div class="slot-picker-summary">
+          <div class="badges">${this._renderAllowedSlotChips(selectedSlots)}</div>
+          <button class="secondary" type="button" @click=${() => this._setSlotSelectorOpen(true)}>
+            Choose
+          </button>
         </div>
+        <span class="meta">
+          ${slotOptions.length} project slot${slotOptions.length === 1 ? '' : 's'} match the
+          selected project.
+        </span>
       </div>
+      <section class="form-section" aria-label="Dispatch config">
+        <div class="field-label">Dispatch config</div>
+        <dispatch-config-editor
+          .project=${this._draftProject}
+          .flowType=${this._draftFlow}
+          .runner=${this._draftDispatch.runner}
+          .model=${this._draftDispatch.model}
+          .effort=${this._draftDispatch.effort}
+          .mode=${this._draftDispatch.mode}
+          .devInteractiveProfile=${this._draftDispatch.devInteractiveProfile}
+          .taskTemplate=${this._draftDispatch.taskTemplate}
+          .selectedTaskTemplateFileName=${this._draftDispatch.taskTemplate?.fileName ?? ''}
+          .templateOptions=${templateOptions}
+          .prepareProfile=${this._draftDispatch.prepareProfile}
+          .prepareProfiles=${projectPrepareProfiles(this._configProjectConfigs, this._draftProject)}
+          .pendingReviewPlan=${this._draftDispatch.pendingReviewPlan}
+          .controls=${BACKLOG_DISPATCH_CONFIG_CONTROLS}
+          .disabled=${!this._draftProject}
+          @dispatch-config-change=${(event: CustomEvent<DispatchConfigChangeDetail>) =>
+            this._updateCreateDispatchConfig(event.detail)}
+        ></dispatch-config-editor>
+        ${templateLoading ? html`<div class="muted">Loading task templates...</div>` : nothing}
+        ${templateError ? html`<div class="error">${templateError}</div>` : nothing}
+      </section>
       ${this._renderLaunchPlanEditor(NEW_PLAN_KEY)}
       <div class="actions" style="margin-top: 10px;">
         <button ?disabled=${this._busy === 'create' || !canCreate}>Create</button>
@@ -3014,18 +3375,20 @@ export class BacklogPanel extends LitElement {
       mode === 'edit'
         ? html`<button
               class="secondary"
-              ?disabled=${this._busy.endsWith(item.id) || !this._notesDirty(item)}
-              @click=${() => this._saveNotes(item)}
+              ?disabled=${this._busy.endsWith(item.id) || !this._metadataDirty(item)}
+              @click=${() => this._saveMetadata(item)}
             >
-              Save notes
+              Save item
             </button>
-            <button
-              class="secondary"
-              ?disabled=${this._busy.endsWith(item.id) || !this._launchPlanDirty(item)}
-              @click=${() => this._saveLaunchPlan(item)}
-            >
-              Save launch plan
-            </button>
+            ${canEditBacklogDispatchForUi(item)
+              ? html`<button
+                  class="secondary"
+                  ?disabled=${this._busy.endsWith(item.id) || !this._launchPlanDirty(item)}
+                  @click=${() => this._saveLaunchPlan(item)}
+                >
+                  Save launch plan
+                </button>`
+              : nothing}
             ${showEditDelete
               ? html`<button
                   class=${this._confirmCleanupClass('delete', item.id, 'danger')}
@@ -3088,8 +3451,8 @@ export class BacklogPanel extends LitElement {
         </header>
       </section>`;
     }
-    const notesValue = this._notesDrafts[item.id] ?? item.notes ?? '';
     const mode = this._selectedItemMode;
+    const dispatchEditable = canEditBacklogDispatchForUi(item);
     return html`<section class="detail-panel" aria-label="Selected backlog item">
       <header class="detail-top">
         <div class="detail-title-row">
@@ -3130,24 +3493,23 @@ export class BacklogPanel extends LitElement {
         label="Linked run"
       ></linked-run-summary>
       ${this._renderSpecAttachment(item)} ${this._renderLaunchPlanSummary(item)}
-      ${this._renderDispatchConfigSummary(item, false, true)}
-      ${mode === 'edit' ? this._renderLaunchPlanEditor(item.id, item) : nothing}
       ${mode === 'edit'
-        ? html`<label
-            >Agent notes
-            <textarea
-              .value=${notesValue}
-              @input=${(e: Event) => {
-                this._notesDrafts = {
-                  ...this._notesDrafts,
-                  [item.id]: (e.target as HTMLTextAreaElement).value,
-                };
-              }}
-            ></textarea>
-          </label>`
+        ? this._renderMetadataEditor(
+            this._metadataDraft(item),
+            (patch) => this._updateMetadataDraft(item, patch),
+            'backlog-edit-metadata',
+            !dispatchEditable,
+          )
+        : nothing}
+      ${mode === 'edit' && dispatchEditable
+        ? this._renderEditDispatchConfig(item)
+        : this._renderDispatchConfigSummary(item, false, true)}
+      ${mode === 'edit' && dispatchEditable ? this._renderLaunchPlanEditor(item.id, item) : nothing}
+      ${mode === 'edit'
+        ? nothing
         : html`<div>
             <div class="field-label">Agent notes</div>
-            <pre class="notes-view">${notesValue || 'No notes.'}</pre>
+            <pre class="notes-view">${item.notes || 'No notes.'}</pre>
           </div>`}
       ${this._renderItemActionButtons(item, mode)} ${this._renderSpecViewerModal(item)}
     </section>`;

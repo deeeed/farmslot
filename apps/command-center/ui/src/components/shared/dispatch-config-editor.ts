@@ -181,6 +181,7 @@ export class DispatchConfigEditor extends LitElement {
   }
 
   private modeValue(): 'interactive' | 'autonomous' {
+    if (this.mode) return this.mode;
     if (this.resolvedControls().template && this.flowType && this.templateOptions.length > 0) {
       return selectedTemplateMode(
         this.flowType,
@@ -190,7 +191,7 @@ export class DispatchConfigEditor extends LitElement {
           '',
       );
     }
-    return this.mode || 'autonomous';
+    return 'autonomous';
   }
 
   private templateFileName(): string {
@@ -207,6 +208,19 @@ export class DispatchConfigEditor extends LitElement {
           : null,
       mode: null,
     });
+  }
+
+  private setMode(mode: 'interactive' | 'autonomous') {
+    const matchingTemplates = this.templateOptions.filter(
+      (option) =>
+        selectedTemplateMode(this.flowType || null, this.templateOptions, option.fileName) === mode,
+    );
+    const template = matchingTemplates.find((option) => option.isDefault) ?? matchingTemplates[0];
+    if (template) {
+      this.setTemplate(template.fileName);
+      return;
+    }
+    this.emitChange({ mode });
   }
 
   private reviewPlanWith(next: readonly ReviewLoopRequest[]): {
@@ -256,12 +270,10 @@ export class DispatchConfigEditor extends LitElement {
 
   private renderMode() {
     const controls = this.resolvedControls();
-    if (!controls.explicitModeFallback || (controls.template && this.templateOptions.length > 1)) {
-      return nothing;
-    }
+    if (!controls.explicitModeFallback) return nothing;
     const mode = this.modeValue();
     return html`<div class="group">
-      <div class="section-label">Template</div>
+      <div class="section-label">Run mode</div>
       <div class="pill-row">
         ${(['autonomous', 'interactive'] as const).map(
           (option) =>
@@ -269,14 +281,16 @@ export class DispatchConfigEditor extends LitElement {
               class="pill ${mode === option ? 'selected' : ''}"
               type="button"
               ?disabled=${this.disabled}
-              @click=${() => this.emitChange({ mode: option })}
+              @click=${() => this.setMode(option)}
             >
               ${option}
             </button>`,
         )}
       </div>
       <div class="section-help">
-        Fallback only: project templates were not available, so this stores an explicit run mode.
+        ${this.templateOptions.length > 0
+          ? 'Selects the matching project-owned worker template.'
+          : 'Project templates are unavailable, so this stores an explicit run mode.'}
       </div>
     </div>`;
   }

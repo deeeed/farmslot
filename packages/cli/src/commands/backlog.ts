@@ -260,7 +260,8 @@ export function registerBacklogCommand(program: Command): void {
 
   backlog
     .command('update <ref>')
-    .description('Update title/notes/priority/multi-pr of a backlog item')
+    .description('Update project/title/notes/priority/multi-pr of a backlog item')
+    .option('--project <project>', 'New owning project')
     .option('--title <title>', 'New title')
     .option('--notes <notes>', 'New notes')
     .option('--priority <n>', 'New priority')
@@ -272,7 +273,13 @@ export function registerBacklogCommand(program: Command): void {
     .action(
       async (
         ref: string,
-        opts: { title?: string; notes?: string; priority?: string; multiPr?: boolean },
+        opts: {
+          project?: string;
+          title?: string;
+          notes?: string;
+          priority?: string;
+          multiPr?: boolean;
+        },
         cmd: Command,
       ) => {
         const ctx = resolveContext(cmd);
@@ -284,6 +291,7 @@ export function registerBacklogCommand(program: Command): void {
               const item = await resolveItem(ctx, ref);
               const result = await ctx.client.call<BacklogUpdateResult>('backlog.update', {
                 itemId: item.id,
+                ...(opts.project ? { project: opts.project } : {}),
                 ...(opts.title ? { title: opts.title } : {}),
                 ...(opts.notes ? { notes: opts.notes } : {}),
                 ...(opts.priority ? { priority: Number(opts.priority) } : {}),

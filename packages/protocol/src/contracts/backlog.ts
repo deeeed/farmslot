@@ -31,6 +31,15 @@ export const ARCHIVABLE_BACKLOG_STATUSES: ReadonlySet<BacklogStatus> = new Set([
   'needs-attention',
 ]);
 
+// Clients use these statuses together with queue/run linkage to decide whether
+// project-owned dispatch configuration remains editable.
+export const EDITABLE_BACKLOG_STATUSES: ReadonlySet<BacklogStatus> = new Set([
+  'candidate',
+  'ready',
+  'failed',
+  'needs-attention',
+]);
+
 export const BACKLOG_SOURCE_KINDS = ['jira', 'github', 'manual'] as const;
 export type BacklogSourceKind = (typeof BACKLOG_SOURCE_KINDS)[number];
 
@@ -273,6 +282,7 @@ export interface BacklogCreateInput {
 }
 
 export interface BacklogUpdateInput {
+  project?: string;
   title?: string;
   sourceKind?: BacklogSourceKind;
   sourceRef?: string;

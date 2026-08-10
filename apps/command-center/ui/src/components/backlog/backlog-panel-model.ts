@@ -5,6 +5,7 @@ import {
   type BacklogRefinementSessionGetResult,
   type BacklogRefineResult,
   type BacklogStatus,
+  EDITABLE_BACKLOG_STATUSES,
   isTerminalRunStatus,
   type Run,
 } from '@farmslot/protocol';
@@ -107,6 +108,12 @@ export function canDequeueBacklogItemForUi(item: Pick<BacklogItem, 'status'>): b
   return item.status === 'queued' || item.status === 'dispatching';
 }
 
+export function canEditBacklogDispatchForUi(
+  item: Pick<BacklogItem, 'status' | 'queuedQueueItemId' | 'runId'>,
+): boolean {
+  return EDITABLE_BACKLOG_STATUSES.has(item.status) && !item.queuedQueueItemId && !item.runId;
+}
+
 export function canMarkReadyBacklogItemForUi(item: Pick<BacklogItem, 'status'>): boolean {
   return (
     item.status === 'candidate' || item.status === 'failed' || item.status === 'needs-attention'
@@ -193,7 +200,20 @@ export function parseBacklogStatusFilter(raw: string | null): ReadonlySet<Backlo
   return valid.length > 0 ? new Set(valid) : DEFAULT_BACKLOG_STATUS_FILTER;
 }
 
-export const syncedBacklogDraftProject = syncedDraftProject;
+export function syncedBacklogDraftProject(input: {
+  currentProject: string;
+  availableProjects: readonly string[];
+  globalProjects: readonly string[];
+}): string {
+  const globalProjects = [...new Set(input.globalProjects.map((project) => project.trim()))].filter(
+    Boolean,
+  );
+  if (globalProjects.length > 1) {
+    const current = input.currentProject.trim();
+    return current && globalProjects.includes(current) ? current : '';
+  }
+  return syncedDraftProject(input);
+}
 
 /** Pure view-model for the backlog "Refine with runner" picker launch/resume UI. */
 export function backlogRefinementPickerView(state: {
