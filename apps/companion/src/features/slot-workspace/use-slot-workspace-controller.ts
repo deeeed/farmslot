@@ -82,20 +82,23 @@ import type {
 
 export function useSlotWorkspaceController() {
   const {
-    id,
+    id: routeId,
+    slotId: routeSlotId,
     runId: routeRunId,
     recipeRun: routeRecipeRunId,
     artifact: routeArtifactPath,
     workspace,
     decisionKind,
   } = useLocalSearchParams<{
-    id: string;
+    id?: string | string[];
+    slotId?: string | string[];
     runId?: string | string[];
     recipeRun?: string | string[];
     artifact?: string | string[];
     workspace?: string | string[];
     decisionKind?: string | string[];
   }>();
+  const id = routeParamString(routeId ?? routeSlotId).trim();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const slot = useFleetStore((s) => s.fleet?.slots.find((sl) => sl.slot === id));

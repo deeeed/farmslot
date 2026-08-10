@@ -18,15 +18,11 @@ import {
   type RunGetResult,
   type RunRecipeRunsForRunResult,
   type RunRefreshMirrorResult,
-  type TaskProgressResult,
-  type TaskProgressStructured,
-  type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 
 import { ArtifactCard } from '../../components/ArtifactCard';
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { MediaViewer } from '../../components/MediaViewer';
-import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import {
   type ArtifactStickyChromeLayout,
   artifactStickyChromeThreshold,
@@ -38,9 +34,7 @@ import {
   artifactUrlForEntry,
   classifyArtifact,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-  deriveBaselineVisualArtifactPairs,
   extractRunArtifactManifest,
-  groupVisualArtifactPairs,
   resolveRecipeRunSelection,
 } from '../../lib/artifact-url';
 import {
@@ -51,27 +45,10 @@ import {
 } from '../../lib/artifact-workspace';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
-import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
-import { selectSlotRecipeArtifactsForPreviewScope } from '../../lib/slot-workspace';
-import {
-  effectiveTaskProgressForRun,
-  fallbackTaskProgressSummary,
-  isWorkerProgressActive,
-  shouldAcceptTaskProgressUpdate,
-} from '../../lib/task-progress';
 import { baseStyles, spacing } from '../../lib/theme';
 import {
-  selectPrimaryWorkspaceDecision,
-  selectReadyWorkspaceDecision,
-  selectRetrospectiveWorkspaceDecision,
-  selectReviewGateWorkspaceDecision,
-  workspaceDecisionKind,
-} from '../../lib/workspace-decisions';
-import { summarizeRunWorkspaceNavMeta } from '../../lib/workspace-nav-meta';
-import {
-  artifactFilterParamForWorkspaceNav,
   artifactWorkspaceNavCurrent,
   targetWorkspaceRouteContextParams,
   workspaceRouteContextParams,
@@ -82,8 +59,6 @@ import { useRunStore } from '../../store/runs';
 import {
   ArtifactHeader,
   ArtifactStickyFilter,
-  groupArtifacts,
-  recipeRunIdForVisualPair,
   routeParamString,
 } from './components/artifact-viewer-panels';
 import { artifactViewerStyles as styles } from './styles/artifact-viewer.styles';
@@ -132,11 +107,7 @@ export default function ArtifactViewerScreen() {
   );
   const [artifactFilter, setArtifactFilter] = useState<ArtifactWorkspaceFilter>('all');
   const [artifactQuery, setArtifactQuery] = useState('');
-  const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
-  const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
-  const [workspaceNavLayout, setWorkspaceNavLayout] = useState<ArtifactStickyChromeLayout | null>(
-    null,
-  );
+  const [filterLayout, setFilterLayout] = useState<ArtifactStickyChromeLayout | null>(null);
   const [stickyNavVisible, setStickyNavVisible] = useState(false);
   const [artifactMirrorEpoch, setArtifactMirrorEpoch] = useState(0);
   const [artifactMirrorRefreshing, setArtifactMirrorRefreshing] = useState(false);
@@ -308,16 +279,10 @@ export default function ArtifactViewerScreen() {
     () => recipeRuns.find((group) => group.id === selectedRecipeRunId) ?? null,
     [recipeRuns, selectedRecipeRunId],
   );
-  const totalRecipeArtifactCount = useMemo(
-    () => recipeRuns.reduce((sum, group) => sum + artifactsForRecipeRun(group).length, 0),
-    [recipeRuns],
-  );
-  const recipeAvailable = recipeRunGroupsLoaded ? totalRecipeArtifactCount > 0 : undefined;
   const workspaceRecipeRunId =
     requestedRecipeRunId === DECISION_EVIDENCE_RECIPE_RUN_PARAM
       ? DECISION_EVIDENCE_RECIPE_RUN_PARAM
       : selectedRecipeRunId;
-  const runArtifactCount = useMemo(() => (run ? extractRunArtifactManifest(run).length : 0), [run]);
   const manifest = useMemo(() => {
     if (awaitingRequestedRecipeRun) return [];
     if (selectedRecipeRun) return artifactsForRecipeRun(selectedRecipeRun);
@@ -328,51 +293,6 @@ export default function ArtifactViewerScreen() {
       artifactUrlForEntry(gatewayUrl, runId ?? '', entry, artifactMirrorEpoch),
     [artifactMirrorEpoch, gatewayUrl, runId],
   );
-  const { pairs: strictVisualPairs } = useMemo(
-    () =>
-      runId
-        ? groupArtifacts(manifest, gatewayUrl, runId, artifactMirrorEpoch)
-        : { pairs: [], singles: manifest },
-    [artifactMirrorEpoch, gatewayUrl, manifest, runId],
-  );
-  const derivedBaselinePairs = useMemo(
-    () =>
-      runId
-        ? deriveBaselineVisualArtifactPairs(
-            manifest,
-            (entry) => artifactUrlForEntry(gatewayUrl, runId, entry, artifactMirrorEpoch),
-            strictVisualPairs,
-          )
-        : [],
-    [artifactMirrorEpoch, gatewayUrl, manifest, runId, strictVisualPairs],
-  );
-  const manifestVisualPairs = useMemo(
-    () => [...strictVisualPairs, ...derivedBaselinePairs],
-    [derivedBaselinePairs, strictVisualPairs],
-  );
-  const recipeFallbackPairs = useMemo(() => {
-    if (selectedRecipeRun || manifestVisualPairs.length > 0 || !runId) return [];
-    return groupVisualArtifactPairs(
-      selectSlotRecipeArtifactsForPreviewScope(recipeRuns, selectedRecipeRunId),
-      (entry) => artifactUrlForEntry(gatewayUrl, runId, entry, artifactMirrorEpoch),
-    ).pairs;
-  }, [
-    artifactMirrorEpoch,
-    gatewayUrl,
-    manifestVisualPairs.length,
-    recipeRuns,
-    runId,
-    selectedRecipeRun,
-    selectedRecipeRunId,
-  ]);
-  const priorityVisualPairs =
-    manifestVisualPairs.length > 0 ? manifestVisualPairs : recipeFallbackPairs;
-  const priorityCompareArtifactPath = priorityVisualPairs[0]?.after.path ?? null;
-  const priorityCompareRecipeRunId =
-    manifestVisualPairs.length > 0
-      ? workspaceRecipeRunId
-      : recipeRunIdForVisualPair(recipeRuns, priorityVisualPairs[0] ?? null, selectedRecipeRunId);
-  const priorityVisualPairCount = priorityVisualPairs.length;
   const artifactCounts = useMemo(() => buildArtifactWorkspaceCounts(manifest), [manifest]);
   const filteredSingles = useMemo(
     () => filterArtifactWorkspace(manifest, artifactFilter, artifactQuery),
@@ -385,18 +305,8 @@ export default function ArtifactViewerScreen() {
         : ARTIFACT_FILTERS,
     [selectedRecipeRun],
   );
-  const focusedArtifactPath = useMemo(() => {
-    const normalized = artifactQuery.trim();
-    if (!normalized) return null;
-    return manifest.some((item) => item.path === normalized) ? normalized : null;
-  }, [artifactQuery, manifest]);
   const artifactDiffPath = useMemo(() => diffArtifactCandidate(manifest)?.path ?? null, [manifest]);
-  const diffAvailable = Boolean(artifactDiffPath || run?.slotId);
-  const workspaceNavCurrent = artifactWorkspaceNavCurrent(
-    workspaceRecipeRunId,
-    artifactFilter,
-    priorityVisualPairCount,
-  );
+  const workspaceNavCurrent = artifactWorkspaceNavCurrent(workspaceRecipeRunId, artifactFilter, 0);
   const workspaceRouteContext = useMemo(
     () =>
       workspaceRouteContextParams(
@@ -411,7 +321,7 @@ export default function ArtifactViewerScreen() {
     [workspaceRouteContext.decisionKind],
   );
   const stickyNavThreshold = artifactStickyChromeThreshold(
-    workspaceNavLayout,
+    filterLayout,
     ARTIFACT_STICKY_NAV_FALLBACK_THRESHOLD,
     ARTIFACT_STICKY_NAV_ACTIVATION_LEAD,
     ARTIFACT_STICKY_NAV_MAX_THRESHOLD,
@@ -430,50 +340,10 @@ export default function ArtifactViewerScreen() {
     [stickyNavThreshold],
   );
 
-  const rememberWorkspaceNavOffset = useCallback((event: LayoutChangeEvent) => {
+  const rememberFilterOffset = useCallback((event: LayoutChangeEvent) => {
     const { y, height } = event.nativeEvent.layout;
-    setWorkspaceNavLayout({ y, height });
+    setFilterLayout({ y, height });
   }, []);
-
-  const fetchTaskProgress = useCallback(() => {
-    if (!client || !run?.slotId) return Promise.resolve();
-    return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-        slotId: run.slotId,
-        runId: run.id,
-      })
-      .then((result) => {
-        setTaskProgress(result.structured ?? null);
-        setTaskProgressError(null);
-      })
-      .catch((err: Error) => {
-        setTaskProgressError(`Task progress unavailable: ${err.message}`);
-      });
-  }, [client, run?.id, run?.slotId]);
-
-  useEffect(() => {
-    if (!client || !run) return;
-    const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
-      const update = payload as TaskProgressUpdatedPayload;
-      if (!shouldAcceptTaskProgressUpdate(run, update)) return;
-      setTaskProgress(update.progress.structured ?? null);
-      setTaskProgressError(null);
-    });
-    return unsub;
-  }, [client, run]);
-
-  useEffect(() => {
-    if (!isWorkerProgressActive(run)) {
-      setTaskProgress(null);
-      setTaskProgressError(null);
-      return;
-    }
-    void fetchTaskProgress();
-    const timer = setInterval(() => {
-      void fetchTaskProgress();
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [fetchTaskProgress, run]);
 
   useEffect(() => {
     if (selectedRecipeRun && artifactFilter === 'recipes') setArtifactFilter('all');
@@ -530,24 +400,13 @@ export default function ArtifactViewerScreen() {
         authHeaders: artifactAuthHeaders,
       }));
 
-    for (const pair of recipeFallbackPairs) {
-      for (const artifact of [pair.before, pair.after]) {
-        items.push({
-          uri: artifact.url,
-          title: artifact.label ?? artifact.path,
-          mediaType: classifyArtifact(artifact),
-          authHeaders: artifactAuthHeaders,
-        });
-      }
-    }
-
     const seen = new Set<string>();
     return items.filter((item) => {
       if (seen.has(item.uri)) return false;
       seen.add(item.uri);
       return true;
     });
-  }, [artifactAuthHeaders, artifactMirrorEpoch, gatewayUrl, manifest, recipeFallbackPairs, runId]);
+  }, [artifactAuthHeaders, artifactMirrorEpoch, gatewayUrl, manifest, runId]);
   const viewerIndex = viewerUri
     ? Math.max(
         0,
@@ -601,21 +460,6 @@ export default function ArtifactViewerScreen() {
       router.setParams({ filter: nextFilter === 'all' ? undefined : nextFilter });
     },
     [router],
-  );
-
-  const openCompareArtifact = useCallback(
-    (entry: ArtifactManifestEntry, recipeRunIdValue?: string | null) => {
-      const targetRecipeRun =
-        recipeRunIdValue ?? workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM;
-      setArtifactFilter('visual');
-      setArtifactQuery(entry.path);
-      router.setParams({
-        artifact: entry.path,
-        filter: artifactFilterParamForWorkspaceNav('compare'),
-        recipeRun: targetRecipeRun,
-      });
-    },
-    [router, workspaceRecipeRunId],
   );
 
   const openDiffPath = useCallback(
@@ -684,57 +528,17 @@ export default function ArtifactViewerScreen() {
     );
   }
 
-  const primaryDecision = selectPrimaryWorkspaceDecision(run);
-  const readyDecision = selectReadyWorkspaceDecision(run);
-  const reviewGateDecision = selectReviewGateWorkspaceDecision(run);
-  const retroDecision = selectRetrospectiveWorkspaceDecision(run);
-  const workspaceNavMeta = summarizeRunWorkspaceNavMeta(run);
-  const activeTaskProgress = isWorkerProgressActive(run)
-    ? (effectiveTaskProgressForRun(run, taskProgress) ?? null)
-    : null;
-  const fallbackTaskProgress =
-    !activeTaskProgress && isWorkerProgressActive(run) ? fallbackTaskProgressSummary(run) : null;
-
   return (
     <View style={baseStyles.container}>
       {stickyNavVisible ? (
-        <View style={styles.stickyWorkspaceChrome}>
-          <RunWorkspaceNav
-            dense
-            current={workspaceNavCurrent}
-            routeWorkspace={workspaceRouteContext.workspace}
-            routeDecisionKind={workspaceRouteContext.decisionKind}
-            decisionId={primaryDecision?.id ?? null}
-            decisionKind={workspaceDecisionKind(primaryDecision)}
-            readyDecisionId={readyDecision?.id ?? null}
-            reviewDecisionId={reviewGateDecision?.id ?? null}
-            retroDecisionId={retroDecision?.id ?? null}
-            readyMeta={workspaceNavMeta.readyMeta}
-            reviewMeta={workspaceNavMeta.reviewMeta}
-            retroMeta={workspaceNavMeta.retroMeta}
-            familyId={run.familyId}
-            project={run.project}
-            prNumber={run.prNumber}
-            prRepo={prRepoFromWorkspaceSource(run, run.prNumber ?? null)}
-            slotId={run.slotId}
-            runId={run.id}
-            recipeRunId={workspaceRecipeRunId}
-            recipeAvailable={recipeAvailable}
-            recipeArtifactCount={recipeRunGroupsLoaded ? totalRecipeArtifactCount : null}
-            diffAvailable={diffAvailable}
-            artifactCount={runArtifactCount}
-            artifactPath={focusedArtifactPath ?? artifactDiffPath}
-            visualPairCount={priorityVisualPairCount}
-            compareArtifactPath={priorityCompareArtifactPath}
-            compareRecipeRunId={priorityCompareRecipeRunId}
-          />
+        <View style={styles.stickyFilterChrome}>
           <ArtifactStickyFilter
             compact
             filter={artifactFilter}
             query={artifactQuery}
             counts={artifactCounts}
             visible={filteredSingles.length}
-            visualPairCount={priorityVisualPairCount}
+            visualPairCount={0}
             filters={availableFilters}
             onFilterChange={(nextFilter) => {
               handleFilterChange(nextFilter);
@@ -761,27 +565,14 @@ export default function ArtifactViewerScreen() {
               run={run}
               gatewayUrl={gatewayUrl}
               artifactCount={manifest.length}
-              runArtifactCount={runArtifactCount}
               manifest={manifest}
-              pairs={manifestVisualPairs}
-              recipeFallbackPairs={recipeFallbackPairs}
-              authHeaders={artifactAuthHeaders}
               recipeRuns={recipeRuns}
               selectedRecipeRunId={selectedRecipeRunId}
-              workspaceRecipeRunId={workspaceRecipeRunId}
-              workspaceNavCurrent={workspaceNavCurrent}
-              workspaceRouteContext={workspaceRouteContext}
-              recipeAvailable={recipeAvailable}
-              diffAvailable={diffAvailable}
               focusedArtifactQuery={artifactQuery}
               activeFilter={artifactFilter}
               artifactCounts={artifactCounts}
               filteredArtifactCount={filteredSingles.length}
-              visualPairCount={priorityVisualPairCount}
               availableFilters={availableFilters}
-              activeTaskProgress={activeTaskProgress}
-              fallbackTaskProgress={fallbackTaskProgress}
-              taskProgressError={taskProgressError}
               artifactMirrorEpoch={artifactMirrorEpoch}
               artifactMirrorRefreshing={artifactMirrorRefreshing}
               artifactMirrorFeedback={artifactMirrorFeedback}
@@ -792,29 +583,10 @@ export default function ArtifactViewerScreen() {
                 router.setParams({ artifact: undefined });
               }}
               onSelectRecipeRun={handleSelectRecipeRun}
-              onFocusFilter={(nextFilter) => {
-                handleFilterChange(nextFilter);
-                setArtifactQuery('');
-                router.setParams({
-                  artifact: undefined,
-                  filter: nextFilter === 'all' ? undefined : nextFilter,
-                  recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                });
-              }}
               onOpenVisual={setViewerUri}
               onOpenDocument={openReviewDocument}
               onOpenDiff={openDiffPath}
-              onOpenArtifactWorkspace={(entry) => {
-                setArtifactFilter('all');
-                setArtifactQuery(entry.path);
-                router.setParams({
-                  artifact: entry.path,
-                  filter: undefined,
-                  recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                });
-              }}
-              onOpenCompareArtifact={openCompareArtifact}
-              onWorkspaceNavLayout={rememberWorkspaceNavOffset}
+              onFilterLayout={rememberFilterOffset}
               onClearFocusedArtifact={() => {
                 setArtifactQuery('');
                 router.setParams({
@@ -827,7 +599,7 @@ export default function ArtifactViewerScreen() {
           </>
         }
         ListEmptyComponent={
-          <Text style={styles.emptyText}>No evidence files match the current filter.</Text>
+          <Text style={styles.emptyText}>No files match the current filter.</Text>
         }
       />
       {error && (

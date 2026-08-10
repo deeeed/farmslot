@@ -5,15 +5,10 @@ import {
   type Run,
   type RunDecision,
   type RunStep,
-  type TaskProgressStructured,
 } from '@farmslot/protocol';
 
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
 import { RecipeRunControls } from '../../../components/RecipeRunControls';
-import {
-  TaskProgressFallbackPanel,
-  TaskProgressPanel,
-} from '../../../components/TaskProgressPanel';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
@@ -43,12 +38,6 @@ import {
   summarizeSlotWorkspaceRetro,
   workspaceGateDiffMetricValue,
 } from '../../../lib/slot-workspace';
-import {
-  fallbackTaskProgressSummary,
-  isWorkerProgressActive,
-  taskProgressPercent,
-  taskProgressTitle,
-} from '../../../lib/task-progress';
 import { baseStyles, colors } from '../../../lib/theme';
 import {
   artifactFilterParamForArtifactPath,
@@ -314,8 +303,6 @@ export function RunReviewWorkspaceSummary({
   recipeRuns,
   selectedRecipeRunId,
   compareTarget,
-  activeTaskProgress,
-  taskProgressError,
   onOpenDecision,
   onOpenArtifacts,
   onOpenRecipeArtifact,
@@ -337,8 +324,6 @@ export function RunReviewWorkspaceSummary({
   recipeRuns: RecipeRunArtifactGroup[];
   selectedRecipeRunId: string | null;
   compareTarget: SlotCompareTarget | null;
-  activeTaskProgress: TaskProgressStructured | null;
-  taskProgressError?: string | null;
   onOpenDecision: (decisionId: string) => void;
   onOpenArtifacts: (artifactPath?: string) => void;
   onOpenRecipeArtifact: (artifactPath: string, recipeRunId: string | null) => void;
@@ -353,8 +338,6 @@ export function RunReviewWorkspaceSummary({
 }) {
   const manifest = extractRunArtifactManifest(run);
   const manifestCount = manifest.length;
-  const fallbackTaskProgress =
-    !activeTaskProgress && isWorkerProgressActive(run) ? fallbackTaskProgressSummary(run) : null;
   const gate = gates[0] ?? null;
   const retroSummary = summarizeSlotWorkspaceRetro(run);
   const previewArtifacts = gate ? selectSlotGatePreviewArtifacts(gate, manifest, 4) : [];
@@ -570,9 +553,6 @@ export function RunReviewWorkspaceSummary({
         retroSummary={retroSummary}
         visualPairCount={workspaceVisualPairCount}
         pendingCount={(run.decisions ?? []).filter((decision) => !decision.resolvedAt).length}
-        activeTaskProgress={activeTaskProgress}
-        fallbackTaskProgress={fallbackTaskProgress}
-        run={run}
         terminalAvailable={Boolean(run.slotId)}
         slotId={run.slotId}
         prNumber={run.prNumber}
@@ -588,20 +568,6 @@ export function RunReviewWorkspaceSummary({
         onOpenGate={(workspaceGate) => onOpenDecision(workspaceGate.decision.id)}
         onOpenRetro={(retro) => onOpenDecision(retro.decision.id)}
       />
-      {activeTaskProgress ? (
-        <TaskProgressPanel
-          run={run}
-          progress={activeTaskProgress}
-          error={taskProgressError}
-          compact
-        />
-      ) : fallbackTaskProgress ? (
-        <TaskProgressFallbackPanel
-          summary={fallbackTaskProgress}
-          error={taskProgressError}
-          compact
-        />
-      ) : null}
       {gate?.metrics.length ? (
         <View style={styles.workspaceSignalRow}>
           {gate.metrics.map((metric) => {
@@ -923,9 +889,6 @@ export function RunWorkspaceCockpit({
   retroSummary,
   visualPairCount,
   pendingCount,
-  activeTaskProgress,
-  fallbackTaskProgress,
-  run,
   terminalAvailable,
   slotId,
   prNumber,
@@ -954,9 +917,6 @@ export function RunWorkspaceCockpit({
   retroSummary: SlotWorkspaceRetroSummary | null;
   visualPairCount: number;
   pendingCount: number;
-  activeTaskProgress: TaskProgressStructured | null;
-  fallbackTaskProgress: ReturnType<typeof fallbackTaskProgressSummary> | null;
-  run: Run;
   terminalAvailable: boolean;
   slotId: string | null | undefined;
   prNumber: number | null | undefined;
@@ -972,16 +932,6 @@ export function RunWorkspaceCockpit({
   onOpenGate: (gate: SlotWorkspaceGateSummary) => void;
   onOpenRetro: (retro: SlotWorkspaceRetroSummary) => void;
 }) {
-  const progressValue = activeTaskProgress
-    ? `${Math.round(taskProgressPercent(activeTaskProgress))}%`
-    : fallbackTaskProgress?.percent != null
-      ? `${Math.round(fallbackTaskProgress.percent)}%`
-      : fallbackTaskProgress
-        ? 'live'
-        : '-';
-  const progressMeta = activeTaskProgress
-    ? taskProgressTitle(run, activeTaskProgress)
-    : (fallbackTaskProgress?.meta ?? 'No progress');
   return (
     <View style={styles.cockpitPanel}>
       <View style={styles.cockpitHeader}>
@@ -1043,13 +993,6 @@ export function RunWorkspaceCockpit({
           value={familyId ? 'open' : '-'}
           onPress={onOpenFamilyRetros}
           disabled={!familyId}
-        />
-        <CockpitTile
-          label="Progress"
-          value={progressValue}
-          onPress={onOpenTerminal}
-          disabled={!activeTaskProgress && !fallbackTaskProgress}
-          hint={progressMeta}
         />
         <CockpitTile
           label="Artifact files"

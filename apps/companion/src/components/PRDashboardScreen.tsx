@@ -323,7 +323,6 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
   const status = useConnectionStore((s) => s.status);
   const globalFilters = useFilterStore((s) => s.filters);
   const clearGlobalFilters = useFilterStore((s) => s.clearAll);
-  const setFilterEditorExpanded = useFilterStore((s) => s.setEditorExpanded);
   const prs = usePRStore((s) => s.prs);
   const loading = usePRStore((s) => s.loading);
   const error = usePRStore((s) => s.lastError);
@@ -509,7 +508,7 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
               </Pressable>
               <Pressable
                 style={[styles.actionButton, styles.scopeActionButton]}
-                onPress={() => setFilterEditorExpanded(true)}
+                onPress={() => router.push('/filters')}
               >
                 <Text style={styles.actionText}>Edit scope</Text>
               </Pressable>

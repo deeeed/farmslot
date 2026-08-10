@@ -95,6 +95,17 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
+          name="backlog"
+          options={{
+            title: 'Backlog',
+            href: null,
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="list-outline" size={size} color={color} />
+            ),
+            header: () => filteredHeader,
+          }}
+        />
+        <Tabs.Screen
           name="inbox"
           options={{
             title: 'Inbox',

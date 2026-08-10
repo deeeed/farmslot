@@ -3,8 +3,6 @@ import { create } from 'zustand';
 
 import type { PendingDecision, Run, SlotStatus } from '@farmslot/protocol';
 
-
-
 export const GLOBAL_FILTERS_STORAGE_KEY = '@farmslot:globalFilters';
 
 export interface GlobalFilters {
@@ -41,7 +39,6 @@ interface FilterStore {
   availableProjects: string[];
   availableMachines: string[];
   availableSources: FilterSource[];
-  editorExpanded: boolean;
   initializing: boolean;
   initialized: boolean;
   mutationVersion: number;
@@ -51,7 +48,6 @@ interface FilterStore {
   toggleMachine: (machine: string) => void;
   clearAll: () => void;
   setAvailable: (sources: FilterSource[]) => void;
-  setEditorExpanded: (expanded: boolean) => void;
 }
 
 export function createFilterStore(storage: FilterPersistenceStorage = AsyncStorage) {
@@ -60,7 +56,6 @@ export function createFilterStore(storage: FilterPersistenceStorage = AsyncStora
     availableProjects: [],
     availableMachines: [],
     availableSources: [],
-    editorExpanded: false,
     initializing: false,
     initialized: false,
     mutationVersion: 0,
@@ -157,10 +152,6 @@ export function createFilterStore(storage: FilterPersistenceStorage = AsyncStora
       });
       if (get().initialized && filtersChanged) void persistFilters(next.filters, set, storage);
     },
-
-    setEditorExpanded: (editorExpanded) => {
-      set({ editorExpanded });
-    },
   }));
 }
 
@@ -173,7 +164,8 @@ export function filterSlots<T extends { project?: string | null; machine?: strin
 ): T[] {
   const normalized = normalizeFilters(filters);
   return slots.filter((s) => {
-    if (normalized.projects.length > 0 && !normalized.projects.includes(s.project ?? '')) return false;
+    if (normalized.projects.length > 0 && !normalized.projects.includes(s.project ?? ''))
+      return false;
     if (normalized.machines.length > 0 && !normalized.machines.includes(s.machine ?? ''))
       return false;
     return true;

@@ -65,12 +65,34 @@ export default function RootLayout() {
         >
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen
+            name="filters"
+            options={{
+              headerShown: false,
+              presentation: 'formSheet',
+              sheetAllowedDetents: [0.55, 0.9],
+              sheetGrabberVisible: true,
+              sheetInitialDetentIndex: 1,
+            }}
+          />
+          <Stack.Screen
+            name="backlog/create"
+            options={{
+              headerShown: false,
+              presentation: 'formSheet',
+              sheetAllowedDetents: [0.65, 0.95],
+              sheetGrabberVisible: true,
+              sheetInitialDetentIndex: 1,
+            }}
+          />
+          <Stack.Screen
             name="slot/[id]"
             options={{
               title: 'Slot Detail',
               headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/fleet" />,
             }}
           />
+          <Stack.Screen name="workspace/slot/[slotId]" options={{ headerShown: false }} />
+          <Stack.Screen name="workspace/run/[runId]" options={{ headerShown: false }} />
           <Stack.Screen
             name="run/[id]"
             options={{
@@ -101,13 +123,7 @@ export default function RootLayout() {
               headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/settings" />,
             }}
           />
-          <Stack.Screen
-            name="artifacts/[runId]"
-            options={{
-              title: 'Artifacts',
-              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/runs" />,
-            }}
-          />
+          <Stack.Screen name="artifacts/[runId]" options={{ headerShown: false }} />
           <Stack.Screen name="diff/[runId]" options={{ headerShown: false }} />
           <Stack.Screen name="diff/slot/[slotId]" options={{ headerShown: false }} />
         </Stack>

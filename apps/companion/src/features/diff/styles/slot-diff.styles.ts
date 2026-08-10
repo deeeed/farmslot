@@ -54,9 +54,6 @@ export const slotDiffStyles = StyleSheet.create({
     marginBottom: spacing.lg,
     padding: spacing.xs,
   },
-  progressPanel: {
-    marginBottom: spacing.lg,
-  },
   contextCard: {
     backgroundColor: colors.bgCard,
     borderColor: colors.bgCardHover,

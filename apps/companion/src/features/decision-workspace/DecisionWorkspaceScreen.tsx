@@ -2,15 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, type LayoutChangeEvent, Pressable, ScrollView, Text, View } from 'react-native';
-import Animated, {
-  Extrapolation,
-  interpolate,
-  runOnJS,
-  useAnimatedReaction,
-  useAnimatedScrollHandler,
-  useAnimatedStyle,
-  useSharedValue,
-} from 'react-native-reanimated';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -30,7 +22,6 @@ import {
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
-import { ReviewPackageTabs } from '../../components/ReviewPackageTabs';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
 import {
   type ArtifactManifestEntry,
@@ -72,10 +63,6 @@ import {
   shouldPreserveArtifactForRecipeContext,
   targetWorkspaceRouteContextParams,
 } from '../../lib/workspace-navigation';
-import {
-  type WorkspaceStickyNavLayout,
-  workspaceStickyNavThreshold,
-} from '../../lib/workspace-sticky-nav';
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
 
@@ -141,48 +128,7 @@ export default function DecisionDetailScreen() {
   const documentAbortRef = useRef<AbortController | null>(null);
   const sourceRunRequestRef = useRef(0);
   const recipeRunsRequestRef = useRef(0);
-  const [navLayout, setNavLayout] = useState<WorkspaceStickyNavLayout | null>(null);
-  const [stickyNavVisible, setStickyNavVisibleState] = useState(false);
-  const stickyNavVisibleRef = useRef(false);
-  const scrollY = useSharedValue(0);
   const requestedArtifactPath = routeParamString(routeArtifactPath).trim();
-
-  const setStickyNavVisible = useCallback((visible: boolean) => {
-    if (stickyNavVisibleRef.current === visible) return;
-    stickyNavVisibleRef.current = visible;
-    setStickyNavVisibleState(visible);
-  }, []);
-  const stickyThreshold = workspaceStickyNavThreshold(navLayout);
-  const scrollHandler = useAnimatedScrollHandler({
-    onScroll: (event) => {
-      scrollY.value = event.contentOffset.y;
-    },
-  });
-  const stickyNavStyle = useAnimatedStyle(() => {
-    const progress = interpolate(
-      scrollY.value,
-      [stickyThreshold, stickyThreshold + 40],
-      [0, 1],
-      Extrapolation.CLAMP,
-    );
-    return {
-      opacity: progress,
-      transform: [{ translateY: interpolate(progress, [0, 1], [-8, 0], Extrapolation.CLAMP) }],
-    };
-  }, [stickyThreshold]);
-
-  useAnimatedReaction(
-    () => scrollY.value > stickyThreshold + 8,
-    (visible, previous) => {
-      if (visible !== previous) runOnJS(setStickyNavVisible)(visible);
-    },
-    [setStickyNavVisible, stickyThreshold],
-  );
-
-  const rememberNavLayout = useCallback((event: LayoutChangeEvent) => {
-    const { y, height } = event.nativeEvent.layout;
-    setNavLayout({ y, height });
-  }, []);
 
   const refreshDecision = useCallback(() => {
     if (!client || !id) return;
@@ -478,10 +424,10 @@ export default function DecisionDetailScreen() {
   );
 
   const openDiffArtifact = useCallback(
-    (path: string) => {
+    (path: string, replace = false) => {
       if (!presentation?.runId) return;
       const routeRecipeRunId = routeParamString(routeRecipeRun).trim();
-      router.push({
+      const href = {
         pathname: '/diff/[runId]',
         params: {
           runId: presentation.runId,
@@ -489,7 +435,12 @@ export default function DecisionDetailScreen() {
           path,
           recipeRun: routeRecipeRunId || DECISION_EVIDENCE_RECIPE_RUN_PARAM,
         },
-      });
+      } as const;
+      if (replace) {
+        router.replace(href);
+        return;
+      }
+      router.push(href);
     },
     [diffRouteContext, presentation?.runId, routeRecipeRun, router],
   );
@@ -654,93 +605,6 @@ export default function DecisionDetailScreen() {
           ? 'slot'
           : 'none';
   const focusedArtifactPath = requestedArtifactPath || diffArtifact?.path || null;
-  const decisionReviewTabs = [
-    {
-      id: 'evidence' as const,
-      label: 'Evidence',
-      meta: `${priorityPairs.length} visual`,
-      icon: 'images-outline' as const,
-      onPress: () => scrollToSection('evidence'),
-    },
-    {
-      id: 'diff' as const,
-      label: 'Diff',
-      meta: decisionDiffValue,
-      icon: 'git-compare-outline' as const,
-      disabled: !diffAvailable && !presentation.terminalSlotId,
-      onPress: () => {
-        if (diffArtifact?.path) {
-          openDiffArtifact(diffArtifact.path);
-          return;
-        }
-        if (presentation.runId && diffAvailable) {
-          router.push({
-            pathname: '/diff/[runId]',
-            params: {
-              runId: presentation.runId,
-              ...diffRouteContext,
-              recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-            },
-          });
-          return;
-        }
-        if (presentation.terminalSlotId) {
-          router.push({
-            pathname: '/diff/slot/[slotId]',
-            params: { slotId: presentation.terminalSlotId, ...diffRouteContext },
-          });
-        }
-      },
-    },
-    {
-      id: 'timeline' as const,
-      label: 'Timeline',
-      meta: activeTaskProgress || fallbackTaskProgress ? 'progress' : 'signals',
-      icon: 'pulse-outline' as const,
-      onPress: () =>
-        scrollToSection(activeTaskProgress || fallbackTaskProgress ? 'progress' : 'signals'),
-    },
-    {
-      id: 'terminal' as const,
-      label: 'Terminal',
-      meta: presentation.terminalSlotId ?? '-',
-      icon: 'terminal-outline' as const,
-      disabled: !presentation.terminalSlotId || !presentation.runId,
-      onPress: () => {
-        if (!presentation.terminalSlotId || !presentation.runId) return;
-        router.push({
-          pathname: '/terminal/[slotId]',
-          params: {
-            slotId: presentation.terminalSlotId,
-            ...decisionRouteContext,
-            runId: presentation.runId,
-            details: '1',
-            recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-            ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
-          },
-        });
-      },
-    },
-    {
-      id: 'files' as const,
-      label: 'Files',
-      meta: String(presentation.artifactManifest.length + (recipeArtifactCount ?? 0)),
-      icon: 'folder-open-outline' as const,
-      disabled: !presentation.runId,
-      onPress: () => {
-        if (!presentation.runId) return;
-        router.push({
-          pathname: '/artifacts/[runId]',
-          params: {
-            runId: presentation.runId,
-            ...decisionRouteContext,
-            recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-            filter: artifactFilterParamForWorkspaceNav('review'),
-          },
-        });
-      },
-    },
-  ];
 
   return (
     <View style={baseStyles.container}>
@@ -754,22 +618,10 @@ export default function DecisionDetailScreen() {
                 : 'Review Gate',
         }}
       />
-      <Animated.View
-        pointerEvents={stickyNavVisible && navLayout !== null ? 'auto' : 'none'}
-        style={[styles.stickyWorkspaceNav, stickyNavStyle]}
-      >
-        <ReviewPackageTabs
-          active="evidence"
-          tabs={decisionReviewTabs}
-          summary={presentation.kindLabel}
-        />
-      </Animated.View>
       <Animated.ScrollView
         testID="companion-screen-decision-workspace"
         collapsable={false}
         ref={scrollRef}
-        onScroll={scrollHandler}
-        scrollEventThrottle={16}
         contentContainerStyle={[
           styles.scrollContent,
           { paddingBottom: styles.scrollContent.paddingBottom + insets.bottom },
@@ -792,14 +644,6 @@ export default function DecisionDetailScreen() {
             <Meta label="Branch" value={presentation.branch ?? '-'} />
             <Meta label="Model" value={presentation.model ?? presentation.runner ?? '-'} />
           </View>
-        </View>
-
-        <View onLayout={rememberNavLayout}>
-          <ReviewPackageTabs
-            active="evidence"
-            tabs={decisionReviewTabs}
-            summary={presentation.kindLabel}
-          />
         </View>
 
         {requestedArtifactPath ? (
