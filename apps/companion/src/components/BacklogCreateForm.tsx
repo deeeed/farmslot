@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -10,7 +10,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { type BacklogCreateResult, type BacklogListResult, Methods } from '@farmslot/protocol';
+import {
+  type BacklogCreateResult,
+  type BacklogListResult,
+  type ConfigProjectsResult,
+  Methods,
+} from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
@@ -23,13 +28,47 @@ export function BacklogCreateForm() {
   const client = useConnectionStore((state) => state.client);
   const status = useConnectionStore((state) => state.status);
   const selectedProjects = useFilterStore((state) => state.filters.projects);
-  const availableProjects = useFilterStore((state) => state.availableProjects);
-  const [project, setProject] = useState(selectedProjects.length === 1 ? selectedProjects[0] : '');
+  const [availableProjects, setAvailableProjects] = useState<string[]>([]);
+  const [projectOptionsError, setProjectOptionsError] = useState<string | null>(null);
+  const [project, setProject] = useState('');
   const [title, setTitle] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdLabel, setCreatedLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!client || status !== 'connected') {
+      setAvailableProjects([]);
+      return;
+    }
+
+    void client
+      .request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {})
+      .then((result) => {
+        if (cancelled) return;
+        const projects = result.projects.map((configuredProject) => configuredProject.name).sort();
+        setAvailableProjects(projects);
+        setProjectOptionsError(null);
+        setProject((current) =>
+          current || selectedProjects.length !== 1 || !projects.includes(selectedProjects[0])
+            ? current
+            : selectedProjects[0],
+        );
+      })
+      .catch((loadError: unknown) => {
+        if (cancelled) return;
+        setAvailableProjects([]);
+        setProjectOptionsError(
+          `Configured projects unavailable: ${loadError instanceof Error ? loadError.message : String(loadError)}`,
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, selectedProjects, status]);
 
   const submit = async () => {
     const normalizedProject = project.trim();
@@ -109,6 +148,7 @@ export function BacklogCreateForm() {
           ))}
         </View>
       ) : null}
+      {projectOptionsError ? <Text style={styles.error}>{projectOptionsError}</Text> : null}
 
       <Text style={styles.label}>Title</Text>
       <TextInput
