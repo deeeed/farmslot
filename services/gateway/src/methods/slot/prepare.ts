@@ -32,6 +32,7 @@ import {
 } from '../../core/index.js';
 import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { loadPoolConfig } from '../../fleet/state.js';
 import { collectSupportFiles, supportHash } from '../../node-support/files.js';
 import { resolveNodeSupportPaths } from '../../node-support/paths.js';
 import {
@@ -40,9 +41,11 @@ import {
 } from '../../node-support/publish-command.js';
 import {
   assertNoOperatorCollision,
+  assertNoSiblingCollision,
   operatorPortsFromEnv,
   renderEnvPorts,
   resolveSandboxPorts,
+  siblingPortsFromDevServer,
 } from '../../prepare/farmslot-port-provisioning.js';
 import { assertStartRefWorkBranchIsLocalOnly } from '../../projects/start-ref-policy.js';
 import {
@@ -1171,6 +1174,14 @@ async function slotPrepareInner(
   const sandboxPorts = resolveSandboxPorts(vars.resourceVars, vars.slotId);
   if (sandboxPorts) {
     assertNoOperatorCollision(sandboxPorts, operatorPortsFromEnv(), vars.slotId);
+    const pool = await loadPoolConfig(vars.machine);
+    const siblings = (pool?.slots ?? []).map((slot) =>
+      siblingPortsFromDevServer(
+        slot.id,
+        (slot.resources as Record<string, Record<string, unknown>> | undefined)?.['dev-server'],
+      ),
+    );
+    assertNoSiblingCollision(sandboxPorts, siblings, vars.slotId);
     const envPortsPath = `${vars.remoteRepo}/.env.ports`;
     const existingR = await execOnSlot(vars, `cat ${shellQuote(envPortsPath)} 2>/dev/null || true`);
     const rendered = renderEnvPorts(
@@ -1193,7 +1204,7 @@ async function slotPrepareInner(
       );
     }
     step(
-      'preflight',
+      'ports',
       `.env.ports provisioned from pool (gateway ${sandboxPorts.gatewayPort}, vite ${sandboxPorts.vitePort})`,
     );
   }

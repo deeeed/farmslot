@@ -46,7 +46,54 @@ export function resolveSandboxPorts(
       `Slot ${slotId}: vite_port and port are both ${vitePort} — the sandbox UI and gateway cannot share a port`,
     );
   }
+  const rawMetro = resourceVars.metro_port?.trim();
+  if (rawMetro && Number(rawMetro) === vitePort) {
+    throw new Error(
+      `Slot ${slotId}: vite_port ${vitePort} equals metro_port — every dev-server port must be distinct`,
+    );
+  }
   return { gatewayPort, vitePort };
+}
+
+/** Ports another slot on the same machine already claims. */
+export interface SiblingSlotPorts {
+  slotId: string;
+  ports: number[];
+}
+
+/** Collect every numeric dev-server port a pool slot claims. */
+export function siblingPortsFromDevServer(
+  slotId: string,
+  devServer: Record<string, unknown> | undefined,
+): SiblingSlotPorts {
+  const ports: number[] = [];
+  for (const field of ['port', 'metro_port', 'vite_port', 'cdp_port']) {
+    const value = Number(devServer?.[field]);
+    if (Number.isInteger(value) && value > 0) ports.push(value);
+  }
+  return { slotId, ports };
+}
+
+/** Refuse a sandbox pair that reuses any port already claimed by another slot
+ * on the same machine — both prepares would pass and then fight at runtime. */
+export function assertNoSiblingCollision(
+  ports: SandboxPorts,
+  siblings: SiblingSlotPorts[],
+  slotId: string,
+): void {
+  for (const sibling of siblings) {
+    if (sibling.slotId === slotId) continue;
+    for (const [name, port] of [
+      ['gateway port', ports.gatewayPort],
+      ['vite port', ports.vitePort],
+    ] as const) {
+      if (sibling.ports.includes(port)) {
+        throw new Error(
+          `Slot ${slotId}: sandbox ${name} ${port} is already claimed by slot ${sibling.slotId} — fix the pool allocation`,
+        );
+      }
+    }
+  }
 }
 
 /** The operator stack's own ports, from the gateway process env (dev.sh

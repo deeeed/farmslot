@@ -3,9 +3,11 @@ import test from 'node:test';
 
 import {
   assertNoOperatorCollision,
+  assertNoSiblingCollision,
   operatorPortsFromEnv,
   renderEnvPorts,
   resolveSandboxPorts,
+  siblingPortsFromDevServer,
 } from './farmslot-port-provisioning.js';
 
 // Pool shapes from the real machines (pool/macwork.json, pool/mini.json).
@@ -40,6 +42,26 @@ test('a half-configured slot fails loudly instead of falling back', () => {
     () => resolveSandboxPorts({ vite_port: '8808', port: '8808' }, 's1'),
     /cannot share a port/,
   );
+  assert.throws(
+    () => resolveSandboxPorts({ vite_port: '8878', port: '8808', metro_port: '8878' }, 's1'),
+    /equals metro_port/,
+  );
+});
+
+test('a vite port already claimed by a sibling slot on the machine is refused', () => {
+  const siblings = [
+    siblingPortsFromDevServer('macwork-ff-1', { port: 8808, metro_port: 8878, vite_port: 5875 }),
+    siblingPortsFromDevServer('macwork-ff-2', { port: 8809, metro_port: 8879, vite_port: 5876 }),
+    siblingPortsFromDevServer('macwork-mm-1', undefined),
+  ];
+  assert.throws(
+    () => assertNoSiblingCollision({ gatewayPort: 8810, vitePort: 5875 }, siblings, 'macwork-ff-3'),
+    /vite port 5875 is already claimed by slot macwork-ff-1/,
+  );
+  // A slot never collides with its own pool entry.
+  assertNoSiblingCollision({ gatewayPort: 8808, vitePort: 5875 }, siblings, 'macwork-ff-1');
+  // Disjoint ports pass.
+  assertNoSiblingCollision({ gatewayPort: 8810, vitePort: 5877 }, siblings, 'macwork-ff-3');
 });
 
 test('AC2: operator port reuse is refused before the dev stack starts', () => {
@@ -84,6 +106,17 @@ test('renderEnvPorts overwrites the port lines and keeps everything else', () =>
   assert.equal(
     content,
     '# mini-ff-3 sandbox — isolated from operator Command Center\nMETRO_PORT=8873\nGATEWAY_PORT=8803\nVITE_PORT=5873\n',
+  );
+});
+
+test('renderEnvPorts keeps comment lines containing single quotes intact', () => {
+  // shellQuote must carry this line through printf untouched; the render layer
+  // must not mangle it either.
+  const existing = "# this checkout's ports — don't edit by hand\nGATEWAY_PORT=1\nVITE_PORT=2\n";
+  const content = renderEnvPorts(existing, { gatewayPort: 8808, vitePort: 5875 }, 'macwork-ff-1');
+  assert.equal(
+    content,
+    "# this checkout's ports — don't edit by hand\nGATEWAY_PORT=8808\nVITE_PORT=5875\n",
   );
 });
 
