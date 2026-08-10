@@ -111,16 +111,16 @@ export function useFamilyWorkspaceController() {
     decisionKind,
     evidence,
   } = useLocalSearchParams<{
-      familyId: string;
-      project?: string;
-      runId?: string;
-      section?: string;
-      recipeRun?: string | string[];
-      artifact?: string | string[];
-      workspace?: string | string[];
-      decisionKind?: string | string[];
-      evidence?: string | string[];
-    }>();
+    familyId: string;
+    project?: string;
+    runId?: string;
+    section?: string;
+    recipeRun?: string | string[];
+    artifact?: string | string[];
+    workspace?: string | string[];
+    decisionKind?: string | string[];
+    evidence?: string | string[];
+  }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const client = useConnectionStore((s) => s.client);
@@ -677,7 +677,7 @@ export function useFamilyWorkspaceController() {
   const openDiffArtifact = useCallback(
     (artifact: FamilyObservabilityArtifact, routeContext = workspaceRouteContext) => {
       router.push({
-        pathname: '/diff/[runId]',
+        pathname: '/workspace/run/[runId]/diff',
         params: {
           runId: artifact.runId,
           ...diffRouteContext(routeContext),
@@ -698,7 +698,7 @@ export function useFamilyWorkspaceController() {
     ) => {
       if (diffArtifactCandidate([{ path: artifactPath }])) {
         router.push({
-          pathname: '/diff/[runId]',
+          pathname: '/workspace/run/[runId]/diff',
           params: {
             runId: runIdValue,
             ...diffRouteContext(routeContext),
@@ -709,7 +709,7 @@ export function useFamilyWorkspaceController() {
         return;
       }
       router.push({
-        pathname: '/artifacts/[runId]',
+        pathname: '/workspace/run/[runId]/files',
         params: {
           runId: runIdValue,
           ...artifactRouteContext(
@@ -732,7 +732,7 @@ export function useFamilyWorkspaceController() {
         artifactFilterParamForWorkspaceNav('review');
       if (artifactPath && diffArtifactCandidate([{ path: artifactPath }])) {
         router.push({
-          pathname: '/diff/[runId]',
+          pathname: '/workspace/run/[runId]/diff',
           params: {
             runId: runIdValue,
             ...diffRouteContext(routeContext),
@@ -743,7 +743,7 @@ export function useFamilyWorkspaceController() {
         return;
       }
       router.push({
-        pathname: '/artifacts/[runId]',
+        pathname: '/workspace/run/[runId]/files',
         params: {
           runId: runIdValue,
           ...artifactRouteContext(DECISION_EVIDENCE_RECIPE_RUN_PARAM, filter, routeContext),
@@ -906,7 +906,7 @@ export function useFamilyWorkspaceController() {
   ) => {
     if (!run.diffStat.available && run.slotId) {
       router.push({
-        pathname: '/diff/slot/[slotId]',
+        pathname: '/workspace/slot/[slotId]/diff',
         params: {
           slotId: run.slotId,
           ...diffRouteContext(routeContext),
@@ -918,7 +918,7 @@ export function useFamilyWorkspaceController() {
       return;
     }
     router.push({
-      pathname: '/diff/[runId]',
+      pathname: '/workspace/run/[runId]/diff',
       params: {
         runId: run.runId,
         ...diffRouteContext(routeContext),

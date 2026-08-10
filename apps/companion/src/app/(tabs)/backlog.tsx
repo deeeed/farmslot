@@ -22,12 +22,9 @@ import {
   Methods,
 } from '@farmslot/protocol';
 
-import { colors, fonts, radii, spacing } from '../../lib/theme';
+import { colors, floatingCopilotGutter, fonts, radii, spacing } from '../../lib/theme';
 import { useConnectionStore } from '../../store/connection';
 import { useFilterStore } from '../../store/filters';
-
-// The global Co-Pilot button starts in the lower-right and remains draggable.
-const FLOATING_COPILOT_GUTTER = 48;
 
 const STATUS_ORDER: Record<BacklogStatus, number> = {
   ready: 0,
@@ -94,21 +91,28 @@ export default function BacklogScreen() {
       setBusyItemId(item.id);
       setError(null);
       try {
+        let updatedItem: BacklogItem;
         if (action === 'ready') {
-          await client.request<BacklogMarkReadyResult>(Methods.BACKLOG_MARK_READY, {
+          const result = await client.request<BacklogMarkReadyResult>(Methods.BACKLOG_MARK_READY, {
             itemId: item.id,
           });
+          updatedItem = result.item;
         } else {
-          await client.request<BacklogEnqueueResult>(Methods.BACKLOG_ENQUEUE, { itemId: item.id });
+          const result = await client.request<BacklogEnqueueResult>(Methods.BACKLOG_ENQUEUE, {
+            itemId: item.id,
+          });
+          updatedItem = result.item;
         }
-        await load();
+        setItems((current) =>
+          current.map((candidate) => (candidate.id === updatedItem.id ? updatedItem : candidate)),
+        );
       } catch (actionError) {
         setError(actionError instanceof Error ? actionError.message : String(actionError));
       } finally {
         setBusyItemId(null);
       }
     },
-    [client, connectionStatus, load],
+    [client, connectionStatus],
   );
 
   const enqueue = useCallback(
@@ -201,12 +205,22 @@ function BacklogRow({
       </Text>
       <View style={styles.actions}>
         {action === 'ready' ? (
-          <Pressable style={styles.secondaryButton} disabled={busy} onPress={onMarkReady}>
+          <Pressable
+            testID={`companion-backlog-${item.id}-ready`}
+            style={styles.secondaryButton}
+            disabled={busy}
+            onPress={onMarkReady}
+          >
             <Text style={styles.secondaryText}>{busy ? 'Working…' : 'Mark ready'}</Text>
           </Pressable>
         ) : null}
         {action === 'enqueue' && !graphManaged ? (
-          <Pressable style={styles.primaryButton} disabled={busy} onPress={onEnqueue}>
+          <Pressable
+            testID={`companion-backlog-${item.id}-enqueue`}
+            style={styles.primaryButton}
+            disabled={busy}
+            onPress={onEnqueue}
+          >
             <Text style={styles.primaryText}>{busy ? 'Launching…' : 'Launch'}</Text>
           </Pressable>
         ) : null}
@@ -248,7 +262,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     flexDirection: 'row',
     gap: spacing.xs,
-    marginRight: FLOATING_COPILOT_GUTTER,
+    marginRight: floatingCopilotGutter,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },

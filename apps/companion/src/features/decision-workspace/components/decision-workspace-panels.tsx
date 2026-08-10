@@ -377,7 +377,7 @@ export function DecisionWorkspaceCockpit({
   } · ${diffValue}`;
   const openDecisionArtifacts = () =>
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: presentation.runId!,
         ...decisionRouteContext,
@@ -388,7 +388,7 @@ export function DecisionWorkspaceCockpit({
     });
   const openCompareArtifacts = () =>
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: presentation.runId!,
         ...decisionRouteContext,
@@ -401,7 +401,7 @@ export function DecisionWorkspaceCockpit({
     if (recipeAvailable === false) return;
     const recipeTarget = recipeWorkspaceParam(workspaceRecipeRunId);
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: presentation.runId!,
         ...decisionRouteContext,
@@ -419,13 +419,13 @@ export function DecisionWorkspaceCockpit({
   const openDiff = () => {
     if (!diffAvailable && presentation.slotId) {
       router.push({
-        pathname: '/diff/slot/[slotId]',
+        pathname: '/workspace/slot/[slotId]/diff',
         params: { slotId: presentation.slotId, ...diffRouteContext },
       });
       return;
     }
     router.push({
-      pathname: '/diff/[runId]',
+      pathname: '/workspace/run/[runId]/diff',
       params: {
         runId: presentation.runId!,
         ...diffRouteContext,
@@ -441,9 +441,9 @@ export function DecisionWorkspaceCockpit({
   const openSlot = () => {
     if (!presentation.slotId) return;
     router.push({
-      pathname: '/slot/[id]',
+      pathname: '/workspace/slot/[slotId]/slot',
       params: {
-        id: presentation.slotId,
+        slotId: presentation.slotId,
         ...decisionRouteContext,
         runId: presentation.runId!,
         recipeRun: workspaceRecipeRunId,
@@ -501,7 +501,7 @@ export function DecisionWorkspaceCockpit({
           onPress={() => {
             if (!presentation.terminalSlotId) return;
             router.push({
-              pathname: '/terminal/[slotId]',
+              pathname: '/workspace/slot/[slotId]/terminal',
               params: {
                 slotId: presentation.terminalSlotId,
                 ...decisionRouteContext,
@@ -659,9 +659,9 @@ export function DecisionWorkspaceCockpit({
           value={shortId(presentation.runId)}
           onPress={() =>
             router.push({
-              pathname: '/run/[id]',
+              pathname: '/workspace/run/[runId]/evidence',
               params: {
-                id: presentation.runId!,
+                runId: presentation.runId!,
                 ...decisionRouteContext,
                 recipeRun: workspaceRecipeRunId,
                 ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
@@ -922,7 +922,7 @@ export function signalTarget(
   const target = workspaceSignalTargetForDecisionLabel(label);
   if (target === 'diff') {
     return {
-      pathname: '/diff/[runId]' as const,
+      pathname: '/workspace/run/[runId]/diff' as const,
       params: {
         runId,
         ...targetWorkspaceRouteContextParams('diff', decisionRouteContext.decisionKind),
@@ -933,7 +933,7 @@ export function signalTarget(
   }
   if (target === 'artifacts' || target === 'compare') {
     return {
-      pathname: '/artifacts/[runId]' as const,
+      pathname: '/workspace/run/[runId]/files' as const,
       params: {
         runId,
         ...decisionRouteContext,

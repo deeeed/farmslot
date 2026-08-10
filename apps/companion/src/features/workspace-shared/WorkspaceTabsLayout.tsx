@@ -11,10 +11,7 @@ import { forwardRef, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, fonts, spacing } from '../../lib/theme';
-
-// Keep the movable Co-Pilot control from obscuring workspace navigation.
-const FLOATING_COPILOT_GUTTER = 64;
+import { colors, floatingCopilotGutter, fonts, spacing } from '../../lib/theme';
 
 export interface WorkspaceTabDefinition {
   href: Href;
@@ -127,7 +124,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     minHeight: 48,
     paddingBottom: spacing.sm,
-    paddingRight: FLOATING_COPILOT_GUTTER,
+    paddingRight: floatingCopilotGutter,
   },
   headerTitle: {
     color: colors.textPrimary,
@@ -144,7 +141,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.bgCardHover,
     borderBottomWidth: 1,
     flexDirection: 'row',
-    paddingRight: FLOATING_COPILOT_GUTTER,
+    paddingRight: floatingCopilotGutter,
   },
   tab: {
     alignItems: 'center',

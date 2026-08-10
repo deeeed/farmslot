@@ -180,7 +180,7 @@ export function SlotWorkspaceSection({
         ? artifactFilterParamForWorkspaceNav('review')
         : artifactFilterParamForWorkspaceNav('recipe'));
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId,
         ...targetRouteContext(targetWorkspaceForArtifactRoute(recipeRunParam, targetFilter)),
@@ -202,7 +202,7 @@ export function SlotWorkspaceSection({
     const recipeRunParam = recipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM;
     if (diffArtifactCandidate([{ path: artifactPath }])) {
       router.push({
-        pathname: '/diff/[runId]',
+        pathname: '/workspace/run/[runId]/diff',
         params: {
           runId,
           ...targetRouteContext('diff'),
@@ -219,7 +219,7 @@ export function SlotWorkspaceSection({
         : (artifactFilterParamForArtifactPath(artifactPath) ??
           artifactFilterParamForWorkspaceNav('review')));
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId,
         ...targetRouteContext(targetWorkspaceForArtifactRoute(recipeRunParam, targetFilter)),
@@ -247,9 +247,9 @@ export function SlotWorkspaceSection({
           prNumber={run.prNumber}
           onOpenRun={() =>
             router.push({
-              pathname: '/run/[id]',
+              pathname: '/workspace/run/[runId]/evidence',
               params: {
-                id: run.id,
+                runId: run.id,
                 ...targetRouteContext('run'),
                 recipeRun: selectedRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                 artifact: focusedArtifactPath,
@@ -285,7 +285,7 @@ export function SlotWorkspaceSection({
           onOpenDiff={() =>
             hasRunWorkspaceDiff(run)
               ? router.push({
-                  pathname: '/diff/[runId]',
+                  pathname: '/workspace/run/[runId]/diff',
                   params: {
                     runId: run.id,
                     ...targetRouteContext('diff'),
@@ -296,7 +296,7 @@ export function SlotWorkspaceSection({
                   },
                 })
               : router.push({
-                  pathname: '/diff/slot/[slotId]',
+                  pathname: '/workspace/slot/[slotId]/diff',
                   params: {
                     slotId,
                     ...targetRouteContext('diff'),
@@ -366,9 +366,9 @@ export function SlotWorkspaceSection({
           onOpenTerminal={onOpenTerminal}
           onOpenRun={() =>
             router.push({
-              pathname: '/run/[id]',
+              pathname: '/workspace/run/[runId]/evidence',
               params: {
-                id: run.id,
+                runId: run.id,
                 ...targetRouteContext('run'),
                 recipeRun: selectedRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                 ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
@@ -427,7 +427,7 @@ export function SlotWorkspaceSection({
           onOpenDiff={() =>
             hasRunWorkspaceDiff(run)
               ? router.push({
-                  pathname: '/diff/[runId]',
+                  pathname: '/workspace/run/[runId]/diff',
                   params: {
                     runId: run.id,
                     ...targetRouteContext('diff'),
@@ -438,7 +438,7 @@ export function SlotWorkspaceSection({
                   },
                 })
               : router.push({
-                  pathname: '/diff/slot/[slotId]',
+                  pathname: '/workspace/slot/[slotId]/diff',
                   params: {
                     slotId,
                     ...targetRouteContext('diff'),
@@ -569,9 +569,9 @@ export function SlotWorkspaceSection({
             slotCurrentRunId && slotCurrentRunId !== run.id
               ? () =>
                   router.replace({
-                    pathname: '/slot/[id]',
+                    pathname: '/workspace/slot/[slotId]/slot',
                     params: {
-                      id: slotId,
+                      slotId: slotId,
                       ...slotWorkspaceRouteContext,
                       runId: slotCurrentRunId,
                       recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -601,7 +601,7 @@ export function SlotWorkspaceSection({
               value="git.diff"
               onPress={() =>
                 router.push({
-                  pathname: '/diff/slot/[slotId]',
+                  pathname: '/workspace/slot/[slotId]/diff',
                   params: { slotId, ...targetRouteContext('diff') },
                 })
               }
@@ -630,7 +630,7 @@ export function SlotWorkspaceSection({
                 }
                 onPress={() =>
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: latestHistoryEntry.runId,
                       ...targetRouteContext('artifacts'),
@@ -647,7 +647,7 @@ export function SlotWorkspaceSection({
                 value={`${latestComparePairCount} pair${latestComparePairCount === 1 ? '' : 's'}`}
                 onPress={() =>
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: latestHistoryEntry.runId,
                       ...targetRouteContext('compare'),
@@ -670,7 +670,7 @@ export function SlotWorkspaceSection({
                     latestHistoryRecipeEvidence,
                   );
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: latestHistoryEntry.runId,
                       ...targetRouteContext('recipe'),
@@ -687,7 +687,7 @@ export function SlotWorkspaceSection({
                 value="history"
                 onPress={() =>
                   router.push({
-                    pathname: '/terminal/[slotId]',
+                    pathname: '/workspace/slot/[slotId]/terminal',
                     params: {
                       slotId,
                       ...targetRouteContext('terminal'),
@@ -749,7 +749,7 @@ export function SlotWorkspaceSection({
                 authHeaders={artifactAuthHeaders}
                 onOpenArtifact={(artifactPath) =>
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: latestHistoryEntry.runId,
                       ...targetRouteContext('compare'),
@@ -805,9 +805,9 @@ export function SlotWorkspaceSection({
                 artifactAuthHeaders={artifactAuthHeaders}
                 onOpenRun={() =>
                   router.push({
-                    pathname: '/run/[id]',
+                    pathname: '/workspace/run/[runId]/evidence',
                     params: {
-                      id: entry.runId,
+                      runId: entry.runId,
                       ...targetRouteContext('run'),
                       recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                     },
@@ -815,7 +815,7 @@ export function SlotWorkspaceSection({
                 }
                 onOpenArtifacts={() =>
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: entry.runId,
                       ...targetRouteContext('artifacts'),
@@ -826,7 +826,7 @@ export function SlotWorkspaceSection({
                 }
                 onOpenCompare={() =>
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: entry.runId,
                       ...targetRouteContext('compare'),
@@ -842,7 +842,7 @@ export function SlotWorkspaceSection({
                 }
                 onOpenCompareArtifact={(artifactPath, source) =>
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: entry.runId,
                       ...targetRouteContext('compare'),
@@ -858,7 +858,7 @@ export function SlotWorkspaceSection({
                 onOpenRecipe={() => {
                   const recipeTarget = slotHistoryRecipeWorkspaceParams(recipeEvidence);
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: entry.runId,
                       ...targetRouteContext('recipe'),
@@ -869,7 +869,7 @@ export function SlotWorkspaceSection({
                 }}
                 onOpenDiff={() =>
                   router.push({
-                    pathname: '/diff/[runId]',
+                    pathname: '/workspace/run/[runId]/diff',
                     params: {
                       runId: entry.runId,
                       ...targetRouteContext('diff'),
@@ -909,7 +909,7 @@ export function SlotWorkspaceSection({
                 }
                 onOpenTerminal={() =>
                   router.push({
-                    pathname: '/terminal/[slotId]',
+                    pathname: '/workspace/slot/[slotId]/terminal',
                     params: {
                       slotId,
                       ...targetRouteContext('terminal'),

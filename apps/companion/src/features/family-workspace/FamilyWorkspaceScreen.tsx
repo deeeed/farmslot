@@ -208,7 +208,7 @@ export default function FamilyWorkspaceScreen() {
                   );
                   const focusedArtifact = focusedArtifactForRun(selectedRun.runId);
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: selectedRun.runId,
                       ...targetRouteContext('recipe'),
@@ -236,9 +236,9 @@ export default function FamilyWorkspaceScreen() {
               prNumber={selectedRun.prNumber}
               onOpenRun={() =>
                 router.push({
-                  pathname: '/run/[id]',
+                  pathname: '/workspace/run/[runId]/evidence',
                   params: {
-                    id: selectedRun.runId,
+                    runId: selectedRun.runId,
                     ...targetRouteContext('run'),
                     recipeRun: requestedRecipeRunId || DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                     artifact: requestedArtifactPath,
@@ -248,7 +248,7 @@ export default function FamilyWorkspaceScreen() {
               onOpenRecipe={() => {
                 const recipeRunTarget = recipeWorkspaceParam(requestedRecipeRunId);
                 router.push({
-                  pathname: '/artifacts/[runId]',
+                  pathname: '/workspace/run/[runId]/files',
                   params: {
                     runId: selectedRun.runId,
                     ...targetRouteContext('recipe'),
@@ -278,7 +278,7 @@ export default function FamilyWorkspaceScreen() {
                   return;
                 }
                 router.push({
-                  pathname: '/artifacts/[runId]',
+                  pathname: '/workspace/run/[runId]/files',
                   params: {
                     runId: selectedRun.runId,
                     ...targetRouteContext('compare'),
@@ -291,9 +291,9 @@ export default function FamilyWorkspaceScreen() {
               onOpenSlot={() => {
                 if (!selectedRun.slotId) return;
                 router.push({
-                  pathname: '/slot/[id]',
+                  pathname: '/workspace/slot/[slotId]/slot',
                   params: {
-                    id: selectedRun.slotId,
+                    slotId: selectedRun.slotId,
                     ...targetRouteContext('slot'),
                     runId: selectedRun.runId,
                     recipeRun: requestedRecipeRunId || DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -304,7 +304,7 @@ export default function FamilyWorkspaceScreen() {
               onOpenTerminal={() => {
                 if (!selectedRun.slotId) return;
                 router.push({
-                  pathname: '/terminal/[slotId]',
+                  pathname: '/workspace/slot/[slotId]/terminal',
                   params: {
                     slotId: selectedRun.slotId,
                     ...targetRouteContext('terminal'),
@@ -357,7 +357,7 @@ export default function FamilyWorkspaceScreen() {
                 if (priorityVisualPairIsRecipe) {
                   if (!selectedRun) return;
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: selectedRun.runId,
                       ...targetRouteContext('compare'),
@@ -380,7 +380,7 @@ export default function FamilyWorkspaceScreen() {
                 }
                 if (!selectedRun) return;
                 router.push({
-                  pathname: '/artifacts/[runId]',
+                  pathname: '/workspace/run/[runId]/files',
                   params: {
                     runId: selectedRun.runId,
                     ...targetRouteContext('compare'),
@@ -400,7 +400,7 @@ export default function FamilyWorkspaceScreen() {
               onOpenRecipe={() => {
                 if (!selectedRun) return;
                 router.push({
-                  pathname: '/artifacts/[runId]',
+                  pathname: '/workspace/run/[runId]/files',
                   params: {
                     runId: selectedRun.runId,
                     ...targetRouteContext('recipe'),
@@ -419,9 +419,9 @@ export default function FamilyWorkspaceScreen() {
               onOpenRun={() => {
                 if (!selectedRun) return;
                 router.push({
-                  pathname: '/run/[id]',
+                  pathname: '/workspace/run/[runId]/evidence',
                   params: {
-                    id: selectedRun.runId,
+                    runId: selectedRun.runId,
                     ...targetRouteContext('run'),
                     recipeRun: workspaceRecipeRunForRun(selectedRun.runId),
                     ...focusedArtifactParamsForRun(selectedRun.runId),
@@ -432,7 +432,7 @@ export default function FamilyWorkspaceScreen() {
               onOpenTerminal={() => {
                 if (!selectedRun?.slotId) return;
                 router.push({
-                  pathname: '/terminal/[slotId]',
+                  pathname: '/workspace/slot/[slotId]/terminal',
                   params: {
                     slotId: selectedRun.slotId,
                     ...targetRouteContext('terminal'),
@@ -474,7 +474,7 @@ export default function FamilyWorkspaceScreen() {
               }
               if (!selectedRun || !priorityVisualPair) return;
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: selectedRun.runId,
                   ...targetRouteContext('compare'),
@@ -492,9 +492,9 @@ export default function FamilyWorkspaceScreen() {
               if (!selectedRun) return;
               const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
               router.push({
-                pathname: '/run/[id]',
+                pathname: '/workspace/run/[runId]/evidence',
                 params: {
-                  id: selectedRun.runId,
+                  runId: selectedRun.runId,
                   ...targetRouteContext('run'),
                   recipeRun: contextRecipeRun,
                   ...focusedArtifactParamsForRun(selectedRun.runId),
@@ -505,7 +505,7 @@ export default function FamilyWorkspaceScreen() {
               if (!selectedRun) return;
               const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: selectedRun.runId,
                   ...artifactRouteContext(
@@ -530,7 +530,7 @@ export default function FamilyWorkspaceScreen() {
               );
               const focusedArtifact = focusedArtifactForRun(selectedRun.runId);
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: selectedRun.runId,
                   ...targetRouteContext('recipe'),
@@ -549,9 +549,9 @@ export default function FamilyWorkspaceScreen() {
               if (!selectedRun?.slotId) return;
               const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
               router.push({
-                pathname: '/slot/[id]',
+                pathname: '/workspace/slot/[slotId]/slot',
                 params: {
-                  id: selectedRun.slotId,
+                  slotId: selectedRun.slotId,
                   ...targetRouteContext('slot'),
                   runId: selectedRun.runId,
                   recipeRun: contextRecipeRun,
@@ -567,7 +567,7 @@ export default function FamilyWorkspaceScreen() {
               if (!selectedRun?.slotId) return;
               const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
               router.push({
-                pathname: '/terminal/[slotId]',
+                pathname: '/workspace/slot/[slotId]/terminal',
                 params: {
                   slotId: selectedRun.slotId,
                   ...targetRouteContext('terminal'),
@@ -606,9 +606,9 @@ export default function FamilyWorkspaceScreen() {
                 }
                 onOpenRun={() =>
                   router.push({
-                    pathname: '/run/[id]',
+                    pathname: '/workspace/run/[runId]/evidence',
                     params: {
-                      id: selectedRun.runId,
+                      runId: selectedRun.runId,
                       ...targetRouteContext('run'),
                       recipeRun: workspaceRecipeRunForRun(selectedRun.runId),
                       ...focusedArtifactParamsForRun(selectedRun.runId),
@@ -617,7 +617,7 @@ export default function FamilyWorkspaceScreen() {
                 }
                 onOpenArtifacts={() =>
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: selectedRun.runId,
                       ...artifactRouteContext(
@@ -654,7 +654,7 @@ export default function FamilyWorkspaceScreen() {
                 onOpenDiffArtifact={openDiffArtifact}
                 onOpenRecipe={() =>
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: selectedRun.runId,
                       ...targetRouteContext('recipe'),
@@ -681,7 +681,7 @@ export default function FamilyWorkspaceScreen() {
                 onOpenTerminal={() => {
                   if (!selectedRun.slotId) return;
                   router.push({
-                    pathname: '/terminal/[slotId]',
+                    pathname: '/workspace/slot/[slotId]/terminal',
                     params: {
                       slotId: selectedRun.slotId,
                       ...targetRouteContext('terminal'),
@@ -695,9 +695,9 @@ export default function FamilyWorkspaceScreen() {
                 onOpenSlot={() => {
                   if (!selectedRun.slotId) return;
                   router.push({
-                    pathname: '/slot/[id]',
+                    pathname: '/workspace/slot/[slotId]/slot',
                     params: {
-                      id: selectedRun.slotId,
+                      slotId: selectedRun.slotId,
                       ...targetRouteContext('slot'),
                       runId: selectedRun.runId,
                       recipeRun: workspaceRecipeRunForRun(selectedRun.runId),
@@ -732,7 +732,7 @@ export default function FamilyWorkspaceScreen() {
                 if (priorityVisualPairIsRecipe) {
                   if (!selectedRun) return;
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: selectedRun.runId,
                       ...targetRouteContext('compare'),
@@ -749,7 +749,7 @@ export default function FamilyWorkspaceScreen() {
               onOpenArtifacts={() => {
                 if (!selectedRun) return;
                 router.push({
-                  pathname: '/artifacts/[runId]',
+                  pathname: '/workspace/run/[runId]/files',
                   params: {
                     runId: selectedRun.runId,
                     ...targetRouteContext('compare'),
@@ -771,9 +771,9 @@ export default function FamilyWorkspaceScreen() {
               snapshot={snapshot}
               onOpenRun={(runIdValue) =>
                 router.push({
-                  pathname: '/run/[id]',
+                  pathname: '/workspace/run/[runId]/evidence',
                   params: {
-                    id: runIdValue,
+                    runId: runIdValue,
                     ...targetRouteContext('run'),
                     recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                   },
@@ -782,7 +782,7 @@ export default function FamilyWorkspaceScreen() {
               onOpenArtifacts={openFamilyArtifactWorkspace}
               onOpenDiff={(entry, artifactPath) =>
                 router.push({
-                  pathname: '/diff/[runId]',
+                  pathname: '/workspace/run/[runId]/diff',
                   params: {
                     runId: entry.runId,
                     ...diffRouteContext(),
@@ -793,9 +793,9 @@ export default function FamilyWorkspaceScreen() {
               }
               onOpenSlot={(slotIdValue, runIdValue) =>
                 router.push({
-                  pathname: '/slot/[id]',
+                  pathname: '/workspace/slot/[slotId]/slot',
                   params: {
-                    id: slotIdValue,
+                    slotId: slotIdValue,
                     ...targetRouteContext('slot'),
                     runId: runIdValue,
                     recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -804,7 +804,7 @@ export default function FamilyWorkspaceScreen() {
               }
               onOpenTerminal={(slotIdValue, runIdValue) =>
                 router.push({
-                  pathname: '/terminal/[slotId]',
+                  pathname: '/workspace/slot/[slotId]/terminal',
                   params: {
                     slotId: slotIdValue,
                     ...targetRouteContext('terminal'),
@@ -866,9 +866,9 @@ export default function FamilyWorkspaceScreen() {
                   }
                   onOpenRun={() =>
                     router.push({
-                      pathname: '/run/[id]',
+                      pathname: '/workspace/run/[runId]/evidence',
                       params: {
-                        id: run.runId,
+                        runId: run.runId,
                         ...retrospectiveRouteContext,
                         recipeRun: workspaceRecipeRunForRun(run.runId),
                         ...focusedArtifactParamsForRun(run.runId),
@@ -877,7 +877,7 @@ export default function FamilyWorkspaceScreen() {
                   }
                   onOpenArtifacts={() =>
                     router.push({
-                      pathname: '/artifacts/[runId]',
+                      pathname: '/workspace/run/[runId]/files',
                       params: {
                         runId: run.runId,
                         ...retrospectiveRouteContext,
@@ -894,7 +894,7 @@ export default function FamilyWorkspaceScreen() {
                   }
                   onOpenRecipe={() =>
                     router.push({
-                      pathname: '/artifacts/[runId]',
+                      pathname: '/workspace/run/[runId]/files',
                       params: {
                         runId: run.runId,
                         ...retrospectiveRouteContext,
@@ -906,7 +906,7 @@ export default function FamilyWorkspaceScreen() {
                   onOpenRecipeCompare={(artifactPath) => {
                     const recipeEvidence = recipeEvidenceForRun(run);
                     router.push({
-                      pathname: '/artifacts/[runId]',
+                      pathname: '/workspace/run/[runId]/files',
                       params: {
                         runId: run.runId,
                         ...retrospectiveRouteContext,
@@ -925,7 +925,7 @@ export default function FamilyWorkspaceScreen() {
                   onOpenTerminal={() => {
                     if (!run.slotId) return;
                     router.push({
-                      pathname: '/terminal/[slotId]',
+                      pathname: '/workspace/slot/[slotId]/terminal',
                       params: {
                         slotId: run.slotId,
                         ...retrospectiveRouteContext,
@@ -939,9 +939,9 @@ export default function FamilyWorkspaceScreen() {
                   onOpenSlot={() => {
                     if (!run.slotId) return;
                     router.push({
-                      pathname: '/slot/[id]',
+                      pathname: '/workspace/slot/[slotId]/slot',
                       params: {
-                        id: run.slotId,
+                        slotId: run.slotId,
                         ...retrospectiveRouteContext,
                         runId: run.runId,
                         recipeRun: workspaceRecipeRunForRun(run.runId),
@@ -1006,9 +1006,9 @@ export default function FamilyWorkspaceScreen() {
                   onOpenVisual={setViewerUri}
                   onOpenRun={(runIdValue) =>
                     router.push({
-                      pathname: '/run/[id]',
+                      pathname: '/workspace/run/[runId]/evidence',
                       params: {
-                        id: runIdValue,
+                        runId: runIdValue,
                         ...targetRouteContext('run'),
                         recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                       },
@@ -1017,7 +1017,7 @@ export default function FamilyWorkspaceScreen() {
                   onOpenArtifacts={openFamilyArtifactWorkspace}
                   onOpenRecipe={(runIdValue) =>
                     router.push({
-                      pathname: '/artifacts/[runId]',
+                      pathname: '/workspace/run/[runId]/files',
                       params: {
                         runId: runIdValue,
                         ...targetRouteContext('recipe'),
@@ -1029,7 +1029,7 @@ export default function FamilyWorkspaceScreen() {
                   onOpenDiff={(sourceRun) => openFamilyRunDiff(sourceRun)}
                   onOpenTerminal={(slotIdValue, runIdValue) =>
                     router.push({
-                      pathname: '/terminal/[slotId]',
+                      pathname: '/workspace/slot/[slotId]/terminal',
                       params: {
                         slotId: slotIdValue,
                         ...targetRouteContext('terminal'),
@@ -1041,9 +1041,9 @@ export default function FamilyWorkspaceScreen() {
                   }
                   onOpenSlot={(slotIdValue, runIdValue) =>
                     router.push({
-                      pathname: '/slot/[id]',
+                      pathname: '/workspace/slot/[slotId]/slot',
                       params: {
-                        id: slotIdValue,
+                        slotId: slotIdValue,
                         ...targetRouteContext('slot'),
                         runId: runIdValue,
                         recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -1075,9 +1075,9 @@ export default function FamilyWorkspaceScreen() {
                 }
                 onOpenRun={() =>
                   router.push({
-                    pathname: '/run/[id]',
+                    pathname: '/workspace/run/[runId]/evidence',
                     params: {
-                      id: run.runId,
+                      runId: run.runId,
                       ...targetRouteContext('run'),
                       recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                     },
@@ -1085,7 +1085,7 @@ export default function FamilyWorkspaceScreen() {
                 }
                 onOpenArtifacts={() =>
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: run.runId,
                       ...targetRouteContext('artifacts'),
@@ -1100,7 +1100,7 @@ export default function FamilyWorkspaceScreen() {
                 onOpenRecipeCompare={() => {
                   const recipeEvidence = recipeEvidenceForRun(run);
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: run.runId,
                       ...targetRouteContext('compare'),
@@ -1114,7 +1114,7 @@ export default function FamilyWorkspaceScreen() {
                 }}
                 onOpenRecipe={() =>
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: run.runId,
                       ...targetRouteContext('recipe'),
@@ -1137,7 +1137,7 @@ export default function FamilyWorkspaceScreen() {
                 onOpenTerminal={() => {
                   if (!run.slotId) return;
                   router.push({
-                    pathname: '/terminal/[slotId]',
+                    pathname: '/workspace/slot/[slotId]/terminal',
                     params: {
                       slotId: run.slotId,
                       ...targetRouteContext('terminal'),
@@ -1150,9 +1150,9 @@ export default function FamilyWorkspaceScreen() {
                 onOpenSlot={() => {
                   if (!run.slotId) return;
                   router.push({
-                    pathname: '/slot/[id]',
+                    pathname: '/workspace/slot/[slotId]/slot',
                     params: {
-                      id: run.slotId,
+                      slotId: run.slotId,
                       ...targetRouteContext('slot'),
                       runId: run.runId,
                       recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,

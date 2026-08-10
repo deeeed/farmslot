@@ -85,9 +85,7 @@ export function TerminalSteeringContextCard({
             },
           ]}
         >
-          <Text style={[styles.steeringStatusText, { color: liveBadgeColor }]}>
-            {streamLabel}
-          </Text>
+          <Text style={[styles.steeringStatusText, { color: liveBadgeColor }]}>{streamLabel}</Text>
         </View>
       </View>
       {targetWarning ? <Text style={styles.steeringWarningText}>{targetWarning}</Text> : null}
@@ -194,9 +192,9 @@ export function TerminalWorkspaceCockpit({
   const openRun = () => {
     if (!targetRunId) return;
     router.push({
-      pathname: '/run/[id]',
+      pathname: '/workspace/run/[runId]/evidence',
       params: {
-        id: targetRunId,
+        runId: targetRunId,
         ...targetRouteContext('run'),
         ...(recipeRunId ? { recipeRun: recipeRunId } : {}),
         ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
@@ -211,7 +209,7 @@ export function TerminalWorkspaceCockpit({
         : ((focusedArtifactPath ? artifactFilterParamForArtifactPath(focusedArtifactPath) : null) ??
           artifactFilterParamForWorkspaceNav('review'));
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: targetRunId,
         ...targetRouteContext(targetWorkspaceForArtifactRoute(artifactRecipeRun, targetFilter)),
@@ -233,7 +231,7 @@ export function TerminalWorkspaceCockpit({
       (evidenceArtifactPath ? artifactFilterParamForArtifactPath(evidenceArtifactPath) : null) ??
       artifactFilterParamForWorkspaceNav('review');
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: targetRunId,
         ...targetRouteContext(
@@ -248,7 +246,7 @@ export function TerminalWorkspaceCockpit({
   const openCompareArtifacts = () => {
     if (!targetRunId || !compareArtifactPath) return;
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: targetRunId,
         ...targetRouteContext('compare'),
@@ -261,7 +259,7 @@ export function TerminalWorkspaceCockpit({
   const openCompareArtifact = (artifactPath: string) => {
     if (!targetRunId) return;
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: targetRunId,
         ...targetRouteContext('compare'),
@@ -274,7 +272,7 @@ export function TerminalWorkspaceCockpit({
   const openRecipe = () => {
     if (!targetRunId || recipeAvailable === false) return;
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: targetRunId,
         ...targetRouteContext('recipe'),
@@ -289,7 +287,7 @@ export function TerminalWorkspaceCockpit({
   const openDiff = () => {
     if (targetRunId && diffAvailable !== false) {
       router.push({
-        pathname: '/diff/[runId]',
+        pathname: '/workspace/run/[runId]/diff',
         params: {
           runId: targetRunId,
           ...diffRouteContext,
@@ -304,7 +302,7 @@ export function TerminalWorkspaceCockpit({
       return;
     }
     router.push({
-      pathname: '/diff/slot/[slotId]',
+      pathname: '/workspace/slot/[slotId]/diff',
       params: {
         slotId,
         ...diffRouteContext,
@@ -318,9 +316,9 @@ export function TerminalWorkspaceCockpit({
   };
   const openSlot = () => {
     router.push({
-      pathname: '/slot/[id]',
+      pathname: '/workspace/slot/[slotId]/slot',
       params: {
-        id: slotId,
+        slotId: slotId,
         ...targetRouteContext('slot'),
         ...(targetRunId ? { runId: targetRunId } : {}),
         ...(recipeRunId ? { recipeRun: recipeRunId } : {}),
@@ -385,7 +383,7 @@ export function TerminalWorkspaceCockpit({
       return;
     }
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: targetRunId,
         ...targetRouteContext(
@@ -705,9 +703,9 @@ export function TerminalFullscreenWorkspaceRail({
   ) => targetWorkspaceRouteContextParams(targetWorkspace, workspaceRouteContext.decisionKind);
   const openSlot = () => {
     router.push({
-      pathname: '/slot/[id]',
+      pathname: '/workspace/slot/[slotId]/slot',
       params: {
-        id: slotId,
+        slotId: slotId,
         ...targetRouteContext('slot'),
         ...(targetRunId ? { runId: targetRunId } : {}),
         ...(recipeRunId ? { recipeRun: recipeRunId } : {}),
@@ -718,9 +716,9 @@ export function TerminalFullscreenWorkspaceRail({
   const openRun = () => {
     if (!targetRunId) return;
     router.push({
-      pathname: '/run/[id]',
+      pathname: '/workspace/run/[runId]/evidence',
       params: {
-        id: targetRunId,
+        runId: targetRunId,
         ...targetRouteContext('run'),
         ...(recipeRunId ? { recipeRun: recipeRunId } : {}),
         ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
@@ -736,7 +734,7 @@ export function TerminalFullscreenWorkspaceRail({
         : ((focusedArtifactPath ? artifactFilterParamForArtifactPath(focusedArtifactPath) : null) ??
           artifactFilterParamForWorkspaceNav('review'));
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: targetRunId,
         ...targetRouteContext(targetWorkspaceForArtifactRoute(artifactRecipeRun, targetFilter)),
@@ -759,7 +757,7 @@ export function TerminalFullscreenWorkspaceRail({
       (evidenceArtifactPath ? artifactFilterParamForArtifactPath(evidenceArtifactPath) : null) ??
       artifactFilterParamForWorkspaceNav('review');
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: targetRunId,
         ...targetRouteContext(
@@ -774,7 +772,7 @@ export function TerminalFullscreenWorkspaceRail({
   const openCompare = () => {
     if (!targetRunId || !compareArtifactPath || visualPairCount === 0) return;
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: targetRunId,
         ...targetRouteContext('compare'),
@@ -788,7 +786,7 @@ export function TerminalFullscreenWorkspaceRail({
     if (!targetRunId || recipeAvailable === false) return;
     const recipeTarget = recipeWorkspaceParam(recipeRunId);
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: targetRunId,
         ...targetRouteContext('recipe'),
@@ -803,7 +801,7 @@ export function TerminalFullscreenWorkspaceRail({
   const openDiff = () => {
     if (targetRunId && diffAvailable !== false) {
       router.push({
-        pathname: '/diff/[runId]',
+        pathname: '/workspace/run/[runId]/diff',
         params: {
           runId: targetRunId,
           ...diffRouteContext,
@@ -818,7 +816,7 @@ export function TerminalFullscreenWorkspaceRail({
       return;
     }
     router.push({
-      pathname: '/diff/slot/[slotId]',
+      pathname: '/workspace/slot/[slotId]/diff',
       params: {
         slotId,
         ...diffRouteContext,
