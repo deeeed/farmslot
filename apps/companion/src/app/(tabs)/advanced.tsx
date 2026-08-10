@@ -76,6 +76,14 @@ export default function AdvancedScreen() {
             <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
             <Text style={styles.secondaryActionText}>New item</Text>
           </Pressable>
+          <Pressable
+            testID="companion-advanced-roadmap"
+            style={styles.secondaryAction}
+            onPress={() => router.push('/(tabs)/roadmap')}
+          >
+            <Ionicons name="map-outline" size={20} color={colors.accent} />
+            <Text style={styles.secondaryActionText}>Roadmap</Text>
+          </Pressable>
         </View>
       </View>
 

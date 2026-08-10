@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- feat(companion): add mobile Roadmap and Backlog detail workspaces, edit complete backlog dispatch parameters before launch, render attached specs, and expose review-attempt history with per-generation reviewed and fix diffs.
 - feat(companion): use native form-sheet routes for workspace filters and backlog creation, add a scoped mobile backlog launcher, and make Slot/Terminal/Diff and Run Evidence/Diff/Timeline/Files persistent tabbed workspaces with single-purpose content instead of duplicated progress or artifact surfaces.
 - fix(pairing): reject mixed-code multi-address QRs before exchanging any credential.
 - fix(pairing): exchange a multi-address QR once so every imported profile shares one revocable device credential.

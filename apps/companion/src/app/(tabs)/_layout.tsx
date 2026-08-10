@@ -103,6 +103,14 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
+          name="roadmap"
+          options={{
+            title: 'Roadmap',
+            href: null,
+            header: () => filteredHeader,
+          }}
+        />
+        <Tabs.Screen
           name="inbox"
           options={{
             title: 'Inbox',

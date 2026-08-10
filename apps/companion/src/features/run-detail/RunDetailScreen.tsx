@@ -8,7 +8,6 @@ import {
   Events,
   isTerminalRunStatus,
   Methods,
-  observedReviewSessionContinuity,
   type RecipeRunArtifactGroup,
   reviewChainForRun,
   type Run,
@@ -64,6 +63,7 @@ import { formatDuration } from '../workspace-shared/format';
 import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
 
 import { InteractiveOperatorPacketsPanel } from './components/InteractiveOperatorPacketsPanel';
+import { ReviewHistoryPanel } from './components/ReviewHistoryPanel';
 import {
   decisionPresentationForRun,
   DecisionSummaryCard,
@@ -493,33 +493,12 @@ export default function RunDetailScreen() {
           </View>
         </View>
 
-        {reviewPackageActiveTab === 'timeline' && reviewChain.length > 0 ? (
-          <View style={styles.workspaceCard}>
-            <Text style={styles.sectionTitle}>Review chain</Text>
-            <View style={styles.workspaceSignalRow}>
-              {reviewChain.map((entry) => (
-                <View key={entry.runId} style={styles.workspaceSignalChip}>
-                  <Text style={styles.workspaceSignalLabel}>Generation {entry.generation}</Text>
-                  <Text style={styles.workspaceSignalValue} numberOfLines={1}>
-                    {entry.baseSha ? `${entry.baseSha.slice(0, 7)} → ` : ''}
-                    {entry.headSha?.slice(0, 7) ?? 'pending'}
-                  </Text>
-                  <Text style={styles.workspaceSignalValue} numberOfLines={1}>
-                    {entry.reviewScope} · {entry.validationDepth}
-                  </Text>
-                  <Text style={styles.workspaceSignalValue} numberOfLines={1}>
-                    {entry.verdict} ·{' '}
-                    {entry.unresolvedCount == null
-                      ? 'unresolved pending'
-                      : `${entry.unresolvedCount} unresolved`}
-                  </Text>
-                  <Text style={styles.workspaceSignalValue} numberOfLines={1}>
-                    {observedReviewSessionContinuity(entry)}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          </View>
+        {reviewPackageActiveTab === 'timeline' ? (
+          <ReviewHistoryPanel
+            run={run}
+            chain={reviewChain}
+            onOpenArtifact={(path) => openRunEvidenceArtifact(path)}
+          />
         ) : null}
 
         {reviewPackageActiveTab === 'evidence' && focusedArtifactPath ? (
