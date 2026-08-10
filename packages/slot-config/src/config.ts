@@ -430,6 +430,38 @@ export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
   );
 }
 
+/**
+ * All slots a machine's pool declares, from the SAME pool directory every
+ * other slot-config lookup uses (honors FARMSLOT_POOL_DIR). Fails closed: a
+ * machine that just resolved a slot must have a pool file — its absence means
+ * the callers are reading inconsistent state.
+ */
+export async function loadMachineSlots(machine: string): Promise<RawPoolSlot[]> {
+  let files: string[];
+  try {
+    files = await readdir(poolDir);
+  } catch {
+    throw new SlotConfigError('POOL_DIR_NOT_FOUND', `Pool directory not found: ${poolDir}`, {
+      userAction: 'No pools are configured. Diagnose with `farmslot doctor`.',
+    });
+  }
+  for (const file of files) {
+    if (isIgnoredPoolFile(file)) continue;
+    try {
+      const content = await readFile(path.join(poolDir, file), 'utf-8');
+      const pool: RawPoolJson = JSON.parse(content);
+      if (pool.machine === machine) return pool.slots;
+    } catch {
+      /* skip invalid files — same tolerance as resolveSlot */
+    }
+  }
+  throw new SlotConfigError(
+    'SLOT_NOT_FOUND',
+    `No pool JSON declares machine '${machine}' under ${poolDir}/`,
+    { userAction: 'Run `farmslot fleet refresh` and diagnose with `farmslot doctor`.' },
+  );
+}
+
 // ─── resolveSlotByRepo ───
 // Reverse-lookup a slot from a checkout directory (find-slot-by-cwd scripts).
 // Prefers a slot on the local machine when several pools map the same path.
