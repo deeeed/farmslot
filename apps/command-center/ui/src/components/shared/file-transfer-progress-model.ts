@@ -31,7 +31,9 @@ export function pruneFileTransfers(
   });
 }
 
-export function transferPercent(progress: Pick<FileTransferProgress, 'bytesTransferred' | 'totalBytes'>): number {
+export function transferPercent(
+  progress: Pick<FileTransferProgress, 'bytesTransferred' | 'totalBytes'>,
+): number {
   if (!progress.totalBytes || progress.totalBytes <= 0) return 0;
   return Math.min(100, Math.round((progress.bytesTransferred / progress.totalBytes) * 100));
 }

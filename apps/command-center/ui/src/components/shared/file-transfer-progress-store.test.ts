@@ -4,10 +4,10 @@ import test from 'node:test';
 import type { FileTransferProgress } from '@farmslot/protocol';
 
 import {
+  type FileTransferUiEntry,
   filterTransfersForRun,
   formatPipelineTransferMeta,
   transferForPipelineNode,
-  type FileTransferUiEntry,
   upsertFileTransfer,
 } from './file-transfer-progress-model.js';
 
@@ -50,11 +50,12 @@ test('filterTransfersForRun is strict — excludes unscoped transfers', () => {
   const forRun1 = filterTransfersForRun(entries, 'run-1');
   assert.equal(forRun1.length, 1);
   assert.equal(forRun1[0]?.transferId, 'a');
-  assert.deepEqual(filterTransfersForRun(entries, null).map((e) => e.transferId).sort(), [
-    'a',
-    'b',
-    'c',
-  ]);
+  assert.deepEqual(
+    filterTransfersForRun(entries, null)
+      .map((e) => e.transferId)
+      .sort(),
+    ['a', 'b', 'c'],
+  );
 });
 
 test('transferForPipelineNode separates package-refresh from finalize', () => {

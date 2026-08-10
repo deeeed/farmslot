@@ -11,12 +11,12 @@ import type {
 import { failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 import {
   primaryTransferForRun,
   retainFileTransferStore,
   subscribeFileTransferStore,
 } from '../shared/file-transfer-progress-store.js';
-import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 
 import {
   activeTaskProgressStepId,
@@ -153,8 +153,7 @@ export class RunPipeline extends LitElement {
                       : 'transferring'}</span
                 >
                 <span class="pipeline-transfer-meta"
-                  >${this.transferProgress.label ?? this.transferProgress.path.split('/').pop()}
-                  ·
+                  >${this.transferProgress.label ?? this.transferProgress.path.split('/').pop()} ·
                   ${this.transferProgress.totalBytes > 0
                     ? `${Math.min(
                         100,

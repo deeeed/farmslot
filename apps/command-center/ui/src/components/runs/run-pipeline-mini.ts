@@ -1,4 +1,4 @@
-import { css, html, LitElement, unsafeCSS, type PropertyValues } from 'lit';
+import { css, html, LitElement, type PropertyValues, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type { FlowType, Run, RunStep } from '@farmslot/protocol';
@@ -9,11 +9,11 @@ import {
   compactHumanGateLabel,
   reviewSegmentLabel,
 } from '../../utils/review-gate-display.js';
+import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 import {
   formatPipelineTransferMeta,
   transferForPipelineNode,
 } from '../shared/file-transfer-progress-model.js';
-import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 import {
   primaryTransferForRun,
   retainFileTransferStore,

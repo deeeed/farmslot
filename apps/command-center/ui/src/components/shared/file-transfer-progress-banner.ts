@@ -7,8 +7,8 @@ import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 import {
-  formatTransferBytes,
   type FileTransferUiEntry,
+  formatTransferBytes,
   transferPercent,
 } from './file-transfer-progress-model.js';
 import {
@@ -231,8 +231,8 @@ export class FileTransferProgressBanner extends LitElement {
           <span class="ftp-status ${entry.state}">${entry.state}</span>
         </div>
         <div class="ftp-meta">
-          ${formatTransferBytes(entry.bytesTransferred)} /
-          ${formatTransferBytes(entry.totalBytes)} (${pct}%)${files}
+          ${formatTransferBytes(entry.bytesTransferred)} / ${formatTransferBytes(entry.totalBytes)}
+          (${pct}%)${files}
         </div>
         <div
           class="ftp-bar ${entry.state}"

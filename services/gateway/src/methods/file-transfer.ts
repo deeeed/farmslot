@@ -10,7 +10,6 @@ import {
   type FileTransferCancelResult,
   type FileTransferListParams,
   type FileTransferListResult,
-  type FileTransferProgress,
   type FileTransferRemoteE2eParams,
   type FileTransferRemoteE2eResult,
   type FileTransferSmokeParams,
@@ -24,14 +23,14 @@ import {
   readLocalFileChunk,
   writeTransferFixture,
 } from '../core/file-transfer.js';
-import { getAllNodes, getNode } from '../fleet/machine-registry.js';
-import { sendNodeRequest } from '../fleet/node-rpc.js';
 import {
   slotCopyDir,
   slotCopyFile,
   slotReadFileBuffer,
   slotWriteFileBuffer,
 } from '../core/slot-io.js';
+import { getAllNodes, getNode } from '../fleet/machine-registry.js';
+import { sendNodeRequest } from '../fleet/node-rpc.js';
 
 /**
  * Diagnostics smoke path: multi-chunk local fixture copy that emits the same

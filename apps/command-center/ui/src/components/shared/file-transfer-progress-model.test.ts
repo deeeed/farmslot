@@ -10,7 +10,9 @@ import {
   upsertFileTransfer,
 } from './file-transfer-progress-model.js';
 
-function progress(partial: Partial<FileTransferProgress> & { transferId: string }): FileTransferProgress {
+function progress(
+  partial: Partial<FileTransferProgress> & { transferId: string },
+): FileTransferProgress {
   return {
     path: '/tmp/x.bin',
     phase: 'mirror',

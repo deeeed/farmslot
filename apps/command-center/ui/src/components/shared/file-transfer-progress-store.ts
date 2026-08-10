@@ -9,7 +9,6 @@ import { Events, type FileTransferProgress } from '@farmslot/protocol';
 import {
   type FileTransferUiEntry,
   filterTransfersForRun,
-  formatPipelineTransferMeta,
   pruneFileTransfers,
   upsertFileTransfer,
 } from './file-transfer-progress-model.js';
@@ -100,7 +99,9 @@ export function getFileTransfersForRun(runId: string | undefined | null): FileTr
 }
 
 /** Best summary for pipeline nodes: prefer running, else latest terminal. */
-export function primaryTransferForRun(runId: string | undefined | null): FileTransferUiEntry | null {
+export function primaryTransferForRun(
+  runId: string | undefined | null,
+): FileTransferUiEntry | null {
   const list = getFileTransfersForRun(runId);
   if (list.length === 0) return null;
   const running = list.filter((e) => e.state === 'running');

@@ -695,7 +695,7 @@ export async function serveFile(req: IncomingMessage, res: ServerResponse): Prom
     }
 
     const repoPath = await resolveRepoPath(slotId);
-    const { isLocal, machine } = await getSlotLocality(slotId);
+    const { isLocal } = await getSlotLocality(slotId);
     const mime = mimeForPath(filePath);
 
     if (isLocal) {

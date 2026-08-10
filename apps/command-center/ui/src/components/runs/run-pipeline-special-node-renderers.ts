@@ -589,9 +589,7 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
     if (model) pills.push({ label: model, color: colors.textMuted });
   }
 
-  const runningMeta = transferActive
-    ? formatPipelineTransferMeta(transfer!)
-    : (step.detail ?? '*');
+  const runningMeta = transferActive ? formatPipelineTransferMeta(transfer!) : (step.detail ?? '*');
   const pct = transfer ? fileTransferPercent(transfer) : 0;
   const barW = Math.max(0, Math.min(n.w - 16, ((n.w - 16) * pct) / 100));
 
