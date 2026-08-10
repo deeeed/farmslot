@@ -85,6 +85,30 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="backlog/edit/[id]"
+            options={{
+              headerShown: false,
+              presentation: 'formSheet',
+              sheetAllowedDetents: [0.65, 0.95],
+              sheetGrabberVisible: true,
+              sheetInitialDetentIndex: 1,
+            }}
+          />
+          <Stack.Screen
+            name="backlog/[id]"
+            options={{
+              title: 'Backlog item',
+              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/backlog" />,
+            }}
+          />
+          <Stack.Screen
+            name="roadmap/[id]"
+            options={{
+              title: 'Roadmap item',
+              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/roadmap" />,
+            }}
+          />
+          <Stack.Screen
             name="slot/[id]"
             options={{
               title: 'Slot Detail',

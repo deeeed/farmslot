@@ -154,6 +154,7 @@ export default function BacklogScreen() {
           <BacklogRow
             item={item}
             busy={busyItemId === item.id}
+            onOpen={() => router.push({ pathname: '/backlog/[id]', params: { id: item.id } })}
             onMarkReady={() => void runAction(item, 'ready')}
             onEnqueue={() => enqueue(item)}
             onOpenRun={
@@ -178,18 +179,20 @@ function BacklogRow({
   onMarkReady,
   onEnqueue,
   onOpenRun,
+  onOpen,
 }: {
   item: BacklogItem;
   busy: boolean;
   onMarkReady: () => void;
   onEnqueue: () => void;
   onOpenRun?: () => void;
+  onOpen: () => void;
 }) {
   const action = item.status === 'candidate' ? 'ready' : item.status === 'ready' ? 'enqueue' : null;
   const graphManaged = Boolean(item.workGraphId);
 
   return (
-    <View style={styles.card}>
+    <Pressable style={styles.card} onPress={onOpen}>
       <View style={styles.metaRow}>
         <Text style={[styles.status, { color: statusColor(item.status) }]}>{item.status}</Text>
         <Text style={styles.flow}>{item.flowType}</Text>
@@ -209,7 +212,10 @@ function BacklogRow({
             testID={`companion-backlog-${item.id}-ready`}
             style={styles.secondaryButton}
             disabled={busy}
-            onPress={onMarkReady}
+            onPress={(event) => {
+              event.stopPropagation();
+              onMarkReady();
+            }}
           >
             <Text style={styles.secondaryText}>{busy ? 'Working…' : 'Mark ready'}</Text>
           </Pressable>
@@ -219,7 +225,10 @@ function BacklogRow({
             testID={`companion-backlog-${item.id}-enqueue`}
             style={styles.primaryButton}
             disabled={busy}
-            onPress={onEnqueue}
+            onPress={(event) => {
+              event.stopPropagation();
+              onEnqueue();
+            }}
           >
             <Text style={styles.primaryText}>{busy ? 'Launching…' : 'Launch'}</Text>
           </Pressable>
@@ -228,12 +237,18 @@ function BacklogRow({
           <Text style={styles.graphManaged}>Graph managed</Text>
         ) : null}
         {onOpenRun ? (
-          <Pressable style={styles.secondaryButton} onPress={onOpenRun}>
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={(event) => {
+              event.stopPropagation();
+              onOpenRun();
+            }}
+          >
             <Text style={styles.secondaryText}>Open run</Text>
           </Pressable>
         ) : null}
       </View>
-    </View>
+    </Pressable>
   );
 }
 
