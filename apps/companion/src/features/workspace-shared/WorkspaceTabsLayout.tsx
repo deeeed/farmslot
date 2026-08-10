@@ -54,7 +54,9 @@ export function WorkspaceTabsLayout({
         <TabList style={styles.tabList}>
           {tabs.map((tab) => (
             <TabTrigger key={tab.name} asChild href={tab.href} name={tab.name}>
-              <WorkspaceTab testID={tab.testID}>{tab.label}</WorkspaceTab>
+              <WorkspaceTab accessibilityLabel={`${title}: ${tab.label} tab`} testID={tab.testID}>
+                {tab.label}
+              </WorkspaceTab>
             </TabTrigger>
           ))}
         </TabList>
