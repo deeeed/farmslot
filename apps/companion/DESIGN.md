@@ -46,7 +46,7 @@
   - Review: default evidence/decision queue across active runs, PRs, family retros, and ready/review gates.
   - Terminals: all worker/tmux access, with recently-related workers first.
   - Settings: pairing, profiles, environment, diagnostics.
-  - Advanced/More: raw Runs, Fleet, PR dashboard, Inbox, Co-Pilot, filters, and low-level debug views.
+  - Advanced/More: raw Runs, Fleet, PR dashboard, Inbox, Co-Pilot, filters, low-level debug views, and a scoped Backlog surface for creating candidates or launching already-ready work while away from the desk.
 - Core review package tabs:
   - Evidence: before→after visual pairs and videos first.
   - Diff: changed files and visual/code context.

@@ -98,12 +98,12 @@ export function DiffWorkspaceCockpit({
   };
   const openArtifacts = () =>
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: artifactParams,
     });
   const openCompareArtifacts = () =>
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId,
         ...compareRouteContext,
@@ -115,7 +115,7 @@ export function DiffWorkspaceCockpit({
   const openRecipe = () => {
     const recipeTarget = recipeWorkspaceParam(recipeRunId);
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId,
         ...recipeRouteContext,
@@ -130,9 +130,9 @@ export function DiffWorkspaceCockpit({
   const openSlot = () => {
     if (!run?.slotId) return;
     router.push({
-      pathname: '/slot/[id]',
+      pathname: '/workspace/slot/[slotId]/slot',
       params: {
-        id: run.slotId,
+        slotId: run.slotId,
         ...slotRouteContext,
         runId,
         ...(recipeRunId ? { recipeRun: recipeRunId } : {}),
@@ -172,9 +172,9 @@ export function DiffWorkspaceCockpit({
   };
   const openRun = () =>
     router.push({
-      pathname: '/run/[id]',
+      pathname: '/workspace/run/[runId]/evidence',
       params: {
-        id: runId,
+        runId,
         ...runRouteContext,
         ...(recipeRunId ? { recipeRun: recipeRunId } : {}),
         ...(diffPath ? { artifact: diffPath } : {}),
@@ -226,7 +226,7 @@ export function DiffWorkspaceCockpit({
           onPress={() => {
             if (!run?.slotId) return;
             router.push({
-              pathname: '/terminal/[slotId]',
+              pathname: '/workspace/slot/[slotId]/terminal',
               params: {
                 slotId: run.slotId,
                 ...terminalRouteContext,

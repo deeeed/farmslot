@@ -358,7 +358,7 @@ export default function DiffViewerScreen() {
   }, [router]);
   const openEvidenceFromDiff = useCallback(() => {
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId,
         workspace: 'artifacts',

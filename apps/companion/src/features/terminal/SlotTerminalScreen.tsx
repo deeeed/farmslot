@@ -1454,7 +1454,7 @@ export default function TerminalScreen() {
     const draft = voiceDraft.trim();
     const transcript = voiceTranscript.trim();
     router.push({
-      pathname: '/terminal/[slotId]',
+      pathname: '/workspace/slot/[slotId]/terminal',
       params: {
         slotId: voiceTargetMismatchSlotId,
         ...targetWorkspaceRouteContextParams('terminal', workspaceRouteContext.decisionKind),

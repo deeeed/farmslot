@@ -267,8 +267,8 @@ export default function SlotDiffViewerScreen() {
       return;
     }
     router.replace({
-      pathname: '/slot/[id]',
-      params: { id: slotId, ...slotRouteContext },
+      pathname: '/workspace/slot/[slotId]/slot',
+      params: { slotId, ...slotRouteContext },
     });
   }, [router, slotId, slotRouteContext]);
 
@@ -387,7 +387,7 @@ export default function SlotDiffViewerScreen() {
               authHeaders={artifactAuthHeaders}
               onOpenArtifact={(artifactPath) =>
                 router.push({
-                  pathname: '/artifacts/[runId]',
+                  pathname: '/workspace/run/[runId]/files',
                   params: {
                     runId: navRunId,
                     ...compareRouteContext,

@@ -498,4 +498,8 @@ export const artifactViewerStyles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing.lg,
   },
+  recipeControlsWrap: {
+    marginBottom: spacing.lg,
+    marginHorizontal: spacing.lg,
+  },
 });

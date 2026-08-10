@@ -446,9 +446,9 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
               })
               .then((result) => {
                 router.push({
-                  pathname: '/run/[id]',
+                  pathname: '/workspace/run/[runId]/evidence',
                   params: {
-                    id: result.run.id,
+                    runId: result.run.id,
                     recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                   },
                 });
@@ -626,9 +626,9 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
                 onOpenLatestRun={() => {
                   if (!item.pr.latestRunId) return;
                   router.push({
-                    pathname: '/run/[id]',
+                    pathname: '/workspace/run/[runId]/evidence',
                     params: {
-                      id: item.pr.latestRunId,
+                      runId: item.pr.latestRunId,
                       ...prWorkspaceRouteContext,
                       recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                     },
@@ -637,9 +637,9 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
                 onOpenSlot={() => {
                   if (!item.pr.slot) return;
                   router.push({
-                    pathname: '/slot/[id]',
+                    pathname: '/workspace/slot/[slotId]/slot',
                     params: {
-                      id: item.pr.slot,
+                      slotId: item.pr.slot,
                       ...prWorkspaceRouteContext,
                       ...(item.pr.latestRunId ? { runId: item.pr.latestRunId } : {}),
                       recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -649,7 +649,7 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
                 onOpenArtifacts={() => {
                   if (!item.pr.latestRunId) return;
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: item.pr.latestRunId,
                       ...prWorkspaceRouteContext,
@@ -661,7 +661,7 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
                 onOpenCompare={() => {
                   if (!item.pr.latestRunId) return;
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: item.pr.latestRunId,
                       ...prWorkspaceRouteContext,
@@ -673,7 +673,7 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
                 onOpenRecipe={() => {
                   if (!item.pr.latestRunId) return;
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: item.pr.latestRunId,
                       ...prWorkspaceRouteContext,
@@ -686,13 +686,13 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
                   if (!item.pr.latestRunId) {
                     if (!item.pr.slot) return;
                     router.push({
-                      pathname: '/diff/slot/[slotId]',
+                      pathname: '/workspace/slot/[slotId]/diff',
                       params: { slotId: item.pr.slot, ...diffRouteContext },
                     });
                     return;
                   }
                   router.push({
-                    pathname: '/diff/[runId]',
+                    pathname: '/workspace/run/[runId]/diff',
                     params: {
                       runId: item.pr.latestRunId,
                       ...diffRouteContext,
@@ -703,7 +703,7 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
                 onOpenTerminal={() => {
                   if (!item.pr.slot) return;
                   router.push({
-                    pathname: '/terminal/[slotId]',
+                    pathname: '/workspace/slot/[slotId]/terminal',
                     params: {
                       slotId: item.pr.slot,
                       ...prWorkspaceRouteContext,

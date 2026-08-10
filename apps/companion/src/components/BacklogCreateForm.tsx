@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -28,6 +28,7 @@ export function BacklogCreateForm() {
   const client = useConnectionStore((state) => state.client);
   const status = useConnectionStore((state) => state.status);
   const selectedProjects = useFilterStore((state) => state.filters.projects);
+  const initialSelectedProject = useRef(selectedProjects.length === 1 ? selectedProjects[0] : null);
   const [availableProjects, setAvailableProjects] = useState<string[]>([]);
   const [projectOptionsError, setProjectOptionsError] = useState<string | null>(null);
   const [project, setProject] = useState('');
@@ -51,11 +52,12 @@ export function BacklogCreateForm() {
         const projects = result.projects.map((configuredProject) => configuredProject.name).sort();
         setAvailableProjects(projects);
         setProjectOptionsError(null);
-        setProject((current) =>
-          current || selectedProjects.length !== 1 || !projects.includes(selectedProjects[0])
-            ? current
-            : selectedProjects[0],
-        );
+        setProject((current) => {
+          const initialProject = initialSelectedProject.current;
+          return !current && initialProject && projects.includes(initialProject)
+            ? initialProject
+            : current;
+        });
       })
       .catch((loadError: unknown) => {
         if (cancelled) return;
@@ -68,7 +70,7 @@ export function BacklogCreateForm() {
     return () => {
       cancelled = true;
     };
-  }, [client, selectedProjects, status]);
+  }, [client, status]);
 
   const submit = async () => {
     const normalizedProject = project.trim();

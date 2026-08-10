@@ -104,7 +104,12 @@ export function SlotDiffCockpit({
         </View>
         <Pressable
           style={styles.contextPill}
-          onPress={() => router.push({ pathname: '/terminal/[slotId]', params: terminalParams })}
+          onPress={() =>
+            router.push({
+              pathname: '/workspace/slot/[slotId]/terminal',
+              params: terminalParams,
+            })
+          }
         >
           <Text style={styles.contextPillText}>Terminal</Text>
         </Pressable>
@@ -123,9 +128,9 @@ export function SlotDiffCockpit({
           onPress={() => {
             if (!targetRunId) return;
             router.push({
-              pathname: '/run/[id]',
+              pathname: '/workspace/run/[runId]/evidence',
               params: {
-                id: targetRunId,
+                runId: targetRunId,
                 ...runRouteContext,
                 recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
               },
@@ -141,7 +146,7 @@ export function SlotDiffCockpit({
           onPress={() => {
             if (!targetRunId) return;
             router.push({
-              pathname: '/artifacts/[runId]',
+              pathname: '/workspace/run/[runId]/files',
               params: {
                 runId: targetRunId,
                 ...diffRouteContext,
@@ -158,7 +163,7 @@ export function SlotDiffCockpit({
           onPress={() => {
             if (!targetRunId || !compareArtifactPath) return;
             router.push({
-              pathname: '/artifacts/[runId]',
+              pathname: '/workspace/run/[runId]/files',
               params: {
                 runId: targetRunId,
                 ...compareRouteContext,
@@ -182,7 +187,7 @@ export function SlotDiffCockpit({
           onPress={() => {
             if (!targetRunId || recipeAvailable === false) return;
             router.push({
-              pathname: '/artifacts/[runId]',
+              pathname: '/workspace/run/[runId]/files',
               params: {
                 runId: targetRunId,
                 ...recipeRouteContext,
@@ -245,9 +250,9 @@ export function SlotDiffCockpit({
           value="ready/review"
           onPress={() =>
             router.push({
-              pathname: '/slot/[id]',
+              pathname: '/workspace/slot/[slotId]/slot',
               params: {
-                id: slotId,
+                slotId,
                 ...slotRouteContext,
                 ...(targetRunId ? { runId: targetRunId } : {}),
                 ...(targetRunId ? { recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM } : {}),
@@ -311,7 +316,12 @@ export function SlotDiffCockpit({
         <ContextTile
           label="Terminal"
           value="control"
-          onPress={() => router.push({ pathname: '/terminal/[slotId]', params: terminalParams })}
+          onPress={() =>
+            router.push({
+              pathname: '/workspace/slot/[slotId]/terminal',
+              params: terminalParams,
+            })
+          }
         />
       </ScrollView>
     </View>

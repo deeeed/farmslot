@@ -26,6 +26,9 @@ import { colors, fonts, radii, spacing } from '../../lib/theme';
 import { useConnectionStore } from '../../store/connection';
 import { useFilterStore } from '../../store/filters';
 
+// The global Co-Pilot button starts in the lower-right and remains draggable.
+const FLOATING_COPILOT_GUTTER = 48;
+
 const STATUS_ORDER: Record<BacklogStatus, number> = {
   ready: 0,
   candidate: 1,
@@ -151,7 +154,11 @@ export default function BacklogScreen() {
             onEnqueue={() => enqueue(item)}
             onOpenRun={
               item.runId
-                ? () => router.push({ pathname: '/run/[id]', params: { id: item.runId! } })
+                ? () =>
+                    router.push({
+                      pathname: '/workspace/run/[runId]/evidence',
+                      params: { runId: item.runId! },
+                    })
                 : undefined
             }
           />
@@ -241,7 +248,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     flexDirection: 'row',
     gap: spacing.xs,
-    marginRight: 42,
+    marginRight: FLOATING_COPILOT_GUTTER,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },

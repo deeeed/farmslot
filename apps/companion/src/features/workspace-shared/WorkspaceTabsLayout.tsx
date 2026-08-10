@@ -1,10 +1,20 @@
 import { type Href, useNavigation, useRouter } from 'expo-router';
-import { TabList, Tabs, TabSlot, TabTrigger, type TabTriggerSlotProps } from 'expo-router/ui';
+import {
+  defaultTabsSlotRender,
+  TabList,
+  Tabs,
+  TabSlot,
+  TabTrigger,
+  type TabTriggerSlotProps,
+} from 'expo-router/ui';
 import { forwardRef, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, fonts, spacing } from '../../lib/theme';
+
+// Keep the movable Co-Pilot control from obscuring workspace navigation.
+const FLOATING_COPILOT_GUTTER = 64;
 
 export interface WorkspaceTabDefinition {
   href: Href;
@@ -51,7 +61,7 @@ export function WorkspaceTabsLayout({
         </Text>
       </SafeAreaView>
       <Tabs options={{ backBehavior: 'none' }} style={styles.tabs}>
-        <TabList style={styles.tabList}>
+        <TabList accessibilityRole="tablist" style={styles.tabList}>
           {tabs.map((tab) => (
             <TabTrigger key={tab.name} asChild href={tab.href} name={tab.name}>
               <WorkspaceTab accessibilityLabel={`${title}: ${tab.label} tab`} testID={tab.testID}>
@@ -60,7 +70,12 @@ export function WorkspaceTabsLayout({
             </TabTrigger>
           ))}
         </TabList>
-        <TabSlot style={styles.content} />
+        <TabSlot
+          style={styles.content}
+          renderFn={(descriptor, options) =>
+            options.isFocused ? defaultTabsSlotRender(descriptor, options) : null
+          }
+        />
       </Tabs>
     </View>
   );
@@ -74,6 +89,8 @@ const WorkspaceTab = forwardRef<View, WorkspaceTabProps>(function WorkspaceTab(
   { children, isFocused, style: _style, ...props },
   ref,
 ) {
+  // TabTrigger injects layout styles for its wrapper; the shared tab owns its
+  // visual state so every run and slot workspace stays consistent.
   return (
     <Pressable
       {...props}
@@ -110,7 +127,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     minHeight: 48,
     paddingBottom: spacing.sm,
-    paddingRight: 64,
+    paddingRight: FLOATING_COPILOT_GUTTER,
   },
   headerTitle: {
     color: colors.textPrimary,
@@ -127,7 +144,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.bgCardHover,
     borderBottomWidth: 1,
     flexDirection: 'row',
-    paddingRight: 64,
+    paddingRight: FLOATING_COPILOT_GUTTER,
   },
   tab: {
     alignItems: 'center',

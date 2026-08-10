@@ -99,6 +99,7 @@ export default function RunDetailScreen() {
   }>();
   const resolvedRunId = routeParamString(id) || routeParamString(runId);
   const reviewPackageTab = useReviewPackageTab();
+  const isTimelineTab = reviewPackageTab === 'timeline';
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const client = useConnectionStore((s) => s.client);
@@ -145,8 +146,6 @@ export default function RunDetailScreen() {
   useEffect(() => {
     requestedRecipeRunIdRef.current = requestedRecipeRunId;
   }, [requestedRecipeRunId]);
-
-  useEffect(() => () => {}, []);
 
   const loadRecipeRuns = useCallback(
     (selectionHint: string | null) => {
@@ -266,7 +265,7 @@ export default function RunDetailScreen() {
   }, [client, run?.id, run?.slotId]);
 
   useEffect(() => {
-    if (!client || !run) return;
+    if (!isTimelineTab || !client || !run) return;
     const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
       const update = payload as TaskProgressUpdatedPayload;
       if (!shouldAcceptTaskProgressUpdate(run, update)) return;
@@ -274,10 +273,10 @@ export default function RunDetailScreen() {
       setTaskProgressError(null);
     });
     return unsub;
-  }, [client, run]);
+  }, [client, isTimelineTab, run]);
 
   useEffect(() => {
-    if (!isWorkerProgressActive(run)) {
+    if (!isTimelineTab || !isWorkerProgressActive(run)) {
       setTaskProgress(null);
       setTaskProgressError(null);
       return;
@@ -287,7 +286,7 @@ export default function RunDetailScreen() {
       void fetchTaskProgress();
     }, 10_000);
     return () => clearInterval(timer);
-  }, [fetchTaskProgress, run]);
+  }, [fetchTaskProgress, isTimelineTab, run]);
 
   const goBackOrRuns = useCallback(() => {
     if (router.canGoBack()) {
@@ -436,7 +435,7 @@ export default function RunDetailScreen() {
     const recipeRunParam = recipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM;
     if (artifactPath && diffArtifactCandidate([{ path: artifactPath }])) {
       router.push({
-        pathname: '/diff/[runId]',
+        pathname: '/workspace/run/[runId]/diff',
         params: {
           runId: run.id,
           ...diffRouteContext,
@@ -455,7 +454,7 @@ export default function RunDetailScreen() {
             artifactFilterParamForWorkspaceNav('review'))
           : artifactFilterParamForWorkspaceNav('review'));
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId: run.id,
         ...targetRouteContext(targetWorkspaceForArtifactRoute(recipeRunParam, targetFilter)),
@@ -465,7 +464,7 @@ export default function RunDetailScreen() {
       },
     });
   };
-  const reviewPackageActiveTab = reviewPackageTab === 'timeline' ? 'timeline' : 'evidence';
+  const reviewPackageActiveTab = isTimelineTab ? 'timeline' : 'evidence';
 
   return (
     <View style={baseStyles.container}>
@@ -542,7 +541,7 @@ export default function RunDetailScreen() {
             }
             onOpenFiles={() =>
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: run.id,
                   ...targetRouteContext(
@@ -569,7 +568,7 @@ export default function RunDetailScreen() {
             onOpenRecipe={() => {
               const recipeTarget = recipeWorkspaceParam(workspaceRecipeRunId);
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: run.id,
                   ...targetRouteContext('recipe'),
@@ -584,7 +583,7 @@ export default function RunDetailScreen() {
             onOpenDiff={() =>
               activeDiffValue === '-' && run.slotId
                 ? router.push({
-                    pathname: '/diff/slot/[slotId]',
+                    pathname: '/workspace/slot/[slotId]/diff',
                     params: {
                       slotId: run.slotId,
                       ...diffRouteContext,
@@ -592,7 +591,7 @@ export default function RunDetailScreen() {
                     },
                   })
                 : router.push({
-                    pathname: '/diff/[runId]',
+                    pathname: '/workspace/run/[runId]/diff',
                     params: {
                       runId: run.id,
                       ...diffRouteContext,
@@ -612,9 +611,9 @@ export default function RunDetailScreen() {
             onOpenSlot={() => {
               if (!run.slotId) return;
               router.push({
-                pathname: '/slot/[id]',
+                pathname: '/workspace/slot/[slotId]/slot',
                 params: {
-                  id: run.slotId,
+                  slotId: run.slotId,
                   ...targetRouteContext('slot'),
                   runId: run.id,
                   recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -625,7 +624,7 @@ export default function RunDetailScreen() {
             onOpenTerminal={() => {
               if (!run.slotId) return;
               router.push({
-                pathname: '/terminal/[slotId]',
+                pathname: '/workspace/slot/[slotId]/terminal',
                 params: {
                   slotId: run.slotId,
                   ...targetRouteContext('terminal'),
@@ -706,7 +705,7 @@ export default function RunDetailScreen() {
             onOpenRecipe={() => {
               const recipeTarget = recipeWorkspaceParam(workspaceRecipeRunId);
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: run.id,
                   ...targetRouteContext('recipe'),
@@ -721,11 +720,11 @@ export default function RunDetailScreen() {
             onOpenDiff={() =>
               activeDiffValue === '-' && run.slotId
                 ? router.push({
-                    pathname: '/diff/slot/[slotId]',
+                    pathname: '/workspace/slot/[slotId]/diff',
                     params: { slotId: run.slotId, ...diffRouteContext },
                   })
                 : router.push({
-                    pathname: '/diff/[runId]',
+                    pathname: '/workspace/run/[runId]/diff',
                     params: {
                       runId: run.id,
                       ...diffRouteContext,
@@ -777,7 +776,7 @@ export default function RunDetailScreen() {
             onOpenTerminal={() =>
               run.slotId
                 ? router.push({
-                    pathname: '/terminal/[slotId]',
+                    pathname: '/workspace/slot/[slotId]/terminal',
                     params: {
                       slotId: run.slotId,
                       ...targetRouteContext('terminal'),
@@ -792,9 +791,9 @@ export default function RunDetailScreen() {
             onOpenSlot={() =>
               run.slotId
                 ? router.push({
-                    pathname: '/slot/[id]',
+                    pathname: '/workspace/slot/[slotId]/slot',
                     params: {
-                      id: run.slotId,
+                      slotId: run.slotId,
                       ...targetRouteContext('slot'),
                       runId: run.id,
                       recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -859,7 +858,7 @@ export default function RunDetailScreen() {
                 }
                 onOpenArtifacts={() =>
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: run.id,
                       ...targetRouteContext(
@@ -881,7 +880,7 @@ export default function RunDetailScreen() {
                 onOpenDiff={() =>
                   activeDiffValue === '-' && run.slotId
                     ? router.push({
-                        pathname: '/diff/slot/[slotId]',
+                        pathname: '/workspace/slot/[slotId]/diff',
                         params: {
                           slotId: run.slotId,
                           ...diffRouteContext,
@@ -891,7 +890,7 @@ export default function RunDetailScreen() {
                         },
                       })
                     : router.push({
-                        pathname: '/diff/[runId]',
+                        pathname: '/workspace/run/[runId]/diff',
                         params: {
                           runId: run.id,
                           ...diffRouteContext,
@@ -964,7 +963,7 @@ export default function RunDetailScreen() {
                 onOpenArtifact={(artifactPath) => {
                   if (diffArtifactCandidate([{ path: artifactPath }])) {
                     router.push({
-                      pathname: '/diff/[runId]',
+                      pathname: '/workspace/run/[runId]/diff',
                       params: {
                         runId: run.id,
                         ...diffRouteContext,
@@ -975,7 +974,7 @@ export default function RunDetailScreen() {
                     return;
                   }
                   router.push({
-                    pathname: '/artifacts/[runId]',
+                    pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: run.id,
                       ...targetRouteContext(
@@ -1012,7 +1011,7 @@ export default function RunDetailScreen() {
                 style={styles.terminalButton}
                 onPress={() =>
                   router.push({
-                    pathname: '/terminal/[slotId]',
+                    pathname: '/workspace/slot/[slotId]/terminal',
                     params: {
                       slotId: run.slotId!,
                       ...targetRouteContext('terminal'),

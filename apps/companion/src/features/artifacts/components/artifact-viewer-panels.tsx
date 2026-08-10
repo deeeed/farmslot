@@ -138,6 +138,7 @@ export function ArtifactHeader({
   run,
   gatewayUrl,
   artifactCount,
+  visualPairCount,
   manifest,
   recipeRuns,
   selectedRecipeRunId,
@@ -161,6 +162,7 @@ export function ArtifactHeader({
   run: Run;
   gatewayUrl: string;
   artifactCount: number;
+  visualPairCount: number;
   manifest: ArtifactManifestEntry[];
   recipeRuns: RecipeRunArtifactGroup[];
   selectedRecipeRunId: string | null;
@@ -215,7 +217,7 @@ export function ArtifactHeader({
           query={focusedArtifactQuery}
           counts={artifactCounts}
           visible={filteredArtifactCount}
-          visualPairCount={0}
+          visualPairCount={visualPairCount}
           filters={availableFilters}
           onFilterChange={onFilterChange}
         />

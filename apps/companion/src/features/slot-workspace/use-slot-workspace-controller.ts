@@ -556,7 +556,7 @@ export function useSlotWorkspaceController() {
   const openLiveTerminal = () => {
     if (!id) return;
     router.push({
-      pathname: '/terminal/[slotId]',
+      pathname: '/workspace/slot/[slotId]/terminal',
       params: {
         slotId: id,
         ...targetWorkspaceRouteContextParams('terminal', workspaceRouteContext.decisionKind),

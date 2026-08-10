@@ -99,9 +99,6 @@ export default function TabLayout() {
           options={{
             title: 'Backlog',
             href: null,
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="list-outline" size={size} color={color} />
-            ),
             header: () => filteredHeader,
           }}
         />

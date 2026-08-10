@@ -428,7 +428,7 @@ export default function DecisionDetailScreen() {
       if (!presentation?.runId) return;
       const routeRecipeRunId = routeParamString(routeRecipeRun).trim();
       const href = {
-        pathname: '/diff/[runId]',
+        pathname: '/workspace/run/[runId]/diff',
         params: {
           runId: presentation.runId,
           ...diffRouteContext,
@@ -453,7 +453,7 @@ export default function DecisionDetailScreen() {
         return;
       }
       router.push({
-        pathname: '/artifacts/[runId]',
+        pathname: '/workspace/run/[runId]/files',
         params: {
           runId: presentation.runId,
           ...decisionRouteContext,
@@ -667,7 +667,7 @@ export default function DecisionDetailScreen() {
                   ? recipeWorkspaceParam(workspaceRecipeRunId)
                   : (workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM);
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: presentation.runId,
                   ...decisionRouteContext,
@@ -681,7 +681,7 @@ export default function DecisionDetailScreen() {
               if (!presentation.runId || recipeAvailable === false) return;
               const recipeTarget = recipeWorkspaceParam(workspaceRecipeRunId);
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: presentation.runId,
                   ...decisionRouteContext,
@@ -697,7 +697,7 @@ export default function DecisionDetailScreen() {
             onOpenCompare={() => {
               if (!presentation.runId || !primaryPair) return;
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: presentation.runId,
                   ...decisionRouteContext,
@@ -710,9 +710,9 @@ export default function DecisionDetailScreen() {
             onOpenRun={() => {
               if (!presentation.runId) return;
               router.push({
-                pathname: '/run/[id]',
+                pathname: '/workspace/run/[runId]/evidence',
                 params: {
-                  id: presentation.runId,
+                  runId: presentation.runId,
                   ...decisionRouteContext,
                   recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                   artifact: requestedArtifactPath,
@@ -722,9 +722,9 @@ export default function DecisionDetailScreen() {
             onOpenSlot={() => {
               if (!presentation.terminalSlotId || !presentation.runId) return;
               router.push({
-                pathname: '/slot/[id]',
+                pathname: '/workspace/slot/[slotId]/slot',
                 params: {
-                  id: presentation.terminalSlotId,
+                  slotId: presentation.terminalSlotId,
                   ...decisionRouteContext,
                   runId: presentation.runId,
                   recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -735,7 +735,7 @@ export default function DecisionDetailScreen() {
             onOpenTerminal={() => {
               if (!presentation.terminalSlotId || !presentation.runId) return;
               router.push({
-                pathname: '/terminal/[slotId]',
+                pathname: '/workspace/slot/[slotId]/terminal',
                 params: {
                   slotId: presentation.terminalSlotId,
                   ...decisionRouteContext,
@@ -815,7 +815,7 @@ export default function DecisionDetailScreen() {
               );
               if (!recipeTarget) return;
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: presentation.runId,
                   ...decisionRouteContext,
@@ -828,7 +828,7 @@ export default function DecisionDetailScreen() {
             onOpenCompare={() => {
               if (!presentation.runId) return;
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: presentation.runId,
                   ...decisionRouteContext,
@@ -841,7 +841,7 @@ export default function DecisionDetailScreen() {
             onOpenEvidence={() => {
               if (!presentation.runId) return;
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: presentation.runId,
                   ...decisionRouteContext,
@@ -854,7 +854,7 @@ export default function DecisionDetailScreen() {
               if (!presentation.runId || recipeAvailable === false) return;
               const recipeTarget = recipeWorkspaceParam(workspaceRecipeRunId);
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: presentation.runId,
                   ...decisionRouteContext,
@@ -873,7 +873,7 @@ export default function DecisionDetailScreen() {
               }
               if (presentation.runId && diffAvailable) {
                 router.push({
-                  pathname: '/diff/[runId]',
+                  pathname: '/workspace/run/[runId]/diff',
                   params: {
                     runId: presentation.runId,
                     ...diffRouteContext,
@@ -884,7 +884,7 @@ export default function DecisionDetailScreen() {
               }
               if (presentation.terminalSlotId) {
                 router.push({
-                  pathname: '/diff/slot/[slotId]',
+                  pathname: '/workspace/slot/[slotId]/diff',
                   params: {
                     slotId: presentation.terminalSlotId,
                     ...diffRouteContext,
@@ -895,9 +895,9 @@ export default function DecisionDetailScreen() {
             onOpenRun={() => {
               if (!presentation.runId) return;
               router.push({
-                pathname: '/run/[id]',
+                pathname: '/workspace/run/[runId]/evidence',
                 params: {
-                  id: presentation.runId,
+                  runId: presentation.runId,
                   ...decisionRouteContext,
                   recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                   ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
@@ -927,7 +927,7 @@ export default function DecisionDetailScreen() {
             onOpenTerminal={() => {
               if (!presentation.terminalSlotId || !presentation.runId) return;
               router.push({
-                pathname: '/terminal/[slotId]',
+                pathname: '/workspace/slot/[slotId]/terminal',
                 params: {
                   slotId: presentation.terminalSlotId,
                   ...decisionRouteContext,
@@ -1116,7 +1116,7 @@ export default function DecisionDetailScreen() {
             gatewayUrl={gatewayUrl}
             onOpenRecipeArtifacts={() =>
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: presentation.runId!,
                   ...decisionRouteContext,
@@ -1132,7 +1132,7 @@ export default function DecisionDetailScreen() {
             ) => {
               if (diffArtifactCandidate([{ path: artifactPath }])) {
                 router.push({
-                  pathname: '/diff/[runId]',
+                  pathname: '/workspace/run/[runId]/diff',
                   params: {
                     runId: presentation.runId!,
                     ...diffRouteContext,
@@ -1143,7 +1143,7 @@ export default function DecisionDetailScreen() {
                 return;
               }
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: presentation.runId!,
                   ...decisionRouteContext,
@@ -1178,7 +1178,7 @@ export default function DecisionDetailScreen() {
                 style={styles.terminalButton}
                 onPress={() =>
                   router.push({
-                    pathname: '/terminal/[slotId]',
+                    pathname: '/workspace/slot/[slotId]/terminal',
                     params: {
                       slotId: terminalSlotId,
                       ...decisionRouteContext,

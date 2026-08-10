@@ -23,6 +23,7 @@ import {
 import { ArtifactCard } from '../../components/ArtifactCard';
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { MediaViewer } from '../../components/MediaViewer';
+import { RecipeRunControls } from '../../components/RecipeRunControls';
 import {
   type ArtifactStickyChromeLayout,
   artifactStickyChromeThreshold,
@@ -33,6 +34,8 @@ import {
   artifactsForRecipeRun,
   artifactUrlForEntry,
   classifyArtifact,
+  countVisualArtifactPairs,
+  CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
   extractRunArtifactManifest,
   resolveRecipeRunSelection,
@@ -77,6 +80,7 @@ const ARTIFACT_FILTERS: Array<{ id: ArtifactWorkspaceFilter; label: string }> = 
 const ARTIFACT_STICKY_NAV_FALLBACK_THRESHOLD = 180;
 const ARTIFACT_STICKY_NAV_ACTIVATION_LEAD = 96;
 const ARTIFACT_STICKY_NAV_MAX_THRESHOLD = 32;
+const RECIPE_COMPLETION_REFRESH_DELAY_MS = 5500;
 
 export default function ArtifactViewerScreen() {
   const { runId, recipeRun, artifact, filter, workspace, decisionKind } = useLocalSearchParams<{
@@ -117,6 +121,7 @@ export default function ArtifactViewerScreen() {
   const runRefreshRequestRef = useRef(0);
   const runRefreshRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recipeRunRefreshRequestRef = useRef(0);
+  const recipeCompletionRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { recipeRuns, gatewaySelectedRecipeRunId } = recipeRunSelection;
 
@@ -124,6 +129,7 @@ export default function ArtifactViewerScreen() {
     return () => {
       documentAbortRef.current?.abort();
       if (runRefreshRetryRef.current) clearTimeout(runRefreshRetryRef.current);
+      if (recipeCompletionRefreshRef.current) clearTimeout(recipeCompletionRefreshRef.current);
     };
   }, []);
 
@@ -255,6 +261,26 @@ export default function ArtifactViewerScreen() {
     void refreshRecipeRuns('initial load', true);
   }, [refreshRecipeRuns]);
 
+  const refreshAfterRecipeComplete = useCallback(
+    (_requestId: string) => {
+      void Promise.all([
+        refreshRun('recipe completion'),
+        refreshRecipeRuns('recipe completion', false),
+      ]);
+      if (recipeCompletionRefreshRef.current) {
+        clearTimeout(recipeCompletionRefreshRef.current);
+      }
+      recipeCompletionRefreshRef.current = setTimeout(() => {
+        recipeCompletionRefreshRef.current = null;
+        void Promise.all([
+          refreshRun('recipe artifact settle'),
+          refreshRecipeRuns('recipe artifact settle', false),
+        ]);
+      }, RECIPE_COMPLETION_REFRESH_DELAY_MS);
+    },
+    [refreshRecipeRuns, refreshRun],
+  );
+
   useEffect(() => {
     setSelectedRecipeRunId(
       requestedRecipeRunId === DECISION_EVIDENCE_RECIPE_RUN_PARAM
@@ -293,6 +319,7 @@ export default function ArtifactViewerScreen() {
       artifactUrlForEntry(gatewayUrl, runId ?? '', entry, artifactMirrorEpoch),
     [artifactMirrorEpoch, gatewayUrl, runId],
   );
+  const visualPairCount = useMemo(() => countVisualArtifactPairs(manifest), [manifest]);
   const artifactCounts = useMemo(() => buildArtifactWorkspaceCounts(manifest), [manifest]);
   const filteredSingles = useMemo(
     () => filterArtifactWorkspace(manifest, artifactFilter, artifactQuery),
@@ -306,7 +333,11 @@ export default function ArtifactViewerScreen() {
     [selectedRecipeRun],
   );
   const artifactDiffPath = useMemo(() => diffArtifactCandidate(manifest)?.path ?? null, [manifest]);
-  const workspaceNavCurrent = artifactWorkspaceNavCurrent(workspaceRecipeRunId, artifactFilter, 0);
+  const workspaceNavCurrent = artifactWorkspaceNavCurrent(
+    workspaceRecipeRunId,
+    artifactFilter,
+    visualPairCount,
+  );
   const workspaceRouteContext = useMemo(
     () =>
       workspaceRouteContextParams(
@@ -467,13 +498,13 @@ export default function ArtifactViewerScreen() {
       if (!runId) return;
       if (!path && !artifactDiffPath && run?.slotId) {
         router.push({
-          pathname: '/diff/slot/[slotId]',
+          pathname: '/workspace/slot/[slotId]/diff',
           params: { slotId: run.slotId, ...diffRouteContext },
         });
         return;
       }
       router.push({
-        pathname: '/diff/[runId]',
+        pathname: '/workspace/run/[runId]/diff',
         params: {
           runId,
           ...diffRouteContext,
@@ -538,7 +569,7 @@ export default function ArtifactViewerScreen() {
             query={artifactQuery}
             counts={artifactCounts}
             visible={filteredSingles.length}
-            visualPairCount={0}
+            visualPairCount={visualPairCount}
             filters={availableFilters}
             onFilterChange={(nextFilter) => {
               handleFilterChange(nextFilter);
@@ -565,6 +596,7 @@ export default function ArtifactViewerScreen() {
               run={run}
               gatewayUrl={gatewayUrl}
               artifactCount={manifest.length}
+              visualPairCount={visualPairCount}
               manifest={manifest}
               recipeRuns={recipeRuns}
               selectedRecipeRunId={selectedRecipeRunId}
@@ -596,6 +628,22 @@ export default function ArtifactViewerScreen() {
                 });
               }}
             />
+            {recipeRuns.length > 0 ? (
+              <View style={styles.recipeControlsWrap}>
+                <RecipeRunControls
+                  client={client}
+                  runId={run.id}
+                  slotId={run.slotId}
+                  project={run.project}
+                  recipeRunId={
+                    selectedRecipeRun?.groupKind === CURRENT_ARTIFACTS_RECIPE_RUN_PARAM
+                      ? null
+                      : selectedRecipeRun?.id
+                  }
+                  onComplete={refreshAfterRecipeComplete}
+                />
+              </View>
+            ) : null}
           </>
         }
         ListEmptyComponent={
