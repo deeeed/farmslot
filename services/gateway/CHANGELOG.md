@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.6.0 - 2026-08-10
+
 - fix(transfer): real isolated-pool `/api/file` remote e2e; preserve not-a-file stat errors; yield before aggregate complete; large refreshArtifactMirror integrity test (MANUAL-000095 self-review).
 - fix(review): preserve the final unresolved findings whenever a review loop exhausts or a mid-loop worker relaunch fails, deduplicate restart recovery by review generation instead of terminal-signal timing, route fresh and retained follow-ups — including CI fix nudges whose session binding was lost — through one runner-capability delivery contract, and give warm continuations an authoritative prior-HEAD-to-current-HEAD scope.
 - fix(server): surface unexpected auth-connect, routed RPC, and JSON/binary node-frame principal-resolution faults, contain pre-auth pairing credential-store faults, and fail closed per receiver when broadcast authorization cannot refresh the credential store, without exposing internal messages or unhandled promise rejections.
@@ -14,11 +18,6 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - refactor: `runtime/session-usage.ts` consumes the ported `@farmslot/slot-config` core directly instead of shelling out to `scripts/session-usage.sh`; `computePRRecommendation` moved to `@farmslot/protocol` (re-imported) with the bash pr-monitor rules folded in — `PRStatus` gains `workerActive` so formatters can derive the worker-active sub-labels.
 - refactor: `core/config.ts` and `core/hooks.ts` moved to the new `@farmslot/slot-config` package (gateway files remain as re-export shims; `SlotConfigError` serializes like `GatewayMethodError` in RPC responses). No behavior change.
 - refactor: dispatch `isCdpLive` now delegates to the shared protocol `isCdpLiveValue` (no behavior change).
-
-- Active-development baseline; add user-facing changes here before release or package publication.
-
-## 0.6.0 - 2026-08-10
-
 - fix(backlog): validate project changes against source and slot ownership, clear all project-owned dispatch configuration, and validate slot ownership only when relevant fields change
 - fix(transfer): preserve bounded root/relPath on remote HTTP artifact reads; clean drain/error listeners under multi-chunk backpressure; observe HTTP chunk mode via response headers; prove remote `refreshArtifactMirror` with progress + byte equality (MANUAL-000095 self-review)
 - fix(transfer): align buffer/proxy chunked reads with copy idle race and chunk bounds; remote e2e counts production onProgress only and never rewrites shared pool JSON (MANUAL-000095 self-review)

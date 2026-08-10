@@ -5,7 +5,12 @@ import { fileURLToPath } from 'node:url';
 
 import { loadWorkspacePackages, readJson } from './lib/workspace-utils.mjs';
 import { buildProposal } from './curate-changelog.mjs';
-import { applyChangelogCut, bumpSemver } from './parse-changelog.mjs';
+import {
+  applyChangelogCut,
+  bumpSemver,
+  compareSemver,
+  unreleasedMeaningfulBullets,
+} from './parse-changelog.mjs';
 import { resolveReleaseGroup } from './release-groups.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -69,6 +74,32 @@ function validateProposal(proposal, groupId) {
       throw new Error(`Proposal missing required workspace entry: ${dir}`);
     }
   }
+  if (groupId === 'npm' && proposal.workspaces['packages/protocol']?.include?.length > 0) {
+    const hostedOnly = resolveReleaseGroup('hosted-cc').workspaces.filter(
+      (dir) => dir !== 'packages/protocol',
+    );
+    const pendingHosted = hostedOnly.filter((dir) => {
+      const changelog = readFileSync(path.join(repoRoot, dir, 'CHANGELOG.md'), 'utf8');
+      return unreleasedMeaningfulBullets(changelog).length > 0;
+    });
+    if (pendingHosted.length > 0) {
+      throw new Error(
+        `Cut hosted-cc before npm while protocol changes are pending; unreleased hosted workspaces: ${pendingHosted.join(', ')}`,
+      );
+    }
+  }
+}
+
+export function protocolVersionFromSource(content) {
+  const match = content.match(/export const PROTOCOL_VERSION = '([^']+)';/);
+  if (!match)
+    throw new Error('Failed to find PROTOCOL_VERSION in packages/protocol/src/version.ts');
+  return match[1];
+}
+
+export function resolveProtocolPackageVersion(packageVersion, bump, protocolVersion) {
+  const requested = bumpSemver(packageVersion, bump);
+  return compareSemver(protocolVersion, requested) > 0 ? protocolVersion : requested;
 }
 
 function planCut(proposal) {
@@ -85,7 +116,18 @@ function planCut(proposal) {
       console.log(`[skip] ${dir} — no bullets to release`);
       continue;
     }
-    const nextVersion = bumpSemver(pkg.version, proposal.bump);
+    let nextVersion = bumpSemver(pkg.version, proposal.bump);
+    if (dir === 'packages/protocol') {
+      const versionSource = readFileSync(
+        path.join(repoRoot, 'packages/protocol/src/version.ts'),
+        'utf8',
+      );
+      nextVersion = resolveProtocolPackageVersion(
+        pkg.version,
+        proposal.bump,
+        protocolVersionFromSource(versionSource),
+      );
+    }
     versionByDir.set(dir, nextVersion);
 
     const changelogPath = path.join(repoRoot, dir, 'CHANGELOG.md');
@@ -123,10 +165,13 @@ function planCut(proposal) {
     if (protocolVersion) {
       const versionTs = path.join(repoRoot, 'packages/protocol/src/version.ts');
       const content = readFileSync(versionTs, 'utf8');
-      const versionPattern = /export const PROTOCOL_VERSION = '[^']+';/;
-      if (!versionPattern.test(content)) {
-        throw new Error('Failed to find PROTOCOL_VERSION in packages/protocol/src/version.ts');
+      const currentProtocolVersion = protocolVersionFromSource(content);
+      if (compareSemver(currentProtocolVersion, protocolVersion) > 0) {
+        throw new Error(
+          `Refusing to downgrade PROTOCOL_VERSION ${currentProtocolVersion} → ${protocolVersion}`,
+        );
       }
+      const versionPattern = /export const PROTOCOL_VERSION = '[^']+';/;
       const next = content.replace(
         versionPattern,
         `export const PROTOCOL_VERSION = '${protocolVersion}';`,
@@ -192,4 +237,5 @@ function main() {
   }
 }
 
-main();
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) main();

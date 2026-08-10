@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.6.0 - 2026-08-10
+
 - chore(scripts): `cdp.mjs` gateway RPC timeout is configurable via `FARMSLOT_RPC_TIMEOUT_MS` (default unchanged) so long RPCs like `slot.prepare` can be driven from the helper (MANUAL-000085).
 - test(probes): self-checking CDP probe for the execution-template picker dev-harness state (MANUAL-000076).
 - test(review-recovery): add a read-only CDP probe for active and inactive operator-required banner rendering.
@@ -11,11 +15,6 @@ All notable changes to `@farmslot/command-center` are tracked here.
 - refactor: rename the branch-maintenance flow `merge-main` → `update-branch` in the orphan-run backfill flow map.
 - chore: recipe operational gate runs the hook-expansion tests from their new `@farmslot/slot-config` home.
 - chore: prune the type-escape baseline entry for `packages/cli/src/gateway-client.ts` (file is now escape-free).
-
-- Active-development baseline; add user-facing changes here before release or package publication.
-
-## 0.6.0 - 2026-08-10
-
 - fix(pairing): mint one device code per multi-address Companion QR instead of one independently redeemable code per address
 - fix(pairing): require an explicit existing-principal or new-service-principal authority before generating a Companion QR
 

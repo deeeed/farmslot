@@ -4,14 +4,13 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- fix(transfer): lazy-load gateway in the transfer store (Node renderer tests), resync banner/mini pipeline when runId/run changes, and never swallow listener exceptions (MANUAL-000095 self-review).
-- fix(transfer): strict run-scoped pipeline filter (no unscoped bleed), pure model helpers for unit tests, and surface listener errors instead of empty catch (MANUAL-000095 self-review).
-- style(runs): reformat run-detail-model and review-gate-display test to satisfy the repo Prettier gate (no behavior change).
-
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.6.0 - 2026-08-10
 
+- fix(transfer): lazy-load gateway in the transfer store (Node renderer tests), resync banner/mini pipeline when runId/run changes, and never swallow listener exceptions (MANUAL-000095 self-review).
+- fix(transfer): strict run-scoped pipeline filter (no unscoped bleed), pure model helpers for unit tests, and surface listener errors instead of empty catch (MANUAL-000095 self-review).
+- style(runs): reformat run-detail-model and review-gate-display test to satisfy the repo Prettier gate (no behavior change).
 - fix(backlog): share backlog metadata and dispatch controls across create/edit, with explicit run mode and project-owned template selection; keep descriptive metadata editable after execution while locking dispatch ownership
 - fix(backlog): require an owner under multi-project creation scope and clear project-owned dispatch fields when that owner changes
 - fix(transfer): mini pipeline package-refresh segment uses the same purpose filter as the full renderer so finalize uploads and release-artifact mirrors are not misattributed (MANUAL-000095 self-review)

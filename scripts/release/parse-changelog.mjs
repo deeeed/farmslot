@@ -91,6 +91,20 @@ export function bumpSemver(version, bump) {
   return `${major}.${minor}.${patch}`;
 }
 
+export function compareSemver(left, right) {
+  const parse = (version) => {
+    const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+    if (!match) throw new Error(`Invalid semver '${version}'`);
+    return match.slice(1).map(Number);
+  };
+  const leftParts = parse(left);
+  const rightParts = parse(right);
+  for (let index = 0; index < leftParts.length; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index];
+  }
+  return 0;
+}
+
 export function applyChangelogCut(content, { version, date, include, defer }) {
   const unreleased = extractSection(content, (line) => /^##\s+Unreleased\b/i.test(line));
   if (!unreleased) throw new Error('Missing ## Unreleased section');
