@@ -47,7 +47,7 @@ yarn release:cut --group hosted-cc --from-proposal .release-cut/proposal.json --
 Effects:
 
 - Bumps `package.json` versions (patch by default; pass `--bump minor|major` to `--assist`)
-- Moves curated bullets into `## X.Y.Z - YYYY-MM-DD`
+- Moves included bullets verbatim into `## X.Y.Z - YYYY-MM-DD`
 - Writes `release-notes.json` for UI surfaces
 - Syncs `PROTOCOL_VERSION` when `packages/protocol` is in the group
 

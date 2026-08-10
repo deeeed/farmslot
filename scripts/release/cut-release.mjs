@@ -4,11 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadWorkspacePackages, readJson } from './lib/workspace-utils.mjs';
-import { buildProposal } from './curate-changelog.mjs';
+import { buildProposal, optionValue } from './curate-changelog.mjs';
 import {
   applyChangelogCut,
   bumpSemver,
   compareSemver,
+  parseBullets,
   unreleasedMeaningfulBullets,
 } from './parse-changelog.mjs';
 import { resolveReleaseGroup } from './release-groups.mjs';
@@ -22,30 +23,19 @@ const RELEASE_NOTES_TARGETS = {
   'apps/companion': 'apps/companion/src/generated/release-notes.json',
 };
 
-function parseArgs(argv) {
-  const args = {
-    group: null,
-    bump: 'patch',
-    assist: false,
-    execute: false,
-    proposalPath: null,
-    dryRun: true,
-  };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === '--assist') args.assist = true;
-    else if (arg === '--execute') {
-      args.execute = true;
-      args.dryRun = false;
-    } else if (arg.startsWith('--group=')) args.group = arg.slice('--group='.length);
-    else if (arg === '--group') args.group = argv[++i];
-    else if (arg.startsWith('--bump=')) args.bump = arg.slice('--bump='.length);
-    else if (arg === '--bump') args.bump = argv[++i];
-    else if (arg.startsWith('--from-proposal='))
-      args.proposalPath = arg.slice('--from-proposal='.length);
-    else if (arg === '--from-proposal') args.proposalPath = argv[++i];
+export function parseCutArgs(argv) {
+  const bump = optionValue(argv, '--bump') ?? 'patch';
+  if (!VALID_BUMPS.has(bump)) {
+    throw new Error(`Invalid --bump '${bump}' (expected patch, minor, or major)`);
   }
-  return args;
+  return {
+    group: optionValue(argv, '--group') ?? null,
+    bump,
+    assist: argv.includes('--assist'),
+    execute: argv.includes('--execute'),
+    proposalPath: optionValue(argv, '--from-proposal') ?? null,
+    dryRun: !argv.includes('--execute'),
+  };
 }
 
 function loadProposal(proposalPath) {
@@ -102,6 +92,18 @@ export function resolveProtocolPackageVersion(packageVersion, bump, protocolVers
   return compareSemver(protocolVersion, requested) > 0 ? protocolVersion : requested;
 }
 
+export function proposalCutDisposition(changelogContent, include) {
+  const pending = new Set(unreleasedMeaningfulBullets(changelogContent));
+  const pendingCount = include.filter((bullet) => pending.has(bullet)).length;
+  if (pendingCount === include.length) return 'cut';
+  if (pendingCount > 0) {
+    throw new Error('Release proposal only partially matches the current Unreleased section');
+  }
+  const archived = new Set(parseBullets(changelogContent));
+  if (include.every((bullet) => archived.has(bullet))) return 'already-cut';
+  throw new Error('Release proposal does not match the current changelog');
+}
+
 function planCut(proposal) {
   const packages = loadWorkspacePackages(repoRoot);
   const date = new Date().toISOString().slice(0, 10);
@@ -114,6 +116,12 @@ function planCut(proposal) {
     if (!pkg) throw new Error(`Unknown workspace: ${dir}`);
     if (!entry.include?.length) {
       console.log(`[skip] ${dir} — no bullets to release`);
+      continue;
+    }
+    const changelogPath = path.join(repoRoot, dir, 'CHANGELOG.md');
+    const content = readFileSync(changelogPath, 'utf8');
+    if (proposalCutDisposition(content, entry.include) === 'already-cut') {
+      console.log(`[skip] ${dir} — proposal already cut`);
       continue;
     }
     let nextVersion = bumpSemver(pkg.version, proposal.bump);
@@ -130,8 +138,6 @@ function planCut(proposal) {
     }
     versionByDir.set(dir, nextVersion);
 
-    const changelogPath = path.join(repoRoot, dir, 'CHANGELOG.md');
-    const content = readFileSync(changelogPath, 'utf8');
     const nextChangelog = applyChangelogCut(content, {
       version: nextVersion,
       date,
@@ -195,11 +201,21 @@ function applyCut(proposal, dryRun) {
       writeFileSync(write.path, write.content, 'utf8');
     }
   }
-  console.log(`\nSuggested commit: chore(release): cut ${commitParts.join(', ')}`);
+  if (commitParts.length > 0) {
+    console.log(`\nSuggested commit: chore(release): cut ${commitParts.join(', ')}`);
+  } else {
+    console.log('\nNo release changes planned.');
+  }
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  let args;
+  try {
+    args = parseCutArgs(process.argv.slice(2));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
   if (!args.group) {
     console.error(
       'Usage: node scripts/release/cut-release.mjs --group <id> [--assist] [--bump patch|minor|major] [--from-proposal path] [--execute]',

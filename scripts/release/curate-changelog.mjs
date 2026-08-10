@@ -35,7 +35,7 @@ function rewriteForOperator(bullet) {
 }
 
 export function buildWorkspaceProposal(dir, bullets) {
-  const include = bullets.map(rewriteForOperator);
+  const include = [...bullets];
   const operatorSummary = bullets.filter(isOperatorFacing).map(rewriteForOperator).slice(0, 5);
   return {
     include,
@@ -93,7 +93,7 @@ function printProposalSummary(proposal) {
   }
 }
 
-function optionValue(args, name) {
+export function optionValue(args, name) {
   const inline = args.find((arg) => arg.startsWith(`${name}=`));
   if (inline) return inline.slice(name.length + 1);
   const index = args.indexOf(name);

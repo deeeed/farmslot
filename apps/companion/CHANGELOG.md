@@ -8,14 +8,14 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## 0.4.0 - 2026-08-10
 
+- feat(companion): add mobile Roadmap and Backlog detail workspaces, edit complete backlog dispatch parameters before launch, render attached specs, and expose review-attempt history with per-generation reviewed and fix diffs.
+- feat(companion): use native form-sheet routes for workspace filters and backlog creation, add a scoped mobile backlog launcher, and make Slot/Terminal/Diff and Run Evidence/Diff/Timeline/Files persistent tabbed workspaces with single-purpose content instead of duplicated progress or artifact surfaces.
+- fix(pairing): reject mixed-code multi-address QRs before exchanging any credential.
+- fix(pairing): exchange a multi-address QR once so every imported profile shares one revocable device credential.
 - chore(deps): upgrade Companion to Expo SDK 57 / React Native 0.86 (expo@57.0.10, aligned expo-\* modules via `expo install --fix`).
+- feat(review): show the shared repeat-review generation and reviewer-session chain in run details.
 - chore: store-screenshot demo PR data carries the new `skipped` CI check-summary count (protocol `PRStatus.checkSummary` gained the field).
 - Route production Android submit to Play internal testing until the first production store release exists.
-- feat(companion): add mobile Roadmap and Backlog detail workspaces, edit complete backlog dispatch parameters before launch, render attached specs, and expose review-attempt history with per-generation reviewed and fix diffs
-- feat(companion): use native form-sheet routes for workspace filters and backlog creation, add a scoped mobile backlog launcher, and make Slot/Terminal/Diff and Run Evidence/Diff/Timeline/Files persistent tabbed workspaces with single-purpose content instead of duplicated progress or artifact surfaces
-- fix(pairing): reject mixed-code multi-address QRs before exchanging any credential
-- fix(pairing): exchange a multi-address QR once so every imported profile shares one revocable device credential
-- feat(review): show the shared repeat-review generation and reviewer-session chain in run details
 
 ## 0.3.0 - 2026-08-06
 
