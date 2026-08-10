@@ -140,3 +140,22 @@ test('node fs operations refuse ordinary paths inside .git', async (t) => {
   await assert.rejects(fsDelete({ root, relPath: '.git/config' }), /Access to \.git/);
   assert.equal(await readFile(path.join(root, '.git', 'config'), 'utf-8'), 'safe');
 });
+
+test('fsReadChunk returns a bounded base64 slice and eof', async (t) => {
+  const { fsReadChunk } = await import('./fs.js');
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-chunk-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const content = Buffer.alloc(100, 'a');
+  await writeFile(path.join(root, 'blob.bin'), content);
+
+  const first = await fsReadChunk({ root, relPath: 'blob.bin', offset: 0, length: 40 });
+  assert.equal(first.bytesRead, 40);
+  assert.equal(first.offset, 0);
+  assert.equal(first.size, 100);
+  assert.equal(first.eof, false);
+  assert.equal(Buffer.from(first.content, 'base64').byteLength, 40);
+
+  const last = await fsReadChunk({ root, relPath: 'blob.bin', offset: 80, length: 40 });
+  assert.equal(last.bytesRead, 20);
+  assert.equal(last.eof, true);
+});

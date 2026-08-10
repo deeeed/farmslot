@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(transfer): progress-aware chunked remote `slotCopyFile` / artifact mirror copies — `file.transfer.progress` events, idle/heartbeat timeouts instead of a fixed 30s wall clock, integrity checks, and admin `file.transfer.smoke` for multi-chunk proof (MANUAL-000095).
+
 - feat(intelligence): learnings router — every improvement analysis first classifies learnings entries as system vs domain; system entries continue into the projects/<project>/ improvement path, domain entries become a human-gated skill-antipattern draft card (with exactly-once inbox processed.jsonl receipts when a captured package correlates), ambiguous entries become visible teaching holds, and out-of-project apply paths now refuse loudly as `out-of-project` instead of skipping silently (MANUAL-000075).
 
 - fix(tasks): execution-template catalog reports domain-filtered sources via `filteredSources` and reuses the agent-runtime participation gate instead of a private copy (MANUAL-000076).

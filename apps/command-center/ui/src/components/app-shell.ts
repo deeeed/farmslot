@@ -34,6 +34,7 @@ import './shared/global-filter-bar.js';
 import './shared/hydrating-placeholder.js';
 import './shared/update-banner.js';
 import './shared/whats-new-modal.js';
+import './shared/file-transfer-progress-banner.js';
 import './fleet-map/fleet-canvas.js';
 import './terminal/split-view.js';
 import './dispatch/dispatch-wizard.js';
@@ -1707,6 +1708,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         }}
       ></chat-panel>
       ${this.renderPairingPanel()} ${this.renderVersionDetailsModal()} ${this.renderWhatsNewModal()}
+      <file-transfer-progress-banner></file-transfer-progress-banner>
     `;
   }
 }

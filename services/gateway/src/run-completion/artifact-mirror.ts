@@ -154,6 +154,7 @@ async function copyEvidenceManifestReferencedArtifacts(
   workerArtifactsDir: string,
   localArtifactsDir: string,
   manifest: EvidenceManifest | null | undefined,
+  progress?: { runId?: string; slotId?: string },
 ): Promise<number> {
   const manifestPaths = evidenceManifestArtifactPaths(manifest);
   let copied = 0;
@@ -168,7 +169,12 @@ async function copyEvidenceManifestReferencedArtifacts(
     }
     const localPath = path.join(localArtifactsDir, relativePath);
     await mkdir(path.dirname(localPath), { recursive: true });
-    await slotCopyFile(vars, workerPath, localPath);
+    await slotCopyFile(vars, workerPath, localPath, {
+      phase: 'mirror',
+      runId: progress?.runId,
+      slotId: progress?.slotId ?? vars.slotId,
+      label: relativePath,
+    });
     copied += 1;
   }
   return copied;
@@ -222,9 +228,13 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     preserveRecipeRuns: !clearLocalRecipeRuns,
   });
   const gatewayOwnedWorkerEntries = await workerGatewayOwnedCopyExcludes(vars, workerArtifactsDir);
+  const transferMeta = { runId: run.id, slotId: run.slotId ?? vars.slotId };
   let copied = await slotCopyDir(vars, workerArtifactsDir, localArtifactsDir, {
     excludeTopLevel: [...WORKER_ARTIFACT_COPY_EXCLUDES, ...gatewayOwnedWorkerEntries],
     excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
+    phase: 'mirror',
+    ...transferMeta,
+    labelPrefix: 'artifacts',
   });
   // Defensive cleanup for stale local mirrors created before screenshots/ was excluded.
   await removeStaleArtifactDirectory(path.join(localArtifactsDir, 'screenshots'));
@@ -233,6 +243,7 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
     workerArtifactsDir,
     localArtifactsDir,
     await readEvidenceManifest(run),
+    transferMeta,
   );
   if (promotedPointer) {
     const promotedLocalRoot = path.join(localArtifactsDir, promotedPointer.relativeArtifactRoot);
@@ -242,7 +253,12 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
       vars,
       path.join(workerArtifactsDir, promotedPointer.relativeArtifactRoot),
       promotedLocalRoot,
-      { excludeTopLevel: ['screenshots'] },
+      {
+        excludeTopLevel: ['screenshots'],
+        phase: 'mirror',
+        ...transferMeta,
+        labelPrefix: promotedPointer.relativeArtifactRoot,
+      },
     );
     // Defensive cleanup for stale promoted mirrors created before screenshots/ was excluded.
     await removeStaleArtifactDirectory(path.join(promotedLocalRoot, 'screenshots'));
@@ -272,7 +288,11 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
   // Copy TASK.md back (worker may have updated checkboxes)
   const workerTask = path.join(workerTaskDir, 'TASK.md');
   if (await slotFileExists(vars, workerTask)) {
-    await slotCopyFile(vars, workerTask, path.join(taskDir, 'TASK.md.worker'));
+    await slotCopyFile(vars, workerTask, path.join(taskDir, 'TASK.md.worker'), {
+      phase: 'mirror',
+      ...transferMeta,
+      label: 'TASK.md.worker',
+    });
   }
   return copied;
 }

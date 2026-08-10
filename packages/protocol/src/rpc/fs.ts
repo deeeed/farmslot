@@ -76,3 +76,17 @@ export interface NodeFsWriteFilesParams extends NodeFsPathParams {
 export interface NodeFsReadBase64Params extends NodeFsPathParams {
   maxBytes?: number;
 }
+
+export interface NodeFsReadChunkParams extends NodeFsPathParams {
+  offset: number;
+  length: number;
+}
+
+export interface NodeFsReadChunkResult {
+  content: string;
+  size: number;
+  offset: number;
+  bytesRead: number;
+  eof: boolean;
+}
+

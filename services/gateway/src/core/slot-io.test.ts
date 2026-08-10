@@ -14,10 +14,17 @@ import {
   WORKER_ARTIFACT_COPY_EXCLUDES,
   WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES,
 } from './artifact-copy-policy.js';
-import { slotCopyDir, SlotCopyDirEntryError, slotFileExists } from './slot-io.js';
+import { setFileTransferBroadcast } from './file-transfer.js';
+import {
+  slotCopyDir,
+  SlotCopyDirEntryError,
+  slotCopyFile,
+  slotFileExists,
+} from './slot-io.js';
 
 class FakeNodeWebSocket {
   readyState = WebSocket.OPEN;
+  calls: Array<{ method: string; params: Record<string, unknown> }> = [];
 
   constructor(
     private readonly handlers: {
@@ -33,6 +40,25 @@ class FakeNodeWebSocket {
       onReadBase64?: (params: { path: string; root?: string; relPath?: string }) => {
         content: string;
       };
+      onStat?: (params: { path: string; root?: string; relPath?: string }) => {
+        size: number;
+        isFile: boolean;
+        isDirectory: boolean;
+        mtimeMs: number;
+      };
+      onReadChunk?: (params: {
+        path: string;
+        root?: string;
+        relPath?: string;
+        offset?: number;
+        length?: number;
+      }) => {
+        content: string;
+        size: number;
+        offset: number;
+        bytesRead: number;
+        eof: boolean;
+      };
     },
   ) {}
 
@@ -40,8 +66,15 @@ class FakeNodeWebSocket {
     const frame = JSON.parse(raw) as {
       id: string;
       method: string;
-      params: { path?: string; root?: string; relPath?: string };
+      params: {
+        path?: string;
+        root?: string;
+        relPath?: string;
+        offset?: number;
+        length?: number;
+      };
     };
+    this.calls.push({ method: frame.method, params: frame.params as Record<string, unknown> });
     const handlerParams = {
       ...frame.params,
       path:
@@ -72,12 +105,48 @@ class FakeNodeWebSocket {
         );
         return;
       }
+      if (frame.method === 'fs.stat') {
+        handleNodeResponse(
+          frame.id,
+          true,
+          this.handlers.onStat?.(handlerParams) ?? {
+            size: 0,
+            isFile: true,
+            isDirectory: false,
+            mtimeMs: 0,
+          },
+        );
+        return;
+      }
       if (frame.method === 'fs.readBase64') {
         try {
           handleNodeResponse(
             frame.id,
             true,
             this.handlers.onReadBase64?.(handlerParams) ?? { content: '' },
+          );
+        } catch (err) {
+          handleNodeResponse(
+            frame.id,
+            false,
+            null,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+        return;
+      }
+      if (frame.method === 'fs.readChunk') {
+        try {
+          handleNodeResponse(
+            frame.id,
+            true,
+            this.handlers.onReadChunk?.(handlerParams) ?? {
+              content: '',
+              size: 0,
+              offset: handlerParams.offset ?? 0,
+              bytesRead: 0,
+              eof: true,
+            },
           );
         } catch (err) {
           handleNodeResponse(
@@ -430,4 +499,76 @@ test('slotCopyDir local path keeps copying after a nested per-file failure', asy
   assert.equal(await readFile(path.join(destDir, 'top.txt'), 'utf-8'), 'top');
   assert.equal(await readFile(path.join(destDir, 'sub', 'sibling.txt'), 'utf-8'), 'sibling');
   assert.equal(existsSync(path.join(destDir, 'sub', 'blocked.bin')), false);
+});
+
+test('remote slotCopyFile uses one-shot fs.readBase64 below the small-file threshold', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-slot-copy-small-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const dest = path.join(dir, 'out.bin');
+  const payload = Buffer.from('hello-small');
+  const fakeWs = new FakeNodeWebSocket({
+    onStat: () => ({ size: payload.byteLength, isFile: true, isDirectory: false, mtimeMs: 1 }),
+    onReadBase64: () => ({ content: payload.toString('base64') }),
+  });
+  registerNode('copy-small-machine', 1, fakeWs as any);
+  t.after(() => unregisterByWs(fakeWs as any));
+
+  await slotCopyFile(
+    { host: '203.0.113.9', machine: 'copy-small-machine', sshTarget: 't@203.0.113.9' },
+    '/remote/small.bin',
+    dest,
+  );
+
+  assert.equal(await readFile(dest, 'utf-8'), 'hello-small');
+  assert.ok(fakeWs.calls.some((c) => c.method === 'fs.readBase64'));
+  assert.equal(
+    fakeWs.calls.filter((c) => c.method === 'fs.readChunk').length,
+    0,
+    'small files must not use chunked path',
+  );
+});
+
+test('remote slotCopyFile uses chunked fs.readChunk above the small-file threshold', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-slot-copy-large-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const dest = path.join(dir, 'out.bin');
+  // 3 * 100 bytes with a tiny threshold forces multi-chunk without huge fixtures.
+  const payload = Buffer.alloc(300, 7);
+  const fakeWs = new FakeNodeWebSocket({
+    onStat: () => ({ size: payload.byteLength, isFile: true, isDirectory: false, mtimeMs: 1 }),
+    onReadChunk: (params) => {
+      const offset = params.offset ?? 0;
+      const length = params.length ?? 0;
+      const slice = payload.subarray(offset, offset + length);
+      return {
+        content: slice.toString('base64'),
+        size: payload.byteLength,
+        offset,
+        bytesRead: slice.byteLength,
+        eof: offset + slice.byteLength >= payload.byteLength,
+      };
+    },
+  });
+  registerNode('copy-large-machine', 1, fakeWs as any);
+  t.after(() => unregisterByWs(fakeWs as any));
+
+  const events: unknown[] = [];
+  setFileTransferBroadcast((_e, payload) => events.push(payload));
+  t.after(() => setFileTransferBroadcast(() => {}));
+
+  await slotCopyFile(
+    { host: '203.0.113.9', machine: 'copy-large-machine', sshTarget: 't@203.0.113.9' },
+    '/remote/large.bin',
+    dest,
+    { forceChunked: true, smallFileThresholdBytes: 50, phase: 'mirror', label: 'large.bin' },
+  );
+
+  assert.deepEqual(await readFile(dest), payload);
+  assert.ok(fakeWs.calls.some((c) => c.method === 'fs.readChunk'));
+  assert.equal(
+    fakeWs.calls.filter((c) => c.method === 'fs.readBase64').length,
+    0,
+    'large files must not use one-shot readBase64',
+  );
+  assert.ok(events.length >= 3, `expected progress events, got ${events.length}`);
 });

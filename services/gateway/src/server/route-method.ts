@@ -265,6 +265,7 @@ import {
 import { copilotFormatInstruction } from '../methods/copilot.js';
 import { decisionList, decisionResolve } from '../methods/decisions.js';
 import { diagnosticsRun } from '../methods/diagnostics.js';
+import { fileTransferSmoke } from '../methods/file-transfer.js';
 import {
   dispatchCandidates,
   dispatchMatchProject,
@@ -1070,6 +1071,8 @@ async function routeAuthorizedMethod(
     // Diagnostics
     case Methods.DIAGNOSTICS_RUN:
       return diagnosticsRun(p as DiagnosticsRunParams);
+    case Methods.FILE_TRANSFER_SMOKE:
+      return fileTransferSmoke(p as import('@farmslot/protocol').FileTransferSmokeParams);
 
     // Search
     case Methods.SEARCH_QUERY:

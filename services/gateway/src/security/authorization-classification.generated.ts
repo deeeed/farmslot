@@ -88,6 +88,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
     classification: 'admin',
     reason: 'reads artifacts and may launch an unsandboxed report CLI',
   },
+  'file.transfer.smoke': { classification: 'admin' },
   'finetune.exportDPO': { classification: 'admin' },
   'finetune.exportSFT': { classification: 'admin' },
   'finetune.index': { classification: 'admin' },

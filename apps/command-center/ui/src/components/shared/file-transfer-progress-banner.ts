@@ -1,0 +1,192 @@
+import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
+import { customElement, state } from 'lit/decorators.js';
+
+import {
+  Events,
+  type FileTransferProgress,
+  type FileTransferProgressPayload,
+} from '@farmslot/protocol';
+
+import { gateway } from '../../gateway-client.js';
+import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+
+import {
+  formatTransferBytes,
+  type FileTransferUiEntry,
+  pruneFileTransfers,
+  transferPercent,
+  upsertFileTransfer,
+} from './file-transfer-progress-model.js';
+
+@customElement('file-transfer-progress-banner')
+export class FileTransferProgressBanner extends LitElement {
+  @state() private _entries: FileTransferUiEntry[] = [];
+
+  private _unsub: (() => void) | null = null;
+  private _pruneTimer: ReturnType<typeof setInterval> | null = null;
+
+  static override styles = css`
+    :host {
+      display: block;
+      pointer-events: none;
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 1200;
+      max-width: min(420px, calc(100vw - 32px));
+      font-family: ${unsafeCSS(fonts.mono)};
+    }
+    .ftp-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: auto;
+    }
+    .ftp-card {
+      border: 1px solid #2a2a44;
+      border-radius: ${unsafeCSS(radii.md)};
+      background: ${unsafeCSS(colors.bgCard)};
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+    }
+    .ftp-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: baseline;
+      margin-bottom: 6px;
+    }
+    .ftp-title {
+      font-size: ${unsafeCSS(fonts.sizeSm)};
+      font-weight: 700;
+      color: ${unsafeCSS(colors.textPrimary)};
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ftp-meta {
+      font-size: 11px;
+      color: ${unsafeCSS(colors.textMuted)};
+      white-space: nowrap;
+    }
+    .ftp-status {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 2px 7px;
+      border-radius: ${unsafeCSS(radii.sm)};
+    }
+    .ftp-status.running {
+      background: ${unsafeCSS(colors.accent)}22;
+      color: ${unsafeCSS(colors.accent)};
+    }
+    .ftp-status.done {
+      background: ${unsafeCSS(colors.statusOk)}22;
+      color: ${unsafeCSS(colors.statusOk)};
+    }
+    .ftp-status.failed {
+      background: ${unsafeCSS(colors.statusFail)}22;
+      color: ${unsafeCSS(colors.statusFail)};
+    }
+    .ftp-bar {
+      width: 100%;
+      height: 8px;
+      border-radius: 999px;
+      background: #1a1a2e;
+      overflow: hidden;
+    }
+    .ftp-bar > span {
+      display: block;
+      height: 100%;
+      background: ${unsafeCSS(colors.accent)};
+      transition: width 120ms linear;
+    }
+    .ftp-bar.failed > span {
+      background: ${unsafeCSS(colors.statusFail)};
+    }
+    .ftp-bar.done > span {
+      background: ${unsafeCSS(colors.statusOk)};
+    }
+    .ftp-error {
+      margin-top: 6px;
+      font-size: 11px;
+      color: ${unsafeCSS(colors.statusFail)};
+      line-height: 1.35;
+      word-break: break-word;
+    }
+    .ftp-phase {
+      font-size: 10px;
+      color: ${unsafeCSS(colors.textSecondary)};
+      margin-top: 4px;
+    }
+  `;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this._unsub = gateway.subscribe<FileTransferProgressPayload>(
+      Events.FILE_TRANSFER_PROGRESS,
+      (progress) => this._onProgress(progress),
+    );
+    this._pruneTimer = setInterval(() => {
+      this._entries = pruneFileTransfers(this._entries);
+    }, 1000);
+  }
+
+  override disconnectedCallback(): void {
+    this._unsub?.();
+    this._unsub = null;
+    if (this._pruneTimer) clearInterval(this._pruneTimer);
+    this._pruneTimer = null;
+    super.disconnectedCallback();
+  }
+
+  private _onProgress(progress: FileTransferProgress): void {
+    this._entries = pruneFileTransfers(upsertFileTransfer(this._entries, progress));
+  }
+
+  override render() {
+    if (this._entries.length === 0) return nothing;
+    return html`
+      <div class="ftp-stack" data-testid="file-transfer-progress-banner">
+        ${this._entries.map((entry) => {
+          const pct = transferPercent(entry);
+          const name = entry.label || entry.path.split('/').pop() || entry.path;
+          return html`
+            <div
+              class="ftp-card"
+              data-testid="file-transfer-progress-card"
+              data-transfer-id=${entry.transferId}
+              data-state=${entry.state}
+              data-phase=${entry.phase}
+            >
+              <div class="ftp-header">
+                <div class="ftp-title" title=${entry.path}>${name}</div>
+                <span class="ftp-status ${entry.state}">${entry.state}</span>
+              </div>
+              <div class="ftp-meta">
+                ${formatTransferBytes(entry.bytesTransferred)} /
+                ${formatTransferBytes(entry.totalBytes)} (${pct}%)
+              </div>
+              <div class="ftp-bar ${entry.state}" role="progressbar" aria-valuenow=${pct} aria-valuemin="0" aria-valuemax="100">
+                <span style="width: ${pct}%"></span>
+              </div>
+              <div class="ftp-phase">phase: ${entry.phase}</div>
+              ${entry.error
+                ? html`<div class="ftp-error" data-testid="file-transfer-progress-error">
+                    ${entry.error}
+                  </div>`
+                : nothing}
+            </div>
+          `;
+        })}
+      </div>
+    `;
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'file-transfer-progress-banner': FileTransferProgressBanner;
+  }
+}

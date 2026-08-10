@@ -8,6 +8,8 @@ import { expandTilde, type FileWatchHandle, watchFile } from '@farmslot/capabili
 import type {
   NodeFsPathParams,
   NodeFsReadBase64Params,
+  NodeFsReadChunkParams,
+  NodeFsReadChunkResult,
   NodeFsRenameParams,
   NodeFsWriteFileEntry,
   NodeFsWriteFilesParams,
@@ -187,6 +189,46 @@ export async function fsReadBase64(
     }
     const buf = await handle.readFile();
     return { content: buf.toString('base64'), size: info.size };
+  } catch (error) {
+    return actionableNoFollowError(error, params.relPath);
+  } finally {
+    await handle?.close();
+  }
+}
+
+/**
+ * Read a bounded byte range as base64 for progress-aware large transfers.
+ * Callers must keep `length` ≤ FILE_TRANSFER_CHUNK_MAX_BYTES so frames stay
+ * well under the gateway WebSocket max payload.
+ */
+export async function fsReadChunk(params: NodeFsReadChunkParams): Promise<NodeFsReadChunkResult> {
+  if (!Number.isInteger(params.offset) || params.offset < 0) {
+    throw new Error(`fs.readChunk offset must be a non-negative integer (got ${params.offset})`);
+  }
+  if (!Number.isInteger(params.length) || params.length <= 0) {
+    throw new Error(`fs.readChunk length must be a positive integer (got ${params.length})`);
+  }
+  const { target } = confinedPath(params);
+  let handle;
+  try {
+    handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const info = await handle.stat();
+    if (params.offset > info.size) {
+      throw new Error(
+        `fs.readChunk offset ${params.offset} beyond file size ${info.size} for ${params.relPath}`,
+      );
+    }
+    const toRead = Math.min(params.length, info.size - params.offset);
+    const buf = Buffer.alloc(toRead);
+    const { bytesRead } = await handle.read(buf, 0, toRead, params.offset);
+    const slice = bytesRead === toRead ? buf : buf.subarray(0, bytesRead);
+    return {
+      content: slice.toString('base64'),
+      size: info.size,
+      offset: params.offset,
+      bytesRead,
+      eof: params.offset + bytesRead >= info.size,
+    };
   } catch (error) {
     return actionableNoFollowError(error, params.relPath);
   } finally {

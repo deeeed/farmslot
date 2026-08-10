@@ -18,10 +18,19 @@ import path from 'node:path';
 
 import { type FSWatcher, watch } from 'chokidar';
 
+import {
+  FILE_TRANSFER_CHUNK_MAX_BYTES,
+  FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
+  FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES,
+  type FileTransferPhase,
+  type NodeFsReadChunkResult,
+} from '@farmslot/protocol';
+
 import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 
 import { isLocal } from './exec.js';
+import { copyFileChunked } from './file-transfer.js';
 
 export const MAX_ARTIFACT_TREE_DEPTH = 12;
 // Subset of SlotVars — SlotVars satisfies this via structural typing
@@ -41,6 +50,11 @@ export interface SlotCopyDirOptions {
    * where one transient EACCES on a screenshot must not abort the whole copy.
    */
   onEntryFailure?: (err: SlotCopyDirEntryError) => void;
+  /** Progress phase for large remote files (default download). */
+  phase?: FileTransferPhase;
+  runId?: string;
+  slotId?: string;
+  labelPrefix?: string;
 }
 
 export class SlotCopyDirEntryError extends Error {
@@ -231,22 +245,80 @@ export async function slotStat(ctx: SlotLocality, targetPath: string): Promise<S
 
 // ─── slotCopyFile ───
 // Copy a single file from slot to a local destination.
-// Local: fs.copyFile. Remote: agent fs.readBase64 → local write.
+// Local: fs.copyFile. Remote: small files one-shot fs.readBase64; large files
+// go through chunked fs.readChunk with progress events and idle-based timeouts.
+
+export interface SlotCopyFileOptions {
+  label?: string;
+  phase?: FileTransferPhase;
+  runId?: string;
+  slotId?: string;
+  /** Force chunked path even for small files (tests). */
+  forceChunked?: boolean;
+  /** Override small-file threshold (tests). */
+  smallFileThresholdBytes?: number;
+}
 
 export async function slotCopyFile(
   ctx: SlotLocality,
   remotePath: string,
   localPath: string,
+  options: SlotCopyFileOptions = {},
 ): Promise<void> {
   if (local(ctx)) {
     await copyFile(remotePath, localPath);
     return;
   }
-  const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.readBase64', {
-    ...nodePathParams(remotePath),
-  })) as { content: string };
-  await fsWriteFile(localPath, Buffer.from(result.content, 'base64'));
+  const node = requireNode(ctx.machine);
+  const pathParams = nodePathParams(remotePath);
+  const threshold = options.smallFileThresholdBytes ?? FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES;
+
+  let size = 0;
+  try {
+    const st = (await sendNodeRequest(node, 'fs.stat', pathParams, {
+      timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
+    })) as { size: number; isFile: boolean };
+    size = st.size;
+    if (!st.isFile) {
+      throw new Error(`slotCopyFile remote path is not a file: ${remotePath}`);
+    }
+  } catch (err) {
+    // Fall through to one-shot read when stat is unavailable; large files still
+    // benefit if forceChunked, otherwise preserve prior best-effort behavior.
+    if (options.forceChunked) throw err;
+  }
+
+  const useChunked = options.forceChunked || size > threshold;
+  if (!useChunked) {
+    const result = (await sendNodeRequest(node, 'fs.readBase64', pathParams, {
+      timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
+    })) as { content: string };
+    await fsWriteFile(localPath, Buffer.from(result.content, 'base64'));
+    return;
+  }
+
+  await copyFileChunked({
+    path: remotePath,
+    label: options.label ?? path.basename(remotePath),
+    phase: options.phase ?? 'download',
+    runId: options.runId,
+    slotId: options.slotId,
+    totalBytes: size > 0 ? size : undefined,
+    localPath,
+    readChunk: async (offset, length) => {
+      const chunk = (await sendNodeRequest(
+        node,
+        'fs.readChunk',
+        { ...pathParams, offset, length },
+        { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
+      )) as NodeFsReadChunkResult;
+      return chunk;
+    },
+  });
 }
+
+/** Exported for tests asserting the chunk budget stays under the WS max payload. */
+export { FILE_TRANSFER_CHUNK_MAX_BYTES };
 
 // ─── slotCopyDir ───
 // Copy a directory from slot to a local destination.
@@ -404,11 +476,14 @@ export async function slotCopyDir(
       }
       if (entry.type === 'file') {
         try {
-          const fileResult = (await sendNodeRequest(node, 'fs.readBase64', {
-            root: remoteDir,
-            relPath: path.relative(remoteDir, sourcePath),
-          })) as { content: string };
-          await fsWriteFile(targetPath, Buffer.from(fileResult.content, 'base64'));
+          await slotCopyFile(ctx, sourcePath, targetPath, {
+            phase: options.phase ?? 'download',
+            label: options.labelPrefix
+              ? `${options.labelPrefix}/${path.relative(remoteDir, sourcePath)}`
+              : path.relative(remoteDir, sourcePath),
+            runId: options.runId,
+            slotId: options.slotId,
+          });
         } catch (err) {
           const entryError = new SlotCopyDirEntryError(sourcePath, targetPath, err);
           if (options.onEntryFailure) {

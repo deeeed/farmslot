@@ -97,6 +97,9 @@ export const Methods = {
   ROADMAP_PROMOTION_DRAFT_SAVE: 'roadmap.promotionDraft.save',
   ROADMAP_PROMOTE: 'roadmap.promote',
 
+  // File transfer (progress-aware large copies)
+  FILE_TRANSFER_SMOKE: 'file.transfer.smoke',
+
   // Terminal
   TERMINAL_SUBSCRIBE: 'terminal.subscribe',
   TERMINAL_UNSUBSCRIBE: 'terminal.unsubscribe',

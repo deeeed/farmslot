@@ -75,6 +75,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `eval.trial.start`                   | admin          |                                                          |
 | `family.observability.get`           | admin          | scans and reads task artifacts by pathname               |
 | `family.report.generate`             | admin          | reads artifacts and may launch an unsandboxed report CLI |
+| `file.transfer.smoke`                | admin          |                                                          |
 | `finetune.exportDPO`                 | admin          |                                                          |
 | `finetune.exportSFT`                 | admin          |                                                          |
 | `finetune.index`                     | admin          |                                                          |

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(transfer): determinate file-transfer progress banner (filename, bytes/percent, phase, failed) driven by `file.transfer.progress` events (MANUAL-000095).
+
 - feat(decisions): render learnings-draft cards — domain antipattern drafts with target paths, teaching holds, and the inbox receipt status (MANUAL-000075).
 
 - feat(dispatch): replace the execution-template pills with a reusable filterable catalog picker — Domain/Run-mode filters with visible result counts, per-row source/domain/platform/digest provenance, filter-named empty states, and loud domain-restricted/unavailable source notices (MANUAL-000076).

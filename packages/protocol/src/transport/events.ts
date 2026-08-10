@@ -21,7 +21,11 @@ import type {
   WorkGraphProjection,
 } from '../contracts/index.js';
 import type { CIWatchFixProgress, CIWatchFixTrigger, CIWatchPhase } from '../recipes/step-io.js';
-import type { TaskProgressResult, WorkerSessionHistoryDeltaPayload } from '../rpc/index.js';
+import type {
+  FileTransferProgress,
+  TaskProgressResult,
+  WorkerSessionHistoryDeltaPayload,
+} from '../rpc/index.js';
 import type { TmuxWorkerRef } from '../rpc/tmux.js';
 
 import type { WorkerSignal } from './signal.js';
@@ -129,6 +133,9 @@ export const Events = {
 
   // LLM auth (browser-based login progress)
   LLM_AUTH_LOGIN_PROGRESS: 'llm.auth.login.progress',
+
+  // Large remote file transfer progress (node ↔ gateway ↔ CC)
+  FILE_TRANSFER_PROGRESS: 'file.transfer.progress',
 } as const;
 
 // ─── Event payload types ───
@@ -406,3 +413,6 @@ export interface FleetThumbnailsUpdatedPayload {
 export interface WorkGraphUpdatedPayload {
   graph: WorkGraphProjection;
 }
+
+export interface FileTransferProgressPayload extends FileTransferProgress {}
+

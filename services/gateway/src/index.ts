@@ -315,6 +315,10 @@ async function main(): Promise<void> {
   await loadAllRuns();
   initRunEngine(observedBroadcast);
   initRunMonitor(observedBroadcast);
+  {
+    const { setFileTransferBroadcast } = await import('./core/file-transfer.js');
+    setFileTransferBroadcast(observedBroadcast);
+  }
   initRunCompletion(observedBroadcast);
   initImprovementEngine(observedBroadcast);
   initPrLinkage(observedBroadcast);

@@ -170,7 +170,9 @@ export function canReceiveBroadcast(
   const principal = resolution.principal;
   if (isAdminPrincipal(principal)) return true;
   if (!hasRole(principal, 'operator')) return false;
-  return /^(?:run\.|queue\.|backlog\.|workGraph\.|node\.health|fleet\.node)/u.test(event);
+  return /^(?:run\.|queue\.|backlog\.|workGraph\.|node\.health|fleet\.node|file\.transfer)/u.test(
+    event,
+  );
 }
 
 function denial(
