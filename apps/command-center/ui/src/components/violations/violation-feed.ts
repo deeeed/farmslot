@@ -22,8 +22,6 @@ function typeColor(type: ViolationType): string {
       return colors.statusFail;
     case 'waiting':
       return colors.statusWarn;
-    case 'budget':
-      return colors.statusWarn;
     case 'skipped':
       return colors.statusUnknown;
     default:

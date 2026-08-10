@@ -1269,6 +1269,22 @@ export function nextFreeComparisonVariant(
   return '';
 }
 
+/** Incremental/cached session-usage sample for soft turn/token budgets. */
+export interface RunMonitorBudgetUsageState {
+  path: string | null;
+  size: number;
+  mtimeMs: number;
+  offset: number;
+  turns: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreation: number;
+  cacheRead: number;
+  sampledAt?: string;
+  unavailableReason?: string;
+}
+
 export interface RunMonitorState {
   nudgeCount: number;
   lastPollAt: string;
@@ -1276,6 +1292,8 @@ export interface RunMonitorState {
   lastPaneHash?: string;
   /** True after a one-shot usage-budget warning was emitted for this monitor session. */
   budgetWarned?: boolean;
+  /** Append-only transcript sample cache for the soft budget guard. */
+  budgetUsage?: RunMonitorBudgetUsageState;
 }
 
 export interface RunLink {

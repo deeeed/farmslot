@@ -6,6 +6,7 @@ import type { Run, RunDecision, WorkerSignal } from '@farmslot/protocol';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
+  applyBudgetWarnOnce,
   applyHandoffAutoResolution,
   artifactContractWaiverArgs,
   artifactContractWorkerInstruction,
@@ -392,6 +393,38 @@ test('resolveMonitorConfig ignores invalid usage budget overrides and keeps defa
   );
   assert.equal(cfg.maxTurns, 80);
   assert.equal(cfg.maxTotalTokens, 8_000_000);
+});
+
+test('resolveMonitorConfig(undefined) still applies update-branch budget defaults', () => {
+  // Mirrors the project-config load failure path — must not drop built-in budgets.
+  const cfg = resolveMonitorConfig(undefined, 'missing-project', 'update-branch');
+  assert.equal(cfg.maxTurns, 80);
+  assert.equal(cfg.maxTotalTokens, 8_000_000);
+});
+
+test('applyBudgetWarnOnce emits once then stays quiet (warn-once)', () => {
+  const first = applyBudgetWarnOnce({
+    turns: 100,
+    totalTokens: 1_000,
+    maxTurns: 80,
+    maxTotalTokens: 8_000_000,
+    budgetWarned: false,
+    flowType: 'update-branch',
+  });
+  assert.equal(first.emit, true);
+  if (!first.emit) throw new Error('expected emit');
+  assert.match(first.message, /update-branch usage budget exceeded/);
+
+  const second = applyBudgetWarnOnce({
+    turns: 200,
+    totalTokens: 2_000,
+    maxTurns: 80,
+    maxTotalTokens: 8_000_000,
+    budgetWarned: true,
+    flowType: 'update-branch',
+  });
+  assert.equal(second.emit, false);
+  assert.equal(second.budgetWarned, true);
 });
 
 // ─── Terminal-signal auto-recovery (deliverable 2) ───
