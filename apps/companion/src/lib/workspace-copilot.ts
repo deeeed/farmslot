@@ -68,6 +68,7 @@ export function workspaceCopilotInputForRoute(
     pathname,
     routeParam(params.filter),
     decisionKind,
+    workspaceFocus,
   );
   return {
     current,
@@ -80,7 +81,7 @@ export function workspaceCopilotInputForRoute(
     decisionKind,
     workspaceFocus,
     recipeRunId: routeParam(params.recipeRun),
-    artifactPath: routeParam(params.artifact) ?? routeParam(params.path),
+    artifactPath: artifactPathForRoute(pathname, params),
   };
 }
 
@@ -113,7 +114,23 @@ function workspaceCopilotCurrentForRoute(
   pathname: string,
   artifactFilter: string | null,
   decisionKind: string | null,
+  workspaceFocus: string | null,
 ): WorkspaceCopilotDraftInput['current'] {
+  if (pathname.startsWith('/workspace/slot/')) {
+    if (pathname.endsWith('/terminal')) return 'terminal';
+    if (pathname.endsWith('/diff')) return 'diff';
+    return 'slot';
+  }
+  if (pathname.startsWith('/workspace/run/')) {
+    if (pathname.endsWith('/diff')) return 'diff';
+    if (pathname.endsWith('/timeline')) return 'run';
+    if (pathname.endsWith('/files')) {
+      return (
+        currentForArtifactFilter(artifactFilter, decisionKind) ?? workspaceFocus ?? 'artifacts'
+      );
+    }
+    return workspaceFocus ?? workspaceCurrentForDecisionKind(decisionKind) ?? 'run';
+  }
   if (pathname.startsWith('/slot/')) return 'slot';
   if (pathname.startsWith('/run/')) return 'run';
   if (pathname.startsWith('/family/')) return 'family';
@@ -123,16 +140,23 @@ function workspaceCopilotCurrentForRoute(
   if (pathname.startsWith('/terminal/')) return 'terminal';
   if (pathname.startsWith('/diff/')) return 'diff';
   if (pathname.startsWith('/artifacts/')) {
-    if (artifactFilter === 'visual') return 'compare';
-    if (artifactFilter === 'recipes') return 'recipe';
-    if (artifactFilter === 'diffs') return 'diff';
-    if (artifactFilter === 'review') {
-      return workspaceCurrentForDecisionKind(decisionKind) ?? 'review';
-    }
-    return 'artifacts';
+    return currentForArtifactFilter(artifactFilter, decisionKind) ?? 'artifacts';
   }
   if (pathname.startsWith('/prs')) return 'pr';
   if (pathname.startsWith('/runs')) return 'run';
+  return null;
+}
+
+function currentForArtifactFilter(
+  artifactFilter: string | null,
+  decisionKind: string | null,
+): WorkspaceCopilotDraftInput['current'] {
+  if (artifactFilter === 'visual') return 'compare';
+  if (artifactFilter === 'recipes') return 'recipe';
+  if (artifactFilter === 'diffs') return 'diff';
+  if (artifactFilter === 'review') {
+    return workspaceCurrentForDecisionKind(decisionKind) ?? 'review';
+  }
   return null;
 }
 
@@ -181,4 +205,16 @@ function parsePrNumber(value: string | null): number | null {
   if (!value) return null;
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function artifactPathForRoute(
+  pathname: string,
+  params: WorkspaceCopilotRouteParams,
+): string | null {
+  const artifact = routeParam(params.artifact);
+  if (artifact) return artifact;
+  if (!pathname.startsWith('/diff/') && !pathname.includes('/diff')) return null;
+
+  const path = routeParam(params.path);
+  return path === pathname.replace(/^\/+/, '') ? null : path;
 }
