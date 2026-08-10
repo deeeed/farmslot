@@ -4,27 +4,21 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.20.0 - 2026-08-10
+
 - feat(backlog): allow pre-dispatch backlog updates to change the owning project.
-
 - feat(transfer): remote e2e result carries HTTP `readChunkCount`/`transferMode` and production `artifactMirror` progress proof fields (MANUAL-000095 self-review).
-
 - feat(fs): optional `mode` on `NodeFsWriteChunkParams` for private remote writes (MANUAL-000095 self-review).
-
 - feat(transfer): diagnostics smoke `forceFail` + result `failed` for failed-state UI proof (MANUAL-000095 self-review).
-
 - feat(transfer): cancel/list RPC, size-scaled idle timeout, aggregate file counts, diagnostics smoke rename, cancelled state (MANUAL-000095 follow-up).
-
 - feat(transfer): chunked file-transfer contract — `FILE_TRANSFER_CHUNK_MAX_BYTES`, small-file threshold, idle timeout, `FileTransferProgress` event payload, `file.transfer.smoke` method, and `fs.readChunk` node params (MANUAL-000095).
-
 - feat(review)!: `DEFAULT_REVIEW_SESSION_POLICY` is now `warm-per-reviewer` — after a worker fixes findings, the re-review resumes the reviewer session instead of rebuilding the review; first passes stay cold and no-reload runners fall back to cold.
-
 - feat(runs): `LearningsDraftPayload` (`kind: 'learnings-draft'`) with antipattern drafts, teaching holds, and inbox receipt status; `ImprovementApplyResult.refused` gains `out-of-project` (MANUAL-000075).
-
 - feat(execution-templates): `ExecutionTemplateOptions.filteredSources` reports sources dropped by the domain gate (`domain-restricted` + enabling domains) instead of hiding them (MANUAL-000076).
 - feat(intelligence): add `truncated-tail` to `ImprovementApplyResult.refused` reasons (MANUAL-000104).
-
 - feat(intelligence): `ImprovementApplyResult.refused` — per-file apply refusals (`stale-anchor` | `suspicious-shrink`) so clients can show why a card stayed pending (MANUAL-000098).
-
 - fix(pairing): define one shared-code multi-address QR contract so one scan represents one revocable device authority.
 - feat(auth)!: add principal and credential contracts plus caller summaries; require explicit principal authority for pairing codes and configured GitHub/Jira auto-dispatch webhook identities.
 - feat(review): let each publication-review request explicitly continue or reset one same-run reviewer session per runner.
@@ -34,8 +28,6 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - feat(review): distinguish per-generation retained-review usage from raw review-chain session totals.
 - feat(agents): add the optional `reviewResultFile` path used for authoritative structured results by newly launched self-review and publication reviewers.
 - feat(terminal): add the terminal image-attachment contract — chunked upload params, separate delivery result with an explicit `unsupported` status, size/MIME limits, and cleanup scopes.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.19.0 - 2026-08-06
 

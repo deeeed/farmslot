@@ -4,24 +4,20 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.6.0 - 2026-08-10
+
 - fix(backlog): share backlog metadata and dispatch controls across create/edit, with explicit run mode and project-owned template selection; keep descriptive metadata editable after execution while locking dispatch ownership.
 - fix(backlog): require an owner under multi-project creation scope and clear project-owned dispatch fields when that owner changes.
-
 - fix(transfer): mini pipeline package-refresh segment uses the same purpose filter as the full renderer so finalize uploads and release-artifact mirrors are not misattributed (MANUAL-000095 self-review).
-
 - fix(transfer): bind package-refresh vs finalize pipeline nodes to distinct transfer purposes so one run transfer cannot animate both (MANUAL-000095 self-review).
-
 - fix(transfer): lazy-load gateway in the transfer store (Node renderer tests), resync banner/mini pipeline when runId/run changes, and never swallow listener exceptions (MANUAL-000095 self-review).
-
 - fix(transfer): strict run-scoped pipeline filter (no unscoped bleed), pure model helpers for unit tests, and surface listener errors instead of empty catch (MANUAL-000095 self-review).
-
 - feat(transfer): show live file-transfer progress on the pipeline package-refresh and publish nodes (and mini bar titles), plus a strip under the canvas while a transfer is running for that run (MANUAL-000095).
 - feat(transfer): cancel control, multi-file counts, run-detail inline transfer panel (MANUAL-000095 follow-up).
-
 - feat(transfer): determinate file-transfer progress banner (filename, bytes/percent, phase, failed) driven by `file.transfer.progress` events (MANUAL-000095).
-
 - feat(decisions): render learnings-draft cards — domain antipattern drafts with target paths, teaching holds, and the inbox receipt status (MANUAL-000075).
-
 - feat(dispatch): replace the execution-template pills with a reusable filterable catalog picker — Domain/Run-mode filters with visible result counts, per-row source/domain/platform/digest provenance, filter-named empty states, and loud domain-restricted/unavailable source notices (MANUAL-000076).
 - style(runs): reformat run-detail-model and review-gate-display test to satisfy the repo Prettier gate (no behavior change).
 - fix(runs): allow a blocked run that still holds a slot and has no unresolved operator decisions to replay its pipeline after review recovery, and show the pending worker-fix/re-review phases for exhausted review loops whose findings were never delivered.
@@ -37,8 +33,6 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - fix(terminal): bind and unbind the terminal's capture-phase image-paste listener on connect/disconnect rather than on first render and terminal disposal, so image paste survives a DOM move or an xterm re-initialization; the non-image Cmd+V path sends through the same unguarded sender as every other intercepted key combo again.
 - fix(terminal): pin each image attachment to the terminal target it was added on, hide attachments on worker terminals where the protocol cannot serve them, consume unsupported file drops instead of letting the browser navigate away, and cap the attachment tray height.
 - feat(terminal): paste (Ctrl+V/Cmd+V) or drag-and-drop an image onto a slot terminal to attach it to the running worker, with a card showing thumbnail, filename, size, determinate upload progress, distinct upload vs runner-delivery states, retry, and remove.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.5.0 - 2026-08-06
 

@@ -22,8 +22,8 @@ const DEFER_PATTERNS = [
   /\bplaceholder\b/i,
 ];
 
-function classifyBullet(bullet) {
-  return DEFER_PATTERNS.some((pattern) => pattern.test(bullet)) ? 'defer' : 'include';
+function isOperatorFacing(bullet) {
+  return !DEFER_PATTERNS.some((pattern) => pattern.test(bullet));
 }
 
 function rewriteForOperator(bullet) {
@@ -34,17 +34,13 @@ function rewriteForOperator(bullet) {
     .trim();
 }
 
-function buildWorkspaceProposal(dir, bullets) {
-  const include = [];
-  const defer = [];
-  for (const bullet of bullets) {
-    if (classifyBullet(bullet) === 'defer') defer.push(bullet);
-    else include.push(rewriteForOperator(bullet));
-  }
+export function buildWorkspaceProposal(dir, bullets) {
+  const include = [...bullets];
+  const operatorSummary = bullets.filter(isOperatorFacing).map(rewriteForOperator).slice(0, 5);
   return {
     include,
-    defer,
-    operatorSummary: include.slice(0, 5),
+    defer: [],
+    operatorSummary,
   };
 }
 
@@ -97,19 +93,28 @@ function printProposalSummary(proposal) {
   }
 }
 
+export function optionValue(args, name) {
+  const inline = args.find((arg) => arg.startsWith(`${name}=`));
+  if (inline) return inline.slice(name.length + 1);
+  const index = args.indexOf(name);
+  if (index < 0) return undefined;
+  const value = args[index + 1];
+  if (!value || value.startsWith('--')) throw new Error(`${name} requires a value`);
+  return value;
+}
+
+export function parseCurateArgs(args) {
+  const group = optionValue(args, '--group');
+  const bump = optionValue(args, '--bump') ?? 'patch';
+  const out = optionValue(args, '--out') ?? '.release-cut/proposal.json';
+  if (!['patch', 'minor', 'major'].includes(bump)) {
+    throw new Error(`Invalid --bump '${bump}' (expected patch, minor, or major)`);
+  }
+  return { group, bump, out };
+}
+
 function main() {
-  const args = process.argv.slice(2);
-  const groupArg =
-    args.find((arg) => arg.startsWith('--group='))?.slice('--group='.length) ??
-    args[args.indexOf('--group') + 1];
-  const bumpArg =
-    args.find((arg) => arg.startsWith('--bump='))?.slice('--bump='.length) ??
-    args[args.indexOf('--bump') + 1] ??
-    'patch';
-  const outArg =
-    args.find((arg) => arg.startsWith('--out='))?.slice('--out='.length) ??
-    args[args.indexOf('--out') + 1] ??
-    '.release-cut/proposal.json';
+  const { group: groupArg, bump: bumpArg, out: outArg } = parseCurateArgs(process.argv.slice(2));
 
   if (!groupArg) {
     console.error(

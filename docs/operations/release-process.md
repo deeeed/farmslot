@@ -20,11 +20,11 @@ Or invoke the **`fs-release-cut`** agent skill for a succinct NO / SOON / YES si
 
 ## Release groups
 
-| Group       | Workspaces                                                   | Typical ship path                                                  |
-| ----------- | ------------------------------------------------------------ | ------------------------------------------------------------------ |
-| `hosted-cc` | `command-center-ui`, `command-center`, `gateway`, `protocol` | Merge → GitHub Pages (`farmslot.io/cc`)                            |
-| `companion` | `companion`                                                  | EAS update / build via `apps/companion/scripts/release/release.sh` |
-| `npm`       | `protocol`, `recipe-harness`, `expo-recipe`, `skills`        | Manual `yarn npm publish` after strict checks                      |
+| Group       | Workspaces                                                             | Typical ship path                                                  |
+| ----------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `hosted-cc` | `command-center-ui`, `command-center`, `gateway`, `protocol`           | Merge → GitHub Pages (`farmslot.io/cc`)                            |
+| `companion` | `companion`                                                            | EAS update / build via `apps/companion/scripts/release/release.sh` |
+| `npm`       | `protocol`, `agent-runtime`, `recipe-harness`, `expo-recipe`, `skills` | Manual `yarn npm publish` after strict checks                      |
 
 ## Cut workflow
 
@@ -34,7 +34,9 @@ Or invoke the **`fs-release-cut`** agent skill for a succinct NO / SOON / YES si
 yarn release:cut --group hosted-cc --assist
 ```
 
-Writes `.release-cut/proposal.json` with `include`, `defer`, and `operatorSummary` per workspace. Review and edit the JSON — defer internal chores, consolidate duplicates, tighten operator wording.
+Writes `.release-cut/proposal.json` with `include`, `defer`, and `operatorSummary` per workspace. Every shipped changelog bullet is included by default; `operatorSummary` is the curated user-facing subset. Consolidate duplicates and tighten operator wording before executing the cut.
+
+When both `hosted-cc` and `npm` need the shared protocol package, cut `hosted-cc` first. The npm cut refuses to consume protocol bullets while hosted workspaces are still pending.
 
 ### 2. Execute
 
@@ -45,7 +47,7 @@ yarn release:cut --group hosted-cc --from-proposal .release-cut/proposal.json --
 Effects:
 
 - Bumps `package.json` versions (patch by default; pass `--bump minor|major` to `--assist`)
-- Moves curated bullets into `## X.Y.Z - YYYY-MM-DD`
+- Moves included bullets verbatim into `## X.Y.Z - YYYY-MM-DD`
 - Writes `release-notes.json` for UI surfaces
 - Syncs `PROTOCOL_VERSION` when `packages/protocol` is in the group
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.8.0 - 2026-08-10
+
 - fix(execution-templates): an explicit template id excluded only by the domain gate now fails naming the enabling source and domains; the participation gate is exported (`executionTemplateSourceParticipates`/`executionTemplateEntryParticipates`) as the single authority (MANUAL-000076).
 
 ## 0.7.0 - 2026-08-03
