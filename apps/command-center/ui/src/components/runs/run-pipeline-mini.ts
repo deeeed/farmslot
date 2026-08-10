@@ -9,13 +9,13 @@ import {
   compactHumanGateLabel,
   reviewSegmentLabel,
 } from '../../utils/review-gate-display.js';
+import { formatPipelineTransferMeta } from '../shared/file-transfer-progress-model.js';
+import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 import {
-  formatPipelineTransferMeta,
   primaryTransferForRun,
   retainFileTransferStore,
   subscribeFileTransferStore,
 } from '../shared/file-transfer-progress-store.js';
-import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 
 import {
   computePackageRefreshStatus,

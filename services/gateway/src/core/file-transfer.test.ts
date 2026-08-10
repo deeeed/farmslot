@@ -227,3 +227,61 @@ test('size-scaled idle timeout grows with totalBytes', async () => {
   );
   assert.ok(fileTransferIdleTimeoutMs(10 * 1024 * 1024) > FILE_TRANSFER_IDLE_TIMEOUT_MS);
 });
+
+test('emitFileTransferProgress broadcasts intermediate chunk progress to subscribers', async () => {
+  const broadcasts: Array<{ bytes: number; state: string }> = [];
+  setFileTransferBroadcast((_e, payload) => {
+    const p = payload as { bytesTransferred: number; state: string; transferId: string };
+    broadcasts.push({ bytes: p.bytesTransferred, state: p.state });
+  });
+  try {
+    const size = FILE_TRANSFER_CHUNK_MAX_BYTES * 3;
+    let offset = 0;
+    await copyFileChunked({
+      path: '/remote/x.bin',
+      phase: 'download',
+      totalBytes: size,
+      transferId: 'broadcast-test-1',
+      readChunk: async (off, length) => {
+        const n = Math.min(length, size - off);
+        offset = off + n;
+        return {
+          content: Buffer.alloc(n, 1).toString('base64'),
+          size,
+          offset: off,
+          bytesRead: n,
+          eof: offset >= size,
+        };
+      },
+    });
+    const intermediate = broadcasts.filter(
+      (b) => b.state === 'running' && b.bytes > 0 && b.bytes < size,
+    );
+    assert.ok(
+      intermediate.length >= 2,
+      `expected ≥2 intermediate broadcasts, got ${JSON.stringify(broadcasts)}`,
+    );
+  } finally {
+    setFileTransferBroadcast(() => {});
+  }
+});
+
+test('readRemoteFileChunkedToBuffer rejects early EOF when totalBytes is known', async () => {
+  const { readRemoteFileChunkedToBuffer } = await import('./file-transfer.js');
+  await assert.rejects(
+    () =>
+      readRemoteFileChunkedToBuffer({
+        path: '/remote/trunc.bin',
+        phase: 'download',
+        totalBytes: 100,
+        readChunk: async () => ({
+          content: Buffer.alloc(10, 2).toString('base64'),
+          size: 100,
+          offset: 0,
+          bytesRead: 10,
+          eof: true,
+        }),
+      }),
+    /Assembled size 10 !== totalBytes 100|Early EOF/,
+  );
+});

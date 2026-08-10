@@ -5,9 +5,9 @@ import type { Run, RunStep, RunStepStatus, TaskProgressStructured } from '@farms
 import { colors } from '../../styles/theme-tokens.js';
 import {
   type FileTransferUiEntry,
+  formatPipelineTransferMeta,
   transferPercent as fileTransferPercent,
 } from '../shared/file-transfer-progress-model.js';
-import { formatPipelineTransferMeta } from '../shared/file-transfer-progress-store.js';
 
 import { NODE_H, type NodePos } from './run-pipeline-model.js';
 import {

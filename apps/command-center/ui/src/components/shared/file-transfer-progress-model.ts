@@ -42,3 +42,34 @@ export function formatTransferBytes(bytes: number): string {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GiB`;
 }
+
+/**
+ * Strict run scoping for pipeline/run-detail: only transfers that name this run.
+ * Unscoped transfers stay on the global banner only (not bound to a run canvas).
+ */
+export function filterTransfersForRun(
+  entries: readonly FileTransferUiEntry[],
+  runId: string | undefined | null,
+): FileTransferUiEntry[] {
+  if (!runId) return [...entries];
+  return entries.filter((e) => e.runId === runId);
+}
+
+export function formatPipelineTransferMeta(entry: FileTransferUiEntry): string {
+  const pct =
+    entry.totalBytes > 0
+      ? Math.min(100, Math.round((entry.bytesTransferred / entry.totalBytes) * 100))
+      : 0;
+  const files =
+    entry.filesTotal != null && entry.filesTotal > 0
+      ? ` ${entry.filesCompleted ?? 0}/${entry.filesTotal}f`
+      : '';
+  if (entry.state === 'running') {
+    const label = entry.label ? entry.label.slice(0, 14) : entry.phase;
+    return `${label} ${pct}%${files}`;
+  }
+  if (entry.state === 'failed' || entry.state === 'cancelled') {
+    return entry.state;
+  }
+  return entry.state === 'done' ? `done ${pct}%` : entry.state;
+}

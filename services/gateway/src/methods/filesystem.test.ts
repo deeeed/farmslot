@@ -400,16 +400,16 @@ test('serveRunArtifact prefers a recipe package when an omitted recipeRunId poin
 
 test('serveRunArtifact falls back to the remote slot when a local recipe-run mirror is incomplete', async (t) => {
   await withRemoteRun(t, async ({ runId, liveGroupId, remoteArtifactRoot }) => {
+    const expectedAbs = path.join(remoteArtifactRoot, 'video.mp4');
     const fakeWs = new FakeNodeWebSocket({
       onRealpath: ({ path: requestedPath }) => ({ path: requestedPath }),
       onStat: ({ path: requestedPath }) => {
-        assert.equal(requestedPath, path.join(remoteArtifactRoot, 'video.mp4'));
+        // slotReadFileBuffer stats via nodePathParams (root=/ + abs relPath).
+        assert.equal(requestedPath, expectedAbs);
         return { size: 'remote-video'.length };
       },
-      onRead: ({ path: requestedPath, root, relPath, maxBytes }) => {
-        assert.equal(requestedPath, path.join(remoteArtifactRoot, 'video.mp4'));
-        assert.equal(root, remoteArtifactRoot);
-        assert.equal(relPath, 'video.mp4');
+      onRead: ({ path: requestedPath, maxBytes }) => {
+        assert.equal(requestedPath, expectedAbs);
         assert.ok(typeof maxBytes === 'number' && maxBytes > 'remote-video'.length);
         return { content: Buffer.from('remote-video').toString('base64') };
       },
@@ -428,7 +428,8 @@ test('serveRunArtifact falls back to the remote slot when a local recipe-run mir
     await new Promise((resolve) => res.on('finish', resolve));
     assert.equal(res.statusCode, 200);
     assert.equal(res.body, 'remote-video');
-    assert.equal(fakeWs.statCalls, 0);
+    // Progress-aware proxy: stat size, then one-shot readBase64 for small files.
+    assert.equal(fakeWs.statCalls, 1);
     assert.equal(fakeWs.readCalls, 1);
   });
 });

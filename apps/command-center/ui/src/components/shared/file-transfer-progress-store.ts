@@ -7,9 +7,13 @@ import { gateway } from '../../gateway-client.js';
 
 import {
   type FileTransferUiEntry,
+  filterTransfersForRun,
+  formatPipelineTransferMeta,
   pruneFileTransfers,
   upsertFileTransfer,
 } from './file-transfer-progress-model.js';
+
+export { formatPipelineTransferMeta } from './file-transfer-progress-model.js';
 
 type Listener = () => void;
 
@@ -23,8 +27,9 @@ function notify(): void {
   for (const listener of listeners) {
     try {
       listener();
-    } catch {
-      /* listener errors must not break other surfaces */
+    } catch (err) {
+      // Surface listener failures — do not swallow (repo exception contract).
+      console.error('[file-transfer-store] listener failed', err);
     }
   }
 }
@@ -80,8 +85,7 @@ export function getFileTransferEntries(): readonly FileTransferUiEntry[] {
 }
 
 export function getFileTransfersForRun(runId: string | undefined | null): FileTransferUiEntry[] {
-  if (!runId) return [...entries];
-  return entries.filter((e) => !e.runId || e.runId === runId);
+  return filterTransfersForRun(entries, runId);
 }
 
 /** Best summary for pipeline nodes: prefer running, else latest terminal. */
@@ -90,30 +94,10 @@ export function primaryTransferForRun(runId: string | undefined | null): FileTra
   if (list.length === 0) return null;
   const running = list.filter((e) => e.state === 'running');
   if (running.length > 0) {
-    // Prefer mirror/upload aggregates (dir sessions have filesTotal).
     const aggregate = running.find((e) => (e.filesTotal ?? 0) > 0);
     return aggregate ?? running[running.length - 1]!;
   }
   return list[list.length - 1] ?? null;
-}
-
-export function formatPipelineTransferMeta(entry: FileTransferUiEntry): string {
-  const pct =
-    entry.totalBytes > 0
-      ? Math.min(100, Math.round((entry.bytesTransferred / entry.totalBytes) * 100))
-      : 0;
-  const files =
-    entry.filesTotal != null && entry.filesTotal > 0
-      ? ` ${entry.filesCompleted ?? 0}/${entry.filesTotal}f`
-      : '';
-  if (entry.state === 'running') {
-    const label = entry.label ? entry.label.slice(0, 14) : entry.phase;
-    return `${label} ${pct}%${files}`;
-  }
-  if (entry.state === 'failed' || entry.state === 'cancelled') {
-    return entry.state;
-  }
-  return entry.state === 'done' ? `done ${pct}%` : entry.state;
 }
 
 /** Test helper — reset store between tests. */

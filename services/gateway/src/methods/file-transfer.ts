@@ -449,8 +449,12 @@ export async function fileTransferRemoteE2e(
             { root: httpRepo, relPath: '.' },
             { timeout: 30_000 },
           );
-        } catch {
-          /* ignore */
+        } catch (cleanupErr) {
+          console.warn(
+            `[file-transfer] remote e2e http fixture cleanup failed: ${
+              cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
+            }`,
+          );
         }
       }
     }
@@ -483,8 +487,12 @@ export async function fileTransferRemoteE2e(
         { root: remoteRoot, relPath: '.' },
         { timeout: 30_000 },
       );
-    } catch {
-      /* ignore */
+    } catch (cleanupErr) {
+      console.warn(
+        `[file-transfer] remote e2e fixture cleanup failed: ${
+          cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
+        }`,
+      );
     }
     await rm(localDir, { recursive: true, force: true });
   }

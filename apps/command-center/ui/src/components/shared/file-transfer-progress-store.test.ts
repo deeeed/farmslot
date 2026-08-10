@@ -4,14 +4,13 @@ import test from 'node:test';
 import type { FileTransferProgress } from '@farmslot/protocol';
 
 import {
+  filterTransfersForRun,
   formatPipelineTransferMeta,
-  getFileTransfersForRun,
-  primaryTransferForRun,
-  _resetFileTransferStoreForTests,
-} from './file-transfer-progress-store.js';
-import { upsertFileTransfer } from './file-transfer-progress-model.js';
+  type FileTransferUiEntry,
+  upsertFileTransfer,
+} from './file-transfer-progress-model.js';
 
-// Store module wires gateway at retain time; unit-test pure helpers via model + formatters.
+// Pure helpers only — do not import the store module (it pulls the browser gateway).
 
 function progress(
   partial: Partial<FileTransferProgress> & { transferId: string },
@@ -27,7 +26,7 @@ function progress(
 }
 
 test('formatPipelineTransferMeta shows percent and multi-file counts', () => {
-  const entry = {
+  const entry: FileTransferUiEntry = {
     ...progress({
       transferId: 't1',
       label: 'artifacts',
@@ -43,41 +42,33 @@ test('formatPipelineTransferMeta shows percent and multi-file counts', () => {
   assert.match(formatPipelineTransferMeta(entry), /2\/5f/);
 });
 
-test('run filter keeps unscoped transfers and matching runId', () => {
+test('filterTransfersForRun is strict — excludes unscoped transfers', () => {
   let entries = upsertFileTransfer([], progress({ transferId: 'a', runId: 'run-1' }), 1);
   entries = upsertFileTransfer(entries, progress({ transferId: 'b', runId: 'run-2' }), 2);
   entries = upsertFileTransfer(entries, progress({ transferId: 'c' }), 3);
-  // Simulate store filter logic without gateway.
-  const forRun1 = entries.filter((e) => !e.runId || e.runId === 'run-1');
-  assert.equal(forRun1.length, 2);
-  assert.ok(forRun1.some((e) => e.transferId === 'a'));
-  assert.ok(forRun1.some((e) => e.transferId === 'c'));
+  const forRun1 = filterTransfersForRun(entries, 'run-1');
+  assert.equal(forRun1.length, 1);
+  assert.equal(forRun1[0]?.transferId, 'a');
+  assert.deepEqual(filterTransfersForRun(entries, null).map((e) => e.transferId).sort(), [
+    'a',
+    'b',
+    'c',
+  ]);
 });
 
-test('primaryTransferForRun prefers running aggregate', () => {
-  _resetFileTransferStoreForTests();
-  // Without retain/gateway, primaryTransferForRun only sees empty store — test preference via local logic mirror
-  const list = [
-    {
-      ...progress({ transferId: 'file', runId: 'r', bytesTransferred: 10, state: 'running' }),
+test('formatPipelineTransferMeta reports failed and cancelled', () => {
+  assert.equal(
+    formatPipelineTransferMeta({
+      ...progress({ transferId: 'f', state: 'failed' }),
       updatedAt: 1,
-    },
-    {
-      ...progress({
-        transferId: 'agg',
-        runId: 'r',
-        filesTotal: 4,
-        filesCompleted: 1,
-        bytesTransferred: 50,
-        state: 'running',
-      }),
-      updatedAt: 2,
-    },
-  ];
-  const running = list.filter((e) => e.state === 'running');
-  const aggregate = running.find((e) => (e.filesTotal ?? 0) > 0);
-  assert.equal(aggregate?.transferId, 'agg');
-  // Keep imports used when store is empty
-  assert.equal(primaryTransferForRun('missing')?.transferId, undefined);
-  assert.deepEqual(getFileTransfersForRun('missing'), []);
+    }),
+    'failed',
+  );
+  assert.equal(
+    formatPipelineTransferMeta({
+      ...progress({ transferId: 'c', state: 'cancelled' }),
+      updatedAt: 1,
+    }),
+    'cancelled',
+  );
 });

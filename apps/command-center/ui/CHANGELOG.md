@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(transfer): strict run-scoped pipeline filter (no unscoped bleed), pure model helpers for unit tests, and surface listener errors instead of empty catch (MANUAL-000095 self-review).
+
 - feat(transfer): show live file-transfer progress on the pipeline package-refresh and publish nodes (and mini bar titles), plus a strip under the canvas while a transfer is running for that run (MANUAL-000095).
 - feat(transfer): cancel control, multi-file counts, run-detail inline transfer panel (MANUAL-000095 follow-up).
 

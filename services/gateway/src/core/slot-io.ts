@@ -268,6 +268,7 @@ export interface SlotCopyFileOptions {
   keepPartialOnFailure?: boolean;
   /** Verify assembled bytes against remote fs.hash when true (default for chunked). */
   verifyRemoteHash?: boolean;
+  onProgress?: (progress: import('@farmslot/protocol').FileTransferProgress) => void;
 }
 
 export async function slotCopyFile(
@@ -322,6 +323,7 @@ export async function slotCopyFile(
     localPath,
     resumeFromOffset: options.resumeFromOffset,
     keepPartialOnFailure: options.keepPartialOnFailure,
+    onProgress: options.onProgress,
     fetchRemoteSha256: verifyHash
       ? async () => {
           const hashed = (await sendNodeRequest(node, 'fs.hash', pathParams, {
@@ -374,14 +376,17 @@ export async function slotReadFileBuffer(
       timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
     })) as { size: number };
     size = st.size;
-    if (options.maxBytes != null && size > options.maxBytes) {
-      throw new Error(`Remote artifact too large to proxy (${size} bytes)`);
-    }
   } catch (err) {
+    // Stat is best-effort unless the caller requires the chunked path.
     if (options.forceChunked) throw err;
   }
+  // Must not live inside the stat try/catch — oversize is a hard failure for proxies.
+  if (options.maxBytes != null && size > options.maxBytes) {
+    throw new Error(`Remote artifact too large to proxy (${size} bytes)`);
+  }
   const threshold = FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES;
-  if (!options.forceChunked && size > 0 && size <= threshold) {
+  // One-shot for known-small OR unknown size (stat missed). Known-large uses chunked progress.
+  if (!options.forceChunked && (size === 0 || size <= threshold)) {
     const result = (await sendNodeRequest(node, 'fs.readBase64', {
       ...pathParams,
       maxBytes: options.maxBytes,
@@ -443,13 +448,30 @@ export async function slotWriteFileBuffer(
     return;
   }
   const { randomUUID } = await import('node:crypto');
-  const { emitFileTransferProgress } = await import('./file-transfer.js');
+  const {
+    emitFileTransferProgress,
+    endFileTransferSession,
+    FileTransferCancelledError,
+    startFileTransferSession,
+  } = await import('./file-transfer.js');
   const transferId = randomUUID();
-  let bytesTransferred = 0;
   const label = options.label ?? path.basename(remotePath);
   const phase = options.phase ?? 'upload';
+  let bytesTransferred = 0;
+  const abort = startFileTransferSession({
+    transferId,
+    path: remotePath,
+    label,
+    phase,
+    runId: options.runId,
+    slotId: options.slotId,
+    bytesTransferred: 0,
+    totalBytes,
+    state: 'running',
+    cancellable: true,
+  });
   const publish = (
-    state: 'running' | 'done' | 'failed',
+    state: 'running' | 'done' | 'failed' | 'cancelled',
     error?: string,
   ) => {
     emitFileTransferProgress(
@@ -473,6 +495,9 @@ export async function slotWriteFileBuffer(
     publish('running');
     let offset = 0;
     while (offset < totalBytes) {
+      if (abort.signal.aborted) {
+        throw new FileTransferCancelledError(transferId);
+      }
       const end = Math.min(offset + FILE_TRANSFER_CHUNK_MAX_BYTES, totalBytes);
       const slice = data.subarray(offset, end);
       await sendNodeRequest(
@@ -492,8 +517,17 @@ export async function slotWriteFileBuffer(
     }
     publish('done');
   } catch (err) {
-    publish('failed', err instanceof Error ? err.message : String(err));
-    throw err;
+    const cancelled =
+      err instanceof FileTransferCancelledError || abort.signal.aborted;
+    publish(
+      cancelled ? 'cancelled' : 'failed',
+      err instanceof Error ? err.message : String(err),
+    );
+    throw cancelled && !(err instanceof FileTransferCancelledError)
+      ? new FileTransferCancelledError(transferId)
+      : err;
+  } finally {
+    endFileTransferSession(transferId);
   }
 }
 
@@ -695,6 +729,11 @@ export async function slotCopyDir(
             parentTransferId: aggregate.transferId,
             filesCompleted: aggregate.filesDone,
             filesTotal,
+            onProgress: (p) => {
+              if (p.state === 'running') {
+                aggregate.noteFileProgress(p.bytesTransferred, p.totalBytes);
+              }
+            },
           });
           aggregate.noteFileComplete(typeof entry.size === 'number' ? entry.size : 0);
         } catch (err) {
@@ -733,6 +772,8 @@ export async function slotCopyDir(
     aggregate.complete();
     return copied;
   } catch (err) {
+    // Always fail/unregister the aggregate — per-file catch only covers entry errors.
+    aggregate.fail(err instanceof Error ? err.message : String(err));
     throw err;
   }
 }

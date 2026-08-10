@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(transfer): restore intermediate progress broadcasts, reject truncated chunked buffer reads, fail/unregister aggregate dir sessions, wire upload cancel + aggregate byte progress, and keep HTTP 413 oversize mapping under `slotReadFileBuffer` (MANUAL-000095 self-review).
+
 - fix(transfer): stamp runId/slotId/phase on review-gate and slot-release artifact copies so pipeline transfer UI can bind (MANUAL-000095).
 
 - feat(transfer): cancel/list, size-scaled idle, resume partials, aggregate dir progress, chunked HTTP artifact proxy, remote upload progress, throttled broadcasts, node hash verify (MANUAL-000095 follow-up).

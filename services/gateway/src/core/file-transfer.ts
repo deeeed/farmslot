@@ -82,18 +82,36 @@ function unregisterActive(transferId: string): void {
   activeTransfers.delete(transferId);
 }
 
+/** Register a cancellable transfer session (e.g. large uploads). */
+export function startFileTransferSession(progress: FileTransferProgress): AbortController {
+  return registerActive(progress.transferId, progress);
+}
+
+export function endFileTransferSession(transferId: string): void {
+  unregisterActive(transferId);
+}
+
 export function emitFileTransferProgress(
   progress: FileTransferProgress,
   opts?: { force?: boolean; now?: number },
 ): void {
   const now = opts?.now ?? Date.now();
   const entry = activeTransfers.get(progress.transferId);
-  const bytesAdvanced =
-    entry != null && progress.bytesTransferred !== entry.progress.bytesTransferred;
+  const prevBytes = entry?.progress.bytesTransferred ?? 0;
+  const bytesAdvanced = progress.bytesTransferred !== prevBytes;
   const filled =
     progress.state === 'running' &&
     progress.totalBytes > 0 &&
     progress.bytesTransferred >= progress.totalBytes;
+  const prevPct =
+    entry && entry.progress.totalBytes > 0
+      ? Math.round((entry.progress.bytesTransferred / entry.progress.totalBytes) * 100)
+      : 0;
+  const pct =
+    progress.totalBytes > 0
+      ? Math.round((progress.bytesTransferred / progress.totalBytes) * 100)
+      : 0;
+  const pctAdvanced = pct !== prevPct;
   const intervalOk =
     !entry || now - entry.lastBroadcastAt >= FILE_TRANSFER_PROGRESS_BROADCAST_MIN_INTERVAL_MS;
   const force =
@@ -101,9 +119,8 @@ export function emitFileTransferProgress(
     progress.state !== 'running' ||
     !entry ||
     filled ||
-    (bytesAdvanced && intervalOk) ||
-    // Always surface the first non-zero progress so single-chunk transfers paint.
-    (bytesAdvanced && entry.progress.bytesTransferred === 0);
+    // Emit on byte/percent advances: first non-zero, percent change, or 2Hz cadence.
+    (bytesAdvanced && (intervalOk || prevBytes === 0 || pctAdvanced));
   if (entry) {
     entry.progress = progress;
     if (force) entry.lastBroadcastAt = now;
@@ -318,8 +335,10 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
   const emit = (progress: FileTransferProgress, force = false) => {
     progressEvents.push(progress);
     params.onProgress?.(progress);
-    updateActive(progress);
+    // Broadcast first so emitFileTransferProgress can compare against the previous
+    // active snapshot (updateActive before emit makes bytesAdvanced always false).
     emitFileTransferProgress(progress, { force, now: clock.now() });
+    updateActive(progress);
   };
 
   let bytesTransferred = 0;
@@ -593,16 +612,18 @@ export class AggregateTransferSession {
     return this.filesCompleted;
   }
 
-  noteFileProgress(fileBytesTransferred: number, fileTotal: number): void {
-    // Reflect last file's contribution as overall when total unknown.
-    void fileTotal;
-    this.bytesTransferred += 0; // per-file deltas handled via noteFileComplete
-    void fileBytesTransferred;
+  /** Bytes from fully completed files (not including the in-flight file). */
+  private completedBytes = 0;
+
+  noteFileProgress(fileBytesTransferred: number, _fileTotal: number): void {
+    this.bytesTransferred = this.completedBytes + Math.max(0, fileBytesTransferred);
+    this.publish('running', false);
   }
 
   noteFileComplete(fileSize: number): void {
     this.filesCompleted += 1;
-    this.bytesTransferred += Math.max(0, fileSize);
+    this.completedBytes += Math.max(0, fileSize);
+    this.bytesTransferred = this.completedBytes;
     this.publish('running', false);
   }
 
@@ -665,13 +686,16 @@ export async function readRemoteFileChunkedToBuffer(
     slotId: params.slotId,
     encoding,
   };
-  registerActive(transferId, {
+  const sessionAbort = registerActive(transferId, {
     ...base,
     bytesTransferred: 0,
     totalBytes,
     state: 'running',
     cancellable: true,
   });
+  const combinedSignal = params.abortSignal
+    ? mergeAbortSignals(params.abortSignal, sessionAbort.signal)
+    : sessionAbort.signal;
   const hash = createHash('sha256');
   let bytesTransferred = 0;
   let lastProgressAt = clock.now();
@@ -681,7 +705,9 @@ export async function readRemoteFileChunkedToBuffer(
     const progress = buildProgress(base, state, bytesTransferred, totalBytes, extra);
     progressEvents.push(progress);
     params.onProgress?.(progress);
+    // Compare against previous snapshot before replacing it.
     emitFileTransferProgress(progress, { force: state !== 'running', now: clock.now() });
+    updateActive(progress);
     if (state === 'running') lastProgressAt = clock.now();
   };
 
@@ -690,6 +716,9 @@ export async function readRemoteFileChunkedToBuffer(
     let offset = 0;
     let eof = false;
     while (!eof) {
+      if (combinedSignal.aborted) {
+        throw new FileTransferCancelledError(transferId);
+      }
       if (clock.now() - lastProgressAt > idleTimeoutMs) {
         throw new FileTransferIdleTimeoutError({
           transferId,
@@ -709,6 +738,11 @@ export async function readRemoteFileChunkedToBuffer(
       }
       if (totalBytes === 0 && chunk.size > 0) totalBytes = chunk.size;
       if (chunk.bytesRead === 0) {
+        if (totalBytes > 0 && offset < totalBytes) {
+          throw new FileTransferIntegrityError(
+            `Early EOF at offset ${offset} of ${totalBytes} for ${params.path}`,
+          );
+        }
         eof = true;
         break;
       }
@@ -724,6 +758,11 @@ export async function readRemoteFileChunkedToBuffer(
       offset += chunk.bytesRead;
       eof = chunk.eof || (totalBytes > 0 && offset >= totalBytes);
       publish('running');
+    }
+    if (totalBytes > 0 && bytesTransferred !== totalBytes) {
+      throw new FileTransferIntegrityError(
+        `Assembled size ${bytesTransferred} !== totalBytes ${totalBytes} for ${params.path}`,
+      );
     }
     if (totalBytes === 0) totalBytes = bytesTransferred;
     const sha256 = hash.digest('hex');
@@ -741,9 +780,13 @@ export async function readRemoteFileChunkedToBuffer(
     publish('done', { sha256 });
     return { buffer: Buffer.concat(parts, bytesTransferred), sha256, transferId, size: bytesTransferred };
   } catch (err) {
+    const cancelled =
+      err instanceof FileTransferCancelledError || combinedSignal.aborted;
     const message = err instanceof Error ? err.message : String(err);
-    publish('failed', { error: message });
-    throw err;
+    publish(cancelled ? 'cancelled' : 'failed', { error: message });
+    throw cancelled && !(err instanceof FileTransferCancelledError)
+      ? new FileTransferCancelledError(transferId)
+      : err;
   } finally {
     unregisterActive(transferId);
   }
