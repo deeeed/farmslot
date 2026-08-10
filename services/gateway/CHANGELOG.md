@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(transfer): stamp runId/slotId/phase on review-gate and slot-release artifact copies so pipeline transfer UI can bind (MANUAL-000095).
+
 - feat(transfer): cancel/list, size-scaled idle, resume partials, aggregate dir progress, chunked HTTP artifact proxy, remote upload progress, throttled broadcasts, node hash verify (MANUAL-000095 follow-up).
 
 - feat(transfer): progress-aware chunked remote `slotCopyFile` / artifact mirror copies — `file.transfer.progress` events, idle/heartbeat timeouts instead of a fixed 30s wall clock, integrity checks, and admin `file.transfer.smoke` for multi-chunk proof (MANUAL-000095).
