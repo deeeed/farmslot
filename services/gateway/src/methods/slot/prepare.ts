@@ -10,7 +10,7 @@ import {
   SLOT_DESTRUCTIVE_OPS,
   type SlotPrepareParams,
 } from '@farmslot/protocol';
-import { resolveEffectiveDomain } from '@farmslot/slot-config';
+import { loadMachineSlots, resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import {
   applyProjectCommandEnv,
@@ -32,7 +32,6 @@ import {
 } from '../../core/index.js';
 import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
-import { loadPoolConfig } from '../../fleet/state.js';
 import { collectSupportFiles, supportHash } from '../../node-support/files.js';
 import { resolveNodeSupportPaths } from '../../node-support/paths.js';
 import {
@@ -1174,12 +1173,12 @@ async function slotPrepareInner(
   const sandboxPorts = resolveSandboxPorts(vars.resourceVars, vars.slotId);
   if (sandboxPorts) {
     assertNoOperatorCollision(sandboxPorts, operatorPortsFromEnv(), vars.slotId);
-    const pool = await loadPoolConfig(vars.machine);
-    const siblings = (pool?.slots ?? []).map((slot) =>
-      siblingPortsFromDevServer(
-        slot.id,
-        (slot.resources as Record<string, Record<string, unknown>> | undefined)?.['dev-server'],
-      ),
+    // loadMachineSlots reads the SAME pool dir every slot-config lookup uses
+    // (honors FARMSLOT_POOL_DIR) and throws when the machine has no pool —
+    // the sibling check must fail closed, never silently pass on a miss.
+    const machineSlots = await loadMachineSlots(vars.machine);
+    const siblings = machineSlots.map((slot) =>
+      siblingPortsFromDevServer(slot.id, slot.resources?.['dev-server']),
     );
     assertNoSiblingCollision(sandboxPorts, siblings, vars.slotId);
     const envPortsPath = `${vars.remoteRepo}/.env.ports`;
