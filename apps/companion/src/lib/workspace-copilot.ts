@@ -213,8 +213,8 @@ function artifactPathForRoute(
 ): string | null {
   const artifact = routeParam(params.artifact);
   if (artifact) return artifact;
-  if (!pathname.startsWith('/diff/') && !pathname.includes('/diff')) return null;
+  if (!pathname.includes('/diff')) return null;
 
   const path = routeParam(params.path);
-  return path === pathname.replace(/^\/+/, '') ? null : path;
+  return path?.replace(/^\/+/, '') === pathname.replace(/^\/+/, '') ? null : path;
 }
