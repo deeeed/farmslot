@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- feat(companion): use native form-sheet routes for workspace filters and backlog creation, add a scoped mobile backlog launcher, and make Slot/Terminal/Diff and Run Evidence/Diff/Timeline/Files persistent tabbed workspaces with single-purpose content instead of duplicated progress or artifact surfaces.
 - fix(pairing): reject mixed-code multi-address QRs before exchanging any credential.
 - fix(pairing): exchange a multi-address QR once so every imported profile shares one revocable device credential.
 - chore(deps): upgrade Companion to Expo SDK 57 / React Native 0.86 (expo@57.0.10, aligned expo-\* modules via `expo install --fix`).

@@ -31,8 +31,6 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
   imageHeight = 78,
 }: BeforeAfterPreviewProps<T>) {
   const comparisonLabel = formatVisualArtifactPairLabel(pair);
-  const beforeName = artifactDisplayName(pair.before);
-  const afterName = artifactDisplayName(pair.after);
   return (
     <View style={styles.card}>
       <View style={styles.header}>
@@ -66,12 +64,6 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
           imageHeight={imageHeight}
           onOpenArtifact={onOpenArtifact}
         />
-      </View>
-      <View style={styles.deltaStrip}>
-        <Text style={styles.deltaLabel}>Find what changed</Text>
-        <Text style={styles.deltaText} numberOfLines={1}>
-          {beforeName} → {afterName}
-        </Text>
       </View>
     </View>
   );
@@ -119,10 +111,6 @@ function ComparePane<T extends ArtifactManifestEntry>({
   );
 }
 
-function artifactDisplayName(artifact: ArtifactManifestEntry): string {
-  return artifact.label?.trim() || artifact.path.split('/').pop() || artifact.path;
-}
-
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.bgInput,
@@ -168,29 +156,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.xs,
-  },
-  deltaStrip: {
-    alignItems: 'center',
-    backgroundColor: colors.bgCard,
-    borderColor: colors.accent + '2b',
-    borderRadius: radii.md,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  deltaLabel: {
-    color: colors.accent,
-    fontSize: fonts.sizeXs,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-  },
-  deltaText: {
-    color: colors.textPrimary,
-    flex: 1,
-    fontSize: fonts.sizeXs,
-    fontWeight: '800',
   },
   pane: {
     backgroundColor: colors.bgCard,

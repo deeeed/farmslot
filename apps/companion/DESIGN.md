@@ -46,13 +46,24 @@
   - Review: default evidence/decision queue across active runs, PRs, family retros, and ready/review gates.
   - Terminals: all worker/tmux access, with recently-related workers first.
   - Settings: pairing, profiles, environment, diagnostics.
-  - Advanced/More: raw Runs, Fleet, PR dashboard, Inbox, Co-Pilot, filters, and low-level debug views.
+  - Advanced/More: raw Runs, Fleet, PR dashboard, Inbox, Co-Pilot, filters, low-level debug views, and a scoped Backlog surface for creating candidates or launching already-ready work while away from the desk.
 - Core review package tabs:
   - Evidence: before→after visual pairs and videos first.
   - Diff: changed files and visual/code context.
   - Timeline: compact status/progress; pipeline details collapsed.
-  - Terminal: linked worker/tmux control.
-  - Files: full artifact list and raw supporting data.
+  - Evidence, Diff, Timeline, and Files share one nested Run workspace navigator.
+  - Terminal remains an explicit contextual drill-down action.
+  - Ready/Review Gate uses its cockpit actions instead of duplicating the Run tab rail.
+- Slot workspace tabs:
+  - Slot, Terminal, and Diff share one nested tab navigator.
+  - Switching these peers changes the selected tab without growing the root navigation stack.
+  - Existing Slot, Terminal, and slot-Diff deep links remain compatibility entries into this tab group.
+- Run workspace tabs:
+  - Evidence, Diff, Timeline, and Files share one nested tab navigator under a single Run Detail header.
+  - Evidence owns gate/evidence summaries and review decisions; Diff owns changed-file inspection; Timeline owns pipeline and worker progress; Files owns artifact filters, previews, and file actions.
+  - Tab content must not duplicate another tab's primary surface. Cross-tab destinations are concise actions, not embedded copies.
+  - Existing Run, run-Diff, and Artifacts deep links remain compatibility entries into this tab group.
+  - Switching peers does not add route history; Back exits the Run workspace once.
 - Content hierarchy: signal summary → primary evidence → next action → supporting detail.
 - Offline visual-review catalogs: recipe capture nodes define stable surfaces; optional parent and related links provide breadcrumbs, subscreens, and cross-surface navigation without a separate screen registry.
 
@@ -61,8 +72,8 @@
 - Evidence first: visual proof beats metrics unless the run is failing.
 - Contextual steering: every run/PR/family screen should answer “which worker do I talk to?”
 - Progressive disclosure: raw fleet, filters, JSON, retry internals, and diagnostics are Advanced.
-- One review package model: run detail, PR evidence, family retros, and decision workspaces should feel like the same tabbed review object.
-- Honest review navigation: Evidence and Timeline move in place within one review workspace; Diff opens its dedicated comparison route. Controls must not imply unrelated top-level screens.
+- One review package model: run detail, PR evidence, family retros, and decision workspaces share the same evidence-first hierarchy without pretending that drill-down actions are tabs.
+- Honest navigation: controls styled as tabs must be backed by a tab navigator. Unrelated destinations remain explicit shortcuts or drill-down actions.
 - Preserve escape hatches: power-user surfaces remain reachable but should not dominate first launch.
 - Separate discovery from proof: use interactive device inspection to learn the app, then retain
   only stable selectors, explicit expectations, and observed navigation relationships in recipes.
@@ -81,7 +92,7 @@
 - Existing components to reuse:
   - `EvidenceReviewWorkspace`, `BeforeAfterPreview`, `MobileDiffViewer`, `XtermTerminalView`, `RunWorkspaceNav`.
 - New/changed components:
-  - `ReviewPackageTabs` segmented rail shared by run and decision workspaces.
+  - `WorkspaceTabsLayout` shared real-tab shell for Slot and Run workspaces, including Run Files.
   - Evidence-first review card for queue rows.
   - Sticky Review Actions bar (`Open diff`, `Terminal`, `Approve/Follow up` where available).
   - Advanced drawer/list for parity surfaces.

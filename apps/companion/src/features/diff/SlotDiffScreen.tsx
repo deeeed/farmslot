@@ -11,9 +11,6 @@ import {
   type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
-  type TaskProgressResult,
-  type TaskProgressStructured,
-  type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 
 import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
@@ -37,13 +34,6 @@ import {
   selectSlotCompareTarget,
   selectSlotRecipeArtifactsForPreviewScope,
 } from '../../lib/slot-workspace';
-import {
-  effectiveTaskProgressForRun,
-  fallbackTaskProgressSummary,
-  isSlotWorkerProgressActive,
-  isWorkerProgressActive,
-  shouldAcceptTaskProgressUpdate,
-} from '../../lib/task-progress';
 import { baseStyles } from '../../lib/theme';
 import {
   selectPrimaryWorkspaceDecision,
@@ -60,6 +50,7 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useFleetStore } from '../../store/fleet';
+import { useSlotWorkspaceTabs } from '../workspace-shared/slot-workspace-tabs';
 
 import { routeParamString, SlotDiffCockpit } from './components/slot-diff-panels';
 import { slotDiffStyles as styles } from './styles/slot-diff.styles';
@@ -72,6 +63,7 @@ export default function SlotDiffViewerScreen() {
     decisionKind?: string | string[];
   }>();
   const router = useRouter();
+  const insideSlotWorkspaceTabs = useSlotWorkspaceTabs();
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
@@ -82,8 +74,6 @@ export default function SlotDiffViewerScreen() {
   const [recipeRunsLoaded, setRecipeRunsLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
-  const [_taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const runRefreshRequestRef = useRef(0);
   const recipeRunsRefreshRequestRef = useRef(0);
   const diffRefreshRequestRef = useRef(0);
@@ -271,54 +261,14 @@ export default function SlotDiffViewerScreen() {
     slotId,
   ]);
 
-  const fetchTaskProgress = useCallback(() => {
-    if (!client || !currentRun?.slotId) return Promise.resolve();
-    return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-        slotId: currentRun.slotId,
-        runId: currentRun.id,
-      })
-      .then((result) => {
-        setTaskProgress(result.structured ?? null);
-        setTaskProgressError(null);
-      })
-      .catch((err: Error) => {
-        setTaskProgressError(`Task progress unavailable: ${err.message}`);
-      });
-  }, [client, currentRun?.id, currentRun?.slotId]);
-
-  useEffect(() => {
-    if (!client || !currentRun) return;
-    const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
-      const update = payload as TaskProgressUpdatedPayload;
-      if (!shouldAcceptTaskProgressUpdate(currentRun, update)) return;
-      setTaskProgress(update.progress.structured ?? null);
-      setTaskProgressError(null);
-    });
-    return unsub;
-  }, [client, currentRun]);
-
-  useEffect(() => {
-    if (!isWorkerProgressActive(currentRun)) {
-      setTaskProgress(null);
-      setTaskProgressError(null);
-      return;
-    }
-    void fetchTaskProgress();
-    const timer = setInterval(() => {
-      void fetchTaskProgress();
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [currentRun, fetchTaskProgress]);
-
   const goBackOrSlot = useCallback(() => {
     if (router.canGoBack()) {
       router.back();
       return;
     }
     router.replace({
-      pathname: '/slot/[id]',
-      params: { id: slotId, ...slotRouteContext },
+      pathname: '/workspace/slot/[slotId]/slot',
+      params: { slotId, ...slotRouteContext },
     });
   }, [router, slotId, slotRouteContext]);
 
@@ -364,32 +314,29 @@ export default function SlotDiffViewerScreen() {
     : navVisualPairs.length > 0
       ? DECISION_EVIDENCE_RECIPE_RUN_PARAM
       : compareTarget?.recipeRunId;
-  const activeTaskProgress = isWorkerProgressActive(currentRun)
-    ? (effectiveTaskProgressForRun(currentRun, taskProgress) ?? null)
-    : null;
-  const fallbackTaskProgress =
-    !activeTaskProgress && (isWorkerProgressActive(currentRun) || isSlotWorkerProgressActive(slot))
-      ? fallbackTaskProgressSummary(currentRun, slot)
-      : null;
-
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={baseStyles.container}>
-      <View style={styles.header}>
-        <Pressable style={styles.backButton} onPress={goBackOrSlot}>
-          <Text style={styles.backButtonText}>‹ Back</Text>
-        </Pressable>
-        <View style={styles.headerTitle}>
-          <Text style={styles.eyebrow}>Slot diff</Text>
-          <Text style={styles.title} numberOfLines={2}>
-            {requestedPath || slotId}
-          </Text>
-          {currentRun ? (
-            <Text style={styles.subtitle} numberOfLines={1}>
-              {currentRun.ticketOrPr} · {currentRun.status}
+    <SafeAreaView
+      edges={insideSlotWorkspaceTabs ? ['bottom'] : ['top', 'bottom']}
+      style={baseStyles.container}
+    >
+      {!insideSlotWorkspaceTabs ? (
+        <View style={styles.header}>
+          <Pressable style={styles.backButton} onPress={goBackOrSlot}>
+            <Text style={styles.backButtonText}>‹ Back</Text>
+          </Pressable>
+          <View style={styles.headerTitle}>
+            <Text style={styles.eyebrow}>Slot diff</Text>
+            <Text style={styles.title} numberOfLines={2}>
+              {requestedPath || slotId}
             </Text>
-          ) : null}
+            {currentRun ? (
+              <Text style={styles.subtitle} numberOfLines={1}>
+                {currentRun.ticketOrPr} · {currentRun.status}
+              </Text>
+            ) : null}
+          </View>
         </View>
-      </View>
+      ) : null}
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
         <RunWorkspaceNav
           current="diff"
@@ -431,8 +378,6 @@ export default function SlotDiffViewerScreen() {
           compareArtifactPath={navCompareArtifactPath}
           compareRecipeRunId={navCompareRecipeRunId}
           compareUsesRecipe={navVisualPairs.length === 0 && Boolean(compareTarget)}
-          activeTaskProgress={activeTaskProgress}
-          fallbackTaskProgress={fallbackTaskProgress}
           workspaceRouteContext={workspaceRouteContext}
         />
         {priorityVisualPair && navRunId ? (
@@ -442,7 +387,7 @@ export default function SlotDiffViewerScreen() {
               authHeaders={artifactAuthHeaders}
               onOpenArtifact={(artifactPath) =>
                 router.push({
-                  pathname: '/artifacts/[runId]',
+                  pathname: '/workspace/run/[runId]/files',
                   params: {
                     runId: navRunId,
                     ...compareRouteContext,

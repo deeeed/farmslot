@@ -5,21 +5,14 @@ import {
   type Run,
   type RunDecision,
   type RunStep,
-  type TaskProgressStructured,
 } from '@farmslot/protocol';
 
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
-import { RecipeRunControls } from '../../../components/RecipeRunControls';
-import {
-  TaskProgressFallbackPanel,
-  TaskProgressPanel,
-} from '../../../components/TaskProgressPanel';
 import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
   artifactSource,
-  artifactUrl,
   artifactUrlForEntry,
   classifyArtifact,
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
@@ -30,7 +23,6 @@ import {
 } from '../../../lib/artifact-url';
 import { type DecisionPresentation, presentDecision } from '../../../lib/decision-presentation';
 import { diffArtifactCandidate } from '../../../lib/diff';
-import type { GatewayClient } from '../../../lib/gateway-client';
 import {
   hasRunWorkspaceDiff,
   isActionableWorkspaceDiffValue,
@@ -43,16 +35,9 @@ import {
   summarizeSlotWorkspaceRetro,
   workspaceGateDiffMetricValue,
 } from '../../../lib/slot-workspace';
-import {
-  fallbackTaskProgressSummary,
-  isWorkerProgressActive,
-  taskProgressPercent,
-  taskProgressTitle,
-} from '../../../lib/task-progress';
 import { baseStyles, colors } from '../../../lib/theme';
 import {
   artifactFilterParamForArtifactPath,
-  artifactFilterParamForWorkspaceNav,
   recipeWorkspaceScopeLabel,
   workspaceSignalTargetForDecisionLabel,
 } from '../../../lib/workspace-navigation';
@@ -314,8 +299,6 @@ export function RunReviewWorkspaceSummary({
   recipeRuns,
   selectedRecipeRunId,
   compareTarget,
-  activeTaskProgress,
-  taskProgressError,
   onOpenDecision,
   onOpenArtifacts,
   onOpenRecipeArtifact,
@@ -337,8 +320,6 @@ export function RunReviewWorkspaceSummary({
   recipeRuns: RecipeRunArtifactGroup[];
   selectedRecipeRunId: string | null;
   compareTarget: SlotCompareTarget | null;
-  activeTaskProgress: TaskProgressStructured | null;
-  taskProgressError?: string | null;
   onOpenDecision: (decisionId: string) => void;
   onOpenArtifacts: (artifactPath?: string) => void;
   onOpenRecipeArtifact: (artifactPath: string, recipeRunId: string | null) => void;
@@ -353,8 +334,6 @@ export function RunReviewWorkspaceSummary({
 }) {
   const manifest = extractRunArtifactManifest(run);
   const manifestCount = manifest.length;
-  const fallbackTaskProgress =
-    !activeTaskProgress && isWorkerProgressActive(run) ? fallbackTaskProgressSummary(run) : null;
   const gate = gates[0] ?? null;
   const retroSummary = summarizeSlotWorkspaceRetro(run);
   const previewArtifacts = gate ? selectSlotGatePreviewArtifacts(gate, manifest, 4) : [];
@@ -570,9 +549,6 @@ export function RunReviewWorkspaceSummary({
         retroSummary={retroSummary}
         visualPairCount={workspaceVisualPairCount}
         pendingCount={(run.decisions ?? []).filter((decision) => !decision.resolvedAt).length}
-        activeTaskProgress={activeTaskProgress}
-        fallbackTaskProgress={fallbackTaskProgress}
-        run={run}
         terminalAvailable={Boolean(run.slotId)}
         slotId={run.slotId}
         prNumber={run.prNumber}
@@ -588,20 +564,6 @@ export function RunReviewWorkspaceSummary({
         onOpenGate={(workspaceGate) => onOpenDecision(workspaceGate.decision.id)}
         onOpenRetro={(retro) => onOpenDecision(retro.decision.id)}
       />
-      {activeTaskProgress ? (
-        <TaskProgressPanel
-          run={run}
-          progress={activeTaskProgress}
-          error={taskProgressError}
-          compact
-        />
-      ) : fallbackTaskProgress ? (
-        <TaskProgressFallbackPanel
-          summary={fallbackTaskProgress}
-          error={taskProgressError}
-          compact
-        />
-      ) : null}
       {gate?.metrics.length ? (
         <View style={styles.workspaceSignalRow}>
           {gate.metrics.map((metric) => {
@@ -923,9 +885,6 @@ export function RunWorkspaceCockpit({
   retroSummary,
   visualPairCount,
   pendingCount,
-  activeTaskProgress,
-  fallbackTaskProgress,
-  run,
   terminalAvailable,
   slotId,
   prNumber,
@@ -954,9 +913,6 @@ export function RunWorkspaceCockpit({
   retroSummary: SlotWorkspaceRetroSummary | null;
   visualPairCount: number;
   pendingCount: number;
-  activeTaskProgress: TaskProgressStructured | null;
-  fallbackTaskProgress: ReturnType<typeof fallbackTaskProgressSummary> | null;
-  run: Run;
   terminalAvailable: boolean;
   slotId: string | null | undefined;
   prNumber: number | null | undefined;
@@ -972,16 +928,6 @@ export function RunWorkspaceCockpit({
   onOpenGate: (gate: SlotWorkspaceGateSummary) => void;
   onOpenRetro: (retro: SlotWorkspaceRetroSummary) => void;
 }) {
-  const progressValue = activeTaskProgress
-    ? `${Math.round(taskProgressPercent(activeTaskProgress))}%`
-    : fallbackTaskProgress?.percent != null
-      ? `${Math.round(fallbackTaskProgress.percent)}%`
-      : fallbackTaskProgress
-        ? 'live'
-        : '-';
-  const progressMeta = activeTaskProgress
-    ? taskProgressTitle(run, activeTaskProgress)
-    : (fallbackTaskProgress?.meta ?? 'No progress');
   return (
     <View style={styles.cockpitPanel}>
       <View style={styles.cockpitHeader}>
@@ -1043,13 +989,6 @@ export function RunWorkspaceCockpit({
           value={familyId ? 'open' : '-'}
           onPress={onOpenFamilyRetros}
           disabled={!familyId}
-        />
-        <CockpitTile
-          label="Progress"
-          value={progressValue}
-          onPress={onOpenTerminal}
-          disabled={!activeTaskProgress && !fallbackTaskProgress}
-          hint={progressMeta}
         />
         <CockpitTile
           label="Artifact files"
@@ -1331,210 +1270,6 @@ export function DecisionSummaryCard({
       ) : null}
       <Text style={baseStyles.textMuted}>{statusText}</Text>
     </Pressable>
-  );
-}
-export function RecipeRunsSection({
-  run,
-  client,
-  gatewayUrl,
-  artifactAuthHeaders,
-  recipeRuns,
-  selectedRecipeRunId,
-  onSelectRecipeRun,
-  onViewArtifacts,
-  onOpenRecipeArtifact,
-  onRecipeComplete,
-}: {
-  run: Run;
-  client: GatewayClient | null;
-  gatewayUrl: string;
-  artifactAuthHeaders: ArtifactHttpHeaders;
-  recipeRuns: RecipeRunArtifactGroup[];
-  selectedRecipeRunId: string | null;
-  onSelectRecipeRun: (id: string | null) => void;
-  onViewArtifacts: (recipeRunId: string) => void;
-  onOpenRecipeArtifact: (
-    recipeRunId: string,
-    artifactPath: string,
-    filter?: ReturnType<typeof artifactFilterParamForWorkspaceNav>,
-  ) => void;
-  onRecipeComplete: (requestId: string) => void;
-}) {
-  if (recipeRuns.length === 0) return null;
-  const selected = recipeRuns.find((group) => group.id === selectedRecipeRunId);
-  const previewGroup = selected ?? recipeRuns.find((group) => group.promoted) ?? recipeRuns[0];
-  if (!previewGroup) return null;
-  const artifacts = artifactsForRecipeRun(previewGroup);
-  const previewArtifacts = artifacts.slice(0, 4);
-  const visualPairSummary = groupVisualArtifactPairs(artifacts, (artifact) =>
-    artifactUrlForEntry(gatewayUrl, run.id, artifact),
-  );
-  const primaryVisualPair = visualPairSummary.pairs[0] ?? null;
-  // Recipe replay APIs resolve selected recipe roots by RecipeRunArtifactGroup.id,
-  // matching the desktop helper. Current task artifacts omit recipeRunId; live
-  // and promoted evidence groups intentionally pass ids such as "live-run:<id>".
-  const selectedRecipeRunRequestId =
-    previewGroup.groupKind === 'current-artifacts' ? null : previewGroup.id;
-  const totalArtifactCount = recipeRuns.reduce(
-    (sum, group) => sum + artifactsForRecipeRun(group).length,
-    0,
-  );
-  return (
-    <View style={styles.section}>
-      <View style={styles.row}>
-        <Text style={styles.sectionTitle}>Recipe evidence</Text>
-        <Text style={styles.recipeSummary}>
-          {recipeRuns.length} run{recipeRuns.length === 1 ? '' : 's'} · {totalArtifactCount}{' '}
-          artifact{totalArtifactCount === 1 ? '' : 's'}
-        </Text>
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.recipeRunStrip}>
-        {recipeRuns.map((group) => (
-          <Pressable
-            key={group.id}
-            style={[styles.recipeRunCard, selected?.id === group.id && styles.recipeRunCardActive]}
-            onPress={() => onSelectRecipeRun(group.id)}
-          >
-            <Text
-              style={[
-                styles.recipeRunLabel,
-                selected?.id === group.id && styles.recipeRunLabelActive,
-              ]}
-              numberOfLines={1}
-            >
-              {group.label}
-            </Text>
-            <Text style={styles.recipeRunMeta}>
-              {group.status} · {group.artifactManifest?.length ?? 0} artifact
-              {(group.artifactManifest?.length ?? 0) === 1 ? '' : 's'}
-            </Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-      {previewArtifacts.length > 0 ? (
-        <View style={styles.thumbStrip}>
-          {previewArtifacts.map((artifact) => {
-            const mediaType = classifyArtifact(artifact);
-            const isDiffArtifact = diffArtifactCandidate([artifact])?.path === artifact.path;
-            return (
-              <Pressable
-                key={`${previewGroup.id}:${artifact.path}`}
-                style={mediaType === 'image' ? undefined : styles.recipeArtifactTile}
-                onPress={() => onOpenRecipeArtifact(previewGroup.id, artifact.path)}
-              >
-                {mediaType === 'image' ? (
-                  <Image
-                    source={artifactSource(
-                      artifactUrlForEntry(gatewayUrl, run.id, artifact),
-                      artifactAuthHeaders,
-                    )}
-                    style={styles.artifactThumb}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <>
-                    <Text style={styles.recipeArtifactTileKind}>
-                      {isDiffArtifact ? 'DIFF' : mediaType.toUpperCase()}
-                    </Text>
-                    <Text style={styles.recipeArtifactTilePath} numberOfLines={2}>
-                      {artifact.path.split('/').pop() ?? artifact.path}
-                    </Text>
-                  </>
-                )}
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
-      {primaryVisualPair ? (
-        <View style={styles.recipePairPreview}>
-          <BeforeAfterPreview
-            pair={primaryVisualPair}
-            authHeaders={artifactAuthHeaders}
-            onOpenArtifact={(artifactPath) => {
-              const target = [primaryVisualPair.before, primaryVisualPair.after].find(
-                (artifact) => artifact.path === artifactPath,
-              );
-              onOpenRecipeArtifact(
-                target?.recipeRunId ?? previewGroup.id,
-                artifactPath,
-                artifactFilterParamForWorkspaceNav('compare'),
-              );
-            }}
-            title="Recipe before → after"
-            hint="Tap to inspect"
-            imageHeight={74}
-          />
-        </View>
-      ) : null}
-      {!selected ? (
-        <Text style={styles.recipeContextHint}>
-          Decision evidence is selected. Pick a recipe run or open the current recipe artifacts.
-        </Text>
-      ) : null}
-      <Pressable
-        style={styles.viewAllButton}
-        onPress={() => onViewArtifacts(selected?.id ?? CURRENT_ARTIFACTS_RECIPE_RUN_PARAM)}
-      >
-        <Text style={styles.viewAllText}>Open recipe artifacts</Text>
-      </Pressable>
-      <View style={styles.recipeControlsWrap}>
-        <RecipeRunControls
-          client={client}
-          runId={run.id}
-          slotId={run.slotId}
-          project={run.project}
-          recipeRunId={selectedRecipeRunRequestId}
-          onComplete={onRecipeComplete}
-        />
-      </View>
-    </View>
-  );
-}
-export function ArtifactsSection({
-  run,
-  gatewayUrl,
-  artifactAuthHeaders,
-  onViewAll,
-  onOpenArtifact,
-}: {
-  run: Run;
-  gatewayUrl: string;
-  artifactAuthHeaders: ArtifactHttpHeaders;
-  onViewAll: () => void;
-  onOpenArtifact: (artifactPath: string) => void;
-}) {
-  const manifest = extractRunArtifactManifest(run);
-  if (manifest.length === 0) return null;
-  const images = manifest.filter((artifact) => classifyArtifact(artifact) === 'image');
-  return (
-    <View style={styles.section}>
-      <View style={styles.row}>
-        <Text style={styles.sectionTitle}>Evidence files</Text>
-        <View style={styles.artifactCountBadge}>
-          <Text style={styles.artifactCountText}>{manifest.length}</Text>
-        </View>
-      </View>
-      {images.length > 0 && (
-        <View style={styles.thumbStrip}>
-          {images.slice(0, 4).map((a) => (
-            <Pressable key={a.path} onPress={() => onOpenArtifact(a.path)}>
-              <Image
-                source={artifactSource(
-                  artifactUrl(gatewayUrl, run.id, a.path),
-                  artifactAuthHeaders,
-                )}
-                style={styles.artifactThumb}
-                resizeMode="cover"
-              />
-            </Pressable>
-          ))}
-        </View>
-      )}
-      <Pressable style={styles.viewAllButton} onPress={onViewAll}>
-        <Text style={styles.viewAllText}>View evidence files</Text>
-      </Pressable>
-    </View>
   );
 }
 export function MetricItem({ label, value }: { label: string; value: string }) {

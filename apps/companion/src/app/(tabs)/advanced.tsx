@@ -1,10 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BacklogCreateSheet } from '../../components/BacklogCreateSheet';
 import { GestureProofSurface } from '../../components/GestureProofSurface';
 import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
 
@@ -50,64 +49,64 @@ const ADVANCED_ROUTES: AdvancedRoute[] = [
 export default function AdvancedScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [backlogCreateOpen, setBacklogCreateOpen] = useState(false);
-
   return (
-    <>
-      <ScrollView
-        testID="companion-screen-advanced"
-        collapsable={false}
-        style={baseStyles.container}
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + spacing.xxxl }]}
-      >
-        <View style={styles.heroCard}>
-          <Text style={styles.eyebrow}>Advanced mode</Text>
-          <Text style={styles.title}>Command Center parity lives here.</Text>
-          <Text style={styles.subtitle}>
-            Review and Terminals stay focused by default. Use these raw dashboards when you need
-            broader fleet context, global filters, or diagnostics.
-          </Text>
+    <ScrollView
+      testID="companion-screen-advanced"
+      collapsable={false}
+      style={baseStyles.container}
+      contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + spacing.xxxl }]}
+    >
+      <View style={styles.heroCard}>
+        <Text style={styles.title}>Advanced</Text>
+        <Text style={styles.subtitle}>Fleet, backlog, PRs, decisions, and diagnostics.</Text>
+        <View style={styles.heroActions}>
+          <Pressable
+            testID="companion-advanced-backlog"
+            style={styles.primaryAction}
+            onPress={() => router.push('/(tabs)/backlog')}
+          >
+            <Ionicons name="list-outline" size={20} color={colors.bgBase} />
+            <Text style={styles.primaryActionText}>Backlog</Text>
+          </Pressable>
           <Pressable
             testID="companion-create-backlog"
-            style={styles.primaryAction}
-            onPress={() => setBacklogCreateOpen(true)}
+            style={styles.secondaryAction}
+            onPress={() => router.push('/backlog/create')}
           >
-            <Ionicons name="add-circle-outline" size={20} color={colors.bgBase} />
-            <Text style={styles.primaryActionText}>Create backlog item</Text>
+            <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
+            <Text style={styles.secondaryActionText}>New item</Text>
           </Pressable>
         </View>
+      </View>
 
-        <GestureProofSurface />
-
-        <View style={styles.routeList}>
-          {ADVANCED_ROUTES.map((route) => (
-            <Pressable
-              key={route.pathname}
-              testID={route.testID}
-              style={styles.routeCard}
-              onPress={() => router.push({ pathname: route.pathname })}
-            >
-              <View style={styles.iconBadge}>
-                <Ionicons name={route.icon} size={22} color={colors.accent} />
-              </View>
-              <View style={styles.routeText}>
-                <Text style={styles.routeTitle}>{route.title}</Text>
-                <Text style={styles.routeSubtitle}>{route.subtitle}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-            </Pressable>
-          ))}
-        </View>
-        <View
-          testID="companion-screen-advanced-end"
-          accessible
-          collapsable={false}
-          accessibilityLabel="End of Advanced"
-          style={styles.captureEndMarker}
-        />
-      </ScrollView>
-      <BacklogCreateSheet visible={backlogCreateOpen} onClose={() => setBacklogCreateOpen(false)} />
-    </>
+      <View style={styles.routeList}>
+        {ADVANCED_ROUTES.map((route) => (
+          <Pressable
+            key={route.pathname}
+            testID={route.testID}
+            style={styles.routeCard}
+            onPress={() => router.push({ pathname: route.pathname })}
+          >
+            <View style={styles.iconBadge}>
+              <Ionicons name={route.icon} size={22} color={colors.accent} />
+            </View>
+            <View style={styles.routeText}>
+              <Text style={styles.routeTitle}>{route.title}</Text>
+              <Text style={styles.routeSubtitle}>{route.subtitle}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          </Pressable>
+        ))}
+      </View>
+      <GestureProofSurface />
+      <View
+        testID="companion-screen-advanced-end"
+        accessible
+        collapsable={false}
+        accessibilityLabel="End of Advanced"
+        style={styles.captureEndMarker}
+      />
+    </ScrollView>
   );
 }
 
@@ -125,14 +124,6 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     gap: spacing.md,
   },
-  eyebrow: {
-    color: colors.textMuted,
-    fontFamily: fonts.mono,
-    fontSize: fonts.sizeSm,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
   title: {
     color: colors.textPrimary,
     fontSize: 24,
@@ -144,6 +135,7 @@ const styles = StyleSheet.create({
     fontSize: fonts.sizeMd,
     lineHeight: 21,
   },
+  heroActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   primaryAction: {
     alignItems: 'center',
     alignSelf: 'flex-start',
@@ -151,7 +143,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     flexDirection: 'row',
     gap: spacing.md,
-    marginTop: spacing.sm,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
@@ -160,6 +151,17 @@ const styles = StyleSheet.create({
     fontSize: fonts.sizeMd,
     fontWeight: '800',
   },
+  secondaryAction: {
+    alignItems: 'center',
+    borderColor: colors.accent,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  secondaryActionText: { color: colors.accent, fontSize: fonts.sizeMd, fontWeight: '800' },
   routeList: {
     gap: spacing.lg,
   },

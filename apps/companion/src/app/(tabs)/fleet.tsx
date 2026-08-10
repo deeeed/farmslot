@@ -28,7 +28,7 @@ function SlotCard({
   const openTerminal = (event: GestureResponderEvent) => {
     event.stopPropagation();
     router.push({
-      pathname: '/terminal/[slotId]',
+      pathname: '/workspace/slot/[slotId]/terminal',
       params: {
         slotId: slot.slot,
         details: '1',
@@ -50,9 +50,9 @@ function SlotCard({
       style={styles.slotCard}
       onPress={() =>
         router.push({
-          pathname: '/slot/[id]',
+          pathname: '/workspace/slot/[slotId]/slot',
           params: {
-            id: slot.slot,
+            slotId: slot.slot,
             ...(contextRunId
               ? {
                   runId: contextRunId,

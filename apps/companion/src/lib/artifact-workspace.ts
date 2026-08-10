@@ -101,7 +101,7 @@ function artifactWorkspaceHeaderTitle(activeFilter: ArtifactWorkspaceFilter): st
     case 'supporting':
       return 'Supporting files';
     case 'all':
-      return 'Evidence files';
+      return 'Files';
   }
 }
 

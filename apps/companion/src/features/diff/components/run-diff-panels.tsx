@@ -1,11 +1,7 @@
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
-import {
-  type RecipeRunArtifactGroup,
-  type Run,
-  type TaskProgressStructured,
-} from '@farmslot/protocol';
+import { type RecipeRunArtifactGroup, type Run } from '@farmslot/protocol';
 
 import {
   artifactsForRecipeRun,
@@ -14,7 +10,6 @@ import {
   type VisualArtifactPair,
 } from '../../../lib/artifact-url';
 import { prRepoFromWorkspaceSource } from '../../../lib/pr-links';
-import { fallbackTaskProgressSummary, taskProgressPercent } from '../../../lib/task-progress';
 import {
   artifactFilterParamForWorkspaceNav,
   decisionWorkspaceRouteParams,
@@ -42,8 +37,6 @@ export function DiffWorkspaceCockpit({
   reviewDecisionId,
   retroDecisionId,
   diffSource,
-  activeTaskProgress,
-  fallbackTaskProgress,
   workspaceRouteContext,
 }: {
   run: Run | null;
@@ -60,8 +53,6 @@ export function DiffWorkspaceCockpit({
   reviewDecisionId: string | null;
   retroDecisionId: string | null;
   diffSource: 'artifact' | 'live workspace' | 'missing';
-  activeTaskProgress: TaskProgressStructured | null;
-  fallbackTaskProgress: ReturnType<typeof fallbackTaskProgressSummary> | null;
   workspaceRouteContext: WorkspaceRouteContext;
 }) {
   const router = useRouter();
@@ -98,13 +89,6 @@ export function DiffWorkspaceCockpit({
     (recipeRunId === DECISION_EVIDENCE_RECIPE_RUN_PARAM
       ? 'decision evidence'
       : (recipeRunId ?? 'run evidence'));
-  const progressValue = activeTaskProgress
-    ? `${Math.round(taskProgressPercent(activeTaskProgress))}%`
-    : fallbackTaskProgress?.percent != null
-      ? `${Math.round(fallbackTaskProgress.percent)}%`
-      : fallbackTaskProgress
-        ? 'live'
-        : '-';
   const artifactParams = {
     runId,
     ...diffRouteContext,
@@ -114,12 +98,12 @@ export function DiffWorkspaceCockpit({
   };
   const openArtifacts = () =>
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: artifactParams,
     });
   const openCompareArtifacts = () =>
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId,
         ...compareRouteContext,
@@ -131,7 +115,7 @@ export function DiffWorkspaceCockpit({
   const openRecipe = () => {
     const recipeTarget = recipeWorkspaceParam(recipeRunId);
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId,
         ...recipeRouteContext,
@@ -146,9 +130,9 @@ export function DiffWorkspaceCockpit({
   const openSlot = () => {
     if (!run?.slotId) return;
     router.push({
-      pathname: '/slot/[id]',
+      pathname: '/workspace/slot/[slotId]/slot',
       params: {
-        id: run.slotId,
+        slotId: run.slotId,
         ...slotRouteContext,
         runId,
         ...(recipeRunId ? { recipeRun: recipeRunId } : {}),
@@ -188,9 +172,9 @@ export function DiffWorkspaceCockpit({
   };
   const openRun = () =>
     router.push({
-      pathname: '/run/[id]',
+      pathname: '/workspace/run/[runId]/evidence',
       params: {
-        id: runId,
+        runId,
         ...runRouteContext,
         ...(recipeRunId ? { recipeRun: recipeRunId } : {}),
         ...(diffPath ? { artifact: diffPath } : {}),
@@ -242,7 +226,7 @@ export function DiffWorkspaceCockpit({
           onPress={() => {
             if (!run?.slotId) return;
             router.push({
-              pathname: '/terminal/[slotId]',
+              pathname: '/workspace/slot/[slotId]/terminal',
               params: {
                 slotId: run.slotId,
                 ...terminalRouteContext,
@@ -292,11 +276,6 @@ export function DiffWorkspaceCockpit({
           value={retroDecisionId ? 'available' : '-'}
           onPress={() => openDecision(retroDecisionId)}
           disabled={!retroDecisionId}
-        />
-        <DiffCockpitTile
-          label="Progress"
-          value={progressValue}
-          disabled={!activeTaskProgress && !fallbackTaskProgress}
         />
         <DiffCockpitTile
           label="PR"

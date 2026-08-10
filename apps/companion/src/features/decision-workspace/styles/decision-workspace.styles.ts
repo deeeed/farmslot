@@ -4,18 +4,6 @@ import { colors, fonts, radii, spacing } from '../../../lib/theme';
 export const decisionWorkspaceStyles = StyleSheet.create({
   center: { justifyContent: 'center', alignItems: 'center', gap: spacing.lg },
   scrollContent: { padding: spacing.xl, paddingBottom: spacing.xxxl * 2 },
-  stickyWorkspaceNav: {
-    backgroundColor: colors.bgSurface,
-    borderBottomColor: colors.bgCard,
-    borderBottomWidth: 1,
-    left: 0,
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.sm,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    zIndex: 20,
-  },
   headerCard: {
     backgroundColor: colors.bgCard,
     borderRadius: radii.lg,

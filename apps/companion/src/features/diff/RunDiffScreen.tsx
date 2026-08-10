@@ -11,14 +11,10 @@ import {
   type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
-  type TaskProgressResult,
-  type TaskProgressStructured,
-  type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 
 import { MobileDiffViewer } from '../../components/MobileDiffViewer';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
-import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -34,12 +30,6 @@ import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
 import { selectSlotRecipeArtifactsForPreviewScope } from '../../lib/slot-workspace';
-import {
-  effectiveTaskProgressForRun,
-  fallbackTaskProgressSummary,
-  isWorkerProgressActive,
-  shouldAcceptTaskProgressUpdate,
-} from '../../lib/task-progress';
 import { baseStyles } from '../../lib/theme';
 import {
   selectPrimaryWorkspaceDecision,
@@ -55,6 +45,7 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useRunStore } from '../../store/runs';
+import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
 
 import {
   DiffWorkspaceCockpit,
@@ -72,6 +63,7 @@ export default function DiffViewerScreen() {
     decisionKind?: string | string[];
   }>();
   const router = useRouter();
+  const insideReviewPackageTabs = useReviewPackageTab() === 'diff';
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
@@ -84,8 +76,6 @@ export default function DiffViewerScreen() {
   const [workspaceDiffText, setWorkspaceDiffText] = useState('');
   const [workspaceDiffError, setWorkspaceDiffError] = useState<string | null>(null);
   const [workspaceDiffLoading, setWorkspaceDiffLoading] = useState(false);
-  const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
-  const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const runRefreshRequestRef = useRef(0);
   const runRefreshRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recipeRunRefreshRequestRef = useRef(0);
@@ -326,52 +316,6 @@ export default function DiffViewerScreen() {
   const reviewGateDecision = selectReviewGateWorkspaceDecision(run);
   const retroDecision = selectRetrospectiveWorkspaceDecision(run);
   const workspaceNavMeta = summarizeRunWorkspaceNavMeta(run);
-  const activeTaskProgress = isWorkerProgressActive(run)
-    ? (effectiveTaskProgressForRun(run, taskProgress) ?? null)
-    : null;
-  const fallbackTaskProgress =
-    !activeTaskProgress && isWorkerProgressActive(run) ? fallbackTaskProgressSummary(run) : null;
-
-  const fetchTaskProgress = useCallback(() => {
-    if (!client || !run?.slotId) return Promise.resolve();
-    return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-        slotId: run.slotId,
-        runId: run.id,
-      })
-      .then((result) => {
-        setTaskProgress(result.structured ?? null);
-        setTaskProgressError(null);
-      })
-      .catch((err: Error) => {
-        setTaskProgressError(`Task progress unavailable: ${err.message}`);
-      });
-  }, [client, run?.id, run?.slotId]);
-
-  useEffect(() => {
-    if (!client || !run) return;
-    const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
-      const update = payload as TaskProgressUpdatedPayload;
-      if (!shouldAcceptTaskProgressUpdate(run, update)) return;
-      setTaskProgress(update.progress.structured ?? null);
-      setTaskProgressError(null);
-    });
-    return unsub;
-  }, [client, run]);
-
-  useEffect(() => {
-    if (!isWorkerProgressActive(run)) {
-      setTaskProgress(null);
-      setTaskProgressError(null);
-      return;
-    }
-    void fetchTaskProgress();
-    const timer = setInterval(() => {
-      void fetchTaskProgress();
-    }, 10_000);
-    return () => clearInterval(timer);
-  }, [fetchTaskProgress, run]);
-
   useEffect(() => {
     if (!client || !run?.slotId || !canLoadWorkspaceDiff) {
       setWorkspaceDiffText('');
@@ -414,7 +358,7 @@ export default function DiffViewerScreen() {
   }, [router]);
   const openEvidenceFromDiff = useCallback(() => {
     router.push({
-      pathname: '/artifacts/[runId]',
+      pathname: '/workspace/run/[runId]/files',
       params: {
         runId,
         workspace: 'artifacts',
@@ -430,73 +374,66 @@ export default function DiffViewerScreen() {
     runId,
     workspaceRecipeRunId,
   ]);
-  const openTerminalFromDiff = useCallback(() => {
-    if (!run?.slotId) return;
-    router.push({
-      pathname: '/terminal/[slotId]',
-      params: {
-        slotId: run.slotId,
-        workspace: 'terminal',
-        runId,
-        details: '1',
-        recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-      },
-    });
-  }, [router, run?.slotId, runId, workspaceRecipeRunId]);
-
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={baseStyles.container}>
-      <View style={styles.header}>
-        <Pressable style={styles.backButton} onPress={goBackOrRuns}>
-          <Text style={styles.backButtonText}>‹ Back</Text>
-        </Pressable>
-        <View style={styles.headerTitle}>
-          <Text style={styles.eyebrow}>Run diff</Text>
-          <Text style={styles.title} numberOfLines={2}>
-            {focusedFilePath || diffArtifactPath || run?.ticketOrPr || runId}
-          </Text>
-          {selectedRecipeRun ? (
-            <Text style={styles.subtitle} numberOfLines={1}>
-              {selectedRecipeRun.label} · {selectedRecipeRun.status}
+    <SafeAreaView
+      edges={insideReviewPackageTabs ? ['bottom'] : ['top', 'bottom']}
+      style={baseStyles.container}
+    >
+      {!insideReviewPackageTabs ? (
+        <View style={styles.header}>
+          <Pressable style={styles.backButton} onPress={goBackOrRuns}>
+            <Text style={styles.backButtonText}>‹ Back</Text>
+          </Pressable>
+          <View style={styles.headerTitle}>
+            <Text style={styles.eyebrow}>Run diff</Text>
+            <Text style={styles.title} numberOfLines={2}>
+              {focusedFilePath || diffArtifactPath || run?.ticketOrPr || runId}
             </Text>
-          ) : null}
+            {selectedRecipeRun ? (
+              <Text style={styles.subtitle} numberOfLines={1}>
+                {selectedRecipeRun.label} · {selectedRecipeRun.status}
+              </Text>
+            ) : null}
+          </View>
         </View>
-      </View>
+      ) : null}
       <ScrollView
         testID="companion-screen-run-diff"
         collapsable={false}
         style={styles.body}
         contentContainerStyle={styles.bodyContent}
       >
-        <RunWorkspaceNav
-          dense
-          current="diff"
-          routeWorkspace={workspaceRouteContext.workspace}
-          routeDecisionKind={workspaceRouteContext.decisionKind}
-          decisionId={primaryDecision?.id ?? null}
-          decisionKind={workspaceDecisionKind(primaryDecision)}
-          readyDecisionId={readyDecision?.id ?? null}
-          reviewDecisionId={reviewGateDecision?.id ?? null}
-          retroDecisionId={retroDecision?.id ?? null}
-          readyMeta={workspaceNavMeta.readyMeta}
-          reviewMeta={workspaceNavMeta.reviewMeta}
-          retroMeta={workspaceNavMeta.retroMeta}
-          familyId={run?.familyId}
-          project={run?.project}
-          prNumber={run?.prNumber}
-          prRepo={prRepoFromWorkspaceSource(run, run?.prNumber ?? null)}
-          recipeRunId={workspaceRecipeRunId}
-          artifactPath={diffArtifactPath}
-          slotId={run?.slotId}
-          runId={runId}
-          recipeAvailable={recipeAvailable}
-          recipeArtifactCount={recipeArtifactCount}
-          diffAvailable={diffAvailable}
-          artifactCount={runArtifactCount}
-          visualPairCount={priorityVisualPairs.length}
-          compareArtifactPath={priorityVisualPair?.after.path ?? null}
-          compareRecipeRunId={priorityCompareRecipeRunId}
-        />
+        {!insideReviewPackageTabs ? (
+          <RunWorkspaceNav
+            dense
+            current="diff"
+            routeWorkspace={workspaceRouteContext.workspace}
+            routeDecisionKind={workspaceRouteContext.decisionKind}
+            decisionId={primaryDecision?.id ?? null}
+            decisionKind={workspaceDecisionKind(primaryDecision)}
+            readyDecisionId={readyDecision?.id ?? null}
+            reviewDecisionId={reviewGateDecision?.id ?? null}
+            retroDecisionId={retroDecision?.id ?? null}
+            readyMeta={workspaceNavMeta.readyMeta}
+            reviewMeta={workspaceNavMeta.reviewMeta}
+            retroMeta={workspaceNavMeta.retroMeta}
+            familyId={run?.familyId}
+            project={run?.project}
+            prNumber={run?.prNumber}
+            prRepo={prRepoFromWorkspaceSource(run, run?.prNumber ?? null)}
+            recipeRunId={workspaceRecipeRunId}
+            artifactPath={diffArtifactPath}
+            slotId={run?.slotId}
+            runId={runId}
+            recipeAvailable={recipeAvailable}
+            recipeArtifactCount={recipeArtifactCount}
+            diffAvailable={diffAvailable}
+            artifactCount={runArtifactCount}
+            visualPairCount={priorityVisualPairs.length}
+            compareArtifactPath={priorityVisualPair?.after.path ?? null}
+            compareRecipeRunId={priorityCompareRecipeRunId}
+          />
+        ) : null}
         <DiffWorkspaceCockpit
           run={run}
           runId={runId}
@@ -512,75 +449,8 @@ export default function DiffViewerScreen() {
           reviewDecisionId={reviewGateDecision?.id ?? null}
           retroDecisionId={retroDecision?.id ?? null}
           diffSource={diffUrl ? 'artifact' : canLoadWorkspaceDiff ? 'live workspace' : 'missing'}
-          activeTaskProgress={activeTaskProgress}
-          fallbackTaskProgress={fallbackTaskProgress}
           workspaceRouteContext={workspaceRouteContext}
         />
-        <View style={styles.evidenceBridgeCard}>
-          <View style={styles.evidenceBridgeHeader}>
-            <View style={styles.evidenceBridgeCopy}>
-              <Text style={styles.evidenceBridgeEyebrow}>Diff + evidence</Text>
-              <Text style={styles.evidenceBridgeTitle} numberOfLines={2}>
-                {run?.prNumber ? `PR #${run.prNumber}` : run?.ticketOrPr || runId}
-                {run?.status ? ` · ${run.status}` : ''}
-              </Text>
-              <Text style={styles.evidenceBridgeText}>
-                Keep the visual proof and code changes together while reviewing on mobile.
-              </Text>
-            </View>
-          </View>
-          <View style={styles.evidenceBridgeRail}>
-            <View style={styles.evidenceBridgeMetric}>
-              <Text style={styles.evidenceBridgeMetricLabel}>Visual pairs</Text>
-              <Text style={styles.evidenceBridgeMetricValue}>{priorityVisualPairs.length}</Text>
-            </View>
-            <View style={styles.evidenceBridgeMetric}>
-              <Text style={styles.evidenceBridgeMetricLabel}>Diff source</Text>
-              <Text style={styles.evidenceBridgeMetricValue}>
-                {diffUrl ? 'artifact' : canLoadWorkspaceDiff ? 'workspace' : 'missing'}
-              </Text>
-            </View>
-            <View style={styles.evidenceBridgeMetric}>
-              <Text style={styles.evidenceBridgeMetricLabel}>Repo</Text>
-              <Text style={styles.evidenceBridgeMetricValue} numberOfLines={1}>
-                {prRepoFromWorkspaceSource(run, run?.prNumber ?? null) ?? run?.project ?? '-'}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.evidenceBridgeActions}>
-            <Pressable style={styles.evidenceBridgeButton} onPress={openEvidenceFromDiff}>
-              <Text style={styles.evidenceBridgeButtonText}>Open evidence</Text>
-            </Pressable>
-            <Pressable
-              style={[
-                styles.evidenceBridgeButton,
-                !run?.slotId && styles.evidenceBridgeButtonDisabled,
-              ]}
-              onPress={openTerminalFromDiff}
-              disabled={!run?.slotId}
-            >
-              <Text style={styles.evidenceBridgeButtonText}>Open terminal</Text>
-            </Pressable>
-          </View>
-        </View>
-        {activeTaskProgress ? (
-          <View style={styles.progressPanel}>
-            <TaskProgressPanel
-              run={run}
-              progress={activeTaskProgress}
-              error={taskProgressError}
-              compact
-            />
-          </View>
-        ) : fallbackTaskProgress ? (
-          <View style={styles.progressPanel}>
-            <TaskProgressFallbackPanel
-              summary={fallbackTaskProgress}
-              error={taskProgressError}
-              compact
-            />
-          </View>
-        ) : null}
         {pathParamError || error ? (
           <Text style={styles.errorText}>{pathParamError ?? error}</Text>
         ) : null}

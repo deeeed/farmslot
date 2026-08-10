@@ -458,16 +458,6 @@ test('filter store does not delete persisted filters when available sources chan
   assert.equal(storage.setCalls.length, 0);
 });
 
-test('filter store keeps editor expansion globally without rewriting saved filters', async () => {
-  const storage = new MemoryFilterStorage();
-  const store = createFilterStore(storage);
-
-  store.getState().setEditorExpanded(true);
-
-  assert.equal(store.getState().editorExpanded, true);
-  assert.deepEqual(storage.setCalls, []);
-});
-
 function makeRun(overrides: Pick<Run, 'id' | 'project' | 'slotId'>): Run {
   return {
     id: overrides.id,

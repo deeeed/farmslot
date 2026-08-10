@@ -143,8 +143,8 @@ function RunCard({
         style={[styles.runCard, isFamilyRoot && styles.rootRunCard]}
         onPress={() =>
           router.push({
-            pathname: '/run/[id]',
-            params: { id: run.id, recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM },
+            pathname: '/workspace/run/[runId]/evidence',
+            params: { runId: run.id, recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM },
           })
         }
       >
@@ -219,7 +219,7 @@ function RunCard({
               authHeaders={artifactAuthHeaders}
               onOpenArtifact={(artifactPath) =>
                 router.push({
-                  pathname: '/artifacts/[runId]',
+                  pathname: '/workspace/run/[runId]/files',
                   params: {
                     runId: run.id,
                     recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -258,7 +258,7 @@ function RunCard({
             label={artifactCount > 0 ? `Evidence ${artifactCount}` : 'Evidence files'}
             onPress={() =>
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: run.id,
                   recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -271,7 +271,7 @@ function RunCard({
             label="Recipe files"
             onPress={() =>
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: run.id,
                   recipeRun: CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
@@ -333,7 +333,7 @@ function RunCard({
               label="Diff view"
               onPress={() =>
                 router.push({
-                  pathname: '/diff/[runId]',
+                  pathname: '/workspace/run/[runId]/diff',
                   params: {
                     runId: run.id,
                     ...DIFF_ROUTE_CONTEXT,
@@ -350,9 +350,9 @@ function RunCard({
                 label="Slot"
                 onPress={() =>
                   router.push({
-                    pathname: '/slot/[id]',
+                    pathname: '/workspace/slot/[slotId]/slot',
                     params: {
-                      id: run.slotId!,
+                      slotId: run.slotId!,
                       runId: run.id,
                       recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                     },
@@ -363,7 +363,7 @@ function RunCard({
                 label="Terminal"
                 onPress={() =>
                   router.push({
-                    pathname: '/terminal/[slotId]',
+                    pathname: '/workspace/slot/[slotId]/terminal',
                     params: {
                       slotId: run.slotId!,
                       runId: run.id,
@@ -599,7 +599,7 @@ function RecentFamilyShortcut({
             authHeaders={artifactAuthHeaders}
             onOpenArtifact={(artifactPath) =>
               router.push({
-                pathname: '/artifacts/[runId]',
+                pathname: '/workspace/run/[runId]/files',
                 params: {
                   runId: run.id,
                   recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -625,9 +625,9 @@ function RecentFamilyShortcut({
               label="Slot"
               onPress={() =>
                 router.push({
-                  pathname: '/slot/[id]',
+                  pathname: '/workspace/slot/[slotId]/slot',
                   params: {
-                    id: run.slotId!,
+                    slotId: run.slotId!,
                     runId: run.id,
                     recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                   },
@@ -638,7 +638,7 @@ function RecentFamilyShortcut({
               label="Terminal"
               onPress={() =>
                 router.push({
-                  pathname: '/terminal/[slotId]',
+                  pathname: '/workspace/slot/[slotId]/terminal',
                   params: {
                     slotId: run.slotId!,
                     runId: run.id,
@@ -654,7 +654,7 @@ function RecentFamilyShortcut({
           label={artifactManifest.length ? `Evidence ${artifactManifest.length}` : 'Evidence files'}
           onPress={() =>
             router.push({
-              pathname: '/artifacts/[runId]',
+              pathname: '/workspace/run/[runId]/files',
               params: {
                 runId: run.id,
                 recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -667,7 +667,7 @@ function RecentFamilyShortcut({
           label="Recipe files"
           onPress={() =>
             router.push({
-              pathname: '/artifacts/[runId]',
+              pathname: '/workspace/run/[runId]/files',
               params: {
                 runId: run.id,
                 recipeRun: CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
@@ -681,7 +681,7 @@ function RecentFamilyShortcut({
             label="Diff view"
             onPress={() =>
               router.push({
-                pathname: '/diff/[runId]',
+                pathname: '/workspace/run/[runId]/diff',
                 params: {
                   runId: run.id,
                   ...DIFF_ROUTE_CONTEXT,

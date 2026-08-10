@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
-import { type Run, type TaskProgressStructured } from '@farmslot/protocol';
+import { type Run } from '@farmslot/protocol';
 
 import {
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
@@ -9,7 +9,6 @@ import {
   extractRunArtifactManifest,
 } from '../../../lib/artifact-url';
 import { prRepoFromWorkspaceSource } from '../../../lib/pr-links';
-import { fallbackTaskProgressSummary, taskProgressPercent } from '../../../lib/task-progress';
 import {
   selectReadyWorkspaceDecision,
   selectRetrospectiveWorkspaceDecision,
@@ -36,8 +35,6 @@ export function SlotDiffCockpit({
   compareArtifactPath,
   compareRecipeRunId,
   compareUsesRecipe,
-  activeTaskProgress,
-  fallbackTaskProgress,
   workspaceRouteContext,
 }: {
   slotId: string;
@@ -50,8 +47,6 @@ export function SlotDiffCockpit({
   compareArtifactPath: string | null;
   compareRecipeRunId?: string | null;
   compareUsesRecipe: boolean;
-  activeTaskProgress: TaskProgressStructured | null;
-  fallbackTaskProgress: ReturnType<typeof fallbackTaskProgressSummary> | null;
   workspaceRouteContext: WorkspaceRouteContext;
 }) {
   const router = useRouter();
@@ -98,13 +93,6 @@ export function SlotDiffCockpit({
     ...(targetRunId ? { runId: targetRunId } : {}),
     ...(targetRunId ? { recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM } : {}),
   };
-  const progressValue = activeTaskProgress
-    ? `${Math.round(taskProgressPercent(activeTaskProgress))}%`
-    : fallbackTaskProgress?.percent != null
-      ? `${Math.round(fallbackTaskProgress.percent)}%`
-      : fallbackTaskProgress
-        ? 'live'
-        : '-';
   return (
     <View style={styles.contextCard}>
       <View style={styles.contextHeader}>
@@ -116,7 +104,12 @@ export function SlotDiffCockpit({
         </View>
         <Pressable
           style={styles.contextPill}
-          onPress={() => router.push({ pathname: '/terminal/[slotId]', params: terminalParams })}
+          onPress={() =>
+            router.push({
+              pathname: '/workspace/slot/[slotId]/terminal',
+              params: terminalParams,
+            })
+          }
         >
           <Text style={styles.contextPillText}>Terminal</Text>
         </Pressable>
@@ -135,9 +128,9 @@ export function SlotDiffCockpit({
           onPress={() => {
             if (!targetRunId) return;
             router.push({
-              pathname: '/run/[id]',
+              pathname: '/workspace/run/[runId]/evidence',
               params: {
-                id: targetRunId,
+                runId: targetRunId,
                 ...runRouteContext,
                 recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
               },
@@ -153,7 +146,7 @@ export function SlotDiffCockpit({
           onPress={() => {
             if (!targetRunId) return;
             router.push({
-              pathname: '/artifacts/[runId]',
+              pathname: '/workspace/run/[runId]/files',
               params: {
                 runId: targetRunId,
                 ...diffRouteContext,
@@ -170,7 +163,7 @@ export function SlotDiffCockpit({
           onPress={() => {
             if (!targetRunId || !compareArtifactPath) return;
             router.push({
-              pathname: '/artifacts/[runId]',
+              pathname: '/workspace/run/[runId]/files',
               params: {
                 runId: targetRunId,
                 ...compareRouteContext,
@@ -194,7 +187,7 @@ export function SlotDiffCockpit({
           onPress={() => {
             if (!targetRunId || recipeAvailable === false) return;
             router.push({
-              pathname: '/artifacts/[runId]',
+              pathname: '/workspace/run/[runId]/files',
               params: {
                 runId: targetRunId,
                 ...recipeRouteContext,
@@ -253,19 +246,13 @@ export function SlotDiffCockpit({
           }}
         />
         <ContextTile
-          label="Progress"
-          value={progressValue}
-          disabled={!activeTaskProgress && !fallbackTaskProgress}
-          onPress={() => router.push({ pathname: '/terminal/[slotId]', params: terminalParams })}
-        />
-        <ContextTile
           label="Slot view"
           value="ready/review"
           onPress={() =>
             router.push({
-              pathname: '/slot/[id]',
+              pathname: '/workspace/slot/[slotId]/slot',
               params: {
-                id: slotId,
+                slotId,
                 ...slotRouteContext,
                 ...(targetRunId ? { runId: targetRunId } : {}),
                 ...(targetRunId ? { recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM } : {}),
@@ -329,7 +316,12 @@ export function SlotDiffCockpit({
         <ContextTile
           label="Terminal"
           value="control"
-          onPress={() => router.push({ pathname: '/terminal/[slotId]', params: terminalParams })}
+          onPress={() =>
+            router.push({
+              pathname: '/workspace/slot/[slotId]/terminal',
+              params: terminalParams,
+            })
+          }
         />
       </ScrollView>
     </View>

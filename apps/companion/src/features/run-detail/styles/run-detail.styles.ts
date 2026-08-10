@@ -16,18 +16,6 @@ export const runDetailStyles = StyleSheet.create({
     fontWeight: '800',
   },
   scrollContent: { padding: spacing.xl, paddingBottom: spacing.xxxl * 2 },
-  stickyWorkspaceNav: {
-    backgroundColor: colors.bgSurface,
-    borderBottomColor: colors.bgCard,
-    borderBottomWidth: 1,
-    left: 0,
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.sm,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    zIndex: 20,
-  },
   headerCard: {
     backgroundColor: colors.bgCard,
     borderRadius: radii.lg,

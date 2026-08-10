@@ -65,12 +65,34 @@ export default function RootLayout() {
         >
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen
+            name="filters"
+            options={{
+              headerShown: false,
+              presentation: 'formSheet',
+              sheetAllowedDetents: [0.55, 0.9],
+              sheetGrabberVisible: true,
+              sheetInitialDetentIndex: 1,
+            }}
+          />
+          <Stack.Screen
+            name="backlog/create"
+            options={{
+              headerShown: false,
+              presentation: 'formSheet',
+              sheetAllowedDetents: [0.65, 0.95],
+              sheetGrabberVisible: true,
+              sheetInitialDetentIndex: 1,
+            }}
+          />
+          <Stack.Screen
             name="slot/[id]"
             options={{
               title: 'Slot Detail',
               headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/fleet" />,
             }}
           />
+          <Stack.Screen name="workspace/slot/[slotId]" options={{ headerShown: false }} />
+          <Stack.Screen name="workspace/run/[runId]" options={{ headerShown: false }} />
           <Stack.Screen
             name="run/[id]"
             options={{
@@ -101,13 +123,7 @@ export default function RootLayout() {
               headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/settings" />,
             }}
           />
-          <Stack.Screen
-            name="artifacts/[runId]"
-            options={{
-              title: 'Artifacts',
-              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/runs" />,
-            }}
-          />
+          <Stack.Screen name="artifacts/[runId]" options={{ headerShown: false }} />
           <Stack.Screen name="diff/[runId]" options={{ headerShown: false }} />
           <Stack.Screen name="diff/slot/[slotId]" options={{ headerShown: false }} />
         </Stack>
@@ -125,11 +141,7 @@ function FloatingCopilotButton() {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const isTabsRoute =
-    pathname.startsWith('/runs') ||
-    pathname.startsWith('/fleet') ||
-    pathname.startsWith('/prs') ||
-    pathname.startsWith('/inbox') ||
-    pathname.startsWith('/settings');
+    /^\/(runs|fleet|prs|inbox|settings|advanced|backlog|copilot|workers)(\/|$)/.test(pathname);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const positionRef = useRef<{ x: number; y: number } | null>(null);
   const dragStartRef = useRef({ x: 0, y: 0 });
@@ -261,7 +273,7 @@ function FloatingCopilotButton() {
   const shouldHide =
     // Terminal owns its own voice/input overlay; keep the global Co-Pilot
     // button out of the xterm touch surface.
-    pathname.includes('/copilot') || pathname.includes('/terminal/');
+    /(^|\/)copilot(\/|$)/.test(pathname) || /(^|\/)terminal(\/|$)/.test(pathname);
   if (shouldHide) return null;
   return (
     <View

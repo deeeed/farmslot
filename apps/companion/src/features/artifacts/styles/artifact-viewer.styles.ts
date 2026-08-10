@@ -4,7 +4,7 @@ import { colors, fonts, radii, spacing } from '../../../lib/theme';
 export const artifactViewerStyles = StyleSheet.create({
   center: { justifyContent: 'center', alignItems: 'center' },
   listContent: { padding: spacing.xl, paddingBottom: spacing.xxxl * 2 },
-  stickyWorkspaceChrome: {
+  stickyFilterChrome: {
     backgroundColor: colors.bgSurface,
     borderBottomColor: colors.bgCard,
     borderBottomWidth: 1,
@@ -24,9 +24,6 @@ export const artifactViewerStyles = StyleSheet.create({
   artifactCell: { marginBottom: spacing.md },
   artifactCellLeft: { marginRight: spacing.md },
   header: { marginBottom: spacing.lg },
-  primaryWorkspaceNavBlock: {
-    marginTop: spacing.lg,
-  },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -239,9 +236,6 @@ export const artifactViewerStyles = StyleSheet.create({
     fontSize: 10,
     marginTop: 2,
     maxWidth: 110,
-  },
-  artifactProgressPanel: {
-    marginTop: spacing.lg,
   },
   artifactCockpitDisabled: {
     opacity: 0.45,
@@ -503,5 +497,9 @@ export const artifactViewerStyles = StyleSheet.create({
     fontSize: fonts.sizeSm,
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing.lg,
+  },
+  recipeControlsWrap: {
+    marginBottom: spacing.lg,
+    marginHorizontal: spacing.lg,
   },
 });

@@ -45,13 +45,13 @@ test('buildWorkspaceCopilotDraft works without specific context', () => {
 
 test('workspaceCopilotInputForRoute extracts slot detail context', () => {
   assert.deepEqual(
-    workspaceCopilotInputForRoute('/slot/runner-mobile-2', {
-      id: 'runner-mobile-2',
+    workspaceCopilotInputForRoute('/workspace/slot/runner-mobile-2/terminal', {
+      slotId: 'runner-mobile-2',
       runId: 'run-abc',
       recipeRun: 'current-artifacts',
     }),
     {
-      current: 'slot',
+      current: 'terminal',
       familyId: null,
       slotId: 'runner-mobile-2',
       runId: 'run-abc',
@@ -62,6 +62,34 @@ test('workspaceCopilotInputForRoute extracts slot detail context', () => {
       recipeRunId: 'current-artifacts',
       artifactPath: null,
     },
+  );
+});
+
+test('workspaceCopilotInputForRoute identifies run workspace tabs', () => {
+  assert.equal(
+    workspaceCopilotInputForRoute('/workspace/run/run-abc/diff', { runId: 'run-abc' }).current,
+    'diff',
+  );
+  assert.equal(
+    workspaceCopilotInputForRoute('/workspace/run/run-abc/diff', {
+      runId: 'run-abc',
+      path: 'workspace/run/run-abc/diff',
+    }).artifactPath,
+    null,
+  );
+  assert.equal(
+    workspaceCopilotInputForRoute('/workspace/run/run-abc/files', {
+      runId: 'run-abc',
+      filter: 'recipes',
+    }).current,
+    'recipe',
+  );
+  assert.equal(
+    workspaceCopilotInputForRoute('/workspace/run/run-abc/diff', {
+      runId: 'run-abc',
+      path: 'src/example.ts',
+    }).artifactPath,
+    'src/example.ts',
   );
 });
 

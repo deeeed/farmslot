@@ -39,6 +39,9 @@ export const fonts = {
   sizeXl: 20,
 } as const;
 
+// Keeps lower-right controls clear of the draggable global Co-Pilot button.
+export const floatingCopilotGutter = 64;
+
 export function lifecycleColor(state: string): string {
   const phaseMap: Record<string, string> = {
     preparing: colors.lifecycleDispatching,

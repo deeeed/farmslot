@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { useSlotWorkspaceTabs } from '../features/workspace-shared/slot-workspace-tabs';
 import { DECISION_EVIDENCE_RECIPE_RUN_PARAM } from '../lib/artifact-url';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 import {
@@ -314,6 +315,7 @@ export function RunWorkspaceNav({
   dense = false,
 }: RunWorkspaceNavProps) {
   const router = useRouter();
+  const insideSlotWorkspaceTabs = useSlotWorkspaceTabs();
   const decisionTarget: WorkspaceNavTarget =
     decisionKind === 'retrospective' || current === 'retro'
       ? 'retro'
@@ -391,9 +393,9 @@ export function RunWorkspaceNav({
       onPress: () => {
         if (!slotId) return;
         router.push({
-          pathname: '/slot/[id]',
+          pathname: '/workspace/slot/[slotId]/slot',
           params: {
-            id: slotId,
+            slotId,
             ...targetRouteContext('slot'),
             ...(runId ? { runId } : {}),
             ...(recipeRunId ? { recipeRun: recipeRunId } : {}),
@@ -410,9 +412,9 @@ export function RunWorkspaceNav({
       onPress: () => {
         if (!runId) return;
         router.push({
-          pathname: '/run/[id]',
+          pathname: '/workspace/run/[runId]/evidence',
           params: {
-            id: runId,
+            runId,
             ...targetRouteContext('run'),
             ...(recipeRunId ? { recipeRun: recipeRunId } : {}),
             ...(preservedArtifactPath ? { artifact: preservedArtifactPath } : {}),
@@ -529,7 +531,7 @@ export function RunWorkspaceNav({
       onPress: () => {
         if (!slotId) return;
         router.push({
-          pathname: '/terminal/[slotId]',
+          pathname: '/workspace/slot/[slotId]/terminal',
           params: {
             slotId,
             ...targetRouteContext('terminal'),
@@ -549,7 +551,7 @@ export function RunWorkspaceNav({
       onPress: () => {
         if (!runId) return;
         router.push({
-          pathname: '/artifacts/[runId]',
+          pathname: '/workspace/run/[runId]/files',
           params: {
             runId,
             ...targetRouteContext('artifacts'),
@@ -574,7 +576,7 @@ export function RunWorkspaceNav({
         if (!runId) return;
         const recipeTarget = recipeWorkspaceParam(recipeRunId);
         router.push({
-          pathname: '/artifacts/[runId]',
+          pathname: '/workspace/run/[runId]/files',
           params: {
             runId,
             ...targetRouteContext('recipe'),
@@ -599,7 +601,7 @@ export function RunWorkspaceNav({
       onPress: () => {
         if (!compareTargetRunId || visualPairCount === 0) return;
         router.push({
-          pathname: '/artifacts/[runId]',
+          pathname: '/workspace/run/[runId]/files',
           params: {
             runId: compareTargetRunId,
             ...targetRouteContext('compare'),
@@ -626,7 +628,7 @@ export function RunWorkspaceNav({
       onPress: () => {
         if (runId && diffAvailable !== false) {
           router.push({
-            pathname: '/diff/[runId]',
+            pathname: '/workspace/run/[runId]/diff',
             params: {
               runId,
               ...targetRouteContext('diff'),
@@ -638,7 +640,7 @@ export function RunWorkspaceNav({
         }
         if (slotId) {
           router.push({
-            pathname: '/diff/slot/[slotId]',
+            pathname: '/workspace/slot/[slotId]/diff',
             params: {
               slotId,
               ...targetRouteContext('diff'),
@@ -650,13 +652,20 @@ export function RunWorkspaceNav({
     },
   ];
   const visibleActions = actions
-    .filter((action) => !action.hidden && (!action.disabled || action.id === current))
+    .filter(
+      (action) =>
+        !action.hidden &&
+        (!insideSlotWorkspaceTabs || !['slot', 'terminal', 'diff'].includes(action.id)) &&
+        (!action.disabled || action.id === current),
+    )
     .sort((left, right) => {
       const priority = current
         ? (NAV_PRIORITIES[current] ?? DEFAULT_NAV_PRIORITY)
         : DEFAULT_NAV_PRIORITY;
       return navRank(priority, left.id) - navRank(priority, right.id);
     });
+
+  if (visibleActions.length === 0) return null;
 
   return (
     <View style={[styles.container, dense && styles.containerDense]}>
@@ -672,6 +681,9 @@ export function RunWorkspaceNav({
           return (
             <Pressable
               key={action.id}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: action.disabled }}
+              testID={`companion-workspace-shortcut-${action.id}`}
               style={[
                 styles.action,
                 dense && styles.actionDense,
@@ -813,12 +825,13 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     borderWidth: 1,
     minWidth: 88,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    padding: spacing.md,
   },
   actionDense: {
     alignItems: 'center',
     borderRadius: 999,
+    justifyContent: 'center',
+    minHeight: 40,
     minWidth: 0,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,

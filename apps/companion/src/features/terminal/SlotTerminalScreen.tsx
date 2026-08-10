@@ -126,6 +126,7 @@ import {
 import { useConnectionStore } from '../../store/connection';
 import { useFleetStore } from '../../store/fleet';
 import { useTerminalPrefsStore } from '../../store/terminal-prefs';
+import { useSlotWorkspaceTabs } from '../workspace-shared/slot-workspace-tabs';
 
 import {
   type MobileTmuxActionMethod,
@@ -268,6 +269,7 @@ export default function TerminalScreen() {
     voiceTranscript?: string | string[];
   }>();
   const router = useRouter();
+  const insideSlotWorkspaceTabs = useSlotWorkspaceTabs();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const client = useConnectionStore((s) => s.client);
@@ -1430,9 +1432,7 @@ export default function TerminalScreen() {
     }
     const sent = await sendTerminalText(voiceEditableInstruction, setVoiceWarning);
     if (sent) {
-      resetVoiceCopilotAfterSend(
-        'Instruction sent. Tap mic to dictate the next worker instruction.',
-      );
+      resetVoiceCopilotAfterSend('Sent. Tap mic to dictate another instruction.');
     }
   }, [
     resetVoiceCopilotAfterSend,
@@ -1452,7 +1452,7 @@ export default function TerminalScreen() {
     const draft = voiceDraft.trim();
     const transcript = voiceTranscript.trim();
     router.push({
-      pathname: '/terminal/[slotId]',
+      pathname: '/workspace/slot/[slotId]/terminal',
       params: {
         slotId: voiceTargetMismatchSlotId,
         ...targetWorkspaceRouteContextParams('terminal', workspaceRouteContext.decisionKind),
@@ -1623,7 +1623,7 @@ export default function TerminalScreen() {
       style={[
         baseStyles.container,
         terminalFullscreen && styles.fullscreenContainer,
-        { paddingTop: insets.top },
+        { paddingTop: insideSlotWorkspaceTabs ? 0 : insets.top },
       ]}
     >
       <StatusBar hidden={terminalFullscreen} style="light" />
@@ -1682,9 +1682,11 @@ export default function TerminalScreen() {
           showsVerticalScrollIndicator={showTerminalOptions}
         >
           <View style={styles.terminalCompactHeader}>
-            <Pressable style={styles.backButton} onPress={goBackOrHome}>
-              <Text style={styles.backButtonText}>‹</Text>
-            </Pressable>
+            {!insideSlotWorkspaceTabs && (
+              <Pressable style={styles.backButton} onPress={goBackOrHome}>
+                <Text style={styles.backButtonText}>‹</Text>
+              </Pressable>
+            )}
             <View style={styles.terminalIdentity}>
               <Text style={styles.terminalTarget} numberOfLines={1}>
                 {slotId ?? 'unknown slot'}

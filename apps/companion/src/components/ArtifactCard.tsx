@@ -158,9 +158,6 @@ export function ComparisonCard({
   onOpenBefore?: () => void;
   onOpenAfter?: () => void;
 }) {
-  const beforeName = artifactDisplayName(pair.before);
-  const afterName = artifactDisplayName(pair.after);
-
   return (
     <View style={styles.comparisonCard}>
       <View style={styles.comparisonHeader}>
@@ -185,18 +182,8 @@ export function ComparisonCard({
           <ComparisonMedia item={pair.after} authHeaders={authHeaders} onOpen={onOpenAfter} />
         </View>
       </View>
-      <View style={styles.comparisonDeltaStrip}>
-        <Text style={styles.comparisonDeltaLabel}>Find what changed</Text>
-        <Text style={styles.comparisonDeltaText} numberOfLines={1}>
-          {beforeName} → {afterName}
-        </Text>
-      </View>
     </View>
   );
-}
-
-function artifactDisplayName(artifact: ArtifactManifestEntry): string {
-  return artifact.label?.trim() || artifact.path.split('/').pop() || artifact.path;
 }
 
 function ComparisonMedia({
@@ -371,30 +358,6 @@ const styles = StyleSheet.create({
     fontSize: fonts.sizeXs,
     marginBottom: spacing.xs,
     textTransform: 'uppercase',
-  },
-  comparisonDeltaStrip: {
-    alignItems: 'center',
-    backgroundColor: colors.bgInput,
-    borderColor: colors.accent + '2b',
-    borderRadius: radii.md,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  comparisonDeltaLabel: {
-    color: colors.accent,
-    fontSize: fonts.sizeXs,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-  },
-  comparisonDeltaText: {
-    color: colors.textPrimary,
-    flex: 1,
-    fontSize: fonts.sizeXs,
-    fontWeight: '800',
   },
   comparisonVideo: {
     width: '100%',
