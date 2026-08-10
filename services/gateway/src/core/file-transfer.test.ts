@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -110,6 +111,105 @@ test('copyFileChunked idle timeout fails with last bytesTransferred/totalBytes s
       return true;
     },
   );
+});
+
+test('copyFileChunked translates unresolved/rejected production RPC timeout into idle snapshot', async () => {
+  const size = FILE_TRANSFER_CHUNK_MAX_BYTES * 2;
+  let now = 5_000;
+  const clock = {
+    now: () => now,
+    // No-op sleep: race with idle budget must still surface last-progress idle error.
+    sleep: async () => {
+      now += 10_000;
+    },
+  };
+  await assert.rejects(
+    () =>
+      copyFileChunked({
+        path: '/remote/stall.bin',
+        phase: 'download',
+        totalBytes: size,
+        idleTimeoutMs: 100,
+        clock,
+        readChunk: async () => {
+          throw new Error('Node mini timeout after 60000ms');
+        },
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof FileTransferIdleTimeoutError);
+      assert.equal(err.bytesTransferred, 0);
+      assert.equal(err.totalBytes, size);
+      assert.match(err.message, /last progress 0\//);
+      return true;
+    },
+  );
+});
+
+test('copyFileChunked stages into sibling partial and preserves prior-good final on failure/cancel', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-xfer-stage-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const dest = path.join(dir, 'dest.bin');
+  const prior = Buffer.from('previous-good-destination-bytes');
+  await writeFile(dest, prior);
+
+  // Failure mid-transfer must not remove or truncate the prior-good final path.
+  await assert.rejects(
+    () =>
+      copyFileChunked({
+        path: '/remote/x.bin',
+        phase: 'download',
+        totalBytes: FILE_TRANSFER_CHUNK_MAX_BYTES * 2,
+        localPath: dest,
+        readChunk: async (offset) => {
+          if (offset > 0) throw new Error('forced later-chunk failure');
+          return {
+            content: Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES, 9).toString('base64'),
+            size: FILE_TRANSFER_CHUNK_MAX_BYTES * 2,
+            offset: 0,
+            bytesRead: FILE_TRANSFER_CHUNK_MAX_BYTES,
+            eof: false,
+          };
+        },
+      }),
+    /forced later-chunk failure/,
+  );
+  assert.equal(await readFile(dest, 'utf8'), prior.toString('utf8'));
+  assert.ok(!existsSync(`${dest}.farmslot-partial`));
+
+  // Cancel after at least one chunk is on disk: keep sibling partial, leave final alone.
+  await writeFile(dest, prior);
+  const transferId = 'stage-cancel-1';
+  const copyPromise = copyFileChunked({
+    path: '/remote/y.bin',
+    phase: 'download',
+    totalBytes: FILE_TRANSFER_CHUNK_MAX_BYTES * 3,
+    transferId,
+    localPath: dest,
+    keepPartialOnFailure: true,
+    readChunk: async (offset, length) => {
+      await new Promise((r) => setTimeout(r, 20));
+      const n = Math.min(length, FILE_TRANSFER_CHUNK_MAX_BYTES * 3 - offset);
+      return {
+        content: Buffer.alloc(n, 3).toString('base64'),
+        size: FILE_TRANSFER_CHUNK_MAX_BYTES * 3,
+        offset,
+        bytesRead: n,
+        eof: false,
+      };
+    },
+    onProgress: (p) => {
+      if (p.state === 'running' && p.bytesTransferred > 0) {
+        cancelTransfer(transferId);
+      }
+    },
+  });
+  await assert.rejects(() => copyPromise, /cancelled/i);
+  assert.equal(await readFile(dest, 'utf8'), prior.toString('utf8'));
+  assert.ok(
+    existsSync(`${dest}.farmslot-partial`),
+    'cancelled transfer must retain sibling partial for resume',
+  );
+  assert.ok((await stat(`${dest}.farmslot-partial`)).size > 0);
 });
 
 test('copyFileChunked rejects dropped/reordered chunks', async () => {

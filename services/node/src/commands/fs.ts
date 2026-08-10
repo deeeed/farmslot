@@ -247,19 +247,23 @@ export async function fsWriteChunk(params: {
   offset: number;
   content: string;
   truncate?: boolean;
+  /** Applied on create and after write so reused files keep the requested mode. */
+  mode?: number;
 }): Promise<{ ok: true; bytesWritten: number; offset: number }> {
   if (!Number.isInteger(params.offset) || params.offset < 0) {
     throw new Error(`fs.writeChunk offset must be a non-negative integer (got ${params.offset})`);
   }
   const { target } = confinedPath(params);
   const buf = Buffer.from(params.content, 'base64');
+  const createMode =
+    typeof params.mode === 'number' && Number.isInteger(params.mode) ? params.mode : 0o666;
   let handle;
   try {
     const flags =
       params.truncate || params.offset === 0
         ? constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW
         : constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW;
-    handle = await open(target, flags, 0o666);
+    handle = await open(target, flags, createMode);
     // Loop until the full buffer is written — FileHandle.write may return a short write.
     let written = 0;
     while (written < buf.byteLength) {
@@ -275,6 +279,9 @@ export async function fsWriteChunk(params: {
         );
       }
       written += result.bytesWritten;
+    }
+    if (typeof params.mode === 'number' && Number.isInteger(params.mode)) {
+      await handle.chmod(params.mode);
     }
     return { ok: true, bytesWritten: written, offset: params.offset };
   } catch (error) {

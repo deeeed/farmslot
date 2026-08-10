@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(fs): optional `mode` on `NodeFsWriteChunkParams` for private remote writes (MANUAL-000095 self-review).
+
 - feat(transfer): diagnostics smoke `forceFail` + result `failed` for failed-state UI proof (MANUAL-000095 self-review).
 
 - feat(transfer): cancel/list RPC, size-scaled idle timeout, aggregate file counts, diagnostics smoke rename, cancelled state (MANUAL-000095 follow-up).

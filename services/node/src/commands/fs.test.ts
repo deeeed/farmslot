@@ -184,3 +184,19 @@ test('fsWriteChunk reports the actual written length and can multi-chunk a file'
   assert.equal(read.bytesRead, 90);
   assert.deepEqual(Buffer.from(read.content, 'base64'), payload);
 });
+
+test('fsWriteChunk applies explicit mode for private attachment-style files', async (t) => {
+  const { fsWriteChunk } = await import('./fs.js');
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-wmode-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await fsWriteChunk({
+    root,
+    relPath: 'secret.bin',
+    offset: 0,
+    content: Buffer.from('private').toString('base64'),
+    truncate: true,
+    mode: 0o600,
+  });
+  const mode = (await stat(path.join(root, 'secret.bin'))).mode & 0o777;
+  assert.equal(mode, 0o600);
+});

@@ -215,11 +215,12 @@ export async function terminalAttachmentUpload(
   // attachment therefore re-stages identical bytes instead of creating a second target
   // the UI could deliver twice.
   const reused = await slotFileExists(vars, storedPath);
-  // Progress-aware chunked upload for large payloads (same path as remote slot writes).
+  // Progress-aware chunked upload; keep prior private 0o600 attachment contract.
   await slotWriteFileBuffer(vars, storedPath, bytes, {
     label: storedName,
     phase: 'upload',
     slotId: params.slotId,
+    mode: 0o600,
   });
 
   const sha256 = sha256Hex(bytes);

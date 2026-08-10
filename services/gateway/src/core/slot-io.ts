@@ -427,15 +427,28 @@ export async function slotWriteFileBuffer(
     phase?: FileTransferPhase;
     runId?: string;
     slotId?: string;
+    /** File mode (e.g. 0o600 for terminal attachments). Applied local and remote. */
+    mode?: number;
   } = {},
 ): Promise<void> {
   if (local(ctx)) {
-    await fsWriteFile(remotePath, data);
+    await fsWriteFile(
+      remotePath,
+      data,
+      typeof options.mode === 'number' ? { mode: options.mode } : undefined,
+    );
+    if (typeof options.mode === 'number') {
+      await fsChmod(remotePath, options.mode);
+    }
     return;
   }
   const node = requireNode(ctx.machine);
   const pathParams = nodePathParams(remotePath);
   const totalBytes = data.byteLength;
+  const modePayload =
+    typeof options.mode === 'number' && Number.isInteger(options.mode)
+      ? { mode: options.mode }
+      : {};
   if (totalBytes <= FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES) {
     const written = (await sendNodeRequest(
       node,
@@ -445,6 +458,7 @@ export async function slotWriteFileBuffer(
         offset: 0,
         content: data.toString('base64'),
         truncate: true,
+        ...modePayload,
       },
       { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
     )) as { bytesWritten?: number };
@@ -519,6 +533,7 @@ export async function slotWriteFileBuffer(
           offset,
           content: slice.toString('base64'),
           truncate: offset === 0,
+          ...modePayload,
         },
         { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
       )) as { bytesWritten?: number };

@@ -463,7 +463,11 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
         const offset = requireNumber(params, 'offset');
         const content = requireString(params, 'content');
         const truncate = params.truncate === true;
-        const result = await fsWriteChunk({ root, relPath, offset, content, truncate });
+        const mode =
+          typeof params.mode === 'number' && Number.isInteger(params.mode)
+            ? params.mode
+            : undefined;
+        const result = await fsWriteChunk({ root, relPath, offset, content, truncate, mode });
         sendResponse(frame.id, true, result);
         break;
       }

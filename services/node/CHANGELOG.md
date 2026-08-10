@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- fix(fs): `fs.writeChunk` accepts optional `mode` (applied on create + chmod) so private attachments can stay 0o600 (MANUAL-000095 self-review).
+
 - fix(fs): `fs.writeChunk` loops until the full buffer is written and returns actual `bytesWritten` (MANUAL-000095 self-review).
 
 - feat(fs): `fs.writeChunk` for progress-aware remote uploads (MANUAL-000095 follow-up).

@@ -97,6 +97,8 @@ export interface NodeFsWriteChunkParams extends NodeFsPathParams {
   content: string;
   /** When true (or offset is 0), create/truncate before writing. */
   truncate?: boolean;
+  /** Optional file mode applied on create and after write (e.g. 0o600 attachments). */
+  mode?: number;
 }
 
 export interface NodeFsWriteChunkResult {

@@ -349,6 +349,10 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
   let failed = false;
   let cancelled = false;
   const resumeFrom = Math.max(0, Math.floor(params.resumeFromOffset ?? 0));
+  // Never write into the published destination until integrity succeeds — a failed
+  // transfer must not delete prior-good final files; cancel keeps a sibling partial.
+  const finalLocalPath = params.localPath;
+  const workPath = finalLocalPath ? `${finalLocalPath}.farmslot-partial` : undefined;
 
   const publish = (
     state: FileTransferState,
@@ -373,21 +377,74 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
     }
   };
 
+  const idleTimeoutError = () =>
+    new FileTransferIdleTimeoutError({
+      transferId,
+      bytesTransferred,
+      totalBytes,
+      idleTimeoutMs,
+    });
+
+  /** Reject if idle budget is already exhausted; race pending reads against the remainder. */
+  const assertNotIdle = () => {
+    if (clock.now() - lastProgressAt > idleTimeoutMs) {
+      throw idleTimeoutError();
+    }
+  };
+
+  const readChunkWithIdle = async (offset: number, length: number): Promise<ChunkReadResult> => {
+    assertNotIdle();
+    // Wall-clock budget for a hung/pending read. Fake clocks used in unit tests often
+    // no-op `sleep` while advancing `now` only inside readChunk — racing clock.sleep
+    // would false-trigger idle immediately. Wall time covers production RPC stalls;
+    // logical idle is still enforced before/after via assertNotIdle + RPC translation.
+    const remainingLogical = Math.max(1, idleTimeoutMs - (clock.now() - lastProgressAt));
+    const remainingWallMs = Math.min(remainingLogical, idleTimeoutMs);
+    const readPromise = params.readChunk(offset, length);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const idlePromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(idleTimeoutError()), remainingWallMs);
+    });
+    void readPromise.catch(() => undefined);
+    void idlePromise.catch(() => undefined);
+    try {
+      return await Promise.race([readPromise, idlePromise]);
+    } catch (err) {
+      // Production node RPC can surface first as a generic 60s mini timeout — translate
+      // so operators still see last-progress bytes/total (required transfer contract).
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        !(err instanceof FileTransferIdleTimeoutError) &&
+        /timeout after \d+ms|Node mini timeout|RPC timeout|request timed out/i.test(message)
+      ) {
+        throw idleTimeoutError();
+      }
+      throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
   try {
-    if (params.localPath && resumeFrom > 0) {
-      if (!existsSync(params.localPath)) {
+    if (workPath && resumeFrom > 0) {
+      // Resume is always against the sibling partial. If a caller truncated the
+      // published final (smoke/tests), re-stage it as the partial first.
+      if (!existsSync(workPath) && finalLocalPath && existsSync(finalLocalPath)) {
+        await rename(finalLocalPath, workPath);
+      }
+      if (!existsSync(workPath)) {
         throw new FileTransferIntegrityError(
-          `Resume offset ${resumeFrom} but partial missing: ${params.localPath}`,
+          `Resume offset ${resumeFrom} but partial missing: ${workPath}`,
         );
       }
-      const st = await stat(params.localPath);
+      const st = await stat(workPath);
       if (st.size < resumeFrom) {
         throw new FileTransferIntegrityError(
-          `Partial size ${st.size} < resume offset ${resumeFrom} for ${params.localPath}`,
+          `Partial size ${st.size} < resume offset ${resumeFrom} for ${workPath}`,
         );
       }
       // Re-hash prefix so integrity covers the full assembled file.
-      const handle = await open(params.localPath, 'r');
+      const handle = await open(workPath, 'r');
       try {
         const buf = Buffer.alloc(64 * 1024);
         let off = 0;
@@ -404,12 +461,12 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
       if (st.size > resumeFrom) {
         // Truncate any overshoot from a previous crash after the resume point.
         const { truncate } = await import('node:fs/promises');
-        await truncate(params.localPath, resumeFrom);
+        await truncate(workPath, resumeFrom);
       }
       bytesTransferred = resumeFrom;
-      writeStream = createWriteStream(params.localPath, { flags: 'a' });
-    } else if (params.localPath) {
-      writeStream = createWriteStream(params.localPath);
+      writeStream = createWriteStream(workPath, { flags: 'a' });
+    } else if (workPath) {
+      writeStream = createWriteStream(workPath);
     }
 
     publish('running', undefined, true);
@@ -418,26 +475,11 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
     let eof = totalBytes > 0 && offset >= totalBytes;
     while (!eof) {
       throwIfAborted();
-      if (clock.now() - lastProgressAt > idleTimeoutMs) {
-        throw new FileTransferIdleTimeoutError({
-          transferId,
-          bytesTransferred,
-          totalBytes,
-          idleTimeoutMs,
-        });
-      }
+      assertNotIdle();
 
-      const chunk = await params.readChunk(offset, chunkMax);
+      const chunk = await readChunkWithIdle(offset, chunkMax);
       throwIfAborted();
-
-      if (clock.now() - lastProgressAt > idleTimeoutMs) {
-        throw new FileTransferIdleTimeoutError({
-          transferId,
-          bytesTransferred,
-          totalBytes,
-          idleTimeoutMs,
-        });
-      }
+      assertNotIdle();
 
       if (chunk.offset !== offset) {
         throw new FileTransferIntegrityError(
@@ -520,6 +562,11 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
       }
     }
 
+    // Atomic publish: only now replace any prior-good final destination.
+    if (workPath && finalLocalPath) {
+      await finalizeTransferTemp(workPath, finalLocalPath);
+    }
+
     publish('done', { sha256 }, true);
     return {
       transferId,
@@ -540,12 +587,13 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
       writeStream.destroy();
       writeStream = null;
     }
-    if (params.localPath && !params.keepPartialOnFailure && !isCancel) {
+    // Never touch finalLocalPath here — only the sibling partial.
+    if (workPath && !params.keepPartialOnFailure && !isCancel) {
       try {
-        await rm(params.localPath, { force: true });
+        await rm(workPath, { force: true });
       } catch (cleanupErr) {
         console.warn(
-          `[file-transfer] failed to remove partial ${params.localPath}: ${
+          `[file-transfer] failed to remove partial ${workPath}: ${
             cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
           }`,
         );
