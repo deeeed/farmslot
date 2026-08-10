@@ -722,6 +722,10 @@ test('backlog.update rejects public lifecycle and run linkage mutation', async (
 
 test('backlog.update changes the owning project and clears project-owned dispatch config', async () => {
   const { backlog } = await freshStores();
+  const targetProject = `backlog-test-farm-${process.pid}`;
+  const targetProjectDir = path.join(farmslotRoot, 'projects', targetProject);
+  await mkdir(targetProjectDir, { recursive: true });
+  await writeFile(path.join(targetProjectDir, 'project.json'), '{}', 'utf-8');
   const created = await backlog.createBacklogItem(
     {
       project: 'farmslot-farm',
@@ -748,18 +752,22 @@ test('backlog.update changes the owning project and clears project-owned dispatc
     { kind: 'system' },
   );
 
-  const updated = await backlog.updateBacklogItem({
-    itemId: created.item.id,
-    project: 'metamask-core-farm',
-  });
+  try {
+    const updated = await backlog.updateBacklogItem({
+      itemId: created.item.id,
+      project: targetProject,
+    });
 
-  assert.equal(updated.item.project, 'metamask-core-farm');
-  assert.equal(updated.item.allowedSlots, undefined);
-  assert.equal(updated.item.taskTemplate, undefined);
-  assert.equal(updated.item.app, undefined);
-  assert.equal(updated.item.prepareProfile, undefined);
-  assert.equal(updated.item.scripted, undefined);
-  assert.equal(updated.item.launchPlan, undefined);
+    assert.equal(updated.item.project, targetProject);
+    assert.equal(updated.item.allowedSlots, undefined);
+    assert.equal(updated.item.taskTemplate, undefined);
+    assert.equal(updated.item.app, undefined);
+    assert.equal(updated.item.prepareProfile, undefined);
+    assert.equal(updated.item.scripted, undefined);
+    assert.equal(updated.item.launchPlan, undefined);
+  } finally {
+    await rm(targetProjectDir, { recursive: true, force: true });
+  }
 });
 
 test('backlog.update rejects project changes while queue or run linkage exists', async () => {
