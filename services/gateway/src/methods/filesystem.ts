@@ -705,24 +705,35 @@ export async function serveFile(req: IncomingMessage, res: ServerResponse): Prom
       const stats = await handle.stat();
       serveLocalFileWithRange(req, res, handle, mime, stats.size);
     } else {
-      // Remote: progress-aware chunked read (small files still one-shot inside helper)
+      // Remote: progress-aware chunked read (small files still one-shot inside helper).
+      // Preserve repo root confinement — never collapse node RPC root to `/`.
       const { slotReadFileBuffer } = await import('../core/slot-io.js');
       const vars = await (await import('../core/config.js')).loadSlotVars(slotId);
-      const remoteAbs = path.posix.join(
-        repoPath.replace(/\\/g, '/').replace(/\/+$/, ''),
-        filePath.replace(/^\/+/, ''),
-      );
+      const remoteRoot = repoPath.replace(/\\/g, '/').replace(/\/+$/, '');
+      const remoteRel = filePath.replace(/^\/+/, '');
+      const remoteAbs = path.posix.join(remoteRoot, remoteRel);
+      let transferMode = 'unknown';
+      let readChunkCount = 0;
       const buf = await slotReadFileBuffer(
         { host: vars.host, machine: vars.machine, sshTarget: vars.sshTarget },
         remoteAbs,
         {
+          root: remoteRoot,
+          relPath: remoteRel,
           label: path.basename(filePath),
           phase: 'download',
           slotId,
           maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
+          onTransport: (info) => {
+            transferMode = info.mode;
+            readChunkCount = info.readChunkCount;
+          },
         },
       );
-      serveBufferWithRange(req, res, buf, mime);
+      serveBufferWithRange(req, res, buf, mime, {
+        'X-Farmslot-Transfer-Mode': transferMode,
+        'X-Farmslot-Read-Chunk-Count': String(readChunkCount),
+      });
     }
   } catch (err) {
     const error = err as NodeJS.ErrnoException;
@@ -906,22 +917,32 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
         if (!remoteTargetPath) throw new Error('Path traversal not allowed');
         const { slotReadFileBuffer } = await import('../core/slot-io.js');
         const vars = await (await import('../core/config.js')).loadSlotVars(run.slotId!);
-        const remoteAbs = path.posix.join(
-          normalizedRemoteBasePath.replace(/\\/g, '/').replace(/\/+$/, ''),
-          slotRelativePath.replace(/^\/+/, ''),
-        );
+        const remoteRoot = normalizedRemoteBasePath.replace(/\\/g, '/').replace(/\/+$/, '');
+        const remoteRel = slotRelativePath.replace(/^\/+/, '');
+        const remoteAbs = path.posix.join(remoteRoot, remoteRel);
+        let transferMode = 'unknown';
+        let readChunkCount = 0;
         const buffer = await slotReadFileBuffer(
           { host: vars.host, machine: vars.machine, sshTarget: vars.sshTarget },
           remoteAbs,
           {
+            root: remoteRoot,
+            relPath: remoteRel,
             label: path.basename(slotRelativePath),
             phase: 'download',
             runId,
             slotId: run.slotId ?? undefined,
             maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
+            onTransport: (info) => {
+              transferMode = info.mode;
+              readChunkCount = info.readChunkCount;
+            },
           },
         );
-        serveBufferWithRange(req, res, buffer, mime);
+        serveBufferWithRange(req, res, buffer, mime, {
+          'X-Farmslot-Transfer-Mode': transferMode,
+          'X-Farmslot-Read-Chunk-Count': String(readChunkCount),
+        });
       };
 
       if (Number.isFinite(expectedSize) && (expectedSize as number) > 0 && run.slotId) {
@@ -1019,22 +1040,32 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
     }
     const { slotReadFileBuffer } = await import('../core/slot-io.js');
     const vars = await (await import('../core/config.js')).loadSlotVars(run.slotId);
-    const remoteAbs = path.posix.join(
-      normalizedRemoteBasePath.replace(/\\/g, '/').replace(/\/+$/, ''),
-      relativePath.replace(/^\/+/, ''),
-    );
+    const remoteRoot = normalizedRemoteBasePath.replace(/\\/g, '/').replace(/\/+$/, '');
+    const remoteRel = relativePath.replace(/^\/+/, '');
+    const remoteAbs = path.posix.join(remoteRoot, remoteRel);
+    let transferMode = 'unknown';
+    let readChunkCount = 0;
     const buffer = await slotReadFileBuffer(
       { host: vars.host, machine: vars.machine, sshTarget: vars.sshTarget },
       remoteAbs,
       {
+        root: remoteRoot,
+        relPath: remoteRel,
         label: path.basename(relativePath),
         phase: 'download',
         runId,
         slotId: run.slotId,
         maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
+        onTransport: (info) => {
+          transferMode = info.mode;
+          readChunkCount = info.readChunkCount;
+        },
       },
     );
-    serveBufferWithRange(req, res, buffer, mime);
+    serveBufferWithRange(req, res, buffer, mime, {
+      'X-Farmslot-Transfer-Mode': transferMode,
+      'X-Farmslot-Read-Chunk-Count': String(readChunkCount),
+    });
   } catch (err) {
     const error = err as NodeJS.ErrnoException;
     const message = error.message || String(err);

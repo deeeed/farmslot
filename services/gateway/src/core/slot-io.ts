@@ -348,9 +348,23 @@ export async function slotCopyFile(
   });
 }
 
+export type SlotReadFileTransportMode = 'local' | 'oneshot' | 'chunked';
+
+export interface SlotReadFileTransportInfo {
+  mode: SlotReadFileTransportMode;
+  /** Node `fs.readChunk` RPC count (0 for local/oneshot). */
+  readChunkCount: number;
+  /** Confined node RPC root used for remote reads. */
+  root?: string;
+  relPath?: string;
+}
+
 /**
  * Read a remote file into a Buffer with progress (HTTP artifact proxy, etc.).
  * Small files still use one-shot readBase64.
+ *
+ * Prefer `root` + `relPath` for remote routes so node confinement stays at the
+ * repository/artifact boundary instead of collapsing to filesystem root `/`.
  */
 export async function slotReadFileBuffer(
   ctx: SlotLocality,
@@ -362,7 +376,13 @@ export async function slotReadFileBuffer(
     slotId?: string;
     maxBytes?: number;
     forceChunked?: boolean;
+    /** Bounded node root (repository or artifact dir). Requires relPath. */
+    root?: string;
+    /** Path relative to root. Requires root. */
+    relPath?: string;
     onProgress?: (progress: import('@farmslot/protocol').FileTransferProgress) => void;
+    /** Observability for HTTP/recipe proofs that chunking actually ran. */
+    onTransport?: (info: SlotReadFileTransportInfo) => void;
   } = {},
 ): Promise<Buffer> {
   if (local(ctx)) {
@@ -371,10 +391,17 @@ export async function slotReadFileBuffer(
     if (options.maxBytes != null && buf.byteLength > options.maxBytes) {
       throw new Error(`Remote artifact too large to proxy (${buf.byteLength} bytes)`);
     }
+    options.onTransport?.({ mode: 'local', readChunkCount: 0 });
     return buf;
   }
   const node = requireNode(ctx.machine);
-  const pathParams = nodePathParams(remotePath);
+  if ((options.root == null) !== (options.relPath == null)) {
+    throw new Error('slotReadFileBuffer remote root and relPath must be provided together');
+  }
+  const pathParams =
+    options.root != null && options.relPath != null
+      ? { root: options.root, relPath: options.relPath }
+      : nodePathParams(remotePath);
   let size = 0;
   try {
     const st = (await sendNodeRequest(node, 'fs.stat', pathParams, {
@@ -398,8 +425,15 @@ export async function slotReadFileBuffer(
     }, {
       timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
     })) as { content: string };
+    options.onTransport?.({
+      mode: 'oneshot',
+      readChunkCount: 0,
+      root: pathParams.root,
+      relPath: pathParams.relPath,
+    });
     return Buffer.from(result.content, 'base64');
   }
+  let readChunkCount = 0;
   const { buffer } = await readRemoteFileChunkedToBuffer({
     path: remotePath,
     label: options.label ?? path.basename(remotePath),
@@ -409,13 +443,21 @@ export async function slotReadFileBuffer(
     totalBytes: size > 0 ? size : undefined,
     maxBytes: options.maxBytes,
     onProgress: options.onProgress,
-    readChunk: async (offset, length) =>
-      (await sendNodeRequest(
+    readChunk: async (offset, length) => {
+      readChunkCount += 1;
+      return (await sendNodeRequest(
         node,
         'fs.readChunk',
         { ...pathParams, offset, length },
         { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
-      )) as NodeFsReadChunkResult,
+      )) as NodeFsReadChunkResult;
+    },
+  });
+  options.onTransport?.({
+    mode: 'chunked',
+    readChunkCount,
+    root: pathParams.root,
+    relPath: pathParams.relPath,
   });
   return buffer;
 }

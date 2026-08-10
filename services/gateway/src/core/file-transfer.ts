@@ -524,9 +524,20 @@ export async function copyFileChunked(params: ChunkedCopyParams): Promise<Chunke
       hash.update(buf);
       if (writeStream) {
         if (!writeStream.write(buf)) {
+          // Drain and error are paired one-shots: remove the loser on settlement
+          // so multi-chunk backpressure does not accumulate error listeners.
           await new Promise<void>((resolve, reject) => {
-            writeStream!.once('drain', resolve);
-            writeStream!.once('error', reject);
+            const stream = writeStream!;
+            const onDrain = () => {
+              stream.off('error', onError);
+              resolve();
+            };
+            const onError = (err: Error) => {
+              stream.off('drain', onDrain);
+              reject(err);
+            };
+            stream.once('drain', onDrain);
+            stream.once('error', onError);
           });
         }
       }

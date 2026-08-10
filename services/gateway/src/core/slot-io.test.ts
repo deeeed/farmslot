@@ -20,6 +20,7 @@ import {
   SlotCopyDirEntryError,
   slotCopyFile,
   slotFileExists,
+  slotReadFileBuffer,
 } from './slot-io.js';
 
 class FakeNodeWebSocket {
@@ -581,4 +582,110 @@ test('remote slotCopyFile uses chunked fs.readChunk above the small-file thresho
     'large files must not use one-shot readBase64',
   );
   assert.ok(events.length >= 3, `expected progress events, got ${events.length}`);
+});
+
+test('slotReadFileBuffer preserves bounded root/relPath for remote reads', async (t) => {
+  const payload = Buffer.alloc(80, 3);
+  const fakeWs = new FakeNodeWebSocket({
+    onStat: (params) => {
+      assert.equal(params.root, '/repo/artifacts');
+      assert.equal(params.relPath, 'shots/after.mp4');
+      assert.notEqual(params.root, '/');
+      return {
+        size: payload.byteLength,
+        isFile: true,
+        isDirectory: false,
+        mtimeMs: 1,
+      };
+    },
+    onReadBase64: (params) => {
+      assert.equal(params.root, '/repo/artifacts');
+      assert.equal(params.relPath, 'shots/after.mp4');
+      return { content: payload.toString('base64') };
+    },
+  });
+  registerNode('read-buffer-root-machine', 1, fakeWs as any);
+  t.after(() => unregisterByWs(fakeWs as any));
+
+  const transports: Array<{ mode: string; root?: string; relPath?: string }> = [];
+  const buf = await slotReadFileBuffer(
+    {
+      host: '203.0.113.9',
+      machine: 'read-buffer-root-machine',
+      sshTarget: 't@203.0.113.9',
+    },
+    '/repo/artifacts/shots/after.mp4',
+    {
+      root: '/repo/artifacts',
+      relPath: 'shots/after.mp4',
+      maxBytes: 1024,
+      onTransport: (info) => transports.push(info),
+    },
+  );
+
+  assert.deepEqual(buf, payload);
+  assert.equal(transports[0]?.mode, 'oneshot');
+  assert.equal(transports[0]?.root, '/repo/artifacts');
+  assert.equal(transports[0]?.relPath, 'shots/after.mp4');
+  assert.ok(fakeWs.calls.every((c) => c.params.root === '/repo/artifacts'));
+  assert.ok(fakeWs.calls.every((c) => c.params.root !== '/'));
+});
+
+test('slotReadFileBuffer chunked path reports readChunkCount and bounded root', async (t) => {
+  const { FILE_TRANSFER_CHUNK_MAX_BYTES } = await import('@farmslot/protocol');
+  // Two full chunks so readChunkCount is observably multi-RPC (not size-inferred).
+  const payload = Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES * 2 + 32, 9);
+  const fakeWs = new FakeNodeWebSocket({
+    onStat: (params) => {
+      assert.equal(params.root, '/repo');
+      assert.equal(params.relPath, 'large.bin');
+      return {
+        size: payload.byteLength,
+        isFile: true,
+        isDirectory: false,
+        mtimeMs: 1,
+      };
+    },
+    onReadChunk: (params) => {
+      assert.equal(params.root, '/repo');
+      assert.equal(params.relPath, 'large.bin');
+      const offset = params.offset ?? 0;
+      const length = params.length ?? 0;
+      const slice = payload.subarray(offset, offset + length);
+      return {
+        content: slice.toString('base64'),
+        size: payload.byteLength,
+        offset,
+        bytesRead: slice.byteLength,
+        eof: offset + slice.byteLength >= payload.byteLength,
+      };
+    },
+  });
+  registerNode('read-buffer-chunk-machine', 1, fakeWs as any);
+  t.after(() => unregisterByWs(fakeWs as any));
+
+  let transport: { mode: string; readChunkCount: number; root?: string } | undefined;
+  const buf = await slotReadFileBuffer(
+    {
+      host: '203.0.113.9',
+      machine: 'read-buffer-chunk-machine',
+      sshTarget: 't@203.0.113.9',
+    },
+    '/repo/large.bin',
+    {
+      root: '/repo',
+      relPath: 'large.bin',
+      forceChunked: true,
+      maxBytes: payload.byteLength + 1,
+      onTransport: (info) => {
+        transport = info;
+      },
+    },
+  );
+
+  assert.deepEqual(buf, payload);
+  assert.equal(transport?.mode, 'chunked');
+  assert.ok((transport?.readChunkCount ?? 0) >= 2);
+  assert.equal(transport?.root, '/repo');
+  assert.ok(fakeWs.calls.filter((c) => c.method === 'fs.readChunk').length >= 2);
 });

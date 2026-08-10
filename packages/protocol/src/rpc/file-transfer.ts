@@ -152,7 +152,21 @@ export interface FileTransferRemoteE2eResult {
   remoteDir: { filesCopied: number; aggregateSawFilesTotal: boolean; maxFilesCompleted: number };
   remoteBufferRead: { size: number; sha256: string };
   remoteUpload: { size: number; roundTripSha256Match: boolean };
-  httpFileProxy?: { status: number; bytes: number; usedChunkedPath: boolean };
+  httpFileProxy?: {
+    status: number;
+    bytes: number;
+    usedChunkedPath: boolean;
+    /** Observable node `fs.readChunk` count from X-Farmslot-Read-Chunk-Count. */
+    readChunkCount: number;
+    transferMode: string;
+  };
+  /** Production refreshArtifactMirror remote path (when pool/task fixtures succeed). */
+  artifactMirror?: {
+    copied: number;
+    size: number;
+    sha256: string;
+    intermediateEvents: number;
+  };
 }
 
 /**

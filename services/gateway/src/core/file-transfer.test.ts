@@ -430,6 +430,51 @@ test('readRemoteFileChunkedToBuffer rejects oversize chunk responses', async () 
   );
 });
 
+test('copyFileChunked cleans drain/error listeners under multi-chunk backpressure', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-xfer-backpressure-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  // >10 chunks so a leaked per-chunk error listener would trip MaxListenersExceededWarning.
+  const chunkCount = 14;
+  const chunkSize = 64 * 1024;
+  const size = chunkCount * chunkSize;
+  const src = path.join(dir, 'src.bin');
+  const dest = path.join(dir, 'dest.bin');
+  await writeTransferFixture(src, size);
+
+  const warnings: Error[] = [];
+  const onWarning = (warning: Error) => {
+    warnings.push(warning);
+  };
+  process.on('warning', onWarning);
+  t.after(() => process.off('warning', onWarning));
+
+  // Exercise the production path (createWriteStream inside copyFileChunked) with
+  // more than 10 chunks; a leaked per-chunk error listener trips MaxListeners.
+  const result = await copyFileChunked({
+    path: src,
+    label: 'backpressure.bin',
+    phase: 'download',
+    totalBytes: size,
+    localPath: dest,
+    chunkMaxBytes: chunkSize,
+    readChunk: (offset, length) => readLocalFileChunk(src, offset, length),
+  });
+
+  assert.equal(result.size, size);
+  assert.equal((await readFile(dest)).byteLength, size);
+  const maxListenerWarnings = warnings.filter(
+    (w) => w.name === 'MaxListenersExceededWarning' || /MaxListenersExceeded/i.test(w.message),
+  );
+  assert.equal(
+    maxListenerWarnings.length,
+    0,
+    `unexpected MaxListenersExceededWarning after ${chunkCount}-chunk copy: ${maxListenerWarnings
+      .map((w) => w.message)
+      .join('; ')}`,
+  );
+});
+
 test('AggregateTransferSession cancel aborts before done and keeps indeterminate total', async () => {
   const { AggregateTransferSession, cancelTransfer } = await import('./file-transfer.js');
   const events: Array<{ state: string; totalBytes: number; bytes: number }> = [];

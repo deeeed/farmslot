@@ -429,16 +429,21 @@ export async function fileTransferRemoteE2e(
         }
         const res = await fetch(url, { headers });
         const body = Buffer.from(await res.arrayBuffer());
-        // Chunked path is proven when status is OK and payload matches multi-chunk size
-        // (one-shot threshold is smaller than this fixture).
+        const transferMode = res.headers.get('x-farmslot-transfer-mode') ?? '';
+        const readChunkCount = Number(res.headers.get('x-farmslot-read-chunk-count') ?? '0');
+        // Chunked path is proven only when the server reports real fs.readChunk RPCs —
+        // payload size alone would also pass for a regressed one-shot read.
         const usedChunkedPath =
           res.status === 200 &&
-          body.byteLength === httpPayload.byteLength &&
-          httpPayload.byteLength > FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES;
+          transferMode === 'chunked' &&
+          readChunkCount >= 2 &&
+          body.byteLength === httpPayload.byteLength;
         httpFileProxy = {
           status: res.status,
           bytes: body.byteLength,
           usedChunkedPath,
+          readChunkCount,
+          transferMode,
         };
         if (res.status !== 200) {
           throw new Error(
@@ -451,7 +456,9 @@ export async function fileTransferRemoteE2e(
           );
         }
         if (!usedChunkedPath) {
-          throw new Error('HTTP /api/file did not exercise multi-chunk remote path');
+          throw new Error(
+            `HTTP /api/file did not exercise multi-chunk remote path (mode=${transferMode} readChunkCount=${readChunkCount})`,
+          );
         }
       } finally {
         await rm(poolPath, { force: true });
@@ -465,6 +472,176 @@ export async function fileTransferRemoteE2e(
         } catch (cleanupErr) {
           console.warn(
             `[file-transfer] remote e2e http fixture cleanup failed: ${
+              cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
+            }`,
+          );
+        }
+      }
+    }
+
+    // 5) Production refreshArtifactMirror via a temporary pool slot on the connected node.
+    let artifactMirror: FileTransferRemoteE2eResult['artifactMirror'];
+    {
+      const { writeFile, rm, mkdir, readFile } = await import('node:fs/promises');
+      const { farmslotRoot } = await import('../fleet/state.js');
+      const { refreshArtifactMirror } = await import('../run-completion/artifact-mirror.js');
+      const testId = `e2e-mirror-${Date.now()}`;
+      const mirrorSlotId = `${testId}-slot`;
+      const remoteRepo = path.posix.join('/tmp', testId);
+      const taskRelDir = `test/${testId}`;
+      const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks');
+      const taskDir = path.join(taskRoot, taskRelDir);
+      const taskFile = path.join(taskDir, 'TASK.md');
+      const workerArtifactsRel = path.posix.join(
+        '.sandbox/farmslot-farm/worker-task',
+        taskRelDir,
+        'artifacts',
+      );
+      const poolPath = path.join(farmslotRoot, 'pool', `${testId}.json`);
+      const largeRel = path.posix.join(workerArtifactsRel, 'large-mirror.bin');
+      const mirrorPayload = Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES * 3 + 19);
+      for (let i = 0; i < mirrorPayload.byteLength; i++) mirrorPayload[i] = i % 251;
+      const expectedHash = createHash('sha256').update(mirrorPayload).digest('hex');
+
+      await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
+      await writeFile(taskFile, '# remote mirror e2e\n');
+      await writeFile(
+        poolPath,
+        `${JSON.stringify(
+          {
+            machine,
+            project: 'farmslot-farm',
+            platform: 'cli',
+            os: 'linux',
+            host: '203.0.113.77',
+            ssh_user: 'e2e',
+            slots: [{ id: mirrorSlotId, enabled: true, repo: remoteRepo, session: mirrorSlotId }],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      try {
+        await sendNodeRequest(
+          node,
+          'fs.mkdir',
+          { root: remoteRepo, relPath: workerArtifactsRel },
+          { timeout: 30_000 },
+        );
+        let off = 0;
+        while (off < mirrorPayload.byteLength) {
+          const end = Math.min(off + FILE_TRANSFER_CHUNK_MAX_BYTES, mirrorPayload.byteLength);
+          await sendNodeRequest(
+            node,
+            'fs.writeChunk',
+            {
+              root: remoteRepo,
+              relPath: largeRel,
+              offset: off,
+              content: mirrorPayload.subarray(off, end).toString('base64'),
+              truncate: off === 0,
+            },
+            { timeout: 60_000 },
+          );
+          off = end;
+        }
+
+        let intermediateEvents = 0;
+        const sample = () => {
+          for (const t of listActiveTransfers({ runId: testId })) {
+            if (
+              t.state === 'running' &&
+              t.phase === 'mirror' &&
+              t.bytesTransferred > 0 &&
+              t.bytesTransferred < t.totalBytes
+            ) {
+              intermediateEvents += 1;
+            }
+          }
+        };
+        const mirrorPromise = refreshArtifactMirror({
+          id: testId,
+          familyId: testId,
+          parentRunId: null,
+          familyRootTicketOrPr: 'MANUAL-000095',
+          lane: 'production',
+          variant: null,
+          flowType: 'dev',
+          mode: 'interactive',
+          status: 'monitoring',
+          project: 'farmslot-farm',
+          ticketOrPr: 'MANUAL-000095',
+          slotId: mirrorSlotId,
+          branch: 'feat/manual-000095-add-file-transfer-progress',
+          taskFile,
+          steps: [],
+          decisions: [],
+          metrics: {
+            nudgeCount: 0,
+            model: null,
+            runner: null,
+            runnerSessionId: null,
+            runnerSessionPath: null,
+          },
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as import('@farmslot/protocol').Run);
+
+        let copied = 0;
+        let mirrorError: unknown;
+        let mirrorDone = false;
+        void mirrorPromise.then(
+          (n) => {
+            copied = n;
+            mirrorDone = true;
+          },
+          (err) => {
+            mirrorError = err;
+            mirrorDone = true;
+          },
+        );
+        while (!mirrorDone) {
+          sample();
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+        sample();
+        if (mirrorError) throw mirrorError;
+        if (copied < 1) throw new Error(`refreshArtifactMirror copied ${copied} (need ≥1)`);
+
+        const dest = path.join(taskDir, 'artifacts/large-mirror.bin');
+        const got = await readFile(dest);
+        const gotHash = createHash('sha256').update(got).digest('hex');
+        if (got.byteLength !== mirrorPayload.byteLength || gotHash !== expectedHash) {
+          throw new Error(
+            `artifact mirror integrity mismatch size ${got.byteLength}/${mirrorPayload.byteLength} hash ${gotHash}/${expectedHash}`,
+          );
+        }
+        if (intermediateEvents < 1) {
+          // Multi-chunk should yield intermediate samples; fail closed if none observed.
+          throw new Error(
+            `refreshArtifactMirror produced ${intermediateEvents} intermediate progress samples (need ≥1)`,
+          );
+        }
+        artifactMirror = {
+          copied,
+          size: got.byteLength,
+          sha256: gotHash,
+          intermediateEvents,
+        };
+      } finally {
+        await rm(taskDir, { recursive: true, force: true });
+        await rm(poolPath, { force: true });
+        try {
+          await sendNodeRequest(
+            node,
+            'fs.delete',
+            { root: remoteRepo, relPath: '.' },
+            { timeout: 30_000 },
+          );
+        } catch (cleanupErr) {
+          console.warn(
+            `[file-transfer] remote e2e artifact-mirror cleanup failed: ${
               cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
             }`,
           );
@@ -490,6 +667,7 @@ export async function fileTransferRemoteE2e(
         roundTripSha256Match: uploadMatch,
       },
       httpFileProxy,
+      artifactMirror,
     };
   } finally {
     // Best-effort remote cleanup

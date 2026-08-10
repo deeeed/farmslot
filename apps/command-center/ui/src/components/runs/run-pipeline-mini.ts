@@ -9,7 +9,10 @@ import {
   compactHumanGateLabel,
   reviewSegmentLabel,
 } from '../../utils/review-gate-display.js';
-import { formatPipelineTransferMeta } from '../shared/file-transfer-progress-model.js';
+import {
+  formatPipelineTransferMeta,
+  transferForPipelineNode,
+} from '../shared/file-transfer-progress-model.js';
 import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 import {
   primaryTransferForRun,
@@ -222,7 +225,9 @@ export class RunPipelineMini extends LitElement {
             extraReviews.map((s) => s.status),
             this.run,
           );
-          const transfer = this.transferProgress;
+          // Same purpose filter as the full pipeline renderer — do not attribute
+          // finalize uploads or release-artifact mirrors to package refresh.
+          const transfer = transferForPipelineNode(this.transferProgress, 'package-refresh');
           const transferTitle =
             transfer?.state === 'running'
               ? `package refresh: ${formatPipelineTransferMeta(transfer)}`

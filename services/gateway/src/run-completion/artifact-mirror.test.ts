@@ -108,6 +108,9 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   assert.equal(existsSync(path.join(taskDir, 'artifacts/stale-worker-owned.png')), false);
 });
 
+// Local-branch integrity for refreshArtifactMirror (fs.copyFile). Remote multi-chunk
+// progress + byte equality is proven by diagnostics.fileTransfer.remoteE2e.artifactMirror
+// against a connected node (see methods/file-transfer.ts).
 test('refreshArtifactMirror copies a large multi-chunk fixture with local byte equality', async (t) => {
   const { createHash } = await import('node:crypto');
   const { FILE_TRANSFER_CHUNK_MAX_BYTES } = await import('@farmslot/protocol');

@@ -104,6 +104,7 @@ export function serveBufferWithRange(
   res: ServerResponse,
   buffer: Buffer,
   mime: string,
+  extraHeaders?: Record<string, string | number>,
 ): void {
   const range = parseRequestByteRange(req, buffer.length);
   if (range === 'unsatisfiable') {
@@ -114,13 +115,17 @@ export function serveBufferWithRange(
     const length = range.end - range.start + 1;
     res.writeHead(206, {
       ...byteServingHeaders(mime, length),
+      ...(extraHeaders ?? {}),
       'Content-Range': `bytes ${range.start}-${range.end}/${buffer.length}`,
     });
     res.end(buffer.subarray(range.start, range.end + 1));
     return;
   }
 
-  res.writeHead(200, byteServingHeaders(mime, buffer.length));
+  res.writeHead(200, {
+    ...byteServingHeaders(mime, buffer.length),
+    ...(extraHeaders ?? {}),
+  });
   res.end(buffer);
 }
 

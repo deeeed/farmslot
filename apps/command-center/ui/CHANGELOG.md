@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(transfer): mini pipeline package-refresh segment uses the same purpose filter as the full renderer so finalize uploads and release-artifact mirrors are not misattributed (MANUAL-000095 self-review).
+
 - fix(transfer): bind package-refresh vs finalize pipeline nodes to distinct transfer purposes so one run transfer cannot animate both (MANUAL-000095 self-review).
 
 - fix(transfer): lazy-load gateway in the transfer store (Node renderer tests), resync banner/mini pipeline when runId/run changes, and never swallow listener exceptions (MANUAL-000095 self-review).
