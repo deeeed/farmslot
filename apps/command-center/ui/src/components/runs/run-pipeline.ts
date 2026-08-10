@@ -11,6 +11,12 @@ import type {
 import { failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import {
+  primaryTransferForRun,
+  retainFileTransferStore,
+  subscribeFileTransferStore,
+} from '../shared/file-transfer-progress-store.js';
+import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 
 import {
   activeTaskProgressStepId,
@@ -55,7 +61,10 @@ export class RunPipeline extends LitElement {
   @state() private monitorExpanded = false;
   @state() private autoExpandDone = false;
   @state() private cancelPending = false;
+  @state() private transferProgress: FileTransferUiEntry | null = null;
   private elapsedTimer: ReturnType<typeof setInterval> | null = null;
+  private _unsubTransfer: (() => void) | null = null;
+  private _releaseTransfer: (() => void) | null = null;
 
   static styles = runPipelineStyles;
 
@@ -65,6 +74,7 @@ export class RunPipeline extends LitElement {
       const runChanged = previous?.id !== this.run?.id;
       const terminal = ['done', 'failed', 'cancelled'].includes(this.run?.status ?? '');
       if (runChanged || terminal) this.cancelPending = false;
+      if (runChanged) this.transferProgress = primaryTransferForRun(this.run?.id);
     }
     if (!this.autoExpandDone && (changed.has('run') || changed.has('taskProgress'))) {
       if (this._activeTaskProgress()) {
@@ -77,6 +87,11 @@ export class RunPipeline extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this.elapsedTimer = setInterval(() => this.requestUpdate(), 1000);
+    this._releaseTransfer = retainFileTransferStore();
+    this._unsubTransfer = subscribeFileTransferStore(() => {
+      this.transferProgress = primaryTransferForRun(this.run?.id);
+    });
+    this.transferProgress = primaryTransferForRun(this.run?.id);
   }
 
   disconnectedCallback() {
@@ -85,6 +100,10 @@ export class RunPipeline extends LitElement {
       clearInterval(this.elapsedTimer);
       this.elapsedTimer = null;
     }
+    this._unsubTransfer?.();
+    this._unsubTransfer = null;
+    this._releaseTransfer?.();
+    this._releaseTransfer = null;
   }
 
   private _vis(status: RunStepStatus): RunStepStatus {
@@ -119,6 +138,39 @@ export class RunPipeline extends LitElement {
           ${this.renderSvgContent(layout)}
         </svg>
         ${this.renderRunSummary()}
+        ${this.transferProgress?.state === 'running'
+          ? html`
+              <div
+                class="pipeline-transfer-strip"
+                data-testid="pipeline-transfer-strip"
+                title=${this.transferProgress.path}
+              >
+                <span class="pipeline-transfer-label"
+                  >${this.transferProgress.phase === 'mirror'
+                    ? 'mirroring'
+                    : this.transferProgress.phase === 'upload'
+                      ? 'uploading'
+                      : 'transferring'}</span
+                >
+                <span class="pipeline-transfer-meta"
+                  >${this.transferProgress.label ?? this.transferProgress.path.split('/').pop()}
+                  ·
+                  ${this.transferProgress.totalBytes > 0
+                    ? `${Math.min(
+                        100,
+                        Math.round(
+                          (this.transferProgress.bytesTransferred /
+                            this.transferProgress.totalBytes) *
+                            100,
+                        ),
+                      )}%`
+                    : '…'}${this.transferProgress.filesTotal
+                    ? ` · ${this.transferProgress.filesCompleted ?? 0}/${this.transferProgress.filesTotal} files`
+                    : ''}</span
+                >
+              </div>
+            `
+          : nothing}
         ${this.monitorExpanded && this._activeTaskProgress() ? this.renderProgressPanel() : nothing}
       </div>
     `;
@@ -171,6 +223,7 @@ export class RunPipeline extends LitElement {
       inlineCiFixActive: this._isInlineCIFixActive(),
       monitorTaskProgress: this._monitorTaskProgress(),
       selfReviewTaskProgress: this._selfReviewTaskProgress(),
+      transferProgress: this.transferProgress,
       toggleProgressPanel: () => {
         this.monitorExpanded = !this.monitorExpanded;
       },

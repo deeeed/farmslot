@@ -47,6 +47,33 @@ export const runPipelineStyles = css`
     max-width: 100%;
   }
 
+  .pipeline-transfer-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding: 5px 8px;
+    border: 1px solid ${unsafeCSS(colors.accent)}55;
+    border-radius: ${unsafeCSS(radii.sm)};
+    background: ${unsafeCSS(colors.accent)}12;
+    font-size: 11px;
+    color: ${unsafeCSS(colors.textSecondary)};
+  }
+  .pipeline-transfer-label {
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: ${unsafeCSS(colors.accent)};
+    font-size: 10px;
+  }
+  .pipeline-transfer-meta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: ${unsafeCSS(colors.textPrimary)};
+  }
+
   .lane-label {
     font-size: 8px;
     font-weight: 600;

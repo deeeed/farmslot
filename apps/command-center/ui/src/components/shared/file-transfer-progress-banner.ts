@@ -1,12 +1,7 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import {
-  Events,
-  type FileTransferProgress,
-  type FileTransferProgressPayload,
-  Methods,
-} from '@farmslot/protocol';
+import { type FileTransferProgress, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
@@ -14,10 +9,13 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import {
   formatTransferBytes,
   type FileTransferUiEntry,
-  pruneFileTransfers,
   transferPercent,
-  upsertFileTransfer,
 } from './file-transfer-progress-model.js';
+import {
+  getFileTransfersForRun,
+  retainFileTransferStore,
+  subscribeFileTransferStore,
+} from './file-transfer-progress-store.js';
 
 @customElement('file-transfer-progress-banner')
 export class FileTransferProgressBanner extends LitElement {
@@ -29,8 +27,8 @@ export class FileTransferProgressBanner extends LitElement {
   @state() private _entries: FileTransferUiEntry[] = [];
   @state() private _cancelBusy: string | null = null;
 
-  private _unsub: (() => void) | null = null;
-  private _pruneTimer: ReturnType<typeof setInterval> | null = null;
+  private _unsubStore: (() => void) | null = null;
+  private _releaseStore: (() => void) | null = null;
 
   static override styles = css`
     :host {
@@ -167,26 +165,21 @@ export class FileTransferProgressBanner extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    this._unsub = gateway.subscribe<FileTransferProgressPayload>(
-      Events.FILE_TRANSFER_PROGRESS,
-      (progress) => this._onProgress(progress),
-    );
-    this._pruneTimer = setInterval(() => {
-      this._entries = pruneFileTransfers(this._entries);
-    }, 1000);
+    this._releaseStore = retainFileTransferStore();
+    this._unsubStore = subscribeFileTransferStore(() => this._syncFromStore());
+    this._syncFromStore();
   }
 
   override disconnectedCallback(): void {
-    this._unsub?.();
-    this._unsub = null;
-    if (this._pruneTimer) clearInterval(this._pruneTimer);
-    this._pruneTimer = null;
+    this._unsubStore?.();
+    this._unsubStore = null;
+    this._releaseStore?.();
+    this._releaseStore = null;
     super.disconnectedCallback();
   }
 
-  private _onProgress(progress: FileTransferProgress): void {
-    if (this.runId && progress.runId && progress.runId !== this.runId) return;
-    this._entries = pruneFileTransfers(upsertFileTransfer(this._entries, progress));
+  private _syncFromStore(): void {
+    this._entries = getFileTransfersForRun(this.runId || null);
   }
 
   private async _cancel(transferId: string): Promise<void> {
@@ -199,9 +192,7 @@ export class FileTransferProgressBanner extends LitElement {
   }
 
   override render() {
-    const entries = this.runId
-      ? this._entries.filter((e) => !e.runId || e.runId === this.runId)
-      : this._entries;
+    const entries = this._entries;
     if (entries.length === 0) return nothing;
     return html`
       <div
@@ -210,59 +201,63 @@ export class FileTransferProgressBanner extends LitElement {
           ? 'file-transfer-progress-inline'
           : 'file-transfer-progress-banner'}
       >
-        ${entries.map((entry) => {
-          const pct = transferPercent(entry);
-          const name = entry.label || entry.path.split('/').pop() || entry.path;
-          const files =
-            entry.filesTotal != null && entry.filesTotal > 0
-              ? ` · file ${entry.filesCompleted ?? 0}/${entry.filesTotal}`
-              : '';
-          return html`
-            <div
-              class="ftp-card"
-              data-testid="file-transfer-progress-card"
-              data-transfer-id=${entry.transferId}
-              data-state=${entry.state}
-              data-phase=${entry.phase}
-            >
-              <div class="ftp-header">
-                <div class="ftp-title" title=${entry.path}>${name}</div>
-                <span class="ftp-status ${entry.state}">${entry.state}</span>
-              </div>
-              <div class="ftp-meta">
-                ${formatTransferBytes(entry.bytesTransferred)} /
-                ${formatTransferBytes(entry.totalBytes)} (${pct}%)${files}
-              </div>
-              <div
-                class="ftp-bar ${entry.state}"
-                role="progressbar"
-                aria-valuenow=${pct}
-                aria-valuemin="0"
-                aria-valuemax="100"
+        ${entries.map((entry) => this._renderCard(entry))}
+      </div>
+    `;
+  }
+
+  private _renderCard(entry: FileTransferUiEntry) {
+    const pct = transferPercent(entry);
+    const name = entry.label || entry.path.split('/').pop() || entry.path;
+    const files =
+      entry.filesTotal != null && entry.filesTotal > 0
+        ? ` · file ${entry.filesCompleted ?? 0}/${entry.filesTotal}`
+        : '';
+    return html`
+      <div
+        class="ftp-card"
+        data-testid="file-transfer-progress-card"
+        data-transfer-id=${entry.transferId}
+        data-state=${entry.state}
+        data-phase=${entry.phase}
+      >
+        <div class="ftp-header">
+          <div class="ftp-title" title=${entry.path}>${name}</div>
+          <span class="ftp-status ${entry.state}">${entry.state}</span>
+        </div>
+        <div class="ftp-meta">
+          ${formatTransferBytes(entry.bytesTransferred)} /
+          ${formatTransferBytes(entry.totalBytes)} (${pct}%)${files}
+        </div>
+        <div
+          class="ftp-bar ${entry.state}"
+          role="progressbar"
+          aria-valuenow=${pct}
+          aria-valuemin="0"
+          aria-valuemax="100"
+        >
+          <span style="width: ${pct}%"></span>
+        </div>
+        <div class="ftp-phase">
+          <span
+            >phase: ${entry.phase}${entry.runId ? ` · run ${entry.runId.slice(0, 8)}` : ''}</span
+          >
+          ${entry.state === 'running' && entry.cancellable !== false
+            ? html`<button
+                class="ftp-cancel"
+                data-testid="file-transfer-cancel"
+                ?disabled=${this._cancelBusy === entry.transferId}
+                @click=${() => void this._cancel(entry.transferId)}
               >
-                <span style="width: ${pct}%"></span>
-              </div>
-              <div class="ftp-phase">
-                <span>phase: ${entry.phase}${entry.runId ? ` · run ${entry.runId.slice(0, 8)}` : ''}</span>
-                ${entry.state === 'running' && entry.cancellable !== false
-                  ? html`<button
-                      class="ftp-cancel"
-                      data-testid="file-transfer-cancel"
-                      ?disabled=${this._cancelBusy === entry.transferId}
-                      @click=${() => void this._cancel(entry.transferId)}
-                    >
-                      cancel
-                    </button>`
-                  : nothing}
-              </div>
-              ${entry.error
-                ? html`<div class="ftp-error" data-testid="file-transfer-progress-error">
-                    ${entry.error}
-                  </div>`
-                : nothing}
-            </div>
-          `;
-        })}
+                cancel
+              </button>`
+            : nothing}
+        </div>
+        ${entry.error
+          ? html`<div class="ftp-error" data-testid="file-transfer-progress-error">
+              ${entry.error}
+            </div>`
+          : nothing}
       </div>
     `;
   }
@@ -273,3 +268,6 @@ declare global {
     'file-transfer-progress-banner': FileTransferProgressBanner;
   }
 }
+
+// Keep type import used for documentation / future typed casts
+export type { FileTransferProgress };

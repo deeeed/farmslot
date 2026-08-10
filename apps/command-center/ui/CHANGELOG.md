@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(transfer): show live file-transfer progress on the pipeline package-refresh and publish nodes (and mini bar titles), plus a strip under the canvas while a transfer is running for that run (MANUAL-000095).
 - feat(transfer): cancel control, multi-file counts, run-detail inline transfer panel (MANUAL-000095 follow-up).
 
 - feat(transfer): determinate file-transfer progress banner (filename, bytes/percent, phase, failed) driven by `file.transfer.progress` events (MANUAL-000095).
