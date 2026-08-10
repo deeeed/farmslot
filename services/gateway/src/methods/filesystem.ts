@@ -695,7 +695,7 @@ export async function serveFile(req: IncomingMessage, res: ServerResponse): Prom
     }
 
     const repoPath = await resolveRepoPath(slotId);
-    const { isLocal, machine } = await getSlotLocality(slotId);
+    const { isLocal } = await getSlotLocality(slotId);
     const mime = mimeForPath(filePath);
 
     if (isLocal) {
@@ -705,18 +705,35 @@ export async function serveFile(req: IncomingMessage, res: ServerResponse): Prom
       const stats = await handle.stat();
       serveLocalFileWithRange(req, res, handle, mime, stats.size);
     } else {
-      // Remote: read via node fs.readBase64
-      const node = getNode(machine);
-      if (!node) throw new Error(`No node connected for machine ${machine}`);
-      const result = (await sendNodeRequest(node, 'fs.readBase64', {
-        root: repoPath,
-        relPath: filePath,
-        maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
-      })) as {
-        content: string;
-      };
-      const buf = Buffer.from(result.content, 'base64');
-      serveBufferWithRange(req, res, buf, mime);
+      // Remote: progress-aware chunked read (small files still one-shot inside helper).
+      // Preserve repo root confinement — never collapse node RPC root to `/`.
+      const { slotReadFileBuffer } = await import('../core/slot-io.js');
+      const vars = await (await import('../core/config.js')).loadSlotVars(slotId);
+      const remoteRoot = repoPath.replace(/\\/g, '/').replace(/\/+$/, '');
+      const remoteRel = filePath.replace(/^\/+/, '');
+      const remoteAbs = path.posix.join(remoteRoot, remoteRel);
+      let transferMode = 'unknown';
+      let readChunkCount = 0;
+      const buf = await slotReadFileBuffer(
+        { host: vars.host, machine: vars.machine, sshTarget: vars.sshTarget },
+        remoteAbs,
+        {
+          root: remoteRoot,
+          relPath: remoteRel,
+          label: path.basename(filePath),
+          phase: 'download',
+          slotId,
+          maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
+          onTransport: (info) => {
+            transferMode = info.mode;
+            readChunkCount = info.readChunkCount;
+          },
+        },
+      );
+      serveBufferWithRange(req, res, buf, mime, {
+        'X-Farmslot-Transfer-Mode': transferMode,
+        'X-Farmslot-Read-Chunk-Count': String(readChunkCount),
+      });
     }
   } catch (err) {
     const error = err as NodeJS.ErrnoException;
@@ -898,13 +915,34 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
           slotRelativePath,
         );
         if (!remoteTargetPath) throw new Error('Path traversal not allowed');
-        const result = (await sendNodeRequest(node, 'fs.readBase64', {
-          root: normalizedRemoteBasePath,
-          relPath: slotRelativePath,
-          maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
-        })) as { content: string; size: number };
-        const buffer = Buffer.from(result.content, 'base64');
-        serveBufferWithRange(req, res, buffer, mime);
+        const { slotReadFileBuffer } = await import('../core/slot-io.js');
+        const vars = await (await import('../core/config.js')).loadSlotVars(run.slotId!);
+        const remoteRoot = normalizedRemoteBasePath.replace(/\\/g, '/').replace(/\/+$/, '');
+        const remoteRel = slotRelativePath.replace(/^\/+/, '');
+        const remoteAbs = path.posix.join(remoteRoot, remoteRel);
+        let transferMode = 'unknown';
+        let readChunkCount = 0;
+        const buffer = await slotReadFileBuffer(
+          { host: vars.host, machine: vars.machine, sshTarget: vars.sshTarget },
+          remoteAbs,
+          {
+            root: remoteRoot,
+            relPath: remoteRel,
+            label: path.basename(slotRelativePath),
+            phase: 'download',
+            runId,
+            slotId: run.slotId ?? undefined,
+            maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
+            onTransport: (info) => {
+              transferMode = info.mode;
+              readChunkCount = info.readChunkCount;
+            },
+          },
+        );
+        serveBufferWithRange(req, res, buffer, mime, {
+          'X-Farmslot-Transfer-Mode': transferMode,
+          'X-Farmslot-Read-Chunk-Count': String(readChunkCount),
+        });
       };
 
       if (Number.isFinite(expectedSize) && (expectedSize as number) > 0 && run.slotId) {
@@ -1000,15 +1038,34 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
       (error as NodeJS.ErrnoException).code = 'EACCES';
       throw error;
     }
-    const result = (await sendNodeRequest(node, 'fs.readBase64', {
-      root: normalizedRemoteBasePath,
-      relPath: relativePath,
-      maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
-    })) as {
-      content: string;
-    };
-    const buffer = Buffer.from(result.content, 'base64');
-    serveBufferWithRange(req, res, buffer, mime);
+    const { slotReadFileBuffer } = await import('../core/slot-io.js');
+    const vars = await (await import('../core/config.js')).loadSlotVars(run.slotId);
+    const remoteRoot = normalizedRemoteBasePath.replace(/\\/g, '/').replace(/\/+$/, '');
+    const remoteRel = relativePath.replace(/^\/+/, '');
+    const remoteAbs = path.posix.join(remoteRoot, remoteRel);
+    let transferMode = 'unknown';
+    let readChunkCount = 0;
+    const buffer = await slotReadFileBuffer(
+      { host: vars.host, machine: vars.machine, sshTarget: vars.sshTarget },
+      remoteAbs,
+      {
+        root: remoteRoot,
+        relPath: remoteRel,
+        label: path.basename(relativePath),
+        phase: 'download',
+        runId,
+        slotId: run.slotId,
+        maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
+        onTransport: (info) => {
+          transferMode = info.mode;
+          readChunkCount = info.readChunkCount;
+        },
+      },
+    );
+    serveBufferWithRange(req, res, buffer, mime, {
+      'X-Farmslot-Transfer-Mode': transferMode,
+      'X-Farmslot-Read-Chunk-Count': String(readChunkCount),
+    });
   } catch (err) {
     const error = err as NodeJS.ErrnoException;
     const message = error.message || String(err);

@@ -5,13 +5,16 @@ import { access, lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 
 import { dirname, isAbsolute, join, posix, resolve, sep } from 'node:path';
 
 import { expandTilde, type FileWatchHandle, watchFile } from '@farmslot/capabilities/fs-watch';
-import type {
-  NodeFsPathParams,
-  NodeFsReadBase64Params,
-  NodeFsRenameParams,
-  NodeFsWriteFileEntry,
-  NodeFsWriteFilesParams,
-  NodeFsWriteParams,
+import {
+  FILE_TRANSFER_CHUNK_MAX_BYTES,
+  type NodeFsPathParams,
+  type NodeFsReadBase64Params,
+  type NodeFsReadChunkParams,
+  type NodeFsReadChunkResult,
+  type NodeFsRenameParams,
+  type NodeFsWriteFileEntry,
+  type NodeFsWriteFilesParams,
+  type NodeFsWriteParams,
 } from '@farmslot/protocol';
 
 export interface FsEntry {
@@ -187,6 +190,111 @@ export async function fsReadBase64(
     }
     const buf = await handle.readFile();
     return { content: buf.toString('base64'), size: info.size };
+  } catch (error) {
+    return actionableNoFollowError(error, params.relPath);
+  } finally {
+    await handle?.close();
+  }
+}
+
+/**
+ * Read a bounded byte range as base64 for progress-aware large transfers.
+ * Fail-closed: `length` must not exceed FILE_TRANSFER_CHUNK_MAX_BYTES so frames
+ * stay well under the gateway WebSocket max payload.
+ */
+export async function fsReadChunk(params: NodeFsReadChunkParams): Promise<NodeFsReadChunkResult> {
+  if (!Number.isInteger(params.offset) || params.offset < 0) {
+    throw new Error(`fs.readChunk offset must be a non-negative integer (got ${params.offset})`);
+  }
+  if (!Number.isInteger(params.length) || params.length <= 0) {
+    throw new Error(`fs.readChunk length must be a positive integer (got ${params.length})`);
+  }
+  if (params.length > FILE_TRANSFER_CHUNK_MAX_BYTES) {
+    throw new Error(
+      `fs.readChunk length ${params.length} exceeds FILE_TRANSFER_CHUNK_MAX_BYTES (${FILE_TRANSFER_CHUNK_MAX_BYTES})`,
+    );
+  }
+  const { target } = confinedPath(params);
+  let handle;
+  try {
+    handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const info = await handle.stat();
+    if (params.offset > info.size) {
+      throw new Error(
+        `fs.readChunk offset ${params.offset} beyond file size ${info.size} for ${params.relPath}`,
+      );
+    }
+    const toRead = Math.min(params.length, info.size - params.offset);
+    const buf = Buffer.alloc(toRead);
+    const { bytesRead } = await handle.read(buf, 0, toRead, params.offset);
+    const slice = bytesRead === toRead ? buf : buf.subarray(0, bytesRead);
+    return {
+      content: slice.toString('base64'),
+      size: info.size,
+      offset: params.offset,
+      bytesRead,
+      eof: params.offset + bytesRead >= info.size,
+      encoding: 'base64',
+    };
+  } catch (error) {
+    return actionableNoFollowError(error, params.relPath);
+  } finally {
+    await handle?.close();
+  }
+}
+
+/**
+ * Write a bounded base64 chunk at an absolute offset. offset=0 with truncate creates/truncates.
+ * Subsequent chunks append/overwrite at offset under path confinement.
+ */
+export async function fsWriteChunk(params: {
+  root: string;
+  relPath: string;
+  offset: number;
+  content: string;
+  truncate?: boolean;
+  /** Applied on create and after write so reused files keep the requested mode. */
+  mode?: number;
+}): Promise<{ ok: true; bytesWritten: number; offset: number }> {
+  if (!Number.isInteger(params.offset) || params.offset < 0) {
+    throw new Error(`fs.writeChunk offset must be a non-negative integer (got ${params.offset})`);
+  }
+  const { target } = confinedPath(params);
+  const buf = Buffer.from(params.content, 'base64');
+  if (buf.byteLength > FILE_TRANSFER_CHUNK_MAX_BYTES) {
+    throw new Error(
+      `fs.writeChunk payload ${buf.byteLength} exceeds FILE_TRANSFER_CHUNK_MAX_BYTES (${FILE_TRANSFER_CHUNK_MAX_BYTES})`,
+    );
+  }
+  const createMode =
+    typeof params.mode === 'number' && Number.isInteger(params.mode) ? params.mode : 0o666;
+  let handle;
+  try {
+    const flags =
+      params.truncate || params.offset === 0
+        ? constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW
+        : constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW;
+    handle = await open(target, flags, createMode);
+    // Loop until the full buffer is written — FileHandle.write may return a short write.
+    let written = 0;
+    while (written < buf.byteLength) {
+      const result = await handle.write(
+        buf,
+        written,
+        buf.byteLength - written,
+        params.offset + written,
+      );
+      if (result.bytesWritten <= 0) {
+        throw new Error(
+          `fs.writeChunk short write at offset ${params.offset + written} (0 bytes)`,
+        );
+      }
+      written += result.bytesWritten;
+    }
+    if (typeof params.mode === 'number' && Number.isInteger(params.mode)) {
+      await handle.chmod(params.mode);
+    }
+    return { ok: true, bytesWritten: written, offset: params.offset };
   } catch (error) {
     return actionableNoFollowError(error, params.relPath);
   } finally {

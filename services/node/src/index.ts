@@ -23,6 +23,7 @@ import {
   fsMkdir,
   fsRead,
   fsReadBase64,
+  fsReadChunk,
   fsRealpath,
   fsRename,
   fsStat,
@@ -30,6 +31,7 @@ import {
   fsWatchStop,
   fsWatchStopAll,
   fsWrite,
+  fsWriteChunk,
   fsWriteFiles,
 } from './commands/fs.js';
 import {
@@ -441,6 +443,31 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
         const relPath = requireString(params, 'relPath');
         const maxBytes = typeof params.maxBytes === 'number' ? params.maxBytes : undefined;
         const result = await fsReadBase64({ root, relPath, maxBytes });
+        sendResponse(frame.id, true, result);
+        break;
+      }
+
+      case 'fs.readChunk': {
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const offset = requireNumber(params, 'offset');
+        const length = requireNumber(params, 'length');
+        const result = await fsReadChunk({ root, relPath, offset, length });
+        sendResponse(frame.id, true, result);
+        break;
+      }
+
+      case 'fs.writeChunk': {
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const offset = requireNumber(params, 'offset');
+        const content = requireString(params, 'content');
+        const truncate = params.truncate === true;
+        const mode =
+          typeof params.mode === 'number' && Number.isInteger(params.mode)
+            ? params.mode
+            : undefined;
+        const result = await fsWriteChunk({ root, relPath, offset, content, truncate, mode });
         sendResponse(frame.id, true, result);
         break;
       }

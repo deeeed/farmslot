@@ -83,11 +83,21 @@ export async function copyWorkerArtifacts(runId: string): Promise<void> {
   await slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
     excludeTopLevel: [...REVIEW_GATE_ARTIFACT_COPY_EXCLUDES, ...gatewayOwnedExcludes],
     excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
+    // Stamp run/slot so package-refresh / run-detail transfer UI can bind progress.
+    phase: 'mirror',
+    runId,
+    slotId: run.slotId ?? vars.slotId,
+    labelPrefix: 'review-artifacts',
   });
 
   const workerTask = path.join(workerTaskDir, 'TASK.md');
   if (await slotFileExists(vars, workerTask)) {
-    await slotCopyFile(vars, workerTask, path.join(taskDir, 'TASK.md.worker'));
+    await slotCopyFile(vars, workerTask, path.join(taskDir, 'TASK.md.worker'), {
+      phase: 'mirror',
+      runId,
+      slotId: run.slotId ?? vars.slotId,
+      label: 'TASK.md.worker',
+    });
   }
   console.log(`[run-engine] copied worker artifacts for ${runId.slice(0, 8)}`);
 }

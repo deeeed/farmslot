@@ -58,6 +58,8 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `credential.revoke`                  | admin          |                                                          |
 | `decision.list`                      | admin          | scans task directories and reads decision artifacts      |
 | `decision.resolve`                   | admin          |                                                          |
+| `diagnostics.fileTransfer.remoteE2e` | admin          |                                                          |
+| `diagnostics.fileTransfer.smoke`     | admin          |                                                          |
 | `diagnostics.run`                    | admin          |                                                          |
 | `dispatch.candidates`                | admin          |                                                          |
 | `dispatch.matchProject`              | admin          |                                                          |
@@ -75,6 +77,9 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `eval.trial.start`                   | admin          |                                                          |
 | `family.observability.get`           | admin          | scans and reads task artifacts by pathname               |
 | `family.report.generate`             | admin          | reads artifacts and may launch an unsandboxed report CLI |
+| `file.transfer.cancel`               | admin          |                                                          |
+| `file.transfer.list`                 | admin          |                                                          |
+| `file.transfer.smoke`                | admin          |                                                          |
 | `finetune.exportDPO`                 | admin          |                                                          |
 | `finetune.exportSFT`                 | admin          |                                                          |
 | `finetune.index`                     | admin          |                                                          |

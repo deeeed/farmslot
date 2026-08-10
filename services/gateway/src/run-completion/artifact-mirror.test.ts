@@ -108,6 +108,66 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   assert.equal(existsSync(path.join(taskDir, 'artifacts/stale-worker-owned.png')), false);
 });
 
+// Local-branch integrity for refreshArtifactMirror (fs.copyFile). Remote multi-chunk
+// progress + byte equality is proven by diagnostics.fileTransfer.remoteE2e.artifactMirror
+// against a connected node (see methods/file-transfer.ts).
+test('refreshArtifactMirror copies a large multi-chunk fixture with local byte equality', async (t) => {
+  const { createHash } = await import('node:crypto');
+  const { FILE_TRANSFER_CHUNK_MAX_BYTES } = await import('@farmslot/protocol');
+  const testId = `mirror-large-${process.pid}-${Date.now()}`;
+  const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
+  const workerRepo = await mkdtemp(path.join(tmpdir(), `${testId}-worker-`));
+  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks');
+  const taskRelDir = `test/${testId}`;
+  const taskDir = path.join(taskRoot, taskRelDir);
+  const taskFile = path.join(taskDir, 'TASK.md');
+  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot-farm/worker-task', taskRelDir);
+  const slotId = `${testId}-slot`;
+  t.after(async () => {
+    await rm(taskDir, { recursive: true, force: true });
+    await rm(workerRepo, { recursive: true, force: true });
+    await rm(poolFile, { force: true });
+  });
+
+  await mkdir(path.join(workerTaskDir, 'artifacts'), { recursive: true });
+  await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
+  await writeFile(taskFile, '# large mirror test\n');
+  await writeFile(path.join(workerTaskDir, 'TASK.md'), '# large mirror test\n');
+  // Multi-chunk-sized fixture — production refreshArtifactMirror path must preserve bytes.
+  const large = Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES * 3 + 17);
+  for (let i = 0; i < large.byteLength; i++) large[i] = i % 251;
+  const largePath = path.join(workerTaskDir, 'artifacts/large-mirror.bin');
+  await writeFile(largePath, large);
+  const expectedHash = createHash('sha256').update(large).digest('hex');
+
+  await writeFile(
+    poolFile,
+    JSON.stringify(
+      {
+        machine: 'localhost',
+        project: 'farmslot-farm',
+        platform: 'cli',
+        os: 'darwin',
+        host: 'localhost',
+        ssh_user: userInfo().username,
+        slots: [{ id: slotId, enabled: true, repo: workerRepo, session: slotId }],
+      },
+      null,
+      2,
+    ),
+  );
+
+  const copied = await refreshArtifactMirror(
+    makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile }),
+  );
+  assert.ok(copied >= 1);
+  const dest = path.join(taskDir, 'artifacts/large-mirror.bin');
+  assert.equal(existsSync(dest), true);
+  const got = await readFile(dest);
+  assert.equal(got.byteLength, large.byteLength);
+  assert.equal(createHash('sha256').update(got).digest('hex'), expectedHash);
+});
+
 test('shouldClearLocalRecipeRunCache only clears when the worker pointer is truly absent', () => {
   assert.equal(shouldClearLocalRecipeRunCache(false, null), true);
   assert.equal(shouldClearLocalRecipeRunCache(true, null), false);

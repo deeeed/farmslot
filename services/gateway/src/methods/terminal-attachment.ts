@@ -27,7 +27,7 @@ import {
   slotListDir,
   slotMkdir,
   slotStat,
-  slotWriteFiles,
+  slotWriteFileBuffer,
 } from '../core/index.js';
 import {
   getRunnerAttachmentProvider,
@@ -215,9 +215,13 @@ export async function terminalAttachmentUpload(
   // attachment therefore re-stages identical bytes instead of creating a second target
   // the UI could deliver twice.
   const reused = await slotFileExists(vars, storedPath);
-  await slotWriteFiles(vars, dir, [
-    { path: storedName, content: bytes.toString('base64'), mode: 0o600 },
-  ]);
+  // Progress-aware chunked upload; keep prior private 0o600 attachment contract.
+  await slotWriteFileBuffer(vars, storedPath, bytes, {
+    label: storedName,
+    phase: 'upload',
+    slotId: params.slotId,
+    mode: 0o600,
+  });
 
   const sha256 = sha256Hex(bytes);
   stagedTargets.set(storedPath, { slotId: params.slotId, target });

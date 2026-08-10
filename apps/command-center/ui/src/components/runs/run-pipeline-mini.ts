@@ -1,5 +1,5 @@
-import { css, html, LitElement, unsafeCSS } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { css, html, LitElement, type PropertyValues, unsafeCSS } from 'lit';
+import { customElement, property, state } from 'lit/decorators.js';
 
 import type { FlowType, Run, RunStep } from '@farmslot/protocol';
 
@@ -9,6 +9,16 @@ import {
   compactHumanGateLabel,
   reviewSegmentLabel,
 } from '../../utils/review-gate-display.js';
+import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
+import {
+  formatPipelineTransferMeta,
+  transferForPipelineNode,
+} from '../shared/file-transfer-progress-model.js';
+import {
+  primaryTransferForRun,
+  retainFileTransferStore,
+  subscribeFileTransferStore,
+} from '../shared/file-transfer-progress-store.js';
 
 import {
   computePackageRefreshStatus,
@@ -32,6 +42,37 @@ export class RunPipelineMini extends LitElement {
   @property({ attribute: false }) run?: Run;
   @property({ attribute: false }) steps: RunStep[] = [];
   @property() flowType: FlowType = 'fix-bug';
+  @state() private transferProgress: FileTransferUiEntry | null = null;
+
+  private _unsubTransfer: (() => void) | null = null;
+  private _releaseTransfer: (() => void) | null = null;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this._releaseTransfer = retainFileTransferStore();
+    this._unsubTransfer = subscribeFileTransferStore(() => {
+      this.transferProgress = primaryTransferForRun(this.run?.id);
+    });
+    this.transferProgress = primaryTransferForRun(this.run?.id);
+  }
+
+  override disconnectedCallback(): void {
+    this._unsubTransfer?.();
+    this._unsubTransfer = null;
+    this._releaseTransfer?.();
+    this._releaseTransfer = null;
+    super.disconnectedCallback();
+  }
+
+  override willUpdate(changed: PropertyValues): void {
+    // List rows reuse the element; recompute when the bound run changes.
+    if (changed.has('run')) {
+      const previous = changed.get('run') as Run | undefined;
+      if (previous?.id !== this.run?.id) {
+        this.transferProgress = primaryTransferForRun(this.run?.id);
+      }
+    }
+  }
 
   static styles = css`
     :host {
@@ -184,18 +225,28 @@ export class RunPipelineMini extends LitElement {
             extraReviews.map((s) => s.status),
             this.run,
           );
+          // Same purpose filter as the full pipeline renderer — do not attribute
+          // finalize uploads or release-artifact mirrors to package refresh.
+          const transfer = transferForPipelineNode(this.transferProgress, 'package-refresh');
+          const transferTitle =
+            transfer?.state === 'running'
+              ? `package refresh: ${formatPipelineTransferMeta(transfer)}`
+              : null;
           segments.push({
             name: 'package refresh',
-            status: refreshStatus,
+            status: transfer?.state === 'running' ? 'running' : refreshStatus,
             title:
-              refreshStatus === 'pending'
+              transferTitle ??
+              (refreshStatus === 'pending'
                 ? 'package refresh: waiting for review/fix before rebuild'
-                : 'package refresh: rebuild package after requested review',
+                : 'package refresh: rebuild package after requested review'),
             outputs: lastVerdict ? { lastReviewVerdict: lastVerdict } : undefined,
             detail:
-              refreshStatus === 'pending'
-                ? 'waiting for review/fix before package rebuild'
-                : undefined,
+              transfer?.state === 'running'
+                ? formatPipelineTransferMeta(transfer)
+                : refreshStatus === 'pending'
+                  ? 'waiting for review/fix before package rebuild'
+                  : undefined,
           });
         }
       }

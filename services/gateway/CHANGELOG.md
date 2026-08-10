@@ -4,6 +4,24 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(transfer): preserve bounded root/relPath on remote HTTP artifact reads; clean drain/error listeners under multi-chunk backpressure; observe HTTP chunk mode via response headers; prove remote `refreshArtifactMirror` with progress + byte equality (MANUAL-000095 self-review).
+
+- fix(transfer): real isolated-pool `/api/file` remote e2e; preserve not-a-file stat errors; yield before aggregate complete; large refreshArtifactMirror integrity test (MANUAL-000095 self-review).
+
+- fix(transfer): align buffer/proxy chunked reads with copy idle race and chunk bounds; remote e2e counts production onProgress only and never rewrites shared pool JSON (MANUAL-000095 self-review).
+
+- fix(transfer): stage large downloads to a sibling partial and atomically replace only after integrity; preserve prior-good finals on fail/cancel; race hung chunk reads for idle last-progress errors; restore 0o600 on progress-aware attachment writes (MANUAL-000095 self-review).
+
+- fix(transfer): honor aggregate cancel (abort between files), keep unknown-size aggregates indeterminate, precompute dir totals, validate writeChunk bytesWritten, route terminal attachments through slotWriteFileBuffer, and add forceFail smoke for failed UI proof (MANUAL-000095 self-review).
+
+- fix(transfer): restore intermediate progress broadcasts, reject truncated chunked buffer reads, fail/unregister aggregate dir sessions, wire upload cancel + aggregate byte progress, and keep HTTP 413 oversize mapping under `slotReadFileBuffer` (MANUAL-000095 self-review).
+
+- fix(transfer): stamp runId/slotId/phase on review-gate and slot-release artifact copies so pipeline transfer UI can bind (MANUAL-000095).
+
+- feat(transfer): cancel/list, size-scaled idle, resume partials, aggregate dir progress, chunked HTTP artifact proxy, remote upload progress, throttled broadcasts, node hash verify (MANUAL-000095 follow-up).
+
+- feat(transfer): progress-aware chunked remote `slotCopyFile` / artifact mirror copies — `file.transfer.progress` events, idle/heartbeat timeouts instead of a fixed 30s wall clock, integrity checks, and admin `file.transfer.smoke` for multi-chunk proof (MANUAL-000095).
+
 - fix(review): fix→re-review rounds resume the warm reviewer session by default (`warm-per-reviewer`) instead of relaunching a cold reviewer every pass; automatic publication reviews with a valid verdict now also keep their reviewer session claimable for human-gate continuation. Set `self_review.session_policy: "fresh-per-pass"` to opt out per project.
 
 - feat(prepare): provision checkout-local `.env.ports` from pool-owned slot resources — slots that declare `resources.dev-server.vite_port` get the file written before the sandbox preflight, with operator-port collisions refused (MANUAL-000085).

@@ -4,6 +4,16 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(transfer): remote e2e result carries HTTP `readChunkCount`/`transferMode` and production `artifactMirror` progress proof fields (MANUAL-000095 self-review).
+
+- feat(fs): optional `mode` on `NodeFsWriteChunkParams` for private remote writes (MANUAL-000095 self-review).
+
+- feat(transfer): diagnostics smoke `forceFail` + result `failed` for failed-state UI proof (MANUAL-000095 self-review).
+
+- feat(transfer): cancel/list RPC, size-scaled idle timeout, aggregate file counts, diagnostics smoke rename, cancelled state (MANUAL-000095 follow-up).
+
+- feat(transfer): chunked file-transfer contract — `FILE_TRANSFER_CHUNK_MAX_BYTES`, small-file threshold, idle timeout, `FileTransferProgress` event payload, `file.transfer.smoke` method, and `fs.readChunk` node params (MANUAL-000095).
+
 - feat(review)!: `DEFAULT_REVIEW_SESSION_POLICY` is now `warm-per-reviewer` — after a worker fixes findings, the re-review resumes the reviewer session instead of rebuilding the review; first passes stay cold and no-reload runners fall back to cold.
 
 - feat(runs): `LearningsDraftPayload` (`kind: 'learnings-draft'`) with antipattern drafts, teaching holds, and inbox receipt status; `ImprovementApplyResult.refused` gains `out-of-project` (MANUAL-000075).

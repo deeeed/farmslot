@@ -4,6 +4,16 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- fix(fs): enforce `FILE_TRANSFER_CHUNK_MAX_BYTES` fail-closed on `fs.readChunk` length and `fs.writeChunk` payload (MANUAL-000095 self-review).
+
+- fix(fs): `fs.writeChunk` accepts optional `mode` (applied on create + chmod) so private attachments can stay 0o600 (MANUAL-000095 self-review).
+
+- fix(fs): `fs.writeChunk` loops until the full buffer is written and returns actual `bytesWritten` (MANUAL-000095 self-review).
+
+- feat(fs): `fs.writeChunk` for progress-aware remote uploads (MANUAL-000095 follow-up).
+
+- feat(fs): `fs.readChunk` — confined ranged base64 reads for progress-aware large transfers (MANUAL-000095).
+
 - fix(auth): back off to the reconnect ceiling on deterministic auth rejections (node-subject required / auth failed) instead of spinning at 500ms, and print the credential-issue fix line once per rejection; backoff now resets on successful auth, not on socket open (MANUAL-000103).
 - feat(auth): re-resolve the gateway credential on every reconnect and prefer the freshly written `.env.local-auth` node token over stale inherited launch credentials, so activation and node credential rotation take effect without restarting the node.
 - feat(fs): report `mtimeMs` from `fs.stat` so the gateway can bound its stale-attachment sweep on remote slots.

@@ -8,6 +8,7 @@ export * from './decisions.js';
 export * from './diagnostics.js';
 export * from './dispatch.js';
 export * from './eval.js';
+export * from './file-transfer.js';
 export * from './fleet.js';
 export * from './fs.js';
 export * from './gateway.js';

@@ -3,6 +3,12 @@ import { nothing, svg } from 'lit';
 import type { Run, RunStep, RunStepStatus, TaskProgressStructured } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
+import {
+  type FileTransferUiEntry,
+  formatPipelineTransferMeta,
+  transferForPipelineNode,
+  transferPercent as fileTransferPercent,
+} from '../shared/file-transfer-progress-model.js';
 
 import { NODE_H, type NodePos } from './run-pipeline-model.js';
 import {
@@ -18,6 +24,8 @@ export interface RunPipelineSpecialNodeRenderContext {
   inlineCiFixActive: boolean;
   monitorTaskProgress: TaskProgressStructured | undefined;
   selfReviewTaskProgress: TaskProgressStructured | undefined;
+  /** Active/recent file transfer for this run (mirror/upload during package refresh). */
+  transferProgress?: FileTransferUiEntry | null;
   toggleProgressPanel: () => void;
   onStepSelect: (step: RunStep) => void;
 }
@@ -361,34 +369,43 @@ export function renderPackageRefreshPipelineNode(
   const isDone = vis === 'done';
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
+  const transfer = transferForPipelineNode(ctx.transferProgress, 'package-refresh');
+  const transferActive = transfer?.state === 'running';
   const tone = pipelineStepTone(n.step, { runError: ctx.run.error });
-  const { fill: fillColor, stroke: strokeColor } =
-    tone === 'ok' || tone === 'warn' || tone === 'fail'
+  const { fill: fillColor, stroke: strokeColor } = transferActive
+    ? { fill: '#3b82f618', stroke: '#3b82f6' }
+    : tone === 'ok' || tone === 'warn' || tone === 'fail'
       ? pipelineToneFillStroke(tone)
       : { fill: '#3b82f610', stroke: '#3b82f688' };
   const timing = stepTiming(n.step);
-  const metaLabel = isDone
-    ? 'updated'
-    : isPending
-      ? 'waiting on review'
-      : tone === 'warn'
-        ? 'rework'
-        : isFailed
-          ? 'failed'
-          : 'after requested review';
+  const metaLabel = transfer
+    ? formatPipelineTransferMeta(transfer)
+    : isDone
+      ? 'updated'
+      : isPending
+        ? 'waiting on review'
+        : tone === 'warn'
+          ? 'rework'
+          : isFailed
+            ? 'failed'
+            : 'after requested review';
+  const pct = transfer ? fileTransferPercent(transfer) : 0;
+  const barW = Math.max(0, Math.min(n.w - 16, ((n.w - 16) * pct) / 100));
   return svg`
     <g transform="translate(${n.x}, ${n.y})"
-       style="opacity: ${isPending ? 0.72 : 1}; cursor: pointer"
+       style="opacity: ${isPending && !transferActive ? 0.72 : 1}; cursor: pointer"
+       data-testid="pipeline-package-refresh-node"
+       data-transfer-active=${transferActive ? 'true' : 'false'}
        @click=${() => ctx.onStepSelect(n.step)}>
       <rect width="${n.w}" height="${NODE_H}" rx="6"
-            fill="${fillColor}" stroke="${strokeColor}" stroke-dasharray="${isPending ? '4 3' : 'none'}"/>
+            fill="${fillColor}" stroke="${strokeColor}" stroke-dasharray="${isPending && !transferActive ? '4 3' : 'none'}"/>
       <text class="node-label" x="8" y="11"
             dominant-baseline="central"
             fill="${colors.textPrimary}">
         package refresh
       </text>
       ${
-        timing
+        timing && !transferActive
           ? svg`
         <text class="node-elapsed" x="${n.w - 8}" y="11"
               text-anchor="end" dominant-baseline="central"
@@ -400,9 +417,27 @@ export function renderPackageRefreshPipelineNode(
       }
       <text class="node-meta" x="${n.w / 2}" y="27"
             text-anchor="middle" dominant-baseline="central"
-            fill="${isDone || isFailed || tone === 'warn' ? pipelineToneColor(tone === 'muted' ? (isDone ? 'ok' : 'fail') : tone) : colors.textSecondary}">
+            data-testid="pipeline-package-refresh-transfer-meta"
+            fill="${
+              transferActive
+                ? colors.accent
+                : isDone || isFailed || tone === 'warn'
+                  ? pipelineToneColor(tone === 'muted' ? (isDone ? 'ok' : 'fail') : tone)
+                  : colors.textSecondary
+            }">
         ${metaLabel}
       </text>
+      ${
+        transferActive
+          ? svg`
+        <rect x="8" y="${NODE_H - 6}" width="${n.w - 16}" height="3" rx="1.5"
+              fill="#1a1a2e"/>
+        <rect x="8" y="${NODE_H - 6}" width="${barW}" height="3" rx="1.5"
+              fill="${colors.accent}"
+              data-testid="pipeline-package-refresh-transfer-bar"/>
+      `
+          : nothing
+      }
     </g>
   `;
 }
@@ -512,14 +547,21 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
   const isDone = vis === 'done';
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
+  const transfer = transferForPipelineNode(ctx.transferProgress, 'finalize');
+  const transferActive = transfer?.state === 'running';
   // Package-change / re-review publish failures are reworkable (orange), not terminal red.
   const tone = pipelineStepTone(
     { ...step, detail: step.detail ?? ctx.run.error ?? undefined },
     { runError: ctx.run.error },
   );
   const toneColors = pipelineToneFillStroke(tone);
-  const fillColor = isDone || isFailed || isRunning ? toneColors.fill : 'transparent';
-  const strokeColor = isDone || isFailed || isRunning ? toneColors.stroke : `${colors.textMuted}33`;
+  const fillColor =
+    transferActive || isDone || isFailed || isRunning ? toneColors.fill : 'transparent';
+  const strokeColor = transferActive
+    ? '#3b82f6'
+    : isDone || isFailed || isRunning
+      ? toneColors.stroke
+      : `${colors.textMuted}33`;
 
   const elapsed = step.durationMs
     ? formatDuration(step.durationMs)
@@ -547,10 +589,16 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
     if (model) pills.push({ label: model, color: colors.textMuted });
   }
 
+  const runningMeta = transferActive ? formatPipelineTransferMeta(transfer!) : (step.detail ?? '*');
+  const pct = transfer ? fileTransferPercent(transfer) : 0;
+  const barW = Math.max(0, Math.min(n.w - 16, ((n.w - 16) * pct) / 100));
+
   return svg`
-    <g class="${isRunning ? 'node-running-anim' : ''}"
+    <g class="${isRunning || transferActive ? 'node-running-anim' : ''}"
        transform="translate(${n.x}, ${n.y})"
-       style="opacity: ${isPending ? 0.4 : 1}; cursor: pointer"
+       style="opacity: ${isPending && !transferActive ? 0.4 : 1}; cursor: pointer"
+       data-testid="pipeline-finalize-node"
+       data-transfer-active=${transferActive ? 'true' : 'false'}
        @click=${() => ctx.onStepSelect(n.step)}>
       <rect width="${n.w}" height="${NODE_H}" rx="6"
             fill="${fillColor}" stroke="${strokeColor}"/>
@@ -560,7 +608,7 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
         publish
       </text>
       ${
-        elapsed
+        elapsed && !transferActive
           ? svg`
         <text class="node-elapsed" x="${n.w - 8}" y="11"
               text-anchor="end" dominant-baseline="central"
@@ -571,7 +619,7 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
           : nothing
       }
       ${
-        isDone && pills.length > 0
+        isDone && pills.length > 0 && !transferActive
           ? svg`
         ${pills.map(
           (p, i) => svg`
@@ -585,16 +633,16 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
       `
           : svg`
         ${
-          !isPending
+          !isPending || transferActive
             ? svg`
           <text class="node-meta" x="${n.w / 2}" y="27"
                 text-anchor="middle" dominant-baseline="central"
-                fill="${pipelineToneColor(tone)}">
+                fill="${transferActive ? colors.accent : pipelineToneColor(tone)}">
             ${
-              isDone
+              isDone && !transferActive
                 ? 'v'
-                : isRunning
-                  ? (step.detail ?? '*')
+                : isRunning || transferActive
+                  ? runningMeta
                   : tone === 'warn'
                     ? '! rework'
                     : isFailed
@@ -606,6 +654,17 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
             : nothing
         }
       `
+      }
+      ${
+        transferActive
+          ? svg`
+        <rect x="8" y="${NODE_H - 6}" width="${n.w - 16}" height="3" rx="1.5"
+              fill="#1a1a2e"/>
+        <rect x="8" y="${NODE_H - 6}" width="${barW}" height="3" rx="1.5"
+              fill="${colors.accent}"
+              data-testid="pipeline-finalize-transfer-bar"/>
+      `
+          : nothing
       }
     </g>
   `;

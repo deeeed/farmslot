@@ -278,6 +278,12 @@ import {
   refreshBranches,
 } from '../methods/dispatch.js';
 import {
+  fileTransferCancel,
+  fileTransferList,
+  fileTransferRemoteE2e,
+  fileTransferSmoke,
+} from '../methods/file-transfer.js';
+import {
   fsDelete,
   fsList,
   fsMkdir,
@@ -1070,6 +1076,15 @@ async function routeAuthorizedMethod(
     // Diagnostics
     case Methods.DIAGNOSTICS_RUN:
       return diagnosticsRun(p as DiagnosticsRunParams);
+    case Methods.FILE_TRANSFER_SMOKE:
+    case Methods.DIAGNOSTICS_FILE_TRANSFER_SMOKE:
+      return fileTransferSmoke(p as import('@farmslot/protocol').FileTransferSmokeParams);
+    case Methods.DIAGNOSTICS_FILE_TRANSFER_REMOTE_E2E:
+      return fileTransferRemoteE2e(p as import('@farmslot/protocol').FileTransferRemoteE2eParams);
+    case Methods.FILE_TRANSFER_CANCEL:
+      return fileTransferCancel(p as import('@farmslot/protocol').FileTransferCancelParams);
+    case Methods.FILE_TRANSFER_LIST:
+      return fileTransferList(p as import('@farmslot/protocol').FileTransferListParams);
 
     // Search
     case Methods.SEARCH_QUERY:

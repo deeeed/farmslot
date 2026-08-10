@@ -76,3 +76,33 @@ export interface NodeFsWriteFilesParams extends NodeFsPathParams {
 export interface NodeFsReadBase64Params extends NodeFsPathParams {
   maxBytes?: number;
 }
+
+export interface NodeFsReadChunkParams extends NodeFsPathParams {
+  offset: number;
+  length: number;
+}
+
+export interface NodeFsReadChunkResult {
+  content: string;
+  size: number;
+  offset: number;
+  bytesRead: number;
+  eof: boolean;
+  /** Payload encoding; base64 is the default JSON-safe path. */
+  encoding?: 'base64' | 'binary';
+}
+
+export interface NodeFsWriteChunkParams extends NodeFsPathParams {
+  offset: number;
+  content: string;
+  /** When true (or offset is 0), create/truncate before writing. */
+  truncate?: boolean;
+  /** Optional file mode applied on create and after write (e.g. 0o600 attachments). */
+  mode?: number;
+}
+
+export interface NodeFsWriteChunkResult {
+  ok: true;
+  bytesWritten: number;
+  offset: number;
+}

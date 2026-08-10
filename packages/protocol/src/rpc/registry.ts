@@ -97,6 +97,13 @@ export const Methods = {
   ROADMAP_PROMOTION_DRAFT_SAVE: 'roadmap.promotionDraft.save',
   ROADMAP_PROMOTE: 'roadmap.promote',
 
+  // File transfer (progress-aware large copies)
+  FILE_TRANSFER_SMOKE: 'file.transfer.smoke', // alias — prefer DIAGNOSTICS_FILE_TRANSFER_SMOKE
+  DIAGNOSTICS_FILE_TRANSFER_SMOKE: 'diagnostics.fileTransfer.smoke',
+  DIAGNOSTICS_FILE_TRANSFER_REMOTE_E2E: 'diagnostics.fileTransfer.remoteE2e',
+  FILE_TRANSFER_CANCEL: 'file.transfer.cancel',
+  FILE_TRANSFER_LIST: 'file.transfer.list',
+
   // Terminal
   TERMINAL_SUBSCRIBE: 'terminal.subscribe',
   TERMINAL_UNSUBSCRIBE: 'terminal.unsubscribe',

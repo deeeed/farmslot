@@ -4,6 +4,19 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(transfer): mini pipeline package-refresh segment uses the same purpose filter as the full renderer so finalize uploads and release-artifact mirrors are not misattributed (MANUAL-000095 self-review).
+
+- fix(transfer): bind package-refresh vs finalize pipeline nodes to distinct transfer purposes so one run transfer cannot animate both (MANUAL-000095 self-review).
+
+- fix(transfer): lazy-load gateway in the transfer store (Node renderer tests), resync banner/mini pipeline when runId/run changes, and never swallow listener exceptions (MANUAL-000095 self-review).
+
+- fix(transfer): strict run-scoped pipeline filter (no unscoped bleed), pure model helpers for unit tests, and surface listener errors instead of empty catch (MANUAL-000095 self-review).
+
+- feat(transfer): show live file-transfer progress on the pipeline package-refresh and publish nodes (and mini bar titles), plus a strip under the canvas while a transfer is running for that run (MANUAL-000095).
+- feat(transfer): cancel control, multi-file counts, run-detail inline transfer panel (MANUAL-000095 follow-up).
+
+- feat(transfer): determinate file-transfer progress banner (filename, bytes/percent, phase, failed) driven by `file.transfer.progress` events (MANUAL-000095).
+
 - feat(decisions): render learnings-draft cards — domain antipattern drafts with target paths, teaching holds, and the inbox receipt status (MANUAL-000075).
 
 - feat(dispatch): replace the execution-template pills with a reusable filterable catalog picker — Domain/Run-mode filters with visible result counts, per-row source/domain/platform/digest provenance, filter-named empty states, and loud domain-restricted/unavailable source notices (MANUAL-000076).

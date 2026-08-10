@@ -140,3 +140,92 @@ test('node fs operations refuse ordinary paths inside .git', async (t) => {
   await assert.rejects(fsDelete({ root, relPath: '.git/config' }), /Access to \.git/);
   assert.equal(await readFile(path.join(root, '.git', 'config'), 'utf-8'), 'safe');
 });
+
+test('fsReadChunk returns a bounded base64 slice and eof', async (t) => {
+  const { fsReadChunk } = await import('./fs.js');
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-chunk-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const content = Buffer.alloc(100, 'a');
+  await writeFile(path.join(root, 'blob.bin'), content);
+
+  const first = await fsReadChunk({ root, relPath: 'blob.bin', offset: 0, length: 40 });
+  assert.equal(first.bytesRead, 40);
+  assert.equal(first.offset, 0);
+  assert.equal(first.size, 100);
+  assert.equal(first.eof, false);
+  assert.equal(Buffer.from(first.content, 'base64').byteLength, 40);
+
+  const last = await fsReadChunk({ root, relPath: 'blob.bin', offset: 80, length: 40 });
+  assert.equal(last.bytesRead, 20);
+  assert.equal(last.eof, true);
+});
+
+test('fsWriteChunk reports the actual written length and can multi-chunk a file', async (t) => {
+  const { fsWriteChunk, fsReadChunk } = await import('./fs.js');
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-wchunk-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const payload = Buffer.alloc(90, 7);
+  const first = await fsWriteChunk({
+    root,
+    relPath: 'out.bin',
+    offset: 0,
+    content: payload.subarray(0, 50).toString('base64'),
+    truncate: true,
+  });
+  assert.equal(first.bytesWritten, 50);
+  const second = await fsWriteChunk({
+    root,
+    relPath: 'out.bin',
+    offset: 50,
+    content: payload.subarray(50).toString('base64'),
+  });
+  assert.equal(second.bytesWritten, 40);
+  const read = await fsReadChunk({ root, relPath: 'out.bin', offset: 0, length: 90 });
+  assert.equal(read.bytesRead, 90);
+  assert.deepEqual(Buffer.from(read.content, 'base64'), payload);
+});
+
+test('fsWriteChunk applies explicit mode for private attachment-style files', async (t) => {
+  const { fsWriteChunk } = await import('./fs.js');
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-wmode-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await fsWriteChunk({
+    root,
+    relPath: 'secret.bin',
+    offset: 0,
+    content: Buffer.from('private').toString('base64'),
+    truncate: true,
+    mode: 0o600,
+  });
+  const mode = (await stat(path.join(root, 'secret.bin'))).mode & 0o777;
+  assert.equal(mode, 0o600);
+});
+
+test('fsReadChunk and fsWriteChunk fail closed above FILE_TRANSFER_CHUNK_MAX_BYTES', async (t) => {
+  const { fsReadChunk, fsWriteChunk } = await import('./fs.js');
+  const { FILE_TRANSFER_CHUNK_MAX_BYTES } = await import('@farmslot/protocol');
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-cap-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'big.bin'), Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES + 10, 1));
+  await assert.rejects(
+    () =>
+      fsReadChunk({
+        root,
+        relPath: 'big.bin',
+        offset: 0,
+        length: FILE_TRANSFER_CHUNK_MAX_BYTES + 1,
+      }),
+    /exceeds FILE_TRANSFER_CHUNK_MAX_BYTES/,
+  );
+  await assert.rejects(
+    () =>
+      fsWriteChunk({
+        root,
+        relPath: 'out.bin',
+        offset: 0,
+        content: Buffer.alloc(FILE_TRANSFER_CHUNK_MAX_BYTES + 1, 2).toString('base64'),
+        truncate: true,
+      }),
+    /exceeds FILE_TRANSFER_CHUNK_MAX_BYTES/,
+  );
+});

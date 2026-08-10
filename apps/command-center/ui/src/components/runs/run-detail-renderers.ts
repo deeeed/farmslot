@@ -327,6 +327,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
 
   return html`
     ${backToRuns}
+    <file-transfer-progress-banner inline run-id=${r.id}></file-transfer-progress-banner>
     ${ctx._bootstrapFailed
       ? html`<div class="rehydrating-banner">
           Run refresh failed… showing cached data and pausing actions
