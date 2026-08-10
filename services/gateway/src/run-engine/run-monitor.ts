@@ -218,13 +218,15 @@ function readOptionalBudgetField(
 ): number | null {
   if (value === undefined || value === null) return fallback;
   const n = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(n) || n <= 0) {
+  // Require a positive integer — fractions like 0.5 must not floor to 0 and
+  // silently disable built-in budgets.
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
     console.warn(
       `[run-monitor] ignoring invalid monitoring.${field}=${JSON.stringify(value)} for ${project}; using ${fallback ?? 'no budget'}`,
     );
     return fallback;
   }
-  return Math.floor(n);
+  return n;
 }
 
 async function loadMonitorConfig(project: string, flowType?: FlowType): Promise<MonitorConfig> {
@@ -241,6 +243,81 @@ async function loadMonitorConfig(project: string, flowType?: FlowType): Promise<
   }
 }
 
+/**
+ * Capture the retained parent transcript totals before a warm task is delivered.
+ * A configured budget fails the warm handoff closed when its parent usage cannot
+ * be sampled; the caller may safely fall back to a fresh, absolute-count session.
+ */
+export async function prepareWarmBudgetBaselineForHandoff(
+  runId: string,
+  slotId: string,
+): Promise<'not-required' | 'captured' | 'unavailable'> {
+  const run = getRun(runId);
+  if (!run) return 'unavailable';
+  const config = await loadMonitorConfig(run.project, run.flowType);
+  if (!hasUsageBudget(config)) return 'not-required';
+
+  try {
+    const parent = run.parentRunId ? getRun(run.parentRunId) : undefined;
+    const parentContext = parent
+      ? selectAgentContext(parent, { role: primaryRoleForFlow(parent.flowType) })
+      : undefined;
+    const runnerSessionPath =
+      parentContext?.runnerSessionPath ??
+      parent?.metrics.runnerSessionPath ??
+      run.metrics.runnerSessionPath ??
+      null;
+    if (!runnerSessionPath) return 'unavailable';
+
+    const prior = run.monitorState?.budgetUsage ?? emptyBudgetUsageSampleState();
+    const sample = await sampleBudgetUsage({
+      slotId,
+      vars: await loadSlotVars(slotId),
+      runner: run.metrics.runner,
+      runnerSessionPath,
+      prior,
+    });
+    if (sample.availability === 'unavailable') {
+      console.warn(
+        `[run-monitor] run ${runId.slice(0, 8)} — warm budget baseline unavailable: ${sample.unavailableReason ?? 'unknown reason'}`,
+      );
+      return 'unavailable';
+    }
+
+    const baseline = applyBudgetUsageBaseline({
+      turns: sample.turns,
+      totalTokens: sample.totalTokens,
+      warmSession: true,
+      baselineCaptured: false,
+    });
+    const now = new Date().toISOString();
+    const current = getRun(runId);
+    if (!current) return 'unavailable';
+    updateRun(runId, {
+      monitorState: {
+        nudgeCount: current.metrics.nudgeCount,
+        lastPollAt: now,
+        startedAt: current.monitorState?.startedAt ?? now,
+        lastPaneHash: current.monitorState?.lastPaneHash,
+        budgetWarned: current.monitorState?.budgetWarned ?? false,
+        budgetNudgeSent: current.monitorState?.budgetNudgeSent ?? false,
+        budgetUsage: {
+          ...sample.nextState,
+          baselineCaptured: baseline.baselineCaptured,
+          baselineTurns: baseline.baselineTurns,
+          baselineTotalTokens: baseline.baselineTotalTokens,
+        },
+      },
+    });
+    return 'captured';
+  } catch (err) {
+    console.warn(
+      `[run-monitor] run ${runId.slice(0, 8)} — warm budget baseline capture failed: ${(err as Error).message}`,
+    );
+    return 'unavailable';
+  }
+}
+
 // ─── Monitor state (in-memory per run) ───
 
 interface MonitorState {
@@ -250,6 +327,8 @@ interface MonitorState {
   startedAt: number;
   /** One-shot usage-budget warning already emitted for this monitor session. */
   budgetWarned: boolean;
+  /** Confirmed budget-nudge delivery (may retry while false after a warn). */
+  budgetNudgeSent: boolean;
   /** Incremental transcript sample for soft turn/token budgets. */
   budgetUsage: BudgetUsageSampleState;
 }
@@ -783,6 +862,8 @@ export async function monitorRun(
         cacheRead: persisted.budgetUsage.cacheRead ?? 0,
         sampledAt: persisted.budgetUsage.sampledAt,
         unavailableReason: persisted.budgetUsage.unavailableReason,
+        integrityFailureReason: persisted.budgetUsage.integrityFailureReason,
+        skippingOversizedRecord: persisted.budgetUsage.skippingOversizedRecord,
         baselineCaptured: persisted.budgetUsage.baselineCaptured,
         baselineTurns: persisted.budgetUsage.baselineTurns,
         baselineTotalTokens: persisted.budgetUsage.baselineTotalTokens,
@@ -795,6 +876,7 @@ export async function monitorRun(
         lastStepCount: 0,
         startedAt: new Date(persisted.startedAt).getTime(),
         budgetWarned: persisted.budgetWarned === true,
+        budgetNudgeSent: persisted.budgetNudgeSent === true,
         budgetUsage: restoredBudgetUsage,
       }
     : {
@@ -803,6 +885,7 @@ export async function monitorRun(
         lastStepCount: 0,
         startedAt: now,
         budgetWarned: false,
+        budgetNudgeSent: false,
         budgetUsage: emptyBudgetUsageSampleState(),
       };
   // Also restore nudge count from persisted state
@@ -1139,35 +1222,30 @@ export async function monitorRun(
         violationContext?.id,
       );
 
-      // 2b. Per-flow turn/token soft budget — single entry point pollBudgetGuardStep
-      // (shared with CLI probe so removing monitor wiring fails both paths).
-      if (hasUsageBudget(config) && !state.budgetWarned) {
-        const budgetRun = getRun(runId) ?? initialRun;
-        const budgetVars = await loadSlotVars(slotId);
-        const resolvedSession = await resolveRunnerSessionForRun(budgetRun, budgetVars);
-        const tick = await pollBudgetGuardStep({
+      // 2b. Soft budget: sample every poll until warned; after warn, still retry
+      // nudge delivery if not confirmed (soft guard must not die on nudge errors).
+      if (hasUsageBudget(config) && (!state.budgetWarned || !state.budgetNudgeSent)) {
+        const tick = await pollRunBudgetGuard({
           runId,
           slotId,
-          flowType: budgetRun.flowType,
-          runner: budgetRun.metrics.runner,
-          runnerSessionPath:
-            resolvedSession?.runnerSessionPath ?? budgetRun.metrics.runnerSessionPath ?? null,
           maxTurns: config.maxTurns,
           maxTotalTokens: config.maxTotalTokens,
           budgetWarned: state.budgetWarned,
+          budgetNudgeSent: state.budgetNudgeSent,
           budgetUsage: state.budgetUsage,
+          monitorStartedAt: new Date(state.startedAt).toISOString(),
           agentStatus,
           sendNudge: true,
         });
         state.budgetUsage = tick.budgetUsage;
         state.budgetWarned = tick.budgetWarned;
+        if (tick.nudgeSent) state.budgetNudgeSent = true;
         if (tick.unavailableReason && tick.unavailableReasonChanged) {
           console.warn(
             `[run-monitor] run ${runId.slice(0, 8)} — budget usage unavailable: ${tick.unavailableReason}`,
           );
         }
         if (tick.violation) {
-          broadcastFn(Events.MONITOR_VIOLATION, { violation: tick.violation });
           allViolations.push({
             type: tick.violation.type,
             message: tick.violation.message,
@@ -1286,6 +1364,7 @@ export async function monitorRun(
             startedAt: new Date(state.startedAt).toISOString(),
             lastPaneHash: state.lastPaneHash,
             budgetWarned: state.budgetWarned,
+            budgetNudgeSent: state.budgetNudgeSent,
             budgetUsage: state.budgetUsage,
           },
         });
@@ -1592,7 +1671,7 @@ export async function sendBudgetNudge(
 }
 
 /**
- * Pure warn-once budget decision used by the monitor and live recipe proof.
+ * Pure warn-once budget decision used by the monitor and focused tests.
  * When usage exceeds the ceiling and not yet warned, returns the violation
  * message and next budgetWarned=true; otherwise no emission.
  */
@@ -1637,8 +1716,8 @@ export type PollBudgetGuardStepResult = {
 };
 
 /**
- * One monitor poll of the soft usage budget. Shared by monitorRun and the CLI
- * probe so recipe proof exercises the same step the production loop uses.
+ * One monitor poll of the soft usage budget. Runner resolution and persistence
+ * are owned by pollRunBudgetGuard, the production entry used by monitorRun.
  */
 export async function pollBudgetGuardStep(params: {
   runId: string;
@@ -1649,20 +1728,22 @@ export async function pollBudgetGuardStep(params: {
   maxTurns: number | null;
   maxTotalTokens: number | null;
   budgetWarned: boolean;
+  budgetNudgeSent?: boolean;
   budgetUsage: BudgetUsageSampleState;
   agentStatus: AgentLiveStatus;
   /** When false, skip tmux nudge (CLI/local proof without a live pane). */
   sendNudge: boolean;
   /**
-   * Force warm-session baseline accounting (tests/probes). Production uses
-   * `engineState.flags.warmSessionReuse` on the run when omitted.
+   * Force warm-session baseline accounting in focused tests. Production uses
+   * `engineState.flags.warmHandoffSucceeded` when omitted.
    */
   warmSession?: boolean;
   /**
-   * Optional local host stub for recipe/CLI probes when the pool slot is not
-   * required (transcript path is forced). Production monitor always loads real vars.
+   * Optional local host stub for focused tests. Production monitor always loads real vars.
    */
   localVarsStub?: { host: string; machine: string; slotId: string; remoteRepo?: string };
+  /** Test seam for confirmed-delivery retry behavior; production uses sendBudgetNudge. */
+  deliverNudge?: typeof sendBudgetNudge;
 }): Promise<PollBudgetGuardStepResult> {
   const vars = params.localVarsStub
     ? (params.localVarsStub as Awaited<ReturnType<typeof loadSlotVars>>)
@@ -1678,12 +1759,12 @@ export async function pollBudgetGuardStep(params: {
   let budgetWarned = params.budgetWarned;
   let violation: MonitorViolation | null = null;
   let nudgeSent = false;
+  const priorNudgeSent = params.budgetNudgeSent === true;
 
-  // Warm retained sessions baseline parent totals; cold starts charge absolute usage.
+  // Warm baseline only when handoff actually succeeded — not merely requested.
   const liveRun = getRun(params.runId);
   const warmSession =
-    params.warmSession === true ||
-    liveRun?.engineState?.flags?.warmSessionReuse === true;
+    params.warmSession === true || liveRun?.engineState?.flags?.warmHandoffSucceeded === true;
   const baseline = applyBudgetUsageBaseline({
     turns: sample.turns,
     totalTokens: sample.totalTokens,
@@ -1700,8 +1781,28 @@ export async function pollBudgetGuardStep(params: {
     baselineTotalTokens: baseline.baselineTotalTokens,
   };
 
-  // Establishing baseline never warns — child flow has not yet spent its allowance.
-  if (!baseline.establishingBaseline && sample.availability !== 'unavailable') {
+  let warningMessage: string | null = null;
+  if (sample.enforcementFailure) {
+    warningMessage =
+      `usage budget enforcement unavailable (${sample.unavailableReason ?? 'unknown accounting failure'}). ` +
+      'Stop expanding scope and finish or block the current checklist item.';
+    if (!budgetWarned) {
+      budgetWarned = true;
+      const run = getRun(params.runId);
+      const context = run
+        ? selectAgentContext(run, { role: primaryRoleForFlow(params.flowType) })
+        : undefined;
+      violation = {
+        slotId: params.slotId,
+        role: context?.role,
+        contextId: context?.id,
+        type: 'budget',
+        message: warningMessage,
+        nudgeSent: null,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  } else if (!baseline.establishingBaseline && sample.availability !== 'unavailable') {
     const decision = applyBudgetWarnOnce({
       turns: baseline.chargeTurns,
       totalTokens: baseline.chargeTotalTokens,
@@ -1713,6 +1814,7 @@ export async function pollBudgetGuardStep(params: {
 
     if (decision.emit) {
       budgetWarned = true;
+      warningMessage = decision.message;
       const run = getRun(params.runId);
       const context = run
         ? selectAgentContext(run, { role: primaryRoleForFlow(params.flowType) })
@@ -1726,23 +1828,54 @@ export async function pollBudgetGuardStep(params: {
         nudgeSent: null,
         timestamp: new Date().toISOString(),
       };
-      if (
-        params.sendNudge &&
-        run &&
-        !shouldSkipMonitorNudge(run, violation, params.agentStatus) &&
-        runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))
-      ) {
-        const sent = await sendBudgetNudge(
+    } else if (budgetWarned && !priorNudgeSent) {
+      const evaluation = evaluateFlowUsageBudget(
+        { turns: baseline.chargeTurns, totalTokens: baseline.chargeTotalTokens },
+        { maxTurns: params.maxTurns, maxTotalTokens: params.maxTotalTokens },
+      );
+      if (evaluation.exceeded) {
+        warningMessage = formatUsageBudgetMessage(params.flowType, evaluation);
+      }
+    }
+  }
+
+  // Warning emission and delivery confirmation are separate. A false/throwing
+  // safe-send keeps budgetNudgeSent false so later polls retry without emitting
+  // another violation.
+  if (params.sendNudge && budgetWarned && !priorNudgeSent && warningMessage) {
+    const run = getRun(params.runId);
+    const context = run
+      ? selectAgentContext(run, { role: primaryRoleForFlow(params.flowType) })
+      : undefined;
+    const deliveryViolation =
+      violation ??
+      ({
+        slotId: params.slotId,
+        role: context?.role,
+        contextId: context?.id,
+        type: 'budget',
+        message: warningMessage,
+        nudgeSent: null,
+        timestamp: new Date().toISOString(),
+      } satisfies MonitorViolation);
+    if (
+      run &&
+      !shouldSkipMonitorNudge(run, deliveryViolation, params.agentStatus) &&
+      runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))
+    ) {
+      try {
+        nudgeSent = await (params.deliverNudge ?? sendBudgetNudge)(
           params.runId,
           params.slotId,
-          decision.message,
+          warningMessage,
           context?.role,
           context?.id,
         );
-        if (sent) {
-          violation.nudgeSent = new Date().toISOString();
-          nudgeSent = true;
-        }
+        if (nudgeSent && violation) violation.nudgeSent = new Date().toISOString();
+      } catch (err) {
+        console.warn(
+          `[run-monitor] budget nudge delivery failed for run ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+        );
       }
     }
   }
@@ -1759,12 +1892,72 @@ export async function pollBudgetGuardStep(params: {
     unavailableReason: sample.unavailableReason,
     unavailableReasonChanged: Boolean(
       sample.availability === 'unavailable' &&
-        sample.unavailableReason &&
-        sample.unavailableReason !== priorUnavailable,
+      sample.unavailableReason &&
+      sample.unavailableReason !== priorUnavailable,
     ),
     violation,
     nudgeSent,
   };
+}
+
+/**
+ * Production budget tick: resolve the run's live session, execute the bounded
+ * guard, and durably persist warning/delivery state before returning. Scripted
+ * runner validation calls this same entry point against a real runner session.
+ */
+export async function pollRunBudgetGuard(params: {
+  runId: string;
+  slotId: string;
+  maxTurns: number | null;
+  maxTotalTokens: number | null;
+  budgetWarned?: boolean;
+  budgetNudgeSent?: boolean;
+  budgetUsage?: BudgetUsageSampleState;
+  monitorStartedAt?: string;
+  agentStatus: 'working' | 'idle' | 'no-tmux';
+  sendNudge: boolean;
+}): Promise<PollBudgetGuardStepResult> {
+  const run = getRun(params.runId);
+  if (!run) throw new Error(`Run not found: ${params.runId}`);
+  const vars = await loadSlotVars(params.slotId);
+  const resolvedSession = await resolveRunnerSessionForRun(run, vars);
+  const tick = await pollBudgetGuardStep({
+    runId: params.runId,
+    slotId: params.slotId,
+    flowType: run.flowType,
+    runner: run.metrics.runner,
+    runnerSessionPath: resolvedSession?.runnerSessionPath ?? run.metrics.runnerSessionPath ?? null,
+    maxTurns: params.maxTurns,
+    maxTotalTokens: params.maxTotalTokens,
+    budgetWarned: params.budgetWarned ?? run.monitorState?.budgetWarned === true,
+    budgetNudgeSent: params.budgetNudgeSent ?? run.monitorState?.budgetNudgeSent === true,
+    budgetUsage:
+      params.budgetUsage ?? run.monitorState?.budgetUsage ?? emptyBudgetUsageSampleState(),
+    agentStatus: params.agentStatus,
+    sendNudge: params.sendNudge,
+  });
+
+  const current = getRun(params.runId);
+  if (!current) throw new Error(`Run disappeared during budget poll: ${params.runId}`);
+  const now = new Date().toISOString();
+  updateRun(params.runId, {
+    monitorState: {
+      nudgeCount: current.metrics.nudgeCount,
+      lastPollAt: now,
+      startedAt: params.monitorStartedAt ?? current.monitorState?.startedAt ?? now,
+      lastPaneHash: current.monitorState?.lastPaneHash,
+      budgetWarned: tick.budgetWarned,
+      budgetNudgeSent:
+        params.budgetNudgeSent === true ||
+        current.monitorState?.budgetNudgeSent === true ||
+        tick.nudgeSent,
+      budgetUsage: tick.budgetUsage,
+    },
+  });
+  if (tick.violation) {
+    broadcastFn(Events.MONITOR_VIOLATION, { violation: tick.violation });
+  }
+  return tick;
 }
 
 // ─── Decision creation + wait ───

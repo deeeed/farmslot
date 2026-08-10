@@ -186,7 +186,6 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'run.archive': { classification: 'admin' },
   'run.autoRecovery.stop': { classification: 'admin' },
   'run.backfillSummaries': { classification: 'admin' },
-  'run.budgetGuard.probe': { classification: 'admin' },
   'run.bulkDelete': { classification: 'admin' },
   'run.bundle.export': { classification: 'admin' },
   'run.bundle.import': { classification: 'admin' },

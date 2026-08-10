@@ -4,13 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(run-monitor): cold starts charge absolute usage; warm baselines only when `warmSessionReuse`; remote sampling seeks new bytes only; probe RPC refuses non-probe runs and supports cleanup (MANUAL-000096).
-
-- fix(run-monitor): soft budgets charge per-run growth after a first-poll baseline (warm-handoff parents no longer false-trigger); remote `~/farmslot-node` script path expands via `$HOME` (MANUAL-000096).
-
-- feat(runs): `run.budgetGuard.probe` — live soft-budget probe using `pollBudgetGuardStep`, persists `monitorState.budgetWarned`, emits `MONITOR_VIOLATION` (MANUAL-000096).
-
-- feat(run-monitor): per-flow turn/token soft budget for mechanical flows — `monitoring.flows.*.max_turns` / `max_total_tokens`, built-in `update-branch` defaults (80 turns / 8M tokens), one-shot `budget` violation + confirmed-send worker nudge; sampling uses shared `@farmslot/slot-config` complete-line incremental transcripts (no lost split-writes) and remote `session-usage.sh` path candidates via `execOnSlot` (MANUAL-000096).
+- feat(run-monitor): per-flow turn/token soft budgets for mechanical flows, with built-in update-branch defaults, pre-delivery warm baselines, bounded local/remote transcript sampling through runner capabilities, fail-closed integrity warnings, and retry-safe confirmed nudges (MANUAL-000096).
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - fix(artifacts): treat cleaned or never-created run artifact roots as a quiet not-found result while preserving diagnostics for real filesystem failures.

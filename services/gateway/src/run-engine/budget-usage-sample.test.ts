@@ -4,11 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import {
-  emptyBudgetUsageSampleState,
-  remoteSessionUsageScriptArg,
-  sampleBudgetUsage,
-} from './budget-usage-sample.js';
+import { emptyBudgetUsageSampleState, sampleBudgetUsage } from './budget-usage-sample.js';
 
 const localVars = { host: 'localhost', machine: 'local', slotId: 's1' } as never;
 
@@ -103,9 +99,70 @@ test('sampleBudgetUsage is unavailable without a transcript path', async () => {
   assert.equal(result.turns, null);
 });
 
-test('remoteSessionUsageScriptArg expands tilde via $HOME without single-quoting it away', () => {
-  const arg = remoteSessionUsageScriptArg('~/farmslot-node/scripts/session-usage.sh');
-  assert.match(arg, /\$HOME\//);
-  assert.equal(arg.includes("'$HOME"), false);
-  assert.match(remoteSessionUsageScriptArg('/abs/path/session-usage.sh'), /^'/);
+test('sampleBudgetUsage fails closed without fabricating usage for oversized records', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-oversized-'));
+  const file = path.join(dir, 'session.jsonl');
+  const oversized = `{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1},"pad":"${'x'.repeat(1024 * 1024)}"}}`;
+  await writeFile(file, `${oversized}\n${claudeLine(5, 2)}\n`, 'utf8');
+
+  const first = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: file,
+    prior: emptyBudgetUsageSampleState(),
+  });
+  assert.equal(first.availability, 'unavailable');
+  assert.equal(first.enforcementFailure, true);
+  assert.equal(first.nextState.turns, 0);
+  assert.equal(first.nextState.totalTokens, 0);
+  assert.match(first.unavailableReason ?? '', /exceeds bounded sample window/);
+
+  const second = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: file,
+    prior: first.nextState,
+  });
+  assert.equal(second.enforcementFailure, true);
+  assert.equal(second.nextState.turns, 1);
+  assert.equal(second.nextState.totalTokens, 7);
+});
+
+test('sampleBudgetUsage exposes unsupported runner accounting as an enforcement failure', async () => {
+  const result = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'grok',
+    runnerSessionPath: '/tmp/not-read.jsonl',
+    prior: emptyBudgetUsageSampleState(),
+  });
+  assert.equal(result.availability, 'unavailable');
+  assert.equal(result.enforcementFailure, true);
+  assert.match(result.unavailableReason ?? '', /no bounded session-usage provider/);
+});
+
+test('sampleBudgetUsage fails closed when a transcript truncates after accounting begins', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-truncate-'));
+  const file = path.join(dir, 'session.jsonl');
+  await writeFile(file, `${claudeLine(10, 2)}\n`, 'utf8');
+  const first = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: file,
+    prior: emptyBudgetUsageSampleState(),
+  });
+  await writeFile(file, '', 'utf8');
+  const truncated = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: file,
+    prior: { ...first.nextState, baselineCaptured: true },
+  });
+  assert.equal(truncated.availability, 'unavailable');
+  assert.equal(truncated.enforcementFailure, true);
+  assert.match(truncated.unavailableReason ?? '', /changed after budget accounting began/);
 });

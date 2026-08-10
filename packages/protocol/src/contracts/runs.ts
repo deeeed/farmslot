@@ -1283,6 +1283,10 @@ export interface RunMonitorBudgetUsageState {
   cacheRead: number;
   sampledAt?: string;
   unavailableReason?: string;
+  /** Persistent fail-closed reason when bounded parsing loses accounting integrity. */
+  integrityFailureReason?: string;
+  /** True while advancing past a record larger than the bounded read window. */
+  skippingOversizedRecord?: boolean;
   /**
    * First successful sample for this monitor session (warm-handoff parent totals
    * or cold-start initial point). Soft ceilings apply to (turns - baselineTurns).
@@ -1299,6 +1303,8 @@ export interface RunMonitorState {
   lastPaneHash?: string;
   /** True after a one-shot usage-budget warning was emitted for this monitor session. */
   budgetWarned?: boolean;
+  /** True after a budget nudge was confirmed delivered (may retry while false). */
+  budgetNudgeSent?: boolean;
   /** Append-only transcript sample cache for the soft budget guard. */
   budgetUsage?: RunMonitorBudgetUsageState;
 }
@@ -1629,6 +1635,12 @@ export interface RunEngineState {
      * affinity) — warm handoff targets held/ci-watch slots with an idle agent status.
      */
     warmSessionReuse?: boolean;
+    /**
+     * True only when DISPATCH actually handed off into the warm parent session.
+     * False when warmSessionReuse was requested but fell back to fresh dispatch.
+     * Soft budget baselines use this — not the request flag alone.
+     */
+    warmHandoffSucceeded?: boolean;
   };
   /** Monotonic replay generation counter; startRun bails if the run has been superseded. */
   generation?: number;

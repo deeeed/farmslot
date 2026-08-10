@@ -6,9 +6,24 @@ import test from 'node:test';
 
 import {
   emptyIncrementalSessionUsageState,
+  type IncrementalSessionUsageState,
   runSessionUsage,
   sampleSessionUsageIncremental,
 } from './session-usage.js';
+
+function applyClaudeRecord(
+  state: IncrementalSessionUsageState,
+  record: Record<string, unknown>,
+): IncrementalSessionUsageState {
+  if (record.type !== 'assistant') return state;
+  const message = record.message as Record<string, unknown>;
+  const usage = message.usage as Record<string, number>;
+  const next = { ...state, turns: state.turns + 1 };
+  next.inputTokens += usage.input_tokens ?? 0;
+  next.outputTokens += usage.output_tokens ?? 0;
+  next.totalTokens = next.inputTokens + next.outputTokens;
+  return next;
+}
 
 // Each test uses its own isolated temp dir as HOME so fixture files cannot
 // bleed across tests. The original process.env.HOME is restored after each.
@@ -386,24 +401,27 @@ test('sampleSessionUsageIncremental skips oversized record without a newline to 
   let state = emptyIncrementalSessionUsageState();
   const first = await sampleSessionUsageIncremental({
     filePath: file,
-    runner: 'claude',
     prior: state,
+    applyRecord: applyClaudeRecord,
   });
-  // First window should skip the oversized blob (offset advances).
+  // First window advances while explicitly failing closed; it never invents usage.
   assert.ok(first.nextState.offset > 0, 'offset must advance past oversized window');
-  // Continue until the good record is counted (may take multiple polls).
+  assert.equal(first.availability, 'unavailable');
+  assert.match(first.unavailableReason ?? '', /exceeds bounded sample window/);
+  assert.equal(first.nextState.turns, 0);
+  // Continue until the good record is counted after the oversized record's newline.
   state = first.nextState;
-  let turns = first.turns ?? 0;
-  for (let i = 0; i < 5 && turns < 1; i++) {
+  for (let i = 0; i < 5 && state.turns < 1; i++) {
     const next = await sampleSessionUsageIncremental({
       filePath: file,
-      runner: 'claude',
       prior: state,
+      applyRecord: applyClaudeRecord,
     });
     state = next.nextState;
-    turns = next.turns ?? 0;
   }
-  assert.ok(turns >= 1, `expected to count the valid record after skip, turns=${turns}`);
+  assert.equal(state.turns, 1);
+  assert.equal(state.totalTokens, 12);
+  assert.match(state.integrityFailureReason ?? '', /exceeds bounded sample window/);
 });
 
 test('sampleSessionUsageIncremental bounds bytes read per sample', async () => {
@@ -420,8 +438,8 @@ test('sampleSessionUsageIncremental bounds bytes read per sample', async () => {
   writeFileSync(file, row.repeat(reps), 'utf8');
   const first = await sampleSessionUsageIncremental({
     filePath: file,
-    runner: 'claude',
     prior: emptyIncrementalSessionUsageState(),
+    applyRecord: applyClaudeRecord,
   });
   assert.ok(first.nextState.offset > 0);
   assert.ok(
@@ -432,8 +450,8 @@ test('sampleSessionUsageIncremental bounds bytes read per sample', async () => {
   // Second sample continues from offset (more turns accumulate).
   const second = await sampleSessionUsageIncremental({
     filePath: file,
-    runner: 'claude',
     prior: first.nextState,
+    applyRecord: applyClaudeRecord,
   });
   assert.ok((second.turns ?? 0) > (first.turns ?? 0));
 });
@@ -451,24 +469,24 @@ test('sampleSessionUsageIncremental preserves incomplete trailing JSONL across p
   writeFileSync(file, `${line1}\n`, 'utf8');
   const first = await sampleSessionUsageIncremental({
     filePath: file,
-    runner: 'claude',
     prior: emptyIncrementalSessionUsageState(),
+    applyRecord: applyClaudeRecord,
   });
   assert.equal(first.turns, 1);
   const mid = Math.floor(line2.length / 2);
   appendFileSync(file, line2.slice(0, mid), 'utf8');
   const midSample = await sampleSessionUsageIncremental({
     filePath: file,
-    runner: 'claude',
     prior: first.nextState,
+    applyRecord: applyClaudeRecord,
   });
   assert.equal(midSample.turns, 1);
   assert.equal(midSample.nextState.offset, first.nextState.offset);
   appendFileSync(file, `${line2.slice(mid)}\n`, 'utf8');
   const second = await sampleSessionUsageIncremental({
     filePath: file,
-    runner: 'claude',
     prior: midSample.nextState,
+    applyRecord: applyClaudeRecord,
   });
   assert.equal(second.turns, 2);
 });

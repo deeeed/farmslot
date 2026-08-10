@@ -17,7 +17,6 @@ import {
 } from '@farmslot/protocol';
 import {
   computeFixturePlan,
-  emptyIncrementalSessionUsageState,
   expandDispatchCmd,
   expandHook,
   expandPlatformField,
@@ -31,7 +30,6 @@ import {
   resolveSlot,
   resolveSlotByRepo,
   runSessionUsage,
-  sampleSessionUsageIncremental,
   type SessionAction,
   type SlotVars,
 } from '@farmslot/slot-config';
@@ -496,29 +494,6 @@ export function registerInternalCommand(program: Command): void {
         });
         // Raw plumbing output — consumed by scripts and the gateway, never enveloped.
         process.stdout.write(result);
-      } catch (err) {
-        rawFail(err);
-      }
-    });
-  internal
-    .command('session-usage-incremental')
-    .description(
-      'Incrementally sample turns/tokens from a local runner transcript (complete-line offset; for budget soft ceilings)',
-    )
-    .requiredOption('--path <file>', 'Transcript JSONL path')
-    .option('--runner <name>', 'Runner name (claude|codex|…)', 'claude')
-    .option('--prior-json <json>', 'Prior IncrementalSessionUsageState JSON', '')
-    .action(async (opts: { path: string; runner?: string; priorJson?: string }) => {
-      try {
-        const prior = opts.priorJson
-          ? (JSON.parse(opts.priorJson) as ReturnType<typeof emptyIncrementalSessionUsageState>)
-          : emptyIncrementalSessionUsageState();
-        const result = await sampleSessionUsageIncremental({
-          filePath: opts.path,
-          runner: opts.runner ?? 'claude',
-          prior,
-        });
-        process.stdout.write(`${JSON.stringify(result)}\n`);
       } catch (err) {
         rawFail(err);
       }

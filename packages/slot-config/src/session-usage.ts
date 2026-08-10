@@ -655,10 +655,14 @@ export type IncrementalSessionUsageState = {
   cacheRead: number;
   sampledAt?: string;
   unavailableReason?: string;
+  /** Persistent fail-closed reason when transcript accounting lost integrity. */
+  integrityFailureReason?: string;
   /** Soft-budget baseline for warm-handoff / first-poll delta accounting. */
   baselineCaptured?: boolean;
   baselineTurns?: number;
   baselineTotalTokens?: number;
+  /** True while advancing past a record larger than the bounded read window. */
+  skippingOversizedRecord?: boolean;
 };
 
 export type IncrementalSessionUsageResult = {
@@ -684,74 +688,6 @@ export function emptyIncrementalSessionUsageState(): IncrementalSessionUsageStat
   };
 }
 
-/** Infer runner family for transcript format (shared with path heuristics). */
-export function inferSessionUsageRunner(
-  runner: string | null | undefined,
-  pathHint: string,
-): 'claude' | 'codex' | 'other' {
-  const r = (runner ?? '').toLowerCase();
-  if (r.includes('claude')) return 'claude';
-  if (r.includes('codex')) return 'codex';
-  if (pathHint.includes('.claude/')) return 'claude';
-  if (pathHint.includes('.codex/')) return 'codex';
-  return 'other';
-}
-
-function recomputeClaudeTotal(state: IncrementalSessionUsageState): number {
-  return state.inputTokens + state.cacheCreation + state.cacheRead + state.outputTokens;
-}
-
-/** Apply one Claude JSONL object to incremental totals (assistant usage rows). */
-export function applyClaudeUsageObject(
-  state: IncrementalSessionUsageState,
-  obj: Record<string, unknown>,
-): IncrementalSessionUsageState {
-  if (obj.type !== 'assistant') return state;
-  const msg = (obj.message as Record<string, unknown>) ?? {};
-  const usage = (msg.usage as Record<string, unknown>) ?? {};
-  if (!Object.keys(usage).length) return state;
-  const next = { ...state };
-  next.turns += 1;
-  next.inputTokens += (usage.input_tokens as number) ?? 0;
-  next.outputTokens += (usage.output_tokens as number) ?? 0;
-  next.cacheCreation += (usage.cache_creation_input_tokens as number) ?? 0;
-  next.cacheRead += (usage.cache_read_input_tokens as number) ?? 0;
-  next.totalTokens = recomputeClaudeTotal(next);
-  return next;
-}
-
-/** Apply one Codex JSONL object to incremental totals. */
-export function applyCodexUsageObject(
-  state: IncrementalSessionUsageState,
-  obj: Record<string, unknown>,
-): IncrementalSessionUsageState {
-  const next = { ...state };
-  const typ = obj.type as string;
-  const payload = (obj.payload as Record<string, unknown>) ?? {};
-
-  if (typ === 'response_item' && payload.type === 'message' && payload.role === 'assistant') {
-    next.turns += 1;
-  } else if (typ === 'turn.completed' && obj.usage) {
-    next.turns += 1;
-    const usage = obj.usage as Record<string, unknown>;
-    next.inputTokens = (usage.input_tokens as number) ?? next.inputTokens;
-    next.outputTokens = (usage.output_tokens as number) ?? next.outputTokens;
-    next.totalTokens = codexUsageTotal(usage);
-  } else if (typ === 'event_msg' && payload.type === 'token_count') {
-    const info = (payload.info as Record<string, unknown>) ?? {};
-    const usage =
-      (info.total_token_usage as Record<string, unknown> | undefined) ||
-      (info.last_token_usage as Record<string, unknown> | undefined);
-    if (usage) {
-      next.inputTokens = (usage.input_tokens as number) ?? next.inputTokens;
-      next.outputTokens = (usage.output_tokens as number) ?? next.outputTokens;
-      next.cacheRead = (usage.cached_input_tokens as number) ?? next.cacheRead;
-      next.totalTokens = codexUsageTotal(usage);
-    }
-  }
-  return next;
-}
-
 /**
  * Apply one window of newly read transcript bytes to incremental state.
  * Only complete newline-terminated JSONL records advance the durable offset.
@@ -762,7 +698,10 @@ export function applyCodexUsageObject(
 export function advanceIncrementalFromBytes(
   prior: IncrementalSessionUsageState,
   buf: Buffer,
-  runner: string | null | undefined,
+  applyRecord: (
+    state: IncrementalSessionUsageState,
+    record: Record<string, unknown>,
+  ) => IncrementalSessionUsageState,
   meta: {
     startOffset: number;
     fileSize: number;
@@ -776,17 +715,8 @@ export function advanceIncrementalFromBytes(
     path: meta.filePath,
     size: meta.fileSize,
     mtimeMs: meta.mtimeMs,
+    unavailableReason: prior.integrityFailureReason,
   };
-  const kind = inferSessionUsageRunner(runner, meta.filePath);
-  if (kind === 'other') {
-    return {
-      ...state,
-      offset: meta.startOffset,
-      unavailableReason: `incremental budget sampling unsupported for runner (path=${meta.filePath})`,
-      sampledAt: new Date().toISOString(),
-    };
-  }
-
   let lastNl = -1;
   for (let i = buf.length - 1; i >= 0; i--) {
     if (buf[i] === 0x0a) {
@@ -797,10 +727,13 @@ export function advanceIncrementalFromBytes(
 
   if (lastNl < 0) {
     // No complete line in this window.
-    if (buf.length >= meta.maxWindow) {
-      // Full window without a newline = oversized record; skip the window to
-      // guarantee forward progress (usage inside the blob is not counted).
+    if (state.skippingOversizedRecord || buf.length >= meta.maxWindow) {
+      // A complete record cannot fit in the bounded window. Advance without
+      // parsing and surface an integrity failure instead of fabricating usage.
       state.offset = meta.startOffset + buf.length;
+      state.skippingOversizedRecord = true;
+      state.integrityFailureReason = 'session transcript record exceeds bounded sample window';
+      state.unavailableReason = state.integrityFailureReason;
       state.sampledAt = new Date().toISOString();
       return state;
     }
@@ -811,16 +744,18 @@ export function advanceIncrementalFromBytes(
   }
 
   const completeEnd = lastNl + 1;
-  const completeText = buf.subarray(0, completeEnd).toString('utf8');
+  const parseStart = state.skippingOversizedRecord ? buf.indexOf(0x0a) + 1 : 0;
+  state.skippingOversizedRecord = false;
+  const completeText = buf.subarray(parseStart, completeEnd).toString('utf8');
   for (const line of completeText.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       const obj = JSON.parse(trimmed) as Record<string, unknown>;
-      if (kind === 'claude') state = applyClaudeUsageObject(state, obj);
-      else if (kind === 'codex') state = applyCodexUsageObject(state, obj);
+      state = applyRecord(state, obj);
     } catch {
-      // Complete but malformed line — skip.
+      state.integrityFailureReason = 'session transcript contains malformed JSONL record';
+      state.unavailableReason = state.integrityFailureReason;
     }
   }
   state.offset = meta.startOffset + completeEnd;
@@ -837,10 +772,13 @@ export function advanceIncrementalFromBytes(
  */
 export async function sampleSessionUsageIncremental(params: {
   filePath: string;
-  runner?: string | null;
   prior: IncrementalSessionUsageState;
+  applyRecord: (
+    state: IncrementalSessionUsageState,
+    record: Record<string, unknown>,
+  ) => IncrementalSessionUsageState;
 }): Promise<IncrementalSessionUsageResult> {
-  const { filePath, runner, prior } = params;
+  const { filePath, prior, applyRecord } = params;
   try {
     const st = await stat(filePath);
     if (st.isDirectory()) {
@@ -861,6 +799,27 @@ export async function sampleSessionUsageIncremental(params: {
       };
     }
 
+    const continuityLost =
+      prior.path !== null && (prior.path !== filePath || prior.offset > st.size);
+    if (continuityLost && prior.baselineCaptured) {
+      const integrityFailureReason = 'session transcript changed after budget accounting began';
+      return {
+        turns: null,
+        totalTokens: null,
+        availability: 'unavailable',
+        unavailableReason: integrityFailureReason,
+        nextState: {
+          ...prior,
+          path: filePath,
+          size: st.size,
+          mtimeMs: st.mtimeMs,
+          integrityFailureReason,
+          unavailableReason: integrityFailureReason,
+          sampledAt: new Date().toISOString(),
+        },
+      };
+    }
+
     // Cache only when the file is unchanged *and* we have already consumed through
     // EOF (bounded samples may leave offset < size while size/mtime stay fixed).
     if (
@@ -869,6 +828,15 @@ export async function sampleSessionUsageIncremental(params: {
       prior.mtimeMs === st.mtimeMs &&
       prior.offset >= st.size
     ) {
+      if (prior.integrityFailureReason) {
+        return {
+          turns: null,
+          totalTokens: null,
+          availability: 'unavailable',
+          unavailableReason: prior.integrityFailureReason,
+          nextState: { ...prior, sampledAt: new Date().toISOString() },
+        };
+      }
       return {
         turns: prior.turns,
         totalTokens: prior.totalTokens,
@@ -913,19 +881,19 @@ export async function sampleSessionUsageIncremental(params: {
       await fh.close();
     }
 
-    const advanced = advanceIncrementalFromBytes(state, buf, runner, {
+    const advanced = advanceIncrementalFromBytes(state, buf, applyRecord, {
       startOffset: start,
       fileSize: st.size,
       mtimeMs: st.mtimeMs,
       filePath,
       maxWindow: INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
     });
-    if (advanced.unavailableReason) {
+    if (advanced.integrityFailureReason) {
       return {
         turns: null,
         totalTokens: null,
         availability: 'unavailable',
-        unavailableReason: advanced.unavailableReason,
+        unavailableReason: advanced.integrityFailureReason,
         nextState: advanced,
       };
     }

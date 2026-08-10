@@ -36,7 +36,6 @@ export const RunMethods = {
   forSlot: Methods.RUN_FOR_SLOT,
   resolveDecision: Methods.RUN_RESOLVE_DECISION,
   probeWorkerSignal: Methods.RUN_PROBE_WORKER_SIGNAL,
-  budgetGuardProbe: Methods.RUN_BUDGET_GUARD_PROBE,
   grade: Methods.RUN_GRADE,
   getGrade: Methods.RUN_GET_GRADE,
   proposeImprovement: Methods.RUN_PROPOSE_IMPROVEMENT,
@@ -469,54 +468,6 @@ export interface RunProbeWorkerSignalParams {
 }
 
 export type RunProbeWorkerSignalResult = import('../transport/signal.js').WorkerSignalProbeResult;
-
-/**
- * Live soft-budget guard probe (MANUAL-000096). Samples a transcript via the same
- * pollBudgetGuardStep path as the production monitor, persists monitorState on an
- * ephemeral (or provided) run, and returns violation/nudge side effects for recipe proof.
- */
-export interface RunBudgetGuardProbeParams {
-  /** Local runner transcript JSONL path. */
-  runnerSessionPath: string;
-  runner?: string;
-  /** Soft ceilings; default to update-branch built-ins when omitted. */
-  maxTurns?: number;
-  maxTotalTokens?: number;
-  /**
-   * When set, reuse this probe run (must have been created by a prior probe
-   * call — production runs cannot be mutated).
-   */
-  runId?: string;
-  slotId?: string;
-  /** Attempt a tmux budget nudge (default false for recipe probes). */
-  sendNudge?: boolean;
-  /** Prior budgetWarned; default false. Second call with true proves warn-once. */
-  budgetWarned?: boolean;
-  /** When true, capture warm-session baseline on first sample. */
-  warmSession?: boolean;
-  /** Delete the ephemeral probe run after this call (cleanup). */
-  cleanup?: boolean;
-}
-
-export interface RunBudgetGuardProbeResult {
-  runId: string;
-  budgetWarned: boolean;
-  sampleTurns: number | null;
-  sampleTotalTokens: number | null;
-  /** Per-run charge after warm/cold baseline delta. */
-  chargeTurns: number | null;
-  chargeTotalTokens: number | null;
-  establishingBaseline: boolean;
-  baselineTurns: number | null;
-  availability: string;
-  violationType: string | null;
-  violationMessage: string | null;
-  nudgeSent: boolean;
-  /** True when run.monitorState.budgetWarned is durable after the probe. */
-  persistedBudgetWarned: boolean;
-  /** True when a MONITOR_VIOLATION-class payload was produced this call. */
-  emittedViolation: boolean;
-}
 
 export interface RunGradeParams {
   runId: string;

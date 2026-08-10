@@ -4,8 +4,6 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
-- feat(internal): `session-usage-incremental` CLI for complete-line transcript sampling (MANUAL-000096).
-
 - feat(backlog): let `backlog update --project` repair an item's owning farm; the gateway clears project-owned slots, templates, app, prepare, scripted-runner, and launch-plan configuration.
 
 - feat(execution-template): `options` human output lists domain-filtered sources with the `--domain` value that re-enables them (MANUAL-000076).

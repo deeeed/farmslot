@@ -16,6 +16,7 @@ import {
 import type { SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 
 /** Durable monitor sample state (also persisted on Run.monitorState). */
 export type BudgetUsageSampleState = IncrementalSessionUsageState;
@@ -25,6 +26,8 @@ export type BudgetUsageSampleResult = {
   totalTokens: number | null;
   availability: 'available' | 'unavailable' | 'cached';
   unavailableReason?: string;
+  /** True when accounting integrity/capability is unavailable and the guard must warn. */
+  enforcementFailure?: boolean;
   nextState: BudgetUsageSampleState;
 };
 
@@ -81,18 +84,11 @@ async function remoteReadBytes(
   }
 }
 
-/** Build a remote bash script path argument that expands `~/` via `$HOME`. */
-export function remoteSessionUsageScriptArg(script: string): string {
-  if (script.startsWith('~/')) {
-    return `"$HOME/${script.slice(2).replace(/"/g, '\\"')}"`;
-  }
-  return shellQuote(script);
-}
-
 /**
  * Sample session turns/tokens for the soft budget guard.
  *
- * - Local: shared incremental complete-line sampler (bounded new-byte window).
+ * - Supported runners use their typed session-usage provider.
+ * - Unsupported runners fail closed instead of silently disabling accounting.
  * - Remote: same incremental accounting using remote seek/read of new bytes only.
  */
 export async function sampleBudgetUsage(params: {
@@ -103,6 +99,22 @@ export async function sampleBudgetUsage(params: {
   prior: BudgetUsageSampleState;
 }): Promise<BudgetUsageSampleResult> {
   const { vars, runner, runnerSessionPath, prior } = params;
+  const provider = getRunnerSessionUsageProvider(runner);
+  if (!provider) {
+    const unavailableReason = `runner '${runner ?? 'unknown'}' has no bounded session-usage provider`;
+    return {
+      turns: null,
+      totalTokens: null,
+      availability: 'unavailable',
+      unavailableReason,
+      enforcementFailure: true,
+      nextState: {
+        ...prior,
+        unavailableReason,
+        sampledAt: new Date().toISOString(),
+      },
+    };
+  }
   if (!runnerSessionPath) {
     const next = {
       ...emptyBudgetUsageSampleState(),
@@ -119,11 +131,15 @@ export async function sampleBudgetUsage(params: {
   }
 
   if (isLocal(vars.host, vars.machine)) {
-    return sampleSessionUsageIncremental({
+    const result = await sampleSessionUsageIncremental({
       filePath: runnerSessionPath,
-      runner,
       prior,
+      applyRecord: provider.applyRecord,
     });
+    return {
+      ...result,
+      enforcementFailure: result.nextState.integrityFailureReason !== undefined,
+    };
   }
 
   // Remote incremental path (same complete-line / oversized-skip rules as local).
@@ -145,12 +161,44 @@ export async function sampleBudgetUsage(params: {
       };
     }
 
+    const continuityLost =
+      prior.path !== null && (prior.path !== runnerSessionPath || prior.offset > remoteStat.size);
+    if (continuityLost && prior.baselineCaptured) {
+      const integrityFailureReason = 'session transcript changed after budget accounting began';
+      return {
+        turns: null,
+        totalTokens: null,
+        availability: 'unavailable',
+        unavailableReason: integrityFailureReason,
+        enforcementFailure: true,
+        nextState: {
+          ...prior,
+          path: runnerSessionPath,
+          size: remoteStat.size,
+          mtimeMs: remoteStat.mtimeMs,
+          integrityFailureReason,
+          unavailableReason: integrityFailureReason,
+          sampledAt: new Date().toISOString(),
+        },
+      };
+    }
+
     if (
       prior.path === runnerSessionPath &&
       prior.size === remoteStat.size &&
       prior.mtimeMs === remoteStat.mtimeMs &&
       prior.offset >= remoteStat.size
     ) {
+      if (prior.integrityFailureReason) {
+        return {
+          turns: null,
+          totalTokens: null,
+          availability: 'unavailable',
+          unavailableReason: prior.integrityFailureReason,
+          enforcementFailure: true,
+          nextState: { ...prior, sampledAt: new Date().toISOString() },
+        };
+      }
       return {
         turns: prior.turns,
         totalTokens: prior.totalTokens,
@@ -203,19 +251,20 @@ export async function sampleBudgetUsage(params: {
       };
     }
 
-    const advanced = advanceIncrementalFromBytes(state, buf, runner, {
+    const advanced = advanceIncrementalFromBytes(state, buf, provider.applyRecord, {
       startOffset: start,
       fileSize: remoteStat.size,
       mtimeMs: remoteStat.mtimeMs,
       filePath: runnerSessionPath,
       maxWindow: INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
     });
-    if (advanced.unavailableReason) {
+    if (advanced.integrityFailureReason) {
       return {
         turns: null,
         totalTokens: null,
         availability: 'unavailable',
-        unavailableReason: advanced.unavailableReason,
+        unavailableReason: advanced.integrityFailureReason,
+        enforcementFailure: true,
         nextState: advanced,
       };
     }

@@ -73,6 +73,11 @@ import {
   type RunnerHandoffAckProbe,
 } from './prompt-delivery-evidence.js';
 import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
+import {
+  claudeSessionUsageProvider,
+  codexSessionUsageProvider,
+  type RunnerSessionUsageProvider,
+} from './session-usage-provider.js';
 
 /**
  * Env prefix for worker sessions.
@@ -142,6 +147,8 @@ export interface RunnerDefinition {
   observabilityScope: ObservabilityScope;
   /** Post-send hook heartbeat window for degraded-mode detection (ADR-032). Null skips check. */
   observabilityHeartbeatMs?: number | null;
+  /** Bounded transcript accounting for the soft run budget, or explicit unsupported. */
+  sessionUsageProvider: RunnerSessionUsageProvider | null;
 }
 
 interface PaneClassifierResult {
@@ -207,6 +214,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: (model) => model === 'unknown' || CLAUDE_MODEL_PREFIXES.test(model),
     observabilityScope: 'event-driven',
     observabilityHeartbeatMs: 5000,
+    sessionUsageProvider: claudeSessionUsageProvider,
   },
   codex: {
     id: 'codex',
@@ -244,6 +252,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: (model) => model === 'unknown' || !CLAUDE_MODEL_PREFIXES.test(model),
     observabilityScope: 'event-driven',
     observabilityHeartbeatMs: 5000,
+    sessionUsageProvider: codexSessionUsageProvider,
   },
   cursor: {
     id: 'cursor',
@@ -271,6 +280,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: DEFAULT_CURSOR_MODEL,
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
     observabilityScope: 'pane-only',
+    sessionUsageProvider: null,
   },
   grok: {
     id: 'grok',
@@ -299,6 +309,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: DEFAULT_GROK_MODEL,
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
     observabilityScope: 'event-driven',
+    sessionUsageProvider: null,
   },
   opencode: {
     id: 'opencode',
@@ -319,6 +330,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: null,
     acceptsModel: () => true,
     observabilityScope: 'none',
+    sessionUsageProvider: null,
   },
   none: {
     id: 'none',
@@ -339,6 +351,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: null,
     acceptsModel: () => true,
     observabilityScope: 'none',
+    sessionUsageProvider: null,
   },
   scripted: {
     id: 'scripted',
@@ -359,6 +372,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: null,
     acceptsModel: () => true,
     observabilityScope: 'none',
+    sessionUsageProvider: null,
   },
 };
 
@@ -371,6 +385,14 @@ const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
 export function getRunnerObservability(runnerId?: string | null): RunnerObservability | null {
   if (!runnerId) return null;
   return KNOWN_RUNNER_OBSERVABILITY[normalizeRunner(runnerId)] ?? null;
+}
+
+/** Bounded transcript accounting is a static runner capability. */
+export function getRunnerSessionUsageProvider(
+  runnerId?: string | null,
+): RunnerSessionUsageProvider | null {
+  if (!runnerId) return null;
+  return KNOWN_RUNNERS[normalizeRunner(runnerId)]?.sessionUsageProvider ?? null;
 }
 
 export async function readRunnerTurnState(
