@@ -878,9 +878,14 @@ export function renderAppShellStyles(
         text-transform: uppercase;
       }
       farm-app .pairing-detected-row {
+        align-items: center;
         background: ${colors.bgCard};
         border: 1px solid ${colors.bgCardHover};
         border-radius: 8px;
+        cursor: pointer;
+        display: grid;
+        gap: 10px;
+        grid-template-columns: auto minmax(0, 1fr);
         padding: 8px 10px;
       }
       farm-app .pairing-detected-row strong,
@@ -896,6 +901,16 @@ export function renderAppShellStyles(
         font-family: ${fonts.mono};
         font-size: ${fonts.sizeXs};
         overflow-wrap: anywhere;
+      }
+      farm-app .pairing-target-toggle {
+        align-items: center;
+        color: ${colors.textPrimary};
+        cursor: pointer;
+        display: flex;
+        font-size: ${fonts.sizeSm};
+        font-weight: 700;
+        gap: 8px;
+        margin: 12px 0 8px;
       }
       farm-app .pairing-status-grid div {
         background: ${colors.bgCard};
@@ -917,6 +932,81 @@ export function renderAppShellStyles(
         font-size: ${fonts.sizeSm};
         font-weight: 700;
         overflow-wrap: anywhere;
+      }
+      farm-app .pairing-access {
+        border: 1px solid ${colors.bgCardHover};
+        border-radius: 8px;
+        margin-bottom: 16px;
+        padding: 10px;
+      }
+      farm-app .pairing-access summary {
+        color: ${colors.textPrimary};
+        cursor: pointer;
+        font-size: ${fonts.sizeSm};
+        font-weight: 800;
+      }
+      farm-app .pairing-access[open] summary {
+        margin-bottom: 8px;
+      }
+      farm-app .pairing-access-list {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      farm-app .pairing-access-principal {
+        background: ${colors.bgCard};
+        border: 1px solid ${colors.bgCardHover};
+        border-radius: 8px;
+        padding: 9px;
+      }
+      farm-app .pairing-access-heading,
+      farm-app .pairing-access-credential {
+        align-items: center;
+        display: flex;
+        gap: 10px;
+        justify-content: space-between;
+      }
+      farm-app .pairing-access-heading {
+        color: ${colors.textPrimary};
+        font-size: ${fonts.sizeSm};
+        margin-bottom: 7px;
+      }
+      farm-app .pairing-access-heading span {
+        color: ${colors.textMuted};
+        font-size: ${fonts.sizeXs};
+      }
+      farm-app .pairing-access-credential + .pairing-access-credential {
+        border-top: 1px solid ${colors.bgCardHover};
+        margin-top: 7px;
+        padding-top: 7px;
+      }
+      farm-app .pairing-access-credential > span,
+      farm-app .pairing-access-credential strong,
+      farm-app .pairing-access-credential code {
+        display: block;
+        min-width: 0;
+      }
+      farm-app .pairing-access-credential strong {
+        color: ${colors.textSecondary};
+        font-size: ${fonts.sizeXs};
+      }
+      farm-app .pairing-access-credential code {
+        color: ${colors.textMuted};
+        font-size: 10px;
+        overflow-wrap: anywhere;
+      }
+      farm-app .pairing-access-credential button {
+        background: transparent;
+        border: 1px solid ${colors.statusFail}66;
+        border-radius: 6px;
+        color: ${colors.statusFail};
+        cursor: pointer;
+        font: 700 ${fonts.sizeXs} ${fonts.mono};
+        padding: 6px 8px;
+      }
+      farm-app .pairing-access-credential button:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
       }
       farm-app .pairing-qr-wrap {
         display: flex;

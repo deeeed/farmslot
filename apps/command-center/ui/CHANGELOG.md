@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- fix(pairing): let operators select the gateway profiles encoded in Companion pairing QR codes, invalidate stale QR codes when pairing inputs change, default to one LAN address instead of syncing every detected interface, choose existing principals from the gateway inventory, and revoke active device credentials from the same access panel.
 
 ## 0.6.0 - 2026-08-10
 

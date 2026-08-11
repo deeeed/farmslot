@@ -1069,12 +1069,14 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
   } catch (err) {
     const error = err as NodeJS.ErrnoException;
     const message = error.message || String(err);
-    console.warn('[filesystem] serveRunArtifact failed', err);
     if (error.code === 'ENOENT') {
+      // Artifact packages are intentionally removable while their durable run
+      // records remain. A stale UI request therefore resolves as a quiet 404.
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end(message);
       return;
     }
+    console.warn('[filesystem] serveRunArtifact failed', err);
     if (error.code === 'EACCES') {
       res.writeHead(403, { 'Content-Type': 'text/plain' });
       res.end(message);

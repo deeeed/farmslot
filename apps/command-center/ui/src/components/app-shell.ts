@@ -5,6 +5,7 @@ import QRCode from 'qrcode';
 import type {
   ChatClientContext,
   ChatSendIntent,
+  CredentialListResult,
   FleetSummary,
   GatewayListenInfo,
   GatewayStatusResult,
@@ -16,6 +17,7 @@ import type {
   PairingCandidate,
   PairingCandidatesResult,
   PairingCreateResult,
+  PrincipalListResult,
   Run,
   SlotStatus,
   TmuxWorkerInventoryUpdatedPayload,
@@ -237,11 +239,19 @@ export class FarmApp extends LitElement {
   @state() private pairingProfileName = DEFAULT_PAIRING_PROFILE_NAME;
   @state() private pairingAuthorityKind: PairingAuthorityKind = '';
   @state() private pairingExistingPrincipalId = '';
+  @state() private pairingExistingPrincipals: PrincipalListResult['principals'] = [];
+  @state() private pairingManagedPrincipals: PrincipalListResult['principals'] = [];
+  @state() private pairingCredentials: CredentialListResult['credentials'] = [];
+  @state() private pairingAccessBusyCredentialId = '';
+  @state() private pairingPrincipalStatus = '';
   @state() private pairingNewServiceName = '';
   @state() private pairingNewServiceRole: PairingAuthorityRole = '';
   @state() private pairingLanGatewayUrl = resolveDefaultPairingGatewayUrl();
   @state() private pairingRemoteGatewayUrl = resolveDefaultRemotePairingGatewayUrl();
   @state() private pairingDetectedTargets: PairingTarget[] = [];
+  @state() private pairingSelectedTargetUrls: string[] = [];
+  @state() private pairingIncludeLanGateway = false;
+  @state() private pairingIncludeRemoteGateway = false;
   @state() private pairingCandidateStatus = '';
   @state() private pairingQrDataUrl = '';
   @state() private pairingExpiresAt = '';
@@ -815,12 +825,18 @@ export class FarmApp extends LitElement {
 
   private openPairingPanel() {
     this.pairingOpen = true;
+    this.pairingAuthorityKind = '';
+    this.pairingExistingPrincipalId = '';
     this.pairingError = '';
     this.pairingListenWarning = '';
     this.pairingCandidateStatus = '';
+    this.pairingSelectedTargetUrls = [];
+    this.pairingIncludeLanGateway = false;
+    this.pairingIncludeRemoteGateway = false;
     this.pairingQrDataUrl = '';
     this.pairingExpiresAt = '';
     void this.refreshPairingCandidates();
+    void this.refreshPairingPrincipals();
     void this.refreshPairingListenWarning();
   }
 
@@ -840,6 +856,12 @@ export class FarmApp extends LitElement {
     this.pairingOpen = false;
   }
 
+  private invalidatePairingQr() {
+    this.pairingQrDataUrl = '';
+    this.pairingExpiresAt = '';
+    this.pairingProfileCount = 0;
+  }
+
   private async refreshPairingCandidates() {
     try {
       const port =
@@ -854,9 +876,16 @@ export class FarmApp extends LitElement {
           kind: candidate.kind,
           profileName: candidate.profileName,
         }));
+      const defaultTarget = this.pairingDetectedTargets[0];
+      this.pairingSelectedTargetUrls = defaultTarget ? [defaultTarget.gatewayUrl] : [];
+      this.pairingIncludeLanGateway = !defaultTarget && Boolean(this.pairingLanGatewayUrl.trim());
+      this.pairingIncludeRemoteGateway =
+        !defaultTarget &&
+        !this.pairingIncludeLanGateway &&
+        Boolean(this.pairingRemoteGatewayUrl.trim());
       const hasTailscale = result.candidates.some((candidate) => candidate.kind === 'tailnet');
       this.pairingCandidateStatus = result.candidates.length
-        ? `Auto-detected ${result.candidates.length} gateway URL${result.candidates.length === 1 ? '' : 's'}${hasTailscale ? ', including Tailscale' : ''}.`
+        ? `Detected ${result.candidates.length} gateway URL${result.candidates.length === 1 ? '' : 's'}${hasTailscale ? ', including Tailscale' : ''}. Select only the profiles this device should use.`
         : 'No LAN/Tailscale gateway URLs auto-detected; use the fields below.';
       if (!this.pairingLanGatewayUrl.trim()) {
         this.pairingLanGatewayUrl =
@@ -864,22 +893,102 @@ export class FarmApp extends LitElement {
       }
     } catch (err) {
       this.pairingDetectedTargets = [];
+      this.pairingSelectedTargetUrls = [];
+      this.pairingIncludeLanGateway = Boolean(this.pairingLanGatewayUrl.trim());
+      this.pairingIncludeRemoteGateway =
+        !this.pairingIncludeLanGateway && Boolean(this.pairingRemoteGatewayUrl.trim());
       this.pairingCandidateStatus = `Could not auto-detect LAN/Tailscale URLs: ${err instanceof Error ? err.message : 'unknown error'}`;
     }
+  }
+
+  private async refreshPairingPrincipals() {
+    this.pairingPrincipalStatus = 'Loading principals…';
+    try {
+      const [principalResult, credentialResult] = await Promise.all([
+        gateway.request<PrincipalListResult>(Methods.PRINCIPAL_LIST, {}),
+        gateway.request<CredentialListResult>(Methods.CREDENTIAL_LIST, {
+          includeRevoked: false,
+        }),
+      ]);
+      this.pairingManagedPrincipals = principalResult.principals
+        .filter((principal) => principal.subject.type !== 'node')
+        .sort((a, b) => {
+          const byName = a.subject.displayName.localeCompare(b.subject.displayName);
+          return byName || a.id.localeCompare(b.id);
+        });
+      this.pairingCredentials = credentialResult.credentials;
+      this.pairingExistingPrincipals = this.pairingManagedPrincipals.filter(
+        (principal) => principal.roles.length > 0,
+      );
+      if (
+        !this.pairingExistingPrincipals.some(
+          (principal) => principal.id === this.pairingExistingPrincipalId,
+        )
+      ) {
+        this.pairingExistingPrincipalId = '';
+      }
+      this.pairingPrincipalStatus = this.pairingExistingPrincipals.length
+        ? ''
+        : 'No operator or admin principals are available.';
+    } catch (error) {
+      this.pairingExistingPrincipals = [];
+      this.pairingManagedPrincipals = [];
+      this.pairingCredentials = [];
+      this.pairingExistingPrincipalId = '';
+      this.pairingPrincipalStatus = `Could not load principals: ${error instanceof Error ? error.message : 'unknown error'}`;
+    }
+  }
+
+  private async revokePairingCredential(credential: CredentialListResult['credentials'][number]) {
+    if (
+      !window.confirm(
+        `Revoke ${credential.displayName}? Devices using this credential will disconnect.`,
+      )
+    ) {
+      return;
+    }
+    this.pairingAccessBusyCredentialId = credential.id;
+    this.pairingPrincipalStatus = `Revoking ${credential.displayName}…`;
+    try {
+      await gateway.request(Methods.CREDENTIAL_REVOKE, { credentialId: credential.id });
+      await this.refreshPairingPrincipals();
+    } catch (error) {
+      await this.refreshPairingPrincipals();
+      this.pairingPrincipalStatus = `Could not revoke ${credential.displayName}: ${error instanceof Error ? error.message : 'unknown error'}`;
+    } finally {
+      this.pairingAccessBusyCredentialId = '';
+    }
+  }
+
+  private setPairingTargetSelected(gatewayUrl: string, selected: boolean) {
+    this.pairingSelectedTargetUrls = selected
+      ? [...new Set([...this.pairingSelectedTargetUrls, gatewayUrl])]
+      : this.pairingSelectedTargetUrls.filter((candidate) => candidate !== gatewayUrl);
+    this.invalidatePairingQr();
   }
 
   private async createCompanionPairing(event?: Event) {
     event?.preventDefault();
     const targets = [
-      ...this.pairingDetectedTargets,
-      {
-        profileName: DEFAULT_LAN_PAIRING_PROFILE_NAME,
-        gatewayUrl: this.pairingLanGatewayUrl.trim(),
-      },
-      {
-        profileName: this.pairingProfileName.trim() || DEFAULT_PAIRING_PROFILE_NAME,
-        gatewayUrl: this.pairingRemoteGatewayUrl.trim(),
-      },
+      ...this.pairingDetectedTargets.filter((target) =>
+        this.pairingSelectedTargetUrls.includes(target.gatewayUrl),
+      ),
+      ...(this.pairingIncludeLanGateway
+        ? [
+            {
+              profileName: DEFAULT_LAN_PAIRING_PROFILE_NAME,
+              gatewayUrl: this.pairingLanGatewayUrl.trim(),
+            },
+          ]
+        : []),
+      ...(this.pairingIncludeRemoteGateway
+        ? [
+            {
+              profileName: this.pairingProfileName.trim() || DEFAULT_PAIRING_PROFILE_NAME,
+              gatewayUrl: this.pairingRemoteGatewayUrl.trim(),
+            },
+          ]
+        : []),
     ].filter((target, index, allTargets) => {
       if (!target.gatewayUrl) return false;
       return (
@@ -887,8 +996,7 @@ export class FarmApp extends LitElement {
       );
     });
     if (targets.length === 0) {
-      this.pairingError =
-        'Add at least one gateway URL, or configure VITE_FARMSLOT_PAIRING_GATEWAY_URL / VITE_FARMSLOT_REMOTE_GATEWAY_URL.';
+      this.pairingError = 'Select a detected profile or enable a custom LAN or remote profile.';
       return;
     }
     const invalidTarget = targets.find(
@@ -1401,13 +1509,24 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           ${this.pairingDetectedTargets.length
             ? html`
                 <div class="pairing-detected">
-                  <span>Auto-included profiles</span>
+                  <span>Detected profiles</span>
                   ${this.pairingDetectedTargets.map(
                     (target) => html`
-                      <div class="pairing-detected-row">
-                        <strong>${target.profileName}</strong>
-                        <code>${target.gatewayUrl}</code>
-                      </div>
+                      <label class="pairing-detected-row">
+                        <input
+                          type="checkbox"
+                          .checked=${this.pairingSelectedTargetUrls.includes(target.gatewayUrl)}
+                          @change=${(event: Event) =>
+                            this.setPairingTargetSelected(
+                              target.gatewayUrl,
+                              (event.target as HTMLInputElement).checked,
+                            )}
+                        />
+                        <span>
+                          <strong>${target.profileName}</strong>
+                          <code>${target.gatewayUrl}</code>
+                        </span>
+                      </label>
                     `,
                   )}
                 </div>
@@ -1437,6 +1556,64 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
             </div>
           </div>
 
+          <details class="pairing-access">
+            <summary>Principal access</summary>
+            <div class="pairing-copy">
+              Revoke a device credential without deleting its audit record. The principal remains
+              available for a future pairing.
+            </div>
+            <div class="pairing-access-list">
+              ${this.pairingManagedPrincipals
+                .map((principal) => ({
+                  principal,
+                  credentials: this.pairingCredentials.filter(
+                    (credential) =>
+                      credential.principalId === principal.id && !credential.revokedAt,
+                  ),
+                }))
+                .filter(({ credentials }) => credentials.length > 0)
+                .map(
+                  ({ principal, credentials }) => html`
+                    <div class="pairing-access-principal">
+                      <div class="pairing-access-heading">
+                        <strong>${principal.subject.displayName}</strong>
+                        <span
+                          >${principal.roles.map((binding) => binding.role).join(', ') ||
+                          'no role'}</span
+                        >
+                      </div>
+                      ${credentials.map(
+                        (credential) => html`
+                          <div class="pairing-access-credential">
+                            <span>
+                              <strong>${credential.displayName}</strong>
+                              <code>${credential.id} · ${credential.origin}</code>
+                            </span>
+                            <button
+                              type="button"
+                              ?disabled=${Boolean(this.pairingAccessBusyCredentialId)}
+                              @click=${() => this.revokePairingCredential(credential)}
+                            >
+                              ${this.pairingAccessBusyCredentialId === credential.id
+                                ? 'Revoking…'
+                                : 'Revoke'}
+                            </button>
+                          </div>
+                        `,
+                      )}
+                    </div>
+                  `,
+                )}
+              ${this.pairingManagedPrincipals.some((principal) =>
+                this.pairingCredentials.some(
+                  (credential) => credential.principalId === principal.id && !credential.revokedAt,
+                ),
+              )
+                ? nothing
+                : html`<div class="pairing-empty">No active credentials.</div>`}
+            </div>
+          </details>
+
           <div class="pairing-label">Pairing authority</div>
           <div class="pairing-copy" role="radiogroup" aria-label="Pairing authority">
             <label>
@@ -1447,6 +1624,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
                 .checked=${this.pairingAuthorityKind === 'existing-principal'}
                 @change=${() => {
                   this.pairingAuthorityKind = 'existing-principal';
+                  this.invalidatePairingQr();
                 }}
               />
               Use an existing principal
@@ -1459,6 +1637,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
                 .checked=${this.pairingAuthorityKind === 'new-service-principal'}
                 @change=${() => {
                   this.pairingAuthorityKind = 'new-service-principal';
+                  this.invalidatePairingQr();
                 }}
               />
               Create a new service principal
@@ -1468,17 +1647,31 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           ${this.pairingAuthorityKind === 'existing-principal'
             ? html`
                 <label class="pairing-label" for="pairing-existing-principal-id"
-                  >Existing principal ID</label
+                  >Existing principal</label
                 >
-                <input
+                <select
                   id="pairing-existing-principal-id"
                   class="pairing-input"
                   data-testid="pairing-existing-principal-id"
                   .value=${this.pairingExistingPrincipalId}
-                  @input=${(event: InputEvent) => {
-                    this.pairingExistingPrincipalId = (event.target as HTMLInputElement).value;
+                  @change=${(event: Event) => {
+                    this.pairingExistingPrincipalId = (event.target as HTMLSelectElement).value;
+                    this.invalidatePairingQr();
                   }}
-                />
+                >
+                  <option value="">Select a principal…</option>
+                  ${this.pairingExistingPrincipals.map(
+                    (principal) => html`
+                      <option value=${principal.id}>
+                        ${principal.subject.displayName} · ${principal.id} ·
+                        ${principal.roles.map((binding) => binding.role).join(', ')}
+                      </option>
+                    `,
+                  )}
+                </select>
+                ${this.pairingPrincipalStatus
+                  ? html`<div class="pairing-copy">${this.pairingPrincipalStatus}</div>`
+                  : ''}
               `
             : ''}
           ${this.pairingAuthorityKind === 'new-service-principal'
@@ -1493,6 +1686,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
                   .value=${this.pairingNewServiceName}
                   @input=${(event: InputEvent) => {
                     this.pairingNewServiceName = (event.target as HTMLInputElement).value;
+                    this.invalidatePairingQr();
                   }}
                 />
                 <div class="pairing-label">New service principal role</div>
@@ -1505,6 +1699,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
                       .checked=${this.pairingNewServiceRole === 'operator'}
                       @change=${() => {
                         this.pairingNewServiceRole = 'operator';
+                        this.invalidatePairingQr();
                       }}
                     />
                     Operator
@@ -1517,6 +1712,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
                       .checked=${this.pairingNewServiceRole === 'admin'}
                       @change=${() => {
                         this.pairingNewServiceRole = 'admin';
+                        this.invalidatePairingQr();
                       }}
                     />
                     Admin
@@ -1525,6 +1721,17 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
               `
             : ''}
 
+          <label class="pairing-target-toggle">
+            <input
+              type="checkbox"
+              .checked=${this.pairingIncludeLanGateway}
+              @change=${(event: Event) => {
+                this.pairingIncludeLanGateway = (event.target as HTMLInputElement).checked;
+                this.invalidatePairingQr();
+              }}
+            />
+            Include custom LAN profile
+          </label>
           <label class="pairing-label" for="pairing-lan-gateway-url">LAN gateway URL</label>
           <input
             id="pairing-lan-gateway-url"
@@ -1533,9 +1740,21 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
             .value=${this.pairingLanGatewayUrl}
             @input=${(event: InputEvent) => {
               this.pairingLanGatewayUrl = (event.target as HTMLInputElement).value;
+              this.invalidatePairingQr();
             }}
           />
 
+          <label class="pairing-target-toggle">
+            <input
+              type="checkbox"
+              .checked=${this.pairingIncludeRemoteGateway}
+              @change=${(event: Event) => {
+                this.pairingIncludeRemoteGateway = (event.target as HTMLInputElement).checked;
+                this.invalidatePairingQr();
+              }}
+            />
+            Include remote profile
+          </label>
           <label class="pairing-label" for="pairing-remote-profile-name">Remote profile name</label>
           <input
             id="pairing-remote-profile-name"
@@ -1543,6 +1762,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
             .value=${this.pairingProfileName}
             @input=${(event: InputEvent) => {
               this.pairingProfileName = (event.target as HTMLInputElement).value;
+              this.invalidatePairingQr();
             }}
           />
 
@@ -1556,6 +1776,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
             .value=${this.pairingRemoteGatewayUrl}
             @input=${(event: InputEvent) => {
               this.pairingRemoteGatewayUrl = (event.target as HTMLInputElement).value;
+              this.invalidatePairingQr();
             }}
           />
 
@@ -1750,7 +1971,7 @@ function pairingCandidatePort(url: string): number | undefined {
 }
 
 function pairingCandidateRank(candidate: Pick<PairingCandidate, 'kind'>): number {
-  return candidate.kind === 'tailnet' ? 0 : 1;
+  return candidate.kind === 'lan' ? 0 : 1;
 }
 
 function resolveDefaultPairingGatewayUrl(): string {

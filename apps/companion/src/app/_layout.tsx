@@ -75,6 +75,16 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="run-filters"
+            options={{
+              headerShown: false,
+              presentation: 'formSheet',
+              sheetAllowedDetents: [0.55, 0.9],
+              sheetGrabberVisible: true,
+              sheetInitialDetentIndex: 1,
+            }}
+          />
+          <Stack.Screen
             name="backlog/create"
             options={{
               headerShown: false,

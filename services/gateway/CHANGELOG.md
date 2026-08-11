@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- fix(artifacts): treat cleaned or never-created run artifact roots as a quiet not-found result while preserving diagnostics for real filesystem failures.
 
 ## 0.6.0 - 2026-08-10
 
