@@ -47,7 +47,7 @@ export default function TabLayout() {
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="play-circle-outline" size={size} color={color} />
             ),
-            header: () => connectedHeader,
+            header: () => filteredHeader,
           }}
         />
         <Tabs.Screen

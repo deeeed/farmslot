@@ -9,7 +9,6 @@ import { FLOW_COLORS, FLOW_LABELS, RUNNER_COLORS } from '@farmslot/theme';
 
 import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
 import { FilterEmptyState } from '../../components/FilterEmptyState';
-import { RunFiltersSheet } from '../../components/RunFiltersSheet';
 import { RunPipelineMini } from '../../components/RunPipeline';
 import {
   type ArtifactHttpHeaders,
@@ -779,6 +778,7 @@ function NoActiveRunsWorkspace({
 }
 
 export default function RunsScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const runs = useRunStore((s) => s.runs);
   const activeLoading = useRunStore((s) => s.activeLoading);
@@ -795,7 +795,6 @@ export default function RunsScreen() {
   const runFilterCount = useRunFilterStore((s) => s.activeCount)();
   const initRunFilters = useRunFilterStore((s) => s.init);
   const [showAllRuns, setShowAllRuns] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const hasFilters = filters.projects.length > 0 || filters.machines.length > 0;
 
   useEffect(() => {
@@ -910,7 +909,7 @@ export default function RunsScreen() {
       <View style={styles.scopeActions}>
         <Pressable
           style={[styles.scopeToggle, runFilterCount > 0 && styles.scopeToggleActive]}
-          onPress={() => setFiltersOpen(true)}
+          onPress={() => router.push('/run-filters')}
         >
           <Text
             style={[styles.scopeToggleText, runFilterCount > 0 && styles.scopeToggleTextActive]}
@@ -1011,7 +1010,6 @@ export default function RunsScreen() {
           }
         />
       )}
-      <RunFiltersSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} />
     </View>
   );
 }

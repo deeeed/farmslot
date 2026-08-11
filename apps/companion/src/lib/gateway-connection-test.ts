@@ -7,6 +7,7 @@ import {
 } from '@farmslot/protocol';
 
 import type { GatewayAuthCredentials } from './gateway-http-auth';
+import { mobileGatewayProfileUrlError } from './gateway-profile-validation';
 
 export interface GatewayConnectionTestResult extends GatewayAuthConnectResult {
   latencyMs: number;
@@ -30,6 +31,9 @@ export function testGatewayConnection(
   auth: GatewayAuthCredentials = {},
   timeouts: GatewayConnectionTestTimeouts = {},
 ): Promise<GatewayConnectionTestResult> {
+  const urlError = mobileGatewayProfileUrlError(url);
+  if (urlError) return Promise.reject(new Error(urlError));
+
   const connectTimeout = timeouts.connectMs ?? CONNECTION_TEST_TIMEOUT;
   const pingTimeout = timeouts.pingMs ?? PING_TEST_TIMEOUT;
   const startedAt = Date.now();

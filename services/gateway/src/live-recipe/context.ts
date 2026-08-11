@@ -339,6 +339,9 @@ async function scanSlotArtifactRoot(
     await walk(artifactRoot);
     return refs.length > 0 ? refs : null;
   } catch (error) {
+    // Runs may outlive their slot-local artifact directory after workspace
+    // cleanup. That is an empty evidence source, not a failed node scan.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     console.warn(
       `[live-recipe-context] scanSlotArtifactRoot failed for ${run.id.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`,
     );
