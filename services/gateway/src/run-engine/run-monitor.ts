@@ -51,8 +51,8 @@ import {
 } from '../runners/registry.js';
 import {
   isRunnerAliveUnderPane,
-  resolveRunRetainedSessionBinding,
   resolveRunnerSessionForRun,
+  resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
 } from '../runners/session-process.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
