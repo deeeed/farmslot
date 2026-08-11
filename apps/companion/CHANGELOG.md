@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- fix(connection): retry the first foreground decision sync before warning, and ignore failures from superseded connections.
 
 ## 0.4.1 - 2026-08-11
 
