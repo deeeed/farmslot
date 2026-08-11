@@ -33,6 +33,20 @@ Most of the decision logic that used to live here has moved to the CLI/gateway (
 
 Retired surfaces are CLI-first: slot helpers (`farmslot slot monitor|show|soft-refresh|reopen|auto-refresh`), bug pipeline (`farmslot bug triage|score|grade|validate|batch`, image download folded into `triage`/`batch`), dispatch/PR status (`farmslot run create`, `farmslot pr status|list`), slot picking (`farmslot fleet find-slot`).
 
+## Remote node deployment
+
+Remote installs require a credential bound to the target node principal. Issue it to a private one-time file, deploy, then delete the file:
+
+```bash
+cd apps/command-center
+yarn farmslot credential issue --principal node-mini --name "mini node deploy" --secret-file /tmp/farmslot-mini-node-token
+cd ../..
+bash scripts/deploy-node.sh mini --instance dev --node-token-file /tmp/farmslot-mini-node-token
+unlink /tmp/farmslot-mini-node-token
+```
+
+For a new machine, add `--subject node --machine <machine>` to the credential command so the node principal is created first.
+
 ## Internal Areas
 
 - `lib/` contains shared implementation helpers used by public scripts.
