@@ -70,6 +70,7 @@ const GATEWAY_PROFILES_KEY = '@farmslot:gatewayProfiles';
 const ACTIVE_GATEWAY_PROFILE_KEY = '@farmslot:activeGatewayProfileId';
 const LIVENESS_PROBE_TIMEOUT_MS = 8_000;
 const DECISION_LIST_TIMEOUT_MS = 30_000;
+const DECISION_SYNC_RETRY_DELAY_MS = 2_000;
 
 let livenessController: ConnectionLivenessController | null = null;
 let appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
@@ -199,6 +200,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
       let decisionRefreshInFlight: Promise<void> | null = null;
       let decisionRefreshQueued = false;
+      let decisionRefreshQueuedReason = 'queued event';
+      let decisionRefreshQueuedRetryBeforeWarning = false;
       const clearDecisionSyncError = () => {
         set((state) => ({
           lastSyncError: state.lastSyncError?.startsWith('Failed to refresh decisions')
@@ -206,27 +209,54 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             : state.lastSyncError,
         }));
       };
-      const refreshDecisions = (reason: string): Promise<void> => {
+      const refreshDecisions = (reason: string, retryBeforeWarning = false): Promise<void> => {
         if (decisionRefreshInFlight) {
           decisionRefreshQueued = true;
+          decisionRefreshQueuedReason = reason;
+          decisionRefreshQueuedRetryBeforeWarning ||= retryBeforeWarning;
           return decisionRefreshInFlight;
         }
-        decisionRefreshInFlight = client
-          .request<DecisionListResult>(Methods.DECISION_LIST, undefined, DECISION_LIST_TIMEOUT_MS)
-          .then((result) => {
+        const connectionGeneration = client.connectionGeneration;
+        // A reconnect starts a fresh sync; never surface stale results from the prior socket.
+        const connectionIsCurrent = () =>
+          client.connectionState === 'connected' &&
+          client.connectionGeneration === connectionGeneration;
+        const requestDecisions = () =>
+          client.request<DecisionListResult>(
+            Methods.DECISION_LIST,
+            undefined,
+            DECISION_LIST_TIMEOUT_MS,
+          );
+        decisionRefreshInFlight = (async () => {
+          try {
+            let result: DecisionListResult;
+            try {
+              result = await requestDecisions();
+            } catch (error) {
+              if (!retryBeforeWarning || !connectionIsCurrent()) throw error;
+              await delay(DECISION_SYNC_RETRY_DELAY_MS);
+              if (!connectionIsCurrent()) return;
+              result = await requestDecisions();
+            }
+            if (!connectionIsCurrent()) return;
             useDecisionStore.getState().setDecisions(result.decisions);
             clearDecisionSyncError();
-          })
-          .catch((err: Error) => {
-            set({ lastSyncError: `Failed to refresh decisions after ${reason}: ${err.message}` });
-          })
-          .finally(() => {
-            decisionRefreshInFlight = null;
-            if (decisionRefreshQueued) {
-              decisionRefreshQueued = false;
-              void refreshDecisions('queued event');
-            }
-          });
+          } catch (error) {
+            if (!connectionIsCurrent()) return;
+            const message = error instanceof Error ? error.message : String(error);
+            set({ lastSyncError: `Failed to refresh decisions after ${reason}: ${message}` });
+          }
+        })().finally(() => {
+          decisionRefreshInFlight = null;
+          if (decisionRefreshQueued) {
+            decisionRefreshQueued = false;
+            const queuedReason = decisionRefreshQueuedReason;
+            const queuedRetryBeforeWarning = decisionRefreshQueuedRetryBeforeWarning;
+            decisionRefreshQueuedReason = 'queued event';
+            decisionRefreshQueuedRetryBeforeWarning = false;
+            void refreshDecisions(queuedReason, queuedRetryBeforeWarning);
+          }
+        });
         return decisionRefreshInFlight;
       };
       requestDecisionRefresh = () => refreshDecisions('manual retry');
@@ -339,7 +369,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
               set({ lastSyncError: `Failed to refresh runs: ${err.message}` });
             });
 
-          refreshDecisions('connection sync');
+          refreshDecisions('connection sync', true);
 
           // PR_LIST fans out through GitHub and can legitimately outlive a cold
           // connect. Keep it lazy on the PR screen so a slow PR refresh does not
@@ -812,6 +842,10 @@ async function authCredentialsForProfile(profile: GatewayProfile): Promise<Gatew
 async function readSavedProfiles(): Promise<GatewayProfile[]> {
   const raw = await AsyncStorage.getItem(GATEWAY_PROFILES_KEY);
   return parseGatewayProfilesFromStorage(raw);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function normalizeDecisionEvent(payload: unknown): PendingDecision | null {
