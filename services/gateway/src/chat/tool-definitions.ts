@@ -130,11 +130,11 @@ export const FLEET_TOOLS: Tool[] = [
   {
     name: 'read_farmslot_file',
     description:
-      'Read an approved Farmslot source/doc/script path, or a registered log id/display/absolute path from list_farmslot_logs. Registered log content is redacted.',
+      'Read an approved Farmslot source/doc/script path, a registered log, or an exact absolute path below the Farmslot .omx/logs tree. Log content is redacted.',
     parameters: Type.Object({
       path: Type.String({
         description:
-          'Relative path under Farmslot root, or a log id/display/absolute path returned by list_farmslot_logs.',
+          'Relative path under Farmslot root, a registered log id/display/path, or an exact .omx/logs path from run evidence.',
       }),
       max_chars: Type.Optional(
         Type.Number({ description: 'Max characters to return, default 20000' }),

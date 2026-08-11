@@ -8,6 +8,7 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { intelligenceAuditDir } from '../auto-recovery/audit-writer.js';
 import { isPathInside } from '../core/path.js';
+import { farmslotRuntimeLogDir } from '../projects/repo-root.js';
 
 const MAX_LOG_SOURCES = 200;
 const LOG_FILE_EXTENSIONS = new Set(['.log', '.out', '.err', '.txt', '.ndjson']);
@@ -307,6 +308,7 @@ export async function listLogRegistryEntries(): Promise<LogRegistryEntry[]> {
 export async function findRegisteredLogEntry(
   rawPath: string,
   entries: readonly LogRegistryEntry[],
+  runtimeLogRoot = farmslotRuntimeLogDir,
 ): Promise<LogRegistryEntry | null> {
   const requested = rawPath.trim();
   if (!requested) return null;
@@ -325,7 +327,39 @@ export async function findRegisteredLogEntry(
       (absRequested && entry.path === absRequested) ||
       (realRequested && entry.path === realRequested),
   );
-  return matched ?? null;
+  if (matched) return matched;
+
+  // Prepare and other run-owned logs are nested below .omx/logs, while the
+  // registry's directory listings are intentionally shallow. A run may still
+  // disclose one of those exact paths in step evidence; admit that bounded
+  // path without widening Co-Pilot access to the rest of the checkout.
+  if (!absRequested || !realRequested || !LOG_FILE_EXTENSIONS.has(path.extname(realRequested))) {
+    return null;
+  }
+  const realRuntimeDir = await realpath(runtimeLogRoot).catch((err: unknown) => {
+    if (isRecoverableLogAccessError(err)) return null;
+    throw err;
+  });
+  if (!realRuntimeDir || !isPathInside(realRuntimeDir, realRequested)) return null;
+  const info = await lstat(absRequested).catch((err: unknown) => {
+    if (isRecoverableLogAccessError(err)) return null;
+    throw err;
+  });
+  if (!info || info.isSymbolicLink() || !info.isFile()) return null;
+  const relativePath = path.relative(realRuntimeDir, realRequested);
+  return {
+    id: `runtime-${safeId(relativePath)}-${shortHash(realRequested)}`,
+    label: `Runtime log: ${relativePath}`,
+    category: relativePath.startsWith('prepare-') ? 'prepare' : 'slot-runtime',
+    owner: 'gateway',
+    kind: 'file',
+    path: realRequested,
+    displayPath: `<runtime-logs>/${relativePath}`,
+    description: 'Run-owned Farmslot runtime log disclosed by gateway step evidence.',
+    exists: true,
+    size: info.size,
+    modifiedAt: info.mtime.toISOString(),
+  };
 }
 
 export function redactLogContent(content: string): string {

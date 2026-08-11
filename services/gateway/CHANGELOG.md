@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(copilot): let run diagnostics read redacted prepare logs explicitly disclosed by gateway step evidence while keeping filesystem access bounded to `.omx/logs`.
+
 - feat(run-monitor): per-flow turn/token soft budgets for mechanical flows, with built-in update-branch defaults, pre-delivery warm baselines, bounded local/remote transcript sampling through runner capabilities, fail-closed integrity warnings, and retry-safe confirmed nudges (MANUAL-000096).
 
 - Active-development baseline; add user-facing changes here before release or package publication.

@@ -46,6 +46,7 @@ import {
   resolveSandboxPorts,
   siblingPortsFromDevServer,
 } from '../../prepare/farmslot-port-provisioning.js';
+import { farmslotRuntimeLogDir } from '../../projects/repo-root.js';
 import { assertStartRefWorkBranchIsLocalOnly } from '../../projects/start-ref-policy.js';
 import {
   resolveStartRefInRepo,
@@ -257,7 +258,7 @@ async function slotPrepareInner(
   const slotIsLocal = isLocal(vars.host, vars.machine);
   const prepareLogDir = slotIsLocal
     ? path.join(vars.remoteRepo, runtimeDir, 'prepare-logs')
-    : path.join(farmslotRoot, '.omx', 'logs', `prepare-${params.slotId}`);
+    : path.join(farmslotRuntimeLogDir, `prepare-${params.slotId}`);
   const phaseLog = (name: string) => path.join(prepareLogDir, `${sanitizePhaseName(name)}.log`);
 
   const step = stream.step.bind(stream);
