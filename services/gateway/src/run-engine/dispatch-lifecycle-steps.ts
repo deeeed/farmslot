@@ -28,6 +28,7 @@ import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import { probeRemotePath } from './remote-probes.js';
+import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
 import { createSubStepCollector } from './sub-step-collector.js';
 
 interface StepIO {
@@ -443,54 +444,93 @@ export async function executeDispatchStep(
   // to fresh dispatchExecute when the process is dead, runner/model swapped, or
   // the runner cannot accept tmux instructions (MANUAL-000065 / MANUAL-000043).
   if (current.engineState?.flags?.warmSessionReuse) {
-    const collector = createSubStepCollector();
-    const dispatchStart = Date.now();
-    const result = await warmSessionHandoffDispatch(
-      {
-        slotId: current.slotId,
-        taskFile: current.taskFile,
-        runId,
-        ticketOrPr: current.ticketOrPr,
-        flowType: current.flowType,
-        parentRunId: current.parentRunId,
-        runner: current.metrics.runner,
-        model: current.metrics.model,
-      },
-      collector.emit,
-    );
-    if (result.handedOff) {
-      const subSteps = collector.finish();
+    const baselineStatus = await prepareWarmBudgetBaselineForHandoff(runId, current.slotId);
+    if (baselineStatus === 'unavailable') {
+      console.warn(
+        `[run-engine] run ${runId.slice(0, 8)} — warm session budget baseline unavailable; falling back to fresh dispatch`,
+      );
       updateRun(runId, {
-        activeTaskFile: current.taskFile ?? undefined,
-        metrics: {
-          ...current.metrics,
-          runner: result.runner,
-          ...(result.model ? { model: result.model } : {}),
+        monitorState: undefined,
+        engineState: {
+          ...current.engineState,
+          flags: {
+            ...current.engineState?.flags,
+            warmSessionReuse: true,
+            warmHandoffSucceeded: false,
+          },
         },
       });
-      return {
-        inputs,
-        outputs: {
-          success: true,
-          warmHandoff: true,
-          workerTarget: result.workerTarget,
-          subSteps,
-          readinessWaitMs: Date.now() - dispatchStart,
-          runner: result.runner,
-          model: result.model,
+    } else {
+      const collector = createSubStepCollector();
+      const dispatchStart = Date.now();
+      const result = await warmSessionHandoffDispatch(
+        {
+          slotId: current.slotId,
+          taskFile: current.taskFile,
+          runId,
+          ticketOrPr: current.ticketOrPr,
+          flowType: current.flowType,
+          parentRunId: current.parentRunId,
+          runner: current.metrics.runner,
+          model: current.metrics.model,
         },
-      };
-    }
-    if (result.disposition === 'hold') {
-      throw blockedRunError(
-        `Retained session handoff requires operator attention: ${result.reason}`,
-        'retained-session-handoff',
+        collector.emit,
       );
+      if (result.handedOff) {
+        const subSteps = collector.finish();
+        updateRun(runId, {
+          activeTaskFile: current.taskFile ?? undefined,
+          metrics: {
+            ...current.metrics,
+            runner: result.runner,
+            ...(result.model ? { model: result.model } : {}),
+          },
+          engineState: {
+            ...current.engineState,
+            flags: {
+              ...current.engineState?.flags,
+              warmSessionReuse: true,
+              warmHandoffSucceeded: true,
+            },
+          },
+        });
+        return {
+          inputs,
+          outputs: {
+            success: true,
+            warmHandoff: true,
+            workerTarget: result.workerTarget,
+            subSteps,
+            readinessWaitMs: Date.now() - dispatchStart,
+            runner: result.runner,
+            model: result.model,
+          },
+        };
+      }
+      if (result.disposition === 'hold') {
+        throw blockedRunError(
+          `Retained session handoff requires operator attention: ${result.reason}`,
+          'retained-session-handoff',
+        );
+      }
+      console.log(
+        `[run-engine] run ${runId.slice(0, 8)} — warm session handoff skipped (${result.reason}); falling back to fresh dispatch`,
+      );
+      // Keep warmSessionReuse for observability (request recorded) but mark that
+      // the handoff did not succeed so soft-budget baseline does not treat the
+      // fresh session as a warm parent transcript.
+      updateRun(runId, {
+        monitorState: undefined,
+        engineState: {
+          ...current.engineState,
+          flags: {
+            ...current.engineState?.flags,
+            warmSessionReuse: true,
+            warmHandoffSucceeded: false,
+          },
+        },
+      });
     }
-    console.log(
-      `[run-engine] run ${runId.slice(0, 8)} — warm session handoff skipped (${result.reason}); falling back to fresh dispatch`,
-    );
-    // Leave warmSessionReuse set for observability; fresh path ignores it.
   }
 
   // Branch-affinity nudge — set by the wizard via run.create or by the decision card in

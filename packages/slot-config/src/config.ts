@@ -218,11 +218,12 @@ export interface RawProjectJson {
     total_timeout_min?: number;
     max_nudges?: number;
     /**
-     * Per-flow timeout overrides keyed by FlowType (dev, fix-bug, pr-complete, …).
+     * Per-flow overrides keyed by FlowType (dev, fix-bug, pr-complete, …).
      * Keys are restricted to the FlowType union so a typo'd flow name fails the
-     * typecheck/schema instead of silently never matching at runtime. Only
-     * total_timeout_min and stuck_timeout_min are overridable; when absent the
-     * top-level monitoring value (then the built-in default) applies.
+     * typecheck/schema instead of silently never matching at runtime.
+     * Timeout fields fall back to the top-level monitoring value (then the
+     * built-in default). Turn/token budgets fall back to FLOW_USAGE_BUDGET_DEFAULTS
+     * for mechanical flows (e.g. update-branch) when unset.
      */
     flows?: Partial<
       Record<
@@ -230,6 +231,10 @@ export interface RawProjectJson {
         {
           total_timeout_min?: number;
           stuck_timeout_min?: number;
+          /** Soft turn ceiling; monitor warns once when session turns exceed this. */
+          max_turns?: number;
+          /** Soft total-token ceiling; monitor warns once when session total tokens exceed this. */
+          max_total_tokens?: number;
         }
       >
     >;

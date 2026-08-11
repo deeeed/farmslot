@@ -6,6 +6,7 @@ import type { Run, RunDecision, WorkerSignal } from '@farmslot/protocol';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
+  applyBudgetWarnOnce,
   applyHandoffAutoResolution,
   artifactContractWaiverArgs,
   artifactContractWorkerInstruction,
@@ -15,6 +16,7 @@ import {
   isFreshTerminalHandoffSignal,
   isWorkerSignalFreshForRun,
   type MonitorNudgeRunView,
+  pollBudgetGuardStep,
   rearmInteractiveHandoffAutoRecovery,
   resolveMonitorConfig,
   runHasOpenHumanGate,
@@ -352,6 +354,190 @@ test('resolveMonitorConfig ignores an invalid per-flow override and uses the pro
     'pr-complete',
   );
   assert.equal(cfg.totalTimeoutMs, 120 * 60_000);
+});
+
+test('resolveMonitorConfig applies built-in update-branch turn/token soft budgets', () => {
+  const cfg = resolveMonitorConfig(undefined, 'proj', 'update-branch');
+  assert.equal(cfg.maxTurns, 80);
+  assert.equal(cfg.maxTotalTokens, 8_000_000);
+});
+
+test('resolveMonitorConfig leaves open-ended flows without a usage budget', () => {
+  const cfg = resolveMonitorConfig({ total_timeout_min: 90 }, 'proj', 'dev');
+  assert.equal(cfg.maxTurns, null);
+  assert.equal(cfg.maxTotalTokens, null);
+});
+
+test('resolveMonitorConfig honors project max_turns / max_total_tokens overrides', () => {
+  const cfg = resolveMonitorConfig(
+    {
+      flows: {
+        'update-branch': { max_turns: 40, max_total_tokens: 2_000_000 },
+      },
+    },
+    'proj',
+    'update-branch',
+  );
+  assert.equal(cfg.maxTurns, 40);
+  assert.equal(cfg.maxTotalTokens, 2_000_000);
+});
+
+test('resolveMonitorConfig ignores invalid usage budget overrides and keeps defaults', () => {
+  const cfg = resolveMonitorConfig(
+    {
+      flows: {
+        'update-branch': { max_turns: -3, max_total_tokens: 0 },
+      },
+    },
+    'proj',
+    'update-branch',
+  );
+  assert.equal(cfg.maxTurns, 80);
+  assert.equal(cfg.maxTotalTokens, 8_000_000);
+});
+
+test('resolveMonitorConfig rejects fractional budget ceilings instead of flooring to zero', () => {
+  const cfg = resolveMonitorConfig(
+    {
+      flows: {
+        'update-branch': { max_turns: 0.5, max_total_tokens: 0.5 },
+      },
+    },
+    'proj',
+    'update-branch',
+  );
+  assert.equal(cfg.maxTurns, 80);
+  assert.equal(cfg.maxTotalTokens, 8_000_000);
+});
+
+test('resolveMonitorConfig(undefined) still applies update-branch budget defaults', () => {
+  // Mirrors the project-config load failure path — must not drop built-in budgets.
+  const cfg = resolveMonitorConfig(undefined, 'missing-project', 'update-branch');
+  assert.equal(cfg.maxTurns, 80);
+  assert.equal(cfg.maxTotalTokens, 8_000_000);
+});
+
+test('applyBudgetWarnOnce emits once then stays quiet (warn-once)', () => {
+  const first = applyBudgetWarnOnce({
+    turns: 100,
+    totalTokens: 1_000,
+    maxTurns: 80,
+    maxTotalTokens: 8_000_000,
+    budgetWarned: false,
+    flowType: 'update-branch',
+  });
+  assert.equal(first.emit, true);
+  if (!first.emit) throw new Error('expected emit');
+  assert.match(first.message, /update-branch usage budget exceeded/);
+
+  const second = applyBudgetWarnOnce({
+    turns: 200,
+    totalTokens: 2_000,
+    maxTurns: 80,
+    maxTotalTokens: 8_000_000,
+    budgetWarned: true,
+    flowType: 'update-branch',
+  });
+  assert.equal(second.emit, false);
+  assert.equal(second.budgetWarned, true);
+});
+
+test('pollBudgetGuardStep emits a fail-closed violation for unsupported accounting', async () => {
+  const tick = await pollBudgetGuardStep({
+    runId: 'missing-run-is-okay-for-send-false',
+    slotId: 'slot-1',
+    flowType: 'update-branch',
+    runner: 'grok',
+    runnerSessionPath: '/tmp/unread.jsonl',
+    maxTurns: 80,
+    maxTotalTokens: 8_000_000,
+    budgetWarned: false,
+    budgetNudgeSent: false,
+    budgetUsage: {
+      path: null,
+      size: 0,
+      mtimeMs: 0,
+      offset: 0,
+      turns: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreation: 0,
+      cacheRead: 0,
+    },
+    agentStatus: 'working',
+    sendNudge: false,
+    localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
+  });
+  assert.equal(tick.budgetWarned, true);
+  assert.equal(tick.violation?.type, 'budget');
+  assert.match(tick.violation?.message ?? '', /enforcement unavailable/);
+});
+
+test('pollBudgetGuardStep retries an unconfirmed nudge without re-emitting the violation', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: `BUDGET-RETRY-${Date.now()}`,
+    slotId: 'slot-1',
+    runner: 'grok',
+    branch: 'budget-retry-test',
+  });
+  updateRun(run.id, { status: 'monitoring' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  let attempts = 0;
+  const deliverNudge = async () => {
+    attempts += 1;
+    return attempts > 1;
+  };
+  const common = {
+    runId: run.id,
+    slotId: 'slot-1',
+    flowType: 'update-branch' as const,
+    runner: 'grok',
+    runnerSessionPath: '/tmp/unread.jsonl',
+    maxTurns: 80,
+    maxTotalTokens: 8_000_000,
+    agentStatus: 'working' as const,
+    sendNudge: true,
+    localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
+    deliverNudge,
+  };
+  const first = await pollBudgetGuardStep({
+    ...common,
+    budgetWarned: false,
+    budgetNudgeSent: false,
+    budgetUsage: {
+      path: null,
+      size: 0,
+      mtimeMs: 0,
+      offset: 0,
+      turns: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreation: 0,
+      cacheRead: 0,
+    },
+  });
+  assert.equal(first.violation?.type, 'budget');
+  assert.equal(first.nudgeSent, false);
+
+  const second = await pollBudgetGuardStep({
+    ...common,
+    budgetWarned: first.budgetWarned,
+    budgetNudgeSent: false,
+    budgetUsage: first.budgetUsage,
+  });
+  assert.equal(second.violation, null);
+  assert.equal(second.nudgeSent, true);
+  assert.equal(attempts, 2);
 });
 
 // ─── Terminal-signal auto-recovery (deliverable 2) ───

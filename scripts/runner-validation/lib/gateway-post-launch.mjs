@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 
 import { ROOT } from './common.mjs';
 
@@ -204,6 +205,191 @@ process.stdout.write(JSON.stringify({ delivered }) + '\\n', () => {
       result.stderr?.trim() ||
       (!jsonLine ? stdout || 'safe-send wrapper returned no result' : null),
   };
+}
+
+/**
+ * Exercise the production monitor budget tick against a real retained runner.
+ * The isolated pool/run store prevents validation state from touching a live farm.
+ */
+export function runGatewayBudgetGuard({
+  repo,
+  slotId,
+  session,
+  target,
+  runner,
+  sessionId,
+  sessionPath,
+  timeoutMs = 60_000,
+}) {
+  const harnessRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-validate-budget-'));
+  const poolDir = path.join(harnessRoot, 'pool');
+  const farmslotHome = path.join(harnessRoot, 'home');
+  const runsDir = path.join(harnessRoot, 'runs');
+  fs.mkdirSync(poolDir, { recursive: true });
+  fs.mkdirSync(farmslotHome, { recursive: true });
+  fs.mkdirSync(runsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(poolDir, 'local.json'),
+    JSON.stringify({
+      schema_version: 1,
+      machine: os.hostname().replace(/\.local$/, ''),
+      project: 'runner-validation',
+      platform: 'local',
+      os: process.platform === 'darwin' ? 'darwin' : 'linux',
+      host: 'localhost',
+      ssh_user: os.userInfo().username,
+      slots: [
+        {
+          id: slotId,
+          enabled: true,
+          repo,
+          session,
+          runner,
+          resources: {},
+        },
+      ],
+    }),
+  );
+
+  const snippet = `
+import { agentRoleLabel, contextIdFor, Events, primaryRoleForFlow } from '@farmslot/protocol';
+import {
+  initRunMonitor,
+  pollRunBudgetGuard,
+  prepareWarmBudgetBaselineForHandoff,
+} from './services/gateway/src/run-engine/run-monitor.ts';
+import { createRun, getRun, updateRun } from './services/gateway/src/runs/store.ts';
+
+const run = createRun({
+  flowType: 'update-branch',
+  project: 'runner-validation',
+  ticketOrPr: 'runner-validation-budget-guard',
+  slotId: ${JSON.stringify(slotId)},
+  runner: ${JSON.stringify(runner)},
+  branch: 'runner-validation',
+});
+const role = primaryRoleForFlow(run.flowType);
+const now = new Date().toISOString();
+updateRun(run.id, {
+  status: 'monitoring',
+  metrics: {
+    ...run.metrics,
+    runner: ${JSON.stringify(runner)},
+  },
+  agentContexts: [{
+    id: contextIdFor(role),
+    role,
+    label: agentRoleLabel(role),
+    status: 'idle',
+    slotId: ${JSON.stringify(slotId)},
+    runId: run.id,
+    runner: ${JSON.stringify(runner)},
+    target: {
+      session: ${JSON.stringify(session)},
+      pane: ${JSON.stringify(target)},
+      target: ${JSON.stringify(target)},
+    },
+    runnerSessionId: ${JSON.stringify(sessionId)},
+    runnerSessionPath: ${JSON.stringify(sessionPath)},
+    startedAt: now,
+    updatedAt: now,
+  }],
+});
+
+const events = [];
+initRunMonitor((event, payload) => events.push({ event, payload }));
+const first = await pollRunBudgetGuard({
+  runId: run.id,
+  slotId: ${JSON.stringify(slotId)},
+  maxTurns: 1,
+  maxTotalTokens: 1,
+  agentStatus: 'idle',
+  sendNudge: true,
+});
+const afterFirst = getRun(run.id);
+const second = await pollRunBudgetGuard({
+  runId: run.id,
+  slotId: ${JSON.stringify(slotId)},
+  maxTurns: 1,
+  maxTotalTokens: 1,
+  agentStatus: 'working',
+  sendNudge: true,
+});
+const afterSecond = getRun(run.id);
+const unsupportedRun = createRun({
+  flowType: 'update-branch',
+  project: 'runner-validation',
+  ticketOrPr: 'runner-validation-unsupported-warm-budget',
+  slotId: ${JSON.stringify(slotId)},
+  runner: 'grok',
+  branch: 'runner-validation',
+});
+const unsupportedWarmBaseline = await prepareWarmBudgetBaselineForHandoff(
+  unsupportedRun.id,
+  ${JSON.stringify(slotId)},
+);
+process.stdout.write(JSON.stringify({
+  first: {
+    budgetWarned: first.budgetWarned,
+    violationType: first.violation?.type ?? null,
+    nudgeSent: first.nudgeSent,
+    sampleTurns: first.sampleTurns,
+    sampleTotalTokens: first.sampleTotalTokens,
+  },
+  second: {
+    budgetWarned: second.budgetWarned,
+    violationType: second.violation?.type ?? null,
+    nudgeSent: second.nudgeSent,
+  },
+  persistedAfterFirst: {
+    budgetWarned: afterFirst?.monitorState?.budgetWarned === true,
+    budgetNudgeSent: afterFirst?.monitorState?.budgetNudgeSent === true,
+  },
+  persistedAfterSecond: {
+    budgetWarned: afterSecond?.monitorState?.budgetWarned === true,
+    budgetNudgeSent: afterSecond?.monitorState?.budgetNudgeSent === true,
+  },
+  unsupportedWarmBaseline,
+  violationEvents: events.filter((entry) => entry.event === Events.MONITOR_VIOLATION).length,
+}) + '\\n');
+`;
+
+  try {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      timeout: timeoutMs,
+      env: {
+        ...process.env,
+        FARMSLOT_HOME: farmslotHome,
+        FARMSLOT_POOL_DIR: poolDir,
+        FARMSLOT_RUNS_DIR: runsDir,
+      },
+    });
+    const stdout = result.stdout?.trim() ?? '';
+    const jsonLine = stdout
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .pop();
+    return {
+      result: jsonLine ? JSON.parse(jsonLine) : null,
+      exitCode: result.status,
+      error:
+        result.status !== 0
+          ? result.stderr?.trim() || stdout || 'budget-guard wrapper failed'
+          : !jsonLine
+            ? stdout || 'budget-guard wrapper returned no result'
+            : null,
+      stderr: result.stderr?.trim() || null,
+      gatewayLog:
+        stdout
+          .split('\n')
+          .filter((line) => line && line !== jsonLine)
+          .join('\n') || null,
+    };
+  } finally {
+    fs.rmSync(harnessRoot, { recursive: true, force: true });
+  }
 }
 
 /** Execute the production repeat-review resume path against a local runner session. */

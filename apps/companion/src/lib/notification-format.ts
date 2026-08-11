@@ -19,6 +19,7 @@ const MONITOR_TYPE_LABELS: Record<MonitorViolation['type'], string> = {
   idle: 'Worker idle',
   waiting: 'Worker waiting',
   error: 'Worker error',
+  budget: 'Usage budget',
 };
 
 function isActionableSlotId(value: unknown): value is string {
@@ -29,6 +30,8 @@ function isActionableSlotId(value: unknown): value is string {
 }
 
 function isActionableMonitorType(value: unknown): value is MonitorViolation['type'] {
+  // budget remains a protocol type for Command Center / gateway feeds, but is not
+  // a Companion push notification (device recipe deferred; operator sees gateway).
   return value === 'stuck' || value === 'idle' || value === 'waiting' || value === 'error';
 }
 

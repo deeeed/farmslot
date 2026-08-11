@@ -5,7 +5,7 @@
 // effects on HOME. HOME is resolved at call time so tests can set process.env.HOME
 // before invoking runSessionUsage and see the correct temp directory.
 
-import { readdir, readFile, realpath as fsRealpath, stat, writeFile } from 'node:fs/promises';
+import { open, readdir, readFile, realpath as fsRealpath, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -630,6 +630,294 @@ function formatTotals(totals: SessionTotals): string[] {
     lines.push(`cost_usd=${totals.cost_usd.toFixed(4)}`);
   }
   return lines;
+}
+
+// ─── Incremental sample (poll-time budget / soft ceilings) ───────────────────
+
+/**
+ * Durable append-only sample state for poll-time turn/token soft budgets.
+ * Offset is the next byte to read; incomplete trailing JSONL is never advanced past.
+ */
+/** Max new transcript bytes processed per incremental sample (bounds memory). */
+export const INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE = 1024 * 1024;
+
+export type IncrementalSessionUsageState = {
+  path: string | null;
+  size: number;
+  mtimeMs: number;
+  /** Byte offset of the first unconsumed byte (after last complete newline). */
+  offset: number;
+  turns: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreation: number;
+  cacheRead: number;
+  sampledAt?: string;
+  unavailableReason?: string;
+  /** Persistent fail-closed reason when transcript accounting lost integrity. */
+  integrityFailureReason?: string;
+  /** Soft-budget baseline for warm-handoff / first-poll delta accounting. */
+  baselineCaptured?: boolean;
+  baselineTurns?: number;
+  baselineTotalTokens?: number;
+  /** True while advancing past a record larger than the bounded read window. */
+  skippingOversizedRecord?: boolean;
+};
+
+export type IncrementalSessionUsageResult = {
+  turns: number | null;
+  totalTokens: number | null;
+  availability: 'available' | 'unavailable' | 'cached';
+  unavailableReason?: string;
+  nextState: IncrementalSessionUsageState;
+};
+
+export function emptyIncrementalSessionUsageState(): IncrementalSessionUsageState {
+  return {
+    path: null,
+    size: 0,
+    mtimeMs: 0,
+    offset: 0,
+    turns: 0,
+    totalTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreation: 0,
+    cacheRead: 0,
+  };
+}
+
+/**
+ * Apply one window of newly read transcript bytes to incremental state.
+ * Only complete newline-terminated JSONL records advance the durable offset.
+ * Incomplete trailing bytes leave the offset at the incomplete record.
+ * If a single record exceeds the max window (no newline in a full window),
+ * the window is skipped so sampling always makes forward progress.
+ */
+export function advanceIncrementalFromBytes(
+  prior: IncrementalSessionUsageState,
+  buf: Buffer,
+  applyRecord: (
+    state: IncrementalSessionUsageState,
+    record: Record<string, unknown>,
+  ) => IncrementalSessionUsageState,
+  meta: {
+    startOffset: number;
+    fileSize: number;
+    mtimeMs: number;
+    filePath: string;
+    maxWindow: number;
+  },
+): IncrementalSessionUsageState {
+  let state: IncrementalSessionUsageState = {
+    ...prior,
+    path: meta.filePath,
+    size: meta.fileSize,
+    mtimeMs: meta.mtimeMs,
+    unavailableReason: prior.integrityFailureReason,
+  };
+  let lastNl = -1;
+  for (let i = buf.length - 1; i >= 0; i--) {
+    if (buf[i] === 0x0a) {
+      lastNl = i;
+      break;
+    }
+  }
+
+  if (lastNl < 0) {
+    // No complete line in this window.
+    if (state.skippingOversizedRecord || buf.length >= meta.maxWindow) {
+      // A complete record cannot fit in the bounded window. Advance without
+      // parsing and surface an integrity failure instead of fabricating usage.
+      state.offset = meta.startOffset + buf.length;
+      state.skippingOversizedRecord = true;
+      state.integrityFailureReason = 'session transcript record exceeds bounded sample window';
+      state.unavailableReason = state.integrityFailureReason;
+      state.sampledAt = new Date().toISOString();
+      return state;
+    }
+    // Partial trailing write — keep offset, wait for more bytes.
+    state.offset = meta.startOffset;
+    state.sampledAt = new Date().toISOString();
+    return state;
+  }
+
+  const completeEnd = lastNl + 1;
+  const parseStart = state.skippingOversizedRecord ? buf.indexOf(0x0a) + 1 : 0;
+  state.skippingOversizedRecord = false;
+  const completeText = buf.subarray(parseStart, completeEnd).toString('utf8');
+  for (const line of completeText.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const obj = JSON.parse(trimmed) as Record<string, unknown>;
+      state = applyRecord(state, obj);
+    } catch {
+      state.integrityFailureReason = 'session transcript contains malformed JSONL record';
+      state.unavailableReason = state.integrityFailureReason;
+    }
+  }
+  state.offset = meta.startOffset + completeEnd;
+  state.sampledAt = new Date().toISOString();
+  return state;
+}
+
+/**
+ * Incrementally sample a local transcript file.
+ *
+ * Only complete newline-terminated JSONL records advance the durable offset.
+ * Incomplete trailing bytes (split writes) leave the offset at the incomplete
+ * record so the next poll re-reads and counts it when finished.
+ */
+export async function sampleSessionUsageIncremental(params: {
+  filePath: string;
+  prior: IncrementalSessionUsageState;
+  applyRecord: (
+    state: IncrementalSessionUsageState,
+    record: Record<string, unknown>,
+  ) => IncrementalSessionUsageState;
+}): Promise<IncrementalSessionUsageResult> {
+  const { filePath, prior, applyRecord } = params;
+  try {
+    const st = await stat(filePath);
+    if (st.isDirectory()) {
+      const next = {
+        ...emptyIncrementalSessionUsageState(),
+        path: filePath,
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+        unavailableReason: 'directory session transcripts are not incrementally sampled',
+        sampledAt: new Date().toISOString(),
+      };
+      return {
+        turns: null,
+        totalTokens: null,
+        availability: 'unavailable',
+        unavailableReason: next.unavailableReason,
+        nextState: next,
+      };
+    }
+
+    const continuityLost =
+      prior.path !== null && (prior.path !== filePath || prior.offset > st.size);
+    if (continuityLost && prior.baselineCaptured) {
+      const integrityFailureReason = 'session transcript changed after budget accounting began';
+      return {
+        turns: null,
+        totalTokens: null,
+        availability: 'unavailable',
+        unavailableReason: integrityFailureReason,
+        nextState: {
+          ...prior,
+          path: filePath,
+          size: st.size,
+          mtimeMs: st.mtimeMs,
+          integrityFailureReason,
+          unavailableReason: integrityFailureReason,
+          sampledAt: new Date().toISOString(),
+        },
+      };
+    }
+
+    // Cache only when the file is unchanged *and* we have already consumed through
+    // EOF (bounded samples may leave offset < size while size/mtime stay fixed).
+    if (
+      prior.path === filePath &&
+      prior.size === st.size &&
+      prior.mtimeMs === st.mtimeMs &&
+      prior.offset >= st.size
+    ) {
+      if (prior.integrityFailureReason) {
+        return {
+          turns: null,
+          totalTokens: null,
+          availability: 'unavailable',
+          unavailableReason: prior.integrityFailureReason,
+          nextState: { ...prior, sampledAt: new Date().toISOString() },
+        };
+      }
+      return {
+        turns: prior.turns,
+        totalTokens: prior.totalTokens,
+        availability: prior.turns > 0 || prior.totalTokens > 0 ? 'cached' : 'available',
+        nextState: { ...prior, sampledAt: new Date().toISOString() },
+      };
+    }
+
+    // Truncation / rotate — restart from byte 0.
+    let state: IncrementalSessionUsageState =
+      prior.path === filePath && prior.offset <= st.size
+        ? { ...prior, path: filePath, size: st.size, mtimeMs: st.mtimeMs }
+        : {
+            ...emptyIncrementalSessionUsageState(),
+            path: filePath,
+            size: st.size,
+            mtimeMs: st.mtimeMs,
+          };
+
+    const start = state.offset;
+    if (start >= st.size) {
+      state.size = st.size;
+      state.mtimeMs = st.mtimeMs;
+      state.sampledAt = new Date().toISOString();
+      return {
+        turns: state.turns,
+        totalTokens: state.totalTokens,
+        availability: 'available',
+        nextState: state,
+      };
+    }
+
+    // Bound memory: process at most MAX bytes of new data per sample. Further
+    // growth is consumed on later polls (offset advances).
+    const unread = st.size - start;
+    const length = Math.min(unread, INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE);
+    const buf = Buffer.alloc(length);
+    const fh = await open(filePath, 'r');
+    try {
+      await fh.read(buf, 0, length, start);
+    } finally {
+      await fh.close();
+    }
+
+    const advanced = advanceIncrementalFromBytes(state, buf, applyRecord, {
+      startOffset: start,
+      fileSize: st.size,
+      mtimeMs: st.mtimeMs,
+      filePath,
+      maxWindow: INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
+    });
+    if (advanced.integrityFailureReason) {
+      return {
+        turns: null,
+        totalTokens: null,
+        availability: 'unavailable',
+        unavailableReason: advanced.integrityFailureReason,
+        nextState: advanced,
+      };
+    }
+    return {
+      turns: advanced.turns,
+      totalTokens: advanced.totalTokens,
+      availability: 'available',
+      nextState: advanced,
+    };
+  } catch (err) {
+    const next = {
+      ...prior,
+      path: filePath,
+      unavailableReason: (err as Error).message,
+      sampledAt: new Date().toISOString(),
+    };
+    return {
+      turns: null,
+      totalTokens: null,
+      availability: 'unavailable',
+      unavailableReason: next.unavailableReason,
+      nextState: next,
+    };
+  }
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────

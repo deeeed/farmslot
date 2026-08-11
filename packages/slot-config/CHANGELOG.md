@@ -4,6 +4,10 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- feat(session-usage): runner-neutral incremental complete-line sampling with 1MiB reads, split-write preservation, and explicit integrity failure for oversized records (MANUAL-000096).
+
+- feat(monitoring): per-flow `max_turns` / `max_total_tokens` soft budgets on `monitoring.flows.*` (MANUAL-000096).
+
 - docs(config): the `self_review.session_policy` schema comment names `warm-per-reviewer` as the default.
 
 - feat(config): `loadMachineSlots(machine)` lists a machine's pool slots from the same pool dir as every other lookup, failing closed on a missing machine (MANUAL-000085).

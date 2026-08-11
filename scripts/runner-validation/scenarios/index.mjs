@@ -1,3 +1,4 @@
+import * as budgetGuardSmoke from './budget-guard-smoke.mjs';
 import * as busyComposer from './busy-composer.mjs';
 import * as dispatchPromptDroppedEnter from './dispatch-prompt-dropped-enter.mjs';
 import * as dispatchPromptMcpRace from './dispatch-prompt-mcp-race.mjs';
@@ -31,6 +32,7 @@ export const SCENARIOS = {
   'retained-safe-send-smoke': retainedSafeSendSmoke,
   'turn-boundary': turnBoundary,
   'busy-composer': busyComposer,
+  'budget-guard-smoke': budgetGuardSmoke,
   'mode-switch': modeSwitch,
   'session-attribution-smoke': sessionAttributionSmoke,
   'token-usage-smoke': tokenUsageSmoke,

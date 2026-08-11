@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- fix(notifications): recognize monitor budget violations while keeping them non-actionable for Companion push notifications (MANUAL-000096).
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 - fix(connection): keep clean production installs on the pairing screen by rejecting an empty gateway URL before constructing a WebSocket.
 - fix(review): expose shared workspace filters on the Review tab and replace its simulated filter modal with the native form-sheet route used by the rest of Companion.

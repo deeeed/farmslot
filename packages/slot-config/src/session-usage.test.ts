@@ -1,10 +1,29 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { runSessionUsage } from './session-usage.js';
+import {
+  emptyIncrementalSessionUsageState,
+  type IncrementalSessionUsageState,
+  runSessionUsage,
+  sampleSessionUsageIncremental,
+} from './session-usage.js';
+
+function applyClaudeRecord(
+  state: IncrementalSessionUsageState,
+  record: Record<string, unknown>,
+): IncrementalSessionUsageState {
+  if (record.type !== 'assistant') return state;
+  const message = record.message as Record<string, unknown>;
+  const usage = message.usage as Record<string, number>;
+  const next = { ...state, turns: state.turns + 1 };
+  next.inputTokens += usage.input_tokens ?? 0;
+  next.outputTokens += usage.output_tokens ?? 0;
+  next.totalTokens = next.inputTokens + next.outputTokens;
+  return next;
+}
 
 // Each test uses its own isolated temp dir as HOME so fixture files cannot
 // bleed across tests. The original process.env.HOME is restored after each.
@@ -367,4 +386,107 @@ test('runSessionUsage throws when report is called without a prior snapshot', as
       ),
     /No snapshot found/,
   );
+});
+
+test('sampleSessionUsageIncremental skips oversized record without a newline to keep forward progress', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'incr-oversize-'));
+  const file = path.join(dir, 'session.jsonl');
+  // One giant line > 1MiB with no newline, then a valid record.
+  const giant = `{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1},"pad":"${'x'.repeat(1024 * 1024)}"}}`;
+  const good = JSON.stringify({
+    type: 'assistant',
+    message: { usage: { input_tokens: 10, output_tokens: 2 } },
+  });
+  writeFileSync(file, `${giant}\n${good}\n`, 'utf8');
+  let state = emptyIncrementalSessionUsageState();
+  const first = await sampleSessionUsageIncremental({
+    filePath: file,
+    prior: state,
+    applyRecord: applyClaudeRecord,
+  });
+  // First window advances while explicitly failing closed; it never invents usage.
+  assert.ok(first.nextState.offset > 0, 'offset must advance past oversized window');
+  assert.equal(first.availability, 'unavailable');
+  assert.match(first.unavailableReason ?? '', /exceeds bounded sample window/);
+  assert.equal(first.nextState.turns, 0);
+  // Continue until the good record is counted after the oversized record's newline.
+  state = first.nextState;
+  for (let i = 0; i < 5 && state.turns < 1; i++) {
+    const next = await sampleSessionUsageIncremental({
+      filePath: file,
+      prior: state,
+      applyRecord: applyClaudeRecord,
+    });
+    state = next.nextState;
+  }
+  assert.equal(state.turns, 1);
+  assert.equal(state.totalTokens, 12);
+  assert.match(state.integrityFailureReason ?? '', /exceeds bounded sample window/);
+});
+
+test('sampleSessionUsageIncremental bounds bytes read per sample', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'incr-bound-'));
+  const file = path.join(dir, 'session.jsonl');
+  // Many short lines totaling > 1MB so a single sample cannot ingest all bytes.
+  const line = JSON.stringify({
+    type: 'assistant',
+    message: { usage: { input_tokens: 1, output_tokens: 1 } },
+  });
+  const row = `${line}\n`;
+  const target = 1024 * 1024 + 50_000;
+  const reps = Math.ceil(target / row.length);
+  writeFileSync(file, row.repeat(reps), 'utf8');
+  const first = await sampleSessionUsageIncremental({
+    filePath: file,
+    prior: emptyIncrementalSessionUsageState(),
+    applyRecord: applyClaudeRecord,
+  });
+  assert.ok(first.nextState.offset > 0);
+  assert.ok(
+    first.nextState.offset <= 1024 * 1024 + row.length,
+    `offset ${first.nextState.offset} should be bounded near 1MiB window`,
+  );
+  assert.ok((first.turns ?? 0) > 0);
+  // Second sample continues from offset (more turns accumulate).
+  const second = await sampleSessionUsageIncremental({
+    filePath: file,
+    prior: first.nextState,
+    applyRecord: applyClaudeRecord,
+  });
+  assert.ok((second.turns ?? 0) > (first.turns ?? 0));
+});
+
+test('sampleSessionUsageIncremental preserves incomplete trailing JSONL across polls', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'incr-usage-'));
+  const file = path.join(dir, 'session.jsonl');
+  const line = (a: number, b: number) =>
+    JSON.stringify({
+      type: 'assistant',
+      message: { usage: { input_tokens: a, output_tokens: b } },
+    });
+  const line1 = line(10, 2);
+  const line2 = line(5, 1);
+  writeFileSync(file, `${line1}\n`, 'utf8');
+  const first = await sampleSessionUsageIncremental({
+    filePath: file,
+    prior: emptyIncrementalSessionUsageState(),
+    applyRecord: applyClaudeRecord,
+  });
+  assert.equal(first.turns, 1);
+  const mid = Math.floor(line2.length / 2);
+  appendFileSync(file, line2.slice(0, mid), 'utf8');
+  const midSample = await sampleSessionUsageIncremental({
+    filePath: file,
+    prior: first.nextState,
+    applyRecord: applyClaudeRecord,
+  });
+  assert.equal(midSample.turns, 1);
+  assert.equal(midSample.nextState.offset, first.nextState.offset);
+  appendFileSync(file, `${line2.slice(mid)}\n`, 'utf8');
+  const second = await sampleSessionUsageIncremental({
+    filePath: file,
+    prior: midSample.nextState,
+    applyRecord: applyClaudeRecord,
+  });
+  assert.equal(second.turns, 2);
 });

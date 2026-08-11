@@ -37,6 +37,8 @@ test('rejects unknown slot monitor violations instead of notifying useless alert
 
 test('rejects monitor event types that are not useful as mobile notifications', () => {
   assert.equal(normalizeMonitorViolation({ ...baseViolation, type: 'skipped' }), null);
+  // budget is protocol-valid but not a Companion push notification (no device AC).
+  assert.equal(normalizeMonitorViolation({ ...baseViolation, type: 'budget' }), null);
 });
 
 test('monitor violation dedupe is scoped by slot, type, role, and context', () => {
