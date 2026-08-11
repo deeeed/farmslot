@@ -28,8 +28,21 @@ function shaRange(attempt: IndependentReviewAttempt): string {
 }
 
 function stat(attempt: IndependentReviewAttempt): string | null {
-  const diff = attempt.fixDelta?.diffStat;
-  return diff ? `${diff.files} files · +${diff.additions} −${diff.deletions}` : null;
+  const delta = attempt.fixDelta;
+  const diff = delta?.diffStat;
+  if (!diff) return null;
+  const untracked = delta.untrackedFiles?.length ?? 0;
+  const tracked = Math.max(0, diff.files - untracked);
+  const paths = untracked
+    ? `${tracked} tracked + ${untracked} untracked`
+    : `${diff.files} file${diff.files === 1 ? '' : 's'}`;
+  return `${paths} · +${diff.additions} −${diff.deletions}`;
+}
+
+function reviewSource(review: IndependentReviewStatus): string {
+  if (review.source === 'self-review') return 'Self-review';
+  if (review.source === 'human-gate') return 'Independent review (requested)';
+  return 'Independent review';
 }
 
 function ReviewAttemptCard({
@@ -54,7 +67,7 @@ function ReviewAttemptCard({
     <View style={styles.attempt}>
       <Pressable style={styles.attemptSummary} onPress={() => setExpanded((value) => !value)}>
         <View style={styles.grow}>
-          <Text style={styles.attemptTitle}>Round {attempt.loopNumber || attemptIndex + 1}</Text>
+          <Text style={styles.attemptTitle}>Review round {attemptIndex + 1}</Text>
           <Text style={styles.meta}>
             {shaRange(attempt)} · {attempt.validationDepth || 'static-code'}
           </Text>
@@ -77,8 +90,10 @@ function ReviewAttemptCard({
               ? 'No unresolved findings in this round.'
               : `${findingLabel} recorded${feedbackSent ? ' and sent to the worker' : ''}.`}
           </Text>
-          {stat(attempt) ? (
-            <Text style={styles.fixStat}>Changes entering this round: {stat(attempt)}</Text>
+          {attemptIndex > 0 && stat(attempt) ? (
+            <Text style={styles.fixStat}>
+              Fix after review round {attemptIndex}: {stat(attempt)}
+            </Text>
           ) : null}
           {findings.map((issue, issueIndex) => (
             <View key={`${issue.file}:${issue.line ?? ''}:${issueIndex}`} style={styles.finding}>
@@ -117,11 +132,15 @@ function ReviewCard({
   review,
   reviewIndex,
   defaultExpanded,
+  continuationActive,
+  reviewerActive,
   onOpenArtifact,
 }: {
   review: IndependentReviewStatus;
   reviewIndex: number;
   defaultExpanded: boolean;
+  continuationActive: boolean;
+  reviewerActive: boolean;
   onOpenArtifact: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -133,6 +152,9 @@ function ReviewCard({
     0,
   );
   const passed = review.verdict === 'pass';
+  const pendingContinuation =
+    review.recoveryContinuationPending === true &&
+    (attempts.at(-1)?.unresolvedCount ?? review.unresolvedCount) > 0;
 
   return (
     <View style={styles.reviewerCard}>
@@ -142,11 +164,14 @@ function ReviewCard({
         </View>
         <View style={styles.grow}>
           <Text style={styles.reviewerTitle}>
-            {review.runner || 'unknown'} / {review.model || 'default'}
+            {review.runner || 'Unknown runner'} / {review.model || 'default'}
           </Text>
           <Text style={styles.meta}>
-            {attempts.length} round{attempts.length === 1 ? '' : 's'} · {findingCount} finding
-            {findingCount === 1 ? '' : 's'}
+            Check {reviewIndex + 1} · {reviewSource(review)} · {attempts.length} round
+            {attempts.length === 1 ? '' : 's'}
+          </Text>
+          <Text style={styles.meta}>
+            {findingCount} finding{findingCount === 1 ? '' : 's'} across all rounds
           </Text>
         </View>
         <View style={styles.outcome}>
@@ -162,13 +187,22 @@ function ReviewCard({
           {review.stale ? (
             <Text style={styles.stale}>This review no longer matches the current package.</Text>
           ) : null}
+          {pendingContinuation ? (
+            <Text style={styles.pending}>
+              {reviewerActive
+                ? 'The worker fix is complete; the next review round is running.'
+                : continuationActive
+                  ? `Worker is fixing the latest ${review.unresolvedCount} finding${review.unresolvedCount === 1 ? '' : 's'}.`
+                  : `Stopped after the retry limit: the latest ${review.unresolvedCount} finding${review.unresolvedCount === 1 ? '' : 's'} still need delivery to the worker.`}
+            </Text>
+          ) : null}
           {attempts.map((attempt, attemptIndex) => (
             <ReviewAttemptCard
               key={`${review.id}:${attempt.loopNumber}:${attemptIndex}`}
               attempt={attempt}
               attemptIndex={attemptIndex}
               defaultExpanded={attempt.verdict !== 'pass' && attemptIndex === attempts.length - 1}
-              feedbackSent={review.feedbackSent === true}
+              feedbackSent={attemptIndex < attempts.length - 1 || review.feedbackSent === true}
               onOpenArtifact={onOpenArtifact}
             />
           ))}
@@ -190,6 +224,11 @@ export function ReviewHistoryPanel({
   const reviews = latestReadyReviews(run);
   if (chain.length === 0 && reviews.length === 0) return null;
   const attemptCount = reviews.reduce((total, review) => total + (review.attempts?.length || 1), 0);
+  const continuationActive = (run.agentContexts ?? []).some(
+    (context) =>
+      context.role === 'self-review-fix' &&
+      ['launching', 'working', 'waiting'].includes(context.status),
+  );
 
   return (
     <View style={styles.section}>
@@ -197,7 +236,8 @@ export function ReviewHistoryPanel({
         <Text style={styles.title}>Review history</Text>
         <Text style={styles.count}>
           {chain.length ? `${chain.length} diff generation${chain.length === 1 ? '' : 's'} · ` : ''}
-          {attemptCount} review attempt{attemptCount === 1 ? '' : 's'}
+          {reviews.length} review check{reviews.length === 1 ? '' : 's'} · {attemptCount} round
+          {attemptCount === 1 ? '' : 's'}
         </Text>
       </View>
 
@@ -257,6 +297,13 @@ export function ReviewHistoryPanel({
           review={review}
           reviewIndex={reviewIndex}
           defaultExpanded={review.verdict !== 'pass' && reviewIndex === reviews.length - 1}
+          continuationActive={continuationActive}
+          reviewerActive={(run.agentContexts ?? []).some(
+            (context) =>
+              context.role === 'self-review' &&
+              ['launching', 'working', 'waiting'].includes(context.status) &&
+              context.artifactScope === review.id,
+          )}
           onOpenArtifact={onOpenArtifact}
         />
       ))}
@@ -322,6 +369,16 @@ const styles = StyleSheet.create({
   reviewerTitle: { color: colors.textPrimary, fontSize: fonts.sizeSm, fontWeight: '900' },
   reviewDetails: { gap: spacing.md, paddingTop: spacing.sm },
   stale: { color: colors.statusWarn, fontSize: fonts.sizeXs, fontWeight: '800' },
+  pending: {
+    backgroundColor: colors.bgSurface,
+    borderColor: colors.statusWarn,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    color: colors.statusWarn,
+    fontSize: fonts.sizeXs,
+    fontWeight: '800',
+    padding: spacing.md,
+  },
   attempt: {
     borderTopColor: colors.bgCardHover,
     borderTopWidth: 1,

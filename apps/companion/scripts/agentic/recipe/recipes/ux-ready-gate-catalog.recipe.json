@@ -104,7 +104,7 @@
         "restore_position": false,
         "visual_review": {
           "parent": "capture-run",
-          "navigation": [{ "from": "capture-run", "kind": "push" }]
+          "navigation": [{ "from": "capture-run", "kind": "tab" }]
         },
         "intent": "Preserve the complete Ready Gate from its summary through its operator actions.",
         "proves": ["ready-gate-catalog"],
@@ -112,15 +112,15 @@
       },
       "open-ready-evidence": {
         "action": "ui.press",
-        "test_id": "companion-review-package-tab-evidence",
-        "intent": "Select the Evidence surface through the visible review-package control.",
+        "test_id": "companion-run-tab-evidence",
+        "intent": "Return to the run Evidence tab through the shared workspace navigation.",
         "next": "wait-ready-evidence"
       },
       "wait-ready-evidence": {
         "action": "ui.wait_for",
-        "test_id": "companion-decision-section-evidence",
+        "test_id": "companion-screen-run-detail",
         "expected": "visible",
-        "intent": "Confirm the Evidence section is visible before capturing its review state.",
+        "intent": "Confirm the run Evidence surface is visible before capturing it.",
         "next": "capture-ready-evidence"
       },
       "capture-ready-evidence": {
@@ -128,25 +128,25 @@
         "path": "{{params.platform}}/12_ready_gate_evidence.png",
         "label": "Ready Gate — Evidence",
         "visual_review": {
-          "parent": "capture-ready-gate",
-          "navigation": [{ "from": "capture-ready-gate", "kind": "in-place" }],
+          "parent": "capture-run",
+          "navigation": [{ "from": "capture-ready-gate", "kind": "tab" }],
           "related": ["capture-ready-diff", "capture-ready-timeline"]
         },
-        "intent": "Preserve the Evidence child surface selected from the Ready Gate.",
+        "intent": "Preserve the Evidence tab reached from the Gate tab.",
         "proves": ["ready-gate-catalog"],
         "next": "open-ready-timeline"
       },
       "open-ready-timeline": {
         "action": "ui.press",
-        "test_id": "companion-review-package-tab-timeline",
-        "intent": "Select the Timeline surface through the visible review-package control.",
+        "test_id": "companion-run-tab-timeline",
+        "intent": "Select the run Timeline tab through the shared workspace navigation.",
         "next": "wait-ready-timeline"
       },
       "wait-ready-timeline": {
         "action": "ui.wait_for",
-        "test_id": "companion-decision-section-timeline",
+        "test_id": "companion-screen-run-detail",
         "expected": "visible",
-        "intent": "Confirm the Timeline section is visible before capturing its review state.",
+        "intent": "Confirm the run Timeline surface is visible before capturing it.",
         "next": "capture-ready-timeline"
       },
       "capture-ready-timeline": {
@@ -154,18 +154,18 @@
         "path": "{{params.platform}}/13_ready_gate_timeline.png",
         "label": "Ready Gate — Timeline",
         "visual_review": {
-          "parent": "capture-ready-gate",
-          "navigation": [{ "from": "capture-ready-gate", "kind": "in-place" }],
+          "parent": "capture-run",
+          "navigation": [{ "from": "capture-ready-evidence", "kind": "tab" }],
           "related": ["capture-ready-evidence", "capture-ready-diff"]
         },
-        "intent": "Preserve the Timeline child surface selected from the Ready Gate.",
+        "intent": "Preserve the Timeline tab selected from the run workspace.",
         "proves": ["ready-gate-catalog"],
         "next": "open-ready-diff"
       },
       "open-ready-diff": {
         "action": "ui.press",
-        "test_id": "companion-review-package-tab-diff",
-        "intent": "Select the Diff surface through the visible review-package control.",
+        "test_id": "companion-run-tab-diff",
+        "intent": "Select the run Diff tab through the shared workspace navigation.",
         "next": "wait-ready-diff"
       },
       "wait-ready-diff": {
@@ -184,11 +184,11 @@
         "max_scrolls": 30,
         "restore_position": false,
         "visual_review": {
-          "parent": "capture-ready-gate",
-          "navigation": [{ "from": "capture-ready-gate", "kind": "push" }],
+          "parent": "capture-run",
+          "navigation": [{ "from": "capture-ready-timeline", "kind": "tab" }],
           "related": ["capture-ready-evidence", "capture-ready-timeline"]
         },
-        "intent": "Preserve the complete Diff child surface selected from the Ready Gate.",
+        "intent": "Preserve the complete Diff tab selected from the run workspace.",
         "proves": ["ready-gate-catalog"],
         "next": "build-catalog"
       },

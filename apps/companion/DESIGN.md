@@ -51,18 +51,26 @@
   - Evidence: before→after visual pairs and videos first.
   - Diff: changed files and visual/code context.
   - Timeline: compact status/progress; pipeline details collapsed.
-  - Evidence, Diff, Timeline, and Files share one nested Run workspace navigator.
+  - Gate: conditional run-backed ready/review/publication status, blockers, review history,
+    package freshness, and operator actions.
+  - Evidence, Diff, Timeline, Files, and the conditional Gate tab share one nested Run
+    workspace navigator.
   - Terminal remains an explicit contextual drill-down action.
-  - Ready/Review Gate uses its cockpit actions instead of duplicating the Run tab rail.
+  - Retrospectives and decisions without a source run remain standalone decision workspaces.
 - Slot workspace tabs:
   - Slot, Terminal, and Diff share one nested tab navigator.
   - Switching these peers changes the selected tab without growing the root navigation stack.
   - Existing Slot, Terminal, and slot-Diff deep links remain compatibility entries into this tab group.
 - Run workspace tabs:
-  - Evidence, Diff, Timeline, and Files share one nested tab navigator under a single Run Detail header.
+  - Evidence, Diff, Timeline, Files, and a conditional Gate tab share one nested tab navigator
+    under a single Run Detail header.
   - Evidence owns gate/evidence summaries and review decisions; Diff owns changed-file inspection; Timeline owns pipeline and worker progress; Files owns artifact filters, previews, and file actions.
+  - Gate appears only when the run has a ready, review, no-change, or publication decision. It
+    owns gate state, blockers, review history, package freshness, and operator actions; it must
+    link to the shared Evidence, Diff, Timeline, and Files tabs instead of embedding their content.
   - Tab content must not duplicate another tab's primary surface. Cross-tab destinations are concise actions, not embedded copies.
-  - Existing Run, run-Diff, and Artifacts deep links remain compatibility entries into this tab group.
+  - Existing Run, run-Diff, Artifacts, and run-backed decision deep links remain compatibility
+    entries into this tab group.
   - Switching peers does not add route history; Back exits the Run workspace once.
 - Content hierarchy: signal summary → primary evidence → next action → supporting detail.
 - Offline visual-review catalogs: recipe capture nodes define stable surfaces; optional parent and related links provide breadcrumbs, subscreens, and cross-surface navigation without a separate screen registry.
@@ -93,6 +101,8 @@
   - `EvidenceReviewWorkspace`, `BeforeAfterPreview`, `MobileDiffViewer`, `XtermTerminalView`, `RunWorkspaceNav`.
 - New/changed components:
   - `WorkspaceTabsLayout` shared real-tab shell for Slot and Run workspaces, including Run Files.
+  - Shared run-gate panel used by the conditional Gate tab and compatibility decision route;
+    no second gate presentation model.
   - Evidence-first review card for queue rows.
   - Sticky Review Actions bar (`Open diff`, `Terminal`, `Approve/Follow up` where available).
   - Advanced drawer/list for parity surfaces.

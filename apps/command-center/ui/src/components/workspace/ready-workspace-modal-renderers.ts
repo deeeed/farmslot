@@ -10,7 +10,7 @@ import type {
 } from '@farmslot/protocol';
 import { reviewValidationDepthForLoop } from '@farmslot/protocol';
 
-import { reviewSourceLabel } from '../../utils/review-gate-display.js';
+import { reviewHasPendingContinuationPhases } from '../../utils/review-gate-display.js';
 import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
 
 import type { ReadyInputArtifact } from './ready-workspace-inputs.js';
@@ -202,19 +202,50 @@ export interface ReadyReviewFlowModalContext {
   passingReviews: number;
   unresolvedFindings: number;
   staleIgnoredReviews: number;
-  selected: 'overall' | number;
+  continuationActive: boolean;
+  activeReviewIds: ReadonlySet<string>;
+  view: 'chronological' | 'reviewer';
+  selected: 'overall' | string;
   selfReviewSummary?: string;
   artifactUrl: (artifact: ArtifactRef) => string;
   close: () => void;
-  select: (selection: 'overall' | number) => void;
+  setView: (view: 'chronological' | 'reviewer') => void;
+  select: (selection: 'overall' | string) => void;
   openReviewArtifact: (detail: ReviewLoopArtifactOpenDetail) => void;
   openReviewDiff: (detail: ReviewLoopArtifactOpenDetail) => void;
 }
 
 export function renderReadyReviewFlowModal(ctx: ReadyReviewFlowModalContext) {
   if (!ctx.open) return nothing;
+  const roundCount = ctx.reviews.reduce(
+    (total, review) => total + Math.max(1, review.attempts?.length ?? 0),
+    0,
+  );
+  const pendingReview = ctx.reviews.find((review) =>
+    reviewHasPendingContinuationPhases(review, review.attempts?.at(-1)),
+  );
+  const reviewerGroups = Array.from(
+    ctx.reviews
+      .reduce((groups, review) => {
+        const key = `${review.runner ?? 'Unknown runner'}\u0000${review.model ?? 'default'}`;
+        const group = groups.get(key) ?? {
+          key,
+          runner: review.runner ?? 'Unknown runner',
+          model: review.model ?? 'default',
+          reviews: [] as IndependentReviewStatus[],
+        };
+        group.reviews.push(review);
+        groups.set(key, group);
+        return groups;
+      }, new Map<string, { key: string; runner: string; model: string; reviews: IndependentReviewStatus[] }>())
+      .values(),
+  );
   const selectedReviews =
-    ctx.selected === 'overall' ? ctx.reviews : ctx.reviews.slice(ctx.selected, ctx.selected + 1);
+    ctx.view === 'chronological' || ctx.selected === 'overall'
+      ? [...ctx.reviews].sort((left, right) =>
+          (left.startedAt ?? '').localeCompare(right.startedAt ?? ''),
+        )
+      : (reviewerGroups.find((group) => group.key === ctx.selected)?.reviews ?? ctx.reviews);
   return html`
     <div
       class="rdy-modal-backdrop"
@@ -226,13 +257,16 @@ export function renderReadyReviewFlowModal(ctx: ReadyReviewFlowModalContext) {
         <header class="rdy-review-modal-head">
           <div>
             <div class="rdy-review-modal-eyebrow">Pre-publication review</div>
-            <h3>Review flow</h3>
-            <p>Inspect the complete audit trail or focus on one requested review.</p>
+            <h3>Review history</h3>
+            <p>
+              Each check can repeat as review → worker fix → re-review until it passes or stops.
+            </p>
           </div>
           <button class="rdy-modal-close" @click=${ctx.close}>Close</button>
         </header>
         <div class="rdy-review-flow-summary">
-          <span><strong>${ctx.reviews.length}</strong> reviews</span>
+          <span><strong>${ctx.reviews.length}</strong> review checks</span>
+          <span><strong>${roundCount}</strong> rounds</span>
           <span><strong>${ctx.passingReviews}</strong> trusted passing</span>
           <span class=${ctx.unresolvedFindings ? 'attention' : ''}
             ><strong>${ctx.unresolvedFindings}</strong> unresolved</span
@@ -240,34 +274,71 @@ export function renderReadyReviewFlowModal(ctx: ReadyReviewFlowModalContext) {
           ${ctx.staleIgnoredReviews
             ? html`<span><strong>${ctx.staleIgnoredReviews}</strong> stale ignored</span>`
             : nothing}
+          ${pendingReview
+            ? html`<span class="attention"
+                ><strong>${pendingReview.unresolvedCount}</strong> ${ctx.activeReviewIds.has(
+                  pendingReview.id,
+                )
+                  ? 'prior findings fixed · next round running'
+                  : ctx.continuationActive
+                    ? 'findings being fixed'
+                    : 'latest findings not delivered'}</span
+              >`
+            : nothing}
         </div>
-        <div class="rdy-review-flow-layout">
-          <nav class="rdy-review-flow-nav" aria-label="Review selection">
-            <button
-              class=${ctx.selected === 'overall' ? 'active' : ''}
-              aria-pressed=${ctx.selected === 'overall' ? 'true' : 'false'}
-              @click=${() => ctx.select('overall')}
-            >
-              <strong>Overall flow</strong>
-              <span>All reviews and fixes</span>
-            </button>
-            ${ctx.reviews.map(
-              (review, index) => html`
+        <div class="rdy-review-flow-view-picker" role="group" aria-label="Review history layout">
+          <button
+            class=${ctx.view === 'chronological' ? 'active' : ''}
+            aria-pressed=${ctx.view === 'chronological' ? 'true' : 'false'}
+            @click=${() => ctx.setView('chronological')}
+          >
+            Chronological
+          </button>
+          <button
+            class=${ctx.view === 'reviewer' ? 'active' : ''}
+            aria-pressed=${ctx.view === 'reviewer' ? 'true' : 'false'}
+            @click=${() => ctx.setView('reviewer')}
+          >
+            By reviewer
+          </button>
+        </div>
+        <div class="rdy-review-flow-layout ${ctx.view}">
+          ${ctx.view === 'reviewer'
+            ? html`<nav class="rdy-review-flow-nav" aria-label="Review selection">
                 <button
-                  class=${ctx.selected === index ? 'active' : ''}
-                  aria-pressed=${ctx.selected === index ? 'true' : 'false'}
-                  @click=${() => ctx.select(index)}
+                  class=${ctx.selected === 'overall' ? 'active' : ''}
+                  aria-pressed=${ctx.selected === 'overall' ? 'true' : 'false'}
+                  @click=${() => ctx.select('overall')}
                 >
-                  <strong>Review ${index + 1} · ${reviewSourceLabel(review)}</strong>
-                  <span
-                    >${review.verdict} · ${review.unresolvedCount} unresolved ·
-                    ${review.attempts?.length ?? 1}
-                    attempt${(review.attempts?.length ?? 1) === 1 ? '' : 's'}</span
-                  >
+                  <strong>Overall flow</strong>
+                  <span>All checks, rounds, and worker fixes</span>
                 </button>
-              `,
-            )}
-          </nav>
+                ${reviewerGroups.map((group) => {
+                  const groupRounds = group.reviews.reduce(
+                    (total, review) => total + Math.max(1, review.attempts?.length ?? 0),
+                    0,
+                  );
+                  const groupUnresolved = group.reviews.reduce(
+                    (total, review) => total + review.unresolvedCount,
+                    0,
+                  );
+                  return html`
+                    <button
+                      class=${ctx.selected === group.key ? 'active' : ''}
+                      aria-pressed=${ctx.selected === group.key ? 'true' : 'false'}
+                      @click=${() => ctx.select(group.key)}
+                    >
+                      <strong>${group.runner} / ${group.model}</strong>
+                      <span>
+                        ${group.reviews.length} check${group.reviews.length === 1 ? '' : 's'} ·
+                        ${groupRounds} review round${groupRounds === 1 ? '' : 's'} ·
+                        ${groupUnresolved} unresolved
+                      </span>
+                    </button>
+                  `;
+                })}
+              </nav>`
+            : nothing}
           <main class="rdy-review-flow-detail">
             <review-loop-timeline
               .reviews=${selectedReviews}
@@ -277,7 +348,7 @@ export function renderReadyReviewFlowModal(ctx: ReadyReviewFlowModalContext) {
               @review-diff-open=${(event: CustomEvent<ReviewLoopArtifactOpenDetail>) =>
                 ctx.openReviewDiff(event.detail)}
             ></review-loop-timeline>
-            ${ctx.selected === 'overall' && ctx.selfReviewSummary
+            ${ctx.view === 'chronological' && ctx.selfReviewSummary
               ? html`<section class="rdy-review-flow-fix-summary">
                   <strong>Worker fix summary</strong>
                   <p>${ctx.selfReviewSummary}</p>

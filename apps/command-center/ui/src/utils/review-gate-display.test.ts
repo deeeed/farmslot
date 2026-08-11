@@ -169,7 +169,7 @@ test('publishEvidenceDisplayRows exposes included, excluded and dropped-after-re
 
 test('review labels use Independent review with runner diversity as policy metadata', () => {
   const requested = payload({ source: 'human-gate', crossRunner: true }).independentReviews![0];
-  assert.equal(reviewAttemptLabel(requested, 1, 2), 'Independent review (requested) attempt 2/2');
+  assert.equal(reviewAttemptLabel(requested, 1, 2), 'Review round 2');
   assert.equal(reviewSegmentLabel(requested, 1), 'Independent review (requested) 1');
   // Runner diversity is not a review kind — it renders as a policy label.
   assert.equal(reviewPolicyLabel({ crossRunner: true, runner: 'codex' }), 'runner: codex');
@@ -265,7 +265,7 @@ test('classifyReviewFreshness treats missing package review subject as stale', (
 
 test('review labels preserve self-review source', () => {
   const review = payload({ source: 'self-review', crossRunner: false }).independentReviews![0];
-  assert.equal(reviewAttemptLabel(review, 0, 1), 'Self-review attempt');
+  assert.equal(reviewAttemptLabel(review, 0, 1), 'Review round 1');
   assert.equal(reviewSegmentLabel(review, 2), 'Self-review 2');
 });
 

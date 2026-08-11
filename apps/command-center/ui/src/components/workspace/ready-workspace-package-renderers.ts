@@ -67,10 +67,10 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
           </div>
           <div class="rdy-package-actions">
             <button class="rdy-review-flow-button" @click=${ctx.openReviewFlow}>
-              Review flow
+              Review history
               <span
                 >${reviewSummary.totalAttempts}
-                attempt${reviewSummary.totalAttempts === 1 ? '' : 's'}</span
+                round${reviewSummary.totalAttempts === 1 ? '' : 's'}</span
               >
             </button>
             <button class="rdy-cockpit-link" @click=${ctx.toggleExpanded}>
@@ -95,7 +95,7 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
           <span
             >${reviewSummary.trustedPassingReviews}/${reviewSummary.requiredReviews} passing ·
             ${reviewSummary.totalAttempts}
-            attempt${reviewSummary.totalAttempts === 1 ? '' : 's'}</span
+            round${reviewSummary.totalAttempts === 1 ? '' : 's'}</span
           >
         </div>
         <div class="rdy-package-facts">

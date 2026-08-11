@@ -22,7 +22,7 @@ export function readyWorkspaceReviewModalStyles(): string {
         box-shadow: 0 24px 80px rgba(0,0,0,0.5);
         padding: ${spacing.lg};
         display: grid;
-        grid-template-rows: auto auto minmax(0, 1fr);
+        grid-template-rows: auto auto auto minmax(0, 1fr);
         gap: ${spacing.md};
       }
       ready-workspace .rdy-review-flow-modal h3 {
@@ -52,11 +52,33 @@ export function readyWorkspaceReviewModalStyles(): string {
         border-color: ${colors.statusWarn}88;
         color: ${colors.statusWarn};
       }
+      ready-workspace .rdy-review-flow-view-picker {
+        display: flex;
+        gap: 6px;
+      }
+      ready-workspace .rdy-review-flow-view-picker button {
+        border: 1px solid #2a2a44;
+        border-radius: ${radii.sm};
+        background: ${colors.bgSurface};
+        color: ${colors.textSecondary};
+        cursor: pointer;
+        font-family: ${fonts.mono};
+        font-size: 11px;
+        padding: 6px 10px;
+      }
+      ready-workspace .rdy-review-flow-view-picker button.active {
+        border-color: ${colors.accent};
+        background: ${colors.accent}18;
+        color: ${colors.textPrimary};
+      }
       ready-workspace .rdy-review-flow-layout {
         display: grid;
         grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
         gap: ${spacing.md};
         min-height: 0;
+      }
+      ready-workspace .rdy-review-flow-layout.chronological {
+        grid-template-columns: minmax(0, 1fr);
       }
       ready-workspace .rdy-review-flow-nav {
         display: flex;

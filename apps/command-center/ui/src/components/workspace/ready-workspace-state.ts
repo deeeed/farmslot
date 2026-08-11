@@ -25,6 +25,7 @@ type TabId = ReadyWorkspaceTab;
 
 export abstract class ReadyWorkspaceState extends LitElement {
   abstract _closeReviewRequestModal(): void;
+  abstract _closeDiffModal(): void;
   abstract _readViewStateFromHash(): void;
 
   // Light DOM so diff-review (diff2html) renders correctly inside shadow hosts
@@ -53,7 +54,8 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _publicationTarget: PublicationTarget = 'ready';
   @state() _reviewModalOpen = false;
   @state() _reviewFlowModalOpen = false;
-  @state() _reviewFlowSelection: 'overall' | number = 'overall';
+  @state() _reviewFlowSelection: 'overall' | string = 'overall';
+  @state() _reviewFlowView: 'chronological' | 'reviewer' = 'chronological';
   @state() _reviewLoops: ReviewLoopDraft[] = [{ id: 1, runner: '', sessionIntent: 'reset' }];
   @state() _inputArtifactViewerOpen = false;
   @state() _selectedInputArtifactId = '';
@@ -78,6 +80,7 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _diffModalText = '';
   @state() _diffModalUrl = '';
   @state() _diffModalArtifactPath = '';
+  @state() _returnToReviewFlowAfterDiff = false;
   readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,
     setPendingConfirm: (pending) => {
@@ -86,7 +89,10 @@ export abstract class ReadyWorkspaceState extends LitElement {
   });
   readonly _boundKeydown = (event: KeyboardEvent) => {
     if (event.key !== 'Escape') return;
-    if (this._reviewModalOpen) {
+    if (this._diffModalOpen) {
+      event.preventDefault();
+      this._closeDiffModal();
+    } else if (this._reviewModalOpen) {
       event.preventDefault();
       this._closeReviewRequestModal();
     } else if (this._reviewFlowModalOpen) {

@@ -336,7 +336,7 @@ export function RunReviewWorkspaceSummary({
   const manifestCount = manifest.length;
   const gate = gates[0] ?? null;
   const retroSummary = summarizeSlotWorkspaceRetro(run);
-  const previewArtifacts = gate ? selectSlotGatePreviewArtifacts(gate, manifest, 4) : [];
+  const previewArtifacts = manifest.slice(0, 4);
   const visualPairSummary = groupVisualArtifactPairs(manifest, (artifact) =>
     artifactUrlForEntry(gatewayUrl, run.id, artifact),
   );
@@ -379,21 +379,14 @@ export function RunReviewWorkspaceSummary({
     }
   };
   const workspaceVisualPairCount = compareTarget?.pairCount ?? runVisualPairCount;
-  const tone =
-    gate?.tone === 'ready'
-      ? colors.statusOk
-      : gate?.tone === 'warning'
-        ? colors.statusWarn
-        : colors.accent;
+  const tone = colors.accent;
   const diffValue = runWorkspaceDiffValue(run, gate);
   const diffAvailable = hasRunWorkspaceDiff(run, gate);
   return (
     <View style={styles.workspaceCard}>
       <View style={styles.workspaceHeader}>
         <View style={[styles.workspaceBadge, { backgroundColor: tone + '22' }]}>
-          <Text style={[styles.workspaceBadgeText, { color: tone }]}>
-            {gate?.label ?? 'Run workspace'}
-          </Text>
+          <Text style={[styles.workspaceBadgeText, { color: tone }]}>Run evidence</Text>
         </View>
         {gate ? (
           <Pressable
@@ -401,7 +394,7 @@ export function RunReviewWorkspaceSummary({
             style={styles.workspaceGateButton}
             onPress={() => onOpenDecision(gate.decision.id)}
           >
-            <Text style={[styles.workspaceGateButtonText, { color: tone }]}>Open gate</Text>
+            <Text style={[styles.workspaceGateButtonText, { color: tone }]}>Gate</Text>
           </Pressable>
         ) : (
           <Text style={styles.workspaceRunMeta} numberOfLines={1}>
@@ -410,31 +403,29 @@ export function RunReviewWorkspaceSummary({
         )}
       </View>
       <Text style={styles.workspaceTitle} numberOfLines={2}>
-        {gate?.title ?? run.summary ?? run.ticketOrPr}
+        {run.summary ?? run.ticketOrPr}
       </Text>
       <Text style={styles.workspaceSummary} numberOfLines={4}>
-        {gate?.summary ??
-          'No pending ready/review gate. Use artifacts, diff, family, and terminal shortcuts to inspect this run.'}
+        Review the run evidence here; gate blockers, review history, package freshness, and actions
+        stay in the Gate tab.
       </Text>
-      {gate?.artifactPaths.length ? (
+      {manifest.length ? (
         <>
           <View style={styles.workspaceEvidenceRow}>
-            {gate.artifactPaths.slice(0, 4).map((artifactPath) => (
+            {manifest.slice(0, 4).map((artifact) => (
               <Pressable
-                key={artifactPath}
+                key={artifact.path}
                 style={styles.workspaceEvidenceChip}
-                onPress={() => onOpenArtifacts(artifactPath)}
+                onPress={() => onOpenArtifacts(artifact.path)}
               >
                 <Text style={styles.workspaceEvidenceChipText} numberOfLines={1}>
-                  {artifactPath.split('/').pop() ?? artifactPath}
+                  {artifact.path.split('/').pop() ?? artifact.path}
                 </Text>
               </Pressable>
             ))}
-            {gate.artifactPaths.length > 4 ? (
+            {manifest.length > 4 ? (
               <Pressable style={styles.workspaceEvidenceChip} onPress={() => onOpenArtifacts()}>
-                <Text style={styles.workspaceEvidenceChipText}>
-                  +{gate.artifactPaths.length - 4} more
-                </Text>
+                <Text style={styles.workspaceEvidenceChipText}>+{manifest.length - 4} more</Text>
               </Pressable>
             ) : null}
           </View>
@@ -506,29 +497,6 @@ export function RunReviewWorkspaceSummary({
           slotId={run.slotId}
         />
       ) : null}
-      {gates.length > 1 ? (
-        <RunWorkspaceGateRail
-          gates={gates}
-          runId={run.id}
-          artifactManifest={manifest}
-          gatewayUrl={gatewayUrl}
-          artifactAuthHeaders={artifactAuthHeaders}
-          compareTarget={compareTarget}
-          compareFallbackPair={primaryVisualPair ?? recipePrimaryVisualPair}
-          compareFallbackPairIsRecipe={!primaryVisualPair && Boolean(recipePrimaryVisualPair)}
-          onOpenDecision={onOpenDecision}
-          onOpenArtifacts={onOpenArtifacts}
-          onOpenCompareTarget={onOpenCompareTarget}
-          onOpenCompareFallbackArtifact={(artifactPath) => {
-            if (primaryVisualPair) {
-              onOpenArtifacts(artifactPath);
-              return;
-            }
-            onOpenRecipeArtifact(artifactPath, priorityRecipeRunId);
-          }}
-          onOpenDiff={onOpenDiff}
-        />
-      ) : null}
       <RunWorkspaceCockpit
         diffValue={diffValue}
         diffAvailable={diffAvailable}
@@ -564,41 +532,6 @@ export function RunReviewWorkspaceSummary({
         onOpenGate={(workspaceGate) => onOpenDecision(workspaceGate.decision.id)}
         onOpenRetro={(retro) => onOpenDecision(retro.decision.id)}
       />
-      {gate?.metrics.length ? (
-        <View style={styles.workspaceSignalRow}>
-          {gate.metrics.map((metric) => {
-            const target = workspaceSignalTargetForDecisionLabel(metric.label);
-            const content = (
-              <>
-                <Text style={styles.workspaceSignalLabel}>{metric.label}</Text>
-                <Text style={styles.workspaceSignalValue} numberOfLines={1}>
-                  {metric.value}
-                  {target ? ' ›' : ''}
-                </Text>
-              </>
-            );
-            return target ? (
-              <Pressable
-                key={`${metric.label}:${metric.value}`}
-                style={styles.workspaceSignalChip}
-                onPress={
-                  target === 'diff'
-                    ? onOpenDiff
-                    : target === 'compare'
-                      ? onOpenCompareTarget
-                      : () => onOpenArtifacts()
-                }
-              >
-                {content}
-              </Pressable>
-            ) : (
-              <View key={`${metric.label}:${metric.value}`} style={styles.workspaceSignalChip}>
-                {content}
-              </View>
-            );
-          })}
-        </View>
-      ) : null}
       {selectedRecipeRunId ? (
         <Text style={styles.workspaceRecipeContext} numberOfLines={1}>
           Recipe context: {selectedRecipeRunId}

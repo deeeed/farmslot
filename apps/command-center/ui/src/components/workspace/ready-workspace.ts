@@ -131,10 +131,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         title: this._diffModalTitle,
         diffText: this._diffModalText,
         artifactUrl: this._diffModalUrl,
-        close: () => {
-          this._diffModalOpen = false;
-          this._syncViewStateToHash();
-        },
+        close: () => this._closeDiffModal(),
       },
     });
   }
@@ -178,18 +175,36 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       passingReviews: reviewCounts.trustedPassingReviews,
       unresolvedFindings: reviewCounts.unresolvedFindings,
       staleIgnoredReviews: reviewCounts.staleIgnoredReviews,
+      continuationActive: (this.run?.agentContexts ?? []).some(
+        (context) =>
+          context.role === 'self-review-fix' &&
+          ['launching', 'working', 'waiting'].includes(context.status),
+      ),
+      activeReviewIds: new Set(
+        (this.run?.agentContexts ?? []).flatMap((context) =>
+          context.role === 'self-review' &&
+          ['launching', 'working', 'waiting'].includes(context.status) &&
+          context.artifactScope
+            ? [context.artifactScope]
+            : [],
+        ),
+      ),
+      view: this._reviewFlowView,
       selected: this._reviewFlowSelection,
       selfReviewSummary: payload.selfReviewSummary,
       artifactUrl: (artifact) => this._artifactUrl(artifact.path, artifact),
       close: () => {
         this._reviewFlowModalOpen = false;
       },
+      setView: (view) => {
+        this._reviewFlowView = view;
+      },
       select: (selection) => {
         this._reviewFlowSelection = selection;
       },
       openReviewArtifact: (detail) => this._openReviewArtifact(payload, detail),
       openReviewDiff: (detail) =>
-        this._openDiffModal(
+        this._openReviewFlowDiff(
           workspaceArtifactBasename(detail.artifact.path, 'Review diff'),
           detail.artifact,
         ),
@@ -251,7 +266,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
   ): void {
     const artifact = detail.artifact;
     if (isWorkspaceDiffArtifact(artifact)) {
-      this._openDiffModal(workspaceArtifactBasename(artifact.path, 'Review diff'), artifact);
+      this._openReviewFlowDiff(workspaceArtifactBasename(artifact.path, 'Review diff'), artifact);
       return;
     }
     if (this._opensInLightbox(artifact)) {
@@ -260,6 +275,22 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         label: detail.label,
       });
     }
+  }
+
+  private _openReviewFlowDiff(
+    title: string,
+    artifact: Pick<ArtifactRef, 'path' | 'sha256' | 'sizeBytes'>,
+  ): void {
+    this._openDiffModal(title, artifact);
+    this._returnToReviewFlowAfterDiff = true;
+    this._reviewFlowModalOpen = false;
+  }
+
+  _closeDiffModal(): void {
+    this._diffModalOpen = false;
+    if (this._returnToReviewFlowAfterDiff) this._reviewFlowModalOpen = true;
+    this._returnToReviewFlowAfterDiff = false;
+    this._syncViewStateToHash();
   }
 
   private _renderResolvedBanner(payload: ReadyGatePayload) {
