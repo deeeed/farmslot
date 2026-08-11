@@ -96,7 +96,9 @@ const WorkspaceTab = forwardRef<View, WorkspaceTabProps>(function WorkspaceTab(
       accessibilityState={{ selected: isFocused }}
       style={[styles.tab, isFocused && styles.tabActive]}
     >
-      <Text style={[styles.tabLabel, isFocused && styles.tabLabelActive]}>{children}</Text>
+      <Text numberOfLines={1} style={[styles.tabLabel, isFocused && styles.tabLabelActive]}>
+        {children}
+      </Text>
     </Pressable>
   );
 });
@@ -110,7 +112,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   backButton: {
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.xs,
     paddingVertical: spacing.xs,
   },
   backLabel: {
@@ -158,7 +160,7 @@ const styles = StyleSheet.create({
   },
   tabLabel: {
     color: colors.accentHover,
-    fontSize: fonts.sizeSm,
+    fontSize: fonts.sizeXs,
     fontWeight: '900',
   },
   tabLabelActive: {

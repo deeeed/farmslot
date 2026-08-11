@@ -71,6 +71,7 @@ import {
   buildPublishGateReviewStatus,
   buildUnavailableSnapshotAction,
   CLOSE_AS_SHIPPED_ACTION,
+  CONTINUE_REVIEW_FIX_ACTION,
   countStalePublicationReviews,
   hasValidPrNumber,
   isPublishApprovalAction,
@@ -104,13 +105,28 @@ const activePublicationReviewContinuations = new Map<
   Promise<{ reviewId: string; verdict: SelfReviewResult['verdict'] } | null>
 >();
 
+function reviewerIsActiveForReview(run: Run, review: IndependentReviewStatus): boolean {
+  return (run.agentContexts ?? []).some(
+    (context) =>
+      context.role === 'self-review' &&
+      ['launching', 'working', 'waiting'].includes(context.status) &&
+      context.artifactScope === review.id,
+  );
+}
+
 function interruptedPublicationReview(run: Run): IndependentReviewStatus | undefined {
   const activeFix = run.agentContexts?.some(
     (context) => context.role === 'self-review-fix' && context.status === 'working',
   );
   const reviews = run.engineState?.publishGate?.independentReviews ?? [];
   const pending = pendingIndependentReviewContinuation(reviews);
-  if (pending) return pending;
+  // A gateway restart can happen after the worker fix completed and while the
+  // retained reviewer is already checking the new HEAD. The persisted review
+  // still carries the prior round's pending findings until that reviewer
+  // finishes. Re-delivering them here races the active reviewer and sends the
+  // worker stale feedback. Recovery owns the active reviewer; only resume the
+  // fix when no reviewer for this review lane is running.
+  if (pending) return reviewerIsActiveForReview(run, pending) ? undefined : pending;
   if (!activeFix) return undefined;
   const latest = [...reviews].reverse().find((review) => review.source !== 'self-review');
   return latest?.verdict === 'issues' &&
@@ -731,6 +747,9 @@ export async function executeReadyGate(runId: string): Promise<string> {
       current.engineState?.publishGate?.reviewDepth,
     );
   const independentReviews = current.engineState?.publishGate?.independentReviews ?? [];
+  const pendingReview = pendingIndependentReviewContinuation(independentReviews);
+  const pendingReviewContinuation =
+    pendingReview && !reviewerIsActiveForReview(current, pendingReview) ? pendingReview : undefined;
   const requiredReviewCount = effectiveRequiredReviewCount(reviewDepth);
   const staleReviewCount =
     publicationApprovalGate && preparedPackage && requiredReviewCount > 0
@@ -770,6 +789,15 @@ export async function executeReadyGate(runId: string): Promise<string> {
             : []),
           ...(evidenceRefreshAction ? [evidenceRefreshAction] : []),
           ...(unavailableSnapshotAction ? [unavailableSnapshotAction] : []),
+          ...(pendingReviewContinuation
+            ? [
+                {
+                  id: CONTINUE_REVIEW_FIX_ACTION,
+                  label: `Continue Fixing ${pendingReviewContinuation.unresolvedCount} Finding${pendingReviewContinuation.unresolvedCount === 1 ? '' : 's'}`,
+                  style: 'primary' as const,
+                },
+              ]
+            : []),
           { id: 'hold', label: 'Hold', style: 'secondary' as const },
           {
             id: 'request-extra-review',

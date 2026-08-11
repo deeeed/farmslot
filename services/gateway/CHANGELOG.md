@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- fix(review): expose pending reviewer findings as an explicit publication-gate continuation action and resume the existing worker-fix/re-review chain instead of launching another initial review.
 
 ## 0.6.1 - 2026-08-11
 

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- fix(review): present review checks as ordered rounds with intervening worker fixes, let operators switch between chronological and reviewer-grouped history, distinguish stale or undelivered findings, and open nested review diffs above the history before restoring its prior view.
 
 ## 0.6.1 - 2026-08-11
 

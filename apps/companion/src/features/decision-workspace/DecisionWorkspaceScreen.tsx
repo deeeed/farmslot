@@ -11,6 +11,7 @@ import {
   Events,
   Methods,
   type RecipeRunArtifactGroup,
+  reviewChainForRun,
   type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
@@ -65,6 +66,7 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
+import { ReviewHistoryPanel } from '../run-detail/components/ReviewHistoryPanel';
 
 import {
   DecisionBeforeAfterPriorityPanel,
@@ -90,24 +92,29 @@ const TONE_COLORS = {
 
 type DecisionSectionKey = 'signals' | 'evidence' | 'reports' | 'progress' | 'terminal' | 'actions';
 
-export default function DecisionDetailScreen() {
+export default function DecisionDetailScreen({ embedded = false }: { embedded?: boolean }) {
   const {
     id,
+    decisionId,
     runId: routeRunId,
     recipeRun: routeRecipeRun,
     artifact: routeArtifactPath,
   } = useLocalSearchParams<{
     id: string;
+    decisionId?: string | string[];
     runId?: string | string[];
     recipeRun?: string | string[];
     artifact?: string | string[];
   }>();
+  const resolvedDecisionId = routeParamString(decisionId) || routeParamString(id);
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
-  const storeDecision = useDecisionStore((s) => s.decisions.find((d) => d.id === id));
+  const storeDecision = useDecisionStore((s) =>
+    s.decisions.find((d) => d.id === resolvedDecisionId),
+  );
   const setDecisions = useDecisionStore((s) => s.setDecisions);
   const removeDecision = useDecisionStore((s) => s.removeDecision);
   const [decision, setDecision] = useState<DecisionDetail | null>(storeDecision ?? null);
@@ -131,14 +138,14 @@ export default function DecisionDetailScreen() {
   const requestedArtifactPath = routeParamString(routeArtifactPath).trim();
 
   const refreshDecision = useCallback(() => {
-    if (!client || !id) return;
+    if (!client || !resolvedDecisionId) return;
     const fallbackRunId = routeParamString(routeRunId).trim();
     setError(null);
     client
       .request<DecisionListResult>('decision.list')
       .then((result) => {
         setDecisions(result.decisions);
-        const next = result.decisions.find((d) => d.id === id) ?? null;
+        const next = result.decisions.find((d) => d.id === resolvedDecisionId) ?? null;
         if (next) {
           setDecision(next);
           return null;
@@ -152,7 +159,7 @@ export default function DecisionDetailScreen() {
       })
       .then((result) => {
         if (!result) return;
-        const runDecision = result.run.decisions?.find((d) => d.id === id) ?? null;
+        const runDecision = result.run.decisions?.find((d) => d.id === resolvedDecisionId) ?? null;
         if (!runDecision) {
           setDecision(null);
           setError('Decision is no longer pending.');
@@ -163,7 +170,7 @@ export default function DecisionDetailScreen() {
       .catch((err: Error) => {
         setError(`Failed to refresh decision: ${err.message}`);
       });
-  }, [client, id, routeRunId, setDecisions]);
+  }, [client, resolvedDecisionId, routeRunId, setDecisions]);
 
   useEffect(() => {
     return () => {
@@ -195,6 +202,24 @@ export default function DecisionDetailScreen() {
     () => decisionWorkspaceRouteParams(presentation?.kind),
     [presentation?.kind],
   );
+  useEffect(() => {
+    if (
+      embedded ||
+      !sourceRunId ||
+      !presentation ||
+      !['ready', 'review', 'no-change'].includes(presentation.kind)
+    ) {
+      return;
+    }
+    router.replace({
+      pathname: '/workspace/run/[runId]/gate',
+      params: {
+        runId: sourceRunId,
+        decisionId: resolvedDecisionId,
+        ...decisionWorkspaceRouteParams(presentation.kind),
+      },
+    });
+  }, [embedded, presentation, resolvedDecisionId, router, sourceRunId]);
   const diffRouteContext = useMemo(
     () => targetWorkspaceRouteContextParams('diff', decisionRouteContext.decisionKind),
     [decisionRouteContext.decisionKind],
@@ -387,6 +412,13 @@ export default function DecisionDetailScreen() {
               .then(() => {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 removeDecision(decision.id);
+                if (embedded && sourceRunId) {
+                  router.replace({
+                    pathname: '/workspace/run/[runId]/evidence',
+                    params: { runId: sourceRunId },
+                  });
+                  return;
+                }
                 router.back();
               })
               .catch((err: Error) => Alert.alert('Failed to resolve', err.message));
@@ -394,7 +426,7 @@ export default function DecisionDetailScreen() {
         },
       ]);
     },
-    [client, decision, removeDecision, router],
+    [client, decision, embedded, removeDecision, router, sourceRunId],
   );
 
   const openDocumentArtifact = useCallback(
@@ -608,16 +640,18 @@ export default function DecisionDetailScreen() {
 
   return (
     <View style={baseStyles.container}>
-      <Stack.Screen
-        options={{
-          title:
-            presentation.kind === 'retrospective'
-              ? 'Retrospective'
-              : presentation.kind === 'ready'
-                ? 'Ready Gate'
-                : 'Review Gate',
-        }}
-      />
+      {!embedded ? (
+        <Stack.Screen
+          options={{
+            title:
+              presentation.kind === 'retrospective'
+                ? 'Retrospective'
+                : presentation.kind === 'ready'
+                  ? 'Ready Gate'
+                  : 'Review Gate',
+          }}
+        />
+      ) : null}
       <Animated.ScrollView
         testID="companion-screen-decision-workspace"
         collapsable={false}
@@ -638,15 +672,17 @@ export default function DecisionDetailScreen() {
           <Text style={baseStyles.textSecondary}>
             {presentation.summary || presentation.description}
           </Text>
-          <View style={styles.metaGrid}>
-            <Meta label="Run" value={presentation.ticketOrPr ?? presentation.runId ?? '-'} />
-            <Meta label="Slot" value={presentation.slotId ?? '-'} />
-            <Meta label="Branch" value={presentation.branch ?? '-'} />
-            <Meta label="Model" value={presentation.model ?? presentation.runner ?? '-'} />
-          </View>
+          {!embedded ? (
+            <View style={styles.metaGrid}>
+              <Meta label="Run" value={presentation.ticketOrPr ?? presentation.runId ?? '-'} />
+              <Meta label="Slot" value={presentation.slotId ?? '-'} />
+              <Meta label="Branch" value={presentation.branch ?? '-'} />
+              <Meta label="Model" value={presentation.model ?? presentation.runner ?? '-'} />
+            </View>
+          ) : null}
         </View>
 
-        {requestedArtifactPath ? (
+        {!embedded && requestedArtifactPath ? (
           <DecisionFocusedArtifactCard
             artifactPath={requestedArtifactPath}
             runId={presentation.runId}
@@ -780,7 +816,7 @@ export default function DecisionDetailScreen() {
           />
         ) : null}
 
-        {primaryPair ? (
+        {!embedded && primaryPair ? (
           <DecisionBeforeAfterPriorityPanel
             pair={primaryPair}
             pairCount={priorityPairs.length}
@@ -952,37 +988,39 @@ export default function DecisionDetailScreen() {
           />
         ) : null}
 
-        <DecisionWorkspaceCockpit
-          presentation={presentation}
-          currentDecisionId={decision.id}
-          readyDecisionId={readyDecisionId}
-          reviewDecisionId={reviewDecisionId}
-          retroDecisionId={retroDecisionId}
-          diffPath={diffArtifact?.path}
-          recipeArtifactCount={recipeArtifactCount}
-          recipeAvailable={recipeAvailable}
-          diffAvailable={diffAvailable}
-          visualPairCount={priorityPairs.length}
-          compareArtifactPath={primaryPair?.after.path ?? null}
-          compareRecipeRunId={priorityCompareRecipeRunId}
-          focusedArtifactPath={focusedArtifactPath}
-          workspaceRecipeRunId={workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM}
-          onJumpSignals={() => scrollToSection('signals')}
-          onJumpEvidence={() => scrollToSection('evidence')}
-          onJumpReports={() => scrollToSection('reports')}
-          activeTaskProgress={activeTaskProgress}
-          fallbackTaskProgress={fallbackTaskProgress}
-          sourceRun={sourceRun}
-          decisionRouteContext={decisionRouteContext}
-          onJumpProgress={() => scrollToSection('progress')}
-          onJumpTerminal={() => scrollToSection('terminal')}
-          onJumpActions={() => scrollToSection('actions')}
-        />
+        {!embedded ? (
+          <DecisionWorkspaceCockpit
+            presentation={presentation}
+            currentDecisionId={decision.id}
+            readyDecisionId={readyDecisionId}
+            reviewDecisionId={reviewDecisionId}
+            retroDecisionId={retroDecisionId}
+            diffPath={diffArtifact?.path}
+            recipeArtifactCount={recipeArtifactCount}
+            recipeAvailable={recipeAvailable}
+            diffAvailable={diffAvailable}
+            visualPairCount={priorityPairs.length}
+            compareArtifactPath={primaryPair?.after.path ?? null}
+            compareRecipeRunId={priorityCompareRecipeRunId}
+            focusedArtifactPath={focusedArtifactPath}
+            workspaceRecipeRunId={workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM}
+            onJumpSignals={() => scrollToSection('signals')}
+            onJumpEvidence={() => scrollToSection('evidence')}
+            onJumpReports={() => scrollToSection('reports')}
+            activeTaskProgress={activeTaskProgress}
+            fallbackTaskProgress={fallbackTaskProgress}
+            sourceRun={sourceRun}
+            decisionRouteContext={decisionRouteContext}
+            onJumpProgress={() => scrollToSection('progress')}
+            onJumpTerminal={() => scrollToSection('terminal')}
+            onJumpActions={() => scrollToSection('actions')}
+          />
+        ) : null}
 
         {error && <Text style={styles.errorText}>{error}</Text>}
         {recipeAvailabilityError && <Text style={styles.errorText}>{recipeAvailabilityError}</Text>}
 
-        {activeTaskProgress ? (
+        {!embedded && activeTaskProgress ? (
           <View
             testID="companion-decision-section-timeline"
             style={styles.section}
@@ -996,7 +1034,7 @@ export default function DecisionDetailScreen() {
               compact
             />
           </View>
-        ) : fallbackTaskProgress ? (
+        ) : !embedded && fallbackTaskProgress ? (
           <View
             testID="companion-decision-section-timeline"
             style={styles.section}
@@ -1009,6 +1047,27 @@ export default function DecisionDetailScreen() {
               compact
             />
           </View>
+        ) : null}
+
+        {embedded && sourceRun ? (
+          <ReviewHistoryPanel
+            run={sourceRun}
+            chain={reviewChainForRun(sourceRun)}
+            onOpenArtifact={(artifactPath) => {
+              router.push({
+                pathname: '/workspace/run/[runId]/files',
+                params: {
+                  runId: sourceRun.id,
+                  ...decisionRouteContext,
+                  recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                  artifact: artifactPath,
+                  filter:
+                    artifactFilterParamForArtifactPath(artifactPath) ??
+                    artifactFilterParamForWorkspaceNav('review'),
+                },
+              });
+            }}
+          />
         ) : null}
 
         {presentation.highlights.length > 0 && (
@@ -1081,7 +1140,7 @@ export default function DecisionDetailScreen() {
           </View>
         )}
 
-        {presentation.artifactManifest.length > 0 && presentation.runId && (
+        {!embedded && presentation.artifactManifest.length > 0 && presentation.runId && (
           <View
             testID="companion-decision-section-evidence"
             style={styles.section}
@@ -1105,7 +1164,7 @@ export default function DecisionDetailScreen() {
           </View>
         )}
 
-        {presentation.runId && recipeRuns.length > 0 ? (
+        {!embedded && presentation.runId && recipeRuns.length > 0 ? (
           <DecisionRecipeEvidenceSection
             runId={presentation.runId}
             recipeArtifactCount={recipeArtifactCount}
@@ -1168,43 +1227,45 @@ export default function DecisionDetailScreen() {
           </View>
         )}
 
-        {(() => {
-          const terminalSlotId = presentation.terminalSlotId;
-          if (!terminalSlotId) return null;
-          return (
-            <View style={styles.section} onLayout={rememberSection('terminal')}>
-              <Text style={styles.sectionTitle}>Worker terminal</Text>
-              <Pressable
-                style={styles.terminalButton}
-                onPress={() =>
-                  router.push({
-                    pathname: '/workspace/slot/[slotId]/terminal',
-                    params: {
-                      slotId: terminalSlotId,
-                      ...decisionRouteContext,
-                      details: '1',
-                      ...(presentation.runId ? { runId: presentation.runId } : {}),
-                      ...(presentation.runId
-                        ? { recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM }
-                        : {}),
-                      ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
-                    },
-                  })
-                }
-              >
-                <Text style={styles.terminalButtonText}>Observe / reply to {terminalSlotId}</Text>
-              </Pressable>
-            </View>
-          );
-        })()}
+        {!embedded &&
+          (() => {
+            const terminalSlotId = presentation.terminalSlotId;
+            if (!terminalSlotId) return null;
+            return (
+              <View style={styles.section} onLayout={rememberSection('terminal')}>
+                <Text style={styles.sectionTitle}>Worker terminal</Text>
+                <Pressable
+                  style={styles.terminalButton}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/workspace/slot/[slotId]/terminal',
+                      params: {
+                        slotId: terminalSlotId,
+                        ...decisionRouteContext,
+                        details: '1',
+                        ...(presentation.runId ? { runId: presentation.runId } : {}),
+                        ...(presentation.runId
+                          ? { recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM }
+                          : {}),
+                        ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+                      },
+                    })
+                  }
+                >
+                  <Text style={styles.terminalButtonText}>Observe / reply to {terminalSlotId}</Text>
+                </Pressable>
+              </View>
+            );
+          })()}
 
         <View style={styles.section} onLayout={rememberSection('actions')}>
           <Text style={styles.sectionTitle}>Evidence-reviewed actions</Text>
           <View style={styles.safetyCard}>
             <Text style={styles.safetyTitle}>Resolve only from full context</Text>
             <Text style={styles.safetyText}>
-              Mobile gate shortcuts route here first. Review the summary, criteria, visual evidence,
-              reports, artifacts, and terminal context above before sending a response.
+              {embedded
+                ? 'Use the Evidence, Diff, Timeline, and Files tabs for supporting context before sending a response.'
+                : 'Mobile gate shortcuts route here first. Review the summary, criteria, visual evidence, reports, artifacts, and terminal context above before sending a response.'}
             </Text>
           </View>
           {decision.resolvedAt ? (

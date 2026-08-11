@@ -9,7 +9,6 @@ import {
   isTerminalRunStatus,
   Methods,
   type RecipeRunArtifactGroup,
-  reviewChainForRun,
   type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
@@ -63,7 +62,6 @@ import { formatDuration } from '../workspace-shared/format';
 import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
 
 import { InteractiveOperatorPacketsPanel } from './components/InteractiveOperatorPacketsPanel';
-import { ReviewHistoryPanel } from './components/ReviewHistoryPanel';
 import {
   decisionPresentationForRun,
   DecisionSummaryCard,
@@ -418,7 +416,6 @@ export default function RunDetailScreen() {
   }
 
   const statusColor = STATUS_COLORS[run.status] ?? colors.textMuted;
-  const reviewChain = reviewChainForRun(run);
   const replayAllowed =
     ['failed', 'done', 'cancelled'].includes(run.status) &&
     Boolean(client) &&
@@ -464,7 +461,37 @@ export default function RunDetailScreen() {
       },
     });
   };
+  const openDecisionWorkspace = (decisionId: string) => {
+    const targetDecision = run.decisions.find((decision) => decision.id === decisionId);
+    const routeContext = decisionWorkspaceRouteParams(workspaceDecisionKind(targetDecision));
+    if (['ready', 'review', 'no-change'].includes(workspaceDecisionKind(targetDecision))) {
+      router.push({
+        pathname: '/workspace/run/[runId]/gate',
+        params: {
+          runId: run.id,
+          decisionId,
+          ...routeContext,
+          ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
+          ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+        },
+      });
+      return;
+    }
+    router.push({
+      pathname: '/decision/[id]',
+      params: {
+        id: decisionId,
+        ...routeContext,
+        runId: run.id,
+        ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
+        ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+      },
+    });
+  };
   const reviewPackageActiveTab = isTimelineTab ? 'timeline' : 'evidence';
+  const standaloneDecisions = (run.decisions ?? []).filter(
+    (decision) => workspaceDecisionKind(decision) === 'retrospective',
+  );
 
   return (
     <View style={baseStyles.container}>
@@ -492,14 +519,6 @@ export default function RunDetailScreen() {
             <Text style={baseStyles.textMuted}>{formatDuration(run.metrics?.durationMs)}</Text>
           </View>
         </View>
-
-        {reviewPackageActiveTab === 'timeline' ? (
-          <ReviewHistoryPanel
-            run={run}
-            chain={reviewChain}
-            onOpenArtifact={(path) => openRunEvidenceArtifact(path)}
-          />
-        ) : null}
 
         {reviewPackageActiveTab === 'evidence' && focusedArtifactPath ? (
           <RunFocusedArtifactCard
@@ -655,22 +674,7 @@ export default function RunDetailScreen() {
             recipeRuns={recipeRuns}
             selectedRecipeRunId={selectedRecipeRunId}
             compareTarget={compareTarget}
-            onOpenDecision={(decisionId) =>
-              router.push({
-                pathname: '/decision/[id]',
-                params: {
-                  id: decisionId,
-                  ...decisionWorkspaceRouteParams(
-                    workspaceDecisionKind(
-                      run.decisions.find((decision) => decision.id === decisionId),
-                    ),
-                  ),
-                  runId: run.id,
-                  ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
-                  ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
-                },
-              })
-            }
+            onOpenDecision={openDecisionWorkspace}
             onOpenArtifacts={(artifactPath) =>
               openRunEvidenceArtifact(artifactPath, DECISION_EVIDENCE_RECIPE_RUN_PARAM)
             }
@@ -814,27 +818,16 @@ export default function RunDetailScreen() {
         ) : null}
 
         {/* Decisions */}
-        {reviewPackageActiveTab === 'evidence' && (run.decisions ?? []).length > 0 && (
+        {reviewPackageActiveTab === 'evidence' && standaloneDecisions.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Decisions</Text>
-            {(run.decisions ?? []).map((d) => (
+            {standaloneDecisions.map((d) => (
               <DecisionSummaryCard
                 key={d.id}
                 presentation={decisionPresentationForRun(run, d)}
                 resolvedAction={d.resolvedAction}
                 resolvedAt={d.resolvedAt}
-                onPress={() =>
-                  router.push({
-                    pathname: '/decision/[id]',
-                    params: {
-                      id: d.id,
-                      ...decisionWorkspaceRouteParams(workspaceDecisionKind(d)),
-                      runId: run.id,
-                      ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
-                      ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
-                    },
-                  })
-                }
+                onPress={() => openDecisionWorkspace(d.id)}
                 onOpenArtifacts={() =>
                   router.push({
                     pathname: '/workspace/run/[runId]/files',

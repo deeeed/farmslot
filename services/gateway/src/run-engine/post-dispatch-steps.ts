@@ -43,6 +43,7 @@ import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import {
   CLOSE_AS_SHIPPED_ACTION,
+  CONTINUE_REVIEW_FIX_ACTION,
   isPublishApprovalAction,
   reviewFinalSnapshotMatchesPreparedPackage,
   shouldForceNoChangeHumanGate,
@@ -966,6 +967,26 @@ export async function executeHumanGateStep(
       gateAction !== CLOSE_AS_SHIPPED_ACTION
     ) {
       if (gateAction === 'hold') {
+        gateAction = await executeReadyGate(runId);
+        continue;
+      }
+      if (gateAction === CONTINUE_REVIEW_FIX_ACTION) {
+        const continuationSlotId = getRun(runId)?.slotId ?? current.slotId;
+        if (!continuationSlotId) {
+          throw blockedRunError(
+            'Publication review findings cannot continue without an assigned slot',
+            gateAction,
+          );
+        }
+        const resumed = await (
+          context.resumeInterruptedPublicationReviewForRun ?? resumeInterruptedPublicationReview
+        )(runId, continuationSlotId);
+        if (!resumed) {
+          throw blockedRunError(
+            'Publication review continuation was requested but no pending findings were found',
+            gateAction,
+          );
+        }
         gateAction = await executeReadyGate(runId);
         continue;
       }

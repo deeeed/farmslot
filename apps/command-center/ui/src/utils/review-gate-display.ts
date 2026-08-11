@@ -104,12 +104,11 @@ export function reviewPolicyLabel(
 }
 
 export function reviewAttemptLabel(
-  review: IndependentReviewStatus,
+  _review: IndependentReviewStatus,
   attemptIndex: number,
-  attemptCount: number,
+  _attemptCount: number,
 ): string {
-  const suffix = attemptCount > 1 ? ` ${attemptIndex + 1}/${attemptCount}` : '';
-  return `${reviewSourceLabel(review)} attempt${suffix}`;
+  return `Review round ${attemptIndex + 1}`;
 }
 
 export function reviewSegmentLabel(

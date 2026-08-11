@@ -93,13 +93,18 @@ Tabs:
 - Evidence
 - Diff
 - Timeline
-- Terminal
 - Files
+- Gate, only while a run-backed ready/review/publication decision exists
+
+Terminal remains a contextual drill-down rather than a peer content tab.
 
 Acceptance criteria:
 
 - Run detail opens to Evidence by default.
-- Run and decision workspaces use the same tab labels/order.
+- Run-backed decisions open the same Run workspace with Gate selected; decisions without a
+  source run remain standalone.
+- Gate contains only gate state, blockers, review history, package freshness, and operator
+  actions. Evidence, diff, timeline, and files are linked, not repeated.
 - Pipeline/JSON/supporting files are not visible until Timeline/Files/Advanced.
 - Sticky actions expose `Open diff` and `Terminal` when available.
 

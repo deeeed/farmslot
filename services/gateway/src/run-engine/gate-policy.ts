@@ -44,6 +44,9 @@ export const APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION = 'approve-publish-snap
  */
 export const CLOSE_AS_SHIPPED_ACTION = 'close-as-shipped';
 
+/** Continue the latest issues review from its persisted findings. */
+export const CONTINUE_REVIEW_FIX_ACTION = 'continue-review-fix';
+
 /**
  * Action ids that approve a local-first publication at the human ready/publish
  * gate. Shared so the engine loop exit, finalize guard, decision replay, and the

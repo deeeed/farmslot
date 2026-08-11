@@ -69,6 +69,16 @@ function fixDeltaRange(delta: ReviewFixDeltaSnapshot | undefined) {
   };
 }
 
+function formatFixDeltaStat(delta: ReviewFixDeltaSnapshot | undefined): string | null {
+  if (!delta?.diffStat) return null;
+  const untracked = delta.untrackedFiles?.length ?? 0;
+  const tracked = Math.max(0, delta.diffStat.files - untracked);
+  const paths = untracked
+    ? `${tracked} tracked + ${untracked} untracked`
+    : `${delta.diffStat.files} file${delta.diffStat.files === 1 ? '' : 's'}`;
+  return `${paths} · +${delta.diffStat.additions} −${delta.diffStat.deletions}`;
+}
+
 function reviewAttemptHeading(
   review: IndependentReviewStatus,
   attemptIndex: number,
@@ -127,6 +137,18 @@ export class ReviewLoopTimeline extends LitElement {
       display: flex;
       flex-direction: column;
       gap: 6px;
+    }
+    .reviewer-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: ${unsafeCSS(spacing.sm)};
+      color: ${unsafeCSS(colors.textSecondary)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+    }
+    .reviewer-head strong {
+      color: ${unsafeCSS(colors.textPrimary)};
+      font-size: ${unsafeCSS(fonts.sizeSm)};
     }
     .phase-strip {
       display: flex;
@@ -281,15 +303,19 @@ export class ReviewLoopTimeline extends LitElement {
     }
     return html`
       <div class="timeline" aria-label="Review loop results">
-        ${this.reviews.map((review) => this._renderReviewRows(review))}
+        ${this.reviews.map((review, index) => this._renderReviewRows(review, index))}
       </div>
     `;
   }
 
-  private _renderReviewRows(review: IndependentReviewStatus) {
+  private _renderReviewRows(review: IndependentReviewStatus, reviewIndex: number) {
     const attempts = review.attempts ?? [];
     return html`
       <div class="review-group">
+        <div class="reviewer-head">
+          <strong>${review.runner ?? 'Unknown runner'} / ${review.model ?? 'default'}</strong>
+          <span>Check ${reviewIndex + 1} · ${reviewDisplayLabel(review)}</span>
+        </div>
         ${this._renderPhaseStrip(review, attempts)}
         ${attempts.length > 1
           ? attempts.map((attempt, index) =>
@@ -306,22 +332,23 @@ export class ReviewLoopTimeline extends LitElement {
       const pass = attempt.verdict === 'pass' && attempt.unresolvedCount === 0;
       const warn =
         attempt.unresolvedCount > 0 || attempt.verdict === 'issues' || attempt.verdict === 'failed';
-      const loopNumber = attempt.loopNumber;
+      const reviewRound = index + 1;
       const reviewPhase = html`
         <div class="phase ${pass ? 'pass' : warn ? 'warn' : ''}">
-          <span class="phase-title">${index === 0 ? 'Review' : 'Re-review'} ${loopNumber}</span>
+          <span class="phase-title">Review round ${reviewRound}</span>
           ${pass ? 'passed' : warn ? `${attempt.unresolvedCount} finding(s)` : attempt.verdict}
         </div>
       `;
       if (index === 0) return [reviewPhase];
       const delta = attempt.fixDelta;
       const meaningful = hasMeaningfulReviewFixDelta(delta);
+      const deltaStat = formatFixDeltaStat(delta);
       const { base, head } = fixDeltaRange(delta);
       const fixPhase = html`
         <div class="phase ${meaningful ? '' : 'no-change'}">
-          <span class="phase-title">Worker fix</span>
+          <span class="phase-title">Fix after review round ${index}</span>
           ${meaningful
-            ? `${delta?.diffStat ? `${delta.diffStat.files} file(s) · ` : ''}${shortSha(base)}..${shortSha(head)}`
+            ? `${deltaStat ? `${deltaStat} · ` : ''}${shortSha(base)}..${shortSha(head)}`
             : 'no tracked change'}
         </div>
       `;
@@ -329,8 +356,12 @@ export class ReviewLoopTimeline extends LitElement {
     });
     if (reviewHasPendingContinuationPhases(review, attempts.at(-1))) {
       phases.push(
-        html`<div class="phase pending"><span class="phase-title">Worker fix</span>pending</div>`,
-        html`<div class="phase pending"><span class="phase-title">Re-review</span>pending</div>`,
+        html`<div class="phase pending">
+          <span class="phase-title">Next fix</span>pending delivery
+        </div>`,
+        html`<div class="phase pending">
+          <span class="phase-title">Next review round</span>waits for fix
+        </div>`,
       );
     }
     return html`
@@ -406,7 +437,7 @@ export class ReviewLoopTimeline extends LitElement {
             >${review.runner ?? 'reviewer'} / ${review.model ?? 'model unknown'}</span
           >
           <span class="meta">${label}</span>
-          <span class="meta">artifact loop ${loopNumber}</span>
+          <span class="meta">review round ${attemptIndex + 1}</span>
           <span class="meta">${validationDepth ?? 'legacy/full-live'}</span>
           <span class="meta">${unresolvedCount} unresolved</span>
           <span class="meta" title=${rowUsage?.runnerSessionId ?? review.reviewerSessionId ?? ''}
