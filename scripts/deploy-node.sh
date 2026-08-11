@@ -97,6 +97,10 @@ if [[ -n "$NODE_TOKEN_FILE" ]]; then
     echo "[deploy] ERROR: node token file is not readable: $NODE_TOKEN_FILE" >&2
     exit 1
   fi
+  if [[ "$(awk 'END { print NR }' "$NODE_TOKEN_FILE")" -gt 1 ]]; then
+    echo "[deploy] ERROR: node token file must contain exactly one line: $NODE_TOKEN_FILE" >&2
+    exit 1
+  fi
   FARMSLOT_NODE_TOKEN="$(tr -d '\r\n' < "$NODE_TOKEN_FILE")"
   if [[ -z "$FARMSLOT_NODE_TOKEN" ]]; then
     echo "[deploy] ERROR: node token file is empty: $NODE_TOKEN_FILE" >&2
@@ -495,7 +499,7 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
   PLIST_REL="Library/LaunchAgents/${PLIST_NAME}.plist"
 
   echo "[deploy] installing launchd service..."
-  run "umask 077; mkdir -p ~/Library/LaunchAgents && private_tmp=\$(mktemp ~/$PLIST_REL.tmp.XXXXXX) && cat > \"\$private_tmp\" && chmod 600 \"\$private_tmp\" && mv \"\$private_tmp\" ~/$PLIST_REL" << PLIST
+  run "umask 077; mkdir -p ~/Library/LaunchAgents && private_tmp=\$(mktemp ~/$PLIST_REL.tmp.XXXXXX) && trap 'rm -f \"\$private_tmp\"' EXIT && cat > \"\$private_tmp\" && chmod 600 \"\$private_tmp\" && mv \"\$private_tmp\" ~/$PLIST_REL && trap - EXIT" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -576,7 +580,7 @@ elif [[ "$REMOTE_OS" == "Linux" ]]; then
   UNIT_DIR=".config/systemd/user"
 
   echo "[deploy] installing systemd user service..."
-  run "umask 077; mkdir -p ~/$UNIT_DIR && private_tmp=\$(mktemp ~/$UNIT_DIR/${UNIT_NAME}.service.tmp.XXXXXX) && cat > \"\$private_tmp\" && chmod 600 \"\$private_tmp\" && mv \"\$private_tmp\" ~/$UNIT_DIR/${UNIT_NAME}.service" << UNIT
+  run "umask 077; mkdir -p ~/$UNIT_DIR && private_tmp=\$(mktemp ~/$UNIT_DIR/${UNIT_NAME}.service.tmp.XXXXXX) && trap 'rm -f \"\$private_tmp\"' EXIT && cat > \"\$private_tmp\" && chmod 600 \"\$private_tmp\" && mv \"\$private_tmp\" ~/$UNIT_DIR/${UNIT_NAME}.service && trap - EXIT" << UNIT
 [Unit]
 Description=Farmslot Node (${MACHINE}, ${INSTANCE})
 After=network-online.target
