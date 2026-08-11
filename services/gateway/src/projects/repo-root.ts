@@ -8,6 +8,8 @@ import { farmslotRoot, resolveFarmslotRoot } from '@farmslot/slot-config';
 // this module re-exports it and keeps only the gateway workspace logic.
 export { farmslotRoot, resolveFarmslotRoot };
 
+export const farmslotRuntimeLogDir = path.join(farmslotRoot, '.omx', 'logs');
+
 function expandTilde(p: string): string {
   return p === '~' || p.startsWith('~/') ? path.join(homedir(), p.slice(1)) : p;
 }
