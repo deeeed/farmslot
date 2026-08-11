@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-node.sh — Deploy/update farmslot node to any fleet machine
-# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip] [--instance dev|prod]
+# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip] [--instance dev|prod] [--node-token-file path]
 #
 # Supports:
 #   macOS local  (runner-local) — launchd LaunchAgent
@@ -21,6 +21,7 @@
 set -euo pipefail
 
 INSTANCE="${FARMSLOT_NODE_INSTANCE:-prod}"
+NODE_TOKEN_FILE=""
 ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -30,6 +31,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --instance=*)
       INSTANCE="${1#--instance=}"
+      shift
+      ;;
+    --node-token-file)
+      NODE_TOKEN_FILE="${2:?--node-token-file requires a path}"
+      shift 2
+      ;;
+    --node-token-file=*)
+      NODE_TOKEN_FILE="${1#*=}"
       shift
       ;;
     *)
@@ -76,6 +85,18 @@ if [[ -f "$AUTH_ENV_FILE" ]]; then
   # shellcheck source=/dev/null
   source "$AUTH_ENV_FILE"
   set +a
+fi
+
+if [[ -n "$NODE_TOKEN_FILE" ]]; then
+  if [[ ! -r "$NODE_TOKEN_FILE" ]]; then
+    echo "[deploy] ERROR: node token file is not readable: $NODE_TOKEN_FILE" >&2
+    exit 1
+  fi
+  FARMSLOT_NODE_TOKEN="$(tr -d '\r\n' < "$NODE_TOKEN_FILE")"
+  if [[ -z "$FARMSLOT_NODE_TOKEN" ]]; then
+    echo "[deploy] ERROR: node token file is empty: $NODE_TOKEN_FILE" >&2
+    exit 1
+  fi
 fi
 
 # --- Resolve @farmslot/* workspace packages the node depends on (transitive) ---
@@ -265,7 +286,11 @@ xml_escape() {
 }
 
 launchd_auth_env_xml() {
-  if [[ -n "${FARMSLOT_GATEWAY_TOKEN:-}" ]]; then
+  if [[ -n "${FARMSLOT_NODE_TOKEN:-}" ]]; then
+    printf '        <key>FARMSLOT_NODE_TOKEN</key>
+        <string>%s</string>
+' "$(printf '%s' "$FARMSLOT_NODE_TOKEN" | xml_escape)"
+  elif [[ -n "${FARMSLOT_GATEWAY_TOKEN:-}" ]]; then
     printf '        <key>FARMSLOT_NODE_TOKEN</key>
         <string>%s</string>
 ' "$(printf '%s' "$FARMSLOT_GATEWAY_TOKEN" | xml_escape)"
@@ -277,7 +302,10 @@ launchd_auth_env_xml() {
 }
 
 systemd_auth_env_lines() {
-  if [[ -n "${FARMSLOT_GATEWAY_TOKEN:-}" ]]; then
+  if [[ -n "${FARMSLOT_NODE_TOKEN:-}" ]]; then
+    printf 'Environment="FARMSLOT_NODE_TOKEN=%s"
+' "$(printf '%s' "$FARMSLOT_NODE_TOKEN" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+  elif [[ -n "${FARMSLOT_GATEWAY_TOKEN:-}" ]]; then
     printf 'Environment="FARMSLOT_NODE_TOKEN=%s"
 ' "$(printf '%s' "$FARMSLOT_GATEWAY_TOKEN" | sed 's/\\/\\\\/g; s/"/\\"/g')"
   elif [[ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]]; then
@@ -498,10 +526,25 @@ $(launchd_auth_env_xml)$(launchd_instance_env_xml)        <key>PATH</key>
 PLIST
 
   echo "[deploy] reloading launchd service..."
-  run "launchctl unload ~/$PLIST_REL 2>/dev/null; launchctl load ~/$PLIST_REL"
+  # `launchctl load` silently fails for a previously disabled job and does not
+  # reliably refresh changed environment variables. Re-bootstrap the service
+  # definition, waiting briefly for bootout to leave the launchd domain.
+  run "uid=\$(id -u); domain=gui/\$uid; label=$PLIST_NAME; plist=\$HOME/$PLIST_REL; \
+launchctl bootout \"\$domain/\$label\" 2>/dev/null || true; \
+wait_count=0; while launchctl print \"\$domain/\$label\" >/dev/null 2>&1; do \
+  wait_count=\$((wait_count + 1)); \
+  if [[ \$wait_count -ge 20 ]]; then echo '[deploy] ERROR: launchd service did not stop' >&2; exit 1; fi; \
+  sleep 0.25; \
+done; \
+launchctl enable \"\$domain/\$label\"; \
+attempt=1; until launchctl bootstrap \"\$domain\" \"\$plist\"; do \
+  if [[ \$attempt -ge 5 ]]; then echo '[deploy] ERROR: launchd bootstrap failed after 5 attempts' >&2; exit 1; fi; \
+  attempt=\$((attempt + 1)); sleep 1; \
+done; \
+launchctl kickstart -k \"\$domain/\$label\""
   sleep 2
   echo "[deploy] verifying..."
-  run "launchctl list | grep $PLIST_NAME || echo 'WARNING: service not running'"
+  run "launchctl print gui/\$(id -u)/$PLIST_NAME | grep -E 'state = running|pid ='"
   echo ""
   echo "[deploy] done."
   echo "  Logs:   tail -f $REMOTE_DIR/node.log"
