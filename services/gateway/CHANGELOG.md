@@ -8,6 +8,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - fix(artifacts): treat cleaned or never-created run artifact roots as a quiet not-found result while preserving diagnostics for real filesystem failures.
+- fix(runs): route terminal no-code dispositions through explicit confirmation on publication-gated worker flows, suppress publication on gate-less flows, and preserve that disposition when replaying completion or gate steps instead of presenting autonomous dev runs as publish-ready.
 
 ## 0.6.0 - 2026-08-10
 

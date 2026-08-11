@@ -1011,6 +1011,12 @@ test('runReplayStep supersedes a pending human-gate decision instead of deleting
     status: 'blocked',
     taskFile,
     decisions: [pendingGate],
+    metrics: {
+      ...run.metrics,
+      outcome: 'success',
+      disposition: 'already_fixed',
+      terminalEvidence: { reportPath: 'artifacts/no-change-report.md' },
+    },
     steps: run.steps.map((step) =>
       doneThroughComplete.has(step.name)
         ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
@@ -1039,6 +1045,11 @@ test('runReplayStep supersedes a pending human-gate decision instead of deleting
   assert.equal(superseded.resolvedAction, 'superseded');
   assert.ok(superseded.resolvedAt);
   assert.equal(superseded.context?.supersededBy, 'gate-reentry');
+  assert.equal(replayed.metrics.outcome, 'success');
+  assert.equal(replayed.metrics.disposition, 'already_fixed');
+  assert.deepEqual(replayed.metrics.terminalEvidence, {
+    reportPath: 'artifacts/no-change-report.md',
+  });
 });
 
 test('runReplayStep supersedes pending gate decisions before its first awaited operation', async (t) => {

@@ -736,7 +736,8 @@ export async function runReplayStep(
       actualModel: _actualModel,
       ...metricsWithoutTerminalOutcome
     } = existing.metrics;
-    const resetMetrics = replaysWorkerLaunch
+    const resetTerminalOutcome = targetIdx >= 0 && monitorIdx >= 0 && targetIdx <= monitorIdx;
+    const replayMetrics = replaysWorkerLaunch
       ? {
           ...metricsWithoutTerminalOutcome,
           nudgeCount: 0,
@@ -744,6 +745,14 @@ export async function runReplayStep(
           runnerSessionPath: null,
         }
       : { ...metricsWithoutTerminalOutcome };
+    const resetMetrics = resetTerminalOutcome
+      ? replayMetrics
+      : {
+          ...replayMetrics,
+          ...(_outcome !== undefined ? { outcome: _outcome } : {}),
+          ...(_disposition !== undefined ? { disposition: _disposition } : {}),
+          ...(_terminalEvidence !== undefined ? { terminalEvidence: _terminalEvidence } : {}),
+        };
     const attemptCount =
       (existing.recoveryAttempts ?? []).filter(
         (attempt) => attempt.stepName === replayStepName && attempt.triggeredBy === triggeredBy,
