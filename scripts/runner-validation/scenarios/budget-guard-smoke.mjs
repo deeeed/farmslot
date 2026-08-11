@@ -112,6 +112,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       result.second?.violationType === null &&
       result.second?.nudgeSent === false &&
       result.persistedAfterSecond?.budgetNudgeSent === true &&
+      result.unsupportedWarmBaseline === 'not-required' &&
       result.violationEvents === 1 &&
       report.nudgeAccepted;
   } catch (error) {

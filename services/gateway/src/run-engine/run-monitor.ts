@@ -42,6 +42,7 @@ import {
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
+  getRunnerSessionUsageProvider,
   runnerLineLooksWaiting,
   runnerPaneShowsCurrentInteractiveProgress,
   runnerSupportsTmuxNudgesForLaunch,
@@ -256,6 +257,7 @@ export async function prepareWarmBudgetBaselineForHandoff(
   if (!run) return 'unavailable';
   const config = await loadMonitorConfig(run.project, run.flowType);
   if (!hasUsageBudget(config)) return 'not-required';
+  if (!getRunnerSessionUsageProvider(run.metrics.runner)) return 'not-required';
 
   try {
     const parent = run.parentRunId ? getRun(run.parentRunId) : undefined;
@@ -1920,13 +1922,21 @@ export async function pollRunBudgetGuard(params: {
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
   const vars = await loadSlotVars(params.slotId);
-  const resolvedSession = await resolveRunnerSessionForRun(run, vars);
+  const context = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
+  const retainedSession = resolveRunRetainedSessionBinding(run, context);
+  const resolvedSession = retainedSession.binding
+    ? null
+    : await resolveRunnerSessionForRun(run, vars);
   const tick = await pollBudgetGuardStep({
     runId: params.runId,
     slotId: params.slotId,
     flowType: run.flowType,
     runner: run.metrics.runner,
-    runnerSessionPath: resolvedSession?.runnerSessionPath ?? run.metrics.runnerSessionPath ?? null,
+    runnerSessionPath:
+      retainedSession.binding?.runnerSessionPath ??
+      resolvedSession?.runnerSessionPath ??
+      run.metrics.runnerSessionPath ??
+      null,
     maxTurns: params.maxTurns,
     maxTotalTokens: params.maxTotalTokens,
     budgetWarned: params.budgetWarned ?? run.monitorState?.budgetWarned === true,

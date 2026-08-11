@@ -253,7 +253,11 @@ export function runGatewayBudgetGuard({
 
   const snippet = `
 import { agentRoleLabel, contextIdFor, Events, primaryRoleForFlow } from '@farmslot/protocol';
-import { initRunMonitor, pollRunBudgetGuard } from './services/gateway/src/run-engine/run-monitor.ts';
+import {
+  initRunMonitor,
+  pollRunBudgetGuard,
+  prepareWarmBudgetBaselineForHandoff,
+} from './services/gateway/src/run-engine/run-monitor.ts';
 import { createRun, getRun, updateRun } from './services/gateway/src/runs/store.ts';
 
 const run = createRun({
@@ -271,8 +275,6 @@ updateRun(run.id, {
   metrics: {
     ...run.metrics,
     runner: ${JSON.stringify(runner)},
-    runnerSessionId: ${JSON.stringify(sessionId)},
-    runnerSessionPath: ${JSON.stringify(sessionPath)},
   },
   agentContexts: [{
     id: contextIdFor(role),
@@ -314,6 +316,18 @@ const second = await pollRunBudgetGuard({
   sendNudge: true,
 });
 const afterSecond = getRun(run.id);
+const unsupportedRun = createRun({
+  flowType: 'update-branch',
+  project: 'runner-validation',
+  ticketOrPr: 'runner-validation-unsupported-warm-budget',
+  slotId: ${JSON.stringify(slotId)},
+  runner: 'grok',
+  branch: 'runner-validation',
+});
+const unsupportedWarmBaseline = await prepareWarmBudgetBaselineForHandoff(
+  unsupportedRun.id,
+  ${JSON.stringify(slotId)},
+);
 process.stdout.write(JSON.stringify({
   first: {
     budgetWarned: first.budgetWarned,
@@ -335,6 +349,7 @@ process.stdout.write(JSON.stringify({
     budgetWarned: afterSecond?.monitorState?.budgetWarned === true,
     budgetNudgeSent: afterSecond?.monitorState?.budgetNudgeSent === true,
   },
+  unsupportedWarmBaseline,
   violationEvents: events.filter((entry) => entry.event === Events.MONITOR_VIOLATION).length,
 }) + '\\n');
 `;
