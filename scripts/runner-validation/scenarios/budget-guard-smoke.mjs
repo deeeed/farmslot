@@ -9,7 +9,7 @@ import { eventName, readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { listSessionCandidates, resolveSessionBinding } from '../lib/session-attribution.mjs';
 import { capturePane, ensureShellSession, killSession, sendShellScript } from '../lib/tmux.mjs';
-import { sendTmuxLine } from '../lib/tmux-input.mjs';
+import { resolveLaunchBlockers, sendTmuxLine } from '../lib/tmux-input.mjs';
 import { pollHookRows } from '../lib/wait.mjs';
 
 export const SCENARIO_ID = 'budget-guard-smoke';
@@ -56,7 +56,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const dispatchMs = Date.now();
     const initialCount = readHookLines(logPath).length;
     sendShellScript(paneId, repo, [runnerAdapter.buildInteractiveLaunchCommand(repo, runtimeDir)]);
-    sleepMs(2500);
+    const blockers = resolveLaunchBlockers(paneId, runner, Math.min(timeoutMs, 90_000));
+    if (!blockers.resolved) throw new Error('Codex did not reach an interactive composer');
     sendTmuxLine(paneId, DEFAULT_PROMPT);
     const initialRows = pollHookRows(logPath, initialCount, ['Stop'], timeoutMs);
     report.initialCompleted = initialRows.some((row) => eventName(row) === 'Stop');
