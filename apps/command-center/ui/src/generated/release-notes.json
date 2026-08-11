@@ -1,11 +1,7 @@
 {
-  "version": "0.6.0",
-  "date": "2026-08-10",
+  "version": "0.6.1",
+  "date": "2026-08-11",
   "items": [
-    "Manage backlog ownership, run modes, templates, and slots from the same create/edit controls.",
-    "Track large file transfers with live progress, cancellation, and accurate pipeline stages.",
-    "Continue or reset independent reviews while following each findings, fix, and re-review generation.",
-    "Pair scoped Companion credentials safely and deliver terminal image attachments reliably.",
-    "Recover blocked runs and interrupted improvement analyses without stale recovery loops."
+    "fix(pairing): let operators select the gateway profiles encoded in Companion pairing QR codes, invalidate stale QR codes when pairing inputs change, default to one LAN address instead of syncing every detected interface, choose existing principals from the gateway inventory, and revoke active device credentials from the same access panel"
   ]
 }
