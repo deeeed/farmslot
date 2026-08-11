@@ -491,7 +491,7 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
   PLIST_REL="Library/LaunchAgents/${PLIST_NAME}.plist"
 
   echo "[deploy] installing launchd service..."
-  run "mkdir -p ~/Library/LaunchAgents && cat > ~/$PLIST_REL" << PLIST
+  run "umask 077; mkdir -p ~/Library/LaunchAgents && cat > ~/$PLIST_REL" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -572,7 +572,7 @@ elif [[ "$REMOTE_OS" == "Linux" ]]; then
   UNIT_DIR=".config/systemd/user"
 
   echo "[deploy] installing systemd user service..."
-  run "mkdir -p ~/$UNIT_DIR && cat > ~/$UNIT_DIR/${UNIT_NAME}.service" << UNIT
+  run "umask 077; mkdir -p ~/$UNIT_DIR && cat > ~/$UNIT_DIR/${UNIT_NAME}.service" << UNIT
 [Unit]
 Description=Farmslot Node (${MACHINE}, ${INSTANCE})
 After=network-online.target
@@ -602,7 +602,7 @@ UNIT
   run "systemctl --user daemon-reload && systemctl --user enable $UNIT_NAME && systemctl --user restart $UNIT_NAME"
   sleep 2
   echo "[deploy] verifying..."
-  run "systemctl --user status $UNIT_NAME --no-pager 2>&1 | head -5"
+  run "systemctl --user is-active --quiet $UNIT_NAME && systemctl --user show $UNIT_NAME --property=ActiveState --property=SubState --property=MainPID"
   echo ""
   echo "[deploy] done."
   echo "  Logs:   tail -f $REMOTE_DIR/node.log"
