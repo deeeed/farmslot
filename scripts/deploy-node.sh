@@ -22,6 +22,7 @@ set -euo pipefail
 
 INSTANCE="${FARMSLOT_NODE_INSTANCE:-prod}"
 NODE_TOKEN_FILE=""
+NODE_TOKEN_FROM_FILE=false
 ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -39,6 +40,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --node-token-file=*)
       NODE_TOKEN_FILE="${1#*=}"
+      if [[ -z "$NODE_TOKEN_FILE" ]]; then
+        echo "[deploy] ERROR: --node-token-file requires a path" >&2
+        exit 1
+      fi
       shift
       ;;
     *)
@@ -49,7 +54,7 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${ARGS[@]}"
 
-MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--instance dev|prod]}"
+MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--instance dev|prod] [--node-token-file path]}"
 GATEWAY_IP="${2:-}"
 
 # --- Per-instance configuration (dev + prod coexist on the same machine) ---
@@ -97,6 +102,7 @@ if [[ -n "$NODE_TOKEN_FILE" ]]; then
     echo "[deploy] ERROR: node token file is empty: $NODE_TOKEN_FILE" >&2
     exit 1
   fi
+  NODE_TOKEN_FROM_FILE=true
 fi
 
 # --- Resolve @farmslot/* workspace packages the node depends on (transitive) ---
@@ -200,6 +206,11 @@ if [[ "$MACHINE" == "$LOCAL_HOSTNAME" ]]; then
 else
   run() { ssh "$MACHINE.local" "$@"; }
   RSYNC_PREFIX="$MACHINE.local:"
+fi
+
+if [[ "$IS_LOCAL" != true && "$NODE_TOKEN_FROM_FILE" != true ]]; then
+  echo "[deploy] ERROR: remote deployment requires --node-token-file with a credential bound to $MACHINE" >&2
+  exit 1
 fi
 
 # --- Detect OS ---
@@ -524,12 +535,13 @@ $(launchd_auth_env_xml)$(launchd_instance_env_xml)        <key>PATH</key>
 </dict>
 </plist>
 PLIST
+  run "chmod 600 ~/$PLIST_REL"
 
   echo "[deploy] reloading launchd service..."
   # `launchctl load` silently fails for a previously disabled job and does not
   # reliably refresh changed environment variables. Re-bootstrap the service
   # definition, waiting briefly for bootout to leave the launchd domain.
-  run "uid=\$(id -u); domain=gui/\$uid; label=$PLIST_NAME; plist=\$HOME/$PLIST_REL; \
+  run "set -e; uid=\$(id -u); domain=gui/\$uid; label=$PLIST_NAME; plist=\$HOME/$PLIST_REL; \
 launchctl bootout \"\$domain/\$label\" 2>/dev/null || true; \
 wait_count=0; while launchctl print \"\$domain/\$label\" >/dev/null 2>&1; do \
   wait_count=\$((wait_count + 1)); \
@@ -584,6 +596,7 @@ StandardError=append:${REMOTE_DIR}/node.log
 [Install]
 WantedBy=default.target
 UNIT
+  run "chmod 600 ~/$UNIT_DIR/${UNIT_NAME}.service"
 
   echo "[deploy] reloading systemd service..."
   run "systemctl --user daemon-reload && systemctl --user enable $UNIT_NAME && systemctl --user restart $UNIT_NAME"

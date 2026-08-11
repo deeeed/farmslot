@@ -4,7 +4,7 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
-- fix(deploy): accept a machine-scoped node credential file and reliably re-bootstrap macOS launchd jobs, including previously disabled services, instead of reporting success after a failed legacy reload.
+- fix(deploy): require an explicit machine-scoped credential for remote installs, protect credential-bearing service files, and reliably re-bootstrap macOS launchd jobs instead of reporting success after a failed legacy reload.
 
 - fix(fs): enforce `FILE_TRANSFER_CHUNK_MAX_BYTES` fail-closed on `fs.readChunk` length and `fs.writeChunk` payload (MANUAL-000095 self-review).
 
