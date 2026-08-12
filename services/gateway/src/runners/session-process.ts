@@ -274,15 +274,26 @@ async function tryHookSessionBinding(
   if (getRunnerDefinition(runner).observabilityScope !== 'event-driven') return null;
   if (options.paneId) {
     const paneStartedAt = await readPaneProcessStartedAtMs(vars, options.paneId);
-    const bindingCutoff = Math.max(options.sinceMs ?? 0, paneStartedAt ?? 0);
+    // A named pane is the authority for this binding. If its live process
+    // start cannot be established, fail closed instead of accepting a stale
+    // native or hook snapshot from a prior process in the same tmux pane.
+    if (paneStartedAt === null) return null;
+    const isCurrentPaneProcess = (observedAt: number | null | undefined) =>
+      observedAt !== null && observedAt !== undefined && observedAt >= paneStartedAt;
+    const isCurrentDispatch = (observedAt: number | null | undefined) =>
+      options.sinceMs === undefined ||
+      (observedAt !== null &&
+        observedAt !== undefined &&
+        observedAt >= options.sinceMs - RUNNER_SESSION_DISPATCH_SLACK_MS);
     const nativeBinding = await getRunnerObservability(runner)?.getSessionBinding?.(
       vars,
       options.paneId,
     );
-    const nativeIsCurrentDispatch =
-      bindingCutoff === 0 ||
-      (nativeBinding?.observedAt ?? 0) >= bindingCutoff - RUNNER_SESSION_DISPATCH_SLACK_MS;
-    if (nativeBinding && nativeIsCurrentDispatch) {
+    if (
+      nativeBinding &&
+      isCurrentPaneProcess(nativeBinding.observedAt) &&
+      isCurrentDispatch(nativeBinding.observedAt)
+    ) {
       const mtimeMs = await statSessionPathMtimeMs(vars, nativeBinding.sessionPath);
       if (mtimeMs !== null) {
         return {
@@ -296,12 +307,15 @@ async function tryHookSessionBinding(
     const observedAt = paneState ? observedAtFromRecord(paneState) : null;
     const transcriptPath = paneState?.transcript_path?.trim() ?? '';
     const sessionId = paneState?.session_id?.trim() ?? '';
-    const isCurrentDispatch =
-      bindingCutoff === 0 ||
-      (observedAt !== null && observedAt >= bindingCutoff - RUNNER_SESSION_DISPATCH_SLACK_MS);
     const isCurrentSlot =
       !options.slotId || !paneState?.slotId || paneState.slotId === options.slotId;
-    if (transcriptPath && sessionId && isCurrentDispatch && isCurrentSlot) {
+    if (
+      transcriptPath &&
+      sessionId &&
+      isCurrentPaneProcess(observedAt) &&
+      isCurrentDispatch(observedAt) &&
+      isCurrentSlot
+    ) {
       const mtimeMs = await statSessionPathMtimeMs(vars, transcriptPath);
       if (mtimeMs !== null) {
         return {

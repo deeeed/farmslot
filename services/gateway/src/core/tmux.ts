@@ -42,14 +42,16 @@ export function parseTmuxKeys(keys: string): string[] {
 export function tmuxSendTextCommand(
   target: string,
   text: string,
-  opts?: { enter?: boolean; suffix?: string },
+  opts?: { enter?: boolean; submitKey?: 'Enter' | 'C-m'; suffix?: string },
 ): string {
   const suffix = opts?.suffix ? ` ${opts.suffix}` : '';
   const commands = [
     tmuxShellSnippet(`send-keys -t ${shellQuote(target)} -l ${shellQuote(text)}${suffix}`),
   ];
   if (opts?.enter) {
-    commands.push(tmuxShellSnippet(`send-keys -t ${shellQuote(target)} Enter${suffix}`));
+    commands.push(
+      tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${opts.submitKey ?? 'Enter'}${suffix}`),
+    );
   }
   return commands.join('\n');
 }
