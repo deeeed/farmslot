@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- fix(review): identify worker signal attempts independently of machine clocks so retained reviewer recovery cannot consume an earlier attempt.
 - fix(review): carry review transport failure reasons separately from review findings so clients do not present an unavailable reviewer as a clean zero-finding pass.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

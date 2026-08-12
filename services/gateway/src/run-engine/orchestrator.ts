@@ -946,7 +946,10 @@ function rearmPublicationReviewRecovery(
         return;
       }
       if (!state.replayPending) {
-        const recoveryResult = await recoverInflightPublicationReviews(latest.id, latest.slotId);
+        const recoveryResult = await recoverInflightPublicationReviews(latest.id, latest.slotId, {
+          shouldAbort: () => settled,
+        });
+        if (settled) return;
         if (
           recoveryResult.recoveredIds.length === 0 &&
           recoveryResult.terminalErrors.length === 0
@@ -983,6 +986,7 @@ function rearmPublicationReviewRecovery(
         }
       }
       await replayHumanGateForRecovery(latest.id);
+      if (settled) return;
       persistRecovery(getRun(latest.id) ?? latest, 'recovered');
       state.cleanup();
     } catch (err) {
@@ -1007,6 +1011,18 @@ function rearmPublicationReviewRecovery(
   publicationReviewRecoveryWatchers.set(run.id, state);
   schedule(run);
   return state.cleanup;
+}
+
+export function rearmPublicationReviewRecoveryForRun(runId: string): boolean {
+  const run = getRun(runId);
+  publicationReviewRecoveryWatchers.get(runId)?.cleanup();
+  return !!run && rearmPublicationReviewRecovery(run) !== undefined;
+}
+
+export function suspendPublicationReviewRecoveryForRun(runId: string): boolean {
+  const watcher = publicationReviewRecoveryWatchers.get(runId);
+  watcher?.cleanup();
+  return watcher !== undefined;
 }
 
 function buildRecoveryDeps(): RunRecoveryCollaborators {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const {
   expandedArtifactsForCommand,
@@ -137,7 +138,7 @@ if (terminalCommand === 'no-change' || terminalCommand === 'blocked') {
   }
 }
 
-const SIGNAL_PASSTHROUGH_KEYS = ['role', 'contextId', 'prNumber'];
+const SIGNAL_PASSTHROUGH_KEYS = ['role', 'contextId', 'attemptId', 'prNumber'];
 
 function pickSignalPassthrough(signal) {
   const out = {};
@@ -361,6 +362,7 @@ function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
 function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPath, _taskDir) {
   const base = {
     ...pickSignalPassthrough(signal),
+    ...(isStartCommand ? { attemptId: randomUUID() } : {}),
     step: target?.label ?? signal.step ?? 'complete',
     checklistTiming: {
       schemaVersion: 1,

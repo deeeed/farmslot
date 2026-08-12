@@ -57,6 +57,8 @@ export interface AgentContext {
    * current attempt", which restart recovery needs.
    */
   attemptStartedAt?: string;
+  /** Attempt identity last observed from the worker signal contract. */
+  signalAttemptId?: string;
   updatedAt?: string;
   completedAt?: string;
   lastSignalAt?: string;

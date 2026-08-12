@@ -114,3 +114,73 @@ test('applyRunningWorkerSignalToContext prefers signal context id before role fa
   );
   assert.equal(contexts.find((ctx) => ctx.id === 'rev-claude')?.lastSignalAt, undefined);
 });
+
+test('first opaque attempt identity adopts the worker timestamp', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-browser-farm',
+    ticketOrPr: `PROJ-${Date.now()}-attempt-adoption`,
+    slotId: 'runner-browser-1',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    agentContexts: [
+      {
+        id: 'rev-codex',
+        slotId: 'runner-browser-1',
+        runId: run.id,
+        role: 'self-review',
+        label: 'rev-codex',
+        status: 'working',
+        attemptStartedAt: '2026-07-10T09:00:00.000Z',
+        updatedAt: '2026-07-10T09:00:00.000Z',
+      },
+    ],
+  });
+
+  await applyRunningWorkerSignalToContext('runner-browser-1', run.id, {
+    status: 'running',
+    timestamp: '2026-07-10T08:00:00.000Z',
+    contextId: 'rev-codex',
+    attemptId: 'attempt-2',
+  });
+
+  const context = getRun(run.id)?.agentContexts?.find((candidate) => candidate.id === 'rev-codex');
+  assert.equal(context?.signalAttemptId, 'attempt-2');
+  assert.equal(context?.attemptStartedAt, '2026-07-10T08:00:00.000Z');
+});
+
+test('attempt-scoped context rejects an ID-less running signal', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-browser-farm',
+    ticketOrPr: `PROJ-${Date.now()}-attempt-version-skew`,
+    slotId: 'runner-browser-1',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    agentContexts: [
+      {
+        id: 'rev-codex',
+        slotId: 'runner-browser-1',
+        runId: run.id,
+        role: 'self-review',
+        label: 'rev-codex',
+        status: 'complete',
+        signalAttemptId: 'attempt-2',
+        attemptStartedAt: '2026-07-10T08:00:00.000Z',
+        completedAt: '2026-07-10T08:30:00.000Z',
+        updatedAt: '2026-07-10T08:30:00.000Z',
+      },
+    ],
+  });
+
+  const rearmed = await applyRunningWorkerSignalToContext('runner-browser-1', run.id, {
+    status: 'running',
+    timestamp: '2026-07-10T09:00:00.000Z',
+    contextId: 'rev-codex',
+  });
+
+  assert.equal(rearmed, false);
+  assert.equal(getRun(run.id)?.agentContexts?.[0]?.status, 'complete');
+});
