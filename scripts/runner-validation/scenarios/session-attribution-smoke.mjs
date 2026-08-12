@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { DEFAULT_PROMPT, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
+import { runGatewaySessionBinding } from '../lib/gateway-post-launch.mjs';
 import { readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { runLaunchInTmux } from '../lib/launch.mjs';
@@ -12,7 +13,6 @@ import {
   listSessionCandidates,
   modelFromTranscript,
   modelsMatch,
-  resolveSessionBinding,
   seedStaleSession,
   STALE_MODELS,
 } from '../lib/session-attribution.mjs';
@@ -88,17 +88,19 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     report.paneTail = completion.pane.split('\n').slice(-20).join('\n');
     sleepMs(3000);
 
-    const hookRows = readHookLines(logPath).slice(beforeCount);
-    const binding = resolveSessionBinding({
+    const resolution = runGatewaySessionBinding({
       runner,
       repo,
-      runtimeDir,
       beforePaths,
       sinceMs: dispatchMs,
-      hookRows,
-      paneId,
+      target: paneId,
       slotId,
+      timeoutMs,
     });
+    if (resolution.exitCode !== 0) {
+      throw new Error(`production session binding failed: ${resolution.error}`);
+    }
+    const binding = resolution.binding;
 
     if (!binding) {
       throw new Error('no session binding resolved');
@@ -106,8 +108,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
 
     report.resolvedPath = binding.runnerSessionPath;
     report.resolvedSource = binding.source;
-    report.hookTranscriptPath = binding.hookBinding?.transcriptPath ?? null;
-    report.hookTmuxPane = binding.hookBinding?.tmuxPane ?? null;
+    report.hookTranscriptPath = binding.source === 'hook' ? binding.runnerSessionPath : null;
+    report.hookTmuxPane = binding.source === 'hook' ? paneId : null;
     report.actualModel = modelFromTranscript(runner, binding.runnerSessionPath);
     report.modelMatch = modelsMatch(dispatchedModel, report.actualModel);
 
@@ -119,7 +121,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const pathNotStale = report.resolvedPath !== report.stalePath;
     const hookAligned =
       runnerAdapter.OBSERVABILITY_SCOPE !== 'event-driven' ||
-      (report.hookTranscriptPath === report.resolvedPath && report.hookTmuxPane === paneId);
+      binding.source === 'hook' ||
+      binding.source === 'native';
     const sawCompletion = completion.sawMarker || completion.sawStop;
 
     report.pass =

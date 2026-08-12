@@ -297,7 +297,8 @@ export function modelFromTranscript(runner, sessionPath) {
       try {
         const obj = JSON.parse(line);
         if (obj.type === 'session_meta') {
-          return obj.payload?.model ?? obj.payload?.model_slug ?? null;
+          const model = obj.payload?.model ?? obj.payload?.model_slug;
+          if (model) return model;
         }
         if (obj.type === 'turn_context') return obj.payload?.model ?? null;
       } catch {

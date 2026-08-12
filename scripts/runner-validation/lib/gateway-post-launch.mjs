@@ -114,6 +114,79 @@ try {
   };
 }
 
+/** Exercise the production session-attribution contract for one live runner pane. */
+export function runGatewaySessionBinding({
+  repo,
+  target,
+  runner,
+  beforePaths,
+  sinceMs,
+  slotId,
+  timeoutMs = 30_000,
+}) {
+  const snippet = `
+import os from 'node:os';
+import { resolveRunnerSessionBinding } from './services/gateway/src/runners/session-process.ts';
+
+const vars = {
+  slotId: ${JSON.stringify(slotId)},
+  machine: os.hostname(),
+  platform: 'local',
+  host: 'localhost',
+  sshUser: os.userInfo().username,
+  osType: process.platform === 'darwin' ? 'darwin' : 'linux',
+  claudePath: '',
+  codexPath: '',
+  opencodePath: '',
+  cursorPath: '',
+  grokPath: '',
+  dispatchCmd: '',
+  recycleCmd: '',
+  repo: ${JSON.stringify(repo)},
+  session: ${JSON.stringify(target)},
+  slotMode: 'dispatch',
+  slotEnabled: true,
+  sshTarget: \`\${os.userInfo().username}@localhost\`,
+  remoteRepo: ${JSON.stringify(repo)},
+  projectName: '',
+  resourceVars: {},
+};
+
+const binding = await resolveRunnerSessionBinding(
+  vars,
+  ${JSON.stringify(runner)},
+  ${JSON.stringify(beforePaths)},
+  {
+    sinceMs: ${JSON.stringify(sinceMs)},
+    paneId: ${JSON.stringify(target)},
+    slotId: ${JSON.stringify(slotId)},
+  },
+);
+process.stdout.write(JSON.stringify({ binding }) + '\\n');
+`;
+
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: timeoutMs,
+    env: {
+      ...process.env,
+      FARMSLOT_HOME: process.env.FARMSLOT_HOME ?? `${os.homedir()}/.farmslot-dev`,
+    },
+  });
+  const stdout = result.stdout?.trim() ?? '';
+  const jsonLine = stdout
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .pop();
+  return {
+    binding: jsonLine ? JSON.parse(jsonLine).binding : null,
+    exitCode: result.status,
+    error:
+      result.stderr?.trim() || (!jsonLine ? stdout || 'binding wrapper returned no result' : null),
+  };
+}
+
 /** Invoke the production safe-send contract against an already-idle runner pane. */
 export function runGatewaySafeInstruction({
   repo,
