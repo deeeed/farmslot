@@ -264,6 +264,9 @@ async function tryHookSessionBinding(
       }
     }
   }
+  // Once a caller names a pane, that pane is the authority. Falling through
+  // to the shared hook stream could bind a concurrent same-runner process.
+  if (options.paneId) return null;
   const { hooksRaw } = await readRunnerObservabilityFiles(vars);
   const hookBinding = findSessionStartFromHooks(parseHookJsonl(hooksRaw), options);
   if (!hookBinding) return null;
@@ -335,6 +338,11 @@ export async function resolveRunnerSessionBinding(
   if (!runnerPersistsSessionFiles(runner)) return null;
   const hookBinding = await tryHookSessionBinding(vars, runner, options);
   if (hookBinding) return hookBinding;
+  // A live pane is the authoritative owner for an exact retained session.
+  // Reviewers can coexist with other same-runner processes in one checkout,
+  // so falling back to the newest filesystem transcript here can bind the
+  // reviewer window to an unrelated session.
+  if (options.paneId) return null;
   return tryFilesystemSessionBinding(vars, runner, beforePaths, options);
 }
 

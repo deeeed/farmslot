@@ -619,9 +619,12 @@ export async function bestEffortCaptureRunnerSessionMetadata(
   runner: string,
   beforePaths: string[],
   preScanError?: string,
-  options: { sinceMs?: number } = {},
+  options: {
+    sinceMs?: number;
+    paneId?: string | null;
+  } = {},
 ): Promise<ReviewSessionMeta> {
-  if (preScanError) {
+  if (preScanError && !options.paneId) {
     return { runnerSessionPath: null, runnerSessionId: null, error: preScanError };
   }
   try {

@@ -768,9 +768,6 @@ export async function runReviewAgent(
           allowArtifactScopeChange: continuingPriorGeneration,
         })
       : null;
-  // Set once the resumed session actually launched — the cold-fallback path and
-  // fresh passes leave it false so registration binds the freshly captured id.
-  let warmResumed = false;
   const allocated = allocateReviewerContext({
     runId: _runId,
     runner,
@@ -928,20 +925,18 @@ export async function runReviewAgent(
       });
     const signalPath = taskDirRelPath(taskDir, reviewChecklistTarget.signal);
 
-    const bindLiveReviewerSession = async (): Promise<void> => {
-      // A retained review already owns an exact session binding. Do not let the
-      // filesystem fallback replace it with another concurrent runner's newest
-      // transcript when the pane-scoped hook has not arrived yet.
-      const binding = warmSession
-        ? {
-            runnerSessionId: warmSession.runnerSessionId,
-            runnerSessionPath: warmSession.runnerSessionPath,
-          }
-        : await resolveRunnerSessionBinding(vars, runner, [], {
-            paneId: reviewerWindow.paneId,
-            slotId: vars.slotId,
-          });
-      if (!binding) return;
+    const persistLiveReviewerSession = async (binding: {
+      runnerSessionId: string | null;
+      runnerSessionPath: string | null;
+    }): Promise<boolean> => {
+      if (!binding.runnerSessionId || !binding.runnerSessionPath) return false;
+      if (warmSession) {
+        warmSession = {
+          ...warmSession,
+          runnerSessionId: binding.runnerSessionId,
+          runnerSessionPath: binding.runnerSessionPath,
+        };
+      }
       sessionMeta = {
         runnerSessionId: binding.runnerSessionId,
         runnerSessionPath: binding.runnerSessionPath,
@@ -954,14 +949,38 @@ export async function runReviewAgent(
           runnerSessionId: binding.runnerSessionId,
           runnerSessionPath: binding.runnerSessionPath,
         })) ?? reviewContext;
+      return true;
+    };
+
+    const bindLiveReviewerSession = async (sinceMs?: number): Promise<boolean> => {
+      const binding = await resolveRunnerSessionBinding(vars, runner, [], {
+        sinceMs,
+        paneId: reviewerWindow.paneId,
+        slotId: vars.slotId,
+      });
+      return binding ? persistLiveReviewerSession(binding) : false;
     };
 
     const deliverToLiveReviewer = async (prompt: string, resetContext: boolean): Promise<void> => {
+      // A cold replacement creates a new native Claude session even though the
+      // canonical tmux window stays the same. Rebind from that live pane before
+      // the next retained handoff; the previous claim is lineage metadata, not
+      // proof that its process still owns the window.
+      const rebound = await bindLiveReviewerSession();
+      if (runnerCanResume && !rebound) {
+        throw new Error(
+          `Cannot identify the live ${runner} session that owns ${reviewTarget}; refusing a stale retained handoff`,
+        );
+      }
+      let resetStartedAt: number | undefined;
       if (resetContext) {
+        resetStartedAt = Date.now();
         const reset = await resetLiveRunnerContext({
           vars,
           target: reviewTarget,
           runnerId: runner,
+          sessionId: sessionMeta.runnerSessionId,
+          sessionPath: sessionMeta.runnerSessionPath,
           model,
           effort: parentRun?.effort,
           safetyTier: parentSafetyTier,
@@ -979,8 +998,11 @@ export async function runReviewAgent(
         vars,
         target: reviewTarget,
         runnerId: runner,
-        sessionId: resetContext ? null : warmSession?.runnerSessionId,
-        sessionPath: resetContext ? null : warmSession?.runnerSessionPath,
+        // Native reset may acknowledge before it exposes the successor session.
+        // The fresh prompt hook is authoritative until we bind that successor
+        // immediately after acceptance.
+        sessionId: resetContext ? null : sessionMeta.runnerSessionId,
+        sessionPath: resetContext ? null : sessionMeta.runnerSessionPath,
         model,
         effort: parentRun?.effort,
         prompt,
@@ -997,15 +1019,20 @@ export async function runReviewAgent(
           `Retained ${runner} reviewer did not accept the review task: ${delivery.reason}`,
         );
       }
-      await bindLiveReviewerSession();
-      warmResumed = Boolean(warmSession);
+      if (
+        retainReviewerSession &&
+        runnerCanResume &&
+        !(await bindLiveReviewerSession(resetStartedAt))
+      ) {
+        throw new Error(
+          `Accepted ${runner} review task did not expose a pane-owned session binding in ${reviewTarget}`,
+        );
+      }
     };
 
-    // Cold launch → settle → capture session metadata → bind context → deliver prompt.
-    // `claimed` is the warm session being resumed: capture is diff-based (not
-    // pane-scoped), so a resume that continues the SAME transcript file captures
-    // nothing — seed the claimed id/path so usage extraction and the persisted
-    // context binding still work.
+    // Cold launch → settle → capture the pane-owned session → bind context
+    // → deliver prompt. A claimed warm session supplies the native resume id,
+    // but only the live pane hook may establish the binding after launch.
     const launchReviewer = async (
       launchCmd: string,
       prompt: string,
@@ -1022,21 +1049,15 @@ export async function runReviewAgent(
         runner,
         sessionFilesBefore.paths,
         sessionFilesBefore.error,
-        { sinceMs: handoffAckSinceMs },
+        {
+          sinceMs: handoffAckSinceMs,
+          paneId: reviewerWindow.paneId,
+        },
       );
-      if (claimed) {
-        // Use the claimed binding UNCONDITIONALLY on a resume: capture is
-        // diff-based and prefers fresh paths, so concurrent same-runner
-        // activity can produce a non-null FOREIGN binding — which would then
-        // drive the persisted context and cost attribution. The claimed
-        // session IS the reviewer's session (codex/grok continue the same
-        // file; for claude this trades exact per-loop usage attribution for
-        // never attributing a foreign session).
-        sessionMeta = {
-          runnerSessionId: claimed.runnerSessionId,
-          runnerSessionPath: claimed.runnerSessionPath,
-          error: sessionMeta.error,
-        };
+      if (!sessionMeta.runnerSessionId && retainReviewerSession && runnerCanResume) {
+        throw new Error(
+          `${claimed ? 'Reloaded' : 'Launched'} ${runner} reviewer did not establish an authoritative session binding in ${reviewTarget}`,
+        );
       }
       reviewContext =
         (await upsertAgentContext(_runId, 'self-review', {
@@ -1129,7 +1150,6 @@ export async function runReviewAgent(
       )}`;
       try {
         await launchReviewer(reloadCmd, taskPrompt, warmSession);
-        warmResumed = true;
       } catch (err) {
         console.warn(
           `[self-review] warm resume of ${runner} session ${warmSession.runnerSessionId} failed (${(err as Error).message}) — retrying with a cold fresh launch`,
@@ -1203,16 +1223,8 @@ export async function runReviewAgent(
     }
     if (retainReviewerSession) {
       // Record this pass's session so the next loop of THIS run can resume it.
-      // On a warm-resumed pass keep the CLAIMED binding: session capture is
-      // diff-based, so concurrent same-runner activity on the slot could
-      // mis-attribute a foreign transcript — and a mis-bound id would be
-      // RESUMED next loop. (For claude this means later loops resume the
-      // original lineage rather than each resume's successor id — trading one
-      // loop of reviewer context for never binding a foreign session.)
-      const reusableSessionId =
-        warmResumed && warmSession ? warmSession.runnerSessionId : sessionMeta.runnerSessionId;
-      const reusableSessionPath =
-        warmResumed && warmSession ? warmSession.runnerSessionPath : sessionMeta.runnerSessionPath;
+      const reusableSessionId = sessionMeta.runnerSessionId;
+      const reusableSessionPath = sessionMeta.runnerSessionPath;
       if (reusableSessionId && runnerSupportsSessionReload(runner)) {
         registerWarmReviewerSession({
           ...warmScope,
