@@ -202,6 +202,7 @@ export function recoveryHealthIsReady(
 export function isPublicationReviewRecoveryHeld(run: Run): boolean {
   if (run.status === 'human-gating') return true;
   if (run.status !== 'blocked') return false;
+  if (run.engineState?.publishGate?.reviewRecovery?.status === 'operator-required') return true;
   return run.decisions.some(
     (decision) => decision.type === 'engine_human_gate' && !decision.resolvedAt,
   );
