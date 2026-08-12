@@ -66,18 +66,21 @@ export interface PublicationReviewRecoveryResult {
  * reconciled to `complete`. A failed context is eligible only when the caller
  * explicitly includes it; `reviewerContextNeedsRecovery` then requires the
  * matching persisted delivery-failure placeholder, so a real terminal failure
- * cannot keep the six-hour watcher alive.
+ * cannot keep the six-hour watcher alive. A blocked context is eligible only
+ * for explicit recovery passes: the reviewer may have finished after the gate
+ * rejected its still-missing result artifact.
  */
 export function isRecoverableReviewerContext(
   ctx: Pick<AgentContext, 'role' | 'status'>,
-  options: { includeFailed?: boolean } = {},
+  options: { includeFailed?: boolean; includeBlocked?: boolean } = {},
 ): boolean {
   return (
     ctx.role === 'self-review' &&
     (ctx.status === 'working' ||
       ctx.status === 'launching' ||
       ctx.status === 'complete' ||
-      (options.includeFailed === true && ctx.status === 'failed'))
+      (options.includeFailed === true && ctx.status === 'failed') ||
+      (options.includeBlocked === true && ctx.status === 'blocked'))
   );
 }
 
@@ -122,7 +125,7 @@ type RecoverableReviewRecord = Pick<IndependentReviewStatus, 'id'> &
 export function reviewerContextNeedsRecovery(
   ctx: Pick<AgentContext, 'role' | 'status' | 'artifactScope'>,
   reviews: RecoverableReviewRecord[],
-  options: { includeFailed?: boolean } = {},
+  options: { includeFailed?: boolean; includeBlocked?: boolean } = {},
 ): boolean {
   if (!isRecoverableReviewerContext(ctx, options)) return false;
   const artifactScope = ctx.artifactScope?.trim();
@@ -442,7 +445,7 @@ export async function recoverInflightPublicationReviews(
     reviews = run.engineState?.publishGate?.independentReviews ?? [];
   }
   const candidates = (run.agentContexts ?? []).filter((ctx) =>
-    reviewerContextNeedsRecovery(ctx, reviews, { includeFailed: true }),
+    reviewerContextNeedsRecovery(ctx, reviews, { includeFailed: true, includeBlocked: true }),
   );
   if (candidates.length === 0) return { recoveredIds: [], terminalErrors: [] };
   const vars = await loadSlotVars(slotId);

@@ -26,8 +26,12 @@ export async function applyRunningWorkerSignalToContext(
   });
   if (!match) return;
 
+  const rearmingTerminalContext = ['complete', 'failed', 'blocked', 'idle'].includes(match.status);
+  const observedAt = signal.timestamp ?? new Date().toISOString();
   await upsertAgentContext(runId, match.role, {
     id: match.id,
-    lastSignalAt: signal.timestamp ?? new Date().toISOString(),
+    status: 'working',
+    ...(rearmingTerminalContext ? { attemptStartedAt: observedAt } : {}),
+    lastSignalAt: observedAt,
   });
 }
