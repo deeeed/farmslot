@@ -922,6 +922,7 @@ async function runWaitBehaviorContract(
           'SELF-REVIEW.wait-overdue-SIGNAL.json',
           'artifacts/review-feedback.wait-overdue.md',
           'artifacts/review-result.wait-overdue.json',
+          25,
         )
         .then(() => ({ timedOut: false }))
         .catch((error: unknown) => ({
