@@ -62,13 +62,15 @@ export async function applyRunningWorkerSignalToContext(
     {
       resolvePatch: (current) => {
         if (!current) return null;
-        if (current.signalAttemptId && !signal.attemptId) {
-          console.warn(
-            `[worker-signal] ignored ID-less running signal for attempt-scoped context ${current.id}; check worker runtime version and mark-start compliance`,
-          );
-        }
         rearmingTerminalContext = TERMINAL_AGENT_STATUSES.has(current.status);
-        if (rearmingTerminalContext && !signalIsNewerThanContext(signal, current)) return null;
+        if (rearmingTerminalContext && !signalIsNewerThanContext(signal, current)) {
+          if (current.signalAttemptId && !signal.attemptId) {
+            console.warn(
+              `[worker-signal] ignored ID-less running signal for attempt-scoped context ${current.id}; check worker runtime version and mark-start compliance`,
+            );
+          }
+          return null;
+        }
         if (rearmingTerminalContext && current.role === 'self-review') options?.beforeRearm?.();
         const adoptingAttemptId = Boolean(signal.attemptId && !current.signalAttemptId);
         return {
