@@ -785,6 +785,9 @@ export async function runReviewAgent(
     label: allocated.label,
     status: 'launching',
     attemptStartedAt: startedAt,
+    // The worker establishes the new opaque attempt identity with `mark start`.
+    // Do not let a warm context expose the previous attempt during launch.
+    signalAttemptId: undefined,
     taskFile: taskDirRelPath(taskDir, reviewChecklistTarget.checklist),
     signalFile: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
     reviewResultFile: resultRelPath,

@@ -1,7 +1,32 @@
-import type { AgentRole, WorkerSignal } from '@farmslot/protocol';
+import type { AgentContext, AgentRole, WorkerSignal } from '@farmslot/protocol';
 
-import { upsertAgentContext } from '../agents/contexts.js';
+import { TERMINAL_AGENT_STATUSES, upsertAgentContext } from '../agents/contexts.js';
 import { getRun } from '../runs/store.js';
+
+function signalIsNewerThanContext(signal: WorkerSignal, context: AgentContext): boolean {
+  // An opaque identity is authoritative on first adoption. This is the
+  // migration path for persisted contexts created before attempt IDs existed,
+  // and avoids comparing worker and gateway clocks.
+  if (signal.attemptId && !context.signalAttemptId) return true;
+  if (signal.attemptId && context.signalAttemptId) {
+    if (signal.attemptId === context.signalAttemptId) return false;
+    // Once an attempt id is established, attemptStartedAt was stamped from the
+    // first worker signal. Preserve ordering on the worker clock.
+    const currentAttemptAt = Date.parse(context.attemptStartedAt ?? '');
+    const signalAt = Date.parse(signal.timestamp);
+    return (
+      !Number.isFinite(currentAttemptAt) ||
+      (Number.isFinite(signalAt) && signalAt > currentAttemptAt)
+    );
+  }
+  if (context.signalAttemptId) return false;
+  const signalAt = Date.parse(signal.timestamp);
+  if (!Number.isFinite(signalAt)) return false;
+  const priorAt = [context.lastSignalAt, context.completedAt]
+    .map((value) => Date.parse(value ?? ''))
+    .filter(Number.isFinite);
+  return priorAt.every((timestamp) => signalAt > timestamp);
+}
 
 export async function applyRunningWorkerSignalToContext(
   slotId: string,
@@ -9,12 +34,14 @@ export async function applyRunningWorkerSignalToContext(
   signal: WorkerSignal,
   role?: AgentRole,
   contextId?: string,
-): Promise<void> {
-  if (signal.status !== 'running') return;
-  if (!runId) return;
+  options?: { beforeRearm?: () => void },
+): Promise<boolean> {
+  if (signal.status !== 'running') return false;
+  if (!runId) return false;
+  if (!Number.isFinite(Date.parse(signal.timestamp))) return false;
 
   const run = getRun(runId);
-  if (!run || run.slotId !== slotId) return;
+  if (!run || run.slotId !== slotId) return false;
 
   const contexts = run.agentContexts ?? [];
   const match = contexts.find((ctx) => {
@@ -24,10 +51,37 @@ export async function applyRunningWorkerSignalToContext(
     if (signal.role) return ctx.role === signal.role;
     return ctx.role === 'primary';
   });
-  if (!match) return;
+  if (!match) return false;
 
-  await upsertAgentContext(runId, match.role, {
-    id: match.id,
-    lastSignalAt: signal.timestamp ?? new Date().toISOString(),
-  });
+  const observedAt = signal.timestamp;
+  let rearmingTerminalContext = false;
+  const updated = await upsertAgentContext(
+    runId,
+    match.role,
+    { id: match.id },
+    {
+      resolvePatch: (current) => {
+        if (!current) return null;
+        rearmingTerminalContext = TERMINAL_AGENT_STATUSES.has(current.status);
+        if (rearmingTerminalContext && !signalIsNewerThanContext(signal, current)) {
+          if (current.signalAttemptId && !signal.attemptId) {
+            console.warn(
+              `[worker-signal] ignored ID-less running signal for attempt-scoped context ${current.id}; check worker runtime version and mark-start compliance`,
+            );
+          }
+          return null;
+        }
+        if (rearmingTerminalContext && current.role === 'self-review') options?.beforeRearm?.();
+        const adoptingAttemptId = Boolean(signal.attemptId && !current.signalAttemptId);
+        return {
+          id: current.id,
+          status: 'working',
+          ...(rearmingTerminalContext || adoptingAttemptId ? { attemptStartedAt: observedAt } : {}),
+          ...(signal.attemptId ? { signalAttemptId: signal.attemptId } : {}),
+          lastSignalAt: observedAt,
+        };
+      },
+    },
+  );
+  return updated !== null && rearmingTerminalContext && match.role === 'self-review';
 }

@@ -506,6 +506,40 @@ test('buildRecoveredReview accepts fresh completed runtime context when terminal
   assert.equal(review.verdict, 'issues');
 });
 
+test('buildRecoveredReview accepts signal-less completion for an attempt-scoped context', () => {
+  const review = buildRecoveredReview({
+    run: makeRun({ engineState: { publishGate: { independentReviews: [] } } }),
+    ctx: reviewerContext({
+      status: 'complete',
+      signalAttemptId: 'attempt-2',
+      attemptStartedAt: '2026-07-16T10:00:00.000Z',
+      completedAt: '2026-07-16T10:40:00.000Z',
+    }),
+    signal: undefined,
+    feedback: { verdict: 'pass', issues: [] },
+    reviewedPackage: undefined,
+  });
+
+  assert.equal(review?.verdict, 'pass');
+});
+
+test('buildRecoveredReview rejects a terminal signal from another attempt', () => {
+  const review = buildRecoveredReview({
+    run: makeRun({ engineState: { publishGate: { independentReviews: [] } } }),
+    ctx: reviewerContext({
+      status: 'complete',
+      signalAttemptId: 'attempt-2',
+      attemptStartedAt: '2026-07-16T10:00:00.000Z',
+      completedAt: '2026-07-16T10:40:00.000Z',
+    }),
+    signal: terminalSignal({ attemptId: 'attempt-1' }),
+    feedback: { verdict: 'pass', issues: [] },
+    reviewedPackage: undefined,
+  });
+
+  assert.equal(review, null);
+});
+
 test('buildRecoveredReview rejects stale completed runtime context without a terminal signal', () => {
   const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
   const review = buildRecoveredReview({
