@@ -45,6 +45,7 @@ import {
 } from '../../core/tmux.js';
 import { cleanupSlotStorage } from '../../fleet/slot-storage-cleanup.js';
 import { findActiveGateHeldRunForSlot } from '../../run-engine/gate-held-lifecycle.js';
+import { runnerPromptSubmitKey } from '../../runners/registry.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
@@ -376,7 +377,8 @@ async function slotReleaseImpl(
         const entryFailures: SlotCopyDirEntryError[] = [];
         const releaseRunId =
           params.expectedRunId ??
-          (((await readSlotField(params.slotId, 'current_run_id')) as string | null) ?? undefined);
+          ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ??
+          undefined;
         await slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
           excludeTopLevel: [...WORKER_ARTIFACT_COPY_EXCLUDES],
           excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
@@ -621,9 +623,16 @@ export async function killAgentInSession(
   const agentPid = await findRunnerDescendantPid(vars, panePid, runner);
 
   if (agentPid) {
-    await execOnSlot(vars, tmuxSendTextCommand(target, '/exit', { enter: true }), {
-      timeout: TMUX_CMD_TIMEOUT,
-    });
+    await execOnSlot(
+      vars,
+      tmuxSendTextCommand(target, '/exit', {
+        enter: true,
+        submitKey: runnerPromptSubmitKey(runner),
+      }),
+      {
+        timeout: TMUX_CMD_TIMEOUT,
+      },
+    );
     await new Promise((r) => setTimeout(r, 2000));
 
     const stillAlive =

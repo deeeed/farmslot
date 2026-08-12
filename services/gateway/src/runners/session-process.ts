@@ -53,10 +53,24 @@ try:
         text=True,
     ).strip()
     elapsed = subprocess.check_output(
-        ['ps', '-p', pid, '-o', 'etimes='],
+        ['ps', '-p', pid, '-o', 'etime='],
         text=True,
     ).strip()
-    print(int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000) - int(elapsed) * 1000)
+    day_parts = elapsed.split('-', 1)
+    days = int(day_parts[0]) if len(day_parts) == 2 else 0
+    clock = day_parts[-1].split(':')
+    if len(clock) == 3:
+        hours, minutes, seconds = map(int, clock)
+    elif len(clock) == 2:
+        hours = 0
+        minutes, seconds = map(int, clock)
+    else:
+        raise ValueError(f'unexpected elapsed time: {elapsed}')
+    elapsed_seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds
+    # ps etime has one-second precision. Use the lower bound for process
+    # start so an event emitted during that first second remains admissible.
+    started_at_ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+    print(started_at_ms - (elapsed_seconds + 1) * 1000)
 except Exception as error:
     print(f'pane process start probe failed: {error}', file=sys.stderr)
     raise SystemExit(1)
@@ -291,10 +305,20 @@ async function tryHookSessionBinding(
       (observedAt !== null &&
         observedAt !== undefined &&
         observedAt >= options.sinceMs - RUNNER_SESSION_DISPATCH_SLACK_MS);
-    const nativeBinding = await getRunnerObservability(runner)?.getSessionBinding?.(
-      vars,
-      options.paneId,
-    );
+    let nativeBinding = null;
+    try {
+      nativeBinding = await getRunnerObservability(runner)?.getSessionBinding?.(
+        vars,
+        options.paneId,
+      );
+    } catch (error) {
+      // Native attribution is optional evidence. A transient probe failure must
+      // fail this source closed without tearing down an already-launched worker;
+      // the pane-scoped hook source below may still provide authoritative proof.
+      console.warn(
+        `[runner-session] native binding probe failed for ${runner} in ${options.paneId}: ${(error as Error).message}`,
+      );
+    }
     if (
       nativeBinding &&
       isCurrentPaneProcess(nativeBinding.observedAt) &&
@@ -371,7 +395,6 @@ async function tryFilesystemSessionBinding(
   options: {
     sinceMs?: number;
     existingPath?: string | null;
-    paneStartedAtMs?: number | null;
   },
 ): Promise<RunnerSessionBinding | null> {
   const afterPaths = await listRunnerSessionFiles(vars, runner);
@@ -402,6 +425,7 @@ export async function resolveRunnerSessionBinding(
     paneId?: string | null;
     slotId?: string | null;
     existingPath?: string | null;
+    paneStartedAtMs?: number | null;
   } = {},
 ): Promise<RunnerSessionBinding | null> {
   if (!runnerPersistsSessionFiles(runner)) return null;

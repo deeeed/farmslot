@@ -73,14 +73,17 @@ describe('Grok structured prompt observability', () => {
   });
 
   it('reports delivery state only for the exact retained Grok session', async () => {
-    const observability = createGrokLogObservability(async () => ({
-      status: 'matched',
-      promptAcceptedAt: null,
-      activity: 'idle',
-      activityAt: 1300,
-      sessionId: 'session-1',
-      sessionPath: '/sessions/session-1',
-    }));
+    const observability = createGrokLogObservability(
+      async () => ({
+        status: 'matched',
+        promptAcceptedAt: null,
+        activity: 'idle',
+        activityAt: 1300,
+        sessionId: 'session-1',
+        sessionPath: '/sessions/session-1',
+      }),
+      async () => 1400,
+    );
 
     assert.deepEqual(
       await observability.getSessionDeliveryState(
@@ -108,7 +111,7 @@ describe('Grok structured prompt observability', () => {
     assert.deepEqual(await observability.getSessionBinding?.(makeVars(), 'core-3:bugfix'), {
       sessionId: 'session-1',
       sessionPath: '/sessions/session-1',
-      observedAt: 1300,
+      observedAt: 1400,
     });
   });
 

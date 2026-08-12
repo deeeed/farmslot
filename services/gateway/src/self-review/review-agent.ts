@@ -1025,6 +1025,13 @@ export async function runReviewAgent(
           runnerSessionPath: null,
           error: `No authoritative session binding for ${reviewTarget}`,
         };
+        reviewContext =
+          (await upsertAgentContext(_runId, 'self-review', {
+            id: allocated.id,
+            label: allocated.label,
+            runnerSessionId: null,
+            runnerSessionPath: null,
+          })) ?? reviewContext;
       }
     };
 

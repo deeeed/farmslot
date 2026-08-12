@@ -1342,6 +1342,10 @@ export function runnerBufferedInstructionSubmitKey(
   return getRunnerDefinition(runnerId).promptSubmitKey;
 }
 
+export function runnerPromptSubmitKey(runnerId?: string | null): 'Enter' | 'C-m' {
+  return getRunnerDefinition(runnerId).promptSubmitKey;
+}
+
 function paneTailText(pane: string, lines = 12): string {
   return pane.split('\n').slice(-lines).join('\n');
 }
@@ -3047,7 +3051,10 @@ export async function sendRunnerPostLaunchPrompt(
       } catch (error) {
         console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
       }
-      sendCommand = tmuxSendTextCommand(target, message, { enter: true });
+      sendCommand = tmuxSendTextCommand(target, message, {
+        enter: true,
+        submitKey: runnerPromptSubmitKey(runner),
+      });
     }
     const sentAtMs = Date.now();
     const promptResult = await execOnSlot(vars, sendCommand);

@@ -122,6 +122,9 @@ export async function snapshot(slotId: string, session: string, lines = 200): Pr
 }
 
 export function buildSendKeysCommand(session: string, text: string, enter = true): string {
+  // Terminal streaming is raw operator PTY input, not a runner prompt-delivery
+  // action: the client supplies no runner identity and Enter preserves normal
+  // shell/terminal semantics. Runner-owned sends use the capability adapter.
   return enter
     ? tmuxSendTextCommand(session, text, { enter: true })
     : tmuxSendTextCommand(session, text);

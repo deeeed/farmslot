@@ -23,7 +23,7 @@ PY
 
 submit_key_for_action() {
   case "$1" in
-    cursor | shell) echo "C-m" ;;
+    cursor | grok | shell) echo "C-m" ;;
     *) echo "Enter" ;;
   esac
 }

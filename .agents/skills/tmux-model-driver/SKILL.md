@@ -44,7 +44,7 @@ Cross-review, orchestration, and multi-step PR work use the **interactive tmux c
 
 | Goal                                        | Path                                       | Notes                                                                                         |
 | ------------------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| Cross-review / worker nudges / review loops | Interactive model pane                     | `send-keys -l` then named `Enter`                                                             |
+| Cross-review / worker nudges / review loops | Interactive model pane                     | `send-keys -l`, then the runner-specific submit key below                                     |
 | One-shot smoke from an agent terminal       | `claude -p` / `codex exec` in a real shell | OK outside tmux; not a tmux-pane substitute                                                   |
 | `claude -p` inside a tmux shell pane        | Avoid                                      | Launch script can exit with no visible output; orchestrator thinks review ran when it did not |
 | Extra shell pane + `claude -p` for review   | Avoid                                      | Corrupts cross-review routing; keep reviewer in its dedicated model pane                      |
