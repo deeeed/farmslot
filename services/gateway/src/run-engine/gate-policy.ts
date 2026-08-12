@@ -230,7 +230,9 @@ export function buildPublishGateReviewStatus({
       reviewLoopNumberFromId(EXTRA_REVIEW_SOURCE, resolvedReviewId) ?? priorReviewCount + 1,
     verdict: finalAttempt.verdict,
     unresolvedCount: finalAttempt.unresolvedCount,
-    reason: finalAttempt.reason ?? reviewResult.reason,
+    ...((finalAttempt.reason ?? reviewResult.reason)
+      ? { reason: finalAttempt.reason ?? reviewResult.reason }
+      : {}),
     issues:
       finalAttempt.issues ?? (finalAttempt.unresolvedCount > 0 ? reviewResult.issues : undefined),
     validationDepth: finalAttempt.validationDepth ?? reviewResult.validationDepth,

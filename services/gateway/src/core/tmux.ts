@@ -246,7 +246,7 @@ export async function ensureTmuxWindow(
   const created = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `new-window -t ${shellQuote(`=${session}`)} -n ${shellQuote(windowName)} -d -P -F '#{window_id}' 2>&1`,
+      `new-window -t ${shellQuote(`=${session}`)} -n ${shellQuote(windowName)} -d 2>&1`,
     ),
   );
   const afterCreate = await listExactTmuxWindows(vars, session, windowName);
@@ -309,7 +309,20 @@ export async function resolveExactTmuxWindowPane(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
 ): Promise<{ paneId: string; panePid: string } | null> {
-  if (/^[@%]\d+$/.test(target)) {
+  if (/^%\d+$/.test(target)) {
+    const result = await execOnSlot(
+      vars,
+      tmuxShellSnippet(
+        `display-message -p -t ${shellQuote(target)} '#{pane_id}\t#{pane_pid}' 2>/dev/null`,
+      ),
+      { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
+    );
+    const [paneId, panePid] = result.stdout.trim().split('\t');
+    return result.exitCode === 0 && /^%\d+$/.test(paneId ?? '') && /^\d+$/.test(panePid ?? '')
+      ? { paneId: paneId!, panePid: panePid! }
+      : null;
+  }
+  if (/^@\d+$/.test(target)) {
     const result = await execOnSlot(
       vars,
       tmuxShellSnippet(

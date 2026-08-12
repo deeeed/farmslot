@@ -37,6 +37,7 @@ import {
 } from '../runners/launch-command.js';
 import {
   captureRunnerPromptAcceptanceBaseline,
+  retainedReviewerDeliveryPlan,
   runnerHasDurablePromptHandoff,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
@@ -110,6 +111,9 @@ async function reconcileReviewerWindow(
   windowName: string,
   runner: string,
 ): Promise<ReconciledReviewerWindow> {
+  // Do not resize shared tmux windows here. Prompt acceptance and completion
+  // are hook/signal based; changing the server size corrupts attached operator
+  // clients without strengthening the runner contract.
   const ensured = await ensureTmuxWindow(vars, session, windowName);
   const candidates = await Promise.all(
     ensured.windows.map(async (window) => ({
@@ -118,18 +122,10 @@ async function reconcileReviewerWindow(
     })),
   );
   const live = candidates.filter((window) => window.runnerAlive);
-  if (live.length > 1) {
-    throw new Error(
-      `Multiple live ${runner} reviewers exist for ${session}:${windowName} (${live.map((window) => window.windowId).join(', ')})`,
-    );
-  }
-  const canonical =
-    live[0] ??
-    [...candidates].sort(
-      (a, b) =>
-        (Number.isFinite(b.activityAt) ? b.activityAt : 0) -
-          (Number.isFinite(a.activityAt) ? a.activityAt : 0) || b.windowIndex - a.windowIndex,
-    )[0];
+  const newestFirst = (a: TmuxWindowRef, b: TmuxWindowRef) =>
+    (Number.isFinite(b.activityAt) ? b.activityAt : 0) -
+      (Number.isFinite(a.activityAt) ? a.activityAt : 0) || b.windowIndex - a.windowIndex;
+  const canonical = [...live].sort(newestFirst)[0] ?? [...candidates].sort(newestFirst)[0];
   if (!canonical) throw new Error(`No tmux reviewer window available for ${session}:${windowName}`);
 
   for (const duplicate of candidates) {
@@ -930,10 +926,18 @@ export async function runReviewAgent(
     const signalPath = taskDirRelPath(taskDir, reviewChecklistTarget.signal);
 
     const bindLiveReviewerSession = async (): Promise<void> => {
-      const binding = await resolveRunnerSessionBinding(vars, runner, [], {
-        paneId: reviewerWindow.paneId,
-        slotId: vars.slotId,
-      });
+      // A retained review already owns an exact session binding. Do not let the
+      // filesystem fallback replace it with another concurrent runner's newest
+      // transcript when the pane-scoped hook has not arrived yet.
+      const binding = warmSession
+        ? {
+            runnerSessionId: warmSession.runnerSessionId,
+            runnerSessionPath: warmSession.runnerSessionPath,
+          }
+        : await resolveRunnerSessionBinding(vars, runner, [], {
+            paneId: reviewerWindow.paneId,
+            slotId: vars.slotId,
+          });
       if (!binding) return;
       sessionMeta = {
         runnerSessionId: binding.runnerSessionId,
@@ -1094,8 +1098,24 @@ export async function runReviewAgent(
     // 4/5. Keep the live runner process. Re-reviews are always incremental
     // in-place; only generation-one reset requests issue the native reset.
     if (reviewerWindow.runnerAlive) {
-      const resetContext = sessionIntent === 'reset' && loopNumber === 1;
-      await deliverToLiveReviewer(taskPrompt, resetContext);
+      const deliveryPlan = retainedReviewerDeliveryPlan(runner, sessionIntent, loopNumber);
+      if (deliveryPlan.kind === 'cold-relaunch') {
+        warmSession = null;
+        taskPrompt = basePrompt;
+        await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
+      } else {
+        try {
+          await deliverToLiveReviewer(taskPrompt, deliveryPlan.resetContext);
+        } catch (err) {
+          if (!deliveryPlan.resetContext) throw err;
+          console.warn(
+            `[self-review] retained ${runner} reviewer could not reset (${(err as Error).message}) — replacing its process with a cold fresh launch`,
+          );
+          warmSession = null;
+          taskPrompt = basePrompt;
+          await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
+        }
+      }
     } else if (warmSession) {
       const reloadCmd = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
         vars,

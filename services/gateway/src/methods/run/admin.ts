@@ -107,6 +107,9 @@ export async function runBulkDelete(
       await reconcileDeletedRun(id);
       deleted++;
     } catch (err) {
+      // Bulk deletion is intentionally best-effort: one run may still be
+      // reconciling its backlog link, while independent selected runs remain
+      // safe to delete and must not be stranded behind it.
       console.warn(
         `[run] bulk delete skipped ${id}: ${err instanceof Error ? err.message : String(err)}`,
       );

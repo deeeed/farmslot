@@ -604,6 +604,24 @@ export function runnerContextResetCommand(runnerId?: string | null): string | nu
   return getRunnerDefinition(runnerId).contextResetCommand;
 }
 
+export interface RetainedReviewerDeliveryPlan {
+  kind: 'in-place' | 'cold-relaunch';
+  resetContext: boolean;
+}
+
+/** Fresh context needs either the runner's native reset or a cold process replacement. */
+export function retainedReviewerDeliveryPlan(
+  runnerId: string,
+  sessionIntent: 'reset' | 'resume',
+  loopNumber: number,
+): RetainedReviewerDeliveryPlan {
+  const resetContext = sessionIntent === 'reset' && loopNumber === 1;
+  if (!resetContext) return { kind: 'in-place', resetContext: false };
+  return runnerContextResetCommand(runnerId)
+    ? { kind: 'in-place', resetContext: true }
+    : { kind: 'cold-relaunch', resetContext: false };
+}
+
 export function runnerPersistsSessionFiles(runnerId?: string | null): boolean {
   // Unknown/custom runners are treated as non-session-backed by default so
   // dispatch does not scan ~/.claude|~/.codex for them or attach an unrelated
