@@ -41,6 +41,7 @@ import {
   checkInteractiveHandoffSignal,
   confirmForceComplete,
   confirmRunDecision,
+  confirmRunLifecycleAction,
   jumpToSuccessorWhenAvailable,
   rescueRunLinkage,
   resolveBranchNudgePick,
@@ -76,6 +77,7 @@ import {
   isRunDetailHashForRun,
   runDetailEvidenceArtifactHash,
   runDetailStepHash,
+  runInventoryHashFromDetail,
   selectedStepNameFromRunDetailHash,
 } from './run-detail-url-state.js';
 import { publicationReviewStepForName } from './run-pipeline-model.js';
@@ -725,6 +727,21 @@ export class RunDetail extends RunDetailState {
       _actionsBlocked: () => this._actionsBlocked(),
       _rescueLinkage: (runId) => this._rescueLinkage(runId),
       _confirmForceComplete: (runId) => this._confirmForceComplete(runId),
+      _confirmLifecycleAction: (run, action) =>
+        confirmRunLifecycleAction(run, action, {
+          actionsBlocked: () => this._actionsBlocked(),
+          pendingConfirm: () => this._pendingConfirm,
+          setPendingConfirm: (pending) => {
+            this._pendingConfirm = pending;
+          },
+          confirmTimer: () => this._confirmTimer,
+          setConfirmTimer: (timer) => {
+            this._confirmTimer = timer;
+          },
+          navigateToRuns: () => {
+            location.hash = runInventoryHashFromDetail();
+          },
+        }).catch((err) => alert(`Run ${action} failed: ${(err as Error).message}`)),
       _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
       _slotBranchForRun: (run) =>

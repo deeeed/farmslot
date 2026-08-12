@@ -1,6 +1,7 @@
 import type {
   DevInteractiveCompletionAction,
   Run,
+  RunCancelResult,
   RunDecision,
   RunInteractiveDevResolveResult,
   RunProbeWorkerSignalResult,
@@ -25,6 +26,36 @@ export interface RescueLinkageContext {
   actionsBlocked: () => boolean;
   rescueInProgress: () => boolean;
   setRescueInProgress: (inProgress: boolean) => void;
+}
+
+export interface RunLifecycleActionContext extends ConfirmTimerContext {
+  navigateToRuns: () => void;
+}
+
+export async function confirmRunLifecycleAction(
+  run: Run,
+  action: 'cancel' | 'delete',
+  context: RunLifecycleActionContext,
+): Promise<void> {
+  if (context.actionsBlocked()) return;
+  const confirmation = `${action}:${run.id}`;
+  if (context.pendingConfirm() !== confirmation) {
+    clearTimeout(context.confirmTimer());
+    context.setPendingConfirm(confirmation);
+    context.setConfirmTimer(setTimeout(() => context.setPendingConfirm(null), 3000));
+    return;
+  }
+  clearTimeout(context.confirmTimer());
+  context.setPendingConfirm(null);
+  if (action === 'cancel') {
+    await gateway.request<RunCancelResult>(Methods.RUN_CANCEL, {
+      runId: run.id,
+      reason: 'Cancelled by operator from run details.',
+    });
+    return;
+  }
+  await gateway.request(Methods.RUN_DELETE, { runId: run.id });
+  context.navigateToRuns();
 }
 
 export async function rescueRunLinkage(

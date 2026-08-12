@@ -336,7 +336,13 @@ export class ReviewLoopTimeline extends LitElement {
       const reviewPhase = html`
         <div class="phase ${pass ? 'pass' : warn ? 'warn' : ''}">
           <span class="phase-title">Review round ${reviewRound}</span>
-          ${pass ? 'passed' : warn ? `${attempt.unresolvedCount} finding(s)` : attempt.verdict}
+          ${pass
+            ? 'passed'
+            : attempt.verdict === 'failed'
+              ? 'did not run'
+              : warn
+                ? `${attempt.unresolvedCount} finding(s)`
+                : attempt.verdict}
         </div>
       `;
       if (index === 0) return [reviewPhase];
@@ -382,6 +388,7 @@ export class ReviewLoopTimeline extends LitElement {
     const verdict = attempt?.verdict ?? review.verdict;
     const unresolvedCount = attempt?.unresolvedCount ?? review.unresolvedCount;
     const issues = attempt ? attempt.issues : review.issues;
+    const failureReason = attempt?.reason ?? review.reason;
     const validationDepth = attempt?.validationDepth ?? review.validationDepth;
     const rowSnapshot = attempt ? attempt.reviewSnapshot : review.reviewSnapshot;
     const rowFixDelta = attempt ? attempt.fixDelta : review.fixDelta;
@@ -491,9 +498,11 @@ export class ReviewLoopTimeline extends LitElement {
                   )}
                 </ul>
               `
-            : unresolvedCount > 0
-              ? this._renderLegacyIssues(legacyIssues)
-              : nothing}
+            : failureReason
+              ? html`<div class="meta attention">${failureReason}</div>`
+              : unresolvedCount > 0
+                ? this._renderLegacyIssues(legacyIssues)
+                : nothing}
         ${unresolvedCount > 0 &&
         !issues?.length &&
         artifacts.some((artifact) => artifact.path.endsWith('review-feedback.md'))

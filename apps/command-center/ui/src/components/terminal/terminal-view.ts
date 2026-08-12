@@ -681,10 +681,9 @@ export class TerminalView extends TerminalViewState {
     }
     if (subscribeSeq !== this._subscribeSeq) return;
 
-    // Accept PTY bytes before redraw nudge so we keep the full screen tmux emits.
+    // Accept PTY bytes after the single authoritative size commit. Repeated
+    // shrink/restore nudges leave stale tmux status rows in xterm.
     this._ptyReady = true;
-    await this._nudgePtyRedraw(cols, rows, subscribeSeq);
-    if (subscribeSeq !== this._subscribeSeq) return;
     await this._seedPtyViewportIfEmpty(subscribeSeq);
     if (subscribeSeq !== this._subscribeSeq) return;
 
@@ -717,26 +716,6 @@ export class TerminalView extends TerminalViewState {
       this._log('seed-snapshot', `lines=${snap.lines.length}`);
     } catch (err) {
       this._warn('pty viewport seed', err);
-    }
-  }
-
-  /** Shrink by one column then restore — forces tmux to redraw the full pane. */
-  private async _nudgePtyRedraw(
-    cols: number,
-    rows: number,
-    subscribeSeq = this._subscribeSeq,
-  ): Promise<void> {
-    if (subscribeSeq !== this._subscribeSeq) return;
-    if (cols <= 1 || rows <= 0) return;
-    const method = this._workerRef() ? Methods.TERMINAL_WORKER_RESIZE : Methods.TERMINAL_RESIZE;
-    const params = () => ({ ...this._targetParams(), rows });
-    try {
-      await gateway.request(method, { ...params(), cols: cols - 1 });
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      if (subscribeSeq !== this._subscribeSeq) return;
-      await gateway.request(method, { ...params(), cols });
-    } catch (err) {
-      this._warn('terminal redraw nudge', err);
     }
   }
 

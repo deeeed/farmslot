@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(runs): expose Cancel for recoverable blocked runs and Delete for terminal runs directly in run details, reusing the gateway lifecycle used by Manage Runs.
+- fix(slot-view): decouple terminal window navigation, primary-worker TASK progress, and reviewer history selection; remove the resize redraw nudge that left duplicate tmux status rows.
+- fix(slot-view): remove the redundant agent-context strip above the live terminal; tmux's native window controls remain the single navigation surface.
+- fix(review): show reviewer transport failures as "did not run" with their delivery reason instead of presenting them as zero-finding reviews.
 - fix(review): present review checks as ordered rounds with intervening worker fixes, let operators switch between chronological and reviewer-grouped history, distinguish stale or undelivered findings, and open nested review diffs above the history before restoring its prior view.
 
 ## 0.6.1 - 2026-08-11

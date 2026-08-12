@@ -20,7 +20,6 @@ import { writeAuditRecord } from '../auto-recovery/audit-writer.js';
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
-  ensureTmuxWindowMinimumSize,
   firstWindowTarget,
   resolveTmuxPaneId,
   resolveTmuxSession,
@@ -104,6 +103,8 @@ export interface RunnerDefinition {
   resolvesPreTaskLaunchBlockers: boolean;
   supportsTmuxNudges: boolean;
   continueCommand: string | null;
+  /** In-place command that starts a clean context while keeping the runner process warm. */
+  contextResetCommand: string | null;
   /** Runner writes session files on disk (e.g. resumable session state). */
   persistsSessionFiles: boolean;
   /** Whether persisted sessions can be reloaded with an initial prompt in argv. */
@@ -194,6 +195,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     continueCommand: '/continue',
+    contextResetCommand: '/clear',
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
     retainedSessionHandoff: 'resume-with-prompt',
@@ -228,6 +230,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // monitor. It must be natural language, not the shell-only `codex --continue`
     // launcher, or the text gets inserted into chat instead of executed by zsh.
     continueCommand: 'Continue the current task from where you left off.',
+    contextResetCommand: null,
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
     retainedSessionHandoff: 'resume-with-prompt',
@@ -266,6 +269,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     resolvesPreTaskLaunchBlockers: true,
     supportsTmuxNudges: true,
     continueCommand: null,
+    contextResetCommand: null,
     persistsSessionFiles: false,
     sessionReload: 'none',
     retainedSessionHandoff: 'in-place',
@@ -295,6 +299,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     continueCommand: null,
+    contextResetCommand: null,
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
     retainedSessionHandoff: 'in-place',
@@ -320,6 +325,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
     continueCommand: null,
+    contextResetCommand: null,
     persistsSessionFiles: false,
     sessionReload: 'none',
     retainedSessionHandoff: 'unsupported',
@@ -341,6 +347,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
     continueCommand: null,
+    contextResetCommand: null,
     persistsSessionFiles: false,
     sessionReload: 'none',
     retainedSessionHandoff: 'unsupported',
@@ -362,6 +369,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
     continueCommand: null,
+    contextResetCommand: null,
     persistsSessionFiles: false,
     sessionReload: 'none',
     retainedSessionHandoff: 'unsupported',
@@ -589,6 +597,11 @@ export function runnerResolvesPreTaskLaunchBlockers(runnerId?: string | null): b
 export function runnerContinueCommand(runnerId?: string | null): string | null {
   if (!isKnownRunner(runnerId)) return null;
   return getRunnerDefinition(runnerId).continueCommand;
+}
+
+export function runnerContextResetCommand(runnerId?: string | null): string | null {
+  if (!isKnownRunner(runnerId)) return null;
+  return getRunnerDefinition(runnerId).contextResetCommand;
 }
 
 export function runnerPersistsSessionFiles(runnerId?: string | null): boolean {
@@ -2463,11 +2476,6 @@ export async function sendRunnerPostLaunchPrompt(
         return handoff.accepted;
       }
     : undefined;
-
-  // Tiny windows (e.g. a 5-row pane after a detached-client reflow) truncate the
-  // banner lines readiness matching depends on — re-enforce the minimum size
-  // right before polling, not only at window creation.
-  await ensureTmuxWindowMinimumSize(vars, target);
 
   const readyStart = Date.now();
   let readyDeadline = readyStart + readyTimeoutMs;

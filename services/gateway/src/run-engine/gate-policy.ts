@@ -201,6 +201,7 @@ export function buildPublishGateReviewStatus({
                     : 'pending',
             unresolvedCount:
               reviewResult.verdict === 'pass' ? 0 : (reviewResult.issues?.length ?? 0),
+            ...(reviewResult.reason ? { reason: reviewResult.reason } : {}),
             ...(reviewResult.issues?.length ? { issues: reviewResult.issues } : {}),
             reviewSnapshot: reviewResult.reviewSnapshot,
             fixDelta: reviewResult.fixDelta,
@@ -229,6 +230,7 @@ export function buildPublishGateReviewStatus({
       reviewLoopNumberFromId(EXTRA_REVIEW_SOURCE, resolvedReviewId) ?? priorReviewCount + 1,
     verdict: finalAttempt.verdict,
     unresolvedCount: finalAttempt.unresolvedCount,
+    reason: finalAttempt.reason ?? reviewResult.reason,
     issues:
       finalAttempt.issues ?? (finalAttempt.unresolvedCount > 0 ? reviewResult.issues : undefined),
     validationDepth: finalAttempt.validationDepth ?? reviewResult.validationDepth,

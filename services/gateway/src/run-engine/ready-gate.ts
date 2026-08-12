@@ -44,7 +44,7 @@ import {
   scanArtifacts,
 } from '../run-completion/orchestrator.js';
 import { readReadyGatePreparedPackage } from '../run-completion/ready-gate-package.js';
-import { defaultAlternateReviewRunner } from '../runners/registry.js';
+import { defaultAlternateReviewRunner, runnerDefaultModel } from '../runners/registry.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
 import { isTerminalReviewArtifactError } from '../self-review/terminal-result.js';
@@ -388,6 +388,7 @@ export async function executePublishGateReviewPlan(
             loopNumber: 1,
             verdict: 'failed',
             unresolvedCount: 0,
+            reason: `review-unavailable: ${message}`,
             validationDepth,
             startedAt: new Date().toISOString(),
             completedAt: new Date().toISOString(),
@@ -403,7 +404,13 @@ export async function executePublishGateReviewPlan(
       reviewResult,
       requestedRunner,
       workerRunner: latest.metrics.runner,
-      model: latest.metrics.actualModel ?? latest.metrics.model ?? null,
+      model:
+        reviewResult.model ??
+        planStep.model ??
+        runnerDefaultModel(requestedRunner) ??
+        latest.metrics.actualModel ??
+        latest.metrics.model ??
+        null,
       reviewId,
       reviewedPackage,
     });

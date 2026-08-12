@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- fix(review): carry review transport failure reasons separately from review findings so clients do not present an unavailable reviewer as a clean zero-finding pass.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.20.1 - 2026-08-11

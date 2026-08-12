@@ -157,7 +157,7 @@ function handleSlotViewTaskProgressUpdate(
   payload: TaskProgressUpdatedPayload,
   updateLinkedRun: () => void,
 ): void {
-  const selected = view._selectedAgentContext();
+  const selected = view._taskAgentContext();
   const matchesContext = !selected || !payload.contextId || payload.contextId === selected.id;
   const matchesRun = !view._linkedRun || payload.runId === view._linkedRun.id;
   if (

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(backlog): clear obsolete run linkage when externally shipped work is closed, and reconcile backlog/work-graph links synchronously when runs are deleted or archived.
+- fix(review): retain exactly one tmux window per reviewer runner, resolve orchestration sessions and lifecycle targets exactly, use runner-native context reset for fresh reviews, and bound live-runner detection to the reviewer pane so node load cannot trigger duplicate cold launches.
 - fix(review): expose pending reviewer findings as an explicit publication-gate continuation action and resume the existing worker-fix/re-review chain instead of launching another initial review.
 
 ## 0.6.1 - 2026-08-11

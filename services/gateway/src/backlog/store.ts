@@ -1693,6 +1693,9 @@ export async function closeShippedBacklogItem(
       delete item.queuedQueueItemId;
     }
     item.status = 'done';
+    delete item.runId;
+    delete item.lastObservedRunStatus;
+    delete item.lastDispatchError;
     item.shipped = {
       ...(params.prRef ? { prRef: params.prRef } : {}),
       ...(params.note ? { note: params.note } : {}),

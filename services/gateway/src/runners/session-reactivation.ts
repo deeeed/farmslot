@@ -21,6 +21,7 @@ import {
   normalizeRunner,
   resolveLaunchBlockerWithFreshEvidence,
   resolveSafeSendTimeoutMs,
+  runnerContextResetCommand,
   runnerHasDurablePromptHandoff,
   runnerNeedsPostLaunchPrompt,
   runnerRetainedSessionHandoff,
@@ -447,6 +448,29 @@ export async function deliverPromptInPlace(
       reason: `Live ${runner} retained handoff failed: ${(error as Error).message}`,
     };
   }
+}
+
+/** Reset a live runner through its declared native context command. */
+export async function resetLiveRunnerContext(
+  options: Omit<RunnerSessionReactivationOptions, 'prompt'>,
+): Promise<RetainedSessionDeliveryResult> {
+  const runner = normalizeRunner(options.runnerId);
+  const resetCommand = runnerContextResetCommand(runner);
+  if (!resetCommand) {
+    return {
+      delivered: false,
+      disposition: 'safe-send',
+      reason: `Runner '${runner}' does not declare a native context-reset command`,
+    };
+  }
+  return deliverPromptInPlace({
+    ...options,
+    prompt: resetCommand,
+    priorPromptSendAttempted: false,
+    launchAckSignalPath: null,
+    launchAckBaseline: null,
+    sendLogPrefix: options.sendLogPrefix ?? '[runner-context-reset]',
+  });
 }
 
 async function probeDelayedPromptAcknowledgement(

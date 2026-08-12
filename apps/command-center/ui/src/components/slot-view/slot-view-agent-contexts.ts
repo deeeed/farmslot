@@ -166,6 +166,20 @@ export function selectSlotViewAgentContext(
   return contexts.find((ctx) => ctx.role === 'primary') ?? contexts[0] ?? null;
 }
 
+/** Primary worker checklist is independent from terminal/history navigation. */
+export function selectSlotViewTaskContext(
+  contexts: AgentContextSummary[],
+  flowType?: Run['flowType'] | string | null,
+): AgentContextSummary | null {
+  const primaryRole = primaryRoleForFlow(flowType);
+  return (
+    contexts.find((ctx) => ctx.role === primaryRole) ??
+    contexts.find((ctx) => ctx.role === 'primary') ??
+    contexts.find((ctx) => !isReviewerAgentContext(ctx)) ??
+    null
+  );
+}
+
 /** Chip / breadcrumb label: prefer short reviewer tab id over generic Self-review. */
 export function slotViewAgentContextChipLabel(ctx: AgentContextSummary): string {
   if (isReviewerAgentContext(ctx)) {

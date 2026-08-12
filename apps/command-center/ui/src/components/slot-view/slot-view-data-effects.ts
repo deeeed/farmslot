@@ -3,7 +3,6 @@ import type {
   ResourceListResult,
   SlotActionListResult,
   TaskProgressResult,
-  TerminalSnapshotResult,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
@@ -86,15 +85,14 @@ export async function fetchSlotViewActions(view: SlotView): Promise<void> {
 
 export async function parseSlotViewTaskSteps(view: SlotView): Promise<void> {
   try {
-    const selectedContext = view._selectedAgentContext();
-    const snap = await gateway.request<TerminalSnapshotResult>(Methods.TERMINAL_SNAPSHOT, {
+    const selectedContext = view._taskAgentContext();
+    const snap = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
       slotId: view.slotId,
       ...(view._linkedRun ? { runId: view._linkedRun.id } : {}),
-      ...(selectedContext ? { contextId: selectedContext.id, role: selectedContext.role } : {}),
-      lines: 500,
+      ...(selectedContext?.taskFile ? { taskFile: selectedContext.taskFile } : {}),
     });
     const steps: TaskStep[] = [];
-    for (const line of snap.lines) {
+    for (const line of snap.markdown.split('\n')) {
       const match = line.match(/^- \[([ x])\] (.+)/);
       if (match) {
         steps.push({ text: match[2], checked: match[1] === 'x' });
@@ -113,11 +111,11 @@ export async function parseSlotViewTaskSteps(view: SlotView): Promise<void> {
 
 export async function fetchSlotViewStructuredProgress(view: SlotView): Promise<void> {
   try {
-    const selectedContext = view._selectedAgentContext();
+    const selectedContext = view._taskAgentContext();
     const result = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
       slotId: view.slotId,
       ...(view._linkedRun ? { runId: view._linkedRun.id } : {}),
-      ...(selectedContext ? { contextId: selectedContext.id, role: selectedContext.role } : {}),
+      ...(selectedContext?.taskFile ? { taskFile: selectedContext.taskFile } : {}),
     });
     if (result.structured) {
       view._structuredProgress = result.structured;

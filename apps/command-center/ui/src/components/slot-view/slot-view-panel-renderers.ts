@@ -1,7 +1,5 @@
 import { html, nothing } from 'lit';
 
-import { agentRoleShortLabel } from '@farmslot/protocol';
-
 import { getState } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { buildRerunAlongsideHref, canReplayRunSteps } from '../runs/run-detail-model.js';
@@ -15,37 +13,6 @@ import { requestedRunFromHash } from './slot-view-url-state.js';
 
 export interface SlotViewBodyRenderContext {
   hasResources: boolean;
-}
-
-export function renderSlotViewTaskBreadcrumb(view: SlotView) {
-  const contexts = view._agentContexts();
-  if (contexts.length < 2) return nothing;
-  const selected = view._selectedAgentContext();
-  return html`
-    <div class="sv-task-breadcrumb" aria-label="Role pipeline">
-      ${contexts.map((ctx, i) => {
-        const isActive = selected?.id === ctx.id;
-        const dead = view._isContextUnavailable(ctx);
-        const cls = ['sv-task-crumb'];
-        if (isActive) cls.push('active');
-        if (dead) cls.push('disabled');
-        return html`
-          ${i > 0 ? html`<span class="sv-task-crumb-sep">›</span>` : nothing}
-          <button
-            class="${cls.join(' ')}"
-            ?disabled=${isActive}
-            title="${ctx.label || ctx.role}${dead ? ' — tmux unavailable' : ''}"
-            @click=${() => view._selectAgentContext(ctx)}
-          >
-            ${agentRoleShortLabel(ctx.role)}
-            ${ctx.target?.window && ctx.target.window !== ctx.role
-              ? html` · ${ctx.target.window}`
-              : nothing}
-          </button>
-        `;
-      })}
-    </div>
-  `;
 }
 
 export function renderSlotViewAgentContexts(view: SlotView) {
@@ -169,20 +136,14 @@ export function renderSlotViewSidebarTask(view: SlotView) {
     </div>`;
   }
 
-  const breadcrumb = view._renderTaskBreadcrumb();
-
   // Structured progress (phase accordion) when available
   if (view._structuredProgress) {
-    return html`
-      ${breadcrumb}
-      <progress-tracker .structured=${view._structuredProgress}></progress-tracker>
-    `;
+    return html`<progress-tracker .structured=${view._structuredProgress}></progress-tracker>`;
   }
 
   // Fallback to flat step list
   if (view._taskSteps.length === 0) {
     return html`
-      ${breadcrumb}
       <div style="padding: ${spacing.sm}; color: ${colors.textMuted}; font-size: ${fonts.sizeXs}">
         No active task
       </div>
@@ -190,7 +151,6 @@ export function renderSlotViewSidebarTask(view: SlotView) {
   }
 
   return html`
-    ${breadcrumb}
     <div class="sv-task-header">Progress ${Math.round(view._taskProgress * 100)}%</div>
     <div class="sv-progress-bar">
       <div class="sv-progress-fill" style="width:${view._taskProgress * 100}%"></div>
@@ -519,7 +479,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
             : ''}
           ${(() => {
             if (view._reviewFullWidth || !view._taskPanelOpen) return nothing;
-            const ctx = view._selectedAgentContext();
+            const ctx = view._taskAgentContext();
             const ctxLabel = ctx ? ctx.label || ctx.role : '';
             const totalSteps = view._structuredProgress?.totalSteps ?? view._taskSteps.length;
             const doneSteps =
@@ -805,12 +765,9 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                       >
                         ${view._bottomTab === 'terminal'
                           ? html`
-                              ${view._renderAgentContexts()}
                               <terminal-view
                                 .slotId=${view.slotId}
                                 .runId=${terminalRunId}
-                                .role=${selectedRole}
-                                .contextId=${selectedContextId}
                                 @terminal-subscribe-failed=${(
                                   e: CustomEvent<{ contextId?: string; role?: string }>,
                                 ) => {

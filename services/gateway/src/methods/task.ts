@@ -39,7 +39,9 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
       contextId: params.contextId,
       markdown,
     };
-    const flowType = taskFlowTypeFromPath(params.taskFile);
+    const flowType =
+      (params.runId ? getRun(params.runId)?.flowType : undefined) ??
+      taskFlowTypeFromPath(params.taskFile);
     const schema = generateTaskSchema(markdown, flowType);
     if (schema.phases.length > 0) result.structured = joinSchemaWithMarkdown(schema, markdown);
     return result;
