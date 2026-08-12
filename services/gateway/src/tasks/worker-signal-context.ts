@@ -1,6 +1,6 @@
 import type { AgentContext, AgentRole, WorkerSignal } from '@farmslot/protocol';
 
-import { upsertAgentContext } from '../agents/contexts.js';
+import { TERMINAL_AGENT_STATUSES, upsertAgentContext } from '../agents/contexts.js';
 import { getRun } from '../runs/store.js';
 
 function signalIsNewerThanContext(signal: WorkerSignal, context: AgentContext): boolean {
@@ -21,6 +21,7 @@ export async function applyRunningWorkerSignalToContext(
 ): Promise<boolean> {
   if (signal.status !== 'running') return false;
   if (!runId) return false;
+  if (!Number.isFinite(Date.parse(signal.timestamp))) return false;
 
   const run = getRun(runId);
   if (!run || run.slotId !== slotId) return false;
@@ -35,14 +36,25 @@ export async function applyRunningWorkerSignalToContext(
   });
   if (!match) return false;
 
-  const rearmingTerminalContext = ['complete', 'failed', 'blocked', 'idle'].includes(match.status);
-  if (rearmingTerminalContext && !signalIsNewerThanContext(signal, match)) return false;
   const observedAt = signal.timestamp;
-  await upsertAgentContext(runId, match.role, {
-    id: match.id,
-    status: 'working',
-    ...(rearmingTerminalContext ? { attemptStartedAt: observedAt } : {}),
-    lastSignalAt: observedAt,
-  });
-  return rearmingTerminalContext;
+  let rearmingTerminalContext = false;
+  const updated = await upsertAgentContext(
+    runId,
+    match.role,
+    { id: match.id },
+    {
+      resolvePatch: (current) => {
+        if (!current) return null;
+        rearmingTerminalContext = TERMINAL_AGENT_STATUSES.has(current.status);
+        if (rearmingTerminalContext && !signalIsNewerThanContext(signal, current)) return null;
+        return {
+          id: current.id,
+          status: 'working',
+          ...(rearmingTerminalContext ? { attemptStartedAt: observedAt } : {}),
+          lastSignalAt: observedAt,
+        };
+      },
+    },
+  );
+  return updated !== null && rearmingTerminalContext && match.role === 'self-review';
 }

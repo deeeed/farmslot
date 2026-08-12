@@ -28,7 +28,7 @@ import { loadFleetStatus } from '../fleet/state.js';
 import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js';
 import { getRun, listRuns, updateRunAgentContexts } from '../runs/store.js';
 
-const TERMINAL_AGENT_STATUSES: ReadonlySet<AgentContextStatus> = new Set([
+export const TERMINAL_AGENT_STATUSES: ReadonlySet<AgentContextStatus> = new Set([
   'complete',
   'failed',
   'blocked',
@@ -284,6 +284,9 @@ export async function upsertAgentContext(
   runId: string,
   role: AgentRole,
   patch: Partial<AgentContext>,
+  options?: {
+    resolvePatch?: (existing: AgentContext | undefined) => Partial<AgentContext> | null;
+  },
 ): Promise<AgentContext | null> {
   const previous = agentContextChains.get(runId) ?? Promise.resolve();
   const applyMutation = async () => {
@@ -291,25 +294,30 @@ export async function upsertAgentContext(
     if (!run || !run.slotId) return null;
     const slotId = run.slotId;
     const now = new Date().toISOString();
-    let nextContext: AgentContext;
+    let nextContext: AgentContext | undefined;
     const updated = updateRunAgentContexts(runId, (currentRun, currentContexts) => {
       const explicitId = typeof patch.id === 'string' && patch.id.trim() ? patch.id.trim() : null;
       const identityId = explicitId ?? contextIdFor(role);
       const contexts = currentContexts.filter((ctx) => ctx.id !== identityId);
       const existing = currentContexts.find((ctx) => ctx.id === identityId);
+      const effectivePatch =
+        options?.resolvePatch?.(existing) ?? (options?.resolvePatch ? null : patch);
+      if (!effectivePatch) return currentContexts;
       // A relaunch keeps identity/nudge history but clears stale terminal timestamps.
       // When transitioning FROM a terminal status, clear completedAt so the context
       // restarts cleanly. When transitioning TO a terminal status, preserve any fresh
       // completedAt from the patch (terminal→terminal transitions must not drop it).
-      const enteringTerminal = patch.status && TERMINAL_AGENT_STATUSES.has(patch.status);
+      const enteringTerminal =
+        effectivePatch.status && TERMINAL_AGENT_STATUSES.has(effectivePatch.status);
       const leavingTerminal =
         existing &&
         TERMINAL_AGENT_STATUSES.has(existing.status) &&
-        patch.status &&
-        !TERMINAL_AGENT_STATUSES.has(patch.status);
+        effectivePatch.status &&
+        !TERMINAL_AGENT_STATUSES.has(effectivePatch.status);
       const existingForMerge =
         existing &&
-        (leavingTerminal || (patch.status && !enteringTerminal && patch.completedAt === undefined))
+        (leavingTerminal ||
+          (effectivePatch.status && !enteringTerminal && effectivePatch.completedAt === undefined))
           ? { ...existing, completedAt: undefined, lastSignalAt: undefined }
           : existing;
       const {
@@ -318,7 +326,7 @@ export async function upsertAgentContext(
         runId: _ignoredRunId,
         slotId: _ignoredSlotId,
         ...safePatch
-      } = patch;
+      } = effectivePatch;
       const context: AgentContext = {
         label: agentRoleLabel(role),
         status: 'working',
@@ -336,7 +344,8 @@ export async function upsertAgentContext(
       nextContext = context;
       return [...contexts, context];
     });
-    if (!updated?.slotId) return nextContext!;
+    if (!nextContext) return null;
+    if (!updated?.slotId) return nextContext;
     try {
       await updateSlotStatus(updated.slotId, { agent_contexts: summarizeAgentContexts(updated) });
     } catch (err) {
@@ -347,7 +356,7 @@ export async function upsertAgentContext(
         `[agent-contexts] slot mirror failed for ${updated.slotId}: ${(err as Error).message}`,
       );
     }
-    return nextContext!;
+    return nextContext;
   };
   const result = previous.then(applyMutation, applyMutation);
   // Keep the serialization tail alive after a failed caller-visible mutation,

@@ -541,6 +541,7 @@ async function ingestRecoveredReviewer(
     (isSuccessfulTerminalReviewSignal(freshSignal) || completedContextIsFresh) &&
     feedback.terminalInvalidReason
   ) {
+    if (ctx.status === 'blocked') return null;
     await markAgentContextStatus(runId, 'self-review', 'blocked', { id: ctx.id });
     throw new TerminalReviewArtifactError(
       `Reviewer ${ctx.id} completed with an invalid result artifact: ${feedback.terminalInvalidReason}`,
