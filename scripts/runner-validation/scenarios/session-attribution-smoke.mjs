@@ -10,6 +10,7 @@ import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { runLaunchInTmux } from '../lib/launch.mjs';
 import {
   ATTRIBUTION_MODELS,
+  findSessionStartBinding,
   listSessionCandidates,
   modelFromTranscript,
   modelsMatch,
@@ -106,10 +107,15 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       throw new Error('no session binding resolved');
     }
 
+    const hookBinding = findSessionStartBinding(readHookLines(logPath).slice(beforeCount), {
+      paneId,
+      slotId,
+      sinceMs: dispatchMs,
+    });
     report.resolvedPath = binding.runnerSessionPath;
     report.resolvedSource = binding.source;
-    report.hookTranscriptPath = binding.source === 'hook' ? binding.runnerSessionPath : null;
-    report.hookTmuxPane = binding.source === 'hook' ? paneId : null;
+    report.hookTranscriptPath = hookBinding?.transcriptPath ?? null;
+    report.hookTmuxPane = hookBinding?.tmuxPane ?? null;
     report.actualModel = modelFromTranscript(runner, binding.runnerSessionPath);
     report.modelMatch = modelsMatch(dispatchedModel, report.actualModel);
 
@@ -121,8 +127,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const pathNotStale = report.resolvedPath !== report.stalePath;
     const hookAligned =
       runnerAdapter.OBSERVABILITY_SCOPE !== 'event-driven' ||
-      binding.source === 'hook' ||
-      binding.source === 'native';
+      (report.hookTranscriptPath === report.resolvedPath && report.hookTmuxPane === paneId);
     const sawCompletion = completion.sawMarker || completion.sawStop;
 
     report.pass =

@@ -300,7 +300,10 @@ export function modelFromTranscript(runner, sessionPath) {
           const model = obj.payload?.model ?? obj.payload?.model_slug;
           if (model) return model;
         }
-        if (obj.type === 'turn_context') return obj.payload?.model ?? null;
+        if (obj.type === 'turn_context') {
+          const model = obj.payload?.model;
+          if (model) return model;
+        }
       } catch {
         // partial jsonl while runner writes
       }
