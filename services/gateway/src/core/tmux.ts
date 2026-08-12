@@ -86,7 +86,9 @@ export async function resolveTmuxSession(
   for (const candidate of candidates) {
     const result = await execOnSlot(
       vars,
-      tmuxShellSnippet(`has-session -t ${shellQuote(candidate)} 2>/dev/null`),
+      // Tmux otherwise prefix-matches `ff-1` to `ff-1-orch`, returning the
+      // configured alias instead of the session that actually owns the pane.
+      tmuxShellSnippet(`has-session -t ${shellQuote(`=${candidate}`)} 2>/dev/null`),
       { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
     );
     if (result.exitCode === 0) return candidate;
@@ -189,38 +191,87 @@ export async function respawnTmuxWindowWithCommand(
   }
 }
 
-/** Ensure one stable, named tmux window exists before retargeting it. */
+export interface TmuxWindowRef {
+  windowId: string;
+  windowIndex: number;
+  windowName: string;
+  activityAt: number;
+  paneId: string;
+  panePid: string;
+}
+
+/** List exact named windows without tmux's prefix or first-name-match semantics. */
+export async function listExactTmuxWindows(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  session: string,
+  windowName: string,
+): Promise<TmuxWindowRef[]> {
+  const result = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `list-panes -a -F '#{session_name}\t#{window_name}\t#{window_id}\t#{window_index}\t#{window_activity}\t#{pane_id}\t#{pane_pid}' 2>/dev/null`,
+    ),
+    { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
+  );
+  if (result.exitCode !== 0) return [];
+
+  const windows = new Map<string, TmuxWindowRef>();
+  for (const line of result.stdout.split('\n')) {
+    const [candidateSession, candidateName, windowId, indexRaw, activityRaw, paneId, panePid] =
+      line.split('\t');
+    if (candidateSession !== session || candidateName !== windowName) continue;
+    if (!/^@\d+$/.test(windowId ?? '') || !/^%\d+$/.test(paneId ?? '')) continue;
+    if (!/^\d+$/.test(panePid ?? '')) continue;
+    if (windows.has(windowId!)) continue;
+    windows.set(windowId!, {
+      windowId: windowId!,
+      windowIndex: Number.parseInt(indexRaw ?? '', 10),
+      windowName: candidateName!,
+      activityAt: Number.parseInt(activityRaw ?? '', 10),
+      paneId: paneId!,
+      panePid: panePid!,
+    });
+  }
+  return [...windows.values()];
+}
+
+/** Ensure at least one exact, named tmux window exists before reconciliation. */
 export async function ensureTmuxWindow(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
   windowName: string,
-): Promise<'existing' | 'created'> {
-  const exactWindowExists = async () =>
-    (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(
-          `list-windows -t ${shellQuote(`=${session}`)} -F '#{window_name}' 2>/dev/null | grep -Fxq ${shellQuote(windowName)}`,
-        ),
-      )
-    ).exitCode === 0;
-
-  if (await exactWindowExists()) return 'existing';
+): Promise<{ disposition: 'existing' | 'created'; windows: TmuxWindowRef[] }> {
+  const existing = await listExactTmuxWindows(vars, session, windowName);
+  if (existing.length > 0) return { disposition: 'existing', windows: existing };
   const created = await execOnSlot(
     vars,
     tmuxShellSnippet(
       `new-window -t ${shellQuote(`=${session}`)} -n ${shellQuote(windowName)} -d 2>&1`,
     ),
   );
-  if (created.exitCode === 0) return 'created';
-  if (await exactWindowExists()) return 'existing';
+  const afterCreate = await listExactTmuxWindows(vars, session, windowName);
+  if (afterCreate.length > 0) {
+    return { disposition: created.exitCode === 0 ? 'created' : 'existing', windows: afterCreate };
+  }
   throw new Error(
     `Failed to create tmux window ${session}:${windowName}: ${created.stderr || created.stdout || `exit ${created.exitCode}`}`,
   );
 }
 
-export const TMUX_ROLE_WINDOW_MIN_WIDTH = 80;
-export const TMUX_ROLE_WINDOW_MIN_HEIGHT = 24;
+export async function killTmuxWindowById(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  windowId: string,
+): Promise<void> {
+  const killed = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`kill-window -t ${shellQuote(windowId)} 2>/dev/null`),
+  );
+  if (killed.exitCode !== 0) {
+    throw new Error(
+      `Failed to remove duplicate tmux window ${windowId}: ${killed.stderr || killed.stdout || `exit ${killed.exitCode}`}`,
+    );
+  }
+}
 
 export async function resolveTmuxPaneId(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -258,6 +309,32 @@ export async function resolveExactTmuxWindowPane(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
 ): Promise<{ paneId: string; panePid: string } | null> {
+  if (/^%\d+$/.test(target)) {
+    const result = await execOnSlot(
+      vars,
+      tmuxShellSnippet(
+        `display-message -p -t ${shellQuote(target)} '#{pane_id}\t#{pane_pid}' 2>/dev/null`,
+      ),
+      { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
+    );
+    const [paneId, panePid] = result.stdout.trim().split('\t');
+    return result.exitCode === 0 && /^%\d+$/.test(paneId ?? '') && /^\d+$/.test(panePid ?? '')
+      ? { paneId: paneId!, panePid: panePid! }
+      : null;
+  }
+  if (/^@\d+$/.test(target)) {
+    const result = await execOnSlot(
+      vars,
+      tmuxShellSnippet(
+        `list-panes -t ${shellQuote(target)} -F '#{pane_id}\t#{pane_pid}' 2>/dev/null | head -1`,
+      ),
+      { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
+    );
+    const [paneId, panePid] = result.stdout.trim().split('\t');
+    return result.exitCode === 0 && /^%\d+$/.test(paneId ?? '') && /^\d+$/.test(panePid ?? '')
+      ? { paneId: paneId!, panePid: panePid! }
+      : null;
+  }
   const separator = target.indexOf(':');
   if (separator <= 0 || separator === target.length - 1) return null;
   const session = target.slice(0, separator);
@@ -271,42 +348,6 @@ export async function resolveExactTmuxWindowPane(
   );
   if (result.exitCode !== 0) return null;
   return selectExactTmuxWindowPane(result.stdout, session, windowName);
-}
-
-/**
- * Role windows (dev, self-review, ci-fix) need enough lines for capture-pane
- * verification and operator forensics. Tiny windows (e.g. 114x5) truncate prompts
- * and hide progress markers.
- */
-export async function ensureTmuxWindowMinimumSize(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  target: string,
-  minWidth = TMUX_ROLE_WINDOW_MIN_WIDTH,
-  minHeight = TMUX_ROLE_WINDOW_MIN_HEIGHT,
-): Promise<void> {
-  const dims = await execOnSlot(
-    vars,
-    tmuxShellSnippet(
-      `display-message -t ${shellQuote(target)} -p '#{window_width} #{window_height}' 2>/dev/null`,
-    ),
-  );
-  const [widthRaw, heightRaw] = dims.stdout.trim().split(/\s+/);
-  const width = Number.parseInt(widthRaw ?? '', 10);
-  const height = Number.parseInt(heightRaw ?? '', 10);
-  const nextWidth = Number.isFinite(width) ? Math.max(width, minWidth) : minWidth;
-  const nextHeight = Number.isFinite(height) ? Math.max(height, minHeight) : minHeight;
-  if (nextWidth === width && nextHeight === height) return;
-  const resized = await execOnSlot(
-    vars,
-    tmuxShellSnippet(
-      `resize-window -t ${shellQuote(target)} -x ${nextWidth} -y ${nextHeight} 2>/dev/null`,
-    ),
-  );
-  if (resized.exitCode !== 0) {
-    throw new Error(
-      `Failed to resize tmux window ${target} to at least ${minWidth}x${minHeight}: ${resized.stderr || resized.stdout || `exit ${resized.exitCode}`}`,
-    );
-  }
 }
 
 export async function firstWindowTarget(

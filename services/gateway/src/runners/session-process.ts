@@ -394,21 +394,10 @@ export async function captureRunnerSessionMetadata(
  * dispatches; and `killAgentInSession` skipping the graceful `/exit` step
  * because `pgrep -P` returned nothing for wrapped runners.
  *
- * Strategy: find every PID matching the pattern (`pgrep -f`), then walk each
- * candidate's PPID chain up to either {@link panePid} (alive descendant) or
- * to PID 1 / 0 / empty (different process tree). The pattern is single-quoted
- * via {@link shellQuote} but uses egrep alternation, which is safe inside the
- * quotes — no callers pass user-controlled regex (the patterns come from the
- * runner registry's static `processMatchers`).
- *
- * `tr -d ' \\n\\r\\t'` strips every flavor of whitespace because BSD `ps`
- * (macOS) on a stale/non-existent PID can return a bare newline with exit 0
- * — `tr -d ' '` alone left a `\\n` in `cur` which made the loop predicate
- * `[ -n "$cur" ]` true forever, hanging the SSH exec until the outer timeout.
- *
- * Cost: O(matches × ancestor depth). On a real pane with a single runner that
- * is ~1 candidate × 2-4 levels — cheaper than the original pgrep -P call once
- * the SSH round-trip dominates.
+ * Strategy: walk descendants outward from {@link panePid}, checking each
+ * child's command against the runner registry pattern. This work is bounded by
+ * one pane's process tree; scanning every matching runner on a busy node made
+ * lifecycle checks time out and falsely classified retained reviewers as dead.
  */
 export async function findRunnerDescendantPid(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -448,16 +437,26 @@ export function buildFindRunnerDescendantPidFromVariableCommand(
 function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern: string): string {
   const cmd = [
     `root=${quotedRoot}`,
-    `for pid in $(pgrep -f ${shellQuote(pattern)} 2>/dev/null); do`,
-    `  command=$(ps -o command= -p "$pid" 2>/dev/null || true)`,
-    `  case "$command" in`,
-    `    *'__farmslot_status'*) continue ;;`,
-    `  esac`,
-    `  cur=$pid`,
-    `  while [ -n "$cur" ] && [ "$cur" != "$root" ] && [ "$cur" != "0" ] && [ "$cur" != "1" ]; do`,
-    `    cur=$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d ' \\n\\r\\t')`,
+    `command=$(ps -o command= -p "$root" 2>/dev/null || true)`,
+    `case "$command" in`,
+    `  *'__farmslot_status'*) ;;`,
+    `  *) if printf '%s\\n' "$command" | grep -Eq ${shellQuote(pattern)}; then echo "$root"; exit 0; fi ;;`,
+    `esac`,
+    `set -- "$root"`,
+    `while [ "$#" -gt 0 ]; do`,
+    `  parent=$1`,
+    `  shift`,
+    `  for pid in $(pgrep -P "$parent" 2>/dev/null); do`,
+    `    command=$(ps -o command= -p "$pid" 2>/dev/null || true)`,
+    `    case "$command" in`,
+    `      *'__farmslot_status'*) continue ;;`,
+    `    esac`,
+    `    if printf '%s\\n' "$command" | grep -Eq ${shellQuote(pattern)}; then`,
+    `      echo "$pid"`,
+    `      exit 0`,
+    `    fi`,
+    `    set -- "$@" "$pid"`,
     `  done`,
-    `  if [ "$cur" = "$root" ]; then echo "$pid"; exit 0; fi`,
     `done`,
     `exit 1`,
   ].join('\n');

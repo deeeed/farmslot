@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +18,18 @@ import { capturePane, ensureShellSession, hasSession, killSession, tmux } from '
 import { pollHookRows } from '../lib/wait.mjs';
 
 export const SCENARIO_ID = 'retained-handoff-smoke';
+
+function resolveLiveResetPlan(runner) {
+  const snippet = `
+import { retainedReviewerDeliveryPlan } from './services/gateway/src/runners/registry.ts';
+console.log(JSON.stringify(retainedReviewerDeliveryPlan(${JSON.stringify(runner)}, 'reset', 1)));
+`;
+  const stdout = execFileSync('yarn', ['exec', 'tsx', '-e', snippet], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+  return JSON.parse(stdout.trim().split('\n').at(-1));
+}
 
 export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
@@ -51,6 +64,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     repeatReviewResetPlan: null,
     repeatReviewSlotMismatchPlan: null,
     repeatReviewUnavailablePlan: null,
+    liveReviewerResetPlan: null,
     paneReplacedBeforeResume: false,
     pass: false,
     error: null,
@@ -68,6 +82,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const beforeCount = readHookLines(logPath).length;
 
     const model = runner === 'claude' ? 'opus' : undefined;
+    report.liveReviewerResetPlan = resolveLiveResetPlan(runner);
     runLaunchInTmux(paneId, repo, runner, runnerAdapter, DEFAULT_PROMPT, { model });
     const initialRows = pollHookRows(logPath, beforeCount, ['Stop'], timeoutMs);
     report.initialCompleted = initialRows.some((row) => eventName(row) === 'Stop');
@@ -186,6 +201,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       report.repeatReviewResetPlan?.kind === 'reset' &&
       report.repeatReviewSlotMismatchPlan?.reason === 'slot-mismatch' &&
       report.repeatReviewUnavailablePlan?.reason === 'session-unavailable' &&
+      report.liveReviewerResetPlan?.kind === (runner === 'claude' ? 'in-place' : 'cold-relaunch') &&
       report.paneReplacedBeforeResume &&
       report.handoffDelivered;
   } catch (error) {

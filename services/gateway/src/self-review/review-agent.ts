@@ -19,13 +19,14 @@ import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
   ensureTmuxWindow,
-  ensureTmuxWindowMinimumSize,
+  killTmuxWindowById,
   resolveExactTmuxWindowPane,
   resolveTmuxSession,
   respawnTmuxWindowWithCommand,
   shellQuote,
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
   tmuxShellSnippet,
+  type TmuxWindowRef,
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import {
@@ -36,6 +37,7 @@ import {
 } from '../runners/launch-command.js';
 import {
   captureRunnerPromptAcceptanceBaseline,
+  retainedReviewerDeliveryPlan,
   runnerHasDurablePromptHandoff,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
@@ -45,8 +47,10 @@ import {
 } from '../runners/registry.js';
 import {
   isRunnerAliveUnderPane,
+  resolveRunnerSessionBinding,
   resumableSessionProbeCommand,
 } from '../runners/session-process.js';
+import { deliverPromptInPlace, resetLiveRunnerContext } from '../runners/session-reactivation.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun } from '../runs/store.js';
 import {
@@ -95,6 +99,46 @@ import {
   TerminalReviewArtifactError,
   terminalReviewArtifactErrorForCompletion,
 } from './terminal-result.js';
+
+interface ReconciledReviewerWindow extends TmuxWindowRef {
+  disposition: 'existing' | 'created';
+  runnerAlive: boolean;
+}
+
+async function reconcileReviewerWindow(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  session: string,
+  windowName: string,
+  runner: string,
+): Promise<ReconciledReviewerWindow> {
+  // Do not resize shared tmux windows here. Prompt acceptance and completion
+  // are hook/signal based; changing the server size corrupts attached operator
+  // clients without strengthening the runner contract.
+  const ensured = await ensureTmuxWindow(vars, session, windowName);
+  const candidates = await Promise.all(
+    ensured.windows.map(async (window) => ({
+      ...window,
+      runnerAlive: await isRunnerAliveUnderPane(vars, window.panePid, runner, { timeout: 10_000 }),
+    })),
+  );
+  const live = candidates.filter((window) => window.runnerAlive);
+  const newestFirst = (a: TmuxWindowRef, b: TmuxWindowRef) =>
+    (Number.isFinite(b.activityAt) ? b.activityAt : 0) -
+      (Number.isFinite(a.activityAt) ? a.activityAt : 0) || b.windowIndex - a.windowIndex;
+  const canonical = [...live].sort(newestFirst)[0] ?? [...candidates].sort(newestFirst)[0];
+  if (!canonical) throw new Error(`No tmux reviewer window available for ${session}:${windowName}`);
+
+  for (const duplicate of candidates) {
+    if (duplicate.windowId === canonical.windowId) continue;
+    await killTmuxWindowById(vars, duplicate.windowId);
+  }
+  if (candidates.length > 1) {
+    debugSelfReviewLog(
+      `[self-review] reconciled ${candidates.length} ${session}:${windowName} windows to ${canonical.windowId}`,
+    );
+  }
+  return { ...canonical, disposition: ensured.disposition };
+}
 
 /** Progress mark writes status "running"; only terminal worker signals count as done. */
 export function parseTerminalSelfReviewSignal(raw: string) {
@@ -498,7 +542,11 @@ async function recoverRunningReviewAgent(params: {
   ): Promise<null> => {
     await markAgentContextStatus(params.runId, 'self-review', status, { id: context.id });
     try {
-      await killSelfReviewWindow(params.vars, params.session, reason, context.target?.window);
+      if (context.target?.target?.startsWith('@')) {
+        await killTmuxWindowById(params.vars, context.target.target);
+      } else {
+        await killSelfReviewWindow(params.vars, params.session, reason, context.target?.window);
+      }
     } catch (error) {
       console.warn(
         `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} cleanup failed: ${(error as Error).message}`,
@@ -547,7 +595,7 @@ async function recoverRunningReviewAgent(params: {
     return abandonRecoveredReviewer('failed recovered reviewer prompt cleanup');
   }
   updateRun(params.runId, { activeTaskFile: context.taskFile });
-  const reviewWindow = context.target.window;
+  const reviewTarget = context.target.target ?? pane.paneId;
   const signalBasename = path.posix.basename(context.signalFile);
   const feedbackRelPath = reviewerFeedbackRelPath(context.id);
   const resultRelPath = context.reviewResultFile ?? null;
@@ -560,12 +608,11 @@ async function recoverRunningReviewAgent(params: {
       () =>
         waitForReviewCompletion(
           params.vars,
-          params.session,
+          reviewTarget,
           params.taskDir,
           params.reviewTimeoutMs,
           params.runId,
           params.runner,
-          reviewWindow,
           context.id,
           signalBasename,
           feedbackRelPath,
@@ -749,9 +796,10 @@ export async function runReviewAgent(
   });
 
   try {
-    // 1. Keep one stable window per runner. Each pass retargets this window via
-    // respawn-window; reset versus resume changes runner context, not topology.
-    const windowDisposition = await ensureTmuxWindow(vars, session, reviewWindow);
+    // 1. Keep one stable window per runner. Reset versus resume changes runner
+    // context, not topology; process replacement is only a cold-start fallback.
+    const reviewerWindow = await reconcileReviewerWindow(vars, session, reviewWindow, runner);
+    const reviewTarget = reviewerWindow.windowId;
 
     // 1b. Clear prior-pass artifacts so waitForReviewCompletion / readReviewFeedback
     // can't short-circuit on stale files (caused retry verdict to mirror pass 1).
@@ -762,7 +810,9 @@ export async function runReviewAgent(
     ]);
 
     // 2. Bind the stable operator-addressable window to this review context.
-    debugSelfReviewLog(`[self-review] reviewer window ${reviewWindow}: ${windowDisposition}`);
+    debugSelfReviewLog(
+      `[self-review] reviewer window ${reviewWindow}: ${reviewerWindow.disposition} (${reviewTarget})`,
+    );
     reviewContext =
       (await upsertAgentContext(_runId, 'self-review', {
         id: allocated.id,
@@ -772,12 +822,10 @@ export async function runReviewAgent(
         target: {
           session,
           window: reviewWindow,
-          pane: null,
-          target: `${session}:${reviewWindow}`,
+          pane: reviewerWindow.paneId,
+          target: reviewTarget,
         },
       })) ?? reviewContext;
-    await new Promise((r) => setTimeout(r, 500));
-    await ensureTmuxWindowMinimumSize(vars, `${session}:${reviewWindow}`);
 
     // Log active windows so we can see what's in the session
     const winList = (
@@ -861,14 +909,12 @@ export async function runReviewAgent(
       : basePrompt;
     let taskPrompt = warmPrompt;
 
-    // 4. Launch review agent in the review window. Inherit the run's safety
-    // tier (ADR-023) so the review agent runs with the same posture as the worker.
-    // Warm passes resume the prior reviewer's persisted runner session instead of
-    // cold-launching; every other step (window lifecycle, prompt delivery,
-    // artifacts, teardown) is identical to fresh-per-pass.
+    // 4. Reuse the live reviewer when possible. A fresh review resets context
+    // through the runner's declared native command; a continuation pastes the
+    // next task into the retained runner. Process replacement is only a cold
+    // fallback when no reviewer is alive.
     const parentSafetyTier = parentRun?.safetyTier;
     const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
-    const reviewTarget = `${session}:${reviewWindow}`;
     const coldLaunchCommand = () =>
       buildLaunchCommand(vars, runner, model, taskPrompt, {
         taskFile: taskMdPath,
@@ -877,7 +923,82 @@ export async function runReviewAgent(
         safetyTier: parentSafetyTier,
         runtimeDir,
       });
-    // Launch → settle → capture session metadata → bind context → deliver prompt.
+    const signalPath = taskDirRelPath(taskDir, reviewChecklistTarget.signal);
+
+    const bindLiveReviewerSession = async (): Promise<void> => {
+      // A retained review already owns an exact session binding. Do not let the
+      // filesystem fallback replace it with another concurrent runner's newest
+      // transcript when the pane-scoped hook has not arrived yet.
+      const binding = warmSession
+        ? {
+            runnerSessionId: warmSession.runnerSessionId,
+            runnerSessionPath: warmSession.runnerSessionPath,
+          }
+        : await resolveRunnerSessionBinding(vars, runner, [], {
+            paneId: reviewerWindow.paneId,
+            slotId: vars.slotId,
+          });
+      if (!binding) return;
+      sessionMeta = {
+        runnerSessionId: binding.runnerSessionId,
+        runnerSessionPath: binding.runnerSessionPath,
+      };
+      reviewContext =
+        (await upsertAgentContext(_runId, 'self-review', {
+          id: allocated.id,
+          label: allocated.label,
+          status: 'working',
+          runnerSessionId: binding.runnerSessionId,
+          runnerSessionPath: binding.runnerSessionPath,
+        })) ?? reviewContext;
+    };
+
+    const deliverToLiveReviewer = async (prompt: string, resetContext: boolean): Promise<void> => {
+      if (resetContext) {
+        const reset = await resetLiveRunnerContext({
+          vars,
+          target: reviewTarget,
+          runnerId: runner,
+          model,
+          effort: parentRun?.effort,
+          safetyTier: parentSafetyTier,
+          runtimeDir,
+          taskDir,
+          recovery: { runId: _runId },
+          forceBusyPoll: true,
+          sendLogPrefix: 'self-review-reset',
+        });
+        if (!reset.delivered) {
+          throw new Error(`Cannot reset retained ${runner} reviewer: ${reset.reason}`);
+        }
+      }
+      const delivery = await deliverPromptInPlace({
+        vars,
+        target: reviewTarget,
+        runnerId: runner,
+        sessionId: resetContext ? null : warmSession?.runnerSessionId,
+        sessionPath: resetContext ? null : warmSession?.runnerSessionPath,
+        model,
+        effort: parentRun?.effort,
+        prompt,
+        safetyTier: parentSafetyTier,
+        runtimeDir,
+        taskDir,
+        launchAckSignalPath: signalPath,
+        recovery: { runId: _runId },
+        forceBusyPoll: true,
+        sendLogPrefix: 'self-review-retained',
+      });
+      if (!delivery.delivered) {
+        throw new Error(
+          `Retained ${runner} reviewer did not accept the review task: ${delivery.reason}`,
+        );
+      }
+      await bindLiveReviewerSession();
+      warmResumed = Boolean(warmSession);
+    };
+
+    // Cold launch → settle → capture session metadata → bind context → deliver prompt.
     // `claimed` is the warm session being resumed: capture is diff-based (not
     // pane-scoped), so a resume that continues the SAME transcript file captures
     // nothing — seed the claimed id/path so usage extraction and the persisted
@@ -927,7 +1048,6 @@ export async function runReviewAgent(
       // Use the same runner-neutral post-launch protocol as dispatch: wait for a
       // stable runner prompt, send, then verify that the pane echoes our marker.
       if (runnerNeedsPostLaunchPrompt(runner)) {
-        const signalPath = taskDirRelPath(taskDir, reviewChecklistTarget.signal);
         const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
           vars,
           reviewTarget,
@@ -975,11 +1095,28 @@ export async function runReviewAgent(
       }
     };
 
-    // 4/5. Launch (warm resume when claimed) and deliver the prompt. A warm
-    // resume that fails for any reason past the pre-flight (corrupt session,
-    // runner refuses the id, ready-timeout) is retried ONCE as a cold fresh
-    // launch with the full (non-narrowed) prompt.
-    if (warmSession) {
+    // 4/5. Keep the live runner process. Re-reviews are always incremental
+    // in-place; only generation-one reset requests issue the native reset.
+    if (reviewerWindow.runnerAlive) {
+      const deliveryPlan = retainedReviewerDeliveryPlan(runner, sessionIntent, loopNumber);
+      if (deliveryPlan.kind === 'cold-relaunch') {
+        warmSession = null;
+        taskPrompt = basePrompt;
+        await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
+      } else {
+        try {
+          await deliverToLiveReviewer(taskPrompt, deliveryPlan.resetContext);
+        } catch (err) {
+          if (!deliveryPlan.resetContext) throw err;
+          console.warn(
+            `[self-review] retained ${runner} reviewer could not reset (${(err as Error).message}) — replacing its process with a cold fresh launch`,
+          );
+          warmSession = null;
+          taskPrompt = basePrompt;
+          await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
+        }
+      }
+    } else if (warmSession) {
       const reloadCmd = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
         vars,
         runner,
@@ -1010,12 +1147,11 @@ export async function runReviewAgent(
     });
     await waitForReviewCompletionOrThrow(
       vars,
-      session,
+      reviewTarget,
       taskDir,
       reviewTimeoutMs,
       _runId,
       runner,
-      reviewWindow,
       allocated.id,
       reviewChecklistTarget.signal,
       feedbackRelPath,
@@ -1158,12 +1294,11 @@ export async function runReviewAgent(
 
 export async function waitForReviewCompletion(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  session: string,
+  reviewTarget: string,
   taskDir: string,
   timeoutMs: number,
   runId: string,
   runner: string,
-  reviewWindow: string,
   reviewContextId: string,
   signalBasename: string,
   feedbackRelPath: string,
@@ -1171,9 +1306,6 @@ export async function waitForReviewCompletion(
   pollInterval = 10_000,
 ): Promise<boolean> {
   const start = Date.now();
-  // Re-enforce the minimum window size before polling: completion matching
-  // reads the last pane lines, which a reflowed 5-row window truncates.
-  await ensureTmuxWindowMinimumSize(vars, `${session}:${reviewWindow}`);
   const requiredOutputPaths = [feedbackRelPath, ...(resultRelPath ? [resultRelPath] : [])].map(
     (relPath) => `${vars.remoteRepo}/${taskDir}/${relPath}`,
   );
@@ -1214,14 +1346,13 @@ export async function waitForReviewCompletion(
     await new Promise((r) => setTimeout(r, Math.min(pollInterval, remainingMs)));
     let reviewerActive = false;
 
-    // Check if the review window still exists
+    // Check the immutable reviewer target. Window names are not unique in tmux
+    // and must never be used for lifecycle or completion decisions.
     const hasWindow =
       (
         await execOnSlot(
           vars,
-          tmuxShellSnippet(
-            `list-windows -t ${shellQuote(session)} -F '#{window_name}' 2>/dev/null | grep -Fxq ${shellQuote(reviewWindow)}`,
-          ),
+          tmuxShellSnippet(`list-panes -t ${shellQuote(reviewTarget)} 2>/dev/null`),
         )
       ).exitCode === 0;
 
@@ -1242,7 +1373,7 @@ export async function waitForReviewCompletion(
       await execOnSlot(
         vars,
         tmuxShellSnippet(
-          `list-panes -t ${shellQuote(`${session}:${reviewWindow}`)} -F '#{pane_pid}' 2>/dev/null | head -1`,
+          `list-panes -t ${shellQuote(reviewTarget)} -F '#{pane_pid}' 2>/dev/null | head -1`,
         ),
       )
     ).stdout.trim();
@@ -1315,9 +1446,7 @@ export async function waitForReviewCompletion(
     const pane = (
       await execOnSlot(
         vars,
-        tmuxShellSnippet(
-          `capture-pane -p -t ${shellQuote(`${session}:${reviewWindow}`)} 2>/dev/null | tail -5`,
-        ),
+        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(reviewTarget)} 2>/dev/null | tail -5`),
       )
     ).stdout;
 
@@ -1369,12 +1498,11 @@ export async function waitForReviewCompletion(
 
 export async function waitForReviewCompletionOrThrow(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  session: string,
+  reviewTarget: string,
   taskDir: string,
   timeoutMs: number,
   runId: string,
   runner: string,
-  reviewWindow: string,
   reviewContextId: string,
   signalBasename: string,
   feedbackRelPath: string,
@@ -1383,12 +1511,11 @@ export async function waitForReviewCompletionOrThrow(
 ): Promise<void> {
   const completed = await waitForReviewCompletion(
     vars,
-    session,
+    reviewTarget,
     taskDir,
     timeoutMs,
     runId,
     runner,
-    reviewWindow,
     reviewContextId,
     signalBasename,
     feedbackRelPath,
@@ -1398,10 +1525,10 @@ export async function waitForReviewCompletionOrThrow(
   if (completed) return;
 
   try {
-    await killSelfReviewWindow(vars, session, 'review timeout cleanup', reviewWindow);
+    await killTmuxWindowById(vars, reviewTarget);
   } catch (cleanupErr) {
     console.warn(
-      `[self-review] review timeout cleanup failed for ${session}:${reviewWindow}: ${(cleanupErr as Error).message}`,
+      `[self-review] review timeout cleanup failed for ${reviewTarget}: ${(cleanupErr as Error).message}`,
     );
   }
   throw new Error(

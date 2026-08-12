@@ -24,9 +24,9 @@ import {
   type RunTagsSetResult,
 } from '@farmslot/protocol';
 
+import { markBacklogRunReleased } from '../../backlog/store.js';
 import {
   archiveRun as storeArchiveRun,
-  bulkDeleteRuns as storeBulkDelete,
   cleanupRuns as storeCleanup,
   deleteRun as storeDeleteRun,
   getRun,
@@ -34,8 +34,14 @@ import {
   listRunTags as storeListRunTags,
   updateRun,
 } from '../../runs/store.js';
+import { schedulerTick } from '../../work-graph/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
+
+async function reconcileDeletedRun(runId: string): Promise<void> {
+  const graphIds = await markBacklogRunReleased(runId);
+  for (const graphId of graphIds) await schedulerTick({ graphId });
+}
 
 export function runSetTags(params: RunTagsSetParams, emit: Emit): RunTagsSetResult {
   const existing = getRun(params.runId);
@@ -76,6 +82,7 @@ export function runGetGrade(params: RunGetGradeParams): RunGetGradeResult {
 export async function runDelete(params: RunDeleteParams, emit: Emit): Promise<RunDeleteResult> {
   const ok = await storeDeleteRun(params.runId);
   if (!ok) throw new Error(`Run not found: ${params.runId}`);
+  await reconcileDeletedRun(params.runId);
   emit(Events.RUN_DELETED, { runId: params.runId });
   return { ok: true };
 }
@@ -83,6 +90,7 @@ export async function runDelete(params: RunDeleteParams, emit: Emit): Promise<Ru
 export async function runArchive(params: RunArchiveParams, emit: Emit): Promise<RunArchiveResult> {
   const ok = await storeArchiveRun(params.runId);
   if (!ok) throw new Error(`Run not found: ${params.runId}`);
+  await reconcileDeletedRun(params.runId);
   emit(Events.RUN_DELETED, { runId: params.runId });
   return { ok: true };
 }
@@ -91,8 +99,22 @@ export async function runBulkDelete(
   params: RunBulkDeleteParams,
   emit: Emit,
 ): Promise<RunBulkDeleteResult> {
-  const deleted = await storeBulkDelete(params.runIds);
+  let deleted = 0;
   for (const id of params.runIds) {
+    try {
+      const ok = await storeDeleteRun(id);
+      if (!ok) continue;
+      await reconcileDeletedRun(id);
+      deleted++;
+    } catch (err) {
+      // Bulk deletion is intentionally best-effort: one run may still be
+      // reconciling its backlog link, while independent selected runs remain
+      // safe to delete and must not be stranded behind it.
+      console.warn(
+        `[run] bulk delete skipped ${id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      continue;
+    }
     emit(Events.RUN_DELETED, { runId: id });
   }
   return { deleted };

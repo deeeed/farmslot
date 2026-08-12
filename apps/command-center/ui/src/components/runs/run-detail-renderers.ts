@@ -72,6 +72,7 @@ export interface RunDetailViewContext {
   _actionsBlocked: () => boolean;
   _rescueLinkage: (runId: string) => void | Promise<void>;
   _confirmForceComplete: (runId: string) => void;
+  _confirmLifecycleAction: (run: Run, action: 'cancel' | 'delete') => void | Promise<void>;
   _requestCopilotRunDiagnosis: (run: Run) => void;
   _buildRerunAlongsideHref: (run: Run) => string;
   _slotBranchForRun: (run: Run) => string;
@@ -434,6 +435,35 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             </button>
           `
         : nothing}
+      ${r.status === 'blocked'
+        ? html`
+            <button
+              class="gate-action-btn ${ctx._pendingConfirm === `cancel:${r.id}`
+                ? 'gate-confirming'
+                : ''}"
+              style="border-color:${colors.statusFail}; color:${colors.statusFail}; padding:4px 12px; font-size:11px"
+              title="Cancel this recoverable blocked run before deleting it"
+              ?disabled=${actionsBlocked}
+              @click=${() => ctx._confirmLifecycleAction(r, 'cancel')}
+            >
+              ${ctx._pendingConfirm === `cancel:${r.id}` ? 'Confirm cancel?' : 'Cancel run'}
+            </button>
+          `
+        : isTerminal
+          ? html`
+              <button
+                class="gate-action-btn ${ctx._pendingConfirm === `delete:${r.id}`
+                  ? 'gate-confirming'
+                  : ''}"
+                style="border-color:${colors.statusFail}; color:${colors.statusFail}; padding:4px 12px; font-size:11px"
+                title="Permanently remove this terminal run from history"
+                ?disabled=${actionsBlocked}
+                @click=${() => ctx._confirmLifecycleAction(r, 'delete')}
+              >
+                ${ctx._pendingConfirm === `delete:${r.id}` ? 'Confirm delete?' : 'Delete run'}
+              </button>
+            `
+          : nothing}
       ${canLaunchComparisonSibling(r.status)
         ? html`
             <a

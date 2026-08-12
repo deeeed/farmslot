@@ -52,6 +52,7 @@ import {
   deriveSlotViewAgentContexts,
   isAgentContextUnavailable,
   selectSlotViewAgentContext,
+  selectSlotViewTaskContext,
 } from './slot-view-agent-contexts.js';
 import { connectSlotView, disconnectSlotView } from './slot-view-connection-effects.js';
 import {
@@ -127,7 +128,6 @@ import {
   renderSlotViewSidebarFiles,
   renderSlotViewSidebarSource,
   renderSlotViewSidebarTask,
-  renderSlotViewTaskBreadcrumb,
 } from './slot-view-panel-renderers.js';
 import {
   autoPinSlotViewTaskFolder,
@@ -408,6 +408,13 @@ export class SlotView extends SlotViewRecipePresenter {
     return selectSlotViewAgentContext(this._agentContexts(), this._selectedAgentContextId);
   }
 
+  _taskAgentContext(): AgentContextSummary | null {
+    return selectSlotViewTaskContext(
+      this._agentContexts(),
+      this._linkedRun?.flowType ?? this._slot?.currentFlowType,
+    );
+  }
+
   _contextKey(ctx: AgentContextSummary): string {
     return agentContextKey(ctx);
   }
@@ -424,14 +431,6 @@ export class SlotView extends SlotViewRecipePresenter {
       this._selectedAgentContextIds = { ...this._selectedAgentContextIds, [this.slotId]: ctx.id };
     }
     this._saveLayout();
-    this._structuredProgress = undefined;
-    this._taskSteps = [];
-    this._fetchStructuredProgress();
-    this._parseTaskSteps();
-  }
-
-  _renderTaskBreadcrumb() {
-    return renderSlotViewTaskBreadcrumb(this);
   }
 
   _renderAgentContexts() {

@@ -1120,23 +1120,6 @@ export async function archiveRun(id: string): Promise<boolean> {
   return true;
 }
 
-export async function bulkDeleteRuns(ids: string[]): Promise<number> {
-  let deleted = 0;
-  for (const id of ids) {
-    try {
-      const ok = await deleteRun(id);
-      if (ok) deleted++;
-    } catch (err) {
-      // Same reason as the cleanup sweep: a pending-reconciliation run refuses deletion,
-      // and one such id must not strand the rest of the batch.
-      console.warn(
-        `[run-store] bulk delete skipped ${id}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
-  return deleted;
-}
-
 const CLEANUP_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export async function cleanupRuns(

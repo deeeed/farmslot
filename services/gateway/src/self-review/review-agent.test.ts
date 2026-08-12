@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import type { AgentContext } from '@farmslot/protocol';
 
+import { retainedReviewerDeliveryPlan } from '../runners/registry.js';
 import { targetForChecklistBasename } from '../tasks/checklist-target.js';
 
 import {
@@ -15,6 +16,21 @@ import {
   waitForRecoveredReviewerOrCleanup,
 } from './review-agent.js';
 import { TerminalReviewArtifactError } from './terminal-result.js';
+
+test('retained reviewer delivery uses native reset or a cold process replacement', () => {
+  assert.deepEqual(retainedReviewerDeliveryPlan('claude', 'reset', 1), {
+    kind: 'in-place',
+    resetContext: true,
+  });
+  assert.deepEqual(retainedReviewerDeliveryPlan('codex', 'reset', 1), {
+    kind: 'cold-relaunch',
+    resetContext: false,
+  });
+  assert.deepEqual(retainedReviewerDeliveryPlan('codex', 'resume', 1), {
+    kind: 'in-place',
+    resetContext: false,
+  });
+});
 
 test('restart recovery reclaims only the newest matching in-flight reviewer', () => {
   const context = (id: string, status: AgentContext['status'], scope: string | null) =>

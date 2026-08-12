@@ -390,6 +390,8 @@ export interface IndependentReviewAttempt {
   loopNumber: number;
   verdict: 'pending' | 'pass' | 'issues' | 'failed' | 'cancelled' | 'skipped';
   unresolvedCount: number;
+  /** Transport/lifecycle explanation when a review did not complete normally. */
+  reason?: string;
   issues?: SelfReviewIssue[];
   validationDepth?: ReviewValidationDepth;
   usage?: RunnerSessionUsage;
@@ -412,6 +414,8 @@ export interface IndependentReviewStatus {
   loopNumber: number;
   verdict: 'pending' | 'pass' | 'issues' | 'failed' | 'cancelled' | 'skipped';
   unresolvedCount: number;
+  /** Transport/lifecycle explanation when a review did not complete normally. */
+  reason?: string;
   issues?: SelfReviewIssue[];
   validationDepth?: ReviewValidationDepth;
   usage?: RunnerSessionUsage;
