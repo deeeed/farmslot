@@ -1,7 +1,16 @@
-import type { AgentRole, WorkerSignal } from '@farmslot/protocol';
+import type { AgentContext, AgentRole, WorkerSignal } from '@farmslot/protocol';
 
 import { upsertAgentContext } from '../agents/contexts.js';
 import { getRun } from '../runs/store.js';
+
+function signalIsNewerThanContext(signal: WorkerSignal, context: AgentContext): boolean {
+  const signalAt = Date.parse(signal.timestamp);
+  if (!Number.isFinite(signalAt)) return false;
+  const priorAt = [context.lastSignalAt, context.completedAt]
+    .map((value) => Date.parse(value ?? ''))
+    .filter(Number.isFinite);
+  return priorAt.every((timestamp) => signalAt > timestamp);
+}
 
 export async function applyRunningWorkerSignalToContext(
   slotId: string,
@@ -27,7 +36,8 @@ export async function applyRunningWorkerSignalToContext(
   if (!match) return;
 
   const rearmingTerminalContext = ['complete', 'failed', 'blocked', 'idle'].includes(match.status);
-  const observedAt = signal.timestamp ?? new Date().toISOString();
+  if (rearmingTerminalContext && !signalIsNewerThanContext(signal, match)) return;
+  const observedAt = signal.timestamp;
   await upsertAgentContext(runId, match.role, {
     id: match.id,
     status: 'working',
