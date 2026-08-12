@@ -61,6 +61,28 @@ export interface PublicationReviewRecoveryResult {
   terminalErrors: Array<{ contextId: string; message: string }>;
 }
 
+interface PublicationReviewRecoveryOptions {
+  shouldAbort?: () => boolean;
+}
+
+function signalMatchesReviewerAttempt(signal: WorkerSignal, ctx: AgentContext): boolean {
+  if (ctx.signalAttemptId) return signal.attemptId === ctx.signalAttemptId;
+  return signalFreshSince(signal, ctx.attemptStartedAt ?? ctx.startedAt);
+}
+
+function completedReviewerContextIsFresh(
+  ctx: AgentContext,
+  signal: WorkerSignal | undefined,
+): boolean {
+  if (ctx.signalAttemptId && signal?.attemptId !== ctx.signalAttemptId) return false;
+  const freshnessAnchor = ctx.attemptStartedAt ?? ctx.startedAt;
+  return (
+    ctx.status === 'complete' &&
+    !!ctx.completedAt &&
+    (!freshnessAnchor || Date.parse(ctx.completedAt) >= Date.parse(freshnessAnchor))
+  );
+}
+
 /**
  * A reviewer context can need recovery while in-flight or after its runner was
  * reconciled to `complete`. A failed context is eligible only when the caller
@@ -221,13 +243,8 @@ export function buildRecoveredReview(params: {
   // signal looks fresh) and updatedAt is too new after a restart (startup
   // reconciliation rewrites it before this recovery runs, which would reject
   // the genuine pre-restart signal this path exists to ingest).
-  const freshnessAnchor = ctx.attemptStartedAt ?? ctx.startedAt;
-  const freshSignal = signal && signalFreshSince(signal, freshnessAnchor) ? signal : undefined;
-  const completedContextIsFresh =
-    ctx.status === 'complete' &&
-    !!ctx.completedAt &&
-    (!freshnessAnchor ||
-      new Date(ctx.completedAt).getTime() >= new Date(freshnessAnchor).getTime());
+  const freshSignal = signal && signalMatchesReviewerAttempt(signal, ctx) ? signal : undefined;
+  const completedContextIsFresh = completedReviewerContextIsFresh(ctx, signal);
   if (!freshSignal && !completedContextIsFresh) return null;
   // Only a cleanly completed reviewer may stamp a verdict. A failed/blocked
   // terminal signal can coexist with parseable feedback (e.g. a PASS draft
@@ -409,7 +426,9 @@ async function readSlotHeadSha(
 export async function recoverInflightPublicationReviews(
   runId: string,
   slotId: string,
+  options: PublicationReviewRecoveryOptions = {},
 ): Promise<PublicationReviewRecoveryResult> {
+  if (options.shouldAbort?.()) return { recoveredIds: [], terminalErrors: [] };
   let run = getRun(runId);
   if (!run) return { recoveredIds: [], terminalErrors: [] };
   let reviews = run.engineState?.publishGate?.independentReviews ?? [];
@@ -467,6 +486,7 @@ export async function recoverInflightPublicationReviews(
   const recoveredIds: string[] = [];
   const terminalErrors: PublicationReviewRecoveryResult['terminalErrors'] = [];
   for (const ctx of candidates) {
+    if (options.shouldAbort?.()) break;
     try {
       const recovered = await ingestRecoveredReviewer(
         runId,
@@ -474,6 +494,7 @@ export async function recoverInflightPublicationReviews(
         ctx,
         stampablePackage,
         recoveryContinuationPending,
+        options,
       );
       if (recovered) recoveredIds.push(recovered);
     } catch (err) {
@@ -504,15 +525,17 @@ async function ingestRecoveredReviewer(
   ctx: AgentContext,
   stampablePackage: ReadyGatePrPackage | undefined,
   recoveryContinuationPending: boolean,
+  options: PublicationReviewRecoveryOptions,
 ): Promise<string | null> {
   const signal = await readReviewerTerminalSignal(vars, ctx);
-  const freshnessAnchor = ctx.attemptStartedAt ?? ctx.startedAt;
-  const freshSignal = signal && signalFreshSince(signal, freshnessAnchor) ? signal : undefined;
+  if (options.shouldAbort?.()) return null;
+  const freshSignal = signal && signalMatchesReviewerAttempt(signal, ctx) ? signal : undefined;
   if (freshSignal && !isSuccessfulTerminalReviewSignal(freshSignal)) {
-    return persistRecoveredFailedReviewer(runId, ctx, freshSignal, stampablePackage);
+    return persistRecoveredFailedReviewer(runId, ctx, freshSignal, stampablePackage, options);
   }
   if (!freshSignal && (ctx.status === 'working' || ctx.status === 'launching')) {
     const promptRecovery = await resumeReviewAgentPromptDelivery(vars, runId, ctx);
+    if (options.shouldAbort?.()) return null;
     if (promptRecovery === 'inactive') {
       await markAgentContextStatus(runId, 'self-review', 'failed', { id: ctx.id });
     } else if (promptRecovery === 'unsupported') {
@@ -533,10 +556,8 @@ async function ingestRecoveredReviewer(
     reviewerFeedbackRelPath(ctx.id),
     ctx.reviewResultFile,
   );
-  const completedContextIsFresh =
-    ctx.status === 'complete' &&
-    !!ctx.completedAt &&
-    (!freshnessAnchor || Date.parse(ctx.completedAt) >= Date.parse(freshnessAnchor));
+  if (options.shouldAbort?.()) return null;
+  const completedContextIsFresh = completedReviewerContextIsFresh(ctx, signal);
   if (
     (isSuccessfulTerminalReviewSignal(freshSignal) || completedContextIsFresh) &&
     feedback.terminalInvalidReason
@@ -558,6 +579,7 @@ async function ingestRecoveredReviewer(
     );
   }
   const reviewSnapshot = await readRecoveredReviewSnapshot(vars, taskDir, artifactScope);
+  if (options.shouldAbort?.()) return null;
   const review = buildRecoveredReview({
     run: latest,
     ctx,
@@ -582,6 +604,7 @@ async function ingestRecoveredReviewer(
     ? appendRecoveredContinuationAttempt(existingReview, review)
     : review;
   const [persisted] = await persistIndependentReviewArtifactsForRun(latest, [reviewToPersist]);
+  if (options.shouldAbort?.()) return null;
   const finalRun = getRun(runId)!;
   const finalReviews = finalRun.engineState?.publishGate?.independentReviews ?? [];
   const existingIndex = finalReviews.findIndex((candidate) => candidate.id === persisted.id);
@@ -626,7 +649,9 @@ async function persistRecoveredFailedReviewer(
   ctx: AgentContext,
   signal: WorkerSignal,
   reviewedPackage: ReadyGatePrPackage | undefined,
-): Promise<string> {
+  options: PublicationReviewRecoveryOptions,
+): Promise<string | null> {
+  if (options.shouldAbort?.()) return null;
   const latest = getRun(runId)!;
   const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];
   const reviewId = recoveredReviewArtifactScope(
@@ -671,6 +696,7 @@ async function persistRecoveredFailedReviewer(
     recoveryContinuationPending: false,
   };
   const [persisted] = await persistIndependentReviewArtifactsForRun(latest, [reviewToPersist]);
+  if (options.shouldAbort?.()) return null;
   const nextReviews = [...priorReviews];
   if (existingIndex >= 0) nextReviews[existingIndex] = persisted;
   else nextReviews.push(persisted);

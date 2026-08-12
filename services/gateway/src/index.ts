@@ -78,6 +78,7 @@ import {
   rearmPublicationReviewRecoveryForRun,
   recoverActiveRuns,
   startOrphanReconciler,
+  suspendPublicationReviewRecoveryForRun,
 } from './run-engine/orchestrator.js';
 import { initRunMonitor } from './run-engine/run-monitor.js';
 import { loadAllRuns } from './runs/store.js';
@@ -653,7 +654,11 @@ async function main(): Promise<void> {
     });
   });
   onWorkerSignal((slotId, runId, signal, role, contextId) => {
-    void applyRunningWorkerSignalToContext(slotId, runId, signal, role, contextId)
+    void applyRunningWorkerSignalToContext(slotId, runId, signal, role, contextId, {
+      beforeRearm: () => {
+        if (runId) suspendPublicationReviewRecoveryForRun(runId);
+      },
+    })
       .then((rearmedTerminalContext) => {
         if (rearmedTerminalContext && runId) rearmPublicationReviewRecoveryForRun(runId);
       })

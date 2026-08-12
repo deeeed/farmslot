@@ -4,6 +4,10 @@ import { TERMINAL_AGENT_STATUSES, upsertAgentContext } from '../agents/contexts.
 import { getRun } from '../runs/store.js';
 
 function signalIsNewerThanContext(signal: WorkerSignal, context: AgentContext): boolean {
+  if (signal.attemptId && context.signalAttemptId) {
+    return signal.attemptId !== context.signalAttemptId;
+  }
+  if (context.signalAttemptId) return false;
   const signalAt = Date.parse(signal.timestamp);
   if (!Number.isFinite(signalAt)) return false;
   const priorAt = [context.lastSignalAt, context.completedAt]
@@ -18,6 +22,7 @@ export async function applyRunningWorkerSignalToContext(
   signal: WorkerSignal,
   role?: AgentRole,
   contextId?: string,
+  options?: { beforeRearm?: () => void },
 ): Promise<boolean> {
   if (signal.status !== 'running') return false;
   if (!runId) return false;
@@ -47,10 +52,12 @@ export async function applyRunningWorkerSignalToContext(
         if (!current) return null;
         rearmingTerminalContext = TERMINAL_AGENT_STATUSES.has(current.status);
         if (rearmingTerminalContext && !signalIsNewerThanContext(signal, current)) return null;
+        if (rearmingTerminalContext) options?.beforeRearm?.();
         return {
           id: current.id,
           status: 'working',
           ...(rearmingTerminalContext ? { attemptStartedAt: observedAt } : {}),
+          ...(signal.attemptId ? { signalAttemptId: signal.attemptId } : {}),
           lastSignalAt: observedAt,
         };
       },
