@@ -11,8 +11,8 @@ import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { runLaunchInTmux } from '../lib/launch.mjs';
 import {
   listSessionCandidates,
-  resolveSessionBinding,
   runnerSessionIdForPath,
+  waitForSessionBinding,
 } from '../lib/session-attribution.mjs';
 import { capturePane, ensureShellSession, hasSession, killSession, tmux } from '../lib/tmux.mjs';
 import { pollHookRows } from '../lib/wait.mjs';
@@ -84,20 +84,14 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const model = runner === 'claude' ? 'opus' : undefined;
     report.liveReviewerResetPlan = resolveLiveResetPlan(runner);
     runLaunchInTmux(paneId, repo, runner, runnerAdapter, DEFAULT_PROMPT, { model });
+    const binding = waitForSessionBinding(
+      { runner, repo, beforePaths, sinceMs: dispatchMs, paneId, slotId },
+      Math.min(timeoutMs, 30_000),
+    );
     const initialRows = pollHookRows(logPath, beforeCount, ['Stop'], timeoutMs);
     report.initialCompleted = initialRows.some((row) => eventName(row) === 'Stop');
     sleepMs(2000);
 
-    const binding = resolveSessionBinding({
-      runner,
-      repo,
-      runtimeDir,
-      beforePaths,
-      sinceMs: dispatchMs,
-      hookRows: readHookLines(logPath).slice(beforeCount),
-      paneId,
-      slotId,
-    });
     if (!binding) throw new Error(`initial ${runner} session binding was not captured`);
     report.sessionPath = binding.runnerSessionPath;
     report.sessionId =

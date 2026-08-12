@@ -7,6 +7,7 @@ import { DEFAULT_PROMPT, shSingleQuote } from '../lib/common.mjs';
 
 export const RUNNER_ID = 'cursor';
 export const OBSERVABILITY_SCOPE = 'pane-only';
+export const OBSERVABILITY_TRANSPORT = 'pane';
 export const REGISTERED_EVENTS = [];
 
 const CURSOR_BIN = path.join(os.homedir(), '.local/bin/cursor-agent');

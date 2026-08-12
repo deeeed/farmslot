@@ -7,7 +7,7 @@ import { writeEvidence } from '../lib/evidence.mjs';
 import { runGatewayBudgetGuard } from '../lib/gateway-post-launch.mjs';
 import { eventName, readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
-import { listSessionCandidates, resolveSessionBinding } from '../lib/session-attribution.mjs';
+import { listSessionCandidates, waitForSessionBinding } from '../lib/session-attribution.mjs';
 import { capturePane, ensureShellSession, killSession, sendShellScript } from '../lib/tmux.mjs';
 import { resolveLaunchBlockers, sendTmuxLine } from '../lib/tmux-input.mjs';
 import { pollHookRows } from '../lib/wait.mjs';
@@ -59,20 +59,14 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const blockers = resolveLaunchBlockers(paneId, runner, Math.min(timeoutMs, 90_000));
     if (!blockers.resolved) throw new Error('Codex did not reach an interactive composer');
     sendTmuxLine(paneId, DEFAULT_PROMPT);
+    const binding = waitForSessionBinding(
+      { runner, repo, beforePaths, sinceMs: dispatchMs, paneId, slotId },
+      Math.min(timeoutMs, 30_000),
+    );
     const initialRows = pollHookRows(logPath, initialCount, ['Stop'], timeoutMs);
     report.initialCompleted = initialRows.some((row) => eventName(row) === 'Stop');
     if (!report.initialCompleted) throw new Error('initial Codex turn did not emit Stop');
 
-    const binding = resolveSessionBinding({
-      runner,
-      repo,
-      runtimeDir,
-      beforePaths,
-      sinceMs: dispatchMs,
-      hookRows: [],
-      paneId,
-      slotId,
-    });
     if (!binding?.runnerSessionId || !binding.runnerSessionPath) {
       throw new Error('Codex did not expose an exact session binding');
     }

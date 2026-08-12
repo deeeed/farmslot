@@ -6,7 +6,8 @@ import path from 'node:path';
 import { DEFAULT_PROMPT, shSingleQuote } from '../lib/common.mjs';
 
 export const RUNNER_ID = 'grok';
-export const OBSERVABILITY_SCOPE = 'pane-only';
+export const OBSERVABILITY_SCOPE = 'event-driven';
+export const OBSERVABILITY_TRANSPORT = 'native';
 export const REGISTERED_EVENTS = [];
 
 const GROK_BIN = path.join(os.homedir(), '.grok/bin/grok');
@@ -63,7 +64,7 @@ export function interactiveLaunchMode() {
 
 export function skipReason(scenario) {
   if (scenario === 'hook-smoke' || scenario === 'prompt-accepted' || scenario === 'turn-boundary') {
-    return 'grok is pane-only (observabilityScope); use pane-smoke or interaction-smoke';
+    return 'grok uses native event observability; use interaction-smoke';
   }
   if (scenario === 'busy-composer') {
     return 'grok busy-composer pane fixtures not curated yet';

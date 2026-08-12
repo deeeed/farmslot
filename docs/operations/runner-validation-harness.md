@@ -17,7 +17,7 @@ bash scripts/e2e-tmux-runner-validate.sh
 # Event-driven runners (hooks.jsonl + tmuxPane)
 node scripts/runner-validation/run.mjs --runner hooks --scenario hook-smoke
 
-# Pane-only runners (pane output, no hooks)
+# Pane-only runners (pane output, no structured observability)
 node scripts/runner-validation/run.mjs --runner pane-only --scenario pane-smoke
 
 # Grok production-parity (interactive TUI + project-directory + compose submit)
@@ -35,16 +35,16 @@ node scripts/runner-validation/run.mjs --runner all --scenario all
 
 Evidence JSON: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
 
-Wired into `scripts/e2e-tmux-runner-validate.sh` and `scripts/run-runner-observability-gate.sh`: `hook-smoke` (Claude + Codex, committed evidence), **grok `pane-smoke`**, and **grok `interaction-smoke`** (local temp dir only). Add `--runner pane-only` to include Cursor when it becomes fleet-default.
+Wired into `scripts/e2e-tmux-runner-validate.sh` and `scripts/run-runner-observability-gate.sh`: `hook-smoke` (Claude + Codex, committed evidence) and **grok `interaction-smoke`** (local temp dir only). Add `--runner pane-only` to include Cursor when it becomes fleet-default.
 
 ## Runner groups
 
-| `--runner`          | Runners                     | Observability                                                                                           |
-| ------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `hooks`, `both`     | claude, codex               | `event-driven` — Farmslot hooks + `hooks.jsonl`                                                         |
-| `pane-only`         | cursor, grok                | tmux activity capture; Grok additionally exposes native exact-prompt acceptance, with no hook installer |
-| `all`               | claude, codex, cursor, grok | mixed                                                                                                   |
-| `grok`, `cursor`, … | single runner               | per adapter                                                                                             |
+| `--runner`          | Runners                     | Observability                                          |
+| ------------------- | --------------------------- | ------------------------------------------------------ |
+| `hooks`, `both`     | claude, codex               | `event-driven` — Farmslot hooks + `hooks.jsonl`        |
+| `pane-only`         | cursor                      | tmux activity capture without structured observability |
+| `all`               | claude, codex, cursor, grok | mixed                                                  |
+| `grok`, `cursor`, … | single runner               | per adapter                                            |
 
 Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabilityScope`, `needsPostLaunchPrompt`).
 
@@ -53,7 +53,7 @@ Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabi
 | Scenario                            | Proves                                                                | Claude/Codex | Cursor            | Grok                   |
 | ----------------------------------- | --------------------------------------------------------------------- | ------------ | ----------------- | ---------------------- |
 | `hook-smoke`                        | SessionStart + UserPromptSubmit + Stop + `tmuxPane`                   | live tmux    | skip              | skip                   |
-| `pane-smoke`                        | Launch + response marker in pane                                      | skip         | `--print --trust` | `-p` single-turn       |
+| `pane-smoke`                        | Launch + response marker in pane                                      | skip         | `--print --trust` | skip                   |
 | `interaction-smoke`                 | Post-launch TUI flow (blockers + compose)                             | skip         | skip              | **interactive** launch |
 | `dispatch-prompt-smoke`             | Gateway `sendRunnerPostLaunchPrompt` (dispatch parity)                | skip         | skip              | **interactive** launch |
 | `dispatch-prompt-dropped-enter`     | Buffered prompt recovery after a deterministically omitted submit key | Codex live   | skip              | skip                   |
@@ -169,12 +169,11 @@ Encoded in `scripts/runner-validation/runners/<id>.mjs` — **not** shared assum
 - Requires `git init`; isolated `CODEX_HOME={{runtime_dir}}/codex-home` with canonical `trusted_hash` (realpath-safe paths on macOS).
 - Smoke: `codex exec --sandbox workspace-write '<prompt>'` from the isolated validation `CODEX_HOME` so repository hooks remain active.
 
-### Grok (pane-backed activity + native prompt acceptance) — priority runner
+### Grok (native event observability) — priority runner
 
-Grok is interactive-first in production (`needsPostLaunchPrompt: true`). The harness exposes **two** validated paths:
-
-1. **`pane-smoke` (fast):** `grok -p '<prompt>' --model grok-4.5` — single-turn, tmux shell, proves binary + network + marker response.
-2. **`interaction-smoke` (production-parity):** launch `grok --model grok-4.5`, auto-resolve project-directory prompt (`Enter` on current repo), submit prompt via tmux compose, wait for marker. Matches gateway `detectRunnerLaunchBlocker` / `grok-select-current-project` behavior.
+Grok is interactive-first in production (`needsPostLaunchPrompt: true`). Its production-parity
+`interaction-smoke` launches `grok --model grok-4.5`, resolves the project-directory prompt,
+submits through the shared capability, and verifies native exact-prompt acceptance plus completion.
 
 Improvement backlog for Grok:
 

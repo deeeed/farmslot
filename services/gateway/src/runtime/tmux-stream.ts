@@ -5,6 +5,7 @@ import type { TerminalData } from '@farmslot/protocol';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
+import { runnerPromptSubmitKey } from '../runners/registry.js';
 
 export type TerminalDataHandler = (data: TerminalData) => void;
 
@@ -121,12 +122,20 @@ export async function snapshot(slotId: string, session: string, lines = 200): Pr
   return content.split('\n');
 }
 
-export function buildSendKeysCommand(session: string, text: string, enter = true): string {
-  // Terminal streaming is raw operator PTY input, not a runner prompt-delivery
-  // action: the client supplies no runner identity and Enter preserves normal
-  // shell/terminal semantics. Runner-owned sends use the capability adapter.
+export function buildSendKeysCommand(
+  session: string,
+  text: string,
+  enter = true,
+  runner?: string,
+): string {
+  // Raw operator PTY input omits runner identity and keeps normal Enter
+  // semantics. Semantic agent steering supplies the resolved runner and uses
+  // the shared runner capability.
   return enter
-    ? tmuxSendTextCommand(session, text, { enter: true })
+    ? tmuxSendTextCommand(session, text, {
+        enter: true,
+        submitKey: runner ? runnerPromptSubmitKey(runner) : 'Enter',
+      })
     : tmuxSendTextCommand(session, text);
 }
 
@@ -135,7 +144,8 @@ export async function sendKeys(
   session: string,
   text: string,
   enter = true,
+  runner?: string,
 ): Promise<void> {
   const vars = await loadSlotVars(slotId);
-  await execOnSlot(vars, buildSendKeysCommand(session, text, enter), { timeout: 5000 });
+  await execOnSlot(vars, buildSendKeysCommand(session, text, enter, runner), { timeout: 5000 });
 }

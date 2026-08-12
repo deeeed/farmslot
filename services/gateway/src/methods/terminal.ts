@@ -343,7 +343,13 @@ export async function terminalSend(params: TerminalSendParams): Promise<void> {
     resolved.session,
     resolved.role,
   );
-  await sendKeys(params.slotId, resolved.target, params.text, params.enter ?? true);
+  await sendKeys(
+    params.slotId,
+    resolved.target,
+    params.text,
+    params.enter ?? true,
+    resolved.runner,
+  );
 }
 
 export async function terminalSnapshot(

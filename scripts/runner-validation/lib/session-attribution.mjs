@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { sleepMs } from './common.mjs';
+import { runGatewaySessionBinding } from './gateway-post-launch.mjs';
 import { eventName } from './hooks.mjs';
 
 export const RUNNER_SESSION_DISPATCH_SLACK_MS = 60_000;
@@ -60,7 +62,8 @@ export function codexSessionsRoot(repo, runtimeDir) {
 }
 
 export function modelsMatch(dispatched, actual) {
-  if (!dispatched || !actual) return true;
+  if (!dispatched) return true;
+  if (!actual) return false;
   const d = dispatched.toLowerCase();
   const a = actual.toLowerCase();
   if (d === a) return true;
@@ -323,42 +326,33 @@ export function modelFromTranscript(runner, sessionPath) {
   return null;
 }
 
-export function resolveSessionBinding({
-  runner,
-  repo,
-  runtimeDir,
-  beforePaths,
-  sinceMs,
-  hookRows,
-  paneId,
-  slotId,
-}) {
-  if (runner === 'claude' || runner === 'codex') {
-    const hookBinding = findSessionStartBinding(hookRows, { paneId, slotId, sinceMs });
-    if (hookBinding?.transcriptPath && fs.existsSync(hookBinding.transcriptPath)) {
-      return {
-        runnerSessionPath: hookBinding.transcriptPath,
-        runnerSessionId:
-          hookBinding.sessionId ?? runnerSessionIdForPath(runner, hookBinding.transcriptPath),
-        source: 'hook',
-        hookBinding,
-      };
-    }
-  }
-  const candidates = listSessionCandidates(runner, repo, runtimeDir);
-  const chosen = chooseRunnerSessionPath({
-    candidates,
-    mtimeMsByPath: loadMtimes(candidates),
+export function resolveSessionBinding({ runner, repo, beforePaths, sinceMs, paneId, slotId }) {
+  const { binding, exitCode, error } = runGatewaySessionBinding({
+    runner,
+    repo,
     beforePaths,
     sinceMs,
+    target: paneId,
+    slotId,
   });
-  if (!chosen) return null;
-  return {
-    runnerSessionPath: chosen,
-    runnerSessionId: runnerSessionIdForPath(runner, chosen),
-    source: 'filesystem',
-    hookBinding: null,
-  };
+  if (exitCode !== 0) throw new Error(error || 'production session binding failed');
+  return binding;
+}
+
+export function waitForSessionBinding(options, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const binding = resolveSessionBinding(options);
+      if (binding) return binding;
+    } catch (error) {
+      lastError = error;
+    }
+    sleepMs(500);
+  }
+  if (lastError) throw lastError;
+  return null;
 }
 
 export function selfTestChooseRunnerSessionPath() {

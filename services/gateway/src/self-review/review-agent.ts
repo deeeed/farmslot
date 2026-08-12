@@ -46,8 +46,8 @@ import {
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
 import {
+  captureRunnerSessionMetadata,
   isRunnerAliveUnderPane,
-  resolveRunnerSessionBinding,
   resumableSessionProbeCommand,
 } from '../runners/session-process.js';
 import { deliverPromptInPlace, resetLiveRunnerContext } from '../runners/session-reactivation.js';
@@ -945,9 +945,16 @@ export async function runReviewAgent(
       return true;
     };
 
-    const bindLiveReviewerSession = async (sinceMs?: number): Promise<boolean> => {
-      const binding = await resolveRunnerSessionBinding(vars, runner, [], {
-        sinceMs,
+    const bindLiveReviewerSession = async (
+      options: {
+        sinceMs?: number;
+        observedNotBeforeMs?: number;
+        excludedSessionId?: string | null;
+        excludedSessionPath?: string | null;
+      } = {},
+    ): Promise<boolean> => {
+      const binding = await captureRunnerSessionMetadata(vars, runner, [], {
+        ...options,
         paneId: reviewerWindow.paneId,
         slotId: vars.slotId,
       });
@@ -961,13 +968,24 @@ export async function runReviewAgent(
       // proof that its process still owns the window.
       const rebound = await bindLiveReviewerSession();
       if (runnerCanResume && !rebound) {
+        invalidateWarmReviewerSessions(_runId, runner);
         throw new Error(
           `Cannot identify the live ${runner} session that owns ${reviewTarget}; refusing a stale retained handoff`,
         );
       }
-      let resetStartedAt: number | undefined;
+      let resetObservedNotBeforeMs: number | undefined;
+      let resetPriorSessionId: string | null = null;
+      let resetPriorSessionPath: string | null = null;
       if (resetContext) {
-        resetStartedAt = Date.now();
+        resetPriorSessionId = sessionMeta.runnerSessionId;
+        resetPriorSessionPath = sessionMeta.runnerSessionPath;
+        const baseline = await captureRunnerPromptAcceptanceBaseline(vars, reviewTarget, runner);
+        if (baseline === null) {
+          throw new Error(
+            `Cannot establish the ${runner} observability timebase before resetting ${reviewTarget}`,
+          );
+        }
+        resetObservedNotBeforeMs = baseline;
         const reset = await resetLiveRunnerContext({
           vars,
           target: reviewTarget,
@@ -1013,13 +1031,18 @@ export async function runReviewAgent(
         );
       }
       if (
-        retainReviewerSession &&
+        resetContext &&
         runnerCanResume &&
-        !(await bindLiveReviewerSession(resetStartedAt))
+        !(await bindLiveReviewerSession({
+          observedNotBeforeMs: resetObservedNotBeforeMs,
+          excludedSessionId: resetPriorSessionId,
+          excludedSessionPath: resetPriorSessionPath,
+        }))
       ) {
         console.warn(
           `[self-review] accepted ${runner} review task did not expose a pane-owned session binding in ${reviewTarget}; completing this pass without retaining it`,
         );
+        invalidateWarmReviewerSessions(_runId, runner);
         sessionMeta = {
           runnerSessionId: null,
           runnerSessionPath: null,

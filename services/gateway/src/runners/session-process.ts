@@ -39,19 +39,50 @@ export interface RunnerSessionBinding {
 export async function readPaneProcessStartedAtMs(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   paneId: string,
+  runnerId?: string | null,
 ): Promise<number | null> {
+  const processPattern = runnerId ? runnerProcessPatternSource(runnerId) : '';
   const script = `
 python3 - <<'PY'
 import datetime
+import re
 import subprocess
 import sys
 
 pane = ${JSON.stringify(paneId)}
+pattern = ${JSON.stringify(processPattern)}
 try:
-    pid = subprocess.check_output(
+    pane_pid = subprocess.check_output(
         ['tmux', 'display-message', '-p', '-t', pane, '#{pane_pid}'],
         text=True,
     ).strip()
+    children = {}
+    commands = {}
+    for row in subprocess.check_output(
+        ['ps', '-axo', 'pid=,ppid=,command='], text=True
+    ).splitlines():
+        parts = row.strip().split(None, 2)
+        if len(parts) < 2:
+            continue
+        pid, ppid = parts[:2]
+        command = parts[2] if len(parts) == 3 else ''
+        commands[pid] = command
+        children.setdefault(ppid, []).append((pid, command))
+    pid = pane_pid
+    if pattern:
+        queue = [pane_pid]
+        pane_command = commands.get(pane_pid, '')
+        matched = pane_pid if '__farmslot_status' not in pane_command and re.search(pattern, pane_command) else None
+        while queue and matched is None:
+            parent = queue.pop(0)
+            for child_pid, command in children.get(parent, []):
+                if '__farmslot_status' not in command and re.search(pattern, command):
+                    matched = child_pid
+                    break
+                queue.append(child_pid)
+        if matched is None:
+            raise ValueError('runner process not found under pane')
+        pid = matched
     elapsed = subprocess.check_output(
         ['ps', '-p', pid, '-o', 'etime='],
         text=True,
@@ -67,10 +98,12 @@ try:
     else:
         raise ValueError(f'unexpected elapsed time: {elapsed}')
     elapsed_seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds
-    # ps etime has one-second precision. Use the lower bound for process
-    # start so an event emitted during that first second remains admissible.
+    # ps etime has one-second precision. Use the latest possible process start
+    # so a snapshot from the previous pane occupant can never pass this gate.
+    # A runner event emitted during the first partial second may be retried once
+    # the runner emits its next structured event; stale attribution must fail closed.
     started_at_ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
-    print(started_at_ms - (elapsed_seconds + 1) * 1000)
+    print(started_at_ms - elapsed_seconds * 1000)
 except Exception as error:
     print(f'pane process start probe failed: {error}', file=sys.stderr)
     raise SystemExit(1)
@@ -283,16 +316,19 @@ async function tryHookSessionBinding(
   runner: string,
   options: {
     sinceMs?: number;
+    observedNotBeforeMs?: number;
     paneId?: string | null;
     slotId?: string | null;
     paneStartedAtMs?: number | null;
+    excludedSessionId?: string | null;
+    excludedSessionPath?: string | null;
   },
 ): Promise<RunnerSessionBinding | null> {
   if (getRunnerDefinition(runner).observabilityScope !== 'event-driven') return null;
   if (options.paneId) {
     const paneStartedAt =
       options.paneStartedAtMs === undefined
-        ? await readPaneProcessStartedAtMs(vars, options.paneId)
+        ? await readPaneProcessStartedAtMs(vars, options.paneId, runner)
         : options.paneStartedAtMs;
     // A named pane is the authority for this binding. If its live process
     // start cannot be established, fail closed instead of accepting a stale
@@ -300,11 +336,17 @@ async function tryHookSessionBinding(
     if (paneStartedAt === null) return null;
     const isCurrentPaneProcess = (observedAt: number | null | undefined) =>
       observedAt !== null && observedAt !== undefined && observedAt >= paneStartedAt;
+    const observedBoundary =
+      options.observedNotBeforeMs ??
+      (options.sinceMs === undefined
+        ? undefined
+        : options.sinceMs - RUNNER_SESSION_DISPATCH_SLACK_MS);
     const isCurrentDispatch = (observedAt: number | null | undefined) =>
-      options.sinceMs === undefined ||
-      (observedAt !== null &&
-        observedAt !== undefined &&
-        observedAt >= options.sinceMs - RUNNER_SESSION_DISPATCH_SLACK_MS);
+      observedBoundary === undefined ||
+      (observedAt !== null && observedAt !== undefined && observedAt >= observedBoundary);
+    const isSuccessorSession = (sessionId: string, sessionPath: string) =>
+      (!options.excludedSessionId || sessionId !== options.excludedSessionId) &&
+      (!options.excludedSessionPath || sessionPath !== options.excludedSessionPath);
     let nativeBinding = null;
     try {
       nativeBinding = await getRunnerObservability(runner)?.getSessionBinding?.(
@@ -322,7 +364,8 @@ async function tryHookSessionBinding(
     if (
       nativeBinding &&
       isCurrentPaneProcess(nativeBinding.observedAt) &&
-      isCurrentDispatch(nativeBinding.observedAt)
+      isCurrentDispatch(nativeBinding.observedAt) &&
+      isSuccessorSession(nativeBinding.sessionId, nativeBinding.sessionPath)
     ) {
       const mtimeMs = await statSessionPathMtimeMs(vars, nativeBinding.sessionPath);
       if (mtimeMs !== null) {
@@ -344,7 +387,8 @@ async function tryHookSessionBinding(
       sessionId &&
       isCurrentPaneProcess(observedAt) &&
       isCurrentDispatch(observedAt) &&
-      isCurrentSlot
+      isCurrentSlot &&
+      isSuccessorSession(sessionId, transcriptPath)
     ) {
       const mtimeMs = await statSessionPathMtimeMs(vars, transcriptPath);
       if (mtimeMs !== null) {
@@ -422,10 +466,13 @@ export async function resolveRunnerSessionBinding(
   beforePaths: string[],
   options: {
     sinceMs?: number;
+    observedNotBeforeMs?: number;
     paneId?: string | null;
     slotId?: string | null;
     existingPath?: string | null;
     paneStartedAtMs?: number | null;
+    excludedSessionId?: string | null;
+    excludedSessionPath?: string | null;
   } = {},
 ): Promise<RunnerSessionBinding | null> {
   if (!runnerPersistsSessionFiles(runner)) return null;
@@ -458,15 +505,18 @@ export async function captureRunnerSessionMetadata(
   beforePaths: string[],
   options: {
     sinceMs?: number;
+    observedNotBeforeMs?: number;
     paneId?: string | null;
     slotId?: string | null;
+    excludedSessionId?: string | null;
+    excludedSessionPath?: string | null;
   } = {},
 ): Promise<{ runnerSessionPath: string | null; runnerSessionId: string | null }> {
   if (!runnerPersistsSessionFiles(runner)) {
     return { runnerSessionPath: null, runnerSessionId: null };
   }
   const paneStartedAtMs = options.paneId
-    ? await readPaneProcessStartedAtMs(vars, options.paneId)
+    ? await readPaneProcessStartedAtMs(vars, options.paneId, runner)
     : undefined;
   if (options.paneId && paneStartedAtMs === null) {
     return { runnerSessionPath: null, runnerSessionId: null };
@@ -475,9 +525,12 @@ export async function captureRunnerSessionMetadata(
     await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_CAPTURE_POLL_MS));
     const binding = await resolveRunnerSessionBinding(vars, runner, beforePaths, {
       sinceMs: options.sinceMs,
+      observedNotBeforeMs: options.observedNotBeforeMs,
       paneId: options.paneId,
       slotId: options.slotId ?? vars.slotId,
       paneStartedAtMs,
+      excludedSessionId: options.excludedSessionId,
+      excludedSessionPath: options.excludedSessionPath,
     });
     if (binding) {
       return {

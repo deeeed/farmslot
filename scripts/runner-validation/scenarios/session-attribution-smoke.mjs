@@ -2,9 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { DEFAULT_PROMPT, sleepMs } from '../lib/common.mjs';
+import { DEFAULT_PROMPT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
-import { runGatewaySessionBinding } from '../lib/gateway-post-launch.mjs';
 import { readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { runLaunchInTmux } from '../lib/launch.mjs';
@@ -16,6 +15,7 @@ import {
   modelsMatch,
   seedStaleSession,
   STALE_MODELS,
+  waitForSessionBinding,
 } from '../lib/session-attribution.mjs';
 import { capturePane, ensureShellSession, killSession } from '../lib/tmux.mjs';
 import { waitForRunnerCompletion } from '../lib/wait.mjs';
@@ -63,7 +63,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
   try {
     runnerAdapter.prepareRepo(repo);
 
-    if (runnerAdapter.OBSERVABILITY_SCOPE === 'event-driven') {
+    const hookDriven = runnerAdapter.OBSERVABILITY_TRANSPORT === 'hooks';
+    if (hookDriven) {
       installHooks(runner, repo, runtimeDir, slotId);
     }
 
@@ -80,6 +81,22 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       model: dispatchedModel,
     });
 
+    // Resolve while the launched runner still owns the pane. Resolving after
+    // completion would validate the long-lived shell process instead of the
+    // runner process boundary used by production.
+    const binding = waitForSessionBinding(
+      {
+        runner,
+        repo,
+        beforePaths,
+        sinceMs: dispatchMs,
+        paneId,
+        slotId,
+      },
+      Math.min(timeoutMs, 30_000),
+    );
+    if (!binding) throw new Error('no live session binding resolved');
+
     const completion = waitForRunnerCompletion({
       paneId,
       logPath,
@@ -87,26 +104,6 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       timeoutMs,
     });
     report.paneTail = completion.pane.split('\n').slice(-20).join('\n');
-    sleepMs(3000);
-
-    const resolution = runGatewaySessionBinding({
-      runner,
-      repo,
-      beforePaths,
-      sinceMs: dispatchMs,
-      target: paneId,
-      slotId,
-      timeoutMs,
-    });
-    if (resolution.exitCode !== 0) {
-      throw new Error(`production session binding failed: ${resolution.error}`);
-    }
-    const binding = resolution.binding;
-
-    if (!binding) {
-      throw new Error('no session binding resolved');
-    }
-
     const hookBinding = findSessionStartBinding(readHookLines(logPath).slice(beforeCount), {
       paneId,
       slotId,
@@ -126,7 +123,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
 
     const pathNotStale = report.resolvedPath !== report.stalePath;
     const hookAligned =
-      runnerAdapter.OBSERVABILITY_SCOPE !== 'event-driven' ||
+      !hookDriven ||
       (report.hookTranscriptPath === report.resolvedPath && report.hookTmuxPane === paneId);
     const sawCompletion = completion.sawMarker || completion.sawStop;
 

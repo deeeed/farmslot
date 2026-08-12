@@ -18,7 +18,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
     return { scenario: SCENARIO_ID, runner, outPath, pass: true, skipped: true, report };
   }
-  if (runnerAdapter.OBSERVABILITY_SCOPE !== 'pane-only') {
+  if (runnerAdapter.OBSERVABILITY_TRANSPORT !== 'pane') {
     const report = {
       runner,
       skipped: true,
@@ -58,7 +58,9 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     });
     report.paneTail = completion.pane.split('\n').slice(-20).join('\n');
     report.markerSeen = completion.sawMarker;
-    report.promptNeedleSeen = completion.pane.includes('TMUX_HOOK_OK') || completion.pane.includes(PROMPT_MARKER.slice(0, 12));
+    report.promptNeedleSeen =
+      completion.pane.includes('TMUX_HOOK_OK') ||
+      completion.pane.includes(PROMPT_MARKER.slice(0, 12));
     report.paneState = paneState(paneId);
     sleepMs(2000);
     report.pass = report.markerSeen;

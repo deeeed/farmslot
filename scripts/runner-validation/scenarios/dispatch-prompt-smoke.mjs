@@ -53,11 +53,12 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
   try {
     runnerAdapter.prepareRepo(repo);
     const eventDriven = runnerAdapter.OBSERVABILITY_SCOPE === 'event-driven';
+    const hookDriven = runnerAdapter.OBSERVABILITY_TRANSPORT === 'hooks';
     const hookLogPath = path.join(obsDirFor(repo, '.agent'), 'hooks.jsonl');
-    if (eventDriven) {
+    if (hookDriven) {
       installHooks(runner, repo, '.agent', `runner-validate-${runner}-dispatch`);
     }
-    const beforeHookCount = eventDriven ? readHookLines(hookLogPath).length : 0;
+    const beforeHookCount = hookDriven ? readHookLines(hookLogPath).length : 0;
     const shell = ensureShellSession(session, repo);
     paneId = shell.paneId;
 
@@ -81,7 +82,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     }
 
     let pane = capturePane(paneId, 80);
-    if (eventDriven) {
+    if (hookDriven) {
       const hookRows = pollHookRows(
         hookLogPath,
         beforeHookCount,

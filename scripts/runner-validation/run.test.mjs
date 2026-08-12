@@ -35,8 +35,8 @@ test('runner-validation catalog includes four runners and seventeen scenarios', 
   assert.ok(listScenarios().includes('token-usage-smoke'));
 });
 
-test('runner groups resolve grok in pane-only preset', () => {
-  assert.deepEqual(resolveRunnerList('pane-only').sort(), ['cursor', 'grok']);
+test('runner groups reserve pane-only for runners without structured observability', () => {
+  assert.deepEqual(resolveRunnerList('pane-only'), ['cursor']);
   assert.ok(resolveRunnerList('all').includes('grok'));
 });
 
