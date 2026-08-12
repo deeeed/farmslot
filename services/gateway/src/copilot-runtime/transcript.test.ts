@@ -5,8 +5,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { getSessionMessages } from '../chat/chat-store.js';
-import { normalizeTmuxTranscript, tmuxTranscriptMessage } from './transcript.js';
+
 import { testController } from './test-helpers.js';
+import { normalizeTmuxTranscript, tmuxTranscriptMessage } from './transcript.js';
 
 test('normalized tmux transcript has stable offset identity across restart', () => {
   const input = {
@@ -41,6 +42,15 @@ test('transcript ingestion redacts credentials and preserves direct pane text on
   assert.equal(normalizeTmuxTranscript('⏺\n✻\n────────────────\n❯\n'), '');
 });
 
+test('transcript normalization fully removes private CSI and DEC query sequences', () => {
+  assert.equal(
+    normalizeTmuxTranscript(
+      '\u001b[>1u\u001b[>4;2mClaude Code v2.1.228\u001b[?2026$p\r\nshared transcript',
+    ),
+    'Claude Code v2.1.228\nshared transcript',
+  );
+});
+
 test('Command Center and direct canonical-tmux input share one ordered history across reconnect', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'copilot-shared-transcript-'));
   const sessionId = `manual:shared-${Date.now()}`;
@@ -59,7 +69,7 @@ test('Command Center and direct canonical-tmux input share one ordered history a
     first.controller as unknown as { pollTranscript(): Promise<void> }
   ).pollTranscript();
 
-  const beforeRestart = getSessionMessages(sessionId);
+  const beforeRestart = getSessionMessages('global');
   assert.deepEqual(
     beforeRestart.map(({ role, source, content }) => ({ role, source, content })),
     [
@@ -74,12 +84,13 @@ test('Command Center and direct canonical-tmux input share one ordered history a
 
   const restarted = testController({ home, checkout: process.cwd(), tmux: first.tmux });
   await restarted.controller.initialize();
-  const afterRestart = getSessionMessages(sessionId);
+  const afterRestart = getSessionMessages('global');
   assert.deepEqual(
     afterRestart.map(({ id }) => id),
     beforeRestart.map(({ id }) => id),
   );
-  assert.equal((await restarted.controller.status()).session.transcriptId, sessionId);
+  assert.equal((await restarted.controller.status()).session.transcriptId, 'global');
+  assert.deepEqual(getSessionMessages(sessionId), []);
   assert.equal(first.tmux.launchCount, 1);
   await restarted.controller.stop({ reason: 'transcript-test' });
 });

@@ -8,12 +8,12 @@ import {
   type ChatSendResult,
   type CopilotDelivery,
   type CopilotRuntimeSession,
-  type CopilotWorkloadSnapshot,
   type CopilotStartParams,
   type CopilotStartResult,
   type CopilotStatusResult,
   type CopilotStopParams,
   type CopilotStopResult,
+  type CopilotWorkloadSnapshot,
   Events,
   GLOBAL_CHAT_SESSION_ID,
 } from '@farmslot/protocol';
@@ -22,7 +22,6 @@ import {
   appendMessage,
   generateMessageId,
   getSessionMessages,
-  normalizeSessionId,
   persistChatSession,
 } from '../chat/chat-store.js';
 import { sanitizeChatClientContext } from '../chat/safe-client-context.js';
@@ -30,27 +29,27 @@ import { recordScreenEvidenceSnapshot } from '../chat/screen-evidence.js';
 import { resolveProjectRuntimeDir } from '../core/config.js';
 import { getActiveResources } from '../fleet/resource-manager.js';
 import { getCachedFleet } from '../fleet/state.js';
-import { getAllRuns } from '../runs/store.js';
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import {
   interruptRunnerTurn,
   runnerNeedsPostLaunchPrompt,
   sendRunnerInstructionSafely,
 } from '../runners/registry.js';
+import { getAllRuns } from '../runs/store.js';
 
 import { assertDangerousConfirmation, dangerousLaunchBinding } from './authorization.js';
 import { buildLiveCopilotBootstrapBrief } from './bootstrap-brief.js';
-import { inspectCopilotCheckout } from './live-fix-policy.js';
 import {
   buildCopilotLaunch,
   COPILOT_TMUX_SESSION,
   COPILOT_TMUX_TARGET,
+  type CopilotTmuxAdapter,
   createCopilotRunnerVars,
   localCopilotTmuxAdapter,
   resolveCopilotRunner,
   resolveOperatorCheckout,
-  type CopilotTmuxAdapter,
 } from './launcher.js';
+import { inspectCopilotCheckout } from './live-fix-policy.js';
 import { buildCopilotWorkloadSnapshot, type WorkloadResourceInput } from './resource-policy.js';
 import {
   type CopilotAuditRecord,
@@ -123,6 +122,7 @@ export class CopilotRuntimeController {
     if (this.initialized) return;
     await this.store.ensure();
     this.persisted = await this.store.load();
+    if (this.persisted) this.persisted.session.transcriptId = GLOBAL_CHAT_SESSION_ID;
     const candidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
     if (candidates.length > 1 || (candidates.length === 1 && candidates[0] !== COPILOT_TMUX_SESSION)) {
       await this.setAmbiguous(candidates);
@@ -254,7 +254,7 @@ export class CopilotRuntimeController {
         runtimeId: this.persisted?.session.runtimeId ?? 'gateway-copilot',
         status: 'starting',
         tmuxTarget: COPILOT_TMUX_TARGET,
-        transcriptId: this.persisted?.session.transcriptId ?? GLOBAL_CHAT_SESSION_ID,
+        transcriptId: GLOBAL_CHAT_SESSION_ID,
         runner,
         model,
         safetyTier,
@@ -330,8 +330,7 @@ export class CopilotRuntimeController {
     }
     const messageId = generateMessageId();
     const deliveryId = randomUUID();
-    const transcriptId = normalizeSessionId(params.sessionId ?? session.transcriptId);
-    session.transcriptId = transcriptId;
+    const transcriptId = GLOBAL_CHAT_SESSION_ID;
     const safeClientContext = sanitizeChatClientContext(params.clientContext);
     recordScreenEvidenceSnapshot(transcriptId, safeClientContext, messageId);
     appendMessage(transcriptId, {
@@ -423,16 +422,6 @@ export class CopilotRuntimeController {
     await this.audit('stop', { reason: status.session.terminalReason });
     this.emitRuntime();
     return { ok: true, session: status.session };
-  }
-
-  async recordValidationCommand(command: string): Promise<void> {
-    await this.status();
-    await this.audit('validation-command', { command });
-  }
-
-  async recordBoundaryAction(action: string, authorizedBy: string): Promise<void> {
-    await this.status();
-    await this.audit('boundary-action', { action, authorizedBy });
   }
 
   private workload(copilotRunning: boolean) {
@@ -534,7 +523,7 @@ export class CopilotRuntimeController {
         runtimeId: this.persisted?.session.runtimeId ?? 'gateway-copilot',
         status: 'ambiguous',
         tmuxTarget: COPILOT_TMUX_TARGET,
-        transcriptId: this.persisted?.session.transcriptId ?? GLOBAL_CHAT_SESSION_ID,
+        transcriptId: GLOBAL_CHAT_SESSION_ID,
         runner: this.persisted?.session.runner ?? runner,
         model: this.persisted?.session.model ?? model,
         safetyTier: this.persisted?.session.safetyTier ?? 'sandboxed',

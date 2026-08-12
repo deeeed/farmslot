@@ -112,14 +112,14 @@ export class ChatPanel extends ChatPanelState {
     return this.activeSessionIdValue;
   }
 
-  private switchSession(nextId: string) {
+  private switchSession(nextId: string, loadHistory = true) {
     const previous = this.activeSessionId();
     if (previous === nextId) return;
     this.abortStreamingSession(previous);
     this.resetStreamingState();
     this.activeSessionIdValue = nextId;
     safeLsSet(ACTIVE_SESSION_KEY, nextId);
-    void this.loadHistory();
+    if (loadHistory) void this.loadHistory();
     if (this.usageOpen) void this.loadUsageContext();
   }
 
@@ -381,6 +381,11 @@ export class ChatPanel extends ChatPanelState {
   ) {
     const prompt = text.trim();
     if (!prompt || this.sending) return;
+
+    if (prompt !== '/new' && this.activeSessionId() !== SHARED_SESSION_ID) {
+      this.switchSession(SHARED_SESSION_ID, false);
+      await this.loadHistory(SHARED_SESSION_ID);
+    }
 
     this.sending = true;
     this.streamingText = '';
@@ -868,15 +873,17 @@ export class ChatPanel extends ChatPanelState {
           ${this.runtime
             ? html`
                 <div class="cp-runtime-grid">
-                  <span>Runner</span><strong>${this.runtime.runner}</strong>
-                  <span>Model</span><strong>${this.runtime.model}</strong>
-                  <span>Tier</span><strong>${this.runtime.safetyTier}</strong>
-                  <span>tmux</span><strong>${this.runtime.tmuxTarget}</strong>
-                  <span>Checkout</span><strong>${this.runtime.checkout.path}</strong>
-                  <span>Branch</span><strong>${this.runtime.checkout.branch}</strong>
-                  <span>Dirty</span><strong>${this.runtime.checkout.dirtyFileCount}</strong>
-                  <span>Delivery</span><strong
-                    >${this.runtime.lastDelivery.state.slice(0, 1).toUpperCase()}${this.runtime.lastDelivery.state.slice(1)}</strong
+                  <span>Runner</span><strong>${this.runtime.runner}</strong> <span>Model</span
+                  ><strong>${this.runtime.model}</strong> <span>Tier</span
+                  ><strong>${this.runtime.safetyTier}</strong> <span>tmux</span
+                  ><strong>${this.runtime.tmuxTarget}</strong> <span>Checkout</span
+                  ><strong>${this.runtime.checkout.path}</strong> <span>Branch</span
+                  ><strong>${this.runtime.checkout.branch}</strong> <span>Dirty</span
+                  ><strong>${this.runtime.checkout.dirtyFileCount}</strong> <span>Delivery</span
+                  ><strong
+                    >${this.runtime.lastDelivery.state
+                      .slice(0, 1)
+                      .toUpperCase()}${this.runtime.lastDelivery.state.slice(1)}</strong
                   >
                 </div>
                 ${this.runtime.workload.warning
@@ -896,13 +903,17 @@ export class ChatPanel extends ChatPanelState {
                     data-testid="copilot-reconnect"
                     ?disabled=${this.runtimeLoading}
                     @click=${() => this.startRuntime('reconnect')}
-                  >Reconnect</button>
+                  >
+                    Reconnect
+                  </button>
                   <button
                     class="cp-stop-btn"
                     data-testid="copilot-stop"
                     ?disabled=${this.runtimeLoading}
                     @click=${this.stopRuntime}
-                  >Stop runtime</button>
+                  >
+                    Stop runtime
+                  </button>
                 `
               : html`
                   <button
@@ -910,13 +921,17 @@ export class ChatPanel extends ChatPanelState {
                     data-testid="copilot-start-sandboxed"
                     ?disabled=${this.runtimeLoading}
                     @click=${() => this.startRuntime('start')}
-                  >Start Sandboxed</button>
+                  >
+                    Start Sandboxed
+                  </button>
                   <button
                     class="cp-stop-btn"
                     data-testid="copilot-start-dangerous"
                     ?disabled=${this.runtimeLoading || !this.runtime}
                     @click=${this.openDangerousConfirmation}
-                  >Start Dangerous</button>
+                  >
+                    Start Dangerous
+                  </button>
                 `}
           </div>
           ${this.dangerousConfirmationOpen && this.runtime
@@ -924,9 +939,7 @@ export class ChatPanel extends ChatPanelState {
                 <div class="cp-dangerous" data-testid="copilot-dangerous-confirmation">
                   <strong>Dangerous same-user execution</strong>
                   <p>${this.runtime.dangerousLaunch.warning}</p>
-                  <p>
-                    Bound to ${dangerousLaunchSummary(this.runtime.dangerousLaunch)}
-                  </p>
+                  <p>Bound to ${dangerousLaunchSummary(this.runtime.dangerousLaunch)}</p>
                   <label>
                     Type ${this.runtime.dangerousLaunch.typedPhrase}
                     <input
@@ -942,14 +955,18 @@ export class ChatPanel extends ChatPanelState {
                       class="cp-new-btn"
                       data-testid="copilot-dangerous-cancel"
                       @click=${() => (this.dangerousConfirmationOpen = false)}
-                    >Cancel</button>
+                    >
+                      Cancel
+                    </button>
                     <button
                       class="cp-stop-btn"
                       data-testid="copilot-dangerous-confirm"
                       ?disabled=${this.dangerousTypedPhrase !==
-                      this.runtime.dangerousLaunch.typedPhrase || this.runtimeLoading}
+                        this.runtime.dangerousLaunch.typedPhrase || this.runtimeLoading}
                       @click=${this.startDangerousRuntime}
-                    >Launch dangerous</button>
+                    >
+                      Launch dangerous
+                    </button>
                   </div>
                 </div>
               `

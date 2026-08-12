@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { DEFAULT_RUNNER, type SafetyTier } from '@farmslot/protocol';
 import type { SlotVars } from '@farmslot/slot-config';
 
+import { shellQuote } from '../core/tmux.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import { buildLaunchCommand } from '../runners/launch-command.js';
 import {
@@ -15,7 +16,6 @@ import {
   normalizeRunner,
   runnerDefaultModel,
 } from '../runners/registry.js';
-import { shellQuote } from '../core/tmux.js';
 
 import type { CopilotRuntimeStore } from './session-store.js';
 

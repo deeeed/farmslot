@@ -1,20 +1,22 @@
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { appendFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { Events } from '@farmslot/protocol';
+import { Events, GLOBAL_CHAT_SESSION_ID } from '@farmslot/protocol';
 
-import { getSessionMessages } from '../chat/chat-store.js';
+import { getSession, getSessionMessages } from '../chat/chat-store.js';
 import { readLastScreenEvidence } from '../chat/screen-evidence.js';
 import {
   chatAbort,
   chatHistory,
+  chatSend,
   chatSessionCreate,
   chatSessionDelete,
-  chatSend,
+  chatSessionsBulkDelete,
 } from '../methods/chat.js';
+
 import { setCopilotRuntimeForTests } from './controller.js';
 import { testController } from './test-helpers.js';
 
@@ -50,14 +52,34 @@ test('existing chat entry points use one tmux runtime and preserve streaming/his
   assert.match(deliveredInstruction, /Current Command Center View/);
   assert.match(deliveredInstruction, /"route": "run-detail"/);
   assert.match(deliveredInstruction, /"selectedRunId": "run-1"/);
-  assert.equal(readLastScreenEvidence(contextual.id)?.selectedRunId, 'run-1');
+  assert.equal(readLastScreenEvidence(GLOBAL_CHAT_SESSION_ID)?.selectedRunId, 'run-1');
   assert.equal(tmux.launchCount, 1);
-  assert.deepEqual(chatHistory({ sessionId: contextual.id }).messages, getSessionMessages(contextual.id));
+  assert.deepEqual(chatHistory({ sessionId: contextual.id }).messages, []);
+  assert.equal(chatHistory({ sessionId: GLOBAL_CHAT_SESSION_ID }).messages.at(-1)?.content, 'Explain the selected run');
+  assert.equal((await controller.status()).session.transcriptId, GLOBAL_CHAT_SESSION_ID);
   assert.ok(emitted.some(({ event }) => event === Events.CHAT_RESPONSE));
+  assert.ok(
+    emitted.some(
+      ({ event, payload }) =>
+        event === Events.CHAT_RESPONSE &&
+        (payload as { sessionId?: string }).sessionId === GLOBAL_CHAT_SESSION_ID,
+    ),
+  );
   assert.deepEqual(await chatAbort({ sessionId: contextual.id }), { ok: true });
 
   const deleted = await chatSessionDelete({ sessionId: contextual.id });
   assert.deepEqual(deleted, { ok: true, deleted: true });
+  await appendFile(tmux.transcriptPath, 'RUNNER_OUTPUT_AFTER_SINGLE_DELETE\n');
+  await (controller as unknown as { pollTranscript(): Promise<void> }).pollTranscript();
+  assert.equal(getSession(contextual.id), null);
+
+  const bulkContext = chatSessionCreate({ title: 'Bulk contextual Ask Co-Pilot' }).session;
+  await chatSend({ sessionId: bulkContext.id, message: 'Explain another run' }, () => undefined);
+  assert.deepEqual(await chatSessionsBulkDelete({ sessionIds: [bulkContext.id] }), { deleted: 1 });
+  await appendFile(tmux.transcriptPath, 'RUNNER_OUTPUT_AFTER_BULK_DELETE\n');
+  await (controller as unknown as { pollTranscript(): Promise<void> }).pollTranscript();
+  assert.equal(getSession(bulkContext.id), null);
+  assert.equal(getSessionMessages(GLOBAL_CHAT_SESSION_ID).at(-1)?.content, 'RUNNER_OUTPUT_AFTER_BULK_DELETE');
   assert.equal(tmux.launchCount, 1);
 
   await controller.stop({ reason: 'compatibility-test' });

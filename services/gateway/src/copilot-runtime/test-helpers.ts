@@ -10,7 +10,7 @@ import {
   CopilotRuntimeController,
   type CopilotRuntimeControllerOptions,
 } from './controller.js';
-import { createCopilotRunnerVars, type CopilotTmuxAdapter } from './launcher.js';
+import { type CopilotTmuxAdapter,createCopilotRunnerVars } from './launcher.js';
 import { CopilotRuntimeStore } from './session-store.js';
 
 export function testCheckout(checkout: string): CopilotCheckoutIdentity {

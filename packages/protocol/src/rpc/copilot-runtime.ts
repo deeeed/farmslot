@@ -1,4 +1,5 @@
 import type { SafetyTier } from '../contracts/agents.js';
+
 import { Methods } from './registry.js';
 
 export const CopilotRuntimeMethods = {

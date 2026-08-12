@@ -1,7 +1,4 @@
-import type {
-  CopilotDangerousLaunchBinding,
-  CopilotStartParams,
-} from '@farmslot/protocol';
+import type { CopilotDangerousLaunchBinding, CopilotStartParams } from '@farmslot/protocol';
 
 export function copilotRuntimeStatusLabel(status: string): string {
   return `${status.slice(0, 1).toUpperCase()}${status.slice(1)}`;

@@ -2,16 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  ChatMethods,
-  CopilotRuntimeMethods,
-  Events,
-  GLOBAL_CHAT_SESSION_ID,
-  Methods,
   type ChatAbortResult,
+  ChatMethods,
   type ChatSendResult,
+  CopilotRuntimeMethods,
   type CopilotRuntimeSession,
   type CopilotStartParams,
   type CopilotStatusResult,
+  Events,
+  GLOBAL_CHAT_SESSION_ID,
+  Methods,
 } from '../src/index.js';
 
 test('Co-Pilot runtime and compatibility method names remain stable', () => {

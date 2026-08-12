@@ -4,7 +4,7 @@ import type { ChatMessage } from '@farmslot/protocol';
 
 import { redactCopilotValue } from './session-store.js';
 
-const ANSI_ESCAPE = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
+const ANSI_ESCAPE = /(?:\u001B\][^\u0007]*(?:\u0007|\u001B\\)|\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~]|\u001B[()][0-2A-Z0-9]|\u001B[=><])/g;
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const MEANINGFUL_TEXT = /[\p{L}\p{N}]/u;
 

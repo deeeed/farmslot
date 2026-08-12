@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 ## Unreleased
 
 - feat(runtime-capabilities): add Gateway lifecycle smoke tools, a browser/CDP probe, and reusable Companion on-demand lifecycle proof.
+- fix(copilot): keep contextual prompts and runner output in the canonical shared transcript, and normalize private terminal control sequences completely (MANUAL-000071).
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.6.0 - 2026-08-10

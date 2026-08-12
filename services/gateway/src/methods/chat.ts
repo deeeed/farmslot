@@ -1,7 +1,6 @@
 // methods/chat.ts — Co-pilot chat RPC handlers
 
 import {
-  DEFAULT_RUNNER,
   type ChatAbortParams,
   type ChatAbortResult,
   type ChatClearParams,
@@ -34,6 +33,7 @@ import {
   type ChatSessionsBulkDeleteParams,
   type ChatSessionsBulkDeleteResult,
   type ChatSessionsResult,
+  DEFAULT_RUNNER,
   GLOBAL_CHAT_SESSION_ID,
 } from '@farmslot/protocol';
 
@@ -43,7 +43,6 @@ import {
   listChatActions,
 } from '../chat/chat-actions.js';
 import { buildFleetContext } from '../chat/chat-context.js';
-import { getCopilotRuntime } from '../copilot-runtime/controller.js';
 import { saveMemory, saveSessionMemory } from '../chat/chat-memory.js';
 import {
   clearSession,
@@ -60,6 +59,7 @@ import {
 } from '../chat/chat-store.js';
 import { readObserverEvidence } from '../chat/copilot-observer.js';
 import { clearScreenEvidenceSnapshot, readLastScreenEvidence } from '../chat/screen-evidence.js';
+import { getCopilotRuntime } from '../copilot-runtime/controller.js';
 
 type Emit = (event: string, payload: unknown) => void;
 

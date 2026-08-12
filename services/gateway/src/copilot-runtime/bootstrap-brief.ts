@@ -2,9 +2,9 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
-  GLOBAL_CHAT_SESSION_ID,
   type CopilotCheckoutIdentity,
   type CopilotWorkloadSnapshot,
+  GLOBAL_CHAT_SESSION_ID,
   type OperatorSnapshotResult,
   type Run,
 } from '@farmslot/protocol';

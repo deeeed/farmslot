@@ -18,7 +18,7 @@ test('first start creates one canonical runner and later starts reuse it across 
   assert.equal(first.reused, false);
   assert.equal(second.reused, true);
   assert.equal(second.session.runtimeId, first.session.runtimeId);
-  assert.equal(second.session.transcriptId, 'manual:alternate');
+  assert.equal(second.session.transcriptId, 'global');
   assert.equal(tmux.launchCount, 1);
   await controller.stop({ reason: 'test-complete' });
 });

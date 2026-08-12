@@ -40,7 +40,6 @@ import {
   chatScreenEvidence,
   chatSessionContext,
   chatSessionCreate,
-  chatSessionDelete,
   chatSessions,
   chatSessionsBulkDelete,
   estimateContextWindow,

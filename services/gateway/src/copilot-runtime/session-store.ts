@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import type { CopilotRuntimeSession } from '@farmslot/protocol';
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 export interface PersistedCopilotRuntime {
   schemaVersion: 1;
@@ -22,9 +22,7 @@ export interface CopilotAuditRecord {
     | 'send'
     | 'abort'
     | 'stop'
-    | 'checkout-transition'
-    | 'validation-command'
-    | 'boundary-action';
+    | 'checkout-transition';
   runtimeId: string;
   safetyTier: string;
   checkout: string;
