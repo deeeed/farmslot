@@ -10,9 +10,8 @@ function signalIsNewerThanContext(signal: WorkerSignal, context: AgentContext): 
   if (signal.attemptId && !context.signalAttemptId) return true;
   if (signal.attemptId && context.signalAttemptId) {
     if (signal.attemptId === context.signalAttemptId) return false;
-    // Once an attempt id is established, attemptStartedAt and signal.timestamp
-    // both originate on the worker machine. Preserve their ordering without
-    // comparing either clock to the gateway host.
+    // Once an attempt id is established, attemptStartedAt was stamped from the
+    // first worker signal. Preserve ordering on the worker clock.
     const currentAttemptAt = Date.parse(context.attemptStartedAt ?? '');
     const signalAt = Date.parse(signal.timestamp);
     return (
@@ -63,13 +62,19 @@ export async function applyRunningWorkerSignalToContext(
     {
       resolvePatch: (current) => {
         if (!current) return null;
+        if (current.signalAttemptId && !signal.attemptId) {
+          console.warn(
+            `[worker-signal] ignored ID-less running signal for attempt-scoped context ${current.id}; check worker runtime version and mark-start compliance`,
+          );
+        }
         rearmingTerminalContext = TERMINAL_AGENT_STATUSES.has(current.status);
         if (rearmingTerminalContext && !signalIsNewerThanContext(signal, current)) return null;
         if (rearmingTerminalContext && current.role === 'self-review') options?.beforeRearm?.();
+        const adoptingAttemptId = Boolean(signal.attemptId && !current.signalAttemptId);
         return {
           id: current.id,
           status: 'working',
-          ...(rearmingTerminalContext ? { attemptStartedAt: observedAt } : {}),
+          ...(rearmingTerminalContext || adoptingAttemptId ? { attemptStartedAt: observedAt } : {}),
           ...(signal.attemptId ? { signalAttemptId: signal.attemptId } : {}),
           lastSignalAt: observedAt,
         };

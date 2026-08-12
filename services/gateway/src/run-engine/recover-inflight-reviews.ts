@@ -79,7 +79,6 @@ async function markRecoveredReviewerContext(
       resolvePatch: (current) => {
         if (
           !current ||
-          current.updatedAt !== ctx.updatedAt ||
           current.attemptStartedAt !== ctx.attemptStartedAt ||
           current.signalAttemptId !== ctx.signalAttemptId
         ) {
