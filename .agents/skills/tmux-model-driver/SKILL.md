@@ -62,8 +62,8 @@ tmux send-keys -t <pane-id> Enter    # named Enter — not C-m for Claude/Codex
 
 Runner-specific submit keys (same contract as `runnerBufferedInstructionSubmitKey` in `services/gateway/src/runners/registry.ts`):
 
-- **Claude / Codex / Grok:** named `Enter`
-- **Cursor:** `C-m`
+- **Claude / Codex:** named `Enter`
+- **Cursor / Grok:** `C-m`
 - **Codex while busy:** `Tab` when pane shows `tab to queue message`
 
 The helper makes one literal send and one runner-specific submit attempt. Afterward, re-capture the pane and confirm the runner-specific progress marker. `unverified` means it saw neither a consumed prompt nor new runner progress; do not append or resend the payload.
@@ -216,7 +216,7 @@ Two validated paths:
 2. **Production-parity (interactive):**
    - launch `grok --model grok-4.5` from shell
    - run [scripts/resolve-launch-blockers.sh](scripts/resolve-launch-blockers.sh) `<pane> grok` — sends `Enter` on the `(current)` project row
-   - submit prompt with `send-keys -l` + Enter
+   - submit prompt with `send-keys -l` + `C-m`
    - wait for response marker in pane output
 
 Rules:
