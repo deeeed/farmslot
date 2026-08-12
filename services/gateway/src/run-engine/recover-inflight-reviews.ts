@@ -26,7 +26,7 @@ import type {
   WorkerSignal,
 } from '@farmslot/protocol';
 
-import { markAgentContextStatus } from '../agents/contexts.js';
+import { upsertAgentContext } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
@@ -38,7 +38,6 @@ import {
   resumeReviewAgentPromptDelivery,
   reviewerFeedbackRelPath,
 } from '../self-review/review-agent.js';
-import { killSelfReviewWindow } from '../self-review/snapshots.js';
 import { getSelfReviewConfig } from '../self-review/templates.js';
 import {
   isSuccessfulTerminalReviewSignal,
@@ -65,6 +64,34 @@ interface PublicationReviewRecoveryOptions {
   shouldAbort?: () => boolean;
 }
 
+async function markRecoveredReviewerContext(
+  runId: string,
+  ctx: AgentContext,
+  status: 'complete' | 'failed' | 'blocked',
+  patch: Partial<AgentContext>,
+): Promise<boolean> {
+  const completedAt = new Date().toISOString();
+  const updated = await upsertAgentContext(
+    runId,
+    'self-review',
+    { id: ctx.id },
+    {
+      resolvePatch: (current) => {
+        if (
+          !current ||
+          current.updatedAt !== ctx.updatedAt ||
+          current.attemptStartedAt !== ctx.attemptStartedAt ||
+          current.signalAttemptId !== ctx.signalAttemptId
+        ) {
+          return null;
+        }
+        return { id: ctx.id, status, completedAt, ...patch };
+      },
+    },
+  );
+  return updated !== null;
+}
+
 function signalMatchesReviewerAttempt(signal: WorkerSignal, ctx: AgentContext): boolean {
   if (ctx.signalAttemptId) return signal.attemptId === ctx.signalAttemptId;
   return signalFreshSince(signal, ctx.attemptStartedAt ?? ctx.startedAt);
@@ -74,7 +101,7 @@ function completedReviewerContextIsFresh(
   ctx: AgentContext,
   signal: WorkerSignal | undefined,
 ): boolean {
-  if (ctx.signalAttemptId && signal?.attemptId !== ctx.signalAttemptId) return false;
+  if (ctx.signalAttemptId && signal && signal.attemptId !== ctx.signalAttemptId) return false;
   const freshnessAnchor = ctx.attemptStartedAt ?? ctx.startedAt;
   return (
     ctx.status === 'complete' &&
@@ -436,23 +463,9 @@ export async function recoverInflightPublicationReviews(
     reviewerContextIsSettled(ctx, reviews),
   );
   if (settledContexts.length > 0) {
-    const vars = await loadSlotVars(slotId);
     for (const ctx of settledContexts) {
-      if (ctx.target?.session && ctx.target.window) {
-        try {
-          await killSelfReviewWindow(
-            vars,
-            ctx.target.session,
-            'superseded reviewer cleanup',
-            ctx.target.window,
-          );
-        } catch (error) {
-          console.warn(
-            `[run-engine] run ${runId.slice(0, 8)} — failed to clean superseded reviewer ${ctx.id}: ${(error as Error).message}`,
-          );
-        }
-      }
-      await markAgentContextStatus(runId, 'self-review', 'complete', { id: ctx.id });
+      if (options.shouldAbort?.()) break;
+      await markRecoveredReviewerContext(runId, ctx, 'complete', {});
     }
   }
   if (settledContexts.length > 0) {
@@ -537,12 +550,12 @@ async function ingestRecoveredReviewer(
     const promptRecovery = await resumeReviewAgentPromptDelivery(vars, runId, ctx);
     if (options.shouldAbort?.()) return null;
     if (promptRecovery === 'inactive') {
-      await markAgentContextStatus(runId, 'self-review', 'failed', { id: ctx.id });
+      await markRecoveredReviewerContext(runId, ctx, 'failed', {});
     } else if (promptRecovery === 'unsupported') {
       console.warn(
         `[run-engine] run ${runId.slice(0, 8)} — reviewer ${ctx.id} cannot resume prompt delivery; marking it failed`,
       );
-      await markAgentContextStatus(runId, 'self-review', 'failed', { id: ctx.id });
+      await markRecoveredReviewerContext(runId, ctx, 'failed', {});
     }
     return null;
   }
@@ -563,7 +576,9 @@ async function ingestRecoveredReviewer(
     feedback.terminalInvalidReason
   ) {
     if (ctx.status === 'blocked') return null;
-    await markAgentContextStatus(runId, 'self-review', 'blocked', { id: ctx.id });
+    if (options.shouldAbort?.()) return null;
+    const contextSettled = await markRecoveredReviewerContext(runId, ctx, 'blocked', {});
+    if (!contextSettled) return null;
     throw new TerminalReviewArtifactError(
       `Reviewer ${ctx.id} completed with an invalid result artifact: ${feedback.terminalInvalidReason}`,
     );
@@ -624,6 +639,12 @@ async function ingestRecoveredReviewer(
   const nextReviews = [...finalReviews];
   if (existingIndex >= 0) nextReviews[existingIndex] = persisted;
   else nextReviews.push(persisted);
+  if (options.shouldAbort?.()) return null;
+  const contextSettled = await markRecoveredReviewerContext(runId, ctx, 'complete', {
+    artifactScope,
+    lastSignalAt: new Date().toISOString(),
+  });
+  if (!contextSettled) return null;
   updateRun(runId, {
     engineState: {
       ...finalRun.engineState,
@@ -632,11 +653,6 @@ async function ingestRecoveredReviewer(
         independentReviews: nextReviews,
       },
     },
-  });
-  await markAgentContextStatus(runId, 'self-review', 'complete', {
-    id: ctx.id,
-    artifactScope,
-    lastSignalAt: new Date().toISOString(),
   });
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — recovered in-flight publication review ${persisted.id} (verdict ${persisted.verdict}) from reviewer context ${ctx.id}`,
@@ -700,6 +716,14 @@ async function persistRecoveredFailedReviewer(
   const nextReviews = [...priorReviews];
   if (existingIndex >= 0) nextReviews[existingIndex] = persisted;
   else nextReviews.push(persisted);
+  if (options.shouldAbort?.()) return null;
+  const contextSettled = await markRecoveredReviewerContext(
+    runId,
+    ctx,
+    signal.status === 'blocked' ? 'blocked' : 'failed',
+    { artifactScope: reviewId, lastSignalAt: signal.timestamp },
+  );
+  if (!contextSettled) return null;
   updateRun(runId, {
     engineState: {
       ...latest.engineState,
@@ -709,12 +733,6 @@ async function persistRecoveredFailedReviewer(
       },
     },
   });
-  await markAgentContextStatus(
-    runId,
-    'self-review',
-    signal.status === 'blocked' ? 'blocked' : 'failed',
-    { id: ctx.id, artifactScope: reviewId, lastSignalAt: signal.timestamp },
-  );
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — recovered terminal ${signal.status} publication review ${persisted.id} from reviewer context ${ctx.id}`,
   );

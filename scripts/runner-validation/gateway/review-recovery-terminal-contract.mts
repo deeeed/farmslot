@@ -51,12 +51,11 @@ interface ReplayModule {
 interface ReviewAgentModule {
   waitForReviewCompletion(
     vars: unknown,
-    session: string,
+    reviewTarget: string,
     taskDir: string,
     timeoutMs: number,
     runId: string,
     runner: string,
-    reviewWindow: string,
     reviewContextId: string,
     signalBasename: string,
     feedbackRelPath: string,
@@ -65,12 +64,11 @@ interface ReviewAgentModule {
   ): Promise<boolean>;
   waitForReviewCompletionOrThrow?(
     vars: unknown,
-    session: string,
+    reviewTarget: string,
     taskDir: string,
     timeoutMs: number,
     runId: string,
     runner: string,
-    reviewWindow: string,
     reviewContextId: string,
     signalBasename: string,
     feedbackRelPath: string,
@@ -819,16 +817,19 @@ async function runWaitBehaviorContract(
   reviewAgent: ReviewAgentModule,
   sessionProcess: SessionProcessModule,
 ): Promise<WaitBehaviorSnapshot> {
-  const waitForCase = async (id: string, timeoutMs = 1): Promise<boolean | Error> => {
+  const waitForCase = async (
+    id: string,
+    reviewTarget: string,
+    timeoutMs = 1,
+  ): Promise<boolean | Error> => {
     try {
       return await reviewAgent.waitForReviewCompletion(
         vars,
-        waitSession,
+        reviewTarget,
         'tasks/wait',
         timeoutMs,
         waitRunId,
         'scripted',
-        id,
         id,
         `SELF-REVIEW.${id}-SIGNAL.json`,
         `artifacts/review-feedback.${id}.md`,
@@ -844,8 +845,8 @@ async function runWaitBehaviorContract(
     lifetimeSeconds?: number,
     timeoutMs?: number,
   ): Promise<boolean | Error> => {
-    createWaitWindow(id, lifetimeSeconds);
-    return waitForCase(id, timeoutMs);
+    const window = createWaitWindow(id, lifetimeSeconds);
+    return waitForCase(id, window.windowId, timeoutMs);
   };
   const isTerminalInvalid = (result: boolean | Error): boolean =>
     result instanceof Error && result.name === 'TerminalReviewArtifactError';
@@ -882,8 +883,12 @@ async function runWaitBehaviorContract(
     path.join(waitTaskDir, 'artifacts', 'review-result.wait-no-signal-invalid.json'),
     '{"schemaVersion":1,"verdict":"pass"}\n',
   );
-  createActiveShellWindow('wait-no-signal-invalid', 0.2);
-  const noSignalInvalid = await waitForCase('wait-no-signal-invalid', 1_000);
+  const noSignalInvalidWindow = createActiveShellWindow('wait-no-signal-invalid', 0.2);
+  const noSignalInvalid = await waitForCase(
+    'wait-no-signal-invalid',
+    noSignalInvalidWindow.windowId,
+    1_000,
+  );
 
   writeText(
     path.join(waitTaskDir, 'artifacts', 'review-feedback.wait-active-invalid.md'),
@@ -894,7 +899,7 @@ async function runWaitBehaviorContract(
     '{"schemaVersion":1,"verdict":"pass"}\n',
   );
   const activeWindow = createActiveShellWindow('wait-active-invalid', 30);
-  const activeInvalid = await waitForCase('wait-active-invalid');
+  const activeInvalid = await waitForCase('wait-active-invalid', activeWindow.windowId);
   const activeInvalidReviewerAlive = await sessionProcess.isRunnerAliveUnderPane(
     vars,
     activeWindow.panePid,
@@ -908,12 +913,11 @@ async function runWaitBehaviorContract(
     ? reviewAgent
         .waitForReviewCompletionOrThrow(
           vars,
-          waitSession,
+          overdueWindow.windowId,
           'tasks/wait',
           1_000,
           waitRunId,
           'scripted',
-          'wait-overdue',
           'wait-overdue',
           'SELF-REVIEW.wait-overdue-SIGNAL.json',
           'artifacts/review-feedback.wait-overdue.md',
@@ -924,7 +928,9 @@ async function runWaitBehaviorContract(
           timedOut:
             error instanceof Error && error.message.includes('did not complete within 1000ms'),
         }))
-    : waitForCase('wait-overdue', 1_000).then((result) => ({ timedOut: result === false }));
+    : waitForCase('wait-overdue', overdueWindow.windowId, 1_000).then((result) => ({
+        timedOut: result === false,
+      }));
   const overdue = await Promise.race([
     overdueWait.then((result) => ({ settled: true as const, ...result })),
     new Promise<{ settled: false }>((resolve) => {

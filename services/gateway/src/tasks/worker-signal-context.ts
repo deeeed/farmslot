@@ -4,8 +4,21 @@ import { TERMINAL_AGENT_STATUSES, upsertAgentContext } from '../agents/contexts.
 import { getRun } from '../runs/store.js';
 
 function signalIsNewerThanContext(signal: WorkerSignal, context: AgentContext): boolean {
+  // An opaque identity is authoritative on first adoption. This is the
+  // migration path for persisted contexts created before attempt IDs existed,
+  // and avoids comparing worker and gateway clocks.
+  if (signal.attemptId && !context.signalAttemptId) return true;
   if (signal.attemptId && context.signalAttemptId) {
-    return signal.attemptId !== context.signalAttemptId;
+    if (signal.attemptId === context.signalAttemptId) return false;
+    // Once an attempt id is established, attemptStartedAt and signal.timestamp
+    // both originate on the worker machine. Preserve their ordering without
+    // comparing either clock to the gateway host.
+    const currentAttemptAt = Date.parse(context.attemptStartedAt ?? '');
+    const signalAt = Date.parse(signal.timestamp);
+    return (
+      !Number.isFinite(currentAttemptAt) ||
+      (Number.isFinite(signalAt) && signalAt > currentAttemptAt)
+    );
   }
   if (context.signalAttemptId) return false;
   const signalAt = Date.parse(signal.timestamp);
@@ -52,7 +65,7 @@ export async function applyRunningWorkerSignalToContext(
         if (!current) return null;
         rearmingTerminalContext = TERMINAL_AGENT_STATUSES.has(current.status);
         if (rearmingTerminalContext && !signalIsNewerThanContext(signal, current)) return null;
-        if (rearmingTerminalContext) options?.beforeRearm?.();
+        if (rearmingTerminalContext && current.role === 'self-review') options?.beforeRearm?.();
         return {
           id: current.id,
           status: 'working',
