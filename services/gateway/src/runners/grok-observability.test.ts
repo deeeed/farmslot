@@ -105,6 +105,11 @@ describe('Grok structured prompt observability', () => {
       ),
       null,
     );
+    assert.deepEqual(await observability.getSessionBinding?.(makeVars(), 'core-3:bugfix'), {
+      sessionId: 'session-1',
+      sessionPath: '/sessions/session-1',
+      observedAt: 1300,
+    });
   });
 
   it('does not claim the runner is idle before its first turn event', async () => {

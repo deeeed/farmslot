@@ -291,6 +291,17 @@ export function createGrokLogObservability(
     async resolveSessionId(_vars, sessionPath) {
       return path.basename(sessionPath) || null;
     },
+    async getSessionBinding(vars, target) {
+      const signal = await probe(vars, target, null, null);
+      if (signal.status !== 'matched' || !signal.sessionId || !signal.sessionPath) {
+        return null;
+      }
+      return {
+        sessionId: signal.sessionId,
+        sessionPath: signal.sessionPath,
+        observedAt: signal.activityAt,
+      };
+    },
     async getActivity(vars, target) {
       const signal = await probe(vars, target, null, null);
       if (signal.status !== 'matched') return null;

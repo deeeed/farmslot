@@ -28,7 +28,7 @@ import {
   statSessionPathMtimeMs,
 } from './session-path-resolution.js';
 
-export type RunnerSessionBindingSource = 'hook' | 'filesystem';
+export type RunnerSessionBindingSource = 'hook' | 'native' | 'filesystem';
 
 export interface RunnerSessionBinding {
   runnerSessionPath: string;
@@ -244,6 +244,23 @@ async function tryHookSessionBinding(
 ): Promise<RunnerSessionBinding | null> {
   if (getRunnerDefinition(runner).observabilityScope !== 'event-driven') return null;
   if (options.paneId) {
+    const nativeBinding = await getRunnerObservability(runner)?.getSessionBinding?.(
+      vars,
+      options.paneId,
+    );
+    const nativeIsCurrentDispatch =
+      options.sinceMs === undefined ||
+      (nativeBinding?.observedAt ?? 0) >= options.sinceMs - RUNNER_SESSION_DISPATCH_SLACK_MS;
+    if (nativeBinding && nativeIsCurrentDispatch) {
+      const mtimeMs = await statSessionPathMtimeMs(vars, nativeBinding.sessionPath);
+      if (mtimeMs !== null) {
+        return {
+          runnerSessionPath: nativeBinding.sessionPath,
+          runnerSessionId: nativeBinding.sessionId,
+          source: 'native',
+        };
+      }
+    }
     const paneState = await readRunnerPaneObservabilityState(vars, options.paneId);
     const observedAt = paneState ? observedAtFromRecord(paneState) : null;
     const transcriptPath = paneState?.transcript_path?.trim() ?? '';

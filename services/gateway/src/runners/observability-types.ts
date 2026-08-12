@@ -87,6 +87,15 @@ export interface RunnerObservability {
   capturePromptAcceptanceBaseline?(vars: SlotVars, target: string): Promise<number>;
   /** Resolve the runner-native session id stored inside one persisted session. */
   resolveSessionId?(vars: SlotVars, sessionPath: string): Promise<string | null>;
+  /** Resolve the exact native session currently owned by one tmux target. */
+  getSessionBinding?(
+    vars: SlotVars,
+    target: string,
+  ): Promise<{
+    sessionId: string;
+    sessionPath: string;
+    observedAt: number;
+  } | null>;
   /**
    * Upgrade one persisted binding to the runner's current native identity.
    * Providers must reject ids that are neither current nor a format they
