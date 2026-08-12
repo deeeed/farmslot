@@ -36,6 +36,35 @@ export interface RunnerSessionBinding {
   source: RunnerSessionBindingSource;
 }
 
+export async function readPaneProcessStartedAtMs(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  paneId: string,
+): Promise<number | null> {
+  const script = `
+python3 - <<'PY'
+import datetime
+import subprocess
+
+pane = ${JSON.stringify(paneId)}
+try:
+    pid = subprocess.check_output(
+        ['tmux', 'display-message', '-p', '-t', pane, '#{pane_pid}'],
+        text=True,
+    ).strip()
+    started = subprocess.check_output(
+        ['ps', '-p', pid, '-o', 'lstart='],
+        text=True,
+    ).strip()
+    parsed = datetime.datetime.strptime(started, '%a %b %d %H:%M:%S %Y')
+    print(int(parsed.timestamp() * 1000))
+except Exception:
+    pass
+PY`;
+  const result = await execOnSlot(vars, script);
+  const parsed = Number(result.stdout.trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 export interface PersistedRunnerSessionCandidate {
   label: string;
   runnerSessionId?: string | null;
@@ -244,13 +273,15 @@ async function tryHookSessionBinding(
 ): Promise<RunnerSessionBinding | null> {
   if (getRunnerDefinition(runner).observabilityScope !== 'event-driven') return null;
   if (options.paneId) {
+    const paneStartedAt = await readPaneProcessStartedAtMs(vars, options.paneId);
+    const bindingCutoff = Math.max(options.sinceMs ?? 0, paneStartedAt ?? 0);
     const nativeBinding = await getRunnerObservability(runner)?.getSessionBinding?.(
       vars,
       options.paneId,
     );
     const nativeIsCurrentDispatch =
-      options.sinceMs === undefined ||
-      (nativeBinding?.observedAt ?? 0) >= options.sinceMs - RUNNER_SESSION_DISPATCH_SLACK_MS;
+      bindingCutoff === 0 ||
+      (nativeBinding?.observedAt ?? 0) >= bindingCutoff - RUNNER_SESSION_DISPATCH_SLACK_MS;
     if (nativeBinding && nativeIsCurrentDispatch) {
       const mtimeMs = await statSessionPathMtimeMs(vars, nativeBinding.sessionPath);
       if (mtimeMs !== null) {
@@ -266,8 +297,8 @@ async function tryHookSessionBinding(
     const transcriptPath = paneState?.transcript_path?.trim() ?? '';
     const sessionId = paneState?.session_id?.trim() ?? '';
     const isCurrentDispatch =
-      options.sinceMs === undefined ||
-      (observedAt !== null && observedAt >= options.sinceMs - RUNNER_SESSION_DISPATCH_SLACK_MS);
+      bindingCutoff === 0 ||
+      (observedAt !== null && observedAt >= bindingCutoff - RUNNER_SESSION_DISPATCH_SLACK_MS);
     const isCurrentSlot =
       !options.slotId || !paneState?.slotId || paneState.slotId === options.slotId;
     if (transcriptPath && sessionId && isCurrentDispatch && isCurrentSlot) {
@@ -280,10 +311,10 @@ async function tryHookSessionBinding(
         };
       }
     }
+    // Once a caller names a pane, that pane is the authority. Falling through
+    // to shared hook/filesystem streams could bind a concurrent runner process.
+    return null;
   }
-  // Once a caller names a pane, that pane is the authority. Falling through
-  // to the shared hook stream could bind a concurrent same-runner process.
-  if (options.paneId) return null;
   const { hooksRaw } = await readRunnerObservabilityFiles(vars);
   const hookBinding = findSessionStartFromHooks(parseHookJsonl(hooksRaw), options);
   if (!hookBinding) return null;

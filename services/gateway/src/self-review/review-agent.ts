@@ -930,13 +930,6 @@ export async function runReviewAgent(
       runnerSessionPath: string | null;
     }): Promise<boolean> => {
       if (!binding.runnerSessionId || !binding.runnerSessionPath) return false;
-      if (warmSession) {
-        warmSession = {
-          ...warmSession,
-          runnerSessionId: binding.runnerSessionId,
-          runnerSessionPath: binding.runnerSessionPath,
-        };
-      }
       sessionMeta = {
         runnerSessionId: binding.runnerSessionId,
         runnerSessionPath: binding.runnerSessionPath,
@@ -1024,9 +1017,14 @@ export async function runReviewAgent(
         runnerCanResume &&
         !(await bindLiveReviewerSession(resetStartedAt))
       ) {
-        throw new Error(
-          `Accepted ${runner} review task did not expose a pane-owned session binding in ${reviewTarget}`,
+        console.warn(
+          `[self-review] accepted ${runner} review task did not expose a pane-owned session binding in ${reviewTarget}; completing this pass without retaining it`,
         );
+        sessionMeta = {
+          runnerSessionId: null,
+          runnerSessionPath: null,
+          error: `No authoritative session binding for ${reviewTarget}`,
+        };
       }
     };
 
@@ -1055,8 +1053,8 @@ export async function runReviewAgent(
         },
       );
       if (!sessionMeta.runnerSessionId && retainReviewerSession && runnerCanResume) {
-        throw new Error(
-          `${claimed ? 'Reloaded' : 'Launched'} ${runner} reviewer did not establish an authoritative session binding in ${reviewTarget}`,
+        console.warn(
+          `[self-review] ${claimed ? 'reloaded' : 'launched'} ${runner} reviewer did not establish an authoritative session binding in ${reviewTarget}; completing this pass without retaining it`,
         );
       }
       reviewContext =

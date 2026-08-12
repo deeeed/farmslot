@@ -624,11 +624,12 @@ export async function bestEffortCaptureRunnerSessionMetadata(
     paneId?: string | null;
   } = {},
 ): Promise<ReviewSessionMeta> {
-  if (preScanError && !options.paneId) {
-    return { runnerSessionPath: null, runnerSessionId: null, error: preScanError };
-  }
   try {
-    return await captureRunnerSessionMetadata(vars, runner, beforePaths, options);
+    const captured = await captureRunnerSessionMetadata(vars, runner, beforePaths, options);
+    if (!captured.runnerSessionId && !captured.runnerSessionPath && preScanError) {
+      return { ...captured, error: preScanError };
+    }
+    return captured;
   } catch (err) {
     const message = (err as Error).message;
     console.warn(`[self-review] optional ${runner} session metadata capture failed: ${message}`);
