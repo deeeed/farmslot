@@ -1009,6 +1009,11 @@ function rearmPublicationReviewRecovery(
   return state.cleanup;
 }
 
+export function rearmPublicationReviewRecoveryForRun(runId: string): boolean {
+  const run = getRun(runId);
+  return !!run && rearmPublicationReviewRecovery(run) !== undefined;
+}
+
 function buildRecoveryDeps(): RunRecoveryCollaborators {
   return {
     listRuns,

@@ -18,12 +18,12 @@ export async function applyRunningWorkerSignalToContext(
   signal: WorkerSignal,
   role?: AgentRole,
   contextId?: string,
-): Promise<void> {
-  if (signal.status !== 'running') return;
-  if (!runId) return;
+): Promise<boolean> {
+  if (signal.status !== 'running') return false;
+  if (!runId) return false;
 
   const run = getRun(runId);
-  if (!run || run.slotId !== slotId) return;
+  if (!run || run.slotId !== slotId) return false;
 
   const contexts = run.agentContexts ?? [];
   const match = contexts.find((ctx) => {
@@ -33,10 +33,10 @@ export async function applyRunningWorkerSignalToContext(
     if (signal.role) return ctx.role === signal.role;
     return ctx.role === 'primary';
   });
-  if (!match) return;
+  if (!match) return false;
 
   const rearmingTerminalContext = ['complete', 'failed', 'blocked', 'idle'].includes(match.status);
-  if (rearmingTerminalContext && !signalIsNewerThanContext(signal, match)) return;
+  if (rearmingTerminalContext && !signalIsNewerThanContext(signal, match)) return false;
   const observedAt = signal.timestamp;
   await upsertAgentContext(runId, match.role, {
     id: match.id,
@@ -44,4 +44,5 @@ export async function applyRunningWorkerSignalToContext(
     ...(rearmingTerminalContext ? { attemptStartedAt: observedAt } : {}),
     lastSignalAt: observedAt,
   });
+  return rearmingTerminalContext;
 }

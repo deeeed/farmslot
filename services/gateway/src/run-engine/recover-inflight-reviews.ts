@@ -611,6 +611,7 @@ async function ingestRecoveredReviewer(
   });
   await markAgentContextStatus(runId, 'self-review', 'complete', {
     id: ctx.id,
+    artifactScope,
     lastSignalAt: new Date().toISOString(),
   });
   console.log(
@@ -685,7 +686,7 @@ async function persistRecoveredFailedReviewer(
     runId,
     'self-review',
     signal.status === 'blocked' ? 'blocked' : 'failed',
-    { id: ctx.id, lastSignalAt: signal.timestamp },
+    { id: ctx.id, artifactScope: reviewId, lastSignalAt: signal.timestamp },
   );
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — recovered terminal ${signal.status} publication review ${persisted.id} from reviewer context ${ctx.id}`,

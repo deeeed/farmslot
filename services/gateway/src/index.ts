@@ -75,6 +75,7 @@ import { startMonitor } from './observability/fleet-monitor.js';
 import { initRunCompletion } from './run-completion/orchestrator.js';
 import {
   initRunEngine,
+  rearmPublicationReviewRecoveryForRun,
   recoverActiveRuns,
   startOrphanReconciler,
 } from './run-engine/orchestrator.js';
@@ -539,13 +540,17 @@ async function main(): Promise<void> {
     }
     // Serve raw files: /api/file?slotId=X&path=Y
     if (req.url?.startsWith('/api/file?')) {
-      if (!authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res, resource: 'file' })) return;
+      if (!authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res, resource: 'file' }))
+        return;
       serveFile(req, res);
       return;
     }
     // Serve run artifacts: /api/run-artifact?runId=X&path=Y (relative to task artifacts dir)
     if (req.url?.startsWith('/api/run-artifact?')) {
-      if (!authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res, resource: 'run-artifact' })) return;
+      if (
+        !authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res, resource: 'run-artifact' })
+      )
+        return;
       serveRunArtifact(req, res);
       return;
     }
@@ -648,13 +653,15 @@ async function main(): Promise<void> {
     });
   });
   onWorkerSignal((slotId, runId, signal, role, contextId) => {
-    void applyRunningWorkerSignalToContext(slotId, runId, signal, role, contextId).catch(
-      (error) => {
+    void applyRunningWorkerSignalToContext(slotId, runId, signal, role, contextId)
+      .then((rearmedTerminalContext) => {
+        if (rearmedTerminalContext && runId) rearmPublicationReviewRecoveryForRun(runId);
+      })
+      .catch((error) => {
         console.warn(
           `[worker-signal] failed to apply running signal for ${slotId}: ${(error as Error).message}`,
         );
-      },
-    );
+      });
     broadcast({
       type: 'event',
       event: Events.WORKER_SIGNAL,
