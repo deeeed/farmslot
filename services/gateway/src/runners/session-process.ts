@@ -44,6 +44,7 @@ export async function readPaneProcessStartedAtMs(
 python3 - <<'PY'
 import datetime
 import subprocess
+import sys
 
 pane = ${JSON.stringify(paneId)}
 try:
@@ -51,16 +52,17 @@ try:
         ['tmux', 'display-message', '-p', '-t', pane, '#{pane_pid}'],
         text=True,
     ).strip()
-    started = subprocess.check_output(
-        ['ps', '-p', pid, '-o', 'lstart='],
+    elapsed = subprocess.check_output(
+        ['ps', '-p', pid, '-o', 'etimes='],
         text=True,
     ).strip()
-    parsed = datetime.datetime.strptime(started, '%a %b %d %H:%M:%S %Y')
-    print(int(parsed.timestamp() * 1000))
-except Exception:
-    pass
+    print(int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000) - int(elapsed) * 1000)
+except Exception as error:
+    print(f'pane process start probe failed: {error}', file=sys.stderr)
+    raise SystemExit(1)
 PY`;
   const result = await execOnSlot(vars, script);
+  if (result.exitCode !== 0) return null;
   const parsed = Number(result.stdout.trim());
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
@@ -269,11 +271,15 @@ async function tryHookSessionBinding(
     sinceMs?: number;
     paneId?: string | null;
     slotId?: string | null;
+    paneStartedAtMs?: number | null;
   },
 ): Promise<RunnerSessionBinding | null> {
   if (getRunnerDefinition(runner).observabilityScope !== 'event-driven') return null;
   if (options.paneId) {
-    const paneStartedAt = await readPaneProcessStartedAtMs(vars, options.paneId);
+    const paneStartedAt =
+      options.paneStartedAtMs === undefined
+        ? await readPaneProcessStartedAtMs(vars, options.paneId)
+        : options.paneStartedAtMs;
     // A named pane is the authority for this binding. If its live process
     // start cannot be established, fail closed instead of accepting a stale
     // native or hook snapshot from a prior process in the same tmux pane.
@@ -365,6 +371,7 @@ async function tryFilesystemSessionBinding(
   options: {
     sinceMs?: number;
     existingPath?: string | null;
+    paneStartedAtMs?: number | null;
   },
 ): Promise<RunnerSessionBinding | null> {
   const afterPaths = await listRunnerSessionFiles(vars, runner);
@@ -434,12 +441,19 @@ export async function captureRunnerSessionMetadata(
   if (!runnerPersistsSessionFiles(runner)) {
     return { runnerSessionPath: null, runnerSessionId: null };
   }
+  const paneStartedAtMs = options.paneId
+    ? await readPaneProcessStartedAtMs(vars, options.paneId)
+    : undefined;
+  if (options.paneId && paneStartedAtMs === null) {
+    return { runnerSessionPath: null, runnerSessionId: null };
+  }
   for (let i = 0; i < RUNNER_SESSION_CAPTURE_MAX_POLLS; i++) {
     await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_CAPTURE_POLL_MS));
     const binding = await resolveRunnerSessionBinding(vars, runner, beforePaths, {
       sinceMs: options.sinceMs,
       paneId: options.paneId,
       slotId: options.slotId ?? vars.slotId,
+      paneStartedAtMs,
     });
     if (binding) {
       return {

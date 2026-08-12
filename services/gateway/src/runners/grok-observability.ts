@@ -299,7 +299,9 @@ export function createGrokLogObservability(
       return {
         sessionId: signal.sessionId,
         sessionPath: signal.sessionPath,
-        observedAt: signal.activityAt,
+        // Binding observation is a fresh native probe of the exact pane-owned
+        // process, independent of when that idle session last completed work.
+        observedAt: await readClock(vars),
       };
     },
     async getActivity(vars, target) {
