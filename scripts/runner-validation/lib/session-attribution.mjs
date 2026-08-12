@@ -105,15 +105,6 @@ export function statMtimeMs(targetPath) {
   }
 }
 
-export function loadMtimes(paths) {
-  const map = new Map();
-  for (const candidate of paths) {
-    const mtimeMs = statMtimeMs(candidate);
-    if (mtimeMs !== null) map.set(candidate, mtimeMs);
-  }
-  return map;
-}
-
 export function runnerSessionIdForPath(runner, sessionPath) {
   if (runner === 'codex') {
     try {

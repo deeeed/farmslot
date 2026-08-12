@@ -26,7 +26,7 @@ submit_key_for_action() {
     echo "C-m"
     return
   fi
-  node --import tsx "$skill_dir/scripts/runner-submit-key.mjs" "$1"
+  (cd "$skill_dir/../../.." && node --import tsx "$skill_dir/scripts/runner-submit-key.mjs" "$1")
 }
 
 submit_key_for_pane() {
