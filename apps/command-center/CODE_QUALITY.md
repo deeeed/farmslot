@@ -237,8 +237,7 @@ Current high-churn line-count snapshot:
 | `services/gateway/src/methods/run.ts`                             |   978 |  1,000 | met     |
 | `services/gateway/src/run-completion/orchestrator.ts`             |   988 |  1,000 | met     |
 | `services/gateway/src/self-review/orchestrator.ts`                |   975 |  1,000 | met     |
-| `services/gateway/src/chat/chat-engine.ts`                        |   767 |  1,000 | met     |
-| `services/gateway/src/chat/chat-engine.test.ts`                   |   935 |  1,000 | met     |
+| `services/gateway/src/copilot-runtime/controller.ts`             |   634 |  1,000 | met     |
 | `services/gateway/src/chat/chat-tools.ts`                         |   730 |  1,000 | met     |
 | `services/gateway/src/chat/chat-tools.test.ts`                    |   524 |  1,000 | met     |
 | `services/gateway/src/chat/chat-actions.ts`                       |   862 |  1,000 | met     |

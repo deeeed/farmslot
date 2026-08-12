@@ -9,6 +9,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - fix(runners): default Cursor Agent runs to the installed `cursor-grok-4.6-high-fast` model.
 - fix(git): let review clients request an exact frozen base/head diff instead of implicitly comparing against live `HEAD`.
 - fix(review): identify worker signal attempts independently of machine clocks so retained reviewer recovery cannot consume an earlier attempt.
+- feat(copilot): add the client-neutral singleton runtime lifecycle, checkout/workload/safety metadata, structured delivery, and runtime-update event contracts.
 - fix(review): carry review transport failure reasons separately from review findings so clients do not present an unavailable reviewer as a clean zero-finding pass.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

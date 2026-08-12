@@ -7,6 +7,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - feat(slot-view): show planned/acquired runtime capabilities with cost, owner, health, provider provenance, release effects, and an operator release control.
 - fix(runners): default Cursor Agent selections to `cursor-grok-4.6-high-fast` and expose the current 4.6 choices.
 - fix(review): render review workspaces and the slot source tree from the frozen reviewed SHAs, so later base or PR movement cannot inflate or replace the operator's diff.
+- feat(copilot): evolve the existing drawer with shared runtime lifecycle, runner/model/tier, tmux/checkout metadata, pressure visibility, explicit stop/reconnect, and bound dangerous-start confirmation.
 - fix(runs): expose Cancel for recoverable blocked runs and Delete for terminal runs directly in run details, reusing the gateway lifecycle used by Manage Runs.
 - fix(slot-view): decouple terminal window navigation, primary-worker TASK progress, and reviewer history selection; remove the resize redraw nudge that left duplicate tmux status rows.
 - fix(slot-view): remove the redundant agent-context strip above the live terminal; tmux's native window controls remain the single navigation surface.

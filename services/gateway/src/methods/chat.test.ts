@@ -9,10 +9,6 @@ import path from 'node:path';
 import { type ChatMessage, Events } from '@farmslot/protocol';
 
 import {
-  __isSessionAbortControllerClearedForTests,
-  __setSessionAbortControllerForTests,
-} from '../chat/chat-engine.js';
-import {
   appendMessage,
   chatSessionFileName,
   getAllSessions,
@@ -706,32 +702,6 @@ await test('chatNew on a stale run:/slot:/family: id does not leak an empty ephe
   assert(
     beforeIds.size === afterIds.size && [...afterIds].every((id) => beforeIds.has(id)),
     `chatNew leaked sessions; new ids: ${[...afterIds].filter((id) => !beforeIds.has(id)).join(',')}`,
-  );
-});
-
-await test('chatSessionDelete aborts the in-flight LLM call before removing the session', async () => {
-  // Round-6 m3 regression: deleting a session must abort any in-flight LLM
-  // request routed to that id, otherwise the call resurrects the session via
-  // its first append after delete, wasting tokens and leaving a phantom
-  // session on disk.
-  process.env.NODE_ENV = 'test';
-  const target = chatSessionCreate({}).session;
-  appendMessage(target.id, testMessage(`abort-${Date.now()}`, 'pin me first'));
-
-  __setSessionAbortControllerForTests(target.id);
-  assert(
-    !__isSessionAbortControllerClearedForTests(target.id),
-    'precondition: abort controller should be installed',
-  );
-
-  await chatSessionDelete({ sessionId: target.id });
-  assert(
-    __isSessionAbortControllerClearedForTests(target.id),
-    'chatSessionDelete did not abort the in-flight LLM call',
-  );
-  assert(
-    getSession(target.id) === null,
-    'chatSessionDelete did not remove the session from memory',
   );
 });
 

@@ -1,6 +1,7 @@
 // methods/chat.ts — Co-pilot chat RPC handlers
 
 import {
+  DEFAULT_RUNNER,
   type ChatAbortParams,
   type ChatAbortResult,
   type ChatClearParams,
@@ -33,7 +34,6 @@ import {
   type ChatSessionsBulkDeleteParams,
   type ChatSessionsBulkDeleteResult,
   type ChatSessionsResult,
-  Events,
   GLOBAL_CHAT_SESSION_ID,
 } from '@farmslot/protocol';
 
@@ -42,23 +42,14 @@ import {
   confirmChatAction,
   listChatActions,
 } from '../chat/chat-actions.js';
-// abortChatSession is also imported above for chat.abort; chat.sessionDelete
-// reuses it so deleting a session cancels any in-flight LLM call routed to
-// that session (otherwise a phantom write to a resurrected session id and
-// wasted tokens until the call completes).
 import { buildFleetContext } from '../chat/chat-context.js';
-import {
-  abortChatSession,
-  clearSessionPiHistory,
-  processChatMessage,
-} from '../chat/chat-engine.js';
+import { getCopilotRuntime } from '../copilot-runtime/controller.js';
 import { saveMemory, saveSessionMemory } from '../chat/chat-memory.js';
 import {
   clearSession,
   createChatSession,
   deleteSession,
   deleteSessions,
-  generateMessageId,
   getSession,
   getSessionMessages,
   listSessionSummaries,
@@ -69,37 +60,12 @@ import {
 } from '../chat/chat-store.js';
 import { readObserverEvidence } from '../chat/copilot-observer.js';
 import { clearScreenEvidenceSnapshot, readLastScreenEvidence } from '../chat/screen-evidence.js';
-import { getLLMConfig } from '../llm/config.js';
-import { describeModel } from '../llm/index.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
 export async function chatSend(params: ChatSendParams, emit: Emit): Promise<ChatSendResult> {
-  const sessionId = normalizeSessionId(params.sessionId);
-  const requestId = generateMessageId();
-  let emittedChatResponse = false;
-  const streamingEmit: Emit = (event, payload) => {
-    if (event === Events.CHAT_RESPONSE) emittedChatResponse = true;
-    emit(event, payload);
-  };
-  void processChatMessage(
-    sessionId,
-    params.message,
-    params.clientContext,
-    params.intent,
-    streamingEmit,
-  ).catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[chat] async chat.send failed: ${message}`);
-    if (!emittedChatResponse) {
-      emit(Events.CHAT_RESPONSE, {
-        sessionId,
-        state: 'error',
-        errorMessage: message,
-      });
-    }
-  });
-  return { messageId: requestId };
+  void emit;
+  return getCopilotRuntime().send(params);
 }
 
 export function chatHistory(params: ChatHistoryParams): ChatHistoryResult {
@@ -114,7 +80,6 @@ export function chatClear(params: ChatClearParams): ChatClearResult {
     return {};
   }
   const sessionId = normalizeSessionId(params.sessionId);
-  clearSessionPiHistory(sessionId);
   clearScreenEvidenceSnapshot(sessionId);
   clearChatActionsForSession(sessionId);
   clearSession(sessionId);
@@ -134,7 +99,6 @@ export async function chatNew(params: ChatNewParams, emit: Emit): Promise<ChatNe
   if (session && session.messages.length > 0) {
     savedPath = await saveSessionMemory(sessionId, session.messages, emit);
   }
-  clearSessionPiHistory(sessionId);
   clearScreenEvidenceSnapshot(sessionId);
   clearChatActionsForSession(sessionId);
   if (session) {
@@ -167,8 +131,6 @@ export async function chatSessionDelete(
   // throws due to a future change in normalize behavior.
   if (id === GLOBAL_CHAT_SESSION_ID)
     throw new Error('Cannot delete the shared global chat session');
-  abortChatSession(id);
-  clearSessionPiHistory(id);
   clearScreenEvidenceSnapshot(id);
   clearChatActionsForSession(id);
   const deleted = await deleteSession(id);
@@ -186,8 +148,6 @@ export async function chatSessionsBulkDelete(
     throw new Error('Cannot delete the shared global chat session');
   }
   for (const id of ids) {
-    abortChatSession(id);
-    clearSessionPiHistory(id);
     clearScreenEvidenceSnapshot(id);
     clearChatActionsForSession(id);
   }
@@ -234,9 +194,8 @@ export function chatListActions(params: ChatListActionsParams): ChatListActionsR
   return { actions: listChatActions(params.sessionId) };
 }
 
-export function chatAbort(params: ChatAbortParams): ChatAbortResult {
-  abortChatSession(normalizeSessionId(params.sessionId));
-  return {};
+export function chatAbort(_params: ChatAbortParams): Promise<ChatAbortResult> {
+  return getCopilotRuntime().abort();
 }
 
 export async function chatContext(): Promise<ChatContextResult> {
@@ -274,8 +233,10 @@ export function chatSessionContext(
 ): ChatSessionContextResult {
   const sessionId = normalizeSessionId(params.sessionId);
   const session = getSession(sessionId);
-  const cfg = getLLMConfig();
-  const runtimeIdentity = describeModel(cfg.defaultProvider, cfg.copilotModel);
+  const runtime = getCopilotRuntime().currentSession();
+  const runtimeRunner = runtime?.runner ?? process.env.FARMSLOT_COPILOT_RUNNER ?? DEFAULT_RUNNER;
+  const runtimeModel = runtime?.model ?? process.env.FARMSLOT_COPILOT_MODEL ?? 'unknown';
+  const runtimeIdentity = `${runtimeRunner}:${runtimeModel}`;
   const messages = session?.messages ?? [];
   const assistantUsage = messages
     .filter((message) => message.role === 'assistant' && message.usage)
@@ -302,8 +263,8 @@ export function chatSessionContext(
     sessionId,
     generatedAt: new Date().toISOString(),
     model: {
-      provider: cfg.defaultProvider,
-      configuredModel: cfg.copilotModel,
+      provider: runtimeRunner,
+      configuredModel: runtimeModel,
       runtimeIdentity,
     },
     messages: {
@@ -333,7 +294,7 @@ export function chatSessionContext(
       automatic: false,
       jumpsUntilCompact: null,
       status: 'not-implemented',
-      note: 'Co-Pilot chat sessions persist until /new. The gateway does not currently have automatic compaction or a provider-reported jumps-until-compact counter.',
+      note: 'The shared runner owns context compaction; Gateway transcript persistence remains independent of runner context.',
     },
   };
 }

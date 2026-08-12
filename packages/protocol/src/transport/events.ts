@@ -118,6 +118,7 @@ export const Events = {
   CHAT_RESPONSE: 'chat.response',
   CHAT_MEMORY_SAVED: 'chat.memory.saved',
   COPILOT_OBSERVER_NOTIFICATION: 'copilot.observer.notification',
+  COPILOT_RUNTIME_UPDATED: 'copilot.runtime.updated',
 
   // Node Health
   NODE_HEALTH_UPDATED: 'node.health.updated',

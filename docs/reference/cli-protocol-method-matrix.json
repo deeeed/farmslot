@@ -205,6 +205,18 @@
       "surface": "na",
       "note": "Command Center copilot surface (web UI)."
     },
+    "copilot.start": {
+      "surface": "rpc-only",
+      "note": "Shared Co-Pilot runtime lifecycle is client-neutral; use `farmslot rpc copilot.start [json]` until a typed CLI lifecycle command is promoted."
+    },
+    "copilot.status": {
+      "surface": "rpc-only",
+      "note": "Shared Co-Pilot runtime lifecycle is client-neutral; use `farmslot rpc copilot.status` until a typed CLI lifecycle command is promoted."
+    },
+    "copilot.stop": {
+      "surface": "rpc-only",
+      "note": "Shared Co-Pilot runtime lifecycle is client-neutral; use `farmslot rpc copilot.stop [json]` until a typed CLI lifecycle command is promoted."
+    },
     "credential.issue": {
       "surface": "typed-command",
       "command": "farmslot credential issue"

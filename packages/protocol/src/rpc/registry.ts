@@ -332,6 +332,9 @@ export const Methods = {
   CHAT_CONTEXT: 'chat.context',
   CHAT_SESSION_CONTEXT: 'chat.sessionContext',
   COPILOT_FORMAT_INSTRUCTION: 'copilot.formatInstruction',
+  COPILOT_STATUS: 'copilot.status',
+  COPILOT_START: 'copilot.start',
+  COPILOT_STOP: 'copilot.stop',
 
   // Node Health
   NODE_HEALTH: 'node.health',

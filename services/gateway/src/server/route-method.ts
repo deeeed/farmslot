@@ -44,6 +44,8 @@ import {
   type ConfigTemplatePreviewParams,
   type ConfigTemplatesParams,
   type CopilotFormatInstructionParams,
+  type CopilotStartParams,
+  type CopilotStopParams,
   type CredentialIssueParams,
   type CredentialListParams,
   type CredentialRevokeParams,
@@ -267,6 +269,7 @@ import {
   configTemplates,
 } from '../methods/config.js';
 import { copilotFormatInstruction } from '../methods/copilot.js';
+import { copilotStart, copilotStatus, copilotStop } from '../methods/copilot-runtime.js';
 import { decisionList, decisionResolve } from '../methods/decisions.js';
 import { diagnosticsRun } from '../methods/diagnostics.js';
 import {
@@ -1269,6 +1272,12 @@ async function routeAuthorizedMethod(
       return chatContext();
     case Methods.CHAT_SESSION_CONTEXT:
       return chatSessionContext(p as ChatSessionContextParams);
+    case Methods.COPILOT_STATUS:
+      return copilotStatus();
+    case Methods.COPILOT_START:
+      return copilotStart(p as CopilotStartParams);
+    case Methods.COPILOT_STOP:
+      return copilotStop(p as CopilotStopParams);
     // Improvement
     case Methods.IMPROVEMENT_CHAT:
       return improvementChat(p as ImprovementChatParams, emit);

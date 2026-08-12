@@ -349,9 +349,8 @@ export function throwOnTransportStop(
         errorMessage,
       ),
     );
-    // Preserve abort identity: AbortSignal-aware callers (chat-engine's stop
-    // button) distinguish a deliberate cancellation from a provider failure
-    // by err.name === 'AbortError'.
+    // Preserve abort identity so AbortSignal-aware callers can distinguish a
+    // deliberate cancellation from a provider failure by err.name === 'AbortError'.
     if (stopReason === 'aborted') err.name = 'AbortError';
     throw err;
   }

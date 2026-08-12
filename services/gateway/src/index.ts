@@ -44,6 +44,7 @@ import {
 import { checkDailyAutosave, ensureCopilotDirs } from './chat/chat-memory.js';
 import { getAllSessions, initChatStore } from './chat/chat-store.js';
 import { initCopilotObserver, routeEventToObserver } from './chat/copilot-observer.js';
+import { initCopilotRuntime } from './copilot-runtime/controller.js';
 import { initCIMonitor } from './ci-monitor/service.js';
 import { loadGatewayTlsMaterial } from './core/gateway-tls.js';
 import { getGatewayListenSnapshot, setGatewayListenAddress } from './core/listen-address.js';
@@ -337,6 +338,7 @@ async function main(): Promise<void> {
   // Co-pilot: store + workspace bootstrap + observer
   initChatStore();
   await ensureCopilotDirs();
+  await initCopilotRuntime(observedBroadcast);
   initCopilotObserver(observedBroadcast);
   const { getLLMConfig } = await import('./llm/config.js');
   const llmCfg = getLLMConfig();

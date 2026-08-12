@@ -410,6 +410,11 @@ async function persistSession(sessionId: string): Promise<void> {
   await writeSessionFile(filePath, session);
 }
 
+/** Flush a shared transcript immediately when durable runner ordering matters. */
+export async function persistChatSession(sessionId: string): Promise<void> {
+  await persistSession(normalizeSessionId(sessionId));
+}
+
 export function generateMessageId(): string {
   return randomUUID();
 }

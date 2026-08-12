@@ -16,6 +16,7 @@ The package is intentionally organized by ownership domains. Keep `src/` itself 
 | `automation/`           | Background automation such as branch watching and auto-recycle.      |
 | `backlog/`              | Manual backlog store and dispatch queue.                             |
 | `chat/`                 | Command Center copilot sessions, tools, screen evidence, memory.     |
+| `copilot-runtime/`      | Singleton tmux Co-Pilot lifecycle, transcript, safety, and audit.    |
 | `ci-monitor/`           | CI watch state, inline-fix flow, CI monitor service.                 |
 | `core/`                 | Low-level config, hooks, shell/tmux helpers, artifact primitives.    |
 | `evals/`                | Eval package and suite-cap persistence.                              |
@@ -49,6 +50,11 @@ The package is intentionally organized by ownership domains. Keep `src/` itself 
 6. **Run Gateway validation before committing Gateway changes.**
 
 ## Local quality
+
+The Co-Pilot runtime defaults to this Farmslot checkout, the default registered runner, and that
+runner's default model. Override those startup choices with `FARMSLOT_OPERATOR_CHECKOUT`,
+`FARMSLOT_COPILOT_RUNNER`, and `FARMSLOT_COPILOT_MODEL`; dangerous execution still requires the
+per-start typed confirmation returned by `copilot.status`.
 
 ```bash
 yarn workspace @farmslot/gateway quality
