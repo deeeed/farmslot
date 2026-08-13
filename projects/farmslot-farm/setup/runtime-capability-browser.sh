@@ -57,10 +57,14 @@ owner_matches_provider() {
 }
 
 owner_holds_endpoint() {
-  command -v lsof >/dev/null 2>&1 || return 1
   local listeners
-  listeners="$(lsof -nP -iTCP:"${CDP_PORT}" -sTCP:LISTEN -t 2>/dev/null | sort -u)" || return 1
+  listeners="$(endpoint_listener_pids)" || return 1
   [[ "$listeners" == "$1" ]]
+}
+
+endpoint_listener_pids() {
+  command -v lsof >/dev/null 2>&1 || return 1
+  lsof -nP -iTCP:"${CDP_PORT}" -sTCP:LISTEN -t 2>/dev/null | sort -u || true
 }
 
 case "$MODE" in
@@ -87,21 +91,31 @@ case "$MODE" in
     curl -fsS "$CDP_ENDPOINT" >/dev/null
     ;;
   stop)
-    if ! curl -fsS "$CDP_ENDPOINT" >/dev/null 2>&1; then
-      exit 0
-    fi
-    owner="$(profile_owner_pid)" || {
-      echo "refusing to stop unowned CDP endpoint :${CDP_PORT}" >&2
+    endpoint_healthy=0
+    curl -fsS "$CDP_ENDPOINT" >/dev/null 2>&1 && endpoint_healthy=1
+    listeners="$(endpoint_listener_pids)" || {
+      echo "refusing to stop CDP :${CDP_PORT}; listener ownership is unavailable" >&2
       exit 1
     }
+    if ! owner="$(profile_owner_pid)"; then
+      if [[ "$endpoint_healthy" -eq 1 || -n "$listeners" ]]; then
+        echo "refusing to stop unowned CDP endpoint :${CDP_PORT}" >&2
+        exit 1
+      fi
+      exit 0
+    fi
     owner_matches_provider "$owner" || {
       echo "refusing to stop mismatched Chrome pid ${owner}" >&2
       exit 1
     }
-    owner_holds_endpoint "$owner" || {
+    if [[ -n "$listeners" && "$listeners" != "$owner" ]]; then
       echo "refusing to stop pid ${owner}; it does not own CDP endpoint :${CDP_PORT}" >&2
       exit 1
-    }
+    fi
+    if [[ "$endpoint_healthy" -eq 1 && -z "$listeners" ]]; then
+      echo "refusing to stop healthy CDP :${CDP_PORT}; listener owner was not resolved" >&2
+      exit 1
+    fi
     kill -TERM "$owner"
     for _ in $(seq 1 50); do
       kill -0 "$owner" 2>/dev/null || exit 0

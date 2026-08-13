@@ -105,6 +105,7 @@ function parameterValidator(schema: Record<string, unknown>): ValidateFunction {
 export class RuntimeCapabilityRegistry {
   private readonly now: () => Date;
   private readonly leaseId: () => string;
+  private pendingEvents: RuntimeCapabilityLifecycleEvent[] = [];
   private loaded = false;
   private loadPromise: Promise<void> | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
@@ -152,11 +153,14 @@ export class RuntimeCapabilityRegistry {
     if (snapshot.events.length > RUNTIME_CAPABILITY_EVENT_LIMIT) {
       snapshot.events.splice(0, snapshot.events.length - RUNTIME_CAPABILITY_EVENT_LIMIT);
     }
-    this.options.onEvent?.(record);
+    this.pendingEvents.push(record);
   }
 
   private async persist(snapshot: RuntimeCapabilityStoreSnapshot): Promise<void> {
+    const events = this.pendingEvents;
+    this.pendingEvents = [];
     await this.options.store.replace(snapshot);
+    for (const event of events) this.options.onEvent?.(event);
   }
 
   private async runAction(
@@ -1017,24 +1021,45 @@ export class RuntimeCapabilityRegistry {
     roots: RuntimeCapabilityLease[],
   ): RuntimeCapabilityLease[] {
     const byId = new Map(snapshot.leases.map((lease) => [lease.id, lease]));
-    const ordered: RuntimeCapabilityLease[] = [];
-    const visited = new Set<string>();
-    const visit = (lease: RuntimeCapabilityLease): void => {
-      if (visited.has(lease.id)) return;
-      visited.add(lease.id);
-      ordered.push(lease);
+    const reachable = new Map<string, RuntimeCapabilityLease>();
+    const collect = (lease: RuntimeCapabilityLease): void => {
+      if (reachable.has(lease.id)) return;
+      reachable.set(lease.id, lease);
       for (const dependencyId of lease.dependencyLeaseIds) {
         const dependency = byId.get(dependencyId);
-        if (dependency) visit(dependency);
+        if (dependency) collect(dependency);
       }
     };
-    const rootIds = new Set(roots.map((lease) => lease.id));
-    const dependencyRootIds = new Set(
-      roots.flatMap((lease) => lease.dependencyLeaseIds.filter((id) => rootIds.has(id))),
-    );
     const sortedRoots = [...roots].sort((a, b) => a.capabilityId.localeCompare(b.capabilityId));
-    for (const root of sortedRoots.filter((lease) => !dependencyRootIds.has(lease.id))) visit(root);
-    for (const root of sortedRoots) visit(root);
+    for (const root of sortedRoots) collect(root);
+
+    const incomingParents = new Map([...reachable.keys()].map((id) => [id, 0]));
+    for (const lease of reachable.values()) {
+      for (const dependencyId of lease.dependencyLeaseIds) {
+        if (reachable.has(dependencyId)) {
+          incomingParents.set(dependencyId, (incomingParents.get(dependencyId) ?? 0) + 1);
+        }
+      }
+    }
+    const compareLease = (left: RuntimeCapabilityLease, right: RuntimeCapabilityLease) =>
+      left.capabilityId.localeCompare(right.capabilityId) || left.id.localeCompare(right.id);
+    const ready = [...reachable.values()]
+      .filter((lease) => incomingParents.get(lease.id) === 0)
+      .sort(compareLease);
+    const ordered: RuntimeCapabilityLease[] = [];
+    while (ready.length > 0) {
+      const lease = ready.shift()!;
+      ordered.push(lease);
+      for (const dependencyId of lease.dependencyLeaseIds) {
+        if (!reachable.has(dependencyId)) continue;
+        const remaining = (incomingParents.get(dependencyId) ?? 0) - 1;
+        incomingParents.set(dependencyId, remaining);
+        if (remaining === 0) {
+          ready.push(reachable.get(dependencyId)!);
+          ready.sort(compareLease);
+        }
+      }
+    }
     return ordered;
   }
 

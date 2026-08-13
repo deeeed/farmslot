@@ -6,6 +6,7 @@ import test, { type TestContext } from 'node:test';
 
 import type {
   RuntimeCapabilityCatalogEntry,
+  RuntimeCapabilityLifecycleEvent,
   RuntimeCapabilityProviderActionRef,
 } from '@farmslot/protocol';
 
@@ -53,6 +54,8 @@ async function fixture(
   options: {
     pressureFor?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['pressureFor'];
     runAction?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['runAction'];
+    onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
+    storeFactory?: (storePath: string) => RuntimeCapabilityStore;
     now?: () => Date;
   } = {},
 ) {
@@ -60,8 +63,9 @@ async function fixture(
   t.after(() => rm(directory, { recursive: true, force: true }));
   const actions: string[] = [];
   let nextLease = 0;
+  const storePath = path.join(directory, 'leases.json');
   const registry = new RuntimeCapabilityRegistry({
-    store: new RuntimeCapabilityStore(path.join(directory, 'leases.json')),
+    store: options.storeFactory?.(storePath) ?? new RuntimeCapabilityStore(storePath),
     catalogForSlot: async (slotId) => ({ slotId, project: 'test-project', capabilities }),
     runAction: async (_slotId, action) => {
       actions.push(
@@ -70,6 +74,7 @@ async function fixture(
       return options.runAction ? options.runAction(_slotId, action) : { ok: true };
     },
     ...(options.pressureFor ? { pressureFor: options.pressureFor } : {}),
+    ...(options.onEvent ? { onEvent: options.onEvent } : {}),
     leaseId: () => `lease-${++nextLease}`,
     now: options.now ?? (() => new Date('2026-08-11T00:00:00.000Z')),
   });
@@ -238,6 +243,60 @@ test('release orders owning capabilities before dependencies even when all owner
     released.released.map((lease) => lease.capabilityId),
     ['parent', 'dependency'],
   );
+});
+
+test('release orders every selected parent before their shared dependency', async (t) => {
+  const { registry, actions } = await fixture(t, [
+    entry('dependency', 'shared'),
+    entry('parent-a', 'exclusive', ['dependency']),
+    entry('parent-b', 'exclusive', ['dependency']),
+  ]);
+  assert.equal((await acquire(registry, 'parent-a', 'run-a')).ok, true);
+  assert.equal((await acquire(registry, 'parent-b', 'run-a')).ok, true);
+  actions.length = 0;
+
+  const released = await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  assert.equal(released.ok, true);
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['parent-a.release', 'parent-b.release', 'dependency.release'],
+  );
+  assert.deepEqual(
+    released.released.map((lease) => lease.capabilityId),
+    ['parent-a', 'parent-b', 'dependency'],
+  );
+});
+
+test('lifecycle events publish only after acquired and released snapshots are durable', async (t) => {
+  class DelayedStore extends RuntimeCapabilityStore {
+    override async replace(snapshot: Parameters<RuntimeCapabilityStore['replace']>[0]) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await super.replace(snapshot);
+    }
+  }
+
+  let registry!: RuntimeCapabilityRegistry;
+  const observedStates: Array<Promise<{ kind: string; state: string | undefined }>> = [];
+  const result = await fixture(t, [entry('browser')], {
+    storeFactory: (storePath) => new DelayedStore(storePath),
+    onEvent: (event) => {
+      if (event.kind !== 'acquired' && event.kind !== 'released') return;
+      observedStates.push(
+        registry.status({ slotId: SLOT }).then((status) => ({
+          kind: event.kind,
+          state: status.leases.find((lease) => lease.id === event.leaseId)?.state,
+        })),
+      );
+    },
+  });
+  registry = result.registry;
+
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
+  assert.equal((await registry.release({ slotId: SLOT, ownerRunId: 'run-a' })).ok, true);
+  assert.deepEqual(await Promise.all(observedStates), [
+    { kind: 'acquired', state: 'acquired' },
+    { kind: 'released', state: 'released' },
+  ]);
 });
 
 test('failed parent acquire rolls back the provider and newly acquired dependencies', async (t) => {
