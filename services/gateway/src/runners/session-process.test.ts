@@ -6,10 +6,12 @@ import { promisify } from 'node:util';
 
 import {
   buildFindRunnerDescendantPidCommand,
+  readPaneProcessStartedAtMs,
   resolvePersistedRunnerSessionBinding,
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
 } from './session-process.js';
+import { makeVars } from './test-fixtures.js';
 
 const execFile = promisify(execFileCb);
 
@@ -157,4 +159,23 @@ test('retained session send option maps one atomic binding', () => {
       },
     },
   );
+});
+
+test('pane process start is resolved from the live tmux pane', async () => {
+  const session = `farmslot-pane-start-${process.pid}`;
+  let created = false;
+  try {
+    await execFile('tmux', ['new-session', '-d', '-s', session, 'sleep 30']);
+    created = true;
+    const paneId = (
+      await execFile('tmux', ['display-message', '-p', '-t', session, '#{pane_id}'])
+    ).stdout.trim();
+    const startedAt = await readPaneProcessStartedAtMs(
+      makeVars({ remoteRepo: process.cwd() }),
+      paneId,
+    );
+    assert.ok(startedAt !== null && Math.abs(Date.now() - startedAt) < 60_000);
+  } finally {
+    if (created) await execFile('tmux', ['kill-session', '-t', session]);
+  }
 });

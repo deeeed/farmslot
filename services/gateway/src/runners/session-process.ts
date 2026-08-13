@@ -28,12 +28,120 @@ import {
   statSessionPathMtimeMs,
 } from './session-path-resolution.js';
 
-export type RunnerSessionBindingSource = 'hook' | 'filesystem';
+export type RunnerSessionBindingSource = 'hook' | 'native' | 'filesystem';
 
 export interface RunnerSessionBinding {
   runnerSessionPath: string;
   runnerSessionId: string;
   source: RunnerSessionBindingSource;
+}
+
+export async function readPaneProcessStartedAtMs(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  paneId: string,
+  runnerId?: string | null,
+): Promise<number | null> {
+  const processPattern = runnerId ? runnerProcessPatternSource(runnerId) : '';
+  const script = `
+python3 - <<'PY'
+import datetime
+import ctypes
+import os
+import platform
+import re
+import subprocess
+import sys
+import time
+
+pane = ${JSON.stringify(paneId)}
+pattern = ${JSON.stringify(processPattern)}
+try:
+    pane_pid = subprocess.check_output(
+        ['tmux', 'display-message', '-p', '-t', pane, '#{pane_pid}'],
+        text=True,
+    ).strip()
+    children = {}
+    commands = {}
+    executables = {}
+    for row in subprocess.check_output(
+        ['ps', '-axo', 'pid=,ppid=,comm=,command='], text=True
+    ).splitlines():
+        parts = row.strip().split(None, 3)
+        if len(parts) < 2:
+            continue
+        pid, ppid = parts[:2]
+        executable = parts[2] if len(parts) >= 3 else ''
+        command = parts[3] if len(parts) == 4 else executable
+        commands[pid] = command
+        executables[pid] = executable
+        children.setdefault(ppid, []).append(pid)
+    pid = pane_pid
+    if pattern:
+        queue = [(pane_pid, 0)]
+        matches = []
+        while queue:
+            candidate, depth = queue.pop(0)
+            command = commands.get(candidate, '')
+            executable = executables.get(candidate, '')
+            if '__farmslot_status' not in command and re.search(pattern, command):
+                executable_name = os.path.basename(executable)
+                strong = bool(
+                    re.fullmatch(pattern, executable_name)
+                    or re.fullmatch(pattern, executable)
+                )
+                shell_wrapper = os.path.basename(executable) in {'bash', 'zsh', 'sh', 'fish'}
+                matches.append((strong, not shell_wrapper, depth, candidate))
+            queue.extend((child, depth + 1) for child in children.get(candidate, []))
+        if not matches:
+            raise ValueError('runner process not found under pane')
+        # Prefer the runner executable itself, then a non-shell launcher. Among
+        # exact executable matches prefer the shallowest process: descendants
+        # such as codex-code-mode-host are tools owned by the turn, not the
+        # retained runner generation.
+        pid = max(matches, key=lambda item: (item[0], item[1], -item[2]))[3]
+
+    if platform.system() == 'Darwin':
+        class ProcBsdInfo(ctypes.Structure):
+            _fields_ = [
+                ('flags', ctypes.c_uint32), ('status', ctypes.c_uint32),
+                ('xstatus', ctypes.c_uint32), ('pid', ctypes.c_uint32),
+                ('ppid', ctypes.c_uint32), ('uid', ctypes.c_uint32),
+                ('gid', ctypes.c_uint32), ('ruid', ctypes.c_uint32),
+                ('rgid', ctypes.c_uint32), ('svuid', ctypes.c_uint32),
+                ('svgid', ctypes.c_uint32), ('rfu_1', ctypes.c_uint32),
+                ('comm', ctypes.c_char * 16), ('name', ctypes.c_char * 32),
+                ('nfiles', ctypes.c_uint32), ('pgid', ctypes.c_uint32),
+                ('pjobc', ctypes.c_uint32), ('e_tdev', ctypes.c_uint32),
+                ('e_tpgid', ctypes.c_uint32), ('nice', ctypes.c_int32),
+                ('start_tvsec', ctypes.c_uint64), ('start_tvusec', ctypes.c_uint64),
+            ]
+        info = ProcBsdInfo()
+        libproc = ctypes.CDLL('/usr/lib/libproc.dylib')
+        size = libproc.proc_pidinfo(int(pid), 3, 0, ctypes.byref(info), ctypes.sizeof(info))
+        if size != ctypes.sizeof(info):
+            raise ValueError('libproc start-time probe failed')
+        print(info.start_tvsec * 1000 + info.start_tvusec // 1000)
+    elif os.path.isfile(f'/proc/{pid}/stat'):
+        fields = open(f'/proc/{pid}/stat').read().split()
+        start_ticks = int(fields[21])
+        uptime = float(open('/proc/uptime').read().split()[0])
+        ticks_per_second = os.sysconf(os.sysconf_names['SC_CLK_TCK'])
+        print(int((time.time() - uptime + start_ticks / ticks_per_second) * 1000))
+    else:
+        started = subprocess.check_output(
+            ['ps', '-p', pid, '-o', 'lstart='], text=True,
+            env={**os.environ, 'LC_ALL': 'C'},
+        ).strip()
+        started_at = datetime.datetime.strptime(started, '%a %b %d %H:%M:%S %Y').astimezone()
+        print(int(started_at.timestamp() * 1000))
+except Exception as error:
+    print(f'pane process start probe failed: {error}', file=sys.stderr)
+    raise SystemExit(1)
+PY`;
+  const result = await execOnSlot(vars, script);
+  if (result.exitCode !== 0) return null;
+  const parsed = Number(result.stdout.trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 export interface PersistedRunnerSessionCandidate {
@@ -236,24 +344,87 @@ PY`;
 async function tryHookSessionBinding(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
+  beforePaths: readonly string[],
   options: {
     sinceMs?: number;
+    observedNotBeforeMs?: number;
     paneId?: string | null;
     slotId?: string | null;
+    paneStartedAtMs?: number | null;
+    excludedSessionId?: string | null;
+    excludedSessionPath?: string | null;
   },
 ): Promise<RunnerSessionBinding | null> {
   if (getRunnerDefinition(runner).observabilityScope !== 'event-driven') return null;
   if (options.paneId) {
+    const paneStartedAt =
+      options.paneStartedAtMs === undefined
+        ? await readPaneProcessStartedAtMs(vars, options.paneId, runner)
+        : options.paneStartedAtMs;
+    // A named pane is the authority for this binding. If its live process
+    // start cannot be established, fail closed instead of accepting a stale
+    // native or hook snapshot from a prior process in the same tmux pane.
+    const isNewSessionPath = (sessionPath: string) =>
+      beforePaths.length > 0 && !beforePaths.includes(sessionPath);
+    const isCurrentPaneProcess = (observedAt: number | null | undefined) =>
+      paneStartedAt === null ||
+      (observedAt !== null && observedAt !== undefined && observedAt >= paneStartedAt);
+    const observedBoundary =
+      options.observedNotBeforeMs ??
+      (options.sinceMs === undefined
+        ? undefined
+        : options.sinceMs - RUNNER_SESSION_DISPATCH_SLACK_MS);
+    const isCurrentDispatch = (observedAt: number | null | undefined) =>
+      observedBoundary === undefined ||
+      (observedAt !== null && observedAt !== undefined && observedAt >= observedBoundary);
+    const isSuccessorSession = (sessionId: string, sessionPath: string) =>
+      (!options.excludedSessionId || sessionId !== options.excludedSessionId) &&
+      (!options.excludedSessionPath || sessionPath !== options.excludedSessionPath);
+    let nativeBinding = null;
+    try {
+      nativeBinding = await getRunnerObservability(runner)?.getSessionBinding?.(
+        vars,
+        options.paneId,
+      );
+    } catch (error) {
+      // Native attribution is optional evidence. A transient probe failure must
+      // fail this source closed without tearing down an already-launched worker;
+      // the pane-scoped hook source below may still provide authoritative proof.
+      console.warn(
+        `[runner-session] native binding probe failed for ${runner} in ${options.paneId}: ${(error as Error).message}`,
+      );
+    }
+    if (
+      nativeBinding &&
+      isCurrentPaneProcess(nativeBinding.observedAt) &&
+      isCurrentDispatch(nativeBinding.observedAt) &&
+      (paneStartedAt !== null || isNewSessionPath(nativeBinding.sessionPath)) &&
+      isSuccessorSession(nativeBinding.sessionId, nativeBinding.sessionPath)
+    ) {
+      const mtimeMs = await statSessionPathMtimeMs(vars, nativeBinding.sessionPath);
+      if (mtimeMs !== null) {
+        return {
+          runnerSessionPath: nativeBinding.sessionPath,
+          runnerSessionId: nativeBinding.sessionId,
+          source: 'native',
+        };
+      }
+    }
     const paneState = await readRunnerPaneObservabilityState(vars, options.paneId);
     const observedAt = paneState ? observedAtFromRecord(paneState) : null;
     const transcriptPath = paneState?.transcript_path?.trim() ?? '';
     const sessionId = paneState?.session_id?.trim() ?? '';
-    const isCurrentDispatch =
-      options.sinceMs === undefined ||
-      (observedAt !== null && observedAt >= options.sinceMs - RUNNER_SESSION_DISPATCH_SLACK_MS);
     const isCurrentSlot =
       !options.slotId || !paneState?.slotId || paneState.slotId === options.slotId;
-    if (transcriptPath && sessionId && isCurrentDispatch && isCurrentSlot) {
+    if (
+      transcriptPath &&
+      sessionId &&
+      isCurrentPaneProcess(observedAt) &&
+      isCurrentDispatch(observedAt) &&
+      isCurrentSlot &&
+      (paneStartedAt !== null || isNewSessionPath(transcriptPath)) &&
+      isSuccessorSession(sessionId, transcriptPath)
+    ) {
       const mtimeMs = await statSessionPathMtimeMs(vars, transcriptPath);
       if (mtimeMs !== null) {
         return {
@@ -263,6 +434,9 @@ async function tryHookSessionBinding(
         };
       }
     }
+    // Once a caller names a pane, that pane is the authority. Falling through
+    // to shared hook/filesystem streams could bind a concurrent runner process.
+    return null;
   }
   const { hooksRaw } = await readRunnerObservabilityFiles(vars);
   const hookBinding = findSessionStartFromHooks(parseHookJsonl(hooksRaw), options);
@@ -327,14 +501,23 @@ export async function resolveRunnerSessionBinding(
   beforePaths: string[],
   options: {
     sinceMs?: number;
+    observedNotBeforeMs?: number;
     paneId?: string | null;
     slotId?: string | null;
     existingPath?: string | null;
+    paneStartedAtMs?: number | null;
+    excludedSessionId?: string | null;
+    excludedSessionPath?: string | null;
   } = {},
 ): Promise<RunnerSessionBinding | null> {
   if (!runnerPersistsSessionFiles(runner)) return null;
-  const hookBinding = await tryHookSessionBinding(vars, runner, options);
+  const hookBinding = await tryHookSessionBinding(vars, runner, beforePaths, options);
   if (hookBinding) return hookBinding;
+  // A live pane is the authoritative owner for an exact retained session.
+  // Reviewers can coexist with other same-runner processes in one checkout,
+  // so falling back to the newest filesystem transcript here can bind the
+  // reviewer window to an unrelated session.
+  if (options.paneId) return null;
   return tryFilesystemSessionBinding(vars, runner, beforePaths, options);
 }
 
@@ -357,8 +540,11 @@ export async function captureRunnerSessionMetadata(
   beforePaths: string[],
   options: {
     sinceMs?: number;
+    observedNotBeforeMs?: number;
     paneId?: string | null;
     slotId?: string | null;
+    excludedSessionId?: string | null;
+    excludedSessionPath?: string | null;
   } = {},
 ): Promise<{ runnerSessionPath: string | null; runnerSessionId: string | null }> {
   if (!runnerPersistsSessionFiles(runner)) {
@@ -366,10 +552,21 @@ export async function captureRunnerSessionMetadata(
   }
   for (let i = 0; i < RUNNER_SESSION_CAPTURE_MAX_POLLS; i++) {
     await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_CAPTURE_POLL_MS));
+    // ps(1) reports elapsed time at one-second precision. Re-probe on every
+    // capture attempt so a legitimate SessionStart emitted during the first
+    // partial second becomes eligible when the elapsed counter advances.
+    const paneStartedAtMs = options.paneId
+      ? await readPaneProcessStartedAtMs(vars, options.paneId, runner)
+      : undefined;
+    if (options.paneId && paneStartedAtMs === null) continue;
     const binding = await resolveRunnerSessionBinding(vars, runner, beforePaths, {
       sinceMs: options.sinceMs,
+      observedNotBeforeMs: options.observedNotBeforeMs,
       paneId: options.paneId,
       slotId: options.slotId ?? vars.slotId,
+      paneStartedAtMs,
+      excludedSessionId: options.excludedSessionId,
+      excludedSessionPath: options.excludedSessionPath,
     });
     if (binding) {
       return {

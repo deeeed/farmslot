@@ -14,7 +14,7 @@ const RUNNERS = {
 export const RUNNER_GROUPS = {
   both: ['claude', 'codex'],
   hooks: ['claude', 'codex'],
-  'pane-only': ['cursor', 'grok'],
+  'pane-only': ['cursor'],
   all: ['claude', 'codex', 'cursor', 'grok'],
 };
 
@@ -31,7 +31,9 @@ export function listRunners() {
 export function resolveRunnerList(runnerArg) {
   if (runnerArg in RUNNER_GROUPS) return RUNNER_GROUPS[runnerArg];
   if (!listRunners().includes(runnerArg)) {
-    throw new Error(`unsupported runner: ${runnerArg} (try ${Object.keys(RUNNER_GROUPS).join(', ')})`);
+    throw new Error(
+      `unsupported runner: ${runnerArg} (try ${Object.keys(RUNNER_GROUPS).join(', ')})`,
+    );
   }
   return [runnerArg];
 }

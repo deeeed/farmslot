@@ -7,6 +7,7 @@ import { DEFAULT_PROMPT, shSingleQuote } from '../lib/common.mjs';
 
 export const RUNNER_ID = 'codex';
 export const OBSERVABILITY_SCOPE = 'event-driven';
+export const OBSERVABILITY_TRANSPORT = 'hooks';
 
 export const REGISTERED_EVENTS = [
   'SessionStart',

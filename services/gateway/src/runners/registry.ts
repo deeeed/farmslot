@@ -115,6 +115,8 @@ export interface RunnerDefinition {
   supportsExactSessionDelivery: boolean;
   /** Runner's TUI can show a busy "composer" pane that swallows send-keys — poll before sending. */
   requiresBusyComposerPoll: boolean;
+  /** Tmux key that submits text already typed into the runner's interactive composer. */
+  promptSubmitKey: 'Enter' | 'C-m';
   /**
    * Per-tier CLI flags appended to the runner binary (ADR-023). Every tier maps to
    * an explicit list so callers never branch on runner-id when selecting flags —
@@ -201,6 +203,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     retainedSessionHandoff: 'resume-with-prompt',
     supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: false,
+    promptSubmitKey: 'Enter',
     // Claude has no "more dangerous" mode beyond --dangerously-skip-permissions,
     // so full-auto and dangerous collapse onto the same flag. Sandboxed drops it.
     flagsByTier: {
@@ -236,6 +239,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     retainedSessionHandoff: 'resume-with-prompt',
     supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: true,
+    promptSubmitKey: 'Enter',
     // Codex tier mapping:
     //   sandboxed  — default; Codex CLI prompts for approvals on destructive ops.
     //   full-auto  — workspace-write sandbox with approval prompts disabled.
@@ -275,6 +279,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     retainedSessionHandoff: 'in-place',
     supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
+    promptSubmitKey: 'C-m',
     flagsByTier: {
       sandboxed: ['--sandbox', 'enabled'],
       'full-auto': ['--force', '--sandbox', 'enabled'],
@@ -305,6 +310,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     retainedSessionHandoff: 'in-place',
     supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: true,
+    promptSubmitKey: 'C-m',
     flagsByTier: {
       sandboxed: [],
       'full-auto': ['--permission-mode', 'auto'],
@@ -331,6 +337,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     retainedSessionHandoff: 'unsupported',
     supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
+    promptSubmitKey: 'Enter',
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
@@ -353,6 +360,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     retainedSessionHandoff: 'unsupported',
     supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
+    promptSubmitKey: 'Enter',
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
@@ -375,6 +383,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     retainedSessionHandoff: 'unsupported',
     supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
+    promptSubmitKey: 'Enter',
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
@@ -1330,13 +1339,11 @@ export function runnerBufferedInstructionSubmitKey(
   if (normalizeRunner(runnerId) === 'codex' && /tab to queue message/i.test(pane)) {
     return 'Tab';
   }
-  // Cursor Agent v2026.06.19 renders a "Run Everything" composer where tmux's
-  // named Enter key can leave the prompt buffered. A carriage return submits
-  // the exact same visible prompt reliably.
-  if (normalizeRunner(runnerId) === 'cursor') {
-    return 'C-m';
-  }
-  return 'Enter';
+  return getRunnerDefinition(runnerId).promptSubmitKey;
+}
+
+export function runnerPromptSubmitKey(runnerId?: string | null): 'Enter' | 'C-m' {
+  return getRunnerDefinition(runnerId).promptSubmitKey;
 }
 
 function paneTailText(pane: string, lines = 12): string {
@@ -1892,7 +1899,13 @@ async function submitRunnerInstruction(
     } catch (error) {
       console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
     }
-    await execOnSlot(vars, tmuxSendTextCommand(target, message, { enter: true }));
+    await execOnSlot(
+      vars,
+      tmuxSendTextCommand(target, message, {
+        enter: true,
+        submitKey: getRunnerDefinition(runner).promptSubmitKey,
+      }),
+    );
   } else {
     const pane = await captureTmuxPane(vars, target);
     if (!runnerPaneHasBufferedInstruction(pane, message, runner)) {
@@ -3038,7 +3051,10 @@ export async function sendRunnerPostLaunchPrompt(
       } catch (error) {
         console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
       }
-      sendCommand = tmuxSendTextCommand(target, message, { enter: true });
+      sendCommand = tmuxSendTextCommand(target, message, {
+        enter: true,
+        submitKey: runnerPromptSubmitKey(runner),
+      });
     }
     const sentAtMs = Date.now();
     const promptResult = await execOnSlot(vars, sendCommand);

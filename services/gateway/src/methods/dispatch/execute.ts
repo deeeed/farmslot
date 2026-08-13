@@ -905,10 +905,12 @@ export async function dispatchExecute(
         `Validation mode auto-scrub for stale slot identity (${existingRunId}/${existingFlow}/${existingTicket}/${existingFamily}/${existingLane}/${existingVariant})`,
       );
       const slotMod = await import('../slot.js');
+      await slotMod.killAgentInSession(
+        vars,
+        existingRunner ?? undefined,
+        primaryRoleForFlow(existingFlow),
+      );
       await slotMod.killAllAgentWindows(vars);
-      // Role windows are canonical; keep a base-pane kill as a fallback for
-      // unnamed/manual windows without trusting possibly stale flow metadata.
-      await slotMod.killAgentInSession(vars, existingRunner ?? undefined);
       await resetSlot(params.slotId, true);
     } else {
       throw new Error(
