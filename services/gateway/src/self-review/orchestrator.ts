@@ -65,7 +65,7 @@ import {
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
-import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
+import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { parseSelfReviewIssueBullets } from './issues.js';
 import { initSelfReviewProgress, startProgressWatcher } from './progress.js';
