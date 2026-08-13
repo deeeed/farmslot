@@ -1072,6 +1072,7 @@ export async function runReviewAgent(
       claimed: typeof warmSession,
     ): Promise<void> => {
       const handoffAckSinceMs = Date.now();
+      let bindingObservedNotBeforeMs = handoffAckSinceMs;
       debugSelfReviewLog(`[self-review] launching (${runner}) via respawn-window: ${launchCmd}`);
       await respawnTmuxWindowWithCommand(vars, reviewTarget, launchCmd, {
         preserveWindowAfterExit: true,
@@ -1106,6 +1107,7 @@ export async function runReviewAgent(
           runner,
           handoffAckSinceMs,
         );
+        bindingObservedNotBeforeMs = promptAcceptanceBaselineMs ?? handoffAckSinceMs;
         try {
           await sendRunnerPostLaunchPrompt(
             vars,
@@ -1152,9 +1154,9 @@ export async function runReviewAgent(
       // the pane hook and resumable transcript can both be verified.
       if (
         !sessionMeta.runnerSessionId &&
-        retainReviewerSession &&
         runnerCanResume &&
-        !(await bindLiveReviewerSession({ observedNotBeforeMs: handoffAckSinceMs }))
+        !(await bindLiveReviewerSession({ observedNotBeforeMs: bindingObservedNotBeforeMs })) &&
+        retainReviewerSession
       ) {
         console.warn(
           `[self-review] ${claimed ? 'reloaded' : 'launched'} ${runner} reviewer did not establish an authoritative session binding in ${reviewTarget}; completing this pass without retaining it`,
@@ -1163,8 +1165,9 @@ export async function runReviewAgent(
       }
     };
 
-    // 4/5. Keep the live runner process. Re-reviews are always incremental
-    // in-place; only generation-one reset requests issue the native reset.
+    // 4/5. Keep one canonical reviewer window and retained session. The shared
+    // runner capability may resume that session by replacing the idle process;
+    // this preserves reviewer context without composing into unknown TUI state.
     if (reviewerWindow.runnerAlive) {
       const deliveryPlan = retainedReviewerDeliveryPlan(runner, sessionIntent, loopNumber);
       if (deliveryPlan.kind === 'cold-relaunch') {
