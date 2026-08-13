@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(review): replace skipped publication-review placeholders with the reviewer-owned terminal verdict, and bind recovered worker-fix state to the exact findings generation so stale contexts cannot suppress a new fix handoff.
 - fix(review): route every retained review handoff through the shared runner-capability contract, rebind reviewers to the exact structured session that owns their live runner process after replacement or reset, consume and invalidate stale warm claims on every failed lifecycle path, resolve semantic sends and graceful shutdown through the owning runner context, and make live attribution reject stale identities from both the same pane/process generation and a dead runner pane without pre-launch session inventory.
 - fix(review): re-arm a retained reviewer context when its scoped checklist emits a fresh running signal, and reconsider prematurely blocked contexts when their result arrives, so recovery cannot mistake the new attempt for an earlier terminal review or strand a late valid artifact.
 - fix(backlog): clear obsolete run linkage when externally shipped work is closed, and reconcile backlog/work-graph links synchronously when runs are deleted or archived.

@@ -239,9 +239,29 @@ test('canRecoverSelfReviewFixPass requires a working context for the current fix
     status: 'working',
     taskFile: 'tasks/foo/SELF-REVIEW-FIX.md',
     signalFile: 'tasks/foo/SELF-REVIEW-FIX-SIGNAL.json',
+    artifactScope: 'independent-review-4',
   } as const;
 
   assert.equal(canRecoverSelfReviewFixPass(current, 'tasks/foo'), true);
+  assert.equal(
+    canRecoverSelfReviewFixPass(current, 'tasks/foo', 'independent-review-4'),
+    true,
+    'a fix context owned by the current findings generation is recoverable',
+  );
+  assert.equal(
+    canRecoverSelfReviewFixPass(
+      { ...current, artifactScope: null },
+      'tasks/foo',
+      'independent-review-4',
+    ),
+    true,
+    'an in-flight context created before generation ownership can be bound during recovery',
+  );
+  assert.equal(
+    canRecoverSelfReviewFixPass(current, 'tasks/foo', 'independent-review-5'),
+    false,
+    'a fix context owned by another findings generation must not be recovered',
+  );
   assert.equal(canRecoverSelfReviewFixPass(null, 'tasks/foo'), false);
   assert.equal(
     canRecoverSelfReviewFixPass({ ...current, status: 'complete' }, 'tasks/foo'),

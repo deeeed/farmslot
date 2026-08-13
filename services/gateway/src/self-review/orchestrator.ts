@@ -65,7 +65,7 @@ import {
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
-import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
+import { normalizeWorkerSignal, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { parseSelfReviewIssueBullets } from './issues.js';
 import { initSelfReviewProgress, startProgressWatcher } from './progress.js';
@@ -263,6 +263,7 @@ export async function executeSelfReview(
       validationDepth,
       artifactScope,
       sessionPolicy,
+      findingsArtifactScope: artifactScope,
     });
     if (recoveredFixResult) {
       hasReusableReviewResult =
@@ -463,6 +464,7 @@ export interface SelfReviewRetryDeps {
     issues: SelfReviewIssue[],
     taskDir: string,
     runId: string,
+    findingsArtifactScope?: string | null,
   ) => Promise<FixDeliveryAcceptance>;
   startProgressWatcher: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -698,7 +700,13 @@ export async function runSelfReviewRetryLoop({
     let fixSignalBaseline: string | undefined;
     let fixTurnToken: string | undefined;
     try {
-      const delivery = await deps.sendFeedbackToWorker(vars, result.issues, taskDir, runId);
+      const delivery = await deps.sendFeedbackToWorker(
+        vars,
+        result.issues,
+        taskDir,
+        runId,
+        artifactScope,
+      );
       fixSignalBaseline = delivery.signalBaseline;
       fixTurnToken = delivery.turnToken;
     } catch (error) {
@@ -979,23 +987,57 @@ export async function runSelfReviewRetryLoop({
 async function readSelfReviewFixIssues(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
-): Promise<SelfReviewIssue[]> {
-  const content = await readOptionalSlotFile(
+): Promise<SelfReviewIssue[] | null> {
+  const checklistPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
+  const result = await execOnSlot(
     vars,
-    slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist),
+    `if [ -f ${shellQuote(checklistPath)} ]; then cat ${shellQuote(checklistPath)}; else exit 44; fi`,
   );
+  if (result.exitCode === 44) return null;
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to read self-review fix findings: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+    );
+  }
+  const content = result.stdout.trim();
   return parseSelfReviewIssueBullets(content);
 }
 
+async function readOptionalSelfReviewFixSignal(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  signalPath: string,
+): Promise<string | null> {
+  const result = await execOnSlot(
+    vars,
+    `if [ -f ${shellQuote(signalPath)} ]; then cat ${shellQuote(signalPath)}; else exit 44; fi`,
+  );
+  if (result.exitCode === 44) return null;
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to read self-review fix signal: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+    );
+  }
+  return result.stdout.trim();
+}
+
 export function canRecoverSelfReviewFixPass(
-  fixContext: Pick<AgentContext, 'role' | 'status' | 'taskFile' | 'signalFile'> | null | undefined,
+  fixContext:
+    | Pick<AgentContext, 'role' | 'status' | 'taskFile' | 'signalFile' | 'artifactScope'>
+    | null
+    | undefined,
   taskDir: string,
+  findingsArtifactScope?: string | null,
 ): boolean {
+  const matchesFindingsGeneration =
+    !findingsArtifactScope ||
+    !fixContext?.artifactScope ||
+    fixContext.artifactScope === findingsArtifactScope;
   return (
     fixContext?.role === 'self-review-fix' &&
     fixContext.status === 'working' &&
     fixContext.taskFile === taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist) &&
-    fixContext.signalFile === taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal)
+    fixContext.signalFile === taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal) &&
+    matchesFindingsGeneration
   );
 }
 
@@ -1168,6 +1210,7 @@ async function recoverSelfReviewFixPass({
   validationDepth,
   artifactScope,
   sessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
+  findingsArtifactScope,
   setProgressDetail = setSelfReviewProgressDetail,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -1183,32 +1226,103 @@ async function recoverSelfReviewFixPass({
   validationDepth: ReviewValidationDepth;
   artifactScope?: string | null;
   sessionPolicy?: ReviewSessionPolicy;
+  findingsArtifactScope?: string | null;
   setProgressDetail?: (runId: string, detail: string) => void;
 }): Promise<SelfReviewResult | null> {
   const run = getRun(runId);
-  const fixContext = run?.agentContexts?.find((ctx) => canRecoverSelfReviewFixPass(ctx, taskDir));
+  const fixContext = run?.agentContexts?.find((ctx) =>
+    canRecoverSelfReviewFixPass(ctx, taskDir, findingsArtifactScope),
+  );
   // Never recover from SELF-REVIEW-FIX-SIGNAL.json alone. That file is reused by every
   // review loop in the task dir, so a completed prior loop can otherwise masquerade as the
   // fix pass for a new independent review and prevent feedback from reaching the worker.
   if (!fixContext) return null;
 
+  const settleRecoveredFixContext = async (
+    status: 'complete' | 'failed' | 'blocked',
+    expectedAttemptId: string,
+    patch: Partial<AgentContext> = {},
+  ): Promise<boolean> => {
+    const updated = await upsertAgentContext(
+      runId,
+      'self-review-fix',
+      { id: fixContext.id },
+      {
+        resolvePatch: (current) =>
+          current &&
+          current.artifactScope === findingsArtifactScope &&
+          current.taskFile === fixContext.taskFile &&
+          current.signalFile === fixContext.signalFile &&
+          current.signalAttemptId === expectedAttemptId
+            ? { id: fixContext.id, status, completedAt: new Date().toISOString(), ...patch }
+            : null,
+      },
+    );
+    return updated !== null;
+  };
+
   try {
     const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
-    const rawSignal = await readOptionalSlotFile(vars, fixSignalPath);
+    const rawSignal = await readOptionalSelfReviewFixSignal(vars, fixSignalPath);
     let fixSignal: WorkerSignal | undefined;
     try {
-      fixSignal = terminalWorkerSignalFromRaw(rawSignal);
+      fixSignal = terminalWorkerSignalFromRaw(rawSignal ?? '');
     } catch (err) {
       console.warn(
         `[self-review] ignoring invalid recovered self-review fix signal for ${runId.slice(0, 8)}: ${(err as Error).message}`,
       );
     }
 
-    if (fixSignal && !signalFreshSince(fixSignal, fixContext?.startedAt)) {
-      fixSignal = undefined;
+    if (fixSignal) {
+      const matchesAttempt = Boolean(
+        fixSignal.attemptId && fixSignal.attemptId === fixContext.signalAttemptId,
+      );
+      if (!matchesAttempt) fixSignal = undefined;
+    }
+
+    // Older contexts can be migrated only after their opaque worker attempt
+    // matches. Bind the review generation then; never infer it from clocks.
+    if (findingsArtifactScope && !fixContext.artifactScope) {
+      if (!fixSignal) return null;
+      const rebound = await upsertAgentContext(
+        runId,
+        'self-review-fix',
+        { id: fixContext.id },
+        {
+          resolvePatch: (current) =>
+            current &&
+            current.attemptStartedAt === fixContext.attemptStartedAt &&
+            current.signalAttemptId === fixContext.signalAttemptId &&
+            !current.artifactScope
+              ? { id: fixContext.id, artifactScope: findingsArtifactScope }
+              : null,
+        },
+      );
+      if (!rebound) return null;
     }
 
     const issues = await readSelfReviewFixIssues(vars, taskDir);
+    if (issues === null) return null;
+    if (issues.length === 0) {
+      await upsertAgentContext(
+        runId,
+        'self-review-fix',
+        { id: fixContext.id },
+        {
+          resolvePatch: (current) =>
+            current &&
+            current.artifactScope === findingsArtifactScope &&
+            current.attemptStartedAt === fixContext.attemptStartedAt &&
+            current.signalAttemptId === fixContext.signalAttemptId
+              ? { id: fixContext.id, status: 'failed' }
+              : null,
+        },
+      );
+      debugSelfReviewLog(
+        `[self-review] run ${runId.slice(0, 8)} — fix context has no materialized findings; rebuilding from the review result`,
+      );
+      return null;
+    }
     debugSelfReviewLog(
       `[self-review] run ${runId.slice(0, 8)} — recovering self-review fix pass (${fixSignal ? 'signal-present' : 'waiting'})`,
     );
@@ -1217,6 +1331,7 @@ async function recoverSelfReviewFixPass({
       `Recovered reviewer findings; worker applying ${issues.length} fix(es)...`,
     );
 
+    let expiredAttemptId: string | undefined;
     if (!fixSignal) {
       const expectedWorkerModel = resolveWorkerModel(run, workerRunner, model);
       const fixContextMatchesWorker =
@@ -1272,10 +1387,16 @@ async function recoverSelfReviewFixPass({
           vars,
           taskDir,
           FEEDBACK_TIMEOUT_MS,
-          rawSignal,
+          rawSignal ?? '',
           deliveredTurnToken
             ? () => selfReviewFixTurnIsActive(vars, runId, workerRunner, deliveredTurnToken)
             : undefined,
+          () =>
+            getRun(runId)?.agentContexts?.find((context) => context.id === fixContext.id)
+              ?.signalAttemptId ?? undefined,
+          (attemptId) => {
+            expiredAttemptId = attemptId;
+          },
         );
       } finally {
         fixWatcher.stop();
@@ -1286,8 +1407,11 @@ async function recoverSelfReviewFixPass({
       debugSelfReviewLog(
         `[self-review] run ${runId.slice(0, 8)} — timeout waiting for recovered worker fix`,
       );
-      await markAgentContextStatus(runId, 'self-review-fix', 'failed');
-      await unwatchContext(slotId, 'self-review-fix');
+      if (!expiredAttemptId || !(await settleRecoveredFixContext('failed', expiredAttemptId)))
+        return null;
+      // Keep the path-scoped watch alive for a same-run successor attempt. A running
+      // signal can adopt a new opaque attempt immediately after the settlement CAS;
+      // role-scoped teardown here would then remove the successor's observability.
       if (maxRetries <= 1)
         return {
           verdict: 'issues',
@@ -1321,12 +1445,18 @@ async function recoverSelfReviewFixPass({
       });
     }
 
+    const terminalAttemptId = fixSignal.attemptId;
+    if (!terminalAttemptId) return null;
+
     if (fixSignal.status === 'blocked') {
       const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
-      await markAgentContextStatus(runId, 'self-review-fix', 'blocked', {
-        lastSignalAt: new Date().toISOString(),
-      });
-      await unwatchContext(slotId, 'self-review-fix');
+      if (
+        !(await settleRecoveredFixContext('blocked', terminalAttemptId, {
+          lastSignalAt: new Date().toISOString(),
+        }))
+      )
+        return null;
+      // Keep the reusable fix-context watch; slot/run teardown owns final cleanup.
       return {
         verdict: 'blocked',
         reason: fixSignal.reason ?? 'worker blocked during self-review fix',
@@ -1350,13 +1480,15 @@ async function recoverSelfReviewFixPass({
       };
     }
 
-    await markAgentContextStatus(
-      runId,
-      'self-review-fix',
-      fixSignal.status === 'failed' ? 'failed' : 'complete',
-      { lastSignalAt: new Date().toISOString() },
-    );
-    await unwatchContext(slotId, 'self-review-fix');
+    if (
+      !(await settleRecoveredFixContext(
+        fixSignal.status === 'failed' ? 'failed' : 'complete',
+        terminalAttemptId,
+        { lastSignalAt: new Date().toISOString() },
+      ))
+    )
+      return null;
+    // Keep the reusable fix-context watch; the next review round uses the same files.
     const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
     setProgressDetail(runId, `Worker fix complete; running ${reviewRunner} re-review (2)...`);
     const retryResult = await runReviewAgent(
@@ -1482,6 +1614,7 @@ async function sendFeedbackToWorker(
   issues: SelfReviewIssue[],
   taskDir: string,
   runId: string,
+  findingsArtifactScope?: string | null,
 ): Promise<FixDeliveryAcceptance> {
   const run = getRun(runId);
   const project = run?.project;
@@ -1577,6 +1710,8 @@ async function sendFeedbackToWorker(
     const fixContext = await upsertAgentContext(runId, 'self-review-fix', {
       status: 'working',
       attemptStartedAt: fixAttemptStartedAt,
+      artifactScope: findingsArtifactScope,
+      signalAttemptId: undefined,
       taskFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist),
       signalFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal),
       runner: run?.metrics.runner ?? null,
@@ -1968,32 +2103,52 @@ export async function waitForWorkerSignal(
   timeoutMs: number,
   baseline: string,
   turnActive?: () => Promise<boolean>,
+  expectedAttemptId?: string | (() => string | undefined),
+  onTimeout?: (expiredAttemptId: string | undefined) => void,
 ): Promise<WorkerSignal | undefined> {
   const signalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
 
   const start = Date.now();
   let lastProgressAt = start;
   let lastObservedSignal = baseline;
+  let lastExpectedAttemptId =
+    typeof expectedAttemptId === 'function' ? expectedAttemptId() : expectedAttemptId;
   let nextTurnStateCheckAt = start;
   const turnStatePollMs = Math.min(10_000, Math.max(2_000, Math.floor(timeoutMs / 2)));
   const maxActiveMs = Math.max(timeoutMs, Math.min(FEEDBACK_MAX_ACTIVE_MS, timeoutMs * 4));
   while (Date.now() - start < maxActiveMs && Date.now() - lastProgressAt < timeoutMs) {
     await new Promise((r) => setTimeout(r, 2000));
-    try {
-      const raw = await readOptionalSlotFile(vars, signalPath);
-      if (raw && raw !== lastObservedSignal) {
-        lastObservedSignal = raw;
-        lastProgressAt = Date.now();
-        const signal = terminalWorkerSignalFromRaw(raw);
-        if (signal) return signal;
+    const expected =
+      typeof expectedAttemptId === 'function' ? expectedAttemptId() : expectedAttemptId;
+    if (expected !== lastExpectedAttemptId) {
+      // Reconsider the current file when the context watcher adopts a new attempt.
+      // The terminal write can race that persisted adoption and otherwise look unchanged.
+      lastObservedSignal = baseline;
+      lastExpectedAttemptId = expected;
+    }
+    const raw = await readOptionalSelfReviewFixSignal(vars, signalPath);
+    if (raw && raw !== lastObservedSignal) {
+      lastObservedSignal = raw;
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        const normalized = normalizeWorkerSignal(parsed);
+        const observed = normalized.ok ? normalized.signal : undefined;
+        const attemptMatches =
+          typeof expectedAttemptId === 'function'
+            ? Boolean(expected && observed?.attemptId === expected)
+            : !expected || observed?.attemptId === expected;
+        if (attemptMatches) lastProgressAt = Date.now();
+        const signal = observed ? terminalWorkerSignalFromRaw(raw) : undefined;
+        if (signal && attemptMatches) return signal;
+      } catch (err) {
+        console.warn(`[self-review] failed to parse ${signalPath}: ${(err as Error).message}`);
       }
-    } catch (err) {
-      console.warn(`[self-review] failed to parse ${signalPath}: ${(err as Error).message}`);
     }
     if (turnActive && Date.now() >= nextTurnStateCheckAt) {
       nextTurnStateCheckAt = Date.now() + turnStatePollMs;
       if (await turnActive()) lastProgressAt = Date.now();
     }
   }
+  onTimeout?.(lastExpectedAttemptId);
   return undefined;
 }

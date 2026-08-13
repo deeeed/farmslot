@@ -152,7 +152,7 @@ function hasLaterSettledReview(reviews: RecoverableReviewRecord[], recordedIndex
     .some(
       (review) =>
         review.source !== 'self-review' &&
-        review.verdict !== undefined &&
+        (review.verdict === 'pass' || review.verdict === 'issues') &&
         review.unresolvedCount !== undefined,
     );
 }
@@ -198,6 +198,13 @@ export function reviewerContextNeedsRecovery(
       unresolvedCount: recorded.unresolvedCount,
       issues: recorded.issues,
     })
+  ) {
+    return true;
+  }
+  if (
+    ctx.status !== 'failed' &&
+    recorded.verdict === 'skipped' &&
+    !hasLaterSettledReview(reviews, recordedIndex)
   ) {
     return true;
   }
@@ -293,6 +300,18 @@ export function buildRecoveredReview(params: {
     model: ctx.model ?? undefined,
     retryCount: 0,
     reviewSnapshot,
+    attempts: [
+      {
+        loopNumber: 1,
+        verdict: feedback.verdict,
+        unresolvedCount: feedback.verdict === 'pass' ? 0 : feedback.issues.length,
+        ...(feedback.issues.length ? { issues: feedback.issues } : {}),
+        validationDepth: feedback.validationDepth,
+        reviewSnapshot,
+        startedAt: ctx.attemptStartedAt ?? ctx.startedAt,
+        completedAt: freshSignal?.timestamp ?? ctx.completedAt,
+      },
+    ],
   };
   const recovered = buildPublishGateReviewStatus({
     source:
@@ -610,6 +629,7 @@ async function ingestRecoveredReviewer(
   if (
     existingReview &&
     !isFailedReviewPlaceholder(existingReview) &&
+    existingReview.verdict !== 'skipped' &&
     !independentReviewNeedsContinuation(existingReview)
   ) {
     return null;
@@ -631,6 +651,7 @@ async function ingestRecoveredReviewer(
   if (
     existingIndex >= 0 &&
     !isFailedReviewPlaceholder(finalReviews[existingIndex]!) &&
+    finalReviews[existingIndex]!.verdict !== 'skipped' &&
     !independentReviewNeedsContinuation(finalReviews[existingIndex]!)
   ) {
     return null;
@@ -781,19 +802,18 @@ export function recoveredReviewAlreadyIngested(
   // can be later than the reviewer's already-written terminal signal. It is
   // not an ingested verdict and must never suppress that recovered result.
   if (isFailedReviewPlaceholder(existing)) return false;
+  if (existing.verdict === 'skipped') return false;
   const existingAttempt = existing.attempts?.at(-1);
   const recoveredAttempt = recovered.attempts?.at(-1);
-  if (
-    existingAttempt?.startedAt &&
-    recoveredAttempt?.startedAt &&
-    existingAttempt.startedAt === recoveredAttempt.startedAt &&
-    existing.verdict === recovered.verdict &&
-    existing.unresolvedCount === recovered.unresolvedCount
-  ) {
-    // The terminal signal can be written milliseconds after the live result
-    // was persisted. `startedAt` identifies the review generation; treating
-    // the later signal timestamp as a new pass duplicates the final attempt.
-    return true;
+  if (existingAttempt?.startedAt && recoveredAttempt?.startedAt) {
+    // Attempt start is the opaque generation identity. Completion clocks can
+    // be inverted across the worker, node, and gateway, so they are only a
+    // migration fallback when one side predates attempt-scoped artifacts.
+    if (existingAttempt.startedAt !== recoveredAttempt.startedAt) return false;
+    return (
+      existing.verdict === recovered.verdict &&
+      existing.unresolvedCount === recovered.unresolvedCount
+    );
   }
   const existingAt = Date.parse(existing.completedAt ?? '');
   const recoveredAt = Date.parse(recovered.completedAt ?? '');
