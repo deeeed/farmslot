@@ -230,6 +230,9 @@ export async function gitDiff(
   params: GitDiffParams,
   deps: GitExecDeps = {},
 ): Promise<GitDiffResult> {
+  if (params.head && !params.base) {
+    throw new Error('An exact review head requires a base ref');
+  }
   const args = ['diff'];
 
   if (params.base) {

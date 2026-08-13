@@ -91,16 +91,13 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
   // ticket stales any completion from an earlier visit.
   const ticket = branchDiffTicket(view);
   const isCurrent = () => isTicketCurrent(view, ticket);
-  const requestedHeadSha = view._liveGitData?.headSha;
+  const reviewSnapshot = slotViewPendingReviewSnapshot(view._linkedRun);
+  const requestedHeadSha = reviewSnapshot?.headSha ?? view._liveGitData?.headSha;
   view._branchDiffLoading = true;
   try {
     const result = await gateway.request<GitBranchDiffResult>(
       Methods.GIT_BRANCH_DIFF,
-      committedReviewBranchDiffRequest(
-        view.slotId,
-        view._branchDiffBase,
-        slotViewPendingReviewSnapshot(view._linkedRun),
-      ),
+      committedReviewBranchDiffRequest(view.slotId, view._branchDiffBase, reviewSnapshot),
     );
     if (!isCurrent()) return;
     view._branchDiffBase = result.base;
@@ -126,7 +123,7 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
     // flag the new slot's own load now owns.
     if (isCurrent()) {
       view._branchDiffLoading = false;
-      if (requestedHeadSha && view._liveGitData?.headSha !== requestedHeadSha) {
+      if (!reviewSnapshot && requestedHeadSha && view._liveGitData?.headSha !== requestedHeadSha) {
         view._liveDiffContents.clear();
         void view._loadBranchDiff();
       }

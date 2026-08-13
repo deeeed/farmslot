@@ -20,6 +20,7 @@ import {
   isMediaFile,
   parseBranchDiffKey,
   realPath,
+  slotViewPendingReviewSnapshot,
 } from './slot-view-model.js';
 import { updateSlotViewTreeChildren } from './slot-view-tree-model.js';
 
@@ -140,8 +141,13 @@ export async function refreshSlotViewGitStatus(view: SlotView) {
       loading: view._branchDiffLoading,
     });
     if (pollAction !== 'none') {
-      if (pollAction === 'reload-and-clear-cache') view._liveDiffContents.clear();
-      view._loadBranchDiff();
+      const frozenReview = slotViewPendingReviewSnapshot(view._linkedRun);
+      if (!frozenReview) {
+        if (pollAction === 'reload-and-clear-cache') view._liveDiffContents.clear();
+        view._loadBranchDiff();
+      } else if (view._branchDiffError !== null) {
+        view._loadBranchDiff();
+      }
     }
   } catch (err) {
     console.warn(
