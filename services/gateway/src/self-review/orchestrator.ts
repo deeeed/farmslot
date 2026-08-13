@@ -1408,7 +1408,9 @@ async function recoverSelfReviewFixPass({
       )?.signalAttemptId;
       if (!currentAttemptId || !(await settleRecoveredFixContext('failed', currentAttemptId)))
         return null;
-      await unwatchContext(slotId, 'self-review-fix');
+      // Keep the path-scoped watch alive for a same-run successor attempt. A running
+      // signal can adopt a new opaque attempt immediately after the settlement CAS;
+      // role-scoped teardown here would then remove the successor's observability.
       if (maxRetries <= 1)
         return {
           verdict: 'issues',
@@ -1450,7 +1452,7 @@ async function recoverSelfReviewFixPass({
         }))
       )
         return null;
-      await unwatchContext(slotId, 'self-review-fix');
+      // Keep the reusable fix-context watch; slot/run teardown owns final cleanup.
       return {
         verdict: 'blocked',
         reason: fixSignal.reason ?? 'worker blocked during self-review fix',
@@ -1482,7 +1484,7 @@ async function recoverSelfReviewFixPass({
       ))
     )
       return null;
-    await unwatchContext(slotId, 'self-review-fix');
+    // Keep the reusable fix-context watch; the next review round uses the same files.
     const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
     setProgressDetail(runId, `Worker fix complete; running ${reviewRunner} re-review (2)...`);
     const retryResult = await runReviewAgent(
@@ -2104,22 +2106,34 @@ export async function waitForWorkerSignal(
   const start = Date.now();
   let lastProgressAt = start;
   let lastObservedSignal = baseline;
+  let lastExpectedAttemptId =
+    typeof expectedAttemptId === 'function' ? expectedAttemptId() : expectedAttemptId;
   let nextTurnStateCheckAt = start;
   const turnStatePollMs = Math.min(10_000, Math.max(2_000, Math.floor(timeoutMs / 2)));
   const maxActiveMs = Math.max(timeoutMs, Math.min(FEEDBACK_MAX_ACTIVE_MS, timeoutMs * 4));
   while (Date.now() - start < maxActiveMs && Date.now() - lastProgressAt < timeoutMs) {
     await new Promise((r) => setTimeout(r, 2000));
-    try {
-      const raw = await readOptionalSelfReviewFixSignal(vars, signalPath);
-      if (raw && raw !== lastObservedSignal) {
+    const expected =
+      typeof expectedAttemptId === 'function' ? expectedAttemptId() : expectedAttemptId;
+    if (expected !== lastExpectedAttemptId) {
+      // Reconsider the current file when the context watcher adopts a new attempt.
+      // The terminal write can race that persisted adoption and otherwise look unchanged.
+      lastObservedSignal = baseline;
+      lastExpectedAttemptId = expected;
+    }
+    const raw = await readOptionalSelfReviewFixSignal(vars, signalPath);
+    if (raw && raw !== lastObservedSignal) {
+      try {
         const signal = terminalWorkerSignalFromRaw(raw);
-        const expected =
-          typeof expectedAttemptId === 'function' ? expectedAttemptId() : expectedAttemptId;
-        if (signal && (!expected || signal.attemptId === expected)) return signal;
+        const attemptMatches =
+          typeof expectedAttemptId === 'function'
+            ? Boolean(expected && signal?.attemptId === expected)
+            : !expected || signal?.attemptId === expected;
+        if (signal && attemptMatches) return signal;
         lastObservedSignal = raw;
+      } catch (err) {
+        console.warn(`[self-review] failed to parse ${signalPath}: ${(err as Error).message}`);
       }
-    } catch (err) {
-      console.warn(`[self-review] failed to read ${signalPath}: ${(err as Error).message}`);
     }
     if (turnActive && Date.now() >= nextTurnStateCheckAt) {
       nextTurnStateCheckAt = Date.now() + turnStatePollMs;
