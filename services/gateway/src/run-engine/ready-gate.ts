@@ -153,7 +153,6 @@ function selfReviewResultFromInterruptedReview(review: IndependentReviewStatus):
     retryCount: Math.max(0, (review.attempts?.length ?? 1) - 1),
     feedbackSent: review.feedbackSent,
     recoveryContinuationPending: review.recoveryContinuationPending,
-    findingsCompletedAt: review.completedAt,
   };
 }
 

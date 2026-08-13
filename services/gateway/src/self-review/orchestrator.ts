@@ -116,8 +116,6 @@ export interface SelfReviewResult {
   /** Reviewer findings are valid, but their worker fix handoff still needs recovery. */
   recoveryContinuationPending?: boolean;
   durationMs?: number;
-  /** Completion time of the findings generation this result resumes. */
-  findingsCompletedAt?: string;
 }
 
 /** The fix checklist exists, but the retained worker did not accept its prompt. */
@@ -265,9 +263,7 @@ export async function executeSelfReview(
       validationDepth,
       artifactScope,
       sessionPolicy,
-      findingsCompletedAt:
-        options.resumeFromResult?.findingsCompletedAt ??
-        options.resumeFromResult?.attempts?.at(-1)?.completedAt,
+      findingsArtifactScope: artifactScope,
     });
     if (recoveredFixResult) {
       hasReusableReviewResult =
@@ -994,20 +990,16 @@ async function readSelfReviewFixIssues(
 
 export function canRecoverSelfReviewFixPass(
   fixContext:
-    | Pick<
-        AgentContext,
-        'role' | 'status' | 'taskFile' | 'signalFile' | 'attemptStartedAt' | 'startedAt'
-      >
+    | Pick<AgentContext, 'role' | 'status' | 'taskFile' | 'signalFile' | 'artifactScope'>
     | null
     | undefined,
   taskDir: string,
-  findingsCompletedAt?: string,
+  findingsArtifactScope?: string | null,
 ): boolean {
-  const fixStartedAt = Date.parse(fixContext?.attemptStartedAt ?? fixContext?.startedAt ?? '');
-  const findingsFinishedAt = Date.parse(findingsCompletedAt ?? '');
   const matchesFindingsGeneration =
-    !Number.isFinite(findingsFinishedAt) ||
-    (Number.isFinite(fixStartedAt) && fixStartedAt >= findingsFinishedAt);
+    !findingsArtifactScope ||
+    !fixContext?.artifactScope ||
+    fixContext.artifactScope === findingsArtifactScope;
   return (
     fixContext?.role === 'self-review-fix' &&
     fixContext.status === 'working' &&
@@ -1186,7 +1178,7 @@ async function recoverSelfReviewFixPass({
   validationDepth,
   artifactScope,
   sessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
-  findingsCompletedAt,
+  findingsArtifactScope,
   setProgressDetail = setSelfReviewProgressDetail,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -1202,17 +1194,26 @@ async function recoverSelfReviewFixPass({
   validationDepth: ReviewValidationDepth;
   artifactScope?: string | null;
   sessionPolicy?: ReviewSessionPolicy;
-  findingsCompletedAt?: string;
+  findingsArtifactScope?: string | null;
   setProgressDetail?: (runId: string, detail: string) => void;
 }): Promise<SelfReviewResult | null> {
   const run = getRun(runId);
   const fixContext = run?.agentContexts?.find((ctx) =>
-    canRecoverSelfReviewFixPass(ctx, taskDir, findingsCompletedAt),
+    canRecoverSelfReviewFixPass(ctx, taskDir, findingsArtifactScope),
   );
   // Never recover from SELF-REVIEW-FIX-SIGNAL.json alone. That file is reused by every
   // review loop in the task dir, so a completed prior loop can otherwise masquerade as the
   // fix pass for a new independent review and prevent feedback from reaching the worker.
   if (!fixContext) return null;
+
+  // Older in-flight contexts predate generation ownership. Bind the selected
+  // context once so every later recovery compares stable review identity,
+  // never clocks whose persistence order can legitimately differ.
+  if (findingsArtifactScope && !fixContext.artifactScope) {
+    await upsertAgentContext(runId, 'self-review-fix', {
+      artifactScope: findingsArtifactScope,
+    });
+  }
 
   try {
     const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
@@ -1606,6 +1607,7 @@ async function sendFeedbackToWorker(
     const fixContext = await upsertAgentContext(runId, 'self-review-fix', {
       status: 'working',
       attemptStartedAt: fixAttemptStartedAt,
+      artifactScope,
       taskFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist),
       signalFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal),
       runner: run?.metrics.runner ?? null,

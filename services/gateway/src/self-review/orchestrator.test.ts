@@ -239,33 +239,28 @@ test('canRecoverSelfReviewFixPass requires a working context for the current fix
     status: 'working',
     taskFile: 'tasks/foo/SELF-REVIEW-FIX.md',
     signalFile: 'tasks/foo/SELF-REVIEW-FIX-SIGNAL.json',
-    attemptStartedAt: '2026-08-04T08:15:00.000Z',
+    artifactScope: 'independent-review-4',
   } as const;
 
   assert.equal(canRecoverSelfReviewFixPass(current, 'tasks/foo'), true);
   assert.equal(
-    canRecoverSelfReviewFixPass(current, 'tasks/foo', '2026-08-04T08:15:00.000Z'),
+    canRecoverSelfReviewFixPass(current, 'tasks/foo', 'independent-review-4'),
     true,
-    'a fix context started with the current findings generation is recoverable',
+    'a fix context owned by the current findings generation is recoverable',
   );
   assert.equal(
     canRecoverSelfReviewFixPass(
-      { ...current, attemptStartedAt: undefined, startedAt: '2026-08-04T08:17:00.000Z' },
+      { ...current, artifactScope: null },
       'tasks/foo',
-      '2026-08-04T08:16:00.000Z',
+      'independent-review-4',
     ),
     true,
-    'legacy contexts fall back to their start time',
+    'an in-flight context created before generation ownership can be bound during recovery',
   );
   assert.equal(
-    canRecoverSelfReviewFixPass(current, 'tasks/foo', 'not-a-timestamp'),
-    true,
-    'an unavailable findings timestamp preserves legacy recovery behavior',
-  );
-  assert.equal(
-    canRecoverSelfReviewFixPass(current, 'tasks/foo', '2026-08-04T08:16:00.000Z'),
+    canRecoverSelfReviewFixPass(current, 'tasks/foo', 'independent-review-5'),
     false,
-    'a fix context from before the current findings must not be recovered',
+    'a fix context owned by another findings generation must not be recovered',
   );
   assert.equal(canRecoverSelfReviewFixPass(null, 'tasks/foo'), false);
   assert.equal(
