@@ -12,6 +12,7 @@ import type {
   GitBranchDiffFile,
   GitBranchDiffResult,
   GitDiffResult,
+  GitShowResult,
   ReviewGatePayload,
   ReviewLineComment,
   RunDecision,
@@ -868,19 +869,26 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     // Load file content for code-viewer with ViewZone
     this._commentFileLoading = true;
     this._commentFileContent = '';
-    const tFs = performance.now();
+    const tFile = performance.now();
     try {
-      const result = await gateway.request<FsReadResult>(Methods.FS_READ, {
-        slotId: this.slotId,
-        path: c.path,
-      });
+      const reviewedHead = this._payload.reviewSnapshot?.headSha?.trim();
+      const result = reviewedHead
+        ? await gateway.request<GitShowResult>(Methods.GIT_SHOW, {
+            slotId: this.slotId,
+            ref: reviewedHead,
+            path: c.path,
+          })
+        : await gateway.request<FsReadResult>(Methods.FS_READ, {
+            slotId: this.slotId,
+            path: c.path,
+          });
       this._commentFileContent = result.content;
     } catch {
       this._commentFileContent = '';
     } finally {
       this._commentFileLoading = false;
       console.log(
-        `[review-workspace] fsRead ${(performance.now() - tFs).toFixed(0)}ms path=${c.path}`,
+        `[review-workspace] commentFile ${(performance.now() - tFile).toFixed(0)}ms path=${c.path}`,
       );
     }
     // Set revealLine after content is loaded — use requestAnimationFrame

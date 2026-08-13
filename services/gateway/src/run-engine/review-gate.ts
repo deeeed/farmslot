@@ -35,6 +35,7 @@ import {
 } from '../run-completion/orchestrator.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 
+import { findLatestResolvedDecision } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun, readReviewInputSnapshot } from './diff-artifacts.js';
 import { createEngineDecision } from './engine-decisions.js';
 import { BlockedRunError } from './errors.js';
@@ -279,12 +280,10 @@ export async function executeReviewGate(runId: string): Promise<void> {
     actions,
     reviewPayload,
   );
+  const resolvedDecision = findLatestResolvedDecision(getRun(runId)!.decisions, 'review_posting');
 
   // 5b. Persist evidence overrides from selectionData (if any)
   if (qualityReport) {
-    const resolvedDecision = getRun(runId)!.decisions.find(
-      (d) => d.type === 'engine_review_posting' && d.resolvedAt,
-    );
     const overrides = resolvedDecision?.selectionData?.evidenceOverrides as
       | Record<string, string>
       | undefined;
@@ -322,13 +321,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
         const latest = getRun(runId)!;
         updateRun(runId, {
           decisions: latest.decisions.map((decision) => {
-            if (
-              decision.type !== 'engine_review_posting' ||
-              decision.id !==
-                latest.decisions.find(
-                  (d) => d.type === 'engine_review_posting' && d.resolvedAction === 'post',
-                )?.id
-            )
+            if (decision.type !== 'engine_review_posting' || decision.id !== resolvedDecision?.id)
               return decision;
             return {
               ...decision,
@@ -348,9 +341,6 @@ export async function executeReviewGate(runId: string): Promise<void> {
     const taskDirName = pv?.projectJson
       ? resolveProjectTaskDirName(pv.projectJson)
       : DEFAULT_TASK_DIR;
-    const resolvedDecision = current.decisions.find(
-      (d) => d.type === 'engine_review_posting' && d.resolvedAction === 'post',
-    );
     const overrideRec = resolvedDecision?.selectionData?.recommendation as string | undefined;
 
     // Populate Runner / Model / Cost / Tokens fields in the comment header.
