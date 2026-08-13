@@ -12,10 +12,16 @@ export function slotViewBranchList({
   const branches = new Set<string>();
   branches.add('main');
   branches.add('develop');
-  if (branchDiffHead && branchDiffHead !== 'main') branches.add(branchDiffHead);
+  if (branchDiffHead && branchDiffHead !== 'main' && !isCommitRef(branchDiffHead)) {
+    branches.add(branchDiffHead);
+  }
   if (branchDiffBase && branchDiffBase !== 'main') branches.add(branchDiffBase);
   if (gitBranch) branches.add(gitBranch);
   return [...branches].sort();
+}
+
+function isCommitRef(ref: string): boolean {
+  return ref === 'HEAD' || /^[0-9a-f]{40,64}$/i.test(ref);
 }
 
 export type BranchDiffPollAction = 'none' | 'reload' | 'reload-and-clear-cache';

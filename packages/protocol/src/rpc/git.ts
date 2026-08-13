@@ -136,6 +136,7 @@ export interface GitBranchDiffParams {
 
 export interface GitBranchDiffResult {
   base: string;
+  /** Resolved live branch name, or the exact reviewed SHA when `params.head` pins the diff. */
   head: string;
   files: import('../contracts/index.js').GitBranchDiffFile[];
   /** Line totals exclude untracked files (worktree target lists them with 0/0). */

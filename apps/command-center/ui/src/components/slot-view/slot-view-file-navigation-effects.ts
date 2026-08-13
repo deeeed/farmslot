@@ -1,5 +1,6 @@
 import type { SlotView } from './slot-view.js';
 import { resolveSlotViewOpenFilePath } from './slot-view-file-navigation-model.js';
+import { realPath } from './slot-view-model.js';
 
 export async function navigateSlotViewComment(
   view: SlotView,
@@ -46,7 +47,7 @@ export function handleSlotViewGlyphClick(view: SlotView, line: number): void {
     if (panel) {
       panel.dispatchEvent(
         new CustomEvent('start-new-comment', {
-          detail: { path: view._activeFile, line },
+          detail: { path: realPath(view._activeFile), line },
         }),
       );
     }
