@@ -244,6 +244,25 @@ test('canRecoverSelfReviewFixPass requires a working context for the current fix
 
   assert.equal(canRecoverSelfReviewFixPass(current, 'tasks/foo'), true);
   assert.equal(
+    canRecoverSelfReviewFixPass(current, 'tasks/foo', '2026-08-04T08:15:00.000Z'),
+    true,
+    'a fix context started with the current findings generation is recoverable',
+  );
+  assert.equal(
+    canRecoverSelfReviewFixPass(
+      { ...current, attemptStartedAt: undefined, startedAt: '2026-08-04T08:17:00.000Z' },
+      'tasks/foo',
+      '2026-08-04T08:16:00.000Z',
+    ),
+    true,
+    'legacy contexts fall back to their start time',
+  );
+  assert.equal(
+    canRecoverSelfReviewFixPass(current, 'tasks/foo', 'not-a-timestamp'),
+    true,
+    'an unavailable findings timestamp preserves legacy recovery behavior',
+  );
+  assert.equal(
     canRecoverSelfReviewFixPass(current, 'tasks/foo', '2026-08-04T08:16:00.000Z'),
     false,
     'a fix context from before the current findings must not be recovered',

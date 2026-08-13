@@ -790,6 +790,7 @@ export function recoveredReviewAlreadyIngested(
   // can be later than the reviewer's already-written terminal signal. It is
   // not an ingested verdict and must never suppress that recovered result.
   if (isFailedReviewPlaceholder(existing)) return false;
+  if (existing.verdict === 'skipped') return false;
   const existingAttempt = existing.attempts?.at(-1);
   const recoveredAttempt = recovered.attempts?.at(-1);
   if (
@@ -806,13 +807,7 @@ export function recoveredReviewAlreadyIngested(
   }
   const existingAt = Date.parse(existing.completedAt ?? '');
   const recoveredAt = Date.parse(recovered.completedAt ?? '');
-  return (
-    existing.verdict === recovered.verdict &&
-    existing.unresolvedCount === recovered.unresolvedCount &&
-    Number.isFinite(existingAt) &&
-    Number.isFinite(recoveredAt) &&
-    recoveredAt <= existingAt
-  );
+  return Number.isFinite(existingAt) && Number.isFinite(recoveredAt) && recoveredAt <= existingAt;
 }
 
 function appendRecoveredContinuationAttempt(

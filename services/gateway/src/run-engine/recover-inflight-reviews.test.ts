@@ -102,6 +102,24 @@ test('recovery replaces a skipped placeholder with an authoritative reviewer ver
   );
 });
 
+test('recovery never lets an older authoritative verdict replace a newer one', () => {
+  assert.equal(
+    recoveredReviewAlreadyIngested(
+      {
+        completedAt: '2026-08-03T16:05:00.000Z',
+        verdict: 'issues',
+        unresolvedCount: 2,
+      },
+      {
+        completedAt: '2026-08-03T16:00:00.000Z',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
+    ),
+    true,
+  );
+});
+
 test('recovery deduplicates one review generation even when its terminal signal is later', () => {
   const attempt = {
     loopNumber: 4,
@@ -290,6 +308,39 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
     ]),
     true,
     'a later skipped placeholder does not suppress an authoritative reviewer artifact',
+  );
+  for (const verdict of ['failed', 'cancelled'] as const) {
+    assert.equal(
+      reviewerContextNeedsRecovery(complete, [
+        {
+          id: 'independent-review-7',
+          source: 'human-gate',
+          verdict: 'skipped',
+          unresolvedCount: 0,
+        },
+        {
+          id: 'independent-review-8',
+          source: 'human-gate',
+          verdict,
+          unresolvedCount: 0,
+        },
+      ]),
+      true,
+      `a later ${verdict} attempt does not suppress the reviewer-owned verdict`,
+    );
+  }
+  assert.equal(
+    reviewerContextNeedsRecovery(complete, [
+      {
+        id: 'independent-review-7',
+        source: 'human-gate',
+        verdict: 'issues',
+        unresolvedCount: 2,
+        feedbackSent: false,
+      },
+    ]),
+    false,
+    'recovery converges once the skipped placeholder is replaced by a terminal verdict',
   );
 });
 

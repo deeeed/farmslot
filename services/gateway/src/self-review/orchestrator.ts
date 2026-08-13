@@ -1232,6 +1232,7 @@ async function recoverSelfReviewFixPass({
 
     const issues = await readSelfReviewFixIssues(vars, taskDir);
     if (issues.length === 0) {
+      await markAgentContextStatus(runId, 'self-review-fix', 'failed', { id: fixContext.id });
       debugSelfReviewLog(
         `[self-review] run ${runId.slice(0, 8)} — fix context has no materialized findings; rebuilding from the review result`,
       );
