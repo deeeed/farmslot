@@ -59,7 +59,11 @@ test('recovery ignores the same terminal reviewer signal but accepts a later con
         verdict: 'pass',
         unresolvedCount: 0,
       },
-      { completedAt: '2026-08-03T16:00:00.000Z' },
+      {
+        completedAt: '2026-08-03T16:00:00.000Z',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
     ),
     true,
   );
@@ -70,7 +74,29 @@ test('recovery ignores the same terminal reviewer signal but accepts a later con
         verdict: 'pass',
         unresolvedCount: 0,
       },
-      { completedAt: '2026-08-03T16:05:00.000Z' },
+      {
+        completedAt: '2026-08-03T16:05:00.000Z',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
+    ),
+    false,
+  );
+});
+
+test('recovery replaces a skipped placeholder with an authoritative reviewer verdict', () => {
+  assert.equal(
+    recoveredReviewAlreadyIngested(
+      {
+        completedAt: '2026-08-03T16:05:00.000Z',
+        verdict: 'skipped',
+        unresolvedCount: 0,
+      },
+      {
+        completedAt: '2026-08-03T16:00:00.000Z',
+        verdict: 'issues',
+        unresolvedCount: 2,
+      },
     ),
     false,
   );
@@ -246,6 +272,24 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
     ]),
     false,
     'a later terminal review supersedes an older continuation marker',
+  );
+  assert.equal(
+    reviewerContextNeedsRecovery(complete, [
+      {
+        id: 'independent-review-7',
+        source: 'human-gate',
+        verdict: 'skipped',
+        unresolvedCount: 0,
+      },
+      {
+        id: 'independent-review-8',
+        source: 'human-gate',
+        verdict: 'skipped',
+        unresolvedCount: 0,
+      },
+    ]),
+    true,
+    'a later skipped placeholder does not suppress an authoritative reviewer artifact',
   );
 });
 

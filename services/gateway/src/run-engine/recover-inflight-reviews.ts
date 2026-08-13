@@ -152,7 +152,7 @@ function hasLaterSettledReview(reviews: RecoverableReviewRecord[], recordedIndex
     .some(
       (review) =>
         review.source !== 'self-review' &&
-        review.verdict !== undefined &&
+        (review.verdict === 'pass' || review.verdict === 'issues') &&
         review.unresolvedCount !== undefined,
     );
 }
@@ -198,6 +198,13 @@ export function reviewerContextNeedsRecovery(
       unresolvedCount: recorded.unresolvedCount,
       issues: recorded.issues,
     })
+  ) {
+    return true;
+  }
+  if (
+    ctx.status !== 'failed' &&
+    recorded.verdict === 'skipped' &&
+    !hasLaterSettledReview(reviews, recordedIndex)
   ) {
     return true;
   }
@@ -610,6 +617,7 @@ async function ingestRecoveredReviewer(
   if (
     existingReview &&
     !isFailedReviewPlaceholder(existingReview) &&
+    existingReview.verdict !== 'skipped' &&
     !independentReviewNeedsContinuation(existingReview)
   ) {
     return null;
@@ -631,6 +639,7 @@ async function ingestRecoveredReviewer(
   if (
     existingIndex >= 0 &&
     !isFailedReviewPlaceholder(finalReviews[existingIndex]!) &&
+    finalReviews[existingIndex]!.verdict !== 'skipped' &&
     !independentReviewNeedsContinuation(finalReviews[existingIndex]!)
   ) {
     return null;
@@ -797,7 +806,13 @@ export function recoveredReviewAlreadyIngested(
   }
   const existingAt = Date.parse(existing.completedAt ?? '');
   const recoveredAt = Date.parse(recovered.completedAt ?? '');
-  return Number.isFinite(existingAt) && Number.isFinite(recoveredAt) && recoveredAt <= existingAt;
+  return (
+    existing.verdict === recovered.verdict &&
+    existing.unresolvedCount === recovered.unresolvedCount &&
+    Number.isFinite(existingAt) &&
+    Number.isFinite(recoveredAt) &&
+    recoveredAt <= existingAt
+  );
 }
 
 function appendRecoveredContinuationAttempt(
