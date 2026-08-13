@@ -617,9 +617,16 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         try {
           await deps.replayHumanGate(run.id);
         } catch (err) {
-          console.warn(
-            `[run-engine] run ${run.id.slice(0, 8)} — superseded gate recovery failed: ${(err as Error).message.slice(0, 200)}`,
-          );
+          const message = `Human-gate recovery needs an operator retry: ${(err as Error).message.slice(0, 160)}`;
+          const current = deps.getRun(run.id) ?? run;
+          markTerminalReviewArtifactOperatorRequired(deps, current, message);
+          deps.updateRunStep(run.id, S.HUMAN_GATE, {
+            detail: 'Review recovery failed — retry this gate to continue',
+          });
+          deps.broadcast(Events.RUN_UPDATED, {
+            run: deps.getRun(run.id) ?? current,
+          });
+          console.error(`[run-engine] run ${run.id.slice(0, 8)} — ${message}`);
         }
         continue;
       }
