@@ -1238,6 +1238,27 @@ async function recoverSelfReviewFixPass({
   // fix pass for a new independent review and prevent feedback from reaching the worker.
   if (!fixContext) return null;
 
+  const settleRecoveredFixContext = async (
+    status: 'complete' | 'failed' | 'blocked',
+    patch: Partial<AgentContext> = {},
+  ): Promise<boolean> => {
+    const updated = await upsertAgentContext(
+      runId,
+      'self-review-fix',
+      { id: fixContext.id },
+      {
+        resolvePatch: (current) =>
+          current &&
+          current.artifactScope === findingsArtifactScope &&
+          current.attemptStartedAt === fixContext.attemptStartedAt &&
+          current.signalAttemptId === fixContext.signalAttemptId
+            ? { id: fixContext.id, status, completedAt: new Date().toISOString(), ...patch }
+            : null,
+      },
+    );
+    return updated !== null;
+  };
+
   try {
     const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
     const rawSignal = await readOptionalSelfReviewFixSignal(vars, fixSignalPath);
@@ -1251,10 +1272,9 @@ async function recoverSelfReviewFixPass({
     }
 
     if (fixSignal) {
-      const matchesAttempt = fixSignal.attemptId
-        ? fixSignal.attemptId === fixContext.signalAttemptId
-        : !fixContext.signalAttemptId &&
-          signalFreshSince(fixSignal, fixContext.attemptStartedAt ?? fixContext.startedAt);
+      const matchesAttempt = Boolean(
+        fixSignal.attemptId && fixSignal.attemptId === fixContext.signalAttemptId,
+      );
       if (!matchesAttempt) fixSignal = undefined;
     }
 
@@ -1368,6 +1388,7 @@ async function recoverSelfReviewFixPass({
           deliveredTurnToken
             ? () => selfReviewFixTurnIsActive(vars, runId, workerRunner, deliveredTurnToken)
             : undefined,
+          fixContext.signalAttemptId ?? undefined,
         );
       } finally {
         fixWatcher.stop();
@@ -1378,7 +1399,7 @@ async function recoverSelfReviewFixPass({
       debugSelfReviewLog(
         `[self-review] run ${runId.slice(0, 8)} — timeout waiting for recovered worker fix`,
       );
-      await markAgentContextStatus(runId, 'self-review-fix', 'failed');
+      if (!(await settleRecoveredFixContext('failed'))) return null;
       await unwatchContext(slotId, 'self-review-fix');
       if (maxRetries <= 1)
         return {
@@ -1415,9 +1436,12 @@ async function recoverSelfReviewFixPass({
 
     if (fixSignal.status === 'blocked') {
       const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
-      await markAgentContextStatus(runId, 'self-review-fix', 'blocked', {
-        lastSignalAt: new Date().toISOString(),
-      });
+      if (
+        !(await settleRecoveredFixContext('blocked', {
+          lastSignalAt: new Date().toISOString(),
+        }))
+      )
+        return null;
       await unwatchContext(slotId, 'self-review-fix');
       return {
         verdict: 'blocked',
@@ -1442,12 +1466,12 @@ async function recoverSelfReviewFixPass({
       };
     }
 
-    await markAgentContextStatus(
-      runId,
-      'self-review-fix',
-      fixSignal.status === 'failed' ? 'failed' : 'complete',
-      { lastSignalAt: new Date().toISOString() },
-    );
+    if (
+      !(await settleRecoveredFixContext(fixSignal.status === 'failed' ? 'failed' : 'complete', {
+        lastSignalAt: new Date().toISOString(),
+      }))
+    )
+      return null;
     await unwatchContext(slotId, 'self-review-fix');
     const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
     setProgressDetail(runId, `Worker fix complete; running ${reviewRunner} re-review (2)...`);
@@ -2063,6 +2087,7 @@ export async function waitForWorkerSignal(
   timeoutMs: number,
   baseline: string,
   turnActive?: () => Promise<boolean>,
+  expectedAttemptId?: string,
 ): Promise<WorkerSignal | undefined> {
   const signalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
 
@@ -2075,12 +2100,12 @@ export async function waitForWorkerSignal(
   while (Date.now() - start < maxActiveMs && Date.now() - lastProgressAt < timeoutMs) {
     await new Promise((r) => setTimeout(r, 2000));
     try {
-      const raw = await readOptionalSlotFile(vars, signalPath);
+      const raw = await readOptionalSelfReviewFixSignal(vars, signalPath);
       if (raw && raw !== lastObservedSignal) {
         lastObservedSignal = raw;
         lastProgressAt = Date.now();
         const signal = terminalWorkerSignalFromRaw(raw);
-        if (signal) return signal;
+        if (signal && (!expectedAttemptId || signal.attemptId === expectedAttemptId)) return signal;
       }
     } catch (err) {
       console.warn(`[self-review] failed to parse ${signalPath}: ${(err as Error).message}`);
