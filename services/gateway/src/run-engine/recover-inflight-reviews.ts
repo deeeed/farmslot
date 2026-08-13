@@ -300,6 +300,18 @@ export function buildRecoveredReview(params: {
     model: ctx.model ?? undefined,
     retryCount: 0,
     reviewSnapshot,
+    attempts: [
+      {
+        loopNumber: 1,
+        verdict: feedback.verdict,
+        unresolvedCount: feedback.verdict === 'pass' ? 0 : feedback.issues.length,
+        ...(feedback.issues.length ? { issues: feedback.issues } : {}),
+        validationDepth: feedback.validationDepth,
+        reviewSnapshot,
+        startedAt: ctx.attemptStartedAt ?? ctx.startedAt,
+        completedAt: freshSignal?.timestamp ?? ctx.completedAt,
+      },
+    ],
   };
   const recovered = buildPublishGateReviewStatus({
     source:

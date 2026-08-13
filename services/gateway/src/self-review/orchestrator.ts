@@ -1003,6 +1003,23 @@ async function readSelfReviewFixIssues(
   return parseSelfReviewIssueBullets(content);
 }
 
+async function readOptionalSelfReviewFixSignal(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  signalPath: string,
+): Promise<string | null> {
+  const result = await execOnSlot(
+    vars,
+    `if [ -f ${shellQuote(signalPath)} ]; then cat ${shellQuote(signalPath)}; else exit 44; fi`,
+  );
+  if (result.exitCode === 44) return null;
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to read self-review fix signal: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+    );
+  }
+  return result.stdout.trim();
+}
+
 export function canRecoverSelfReviewFixPass(
   fixContext:
     | Pick<AgentContext, 'role' | 'status' | 'taskFile' | 'signalFile' | 'artifactScope'>
@@ -1221,21 +1238,12 @@ async function recoverSelfReviewFixPass({
   // fix pass for a new independent review and prevent feedback from reaching the worker.
   if (!fixContext) return null;
 
-  // Older in-flight contexts predate generation ownership. Bind the selected
-  // context once so every later recovery compares stable review identity,
-  // never clocks whose persistence order can legitimately differ.
-  if (findingsArtifactScope && !fixContext.artifactScope) {
-    await upsertAgentContext(runId, 'self-review-fix', {
-      artifactScope: findingsArtifactScope,
-    });
-  }
-
   try {
     const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
-    const rawSignal = await readOptionalSlotFile(vars, fixSignalPath);
+    const rawSignal = await readOptionalSelfReviewFixSignal(vars, fixSignalPath);
     let fixSignal: WorkerSignal | undefined;
     try {
-      fixSignal = terminalWorkerSignalFromRaw(rawSignal);
+      fixSignal = terminalWorkerSignalFromRaw(rawSignal ?? '');
     } catch (err) {
       console.warn(
         `[self-review] ignoring invalid recovered self-review fix signal for ${runId.slice(0, 8)}: ${(err as Error).message}`,
@@ -1243,10 +1251,31 @@ async function recoverSelfReviewFixPass({
     }
 
     if (fixSignal) {
-      const matchesAttempt = fixContext.signalAttemptId
+      const matchesAttempt = fixSignal.attemptId
         ? fixSignal.attemptId === fixContext.signalAttemptId
-        : signalFreshSince(fixSignal, fixContext.attemptStartedAt ?? fixContext.startedAt);
+        : !fixContext.signalAttemptId &&
+          signalFreshSince(fixSignal, fixContext.attemptStartedAt ?? fixContext.startedAt);
       if (!matchesAttempt) fixSignal = undefined;
+    }
+
+    // Older contexts can be migrated only after their opaque worker attempt
+    // matches. Bind the review generation then; never infer it from clocks.
+    if (findingsArtifactScope && !fixContext.artifactScope) {
+      if (!fixSignal) return null;
+      const rebound = await upsertAgentContext(
+        runId,
+        'self-review-fix',
+        { id: fixContext.id },
+        {
+          resolvePatch: (current) =>
+            current?.attemptStartedAt === fixContext.attemptStartedAt &&
+            current.signalAttemptId === fixContext.signalAttemptId &&
+            !current.artifactScope
+              ? { id: fixContext.id, artifactScope: findingsArtifactScope }
+              : null,
+        },
+      );
+      if (!rebound) return null;
     }
 
     const issues = await readSelfReviewFixIssues(vars, taskDir);
@@ -1258,7 +1287,9 @@ async function recoverSelfReviewFixPass({
         { id: fixContext.id },
         {
           resolvePatch: (current) =>
-            current?.artifactScope === findingsArtifactScope
+            current?.artifactScope === findingsArtifactScope &&
+            current.attemptStartedAt === fixContext.attemptStartedAt &&
+            current.signalAttemptId === fixContext.signalAttemptId
               ? { id: fixContext.id, status: 'failed' }
               : null,
         },
