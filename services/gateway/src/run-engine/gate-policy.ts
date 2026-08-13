@@ -336,7 +336,7 @@ export function noChangeRejectionMessage(
 }
 
 /**
- * A gateway restart kills the engine loop that owned a pending human-gate
+ * A gateway restart kills the engine loop that owned a pending human/review gate
  * decision; re-entering the gate then presents a NEW decision. Any older
  * unresolved gate decision must be closed out first — two pending gate
  * decisions mean an approval can land on one no live loop owns (observed: the
@@ -350,7 +350,11 @@ export function supersedeStaleHumanGateDecisions(
 ): number {
   let superseded = 0;
   for (const decision of decisions) {
-    if (decision.type !== 'engine_human_gate' || decision.resolvedAt) continue;
+    if (
+      (decision.type !== 'engine_human_gate' && decision.type !== 'engine_review_posting') ||
+      decision.resolvedAt
+    )
+      continue;
     decision.resolvedAt = nowIso;
     decision.resolvedAction = 'superseded';
     decision.context = { ...decision.context, supersededBy: 'gate-reentry' };

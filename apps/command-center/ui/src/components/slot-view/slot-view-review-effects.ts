@@ -12,10 +12,12 @@ import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 import type { SlotView } from './slot-view.js';
 import {
   type BranchDiffRequestTicket,
+  committedReviewBranchDiffRequest,
   isBranchDiffTicketCurrent,
   slotViewBranchList,
 } from './slot-view-branch-model.js';
 import { loadSlotViewDiffContent, loadSlotViewFileContent } from './slot-view-live-effects.js';
+import { slotViewPendingReviewSnapshot } from './slot-view-model.js';
 
 function isCurrentReviewResult(view: SlotView, epoch: number) {
   return epoch === view._recoveryEpoch && isRecoveryEpochCurrent(epoch);
@@ -92,14 +94,14 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
   const requestedHeadSha = view._liveGitData?.headSha;
   view._branchDiffLoading = true;
   try {
-    const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
-      slotId: view.slotId,
-      base: view._branchDiffBase,
-      // Keep the branch/PR diff identical to committed source control. Staged,
-      // unstaged, and untracked work remains in the separate IDE-style groups
-      // sourced from git.status.
-      target: 'head',
-    });
+    const result = await gateway.request<GitBranchDiffResult>(
+      Methods.GIT_BRANCH_DIFF,
+      committedReviewBranchDiffRequest(
+        view.slotId,
+        view._branchDiffBase,
+        slotViewPendingReviewSnapshot(view._linkedRun),
+      ),
+    );
     if (!isCurrent()) return;
     view._branchDiffBase = result.base;
     view._branchDiffFiles = result.files;

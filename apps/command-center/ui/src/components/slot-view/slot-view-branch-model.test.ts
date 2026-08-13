@@ -47,6 +47,29 @@ test('review workspace requests preserve a certified non-main base and committed
   });
 });
 
+test('review workspace requests pin both sides to the frozen review snapshot', () => {
+  const snapshot = {
+    baseRef: 'main',
+    baseSha: 'base-sha',
+    headRef: 'feature/reviewed',
+    headSha: 'head-sha',
+    capturedAt: '2026-08-13T00:00:00.000Z',
+    source: 'github-pr' as const,
+  };
+  assert.deepEqual(committedReviewBranchDiffRequest('slot-1', 'main', snapshot), {
+    slotId: 'slot-1',
+    base: 'base-sha',
+    head: 'head-sha',
+  });
+  assert.deepEqual(committedReviewFileDiffRequest('slot-1', 'src/index.ts', 'main', snapshot), {
+    slotId: 'slot-1',
+    path: 'src/index.ts',
+    base: 'base-sha',
+    head: 'head-sha',
+    target: 'head',
+  });
+});
+
 const POLL_BASE = {
   prevBranch: 'feat/x' as string | undefined,
   nextBranch: 'feat/x',

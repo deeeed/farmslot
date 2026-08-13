@@ -11,7 +11,7 @@ export const OBSERVABILITY_TRANSPORT = 'pane';
 export const REGISTERED_EVENTS = [];
 
 const CURSOR_BIN = path.join(os.homedir(), '.local/bin/cursor-agent');
-const DEFAULT_MODEL = 'composer-2.5';
+const DEFAULT_MODEL = 'cursor-grok-4.6-high-fast';
 
 function resolveBinary() {
   if (fs.existsSync(CURSOR_BIN)) return CURSOR_BIN;
@@ -31,10 +31,10 @@ export function prepareRepo() {
 }
 
 /** Print mode — matches gateway steerability without post-launch send-keys. */
-export function buildLaunchCommand(_repo, _runtimeDir, prompt = DEFAULT_PROMPT, _model) {
+export function buildLaunchCommand(_repo, _runtimeDir, prompt = DEFAULT_PROMPT, model) {
   assertBinary();
   const bin = resolveBinary();
-  return `${shSingleQuote(bin)} --print --trust --sandbox enabled --model ${DEFAULT_MODEL} ${shSingleQuote(prompt)}`;
+  return `${shSingleQuote(bin)} --print --trust --sandbox enabled --model ${model || DEFAULT_MODEL} ${shSingleQuote(prompt)}`;
 }
 
 /** Argv prompt launch (gateway inline path). */

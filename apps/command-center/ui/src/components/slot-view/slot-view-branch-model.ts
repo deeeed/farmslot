@@ -1,3 +1,5 @@
+import type { ReviewDiffSnapshot } from '@farmslot/protocol';
+
 export function slotViewBranchList({
   branchDiffBase,
   branchDiffHead,
@@ -26,19 +28,26 @@ export function normalizeReviewBaseRef(baseRef: string | null | undefined): stri
 export function committedReviewBranchDiffRequest(
   slotId: string,
   baseRef: string | null | undefined,
+  snapshot?: ReviewDiffSnapshot,
 ) {
-  return { slotId, base: normalizeReviewBaseRef(baseRef) };
+  return {
+    slotId,
+    base: snapshot?.baseSha ?? normalizeReviewBaseRef(baseRef),
+    ...(snapshot?.headSha ? { head: snapshot.headSha } : {}),
+  };
 }
 
 export function committedReviewFileDiffRequest(
   slotId: string,
   path: string,
   baseRef: string | null | undefined,
+  snapshot?: ReviewDiffSnapshot,
 ) {
   return {
     slotId,
     path,
-    base: normalizeReviewBaseRef(baseRef),
+    base: snapshot?.baseSha ?? normalizeReviewBaseRef(baseRef),
+    ...(snapshot?.headSha ? { head: snapshot.headSha } : {}),
     target: 'head' as const,
   };
 }

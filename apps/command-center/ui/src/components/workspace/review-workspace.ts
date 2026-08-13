@@ -314,7 +314,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
       const result = await gateway.request<GitBranchDiffResult>(
         Methods.GIT_BRANCH_DIFF,
-        committedReviewBranchDiffRequest(this.slotId, this._baseRef),
+        committedReviewBranchDiffRequest(this.slotId, this._baseRef, this._payload.reviewSnapshot),
       );
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffFiles = result.files;
@@ -374,7 +374,12 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     try {
       const result = await gateway.request<GitDiffResult>(
         Methods.GIT_DIFF,
-        committedReviewFileDiffRequest(this.slotId, path, this._baseRef),
+        committedReviewFileDiffRequest(
+          this.slotId,
+          path,
+          this._baseRef,
+          this._payload.reviewSnapshot,
+        ),
       );
       this._fileDiff = result.diff;
     } catch (err) {
@@ -840,7 +845,12 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       gateway
         .request<GitDiffResult>(
           Methods.GIT_DIFF,
-          committedReviewFileDiffRequest(this.slotId, c.path, this._baseRef),
+          committedReviewFileDiffRequest(
+            this.slotId,
+            c.path,
+            this._baseRef,
+            this._payload.reviewSnapshot,
+          ),
         )
         .then((r) => {
           this._fileDiff = r.diff;

@@ -1,4 +1,10 @@
-import type { GitStatusResult, Run, SlotStatus } from '@farmslot/protocol';
+import type {
+  GitStatusResult,
+  ReviewDiffSnapshot,
+  ReviewGatePayload,
+  Run,
+  SlotStatus,
+} from '@farmslot/protocol';
 
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 
@@ -179,10 +185,19 @@ export function slotViewPendingReviewDecision(
   run: Pick<Run, 'decisions'> | null | undefined,
 ): Run['decisions'][number] | null {
   return (
-    run?.decisions.find(
-      (decision) => !decision.resolvedAt && decisionPayloadKind(decision.payload) === 'review',
-    ) ?? null
+    run?.decisions
+      .filter(
+        (decision) => !decision.resolvedAt && decisionPayloadKind(decision.payload) === 'review',
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null
   );
+}
+
+export function slotViewPendingReviewSnapshot(
+  run: Pick<Run, 'decisions'> | null | undefined,
+): ReviewDiffSnapshot | undefined {
+  const payload = slotViewPendingReviewDecision(run)?.payload as ReviewGatePayload | undefined;
+  return payload?.kind === 'review' ? payload.reviewSnapshot : undefined;
 }
 
 export function slotViewReviewDrawerKey(input: {

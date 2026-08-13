@@ -148,6 +148,33 @@ test('gitBranchDiff fetches an exact stacked PR base that is missing locally', a
   );
 });
 
+test('gitBranchDiff pins a frozen review to exact GitHub three-dot semantics', async () => {
+  const { deps, argvLog } = branchDiffDeps({
+    nameStatus: 'M\ta.ts\n',
+    numstat: '1\t0\ta.ts\n',
+  });
+  await gitBranchDiff({ slotId: 's', base: 'base-sha', head: 'head-sha' }, deps);
+  assert.ok(!argvLog.some((argv) => argv[1] === 'fetch'));
+  assert.ok(argvLog.some((argv) => argv[1] === 'rev-parse' && argv.includes('head-sha')));
+  assert.ok(
+    argvLog
+      .filter((argv) => argv[1] === 'diff')
+      .every((argv) => argv.includes('base-sha...base123')),
+  );
+});
+
+test('gitDiff pins a frozen review file to exact GitHub three-dot semantics', async () => {
+  const { deps, argvLog } = branchDiffDeps({ nameStatus: '', numstat: '' });
+  await gitDiff({ slotId: 's', base: 'base-sha', head: 'head-sha', path: 'src/a.ts' }, deps);
+  assert.ok(!argvLog.some((argv) => argv[1] === 'fetch'));
+  assert.ok(
+    argvLog.some(
+      (argv) =>
+        argv[1] === 'diff' && argv.includes('base-sha...head-sha') && argv.includes('src/a.ts'),
+    ),
+  );
+});
+
 test('gitDiff refreshes the remote base when called directly', async () => {
   const { deps, argvLog } = branchDiffDeps({ nameStatus: '', numstat: '' });
   await gitDiff({ slotId: 's', base: 'main', path: 'src/a.ts' }, deps);

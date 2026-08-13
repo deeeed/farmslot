@@ -12,6 +12,7 @@ import {
   slotSwitcherEntries,
   slotSwitcherSignature,
   slotViewLoadedRunDrawerKey,
+  slotViewPendingReviewDecision,
   slotViewReadyGateDecision,
   slotViewReviewDrawerKey,
   slotViewTerminalRunId,
@@ -182,6 +183,27 @@ test('slotViewReadyGateDecision prefers pending ready decisions then newest reso
     null,
   );
   assert.equal(slotViewReadyGateDecision(null), null);
+});
+
+test('slotViewPendingReviewDecision chooses the newest unresolved review gate', () => {
+  const decision = (id: string, createdAt: string): Run['decisions'][number] => ({
+    id,
+    type: 'engine_review_posting',
+    title: 'Review',
+    description: 'Review gate',
+    actions: [],
+    createdAt,
+    payload: { kind: 'review' } as Run['decisions'][number]['payload'],
+  });
+  assert.equal(
+    slotViewPendingReviewDecision({
+      decisions: [
+        decision('old', '2026-08-13T09:00:00.000Z'),
+        decision('new', '2026-08-13T10:00:00.000Z'),
+      ],
+    })?.id,
+    'new',
+  );
 });
 
 test('slotViewReviewDrawerKey preserves ready/review precedence over recipe hosts', () => {

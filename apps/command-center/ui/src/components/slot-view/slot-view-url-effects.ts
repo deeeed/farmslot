@@ -6,6 +6,7 @@ import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
 import { committedReviewFileDiffRequest } from './slot-view-branch-model.js';
+import { slotViewPendingReviewSnapshot } from './slot-view-model.js';
 import {
   getSlotViewHashParam,
   isSlotViewHashForSlot,
@@ -178,12 +179,13 @@ export async function openSlotViewFileFromUrl(view: SlotView, file: string): Pro
     if (!match) return;
     const [, base, path] = match;
     view._branchDiffBase = base;
-    const cacheKey = `branch:${base}:${path}`;
+    const reviewSnapshot = slotViewPendingReviewSnapshot(view._linkedRun);
+    const cacheKey = `branch:${base}:${reviewSnapshot?.headSha ?? 'HEAD'}:${path}`;
     if (view._isLive && !view._liveDiffContents.has(cacheKey)) {
       try {
         const result = await gateway.request<GitDiffResult>(
           Methods.GIT_DIFF,
-          committedReviewFileDiffRequest(view.slotId, path, base),
+          committedReviewFileDiffRequest(view.slotId, path, base, reviewSnapshot),
         );
         if (!result.diff.trim()) {
           await view._handleFileSelect(path);

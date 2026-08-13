@@ -118,15 +118,21 @@ export async function executeReviewGate(runId: string): Promise<void> {
   const prNumber = ciRepo ? await findPRNumber(current, ciRepo) : null;
   let reviewInputArtifactPaths: string[] = [];
   let reviewSnapshot: ReviewDiffSnapshot | undefined;
+  let reviewInputSnapshot = await readReviewInputSnapshot(current.taskFile);
   if (prNumber) {
     await persistRunPrNumber(runId, prNumber);
-    reviewInputArtifactPaths = await captureReviewInputArtifactsForRun(getRun(runId)!).then(
-      (artifacts) => artifacts.map((artifact) => artifact.path),
-    );
+    // The task writer freezes the exact PR input before dispatch. Reuse that
+    // immutable snapshot at the gate; recapturing here would silently move the
+    // operator decision to a newer PR head the worker never reviewed.
+    if (!reviewInputSnapshot.snapshot || reviewInputSnapshot.snapshot.source === 'unavailable') {
+      reviewInputArtifactPaths = await captureReviewInputArtifactsForRun(getRun(runId)!).then(
+        (artifacts) => artifacts.map((artifact) => artifact.path),
+      );
+      reviewInputSnapshot = await readReviewInputSnapshot(
+        getRun(runId)?.taskFile ?? current.taskFile,
+      );
+    }
   }
-  const reviewInputSnapshot = await readReviewInputSnapshot(
-    getRun(runId)?.taskFile ?? current.taskFile,
-  );
   reviewInputArtifactPaths = [
     ...new Set([...reviewInputArtifactPaths, ...reviewInputSnapshot.artifactPaths]),
   ];
