@@ -1240,6 +1240,7 @@ async function recoverSelfReviewFixPass({
 
   const settleRecoveredFixContext = async (
     status: 'complete' | 'failed' | 'blocked',
+    expectedAttemptId: string,
     patch: Partial<AgentContext> = {},
   ): Promise<boolean> => {
     const updated = await upsertAgentContext(
@@ -1250,8 +1251,9 @@ async function recoverSelfReviewFixPass({
         resolvePatch: (current) =>
           current &&
           current.artifactScope === findingsArtifactScope &&
-          current.attemptStartedAt === fixContext.attemptStartedAt &&
-          current.signalAttemptId === fixContext.signalAttemptId
+          current.taskFile === fixContext.taskFile &&
+          current.signalFile === fixContext.signalFile &&
+          current.signalAttemptId === expectedAttemptId
             ? { id: fixContext.id, status, completedAt: new Date().toISOString(), ...patch }
             : null,
       },
@@ -1388,7 +1390,9 @@ async function recoverSelfReviewFixPass({
           deliveredTurnToken
             ? () => selfReviewFixTurnIsActive(vars, runId, workerRunner, deliveredTurnToken)
             : undefined,
-          fixContext.signalAttemptId ?? undefined,
+          () =>
+            getRun(runId)?.agentContexts?.find((context) => context.id === fixContext.id)
+              ?.signalAttemptId ?? undefined,
         );
       } finally {
         fixWatcher.stop();
@@ -1399,7 +1403,11 @@ async function recoverSelfReviewFixPass({
       debugSelfReviewLog(
         `[self-review] run ${runId.slice(0, 8)} — timeout waiting for recovered worker fix`,
       );
-      if (!(await settleRecoveredFixContext('failed'))) return null;
+      const currentAttemptId = getRun(runId)?.agentContexts?.find(
+        (context) => context.id === fixContext.id,
+      )?.signalAttemptId;
+      if (!currentAttemptId || !(await settleRecoveredFixContext('failed', currentAttemptId)))
+        return null;
       await unwatchContext(slotId, 'self-review-fix');
       if (maxRetries <= 1)
         return {
@@ -1437,7 +1445,7 @@ async function recoverSelfReviewFixPass({
     if (fixSignal.status === 'blocked') {
       const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
       if (
-        !(await settleRecoveredFixContext('blocked', {
+        !(await settleRecoveredFixContext('blocked', fixSignal.attemptId!, {
           lastSignalAt: new Date().toISOString(),
         }))
       )
@@ -1467,9 +1475,11 @@ async function recoverSelfReviewFixPass({
     }
 
     if (
-      !(await settleRecoveredFixContext(fixSignal.status === 'failed' ? 'failed' : 'complete', {
-        lastSignalAt: new Date().toISOString(),
-      }))
+      !(await settleRecoveredFixContext(
+        fixSignal.status === 'failed' ? 'failed' : 'complete',
+        fixSignal.attemptId!,
+        { lastSignalAt: new Date().toISOString() },
+      ))
     )
       return null;
     await unwatchContext(slotId, 'self-review-fix');
@@ -2087,7 +2097,7 @@ export async function waitForWorkerSignal(
   timeoutMs: number,
   baseline: string,
   turnActive?: () => Promise<boolean>,
-  expectedAttemptId?: string,
+  expectedAttemptId?: string | (() => string | undefined),
 ): Promise<WorkerSignal | undefined> {
   const signalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
 
@@ -2102,13 +2112,14 @@ export async function waitForWorkerSignal(
     try {
       const raw = await readOptionalSelfReviewFixSignal(vars, signalPath);
       if (raw && raw !== lastObservedSignal) {
-        lastObservedSignal = raw;
-        lastProgressAt = Date.now();
         const signal = terminalWorkerSignalFromRaw(raw);
-        if (signal && (!expectedAttemptId || signal.attemptId === expectedAttemptId)) return signal;
+        const expected =
+          typeof expectedAttemptId === 'function' ? expectedAttemptId() : expectedAttemptId;
+        if (signal && (!expected || signal.attemptId === expected)) return signal;
+        lastObservedSignal = raw;
       }
     } catch (err) {
-      console.warn(`[self-review] failed to parse ${signalPath}: ${(err as Error).message}`);
+      console.warn(`[self-review] failed to read ${signalPath}: ${(err as Error).message}`);
     }
     if (turnActive && Date.now() >= nextTurnStateCheckAt) {
       nextTurnStateCheckAt = Date.now() + turnStatePollMs;
