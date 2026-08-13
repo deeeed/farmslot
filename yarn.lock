@@ -4564,6 +4564,7 @@ __metadata:
     "@sinclair/typebox": "npm:^0.34.49"
     "@types/node": "npm:^22.0.0"
     "@types/ws": "npm:^8.5.0"
+    ajv: "npm:^8.20.0"
     chokidar: "npm:^4.0.0"
     node-pty: "npm:^1.0.0"
     tsx: "npm:^4.19.0"

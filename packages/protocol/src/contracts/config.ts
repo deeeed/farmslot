@@ -4,6 +4,7 @@ import type { FailureCategory } from './chat.js';
 import type { ProjectExecutionTemplatesConfig } from './execution-templates.js';
 import type { ResourceDefinition, SlotActionDefinition } from './resources.js';
 import type { FlowType } from './runs.js';
+import type { ProjectRuntimeCapabilitiesConfig } from './runtime-capabilities.js';
 import type { PoolSlotMode } from './slots.js';
 import type { TaskSchema } from './task.js';
 
@@ -128,9 +129,13 @@ export interface PrepareProfileConfig {
 }
 
 export interface ProjectPrepareConfig {
-  /** Profile used when no explicit selection is made. */
+  /** Lightweight default used when no profile is explicitly selected. */
+  core?: PrepareProfileConfig;
+  /** Legacy profile operators may explicitly select during migration. */
+  compatibilityProfile?: string;
+  /** Legacy default used only when `core` is absent. */
   default?: string;
-  profiles: Record<string, PrepareProfileConfig>;
+  profiles?: Record<string, PrepareProfileConfig>;
 }
 
 export interface ProjectConfig {
@@ -203,6 +208,8 @@ export interface ProjectConfig {
   backlog?: ProjectBacklogConfig;
   roadmap?: ProjectRoadmapConfig;
   prepare?: ProjectPrepareConfig;
+  /** Project-owned resources that may be leased after core prepare. */
+  runtimeCapabilities?: ProjectRuntimeCapabilitiesConfig;
   /** Project-owned non-LLM commands addressable by scripted.commandRef. */
   scripted?: ProjectScriptedConfig;
   /** When true, UI may offer slow playback and gateway appends --slow to recipe_run. */

@@ -13,6 +13,7 @@ import {
   type FlowType,
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
+  type PlanningContextProjection,
   type RepeatReviewContext,
   reviewSessionIntentForContext,
   type Run,
@@ -21,7 +22,7 @@ import {
   type TemplateProvenance,
   WORKER_TERMINAL_CONTRACT_INPUT,
 } from '@farmslot/protocol';
-import { resolveEffectiveDomain } from '@farmslot/slot-config';
+import { normalizeRawRuntimeCapabilities, resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import { loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { collectPlaceholderTokens, expandTemplate } from '../core/hooks.js';
@@ -71,6 +72,50 @@ export const TEMPLATE_PROVENANCE_INPUT = 'inputs/template-provenance.json';
 export const PREVIOUS_REVIEW_JSON_INPUT = 'inputs/previous-review.json';
 export const PREVIOUS_REVIEW_MD_INPUT = 'inputs/previous-review.md';
 export const STATIC_REVIEW_INSTRUCTIONS_DIR = 'inputs/review-instructions';
+export const RUNTIME_CAPABILITY_CATALOG_INPUT = 'inputs/runtime-capability-catalog.json';
+
+export function buildRuntimeCapabilityTaskSection(
+  taskDir: string,
+  providers: NonNullable<ReturnType<typeof normalizeRawRuntimeCapabilities>>['providers'] | null,
+): string {
+  const entries = Object.entries(providers ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  const catalog = entries.length
+    ? entries
+        .map(
+          ([id, provider]) =>
+            `- \`${id}\` — ${provider.label}; ${provider.cost.class} cost; ${provider.sharePolicy}; dependencies: ${provider.dependencies?.length ? provider.dependencies.map((dependency) => `\`${dependency}\``).join(', ') : 'none'}.`,
+        )
+        .join('\n')
+    : '- None configured. State-only proof must proceed without a browser, Metro, Companion, simulator, or device hard gate.';
+  return `
+## Runtime capability proof plan
+
+Preparation has completed. Runtime capability providers, when configured, are not implicitly
+granted as proof resources. **Before the first
+\`runtime.capability.acquire\` call**, map each executable acceptance criterion to \`state\`,
+\`visual\`, or \`mixed\` proof and write a version-1 proof plan listing each required capability id,
+reason, mode, and typed parameters. A state-only plan may request none.
+
+Discover current availability and action metadata with \`runtime.capability.list\`; use only
+\`runtime.capability.acquire|status|release\` for lifecycle changes. Do not grep project scripts or
+invent long-lived shell launch commands. Review and QA runs use the same lease contract. The frozen
+dispatch-time catalog is at \`${taskDir}/${RUNTIME_CAPABILITY_CATALOG_INPUT}\`.
+
+### Configured capability ids
+
+${catalog}
+`;
+}
+
+export function appendRuntimeCapabilityAndPlanningContext(
+  base: string,
+  taskDir: string,
+  providers: NonNullable<ReturnType<typeof normalizeRawRuntimeCapabilities>>['providers'] | null,
+  planningContext: PlanningContextProjection | null,
+): string {
+  const withCapabilities = `${base.trimEnd()}\n${buildRuntimeCapabilityTaskSection(taskDir, providers)}\n`;
+  return `${withCapabilities.trimEnd()}\n${buildPlanningContextSection(taskDir, planningContext)}\n`;
+}
 
 function previousReviewMarkdown(context: RepeatReviewContext): string {
   const findings = context.unresolvedFindings.length
@@ -812,6 +857,26 @@ export async function writeTaskFile(
   await mkdir(path.join(taskAbsDir, 'artifacts'), { recursive: true });
   await mkdir(path.join(taskAbsDir, 'inputs'), { recursive: true });
 
+  const runtimeCapabilities = normalizeRawRuntimeCapabilities(
+    projectVars.projectJson.runtime_capabilities,
+  );
+  await writeFile(
+    path.join(taskAbsDir, RUNTIME_CAPABILITY_CATALOG_INPUT),
+    `${JSON.stringify(
+      {
+        version: 1,
+        ownerRunId: run.id,
+        slotId: run.slotId,
+        project: run.project,
+        planningMustPrecedeAcquisition: true,
+        providers: runtimeCapabilities?.providers ?? {},
+      },
+      null,
+      2,
+    )}\n`,
+    'utf-8',
+  );
+
   emit('substep', { name: 'inherited-context', detail: 'Resolving family-inherited context' });
   const inheritedContext = await materializeInheritedContext(run, taskAbsDir);
 
@@ -868,6 +933,8 @@ export async function writeTaskFile(
   }
 
   const vars: Record<string, string> = {
+    RUN_ID: run.id,
+    FAMILY_ID: run.familyId,
     SLOT: run.slotId!,
     SLOT_ID: run.slotId!,
     TICKET: ticketRef,
@@ -1124,7 +1191,13 @@ export async function writeTaskFile(
   // Related planning context is frozen into inputs/ before it is rendered, so the
   // independent-review brief can quote the same snapshot hash the worker saw.
   if (planningContext) await writePlanningContextInput(taskAbsDir, planningContext);
-  const withPlanningContext = `${withInteractivePrCompleteHandoff.trimEnd()}\n${buildPlanningContextSection(vars.TASK_DIR, planningContext)}\n${buildReviewExecutionContract(run, previousReviewPaths, staticReviewInstructionPaths)}\n`;
+  const withRuntimeContext = appendRuntimeCapabilityAndPlanningContext(
+    withInteractivePrCompleteHandoff,
+    vars.TASK_DIR,
+    runtimeCapabilities?.providers ?? null,
+    planningContext,
+  );
+  const withPlanningContext = `${withRuntimeContext.trimEnd()}\n${buildReviewExecutionContract(run, previousReviewPaths, staticReviewInstructionPaths)}\n`;
   const finalContent = applyArtifactOnlyTaskPolicy(withPlanningContext, run);
   if (shouldApplyArtifactOnlyTaskPolicy(run)) {
     assertArtifactOnlyTaskGuard(finalContent);

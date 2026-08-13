@@ -35,6 +35,7 @@ test('slot view hash writer centralizes active view state', () => {
   assert.equal(
     slotViewHash({
       slotId: 'demo',
+      activity: 'info',
       runId: 'run-1',
       file: 'src/index.ts',
       resource: 'ios sim',
@@ -47,7 +48,7 @@ test('slot view hash writer centralizes active view state', () => {
       historyOpen: true,
       historyRun: 'run-0',
     }),
-    '#slot/demo?runId=run-1&file=src%2Findex.ts&resource=ios+sim&recipeNode=ac1&recipeEvidenceMode=node&recipeViewer=1&recipeViewerMode=compare&recipeViewerPair=2&reviewDrawer=recipe&history=1&historyRun=run-0',
+    '#slot/demo?activity=info&runId=run-1&file=src%2Findex.ts&resource=ios+sim&recipeNode=ac1&recipeEvidenceMode=node&recipeViewer=1&recipeViewerMode=compare&recipeViewerPair=2&reviewDrawer=recipe&history=1&historyRun=run-0',
   );
   assert.equal(isSlotViewHashForSlot('demo', '#slot/demo?file=a'), true);
   assert.equal(isSlotViewHashForSlot('other', '#slot/demo?file=a'), false);

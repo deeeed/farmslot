@@ -231,6 +231,12 @@ export const Methods = {
   SLOT_ACTION_LIST: 'slot.action.list',
   SLOT_ACTION_RUN: 'slot.action.run',
 
+  // Proof-plan-driven runtime capability leases
+  RUNTIME_CAPABILITY_LIST: 'runtime.capability.list',
+  RUNTIME_CAPABILITY_ACQUIRE: 'runtime.capability.acquire',
+  RUNTIME_CAPABILITY_RELEASE: 'runtime.capability.release',
+  RUNTIME_CAPABILITY_STATUS: 'runtime.capability.status',
+
   // Runs
   RUN_BUNDLE_EXPORT: 'run.bundle.export',
   RUN_BUNDLE_IMPORT: 'run.bundle.import',

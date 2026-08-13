@@ -320,6 +320,13 @@ export interface RawProjectJson {
     farmslot_command?: string;
   };
   prepare?: {
+    core?: {
+      label?: string;
+      description?: string;
+      phases?: string[];
+      hooks?: Record<string, string>;
+    };
+    compatibility_profile?: string;
     default?: string;
     profiles?: Record<
       string,
@@ -330,6 +337,30 @@ export interface RawProjectJson {
         hooks?: Record<string, string>;
         requires?: string[];
         fallback?: string;
+      }
+    >;
+  };
+  runtime_capabilities?: {
+    providers?: Record<
+      string,
+      {
+        label?: string;
+        description?: string;
+        version?: string;
+        dependencies?: string[];
+        share_policy?: string;
+        cost?: {
+          class?: string;
+          resources?: Array<{ id?: string; access?: string; kind?: string }>;
+        };
+        parameters?: Record<string, unknown>;
+        actions?: {
+          acquire?: RawRuntimeCapabilityActionRef;
+          health?: RawRuntimeCapabilityActionRef;
+          release?: RawRuntimeCapabilityActionRef;
+        };
+        release_effects?: string[];
+        keep_warm_ms?: number;
       }
     >;
   };
@@ -372,6 +403,10 @@ export interface RawSlotActionDefinition extends Omit<SlotActionDefinition, 'tim
   timeoutMs?: number;
   timeout_ms?: number;
 }
+
+export type RawRuntimeCapabilityActionRef =
+  | { kind?: 'resource'; resource_id?: string; action?: string }
+  | { kind?: 'slot-action'; action_id?: string };
 
 export interface ProjectVars {
   projectName: string;
@@ -693,6 +728,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateEvalHarnessesConfig(projectJson, projectConfig);
   validatePublicationReviewConfig(projectJson, projectConfig);
   validatePrepareConfig(projectJson, projectConfig);
+  validateRuntimeCapabilitiesConfig(projectJson, projectConfig);
   validateCommandEnvConfig(projectJson, projectConfig);
   validateExecutionTemplatesConfig(projectJson, projectConfig);
 
@@ -1091,86 +1127,103 @@ export function validatePrepareConfig(projectJson: RawProjectJson, projectConfig
   if (typeof cfg !== 'object' || Array.isArray(cfg)) {
     throw new Error(`${projectConfig}: prepare must be an object`);
   }
-  const profiles = cfg.profiles;
-  if (!profiles || typeof profiles !== 'object' || Array.isArray(profiles)) {
+  const profiles = cfg.profiles ?? {};
+  if (typeof profiles !== 'object' || Array.isArray(profiles)) {
     throw new Error(`${projectConfig}: prepare.profiles must be an object`);
   }
   const profileNames = Object.keys(profiles);
-  if (profileNames.length === 0) {
-    throw new Error(`${projectConfig}: prepare.profiles must define at least one profile`);
+  if (!cfg.core && profileNames.length === 0) {
+    throw new Error(`${projectConfig}: prepare must define core or at least one profile`);
   }
-  for (const [name, profile] of Object.entries(profiles)) {
-    if (!/^[a-z][a-z0-9-]*$/.test(name)) {
-      throw new Error(`${projectConfig}: prepare.profiles key "${name}" is invalid`);
-    }
+
+  const validateProfile = (
+    field: string,
+    profile: NonNullable<NonNullable<RawProjectJson['prepare']>['profiles']>[string],
+    options: { allowFallback: boolean; name?: string },
+  ): void => {
     if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
-      throw new Error(`${projectConfig}: prepare.profiles.${name} must be an object`);
+      throw new Error(`${projectConfig}: ${field} must be an object`);
     }
     if (profile.label !== undefined && typeof profile.label !== 'string') {
-      throw new Error(`${projectConfig}: prepare.profiles.${name}.label must be a string`);
+      throw new Error(`${projectConfig}: ${field}.label must be a string`);
     }
     if (profile.description !== undefined && typeof profile.description !== 'string') {
-      throw new Error(`${projectConfig}: prepare.profiles.${name}.description must be a string`);
+      throw new Error(`${projectConfig}: ${field}.description must be a string`);
     }
     const phases = profile.phases;
     if (!Array.isArray(phases) || phases.length === 0) {
-      throw new Error(
-        `${projectConfig}: prepare.profiles.${name}.phases must be a non-empty array`,
-      );
+      throw new Error(`${projectConfig}: ${field}.phases must be a non-empty array`);
     }
     for (const phase of phases) {
       if (!(PREPARE_PHASES as readonly string[]).includes(phase)) {
         throw new Error(
-          `${projectConfig}: prepare.profiles.${name}.phases contains unknown phase "${phase}" (allowed: ${PREPARE_PHASES.join(', ')})`,
+          `${projectConfig}: ${field}.phases contains unknown phase "${phase}" (allowed: ${PREPARE_PHASES.join(', ')})`,
         );
       }
     }
     if (new Set(phases).size !== phases.length) {
-      throw new Error(`${projectConfig}: prepare.profiles.${name}.phases contains duplicates`);
+      throw new Error(`${projectConfig}: ${field}.phases contains duplicates`);
     }
     if (profile.hooks !== undefined) {
       if (typeof profile.hooks !== 'object' || Array.isArray(profile.hooks)) {
-        throw new Error(`${projectConfig}: prepare.profiles.${name}.hooks must be an object`);
+        throw new Error(`${projectConfig}: ${field}.hooks must be an object`);
       }
       for (const [hookName, hookCmd] of Object.entries(profile.hooks)) {
         if (typeof hookCmd !== 'string' || !hookCmd.trim()) {
           throw new Error(
-            `${projectConfig}: prepare.profiles.${name}.hooks.${hookName} must be a non-empty string`,
+            `${projectConfig}: ${field}.hooks.${hookName} must be a non-empty string`,
           );
         }
       }
     }
     const requires = profile.requires;
     if (requires !== undefined) {
+      if (!options.allowFallback) {
+        throw new Error(`${projectConfig}: ${field}.requires is not valid for core prepare`);
+      }
       if (!Array.isArray(requires)) {
-        throw new Error(`${projectConfig}: prepare.profiles.${name}.requires must be an array`);
+        throw new Error(`${projectConfig}: ${field}.requires must be an array`);
       }
       for (const requirement of requires) {
         if (!(PREPARE_REQUIREMENTS as readonly string[]).includes(requirement)) {
           throw new Error(
-            `${projectConfig}: prepare.profiles.${name}.requires contains unknown check "${requirement}" (allowed: ${PREPARE_REQUIREMENTS.join(', ')})`,
+            `${projectConfig}: ${field}.requires contains unknown check "${requirement}" (allowed: ${PREPARE_REQUIREMENTS.join(', ')})`,
           );
         }
       }
       if (new Set(requires).size !== requires.length) {
-        throw new Error(`${projectConfig}: prepare.profiles.${name}.requires contains duplicates`);
+        throw new Error(`${projectConfig}: ${field}.requires contains duplicates`);
       }
     }
     if (profile.fallback !== undefined) {
-      if (typeof profile.fallback !== 'string' || !(profile.fallback in profiles)) {
-        throw new Error(
-          `${projectConfig}: prepare.profiles.${name}.fallback must name an existing profile`,
-        );
+      if (!options.allowFallback) {
+        throw new Error(`${projectConfig}: ${field}.fallback is not valid for core prepare`);
       }
-      if (profile.fallback === name) {
-        throw new Error(`${projectConfig}: prepare.profiles.${name}.fallback must not be itself`);
+      if (typeof profile.fallback !== 'string' || !(profile.fallback in profiles)) {
+        throw new Error(`${projectConfig}: ${field}.fallback must name an existing profile`);
+      }
+      if (profile.fallback === options.name) {
+        throw new Error(`${projectConfig}: ${field}.fallback must not be itself`);
       }
     }
     if (Array.isArray(requires) && requires.length > 0 && !profile.fallback) {
+      throw new Error(`${projectConfig}: ${field} declares requires but no fallback profile`);
+    }
+  };
+
+  if (cfg.core) {
+    validateProfile('prepare.core', cfg.core, { allowFallback: false });
+    if (Object.prototype.hasOwnProperty.call(profiles, 'core')) {
       throw new Error(
-        `${projectConfig}: prepare.profiles.${name} declares requires but no fallback profile`,
+        `${projectConfig}: prepare.profiles must not define reserved profile "core" when prepare.core exists`,
       );
     }
+  }
+  for (const [name, profile] of Object.entries(profiles)) {
+    if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+      throw new Error(`${projectConfig}: prepare.profiles key "${name}" is invalid`);
+    }
+    validateProfile(`prepare.profiles.${name}`, profile, { allowFallback: true, name });
   }
   // Fallback chains must terminate. requires⇒fallback guarantees every chain
   // keeps extending until a profile with no requires; only a cycle violates that.
@@ -1191,6 +1244,197 @@ export function validatePrepareConfig(projectJson: RawProjectJson, projectConfig
     if (typeof cfg.default !== 'string' || !(cfg.default in profiles)) {
       throw new Error(`${projectConfig}: prepare.default must name an existing profile`);
     }
+  }
+  if (
+    cfg.compatibility_profile !== undefined &&
+    (typeof cfg.compatibility_profile !== 'string' || !(cfg.compatibility_profile in profiles))
+  ) {
+    throw new Error(
+      `${projectConfig}: prepare.compatibility_profile must name an existing profile`,
+    );
+  }
+}
+
+const CAPABILITY_ID_RE = /^[a-z][a-z0-9.-]*$/;
+
+function validateCapabilityActionRef(
+  ref: RawRuntimeCapabilityActionRef | undefined,
+  field: string,
+  projectJson: RawProjectJson,
+  projectConfig: string,
+): void {
+  if (!ref || typeof ref !== 'object' || Array.isArray(ref)) {
+    throw new Error(`${projectConfig}: ${field} must be an action reference`);
+  }
+  if (ref.kind === 'resource') {
+    const resourceId = ref.resource_id;
+    const action = ref.action;
+    if (typeof resourceId !== 'string' || !projectJson.resources?.[resourceId]) {
+      throw new Error(`${projectConfig}: ${field}.resource_id must name an existing resource`);
+    }
+    if (!['boot', 'health', 'shutdown', 'relaunch'].includes(String(action))) {
+      throw new Error(`${projectConfig}: ${field}.action is invalid`);
+    }
+    const resource = projectJson.resources[resourceId];
+    const hasAction =
+      action === 'health'
+        ? Boolean(resource.hooks?.health || resource.watch)
+        : Boolean(resource.hooks?.[action as 'boot' | 'shutdown' | 'relaunch']);
+    if (!hasAction) {
+      throw new Error(
+        `${projectConfig}: ${field} references missing resource action ${resourceId}.${action}`,
+      );
+    }
+    return;
+  }
+  if (ref.kind === 'slot-action') {
+    const actionId = ref.action_id;
+    if (typeof actionId !== 'string' || !actionId.trim()) {
+      throw new Error(`${projectConfig}: ${field}.action_id must be a non-empty string`);
+    }
+    const [resourceId, nestedActionId] = actionId.split('.', 2);
+    const exists =
+      Boolean(projectJson.slot_actions?.[actionId]) ||
+      Boolean(nestedActionId && projectJson.resources?.[resourceId]?.actions?.[nestedActionId]);
+    if (!exists) {
+      throw new Error(`${projectConfig}: ${field}.action_id must name an existing slot action`);
+    }
+    return;
+  }
+  throw new Error(`${projectConfig}: ${field}.kind must be resource or slot-action`);
+}
+
+export function validateRuntimeCapabilitiesConfig(
+  projectJson: RawProjectJson,
+  projectConfig: string,
+): void {
+  const cfg = projectJson.runtime_capabilities;
+  if (!cfg) return;
+  if (typeof cfg !== 'object' || Array.isArray(cfg)) {
+    throw new Error(`${projectConfig}: runtime_capabilities must be an object`);
+  }
+  const providers = cfg.providers;
+  if (!providers || typeof providers !== 'object' || Array.isArray(providers)) {
+    throw new Error(`${projectConfig}: runtime_capabilities.providers must be an object`);
+  }
+  const ids = Object.keys(providers);
+  if (ids.length === 0) {
+    throw new Error(`${projectConfig}: runtime_capabilities.providers must not be empty`);
+  }
+  for (const [id, provider] of Object.entries(providers)) {
+    const field = `runtime_capabilities.providers.${id}`;
+    if (!CAPABILITY_ID_RE.test(id)) {
+      throw new Error(`${projectConfig}: runtime capability id "${id}" is invalid`);
+    }
+    if (!provider || typeof provider !== 'object' || Array.isArray(provider)) {
+      throw new Error(`${projectConfig}: ${field} must be an object`);
+    }
+    if (typeof provider.label !== 'string' || !provider.label.trim()) {
+      throw new Error(`${projectConfig}: ${field}.label must be a non-empty string`);
+    }
+    if (typeof provider.version !== 'string' || !provider.version.trim()) {
+      throw new Error(`${projectConfig}: ${field}.version must be a non-empty string`);
+    }
+    if (!['exclusive', 'shared'].includes(String(provider.share_policy))) {
+      throw new Error(`${projectConfig}: ${field}.share_policy must be exclusive or shared`);
+    }
+    if (!provider.cost || !['low', 'medium', 'high'].includes(String(provider.cost.class))) {
+      throw new Error(`${projectConfig}: ${field}.cost.class must be low, medium, or high`);
+    }
+    if (!Array.isArray(provider.cost.resources)) {
+      throw new Error(`${projectConfig}: ${field}.cost.resources must be an array`);
+    }
+    for (const [index, resource] of provider.cost.resources.entries()) {
+      if (!resource || typeof resource.id !== 'string' || !resource.id.trim()) {
+        throw new Error(`${projectConfig}: ${field}.cost.resources.${index}.id is required`);
+      }
+      if (!['exclusive', 'shared'].includes(String(resource.access))) {
+        throw new Error(`${projectConfig}: ${field}.cost.resources.${index}.access is invalid`);
+      }
+      if (
+        resource.kind !== undefined &&
+        !['port', 'device', 'process', 'service', 'other'].includes(String(resource.kind))
+      ) {
+        throw new Error(`${projectConfig}: ${field}.cost.resources.${index}.kind is invalid`);
+      }
+    }
+    if (provider.dependencies !== undefined) {
+      if (
+        !Array.isArray(provider.dependencies) ||
+        provider.dependencies.some((dep) => typeof dep !== 'string')
+      ) {
+        throw new Error(`${projectConfig}: ${field}.dependencies must be a string array`);
+      }
+      for (const dependency of provider.dependencies) {
+        if (!(dependency in providers) || dependency === id) {
+          throw new Error(
+            `${projectConfig}: ${field}.dependencies contains invalid id "${dependency}"`,
+          );
+        }
+      }
+      if (new Set(provider.dependencies).size !== provider.dependencies.length) {
+        throw new Error(`${projectConfig}: ${field}.dependencies contains duplicates`);
+      }
+    }
+    if (
+      !provider.actions ||
+      typeof provider.actions !== 'object' ||
+      Array.isArray(provider.actions)
+    ) {
+      throw new Error(`${projectConfig}: ${field}.actions must be an object`);
+    }
+    validateCapabilityActionRef(
+      provider.actions.acquire,
+      `${field}.actions.acquire`,
+      projectJson,
+      projectConfig,
+    );
+    validateCapabilityActionRef(
+      provider.actions.health,
+      `${field}.actions.health`,
+      projectJson,
+      projectConfig,
+    );
+    validateCapabilityActionRef(
+      provider.actions.release,
+      `${field}.actions.release`,
+      projectJson,
+      projectConfig,
+    );
+    if (
+      !Array.isArray(provider.release_effects) ||
+      provider.release_effects.some((effect) => typeof effect !== 'string' || !effect.trim())
+    ) {
+      throw new Error(`${projectConfig}: ${field}.release_effects must contain strings`);
+    }
+    if (
+      provider.keep_warm_ms !== undefined &&
+      (!Number.isInteger(provider.keep_warm_ms) || provider.keep_warm_ms < 0)
+    ) {
+      throw new Error(`${projectConfig}: ${field}.keep_warm_ms must be a non-negative integer`);
+    }
+    if (
+      provider.parameters !== undefined &&
+      (!provider.parameters ||
+        typeof provider.parameters !== 'object' ||
+        Array.isArray(provider.parameters))
+    ) {
+      throw new Error(`${projectConfig}: ${field}.parameters must be a JSON Schema object`);
+    }
+  }
+  for (const id of ids) {
+    const visiting = new Set<string>();
+    const visit = (candidate: string): void => {
+      if (visiting.has(candidate)) {
+        throw new Error(
+          `${projectConfig}: runtime capability dependency cycle contains "${candidate}"`,
+        );
+      }
+      visiting.add(candidate);
+      for (const dependency of providers[candidate]?.dependencies ?? []) visit(dependency);
+      visiting.delete(candidate);
+    };
+    visit(id);
   }
 }
 
@@ -1258,11 +1502,8 @@ export function normalizeRawProjectPrepare(
 ): ProjectConfig['prepare'] | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const profilesRaw = raw.profiles;
-  if (!profilesRaw || typeof profilesRaw !== 'object' || Array.isArray(profilesRaw)) {
-    return undefined;
-  }
-  const profiles: NonNullable<ProjectConfig['prepare']>['profiles'] = {};
-  for (const [name, profile] of Object.entries(profilesRaw)) {
+  const profiles: NonNullable<NonNullable<ProjectConfig['prepare']>['profiles']> = {};
+  for (const [name, profile] of Object.entries(profilesRaw ?? {})) {
     if (!profile || typeof profile !== 'object' || Array.isArray(profile)) continue;
     const phases = Array.isArray(profile.phases)
       ? profile.phases.filter((p): p is PreparePhase =>
@@ -1295,8 +1536,84 @@ export function normalizeRawProjectPrepare(
       ...(typeof profile.fallback === 'string' ? { fallback: profile.fallback } : {}),
     };
   }
-  if (Object.keys(profiles).length === 0) return undefined;
-  return { ...(typeof raw.default === 'string' ? { default: raw.default } : {}), profiles };
+  const normalizeCore = (): NonNullable<ProjectConfig['prepare']>['core'] | undefined => {
+    const profile = raw.core;
+    if (!profile || typeof profile !== 'object' || Array.isArray(profile)) return undefined;
+    const phases = Array.isArray(profile.phases)
+      ? profile.phases.filter((phase): phase is PreparePhase =>
+          (PREPARE_PHASES as readonly string[]).includes(String(phase)),
+        )
+      : [];
+    if (phases.length === 0) return undefined;
+    return {
+      phases,
+      ...(typeof profile.label === 'string' ? { label: profile.label } : {}),
+      ...(typeof profile.description === 'string' ? { description: profile.description } : {}),
+      ...(profile.hooks && typeof profile.hooks === 'object' && !Array.isArray(profile.hooks)
+        ? { hooks: profile.hooks }
+        : {}),
+    };
+  };
+  const core = normalizeCore();
+  if (!core && Object.keys(profiles).length === 0) return undefined;
+  return {
+    ...(core ? { core } : {}),
+    ...(typeof raw.compatibility_profile === 'string'
+      ? { compatibilityProfile: raw.compatibility_profile }
+      : {}),
+    ...(typeof raw.default === 'string' ? { default: raw.default } : {}),
+    ...(Object.keys(profiles).length > 0 ? { profiles } : {}),
+  };
+}
+
+export function normalizeRawRuntimeCapabilities(
+  raw: RawProjectJson['runtime_capabilities'],
+): ProjectConfig['runtimeCapabilities'] | undefined {
+  const providersRaw = raw?.providers;
+  if (!providersRaw || typeof providersRaw !== 'object' || Array.isArray(providersRaw)) {
+    return undefined;
+  }
+  const providers: NonNullable<ProjectConfig['runtimeCapabilities']>['providers'] = {};
+  for (const [id, provider] of Object.entries(providersRaw)) {
+    if (!provider?.actions || !provider.cost || !provider.label || !provider.version) continue;
+    const normalizeAction = (ref: RawRuntimeCapabilityActionRef) =>
+      ref.kind === 'resource'
+        ? {
+            kind: 'resource' as const,
+            resourceId: ref.resource_id!,
+            action: ref.action as 'boot' | 'health' | 'shutdown' | 'relaunch',
+          }
+        : {
+            kind: 'slot-action' as const,
+            actionId: 'action_id' in ref ? ref.action_id! : '',
+          };
+    providers[id] = {
+      label: provider.label,
+      ...(provider.description ? { description: provider.description } : {}),
+      version: provider.version,
+      dependencies: [...(provider.dependencies ?? [])],
+      sharePolicy: provider.share_policy as 'exclusive' | 'shared',
+      cost: {
+        class: provider.cost.class as 'low' | 'medium' | 'high',
+        resources: (provider.cost.resources ?? []).map((resource) => ({
+          id: resource.id!,
+          access: resource.access as 'exclusive' | 'shared',
+          ...(resource.kind
+            ? { kind: resource.kind as 'port' | 'device' | 'process' | 'service' | 'other' }
+            : {}),
+        })),
+      },
+      ...(provider.parameters ? { parameters: provider.parameters } : {}),
+      actions: {
+        acquire: normalizeAction(provider.actions.acquire!),
+        health: normalizeAction(provider.actions.health!),
+        release: normalizeAction(provider.actions.release!),
+      },
+      releaseEffects: [...(provider.release_effects ?? [])],
+      ...(provider.keep_warm_ms !== undefined ? { keepWarmMs: provider.keep_warm_ms } : {}),
+    };
+  }
+  return Object.keys(providers).length > 0 ? { providers } : undefined;
 }
 
 export function normalizeRawProjectAutoRecovery(

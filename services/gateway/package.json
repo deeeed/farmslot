@@ -21,6 +21,7 @@
     "@farmslot/run-bundle": "workspace:*",
     "@farmslot/slot-config": "workspace:*",
     "@sinclair/typebox": "^0.34.49",
+    "ajv": "^8.20.0",
     "chokidar": "^4.0.0",
     "node-pty": "^1.0.0",
     "ws": "^8.18.0"

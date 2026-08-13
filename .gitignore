@@ -109,6 +109,7 @@ projects/farmslot-farm/setup/*
 !projects/farmslot-farm/setup/e2e-cross-surface-evidence.sh
 !projects/farmslot-farm/setup/upload-pr-evidence.mjs
 !projects/farmslot-farm/setup/capture-helper-tmux-check.sh
+!projects/farmslot-farm/setup/runtime-capability-browser.sh
 projects/farmslot-farm/tasks/
 projects/farmslot-farm/.agent/
 projects/farmslot-farm/.task/

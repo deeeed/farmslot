@@ -203,6 +203,10 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `run.slotHistory`                    | admin          |                                                          |
 | `run.tags.list`                      | admin          |                                                          |
 | `run.tags.set`                       | admin          |                                                          |
+| `runtime.capability.acquire`         | admin          |                                                          |
+| `runtime.capability.list`            | admin          |                                                          |
+| `runtime.capability.release`         | admin          |                                                          |
+| `runtime.capability.status`          | admin          |                                                          |
 | `screen.subscribe`                   | admin          |                                                          |
 | `screen.thumbnail`                   | admin          |                                                          |
 | `screen.unsubscribe`                 | admin          |                                                          |

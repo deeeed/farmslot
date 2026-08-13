@@ -73,7 +73,7 @@ export function projectPrepareProfileFallback(
   project: string,
   profileName: string,
 ): string | null {
-  const fallback = configs.find((entry) => entry.name === project)?.prepare?.profiles[profileName]
+  const fallback = configs.find((entry) => entry.name === project)?.prepare?.profiles?.[profileName]
     ?.fallback;
   return fallback?.trim() || null;
 }

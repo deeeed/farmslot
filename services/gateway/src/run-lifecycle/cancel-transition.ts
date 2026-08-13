@@ -28,6 +28,7 @@ export interface CancelCollaborators {
   invalidateWarmSessions(runId: string): void;
   settleBacklog(run: Run): Promise<void>;
   tickWorkGraph(graphId: string): Promise<unknown>;
+  releaseCapabilities(run: Run): Promise<void>;
   releaseSlot(run: Run): Promise<void>;
   /** Awaited by the router via `onMutated`, so a broadcast failure is reportable. */
   emit(event: string, payload: unknown): void | Promise<void>;
@@ -90,6 +91,15 @@ function cancelEffects(collaborators: CancelCollaborators): {
           }
           if (!run.workGraphId) return 'skipped';
           await collaborators.tickWorkGraph(run.workGraphId);
+          return 'ok';
+        },
+      },
+      {
+        name: 'runtime-capabilities',
+        severity: 'advisory',
+        apply: async ({ run }) => {
+          if (!run.slotId) return 'skipped';
+          await collaborators.releaseCapabilities(run);
           return 'ok';
         },
       },
@@ -174,6 +184,20 @@ export function defaultCancelCollaborators(): CancelCollaborators {
     invalidateWarmSessions: invalidateWarmReviewerSessions,
     settleBacklog: (run) => markBacklogRunObserved(run),
     tickWorkGraph: (graphId) => schedulerTick({ graphId }),
+    releaseCapabilities: async (run) => {
+      const { releaseRuntimeCapabilitiesForRunAndFamily } =
+        await import('../methods/runtime-capabilities.js');
+      const result = await releaseRuntimeCapabilitiesForRunAndFamily(
+        run.slotId!,
+        run.id,
+        run.familyId,
+      );
+      if (!result.ok) {
+        throw new Error(
+          result.failures.map((failure) => `${failure.capabilityId}: ${failure.reason}`).join('; '),
+        );
+      }
+    },
     releaseSlot: async (run) => {
       const { loadSlotVars, resetSlot } = await import('../core/index.js');
       const { killAgentInSession, killAllAgentWindows } = await import('../methods/slot.js');

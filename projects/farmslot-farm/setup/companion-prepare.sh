@@ -12,7 +12,7 @@ GATEWAY_PORT=""
 METRO_PORT=""
 
 usage() {
-  echo "usage: $0 warm|full|health --gateway-port <port> --metro-port <port> --platform <cli|ios|android> [--simulator <name>] [--adb-serial <serial>]" >&2
+  echo "usage: $0 warm|full|health|stop --gateway-port <port> --metro-port <port> --platform <cli|ios|android> [--simulator <name>] [--adb-serial <serial>]" >&2
   exit 1
 }
 
@@ -33,7 +33,7 @@ optional_flag_value() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    warm|full|health)
+    warm|full|health|stop)
       MODE="$1"
       shift
       ;;
@@ -91,5 +91,30 @@ case "$MODE" in
       IOS_SIMULATOR="${SIMULATOR}" \
       ADB_SERIAL="${ADB_SERIAL}" \
       bash scripts/agentic/prepare-profile.sh "${MODE}"
+    ;;
+  stop)
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
+    METRO_SESSION="farmslot-companion-metro-${METRO_PORT}"
+    if ! tmux has-session -t "=${METRO_SESSION}" 2>/dev/null; then
+      if metro_health; then
+        echo "refusing to stop Metro :${METRO_PORT}: managed session ${METRO_SESSION} is absent" >&2
+        exit 1
+      fi
+      exit 0
+    fi
+    tmux kill-session -t "=${METRO_SESSION}"
+    for _ in $(seq 1 50); do
+      metro_health || break
+      sleep 0.1
+    done
+    if metro_health; then
+      echo "Metro :${METRO_PORT} still answers after stopping ${METRO_SESSION}" >&2
+      exit 1
+    fi
+    CONFIG_FILE="${REPO_ROOT}/apps/companion/.agent/metro-${METRO_PORT}.env"
+    if [[ -f "$CONFIG_FILE" ]]; then
+      rm -f -- "$CONFIG_FILE"
+    fi
     ;;
 esac

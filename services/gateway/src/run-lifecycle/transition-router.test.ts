@@ -59,6 +59,7 @@ function harness(seed: Run, overrides: Partial<CancelCollaborators> = {}): Harne
     invalidateWarmSessions: () => void calls.push('invalidateWarmSessions'),
     settleBacklog: async () => void calls.push('settleBacklog'),
     tickWorkGraph: async () => void calls.push('tickWorkGraph'),
+    releaseCapabilities: async () => void calls.push('releaseCapabilities'),
     releaseSlot: async () => void calls.push('releaseSlot'),
     emit: (event, payload) => {
       calls.push(`emit:${event}`);
@@ -110,6 +111,7 @@ test('operator cancel settles the backlog and ticks the work graph', async () =>
       'warm-sessions:ok',
       'backlog-settle:ok',
       'work-graph-tick:ok',
+      'runtime-capabilities:ok',
       'slot-release:ok',
     ],
   );
@@ -154,6 +156,15 @@ test('terminal state is published before slow slot teardown', async () => {
   );
 });
 
+test('runtime capabilities are released before slot teardown', async () => {
+  const h = harness(run());
+  await routeRunTransition(cancelRequest, h.deps);
+  assert.ok(
+    h.calls.indexOf('releaseCapabilities') < h.calls.indexOf('releaseSlot'),
+    'provider cleanup needs the live slot context',
+  );
+});
+
 test('a run with no work graph skips the tick instead of failing', async () => {
   const h = harness(run({ workGraphId: undefined }));
   const result = await routeRunTransition(cancelRequest, h.deps);
@@ -168,6 +179,24 @@ test('a run with no slot skips slot release', async () => {
   const h = harness(run({ slotId: null }));
   const result = await routeRunTransition(cancelRequest, h.deps);
   assert.equal(result.effects.find((effect) => effect.name === 'slot-release')?.status, 'skipped');
+  assert.equal(
+    result.effects.find((effect) => effect.name === 'runtime-capabilities')?.status,
+    'skipped',
+  );
+});
+
+test('a runtime capability cleanup failure is visible and slot teardown still runs', async () => {
+  const h = harness(run(), {
+    releaseCapabilities: async () => {
+      throw new Error('browser-cdp: stop refused');
+    },
+  });
+
+  const result = await routeRunTransition(cancelRequest, h.deps);
+  const outcome = result.effects.find((effect) => effect.name === 'runtime-capabilities')!;
+  assert.equal(outcome.status, 'failed');
+  assert.match(outcome.detail!, /browser-cdp: stop refused/);
+  assert.ok(h.calls.includes('releaseSlot'), 'capability cleanup must not strand the slot');
 });
 
 test('an advisory failure is reported, never swallowed', async () => {

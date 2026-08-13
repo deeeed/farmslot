@@ -15,6 +15,8 @@ human approval, optional independent review, and CI only after publication.
 
 ```text
 TICKET: {{TICKET_ID}}
+RUN_ID: {{RUN_ID}}
+FAMILY_ID: {{FAMILY_ID}}
 TICKET_URL: {{TICKET_URL}}
 TITLE: {{TICKET_TITLE}}
 BRANCH: {{BRANCH}}
@@ -71,11 +73,14 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
   - **`command-center` only when listed:**
     ```bash
     cd {{REPO}}
+    node apps/command-center/scripts/cdp.mjs gateway runtime.capability.acquire \
+      '{"slotId":"{{SLOT}}","capabilityId":"sandbox-gateway-ui","ownerRunId":"{{RUN_ID}}","ownerFamilyId":"{{FAMILY_ID}}","queueOnPressure":true,"proofRequirement":{"capabilityId":"sandbox-gateway-ui","reason":"Command Center proof requires the slot Gateway and UI","mode":"visual"}}'
+    node apps/command-center/scripts/cdp.mjs gateway runtime.capability.acquire \
+      '{"slotId":"{{SLOT}}","capabilityId":"browser-cdp","ownerRunId":"{{RUN_ID}}","ownerFamilyId":"{{FAMILY_ID}}","queueOnPressure":true,"proofRequirement":{"capabilityId":"browser-cdp","reason":"Command Center proof requires a browser and CDP","mode":"visual"}}'
     node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --slot-id {{SLOT}} --json
-    bash apps/command-center/scripts/debug-chrome.sh
     ```
-    If CDP or the sandbox UI is down and ACs need Command Center, set `STATUS: blocked` with the failing check and stop.
-  - **`companion-device` only when listed:** Companion must be **installed and launchable** on the slot sim/device (`ios-sim` / adb). Prepare “healthy” / Metro listening ≠ app installed. If missing, install via project prepare (`companion-prepare.sh full` with slot gateway/metro/sim or adb) or the Companion install scripts — then verify with `simctl listapps` / `adb` that the Companion bundle is present. Do not treat `--catalog-only`, typecheck, or unit tests as device UX proof. If install is required and fails, set `STATUS: blocked` and stop.
+    Require both acquire responses to report `ok: true`; a queued/failed response is not a booted surface. For a queued `host-pressure` conflict, retry the same acquire request after `retryAfterMs` for at most two minutes, preserving the same owner id so admission remains idempotent. If that bounded retry, any non-pressure acquisition, or the doctor fails, release the owner's queued leases, set `STATUS: blocked` with the failing check, and stop. Do not launch the sandbox or Chrome directly.
+  - **`companion-device` only when listed:** Companion must be **installed and launchable** on the slot sim/device (`ios-sim` / adb). Prepare “healthy” / Metro listening ≠ app installed. Discover the catalog, then acquire the declared native-client provider through `runtime.capability.acquire` (for the configured iOS simulator, `companion-native-client-ios`; its dependencies acquire the simulator and Metro). Require `ok: true`, then verify with `simctl listapps` / `adb` that the Companion bundle is present. If the platform has no declared install provider or acquisition/install fails, set `STATUS: blocked` and stop; do not invoke `companion-prepare.sh` or install scripts directly.
   - **`gateway-cli` only:** skip this step’s boots/installs entirely.
 - [ ] **5. Create branch** — `git checkout -b {{BRANCH}}`
 
@@ -137,7 +142,6 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
 - [ ] **12. Proof run with video** — slow playback + full-run MP4 for publication:
   ```bash
   cd {{REPO}}
-  bash apps/command-center/scripts/debug-chrome.sh
   bash {{recipe_validate_wrapper}} \
     --recipe {{TASK_DIR}}/artifacts/recipe.json \
     --artifacts-dir {{TASK_DIR}}/artifacts/recipe-run \

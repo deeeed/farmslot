@@ -66,6 +66,7 @@ export function syncSlotViewUrlState(view: SlotView): void {
   // _historyRunId before the first sync and URL fallback is unnecessary here.
   const newHash = slotViewHash({
     slotId: view.slotId,
+    activity: view._sidebarOpen && view._activity === 'info' ? 'info' : undefined,
     runId: runForUrl,
     file: fileForUrl,
     resource: view._resourcePanelOpen ? (resourceForUrl ?? '') : '',

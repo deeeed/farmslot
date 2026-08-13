@@ -134,6 +134,10 @@ import {
   type RoadmapRefinementSessionGetParams,
   type RoadmapRefineParams,
   type RoadmapSaveParams,
+  type RuntimeCapabilityAcquireParams,
+  type RuntimeCapabilityListParams,
+  type RuntimeCapabilityReleaseParams,
+  type RuntimeCapabilityStatusParams,
   type SearchQueryParams,
   type SlotActionListParams,
   type SlotActionRunParams,
@@ -369,6 +373,12 @@ import {
   roadmapRefinementSessionGet,
   roadmapSave,
 } from '../methods/roadmap.js';
+import {
+  runtimeCapabilityAcquire,
+  runtimeCapabilityList,
+  runtimeCapabilityRelease,
+  runtimeCapabilityStatus,
+} from '../methods/runtime-capabilities.js';
 import { searchQuery } from '../methods/search.js';
 import {
   slotAutoRefresh,
@@ -1173,6 +1183,14 @@ async function routeAuthorizedMethod(
       return resourceCleanup(p as ResourceCleanupParams);
     case Methods.RESOURCE_WATCH_SET_ENABLED:
       return resourceWatchSetEnabled(p as ResourceWatchSetEnabledParams);
+    case Methods.RUNTIME_CAPABILITY_LIST:
+      return runtimeCapabilityList(p as RuntimeCapabilityListParams);
+    case Methods.RUNTIME_CAPABILITY_ACQUIRE:
+      return runtimeCapabilityAcquire(p as RuntimeCapabilityAcquireParams);
+    case Methods.RUNTIME_CAPABILITY_RELEASE:
+      return runtimeCapabilityRelease(p as RuntimeCapabilityReleaseParams);
+    case Methods.RUNTIME_CAPABILITY_STATUS:
+      return runtimeCapabilityStatus(p as RuntimeCapabilityStatusParams);
 
     // Fine-tuning data export
     case Methods.FINETUNE_INDEX:

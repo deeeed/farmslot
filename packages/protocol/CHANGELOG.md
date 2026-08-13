@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- fix(runtime-capabilities): retain queued admission pressure in status results and document forced provenance cleanup.
+- feat(runtime-capabilities): add typed catalog, proof-plan, provider provenance, durable lease, pressure conflict, lifecycle event, and list/acquire/status/release RPC contracts.
 - fix(runners): default Cursor Agent runs to the installed `cursor-grok-4.6-high-fast` model.
 - fix(git): let review clients request an exact frozen base/head diff instead of implicitly comparing against live `HEAD`.
 - fix(review): identify worker signal attempts independently of machine clocks so retained reviewer recovery cannot consume an earlier attempt.

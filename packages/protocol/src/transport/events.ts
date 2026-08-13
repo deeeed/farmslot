@@ -12,6 +12,7 @@ import type {
   QueueItem,
   ResourceStateUpdate,
   Run,
+  RuntimeCapabilityLifecycleEvent,
   ScriptComplete,
   ScriptOutput,
   SlotStatus,
@@ -124,6 +125,7 @@ export const Events = {
   // Resource Health
   RESOURCE_STATUS_UPDATED: 'resource.status.updated',
   RESOURCE_RELAUNCHED: 'resource.relaunched',
+  RUNTIME_CAPABILITY_LIFECYCLE: 'runtime.capability.lifecycle',
 
   // Fleet Thumbnails
   FLEET_THUMBNAILS_UPDATED: 'fleet.thumbnails.updated',
@@ -152,6 +154,10 @@ export interface SlotChangedPayload {
 export interface ScriptOutputPayload extends ScriptOutput {}
 
 export interface ScriptCompletePayload extends ScriptComplete {}
+
+export interface RuntimeCapabilityLifecyclePayload {
+  event: RuntimeCapabilityLifecycleEvent;
+}
 
 export interface SlotPrepareStepPayload {
   requestId: string;

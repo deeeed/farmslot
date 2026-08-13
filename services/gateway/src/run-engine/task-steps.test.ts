@@ -1,9 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { RunTicketData } from '@farmslot/protocol';
+import type { Run, RunTicketData } from '@farmslot/protocol';
 
-import { mergeInitialContextIntoTicketData } from './task-steps.js';
+import { mergeInitialContextIntoTicketData, prepareProfileDecisionLabel } from './task-steps.js';
+
+test('prepare profile decision label resolves the configured implicit profile', () => {
+  const run = { prepareProfile: undefined } as Pick<Run, 'prepareProfile'>;
+  assert.equal(
+    prepareProfileDecisionLabel(run, {
+      prepare: {
+        core: { phases: ['git'] },
+        default: 'sandbox',
+        profiles: { sandbox: { phases: ['git', 'preflight'] } },
+      },
+    }),
+    'core',
+  );
+  assert.equal(prepareProfileDecisionLabel({ prepareProfile: 'sandbox' }), 'sandbox');
+});
 
 const trackerTicket: RunTicketData = {
   source: 'jira',

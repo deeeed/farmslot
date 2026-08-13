@@ -11,6 +11,7 @@ import {
   isIgnoredPoolFile,
   isMockModeProject,
   loadProjectVars,
+  normalizeRawRuntimeCapabilities,
   type RawProjectJson,
   resolveProjectRuntimeDir,
   resolveProjectTaskDirName,
@@ -18,7 +19,90 @@ import {
   validateCommandEnvConfig,
   validateExecutionTemplatesConfig,
   validatePrepareConfig,
+  validateRuntimeCapabilitiesConfig,
 } from './config.js';
+
+test('prepare core and capability providers validate while legacy profiles remain valid', () => {
+  const legacy: RawProjectJson = {
+    prepare: { default: 'full', profiles: { full: { phases: ['git', 'deps'] } } },
+  };
+  assert.doesNotThrow(() => validatePrepareConfig(legacy, 'legacy-project.json'));
+
+  const migrated: RawProjectJson = {
+    prepare: {
+      core: { phases: ['git', 'fixtures', 'deps'] },
+      compatibility_profile: 'full',
+      profiles: { full: { phases: ['git', 'fixtures', 'deps', 'preflight', 'health'] } },
+    },
+    slot_actions: {
+      'browser-start': { label: 'start', command: 'start' },
+      'browser-health': { label: 'health', command: 'health' },
+      'browser-stop': { label: 'stop', command: 'stop' },
+    },
+    runtime_capabilities: {
+      providers: {
+        'browser-cdp': {
+          label: 'Browser',
+          version: '1',
+          share_policy: 'exclusive',
+          cost: {
+            class: 'high',
+            resources: [{ id: 'cdp-port', access: 'exclusive', kind: 'port' }],
+          },
+          actions: {
+            acquire: { kind: 'slot-action', action_id: 'browser-start' },
+            health: { kind: 'slot-action', action_id: 'browser-health' },
+            release: { kind: 'slot-action', action_id: 'browser-stop' },
+          },
+          release_effects: ['stop browser'],
+        },
+      },
+    },
+  };
+  assert.doesNotThrow(() => validatePrepareConfig(migrated, 'migrated-project.json'));
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(migrated, 'migrated-project.json'));
+  assert.equal(
+    normalizeRawRuntimeCapabilities(migrated.runtime_capabilities)?.providers['browser-cdp']
+      ?.sharePolicy,
+    'exclusive',
+  );
+});
+
+test('capability validation rejects unstable ids, missing actions, and dependency cycles', () => {
+  const project = (providers: NonNullable<RawProjectJson['runtime_capabilities']>['providers']) =>
+    ({ runtime_capabilities: { providers } }) as RawProjectJson;
+  const provider = {
+    label: 'Capability',
+    version: '1',
+    share_policy: 'shared',
+    cost: { class: 'low', resources: [] },
+    actions: {
+      acquire: { kind: 'slot-action' as const, action_id: 'missing' },
+      health: { kind: 'slot-action' as const, action_id: 'missing' },
+      release: { kind: 'slot-action' as const, action_id: 'missing' },
+    },
+    release_effects: ['release'],
+  };
+  assert.throws(
+    () => validateRuntimeCapabilitiesConfig(project({ Bad_ID: provider }), 'project.json'),
+    /runtime capability id/,
+  );
+  assert.throws(
+    () => validateRuntimeCapabilitiesConfig(project({ good: provider }), 'project.json'),
+    /must name an existing slot action/,
+  );
+
+  const action = { label: 'action', command: 'true' };
+  const cyclic = project({
+    a: { ...provider, dependencies: ['b'] },
+    b: { ...provider, dependencies: ['a'] },
+  });
+  cyclic.slot_actions = { missing: action };
+  assert.throws(
+    () => validateRuntimeCapabilitiesConfig(cyclic, 'project.json'),
+    /dependency cycle/,
+  );
+});
 
 test('isMockModeProject detects external mock_mode flag', () => {
   assert.equal(isMockModeProject({ external: { mock_mode: true } } as any), true);
@@ -396,11 +480,11 @@ test('validatePrepareConfig rejects structural errors', () => {
   );
   assert.throws(
     () => validatePrepareConfig(prepareJson({}), PREPARE_CONFIG_PATH),
-    /prepare\.profiles must be an object/,
+    /must define core or at least one profile/,
   );
   assert.throws(
     () => validatePrepareConfig(prepareJson({ profiles: {} }), PREPARE_CONFIG_PATH),
-    /must define at least one profile/,
+    /must define core or at least one profile/,
   );
   assert.throws(
     () =>
@@ -409,6 +493,17 @@ test('validatePrepareConfig rejects structural errors', () => {
         PREPARE_CONFIG_PATH,
       ),
     /key "Bad_Name" is invalid/,
+  );
+  assert.throws(
+    () =>
+      validatePrepareConfig(
+        prepareJson({
+          core: { phases: ['git'] },
+          profiles: { core: { phases: ['git', 'deps'] } },
+        }),
+        PREPARE_CONFIG_PATH,
+      ),
+    /reserved profile "core"/,
   );
 });
 
