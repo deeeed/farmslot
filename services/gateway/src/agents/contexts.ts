@@ -132,6 +132,12 @@ function targetWindowName(target: string): string | null {
   return windowPart.split('.', 1)[0] || null;
 }
 
+function canonicalExplicitTarget(target: string): string {
+  const session = target.split(':', 1)[0];
+  const window = targetWindowName(target);
+  return session && window && !/^\d+$/.test(window) ? `${session}:${window}` : target;
+}
+
 function roleForWindowName(windowName: string | null): AgentRole | null {
   return agentRoleForWindowName(windowName);
 }
@@ -215,7 +221,14 @@ export async function resolveAgentTarget(
     }
     const role = selector.role;
     const run = selector.runId ? getRun(selector.runId) : await findActiveRunForSlot(slotId);
-    const context = run ? selectAgentContext(run, selector) : null;
+    const canonicalTarget = canonicalExplicitTarget(target);
+    const context = run
+      ? (getAgentContexts(run).find(
+          (candidate) =>
+            candidate.target != null &&
+            canonicalAgentContextTarget(candidate.target) === canonicalTarget,
+        ) ?? null)
+      : null;
     return {
       target,
       session: targetSession,

@@ -5,7 +5,7 @@
 // `status: 'running'` and the work-graph node was never told; the scheduler only
 // discovered the stop later by polling and inferring it from run fields (#466).
 
-import { Events, type Run } from '@farmslot/protocol';
+import { Events, primaryRoleForFlow, type Run } from '@farmslot/protocol';
 
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { cancelRunEngine } from '../run-engine/orchestrator.js';
@@ -179,11 +179,12 @@ export function defaultCancelCollaborators(): CancelCollaborators {
       const { killAgentInSession, killAllAgentWindows } = await import('../methods/slot.js');
       const { loadFleetStatus } = await import('../fleet/state.js');
       const vars = await loadSlotVars(run.slotId!);
+      await killAgentInSession(
+        vars,
+        run.metrics.runner ?? undefined,
+        primaryRoleForFlow(run.flowType),
+      );
       await killAllAgentWindows(vars);
-      // After role-scoped windows are gone, clean the base pane as a legacy
-      // fallback. Do not infer a role from the flow here: cancelled legacy runs
-      // can have stale/null flow metadata while their worker lives elsewhere.
-      await killAgentInSession(vars, run.metrics.runner ?? undefined);
       await resetSlot(run.slotId!, true);
       await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
       console.log(`[run-lifecycle] released slot ${run.slotId} on cancel`);

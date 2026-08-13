@@ -11,6 +11,7 @@ type GrokPromptSignalProbe =
       promptAcceptedAt: number | null;
       activity: Extract<RunnerActivity, 'idle' | 'composing' | 'tool-running' | 'unknown'>;
       activityAt: number;
+      turnOutcome?: 'completed' | 'error' | 'cancelled' | null;
       turnStartedAt?: number | null;
       sessionId?: string;
       sessionPath?: string;
@@ -39,7 +40,12 @@ export function parseGrokPromptSignalProbe(raw: string): GrokPromptSignalProbe {
     typeof value.activityAt !== 'number' ||
     (value.turnStartedAt !== undefined &&
       value.turnStartedAt !== null &&
-      typeof value.turnStartedAt !== 'number')
+      typeof value.turnStartedAt !== 'number') ||
+    (value.turnOutcome !== undefined &&
+      value.turnOutcome !== null &&
+      value.turnOutcome !== 'completed' &&
+      value.turnOutcome !== 'error' &&
+      value.turnOutcome !== 'cancelled')
   ) {
     throw new Error(`Invalid Grok prompt signal probe: ${raw}`);
   }
@@ -49,6 +55,9 @@ export function parseGrokPromptSignalProbe(raw: string): GrokPromptSignalProbe {
     activity: value.activity,
     activityAt: value.activityAt,
     ...(value.turnStartedAt === undefined ? {} : { turnStartedAt: value.turnStartedAt }),
+    ...(value.turnOutcome === undefined
+      ? {}
+      : { turnOutcome: value.turnOutcome as 'completed' | 'error' | 'cancelled' | null }),
     ...(typeof value.sessionId === 'string' ? { sessionId: value.sessionId } : {}),
     ...(typeof value.sessionPath === 'string' ? { sessionPath: value.sessionPath } : {}),
   };
@@ -219,7 +228,8 @@ for event in read_jsonl_tail(events_path):
         if latest_start is None or event_ms > latest_start['at']:
             latest_start = {'at': event_ms, 'turn_number': event['turn_number']}
     elif event_type == 'turn_ended':
-        latest_end = max(event_ms, latest_end or 0)
+        if latest_end is None or event_ms > latest_end['at']:
+            latest_end = {'at': event_ms, 'outcome': event.get('outcome')}
     elif event_type == 'tool_started':
         latest_tool_start = max(event_ms, latest_tool_start or 0)
     elif event_type == 'tool_completed':
@@ -245,9 +255,9 @@ for message in read_jsonl_tail(chat_path):
 if latest_start is None:
     activity = 'unknown'
     activity_at = candidate['opened_at_ms']
-elif latest_end is not None and latest_end >= latest_start['at']:
+elif latest_end is not None and latest_end['at'] >= latest_start['at']:
     activity = 'idle'
-    activity_at = latest_end
+    activity_at = latest_end['at']
 elif (
     latest_tool_start is not None
     and latest_tool_start >= latest_start['at']
@@ -276,6 +286,7 @@ print(json.dumps({
     'activity': activity,
     'activityAt': activity_at,
     'turnStartedAt': latest_start['at'] if latest_start is not None else None,
+    'turnOutcome': latest_end['outcome'] if latest_end is not None else None,
     'sessionId': candidate['session_id'],
     'sessionPath': str(session_dir),
 }))
@@ -308,7 +319,11 @@ export function createGrokLogObservability(
       const signal = await probe(vars, target, null, null);
       if (signal.status !== 'matched') return null;
       return {
-        value: signal.activity,
+        value:
+          signal.activity === 'idle' &&
+          (signal.turnOutcome === 'error' || signal.turnOutcome === 'cancelled')
+            ? 'unknown'
+            : signal.activity,
         source: 'signal',
         confidence: 'high',
         observedAt: signal.activityAt,
@@ -324,7 +339,9 @@ export function createGrokLogObservability(
       return {
         value:
           signal.activity === 'idle'
-            ? 'idle'
+            ? signal.turnOutcome === 'error' || signal.turnOutcome === 'cancelled'
+              ? 'unknown'
+              : 'idle'
             : signal.activity === 'unknown'
               ? 'unknown'
               : 'active',
@@ -383,7 +400,9 @@ export function createGrokLogObservability(
       return {
         value:
           signal.activity === 'idle'
-            ? 'idle'
+            ? signal.turnOutcome === 'error' || signal.turnOutcome === 'cancelled'
+              ? 'unknown'
+              : 'idle'
             : signal.activity === 'unknown'
               ? 'unknown'
               : 'active',

@@ -139,7 +139,11 @@ export async function terminalizePriorRunOnSlot(
  * wait for the runner pid to exit. Mirrors what `dispatchExecute`'s "Clean pane" step does
  * before launch but pulled out so it can run BEFORE the engine's PREPARE step.
  */
-export async function killWorkerOnSlot(slotId: string, runner: string): Promise<void> {
+export async function killWorkerOnSlot(
+  slotId: string,
+  runner: string,
+  flowType?: FlowType | null,
+): Promise<void> {
   const vars = await loadSlotVars(slotId);
   const slotMod = await import('../slot.js');
   const session = await resolveTmuxSession(vars.slotId, vars, { strict: true });
@@ -147,8 +151,8 @@ export async function killWorkerOnSlot(slotId: string, runner: string): Promise<
     (await execOnSlot(vars, tmuxShellSnippet(`has-session -t ${shellQuote(session)} 2>/dev/null`)))
       .exitCode === 0;
   if (!hasSession) return;
+  await slotMod.killAgentInSession(vars, runner, primaryRoleForFlow(flowType));
   await slotMod.killAllAgentWindows(vars, session);
-  await slotMod.killAgentInSession(vars, runner);
   // Re-check session after the kills. When the only window in the session was a role window,
   // killAllAgentWindows uses `kill-session` (slot.ts:1625-1627) and the session itself is
   // gone — the runner process exited as a side effect of the session dying, so there's no
@@ -171,10 +175,13 @@ export async function killWorkerOnSlot(slotId: string, runner: string): Promise<
  * doesn't race the prior worker mutating the same git worktree.
  */
 export async function prepareSlotForFreshReuse(slotId: string, newRunId: string): Promise<void> {
+  const priorRunId = (await readSlotField(slotId, 'current_run_id')) as string | null;
+  const { getRun: getRunForCleanup } = await import('../../runs/store.js');
+  const priorFlowType = priorRunId ? getRunForCleanup(priorRunId)?.flowType : null;
   await terminalizePriorRunOnSlot(slotId, newRunId, 'fresh-reuse');
   const slotRunner = (await readSlotField(slotId, 'runner')) as string | null;
   if (slotRunner) {
-    await killWorkerOnSlot(slotId, normalizeRunner(slotRunner));
+    await killWorkerOnSlot(slotId, normalizeRunner(slotRunner), priorFlowType);
   }
 }
 

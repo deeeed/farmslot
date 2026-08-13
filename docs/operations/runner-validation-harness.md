@@ -123,11 +123,12 @@ Evidence: `evidence/runner-validate-<host>-gateway-review-recovery-terminal-cont
 
 Gateway binding priority (`session-path-resolution.ts`, `session-process.ts`):
 
-| #   | Signal                                                                                                    | Runners                    |
-| --- | --------------------------------------------------------------------------------------------------------- | -------------------------- |
-| 1   | Pane-owned native binding or hook `SessionStart`, filtered by pane process generation + dispatch boundary | claude, codex, grok        |
-| 2   | Filesystem set diff / mtime fallback only when no pane target is supplied                                 | persisting, unscoped calls |
-| 4   | `unavailable`                                                                                             | cursor, scripted, opencode |
+| #   | Signal                                                                                     | Runners                    |
+| --- | ------------------------------------------------------------------------------------------ | -------------------------- |
+| 1   | Pane-owned native session binding, filtered by pane process generation + dispatch boundary | grok                       |
+| 2   | Pane-owned hook `SessionStart`, filtered by pane process generation + dispatch boundary    | claude, codex              |
+| 3   | Filesystem set diff / mtime fallback only when no pane target is supplied                  | persisting, unscoped calls |
+| 4   | `unavailable`                                                                              | cursor, scripted, opencode |
 
 | Runner | Persists session | Path source                                     | `session-attribution-smoke` | `token-usage-smoke` |
 | ------ | ---------------- | ----------------------------------------------- | --------------------------- | ------------------- |
@@ -140,10 +141,12 @@ Gateway binding priority (`session-path-resolution.ts`, `session-process.ts`):
 
 1. Stale pre-seeded session exists before dispatch.
 2. Resolved path ≠ stale path.
-3. **Event-driven:** hook `SessionStart.transcript_path` === resolved path; `tmuxPane` === pane id.
+3. **Hook-driven:** hook `SessionStart.transcript_path` === resolved path; `tmuxPane` === pane id.
 4. **`modelsMatch(dispatchedModel, modelFromTranscript(...))`** — e.g. dispatch `opus`, transcript `claude-opus-*`.
 5. Stale seed would mismatch dispatched model.
 6. A stale identity written into the live pane snapshot is rejected by production binding.
+7. After the runner exits, a fresh-looking stale identity is rejected when the pane no longer owns
+   a runner process and the caller has no pre-launch session inventory.
 
 ### `token-usage-smoke` pass criteria
 

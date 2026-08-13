@@ -595,38 +595,62 @@ export async function killAgentInSession(
   // kill path aligned with renameDefaultWorkerWindow / ensureWorkerRoleTarget
   // / waitForRunnerProcessExit so a runner alive in `${session}:1` actually
   // gets interrupted instead of orphaned through a no-op cleanup.
-  const target = roleWindow ? `${session}:${roleWindow}` : await firstWindowTarget(vars, session);
+  const preferredTarget = roleWindow
+    ? `${session}:${roleWindow}`
+    : await firstWindowTarget(vars, session);
+  const listed = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `list-panes -s -t ${shellQuote(session)} -F '#{pane_id}\t#{pane_pid}' 2>/dev/null`,
+    ),
+    { timeout: TMUX_CMD_TIMEOUT },
+  );
+  const panes = listed.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [target, panePid] = line.split('\t', 2);
+      return { target, panePid };
+    })
+    .filter((pane) => pane.target && pane.panePid);
 
-  const hasTarget =
+  const preferredPaneIds = new Set(
     (
       await execOnSlot(
         vars,
         tmuxShellSnippet(
-          `list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null | head -1`,
+          `list-panes -t ${shellQuote(preferredTarget)} -F '#{pane_id}' 2>/dev/null`,
         ),
         { timeout: TMUX_CMD_TIMEOUT },
       )
-    ).exitCode === 0;
-  if (!hasTarget) return;
+    ).stdout
+      .split('\n')
+      .map((paneId) => paneId.trim())
+      .filter(Boolean),
+  );
+  const orderedPanes = [
+    ...panes.filter((pane) => preferredPaneIds.has(pane.target)),
+    ...panes.filter((pane) => !preferredPaneIds.has(pane.target)),
+  ];
 
-  const panePid = (
-    await execOnSlot(
-      vars,
-      tmuxShellSnippet(
-        `list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null | head -1`,
-      ),
-      { timeout: TMUX_CMD_TIMEOUT },
-    )
-  ).stdout.trim();
+  let target = preferredTarget;
+  let panePid = '';
+  let agentPid = '';
+  for (const pane of orderedPanes) {
+    const candidatePid = await findRunnerDescendantPid(vars, pane.panePid, runner);
+    if (!candidatePid) continue;
+    target = pane.target;
+    panePid = pane.panePid;
+    agentPid = candidatePid;
+    break;
+  }
   if (!panePid) return;
 
-  // Walk descendants instead of pgrep -P direct children — a project with a
-  // wrapping `dispatch_cmd` (e.g. `bash -lc 'codex …'`) makes the runner a
-  // grandchild of the pane shell, and the old check returned empty, skipping
-  // the graceful `/exit` step entirely. The kill -TERM/KILL fallback below
-  // operates on the actual runner PID, so the descendant walk needs to
-  // surface that PID, not just a boolean.
-  const agentPid = await findRunnerDescendantPid(vars, panePid, runner);
+  // Prefer the flow-owned role window, but fall back to the exact pane whose
+  // process tree owns the runner. Warm handoff intentionally preserves the
+  // parent worker role while the slot records the child flow, so flow-derived
+  // role metadata alone cannot identify the retained process at teardown.
 
   if (agentPid) {
     await execOnSlot(

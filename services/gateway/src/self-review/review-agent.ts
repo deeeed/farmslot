@@ -50,7 +50,10 @@ import {
   isRunnerAliveUnderPane,
   resumableSessionProbeCommand,
 } from '../runners/session-process.js';
-import { deliverPromptInPlace, resetLiveRunnerContext } from '../runners/session-reactivation.js';
+import {
+  deliverPromptToLiveRunner,
+  resetLiveRunnerContext,
+} from '../runners/session-reactivation.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun } from '../runs/store.js';
 import {
@@ -1006,7 +1009,7 @@ export async function runReviewAgent(
           throw new Error(`Cannot reset retained ${runner} reviewer: ${reset.reason}`);
         }
       }
-      const delivery = await deliverPromptInPlace({
+      const delivery = await deliverPromptToLiveRunner({
         vars,
         target: reviewTarget,
         runnerId: runner,
@@ -1018,6 +1021,7 @@ export async function runReviewAgent(
         model,
         effort: parentRun?.effort,
         prompt,
+        promptMarker: reviewChecklistTarget.checklist,
         safetyTier: parentSafetyTier,
         runtimeDir,
         taskDir,
@@ -1083,12 +1087,6 @@ export async function runReviewAgent(
           paneId: reviewerWindow.paneId,
         },
       );
-      if (!sessionMeta.runnerSessionId && retainReviewerSession && runnerCanResume) {
-        console.warn(
-          `[self-review] ${claimed ? 'reloaded' : 'launched'} ${runner} reviewer did not establish an authoritative session binding in ${reviewTarget}; completing this pass without retaining it`,
-        );
-        invalidateWarmReviewerSessions(_runId, runner);
-      }
       reviewContext =
         (await upsertAgentContext(_runId, 'self-review', {
           id: allocated.id,
@@ -1146,6 +1144,22 @@ export async function runReviewAgent(
             `[self-review] prompt delivery verifier failed but durable handoff passed via ${handoff.source}: ${handoff.reason}`,
           );
         }
+      }
+
+      // Some interactive runners emit SessionStart before creating their
+      // transcript file. The pre-prompt capture correctly refuses that
+      // incomplete identity; retry only after exact prompt acceptance, when
+      // the pane hook and resumable transcript can both be verified.
+      if (
+        !sessionMeta.runnerSessionId &&
+        retainReviewerSession &&
+        runnerCanResume &&
+        !(await bindLiveReviewerSession({ observedNotBeforeMs: handoffAckSinceMs }))
+      ) {
+        console.warn(
+          `[self-review] ${claimed ? 'reloaded' : 'launched'} ${runner} reviewer did not establish an authoritative session binding in ${reviewTarget}; completing this pass without retaining it`,
+        );
+        invalidateWarmReviewerSessions(_runId, runner);
       }
     };
 

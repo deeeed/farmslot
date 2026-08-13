@@ -80,6 +80,11 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const dispatchMs = Date.now();
     const beforeCount = readHookLines(logPath).length;
 
+    // Keep the dispatch cutoff and pane-process boundary observably separate.
+    // The stale-pane control below uses dispatchMs, so it passes freshness but
+    // predates this new runner process and can only fail on process generation.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
     runLaunchInTmux(paneId, repo, runner, runnerAdapter, DEFAULT_PROMPT, {
       model: dispatchedModel,
     });
@@ -115,7 +120,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       fs.writeFileSync(
         paneStatePath,
         JSON.stringify({
-          observedAt: dispatchMs - 120_000,
+          observedAt: dispatchMs,
           session_id: 'runner-stale',
           transcript_path: report.stalePath,
           tmuxPane: paneId,

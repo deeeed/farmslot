@@ -45,6 +45,7 @@ export async function readPaneProcessStartedAtMs(
   const script = `
 python3 - <<'PY'
 import datetime
+import os
 import re
 import subprocess
 import sys
@@ -83,27 +84,16 @@ try:
         if matched is None:
             raise ValueError('runner process not found under pane')
         pid = matched
-    elapsed = subprocess.check_output(
-        ['ps', '-p', pid, '-o', 'etime='],
+    started = subprocess.check_output(
+        ['ps', '-p', pid, '-o', 'lstart='],
         text=True,
+        env={**os.environ, 'LC_ALL': 'C'},
     ).strip()
-    day_parts = elapsed.split('-', 1)
-    days = int(day_parts[0]) if len(day_parts) == 2 else 0
-    clock = day_parts[-1].split(':')
-    if len(clock) == 3:
-        hours, minutes, seconds = map(int, clock)
-    elif len(clock) == 2:
-        hours = 0
-        minutes, seconds = map(int, clock)
-    else:
-        raise ValueError(f'unexpected elapsed time: {elapsed}')
-    elapsed_seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds
-    # ps etime has one-second precision. Use the latest possible process start
-    # so a snapshot from the previous pane occupant can never pass this gate.
-    # A runner event emitted during the first partial second may be retried once
-    # the runner emits its next structured event; stale attribution must fail closed.
-    started_at_ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
-    print(started_at_ms - elapsed_seconds * 1000)
+    # lstart is stable for the lifetime of the process. Its one-second timestamp
+    # is the earliest boundary in that second, so legitimate first-second hook
+    # events remain eligible without a moving now-etime estimate.
+    started_at = datetime.datetime.strptime(started, '%a %b %d %H:%M:%S %Y').astimezone()
+    print(int(started_at.timestamp() * 1000))
 except Exception as error:
     print(f'pane process start probe failed: {error}', file=sys.stderr)
     raise SystemExit(1)
