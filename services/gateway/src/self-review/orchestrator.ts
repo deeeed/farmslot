@@ -1331,6 +1331,7 @@ async function recoverSelfReviewFixPass({
       `Recovered reviewer findings; worker applying ${issues.length} fix(es)...`,
     );
 
+    let expiredAttemptId: string | undefined;
     if (!fixSignal) {
       const expectedWorkerModel = resolveWorkerModel(run, workerRunner, model);
       const fixContextMatchesWorker =
@@ -1393,6 +1394,9 @@ async function recoverSelfReviewFixPass({
           () =>
             getRun(runId)?.agentContexts?.find((context) => context.id === fixContext.id)
               ?.signalAttemptId ?? undefined,
+          (attemptId) => {
+            expiredAttemptId = attemptId;
+          },
         );
       } finally {
         fixWatcher.stop();
@@ -1403,10 +1407,7 @@ async function recoverSelfReviewFixPass({
       debugSelfReviewLog(
         `[self-review] run ${runId.slice(0, 8)} — timeout waiting for recovered worker fix`,
       );
-      const currentAttemptId = getRun(runId)?.agentContexts?.find(
-        (context) => context.id === fixContext.id,
-      )?.signalAttemptId;
-      if (!currentAttemptId || !(await settleRecoveredFixContext('failed', currentAttemptId)))
+      if (!expiredAttemptId || !(await settleRecoveredFixContext('failed', expiredAttemptId)))
         return null;
       // Keep the path-scoped watch alive for a same-run successor attempt. A running
       // signal can adopt a new opaque attempt immediately after the settlement CAS;
@@ -2103,6 +2104,7 @@ export async function waitForWorkerSignal(
   baseline: string,
   turnActive?: () => Promise<boolean>,
   expectedAttemptId?: string | (() => string | undefined),
+  onTimeout?: (expiredAttemptId: string | undefined) => void,
 ): Promise<WorkerSignal | undefined> {
   const signalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
 
@@ -2128,7 +2130,7 @@ export async function waitForWorkerSignal(
     if (raw && raw !== lastObservedSignal) {
       lastObservedSignal = raw;
       try {
-        const parsed = JSON.parse(raw) as WorkerSignal;
+        const parsed: unknown = JSON.parse(raw);
         const normalized = normalizeWorkerSignal(parsed);
         const observed = normalized.ok ? normalized.signal : undefined;
         const attemptMatches =
@@ -2147,5 +2149,6 @@ export async function waitForWorkerSignal(
       if (await turnActive()) lastProgressAt = Date.now();
     }
   }
+  onTimeout?.(lastExpectedAttemptId);
   return undefined;
 }
