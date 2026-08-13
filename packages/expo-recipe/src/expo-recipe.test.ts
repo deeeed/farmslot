@@ -21,6 +21,7 @@ import { closeUiTransportQuietly } from './runner.js';
 test('publishes the native action set through the package root', () => {
   assert.deepEqual(NATIVE_UI_ACTIONS, [
     'ui.press',
+    'ui.key_press',
     'ui.set_input',
     'ui.scroll',
     'ui.swipe',

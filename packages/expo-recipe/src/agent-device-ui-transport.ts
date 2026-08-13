@@ -54,7 +54,10 @@ export interface AgentDeviceClientLike {
     scroll(options: Record<string, unknown>): Promise<unknown>;
     swipe(options: Record<string, unknown>): Promise<unknown>;
   };
-  command: { wait(options: Record<string, unknown>): Promise<unknown> };
+  command: {
+    wait(options: Record<string, unknown>): Promise<unknown>;
+    keyboard(options: Record<string, unknown>): Promise<unknown>;
+  };
   capture: {
     snapshot(options: Record<string, unknown>): Promise<AgentDeviceSnapshot>;
     screenshot(options: Record<string, unknown>): Promise<{
@@ -72,6 +75,7 @@ type AgentDeviceClient = AgentDeviceClientLike;
 
 export const NATIVE_UI_ACTIONS = [
   'ui.press',
+  'ui.key_press',
   'ui.set_input',
   'ui.scroll',
   'ui.swipe',
@@ -205,22 +209,25 @@ export function createAgentDeviceUiTransport(
             }),
             node.settle !== false,
           );
+        case 'ui.key_press':
+          return client.command.keyboard({
+            ...selection,
+            session: options.session,
+            action: nativeKeyboardAction(node.key),
+            responseLevel: 'digest',
+          });
         case 'ui.set_input':
           return sanitizeFillResult(
-            requireSettledInteraction(
-              'ui.set_input',
-              await client.interactions.fill({
-                ...selection,
-                session: options.session,
-                selector: selectorFromNode(node, 'ui.set_input'),
-                text: requiredString(node.value ?? node.text, 'ui.set_input.value'),
-                settle: node.settle !== false,
-                verify: true,
-                responseLevel: 'digest',
-                timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
-              }),
-              node.settle !== false,
-            ),
+            await replaceNativeInput({
+              client,
+              selection,
+              session: options.session,
+              node,
+              platform: options.platform,
+              commandRunner: gestureCommandRunner,
+              tool: gestureTool,
+              device: gestureDevice,
+            }),
           );
         case 'ui.scroll': {
           const result = await client.interactions.scroll({
@@ -299,6 +306,104 @@ export function createAgentDeviceUiTransport(
       opened = false;
     },
   };
+}
+
+function nativeKeyboardAction(value: unknown): 'dismiss' | 'enter' {
+  const key = requiredString(value, 'ui.key_press.key').toLowerCase();
+  if (key === 'back' || key === 'escape') return 'dismiss';
+  if (key === 'enter' || key === 'return') return 'enter';
+  throw new Error(
+    `ui.key_press key ${JSON.stringify(value)} is not supported by the native device transport. Next: use Back, Escape, Enter, or Return`,
+  );
+}
+
+async function replaceNativeInput({
+  client,
+  selection,
+  session,
+  node,
+  platform,
+  commandRunner,
+  tool,
+  device,
+}: {
+  client: AgentDeviceClient;
+  selection: AgentDeviceSelection;
+  session: string;
+  node: Record<string, unknown>;
+  platform: 'ios' | 'android';
+  commandRunner: NativeGestureCommandRunner;
+  tool: () => Promise<string>;
+  device: () => Promise<string>;
+}): Promise<unknown> {
+  const text = requiredString(node.value ?? node.text, 'ui.set_input.value');
+  const selector = selectorFromNode(node, 'ui.set_input');
+  const fill = () =>
+    client.interactions.fill({
+      ...selection,
+      session,
+      selector,
+      text,
+      settle: node.settle !== false,
+      verify: true,
+      responseLevel: 'digest',
+      timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
+    });
+  let result = await fill();
+  const testId = optionalString(node.test_id ?? node.testID);
+  if (platform !== 'android' || !testId) {
+    return requireSettledInteraction('ui.set_input', result, node.settle !== false);
+  }
+  let observed = await nativeInputValue(client, selection, session, testId);
+  if (observed === text) {
+    return requireSettledInteraction('ui.set_input', result, node.settle !== false);
+  }
+  await client.interactions.press({
+    ...selection,
+    session,
+    selector,
+    settle: false,
+    verify: false,
+    responseLevel: 'digest',
+    timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
+  });
+  const adb = await tool();
+  const serial = await device();
+  await commandRunner.execFile(adb, ['-s', serial, 'shell', 'input', 'keyevent', '123'], {
+    timeoutMs: 10_000,
+  });
+  if (observed.length > 0) {
+    await commandRunner.execFile(
+      adb,
+      ['-s', serial, 'shell', 'input', 'keyevent', ...Array.from(observed, () => '67')],
+      { timeoutMs: 10_000 },
+    );
+  }
+  result = await fill();
+  observed = await nativeInputValue(client, selection, session, testId);
+  if (observed !== text) {
+    throw new Error(
+      `ui.set_input could not replace the Android field; expected ${Array.from(text).length} characters and observed ${Array.from(observed).length}.`,
+    );
+  }
+  return requireSettledInteraction('ui.set_input', result, node.settle !== false);
+}
+
+async function nativeInputValue(
+  client: AgentDeviceClient,
+  selection: AgentDeviceSelection,
+  session: string,
+  testId: string,
+): Promise<string> {
+  const snapshot = await client.capture.snapshot({
+    ...selection,
+    session,
+    interactiveOnly: false,
+    forceFull: true,
+  });
+  const target = snapshot.nodes.find((candidate) => candidate.identifier === testId);
+  const value = typeof target?.value === 'string' ? target.value : target?.label;
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 async function executeNativeGesture(
