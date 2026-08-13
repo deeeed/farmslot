@@ -464,6 +464,7 @@ export interface SelfReviewRetryDeps {
     issues: SelfReviewIssue[],
     taskDir: string,
     runId: string,
+    findingsArtifactScope?: string | null,
   ) => Promise<FixDeliveryAcceptance>;
   startProgressWatcher: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -699,7 +700,13 @@ export async function runSelfReviewRetryLoop({
     let fixSignalBaseline: string | undefined;
     let fixTurnToken: string | undefined;
     try {
-      const delivery = await deps.sendFeedbackToWorker(vars, result.issues, taskDir, runId);
+      const delivery = await deps.sendFeedbackToWorker(
+        vars,
+        result.issues,
+        taskDir,
+        runId,
+        artifactScope,
+      );
       fixSignalBaseline = delivery.signalBaseline;
       fixTurnToken = delivery.turnToken;
     } catch (error) {
@@ -1534,6 +1541,7 @@ async function sendFeedbackToWorker(
   issues: SelfReviewIssue[],
   taskDir: string,
   runId: string,
+  findingsArtifactScope?: string | null,
 ): Promise<FixDeliveryAcceptance> {
   const run = getRun(runId);
   const project = run?.project;
@@ -1629,7 +1637,7 @@ async function sendFeedbackToWorker(
     const fixContext = await upsertAgentContext(runId, 'self-review-fix', {
       status: 'working',
       attemptStartedAt: fixAttemptStartedAt,
-      artifactScope,
+      artifactScope: findingsArtifactScope,
       signalAttemptId: undefined,
       taskFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist),
       signalFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal),
