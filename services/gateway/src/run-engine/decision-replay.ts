@@ -26,14 +26,17 @@ export function latestResolvedHumanGateDecision(
   decisions: RunDecision[],
   approvalOnly = false,
 ): RunDecision | undefined {
-  return decisions
-    .filter(
-      (decision) =>
-        decision.type === 'engine_human_gate' &&
-        !!decision.resolvedAt &&
-        (!approvalOnly || HUMAN_GATE_APPROVAL_ACTIONS.has(decision.resolvedAction ?? '')),
-    )
-    .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))[0];
+  for (let i = decisions.length - 1; i >= 0; i--) {
+    const decision = decisions[i];
+    if (decision.type !== 'engine_human_gate' || !decision.resolvedAt) continue;
+    // Supersession is a replay barrier. Looking past it can resurrect the
+    // approval whose stale waiter was deliberately invalidated.
+    if (decision.resolvedAction === 'superseded') return undefined;
+    if (!approvalOnly || HUMAN_GATE_APPROVAL_ACTIONS.has(decision.resolvedAction ?? '')) {
+      return decision;
+    }
+  }
+  return undefined;
 }
 
 export function isHumanGateReviewRequestAction(actionId: string | undefined): boolean {
@@ -81,7 +84,11 @@ export function findLatestResolvedDecision(
   const expectedType = `engine_${reason}`;
   for (let i = decisions.length - 1; i >= 0; i--) {
     const d = decisions[i];
-    if (d.type === expectedType && d.resolvedAt) return d;
+    if (d.type !== expectedType || !d.resolvedAt) continue;
+    // Do not skip over a superseded entry: it invalidates all older replay
+    // candidates until a replacement decision is resolved.
+    if (d.resolvedAction === 'superseded') return undefined;
+    return d;
   }
   return undefined;
 }

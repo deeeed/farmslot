@@ -230,6 +230,9 @@ export async function gitDiff(
   params: GitDiffParams,
   deps: GitExecDeps = {},
 ): Promise<GitDiffResult> {
+  if (params.head && !params.base) {
+    throw new Error('An exact review head requires a base ref');
+  }
   const args = ['diff'];
 
   if (params.base) {
@@ -239,15 +242,23 @@ export async function gitDiff(
       refresh: true,
     });
 
-    const { stdout: mergeBase } = await gitExec(
-      params.slotId,
-      ['merge-base', baseRef, 'HEAD'],
-      undefined,
-      deps,
-    );
-    // 'worktree' diffs merge-base against the working tree (committed +
-    // uncommitted); default diffs committed history only.
-    args.push(params.target === 'worktree' ? mergeBase.trim() : `${mergeBase.trim()}..HEAD`);
+    if (params.head) {
+      if (params.target === 'worktree') {
+        throw new Error('An exact review head cannot be combined with a worktree diff');
+      }
+      await gitExec(params.slotId, ['rev-parse', '--verify', params.head], undefined, deps);
+      args.push(`${baseRef}...${params.head}`);
+    } else {
+      const { stdout: mergeBase } = await gitExec(
+        params.slotId,
+        ['merge-base', baseRef, 'HEAD'],
+        undefined,
+        deps,
+      );
+      // 'worktree' diffs merge-base against the working tree (committed +
+      // uncommitted); default diffs committed history only.
+      args.push(params.target === 'worktree' ? mergeBase.trim() : `${mergeBase.trim()}..HEAD`);
+    }
   }
 
   if (params.path) {
@@ -335,21 +346,35 @@ export async function gitBranchDiff(
   params: GitBranchDiffParams,
   deps: GitExecDeps = {},
 ): Promise<GitBranchDiffResult> {
+  if (params.head && !params.base) {
+    throw new Error('An exact review head requires a base ref');
+  }
   const base = params.base || 'main';
-  const baseRef = await resolveRemoteBaseRef(params.slotId, base, deps, { refresh: true });
+  const baseRef = await resolveRemoteBaseRef(params.slotId, base, deps, {
+    refresh: !params.head,
+  });
 
+  if (params.head && params.target === 'worktree') {
+    throw new Error('An exact review head cannot be combined with a worktree diff');
+  }
   const [mergeBaseResult, branchResult] = await Promise.all([
-    gitExec(params.slotId, ['merge-base', baseRef, 'HEAD'], undefined, deps),
+    params.head
+      ? gitExec(params.slotId, ['rev-parse', '--verify', params.head], undefined, deps)
+      : gitExec(params.slotId, ['merge-base', baseRef, 'HEAD'], undefined, deps),
     gitExec(params.slotId, ['branch', '--show-current'], undefined, deps),
   ]);
 
   const mergeBase = mergeBaseResult.stdout.trim();
-  const head = branchResult.stdout.trim();
+  const head = params.head ? mergeBase : branchResult.stdout.trim();
   // 'worktree' diffs the merge-base against the working tree — every change
   // on the branch (committed + uncommitted), deduped per file by git itself.
   // Default compares committed history only (what a PR would contain).
   const worktree = params.target === 'worktree';
-  const diffRange = worktree ? mergeBase : `${mergeBase}..HEAD`;
+  const diffRange = params.head
+    ? `${baseRef}...${mergeBase}`
+    : worktree
+      ? mergeBase
+      : `${mergeBase}..HEAD`;
 
   const [nameStatusResult, numstatResult, untrackedResult, committedResult] = await Promise.all([
     gitExec(

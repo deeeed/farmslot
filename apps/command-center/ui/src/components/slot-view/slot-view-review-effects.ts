@@ -12,10 +12,12 @@ import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 import type { SlotView } from './slot-view.js';
 import {
   type BranchDiffRequestTicket,
+  committedReviewBranchDiffRequest,
   isBranchDiffTicketCurrent,
   slotViewBranchList,
 } from './slot-view-branch-model.js';
-import { loadSlotViewDiffContent, loadSlotViewFileContent } from './slot-view-live-effects.js';
+import { loadSlotViewDiffContent, loadSlotViewGitFileContent } from './slot-view-live-effects.js';
+import { branchDiffKey, slotViewPendingReviewSnapshot } from './slot-view-model.js';
 
 function isCurrentReviewResult(view: SlotView, epoch: number) {
   return epoch === view._recoveryEpoch && isRecoveryEpochCurrent(epoch);
@@ -89,17 +91,14 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
   // ticket stales any completion from an earlier visit.
   const ticket = branchDiffTicket(view);
   const isCurrent = () => isTicketCurrent(view, ticket);
-  const requestedHeadSha = view._liveGitData?.headSha;
+  const reviewSnapshot = slotViewPendingReviewSnapshot(view._linkedRun);
+  const requestedHeadSha = reviewSnapshot?.headSha ?? view._liveGitData?.headSha;
   view._branchDiffLoading = true;
   try {
-    const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
-      slotId: view.slotId,
-      base: view._branchDiffBase,
-      // Keep the branch/PR diff identical to committed source control. Staged,
-      // unstaged, and untracked work remains in the separate IDE-style groups
-      // sourced from git.status.
-      target: 'head',
-    });
+    const result = await gateway.request<GitBranchDiffResult>(
+      Methods.GIT_BRANCH_DIFF,
+      committedReviewBranchDiffRequest(view.slotId, view._branchDiffBase, reviewSnapshot),
+    );
     if (!isCurrent()) return;
     view._branchDiffBase = result.base;
     view._branchDiffFiles = result.files;
@@ -124,7 +123,7 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
     // flag the new slot's own load now owns.
     if (isCurrent()) {
       view._branchDiffLoading = false;
-      if (requestedHeadSha && view._liveGitData?.headSha !== requestedHeadSha) {
+      if (!reviewSnapshot && requestedHeadSha && view._liveGitData?.headSha !== requestedHeadSha) {
         view._liveDiffContents.clear();
         void view._loadBranchDiff();
       }
@@ -179,25 +178,27 @@ export async function handleSlotViewBranchDiffSelect(
 ) {
   view._cancelFileRestoreRetry();
   const useCodeView = status === 'A';
+  const snapshot = slotViewPendingReviewSnapshot(view._linkedRun);
+  const base = snapshot?.baseSha ?? view._branchDiffBase;
+  const head = snapshot?.headSha ?? 'HEAD';
+  const cacheKey = branchDiffKey(base, head, path);
 
   if (useCodeView) {
-    const loaded = await loadSlotViewFileContent(view, path, {
-      errorFallback: 'Failed to read file',
-    });
+    const loaded = await loadSlotViewGitFileContent(view, cacheKey, path, head);
     if (!loaded) return;
-    view._openFile(path, 'file');
+    view._openFile(cacheKey, 'file');
     return;
   }
 
   // M/D/R: fetch the committed branch/PR diff and open it as a diff tab.
-  const cacheKey = `branch:${view._branchDiffBase}:${path}`;
   if (view._liveDiffContents.has(cacheKey)) {
     const next = new Map(view._liveDiffContents);
     next.delete(cacheKey);
     view._liveDiffContents = next;
   }
   const loaded = await loadSlotViewDiffContent(view, cacheKey, {
-    diffBase: view._branchDiffBase,
+    diffBase: base,
+    diffHead: head,
     diffTarget: 'head',
     errorFallback: 'Failed to load diff',
     requestPath: path,

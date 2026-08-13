@@ -397,14 +397,17 @@ describe('runnerFlagsForTier — grok', () => {
 });
 
 describe('buildCursorAgentLaunch', () => {
-  it('defaults to composer-2.5 and sandboxed flags with an argv task prompt', () => {
+  it('defaults to the registered Cursor model and sandboxed flags with an argv task prompt', () => {
     const cmd = buildCursorAgentLaunch({
       binary: 'cursor-agent',
       model: null,
       prompt: 'hi',
       repo: '/tmp/repo',
     });
-    assert.equal(cmd, "cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5 'hi'");
+    assert.equal(
+      cmd,
+      `cd '/tmp/repo' && cursor-agent --sandbox enabled --model ${DEFAULT_CURSOR_MODEL} 'hi'`,
+    );
   });
 
   it('shell-quotes prompt text for Cursor argv launch', () => {

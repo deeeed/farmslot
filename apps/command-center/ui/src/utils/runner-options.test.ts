@@ -21,6 +21,7 @@ test('eval candidates expose Cursor and Grok through the shared comparison runne
   assert.deepEqual(MODELS_BY_RUNNER.cursor, [
     DEFAULT_CURSOR_MODEL,
     'composer-2.5-fast',
+    'cursor-grok-4.6-high',
     'cursor-grok-4.5-high-fast',
     'cursor-grok-4.5-high',
   ]);

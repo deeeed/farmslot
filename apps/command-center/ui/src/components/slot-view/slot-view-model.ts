@@ -1,4 +1,10 @@
-import type { GitStatusResult, Run, SlotStatus } from '@farmslot/protocol';
+import type {
+  GitStatusResult,
+  ReviewDiffSnapshot,
+  ReviewGatePayload,
+  Run,
+  SlotStatus,
+} from '@farmslot/protocol';
 
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 
@@ -133,13 +139,29 @@ export function basename(path: string): string {
   return parts[parts.length - 1];
 }
 
-/** Extract the real file path from a branch diff cache key like "branch:main:path/to/file" */
+export interface BranchDiffKey {
+  base: string;
+  head?: string;
+  path: string;
+}
+
+export function branchDiffKey(base: string, head: string, path: string): string {
+  return `branch:${base}:${head}:${path}`;
+}
+
+/** Parse current `branch:<base>:<head>:<path>` and legacy `branch:<base>:<path>` keys. */
+export function parseBranchDiffKey(pathOrKey: string): BranchDiffKey | null {
+  if (!pathOrKey.startsWith('branch:')) return null;
+  const match = pathOrKey.match(/^branch:([^:]+):(.+)$/);
+  if (!match) return null;
+  const [, base, remainder] = match;
+  const frozen = remainder.match(/^(HEAD|[0-9a-f]{40,64}):(.+)$/i);
+  return frozen ? { base, head: frozen[1], path: frozen[2] } : { base, path: remainder };
+}
+
+/** Extract the repository path from a branch-diff cache key. */
 export function realPath(pathOrKey: string): string {
-  if (pathOrKey.startsWith('branch:')) {
-    const idx = pathOrKey.indexOf(':', 7); // skip "branch:" then find next ":"
-    return idx >= 0 ? pathOrKey.substring(idx + 1) : pathOrKey;
-  }
-  return pathOrKey;
+  return parseBranchDiffKey(pathOrKey)?.path ?? pathOrKey;
 }
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico', '.bmp']);
@@ -179,10 +201,19 @@ export function slotViewPendingReviewDecision(
   run: Pick<Run, 'decisions'> | null | undefined,
 ): Run['decisions'][number] | null {
   return (
-    run?.decisions.find(
-      (decision) => !decision.resolvedAt && decisionPayloadKind(decision.payload) === 'review',
-    ) ?? null
+    run?.decisions
+      .filter(
+        (decision) => !decision.resolvedAt && decisionPayloadKind(decision.payload) === 'review',
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null
   );
+}
+
+export function slotViewPendingReviewSnapshot(
+  run: Pick<Run, 'decisions'> | null | undefined,
+): ReviewDiffSnapshot | undefined {
+  const payload = slotViewPendingReviewDecision(run)?.payload as ReviewGatePayload | undefined;
+  return payload?.kind === 'review' ? payload.reviewSnapshot : undefined;
 }
 
 export function slotViewReviewDrawerKey(input: {

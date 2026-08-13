@@ -16,11 +16,12 @@ export const MODELS_BY_RUNNER: Record<string, string[]> = {
   claude: ['sonnet', 'opus', 'haiku', 'fable'],
   // GPT-5.6 family (Codex CLI slugs) first; keep 5.5/5.4 for continuity.
   codex: [DEFAULT_CODEX_MODEL, 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4'],
-  // Cursor Agent IDs from `cursor-agent --list-models`. Default stays Composer;
-  // Grok-on-Cursor uses `cursor-grok-4.5-*` slugs (not bare `grok-4.5-fast-xhigh`).
+  // Cursor Agent IDs from `cursor-agent --list-models`. The first entry is the
+  // shared protocol default used by every client.
   cursor: [
     DEFAULT_CURSOR_MODEL,
     'composer-2.5-fast',
+    'cursor-grok-4.6-high',
     'cursor-grok-4.5-high-fast',
     'cursor-grok-4.5-high',
   ],

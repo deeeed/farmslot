@@ -14,6 +14,8 @@ export interface GitDiffParams {
   /** Rename old side — included in the path limiter so renames diff correctly. */
   oldPath?: string;
   base?: string; // three-dot diff against merge-base when set
+  /** Exact reviewed head SHA. When present, diff merge-base(base, head)..head instead of live HEAD. */
+  head?: string;
   /**
    * With a base: 'head' (default) diffs merge-base..HEAD (committed only);
    * 'worktree' diffs merge-base against the working tree — every change on
@@ -122,6 +124,8 @@ export interface GitShowResult {
 export interface GitBranchDiffParams {
   slotId: string;
   base?: string; // defaults to 'main'
+  /** Exact reviewed head SHA. When present, list merge-base(base, head)..head instead of live HEAD. */
+  head?: string;
   /**
    * 'head' (default) lists committed changes (merge-base..HEAD) — what a PR
    * would contain right now. 'worktree' lists every change vs the merge-base
@@ -132,6 +136,7 @@ export interface GitBranchDiffParams {
 
 export interface GitBranchDiffResult {
   base: string;
+  /** Resolved live branch name, or the exact reviewed SHA when `params.head` pins the diff. */
   head: string;
   files: import('../contracts/index.js').GitBranchDiffFile[];
   /** Line totals exclude untracked files (worktree target lists them with 0/0). */

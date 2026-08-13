@@ -121,7 +121,7 @@ export async function prReviewComments(
 }
 
 export async function prAddComment(params: PRAddCommentParams): Promise<PRAddCommentResult> {
-  const { pr, repo, body, path, line, side, inReplyTo } = params;
+  const { pr, repo, body, path, line, side, commitId, inReplyTo } = params;
   if (inReplyTo) {
     const { stdout } = await ghRequest(
       [
@@ -136,12 +136,12 @@ export async function prAddComment(params: PRAddCommentParams): Promise<PRAddCom
     );
     return { id: JSON.parse(stdout).id };
   }
-  const { stdout: shaOut } = await ghRequest([
-    'api',
-    `repos/${repo}/pulls/${pr}`,
-    '--jq',
-    '.head.sha',
-  ]);
+  if (commitId && !/^[0-9a-f]{40,64}$/i.test(commitId)) {
+    throw new Error('commitId must be an exact commit SHA');
+  }
+  const resolvedCommitId = commitId
+    ? commitId
+    : (await ghRequest(['api', `repos/${repo}/pulls/${pr}`, '--jq', '.head.sha'])).stdout.trim();
   const { stdout } = await ghRequest(
     [
       'api',
@@ -157,7 +157,7 @@ export async function prAddComment(params: PRAddCommentParams): Promise<PRAddCom
       '-f',
       `side=${side || 'RIGHT'}`,
       '-f',
-      `commit_id=${shaOut.trim()}`,
+      `commit_id=${resolvedCommitId}`,
     ],
     { force: true },
   );

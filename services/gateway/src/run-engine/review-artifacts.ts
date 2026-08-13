@@ -54,6 +54,21 @@ function reviewRecommendationFromArtifact(data: unknown): string | null {
     : null;
 }
 
+const REVIEW_RECOMMENDATION_RANK: Record<string, number> = {
+  APPROVE: 0,
+  COMMENT: 1,
+  REQUEST_CHANGES: 2,
+};
+
+function normalizeReviewRecommendation(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toUpperCase();
+  return normalized && normalized in REVIEW_RECOMMENDATION_RANK ? normalized : null;
+}
+
+function stricterReviewRecommendation(left: string, right: string): string {
+  return REVIEW_RECOMMENDATION_RANK[right] > REVIEW_RECOMMENDATION_RANK[left] ? right : left;
+}
+
 async function workerGatewayOwnedCopyExcludes(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   workerArtifactsDir: string,
@@ -143,6 +158,7 @@ export async function buildIndependentReviewPlanningBrief(
 }
 
 export async function readReviewArtifacts(runId: string): Promise<ReviewArtifacts> {
+  let markdownRecommendation: string | null = null;
   const run = getRun(runId);
   const result: ReviewArtifacts = {
     recommendation: 'COMMENT',
@@ -171,9 +187,12 @@ export async function readReviewArtifacts(runId: string): Promise<ReviewArtifact
 
       // Extract recommendation
       const recMatch = reviewMd.match(
-        /(?:Recommended Action|Recommendation)[:\s]*\n?\s*(APPROVE|REQUEST_CHANGES|COMMENT)/i,
+        /(?:Recommended Action|Recommendation|Verdict)[:\s]*\n?\s*(APPROVE|REQUEST_CHANGES|COMMENT)/i,
       );
-      if (recMatch) result.recommendation = recMatch[1].toUpperCase();
+      if (recMatch) {
+        markdownRecommendation = recMatch[1].toUpperCase();
+        result.recommendation = markdownRecommendation;
+      }
     } catch (err) {
       console.warn(
         `[run-engine] failed to read review artifact ${reviewPath}: ${(err as Error).message.slice(0, 200)}`,
@@ -203,8 +222,21 @@ export async function readReviewArtifacts(runId: string): Promise<ReviewArtifact
         severity: typeof c.severity === 'string' ? c.severity.toLowerCase() : 'comment',
       }));
 
-      // Also extract recommendation from line-comments.json if present
-      result.recommendation = reviewRecommendationFromArtifact(data) ?? result.recommendation;
+      // Fail closed when the human-readable verdict and structured sidecar
+      // disagree. A stale/default COMMENT must never weaken REQUEST_CHANGES.
+      const sidecarRecommendation = normalizeReviewRecommendation(
+        reviewRecommendationFromArtifact(data),
+      );
+      if (sidecarRecommendation) {
+        if (markdownRecommendation && markdownRecommendation !== sidecarRecommendation) {
+          console.warn(
+            `[run-engine] review recommendation mismatch for ${runId.slice(0, 8)}: review.md=${markdownRecommendation}, line-comments.json=${sidecarRecommendation}; using stricter verdict`,
+          );
+        }
+        result.recommendation = markdownRecommendation
+          ? stricterReviewRecommendation(markdownRecommendation, sidecarRecommendation)
+          : sidecarRecommendation;
+      }
     } catch (err) {
       console.warn(
         `[run-engine] failed to read review line comments ${lcPath}: ${(err as Error).message.slice(0, 200)}`,

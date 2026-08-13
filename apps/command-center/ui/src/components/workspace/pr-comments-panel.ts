@@ -57,6 +57,7 @@ export class PRCommentsPanel extends LitElement {
   @state() private _replySubmitting = false;
   @state() private _newCommentPath = '';
   @state() private _newCommentLine = 0;
+  @state() private _newCommentCommitId = '';
   @state() private _newCommentText = '';
   @state() private _newCommentSubmitting = false;
   @state() private _editingComment: number | null = null;
@@ -72,6 +73,7 @@ export class PRCommentsPanel extends LitElement {
     this.addEventListener('start-new-comment', ((e: CustomEvent) => {
       this._newCommentPath = e.detail.path;
       this._newCommentLine = e.detail.line;
+      this._newCommentCommitId = e.detail.commitId ?? '';
       this._newCommentText = '';
       requestAnimationFrame(() => {
         const textarea = this.shadowRoot?.querySelector(
@@ -214,9 +216,11 @@ export class PRCommentsPanel extends LitElement {
         body: this._newCommentText,
         path: this._newCommentPath,
         line: this._newCommentLine,
+        ...(this._newCommentCommitId ? { commitId: this._newCommentCommitId } : {}),
       });
       this._newCommentPath = '';
       this._newCommentLine = 0;
+      this._newCommentCommitId = '';
       this._newCommentText = '';
       this.dispatchEvent(new CustomEvent('thread-resolved', { bubbles: true, composed: true }));
     } catch (err) {
@@ -229,6 +233,7 @@ export class PRCommentsPanel extends LitElement {
   private _cancelNewComment() {
     this._newCommentPath = '';
     this._newCommentLine = 0;
+    this._newCommentCommitId = '';
     this._newCommentText = '';
   }
 

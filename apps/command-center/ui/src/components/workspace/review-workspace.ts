@@ -12,6 +12,7 @@ import type {
   GitBranchDiffFile,
   GitBranchDiffResult,
   GitDiffResult,
+  GitShowResult,
   ReviewGatePayload,
   ReviewLineComment,
   RunDecision,
@@ -291,7 +292,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       // forceRefreshSlotBranch — slot-view's _liveGitData is event-driven and
       // can lag a checkout by hundreds of ms, which would otherwise leave the
       // diff view stuck on a stale mismatch banner.
-      if (this.branch) {
+      if (this.branch && !this._payload.reviewSnapshot?.headSha) {
         let currentBranch = opts.forceRefreshSlotBranch ? '' : this.slotBranch;
         if (!currentBranch) {
           const status = await gateway.request<{ branch: string }>(Methods.GIT_STATUS, {
@@ -314,7 +315,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
       const result = await gateway.request<GitBranchDiffResult>(
         Methods.GIT_BRANCH_DIFF,
-        committedReviewBranchDiffRequest(this.slotId, this._baseRef),
+        committedReviewBranchDiffRequest(this.slotId, this._baseRef, this._payload.reviewSnapshot),
       );
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffFiles = result.files;
@@ -374,7 +375,12 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     try {
       const result = await gateway.request<GitDiffResult>(
         Methods.GIT_DIFF,
-        committedReviewFileDiffRequest(this.slotId, path, this._baseRef),
+        committedReviewFileDiffRequest(
+          this.slotId,
+          path,
+          this._baseRef,
+          this._payload.reviewSnapshot,
+        ),
       );
       this._fileDiff = result.diff;
     } catch (err) {
@@ -840,7 +846,12 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       gateway
         .request<GitDiffResult>(
           Methods.GIT_DIFF,
-          committedReviewFileDiffRequest(this.slotId, c.path, this._baseRef),
+          committedReviewFileDiffRequest(
+            this.slotId,
+            c.path,
+            this._baseRef,
+            this._payload.reviewSnapshot,
+          ),
         )
         .then((r) => {
           this._fileDiff = r.diff;
@@ -858,19 +869,26 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     // Load file content for code-viewer with ViewZone
     this._commentFileLoading = true;
     this._commentFileContent = '';
-    const tFs = performance.now();
+    const tFile = performance.now();
     try {
-      const result = await gateway.request<FsReadResult>(Methods.FS_READ, {
-        slotId: this.slotId,
-        path: c.path,
-      });
+      const reviewedHead = this._payload.reviewSnapshot?.headSha?.trim();
+      const result = reviewedHead
+        ? await gateway.request<GitShowResult>(Methods.GIT_SHOW, {
+            slotId: this.slotId,
+            ref: reviewedHead,
+            path: c.path,
+          })
+        : await gateway.request<FsReadResult>(Methods.FS_READ, {
+            slotId: this.slotId,
+            path: c.path,
+          });
       this._commentFileContent = result.content;
     } catch {
       this._commentFileContent = '';
     } finally {
       this._commentFileLoading = false;
       console.log(
-        `[review-workspace] fsRead ${(performance.now() - tFs).toFixed(0)}ms path=${c.path}`,
+        `[review-workspace] commentFile ${(performance.now() - tFile).toFixed(0)}ms path=${c.path}`,
       );
     }
     // Set revealLine after content is loaded — use requestAnimationFrame

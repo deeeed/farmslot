@@ -204,7 +204,7 @@ export function renderSlotViewChangesPanel(view: SlotView) {
     .totalAdditions=${view._branchDiffTotalAdd}
     .totalDeletions=${view._branchDiffTotalDel}
     .commentCounts=${view._branchDiffCommentCounts}
-    .selectedPath=${view._activeFile}
+    .selectedPath=${realPath(view._activeFile)}
     .branches=${view._branchDiffBranches}
     @file-select=${(e: CustomEvent) =>
       view._handleBranchDiffSelect(e.detail.path, e.detail.status, e.detail.oldPath)}

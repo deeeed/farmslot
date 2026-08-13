@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import { gitStateChips, gitStatusColor, stateChipStyles } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { realPath } from '../slot-view/slot-view-model.js';
 
 type BranchDiffStatus = 'M' | 'A' | 'D' | 'R';
 type FileListViewMode = 'tree' | 'list';
@@ -528,10 +529,7 @@ export class BranchChangedFiles extends LitElement {
 
   /** Expand all ancestor directories so the given path is visible */
   private _revealPath(filePath: string) {
-    // For branch diff, selectedPath might be a cache key like "branch:main:path/to/file"
-    const actualPath = filePath.startsWith('branch:')
-      ? filePath.split(':').slice(2).join(':')
-      : filePath;
+    const actualPath = realPath(filePath);
     const parts = actualPath.split('/');
     if (parts.length <= 1) return;
     let changed = false;

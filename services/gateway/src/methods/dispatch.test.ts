@@ -339,7 +339,7 @@ test('resolvePreviewModel uses Cursor default for missing or unknown slot model'
   );
 });
 
-test('dispatch preview displays Cursor composer-2.5 instead of Claude default', () => {
+test('dispatch preview displays the shared Cursor default instead of Claude default', () => {
   const result = resolveDispatchPreviewFromFleet(
     { project: 'farmslot-farm', flowType: 'fix-bug', ticketOrPr: 'PROJ-1' },
     [makeSlot({ lifecycle: 'ready', phase: null, branch: 'main', runner: 'cursor', model: null })],

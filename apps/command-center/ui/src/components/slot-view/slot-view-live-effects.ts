@@ -18,12 +18,16 @@ import {
   isDirectoryReadErrorMessage,
   isImageFile,
   isMediaFile,
+  parseBranchDiffKey,
   realPath,
+  slotViewPendingReviewSnapshot,
 } from './slot-view-model.js';
 import { updateSlotViewTreeChildren } from './slot-view-tree-model.js';
 
 type LoadContentOptions = {
   diffBase?: string;
+  /** Exact reviewed head SHA for frozen committed diffs. */
+  diffHead?: string;
   /** With diffBase: 'worktree' diffs merge-base→working tree (default committed only). */
   diffTarget?: 'head' | 'worktree';
   /** Rename old side — keeps renamed files diffing as renames, not adds. */
@@ -137,8 +141,13 @@ export async function refreshSlotViewGitStatus(view: SlotView) {
       loading: view._branchDiffLoading,
     });
     if (pollAction !== 'none') {
-      if (pollAction === 'reload-and-clear-cache') view._liveDiffContents.clear();
-      view._loadBranchDiff();
+      const frozenReview = slotViewPendingReviewSnapshot(view._linkedRun);
+      if (!frozenReview) {
+        if (pollAction === 'reload-and-clear-cache') view._liveDiffContents.clear();
+        view._loadBranchDiff();
+      } else if (view._branchDiffError !== null) {
+        view._loadBranchDiff();
+      }
     }
   } catch (err) {
     console.warn(
@@ -236,6 +245,7 @@ export async function loadSlotViewDiffContent(
       slotId: view.slotId,
       path: options.requestPath ?? path,
       ...(options.diffBase ? { base: options.diffBase } : {}),
+      ...(options.diffHead ? { head: options.diffHead } : {}),
       ...(options.diffBase && options.diffTarget ? { target: options.diffTarget } : {}),
       ...(options.requestOldPath ? { oldPath: options.requestOldPath } : {}),
     });
@@ -264,6 +274,34 @@ export async function loadSlotViewDiffContent(
   }
 }
 
+export async function loadSlotViewGitFileContent(
+  view: SlotView,
+  cacheKey: string,
+  path: string,
+  ref: string,
+) {
+  if (!view._isLive || view._liveFileContents.has(cacheKey)) return true;
+  const epoch = view._recoveryEpoch;
+  try {
+    const result = await gateway.request<{ content: string }>(Methods.GIT_SHOW, {
+      slotId: view.slotId,
+      ref,
+      path,
+    });
+    if (!isCurrentLiveResult(view, epoch)) return false;
+    const next = new Map(view._liveFileContents);
+    next.set(cacheKey, result.content);
+    view._liveFileContents = next;
+    return true;
+  } catch (err) {
+    if (!isCurrentLiveResult(view, epoch)) return false;
+    const next = new Map(view._liveFileContents);
+    next.set(cacheKey, `Error: ${err instanceof Error ? err.message : 'Failed to read file'}`);
+    view._liveFileContents = next;
+    return true;
+  }
+}
+
 export async function toggleSlotViewEditorMode(view: SlotView) {
   const tab = view._openFiles.find((f) => f.path === view._activeFile);
   if (!tab) return;
@@ -274,17 +312,21 @@ export async function toggleSlotViewEditorMode(view: SlotView) {
 
   // Fetch data if not cached
   if (newType === 'file' && view._isLive) {
-    // For branch diffs, switch to a normal file tab with the real path
+    // A committed-review tab stays keyed to its frozen snapshot. Reading the
+    // live worktree here would silently change the code under review.
     if (isBranchDiff) {
-      await loadSlotViewFileContent(view, filePath, {
-        errorFallback: null,
-        warnLabel: 'failed to load branch diff file',
-      });
-      // Replace the branch diff tab with a normal file tab
-      view._openFiles = view._openFiles.map((f) =>
-        f.path === tab.path ? { ...f, path: filePath, type: 'file', diffBase: undefined } : f,
+      const parsed = parseBranchDiffKey(tab.path);
+      if (!parsed) return;
+      const loaded = await loadSlotViewGitFileContent(
+        view,
+        tab.path,
+        filePath,
+        parsed.head ?? 'HEAD',
       );
-      view._activeFile = filePath;
+      if (!loaded) return;
+      view._openFiles = view._openFiles.map((f) =>
+        f.path === tab.path ? { ...f, type: 'file' } : f,
+      );
       return;
     }
     await loadSlotViewFileContent(view, tab.path, {
@@ -293,7 +335,16 @@ export async function toggleSlotViewEditorMode(view: SlotView) {
     });
   }
   if (newType === 'diff' && view._isLive && !view._liveDiffContents.has(tab.path)) {
+    const parsed = parseBranchDiffKey(tab.path);
     await loadSlotViewDiffContent(view, tab.path, {
+      ...(parsed
+        ? {
+            diffBase: parsed.base,
+            diffHead: parsed.head ?? 'HEAD',
+            diffTarget: 'head' as const,
+            requestPath: parsed.path,
+          }
+        : {}),
       errorFallback: null,
       warnLabel: 'failed to load diff tab',
     });

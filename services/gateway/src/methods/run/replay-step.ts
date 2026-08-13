@@ -436,7 +436,11 @@ export async function runReplayStep(
     // retry must keep its pending decisions actionable.
     const supersededGateAudit =
       replaysTaskGeneration || replaysCompletionOrGate
-        ? existing.decisions.filter((d) => d.type === 'engine_human_gate' && !d.resolvedAt)
+        ? existing.decisions.filter(
+            (d) =>
+              (d.type === 'engine_human_gate' || d.type === 'engine_review_posting') &&
+              !d.resolvedAt,
+          )
         : [];
     if (supersedeStaleHumanGateDecisions(supersededGateAudit) > 0) {
       updateRun(params.runId, { decisions: existing.decisions });
