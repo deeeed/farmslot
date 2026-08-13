@@ -12,7 +12,7 @@ import {
   type SlotViewLinkedRunSource,
   slotViewLinkedRunTransition,
 } from './slot-view-linked-run-model.js';
-import { slotBoundRunIdForSlot } from './slot-view-model.js';
+import { slotBoundRunIdForSlot, slotViewPendingReviewSnapshot } from './slot-view-model.js';
 import { requestedRunFromHash } from './slot-view-url-state.js';
 
 export function applySlotViewLinkedRun(
@@ -22,6 +22,7 @@ export function applySlotViewLinkedRun(
   source: SlotViewLinkedRunSource = 'rpc',
 ): string | null {
   const previousRunId = view._lastLinkedRunId;
+  const previousSnapshot = slotViewPendingReviewSnapshot(view._linkedRun);
   if (!run) {
     // Only the RPC source confirms a run is actually gone. A cached null can
     // be a transient hydration miss during mount or reconnect — overwriting
@@ -38,8 +39,30 @@ export function applySlotViewLinkedRun(
     return null;
   }
 
+  const nextSnapshot = slotViewPendingReviewSnapshot(run);
+  const previousSnapshotKey = previousSnapshot
+    ? `${previousSnapshot.baseSha}:${previousSnapshot.headSha}`
+    : '';
+  const nextSnapshotKey = nextSnapshot ? `${nextSnapshot.baseSha}:${nextSnapshot.headSha}` : '';
+
   view._linkedRun = run;
   view._lastLinkedRunId = run.id;
+  if (previousSnapshotKey !== nextSnapshotKey) {
+    view._branchDiffGeneration += 1;
+    view._liveDiffContents = new Map();
+    view._branchDiffFiles = [];
+    view._branchDiffBase = nextSnapshot?.baseSha ?? 'main';
+    view._branchDiffHead = nextSnapshot?.headSha ?? '';
+    view._branchDiffTotalAdd = 0;
+    view._branchDiffTotalDel = 0;
+    view._branchDiffError = null;
+    const activeBranchDiff = view._activeFile.startsWith('branch:');
+    view._openFiles = view._openFiles.filter((file) => !file.path.startsWith('branch:'));
+    if (activeBranchDiff) {
+      view._activeFile = view._openFiles.at(-1)?.path ?? '';
+    }
+    if (view._isLive) void view._loadBranchDiff();
+  }
   const transition = slotViewLinkedRunTransition({
     previousRunId,
     nextRunId: run.id,

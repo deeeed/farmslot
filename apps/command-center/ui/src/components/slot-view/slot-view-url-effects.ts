@@ -182,10 +182,11 @@ export async function openSlotViewFileFromUrl(view: SlotView, file: string): Pro
   if (file.startsWith('branch:')) {
     const parsed = parseBranchDiffKey(file);
     if (!parsed) return;
-    const { base, path } = parsed;
-    view._branchDiffBase = base;
     const reviewSnapshot = slotViewPendingReviewSnapshot(view._linkedRun);
+    const path = parsed.path;
+    const base = parsed.head ? parsed.base : (reviewSnapshot?.baseSha ?? parsed.base);
     const head = parsed.head ?? reviewSnapshot?.headSha ?? 'HEAD';
+    view._branchDiffBase = base;
     const cacheKey = branchDiffKey(base, head, path);
     if (view._isLive && !view._liveDiffContents.has(cacheKey)) {
       try {
