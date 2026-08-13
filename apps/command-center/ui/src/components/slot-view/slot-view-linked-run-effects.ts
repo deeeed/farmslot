@@ -12,7 +12,12 @@ import {
   type SlotViewLinkedRunSource,
   slotViewLinkedRunTransition,
 } from './slot-view-linked-run-model.js';
-import { slotBoundRunIdForSlot, slotViewPendingReviewSnapshot } from './slot-view-model.js';
+import {
+  branchDiffKey,
+  parseBranchDiffKey,
+  slotBoundRunIdForSlot,
+  slotViewPendingReviewSnapshot,
+} from './slot-view-model.js';
 import { requestedRunFromHash } from './slot-view-url-state.js';
 
 export function applySlotViewLinkedRun(
@@ -56,10 +61,29 @@ export function applySlotViewLinkedRun(
     view._branchDiffTotalAdd = 0;
     view._branchDiffTotalDel = 0;
     view._branchDiffError = null;
-    const activeBranchDiff = view._activeFile.startsWith('branch:');
-    view._openFiles = view._openFiles.filter((file) => !file.path.startsWith('branch:'));
-    if (activeBranchDiff) {
-      view._activeFile = view._openFiles.at(-1)?.path ?? '';
+    const activeBranchDiff = parseBranchDiffKey(view._activeFile);
+    const nonBranchFiles = view._openFiles.filter((file) => !file.path.startsWith('branch:'));
+    if (activeBranchDiff && nextSnapshot) {
+      const canonicalPath = branchDiffKey(
+        nextSnapshot.baseSha,
+        nextSnapshot.headSha,
+        activeBranchDiff.path,
+      );
+      const activeTab = view._openFiles.find((file) => file.path === view._activeFile);
+      view._openFiles = [
+        ...nonBranchFiles,
+        {
+          path: canonicalPath,
+          type: activeTab?.type ?? 'diff',
+          pinned: activeTab?.pinned ?? false,
+          diffBase: nextSnapshot.baseSha,
+        },
+      ];
+      view._activeFile = canonicalPath;
+      void view._openFileFromUrl(canonicalPath);
+    } else {
+      view._openFiles = nonBranchFiles;
+      if (activeBranchDiff) view._activeFile = nonBranchFiles.at(-1)?.path ?? '';
     }
     if (view._isLive) void view._loadBranchDiff();
   }

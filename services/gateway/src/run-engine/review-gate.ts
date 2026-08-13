@@ -503,7 +503,9 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
 
-  const decision = run.decisions.find((d) => d.type === 'engine_review_posting' && !d.resolvedAt);
+  const decision = [...run.decisions]
+    .reverse()
+    .find((d) => d.type === 'engine_review_posting' && !d.resolvedAt);
   if (!decision) {
     throw new Error('No pending review_posting decision to refresh');
   }
