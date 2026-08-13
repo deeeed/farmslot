@@ -65,7 +65,7 @@ import {
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
-import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
+import { normalizeWorkerSignal, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { parseSelfReviewIssueBullets } from './issues.js';
 import { initSelfReviewProgress, startProgressWatcher } from './progress.js';
@@ -1444,10 +1444,13 @@ async function recoverSelfReviewFixPass({
       });
     }
 
+    const terminalAttemptId = fixSignal.attemptId;
+    if (!terminalAttemptId) return null;
+
     if (fixSignal.status === 'blocked') {
       const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
       if (
-        !(await settleRecoveredFixContext('blocked', fixSignal.attemptId!, {
+        !(await settleRecoveredFixContext('blocked', terminalAttemptId, {
           lastSignalAt: new Date().toISOString(),
         }))
       )
@@ -1479,7 +1482,7 @@ async function recoverSelfReviewFixPass({
     if (
       !(await settleRecoveredFixContext(
         fixSignal.status === 'failed' ? 'failed' : 'complete',
-        fixSignal.attemptId!,
+        terminalAttemptId,
         { lastSignalAt: new Date().toISOString() },
       ))
     )
@@ -2123,14 +2126,18 @@ export async function waitForWorkerSignal(
     }
     const raw = await readOptionalSelfReviewFixSignal(vars, signalPath);
     if (raw && raw !== lastObservedSignal) {
+      lastObservedSignal = raw;
       try {
-        const signal = terminalWorkerSignalFromRaw(raw);
+        const parsed = JSON.parse(raw) as WorkerSignal;
+        const normalized = normalizeWorkerSignal(parsed);
+        const observed = normalized.ok ? normalized.signal : undefined;
         const attemptMatches =
           typeof expectedAttemptId === 'function'
-            ? Boolean(expected && signal?.attemptId === expected)
-            : !expected || signal?.attemptId === expected;
+            ? Boolean(expected && observed?.attemptId === expected)
+            : !expected || observed?.attemptId === expected;
+        if (attemptMatches) lastProgressAt = Date.now();
+        const signal = observed ? terminalWorkerSignalFromRaw(raw) : undefined;
         if (signal && attemptMatches) return signal;
-        lastObservedSignal = raw;
       } catch (err) {
         console.warn(`[self-review] failed to parse ${signalPath}: ${(err as Error).message}`);
       }
