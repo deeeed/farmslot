@@ -366,6 +366,15 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `run.recipeRunsForSlot`      | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `run.recipeRunsForRun`       | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 
+## runtime.\*
+
+| Method                       | Surface  | CLI command | TUI | Note                                                                                                                                                       |
+| ---------------------------- | -------- | ----------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runtime.capability.list`    | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                             |
+| `runtime.capability.acquire` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                             |
+| `runtime.capability.release` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel. |
+| `runtime.capability.status`  | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel. |
+
 ## screen.\*
 
 | Method               | Surface | CLI command | TUI | Note                                        |
