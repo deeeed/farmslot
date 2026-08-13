@@ -76,8 +76,11 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
 
     report.stalePath = seedStaleSession(runner, repo, runtimeDir);
     const beforePaths = listSessionCandidates(runner, repo, runtimeDir);
-    const staleControlPath = path.join(repo, runtimeDir, 'stale-process-boundary.jsonl');
-    fs.copyFileSync(report.stalePath, staleControlPath);
+    let staleControlPath = null;
+    if (hookDriven && report.stalePath) {
+      staleControlPath = path.join(repo, runtimeDir, 'stale-process-boundary.jsonl');
+      fs.copyFileSync(report.stalePath, staleControlPath);
+    }
 
     const shell = ensureShellSession(session, repo);
     paneId = shell.paneId;
@@ -110,7 +113,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     // Production must fail closed rather than borrowing the stale transcript.
     let paneStatePath = null;
     let livePaneState = null;
-    if (hookDriven && report.stalePath) {
+    if (hookDriven && report.stalePath && staleControlPath) {
       const paneProcessStartedAtMs = runGatewayPaneProcessStartedAt({
         repo,
         target: paneId,
@@ -147,7 +150,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       const staleBinding = resolveSessionBinding({
         runner,
         repo,
-        beforePaths: [],
+        beforePaths: [report.stalePath],
         sinceMs: dispatchMs,
         paneId,
         slotId,
