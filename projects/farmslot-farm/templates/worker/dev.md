@@ -16,6 +16,7 @@ human approval, optional independent review, and CI only after publication.
 ```text
 TICKET: {{TICKET_ID}}
 RUN_ID: {{RUN_ID}}
+FAMILY_ID: {{FAMILY_ID}}
 TICKET_URL: {{TICKET_URL}}
 TITLE: {{TICKET_TITLE}}
 BRANCH: {{BRANCH}}
@@ -73,9 +74,9 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
     ```bash
     cd {{REPO}}
     node apps/command-center/scripts/cdp.mjs gateway runtime.capability.acquire \
-      '{"slotId":"{{SLOT}}","capabilityId":"sandbox-gateway-ui","ownerRunId":"{{RUN_ID}}","queueOnPressure":true,"proofRequirement":{"capabilityId":"sandbox-gateway-ui","reason":"Command Center proof requires the slot Gateway and UI","mode":"visual"}}'
+      '{"slotId":"{{SLOT}}","capabilityId":"sandbox-gateway-ui","ownerRunId":"{{RUN_ID}}","ownerFamilyId":"{{FAMILY_ID}}","queueOnPressure":true,"proofRequirement":{"capabilityId":"sandbox-gateway-ui","reason":"Command Center proof requires the slot Gateway and UI","mode":"visual"}}'
     node apps/command-center/scripts/cdp.mjs gateway runtime.capability.acquire \
-      '{"slotId":"{{SLOT}}","capabilityId":"browser-cdp","ownerRunId":"{{RUN_ID}}","queueOnPressure":true,"proofRequirement":{"capabilityId":"browser-cdp","reason":"Command Center proof requires a browser and CDP","mode":"visual"}}'
+      '{"slotId":"{{SLOT}}","capabilityId":"browser-cdp","ownerRunId":"{{RUN_ID}}","ownerFamilyId":"{{FAMILY_ID}}","queueOnPressure":true,"proofRequirement":{"capabilityId":"browser-cdp","reason":"Command Center proof requires a browser and CDP","mode":"visual"}}'
     node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --slot-id {{SLOT}} --json
     ```
     Require both acquire responses to report `ok: true`; a queued/failed response is not a booted surface. For a queued `host-pressure` conflict, retry the same acquire request after `retryAfterMs` for at most two minutes, preserving the same owner id so admission remains idempotent. If that bounded retry, any non-pressure acquisition, or the doctor fails, release the owner's queued leases, set `STATUS: blocked` with the failing check, and stop. Do not launch the sandbox or Chrome directly.

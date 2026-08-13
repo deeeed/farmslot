@@ -790,6 +790,8 @@ test('writeTaskFile renders selected template variant and leaves source template
     await readFile(path.join(path.dirname(taskPath), TEMPLATE_PROVENANCE_INPUT), 'utf-8'),
   ) as { templateName?: string; templateVariant?: string | null; templateIsDefault?: boolean };
   assert.match(rendered, /Template version marker: PROJ-/);
+  assert.match(rendered, new RegExp(`FAMILY_ID: ${run.familyId}`));
+  assert.match(rendered, new RegExp(`"ownerFamilyId":"${run.familyId}"`));
   assert.equal(await readFile(variantPath, 'utf-8'), variantSource);
   assert.equal(provenance.templateName, 'dev-template-test.md');
   assert.equal(provenance.templateVariant, 'template-test');

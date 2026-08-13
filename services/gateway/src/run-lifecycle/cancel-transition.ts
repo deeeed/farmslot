@@ -185,9 +185,13 @@ export function defaultCancelCollaborators(): CancelCollaborators {
     settleBacklog: (run) => markBacklogRunObserved(run),
     tickWorkGraph: (graphId) => schedulerTick({ graphId }),
     releaseCapabilities: async (run) => {
-      const { releaseRuntimeCapabilitiesForFamily } =
+      const { releaseRuntimeCapabilitiesForRunAndFamily } =
         await import('../methods/runtime-capabilities.js');
-      const result = await releaseRuntimeCapabilitiesForFamily(run.slotId!, run.familyId);
+      const result = await releaseRuntimeCapabilitiesForRunAndFamily(
+        run.slotId!,
+        run.id,
+        run.familyId,
+      );
       if (!result.ok) {
         throw new Error(
           result.failures.map((failure) => `${failure.capabilityId}: ${failure.reason}`).join('; '),

@@ -252,6 +252,27 @@ test('family cleanup releases every sibling lease while slot cleanup includes or
   assert.equal(actions.filter((action) => action === 'gateway.release').length, 1);
 });
 
+test('run and family cleanup includes a familyless current-run lease and explicit family owners', async (t) => {
+  const { registry } = await fixture(t, [entry('gateway', 'shared')]);
+  assert.equal((await acquire(registry, 'gateway', 'current-run')).ok, true);
+  assert.equal((await acquire(registry, 'gateway', 'current-family-run', 'family-a')).ok, true);
+  assert.equal((await acquire(registry, 'gateway', 'sibling-run', 'family-a')).ok, true);
+  assert.equal((await acquire(registry, 'gateway', 'unrelated-run', 'family-b')).ok, true);
+
+  const result = await registry.releaseRunAndFamily(SLOT, 'current-run', 'family-a');
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    result.released.map((lease) => lease.owner.runId),
+    ['current-run', 'current-family-run', 'sibling-run'],
+  );
+  assert.deepEqual(
+    (await registry.status({ slotId: SLOT })).leases
+      .filter((lease) => lease.state === 'acquired')
+      .map((lease) => lease.owner.runId),
+    ['unrelated-run'],
+  );
+});
+
 test('release orders owning capabilities before dependencies even when all owner leases are roots', async (t) => {
   const { registry, actions } = await fixture(t, [
     entry('dependency', 'shared'),

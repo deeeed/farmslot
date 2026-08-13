@@ -14,10 +14,9 @@ const reportPath = path.resolve(
 );
 const peerOwnerRunId = `${ownerRunId}-peer`;
 const rpc = await connectGateway(gatewayUrl);
-let primaryLeaseId;
-let peerLeaseId;
 let runFailed = false;
 let runFailure;
+const cleanupTargets = [];
 const cleanupFailures = [];
 
 try {
@@ -37,6 +36,8 @@ try {
   }
 
   const requirement = (reason) => ({ capabilityId, reason, mode: 'state' });
+  const peerCleanup = { slotId: peerSlotId, ownerRunId: peerOwnerRunId };
+  cleanupTargets.push(peerCleanup);
   const peerAcquire = await rpc.call('runtime.capability.acquire', {
     slotId: peerSlotId,
     capabilityId,
@@ -44,8 +45,10 @@ try {
     proofRequirement: requirement('Peer-slot isolation fixture'),
   });
   if (!peerAcquire.ok) throw new Error(`peer acquire failed: ${JSON.stringify(peerAcquire)}`);
-  peerLeaseId = peerAcquire.lease.id;
+  peerCleanup.leaseId = peerAcquire.lease.id;
 
+  const primaryCleanup = { slotId, ownerRunId };
+  cleanupTargets.push(primaryCleanup);
   const acquire = await rpc.call('runtime.capability.acquire', {
     slotId,
     capabilityId,
@@ -53,7 +56,7 @@ try {
     proofRequirement: requirement('On-demand Companion lifecycle fixture'),
   });
   if (!acquire.ok) throw new Error(`primary acquire failed: ${JSON.stringify(acquire)}`);
-  primaryLeaseId = acquire.lease.id;
+  primaryCleanup.leaseId = acquire.lease.id;
   if (!acquire.dependencyLeases.some((lease) => lease.capabilityId === 'companion-metro')) {
     throw new Error('primary acquire did not return the Metro dependency lease');
   }
@@ -98,29 +101,24 @@ try {
   runFailed = true;
   runFailure = error;
 }
-for (const cleanup of [
-  { slotId, ownerRunId, leaseId: primaryLeaseId },
-  { slotId: peerSlotId, ownerRunId: peerOwnerRunId, leaseId: peerLeaseId },
-]) {
-  if (cleanup.leaseId) {
-    try {
-      const result = await rpc.call('runtime.capability.release', {
-        ...cleanup,
-        capabilityId,
-        force: true,
-      });
-      if (!result.ok) {
-        cleanupFailures.push(
-          new Error(
-            result.failures
-              .map((failure) => `${failure.capabilityId}: ${failure.reason}`)
-              .join('; '),
-          ),
-        );
-      }
-    } catch (error) {
-      cleanupFailures.push(error);
+for (const cleanup of cleanupTargets) {
+  try {
+    const result = await rpc.call('runtime.capability.release', {
+      slotId: cleanup.slotId,
+      ownerRunId: cleanup.ownerRunId,
+      capabilityId,
+      ...(cleanup.leaseId ? { leaseId: cleanup.leaseId } : {}),
+      force: true,
+    });
+    if (!result.ok) {
+      cleanupFailures.push(
+        new Error(
+          result.failures.map((failure) => `${failure.capabilityId}: ${failure.reason}`).join('; '),
+        ),
+      );
     }
+  } catch (error) {
+    cleanupFailures.push(error);
   }
 }
 rpc.close();

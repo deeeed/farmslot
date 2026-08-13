@@ -934,6 +934,7 @@ export async function writeTaskFile(
 
   const vars: Record<string, string> = {
     RUN_ID: run.id,
+    FAMILY_ID: run.familyId,
     SLOT: run.slotId!,
     SLOT_ID: run.slotId!,
     TICKET: ticketRef,

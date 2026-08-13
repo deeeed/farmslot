@@ -7,7 +7,7 @@ Read this before authoring `{{TASK_DIR}}/artifacts/recipe.json`.
 - Graph envelope: canonical `$schema`, required `description`, `workflow.entry`, `workflow.nodes`, and `intent` on every non-terminal executable node.
 - Runner: `{{recipe_validate_wrapper}}` with `{{recipe_manifest_path}}`.
 - Discovery: before authoring, inspect action names in `{{recipe_manifest_path}}`, then read only the relevant metadata/examples and existing recipes under `{{farmslot_dir}}/docs/examples/recipes/farmslot/`; reuse declared capabilities instead of guessing action names.
-- Capability prerequisite: before a Command Center doctor or recipe run, use the control-plane Gateway's `runtime.capability.list` and `runtime.capability.acquire` RPCs to lease `sandbox-gateway-ui` and `browser-cdp` for the current slot/run and declared visual proof requirements. Require both acquire responses to report `ok: true`; do not launch `sandbox-dev.sh` or `debug-chrome.sh` directly.
+- Capability prerequisite: before a Command Center doctor or recipe run, use the control-plane Gateway's `runtime.capability.list` and `runtime.capability.acquire` RPCs to lease `sandbox-gateway-ui` and `browser-cdp` for the current slot/run and declared visual proof requirements. Send the task's explicit `ownerRunId` and `ownerFamilyId`; never infer family ownership from a run id. Require both acquire responses to report `ok: true`; do not launch `sandbox-dev.sh` or `debug-chrome.sh` directly.
 - Doctor after capability acquisition: `cd {{REPO}} && node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --json`
 
 > **Worktree proof — set FARMSLOT_SLOT_REPO:** When validating a branch in a slot worktree,

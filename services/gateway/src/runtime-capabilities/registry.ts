@@ -791,6 +791,18 @@ export class RuntimeCapabilityRegistry {
     return this.releaseSelected(slotId, (lease) => lease.owner.familyId === familyId, false);
   }
 
+  async releaseRunAndFamily(
+    slotId: string,
+    ownerRunId: string,
+    familyId: string,
+  ): Promise<RuntimeCapabilityReleaseResult> {
+    return this.releaseSelected(
+      slotId,
+      (lease) => lease.owner.runId === ownerRunId || lease.owner.familyId === familyId,
+      false,
+    );
+  }
+
   async releaseSlot(slotId: string): Promise<RuntimeCapabilityReleaseResult> {
     return this.releaseSelected(slotId, () => true, false);
   }
