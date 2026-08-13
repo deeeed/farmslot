@@ -793,17 +793,15 @@ export function recoveredReviewAlreadyIngested(
   if (existing.verdict === 'skipped') return false;
   const existingAttempt = existing.attempts?.at(-1);
   const recoveredAttempt = recovered.attempts?.at(-1);
-  if (
-    existingAttempt?.startedAt &&
-    recoveredAttempt?.startedAt &&
-    existingAttempt.startedAt === recoveredAttempt.startedAt &&
-    existing.verdict === recovered.verdict &&
-    existing.unresolvedCount === recovered.unresolvedCount
-  ) {
-    // The terminal signal can be written milliseconds after the live result
-    // was persisted. `startedAt` identifies the review generation; treating
-    // the later signal timestamp as a new pass duplicates the final attempt.
-    return true;
+  if (existingAttempt?.startedAt && recoveredAttempt?.startedAt) {
+    // Attempt start is the opaque generation identity. Completion clocks can
+    // be inverted across the worker, node, and gateway, so they are only a
+    // migration fallback when one side predates attempt-scoped artifacts.
+    if (existingAttempt.startedAt !== recoveredAttempt.startedAt) return false;
+    return (
+      existing.verdict === recovered.verdict &&
+      existing.unresolvedCount === recovered.unresolvedCount
+    );
   }
   const existingAt = Date.parse(existing.completedAt ?? '');
   const recoveredAt = Date.parse(recovered.completedAt ?? '');

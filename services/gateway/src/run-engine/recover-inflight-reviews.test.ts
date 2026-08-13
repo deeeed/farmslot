@@ -120,6 +120,26 @@ test('recovery never lets an older authoritative verdict replace a newer one', (
   );
 });
 
+test('attempt identity wins over inverted completion clocks', () => {
+  assert.equal(
+    recoveredReviewAlreadyIngested(
+      {
+        completedAt: '2026-08-03T16:05:00.000Z',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        attempts: [{ loopNumber: 1, startedAt: '2026-08-03T16:00:00.000Z' }],
+      },
+      {
+        completedAt: '2026-08-03T16:04:00.000Z',
+        verdict: 'pass',
+        unresolvedCount: 0,
+        attempts: [{ loopNumber: 1, startedAt: '2026-08-03T16:03:00.000Z' }],
+      },
+    ),
+    false,
+  );
+});
+
 test('recovery deduplicates one review generation even when its terminal signal is later', () => {
   const attempt = {
     loopNumber: 4,

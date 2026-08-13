@@ -980,11 +980,19 @@ export async function runSelfReviewRetryLoop({
 async function readSelfReviewFixIssues(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
-): Promise<SelfReviewIssue[]> {
-  const content = await readOptionalSlotFile(
+): Promise<SelfReviewIssue[] | null> {
+  const checklistPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
+  const result = await execOnSlot(
     vars,
-    slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist),
+    `if [ -f ${shellQuote(checklistPath)} ]; then cat ${shellQuote(checklistPath)}; else exit 44; fi`,
   );
+  if (result.exitCode === 44) return null;
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to read self-review fix findings: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+    );
+  }
+  const content = result.stdout.trim();
   return parseSelfReviewIssueBullets(content);
 }
 
@@ -1227,13 +1235,27 @@ async function recoverSelfReviewFixPass({
       );
     }
 
-    if (fixSignal && !signalFreshSince(fixSignal, fixContext?.startedAt)) {
-      fixSignal = undefined;
+    if (fixSignal) {
+      const matchesAttempt = fixContext.signalAttemptId
+        ? fixSignal.attemptId === fixContext.signalAttemptId
+        : signalFreshSince(fixSignal, fixContext.attemptStartedAt ?? fixContext.startedAt);
+      if (!matchesAttempt) fixSignal = undefined;
     }
 
     const issues = await readSelfReviewFixIssues(vars, taskDir);
+    if (issues === null) return null;
     if (issues.length === 0) {
-      await markAgentContextStatus(runId, 'self-review-fix', 'failed', { id: fixContext.id });
+      await upsertAgentContext(
+        runId,
+        'self-review-fix',
+        { id: fixContext.id },
+        {
+          resolvePatch: (current) =>
+            current?.artifactScope === findingsArtifactScope
+              ? { id: fixContext.id, status: 'failed' }
+              : null,
+        },
+      );
       debugSelfReviewLog(
         `[self-review] run ${runId.slice(0, 8)} — fix context has no materialized findings; rebuilding from the review result`,
       );
@@ -1608,6 +1630,7 @@ async function sendFeedbackToWorker(
       status: 'working',
       attemptStartedAt: fixAttemptStartedAt,
       artifactScope,
+      signalAttemptId: undefined,
       taskFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist),
       signalFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal),
       runner: run?.metrics.runner ?? null,

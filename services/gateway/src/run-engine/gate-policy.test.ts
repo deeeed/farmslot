@@ -9,11 +9,45 @@ import {
   noChangeDispositionLabel,
   noChangeRejectionMessage,
   normalizeExhaustedReviewContinuation,
+  pendingIndependentReviewContinuation,
   shouldForceNoChangeHumanGate,
   staleReviewsAreEvidenceOnly,
   supersedeStaleHumanGateDecisions,
 } from './gate-policy.js';
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
+
+test('pending continuation ignores later non-verdict placeholders but honors a later pass', () => {
+  const issues = {
+    id: 'independent-review-7',
+    source: 'human-gate',
+    verdict: 'issues',
+    unresolvedCount: 1,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+    issues: [{ file: 'src/example.ts', description: 'Fix this' }],
+  } satisfies IndependentReviewStatus;
+  const skipped = {
+    id: 'independent-review-8',
+    source: 'human-gate',
+    verdict: 'skipped',
+    unresolvedCount: 0,
+  } satisfies IndependentReviewStatus;
+  const failed = {
+    id: 'independent-review-9',
+    source: 'human-gate',
+    verdict: 'failed',
+    unresolvedCount: 0,
+  } satisfies IndependentReviewStatus;
+  assert.equal(pendingIndependentReviewContinuation([issues, skipped, failed])?.id, issues.id);
+  assert.equal(
+    pendingIndependentReviewContinuation([
+      issues,
+      skipped,
+      { ...skipped, id: 'independent-review-10', verdict: 'pass' },
+    ]),
+    undefined,
+  );
+});
 
 test('supersedeStaleHumanGateDecisions closes only unresolved gate decisions and keeps them for audit', () => {
   const decisions: RunDecision[] = [

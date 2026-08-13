@@ -121,7 +121,13 @@ export function normalizeExhaustedReviewContinuation(
 export function pendingIndependentReviewContinuation(
   reviews: readonly IndependentReviewStatus[],
 ): IndependentReviewStatus | undefined {
-  const latest = [...reviews].reverse().find((review) => review.source !== 'self-review');
+  const latest = [...reviews]
+    .reverse()
+    .find(
+      (review) =>
+        review.source !== 'self-review' &&
+        (review.verdict === 'pass' || review.verdict === 'issues'),
+    );
   return latest && independentReviewNeedsContinuation(latest) ? latest : undefined;
 }
 
