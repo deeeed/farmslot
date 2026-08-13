@@ -5,8 +5,11 @@ import type { Run, SlotStatus } from '@farmslot/protocol';
 
 import {
   adjacentSlotId,
+  branchDiffKey,
   isDirectoryReadErrorMessage,
   isSlotViewPinnedLinkedRun,
+  parseBranchDiffKey,
+  realPath,
   shouldHideTerminalSlotRecipePanel,
   slotBoundRunIdForSlot,
   slotSwitcherEntries,
@@ -17,6 +20,21 @@ import {
   slotViewReviewDrawerKey,
   slotViewTerminalRunId,
 } from './slot-view-model.js';
+
+test('branch diff keys round-trip frozen and legacy paths', () => {
+  const frozen = branchDiffKey('base-sha', 'a'.repeat(40), 'src/path:with-colon.ts');
+  assert.deepEqual(parseBranchDiffKey(frozen), {
+    base: 'base-sha',
+    head: 'a'.repeat(40),
+    path: 'src/path:with-colon.ts',
+  });
+  assert.deepEqual(parseBranchDiffKey('branch:main:src/index.ts'), {
+    base: 'main',
+    path: 'src/index.ts',
+  });
+  assert.equal(realPath(frozen), 'src/path:with-colon.ts');
+  assert.equal(realPath('src/index.ts'), 'src/index.ts');
+});
 
 function makeSlot(slot: string, overrides: Partial<SlotStatus> = {}): SlotStatus {
   return {

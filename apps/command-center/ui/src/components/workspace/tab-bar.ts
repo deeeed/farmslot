@@ -2,6 +2,7 @@ import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { realPath } from '../slot-view/slot-view-model.js';
 
 export interface TabInfo {
   path: string;
@@ -10,8 +11,7 @@ export interface TabInfo {
 }
 
 function basename(path: string): string {
-  // Handle branch diff cache keys like "branch:main:path/to/file.ts"
-  const resolved = path.startsWith('branch:') ? path.substring(path.indexOf(':', 7) + 1) : path;
+  const resolved = realPath(path);
   const parts = resolved.split('/');
   return parts[parts.length - 1];
 }

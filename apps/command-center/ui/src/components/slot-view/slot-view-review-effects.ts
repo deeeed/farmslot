@@ -16,8 +16,8 @@ import {
   isBranchDiffTicketCurrent,
   slotViewBranchList,
 } from './slot-view-branch-model.js';
-import { loadSlotViewDiffContent, loadSlotViewFileContent } from './slot-view-live-effects.js';
-import { slotViewPendingReviewSnapshot } from './slot-view-model.js';
+import { loadSlotViewDiffContent, loadSlotViewGitFileContent } from './slot-view-live-effects.js';
+import { branchDiffKey, slotViewPendingReviewSnapshot } from './slot-view-model.js';
 
 function isCurrentReviewResult(view: SlotView, epoch: number) {
   return epoch === view._recoveryEpoch && isRecoveryEpochCurrent(epoch);
@@ -181,25 +181,27 @@ export async function handleSlotViewBranchDiffSelect(
 ) {
   view._cancelFileRestoreRetry();
   const useCodeView = status === 'A';
+  const snapshot = slotViewPendingReviewSnapshot(view._linkedRun);
+  const base = snapshot?.baseSha ?? view._branchDiffBase;
+  const head = snapshot?.headSha ?? 'HEAD';
+  const cacheKey = branchDiffKey(base, head, path);
 
   if (useCodeView) {
-    const loaded = await loadSlotViewFileContent(view, path, {
-      errorFallback: 'Failed to read file',
-    });
+    const loaded = await loadSlotViewGitFileContent(view, cacheKey, path, head);
     if (!loaded) return;
-    view._openFile(path, 'file');
+    view._openFile(cacheKey, 'file');
     return;
   }
 
   // M/D/R: fetch the committed branch/PR diff and open it as a diff tab.
-  const cacheKey = `branch:${view._branchDiffBase}:${path}`;
   if (view._liveDiffContents.has(cacheKey)) {
     const next = new Map(view._liveDiffContents);
     next.delete(cacheKey);
     view._liveDiffContents = next;
   }
   const loaded = await loadSlotViewDiffContent(view, cacheKey, {
-    diffBase: view._branchDiffBase,
+    diffBase: base,
+    diffHead: head,
     diffTarget: 'head',
     errorFallback: 'Failed to load diff',
     requestPath: path,

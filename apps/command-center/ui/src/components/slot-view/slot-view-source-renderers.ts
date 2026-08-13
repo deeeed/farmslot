@@ -222,7 +222,7 @@ export function renderEditorHeader(view: SlotView) {
               </button>
             `
           : ''}
-        ${tab.type === 'file' && !isImageFile(filePath) && !isMediaFile(filePath)
+        ${tab.type === 'file' && !isBranchDiff && !isImageFile(filePath) && !isMediaFile(filePath)
           ? html`
               <button
                 class="sv-save-btn ${view._saveFeedback}"
@@ -252,6 +252,8 @@ export function renderEditor(view: SlotView) {
   if (!tab) {
     return html`<div class="sv-empty-editor">Select a file to view</div>`;
   }
+  const filePath = realPath(tab.path);
+  const isBranchDiff = tab.path.startsWith('branch:');
 
   if (tab.type === 'diff') {
     const diff = view._diffs.get(view._activeFile) ?? '';
@@ -263,7 +265,7 @@ export function renderEditor(view: SlotView) {
   }
 
   // Image files — render via gateway HTTP endpoint (proxied through Vite)
-  if (isImageFile(view._activeFile)) {
+  if (isImageFile(filePath) && !isBranchDiff) {
     const src = gatewayResourceUrl(
       `/api/file?slotId=${encodeURIComponent(view.slotId)}&path=${encodeURIComponent(view._activeFile)}`,
     );
@@ -273,7 +275,7 @@ export function renderEditor(view: SlotView) {
   }
 
   // Video files
-  if (isMediaFile(view._activeFile)) {
+  if (isMediaFile(filePath) && !isBranchDiff) {
     const src = gatewayResourceUrl(
       `/api/file?slotId=${encodeURIComponent(view.slotId)}&path=${encodeURIComponent(view._activeFile)}`,
     );
@@ -283,13 +285,13 @@ export function renderEditor(view: SlotView) {
   }
 
   const content = view._files.get(view._activeFile) ?? '';
-  const lang = extToLanguage(view._activeFile);
-  const commentThreads = view._getCommentThreadsForFile(view._activeFile);
+  const lang = extToLanguage(filePath);
+  const commentThreads = view._getCommentThreadsForFile(filePath);
   return html`<code-viewer
     .content=${content || ''}
     .language=${lang}
-    .filename=${basename(view._activeFile)}
-    .filePath=${view._activeFile}
+    .filename=${basename(filePath)}
+    .filePath=${filePath}
     .commentThreads=${commentThreads}
     .showComments=${view._showInlineComments}
     .revealLine=${view._revealLine}

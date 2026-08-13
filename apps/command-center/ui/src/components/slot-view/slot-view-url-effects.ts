@@ -6,7 +6,11 @@ import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
 import { committedReviewFileDiffRequest } from './slot-view-branch-model.js';
-import { slotViewPendingReviewSnapshot } from './slot-view-model.js';
+import {
+  branchDiffKey,
+  parseBranchDiffKey,
+  slotViewPendingReviewSnapshot,
+} from './slot-view-model.js';
 import {
   getSlotViewHashParam,
   isSlotViewHashForSlot,
@@ -175,17 +179,20 @@ export function scheduleSlotViewUrlRestoreRetry(
 
 export async function openSlotViewFileFromUrl(view: SlotView, file: string): Promise<void> {
   if (file.startsWith('branch:')) {
-    const match = file.match(/^branch:([^:]+):(.+)$/);
-    if (!match) return;
-    const [, base, path] = match;
+    const parsed = parseBranchDiffKey(file);
+    if (!parsed) return;
+    const { base, path } = parsed;
     view._branchDiffBase = base;
     const reviewSnapshot = slotViewPendingReviewSnapshot(view._linkedRun);
-    const cacheKey = `branch:${base}:${reviewSnapshot?.headSha ?? 'HEAD'}:${path}`;
+    const head = parsed.head ?? reviewSnapshot?.headSha ?? 'HEAD';
+    const cacheKey = branchDiffKey(base, head, path);
     if (view._isLive && !view._liveDiffContents.has(cacheKey)) {
       try {
         const result = await gateway.request<GitDiffResult>(
           Methods.GIT_DIFF,
-          committedReviewFileDiffRequest(view.slotId, path, base, reviewSnapshot),
+          parsed.head
+            ? { slotId: view.slotId, path, base, head, target: 'head' }
+            : committedReviewFileDiffRequest(view.slotId, path, base, reviewSnapshot),
         );
         if (!result.diff.trim()) {
           await view._handleFileSelect(path);
