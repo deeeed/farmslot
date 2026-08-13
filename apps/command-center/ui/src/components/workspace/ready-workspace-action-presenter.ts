@@ -475,6 +475,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
         committedReviewBranchDiffRequest(
           this.slotId,
           this._payload?.prPackage?.reviewSnapshot?.baseRef,
+          this._payload?.prPackage?.reviewSnapshot,
         ),
       );
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
@@ -525,6 +526,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           this.slotId,
           filePath,
           this._payload?.prPackage?.reviewSnapshot?.baseRef,
+          this._payload?.prPackage?.reviewSnapshot,
         ),
       );
       this._fileDiff = result.diff;

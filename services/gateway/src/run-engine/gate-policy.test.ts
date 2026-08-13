@@ -83,17 +83,26 @@ test('supersedeStaleHumanGateDecisions closes only unresolved gate decisions and
       actions: [{ id: 'signal-written', label: 'Resume', style: 'primary' }],
       createdAt: '2026-07-18T10:05:00Z',
     },
+    {
+      id: 'review-gate',
+      type: 'engine_review_posting',
+      title: 'review',
+      description: 'review',
+      actions: [{ id: 'post', label: 'Post', style: 'primary' }],
+      createdAt: '2026-07-18T10:10:00Z',
+    },
   ];
 
   const superseded = supersedeStaleHumanGateDecisions(decisions, '2026-07-18T11:00:00Z');
 
-  assert.equal(superseded, 1);
+  assert.equal(superseded, 2);
   assert.equal(decisions[0].resolvedAt, '2026-07-18T11:00:00Z');
   assert.equal(decisions[0].resolvedAction, 'superseded');
   assert.equal(decisions[0].context?.supersededBy, 'gate-reentry');
   // Already-resolved and non-gate decisions are untouched.
   assert.equal(decisions[1].resolvedAction, 'hold');
   assert.equal(decisions[2].resolvedAt, undefined);
+  assert.equal(decisions[3].resolvedAction, 'superseded');
 });
 
 test('supersedeStaleHumanGateDecisions is a no-op when nothing is pending', () => {

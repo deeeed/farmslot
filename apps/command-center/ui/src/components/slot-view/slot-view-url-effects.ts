@@ -6,6 +6,12 @@ import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
 import { committedReviewFileDiffRequest } from './slot-view-branch-model.js';
+import { loadSlotViewGitFileContent } from './slot-view-live-effects.js';
+import {
+  branchDiffKey,
+  parseBranchDiffKey,
+  slotViewPendingReviewSnapshot,
+} from './slot-view-model.js';
 import {
   getSlotViewHashParam,
   isSlotViewHashForSlot,
@@ -175,20 +181,27 @@ export function scheduleSlotViewUrlRestoreRetry(
 
 export async function openSlotViewFileFromUrl(view: SlotView, file: string): Promise<void> {
   if (file.startsWith('branch:')) {
-    const match = file.match(/^branch:([^:]+):(.+)$/);
-    if (!match) return;
-    const [, base, path] = match;
+    const parsed = parseBranchDiffKey(file);
+    if (!parsed) return;
+    const reviewSnapshot = slotViewPendingReviewSnapshot(view._linkedRun);
+    const path = parsed.path;
+    const base = parsed.head ? parsed.base : (reviewSnapshot?.baseSha ?? parsed.base);
+    const head = parsed.head ?? reviewSnapshot?.headSha ?? 'HEAD';
     view._branchDiffBase = base;
-    const cacheKey = `branch:${base}:${path}`;
+    const cacheKey = branchDiffKey(base, head, path);
     if (view._isLive && !view._liveDiffContents.has(cacheKey)) {
       try {
         const result = await gateway.request<GitDiffResult>(
           Methods.GIT_DIFF,
-          committedReviewFileDiffRequest(view.slotId, path, base),
+          parsed.head
+            ? { slotId: view.slotId, path, base, head, target: 'head' }
+            : committedReviewFileDiffRequest(view.slotId, path, base, reviewSnapshot),
         );
         if (!result.diff.trim()) {
-          await view._handleFileSelect(path);
-          view._pinFile(path);
+          const loaded = await loadSlotViewGitFileContent(view, cacheKey, path, head);
+          if (!loaded) return;
+          view._openFile(cacheKey, 'file');
+          view._pinFile(cacheKey);
           return;
         }
         const next = new Map(view._liveDiffContents);

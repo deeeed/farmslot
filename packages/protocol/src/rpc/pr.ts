@@ -28,6 +28,8 @@ export interface PRAddCommentParams {
   path: string;
   line: number;
   side?: 'LEFT' | 'RIGHT';
+  /** Exact reviewed commit for a frozen diff. Defaults to the PR's current head. */
+  commitId?: string;
   inReplyTo?: number;
 }
 

@@ -7,6 +7,7 @@ export function canSaveSlotViewFile(params: {
 }): boolean {
   return Boolean(
     params.activeFile &&
+    !params.activeFile.startsWith('branch:') &&
     params.isLive &&
     params.saveFeedback !== 'saving' &&
     !params.recoveryBlocked &&

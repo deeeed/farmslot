@@ -43,7 +43,7 @@ import {
   writeTaskFile,
 } from '../tasks/writer.js';
 
-import { requiresCollisionPrecheck } from './decision-replay.js';
+import { findLatestResolvedDecision, requiresCollisionPrecheck } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import {
   createEngineDecision,
@@ -153,9 +153,7 @@ async function resolveRecipeStrategy(
       );
       // Extract quality reports from decision payloads (not a top-level Run field)
       const runsWithReports = completedRuns.map((r) => {
-        const reviewDecision = r.decisions.find(
-          (d) => d.type === 'engine_review_posting' && d.resolvedAt,
-        );
+        const reviewDecision = findLatestResolvedDecision(r.decisions, 'review_posting');
         const payload = reviewDecision?.payload as ReviewGatePayload | undefined;
         return { evidenceQualityReport: payload?.qualityReport ?? null };
       });

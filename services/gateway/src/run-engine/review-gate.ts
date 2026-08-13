@@ -35,6 +35,7 @@ import {
 } from '../run-completion/orchestrator.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 
+import { findLatestResolvedDecision } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun, readReviewInputSnapshot } from './diff-artifacts.js';
 import { createEngineDecision } from './engine-decisions.js';
 import { BlockedRunError } from './errors.js';
@@ -118,15 +119,21 @@ export async function executeReviewGate(runId: string): Promise<void> {
   const prNumber = ciRepo ? await findPRNumber(current, ciRepo) : null;
   let reviewInputArtifactPaths: string[] = [];
   let reviewSnapshot: ReviewDiffSnapshot | undefined;
+  let reviewInputSnapshot = await readReviewInputSnapshot(current.taskFile);
   if (prNumber) {
     await persistRunPrNumber(runId, prNumber);
-    reviewInputArtifactPaths = await captureReviewInputArtifactsForRun(getRun(runId)!).then(
-      (artifacts) => artifacts.map((artifact) => artifact.path),
-    );
+    // The task writer freezes the exact PR input before dispatch. Reuse that
+    // immutable snapshot at the gate; recapturing here would silently move the
+    // operator decision to a newer PR head the worker never reviewed.
+    if (!reviewInputSnapshot.snapshot || reviewInputSnapshot.snapshot.source === 'unavailable') {
+      reviewInputArtifactPaths = await captureReviewInputArtifactsForRun(getRun(runId)!).then(
+        (artifacts) => artifacts.map((artifact) => artifact.path),
+      );
+      reviewInputSnapshot = await readReviewInputSnapshot(
+        getRun(runId)?.taskFile ?? current.taskFile,
+      );
+    }
   }
-  const reviewInputSnapshot = await readReviewInputSnapshot(
-    getRun(runId)?.taskFile ?? current.taskFile,
-  );
   reviewInputArtifactPaths = [
     ...new Set([...reviewInputArtifactPaths, ...reviewInputSnapshot.artifactPaths]),
   ];
@@ -273,12 +280,10 @@ export async function executeReviewGate(runId: string): Promise<void> {
     actions,
     reviewPayload,
   );
+  const resolvedDecision = findLatestResolvedDecision(getRun(runId)!.decisions, 'review_posting');
 
   // 5b. Persist evidence overrides from selectionData (if any)
   if (qualityReport) {
-    const resolvedDecision = getRun(runId)!.decisions.find(
-      (d) => d.type === 'engine_review_posting' && d.resolvedAt,
-    );
     const overrides = resolvedDecision?.selectionData?.evidenceOverrides as
       | Record<string, string>
       | undefined;
@@ -316,13 +321,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
         const latest = getRun(runId)!;
         updateRun(runId, {
           decisions: latest.decisions.map((decision) => {
-            if (
-              decision.type !== 'engine_review_posting' ||
-              decision.id !==
-                latest.decisions.find(
-                  (d) => d.type === 'engine_review_posting' && d.resolvedAction === 'post',
-                )?.id
-            )
+            if (decision.type !== 'engine_review_posting' || decision.id !== resolvedDecision?.id)
               return decision;
             return {
               ...decision,
@@ -342,9 +341,6 @@ export async function executeReviewGate(runId: string): Promise<void> {
     const taskDirName = pv?.projectJson
       ? resolveProjectTaskDirName(pv.projectJson)
       : DEFAULT_TASK_DIR;
-    const resolvedDecision = current.decisions.find(
-      (d) => d.type === 'engine_review_posting' && d.resolvedAction === 'post',
-    );
     const overrideRec = resolvedDecision?.selectionData?.recommendation as string | undefined;
 
     // Populate Runner / Model / Cost / Tokens fields in the comment header.
@@ -507,7 +503,9 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
 
-  const decision = run.decisions.find((d) => d.type === 'engine_review_posting' && !d.resolvedAt);
+  const decision = [...run.decisions]
+    .reverse()
+    .find((d) => d.type === 'engine_review_posting' && !d.resolvedAt);
   if (!decision) {
     throw new Error('No pending review_posting decision to refresh');
   }

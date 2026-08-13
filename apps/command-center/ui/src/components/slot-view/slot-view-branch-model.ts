@@ -1,3 +1,5 @@
+import type { ReviewDiffSnapshot } from '@farmslot/protocol';
+
 export function slotViewBranchList({
   branchDiffBase,
   branchDiffHead,
@@ -10,10 +12,18 @@ export function slotViewBranchList({
   const branches = new Set<string>();
   branches.add('main');
   branches.add('develop');
-  if (branchDiffHead && branchDiffHead !== 'main') branches.add(branchDiffHead);
-  if (branchDiffBase && branchDiffBase !== 'main') branches.add(branchDiffBase);
+  if (branchDiffHead && branchDiffHead !== 'main' && !isCommitRef(branchDiffHead)) {
+    branches.add(branchDiffHead);
+  }
+  if (branchDiffBase && branchDiffBase !== 'main' && !isCommitRef(branchDiffBase)) {
+    branches.add(branchDiffBase);
+  }
   if (gitBranch) branches.add(gitBranch);
   return [...branches].sort();
+}
+
+function isCommitRef(ref: string): boolean {
+  return ref === 'HEAD' || /^[0-9a-f]{40,64}$/i.test(ref);
 }
 
 export type BranchDiffPollAction = 'none' | 'reload' | 'reload-and-clear-cache';
@@ -26,19 +36,26 @@ export function normalizeReviewBaseRef(baseRef: string | null | undefined): stri
 export function committedReviewBranchDiffRequest(
   slotId: string,
   baseRef: string | null | undefined,
+  snapshot?: ReviewDiffSnapshot,
 ) {
-  return { slotId, base: normalizeReviewBaseRef(baseRef) };
+  return {
+    slotId,
+    base: snapshot?.baseSha ?? normalizeReviewBaseRef(baseRef),
+    ...(snapshot?.headSha ? { head: snapshot.headSha } : {}),
+  };
 }
 
 export function committedReviewFileDiffRequest(
   slotId: string,
   path: string,
   baseRef: string | null | undefined,
+  snapshot?: ReviewDiffSnapshot,
 ) {
   return {
     slotId,
     path,
-    base: normalizeReviewBaseRef(baseRef),
+    base: snapshot?.baseSha ?? normalizeReviewBaseRef(baseRef),
+    ...(snapshot?.headSha ? { head: snapshot.headSha } : {}),
     target: 'head' as const,
   };
 }

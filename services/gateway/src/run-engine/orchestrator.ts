@@ -1373,10 +1373,13 @@ function payloadKind(payload: RunDecisionPayload | null | undefined): string {
 /** Reconstruct step outputs from decision data when recovery skips a step. */
 function reconstructStepOutputs(run: Run, stepName: string): Record<string, unknown> | null {
   if (stepName === S.HUMAN_GATE) {
-    const gateDecision = run.decisions.find(
-      (d) => (d.type === 'engine_human_gate' || d.type === 'engine_review_posting') && d.resolvedAt,
-    );
-    if (!gateDecision) return null;
+    const gateDecision = [...run.decisions]
+      .reverse()
+      .find(
+        (d) =>
+          (d.type === 'engine_human_gate' || d.type === 'engine_review_posting') && d.resolvedAt,
+      );
+    if (!gateDecision || gateDecision.resolvedAction === 'superseded') return null;
     const waitMs =
       gateDecision.resolvedAt && gateDecision.createdAt
         ? new Date(gateDecision.resolvedAt).getTime() - new Date(gateDecision.createdAt).getTime()

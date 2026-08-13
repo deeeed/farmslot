@@ -1439,7 +1439,7 @@ test('resolveCreateSafetyTier: undefined when neither is set (runner fallback ap
   assert.equal(resolveCreateSafetyTier(undefined, undefined), undefined);
 });
 
-test('createRun defaults explicit Cursor runner with missing model to composer-2.5', async (t) => {
+test('createRun defaults explicit Cursor runner with missing model to the shared default', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',

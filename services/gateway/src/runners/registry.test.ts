@@ -214,7 +214,7 @@ describe('opencode runner', () => {
 });
 
 describe('cursor runner', () => {
-  it('is registered as an interactive runner with composer-2.5 default model', () => {
+  it('is registered as an interactive runner with the shared Cursor default model', () => {
     const def = getRunnerDefinition('cursor');
     assert.equal(def.id, 'cursor');
     assert.equal(def.defaultLaunchMode, 'interactive');
@@ -1624,16 +1624,16 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
       assert.equal(
         cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5 'Read TASK.md and execute.'`,
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && cursor-agent --sandbox enabled --model ${DEFAULT_CURSOR_MODEL} 'Read TASK.md and execute.'`,
       );
     });
 
-    it('falls back to inline Cursor Agent launcher with composer-2.5 default model', () => {
+    it('falls back to inline Cursor Agent launcher with the shared default model', () => {
       const vars = makeVars({ dispatchCmd: '', cursorPath: '/usr/local/bin/cursor-agent' });
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
       assert.equal(
         cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/cursor-agent --sandbox enabled --model composer-2.5 'Read TASK.md and execute.'`,
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/cursor-agent --sandbox enabled --model ${DEFAULT_CURSOR_MODEL} 'Read TASK.md and execute.'`,
       );
       assert.match(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--print/);
@@ -1666,7 +1666,9 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /cd \/tmp\/repo && \/usr\/local\/bin\/cursor-agent --force --sandbox disabled --model composer-2.5 Read TASK\.md and execute\.$/,
+        new RegExp(
+          `cd /tmp/repo && /usr/local/bin/cursor-agent --force --sandbox disabled --model ${DEFAULT_CURSOR_MODEL} Read TASK\\.md and execute\\.$`,
+        ),
       );
       assert.match(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);

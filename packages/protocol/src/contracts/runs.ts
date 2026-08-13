@@ -2106,7 +2106,7 @@ export const DEFAULT_CODEX_MODEL = 'gpt-5.6-sol';
 export const DEFAULT_CODEX_EFFORT = 'xhigh';
 
 /** Default Cursor Agent model used when no slot/task/project/user override is set. */
-export const DEFAULT_CURSOR_MODEL = 'composer-2.5';
+export const DEFAULT_CURSOR_MODEL = 'cursor-grok-4.6-high-fast';
 
 /** Default Grok model used when no slot/task/project/user override is set. */
 export const DEFAULT_GROK_MODEL = 'grok-4.5';
