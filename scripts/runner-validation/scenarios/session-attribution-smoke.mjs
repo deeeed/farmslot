@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { PROMPT_MARKER } from '../lib/common.mjs';
+import { PROMPT_MARKER, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { runGatewayPaneProcessStartedAt } from '../lib/gateway-post-launch.mjs';
 import { readHookLines } from '../lib/hooks.mjs';
@@ -59,6 +59,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     modelMatch: false,
     staleWouldMismatch: false,
     stalePaneRejected: null,
+    staleControlSameSecond: null,
     deadPaneWithoutInventoryRejected: null,
     pass: false,
     error: null,
@@ -75,6 +76,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
 
     report.stalePath = seedStaleSession(runner, repo, runtimeDir);
     const beforePaths = listSessionCandidates(runner, repo, runtimeDir);
+    const staleControlPath = path.join(repo, runtimeDir, 'stale-process-boundary.jsonl');
+    fs.copyFileSync(report.stalePath, staleControlPath);
 
     const shell = ensureShellSession(session, repo);
     paneId = shell.paneId;
@@ -116,6 +119,12 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       if (typeof paneProcessStartedAtMs !== 'number') {
         throw new Error('live runner process boundary was unavailable');
       }
+      const staleObservedAt = paneProcessStartedAtMs - 1;
+      report.staleControlSameSecond =
+        Math.floor(staleObservedAt / 1_000) === Math.floor(paneProcessStartedAtMs / 1_000);
+      if (!report.staleControlSameSecond) {
+        throw new Error('runner process began on a wall-clock second boundary; retry scenario');
+      }
       paneStatePath = path.join(
         obsDirFor(repo, runtimeDir),
         'panes',
@@ -128,9 +137,9 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
           // Deliberately remain in the same wall-clock second as launch. The
           // control passes dispatch freshness and can only be rejected by the
           // precise runner-process generation boundary.
-          observedAt: paneProcessStartedAtMs - 1,
+          observedAt: staleObservedAt,
           session_id: 'runner-stale',
-          transcript_path: report.stalePath,
+          transcript_path: staleControlPath,
           tmuxPane: paneId,
           slotId,
         }),
@@ -138,7 +147,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       const staleBinding = resolveSessionBinding({
         runner,
         repo,
-        beforePaths,
+        beforePaths: [],
         sinceMs: dispatchMs,
         paneId,
         slotId,
@@ -155,6 +164,16 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       requireStop: hookDriven,
     });
     if (paneStatePath && livePaneState && report.stalePath) {
+      const runnerExitDeadline = Date.now() + 15_000;
+      while (
+        runGatewayPaneProcessStartedAt({ repo, target: paneId, runner }) !== null &&
+        Date.now() < runnerExitDeadline
+      ) {
+        sleepMs(100);
+      }
+      if (runGatewayPaneProcessStartedAt({ repo, target: paneId, runner }) !== null) {
+        throw new Error('runner process remained live after structured completion');
+      }
       fs.writeFileSync(
         paneStatePath,
         JSON.stringify({
@@ -208,6 +227,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       report.modelMatch &&
       report.staleWouldMismatch &&
       (!hookDriven || report.stalePaneRejected === true) &&
+      (!hookDriven || report.staleControlSameSecond === true) &&
       (!hookDriven || report.deadPaneWithoutInventoryRejected === true) &&
       sawCompletion;
   } catch (error) {

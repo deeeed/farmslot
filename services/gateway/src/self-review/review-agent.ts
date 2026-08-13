@@ -801,7 +801,8 @@ export async function runReviewAgent(
 
   try {
     // 1. Keep one stable window per runner. Reset versus resume changes runner
-    // context, not topology; process replacement is only a cold-start fallback.
+    // context, not topology; the runner capability decides whether delivery
+    // reuses the live process or replaces it through native resume/cold launch.
     const reviewerWindow = await reconcileReviewerWindow(vars, session, reviewWindow, runner);
     const reviewTarget = reviewerWindow.windowId;
 
@@ -965,10 +966,10 @@ export async function runReviewAgent(
     };
 
     const deliverToLiveReviewer = async (prompt: string, resetContext: boolean): Promise<void> => {
-      // A cold replacement creates a new native Claude session even though the
-      // canonical tmux window stays the same. Rebind from that live pane before
-      // the next retained handoff; the previous claim is lineage metadata, not
-      // proof that its process still owns the window.
+      // Native resume or cold replacement can create a new runner process even
+      // though the canonical tmux window stays the same. Rebind from that live
+      // pane before the next retained handoff; the previous claim is lineage
+      // metadata, not proof that its process still owns the window.
       const rebound = await bindLiveReviewerSession();
       if (runnerCanResume && !rebound) {
         invalidateWarmReviewerSessions(_runId, runner);
