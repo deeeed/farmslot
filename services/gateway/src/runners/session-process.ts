@@ -334,7 +334,8 @@ async function tryHookSessionBinding(
     // A named pane is the authority for this binding. If its live process
     // start cannot be established, fail closed instead of accepting a stale
     // native or hook snapshot from a prior process in the same tmux pane.
-    const isNewSessionPath = (sessionPath: string) => !beforePaths.includes(sessionPath);
+    const isNewSessionPath = (sessionPath: string) =>
+      beforePaths.length > 0 && !beforePaths.includes(sessionPath);
     const isCurrentPaneProcess = (observedAt: number | null | undefined) =>
       paneStartedAt === null ||
       (observedAt !== null && observedAt !== undefined && observedAt >= paneStartedAt);

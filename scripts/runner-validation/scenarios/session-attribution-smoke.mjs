@@ -57,6 +57,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     modelMatch: false,
     staleWouldMismatch: false,
     stalePaneRejected: null,
+    deadPaneWithoutInventoryRejected: null,
     pass: false,
     error: null,
     paneTail: null,
@@ -102,13 +103,15 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     // Negative control for the real pane-scoped contract: replace the live
     // pane snapshot briefly with an identity from a prior process generation.
     // Production must fail closed rather than borrowing the stale transcript.
+    let paneStatePath = null;
+    let livePaneState = null;
     if (hookDriven && report.stalePath) {
-      const paneStatePath = path.join(
+      paneStatePath = path.join(
         obsDirFor(repo, runtimeDir),
         'panes',
         `${encodeURIComponent(paneId)}.json`,
       );
-      const livePaneState = fs.readFileSync(paneStatePath, 'utf8');
+      livePaneState = fs.readFileSync(paneStatePath, 'utf8');
       fs.writeFileSync(
         paneStatePath,
         JSON.stringify({
@@ -137,6 +140,28 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       beforeCount,
       timeoutMs,
     });
+    if (paneStatePath && livePaneState && report.stalePath) {
+      fs.writeFileSync(
+        paneStatePath,
+        JSON.stringify({
+          observedAt: Date.now(),
+          session_id: 'runner-stale-dead-pane',
+          transcript_path: report.stalePath,
+          tmuxPane: paneId,
+          slotId,
+        }),
+      );
+      const deadPaneBinding = resolveSessionBinding({
+        runner,
+        repo,
+        beforePaths: [],
+        sinceMs: dispatchMs,
+        paneId,
+        slotId,
+      });
+      report.deadPaneWithoutInventoryRejected = deadPaneBinding === null;
+      fs.writeFileSync(paneStatePath, livePaneState);
+    }
     report.paneTail = completion.pane.split('\n').slice(-20).join('\n');
     const hookBinding = findSessionStartBinding(readHookLines(logPath).slice(beforeCount), {
       paneId,
@@ -167,6 +192,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       report.modelMatch &&
       report.staleWouldMismatch &&
       (!hookDriven || report.stalePaneRejected === true) &&
+      (!hookDriven || report.deadPaneWithoutInventoryRejected === true) &&
       sawCompletion;
   } catch (error) {
     report.error = error?.message || String(error);
