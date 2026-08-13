@@ -359,7 +359,7 @@ export async function gitBranchDiff(
   ]);
 
   const mergeBase = mergeBaseResult.stdout.trim();
-  const head = branchResult.stdout.trim();
+  const head = params.head ? mergeBase : branchResult.stdout.trim();
   // 'worktree' diffs the merge-base against the working tree — every change
   // on the branch (committed + uncommitted), deduped per file by git itself.
   // Default compares committed history only (what a PR would contain).

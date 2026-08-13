@@ -292,7 +292,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       // forceRefreshSlotBranch — slot-view's _liveGitData is event-driven and
       // can lag a checkout by hundreds of ms, which would otherwise leave the
       // diff view stuck on a stale mismatch banner.
-      if (this.branch) {
+      if (this.branch && !this._payload.reviewSnapshot?.headSha) {
         let currentBranch = opts.forceRefreshSlotBranch ? '' : this.slotBranch;
         if (!currentBranch) {
           const status = await gateway.request<{ branch: string }>(Methods.GIT_STATUS, {
