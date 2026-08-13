@@ -1268,7 +1268,8 @@ async function recoverSelfReviewFixPass({
         { id: fixContext.id },
         {
           resolvePatch: (current) =>
-            current?.attemptStartedAt === fixContext.attemptStartedAt &&
+            current &&
+            current.attemptStartedAt === fixContext.attemptStartedAt &&
             current.signalAttemptId === fixContext.signalAttemptId &&
             !current.artifactScope
               ? { id: fixContext.id, artifactScope: findingsArtifactScope }
@@ -1287,7 +1288,8 @@ async function recoverSelfReviewFixPass({
         { id: fixContext.id },
         {
           resolvePatch: (current) =>
-            current?.artifactScope === findingsArtifactScope &&
+            current &&
+            current.artifactScope === findingsArtifactScope &&
             current.attemptStartedAt === fixContext.attemptStartedAt &&
             current.signalAttemptId === fixContext.signalAttemptId
               ? { id: fixContext.id, status: 'failed' }
@@ -1362,7 +1364,7 @@ async function recoverSelfReviewFixPass({
           vars,
           taskDir,
           FEEDBACK_TIMEOUT_MS,
-          rawSignal,
+          rawSignal ?? '',
           deliveredTurnToken
             ? () => selfReviewFixTurnIsActive(vars, runId, workerRunner, deliveredTurnToken)
             : undefined,
