@@ -53,6 +53,9 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `config.templatePreview`             | admin          |                                                          |
 | `config.templates`                   | admin          |                                                          |
 | `copilot.formatInstruction`          | admin          |                                                          |
+| `copilot.start`                      | admin          |                                                          |
+| `copilot.status`                     | admin          |                                                          |
+| `copilot.stop`                       | admin          |                                                          |
 | `credential.issue`                   | admin          |                                                          |
 | `credential.list`                    | admin          |                                                          |
 | `credential.revoke`                  | admin          |                                                          |

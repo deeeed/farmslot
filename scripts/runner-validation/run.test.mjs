@@ -20,9 +20,9 @@ import { listScenarios } from './scenarios/index.mjs';
 
 const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/panes');
 
-test('runner-validation catalog includes four runners and seventeen scenarios', () => {
+test('runner-validation catalog includes four runners and nineteen scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
-  assert.equal(listScenarios().length, 17);
+  assert.equal(listScenarios().length, 19);
   assert.ok(listScenarios().includes('review-recovery-terminal-contract'));
   assert.ok(listScenarios().includes('self-review-fix-turn-lease'));
   assert.ok(listScenarios().includes('hook-smoke'));
@@ -30,6 +30,7 @@ test('runner-validation catalog includes four runners and seventeen scenarios', 
   assert.ok(listScenarios().includes('interaction-smoke'));
   assert.ok(listScenarios().includes('dispatch-prompt-trust'));
   assert.ok(listScenarios().includes('retained-handoff-smoke'));
+  assert.ok(listScenarios().includes('copilot-runtime-smoke'));
   assert.ok(listScenarios().includes('retained-safe-send-smoke'));
   assert.ok(listScenarios().includes('session-attribution-smoke'));
   assert.ok(listScenarios().includes('token-usage-smoke'));

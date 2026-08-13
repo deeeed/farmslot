@@ -215,6 +215,10 @@ export interface ChatMessage {
   nextSteps?: ChatNextStep[];
   usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
   toolTrace?: ChatToolTraceEntry[];
+  /** Client-neutral origin inside the shared Co-Pilot transcript. */
+  source?: 'command-center' | 'tmux' | 'gateway';
+  /** Stable delivery identity when the message entered through a runner transport. */
+  deliveryId?: string;
 }
 
 export interface ChatSuggestedAction {

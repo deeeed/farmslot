@@ -1,0 +1,1 @@
+{"id":"audit-example","ts":"2026-08-12T00:00:00.000Z","action":"send","runtimeId":"gateway-copilot","safetyTier":"sandboxed","checkout":"/operator/farmslot","branch":"feat/example","head":"0123456789abcdef","detail":{"deliveryId":"delivery-example","authorization":"[REDACTED]","message":"credential [REDACTED]"}}

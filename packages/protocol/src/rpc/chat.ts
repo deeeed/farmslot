@@ -32,6 +32,7 @@ export interface ChatSendParams {
 
 export interface ChatSendResult {
   messageId: string;
+  delivery?: import('./copilot-runtime.js').CopilotDelivery;
 }
 
 export interface ChatHistoryParams {
@@ -148,7 +149,9 @@ export interface ChatListActionsResult {
 export interface ChatAbortParams {
   sessionId?: string;
 }
-export interface ChatAbortResult {}
+export interface ChatAbortResult {
+  ok: true;
+}
 
 export interface ChatContextResult {
   context: string;

@@ -15,7 +15,7 @@ export function renderChatPanelStyles() {
     }
     chat-panel .cp-drawer {
       position: fixed;
-      bottom: 0;
+      bottom: var(--farmslot-recipe-hud-height, 0px);
       left: 0;
       right: 0;
       height: var(--cp-height);
@@ -29,7 +29,7 @@ export function renderChatPanelStyles() {
     }
     chat-panel .cp-drawer.fullscreen {
       top: 0;
-      height: 100vh;
+      height: calc(100vh - var(--farmslot-recipe-hud-height, 0px));
     }
     chat-panel .cp-resize-handle {
       position: absolute;
@@ -323,6 +323,87 @@ export function renderChatPanelStyles() {
     }
     chat-panel .cp-stop-btn:hover {
       background: ${colors.statusFail}22;
+    }
+    chat-panel .cp-runtime {
+      padding: ${spacing.sm} ${spacing.xl};
+      border-bottom: 1px solid ${colors.bgCard};
+      background: ${colors.bgBase};
+      color: ${colors.textMuted};
+      font-size: ${fonts.sizeXs};
+      flex-shrink: 0;
+    }
+    chat-panel .cp-runtime-head,
+    chat-panel .cp-runtime-actions {
+      display: flex;
+      align-items: center;
+      gap: ${spacing.sm};
+      flex-wrap: wrap;
+    }
+    chat-panel .cp-runtime-status,
+    chat-panel .cp-runtime-pressure {
+      border: 1px solid ${colors.textMuted}44;
+      border-radius: ${radii.sm};
+      padding: 2px 7px;
+      text-transform: uppercase;
+      font-size: 10px;
+    }
+    chat-panel .cp-runtime-status.running {
+      color: ${colors.statusOk};
+      border-color: ${colors.statusOk}66;
+    }
+    chat-panel .cp-runtime-status.failed,
+    chat-panel .cp-runtime-status.ambiguous,
+    chat-panel .cp-runtime-pressure.high {
+      color: ${colors.statusFail};
+      border-color: ${colors.statusFail}66;
+    }
+    chat-panel .cp-runtime-grid {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+      gap: 2px ${spacing.sm};
+      margin: ${spacing.sm} 0;
+    }
+    chat-panel .cp-runtime-grid strong {
+      color: ${colors.textSecondary};
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    chat-panel .cp-runtime-warning,
+    chat-panel .cp-runtime-error,
+    chat-panel .cp-runtime-reason {
+      margin: ${spacing.sm} 0;
+    }
+    chat-panel .cp-runtime-warning {
+      color: ${colors.statusWarn};
+    }
+    chat-panel .cp-runtime-error {
+      color: ${colors.statusFail};
+    }
+    chat-panel .cp-dangerous {
+      margin-top: ${spacing.sm};
+      padding: ${spacing.md};
+      border: 1px solid ${colors.statusFail}66;
+      border-radius: ${radii.sm};
+      color: ${colors.textSecondary};
+    }
+    chat-panel .cp-dangerous p {
+      margin: ${spacing.sm} 0;
+    }
+    chat-panel .cp-dangerous label,
+    chat-panel .cp-dangerous input {
+      display: block;
+      width: 100%;
+    }
+    chat-panel .cp-dangerous input {
+      box-sizing: border-box;
+      margin: ${spacing.sm} 0;
+      padding: ${spacing.sm};
+      background: ${colors.bgInput};
+      color: ${colors.textPrimary};
+      border: 1px solid ${colors.statusFail}66;
+      border-radius: ${radii.sm};
+      font-family: ${fonts.mono};
     }
     chat-panel .cp-usage-panel {
       max-height: 220px;

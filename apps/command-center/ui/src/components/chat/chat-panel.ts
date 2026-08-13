@@ -15,6 +15,10 @@ import type {
   ChatSessionCreateResult,
   ChatSessionsResult,
   CopilotObserverNotificationPayload,
+  CopilotRuntimeUpdatedPayload,
+  CopilotStartResult,
+  CopilotStatusResult,
+  CopilotStopResult,
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
 
@@ -37,6 +41,11 @@ import {
   UNAVAILABLE_REJECT_CODES,
 } from './chat-panel-model.js';
 import { applyChatPanelResponse } from './chat-panel-response-model.js';
+import {
+  copilotRuntimeStatusLabel,
+  dangerousLaunchSummary,
+  dangerousStartParams,
+} from './chat-panel-runtime-model.js';
 import { ChatPanelState } from './chat-panel-state.js';
 import { renderChatPanelStyles } from './chat-panel-styles.js';
 import { chatPanelViewModel } from './chat-panel-view-model.js';
@@ -59,6 +68,7 @@ export class ChatPanel extends ChatPanelState {
   connectedCallback() {
     super.connectedCallback();
     this.loadHistory();
+    void this.loadRuntime();
     void this.loadSessions();
     this.unsubResponse = gateway.subscribe<ChatResponsePayload>(Events.CHAT_RESPONSE, (payload) => {
       this.handleChatResponse(payload);
@@ -75,8 +85,15 @@ export class ChatPanel extends ChatPanelState {
         );
       },
     );
+    this.unsubRuntime = gateway.subscribe<CopilotRuntimeUpdatedPayload>(
+      Events.COPILOT_RUNTIME_UPDATED,
+      ({ session }) => {
+        this.runtime = session;
+      },
+    );
     this.unsubConnection = gateway.onConnectionChange((s) => {
       if (s !== 'connected') return;
+      void this.loadRuntime(true);
       void this.reconcileActionsAfterReconnect();
     });
   }
@@ -86,6 +103,7 @@ export class ChatPanel extends ChatPanelState {
     this.unsubResponse?.();
     this.unsubMemory?.();
     this.unsubObserver?.();
+    this.unsubRuntime?.();
     this.unsubConnection?.();
     this.stopResize();
   }
@@ -94,14 +112,14 @@ export class ChatPanel extends ChatPanelState {
     return this.activeSessionIdValue;
   }
 
-  private switchSession(nextId: string) {
+  private switchSession(nextId: string, loadHistory = true) {
     const previous = this.activeSessionId();
     if (previous === nextId) return;
     this.abortStreamingSession(previous);
     this.resetStreamingState();
     this.activeSessionIdValue = nextId;
     safeLsSet(ACTIVE_SESSION_KEY, nextId);
-    void this.loadHistory();
+    if (loadHistory) void this.loadHistory();
     if (this.usageOpen) void this.loadUsageContext();
   }
 
@@ -281,6 +299,81 @@ export class ChatPanel extends ChatPanelState {
     await this.submitPrompt(text);
   }
 
+  private async loadRuntime(reconnected = false) {
+    try {
+      const result = await gateway.request<CopilotStatusResult>(Methods.COPILOT_STATUS, {});
+      this.runtime = result.session;
+      this.runtimeError = '';
+      if (reconnected && result.session.status === 'running') this.runtimeNotice = 'Reconnected';
+    } catch (err) {
+      const message = errorMessage(err);
+      if (
+        message === 'Not connected' ||
+        (err instanceof GatewayRequestError && err.code === 'METHOD_NOT_FOUND')
+      )
+        return;
+      this.runtimeError = message;
+    }
+  }
+
+  private async startRuntime(mode: 'start' | 'reconnect' = 'start') {
+    this.runtimeLoading = true;
+    this.runtimeError = '';
+    try {
+      const result = await gateway.request<CopilotStartResult>(Methods.COPILOT_START, {
+        mode,
+        safetyTier: 'sandboxed',
+      });
+      this.runtime = result.session;
+      this.runtimeNotice = result.reconnected || result.reused ? 'Reconnected' : 'Started';
+      await this.loadHistory(result.session.transcriptId);
+    } catch (err) {
+      this.runtimeError = errorMessage(err);
+    } finally {
+      this.runtimeLoading = false;
+    }
+  }
+
+  private async stopRuntime() {
+    this.runtimeLoading = true;
+    this.runtimeError = '';
+    try {
+      const result = await gateway.request<CopilotStopResult>(Methods.COPILOT_STOP, {
+        reason: 'operator-requested',
+      });
+      this.runtime = result.session;
+      this.runtimeNotice = 'Stopped';
+    } catch (err) {
+      this.runtimeError = errorMessage(err);
+    } finally {
+      this.runtimeLoading = false;
+    }
+  }
+
+  private openDangerousConfirmation() {
+    this.dangerousTypedPhrase = '';
+    this.dangerousConfirmationOpen = true;
+  }
+
+  private async startDangerousRuntime() {
+    const binding = this.runtime?.dangerousLaunch;
+    if (!binding) return;
+    const params = dangerousStartParams(binding, this.dangerousTypedPhrase);
+    if (!params) return;
+    this.runtimeLoading = true;
+    this.runtimeError = '';
+    try {
+      const result = await gateway.request<CopilotStartResult>(Methods.COPILOT_START, params);
+      this.runtime = result.session;
+      this.runtimeNotice = 'Dangerous runtime started';
+      this.dangerousConfirmationOpen = false;
+    } catch (err) {
+      this.runtimeError = errorMessage(err);
+    } finally {
+      this.runtimeLoading = false;
+    }
+  }
+
   public async submitPrompt(
     text: string,
     contextOverride?: Partial<ChatClientContext>,
@@ -288,6 +381,11 @@ export class ChatPanel extends ChatPanelState {
   ) {
     const prompt = text.trim();
     if (!prompt || this.sending) return;
+
+    if (prompt !== '/new' && this.activeSessionId() !== SHARED_SESSION_ID) {
+      this.switchSession(SHARED_SESSION_ID, false);
+      await this.loadHistory(SHARED_SESSION_ID);
+    }
 
     this.sending = true;
     this.streamingText = '';
@@ -576,6 +674,8 @@ export class ChatPanel extends ChatPanelState {
       activeSessionId,
       sessionSummaries: this.sessionSummaries,
     });
+    const runtimeStatus = this.runtime?.status ?? 'unavailable';
+    const runtimeStatusLabel = copilotRuntimeStatusLabel(runtimeStatus);
 
     return html`
       ${renderChatPanelStyles()}
@@ -761,6 +861,117 @@ export class ChatPanel extends ChatPanelState {
               </div>
             `
           : ''}
+        <section class="cp-runtime" data-testid="copilot-runtime-card">
+          <div class="cp-runtime-head">
+            <span class="cp-runtime-status ${runtimeStatus}">${runtimeStatusLabel}</span>
+            <span>${this.runtimeNotice}</span>
+            <span class="cp-runtime-pressure ${this.runtime?.workload.severity ?? 'normal'}">
+              Pressure ${this.runtime?.workload.severity ?? 'unknown'}
+              ${this.runtime ? `· ${this.runtime.workload.totals.total} activities` : ''}
+            </span>
+          </div>
+          ${this.runtime
+            ? html`
+                <div class="cp-runtime-grid">
+                  <span>Runner</span><strong>${this.runtime.runner}</strong> <span>Model</span
+                  ><strong>${this.runtime.model}</strong> <span>Tier</span
+                  ><strong>${this.runtime.safetyTier}</strong> <span>tmux</span
+                  ><strong>${this.runtime.tmuxTarget}</strong> <span>Checkout</span
+                  ><strong>${this.runtime.checkout.path}</strong> <span>Branch</span
+                  ><strong>${this.runtime.checkout.branch}</strong> <span>Dirty</span
+                  ><strong>${this.runtime.checkout.dirtyFileCount}</strong> <span>Delivery</span
+                  ><strong
+                    >${this.runtime.lastDelivery.state
+                      .slice(0, 1)
+                      .toUpperCase()}${this.runtime.lastDelivery.state.slice(1)}</strong
+                  >
+                </div>
+                ${this.runtime.workload.warning
+                  ? html`<div class="cp-runtime-warning">${this.runtime.workload.warning}</div>`
+                  : ''}
+                ${this.runtime.terminalReason
+                  ? html`<div class="cp-runtime-reason">${this.runtime.terminalReason}</div>`
+                  : ''}
+              `
+            : html`<div class="cp-runtime-reason">Runtime status unavailable.</div>`}
+          ${this.runtimeError ? html`<div class="cp-runtime-error">${this.runtimeError}</div>` : ''}
+          <div class="cp-runtime-actions">
+            ${runtimeStatus === 'running'
+              ? html`
+                  <button
+                    class="cp-new-btn"
+                    data-testid="copilot-reconnect"
+                    ?disabled=${this.runtimeLoading}
+                    @click=${() => this.startRuntime('reconnect')}
+                  >
+                    Reconnect
+                  </button>
+                  <button
+                    class="cp-stop-btn"
+                    data-testid="copilot-stop"
+                    ?disabled=${this.runtimeLoading}
+                    @click=${this.stopRuntime}
+                  >
+                    Stop runtime
+                  </button>
+                `
+              : html`
+                  <button
+                    class="cp-new-btn"
+                    data-testid="copilot-start-sandboxed"
+                    ?disabled=${this.runtimeLoading}
+                    @click=${() => this.startRuntime('start')}
+                  >
+                    Start Sandboxed
+                  </button>
+                  <button
+                    class="cp-stop-btn"
+                    data-testid="copilot-start-dangerous"
+                    ?disabled=${this.runtimeLoading || !this.runtime}
+                    @click=${this.openDangerousConfirmation}
+                  >
+                    Start Dangerous
+                  </button>
+                `}
+          </div>
+          ${this.dangerousConfirmationOpen && this.runtime
+            ? html`
+                <div class="cp-dangerous" data-testid="copilot-dangerous-confirmation">
+                  <strong>Dangerous same-user execution</strong>
+                  <p>${this.runtime.dangerousLaunch.warning}</p>
+                  <p>Bound to ${dangerousLaunchSummary(this.runtime.dangerousLaunch)}</p>
+                  <label>
+                    Type ${this.runtime.dangerousLaunch.typedPhrase}
+                    <input
+                      .value=${this.dangerousTypedPhrase}
+                      @input=${(event: InputEvent) => {
+                        if (event.target instanceof HTMLInputElement)
+                          this.dangerousTypedPhrase = event.target.value;
+                      }}
+                    />
+                  </label>
+                  <div class="cp-runtime-actions">
+                    <button
+                      class="cp-new-btn"
+                      data-testid="copilot-dangerous-cancel"
+                      @click=${() => (this.dangerousConfirmationOpen = false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      class="cp-stop-btn"
+                      data-testid="copilot-dangerous-confirm"
+                      ?disabled=${this.dangerousTypedPhrase !==
+                        this.runtime.dangerousLaunch.typedPhrase || this.runtimeLoading}
+                      @click=${this.startDangerousRuntime}
+                    >
+                      Launch dangerous
+                    </button>
+                  </div>
+                </div>
+              `
+            : ''}
+        </section>
         <div class="cp-messages">
           ${this.messages.length === 0 && !view.isStreaming
             ? html`<div class="cp-empty">Ask anything about your fleet.</div>`
@@ -799,7 +1010,7 @@ export class ChatPanel extends ChatPanelState {
               if (e.target instanceof HTMLTextAreaElement) this.inputText = e.target.value;
             }}
             @keydown=${this.onKeyDown}
-            ?disabled=${this.sending}
+            ?disabled=${this.sending || runtimeStatus !== 'running'}
           ></textarea>
           ${this.inputText.trim()
             ? html`
@@ -823,7 +1034,7 @@ export class ChatPanel extends ChatPanelState {
           <button
             class="cp-send-btn"
             @click=${this.send}
-            ?disabled=${this.sending || !this.inputText.trim()}
+            ?disabled=${this.sending || !this.inputText.trim() || runtimeStatus !== 'running'}
           >
             ${this.sending ? '…' : '→'}
           </button>

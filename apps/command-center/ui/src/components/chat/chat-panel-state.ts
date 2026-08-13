@@ -6,6 +6,7 @@ import type {
   ChatSessionContextResult,
   ChatSessionSummary,
   CopilotObserverNotificationPayload,
+  CopilotRuntimeSession,
 } from '@farmslot/protocol';
 
 import { safeLsGet } from '../../utils/storage.js';
@@ -39,11 +40,18 @@ export abstract class ChatPanelState extends LitElement {
   @state() protected observerNotifications: CopilotObserverNotificationPayload[] = [];
   @state() protected historyOpen = false;
   @state() protected pinningActive = false;
+  @state() protected runtime: CopilotRuntimeSession | null = null;
+  @state() protected runtimeLoading = false;
+  @state() protected runtimeError = '';
+  @state() protected runtimeNotice = '';
+  @state() protected dangerousConfirmationOpen = false;
+  @state() protected dangerousTypedPhrase = '';
 
   protected unsubResponse?: () => void;
   protected unsubMemory?: () => void;
   protected unsubObserver?: () => void;
   protected unsubConnection?: () => void;
+  protected unsubRuntime?: () => void;
   protected toastTimer?: ReturnType<typeof setTimeout>;
   protected resizing = false;
   protected resizeStartY = 0;

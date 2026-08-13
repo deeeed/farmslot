@@ -4,6 +4,7 @@ export * from './backlog.js';
 export * from './chat.js';
 export * from './config.js';
 export * from './copilot.js';
+export * from './copilot-runtime.js';
 export * from './decisions.js';
 export * from './diagnostics.js';
 export * from './dispatch.js';

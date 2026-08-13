@@ -95,7 +95,7 @@ test('callLLMChat surfaces faux transport errors and aborts in both branches', a
     (err: Error) => err.name === 'Error' && err.message.includes('reason=error'),
   );
 
-  // User abort — must preserve AbortError identity for chat-engine's stop path.
+  // User abort must preserve AbortError identity for AbortSignal-aware callers.
   for (const extra of [{ onDelta: () => {} }, {}]) {
     const ac = new AbortController();
     ac.abort();

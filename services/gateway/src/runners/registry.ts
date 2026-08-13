@@ -102,6 +102,8 @@ export interface RunnerDefinition {
   /** Runner starts with the task in argv and must clear safe launch blockers before dispatch can trust task execution. */
   resolvesPreTaskLaunchBlockers: boolean;
   supportsTmuxNudges: boolean;
+  /** Structured interrupt capability used by clients such as the Gateway Co-Pilot runtime. */
+  interruptKeys: string[];
   continueCommand: string | null;
   /** In-place command that starts a clean context while keeping the runner process warm. */
   contextResetCommand: string | null;
@@ -196,6 +198,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     needsPostLaunchPrompt: true,
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
+    interruptKeys: ['C-c'],
     continueCommand: '/continue',
     contextResetCommand: '/clear',
     persistsSessionFiles: true,
@@ -229,6 +232,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     needsPostLaunchPrompt: true,
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
+    interruptKeys: ['C-c'],
     // This string is sent into an already-running Codex TUI when resuming a paused
     // monitor. It must be natural language, not the shell-only `codex --continue`
     // launcher, or the text gets inserted into chat instead of executed by zsh.
@@ -272,6 +276,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     needsPostLaunchPrompt: false,
     resolvesPreTaskLaunchBlockers: true,
     supportsTmuxNudges: true,
+    interruptKeys: ['C-c'],
     continueCommand: null,
     contextResetCommand: null,
     persistsSessionFiles: false,
@@ -303,6 +308,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     needsPostLaunchPrompt: true,
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
+    interruptKeys: ['C-c'],
     continueCommand: null,
     contextResetCommand: null,
     persistsSessionFiles: true,
@@ -330,6 +336,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     needsPostLaunchPrompt: false,
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
+    interruptKeys: [],
     continueCommand: null,
     contextResetCommand: null,
     persistsSessionFiles: false,
@@ -353,6 +360,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     needsPostLaunchPrompt: false,
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
+    interruptKeys: [],
     continueCommand: null,
     contextResetCommand: null,
     persistsSessionFiles: false,
@@ -376,6 +384,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     needsPostLaunchPrompt: false,
     resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
+    interruptKeys: [],
     continueCommand: null,
     contextResetCommand: null,
     persistsSessionFiles: false,
@@ -552,6 +561,25 @@ export function runnerSupportsInteractivePrompt(runnerId?: string | null): boole
 export function runnerSupportsTmuxNudges(runnerId?: string | null): boolean {
   if (!isKnownRunner(runnerId)) return false;
   return getRunnerDefinition(runnerId).supportsTmuxNudges;
+}
+
+/** Interrupt an active turn using only the registered runner capability. */
+export async function interruptRunnerTurn(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runnerId?: string | null,
+): Promise<boolean> {
+  if (!isKnownRunner(runnerId)) return false;
+  const keys = getRunnerDefinition(runnerId).interruptKeys;
+  if (keys.length === 0) return false;
+  await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `send-keys -t ${shellQuote(target)} ${keys.map((key) => shellQuote(key)).join(' ')}`,
+    ),
+    { timeout: 5000 },
+  );
+  return true;
 }
 
 export function runnerLaunchCommandUsesHeadlessPrint(

@@ -58,10 +58,6 @@
       "count": 4
     },
     {
-      "key": "services/gateway/src/chat/chat-engine.ts:as-unknown:as unknown",
-      "count": 1
-    },
-    {
       "key": "services/gateway/src/chat/copilot-observer.ts:as-unknown:as unknown",
       "count": 1
     },

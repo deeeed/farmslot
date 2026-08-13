@@ -58,6 +58,16 @@ and what does it not cover". Two claims of different strength, kept separate:
 Farm scoping, verified node identity, and full run attribution are deliberately **not** decided
 here. They appear as follow-on ADRs at the end.
 
+### Gateway Co-Pilot runtime dependency
+
+The tmux-backed Gateway Co-Pilot V1 consumes the existing local/admin authorization surface and
+audits its explicit safety tier, checkout identity, and operator-authorized boundary actions. Its
+`dangerous` mode is intentionally only same-user execution permission: it does not grant gate
+approval, publication, merge, release, deletion, cancellation, or dispatch authority. Companion is
+a client of the same Gateway Co-Pilot runtime protocol, not a second mobile runtime or authority
+model. Enforceable service-principal ceilings, credential isolation, and hard process containment
+remain dependencies of this ADR and its containment follow-up; V1 must not claim those guarantees.
+
 ## Decision
 
 Separate **identity** from **credentials**, persist both, and authorize by **subject**, **role

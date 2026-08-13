@@ -83,9 +83,12 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## copilot.\*
 
-| Method                      | Surface | CLI command | TUI | Note                                     |
-| --------------------------- | ------- | ----------- | --- | ---------------------------------------- |
-| `copilot.formatInstruction` | na      |             |     | Command Center copilot surface (web UI). |
+| Method                      | Surface  | CLI command | TUI | Note                                                                                                                                          |
+| --------------------------- | -------- | ----------- | --- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `copilot.formatInstruction` | na       |             |     | Command Center copilot surface (web UI).                                                                                                      |
+| `copilot.status`            | rpc-only |             |     | Shared Co-Pilot runtime lifecycle is client-neutral; use `farmslot rpc copilot.status` until a typed CLI lifecycle command is promoted.       |
+| `copilot.start`             | rpc-only |             |     | Shared Co-Pilot runtime lifecycle is client-neutral; use `farmslot rpc copilot.start [json]` until a typed CLI lifecycle command is promoted. |
+| `copilot.stop`              | rpc-only |             |     | Shared Co-Pilot runtime lifecycle is client-neutral; use `farmslot rpc copilot.stop [json]` until a typed CLI lifecycle command is promoted.  |
 
 ## credential.\*
 
