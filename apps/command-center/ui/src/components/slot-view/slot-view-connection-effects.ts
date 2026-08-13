@@ -30,6 +30,10 @@ export function connectSlotView(view: SlotView): void {
   if (saved && EDITORS.some((editor) => editor.id === saved)) view._editor = saved as EditorId;
 
   restoreSlotViewLayout(view);
+  if (view._getHashParam('activity') === 'info') {
+    view._activity = 'info';
+    view._sidebarOpen = true;
+  }
 
   if (view.slotId) view._loadSlot();
   void refreshSlotViewRecipeRunnerOptions(view);

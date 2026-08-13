@@ -69,6 +69,10 @@ import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
 import { fleetRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
 import { resolveCreateSafetyTier } from './methods/run.js';
+import {
+  getRuntimeCapabilityRegistry,
+  initRuntimeCapabilities,
+} from './methods/runtime-capabilities.js';
 import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
@@ -82,6 +86,7 @@ import {
 } from './run-engine/orchestrator.js';
 import { initRunMonitor } from './run-engine/run-monitor.js';
 import { loadAllRuns } from './runs/store.js';
+import { reconcileRuntimeCapabilityLeases } from './runtime-capabilities/recovery.js';
 import {
   assertGatewayBindAllowed,
   authorizeHttpRequest,
@@ -304,6 +309,7 @@ async function main(): Promise<void> {
   // Load initial fleet state
   const missingFile = !existsSync(statusFile);
   await loadFleetStatus();
+  await initRuntimeCapabilities(observedBroadcast);
   const cached = getCachedFleet();
   // Re-bootstrap when the file is missing, the cache is empty (read failed or
   // file was corrupt), OR the snapshot is stale — a days-old status file must
@@ -732,6 +738,13 @@ async function main(): Promise<void> {
   // Recover active runs after the port is open so slow recovery cannot make the
   // UI's Vite proxy see ECONNREFUSED while the gateway is still booting.
   if (ENABLE_ORCHESTRATION) {
+    const runtimeCapabilityRegistry = getRuntimeCapabilityRegistry();
+    runtimeCapabilityRegistry.cleanupExpiredWarmProviders().catch((err) => {
+      console.error(`[runtime-capability] startup warm cleanup error: ${(err as Error).message}`);
+    });
+    reconcileRuntimeCapabilityLeases(runtimeCapabilityRegistry).catch((err) => {
+      console.error(`[runtime-capability] startup reconcile error: ${(err as Error).message}`);
+    });
     recoverActiveRuns()
       .then(() => scanFailedRunsForAutoRecovery())
       .catch((err) => {

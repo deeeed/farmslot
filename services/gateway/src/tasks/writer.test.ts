@@ -12,6 +12,7 @@ import {
   type PlanningContextProjection,
   type Run,
 } from '@farmslot/protocol';
+import { normalizeRawRuntimeCapabilities } from '@farmslot/slot-config';
 
 import { farmslotRoot } from '../projects/repo-root.js';
 
@@ -23,6 +24,7 @@ import { assertArtifactOnlyTaskGuard } from './artifact-only-guard.js';
 import { buildPlanningContextSection } from './planning-context.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import {
+  appendRuntimeCapabilityAndPlanningContext,
   applyArtifactOnlyTaskPolicy,
   buildChecklistMarkerScript,
   buildTaskFolderPrefix,
@@ -45,6 +47,57 @@ import {
   writeStaticReviewInstructionInputs,
   writeTaskFile,
 } from './writer.js';
+
+test('runtime proof planning precedes acquisition guidance and retains related planning context', () => {
+  const providers = normalizeRawRuntimeCapabilities({
+    providers: {
+      'browser-cdp': {
+        label: 'Browser / CDP',
+        version: '1',
+        share_policy: 'exclusive',
+        cost: {
+          class: 'high',
+          resources: [{ id: 'cdp-port', access: 'exclusive', kind: 'port' }],
+        },
+        actions: {
+          acquire: { kind: 'slot-action', action_id: 'browser-start' },
+          health: { kind: 'slot-action', action_id: 'browser-health' },
+          release: { kind: 'slot-action', action_id: 'browser-stop' },
+        },
+        release_effects: ['Stop the browser'],
+      },
+    },
+  })!.providers;
+  const task = appendRuntimeCapabilityAndPlanningContext(
+    '# Worker task\n',
+    '.task/run-a',
+    providers,
+    {
+      backlogItemId: 'MANUAL-000073',
+      relations: [
+        {
+          label: 'depends-on',
+          direction: 'upstream',
+          targetKind: 'backlog',
+          targetId: 'MANUAL-000072',
+          targetRef: 'MANUAL-000072',
+          targetTitle: 'Roadmap delivery/planning lineage',
+          source: 'work-graph-reference',
+          schedulerAuthority: false,
+          reason: 'related planning context',
+        },
+      ],
+      generatedAt: '2026-08-11T00:00:00.000Z',
+      snapshotHash: 'snapshot-1',
+    },
+  );
+
+  assert(task.indexOf('Runtime capability proof plan') < task.indexOf('Related planning context'));
+  assert.match(task, /Before the first\s+`runtime\.capability\.acquire` call/);
+  assert.match(task, /`browser-cdp` — Browser \/ CDP; high cost; exclusive/);
+  assert.match(task, /MANUAL-000072.*Roadmap delivery\/planning lineage/);
+  assert.match(task, /inputs\/runtime-capability-catalog\.json/);
+});
 
 test('writePreviousReviewInputs freezes reusable review context as JSON and a concise brief', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'previous-review-inputs-'));

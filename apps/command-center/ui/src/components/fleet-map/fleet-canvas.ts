@@ -778,6 +778,7 @@ export class FleetCanvas extends LitElement {
           </button>
           <button
             class="toggle-btn ${this.viewMode === 'list' ? 'active' : ''}"
+            data-testid="fleet-view-list"
             @click=${() => this.setViewMode('list')}
           >
             list

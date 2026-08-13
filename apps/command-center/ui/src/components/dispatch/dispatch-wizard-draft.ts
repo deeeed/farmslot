@@ -77,10 +77,17 @@ export function projectPrepareProfiles(
 ): PrepareProfileOption[] {
   const prepare = configs.find((project) => project.name === projectName)?.prepare;
   if (!prepare) return [];
-  // Mirrors gateway resolvePrepareProfile: prepare.default, else a profile
-  // literally named "full" is the implicit default.
-  const defaultName = prepare.default ?? ('full' in prepare.profiles ? 'full' : '');
-  return Object.entries(prepare.profiles).map(([name, profile]) => ({
+  const profiles = prepare.profiles ?? {};
+  // Mirrors gateway resolvePrepareProfile: core wins for implicit selection;
+  // legacy projects retain prepare.default / "full" fallback behavior.
+  const defaultName = prepare.core
+    ? 'core'
+    : (prepare.default ?? ('full' in profiles ? 'full' : ''));
+  const entries = [
+    ...(prepare.core ? ([['core', prepare.core]] as const) : []),
+    ...Object.entries(profiles),
+  ];
+  return entries.map(([name, profile]) => ({
     name,
     label: profile.label || name,
     ...(profile.description ? { description: profile.description } : {}),

@@ -234,6 +234,29 @@ test('prepare profile hook refs are included in node support inference', () => {
   ]);
 });
 
+test('prepare core hook refs are included in node support inference', () => {
+  const result = resolveNodeSupportPaths(
+    'example-mobile-farm',
+    {
+      prepare: {
+        core: {
+          hooks: {
+            preflight:
+              'bash {{node_support_dir}}/projects/example-mobile-farm/scripts/preflight.sh',
+          },
+        },
+      },
+    },
+    root,
+  );
+
+  assert.deepEqual(result.undeclaredHookPaths, [
+    'projects/example-mobile-farm/project.json',
+    'projects/example-mobile-farm/scripts',
+    'scripts',
+  ]);
+});
+
 test('declared node support paths cannot escape the supported roots', () => {
   assert.throws(
     () =>

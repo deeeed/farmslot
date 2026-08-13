@@ -45,6 +45,12 @@
     "recipe_run": "bash {{repo}}/projects/farmslot-farm/setup/validate-recipe.sh --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}} --runtime-dir {{runtime_dir}} --platform {{platform}} --cdp-port {{cdp_port}} --gateway-port {{port}} --metro-port {{metro_port}} --simulator {{simulator}} --adb-serial {{adb_serial}} --slot-id {{slot_id}} --run-id={{run_id}} --recipe-run-id={{recipe_run_id}}"
   },
   "prepare": {
+    "core": {
+      "label": "Core prepare — state work only",
+      "description": "Sync checkout state, fixtures, and dependencies without starting Gateway/UI, Chrome/CDP, Metro, Companion, simulators, or devices.",
+      "phases": ["git", "fixtures", "deps"]
+    },
+    "compatibility_profile": "sandbox",
     "default": "sandbox",
     "profiles": {
       "sandbox": {
@@ -184,6 +190,75 @@
       "recycle": "adb -s {{adb_serial}} shell pm clear net.siteed.farmslot.companion.development"
     }
   },
+  "slot_actions": {
+    "gateway-ui-retain": {
+      "label": "Return Gateway/UI to slot lifecycle",
+      "description": "Releases capability ownership; the existing slot lifecycle remains responsible for the control-plane process.",
+      "command": "true",
+      "refresh": ["resources"]
+    },
+    "browser-cdp-start": {
+      "label": "Start Browser / CDP",
+      "command": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/runtime-capability-browser.sh start --cdp-port {{cdp_port}} --ui-url http://localhost:{{vite_port}}/",
+      "timeoutMs": 30000,
+      "refresh": ["resources"]
+    },
+    "browser-cdp-health": {
+      "label": "Check Browser / CDP",
+      "command": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/runtime-capability-browser.sh health --cdp-port {{cdp_port}}",
+      "refresh": ["resources"]
+    },
+    "browser-cdp-stop": {
+      "label": "Stop Browser / CDP",
+      "command": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/runtime-capability-browser.sh stop --cdp-port {{cdp_port}}",
+      "timeoutMs": 30000,
+      "refresh": ["resources"]
+    },
+    "companion-metro-start": {
+      "label": "Start Companion / Metro",
+      "command": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/companion-prepare.sh warm --gateway-port {{port}} --metro-port {{metro_port}} --platform cli",
+      "timeoutMs": 180000,
+      "refresh": ["resources"]
+    },
+    "companion-metro-health": {
+      "label": "Check Companion / Metro",
+      "command": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/companion-prepare.sh health --gateway-port {{port}} --metro-port {{metro_port}} --platform cli",
+      "refresh": ["resources"]
+    },
+    "companion-metro-stop": {
+      "label": "Stop Companion / Metro",
+      "command": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/companion-prepare.sh stop --gateway-port {{port}} --metro-port {{metro_port}} --platform cli",
+      "timeoutMs": 30000,
+      "refresh": ["resources"]
+    },
+    "recording-ready": {
+      "label": "Check recording helper",
+      "command": "command -v capture-helper >/dev/null",
+      "refresh": ["resources"]
+    },
+    "recording-release": {
+      "label": "Release recording reservation",
+      "command": "true",
+      "refresh": ["resources"]
+    },
+    "native-client-install-ios": {
+      "label": "Install Companion dev client",
+      "command": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/companion-prepare.sh full --gateway-port {{port}} --metro-port {{metro_port}} --platform ios --simulator {{simulator}}",
+      "timeoutMs": 1200000,
+      "refresh": ["resources"]
+    },
+    "native-client-health-ios": {
+      "label": "Check Companion dev client",
+      "command": "xcrun simctl get_app_container '{{simulator}}' net.siteed.farmslot.development app >/dev/null",
+      "refresh": ["resources"]
+    },
+    "native-client-retain-ios": {
+      "label": "Retain installed Companion dev client",
+      "description": "Releases the installation lease without uninstalling the reusable dev client.",
+      "command": "true",
+      "refresh": ["resources"]
+    }
+  },
   "resources": {
     "dev-server": {
       "type": "dev-server",
@@ -195,8 +270,39 @@
         "port": "{{port}}"
       },
       "hooks": {
+        "boot": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port {{port}}",
         "health": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
         "shutdown": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh stop --gateway-port {{port}}"
+      }
+    },
+    "browser-cdp": {
+      "type": "browser",
+      "label": "Browser / CDP",
+      "streamable": true,
+      "controllable": true,
+      "watch": {
+        "type": "port-listen",
+        "port": "{{cdp_port}}"
+      },
+      "hooks": {
+        "boot": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/runtime-capability-browser.sh start --cdp-port {{cdp_port}} --ui-url http://localhost:{{vite_port}}/",
+        "health": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/runtime-capability-browser.sh health --cdp-port {{cdp_port}}",
+        "shutdown": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/runtime-capability-browser.sh stop --cdp-port {{cdp_port}}"
+      }
+    },
+    "companion-metro": {
+      "type": "dev-server",
+      "label": "Companion / Metro",
+      "streamable": false,
+      "controllable": true,
+      "watch": {
+        "type": "port-listen",
+        "port": "{{metro_port}}"
+      },
+      "hooks": {
+        "boot": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/companion-prepare.sh warm --gateway-port {{port}} --metro-port {{metro_port}} --platform cli",
+        "health": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/companion-prepare.sh health --gateway-port {{port}} --metro-port {{metro_port}} --platform cli",
+        "shutdown": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/companion-prepare.sh stop --gateway-port {{port}} --metro-port {{metro_port}} --platform cli"
       }
     },
     "ios-sim": {
@@ -228,6 +334,160 @@
       "hooks": {
         "health": "adb -s {{adb_serial}} get-state 2>/dev/null | grep -q device",
         "shutdown": "true"
+      }
+    }
+  },
+  "runtime_capabilities": {
+    "providers": {
+      "sandbox-gateway-ui": {
+        "label": "Sandbox Gateway / UI",
+        "description": "Starts and checks the slot's project-owned Gateway and Vite UI bundle.",
+        "version": "1",
+        "share_policy": "shared",
+        "cost": {
+          "class": "medium",
+          "resources": [
+            { "id": "gateway-port", "access": "shared", "kind": "port" },
+            { "id": "vite-port", "access": "shared", "kind": "port" }
+          ]
+        },
+        "actions": {
+          "acquire": { "kind": "resource", "resource_id": "dev-server", "action": "boot" },
+          "health": { "kind": "resource", "resource_id": "dev-server", "action": "health" },
+          "release": { "kind": "slot-action", "action_id": "gateway-ui-retain" }
+        },
+        "release_effects": [
+          "Gateway/UI capability ownership is removed",
+          "The slot lifecycle retains the control-plane process until slot teardown"
+        ]
+      },
+      "browser-cdp": {
+        "label": "Browser / CDP",
+        "description": "Owns the dedicated Chrome profile and CDP port used for visual proof.",
+        "version": "1",
+        "share_policy": "exclusive",
+        "cost": {
+          "class": "high",
+          "resources": [
+            { "id": "cdp-port", "access": "exclusive", "kind": "port" },
+            { "id": "chrome", "access": "exclusive", "kind": "process" }
+          ]
+        },
+        "actions": {
+          "acquire": { "kind": "slot-action", "action_id": "browser-cdp-start" },
+          "health": { "kind": "slot-action", "action_id": "browser-cdp-health" },
+          "release": { "kind": "slot-action", "action_id": "browser-cdp-stop" }
+        },
+        "release_effects": [
+          "The lease owner can no longer drive the CDP session",
+          "Chrome remains reusable only until the explicit keep-warm deadline"
+        ],
+        "keep_warm_ms": 600000
+      },
+      "companion-metro": {
+        "label": "Companion / Metro",
+        "description": "Starts the slot-scoped Expo Metro session without booting a device.",
+        "version": "1",
+        "share_policy": "shared",
+        "cost": {
+          "class": "high",
+          "resources": [
+            { "id": "metro-port", "access": "shared", "kind": "port" },
+            { "id": "metro", "access": "shared", "kind": "process" }
+          ]
+        },
+        "actions": {
+          "acquire": { "kind": "slot-action", "action_id": "companion-metro-start" },
+          "health": { "kind": "slot-action", "action_id": "companion-metro-health" },
+          "release": { "kind": "slot-action", "action_id": "companion-metro-stop" }
+        },
+        "release_effects": ["The final shared lease stops the slot-scoped Metro tmux session"]
+      },
+      "ios-simulator": {
+        "label": "iOS Simulator",
+        "description": "Boots the simulator declared by this slot after Metro is leased.",
+        "version": "1",
+        "dependencies": ["companion-metro"],
+        "share_policy": "exclusive",
+        "cost": {
+          "class": "high",
+          "resources": [{ "id": "ios-simulator", "access": "exclusive", "kind": "device" }]
+        },
+        "actions": {
+          "acquire": { "kind": "resource", "resource_id": "ios-sim", "action": "boot" },
+          "health": { "kind": "resource", "resource_id": "ios-sim", "action": "health" },
+          "release": { "kind": "resource", "resource_id": "ios-sim", "action": "shutdown" }
+        },
+        "release_effects": [
+          "The simulator is shut down",
+          "Its Metro dependency is released only when no other lease needs it"
+        ]
+      },
+      "android-device": {
+        "label": "Android Device",
+        "description": "Reserves and checks the adb device declared by this slot after Metro is leased.",
+        "version": "1",
+        "dependencies": ["companion-metro"],
+        "share_policy": "exclusive",
+        "cost": {
+          "class": "high",
+          "resources": [{ "id": "android-device", "access": "exclusive", "kind": "device" }]
+        },
+        "actions": {
+          "acquire": { "kind": "resource", "resource_id": "android-device", "action": "health" },
+          "health": { "kind": "resource", "resource_id": "android-device", "action": "health" },
+          "release": { "kind": "resource", "resource_id": "android-device", "action": "shutdown" }
+        },
+        "release_effects": [
+          "The adb reservation is released without clearing another slot's app data",
+          "Its Metro dependency is reference-counted independently"
+        ]
+      },
+      "companion-native-client-ios": {
+        "label": "Companion native dev client (iOS)",
+        "description": "Installs the development client only after the simulator and Metro dependencies are leased.",
+        "version": "1",
+        "dependencies": ["ios-simulator"],
+        "share_policy": "exclusive",
+        "cost": {
+          "class": "high",
+          "resources": [
+            { "id": "ios-native-build", "access": "exclusive", "kind": "process" },
+            { "id": "companion-install", "access": "exclusive", "kind": "device" }
+          ]
+        },
+        "actions": {
+          "acquire": { "kind": "slot-action", "action_id": "native-client-install-ios" },
+          "health": { "kind": "slot-action", "action_id": "native-client-health-ios" },
+          "release": { "kind": "slot-action", "action_id": "native-client-retain-ios" }
+        },
+        "release_effects": [
+          "The native-build lease is released",
+          "The installed dev client remains reusable; simulator and Metro dependencies release normally"
+        ]
+      },
+      "recording": {
+        "label": "Screen recording",
+        "description": "Reserves the project recording helper for publication evidence.",
+        "version": "1",
+        "share_policy": "exclusive",
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "format": { "type": "string", "enum": ["mp4"] }
+          }
+        },
+        "cost": {
+          "class": "medium",
+          "resources": [{ "id": "capture-helper", "access": "exclusive", "kind": "process" }]
+        },
+        "actions": {
+          "acquire": { "kind": "slot-action", "action_id": "recording-ready" },
+          "health": { "kind": "slot-action", "action_id": "recording-ready" },
+          "release": { "kind": "slot-action", "action_id": "recording-release" }
+        },
+        "release_effects": ["The owner releases the exclusive recording-helper reservation"]
       }
     }
   },

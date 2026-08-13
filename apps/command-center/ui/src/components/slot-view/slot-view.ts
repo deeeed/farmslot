@@ -24,6 +24,7 @@ import '../diff-viewer/diff-review.js';
 import '../diff-viewer/code-viewer.js';
 import '../stream-feed/stream-feed.js';
 import '../resources/resource-panel.js';
+import '../runtime-capabilities/runtime-capabilities-panel.js';
 import '../config/slot-toggle.js';
 import '../slot-actions/slot-actions-panel.js';
 import '../shared/prepare-progress-panel.js';

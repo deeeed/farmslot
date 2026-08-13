@@ -68,7 +68,9 @@ export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unkno
   }
   // Sync URL-backed local state
   if (
-    (changed.has('_activeFile') ||
+    (changed.has('_activity') ||
+      changed.has('_sidebarOpen') ||
+      changed.has('_activeFile') ||
       changed.has('_activeResourceId') ||
       changed.has('_resourcePanelOpen') ||
       changed.has('_selectedRecipeRunId') ||

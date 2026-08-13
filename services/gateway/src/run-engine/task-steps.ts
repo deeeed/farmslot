@@ -32,6 +32,7 @@ import {
   gradeTicket,
   selectRecipeStrategy,
 } from '../intelligence/engine.js';
+import { resolvePrepareProfile } from '../methods/slot/prepare-profile.js';
 import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
 import { CHECKLIST_MARKER_INPUT } from '../tasks/sidecars.js';
 import {
@@ -104,6 +105,15 @@ export function mergeInitialContextIntoTicketData(
     return ticketData;
   }
   return { ...ticketData, description, acceptanceCriteria };
+}
+
+export function prepareProfileDecisionLabel(
+  run: Pick<Run, 'prepareProfile'>,
+  projectJson?: Parameters<typeof resolvePrepareProfile>[0],
+): string {
+  return projectJson
+    ? resolvePrepareProfile(projectJson, run.prepareProfile).name
+    : run.prepareProfile?.trim() || 'full';
 }
 
 async function readTemplateProvenanceForTask(
@@ -271,14 +281,20 @@ export async function executeGradeStep(
     slotPlatform,
   });
   if (resolvedProfileFit) {
+    const profileProjectVars = await loadProjectVarsOrNull(
+      run.project,
+      'prepare profile decision',
+      run.id,
+    );
+    const currentPrepareProfile = prepareProfileDecisionLabel(run, profileProjectVars?.projectJson);
     const actionId = await createEngineDecision(
       runId,
       'prepare_profile_mismatch',
-      `Ticket looks like it needs prepare profile "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}, but this run uses "${run.prepareProfile ?? 'sandbox'}". ${resolvedProfileFit.rationale} Continue with the current profile?`,
+      `Ticket looks like it needs prepare profile "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}, but this run uses "${currentPrepareProfile}". ${resolvedProfileFit.rationale} Continue with the current profile?`,
       [
         {
           id: 'continue',
-          label: `Continue with ${run.prepareProfile ?? 'sandbox'}`,
+          label: `Continue with ${currentPrepareProfile}`,
           style: 'primary',
         },
         { id: 'abort', label: 'Abort run', style: 'danger' },

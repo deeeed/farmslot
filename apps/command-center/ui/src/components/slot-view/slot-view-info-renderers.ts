@@ -158,6 +158,8 @@ export function renderSlotViewInfoPanel(view: SlotView) {
       ? html` <div class="sv-section-body sv-info-body">${view._renderSidebarInfo()}</div> `
       : nothing}
 
+    <runtime-capabilities-panel .slotId=${slot.slot}></runtime-capabilities-panel>
+
     <!-- Actions section -->
     <div class="sv-section-header" @click=${() => view._toggleSection('actions')}>
       <span class="sv-section-arrow">${view._sections.actions ? '\u25BE' : '\u25B8'}</span>

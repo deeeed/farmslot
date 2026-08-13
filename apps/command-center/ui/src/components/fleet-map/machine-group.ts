@@ -1045,6 +1045,17 @@ ${deployHint}"
             : ''}
           <button
             class="nav-btn"
+            data-testid="runtime-capabilities-open-${s.slot}"
+            @click=${(e: Event) => {
+              e.stopPropagation();
+              location.hash = `slot/${s.slot}?activity=info`;
+            }}
+            title="Open runtime capabilities"
+          >
+            Capabilities
+          </button>
+          <button
+            class="nav-btn"
             @click=${(e: Event) => {
               e.stopPropagation();
               location.hash = `terminal/${s.slot}`;

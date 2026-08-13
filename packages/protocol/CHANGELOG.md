@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- fix(runtime-capabilities): retain queued admission pressure in status results and document forced provenance cleanup.
+- feat(runtime-capabilities): add typed catalog, proof-plan, provider provenance, durable lease, pressure conflict, lifecycle event, and list/acquire/status/release RPC contracts.
 - fix(review): identify worker signal attempts independently of machine clocks so retained reviewer recovery cannot consume an earlier attempt.
 - fix(review): carry review transport failure reasons separately from review findings so clients do not present an unavailable reviewer as a clean zero-finding pass.
 - Active-development baseline; add user-facing changes here before release or package publication.

@@ -141,3 +141,37 @@ still attach a suggestion for UI hints only. Empty prepare resolves to
 cover the run-engine TASK step (`prepare_profile_mismatch` decision in
 `task-steps.ts`), which can still prompt when profile-fit disagrees with the
 effective profile — demoting that path is a separate follow-up.
+
+## Addendum: core prepare and lazy proof capabilities (2026-08-11)
+
+`prepare.default` originally made one named profile the implicit bundle. That remains the
+compatibility behavior for projects that have not migrated. A migrated project may instead declare
+`prepare.core`; when present, core is the implicit selection and `prepare.default` no longer starts a
+legacy bundle. Operators can still select every named profile explicitly, and the stable
+`compatibility` alias resolves to `prepare.compatibility_profile`.
+
+Core prepare may use `git`, `fixtures`, `deps`, and lightweight project hooks, but it must not start
+proof-only resources merely because a slot happens to declare their ports. Browser/CDP,
+Gateway/UI, Metro, Companion, simulator/device, native-client, and recording processes move into
+project-owned `runtime_capabilities.providers`. Each provider declares stable identity and
+provenance, cost and sharing metadata, dependencies, exact project action references, health, and
+release effects. Workers first persist a typed proof requirement, then use the Gateway's
+`runtime.capability.list|acquire|status|release` methods. Durable run/slot leases make ownership,
+restart reconciliation, dependency release order, and explicit keep-warm deadlines observable.
+
+Migration is intentionally compatible:
+
+1. Add a `prepare.core` profile that performs only checkout, fixture, and dependency work.
+2. Set `prepare.compatibility_profile` to the existing monolithic profile; keep all named profiles
+   unchanged while callers migrate. Explicit `--prepare-profile sandbox` (or another legacy name)
+   retains its previous phases and hooks.
+3. Adapt long-lived project resources into capability providers that reference existing resource or
+   slot actions. Do not copy their shell commands into worker prompts.
+4. Move visual/native proof flows to typed acquisition after proof-plan creation. State-only work
+   declares no capabilities and therefore launches no visual/native processes.
+5. Remove legacy bundles only after task writers, recipes, review/QA, and operator surfaces all use
+   the catalog and lease projection.
+
+MetaMask projects follow the same boundary: an adapter may expose mm-harness action-manifest entries
+as Farmslot provider actions and retain mm-harness provenance/readiness internally. Farmslot does not
+import MetaMask recipes, branch on runner names, or duplicate the mm-harness executor.

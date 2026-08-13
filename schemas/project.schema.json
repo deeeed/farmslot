@@ -27,13 +27,21 @@
     },
     "prepare": {
       "type": "object",
-      "description": "Named prepare profiles (ADR-037): project-defined variations of slot preparation. Each profile selects a subset of the optional cost phases, may override hooks for its run, and declares precondition checks with a fallback profile.",
+      "description": "Core prepare plus explicit legacy compatibility profiles. When core is present it is the default unless an operator names a profile.",
       "additionalProperties": false,
-      "required": ["profiles"],
+      "anyOf": [{ "required": ["core"] }, { "required": ["profiles"] }],
       "properties": {
+        "core": {
+          "$ref": "#/$defs/prepare_core",
+          "description": "Lightweight checkout, fixtures, dependencies, credentials, task artifacts, and health preparation. It must not start proof-only resources."
+        },
+        "compatibility_profile": {
+          "type": "string",
+          "description": "Named monolithic profile retained for explicit compatibility selection during migration."
+        },
         "default": {
           "type": "string",
-          "description": "Profile used when no explicit selection is made. Falls back to a profile literally named 'full' when omitted."
+          "description": "Legacy default used only when core is absent."
         },
         "profiles": {
           "type": "object",
@@ -81,6 +89,22 @@
               }
             }
           }
+        }
+      }
+    },
+    "runtime_capabilities": {
+      "type": "object",
+      "description": "Project-owned proof resources discoverable and leaseable after core prepare.",
+      "additionalProperties": false,
+      "required": ["providers"],
+      "properties": {
+        "providers": {
+          "type": "object",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z][a-z0-9.-]*$": { "$ref": "#/$defs/runtime_capability_provider" }
+          },
+          "additionalProperties": false
         }
       }
     },
@@ -226,6 +250,15 @@
         "type": "string"
       },
       "examples": [["apps/web", "apps/mobile", "apps/api"], ["example-mobile"]]
+    },
+    "external": {
+      "type": "object",
+      "description": "Project-owned external integration fixture policy.",
+      "properties": {
+        "mock_mode": { "type": "boolean" },
+        "fixtures_dir": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
     },
     "paths": {
       "type": "object",
@@ -1321,6 +1354,107 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "prepare_core": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phases"],
+      "properties": {
+        "label": { "type": "string" },
+        "description": { "type": "string" },
+        "phases": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["git", "fixtures", "deps", "preflight", "health"]
+          }
+        },
+        "hooks": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "runtime_capability_action_ref": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "resource_id", "action"],
+          "properties": {
+            "kind": { "const": "resource" },
+            "resource_id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+            "action": {
+              "type": "string",
+              "enum": ["boot", "health", "shutdown", "relaunch"]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "action_id"],
+          "properties": {
+            "kind": { "const": "slot-action" },
+            "action_id": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "runtime_capability_provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "version", "share_policy", "cost", "actions", "release_effects"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "version": { "type": "string", "minLength": 1 },
+        "dependencies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]*$" }
+        },
+        "share_policy": { "type": "string", "enum": ["exclusive", "shared"] },
+        "cost": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["class", "resources"],
+          "properties": {
+            "class": { "type": "string", "enum": ["low", "medium", "high"] },
+            "resources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "access"],
+                "properties": {
+                  "id": { "type": "string", "minLength": 1 },
+                  "access": { "type": "string", "enum": ["exclusive", "shared"] },
+                  "kind": {
+                    "type": "string",
+                    "enum": ["port", "device", "process", "service", "other"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": { "type": "object" },
+        "actions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["acquire", "health", "release"],
+          "properties": {
+            "acquire": { "$ref": "#/$defs/runtime_capability_action_ref" },
+            "health": { "$ref": "#/$defs/runtime_capability_action_ref" },
+            "release": { "$ref": "#/$defs/runtime_capability_action_ref" }
+          }
+        },
+        "release_effects": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "keep_warm_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
     "worker_terminal_command_spec": {
       "type": "object",
       "properties": {

@@ -32,6 +32,20 @@ const PROFILES: RawProjectJson = {
   },
 };
 
+const CORE_AND_COMPATIBILITY: RawProjectJson = {
+  prepare: {
+    core: { label: 'Core', phases: ['git', 'fixtures', 'deps'] },
+    compatibility_profile: 'sandbox',
+    default: 'sandbox',
+    profiles: {
+      sandbox: {
+        phases: ['git', 'fixtures', 'deps', 'preflight', 'health'],
+        hooks: { preflight: 'start sandbox' },
+      },
+    },
+  },
+};
+
 test('resolvePrepareProfile returns implicit full without a prepare block', () => {
   const profile = resolvePrepareProfile({});
   assert.equal(profile.name, 'full');
@@ -48,6 +62,33 @@ test('resolvePrepareProfile allows requesting "full" without a prepare block', (
 test('resolvePrepareProfile honours request over default', () => {
   assert.equal(resolvePrepareProfile(PROFILES, 'full').name, 'full');
   assert.equal(resolvePrepareProfile(PROFILES).name, 'relaunch');
+});
+
+test('core is implicit while explicit compatibility retains the monolithic profile', () => {
+  const implicit = resolvePrepareProfile(CORE_AND_COMPATIBILITY);
+  assert.equal(implicit.name, 'core');
+  assert.deepEqual([...implicit.phases], ['git', 'fixtures', 'deps']);
+  assert.deepEqual(implicit.hooks, {});
+
+  const explicit = resolvePrepareProfile(CORE_AND_COMPATIBILITY, 'sandbox');
+  const compatibility = resolvePrepareProfile(CORE_AND_COMPATIBILITY, 'compatibility');
+  assert.equal(explicit.name, 'sandbox');
+  assert.deepEqual([...explicit.phases], ['git', 'fixtures', 'deps', 'preflight', 'health']);
+  assert.deepEqual(compatibility, explicit);
+});
+
+test('a literal compatibility profile remains selectable without the alias field', () => {
+  const profile = resolvePrepareProfile(
+    {
+      prepare: {
+        core: { phases: ['git'] },
+        profiles: { compatibility: { phases: ['git', 'deps', 'health'] } },
+      },
+    },
+    'compatibility',
+  );
+  assert.equal(profile.name, 'compatibility');
+  assert.deepEqual(profile.phases, new Set(['git', 'deps', 'health']));
 });
 
 test('resolvePrepareProfile materializes hooks/requires/fallback', () => {

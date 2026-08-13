@@ -103,6 +103,9 @@ function hookCommands(projectJson: RawProjectJson): string[] {
       if (typeof command === 'string') commands.push(command);
     }
   }
+  for (const command of Object.values(projectJson.prepare?.core?.hooks ?? {})) {
+    if (typeof command === 'string') commands.push(command);
+  }
   for (const value of Object.values(projectJson.vars ?? {})) {
     if (typeof value === 'string') commands.push(value);
   }

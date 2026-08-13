@@ -6,6 +6,7 @@ export type ReviewDrawerMode = 'primary' | 'recipe';
 
 export interface SlotViewUrlState {
   slotId: string;
+  activity?: 'info';
   runId?: string;
   file?: string;
   resource?: string;
@@ -28,6 +29,7 @@ export function isSlotViewHashForSlot(slotId: string, hash: string = location.ha
 
 export function slotViewHash(state: SlotViewUrlState): string {
   const params = new URLSearchParams();
+  if (state.activity === 'info') params.set('activity', 'info');
   if (state.runId) params.set('runId', state.runId);
   if (state.file) params.set('file', state.file);
   if (state.resource) params.set('resource', state.resource);

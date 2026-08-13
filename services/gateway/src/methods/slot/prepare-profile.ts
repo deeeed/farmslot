@@ -49,6 +49,7 @@ export function expandPrepareProfileHook(
 }
 
 const IMPLICIT_FULL = 'full';
+const CORE_PROFILE = 'core';
 
 type RawProfiles = NonNullable<NonNullable<RawProjectJson['prepare']>['profiles']>;
 
@@ -67,10 +68,16 @@ function implicitFullProfile(): ResolvedPrepareProfile {
   return { name: IMPLICIT_FULL, phases: new Set(PREPARE_PHASES), hooks: {}, requires: [] };
 }
 
+function configuredCoreProfile(projectJson: RawProjectJson): ResolvedPrepareProfile | undefined {
+  const core = projectJson.prepare?.core;
+  return core ? materialize(CORE_PROFILE, core) : undefined;
+}
+
 /**
- * Resolve the starting profile for a prepare run: explicit request →
- * prepare.default → a profile literally named "full" → implicit built-in full
- * (all phases) when the project declares no prepare block.
+ * Resolve the starting profile for a prepare run: explicit request → configured
+ * core → legacy prepare.default → a profile literally named "full" → implicit
+ * built-in full when the project has not migrated yet. `compatibility` is a
+ * stable alias for prepare.compatibility_profile.
  *
  * projectJson is assumed validated by validatePrepareConfig (loadProjectVars).
  */
@@ -78,14 +85,23 @@ export function resolvePrepareProfile(
   projectJson: RawProjectJson,
   requested?: string,
 ): ResolvedPrepareProfile {
+  const core = configuredCoreProfile(projectJson);
   const profiles = projectJson.prepare?.profiles;
+  const requestedName =
+    requested === 'compatibility' && projectJson.prepare?.compatibility_profile
+      ? projectJson.prepare?.compatibility_profile
+      : requested;
+  if (!requestedName && core) return core;
+  if (requestedName === CORE_PROFILE && core) return core;
   if (!profiles) {
-    if (requested && requested !== IMPLICIT_FULL) {
-      throw new Error(`Project defines no prepare profiles; cannot select profile '${requested}'`);
+    if (requestedName && requestedName !== IMPLICIT_FULL) {
+      throw new Error(
+        `Project defines no prepare profiles; cannot select profile '${requestedName}'`,
+      );
     }
     return implicitFullProfile();
   }
-  const name = requested || projectJson.prepare?.default || IMPLICIT_FULL;
+  const name = requestedName || projectJson.prepare?.default || IMPLICIT_FULL;
   const raw = profiles[name];
   if (!raw) {
     throw new Error(

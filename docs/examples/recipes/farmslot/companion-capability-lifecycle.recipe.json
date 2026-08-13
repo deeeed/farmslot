@@ -1,0 +1,55 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "On-demand Companion capability lifecycle",
+  "description": "Acquires Metro plus a simulator/device from the shared runtime capability catalog only after a state proof requirement is declared, then proves primary-slot release leaves a peer slot lease untouched.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["slot_id", "peer_slot_id"],
+    "properties": {
+      "gateway_port": { "type": "string", "default": "7777" },
+      "slot_id": { "type": "string", "default": "macwork-ff-1" },
+      "peer_slot_id": { "type": "string", "default": "macwork-ff-2" },
+      "owner_run_id": { "type": "string", "default": "companion-capability-recipe" },
+      "device_capability": {
+        "type": "string",
+        "enum": ["ios-simulator", "android-device"],
+        "default": "ios-simulator"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "exercise-companion-capabilities",
+    "nodes": {
+      "exercise-companion-capabilities": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/runtime-capability-companion-smoke.mjs --gateway-url ws://127.0.0.1:{{params.gateway_port}}/ws --slot-id {{params.slot_id}} --peer-slot-id {{params.peer_slot_id}} --owner-run-id {{params.owner_run_id}} --capability-id {{params.device_capability}} --report reports/companion-capability-lifecycle.json",
+        "timeout_ms": 1200000,
+        "next": "assert-companion-capabilities",
+        "intent": "Drive the runner-neutral Gateway protocol so both slots discover, acquire, check, and release the same declared Companion provider graph."
+      },
+      "assert-companion-capabilities": {
+        "action": "assert_output",
+        "source": "exercise-companion-capabilities",
+        "stream": "stdout",
+        "contains": "COMPANION_CAPABILITY_LIFECYCLE_PASS",
+        "next": "index-companion-report",
+        "intent": "Require the live lifecycle and cross-slot isolation assertions to complete."
+      },
+      "index-companion-report": {
+        "action": "index_artifacts",
+        "artifacts": [
+          {
+            "path": "reports/companion-capability-lifecycle.json",
+            "type": "json",
+            "proofTarget": "On-demand Metro/device dependency acquisition and cross-slot release isolation",
+            "covers": ["runtime-companion-capability-lifecycle"]
+          }
+        ],
+        "next": "done",
+        "intent": "Publish the live lease and release projections as reusable state evidence."
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
