@@ -15,7 +15,9 @@ export function slotViewBranchList({
   if (branchDiffHead && branchDiffHead !== 'main' && !isCommitRef(branchDiffHead)) {
     branches.add(branchDiffHead);
   }
-  if (branchDiffBase && branchDiffBase !== 'main') branches.add(branchDiffBase);
+  if (branchDiffBase && branchDiffBase !== 'main' && !isCommitRef(branchDiffBase)) {
+    branches.add(branchDiffBase);
+  }
   if (gitBranch) branches.add(gitBranch);
   return [...branches].sort();
 }
