@@ -21,6 +21,8 @@ test('pending continuation ignores later non-verdict placeholders but honors a l
     id: 'independent-review-7',
     source: 'human-gate',
     verdict: 'issues',
+    loopNumber: 1,
+    crossRunner: true,
     unresolvedCount: 1,
     feedbackSent: false,
     recoveryContinuationPending: true,
@@ -30,12 +32,16 @@ test('pending continuation ignores later non-verdict placeholders but honors a l
     id: 'independent-review-8',
     source: 'human-gate',
     verdict: 'skipped',
+    loopNumber: 1,
+    crossRunner: true,
     unresolvedCount: 0,
   } satisfies IndependentReviewStatus;
   const failed = {
     id: 'independent-review-9',
     source: 'human-gate',
     verdict: 'failed',
+    loopNumber: 1,
+    crossRunner: true,
     unresolvedCount: 0,
   } satisfies IndependentReviewStatus;
   assert.equal(pendingIndependentReviewContinuation([issues, skipped, failed])?.id, issues.id);

@@ -127,13 +127,27 @@ test('attempt identity wins over inverted completion clocks', () => {
         completedAt: '2026-08-03T16:05:00.000Z',
         verdict: 'issues',
         unresolvedCount: 1,
-        attempts: [{ loopNumber: 1, startedAt: '2026-08-03T16:00:00.000Z' }],
+        attempts: [
+          {
+            loopNumber: 1,
+            startedAt: '2026-08-03T16:00:00.000Z',
+            verdict: 'issues',
+            unresolvedCount: 1,
+          },
+        ],
       },
       {
         completedAt: '2026-08-03T16:04:00.000Z',
         verdict: 'pass',
         unresolvedCount: 0,
-        attempts: [{ loopNumber: 1, startedAt: '2026-08-03T16:03:00.000Z' }],
+        attempts: [
+          {
+            loopNumber: 1,
+            startedAt: '2026-08-03T16:03:00.000Z',
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
       },
     ),
     false,
