@@ -1379,7 +1379,7 @@ function reconstructStepOutputs(run: Run, stepName: string): Record<string, unkn
         (d) =>
           (d.type === 'engine_human_gate' || d.type === 'engine_review_posting') && d.resolvedAt,
       );
-    if (!gateDecision) return null;
+    if (!gateDecision || gateDecision.resolvedAction === 'superseded') return null;
     const waitMs =
       gateDecision.resolvedAt && gateDecision.createdAt
         ? new Date(gateDecision.resolvedAt).getTime() - new Date(gateDecision.createdAt).getTime()

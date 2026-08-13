@@ -12,6 +12,7 @@ import {
   type SlotViewLinkedRunSource,
   slotViewLinkedRunTransition,
 } from './slot-view-linked-run-model.js';
+import { loadSlotViewGitFileContent } from './slot-view-live-effects.js';
 import {
   branchDiffKey,
   parseBranchDiffKey,
@@ -45,10 +46,13 @@ export function applySlotViewLinkedRun(
   }
 
   const nextSnapshot = slotViewPendingReviewSnapshot(run);
+  const nextSnapshotBase = nextSnapshot?.baseSha || '';
+  const nextSnapshotHead = nextSnapshot?.headSha || '';
   const previousSnapshotKey = previousSnapshot
     ? `${previousSnapshot.baseSha}:${previousSnapshot.headSha}`
     : '';
-  const nextSnapshotKey = nextSnapshot ? `${nextSnapshot.baseSha}:${nextSnapshot.headSha}` : '';
+  const nextSnapshotKey =
+    nextSnapshotBase && nextSnapshotHead ? `${nextSnapshotBase}:${nextSnapshotHead}` : '';
 
   view._linkedRun = run;
   view._lastLinkedRunId = run.id;
@@ -56,17 +60,17 @@ export function applySlotViewLinkedRun(
     view._branchDiffGeneration += 1;
     view._liveDiffContents = new Map();
     view._branchDiffFiles = [];
-    view._branchDiffBase = nextSnapshot?.baseSha ?? 'main';
-    view._branchDiffHead = nextSnapshot?.headSha ?? '';
+    view._branchDiffBase = nextSnapshotBase || 'main';
+    view._branchDiffHead = nextSnapshotHead;
     view._branchDiffTotalAdd = 0;
     view._branchDiffTotalDel = 0;
     view._branchDiffError = null;
     const activeBranchDiff = parseBranchDiffKey(view._activeFile);
     const nonBranchFiles = view._openFiles.filter((file) => !file.path.startsWith('branch:'));
-    if (activeBranchDiff && nextSnapshot) {
+    if (activeBranchDiff && nextSnapshotBase && nextSnapshotHead) {
       const canonicalPath = branchDiffKey(
-        nextSnapshot.baseSha,
-        nextSnapshot.headSha,
+        nextSnapshotBase,
+        nextSnapshotHead,
         activeBranchDiff.path,
       );
       const activeTab = view._openFiles.find((file) => file.path === view._activeFile);
@@ -76,11 +80,20 @@ export function applySlotViewLinkedRun(
           path: canonicalPath,
           type: activeTab?.type ?? 'diff',
           pinned: activeTab?.pinned ?? false,
-          diffBase: nextSnapshot.baseSha,
+          diffBase: nextSnapshotBase,
         },
       ];
       view._activeFile = canonicalPath;
-      void view._openFileFromUrl(canonicalPath);
+      if (activeTab?.type === 'file') {
+        void loadSlotViewGitFileContent(
+          view,
+          canonicalPath,
+          activeBranchDiff.path,
+          nextSnapshotHead,
+        );
+      } else {
+        void view._openFileFromUrl(canonicalPath);
+      }
     } else {
       view._openFiles = nonBranchFiles;
       if (activeBranchDiff) view._activeFile = nonBranchFiles.at(-1)?.path ?? '';

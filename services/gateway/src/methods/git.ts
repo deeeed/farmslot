@@ -346,6 +346,9 @@ export async function gitBranchDiff(
   params: GitBranchDiffParams,
   deps: GitExecDeps = {},
 ): Promise<GitBranchDiffResult> {
+  if (params.head && !params.base) {
+    throw new Error('An exact review head requires a base ref');
+  }
   const base = params.base || 'main';
   const baseRef = await resolveRemoteBaseRef(params.slotId, base, deps, {
     refresh: !params.head,

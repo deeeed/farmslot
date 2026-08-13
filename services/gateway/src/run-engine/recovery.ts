@@ -600,6 +600,29 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         continue;
       }
       const runningStepName = run.steps.find((s) => s.status === 'running')?.name;
+      const latestResolvedGateDecision = [...run.decisions]
+        .reverse()
+        .find(
+          (decision) =>
+            (decision.type === 'engine_human_gate' || decision.type === 'engine_review_posting') &&
+            !!decision.resolvedAt,
+        );
+      const supersededGateWithoutReplacement =
+        runningStepName === S.HUMAN_GATE &&
+        latestResolvedGateDecision?.resolvedAction === 'superseded';
+      if (supersededGateWithoutReplacement) {
+        console.log(
+          `[run-engine] run ${run.id.slice(0, 8)} — superseded gate has no replacement, re-entering human gate`,
+        );
+        try {
+          await deps.replayHumanGate(run.id);
+        } catch (err) {
+          console.warn(
+            `[run-engine] run ${run.id.slice(0, 8)} — superseded gate recovery failed: ${(err as Error).message.slice(0, 200)}`,
+          );
+        }
+        continue;
+      }
       if (runningStepName === S.CI_WATCH) {
         console.log(
           `[run-engine] run ${run.id.slice(0, 8)} — blocked at terminal ci-watch step; keeping blocked`,
