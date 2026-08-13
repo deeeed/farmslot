@@ -209,13 +209,26 @@ export function createAgentDeviceUiTransport(
             }),
             node.settle !== false,
           );
-        case 'ui.key_press':
-          return client.command.keyboard({
+        case 'ui.key_press': {
+          const startedAt = Date.now();
+          const result = await client.command.keyboard({
             ...selection,
             session: options.session,
             action: nativeKeyboardAction(node.key),
             responseLevel: 'digest',
           });
+          if (node.settle === false) return result;
+          return {
+            ...(result as Record<string, unknown>),
+            ...(await awaitNativeStability(
+              client,
+              options.session,
+              selection,
+              'ui.key_press',
+              Math.max(1, (positiveNumber(node.timeout_ms) ?? 10_000) - (Date.now() - startedAt)),
+            )),
+          };
+        }
         case 'ui.set_input':
           return sanitizeFillResult(
             await replaceNativeInput({
@@ -355,7 +368,7 @@ async function replaceNativeInput({
     return requireSettledInteraction('ui.set_input', result, node.settle !== false);
   }
   let observed = await nativeInputValue(client, selection, session, testId);
-  if (observed === text) {
+  if (!observed.verifiable || observed.masked || observed.value === text) {
     return requireSettledInteraction('ui.set_input', result, node.settle !== false);
   }
   await client.interactions.press({
@@ -372,18 +385,18 @@ async function replaceNativeInput({
   await commandRunner.execFile(adb, ['-s', serial, 'shell', 'input', 'keyevent', '123'], {
     timeoutMs: 10_000,
   });
-  if (observed.length > 0) {
+  if (observed.value.length > 0) {
     await commandRunner.execFile(
       adb,
-      ['-s', serial, 'shell', 'input', 'keyevent', ...Array.from(observed, () => '67')],
+      ['-s', serial, 'shell', 'input', 'keyevent', ...Array.from(observed.value, () => '67')],
       { timeoutMs: 10_000 },
     );
   }
   result = await fill();
   observed = await nativeInputValue(client, selection, session, testId);
-  if (observed !== text) {
+  if (observed.verifiable && !observed.masked && observed.value !== text) {
     throw new Error(
-      `ui.set_input could not replace the Android field; expected ${Array.from(text).length} characters and observed ${Array.from(observed).length}.`,
+      `ui.set_input could not replace the Android field; expected ${Array.from(text).length} characters and observed ${Array.from(observed.value).length}.`,
     );
   }
   return requireSettledInteraction('ui.set_input', result, node.settle !== false);
@@ -394,7 +407,7 @@ async function nativeInputValue(
   selection: AgentDeviceSelection,
   session: string,
   testId: string,
-): Promise<string> {
+): Promise<{ value: string; verifiable: boolean; masked: boolean }> {
   const snapshot = await client.capture.snapshot({
     ...selection,
     session,
@@ -403,7 +416,16 @@ async function nativeInputValue(
   });
   const target = snapshot.nodes.find((candidate) => candidate.identifier === testId);
   const value = typeof target?.value === 'string' ? target.value : target?.label;
-  return typeof value === 'string' ? value.trim() : '';
+  if (typeof value !== 'string' || value.length === 0) {
+    return { value: '', verifiable: false, masked: false };
+  }
+  return {
+    value,
+    verifiable: true,
+    masked: Array.from(value).every(
+      (character) => character === '\u2022' || character === '*' || character === '\u25cf',
+    ),
+  };
 }
 
 async function executeNativeGesture(
