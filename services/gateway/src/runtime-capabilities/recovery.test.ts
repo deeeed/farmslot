@@ -129,6 +129,84 @@ test('restart rejects stale provenance and ambiguous exclusive ownership', async
   assert(ambiguousStatus.events.some((event) => event.kind === 'recovery-rejected'));
 });
 
+test('restart adopts an exclusive holder without counting its queued sibling as an owner', async (t) => {
+  const store = await seededStore(t);
+  const snapshot = store.snapshot();
+  snapshot.leases.push({
+    ...structuredClone(snapshot.leases[0]!),
+    id: 'lease-browser-queued',
+    state: 'queued',
+    owner: { runId: 'run-b' },
+    health: { state: 'unknown', checkedAt: snapshot.leases[0]!.updatedAt },
+  });
+  await store.replace(snapshot);
+  const registry = recoveringRegistry(store, [browser()], async (_slot, action) => ({
+    ok: action.kind === 'slot-action' && action.actionId === 'browser.health',
+  }));
+
+  await reconcileRuntimeCapabilityLeases(registry);
+
+  const status = await registry.status({ slotId: 'slot-a' });
+  assert.deepEqual(
+    status.leases.map((lease) => lease.state),
+    ['acquired', 'queued'],
+  );
+  assert(status.events.some((event) => event.kind === 'recovery-adopted'));
+  assert.equal(
+    status.events.some((event) => event.kind === 'recovery-rejected'),
+    false,
+  );
+});
+
+test('restart resumes an interrupted release instead of adopting it as acquired', async (t) => {
+  const store = await seededStore(t);
+  const snapshot = store.snapshot();
+  snapshot.leases[0]!.state = 'releasing';
+  await store.replace(snapshot);
+  const actions: string[] = [];
+  const registry = recoveringRegistry(store, [browser()], async (_slot, action) => {
+    if (action.kind === 'slot-action') actions.push(action.actionId);
+    return { ok: true };
+  });
+
+  await reconcileRuntimeCapabilityLeases(registry);
+
+  const status = await registry.status({ slotId: 'slot-a' });
+  assert.deepEqual(actions, ['browser.release']);
+  assert.equal(status.leases[0]?.state, 'released');
+  assert.equal(status.leases[0]?.referenceCount, 0);
+  assert(status.events.some((event) => event.kind === 'released'));
+  assert.equal(
+    status.events.some((event) => event.kind === 'recovery-adopted'),
+    false,
+  );
+});
+
+test('restart preserves an interrupted release cleanup failure as an error lease', async (t) => {
+  const store = await seededStore(t);
+  const snapshot = store.snapshot();
+  snapshot.leases[0]!.state = 'releasing';
+  await store.replace(snapshot);
+  const registry = recoveringRegistry(store, [browser()], async (_slot, action) => ({
+    ok: false,
+    detail:
+      action.kind === 'slot-action' && action.actionId === 'browser.release'
+        ? 'release still refused'
+        : 'unexpected action',
+  }));
+
+  await reconcileRuntimeCapabilityLeases(registry);
+
+  const status = await registry.status({ slotId: 'slot-a' });
+  assert.equal(status.leases[0]?.state, 'error');
+  assert.equal(status.leases[0]?.cleanupFailure, 'release still refused');
+  assert(status.events.some((event) => event.kind === 'cleanup-failed'));
+  assert.equal(
+    status.events.some((event) => event.kind === 'released'),
+    false,
+  );
+});
+
 test('restart records cleanup failure without claiming the lease was released', async (t) => {
   const store = await seededStore(t);
   const registry = recoveringRegistry(store, [browser()], async (_slot, action) => {

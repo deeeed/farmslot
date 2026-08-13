@@ -777,16 +777,34 @@ export class RuntimeCapabilityRegistry {
   }
 
   async release(params: RuntimeCapabilityReleaseParams): Promise<RuntimeCapabilityReleaseResult> {
+    return this.releaseSelected(
+      params.slotId,
+      (lease) =>
+        lease.owner.runId === params.ownerRunId &&
+        (!params.capabilityId || lease.capabilityId === params.capabilityId) &&
+        (!params.leaseId || lease.id === params.leaseId),
+      params.force === true,
+    );
+  }
+
+  async releaseFamily(slotId: string, familyId: string): Promise<RuntimeCapabilityReleaseResult> {
+    return this.releaseSelected(slotId, (lease) => lease.owner.familyId === familyId, false);
+  }
+
+  async releaseSlot(slotId: string): Promise<RuntimeCapabilityReleaseResult> {
+    return this.releaseSelected(slotId, () => true, false);
+  }
+
+  private async releaseSelected(
+    slotId: string,
+    select: (lease: RuntimeCapabilityLease) => boolean,
+    force: boolean,
+  ): Promise<RuntimeCapabilityReleaseResult> {
     return this.mutate(async () => {
       const snapshot = this.options.store.snapshot();
-      const catalog = await this.options.catalogForSlot(params.slotId);
+      const catalog = await this.options.catalogForSlot(slotId);
       const roots = snapshot.leases.filter(
-        (lease) =>
-          lease.slotId === params.slotId &&
-          lease.owner.runId === params.ownerRunId &&
-          blocksAcquisition(lease) &&
-          (!params.capabilityId || lease.capabilityId === params.capabilityId) &&
-          (!params.leaseId || lease.id === params.leaseId),
+        (lease) => lease.slotId === slotId && blocksAcquisition(lease) && select(lease),
       );
       const order = this.releaseOrder(snapshot, roots);
       const released: RuntimeCapabilityLease[] = [];
@@ -818,7 +836,7 @@ export class RuntimeCapabilityRegistry {
           });
           continue;
         }
-        if (entry.provenance.digest !== lease.provenance.digest && !params.force) {
+        if (entry.provenance.digest !== lease.provenance.digest && !force) {
           lease.state = 'error';
           lease.cleanupFailure = 'Provider provenance changed; cleanup refused';
           lease.updatedAt = this.timestamp();
@@ -874,12 +892,12 @@ export class RuntimeCapabilityRegistry {
           previousState !== 'error' &&
           previousState !== 'queued' &&
           entry.keepWarmMs &&
-          !params.force
+          !force
         ) {
           lease.keepWarmUntil = new Date(this.now().getTime() + entry.keepWarmMs).toISOString();
         } else if (otherHolders.length === 0 && previousState !== 'queued') {
           releaseActionRan = true;
-          actionResult = await this.runAction(params.slotId, entry.actions.release);
+          actionResult = await this.runAction(slotId, entry.actions.release);
         }
         if (!actionResult.ok) {
           lease.state = 'error';
@@ -1098,14 +1116,25 @@ export class RuntimeCapabilityRegistry {
           }
           continue;
         }
+        const initialProviderHolderCounts = new Map<string, number>();
+        for (const candidate of leases) {
+          if (!holdsProvider(candidate)) continue;
+          initialProviderHolderCounts.set(
+            candidate.capabilityId,
+            (initialProviderHolderCounts.get(candidate.capabilityId) ?? 0) + 1,
+          );
+        }
         for (const lease of leases) {
           const entry = catalog.capabilities.find(
             (capability) => capability.id === lease.capabilityId,
           );
-          const sameCapability = leases.filter(
-            (candidate) => candidate.capabilityId === lease.capabilityId,
+          const sameCapabilityHolders = leases.filter(
+            (candidate) =>
+              candidate.capabilityId === lease.capabilityId && holdsProvider(candidate),
           );
-          const ambiguous = entry?.sharePolicy === 'exclusive' && sameCapability.length > 1;
+          const ambiguous =
+            entry?.sharePolicy === 'exclusive' &&
+            (initialProviderHolderCounts.get(lease.capabilityId) ?? 0) > 1;
           if (lease.state === 'queued') {
             this.recordEvent(snapshot, {
               kind: 'queued',
@@ -1131,6 +1160,43 @@ export class RuntimeCapabilityRegistry {
               owner: lease.owner,
               detail: lease.cleanupFailure,
             });
+            continue;
+          }
+          if (lease.state === 'releasing') {
+            const otherHolders = sameCapabilityHolders.filter(
+              (candidate) => candidate.id !== lease.id,
+            );
+            const cleanup =
+              otherHolders.length === 0
+                ? await this.runAction(slotId, entry.actions.release)
+                : { ok: true };
+            lease.updatedAt = this.timestamp();
+            lease.health = { state: 'unknown', checkedAt: lease.updatedAt };
+            if (cleanup.ok) {
+              lease.state = 'released';
+              lease.releasedAt = lease.updatedAt;
+              lease.referenceCount = 0;
+              lease.cleanupFailure = undefined;
+              this.recordEvent(snapshot, {
+                kind: 'released',
+                slotId,
+                capabilityId: lease.capabilityId,
+                leaseId: lease.id,
+                owner: lease.owner,
+                detail: 'interrupted release resumed after restart',
+              });
+            } else {
+              lease.state = 'error';
+              lease.cleanupFailure = cleanup.detail ?? 'restart release cleanup failed';
+              this.recordEvent(snapshot, {
+                kind: 'cleanup-failed',
+                slotId,
+                capabilityId: lease.capabilityId,
+                leaseId: lease.id,
+                owner: lease.owner,
+                detail: lease.cleanupFailure,
+              });
+            }
             continue;
           }
           const health = await this.runAction(slotId, entry.actions.health);

@@ -244,9 +244,15 @@ export async function runtimeCapabilityStatus(
   return registry.status(params);
 }
 
-export async function releaseRuntimeCapabilitiesForRun(
+export async function releaseRuntimeCapabilitiesForFamily(
   slotId: string,
-  runId: string,
+  familyId: string,
 ): Promise<RuntimeCapabilityReleaseResult> {
-  return registry.release({ slotId, ownerRunId: runId });
+  return registry.releaseFamily(slotId, familyId);
+}
+
+export async function releaseRuntimeCapabilitiesForSlot(
+  slotId: string,
+): Promise<RuntimeCapabilityReleaseResult> {
+  return registry.releaseSlot(slotId);
 }

@@ -13,12 +13,7 @@ import {
 
 import { gateway } from '../../gateway-client.js';
 
-const ACTIVE_LEASE_STATES = new Set<RuntimeCapabilityLease['state']>([
-  'queued',
-  'acquiring',
-  'acquired',
-  'releasing',
-]);
+import { projectRuntimeCapabilityLeases } from './runtime-capabilities-panel-model.js';
 
 @customElement('runtime-capabilities-panel')
 export class RuntimeCapabilitiesPanel extends LitElement {
@@ -122,12 +117,10 @@ export class RuntimeCapabilitiesPanel extends LitElement {
   }
 
   private activeLease(entry: RuntimeCapabilityCatalogEntry): RuntimeCapabilityLease | undefined {
-    const leases = this.leasesFor(entry);
-    for (let index = leases.length - 1; index >= 0; index -= 1) {
-      const lease = leases[index];
-      if (lease && ACTIVE_LEASE_STATES.has(lease.state)) return lease;
-    }
-    return undefined;
+    const { providerHolder, queuedReservations } = projectRuntimeCapabilityLeases(
+      this.leasesFor(entry),
+    );
+    return providerHolder ?? queuedReservations.at(-1);
   }
 
   private latestLease(entry: RuntimeCapabilityCatalogEntry): RuntimeCapabilityLease | undefined {
@@ -179,7 +172,10 @@ export class RuntimeCapabilitiesPanel extends LitElement {
   }
 
   private renderCapability(entry: RuntimeCapabilityCatalogEntry) {
-    const active = this.activeLease(entry);
+    const { providerHolder, queuedReservations } = projectRuntimeCapabilityLeases(
+      this.leasesFor(entry),
+    );
+    const active = providerHolder ?? queuedReservations.at(-1);
     const latest = this.latestLease(entry);
     const actionable = this.actionableLease(entry);
     const planned = this.planned(entry);
@@ -197,16 +193,19 @@ export class RuntimeCapabilitiesPanel extends LitElement {
               ? 'Unavailable'
               : 'Available';
     const owner = actionable?.owner.runId;
-    const displayedLease = active ?? (latest?.state === 'error' ? latest : undefined);
+    const displayedLease = providerHolder ?? (latest?.state === 'error' ? latest : undefined);
     const health =
       displayedLease?.health.state === 'healthy'
         ? 'Healthy'
         : titleCase(displayedLease?.health.state);
+    const queuedOwners = queuedReservations.map((lease) => lease.owner.runId).join(', ');
     return html`
       <article
         data-capability-id=${entry.id}
         data-capability-state=${displayState.toLowerCase()}
         data-capability-owner=${owner ?? 'none'}
+        data-provider-holder-count=${providerHolder ? '1' : '0'}
+        data-queued-lease-count=${String(queuedReservations.length)}
       >
         <div class="summary">
           <div>
@@ -216,14 +215,23 @@ export class RuntimeCapabilitiesPanel extends LitElement {
           <div class="badges">
             ${planned ? html`<span class="badge planned">Planned</span>` : nothing}
             <span class="badge state">${displayState}</span>
+            ${queuedReservations.length > 0
+              ? html`<span class="badge queued">${queuedReservations.length} queued</span>`
+              : nothing}
             <span class="badge cost">${titleCase(entry.cost.class)} cost</span>
           </div>
         </div>
         <div class="details">
-          <span><b>Owner</b> ${owner ?? 'No active owner'}</span>
+          <span
+            ><b>${providerHolder ? 'Provider owner' : 'Owner'}</b> ${owner ??
+            'No active owner'}</span
+          >
           <span><b>Health</b> ${health || 'Not acquired'}</span>
           <span><b>Sharing</b> ${titleCase(entry.sharePolicy)}</span>
           <span><b>Provider</b> v${entry.version} · ${entry.provenance.digest.slice(0, 8)}</span>
+          ${queuedReservations.length > 0
+            ? html`<span class="queue"><b>Queued reservations</b> ${queuedOwners}</span>`
+            : nothing}
         </div>
         <div class="effects">
           <b>Release effects</b>
@@ -353,6 +361,10 @@ export class RuntimeCapabilitiesPanel extends LitElement {
       background: #4b2d16;
       color: #ffc17b;
     }
+    .queued {
+      background: #4c3b12;
+      color: #ffe08a;
+    }
     .details {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -364,6 +376,9 @@ export class RuntimeCapabilitiesPanel extends LitElement {
     .details b,
     .effects b {
       color: var(--color-text-primary, #e7e9ee);
+    }
+    .queue {
+      grid-column: 1 / -1;
     }
     .effects {
       margin-top: 8px;

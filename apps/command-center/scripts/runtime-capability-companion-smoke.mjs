@@ -14,6 +14,11 @@ const reportPath = path.resolve(
 );
 const peerOwnerRunId = `${ownerRunId}-peer`;
 const rpc = await connectGateway(gatewayUrl);
+let primaryLeaseId;
+let peerLeaseId;
+let runFailed = false;
+let runFailure;
+const cleanupFailures = [];
 
 try {
   const [catalog, peerCatalog] = await Promise.all([
@@ -39,6 +44,7 @@ try {
     proofRequirement: requirement('Peer-slot isolation fixture'),
   });
   if (!peerAcquire.ok) throw new Error(`peer acquire failed: ${JSON.stringify(peerAcquire)}`);
+  peerLeaseId = peerAcquire.lease.id;
 
   const acquire = await rpc.call('runtime.capability.acquire', {
     slotId,
@@ -47,6 +53,7 @@ try {
     proofRequirement: requirement('On-demand Companion lifecycle fixture'),
   });
   if (!acquire.ok) throw new Error(`primary acquire failed: ${JSON.stringify(acquire)}`);
+  primaryLeaseId = acquire.lease.id;
   if (!acquire.dependencyLeases.some((lease) => lease.capabilityId === 'companion-metro')) {
     throw new Error('primary acquire did not return the Metro dependency lease');
   }
@@ -87,8 +94,47 @@ try {
   await mkdir(path.dirname(reportPath), { recursive: true });
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
   console.log('COMPANION_CAPABILITY_LIFECYCLE_PASS');
-} finally {
-  rpc.close();
+} catch (error) {
+  runFailed = true;
+  runFailure = error;
+}
+for (const cleanup of [
+  { slotId, ownerRunId, leaseId: primaryLeaseId },
+  { slotId: peerSlotId, ownerRunId: peerOwnerRunId, leaseId: peerLeaseId },
+]) {
+  if (cleanup.leaseId) {
+    try {
+      const result = await rpc.call('runtime.capability.release', {
+        ...cleanup,
+        capabilityId,
+        force: true,
+      });
+      if (!result.ok) {
+        cleanupFailures.push(
+          new Error(
+            result.failures
+              .map((failure) => `${failure.capabilityId}: ${failure.reason}`)
+              .join('; '),
+          ),
+        );
+      }
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+  }
+}
+rpc.close();
+if (runFailed) {
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(
+      [runFailure, ...cleanupFailures],
+      'Companion capability fixture and cleanup failed',
+    );
+  }
+  throw runFailure;
+}
+if (cleanupFailures.length > 0) {
+  throw new AggregateError(cleanupFailures, 'Companion capability fixture cleanup failed');
 }
 
 function parseArgs(values) {

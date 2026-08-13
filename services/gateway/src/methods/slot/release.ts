@@ -51,7 +51,7 @@ import { runnerPromptSubmitKey } from '../../runners/registry.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
-import { releaseRuntimeCapabilitiesForRun } from '../runtime-capabilities.js';
+import { releaseRuntimeCapabilitiesForSlot } from '../runtime-capabilities.js';
 import { terminalAttachmentCleanup } from '../terminal-attachment.js';
 
 import { slotPrepare } from './prepare.js';
@@ -228,31 +228,20 @@ async function slotReleaseImpl(
   // acquired after core prepare. Release them before agent/session teardown so
   // provider actions still have their normal slot context. A provider failure
   // remains durable as an error lease and is reported without claiming release.
-  const capabilityOwner =
-    params.expectedRunId ??
-    ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ??
-    undefined;
-  if (capabilityOwner) {
-    try {
-      const capabilityRelease = await releaseRuntimeCapabilitiesForRun(
-        params.slotId,
-        capabilityOwner,
-      );
-      step(
-        'capabilities',
-        capabilityRelease.ok
-          ? `Released ${capabilityRelease.released.length} runtime capability lease(s)`
-          : `Runtime capability cleanup recorded ${capabilityRelease.failures.length} failure(s)`,
-      );
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      step('capabilities', `Runtime capability cleanup deferred: ${detail}`);
-      console.warn(
-        `[release] runtime capability cleanup failed for ${params.slotId}; continuing teardown: ${detail}`,
-      );
-    }
-  } else {
-    step('capabilities', 'No run-owned runtime capability leases');
+  try {
+    const capabilityRelease = await releaseRuntimeCapabilitiesForSlot(params.slotId);
+    step(
+      'capabilities',
+      capabilityRelease.ok
+        ? `Released ${capabilityRelease.released.length} runtime capability lease(s)`
+        : `Runtime capability cleanup recorded ${capabilityRelease.failures.length} failure(s)`,
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    step('capabilities', `Runtime capability cleanup deferred: ${detail}`);
+    console.warn(
+      `[release] runtime capability cleanup failed for ${params.slotId}; continuing teardown: ${detail}`,
+    );
   }
 
   // Stop TASK.md watching — only after the CAS proves this teardown owns the

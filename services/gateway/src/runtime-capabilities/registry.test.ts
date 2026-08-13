@@ -81,11 +81,17 @@ async function fixture(
   return { registry, actions };
 }
 
-function acquire(registry: RuntimeCapabilityRegistry, capabilityId: string, ownerRunId: string) {
+function acquire(
+  registry: RuntimeCapabilityRegistry,
+  capabilityId: string,
+  ownerRunId: string,
+  ownerFamilyId?: string,
+) {
   return registry.acquire({
     slotId: SLOT,
     capabilityId,
     ownerRunId,
+    ...(ownerFamilyId ? { ownerFamilyId } : {}),
     proofRequirement: {
       capabilityId,
       reason: `prove ${capabilityId}`,
@@ -210,6 +216,39 @@ test('shared providers reference-count holders and release only after the final 
   assert.equal(retained.leases.find((lease) => lease.id === second.lease.id)?.referenceCount, 1);
 
   await registry.release({ slotId: SLOT, ownerRunId: 'run-b', leaseId: second.lease.id });
+  assert.equal(actions.filter((action) => action === 'gateway.release').length, 1);
+});
+
+test('family cleanup releases every sibling lease while slot cleanup includes orphan owners', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('gateway', 'shared')]);
+  assert.equal((await acquire(registry, 'gateway', 'run-a', 'family-a')).ok, true);
+  assert.equal((await acquire(registry, 'gateway', 'run-b', 'family-a')).ok, true);
+  assert.equal((await acquire(registry, 'gateway', 'run-c', 'family-b')).ok, true);
+  assert.equal((await acquire(registry, 'gateway', 'orphan-run')).ok, true);
+  actions.length = 0;
+
+  const familyRelease = await registry.releaseFamily(SLOT, 'family-a');
+  assert.equal(familyRelease.ok, true);
+  assert.deepEqual(
+    familyRelease.released.map((lease) => lease.owner.runId),
+    ['run-a', 'run-b'],
+  );
+  assert.equal(actions.includes('gateway.release'), false);
+
+  const activeAfterFamily = (await registry.status({ slotId: SLOT })).leases.filter(
+    (lease) => lease.state === 'acquired',
+  );
+  assert.deepEqual(
+    activeAfterFamily.map((lease) => lease.owner.runId),
+    ['run-c', 'orphan-run'],
+  );
+
+  const slotRelease = await registry.releaseSlot(SLOT);
+  assert.equal(slotRelease.ok, true);
+  assert.deepEqual(
+    slotRelease.released.map((lease) => lease.owner.runId),
+    ['run-c', 'orphan-run'],
+  );
   assert.equal(actions.filter((action) => action === 'gateway.release').length, 1);
 });
 
