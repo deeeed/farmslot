@@ -6,6 +6,7 @@ import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
 import { committedReviewFileDiffRequest } from './slot-view-branch-model.js';
+import { loadSlotViewGitFileContent } from './slot-view-live-effects.js';
 import {
   branchDiffKey,
   parseBranchDiffKey,
@@ -195,8 +196,10 @@ export async function openSlotViewFileFromUrl(view: SlotView, file: string): Pro
             : committedReviewFileDiffRequest(view.slotId, path, base, reviewSnapshot),
         );
         if (!result.diff.trim()) {
-          await view._handleFileSelect(path);
-          view._pinFile(path);
+          const loaded = await loadSlotViewGitFileContent(view, cacheKey, path, head);
+          if (!loaded) return;
+          view._openFile(cacheKey, 'file');
+          view._pinFile(cacheKey);
           return;
         }
         const next = new Map(view._liveDiffContents);
