@@ -75,6 +75,7 @@ try {
   }));
   process.exit(1);
 }
+
 `;
 
   const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
@@ -112,6 +113,34 @@ try {
     exitCode: result.status,
     stderr: result.stderr?.trim() || null,
   };
+}
+
+/** Read the production runner-native turn state for an exact tmux pane. */
+export function runGatewayTurnState({ repo, target, runner, timeoutMs = 30_000 }) {
+  const snippet = `
+import os from 'node:os';
+import { readRunnerTurnState } from './services/gateway/src/runners/registry.ts';
+const vars = {
+  slotId: 'runner-validate-local', machine: os.hostname(), platform: 'local', host: 'localhost',
+  sshUser: os.userInfo().username, osType: process.platform === 'darwin' ? 'darwin' : 'linux',
+  claudePath: '', codexPath: '', opencodePath: '', cursorPath: '', grokPath: '',
+  dispatchCmd: '', recycleCmd: '', repo: ${JSON.stringify(repo)}, session: ${JSON.stringify(target)},
+  slotMode: 'dispatch', slotEnabled: true, sshTarget: \`\${os.userInfo().username}@localhost\`,
+  remoteRepo: ${JSON.stringify(repo)}, projectName: '', resourceVars: {},
+};
+const state = await readRunnerTurnState(vars, ${JSON.stringify(target)}, ${JSON.stringify(runner)});
+process.stdout.write(JSON.stringify({ state }) + '\\n');
+`;
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: timeoutMs,
+  });
+  const jsonLine = (result.stdout?.trim() ?? '')
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .pop();
+  return jsonLine ? JSON.parse(jsonLine).state : null;
 }
 
 /** Exercise the production session-attribution contract for one live runner pane. */

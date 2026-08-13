@@ -337,6 +337,11 @@ export async function terminalReinit(
 
 export async function terminalSend(params: TerminalSendParams): Promise<void> {
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
+  if ((params.enter ?? true) && params.bareSession !== true && !resolved.runner) {
+    throw new Error(
+      `Cannot send semantic input to ${resolved.target}: the owning runner context is unavailable`,
+    );
+  }
   await assertInteractiveTargetReady(
     params.slotId,
     resolved.target,

@@ -13,6 +13,7 @@ import {
   listSessionCandidates,
   modelFromTranscript,
   modelsMatch,
+  resolveSessionBinding,
   seedStaleSession,
   STALE_MODELS,
   waitForSessionBinding,
@@ -55,6 +56,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     actualModel: null,
     modelMatch: false,
     staleWouldMismatch: false,
+    stalePaneRejected: null,
     pass: false,
     error: null,
     paneTail: null,
@@ -97,6 +99,38 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     );
     if (!binding) throw new Error('no live session binding resolved');
 
+    // Negative control for the real pane-scoped contract: replace the live
+    // pane snapshot briefly with an identity from a prior process generation.
+    // Production must fail closed rather than borrowing the stale transcript.
+    if (hookDriven && report.stalePath) {
+      const paneStatePath = path.join(
+        obsDirFor(repo, runtimeDir),
+        'panes',
+        `${encodeURIComponent(paneId)}.json`,
+      );
+      const livePaneState = fs.readFileSync(paneStatePath, 'utf8');
+      fs.writeFileSync(
+        paneStatePath,
+        JSON.stringify({
+          observedAt: dispatchMs - 120_000,
+          session_id: 'runner-stale',
+          transcript_path: report.stalePath,
+          tmuxPane: paneId,
+          slotId,
+        }),
+      );
+      const staleBinding = resolveSessionBinding({
+        runner,
+        repo,
+        beforePaths,
+        sinceMs: dispatchMs,
+        paneId,
+        slotId,
+      });
+      report.stalePaneRejected = staleBinding === null;
+      fs.writeFileSync(paneStatePath, livePaneState);
+    }
+
     const completion = waitForRunnerCompletion({
       paneId,
       logPath,
@@ -132,6 +166,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       hookAligned &&
       report.modelMatch &&
       report.staleWouldMismatch &&
+      (!hookDriven || report.stalePaneRejected === true) &&
       sawCompletion;
   } catch (error) {
     report.error = error?.message || String(error);

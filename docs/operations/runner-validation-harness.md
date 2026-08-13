@@ -123,19 +123,18 @@ Evidence: `evidence/runner-validate-<host>-gateway-review-recovery-terminal-cont
 
 Gateway binding priority (`session-path-resolution.ts`, `session-process.ts`):
 
-| #   | Signal                                                                                                         | Runners                    |
-| --- | -------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| 1   | Hook `SessionStart` → `transcript_path` + `session_id`, filter `tmuxPane` + `slotId` + `observedAt ≥ dispatch` | claude, codex              |
-| 2   | Set diff `afterPaths − beforePaths`                                                                            | claude, codex, grok        |
-| 3   | mtime ≥ dispatch (`sinceMs`, 60s slack) — filter only, never newest-alone                                      | all persisting             |
-| 4   | `unavailable`                                                                                                  | cursor, scripted, opencode |
+| #   | Signal                                                                                                    | Runners                    |
+| --- | --------------------------------------------------------------------------------------------------------- | -------------------------- |
+| 1   | Pane-owned native binding or hook `SessionStart`, filtered by pane process generation + dispatch boundary | claude, codex, grok        |
+| 2   | Filesystem set diff / mtime fallback only when no pane target is supplied                                 | persisting, unscoped calls |
+| 4   | `unavailable`                                                                                             | cursor, scripted, opencode |
 
-| Runner | Persists session | Path source                             | `session-attribution-smoke` | `token-usage-smoke` |
-| ------ | ---------------- | --------------------------------------- | --------------------------- | ------------------- |
-| claude | yes              | hook `transcript_path`                  | required (E2E)              | required (E2E)      |
-| codex  | yes              | hook or slot `CODEX_HOME/.../*.jsonl`   | required (E2E)              | required (E2E)      |
-| grok   | yes              | `~/.grok/sessions/<realpath-repo>/` dir | required (E2E)              | required (E2E)      |
-| cursor | no               | —                                       | skip                        | skip                |
+| Runner | Persists session | Path source                                     | `session-attribution-smoke` | `token-usage-smoke` |
+| ------ | ---------------- | ----------------------------------------------- | --------------------------- | ------------------- |
+| claude | yes              | hook `transcript_path`                          | required (E2E)              | required (E2E)      |
+| codex  | yes              | pane hook; unscoped slot `CODEX_HOME` fallback  | required (E2E)              | required (E2E)      |
+| grok   | yes              | pane-native `~/.grok/sessions/<realpath-repo>/` | required (E2E)              | required (E2E)      |
+| cursor | no               | —                                               | skip                        | skip                |
 
 ### `session-attribution-smoke` pass criteria
 
@@ -144,6 +143,7 @@ Gateway binding priority (`session-path-resolution.ts`, `session-process.ts`):
 3. **Event-driven:** hook `SessionStart.transcript_path` === resolved path; `tmuxPane` === pane id.
 4. **`modelsMatch(dispatchedModel, modelFromTranscript(...))`** — e.g. dispatch `opus`, transcript `claude-opus-*`.
 5. Stale seed would mismatch dispatched model.
+6. A stale identity written into the live pane snapshot is rejected by production binding.
 
 ### `token-usage-smoke` pass criteria
 

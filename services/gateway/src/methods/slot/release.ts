@@ -7,7 +7,9 @@ import {
   type AgentRole,
   agentRoleWindow,
   DEFAULT_BRANCH,
+  type FlowType,
   isReviewerWindowName,
+  primaryRoleForFlow,
   SLOT_DESTRUCTIVE_OPS,
   type SlotReleaseParams,
 } from '@farmslot/protocol';
@@ -257,13 +259,14 @@ async function slotReleaseImpl(
   // (or terminal-failure / cancel). preserveAgents is for partial release call sites only.
   if (!preserveAgents) {
     const runner = (await readSlotField(params.slotId, 'runner')) as string | null;
+    const flowType = (await readSlotField(params.slotId, 'current_flow_type')) as FlowType | null;
     // Close the passive log reader first. If it were the only non-agent
     // window, killing role windows first would leave it as tmux's last window;
     // closing it afterward would destroy the slot session.
     await closeDevServerLogTailWindow(vars);
     step('agent', 'Killing agent...');
+    await killAgentInSession(vars, runner ?? undefined, primaryRoleForFlow(flowType));
     await killAllAgentWindows(vars);
-    await killAgentInSession(vars, runner ?? undefined);
     step('agent', 'Agent killed');
     // The staged terminal attachments belong to the session that just died. Delete them
     // here rather than waiting for the bounded stale sweep so the slot goes back to idle
@@ -558,11 +561,12 @@ async function slotReleaseImpl(
 export async function killSlotAgents(slotId: string): Promise<void> {
   const vars = await loadSlotVars(slotId);
   const runner = (await readSlotField(slotId, 'runner')) as string | null;
+  const flowType = (await readSlotField(slotId, 'current_flow_type')) as FlowType | null;
   // Preserve the replacement-window invariant in killAllAgentWindows: remove
   // the passive tail before it counts as the session's final non-agent window.
   await closeDevServerLogTailWindow(vars);
+  await killAgentInSession(vars, runner ?? undefined, primaryRoleForFlow(flowType));
   await killAllAgentWindows(vars);
-  await killAgentInSession(vars, runner ?? undefined);
 }
 
 // ─── slotRecycle — convenience wrapper ───

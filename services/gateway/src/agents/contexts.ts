@@ -214,11 +214,14 @@ export async function resolveAgentTarget(
       );
     }
     const role = selector.role;
+    const run = selector.runId ? getRun(selector.runId) : await findActiveRunForSlot(slotId);
+    const context = run ? selectAgentContext(run, selector) : null;
     return {
       target,
       session: targetSession,
       role,
       contextId: selector.contextId ?? (role ? contextIdFor(role) : undefined),
+      ...(context?.runner ? { runner: context.runner } : {}),
     };
   }
 

@@ -314,6 +314,7 @@ PY`;
 async function tryHookSessionBinding(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
+  beforePaths: readonly string[],
   options: {
     sinceMs?: number;
     observedNotBeforeMs?: number;
@@ -333,9 +334,10 @@ async function tryHookSessionBinding(
     // A named pane is the authority for this binding. If its live process
     // start cannot be established, fail closed instead of accepting a stale
     // native or hook snapshot from a prior process in the same tmux pane.
-    if (paneStartedAt === null) return null;
+    const isNewSessionPath = (sessionPath: string) => !beforePaths.includes(sessionPath);
     const isCurrentPaneProcess = (observedAt: number | null | undefined) =>
-      observedAt !== null && observedAt !== undefined && observedAt >= paneStartedAt;
+      paneStartedAt === null ||
+      (observedAt !== null && observedAt !== undefined && observedAt >= paneStartedAt);
     const observedBoundary =
       options.observedNotBeforeMs ??
       (options.sinceMs === undefined
@@ -365,6 +367,7 @@ async function tryHookSessionBinding(
       nativeBinding &&
       isCurrentPaneProcess(nativeBinding.observedAt) &&
       isCurrentDispatch(nativeBinding.observedAt) &&
+      (paneStartedAt !== null || isNewSessionPath(nativeBinding.sessionPath)) &&
       isSuccessorSession(nativeBinding.sessionId, nativeBinding.sessionPath)
     ) {
       const mtimeMs = await statSessionPathMtimeMs(vars, nativeBinding.sessionPath);
@@ -388,6 +391,7 @@ async function tryHookSessionBinding(
       isCurrentPaneProcess(observedAt) &&
       isCurrentDispatch(observedAt) &&
       isCurrentSlot &&
+      (paneStartedAt !== null || isNewSessionPath(transcriptPath)) &&
       isSuccessorSession(sessionId, transcriptPath)
     ) {
       const mtimeMs = await statSessionPathMtimeMs(vars, transcriptPath);
@@ -476,7 +480,7 @@ export async function resolveRunnerSessionBinding(
   } = {},
 ): Promise<RunnerSessionBinding | null> {
   if (!runnerPersistsSessionFiles(runner)) return null;
-  const hookBinding = await tryHookSessionBinding(vars, runner, options);
+  const hookBinding = await tryHookSessionBinding(vars, runner, beforePaths, options);
   if (hookBinding) return hookBinding;
   // A live pane is the authoritative owner for an exact retained session.
   // Reviewers can coexist with other same-runner processes in one checkout,
@@ -515,14 +519,15 @@ export async function captureRunnerSessionMetadata(
   if (!runnerPersistsSessionFiles(runner)) {
     return { runnerSessionPath: null, runnerSessionId: null };
   }
-  const paneStartedAtMs = options.paneId
-    ? await readPaneProcessStartedAtMs(vars, options.paneId, runner)
-    : undefined;
-  if (options.paneId && paneStartedAtMs === null) {
-    return { runnerSessionPath: null, runnerSessionId: null };
-  }
   for (let i = 0; i < RUNNER_SESSION_CAPTURE_MAX_POLLS; i++) {
     await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_CAPTURE_POLL_MS));
+    // ps(1) reports elapsed time at one-second precision. Re-probe on every
+    // capture attempt so a legitimate SessionStart emitted during the first
+    // partial second becomes eligible when the elapsed counter advances.
+    const paneStartedAtMs = options.paneId
+      ? await readPaneProcessStartedAtMs(vars, options.paneId, runner)
+      : undefined;
+    if (options.paneId && paneStartedAtMs === null) continue;
     const binding = await resolveRunnerSessionBinding(vars, runner, beforePaths, {
       sinceMs: options.sinceMs,
       observedNotBeforeMs: options.observedNotBeforeMs,

@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { DEFAULT_PROMPT, PROMPT_MARKER } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
-import { runGatewayPostLaunchPrompt } from '../lib/gateway-post-launch.mjs';
+import { runGatewayPostLaunchPrompt, runGatewayTurnState } from '../lib/gateway-post-launch.mjs';
 import { readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { capturePane, ensureShellSession, killSession, sendShellScript } from '../lib/tmux.mjs';
@@ -95,11 +95,14 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     } else {
       const deadline = Date.now() + 30_000;
       while (Date.now() < deadline) {
-        pane = capturePane(paneId, 80);
-        if (pane.split(PROMPT_MARKER).length - 1 >= 2) break;
+        const state = runGatewayTurnState({ repo, target: paneId, runner });
+        if (state?.value === 'idle' && state?.source === 'signal') {
+          report.responseCompleted = true;
+          break;
+        }
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
-      report.responseCompleted = pane.split(PROMPT_MARKER).length - 1 >= 2;
+      pane = capturePane(paneId, 80);
     }
     report.paneTail = pane.split('\n').slice(-25).join('\n');
     report.pass = report.promptDelivered && report.responseCompleted;

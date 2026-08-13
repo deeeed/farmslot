@@ -4,8 +4,9 @@ import path from 'node:path';
 
 import { DEFAULT_PROMPT, PROMPT_MARKER, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
+import { runGatewayPostLaunchPrompt, runGatewayTurnState } from '../lib/gateway-post-launch.mjs';
 import { capturePane, ensureShellSession, killSession, sendShellScript } from '../lib/tmux.mjs';
-import { resolveLaunchBlockers, sendTmuxLine } from '../lib/tmux-input.mjs';
+import { resolveLaunchBlockers } from '../lib/tmux-input.mjs';
 
 export const SCENARIO_ID = 'interaction-smoke';
 
@@ -61,18 +62,31 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     }
 
     sleepMs(2000);
-    sendTmuxLine(paneId, DEFAULT_PROMPT);
-    report.promptSubmitted = true;
+    const gatewayResult = runGatewayPostLaunchPrompt({
+      repo,
+      target: paneId,
+      runner,
+      message: DEFAULT_PROMPT,
+      marker: PROMPT_MARKER,
+      timeoutMs: Math.min(timeoutMs, 120_000),
+      artifactsDir: path.join(repo, '.artifacts', 'runner-blockers'),
+      requirePromptDigest: true,
+    });
+    report.promptSubmitted = Boolean(gatewayResult.ok);
+    if (!gatewayResult.ok) throw new Error(gatewayResult.error || 'gateway prompt delivery failed');
 
     const deadline = Date.now() + timeoutMs;
     let pane = capturePane(paneId, 80);
     while (Date.now() < deadline) {
-      pane = capturePane(paneId, 80);
-      if (pane.includes(PROMPT_MARKER)) break;
+      const state = runGatewayTurnState({ repo, target: paneId, runner });
+      if (state?.value === 'idle' && state?.source === 'signal') {
+        report.markerSeen = true;
+        break;
+      }
       sleepMs(2000);
     }
+    pane = capturePane(paneId, 80);
     report.paneTail = pane.split('\n').slice(-25).join('\n');
-    report.markerSeen = pane.includes(PROMPT_MARKER);
     report.pass = report.promptSubmitted && report.markerSeen;
   } catch (error) {
     report.error = error?.message || String(error);

@@ -766,6 +766,7 @@ export async function runReviewAgent(
     (continuingPriorGeneration || shouldAttemptWarmResume(sessionPolicy, loopNumber, true))
       ? claimWarmReviewerSession(warmScope, {
           allowArtifactScopeChange: continuingPriorGeneration,
+          consume: true,
         })
       : null;
   const allocated = allocateReviewerContext({
@@ -1086,6 +1087,7 @@ export async function runReviewAgent(
         console.warn(
           `[self-review] ${claimed ? 'reloaded' : 'launched'} ${runner} reviewer did not establish an authoritative session binding in ${reviewTarget}; completing this pass without retaining it`,
         );
+        invalidateWarmReviewerSessions(_runId, runner);
       }
       reviewContext =
         (await upsertAgentContext(_runId, 'self-review', {
@@ -1302,6 +1304,7 @@ export async function runReviewAgent(
       completedAt,
     };
   } catch (err) {
+    invalidateWarmReviewerSessions(_runId, runner);
     await markAgentContextStatus(
       _runId,
       'self-review',

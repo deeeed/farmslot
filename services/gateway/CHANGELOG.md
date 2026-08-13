@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(review): rebind retained reviewers to the exact structured session that owns their live runner process after replacement or reset, invalidate stale warm claims, use each runner's declared composer-submit key for semantic terminal sends and every shutdown path, and make every live attribution scenario exercise the production fail-closed resolver, preventing stale identities and false delivery acknowledgements from blocking later reviews.
+- fix(review): rebind retained reviewers to the exact structured session that owns their live runner process after replacement or reset, consume and invalidate stale warm claims on every failed lifecycle path, resolve semantic sends and graceful shutdown through the owning runner context, and make live attribution reject a stale identity injected for the same pane/process generation before accepting delivery.
 - fix(review): re-arm a retained reviewer context when its scoped checklist emits a fresh running signal, and reconsider prematurely blocked contexts when their result arrives, so recovery cannot mistake the new attempt for an earlier terminal review or strand a late valid artifact.
 - fix(backlog): clear obsolete run linkage when externally shipped work is closed, and reconcile backlog/work-graph links synchronously when runs are deleted or archived.
 - fix(review): retain exactly one tmux window per reviewer runner, resolve orchestration sessions and lifecycle targets exactly, use runner-native context reset for fresh reviews, and bound live-runner detection to the reviewer pane so node load cannot trigger duplicate cold launches.
