@@ -11,7 +11,7 @@ import {
   ATTRIBUTION_MODELS,
   listSessionCandidates,
   modelsMatch,
-  resolveSessionBinding,
+  waitForSessionBinding,
 } from '../lib/session-attribution.mjs';
 import {
   makeUsagePoolHarness,
@@ -59,7 +59,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
 
   try {
     runnerAdapter.prepareRepo(repo);
-    if (runnerAdapter.OBSERVABILITY_SCOPE === 'event-driven') {
+    if (runnerAdapter.OBSERVABILITY_TRANSPORT === 'hooks') {
       installHooks(runner, repo, runtimeDir, slotId);
     }
 
@@ -74,6 +74,11 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       model: dispatchedModel,
     });
 
+    const binding = waitForSessionBinding(
+      { runner, repo, beforePaths, sinceMs: dispatchMs, paneId, slotId },
+      Math.min(timeoutMs, 30_000),
+    );
+
     const completion = waitForRunnerCompletion({
       paneId,
       logPath,
@@ -83,17 +88,6 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     report.paneTail = completion.pane.split('\n').slice(-20).join('\n');
     sleepMs(3000);
 
-    const hookRows = readHookLines(logPath).slice(beforeCount);
-    const binding = resolveSessionBinding({
-      runner,
-      repo,
-      runtimeDir,
-      beforePaths,
-      sinceMs: dispatchMs,
-      hookRows,
-      paneId,
-      slotId,
-    });
     if (!binding) {
       throw new Error('no session path for token extraction');
     }

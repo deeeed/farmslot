@@ -7,7 +7,9 @@ import {
   type AgentRole,
   agentRoleWindow,
   DEFAULT_BRANCH,
+  type FlowType,
   isReviewerWindowName,
+  primaryRoleForFlow,
   SLOT_DESTRUCTIVE_OPS,
   type SlotReleaseParams,
 } from '@farmslot/protocol';
@@ -45,6 +47,7 @@ import {
 } from '../../core/tmux.js';
 import { cleanupSlotStorage } from '../../fleet/slot-storage-cleanup.js';
 import { findActiveGateHeldRunForSlot } from '../../run-engine/gate-held-lifecycle.js';
+import { runnerPromptSubmitKey } from '../../runners/registry.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
@@ -255,13 +258,15 @@ async function slotReleaseImpl(
   // through FINALIZE → ci-watch; agent teardown happens here at family/slot end
   // (or terminal-failure / cancel). preserveAgents is for partial release call sites only.
   if (!preserveAgents) {
+    const runner = (await readSlotField(params.slotId, 'runner')) as string | null;
+    const flowType = (await readSlotField(params.slotId, 'current_flow_type')) as FlowType | null;
     // Close the passive log reader first. If it were the only non-agent
     // window, killing role windows first would leave it as tmux's last window;
     // closing it afterward would destroy the slot session.
     await closeDevServerLogTailWindow(vars);
     step('agent', 'Killing agent...');
+    await killAgentInSession(vars, runner ?? undefined, primaryRoleForFlow(flowType));
     await killAllAgentWindows(vars);
-    await killAgentInSession(vars);
     step('agent', 'Agent killed');
     // The staged terminal attachments belong to the session that just died. Delete them
     // here rather than waiting for the bounded stale sweep so the slot goes back to idle
@@ -376,7 +381,8 @@ async function slotReleaseImpl(
         const entryFailures: SlotCopyDirEntryError[] = [];
         const releaseRunId =
           params.expectedRunId ??
-          (((await readSlotField(params.slotId, 'current_run_id')) as string | null) ?? undefined);
+          ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ??
+          undefined;
         await slotCopyDir(vars, workerArtifacts, localArtifactsDir, {
           excludeTopLevel: [...WORKER_ARTIFACT_COPY_EXCLUDES],
           excludeRelativePaths: [...WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES],
@@ -554,11 +560,13 @@ async function slotReleaseImpl(
 /** Tear down role windows and runner processes without running a full slot release. */
 export async function killSlotAgents(slotId: string): Promise<void> {
   const vars = await loadSlotVars(slotId);
+  const runner = (await readSlotField(slotId, 'runner')) as string | null;
+  const flowType = (await readSlotField(slotId, 'current_flow_type')) as FlowType | null;
   // Preserve the replacement-window invariant in killAllAgentWindows: remove
   // the passive tail before it counts as the session's final non-agent window.
   await closeDevServerLogTailWindow(vars);
+  await killAgentInSession(vars, runner ?? undefined, primaryRoleForFlow(flowType));
   await killAllAgentWindows(vars);
-  await killAgentInSession(vars);
 }
 
 // ─── slotRecycle — convenience wrapper ───
@@ -587,43 +595,78 @@ export async function killAgentInSession(
   // kill path aligned with renameDefaultWorkerWindow / ensureWorkerRoleTarget
   // / waitForRunnerProcessExit so a runner alive in `${session}:1` actually
   // gets interrupted instead of orphaned through a no-op cleanup.
-  const target = roleWindow ? `${session}:${roleWindow}` : await firstWindowTarget(vars, session);
+  const preferredTarget = roleWindow
+    ? `${session}:${roleWindow}`
+    : await firstWindowTarget(vars, session);
+  const listed = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `list-panes -s -t ${shellQuote(session)} -F '#{pane_id}\t#{pane_pid}' 2>/dev/null`,
+    ),
+    { timeout: TMUX_CMD_TIMEOUT },
+  );
+  const panes = listed.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [target, panePid] = line.split('\t', 2);
+      return { target, panePid };
+    })
+    .filter((pane) => pane.target && pane.panePid);
 
-  const hasTarget =
+  const preferredPaneIds = new Set(
     (
       await execOnSlot(
         vars,
         tmuxShellSnippet(
-          `list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null | head -1`,
+          `list-panes -t ${shellQuote(preferredTarget)} -F '#{pane_id}' 2>/dev/null`,
         ),
         { timeout: TMUX_CMD_TIMEOUT },
       )
-    ).exitCode === 0;
-  if (!hasTarget) return;
+    ).stdout
+      .split('\n')
+      .map((paneId) => paneId.trim())
+      .filter(Boolean),
+  );
+  const candidates: Array<{ target: string; panePid: string; agentPid: string }> = [];
+  for (const pane of panes) {
+    const candidatePid = await findRunnerDescendantPid(vars, pane.panePid, runner);
+    if (!candidatePid) continue;
+    candidates.push({ ...pane, agentPid: candidatePid });
+  }
+  const preferredCandidates = candidates.filter((pane) => preferredPaneIds.has(pane.target));
+  const selected =
+    preferredCandidates.length === 1
+      ? preferredCandidates[0]
+      : preferredCandidates.length === 0 && candidates.length === 1
+        ? candidates[0]
+        : null;
+  if (!selected) {
+    if (candidates.length > 1) {
+      console.warn(
+        `[release] refusing ambiguous runner teardown in ${session}: ${candidates.length} ${runner ?? 'agent'} processes`,
+      );
+    }
+    return;
+  }
+  const { target, panePid, agentPid } = selected;
 
-  const panePid = (
-    await execOnSlot(
-      vars,
-      tmuxShellSnippet(
-        `list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null | head -1`,
-      ),
-      { timeout: TMUX_CMD_TIMEOUT },
-    )
-  ).stdout.trim();
-  if (!panePid) return;
-
-  // Walk descendants instead of pgrep -P direct children — a project with a
-  // wrapping `dispatch_cmd` (e.g. `bash -lc 'codex …'`) makes the runner a
-  // grandchild of the pane shell, and the old check returned empty, skipping
-  // the graceful `/exit` step entirely. The kill -TERM/KILL fallback below
-  // operates on the actual runner PID, so the descendant walk needs to
-  // surface that PID, not just a boolean.
-  const agentPid = await findRunnerDescendantPid(vars, panePid, runner);
+  // Prefer the flow-owned role window. A unique non-role fallback supports a
+  // warm handoff whose child flow retained its parent worker window. Multiple
+  // same-runner candidates fail closed instead of interrupting a reviewer.
 
   if (agentPid) {
-    await execOnSlot(vars, tmuxSendTextCommand(target, '/exit', { enter: true }), {
-      timeout: TMUX_CMD_TIMEOUT,
-    });
+    await execOnSlot(
+      vars,
+      tmuxSendTextCommand(target, '/exit', {
+        enter: true,
+        submitKey: runnerPromptSubmitKey(runner),
+      }),
+      {
+        timeout: TMUX_CMD_TIMEOUT,
+      },
+    );
     await new Promise((r) => setTimeout(r, 2000));
 
     const stillAlive =

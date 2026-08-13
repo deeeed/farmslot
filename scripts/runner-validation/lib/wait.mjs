@@ -2,13 +2,23 @@ import { PROMPT_MARKER, sleepMs } from './common.mjs';
 import { eventName, readHookLines } from './hooks.mjs';
 import { capturePane } from './tmux.mjs';
 
-export function waitForRunnerCompletion({ paneId, logPath, beforeCount, timeoutMs, intervalMs = 2000 }) {
+export function waitForRunnerCompletion({
+  paneId,
+  logPath,
+  beforeCount,
+  timeoutMs,
+  intervalMs = 2000,
+  requireStop = false,
+}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const pane = capturePane(paneId, 80);
     const newRows = readHookLines(logPath).slice(beforeCount);
     const sawStop = newRows.some((row) => eventName(row) === 'Stop');
-    if (pane.includes(PROMPT_MARKER) || sawStop) {
+    // The marker is also present in the submitted prompt. Hook-backed callers
+    // that need a genuinely finished runner must wait for the structured Stop
+    // event rather than mistaking the echoed prompt for completion.
+    if (sawStop || (!requireStop && pane.includes(PROMPT_MARKER))) {
       return { pane, newRows, sawStop, sawMarker: pane.includes(PROMPT_MARKER) };
     }
     sleepMs(intervalMs);
@@ -23,7 +33,13 @@ export function waitForRunnerCompletion({ paneId, logPath, beforeCount, timeoutM
   };
 }
 
-export function pollHookRows(logPath, beforeCount, requiredEvents, timeoutMs = 90000, intervalMs = 2000) {
+export function pollHookRows(
+  logPath,
+  beforeCount,
+  requiredEvents,
+  timeoutMs = 90000,
+  intervalMs = 2000,
+) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const newRows = readHookLines(logPath).slice(beforeCount);

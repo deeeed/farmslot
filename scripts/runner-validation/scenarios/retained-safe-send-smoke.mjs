@@ -11,7 +11,7 @@ import { installHooks, obsDirFor } from '../lib/install.mjs';
 import {
   grokSessionDirKeys,
   listSessionCandidates,
-  resolveSessionBinding,
+  waitForSessionBinding,
 } from '../lib/session-attribution.mjs';
 import { capturePane, ensureShellSession, killSession, sendShellScript } from '../lib/tmux.mjs';
 import { resolveLaunchBlockers, sendTmuxLine } from '../lib/tmux-input.mjs';
@@ -150,22 +150,17 @@ function createGrokSymlinkedSessionRoots(repo) {
 }
 
 function waitForGrokSessionBinding({ repo, paneId, beforePaths, sinceMs, timeoutMs }) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const binding = resolveSessionBinding({
+  return waitForSessionBinding(
+    {
       runner: 'grok',
       repo,
-      runtimeDir: '.agent',
       beforePaths,
       sinceMs,
-      hookRows: [],
       paneId,
       slotId: 'runner-validate-local',
-    });
-    if (binding) return binding;
-    sleepMs(500);
-  }
-  return null;
+    },
+    timeoutMs,
+  );
 }
 
 function runGrokScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
@@ -324,20 +319,14 @@ function runCodexScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
     sendShellScript(paneId, repo, [runnerAdapter.buildInteractiveLaunchCommand(repo, runtimeDir)]);
     sleepMs(2500);
     sendTmuxLine(paneId, DEFAULT_PROMPT);
+    const binding = waitForSessionBinding(
+      { runner, repo, beforePaths, sinceMs: dispatchMs, paneId, slotId },
+      Math.min(timeoutMs, 30_000),
+    );
     const initialRows = pollHookRows(logPath, initialCount, ['Stop'], timeoutMs);
     report.initialCompleted = initialRows.some((row) => eventName(row) === 'Stop');
     if (!report.initialCompleted) throw new Error('initial Codex turn did not emit Stop');
 
-    const binding = resolveSessionBinding({
-      runner,
-      repo,
-      runtimeDir,
-      beforePaths,
-      sinceMs: dispatchMs,
-      hookRows: [],
-      paneId,
-      slotId,
-    });
     if (!binding?.runnerSessionId || !binding.runnerSessionPath) {
       throw new Error('Codex filesystem fallback did not expose an exact retained session binding');
     }

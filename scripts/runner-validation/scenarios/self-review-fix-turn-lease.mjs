@@ -48,7 +48,7 @@ function waitForIdleTurn(statePath, timeoutMs) {
 
 export async function runScenario({ runnerAdapter, keepSession, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
-  if (runnerAdapter.OBSERVABILITY_SCOPE !== 'event-driven') {
+  if (runnerAdapter.OBSERVABILITY_TRANSPORT !== 'hooks') {
     const report = {
       runner,
       skipped: true,

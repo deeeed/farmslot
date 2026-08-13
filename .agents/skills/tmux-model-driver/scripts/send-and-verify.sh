@@ -22,10 +22,11 @@ PY
 )"
 
 submit_key_for_action() {
-  case "$1" in
-    cursor | shell) echo "C-m" ;;
-    *) echo "Enter" ;;
-  esac
+  if [ "$1" = "shell" ]; then
+    echo "C-m"
+    return
+  fi
+  (cd "$skill_dir/../../.." && node --import tsx "$skill_dir/scripts/runner-submit-key.mjs" "$1")
 }
 
 submit_key_for_pane() {

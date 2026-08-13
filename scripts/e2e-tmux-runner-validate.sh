@@ -139,16 +139,14 @@ for runner in claude codex; do
 done
 
 if runner_available grok; then
-  echo "-- harness: grok pane-smoke --"
   GROK_RAN=true
+  echo "-- harness: grok interaction-smoke --"
   if [ "$FIRST_HARNESS" = true ]; then
-    run_harness grok pane-smoke true false "$OPTIONAL_EVIDENCE_DIR" || true
+    run_harness grok interaction-smoke true false "$OPTIONAL_EVIDENCE_DIR" || true
     FIRST_HARNESS=false
   else
-    run_harness grok pane-smoke false false "$OPTIONAL_EVIDENCE_DIR" || true
+    run_harness grok interaction-smoke false false "$OPTIONAL_EVIDENCE_DIR" || true
   fi
-  echo "-- harness: grok interaction-smoke --"
-  run_harness grok interaction-smoke false false "$OPTIONAL_EVIDENCE_DIR" || true
   echo "-- harness: grok session-attribution-smoke --"
   if run_harness grok session-attribution-smoke false; then
     GROK_ATTRIBUTION_PASSED=true
@@ -158,7 +156,7 @@ if runner_available grok; then
     GROK_TOKEN_PASSED=true
   fi
 else
-  skip "grok pane-smoke + interaction-smoke (binary missing)"
+  skip "grok interaction-smoke (binary missing)"
 fi
 
 if runner_available cursor; then

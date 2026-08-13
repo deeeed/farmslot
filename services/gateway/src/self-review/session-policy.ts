@@ -93,9 +93,10 @@ export function registerWarmReviewerSession(
  */
 export function claimWarmReviewerSession(
   scope: WarmReviewerScope,
-  options: { allowArtifactScopeChange?: boolean } = {},
+  options: { allowArtifactScopeChange?: boolean; consume?: boolean } = {},
 ): WarmReviewerSession | null {
-  const session = warmSessions.get(sessionKey(scope.runId, scope.runner));
+  const key = sessionKey(scope.runId, scope.runner);
+  const session = warmSessions.get(key);
   if (!session || session.forensicOnly) return null;
   if (
     session.runId !== scope.runId ||
@@ -106,6 +107,7 @@ export function claimWarmReviewerSession(
   ) {
     return null;
   }
+  if (options.consume) warmSessions.set(key, { ...session, forensicOnly: true });
   return session;
 }
 

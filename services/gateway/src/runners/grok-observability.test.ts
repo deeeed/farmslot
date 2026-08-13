@@ -73,14 +73,18 @@ describe('Grok structured prompt observability', () => {
   });
 
   it('reports delivery state only for the exact retained Grok session', async () => {
-    const observability = createGrokLogObservability(async () => ({
-      status: 'matched',
-      promptAcceptedAt: null,
-      activity: 'idle',
-      activityAt: 1300,
-      sessionId: 'session-1',
-      sessionPath: '/sessions/session-1',
-    }));
+    const observability = createGrokLogObservability(
+      async () => ({
+        status: 'matched',
+        promptAcceptedAt: null,
+        activity: 'idle',
+        activityAt: 1300,
+        turnOutcome: 'completed',
+        sessionId: 'session-1',
+        sessionPath: '/sessions/session-1',
+      }),
+      async () => 1400,
+    );
 
     assert.deepEqual(
       await observability.getSessionDeliveryState(
@@ -105,6 +109,11 @@ describe('Grok structured prompt observability', () => {
       ),
       null,
     );
+    assert.deepEqual(await observability.getSessionBinding?.(makeVars(), 'core-3:bugfix'), {
+      sessionId: 'session-1',
+      sessionPath: '/sessions/session-1',
+      observedAt: 1400,
+    });
   });
 
   it('does not claim the runner is idle before its first turn event', async () => {
@@ -256,6 +265,7 @@ describe('Grok structured prompt observability', () => {
         activity: 'tool-running',
         activityAt: Date.parse('2026-08-01T12:00:01.500+00:00'),
         turnStartedAt: Date.parse(acceptedAt),
+        turnOutcome: null,
         sessionId,
         sessionPath: await realpath(sessionDir),
       });
@@ -277,7 +287,11 @@ describe('Grok structured prompt observability', () => {
             session_id: sessionId,
             turn_number: 0,
           }),
-          JSON.stringify({ type: 'turn_ended', ts: '2026-08-01T12:00:02+00:00' }),
+          JSON.stringify({
+            type: 'turn_ended',
+            ts: '2026-08-01T12:00:02+00:00',
+            outcome: 'completed',
+          }),
         ].join('\n'),
       );
       const idleMismatch = await runProbe();
@@ -287,6 +301,7 @@ describe('Grok structured prompt observability', () => {
         activity: 'idle',
         activityAt: Date.parse('2026-08-01T12:00:02+00:00'),
         turnStartedAt: Date.parse(acceptedAt),
+        turnOutcome: 'completed',
         sessionId,
         sessionPath: await realpath(sessionDir),
       });
