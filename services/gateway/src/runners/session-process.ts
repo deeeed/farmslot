@@ -45,10 +45,13 @@ export async function readPaneProcessStartedAtMs(
   const script = `
 python3 - <<'PY'
 import datetime
+import ctypes
 import os
+import platform
 import re
 import subprocess
 import sys
+import time
 
 pane = ${JSON.stringify(paneId)}
 pattern = ${JSON.stringify(processPattern)}
@@ -59,41 +62,78 @@ try:
     ).strip()
     children = {}
     commands = {}
+    executables = {}
     for row in subprocess.check_output(
-        ['ps', '-axo', 'pid=,ppid=,command='], text=True
+        ['ps', '-axo', 'pid=,ppid=,comm=,command='], text=True
     ).splitlines():
-        parts = row.strip().split(None, 2)
+        parts = row.strip().split(None, 3)
         if len(parts) < 2:
             continue
         pid, ppid = parts[:2]
-        command = parts[2] if len(parts) == 3 else ''
+        executable = parts[2] if len(parts) >= 3 else ''
+        command = parts[3] if len(parts) == 4 else executable
         commands[pid] = command
-        children.setdefault(ppid, []).append((pid, command))
+        executables[pid] = executable
+        children.setdefault(ppid, []).append(pid)
     pid = pane_pid
     if pattern:
-        queue = [pane_pid]
-        pane_command = commands.get(pane_pid, '')
-        matched = pane_pid if '__farmslot_status' not in pane_command and re.search(pattern, pane_command) else None
-        while queue and matched is None:
-            parent = queue.pop(0)
-            for child_pid, command in children.get(parent, []):
-                if '__farmslot_status' not in command and re.search(pattern, command):
-                    matched = child_pid
-                    break
-                queue.append(child_pid)
-        if matched is None:
+        queue = [(pane_pid, 0)]
+        matches = []
+        while queue:
+            candidate, depth = queue.pop(0)
+            command = commands.get(candidate, '')
+            executable = executables.get(candidate, '')
+            if '__farmslot_status' not in command and re.search(pattern, command):
+                executable_name = os.path.basename(executable)
+                strong = bool(
+                    re.fullmatch(pattern, executable_name)
+                    or re.fullmatch(pattern, executable)
+                )
+                shell_wrapper = os.path.basename(executable) in {'bash', 'zsh', 'sh', 'fish'}
+                matches.append((strong, not shell_wrapper, depth, candidate))
+            queue.extend((child, depth + 1) for child in children.get(candidate, []))
+        if not matches:
             raise ValueError('runner process not found under pane')
-        pid = matched
-    started = subprocess.check_output(
-        ['ps', '-p', pid, '-o', 'lstart='],
-        text=True,
-        env={**os.environ, 'LC_ALL': 'C'},
-    ).strip()
-    # lstart is stable for the lifetime of the process. Its one-second timestamp
-    # is the earliest boundary in that second, so legitimate first-second hook
-    # events remain eligible without a moving now-etime estimate.
-    started_at = datetime.datetime.strptime(started, '%a %b %d %H:%M:%S %Y').astimezone()
-    print(int(started_at.timestamp() * 1000))
+        # Prefer the runner executable itself, then a non-shell launcher. Among
+        # exact executable matches prefer the shallowest process: descendants
+        # such as codex-code-mode-host are tools owned by the turn, not the
+        # retained runner generation.
+        pid = max(matches, key=lambda item: (item[0], item[1], -item[2]))[3]
+
+    if platform.system() == 'Darwin':
+        class ProcBsdInfo(ctypes.Structure):
+            _fields_ = [
+                ('flags', ctypes.c_uint32), ('status', ctypes.c_uint32),
+                ('xstatus', ctypes.c_uint32), ('pid', ctypes.c_uint32),
+                ('ppid', ctypes.c_uint32), ('uid', ctypes.c_uint32),
+                ('gid', ctypes.c_uint32), ('ruid', ctypes.c_uint32),
+                ('rgid', ctypes.c_uint32), ('svuid', ctypes.c_uint32),
+                ('svgid', ctypes.c_uint32), ('rfu_1', ctypes.c_uint32),
+                ('comm', ctypes.c_char * 16), ('name', ctypes.c_char * 32),
+                ('nfiles', ctypes.c_uint32), ('pgid', ctypes.c_uint32),
+                ('pjobc', ctypes.c_uint32), ('e_tdev', ctypes.c_uint32),
+                ('e_tpgid', ctypes.c_uint32), ('nice', ctypes.c_int32),
+                ('start_tvsec', ctypes.c_uint64), ('start_tvusec', ctypes.c_uint64),
+            ]
+        info = ProcBsdInfo()
+        libproc = ctypes.CDLL('/usr/lib/libproc.dylib')
+        size = libproc.proc_pidinfo(int(pid), 3, 0, ctypes.byref(info), ctypes.sizeof(info))
+        if size != ctypes.sizeof(info):
+            raise ValueError('libproc start-time probe failed')
+        print(info.start_tvsec * 1000 + info.start_tvusec // 1000)
+    elif os.path.isfile(f'/proc/{pid}/stat'):
+        fields = open(f'/proc/{pid}/stat').read().split()
+        start_ticks = int(fields[21])
+        uptime = float(open('/proc/uptime').read().split()[0])
+        ticks_per_second = os.sysconf(os.sysconf_names['SC_CLK_TCK'])
+        print(int((time.time() - uptime + start_ticks / ticks_per_second) * 1000))
+    else:
+        started = subprocess.check_output(
+            ['ps', '-p', pid, '-o', 'lstart='], text=True,
+            env={**os.environ, 'LC_ALL': 'C'},
+        ).strip()
+        started_at = datetime.datetime.strptime(started, '%a %b %d %H:%M:%S %Y').astimezone()
+        print(int(started_at.timestamp() * 1000))
 except Exception as error:
     print(f'pane process start probe failed: {error}', file=sys.stderr)
     raise SystemExit(1)

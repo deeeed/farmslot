@@ -79,6 +79,7 @@ describe('Grok structured prompt observability', () => {
         promptAcceptedAt: null,
         activity: 'idle',
         activityAt: 1300,
+        turnOutcome: 'completed',
         sessionId: 'session-1',
         sessionPath: '/sessions/session-1',
       }),
@@ -286,7 +287,11 @@ describe('Grok structured prompt observability', () => {
             session_id: sessionId,
             turn_number: 0,
           }),
-          JSON.stringify({ type: 'turn_ended', ts: '2026-08-01T12:00:02+00:00' }),
+          JSON.stringify({
+            type: 'turn_ended',
+            ts: '2026-08-01T12:00:02+00:00',
+            outcome: 'completed',
+          }),
         ].join('\n'),
       );
       const idleMismatch = await runProbe();
@@ -296,6 +301,7 @@ describe('Grok structured prompt observability', () => {
         activity: 'idle',
         activityAt: Date.parse('2026-08-01T12:00:02+00:00'),
         turnStartedAt: Date.parse(acceptedAt),
+        turnOutcome: 'completed',
         sessionId,
         sessionPath: await realpath(sessionDir),
       });

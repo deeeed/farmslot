@@ -297,6 +297,9 @@ export function createGrokLogObservability(
   probe: ProbeGrokPromptSignal = probeGrokPromptSignal,
   readClock: (vars: SlotVars) => Promise<number> = readSlotClockMs,
 ): RunnerObservability {
+  const completedActivity = (signal: Extract<GrokPromptSignalProbe, { status: 'matched' }>) =>
+    signal.activity === 'idle' && signal.turnOutcome !== 'completed' ? 'unknown' : signal.activity;
+
   return {
     promptAcceptanceMode: 'native-text',
     async resolveSessionId(_vars, sessionPath) {
@@ -319,11 +322,7 @@ export function createGrokLogObservability(
       const signal = await probe(vars, target, null, null);
       if (signal.status !== 'matched') return null;
       return {
-        value:
-          signal.activity === 'idle' &&
-          (signal.turnOutcome === 'error' || signal.turnOutcome === 'cancelled')
-            ? 'unknown'
-            : signal.activity,
+        value: completedActivity(signal),
         source: 'signal',
         confidence: 'high',
         observedAt: signal.activityAt,
@@ -336,15 +335,9 @@ export function createGrokLogObservability(
     async getTurnState(vars, target) {
       const signal = await probe(vars, target, null, null);
       if (signal.status !== 'matched') return null;
+      const activity = completedActivity(signal);
       return {
-        value:
-          signal.activity === 'idle'
-            ? signal.turnOutcome === 'error' || signal.turnOutcome === 'cancelled'
-              ? 'unknown'
-              : 'idle'
-            : signal.activity === 'unknown'
-              ? 'unknown'
-              : 'active',
+        value: activity === 'idle' ? 'idle' : activity === 'unknown' ? 'unknown' : 'active',
         source: 'signal',
         confidence: 'high',
         observedAt: signal.activityAt,
@@ -397,15 +390,9 @@ export function createGrokLogObservability(
       if (signal.status !== 'matched' || signal.sessionId !== sessionId) {
         return null;
       }
+      const activity = completedActivity(signal);
       return {
-        value:
-          signal.activity === 'idle'
-            ? signal.turnOutcome === 'error' || signal.turnOutcome === 'cancelled'
-              ? 'unknown'
-              : 'idle'
-            : signal.activity === 'unknown'
-              ? 'unknown'
-              : 'active',
+        value: activity === 'idle' ? 'idle' : activity === 'unknown' ? 'unknown' : 'active',
         source: 'signal',
         confidence: 'high',
         observedAt: signal.activityAt,

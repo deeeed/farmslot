@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { DEFAULT_PROMPT } from '../lib/common.mjs';
+import { PROMPT_MARKER } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
@@ -22,6 +22,7 @@ import { capturePane, ensureShellSession, killSession } from '../lib/tmux.mjs';
 import { waitForRunnerCompletion } from '../lib/wait.mjs';
 
 export const SCENARIO_ID = 'session-attribution-smoke';
+const LIVE_ATTRIBUTION_PROMPT = `Use the shell tool to run sleep 15, then reply with exactly ${PROMPT_MARKER} and nothing else.`;
 
 export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
@@ -80,12 +81,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const dispatchMs = Date.now();
     const beforeCount = readHookLines(logPath).length;
 
-    // Keep the dispatch cutoff and pane-process boundary observably separate.
-    // The stale-pane control below uses dispatchMs, so it passes freshness but
-    // predates this new runner process and can only fail on process generation.
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-
-    runLaunchInTmux(paneId, repo, runner, runnerAdapter, DEFAULT_PROMPT, {
+    runLaunchInTmux(paneId, repo, runner, runnerAdapter, LIVE_ATTRIBUTION_PROMPT, {
       model: dispatchedModel,
     });
 
@@ -120,6 +116,9 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       fs.writeFileSync(
         paneStatePath,
         JSON.stringify({
+          // Deliberately remain in the same wall-clock second as launch. The
+          // control passes dispatch freshness and can only be rejected by the
+          // precise runner-process generation boundary.
           observedAt: dispatchMs,
           session_id: 'runner-stale',
           transcript_path: report.stalePath,
@@ -144,6 +143,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       logPath,
       beforeCount,
       timeoutMs,
+      requireStop: hookDriven,
     });
     if (paneStatePath && livePaneState && report.stalePath) {
       fs.writeFileSync(

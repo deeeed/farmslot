@@ -629,28 +629,32 @@ export async function killAgentInSession(
       .map((paneId) => paneId.trim())
       .filter(Boolean),
   );
-  const orderedPanes = [
-    ...panes.filter((pane) => preferredPaneIds.has(pane.target)),
-    ...panes.filter((pane) => !preferredPaneIds.has(pane.target)),
-  ];
-
-  let target = preferredTarget;
-  let panePid = '';
-  let agentPid = '';
-  for (const pane of orderedPanes) {
+  const candidates: Array<{ target: string; panePid: string; agentPid: string }> = [];
+  for (const pane of panes) {
     const candidatePid = await findRunnerDescendantPid(vars, pane.panePid, runner);
     if (!candidatePid) continue;
-    target = pane.target;
-    panePid = pane.panePid;
-    agentPid = candidatePid;
-    break;
+    candidates.push({ ...pane, agentPid: candidatePid });
   }
-  if (!panePid) return;
+  const preferredCandidates = candidates.filter((pane) => preferredPaneIds.has(pane.target));
+  const selected =
+    preferredCandidates.length === 1
+      ? preferredCandidates[0]
+      : preferredCandidates.length === 0 && candidates.length === 1
+        ? candidates[0]
+        : null;
+  if (!selected) {
+    if (candidates.length > 1) {
+      console.warn(
+        `[release] refusing ambiguous runner teardown in ${session}: ${candidates.length} ${runner ?? 'agent'} processes`,
+      );
+    }
+    return;
+  }
+  const { target, panePid, agentPid } = selected;
 
-  // Prefer the flow-owned role window, but fall back to the exact pane whose
-  // process tree owns the runner. Warm handoff intentionally preserves the
-  // parent worker role while the slot records the child flow, so flow-derived
-  // role metadata alone cannot identify the retained process at teardown.
+  // Prefer the flow-owned role window. A unique non-role fallback supports a
+  // warm handoff whose child flow retained its parent worker window. Multiple
+  // same-runner candidates fail closed instead of interrupting a reviewer.
 
   if (agentPid) {
     await execOnSlot(

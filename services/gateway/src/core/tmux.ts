@@ -28,6 +28,10 @@ export function tmuxShellSnippet(snippet: string): string {
 export function buildDispatchRoleShellCommand(remoteRepo: string): string {
   return [
     `cd ${shellQuote(remoteRepo)}`,
+    // Managed role windows must never pause on Oh My Zsh's interactive update
+    // question after a runner exits. The operator can still update zsh outside
+    // Farmslot; this only disables the prompt in lifecycle-owned shells.
+    'export DISABLE_AUTO_UPDATE=true',
     'shell="${SHELL:-}"',
     'if [ -z "$shell" ]; then shell="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk \'{print $2}\')"; fi',
     'if [ -z "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
