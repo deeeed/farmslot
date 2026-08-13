@@ -913,10 +913,9 @@ export async function runReviewAgent(
       : basePrompt;
     let taskPrompt = warmPrompt;
 
-    // 4. Reuse the live reviewer when possible. A fresh review resets context
-    // through the runner's declared native command; a continuation pastes the
-    // next task into the retained runner. Process replacement is only a cold
-    // fallback when no reviewer is alive.
+    // 4. Reuse the live reviewer when possible. The runner capability decides
+    // whether the next turn is a safe in-place send or a native resume that
+    // replaces the idle process while preserving its retained session.
     const parentSafetyTier = parentRun?.safetyTier;
     const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
     const coldLaunchCommand = () =>

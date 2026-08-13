@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { PROMPT_MARKER } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
+import { runGatewayPaneProcessStartedAt } from '../lib/gateway-post-launch.mjs';
 import { readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { runLaunchInTmux } from '../lib/launch.mjs';
@@ -107,6 +108,14 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     let paneStatePath = null;
     let livePaneState = null;
     if (hookDriven && report.stalePath) {
+      const paneProcessStartedAtMs = runGatewayPaneProcessStartedAt({
+        repo,
+        target: paneId,
+        runner,
+      });
+      if (typeof paneProcessStartedAtMs !== 'number') {
+        throw new Error('live runner process boundary was unavailable');
+      }
       paneStatePath = path.join(
         obsDirFor(repo, runtimeDir),
         'panes',
@@ -119,7 +128,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
           // Deliberately remain in the same wall-clock second as launch. The
           // control passes dispatch freshness and can only be rejected by the
           // precise runner-process generation boundary.
-          observedAt: dispatchMs,
+          observedAt: paneProcessStartedAtMs - 1,
           session_id: 'runner-stale',
           transcript_path: report.stalePath,
           tmuxPane: paneId,
@@ -189,7 +198,9 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const hookAligned =
       !hookDriven ||
       (report.hookTranscriptPath === report.resolvedPath && report.hookTmuxPane === paneId);
-    const sawCompletion = completion.sawMarker || completion.sawStop;
+    const sawCompletion = hookDriven
+      ? completion.sawStop
+      : completion.sawMarker || completion.sawStop;
 
     report.pass =
       pathNotStale &&

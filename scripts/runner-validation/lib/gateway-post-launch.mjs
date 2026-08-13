@@ -216,6 +216,39 @@ process.stdout.write(JSON.stringify({ binding }) + '\\n');
   };
 }
 
+/** Read the exact live runner-process boundary used by session attribution. */
+export function runGatewayPaneProcessStartedAt({ repo, target, runner, timeoutMs = 30_000 }) {
+  const snippet = `
+import os from 'node:os';
+import { readPaneProcessStartedAtMs } from './services/gateway/src/runners/session-process.ts';
+
+const vars = {
+  slotId: 'runner-validate-local', machine: os.hostname(), platform: 'local', host: 'localhost',
+  sshUser: os.userInfo().username, osType: process.platform === 'darwin' ? 'darwin' : 'linux',
+  claudePath: '', codexPath: '', opencodePath: '', cursorPath: '', grokPath: '',
+  dispatchCmd: '', recycleCmd: '', repo: ${JSON.stringify(repo)}, session: ${JSON.stringify(target)},
+  slotMode: 'dispatch', slotEnabled: true, sshTarget: \`\${os.userInfo().username}@localhost\`,
+  remoteRepo: ${JSON.stringify(repo)}, projectName: '', resourceVars: {},
+};
+const startedAtMs = await readPaneProcessStartedAtMs(
+  vars,
+  ${JSON.stringify(target)},
+  ${JSON.stringify(runner)},
+);
+process.stdout.write(JSON.stringify({ startedAtMs }) + '\\n');
+`;
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: timeoutMs,
+  });
+  const jsonLine = (result.stdout?.trim() ?? '')
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .pop();
+  return jsonLine ? JSON.parse(jsonLine).startedAtMs : null;
+}
+
 /** Invoke the production safe-send contract against an already-idle runner pane. */
 export function runGatewaySafeInstruction({
   repo,
