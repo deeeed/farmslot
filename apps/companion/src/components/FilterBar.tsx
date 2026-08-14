@@ -42,7 +42,11 @@ export function FilterBar() {
               <Text style={styles.clearText}>Clear</Text>
             </Pressable>
           ) : null}
-          <Pressable style={styles.editButton} onPress={() => router.push('/filters')}>
+          <Pressable
+            testID="companion-filter-edit"
+            style={styles.editButton}
+            onPress={() => router.push('/filters')}
+          >
             <Text style={styles.editText}>{hasFilters ? `${filterCount} active` : 'Edit'}</Text>
           </Pressable>
         </View>

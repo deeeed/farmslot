@@ -5,10 +5,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - fix(runs): share active-run and Co-Pilot tmux identity constants across gateway and clients
-
 - feat(copilot): configure persisted runtime runner, model, and gateway autostart policy through the shared protocol.
 - feat(review): carry normalized per-step checklist timing on worker signals and review attempts.
 - fix(review): carry a gateway-derived task identity so clients match active tasks across configured roots.
+
+## 0.21.0 - 2026-08-14
+
 - fix(runtime-capabilities): retain queued admission pressure in status results and document forced provenance cleanup.
 - feat(runtime-capabilities): add typed catalog, proof-plan, provider provenance, durable lease, pressure conflict, lifecycle event, and list/acquire/status/release RPC contracts.
 - fix(runners): default Cursor Agent runs to the installed `cursor-grok-4.6-high-fast` model.
@@ -16,7 +18,6 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - fix(review): identify worker signal attempts independently of machine clocks so retained reviewer recovery cannot consume an earlier attempt.
 - feat(copilot): add the client-neutral singleton runtime lifecycle, checkout/workload/safety metadata, structured delivery, and runtime-update event contracts.
 - fix(review): carry review transport failure reasons separately from review findings so clients do not present an unavailable reviewer as a clean zero-finding pass.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.20.1 - 2026-08-11
 

@@ -316,6 +316,19 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
       },
     },
     command: {
+      async back(options: Record<string, unknown>) {
+        calls.push({ method: 'back', options });
+        return { action: 'back' };
+      },
+      async keyboard(options: Record<string, unknown>) {
+        calls.push({ method: 'keyboard', options });
+        return {
+          action: options.action,
+          wasVisible: true,
+          dismissed: options.action === 'dismiss',
+          visible: false,
+        };
+      },
       async wait(options: Record<string, unknown>) {
         calls.push({ method: 'wait-stable', options });
         return { stable: true };
@@ -384,6 +397,8 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
   });
 
   await transport.execute('ui.press', { test_id: 'settings-tab', timeout_ms: 2_000 }, context);
+  await transport.execute('ui.key_press', { key: 'Escape' }, context);
+  await transport.execute('ui.key_press', { key: 'Back', timeout_ms: 2_000 }, context);
   const fillResult = await transport.execute(
     'ui.set_input',
     { test_id: 'secret-field', value: 'seed phrase secret' },
@@ -477,6 +492,8 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     'id="settings-tab"',
   );
   assert.equal(calls.find((call) => call.method === 'wait-stable')?.options.stable, true);
+  assert.equal(calls.find((call) => call.method === 'keyboard')?.options.action, 'dismiss');
+  assert.equal(calls.find((call) => call.method === 'back')?.options.responseLevel, 'digest');
   assert.ok(
     calls
       .filter((call) => call.method === 'snapshot')
@@ -511,6 +528,265 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     'screenshots/settings.png',
   );
   assert.equal(calls.find((call) => call.method === 'close')?.options.shutdown, false);
+});
+
+test('native keyboard actions fail when the keyboard command has no effect', async () => {
+  for (const fixture of [
+    {
+      platform: 'ios' as const,
+      key: 'Enter',
+      result: { action: 'enter', wasVisible: false, visible: false },
+    },
+    {
+      platform: 'ios' as const,
+      key: 'Escape',
+      result: { action: 'dismiss', wasVisible: true, dismissed: false },
+    },
+    {
+      platform: 'android' as const,
+      key: 'Escape',
+      result: { action: 'dismiss', wasVisible: false, dismissed: false },
+    },
+  ]) {
+    const client = {
+      apps: { open: async () => ({ session: 's' }) },
+      command: { keyboard: async () => fixture.result },
+      sessions: { close: async () => ({ session: 's' }) },
+    } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+    const transport = createAgentDeviceUiTransport({
+      platform: fixture.platform,
+      device: fixture.platform === 'android' ? 'emulator-5554' : 'ios-simulator',
+      app: 'net.siteed.farmslot.development',
+      session: 's',
+      client,
+    });
+
+    await assert.rejects(
+      () =>
+        transport.execute(
+          'ui.key_press',
+          { key: fixture.key, settle: false },
+          {} as ActionExecutionContext,
+        ),
+      /could not/u,
+    );
+  }
+});
+
+test('native keyboard actions warn when the provider omits visibility evidence', async () => {
+  const client = {
+    apps: { open: async () => ({ session: 's' }) },
+    command: { keyboard: async () => ({ action: 'enter', message: 'keyboardReturn' }) },
+    sessions: { close: async () => ({ session: 's' }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'android',
+    device: 'emulator-5554',
+    app: 'net.siteed.farmslot.development',
+    session: 's',
+    client,
+  });
+
+  const result = (await transport.execute(
+    'ui.key_press',
+    { key: 'Enter', settle: false },
+    {} as ActionExecutionContext,
+  )) as { settlementWarning?: string };
+
+  assert.match(result.settlementWarning ?? '', /without provider keyboard-visibility evidence/u);
+});
+
+test('fails when an observable Android input remains empty after repair', async () => {
+  let fills = 0;
+  const commands: string[][] = [];
+  const client = {
+    apps: { open: async () => ({ session: 'input-session', identifiers: {} }) },
+    interactions: {
+      fill: async () => {
+        fills += 1;
+        return { settle: { settled: true } };
+      },
+      press: async () => ({ pressed: true }),
+    },
+    capture: {
+      snapshot: async () => ({
+        nodes: [{ identifier: 'field', value: '' }],
+        truncated: false,
+      }),
+    },
+    sessions: { close: async () => ({ session: 'input-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'android',
+    device: 'physical-serial',
+    app: 'io.metamask',
+    session: 'input-session',
+    client,
+    adbPath: '/tools/adb',
+    gestureCommandRunner: {
+      async execFile(_file, args) {
+        commands.push(args);
+        return {};
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      transport.execute(
+        'ui.set_input',
+        { test_id: 'field', value: 'expected' },
+        {} as ActionExecutionContext,
+      ),
+    /could not verify the requested Android replacement value/u,
+  );
+  assert.equal(fills, 2);
+  assert.deepEqual(commands, [['-s', 'physical-serial', 'shell', 'input', 'keyevent', '123']]);
+});
+
+test('fails closed when an Android input exposes only a label', async () => {
+  let fills = 0;
+  const client = {
+    apps: { open: async () => ({ session: 'input-session', identifiers: {} }) },
+    interactions: {
+      fill: async () => {
+        fills += 1;
+        return { settle: { settled: true } };
+      },
+      press: async () => ({ pressed: true }),
+    },
+    capture: {
+      snapshot: async () => ({
+        nodes: [{ identifier: 'field', label: 'Email' }],
+        truncated: false,
+      }),
+    },
+    sessions: { close: async () => ({ session: 'input-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'android',
+    device: 'physical-serial',
+    app: 'io.metamask',
+    session: 'input-session',
+    client,
+  });
+
+  await assert.rejects(
+    () =>
+      transport.execute(
+        'ui.set_input',
+        { test_id: 'field', value: 'expected' },
+        {} as ActionExecutionContext,
+      ),
+    /could not verify the Android field/u,
+  );
+
+  assert.equal(fills, 1);
+});
+
+test('fails when a masked Android input cannot be cleared before replacement', async () => {
+  let fills = 0;
+  const commands: string[][] = [];
+  const client = {
+    apps: { open: async () => ({ session: 'input-session', identifiers: {} }) },
+    interactions: {
+      fill: async () => {
+        fills += 1;
+        return { settle: { settled: true } };
+      },
+      press: async () => ({ pressed: true }),
+    },
+    capture: {
+      snapshot: async () => ({
+        nodes: [{ identifier: 'field', value: '••••' }],
+        truncated: false,
+      }),
+    },
+    sessions: { close: async () => ({ session: 'input-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'android',
+    device: 'physical-serial',
+    app: 'io.metamask',
+    session: 'input-session',
+    client,
+    adbPath: '/tools/adb',
+    gestureCommandRunner: {
+      async execFile(_file, args) {
+        commands.push(args);
+        return {};
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      transport.execute(
+        'ui.set_input',
+        { test_id: 'field', value: 'expected' },
+        {} as ActionExecutionContext,
+      ),
+    /could not clear the Android field before replacement/u,
+  );
+  assert.equal(fills, 1);
+  assert.deepEqual(commands, [
+    ['-s', 'physical-serial', 'shell', 'input', 'keyevent', '123'],
+    ['-s', 'physical-serial', 'shell', 'input', 'keyevent', '67', '67', '67', '67'],
+    ['-s', 'physical-serial', 'shell', 'input', 'keyevent', '67', '67', '67', '67'],
+  ]);
+});
+
+test('retries an Android input whose empty placeholder is exposed as its value', async () => {
+  let fills = 0;
+  const snapshotValues = ['Enter password', 'Enter password', 'Enter password', 'expected'];
+  const snapshotRequests: Array<Record<string, unknown>> = [];
+  const commands: string[][] = [];
+  const client = {
+    apps: { open: async () => ({ session: 'input-session', identifiers: {} }) },
+    interactions: {
+      fill: async () => {
+        fills += 1;
+        return { settle: { settled: true } };
+      },
+      press: async () => ({ pressed: true }),
+    },
+    capture: {
+      snapshot: async (options: Record<string, unknown>) => {
+        snapshotRequests.push(options);
+        const value = snapshotValues.shift();
+        return {
+          nodes: [{ identifier: 'field', value }],
+          truncated: false,
+        };
+      },
+    },
+    sessions: { close: async () => ({ session: 'input-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'android',
+    device: 'physical-serial',
+    app: 'io.metamask',
+    session: 'input-session',
+    client,
+    adbPath: '/tools/adb',
+    gestureCommandRunner: {
+      async execFile(_file, args) {
+        commands.push(args);
+        return {};
+      },
+    },
+  });
+
+  await transport.execute(
+    'ui.set_input',
+    { test_id: 'field', value: 'expected' },
+    {} as ActionExecutionContext,
+  );
+
+  assert.equal(fills, 2);
+  assert.equal(snapshotRequests.length, 4);
+  assert.deepEqual(snapshotValues, []);
+  assert.equal(commands.length, 3);
 });
 
 test('streams all continuous gestures from resolved native target coordinates', async () => {

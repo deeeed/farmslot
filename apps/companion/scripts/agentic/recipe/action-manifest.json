@@ -122,8 +122,38 @@
         }
       ]
     },
+    "ui.key_press": {
+      "description": "Send Back through native navigation, or Escape, Enter, or Return to the visible native keyboard, then wait for the resulting UI transition. Keyboard actions fail when no visible keyboard accepts them.",
+      "adapters": ["android", "ios"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": ["Back", "Escape", "Enter", "Return"]
+          },
+          "settle": {
+            "type": "boolean"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": ["key"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "ui.key_press",
+          "intent": "Continue the requested keyboard interaction.",
+          "key": "Enter",
+          "next": "done"
+        }
+      ]
+    },
     "ui.set_input": {
-      "description": "Set text on a native input. Values remain part of retained recipe artifacts, so recipes must not contain secrets.",
+      "description": "Set text on a native input. Android recipes must provide test_id so the replacement can be verified from the native snapshot. Values remain part of retained recipe artifacts, so recipes must not contain secrets.",
       "schema": {
         "type": "object",
         "properties": {

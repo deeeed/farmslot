@@ -46,15 +46,24 @@ export interface AgentDeviceSnapshot {
   appBundleId?: string;
 }
 
+interface AgentDeviceInteractionResult {
+  evidence?: { changedFromBefore?: boolean };
+  [key: string]: unknown;
+}
+
 export interface AgentDeviceClientLike {
   apps: { open(options: Record<string, unknown>): Promise<unknown> };
   interactions: {
     press(options: Record<string, unknown>): Promise<unknown>;
-    fill(options: Record<string, unknown>): Promise<unknown>;
+    fill(options: Record<string, unknown>): Promise<AgentDeviceInteractionResult>;
     scroll(options: Record<string, unknown>): Promise<unknown>;
     swipe(options: Record<string, unknown>): Promise<unknown>;
   };
-  command: { wait(options: Record<string, unknown>): Promise<unknown> };
+  command: {
+    back?(options: Record<string, unknown>): Promise<unknown>;
+    wait(options: Record<string, unknown>): Promise<unknown>;
+    keyboard(options: Record<string, unknown>): Promise<unknown>;
+  };
   capture: {
     snapshot(options: Record<string, unknown>): Promise<AgentDeviceSnapshot>;
     screenshot(options: Record<string, unknown>): Promise<{
@@ -72,6 +81,7 @@ type AgentDeviceClient = AgentDeviceClientLike;
 
 export const NATIVE_UI_ACTIONS = [
   'ui.press',
+  'ui.key_press',
   'ui.set_input',
   'ui.scroll',
   'ui.swipe',
@@ -205,22 +215,44 @@ export function createAgentDeviceUiTransport(
             }),
             node.settle !== false,
           );
+        case 'ui.key_press': {
+          const keyAction = nativeKeyboardAction(node.key);
+          const result =
+            keyAction === 'back'
+              ? await pressNativeBack(client, selection, options.session)
+              : requireNativeKeyboardEffect(
+                  keyAction,
+                  await client.command.keyboard({
+                    ...selection,
+                    session: options.session,
+                    action: keyAction,
+                    responseLevel: 'digest',
+                  }),
+                );
+          if (node.settle === false) return result;
+          return {
+            ...(result as Record<string, unknown>),
+            ...(await awaitNativeStability(
+              client,
+              options.session,
+              selection,
+              'ui.key_press',
+              positiveNumber(node.timeout_ms) ?? 10_000,
+            )),
+          };
+        }
         case 'ui.set_input':
           return sanitizeFillResult(
-            requireSettledInteraction(
-              'ui.set_input',
-              await client.interactions.fill({
-                ...selection,
-                session: options.session,
-                selector: selectorFromNode(node, 'ui.set_input'),
-                text: requiredString(node.value ?? node.text, 'ui.set_input.value'),
-                settle: node.settle !== false,
-                verify: true,
-                responseLevel: 'digest',
-                timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
-              }),
-              node.settle !== false,
-            ),
+            await replaceNativeInput({
+              client,
+              selection,
+              session: options.session,
+              node,
+              platform: options.platform,
+              commandRunner: gestureCommandRunner,
+              tool: gestureTool,
+              device: gestureDevice,
+            }),
           );
         case 'ui.scroll': {
           const result = await client.interactions.scroll({
@@ -298,6 +330,205 @@ export function createAgentDeviceUiTransport(
       await client.sessions.close({ session: options.session, shutdown: false });
       opened = false;
     },
+  };
+}
+
+function nativeKeyboardAction(value: unknown): 'back' | 'dismiss' | 'enter' {
+  const key = requiredString(value, 'ui.key_press.key').toLowerCase();
+  if (key === 'back') return 'back';
+  if (key === 'escape') return 'dismiss';
+  if (key === 'enter' || key === 'return') return 'enter';
+  throw new Error(
+    `ui.key_press key ${JSON.stringify(value)} is not supported by the native device transport. Next: use Back, Escape, Enter, or Return`,
+  );
+}
+
+function requireNativeKeyboardEffect(action: 'dismiss' | 'enter', result: unknown): unknown {
+  if (!result || typeof result !== 'object') {
+    throw new Error(`ui.key_press ${action} returned no observable keyboard result.`);
+  }
+  const outcome = result as Record<string, unknown>;
+  if (outcome.wasVisible === false) {
+    throw new Error(`ui.key_press ${action} could not affect the keyboard: it was not visible.`);
+  }
+  if (action === 'dismiss' && outcome.dismissed !== true) {
+    if (outcome.wasVisible === true) {
+      throw new Error('ui.key_press dismiss could not dismiss the visible keyboard.');
+    }
+  }
+  if (outcome.wasVisible === undefined) {
+    return {
+      ...outcome,
+      settlementWarning: `ui.key_press ${action} completed without provider keyboard-visibility evidence.`,
+    };
+  }
+  return result;
+}
+
+async function pressNativeBack(
+  client: AgentDeviceClient,
+  selection: AgentDeviceSelection,
+  session: string,
+): Promise<unknown> {
+  if (!client.command.back) {
+    throw new Error(
+      'ui.key_press Back requires an agent-device client with native back-navigation support.',
+    );
+  }
+  return client.command.back({
+    ...selection,
+    session,
+    responseLevel: 'digest',
+  });
+}
+
+async function replaceNativeInput({
+  client,
+  selection,
+  session,
+  node,
+  platform,
+  commandRunner,
+  tool,
+  device,
+}: {
+  client: AgentDeviceClient;
+  selection: AgentDeviceSelection;
+  session: string;
+  node: Record<string, unknown>;
+  platform: 'ios' | 'android';
+  commandRunner: NativeGestureCommandRunner;
+  tool: () => Promise<string>;
+  device: () => Promise<string>;
+}): Promise<unknown> {
+  const text = requiredString(node.value ?? node.text, 'ui.set_input.value');
+  const testId = optionalString(node.test_id ?? node.testID);
+  if (platform === 'android' && !testId) {
+    throw new Error(
+      'Android ui.set_input requires test_id so replacement can be verified from the native snapshot.',
+    );
+  }
+  const selector = selectorFromNode(node, 'ui.set_input');
+  const fill = () =>
+    client.interactions.fill({
+      ...selection,
+      session,
+      selector,
+      text,
+      settle: node.settle !== false,
+      verify: true,
+      responseLevel: 'digest',
+      timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
+    });
+  let result = await fill();
+  if (platform !== 'android') {
+    return requireSettledInteraction('ui.set_input', result, node.settle !== false);
+  }
+  if (!testId) throw new Error('Android ui.set_input requires test_id.');
+  let observed = await nativeInputValue(client, selection, session, testId);
+  if (!observed.verifiable) {
+    throw new Error('ui.set_input could not verify the Android field after replacement.');
+  }
+  if (
+    observed.value === text ||
+    (observed.masked &&
+      interactionChanged(result) &&
+      Array.from(observed.value).length === Array.from(text).length)
+  ) {
+    return requireSettledInteraction('ui.set_input', result, node.settle !== false);
+  }
+  await client.interactions.press({
+    ...selection,
+    session,
+    selector,
+    settle: false,
+    verify: false,
+    responseLevel: 'digest',
+    timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
+  });
+  const adb = await tool();
+  const serial = await device();
+  await commandRunner.execFile(adb, ['-s', serial, 'shell', 'input', 'keyevent', '123'], {
+    timeoutMs: 10_000,
+  });
+  await deleteAndroidFieldCharacters(commandRunner, adb, serial, Array.from(observed.value).length);
+  let cleared = await nativeInputValue(client, selection, session, testId);
+  if (!cleared.verifiable) {
+    throw new Error('ui.set_input could not clear the Android field before replacement.');
+  }
+  if (cleared.value.length > 0) {
+    const firstClearedValue = cleared.value;
+    await deleteAndroidFieldCharacters(
+      commandRunner,
+      adb,
+      serial,
+      Array.from(firstClearedValue).length,
+    );
+    cleared = await nativeInputValue(client, selection, session, testId);
+    const stablePlaceholder =
+      cleared.verifiable && !cleared.masked && cleared.value === firstClearedValue;
+    if (!cleared.verifiable || (cleared.value.length > 0 && !stablePlaceholder)) {
+      throw new Error('ui.set_input could not clear the Android field before replacement.');
+    }
+  }
+  result = await fill();
+  observed = await nativeInputValue(client, selection, session, testId);
+  if (
+    !observed.verifiable ||
+    (observed.masked
+      ? Array.from(observed.value).length !== Array.from(text).length
+      : observed.value !== text)
+  ) {
+    throw new Error('ui.set_input could not verify the requested Android replacement value.');
+  }
+  return requireSettledInteraction('ui.set_input', result, node.settle !== false);
+}
+
+async function deleteAndroidFieldCharacters(
+  commandRunner: NativeGestureCommandRunner,
+  adb: string,
+  serial: string,
+  characterCount: number,
+): Promise<void> {
+  for (let offset = 0; offset < characterCount; offset += 24) {
+    const count = Math.min(24, characterCount - offset);
+    await commandRunner.execFile(
+      adb,
+      ['-s', serial, 'shell', 'input', 'keyevent', ...Array.from({ length: count }, () => '67')],
+      { timeoutMs: Math.max(10_000, count * 150 + 2_000) },
+    );
+  }
+}
+
+function interactionChanged(result: AgentDeviceInteractionResult): boolean {
+  return result.evidence?.changedFromBefore === true;
+}
+
+async function nativeInputValue(
+  client: AgentDeviceClient,
+  selection: AgentDeviceSelection,
+  session: string,
+  testId: string,
+): Promise<{ value: string; verifiable: boolean; masked: boolean }> {
+  const snapshot = await client.capture.snapshot({
+    ...selection,
+    session,
+    interactiveOnly: false,
+    forceFull: true,
+  });
+  const target = snapshot.nodes.find((candidate) => candidate.identifier === testId);
+  const value = target?.value;
+  if (typeof value !== 'string') {
+    return { value: '', verifiable: false, masked: false };
+  }
+  return {
+    value,
+    verifiable: true,
+    masked:
+      value.length > 0 &&
+      Array.from(value).every(
+        (character) => character === '\u2022' || character === '*' || character === '\u25cf',
+      ),
   };
 }
 

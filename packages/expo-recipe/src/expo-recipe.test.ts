@@ -21,6 +21,7 @@ import { closeUiTransportQuietly } from './runner.js';
 test('publishes the native action set through the package root', () => {
   assert.deepEqual(NATIVE_UI_ACTIONS, [
     'ui.press',
+    'ui.key_press',
     'ui.set_input',
     'ui.scroll',
     'ui.swipe',
@@ -31,6 +32,41 @@ test('publishes the native action set through the package root', () => {
     'ui.screenshot',
     'ui.capture_surface',
   ]);
+});
+
+test('scaffolded manifests accept native key press recipes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-key-press-'));
+  const previousPlatform = process.env.PLATFORM;
+  try {
+    process.env.PLATFORM = 'android';
+    await writeJson(path.join(root, 'package.json'), { name: 'example-expo', scripts: {} });
+    await installExpoRecipeScaffold({ projectRoot: root });
+    await writeJson(path.join(root, DEFAULT_EXPO_RECIPE_PATH), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Dismiss the native keyboard.',
+      workflow: {
+        entry: 'dismiss',
+        nodes: {
+          dismiss: {
+            action: 'ui.key_press',
+            intent: 'Dismiss the native keyboard.',
+            key: 'Escape',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+
+    const validation = await validateExpoRecipeDocument(DEFAULT_EXPO_RECIPE_PATH, {
+      projectRoot: root,
+    });
+    assert.equal(validation.status, 'valid');
+  } finally {
+    if (previousPlatform === undefined) delete process.env.PLATFORM;
+    else process.env.PLATFORM = previousPlatform;
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('production Expo validation rejects gestures unsupported by the active adapter', async () => {

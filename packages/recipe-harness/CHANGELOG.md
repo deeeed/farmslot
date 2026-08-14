@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.15.0 - 2026-08-14
+
+- Align the packaged Recipe Protocol dependency with 0.21.0 so consumers use one execution-capability and evidence contract runtime.
+
 ## 0.14.0 - 2026-08-03
 
 - feat(visual-review): start navigation maps at the top level with independently collapsible branches and expand/collapse-all controls.

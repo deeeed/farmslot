@@ -1,0 +1,71 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion native input actions",
+  "description": "Proves native input replacement and back navigation through the assigned device.",
+  "workflow": {
+    "entry": "open-filters",
+    "nodes": {
+      "open-filters": {
+        "action": "ui.press",
+        "test_id": "companion-filter-edit",
+        "intent": "Open the native workspace filter sheet.",
+        "next": "wait-for-search"
+      },
+      "wait-for-search": {
+        "action": "ui.wait_for",
+        "test_id": "companion-filter-search",
+        "expected": "visible",
+        "timeout_ms": 20000,
+        "intent": "Confirm the native filter input is ready.",
+        "next": "fill-search"
+      },
+      "fill-search": {
+        "action": "ui.set_input",
+        "test_id": "companion-filter-search",
+        "value": "farmslot",
+        "intent": "Scope the visible project and machine choices to Farmslot entries.",
+        "next": "replace-search"
+      },
+      "replace-search": {
+        "action": "ui.set_input",
+        "test_id": "companion-filter-search",
+        "value": "mini",
+        "intent": "Change the visible filter scope to Mini without retaining the prior query.",
+        "next": "dismiss-keyboard"
+      },
+      "dismiss-keyboard": {
+        "action": "ui.key_press",
+        "key": "Enter",
+        "timeout_ms": 10000,
+        "intent": "Complete the filter query and reveal the controls hidden behind the native keyboard.",
+        "next": "close-filters"
+      },
+      "close-filters": {
+        "action": "ui.key_press",
+        "key": "Back",
+        "timeout_ms": 10000,
+        "intent": "Return from filter editing to the review queue.",
+        "next": "confirm-review"
+      },
+      "confirm-review": {
+        "action": "ui.wait_for",
+        "test_id": "companion-filter-edit",
+        "expected": "visible",
+        "timeout_ms": 20000,
+        "intent": "Confirm Back returned to the review queue.",
+        "next": "capture-proof"
+      },
+      "capture-proof": {
+        "action": "ui.screenshot",
+        "path": "screenshots/native-input-actions.png",
+        "label": "Review filters after native input replacement and Back",
+        "intent": "Retain the final native state as review evidence.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

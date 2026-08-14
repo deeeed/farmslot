@@ -4,6 +4,21 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+## 0.8.2 - 2026-08-14
+
+- fix: require `test_id` for verifiable Android input replacement, retry empty placeholders with bounded chunked clearing, and fail closed when the field cannot be observed.
+- fix: send `Back` through native navigation, require observable keyboard effects for `Escape`, `Enter`, and `Return` on Android and iOS, and honor the recipe node timeout while waiting for the resulting UI to settle.
+
+## 0.8.1 - 2026-08-14
+
+- Publish against `@farmslot/recipe-harness` 0.15.0 so consumers use one Recipe Protocol 0.21.0 runtime.
+
+## 0.8.0 - 2026-08-14
+
+- fix: route standard Back, Escape, Enter, and Return key presses through the native device keyboard on opaque Android and iOS runtimes, then wait for the resulting UI transition.
+- fix: verify Android `ui.set_input` replacement, preserve exact whitespace, distinguish labels from values, and prove masked-field clearing before retrying.
+- Publish against `@farmslot/protocol` 0.21.
+
 ## 0.7.1 - 2026-08-03
 
 - fix: expose the canonical native UI action set from the package root so consumers can verify provider capability wiring without duplicating it.

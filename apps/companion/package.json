@@ -45,6 +45,7 @@
     "recipe:run": "bash scripts/agentic/run-recipe.sh run",
     "recipe:run:bridge": "bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/bridge-status.recipe.json",
     "recipe:run:continuous-gestures": "bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/continuous-gestures.recipe.json",
+    "recipe:run:native-input-actions": "bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/native-input-actions.recipe.json",
     "recipe:run:ux-baseline:ios": "PLATFORM=ios bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/ux-catalog.recipe.json --param platform=ios",
     "recipe:run:ux-baseline:android": "PLATFORM=android bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/ux-catalog.recipe.json --param platform=android",
     "recipe:run:ux-ready-gate": "bash scripts/agentic/run-slot-ux-catalog.sh",
