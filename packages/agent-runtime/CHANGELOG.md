@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- fix(mark): generate and retain an opaque identity for each worker signal attempt.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.8.1 - 2026-08-14
+
+- fix(mark): generate and retain an opaque identity for each worker signal attempt.
 
 ## 0.8.0 - 2026-08-10
 

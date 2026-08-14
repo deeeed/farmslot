@@ -26,7 +26,7 @@
     "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/expo-recipe"
   },
   "dependencies": {
-    "@farmslot/protocol": "workspace:*",
+    "@farmslot/protocol": "workspace:^",
     "@farmslot/recipe-harness": "workspace:*",
     "pngjs": "^7.0.0"
   },

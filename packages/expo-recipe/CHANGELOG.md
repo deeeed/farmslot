@@ -8,6 +8,7 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 - fix: route standard Back, Escape, Enter, and Return key presses through the native device keyboard on opaque Android and iOS runtimes, then wait for the resulting UI transition.
 - fix: verify Android `ui.set_input` replacement, preserve exact whitespace, distinguish labels from values, and prove masked-field clearing before retrying.
+- Publish against `@farmslot/protocol` 0.21.
 
 ## 0.7.1 - 2026-08-03
 
