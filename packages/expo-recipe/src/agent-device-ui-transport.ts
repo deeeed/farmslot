@@ -46,11 +46,16 @@ export interface AgentDeviceSnapshot {
   appBundleId?: string;
 }
 
+interface AgentDeviceInteractionResult {
+  evidence?: { changedFromBefore?: boolean };
+  [key: string]: unknown;
+}
+
 export interface AgentDeviceClientLike {
   apps: { open(options: Record<string, unknown>): Promise<unknown> };
   interactions: {
     press(options: Record<string, unknown>): Promise<unknown>;
-    fill(options: Record<string, unknown>): Promise<unknown>;
+    fill(options: Record<string, unknown>): Promise<AgentDeviceInteractionResult>;
     scroll(options: Record<string, unknown>): Promise<unknown>;
     swipe(options: Record<string, unknown>): Promise<unknown>;
   };
@@ -343,11 +348,19 @@ function requireNativeKeyboardEffect(action: 'dismiss' | 'enter', result: unknow
     throw new Error(`ui.key_press ${action} returned no observable keyboard result.`);
   }
   const outcome = result as Record<string, unknown>;
-  if (outcome.wasVisible !== true) {
+  if (outcome.wasVisible === false) {
     throw new Error(`ui.key_press ${action} could not affect the keyboard: it was not visible.`);
   }
   if (action === 'dismiss' && outcome.dismissed !== true) {
-    throw new Error('ui.key_press dismiss could not dismiss the visible keyboard.');
+    if (outcome.wasVisible === true) {
+      throw new Error('ui.key_press dismiss could not dismiss the visible keyboard.');
+    }
+  }
+  if (outcome.wasVisible === undefined) {
+    return {
+      ...outcome,
+      settlementWarning: `ui.key_press ${action} completed without provider keyboard-visibility evidence.`,
+    };
   }
   return result;
 }
@@ -389,6 +402,12 @@ async function replaceNativeInput({
   device: () => Promise<string>;
 }): Promise<unknown> {
   const text = requiredString(node.value ?? node.text, 'ui.set_input.value');
+  const testId = optionalString(node.test_id ?? node.testID);
+  if (platform === 'android' && !testId) {
+    throw new Error(
+      'Android ui.set_input requires test_id so replacement can be verified from the native snapshot.',
+    );
+  }
   const selector = selectorFromNode(node, 'ui.set_input');
   const fill = () =>
     client.interactions.fill({
@@ -401,16 +420,11 @@ async function replaceNativeInput({
       responseLevel: 'digest',
       timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
     });
-  const testId = optionalString(node.test_id ?? node.testID);
   let result = await fill();
   if (platform !== 'android') {
     return requireSettledInteraction('ui.set_input', result, node.settle !== false);
   }
-  if (!testId) {
-    throw new Error(
-      'Android ui.set_input requires test_id so replacement can be verified from the native snapshot.',
-    );
-  }
+  if (!testId) throw new Error('Android ui.set_input requires test_id.');
   let observed = await nativeInputValue(client, selection, session, testId);
   if (!observed.verifiable) {
     throw new Error('ui.set_input could not verify the Android field after replacement.');
@@ -437,24 +451,25 @@ async function replaceNativeInput({
   await commandRunner.execFile(adb, ['-s', serial, 'shell', 'input', 'keyevent', '123'], {
     timeoutMs: 10_000,
   });
-  if (observed.value.length > 0) {
-    const characterCount = Array.from(observed.value).length;
-    await commandRunner.execFile(
-      adb,
-      [
-        '-s',
-        serial,
-        'shell',
-        'input',
-        'keyevent',
-        ...Array.from({ length: characterCount }, () => '67'),
-      ],
-      { timeoutMs: Math.max(10_000, characterCount * 150 + 2_000) },
-    );
-  }
-  const cleared = await nativeInputValue(client, selection, session, testId);
-  if (!cleared.verifiable || cleared.value.length !== 0) {
+  await deleteAndroidFieldCharacters(commandRunner, adb, serial, Array.from(observed.value).length);
+  let cleared = await nativeInputValue(client, selection, session, testId);
+  if (!cleared.verifiable) {
     throw new Error('ui.set_input could not clear the Android field before replacement.');
+  }
+  if (cleared.value.length > 0) {
+    const firstClearedValue = cleared.value;
+    await deleteAndroidFieldCharacters(
+      commandRunner,
+      adb,
+      serial,
+      Array.from(firstClearedValue).length,
+    );
+    cleared = await nativeInputValue(client, selection, session, testId);
+    const stablePlaceholder =
+      cleared.verifiable && !cleared.masked && cleared.value === firstClearedValue;
+    if (!cleared.verifiable || (cleared.value.length > 0 && !stablePlaceholder)) {
+      throw new Error('ui.set_input could not clear the Android field before replacement.');
+    }
   }
   result = await fill();
   observed = await nativeInputValue(client, selection, session, testId);
@@ -469,10 +484,24 @@ async function replaceNativeInput({
   return requireSettledInteraction('ui.set_input', result, node.settle !== false);
 }
 
-function interactionChanged(result: unknown): boolean {
-  if (!result || typeof result !== 'object') return false;
-  const evidence = (result as { evidence?: { changedFromBefore?: unknown } }).evidence;
-  return evidence?.changedFromBefore === true;
+async function deleteAndroidFieldCharacters(
+  commandRunner: NativeGestureCommandRunner,
+  adb: string,
+  serial: string,
+  characterCount: number,
+): Promise<void> {
+  for (let offset = 0; offset < characterCount; offset += 24) {
+    const count = Math.min(24, characterCount - offset);
+    await commandRunner.execFile(
+      adb,
+      ['-s', serial, 'shell', 'input', 'keyevent', ...Array.from({ length: count }, () => '67')],
+      { timeoutMs: Math.max(10_000, count * 150 + 2_000) },
+    );
+  }
+}
+
+function interactionChanged(result: AgentDeviceInteractionResult): boolean {
+  return result.evidence?.changedFromBefore === true;
 }
 
 async function nativeInputValue(

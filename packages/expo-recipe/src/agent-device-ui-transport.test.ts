@@ -573,6 +573,29 @@ test('native keyboard actions fail when the keyboard command has no effect', asy
   }
 });
 
+test('native keyboard actions warn when the provider omits visibility evidence', async () => {
+  const client = {
+    apps: { open: async () => ({ session: 's' }) },
+    command: { keyboard: async () => ({ action: 'enter', message: 'keyboardReturn' }) },
+    sessions: { close: async () => ({ session: 's' }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'android',
+    device: 'emulator-5554',
+    app: 'net.siteed.farmslot.development',
+    session: 's',
+    client,
+  });
+
+  const result = (await transport.execute(
+    'ui.key_press',
+    { key: 'Enter', settle: false },
+    {} as ActionExecutionContext,
+  )) as { settlementWarning?: string };
+
+  assert.match(result.settlementWarning ?? '', /without provider keyboard-visibility evidence/u);
+});
+
 test('fails when an observable Android input remains empty after repair', async () => {
   let fills = 0;
   const commands: string[][] = [];
@@ -709,13 +732,15 @@ test('fails when a masked Android input cannot be cleared before replacement', a
   assert.deepEqual(commands, [
     ['-s', 'physical-serial', 'shell', 'input', 'keyevent', '123'],
     ['-s', 'physical-serial', 'shell', 'input', 'keyevent', '67', '67', '67', '67'],
+    ['-s', 'physical-serial', 'shell', 'input', 'keyevent', '67', '67', '67', '67'],
   ]);
 });
 
 test('retries an Android input whose empty placeholder is exposed as its value', async () => {
   let fills = 0;
-  const snapshotValues = ['Enter password', '', 'expected'];
+  const snapshotValues = ['Enter password', 'Enter password', 'Enter password', 'expected'];
   const snapshotRequests: Array<Record<string, unknown>> = [];
+  const commands: string[][] = [];
   const client = {
     apps: { open: async () => ({ session: 'input-session', identifiers: {} }) },
     interactions: {
@@ -745,7 +770,8 @@ test('retries an Android input whose empty placeholder is exposed as its value',
     client,
     adbPath: '/tools/adb',
     gestureCommandRunner: {
-      async execFile() {
+      async execFile(_file, args) {
+        commands.push(args);
         return {};
       },
     },
@@ -758,8 +784,9 @@ test('retries an Android input whose empty placeholder is exposed as its value',
   );
 
   assert.equal(fills, 2);
-  assert.equal(snapshotRequests.length, 3);
+  assert.equal(snapshotRequests.length, 4);
   assert.deepEqual(snapshotValues, []);
+  assert.equal(commands.length, 3);
 });
 
 test('streams all continuous gestures from resolved native target coordinates', async () => {

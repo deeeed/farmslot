@@ -153,7 +153,7 @@
       ]
     },
     "ui.set_input": {
-      "description": "Set text on a native input. Values remain part of retained recipe artifacts, so recipes must not contain secrets.",
+      "description": "Set text on a native input. Android recipes must provide test_id so the replacement can be verified from the native snapshot. Values remain part of retained recipe artifacts, so recipes must not contain secrets.",
       "schema": {
         "type": "object",
         "properties": {
