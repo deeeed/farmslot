@@ -44,7 +44,6 @@ export class ChatMessageElement extends LitElement {
           .slice(1)
           .split('|')
           .map((c) => c.trim());
-        const isHeader = false; // simple heuristic: treat all as td
         return `<tr>${cells.map((c) => `<td style="padding:2px 8px;border:1px solid #222240;font-size:0.75rem">${c}</td>`).join('')}</tr>`;
       })
       .replace(
