@@ -361,13 +361,24 @@ async function replaceNativeInput({
       responseLevel: 'digest',
       timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
     });
-  let result = await fill();
   const testId = optionalString(node.test_id ?? node.testID);
+  const before =
+    platform === 'android' && testId
+      ? await nativeInputValue(client, selection, session, testId)
+      : undefined;
+  let result = await fill();
   if (platform !== 'android' || !testId) {
     return requireSettledInteraction('ui.set_input', result, node.settle !== false);
   }
   let observed = await nativeInputValue(client, selection, session, testId);
-  if (!observed.verifiable || observed.masked || observed.value === text) {
+  if (
+    !observed.verifiable ||
+    observed.value === text ||
+    (observed.masked &&
+      before?.verifiable &&
+      before.value.length === 0 &&
+      observed.value.length === text.length)
+  ) {
     return requireSettledInteraction('ui.set_input', result, node.settle !== false);
   }
   await client.interactions.press({
@@ -391,9 +402,16 @@ async function replaceNativeInput({
       { timeoutMs: 10_000 },
     );
   }
+  const cleared = await nativeInputValue(client, selection, session, testId);
+  if (cleared.verifiable && cleared.value.length !== 0) {
+    throw new Error('ui.set_input could not clear the Android field before replacement.');
+  }
   result = await fill();
   observed = await nativeInputValue(client, selection, session, testId);
-  if (observed.verifiable && !observed.masked && observed.value !== text) {
+  if (
+    observed.verifiable &&
+    (observed.masked ? observed.value.length !== text.length : observed.value !== text)
+  ) {
     throw new Error(
       `ui.set_input could not replace the Android field; expected ${Array.from(text).length} characters and observed ${Array.from(observed.value).length}.`,
     );
@@ -414,7 +432,7 @@ async function nativeInputValue(
     forceFull: true,
   });
   const target = snapshot.nodes.find((candidate) => candidate.identifier === testId);
-  const value = typeof target?.value === 'string' ? target.value : target?.label;
+  const value = target?.value;
   if (typeof value !== 'string') {
     return { value: '', verifiable: false, masked: false };
   }

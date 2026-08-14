@@ -567,6 +567,93 @@ test('fails when an observable Android input remains empty after repair', async 
   assert.deepEqual(commands, [['-s', 'physical-serial', 'shell', 'input', 'keyevent', '123']]);
 });
 
+test('does not treat an Android input label as its value', async () => {
+  let fills = 0;
+  const client = {
+    apps: { open: async () => ({ session: 'input-session', identifiers: {} }) },
+    interactions: {
+      fill: async () => {
+        fills += 1;
+        return { settle: { settled: true } };
+      },
+      press: async () => ({ pressed: true }),
+    },
+    capture: {
+      snapshot: async () => ({
+        nodes: [{ identifier: 'field', label: 'Email' }],
+        truncated: false,
+      }),
+    },
+    sessions: { close: async () => ({ session: 'input-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'android',
+    device: 'physical-serial',
+    app: 'io.metamask',
+    session: 'input-session',
+    client,
+  });
+
+  await transport.execute(
+    'ui.set_input',
+    { test_id: 'field', value: 'expected' },
+    {} as ActionExecutionContext,
+  );
+
+  assert.equal(fills, 1);
+});
+
+test('fails when a masked Android input cannot be cleared before replacement', async () => {
+  let fills = 0;
+  const commands: string[][] = [];
+  const client = {
+    apps: { open: async () => ({ session: 'input-session', identifiers: {} }) },
+    interactions: {
+      fill: async () => {
+        fills += 1;
+        return { settle: { settled: true } };
+      },
+      press: async () => ({ pressed: true }),
+    },
+    capture: {
+      snapshot: async () => ({
+        nodes: [{ identifier: 'field', value: '••••' }],
+        truncated: false,
+      }),
+    },
+    sessions: { close: async () => ({ session: 'input-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'android',
+    device: 'physical-serial',
+    app: 'io.metamask',
+    session: 'input-session',
+    client,
+    adbPath: '/tools/adb',
+    gestureCommandRunner: {
+      async execFile(_file, args) {
+        commands.push(args);
+        return {};
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      transport.execute(
+        'ui.set_input',
+        { test_id: 'field', value: 'expected' },
+        {} as ActionExecutionContext,
+      ),
+    /could not clear the Android field before replacement/u,
+  );
+  assert.equal(fills, 1);
+  assert.deepEqual(commands, [
+    ['-s', 'physical-serial', 'shell', 'input', 'keyevent', '123'],
+    ['-s', 'physical-serial', 'shell', 'input', 'keyevent', '67', '67', '67', '67'],
+  ]);
+});
+
 test('streams all continuous gestures from resolved native target coordinates', async () => {
   for (const platform of ['ios', 'android'] as const) {
     const commands: Array<{ file: string; args: string[] }> = [];
