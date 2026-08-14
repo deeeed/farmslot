@@ -132,10 +132,6 @@
             "type": "string",
             "enum": ["Back", "Escape", "Enter", "Return"]
           },
-          "timeout_ms": {
-            "type": "integer",
-            "minimum": 1
-          },
           "settle": {
             "type": "boolean"
           }

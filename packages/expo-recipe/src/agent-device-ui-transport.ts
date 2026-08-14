@@ -210,7 +210,6 @@ export function createAgentDeviceUiTransport(
             node.settle !== false,
           );
         case 'ui.key_press': {
-          const startedAt = Date.now();
           const result = await client.command.keyboard({
             ...selection,
             session: options.session,
@@ -225,7 +224,7 @@ export function createAgentDeviceUiTransport(
               options.session,
               selection,
               'ui.key_press',
-              Math.max(1, (positiveNumber(node.timeout_ms) ?? 10_000) - (Date.now() - startedAt)),
+              10_000,
             )),
           };
         }

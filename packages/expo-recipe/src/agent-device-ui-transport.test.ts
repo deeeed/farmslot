@@ -316,6 +316,10 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
       },
     },
     command: {
+      async keyboard(options: Record<string, unknown>) {
+        calls.push({ method: 'keyboard', options });
+        return { action: options.action };
+      },
       async wait(options: Record<string, unknown>) {
         calls.push({ method: 'wait-stable', options });
         return { stable: true };
@@ -384,6 +388,7 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
   });
 
   await transport.execute('ui.press', { test_id: 'settings-tab', timeout_ms: 2_000 }, context);
+  await transport.execute('ui.key_press', { key: 'Escape' }, context);
   const fillResult = await transport.execute(
     'ui.set_input',
     { test_id: 'secret-field', value: 'seed phrase secret' },
@@ -477,6 +482,7 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     'id="settings-tab"',
   );
   assert.equal(calls.find((call) => call.method === 'wait-stable')?.options.stable, true);
+  assert.equal(calls.find((call) => call.method === 'keyboard')?.options.action, 'dismiss');
   assert.ok(
     calls
       .filter((call) => call.method === 'snapshot')
