@@ -11,13 +11,17 @@ import type {
   RunFamilyReadinessSummary,
   RunListResult,
   RunRehydratePrNumberResult,
+  TaskProgressResult,
+  TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 import {
+  Events,
   Methods,
   normalizeRunTags,
   resolveRunSlotId,
   summarizeRunEvidence,
 } from '@farmslot/protocol';
+import { projectColor } from '@farmslot/theme';
 
 import './run-pipeline-mini.js';
 import './run-detail.js';
@@ -41,6 +45,7 @@ import {
 } from '../shared/work-inventory-table.js';
 
 import { familyRunHash } from './family-observability-url-state.js';
+import { isTaskProgressRunActive, shouldAcceptTaskProgressUpdate } from './run-detail-model.js';
 import { standaloneRunDetailHash } from './run-detail-url-state.js';
 import {
   renderRunListManageBar,
@@ -151,6 +156,8 @@ export class RunList extends RunListState {
   static styles = [runListStyles, flowBadgeStyles, workInventoryTableStyles];
 
   private narrowMedia?: MediaQueryList;
+  private unsubProgress?: () => void;
+  private readonly taskProgressFetches = new Set<string>();
   private readonly onNarrowChange = () => {
     this.narrowViewport = this.narrowMedia?.matches ?? false;
   };
@@ -177,7 +184,21 @@ export class RunList extends RunListState {
       this.globalFilters = s.globalFilters;
       this.hydrating = isHydrating(s, 'runs');
       this.bootstrapFailed = s.bootstrapFailed.runs;
+      void this.fetchInitialTaskProgress(s.runs);
     });
+    this.unsubProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
+      Events.TASK_PROGRESS_UPDATED,
+      (update) => {
+        const run = this.runs.find((candidate) => candidate.id === update.runId);
+        if (run && update.progress.structured && shouldAcceptTaskProgressUpdate(run, update)) {
+          this.taskProgressByRun = new Map(this.taskProgressByRun).set(
+            run.id,
+            update.progress.structured,
+          );
+        }
+      },
+    );
+    void this.fetchInitialTaskProgress(this.runs);
     window.addEventListener('hashchange', this._onHashChange);
     if (typeof window.matchMedia === 'function') {
       this.narrowMedia = window.matchMedia('(max-width: 860px)');
@@ -190,8 +211,37 @@ export class RunList extends RunListState {
   disconnectedCallback() {
     super.disconnectedCallback();
     this.unsub?.();
+    this.unsubProgress?.();
     this.narrowMedia?.removeEventListener('change', this.onNarrowChange);
     window.removeEventListener('hashchange', this._onHashChange);
+  }
+
+  private async fetchInitialTaskProgress(runs: readonly Run[]): Promise<void> {
+    const activeRuns = runs.filter(
+      (run) => run.slotId && isTaskProgressRunActive(run) && !this.taskProgressFetches.has(run.id),
+    );
+    await Promise.all(
+      activeRuns.map(async (run) => {
+        this.taskProgressFetches.add(run.id);
+        try {
+          const progress = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
+            slotId: run.slotId,
+            runId: run.id,
+          });
+          if (progress.structured) {
+            this.taskProgressByRun = new Map(this.taskProgressByRun).set(
+              run.id,
+              progress.structured,
+            );
+          }
+        } catch (error) {
+          console.warn(
+            `[run-list] task progress fetch failed for ${run.id}:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }),
+    );
   }
 
   async refreshTagFilter() {
@@ -732,7 +782,11 @@ export class RunList extends RunListState {
           title: runDisplayTitle(run),
         })}</span
       >`,
-      html`<span class="run-project" data-testid="runs-project" title=${`Project: ${run.project}`}
+      html`<span
+        class="run-project"
+        data-testid="runs-project"
+        style="--project-color:${projectColor(run.project)}"
+        title=${`Project: ${run.project}`}
         >${run.project}</span
       >`,
       html`<span class="item-ref" data-testid="runs-ref" title=${run.ticketOrPr}
@@ -753,6 +807,7 @@ export class RunList extends RunListState {
           .run=${run}
           .steps=${run.steps}
           .flowType=${run.flowType}
+          .taskProgress=${this.taskProgressByRun.get(run.id)}
         ></run-pipeline-mini>
         <span class="pipeline-label">${pipelineLabel}</span>
         <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>

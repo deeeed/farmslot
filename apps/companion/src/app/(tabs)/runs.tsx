@@ -5,7 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { isTerminalRunStatus, normalizeRunTags, type Run } from '@farmslot/protocol';
-import { FLOW_COLORS, FLOW_LABELS, RUNNER_COLORS } from '@farmslot/theme';
+import { FLOW_COLORS, FLOW_LABELS, projectColor, RUNNER_COLORS } from '@farmslot/theme';
 
 import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
 import { FilterEmptyState } from '../../components/FilterEmptyState';
@@ -57,12 +57,6 @@ const STATUS_COLORS: Record<string, string> = {
   paused: colors.statusWarn,
 };
 const DIFF_ROUTE_CONTEXT = targetWorkspaceRouteContextParams('diff');
-const PROJECT_COLORS = ['#60a5fa', '#a78bfa', '#f472b6', '#f59e0b', '#34d399', '#22d3ee'];
-
-function projectColor(project: string): string {
-  const hash = [...project].reduce((value, char) => (value * 31 + char.charCodeAt(0)) >>> 0, 0);
-  return PROJECT_COLORS[hash % PROJECT_COLORS.length] ?? colors.accent;
-}
 
 function ProjectBadge({ project }: { project: string }) {
   const color = projectColor(project);
