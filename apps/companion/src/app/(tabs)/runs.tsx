@@ -142,7 +142,9 @@ function RunCard({
         style={[styles.runCard, isFamilyRoot && styles.rootRunCard]}
         onPress={() =>
           router.push({
-            pathname: '/workspace/run/[runId]/evidence',
+            pathname: isTerminalRunStatus(run.status)
+              ? '/workspace/run/[runId]/evidence'
+              : '/workspace/run/[runId]/timeline',
             params: { runId: run.id, recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM },
           })
         }

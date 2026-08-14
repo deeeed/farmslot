@@ -110,6 +110,7 @@ export default function WorkerTerminalScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
+  const draftParam = Array.isArray(params.draft) ? params.draft[0] : params.draft;
   const client = useConnectionStore((s) => s.client);
   const status = useConnectionStore((s) => s.status);
   const terminalRef = useRef<XtermTerminalViewHandle>(null);
@@ -121,7 +122,7 @@ export default function WorkerTerminalScreen() {
   const [isSending, setIsSending] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceCopilotStatus>('idle');
   const [voiceMessage, setVoiceMessage] = useState(getVoiceCopilotAvailability().message);
-  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [voiceTranscript, setVoiceTranscript] = useState(draftParam ?? '');
   const [voiceDraft, setVoiceDraft] = useState('');
   const [voiceWarning, setVoiceWarning] = useState<string | null>(null);
   const [voiceRuntimeReady, setVoiceRuntimeReady] = useState<boolean | null>(null);
@@ -129,7 +130,7 @@ export default function WorkerTerminalScreen() {
   const [selectedVoiceModelId, setSelectedVoiceModelId] = useState(getPreferredVoiceAsrModelId);
   const [isPreparingVoiceRecorder, setIsPreparingVoiceRecorder] = useState(false);
   const [isFormattingVoice, setIsFormattingVoice] = useState(false);
-  const [voiceComposerOpen, setVoiceComposerOpen] = useState(false);
+  const [voiceComposerOpen, setVoiceComposerOpen] = useState(Boolean(draftParam?.trim()));
   const [voicePanelWidth, setVoicePanelWidth] = useState(0);
   const [terminalFullscreen, setTerminalFullscreen] = useState(false);
   const [showTmuxShortcuts, setShowTmuxShortcuts] = useState(false);

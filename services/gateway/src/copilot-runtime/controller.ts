@@ -222,6 +222,12 @@ export class CopilotRuntimeController {
         });
       }
     }
+    this.persisted.session.terminalWorker = {
+      nodeId: os.hostname().replace(/\.local$/u, ''),
+      session: COPILOT_TMUX_SESSION,
+      target: COPILOT_TMUX_TARGET,
+      ...(this.persisted.paneId ? { paneId: this.persisted.paneId } : {}),
+    };
     return { session: this.persisted.session };
   }
 

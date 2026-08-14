@@ -57,11 +57,6 @@ export abstract class ChatPanelState extends LitElement {
   protected unsubConnection?: () => void;
   protected unsubRuntime?: () => void;
   protected toastTimer?: ReturnType<typeof setTimeout>;
-  protected runtimeWorkerLookup?: Promise<void>;
-  protected runtimeWorkerLookupTarget = '';
-  protected runtimeWorkerRetry?: ReturnType<typeof setTimeout>;
-  protected runtimeWorkerRetryMs = 1000;
-  protected runtimeWorkerSession = '';
   protected resizing = false;
   protected resizeStartY = 0;
   protected resizeStartHeight = DEFAULT_DRAWER_HEIGHT;

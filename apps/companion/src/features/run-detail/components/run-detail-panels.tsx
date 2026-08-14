@@ -166,8 +166,8 @@ export function PipelineStepCard({
               ))}
             </View>
           )}
-          {step.inputs && <JsonBlock title="Inputs" value={step.inputs} />}
-          {step.outputs && <JsonBlock title="Outputs" value={step.outputs} />}
+          {step.inputs && <StructuredDataBlock title="Inputs" value={step.inputs} />}
+          {step.outputs && <StructuredDataBlock title="Outputs" value={step.outputs} />}
         </View>
       )}
     </View>
@@ -1024,14 +1024,77 @@ export function StepMeta({ label, value, tone }: { label: string; value: string;
     </View>
   );
 }
-export function JsonBlock({ title, value }: { title: string; value: Record<string, unknown> }) {
-  const body = JSON.stringify(value, null, 2);
+type StructuredField = { label: string; value: string };
+
+function humanizeFieldPart(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/gu, '$1 $2')
+    .replace(/[_-]+/gu, ' ')
+    .replace(/^./u, (character) => character.toUpperCase());
+}
+
+function structuredValue(value: unknown): string | null {
+  if (value === null) return 'None';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (Array.isArray(value) && value.every((item) => item == null || typeof item !== 'object')) {
+    return value.map((item) => structuredValue(item) ?? '').join(', ') || 'None';
+  }
+  return null;
+}
+
+function flattenStructuredFields(
+  value: unknown,
+  path: string[] = [],
+  fields: StructuredField[] = [],
+): StructuredField[] {
+  if (fields.length >= 32) return fields;
+  const scalar = structuredValue(value);
+  if (scalar !== null) {
+    fields.push({
+      label: path.length ? path.map(humanizeFieldPart).join(' · ') : 'Value',
+      value: scalar,
+    });
+    return fields;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) =>
+      flattenStructuredFields(item, [...path, `Item ${index + 1}`], fields),
+    );
+    return fields;
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value);
+    if (entries.length === 0) {
+      fields.push({ label: path.map(humanizeFieldPart).join(' · ') || 'Value', value: 'None' });
+    } else {
+      entries.forEach(([key, child]) => flattenStructuredFields(child, [...path, key], fields));
+    }
+  }
+  return fields;
+}
+
+export function StructuredDataBlock({
+  title,
+  value,
+}: {
+  title: string;
+  value: Record<string, unknown>;
+}) {
+  const fields = flattenStructuredFields(value);
   return (
     <View style={styles.stepBlock}>
       <Text style={styles.stepBlockTitle}>{title}</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <Text style={styles.stepJson}>{body}</Text>
-      </ScrollView>
+      <View style={styles.stepFieldList}>
+        {fields.map((field, index) => (
+          <View key={`${field.label}-${index}`} style={styles.stepFieldRow}>
+            <Text style={styles.stepFieldLabel}>{field.label}</Text>
+            <Text style={styles.stepFieldValue} selectable>
+              {field.value}
+            </Text>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }

@@ -40,8 +40,8 @@ const ADVANCED_ROUTES: AdvancedRoute[] = [
   {
     testID: 'companion-advanced-copilot',
     title: 'Co-Pilot',
-    subtitle: 'Global voice/text assistant for fleet questions and suggested actions.',
-    icon: 'chatbubble-ellipses-outline',
+    subtitle: 'Open the persistent operator agent terminal.',
+    icon: 'terminal-outline',
     pathname: '/(tabs)/copilot',
   },
 ];
