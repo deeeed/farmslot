@@ -38,6 +38,7 @@ export function GlobalFiltersScreen() {
       <FormSheetHeader title="Workspace filters" />
       <View style={styles.searchRow}>
         <TextInput
+          testID="companion-filter-search"
           autoCapitalize="none"
           autoCorrect={false}
           onChangeText={setQuery}

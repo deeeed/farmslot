@@ -4,7 +4,10 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+## 0.8.2 - 2026-08-14
+
 - fix: retry Android input replacement when an empty field exposes its placeholder as the current value.
+- fix: send `Back` through native back navigation, fail Android `Escape` when no keyboard was dismissed, and honor the recipe node timeout while waiting for the resulting UI to settle.
 
 ## 0.8.1 - 2026-08-14
 

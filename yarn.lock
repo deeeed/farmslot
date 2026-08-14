@@ -4531,7 +4531,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@farmslot/expo-recipe@workspace:packages/expo-recipe"
   dependencies:
-    "@farmslot/protocol": "workspace:^"
+    "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-harness": "workspace:*"
     "@types/node": "npm:^22.0.0"
     "@types/pngjs": "npm:^6.0.5"
@@ -4662,7 +4662,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@farmslot/protocol@workspace:*, @farmslot/protocol@workspace:^, @farmslot/protocol@workspace:packages/protocol":
+"@farmslot/protocol@workspace:*, @farmslot/protocol@workspace:packages/protocol":
   version: 0.0.0-use.local
   resolution: "@farmslot/protocol@workspace:packages/protocol"
   dependencies:

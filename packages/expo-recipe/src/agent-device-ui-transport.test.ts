@@ -316,6 +316,10 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
       },
     },
     command: {
+      async back(options: Record<string, unknown>) {
+        calls.push({ method: 'back', options });
+        return { action: 'back' };
+      },
       async keyboard(options: Record<string, unknown>) {
         calls.push({ method: 'keyboard', options });
         return { action: options.action };
@@ -389,6 +393,7 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
 
   await transport.execute('ui.press', { test_id: 'settings-tab', timeout_ms: 2_000 }, context);
   await transport.execute('ui.key_press', { key: 'Escape' }, context);
+  await transport.execute('ui.key_press', { key: 'Back', timeout_ms: 2_000 }, context);
   const fillResult = await transport.execute(
     'ui.set_input',
     { test_id: 'secret-field', value: 'seed phrase secret' },
@@ -483,6 +488,7 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
   );
   assert.equal(calls.find((call) => call.method === 'wait-stable')?.options.stable, true);
   assert.equal(calls.find((call) => call.method === 'keyboard')?.options.action, 'dismiss');
+  assert.equal(calls.find((call) => call.method === 'back')?.options.responseLevel, 'digest');
   assert.ok(
     calls
       .filter((call) => call.method === 'snapshot')
@@ -517,6 +523,36 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     'screenshots/settings.png',
   );
   assert.equal(calls.find((call) => call.method === 'close')?.options.shutdown, false);
+});
+
+test('Android Escape fails when the keyboard dismiss command has no effect', async () => {
+  for (const keyboardResult of [
+    { action: 'dismiss', wasVisible: false, dismissed: false },
+    { action: 'dismiss', wasVisible: true, dismissed: false },
+  ]) {
+    const client = {
+      apps: { open: async () => ({ session: 's' }) },
+      command: { keyboard: async () => keyboardResult },
+      sessions: { close: async () => ({ session: 's' }) },
+    } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+    const transport = createAgentDeviceUiTransport({
+      platform: 'android',
+      device: 'emulator-5554',
+      app: 'net.siteed.farmslot.development',
+      session: 's',
+      client,
+    });
+
+    await assert.rejects(
+      () =>
+        transport.execute(
+          'ui.key_press',
+          { key: 'Escape', settle: false },
+          {} as ActionExecutionContext,
+        ),
+      /could not dismiss/u,
+    );
+  }
 });
 
 test('fails when an observable Android input remains empty after repair', async () => {

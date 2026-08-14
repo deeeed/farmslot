@@ -55,6 +55,7 @@ export interface AgentDeviceClientLike {
     swipe(options: Record<string, unknown>): Promise<unknown>;
   };
   command: {
+    back(options: Record<string, unknown>): Promise<unknown>;
     wait(options: Record<string, unknown>): Promise<unknown>;
     keyboard(options: Record<string, unknown>): Promise<unknown>;
   };
@@ -210,12 +211,24 @@ export function createAgentDeviceUiTransport(
             node.settle !== false,
           );
         case 'ui.key_press': {
-          const result = await client.command.keyboard({
-            ...selection,
-            session: options.session,
-            action: nativeKeyboardAction(node.key),
-            responseLevel: 'digest',
-          });
+          const keyAction = nativeKeyboardAction(node.key);
+          const result =
+            keyAction === 'back'
+              ? await client.command.back({
+                  ...selection,
+                  session: options.session,
+                  responseLevel: 'digest',
+                })
+              : requireNativeKeyboardEffect(
+                  options.platform,
+                  keyAction,
+                  await client.command.keyboard({
+                    ...selection,
+                    session: options.session,
+                    action: keyAction,
+                    responseLevel: 'digest',
+                  }),
+                );
           if (node.settle === false) return result;
           return {
             ...(result as Record<string, unknown>),
@@ -224,7 +237,7 @@ export function createAgentDeviceUiTransport(
               options.session,
               selection,
               'ui.key_press',
-              10_000,
+              positiveNumber(node.timeout_ms) ?? 10_000,
             )),
           };
         }
@@ -320,13 +333,34 @@ export function createAgentDeviceUiTransport(
   };
 }
 
-function nativeKeyboardAction(value: unknown): 'dismiss' | 'enter' {
+function nativeKeyboardAction(value: unknown): 'back' | 'dismiss' | 'enter' {
   const key = requiredString(value, 'ui.key_press.key').toLowerCase();
-  if (key === 'back' || key === 'escape') return 'dismiss';
+  if (key === 'back') return 'back';
+  if (key === 'escape') return 'dismiss';
   if (key === 'enter' || key === 'return') return 'enter';
   throw new Error(
     `ui.key_press key ${JSON.stringify(value)} is not supported by the native device transport. Next: use Back, Escape, Enter, or Return`,
   );
+}
+
+function requireNativeKeyboardEffect(
+  platform: 'ios' | 'android',
+  action: 'dismiss' | 'enter',
+  result: unknown,
+): unknown {
+  if (platform !== 'android' || action !== 'dismiss' || !result || typeof result !== 'object') {
+    return result;
+  }
+  const outcome = result as Record<string, unknown>;
+  if (outcome.wasVisible === false) {
+    throw new Error(
+      'ui.key_press Escape could not dismiss the Android keyboard: it was not visible.',
+    );
+  }
+  if (outcome.wasVisible === true && outcome.dismissed !== true) {
+    throw new Error('ui.key_press Escape could not dismiss the visible Android keyboard.');
+  }
+  return result;
 }
 
 async function replaceNativeInput({

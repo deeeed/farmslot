@@ -125,6 +125,10 @@
           },
           "settle": {
             "type": "boolean"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1
           }
         },
         "required": ["key"],
