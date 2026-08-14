@@ -42,7 +42,11 @@ import {
 } from '../runners/registry.js';
 import { getAllRuns } from '../runs/store.js';
 
-import { assertDangerousConfirmation, dangerousLaunchBinding } from './authorization.js';
+import {
+  assertDangerousConfirmation,
+  COPILOT_DANGEROUS_TYPED_PHRASE,
+  dangerousLaunchBinding,
+} from './authorization.js';
 import { buildLiveCopilotBootstrapBrief } from './bootstrap-brief.js';
 import {
   buildCopilotLaunch,
@@ -69,6 +73,10 @@ const TRANSCRIPT_POLL_MS = 750;
 const TRANSCRIPT_READ_LIMIT = 64 * 1024;
 const COPILOT_MESSAGE_DELIVERY_TIMEOUT_MS = 10_000;
 const COPILOT_RUNTIME_RECONCILE_INTERVAL_MS = 5_000;
+
+function dangerousAutostartEnabled(): boolean {
+  return process.env.FARMSLOT_COPILOT_DANGEROUS_AUTOSTART === COPILOT_DANGEROUS_TYPED_PHRASE;
+}
 
 export interface CopilotRuntimeControllerOptions {
   store?: CopilotRuntimeStore;
@@ -135,6 +143,7 @@ export class CopilotRuntimeController {
     if (this.persisted) {
       this.persisted.session.transcriptId = GLOBAL_CHAT_SESSION_ID;
       this.persisted.session.autostart ??= false;
+      if (dangerousAutostartEnabled()) this.persisted.session.autostart = true;
     }
     const candidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
     this.runtimePresenceCheckedAtMs = this.now().getTime();
@@ -207,8 +216,8 @@ export class CopilotRuntimeController {
           transcriptId: GLOBAL_CHAT_SESSION_ID,
           runner,
           model,
-          autostart: false,
-          safetyTier: 'sandboxed',
+          autostart: dangerousAutostartEnabled(),
+          safetyTier: dangerousAutostartEnabled() ? 'dangerous' : 'sandboxed',
           checkout,
           workload,
           lastDelivery: this.idleDelivery(now),
@@ -332,12 +341,15 @@ export class CopilotRuntimeController {
       ...(configuredRunner ? { runner: configuredRunner } : {}),
       ...(configuredModel ? { model: configuredModel } : {}),
     });
-    const safetyTier = params.safetyTier ?? 'sandboxed';
+    const localDangerousAutostart = dangerousAutostartEnabled();
+    const safetyTier = params.safetyTier ?? (localDangerousAutostart ? 'dangerous' : 'sandboxed');
     if (safetyTier === 'full-auto') {
       throw new Error('Co-Pilot V1 supports sandboxed or explicitly confirmed dangerous starts');
     }
     const binding = dangerousLaunchBinding({ checkout, runner, model });
-    if (safetyTier === 'dangerous') assertDangerousConfirmation(binding, params.confirmation);
+    if (safetyTier === 'dangerous' && !localDangerousAutostart) {
+      assertDangerousConfirmation(binding, params.confirmation);
+    }
     const startedAt = this.timestamp();
     this.persisted = {
       schemaVersion: 1,
@@ -349,7 +361,7 @@ export class CopilotRuntimeController {
         transcriptId: GLOBAL_CHAT_SESSION_ID,
         runner,
         model,
-        autostart: this.persisted?.session.autostart ?? false,
+        autostart: localDangerousAutostart || (this.persisted?.session.autostart ?? false),
         safetyTier,
         checkout,
         workload: this.workload(false),
@@ -716,7 +728,7 @@ export class CopilotRuntimeController {
         transcriptId: GLOBAL_CHAT_SESSION_ID,
         runner: this.persisted?.session.runner ?? runner,
         model: this.persisted?.session.model ?? model,
-        autostart: this.persisted?.session.autostart ?? false,
+        autostart: dangerousAutostartEnabled() || (this.persisted?.session.autostart ?? false),
         safetyTier: this.persisted?.session.safetyTier ?? 'sandboxed',
         checkout,
         workload: this.workload(Boolean(candidates.length)),
