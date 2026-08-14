@@ -2,6 +2,7 @@ import { html } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
 import type {
+  ConfigTemplateOptionsResult,
   DispatchCandidatesResult,
   ExecutionTemplateCatalogOption,
   FlowType,
@@ -99,6 +100,9 @@ import { renderDispatchWizardView } from './dispatch-wizard-view-renderer.js';
 
 @customElement('dispatch-wizard')
 export class DispatchWizard extends DispatchWizardState {
+  private readonly _templateOptionsCache = new Map<string, ConfigTemplateOptionsResult>();
+  private _templateOptionsPrefetchGeneration = 0;
+
   updated(changed: Map<string, unknown>) {
     super.updated(changed);
     if (this.mockMode && changed.has('mockInitial')) {
@@ -149,6 +153,8 @@ export class DispatchWizard extends DispatchWizardState {
     this._unsubConn = gateway.onConnectionChange((st) => {
       if (this.mockMode) return;
       if (st === 'connected') {
+        this._templateOptionsCache.clear();
+        this._templateOptionsPrefetchGeneration += 1;
         if (this._projectConfigs.length === 0) {
           void this._loadProjectConfigs();
         }
@@ -294,11 +300,14 @@ export class DispatchWizard extends DispatchWizardState {
     };
     const key = templateOptionsRequestKey(this._project, this._flowType, filters);
     this._templateOptionsKey = key;
-    this._templateOptionsLoading = true;
     this._templateOptionsError = '';
     try {
-      const result = await requestTemplateOptions(this._project, this._flowType, filters);
+      const cached = this._templateOptionsCache.get(key);
+      this._templateOptionsLoading = !cached;
+      const result =
+        cached ?? (await requestTemplateOptions(this._project, this._flowType, filters));
       if (this._templateOptionsKey !== key) return;
+      this._templateOptionsCache.set(key, result);
       const options = result.options;
       const previousSelectionStillValid = options.some(
         (option) => option.fileName === this._selectedTaskTemplateFileName,
@@ -334,6 +343,7 @@ export class DispatchWizard extends DispatchWizardState {
               ? result.executionTemplates.options[0]!.id
               : ''));
         this._persistTemplatePreference();
+        void this._prefetchTemplateOptions(result, platform);
       } else {
         this._selectedExecutionTemplateId = '';
         this._domain = '';
@@ -349,6 +359,34 @@ export class DispatchWizard extends DispatchWizardState {
     } finally {
       if (this._templateOptionsKey === key) this._templateOptionsLoading = false;
     }
+  }
+
+  private async _prefetchTemplateOptions(
+    current: ConfigTemplateOptionsResult,
+    platform: string | undefined,
+  ): Promise<void> {
+    if (!this._project || !this._flowType || !current.executionTemplates) return;
+    const project = this._project;
+    const flowType = this._flowType;
+    const generation = ++this._templateOptionsPrefetchGeneration;
+    const domains = ['', ...current.executionTemplates.availableDomains];
+    const modes = ['autonomous', 'interactive'] as const;
+    await Promise.allSettled(
+      modes.flatMap((runMode) =>
+        domains.map(async (domain) => {
+          const filters = {
+            ...(platform ? { platform } : {}),
+            runMode,
+            ...(domain ? { domain } : {}),
+          };
+          const key = templateOptionsRequestKey(project, flowType, filters);
+          if (this._templateOptionsCache.has(key)) return;
+          const result = await requestTemplateOptions(project, flowType, filters);
+          if (generation !== this._templateOptionsPrefetchGeneration) return;
+          this._templateOptionsCache.set(key, result);
+        }),
+      ),
+    );
   }
 
   private async _previewExecutionTemplate(

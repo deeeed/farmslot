@@ -1,16 +1,18 @@
 import os from 'node:os';
 
-import type {
-  ActiveResourcePointer,
-  CopilotHostWorkload,
-  CopilotWorkloadSnapshot,
-  CopilotWorkloadTotals,
-  FleetStatus,
-  Run,
+import {
+  ACTIVE_RUN_STATUSES,
+  type ActiveResourcePointer,
+  type CopilotHostWorkload,
+  type CopilotWorkloadSnapshot,
+  type CopilotWorkloadTotals,
+  type FleetStatus,
+  type Run,
+  type RunStatus,
 } from '@farmslot/protocol';
 
 const ACTIVE_AGENT_STATES = new Set(['launching', 'working', 'waiting']);
-const TERMINAL_RUN_STATES = new Set(['complete', 'completed', 'failed', 'cancelled', 'canceled']);
+const ACTIVE_RUN_STATES = new Set<RunStatus>(ACTIVE_RUN_STATUSES);
 
 export interface WorkloadResourceInput {
   slotId: string;
@@ -63,7 +65,7 @@ export function buildCopilotWorkloadSnapshot(input: {
   const byHost = new Map<string, CopilotWorkloadTotals>();
 
   for (const run of input.runs) {
-    if (TERMINAL_RUN_STATES.has(run.status)) continue;
+    if (!ACTIVE_RUN_STATES.has(run.status)) continue;
     const host = (run.slotId && slotHost.get(run.slotId)) || localHost;
     const contexts = (run.agentContexts ?? []).filter((context) =>
       ACTIVE_AGENT_STATES.has(context.status),
@@ -72,10 +74,17 @@ export function buildCopilotWorkloadSnapshot(input: {
       increment(byHost, host, roleBucket('primary', run.flowType));
     } else {
       for (const context of contexts) {
-        increment(byHost, slotHost.get(context.slotId) ?? host, roleBucket(context.role, run.flowType));
+        increment(
+          byHost,
+          slotHost.get(context.slotId) ?? host,
+          roleBucket(context.role, run.flowType),
+        );
       }
     }
-    if (run.flowType === 'review-pr' && (run.reviewValidationDepth === 'full-live' || run.reviewTier === 'full')) {
+    if (
+      run.flowType === 'review-pr' &&
+      (run.reviewValidationDepth === 'full-live' || run.reviewTier === 'full')
+    ) {
       increment(byHost, host, 'fullQa');
     }
     for (const step of run.steps.filter((candidate) => candidate.status === 'running')) {

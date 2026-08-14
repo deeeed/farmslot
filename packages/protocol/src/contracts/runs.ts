@@ -34,6 +34,18 @@ export type RunStatus =
 
 export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = ['done', 'failed', 'cancelled'];
 
+export const ACTIVE_RUN_STATUSES: readonly RunStatus[] = [
+  'grading',
+  'writing-task',
+  'slot-finding',
+  'preparing',
+  'dispatching',
+  'monitoring',
+  'self-reviewing',
+  'completing',
+  'ci-watching',
+];
+
 export function isTerminalRunStatus(status: RunStatus): boolean {
   return TERMINAL_RUN_STATUSES.includes(status);
 }

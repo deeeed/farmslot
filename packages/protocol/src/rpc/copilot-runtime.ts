@@ -9,6 +9,11 @@ export const CopilotRuntimeMethods = {
   stop: Methods.COPILOT_STOP,
 } as const;
 
+export const COPILOT_TMUX_SESSION = 'farmslot-copilot';
+export const COPILOT_TMUX_WINDOW_NAME = 'agent';
+export const COPILOT_TMUX_WINDOW_INDEX = '0';
+export const COPILOT_TMUX_TARGET = `${COPILOT_TMUX_SESSION}:${COPILOT_TMUX_WINDOW_NAME}.0` as const;
+
 export type CopilotRuntimeStatus =
   | 'stopped'
   | 'starting'
