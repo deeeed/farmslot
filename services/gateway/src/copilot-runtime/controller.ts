@@ -6,6 +6,8 @@ import {
   type ChatAbortResult,
   type ChatSendParams,
   type ChatSendResult,
+  type CopilotConfigureParams,
+  type CopilotConfigureResult,
   type CopilotDelivery,
   type CopilotRuntimeSession,
   type CopilotStartParams,
@@ -122,12 +124,21 @@ export class CopilotRuntimeController {
     if (this.initialized) return;
     await this.store.ensure();
     this.persisted = await this.store.load();
-    if (this.persisted) this.persisted.session.transcriptId = GLOBAL_CHAT_SESSION_ID;
+    if (this.persisted) {
+      this.persisted.session.transcriptId = GLOBAL_CHAT_SESSION_ID;
+      this.persisted.session.autostart ??= false;
+    }
     const candidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
-    if (candidates.length > 1 || (candidates.length === 1 && candidates[0] !== COPILOT_TMUX_SESSION)) {
+    if (
+      candidates.length > 1 ||
+      (candidates.length === 1 && candidates[0] !== COPILOT_TMUX_SESSION)
+    ) {
       await this.setAmbiguous(candidates);
     } else if (candidates.includes(COPILOT_TMUX_SESSION)) {
-      if (!this.persisted || !['starting', 'running', 'reconnecting'].includes(this.persisted.session.status)) {
+      if (
+        !this.persisted ||
+        !['starting', 'running', 'reconnecting'].includes(this.persisted.session.status)
+      ) {
         await this.setAmbiguous(candidates);
       } else {
         this.persisted.session.status = 'running';
@@ -138,7 +149,10 @@ export class CopilotRuntimeController {
         await this.audit('reconnect', { reason: 'gateway restart reconciliation' });
         this.startTranscriptMonitor();
       }
-    } else if (this.persisted && ['starting', 'running', 'reconnecting'].includes(this.persisted.session.status)) {
+    } else if (
+      this.persisted &&
+      ['starting', 'running', 'reconnecting'].includes(this.persisted.session.status)
+    ) {
       this.persisted.session.status = 'stopped';
       this.persisted.session.terminalReason = 'tmux-session-missing-after-restart';
       this.persisted.session.stoppedAt = this.timestamp();
@@ -146,10 +160,21 @@ export class CopilotRuntimeController {
       await this.persist();
     }
     this.initialized = true;
+    if (
+      this.persisted?.session.autostart &&
+      (this.persisted.session.status === 'stopped' || this.persisted.session.status === 'failed')
+    ) {
+      void this.start().catch((error) => {
+        // start() has already persisted the failed terminal state. Keep gateway
+        // startup non-blocking while making the configured autostart failure loud.
+        console.error(`[copilot-runtime] autostart failed: ${(error as Error).message}`);
+      });
+    }
   }
 
   async status(): Promise<CopilotStatusResult> {
     await this.initialize();
+    await this.reconcileRuntimePresence();
     const checkout = await this.inspectCheckout(this.checkout);
     const workload = this.workload(this.persisted?.session.status === 'running');
     if (!this.persisted) {
@@ -165,6 +190,7 @@ export class CopilotRuntimeController {
           transcriptId: GLOBAL_CHAT_SESSION_ID,
           runner,
           model,
+          autostart: false,
           safetyTier: 'sandboxed',
           checkout,
           workload,
@@ -196,6 +222,34 @@ export class CopilotRuntimeController {
     return { session: this.persisted.session };
   }
 
+  async configure(params: CopilotConfigureParams): Promise<CopilotConfigureResult> {
+    const { session } = await this.status();
+    const active = ['starting', 'running', 'reconnecting', 'stopping'].includes(session.status);
+    const requestedRunner = params.runner ?? session.runner;
+    const requestedModel =
+      params.model ?? (requestedRunner === session.runner ? session.model : undefined);
+    const { runner, model } = resolveCopilotRunner({
+      runner: requestedRunner,
+      ...(requestedModel ? { model: requestedModel } : {}),
+    });
+    if (active && (runner !== session.runner || model !== session.model)) {
+      throw new Error('Stop the Co-Pilot runtime before changing its runner or model');
+    }
+    session.runner = runner;
+    session.model = model;
+    session.autostart = params.autostart ?? session.autostart;
+    session.dangerousLaunch = dangerousLaunchBinding({
+      checkout: session.checkout,
+      runner,
+      model,
+    });
+    session.updatedAt = this.timestamp();
+    await this.persist();
+    await this.audit('configure', { runner, model, autostart: session.autostart });
+    this.emitRuntime();
+    return { session };
+  }
+
   async start(params: CopilotStartParams = {}): Promise<CopilotStartResult> {
     if (this.startPromise) return this.startPromise;
     this.startPromise = this.startOnce(params)
@@ -218,7 +272,10 @@ export class CopilotRuntimeController {
   private async startOnce(params: CopilotStartParams): Promise<CopilotStartResult> {
     await this.initialize();
     const candidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
-    if (candidates.length > 1 || (candidates.length === 1 && candidates[0] !== COPILOT_TMUX_SESSION)) {
+    if (
+      candidates.length > 1 ||
+      (candidates.length === 1 && candidates[0] !== COPILOT_TMUX_SESSION)
+    ) {
       await this.setAmbiguous(candidates);
       throw new Error(`Ambiguous Co-Pilot tmux sessions: ${candidates.join(', ')}`);
     }
@@ -239,7 +296,16 @@ export class CopilotRuntimeController {
     }
 
     const checkout = await this.inspectCheckout(this.checkout);
-    const { runner, model } = resolveCopilotRunner(params);
+    const configuredRunner = params.runner ?? this.persisted?.session.runner;
+    const configuredModel =
+      params.model ??
+      (configuredRunner === this.persisted?.session.runner
+        ? this.persisted?.session.model
+        : undefined);
+    const { runner, model } = resolveCopilotRunner({
+      ...(configuredRunner ? { runner: configuredRunner } : {}),
+      ...(configuredModel ? { model: configuredModel } : {}),
+    });
     const safetyTier = params.safetyTier ?? 'sandboxed';
     if (safetyTier === 'full-auto') {
       throw new Error('Co-Pilot V1 supports sandboxed or explicitly confirmed dangerous starts');
@@ -257,6 +323,7 @@ export class CopilotRuntimeController {
         transcriptId: GLOBAL_CHAT_SESSION_ID,
         runner,
         model,
+        autostart: this.persisted?.session.autostart ?? false,
         safetyTier,
         checkout,
         workload: this.workload(false),
@@ -326,7 +393,9 @@ export class CopilotRuntimeController {
   async send(params: ChatSendParams): Promise<ChatSendResult> {
     const { session } = await this.status();
     if (session.status !== 'running') {
-      throw new Error(`Co-Pilot runtime is ${session.status}; start or reconnect it before sending`);
+      throw new Error(
+        `Co-Pilot runtime is ${session.status}; start or reconnect it before sending`,
+      );
     }
     const messageId = generateMessageId();
     const deliveryId = randomUUID();
@@ -390,7 +459,8 @@ export class CopilotRuntimeController {
       session.tmuxTarget,
       session.runner,
     );
-    if (!interrupted) throw new Error(`Runner '${session.runner}' has no registered interrupt capability`);
+    if (!interrupted)
+      throw new Error(`Runner '${session.runner}' has no registered interrupt capability`);
     await this.audit('abort', {});
     this.emit(Events.CHAT_RESPONSE, {
       sessionId: session.transcriptId,
@@ -403,9 +473,14 @@ export class CopilotRuntimeController {
     await this.initialize();
     const status = await this.status();
     const candidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
-    if (candidates.length > 1 || (candidates.length === 1 && candidates[0] !== COPILOT_TMUX_SESSION)) {
+    if (
+      candidates.length > 1 ||
+      (candidates.length === 1 && candidates[0] !== COPILOT_TMUX_SESSION)
+    ) {
       await this.setAmbiguous(candidates);
-      throw new Error(`Refusing to stop ambiguous Co-Pilot tmux sessions: ${candidates.join(', ')}`);
+      throw new Error(
+        `Refusing to stop ambiguous Co-Pilot tmux sessions: ${candidates.join(', ')}`,
+      );
     }
     status.session.status = 'stopping';
     status.session.updatedAt = this.timestamp();
@@ -458,7 +533,12 @@ export class CopilotRuntimeController {
   }
 
   private async pollTranscript(): Promise<void> {
-    if (this.transcriptPollInFlight || !this.persisted || this.persisted.session.status !== 'running') return;
+    if (
+      this.transcriptPollInFlight ||
+      !this.persisted ||
+      this.persisted.session.status !== 'running'
+    )
+      return;
     this.transcriptPollInFlight = true;
     try {
       const info = await stat(this.store.rawTranscriptPath);
@@ -512,6 +592,33 @@ export class CopilotRuntimeController {
     this.emitRuntime();
   }
 
+  private async reconcileRuntimePresence(): Promise<void> {
+    if (
+      !this.persisted ||
+      (this.persisted.session.status !== 'running' &&
+        this.persisted.session.status !== 'reconnecting')
+    ) {
+      return;
+    }
+    const candidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
+    if (
+      candidates.length > 1 ||
+      (candidates.length === 1 && candidates[0] !== COPILOT_TMUX_SESSION)
+    ) {
+      await this.setAmbiguous(candidates);
+      return;
+    }
+    if (candidates.includes(COPILOT_TMUX_SESSION)) return;
+
+    this.stopTranscriptMonitor();
+    this.persisted.session.status = 'failed';
+    this.persisted.session.terminalReason = 'tmux-session-missing-while-running';
+    this.persisted.session.stoppedAt = this.timestamp();
+    this.persisted.session.updatedAt = this.timestamp();
+    await this.persist();
+    this.emitRuntime();
+  }
+
   private async setAmbiguous(candidates: string[]): Promise<void> {
     const checkout = await this.inspectCheckout(this.checkout);
     const { runner, model } = resolveCopilotRunner();
@@ -526,6 +633,7 @@ export class CopilotRuntimeController {
         transcriptId: GLOBAL_CHAT_SESSION_ID,
         runner: this.persisted?.session.runner ?? runner,
         model: this.persisted?.session.model ?? model,
+        autostart: this.persisted?.session.autostart ?? false,
         safetyTier: this.persisted?.session.safetyTier ?? 'sandboxed',
         checkout,
         workload: this.workload(Boolean(candidates.length)),

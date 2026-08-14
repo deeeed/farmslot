@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix(mark): record the final checklist step timing when completion follows an already-checked final box.
 - fix(mark): generate and retain an opaque identity for each worker signal attempt.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

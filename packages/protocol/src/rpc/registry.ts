@@ -333,6 +333,7 @@ export const Methods = {
   CHAT_SESSION_CONTEXT: 'chat.sessionContext',
   COPILOT_FORMAT_INSTRUCTION: 'copilot.formatInstruction',
   COPILOT_STATUS: 'copilot.status',
+  COPILOT_CONFIGURE: 'copilot.configure',
   COPILOT_START: 'copilot.start',
   COPILOT_STOP: 'copilot.stop',
 

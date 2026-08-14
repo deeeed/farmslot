@@ -29,7 +29,8 @@ import {
 } from './runner-observability.js';
 
 const CODEX_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
-const CODEX_PLUGIN_HOOK_ARGS = ' ${FARMSLOT_CODEX_PLUGIN_HOOK_ARGS}';
+const CODEX_PLUGIN_HOOK_ARGS =
+  ' "$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2"';
 
 /**
  * Resolve reasoning effort for runners that support it.
@@ -293,8 +294,8 @@ export function buildCodexHomeSetup(repo: string, runtimeDir = '.agent'): string
   // write the home here — that keeps the global config clean and avoids a half-built
   // home that codex would reject.
   return (
-    `if [ -e ${shellQuote(`${codexHome}/auth.json`)} ]; then export CODEX_HOME=${shellQuote(codexHome)}; FARMSLOT_CODEX_PLUGIN_HOOK_ARGS='--config features.hooks=true'; ` +
-    `else unset CODEX_HOME; FARMSLOT_CODEX_PLUGIN_HOOK_ARGS='--disable plugin_hooks'; echo "[farmslot] codex-home not provisioned; using global ~/.codex without observability" >&2; fi`
+    `if [ -e ${shellQuote(`${codexHome}/auth.json`)} ]; then export CODEX_HOME=${shellQuote(codexHome)}; FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--config'; FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='features.hooks=true'; ` +
+    `else unset CODEX_HOME; FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--disable'; FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='plugin_hooks'; echo "[farmslot] codex-home not provisioned; using global ~/.codex without observability" >&2; fi`
   );
 }
 

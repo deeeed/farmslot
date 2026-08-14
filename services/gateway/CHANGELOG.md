@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(review): accept fresh id-less fix signals consistently during restart recovery, resume an active fix before mirroring its artifacts, and persist per-round checklist timing.
+- feat(copilot): persist configurable runner/model defaults, reconcile optional singleton autostart on gateway startup, pass Codex hook flags as portable shell argv, and report an exited runtime instead of stale `running` state.
 - Fix queued runtime-capability leases suppressing provider rollback, release, and keep-warm cleanup.
 
 - fix(runtime-capabilities): expose queued pressure, allow explicit forced cleanup after provider provenance changes, ignore errored siblings as live holders, and show the resolved prepare profile in mismatch gates.

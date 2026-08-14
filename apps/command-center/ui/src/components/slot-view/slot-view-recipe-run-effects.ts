@@ -26,6 +26,8 @@ export function resetSlotViewRecipePanelState(view: SlotViewRecipePresenter): vo
   // slot's run and wipes the new slot's persisted role/context pin even though
   // that slot's run never changed.
   view._lastLinkedRunId = null;
+  view._lastLinkedRunActiveTaskFile = null;
+  view._lastLinkedRunSelfReviewProgress = null;
   view._linkedRunRefreshToken = Symbol('linked-run-refresh');
   view._recipeRunsRefreshToken = Symbol('recipe-runs-refresh');
   resetSlotViewRecipeLoadTokens(view);

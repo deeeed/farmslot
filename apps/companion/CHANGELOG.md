@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- fix(review): show per-step checklist timing inside each review round.
 - fix(review): keep run evidence in shared tabs, add a conditional Gate tab for blockers, review history, freshness, and actions, and present reviews as rounds separated from worker fixes.
 - fix(connection): retry the first foreground decision sync before warning, and ignore failures from superseded connections.
 

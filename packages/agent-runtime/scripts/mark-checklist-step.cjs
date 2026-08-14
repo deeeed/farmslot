@@ -461,7 +461,9 @@ function resolveTarget(taskPath, stepNumber, markLast) {
     }
   } else if (markLast) {
     const unchecked = parsed.items.filter((entry) => !entry.checked);
-    item = unchecked.length ? unchecked[unchecked.length - 1] : null;
+    item = unchecked.length
+      ? unchecked[unchecked.length - 1]
+      : (parsed.items[parsed.items.length - 1] ?? null);
   }
   let updated = original;
   if (item) {

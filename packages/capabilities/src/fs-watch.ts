@@ -22,62 +22,44 @@ export interface FileWatchHandle {
 
 /**
  * Watch a single file for content changes. `onChange` receives the file's UTF-8
- * content on every write. If the file does not exist yet, its parent directory is
- * watched until the file appears, then the watch switches to the file directly.
- * Returns a handle the caller stops when done.
+ * content on every write. The parent directory remains watched so atomic file
+ * replacement does not detach the watcher from subsequent updates. Returns a
+ * handle the caller stops when done.
  */
 export function watchFile(filePath: string, onChange: (content: string) => void): FileWatchHandle {
   const targetPath = expandTilde(filePath);
   let watcher: FSWatcher | null = null;
   let stopped = false;
+  let lastContent: string | null = null;
 
   const start = (): void => {
     if (stopped) return;
-    if (existsSync(targetPath)) {
-      // File exists — watch it directly.
-      watcher = watch(targetPath, { persistent: false }, async () => {
-        try {
-          const content = await readFile(targetPath, 'utf-8');
-          onChange(content);
-        } catch (err) {
-          // ENOENT is expected: git rewrites HEAD via an atomic rename, so the path is
-          // briefly absent between the watch firing and the read — the next event re-reads.
-          // Anything else (permissions, I/O) is a real fault and is surfaced, not hidden.
-          const code = (err as NodeJS.ErrnoException).code;
-          if (code !== 'ENOENT') {
-            console.warn(`[fs.watch] read failed for ${targetPath}: ${(err as Error).message}`);
-          }
-        }
-      });
-    } else {
-      // File doesn't exist yet — watch the parent directory for its creation.
-      const dir = dirname(targetPath);
-      if (!existsSync(dir)) {
-        console.log(`[fs.watch] parent dir doesn't exist: ${dir} — skipping watch`);
-        return;
-      }
-      const target = basename(targetPath);
-      watcher = watch(dir, { persistent: false }, async (_, filename) => {
-        if (filename !== target) return;
-        if (!existsSync(targetPath)) return;
-        // File appeared — read, notify, then switch to watching it directly.
-        try {
-          const content = await readFile(targetPath, 'utf-8');
-          onChange(content);
-        } catch (err) {
-          // ENOENT is expected: git rewrites HEAD via an atomic rename, so the path is
-          // briefly absent between the watch firing and the read — the next event re-reads.
-          // Anything else (permissions, I/O) is a real fault and is surfaced, not hidden.
-          const code = (err as NodeJS.ErrnoException).code;
-          if (code !== 'ENOENT') {
-            console.warn(`[fs.watch] read failed for ${targetPath}: ${(err as Error).message}`);
-          }
-        }
-        if (watcher) watcher.close();
-        watcher = null;
-        start();
-      });
+    // Watch the parent directory even when the file already exists. Checklist markers,
+    // git, and many editors update files through atomic rename; watching the file inode
+    // sees the first replacement and then silently follows the orphaned inode.
+    const dir = dirname(targetPath);
+    if (!existsSync(dir)) {
+      console.log(`[fs.watch] parent dir doesn't exist: ${dir} — skipping watch`);
+      return;
     }
+    const target = basename(targetPath);
+    watcher = watch(dir, { persistent: false }, async (_, filename) => {
+      if (filename != null && filename.toString() !== target) return;
+      if (!existsSync(targetPath)) return;
+      try {
+        const content = await readFile(targetPath, 'utf-8');
+        if (content === lastContent) return;
+        lastContent = content;
+        onChange(content);
+      } catch (err) {
+        // Atomic replacement can briefly remove the target between the directory
+        // event and the read. The following event will read the replacement.
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') {
+          console.warn(`[fs.watch] read failed for ${targetPath}: ${(err as Error).message}`);
+        }
+      }
+    });
   };
 
   start();

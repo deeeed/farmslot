@@ -14,7 +14,9 @@ import type {
   ChatSessionContextResult,
   ChatSessionCreateResult,
   ChatSessionsResult,
+  CopilotConfigureResult,
   CopilotObserverNotificationPayload,
+  CopilotRuntimeSession,
   CopilotRuntimeUpdatedPayload,
   CopilotStartResult,
   CopilotStatusResult,
@@ -24,9 +26,11 @@ import { Events, Methods } from '@farmslot/protocol';
 
 import './chat-message.js';
 import './chat-history-modal.js';
+import '../shared/runner-model-effort-picker.js';
 
 import { gateway, GatewayRequestError } from '../../gateway-client.js';
 import { safeLsSet } from '../../utils/storage.js';
+import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effort-picker.js';
 
 import { buildChatClientContext } from './chat-client-context.js';
 import { collectChatActionIds, pruneStaleChatActions } from './chat-panel-action-model.js';
@@ -88,7 +92,7 @@ export class ChatPanel extends ChatPanelState {
     this.unsubRuntime = gateway.subscribe<CopilotRuntimeUpdatedPayload>(
       Events.COPILOT_RUNTIME_UPDATED,
       ({ session }) => {
-        this.runtime = session;
+        this.syncRuntime(session);
       },
     );
     this.unsubConnection = gateway.onConnectionChange((s) => {
@@ -302,7 +306,7 @@ export class ChatPanel extends ChatPanelState {
   private async loadRuntime(reconnected = false) {
     try {
       const result = await gateway.request<CopilotStatusResult>(Methods.COPILOT_STATUS, {});
-      this.runtime = result.session;
+      this.syncRuntime(result.session);
       this.runtimeError = '';
       if (reconnected && result.session.status === 'running') this.runtimeNotice = 'Reconnected';
     } catch (err) {
@@ -320,11 +324,12 @@ export class ChatPanel extends ChatPanelState {
     this.runtimeLoading = true;
     this.runtimeError = '';
     try {
+      if (mode === 'start') await this.saveRuntimeConfig(false);
       const result = await gateway.request<CopilotStartResult>(Methods.COPILOT_START, {
         mode,
         safetyTier: 'sandboxed',
       });
-      this.runtime = result.session;
+      this.syncRuntime(result.session);
       this.runtimeNotice = result.reconnected || result.reused ? 'Reconnected' : 'Started';
       await this.loadHistory(result.session.transcriptId);
     } catch (err) {
@@ -341,7 +346,7 @@ export class ChatPanel extends ChatPanelState {
       const result = await gateway.request<CopilotStopResult>(Methods.COPILOT_STOP, {
         reason: 'operator-requested',
       });
-      this.runtime = result.session;
+      this.syncRuntime(result.session);
       this.runtimeNotice = 'Stopped';
     } catch (err) {
       this.runtimeError = errorMessage(err);
@@ -350,7 +355,12 @@ export class ChatPanel extends ChatPanelState {
     }
   }
 
-  private openDangerousConfirmation() {
+  private async openDangerousConfirmation() {
+    try {
+      await this.saveRuntimeConfig(false);
+    } catch {
+      return;
+    }
     this.dangerousTypedPhrase = '';
     this.dangerousConfirmationOpen = true;
   }
@@ -364,7 +374,7 @@ export class ChatPanel extends ChatPanelState {
     this.runtimeError = '';
     try {
       const result = await gateway.request<CopilotStartResult>(Methods.COPILOT_START, params);
-      this.runtime = result.session;
+      this.syncRuntime(result.session);
       this.runtimeNotice = 'Dangerous runtime started';
       this.dangerousConfirmationOpen = false;
     } catch (err) {
@@ -372,6 +382,38 @@ export class ChatPanel extends ChatPanelState {
     } finally {
       this.runtimeLoading = false;
     }
+  }
+
+  private syncRuntime(session: CopilotRuntimeSession) {
+    this.runtime = session;
+    this.runtimeRunner = session.runner;
+    this.runtimeModel = session.model;
+    this.runtimeAutostart = session.autostart;
+    if (session.status === 'failed' || session.status === 'ambiguous') this.runtimeNotice = '';
+  }
+
+  private async saveRuntimeConfig(showNotice = true) {
+    this.runtimeLoading = true;
+    this.runtimeError = '';
+    try {
+      const result = await gateway.request<CopilotConfigureResult>(Methods.COPILOT_CONFIGURE, {
+        runner: this.runtimeRunner,
+        model: this.runtimeModel,
+        autostart: this.runtimeAutostart,
+      });
+      this.syncRuntime(result.session);
+      if (showNotice) this.runtimeNotice = 'Configuration saved';
+    } catch (err) {
+      this.runtimeError = errorMessage(err);
+      throw err;
+    } finally {
+      this.runtimeLoading = false;
+    }
+  }
+
+  private handleRuntimePickerChange(event: CustomEvent<RunnerModelEffortChangeDetail>) {
+    this.runtimeRunner = event.detail.runner;
+    this.runtimeModel = event.detail.model;
   }
 
   public async submitPrompt(
@@ -892,6 +934,36 @@ export class ChatPanel extends ChatPanelState {
                 ${this.runtime.terminalReason
                   ? html`<div class="cp-runtime-reason">${this.runtime.terminalReason}</div>`
                   : ''}
+                <div class="cp-runtime-config">
+                  <runner-model-effort-picker
+                    .runner=${this.runtimeRunner}
+                    .model=${this.runtimeModel}
+                    .effort=${''}
+                    .showEffort=${false}
+                    .disabled=${this.runtimeLoading || runtimeStatus === 'running'}
+                    @runner-model-effort-change=${this.handleRuntimePickerChange}
+                  ></runner-model-effort-picker>
+                  <label class="cp-runtime-autostart">
+                    <input
+                      type="checkbox"
+                      .checked=${this.runtimeAutostart}
+                      ?disabled=${this.runtimeLoading}
+                      @change=${(event: Event) => {
+                        if (event.target instanceof HTMLInputElement)
+                          this.runtimeAutostart = event.target.checked;
+                      }}
+                    />
+                    Start sandboxed with the Gateway
+                  </label>
+                  <button
+                    class="cp-new-btn"
+                    data-testid="copilot-save-config"
+                    ?disabled=${this.runtimeLoading}
+                    @click=${() => this.saveRuntimeConfig()}
+                  >
+                    Save configuration
+                  </button>
+                </div>
               `
             : html`<div class="cp-runtime-reason">Runtime status unavailable.</div>`}
           ${this.runtimeError ? html`<div class="cp-runtime-error">${this.runtimeError}</div>` : ''}

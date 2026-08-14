@@ -23,6 +23,7 @@ export class RunnerModelEffortPicker extends LitElement {
   @property({ type: String }) effort: EffortLevel = '';
   @property({ type: Boolean }) disabled = false;
   @property({ type: Boolean }) allowDefault = false;
+  @property({ type: Boolean }) showEffort = true;
 
   static styles = css`
     :host {
@@ -205,7 +206,7 @@ export class RunnerModelEffortPicker extends LitElement {
               : nothing}
         </div>
 
-        ${this.runner && efforts.length
+        ${this.showEffort && this.runner && efforts.length
           ? html`<div class="config-group">
               <div class="section-label">Effort</div>
               <div class="pill-row">

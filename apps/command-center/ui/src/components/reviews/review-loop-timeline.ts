@@ -1,19 +1,21 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type {
-  ArtifactRef,
-  IndependentReviewAttempt,
-  IndependentReviewStatus,
-  ReviewDiffSnapshot,
-  ReviewFixDeltaSnapshot,
-  RunnerSessionUsage,
+import {
+  type ArtifactRef,
+  deriveChecklistStepDurations,
+  type IndependentReviewAttempt,
+  type IndependentReviewStatus,
+  type ReviewDiffSnapshot,
+  type ReviewFixDeltaSnapshot,
+  type RunnerSessionUsage,
 } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import {
   fixDeltaAbsenceReason,
+  formatDurationMs,
   hasMeaningfulReviewFixDelta,
   reviewAttemptLabel,
   reviewHasPendingContinuationPhases,
@@ -52,6 +54,12 @@ function formatRunnerUsage(usage: RunnerSessionUsage | undefined): string {
     usage.costUsd != null ? `$${usage.costUsd.toFixed(4)}` : null,
   ].filter(Boolean);
   return parts.length ? parts.join(' · ') : 'usage measured';
+}
+
+function attemptDuration(attempt: IndependentReviewAttempt | undefined): string | null {
+  if (!attempt?.startedAt || !attempt.completedAt) return null;
+  const durationMs = Date.parse(attempt.completedAt) - Date.parse(attempt.startedAt);
+  return Number.isFinite(durationMs) && durationMs >= 0 ? formatDurationMs(durationMs) : null;
 }
 
 function reviewUsage(review: IndependentReviewStatus) {
@@ -295,6 +303,24 @@ export class ReviewLoopTimeline extends LitElement {
       color: ${unsafeCSS(colors.accent)};
       background: ${unsafeCSS(colors.accent)}14;
     }
+    details.timing {
+      color: ${unsafeCSS(colors.textSecondary)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+    }
+    details.timing summary {
+      cursor: pointer;
+      color: ${unsafeCSS(colors.textSecondary)};
+    }
+    .timing-row {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 8px;
+      padding: 3px 0 3px 8px;
+      color: ${unsafeCSS(colors.textMuted)};
+    }
+    .timing-row .duration {
+      color: ${unsafeCSS(colors.textSecondary)};
+    }
   `;
 
   override render() {
@@ -395,6 +421,9 @@ export class ReviewLoopTimeline extends LitElement {
     const hasFixDeltaRange = hasMeaningfulReviewFixDelta(rowFixDelta);
     const fixDeltaMissingReason = hasFixDeltaRange ? '' : fixDeltaAbsenceReason(review, attempt);
     const rowUsage = attempt ? attempt.usage : reviewUsage(review);
+    const checklistTiming = attempt?.checklistTiming;
+    const checklistSteps = deriveChecklistStepDurations(checklistTiming, attempt?.startedAt);
+    const totalDuration = attemptDuration(attempt);
     const pass = verdict === 'pass' && unresolvedCount === 0;
     const warn = unresolvedCount > 0 || verdict === 'issues' || verdict === 'failed';
     const diffArtifact = snapshotDiffArtifact(rowSnapshot, `review-loop-${loopNumber}-input-diff`);
@@ -452,6 +481,7 @@ export class ReviewLoopTimeline extends LitElement {
           >
           <span class="meta">${artifacts.length} artifacts</span>
           <span class="meta">reviewed ${shortSha(rowSnapshot?.headSha)}</span>
+          ${totalDuration ? html`<span class="meta">${totalDuration} total</span>` : nothing}
           ${diffArtifact
             ? html`<button
                 class="link"
@@ -461,6 +491,22 @@ export class ReviewLoopTimeline extends LitElement {
               </button>`
             : nothing}
         </div>
+        ${checklistSteps.length
+          ? html`
+              <details class="timing">
+                <summary>Checklist timing · ${checklistSteps.length} steps</summary>
+                ${checklistSteps.map(
+                  (step) => html`
+                    <div class="timing-row">
+                      <span>${step.stepNumber}</span>
+                      <span>${step.label}</span>
+                      <span class="duration">${formatDurationMs(step.durationMs)}</span>
+                    </div>
+                  `,
+                )}
+              </details>
+            `
+          : nothing}
         ${issues?.length
           ? html`
               <div class="section-label">Findings · ${issues.length}</div>

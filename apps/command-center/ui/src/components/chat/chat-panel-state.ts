@@ -44,6 +44,9 @@ export abstract class ChatPanelState extends LitElement {
   @state() protected runtimeLoading = false;
   @state() protected runtimeError = '';
   @state() protected runtimeNotice = '';
+  @state() protected runtimeRunner = '';
+  @state() protected runtimeModel = '';
+  @state() protected runtimeAutostart = false;
   @state() protected dangerousConfirmationOpen = false;
   @state() protected dangerousTypedPhrase = '';
 

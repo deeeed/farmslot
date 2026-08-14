@@ -166,11 +166,28 @@ export function selectSlotViewAgentContext(
   return contexts.find((ctx) => ctx.role === 'primary') ?? contexts[0] ?? null;
 }
 
-/** Primary worker checklist is independent from terminal/history navigation. */
+function normalizedTaskFile(taskFile: string | null | undefined): string {
+  return (taskFile ?? '').replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/+$/, '');
+}
+
+function taskFilesMatch(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  const a = normalizedTaskFile(left);
+  const b = normalizedTaskFile(right);
+  if (!a || !b) return false;
+  return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+}
+
+/** Active run checklist is independent from terminal/history navigation. */
 export function selectSlotViewTaskContext(
   contexts: AgentContextSummary[],
   flowType?: Run['flowType'] | string | null,
+  activeTaskFile?: string | null,
 ): AgentContextSummary | null {
+  const active = contexts.find((ctx) => taskFilesMatch(ctx.taskFile, activeTaskFile));
+  if (active) return active;
   const primaryRole = primaryRoleForFlow(flowType);
   return (
     contexts.find((ctx) => ctx.role === primaryRole) ??

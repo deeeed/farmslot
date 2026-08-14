@@ -490,6 +490,7 @@ export function reviewAttemptFromResult(
     ...(result.issues.length ? { issues: result.issues } : {}),
     ...(result.validationDepth ? { validationDepth: result.validationDepth } : {}),
     ...(result.usage ? { usage: result.usage } : {}),
+    ...(result.checklistTiming ? { checklistTiming: result.checklistTiming } : {}),
     ...(result.reviewSnapshot ? { reviewSnapshot: result.reviewSnapshot } : {}),
     ...(effectiveFixDelta ? { fixDelta: effectiveFixDelta } : {}),
     artifactPaths: [...(result.artifactPaths ?? []), ...extraArtifactPaths],

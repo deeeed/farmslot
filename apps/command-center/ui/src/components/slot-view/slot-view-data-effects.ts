@@ -86,11 +86,19 @@ export async function fetchSlotViewActions(view: SlotView): Promise<void> {
 export async function parseSlotViewTaskSteps(view: SlotView): Promise<void> {
   try {
     const selectedContext = view._taskAgentContext();
+    const requestedRunId = view._linkedRun?.id ?? null;
+    const requestedTaskFile = selectedContext?.taskFile ?? null;
     const snap = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
       slotId: view.slotId,
       ...(view._linkedRun ? { runId: view._linkedRun.id } : {}),
       ...(selectedContext?.taskFile ? { taskFile: selectedContext.taskFile } : {}),
     });
+    if (
+      (view._linkedRun?.id ?? null) !== requestedRunId ||
+      (view._taskAgentContext()?.taskFile ?? null) !== requestedTaskFile
+    ) {
+      return;
+    }
     const steps: TaskStep[] = [];
     for (const line of snap.markdown.split('\n')) {
       const match = line.match(/^- \[([ x])\] (.+)/);
@@ -112,11 +120,19 @@ export async function parseSlotViewTaskSteps(view: SlotView): Promise<void> {
 export async function fetchSlotViewStructuredProgress(view: SlotView): Promise<void> {
   try {
     const selectedContext = view._taskAgentContext();
+    const requestedRunId = view._linkedRun?.id ?? null;
+    const requestedTaskFile = selectedContext?.taskFile ?? null;
     const result = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
       slotId: view.slotId,
       ...(view._linkedRun ? { runId: view._linkedRun.id } : {}),
       ...(selectedContext?.taskFile ? { taskFile: selectedContext.taskFile } : {}),
     });
+    if (
+      (view._linkedRun?.id ?? null) !== requestedRunId ||
+      (view._taskAgentContext()?.taskFile ?? null) !== requestedTaskFile
+    ) {
+      return;
+    }
     if (result.structured) {
       view._structuredProgress = result.structured;
     }

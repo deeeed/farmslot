@@ -4,6 +4,7 @@ import { Methods } from './registry.js';
 
 export const CopilotRuntimeMethods = {
   status: Methods.COPILOT_STATUS,
+  configure: Methods.COPILOT_CONFIGURE,
   start: Methods.COPILOT_START,
   stop: Methods.COPILOT_STOP,
 } as const;
@@ -92,6 +93,7 @@ export interface CopilotRuntimeSession {
   transcriptId: string;
   runner: string;
   model: string;
+  autostart: boolean;
   safetyTier: SafetyTier;
   checkout: CopilotCheckoutIdentity;
   workload: CopilotWorkloadSnapshot;
@@ -108,6 +110,16 @@ export interface CopilotRuntimeSession {
 export interface CopilotStatusParams {}
 
 export interface CopilotStatusResult {
+  session: CopilotRuntimeSession;
+}
+
+export interface CopilotConfigureParams {
+  runner?: string;
+  model?: string;
+  autostart?: boolean;
+}
+
+export interface CopilotConfigureResult {
   session: CopilotRuntimeSession;
 }
 

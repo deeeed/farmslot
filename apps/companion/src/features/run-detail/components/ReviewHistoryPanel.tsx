@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
+  deriveChecklistStepDurations,
   type IndependentReviewAttempt,
   type IndependentReviewStatus,
   observedReviewSessionContinuity,
@@ -39,6 +40,20 @@ function stat(attempt: IndependentReviewAttempt): string | null {
   return `${paths} · +${diff.additions} −${diff.deletions}`;
 }
 
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
+  return `${(ms / 3_600_000).toFixed(1)}h`;
+}
+
+function totalDuration(attempt: IndependentReviewAttempt): string | null {
+  if (!attempt.startedAt || !attempt.completedAt) return null;
+  const durationMs = Date.parse(attempt.completedAt) - Date.parse(attempt.startedAt);
+  return Number.isFinite(durationMs) && durationMs >= 0 ? formatDuration(durationMs) : null;
+}
+
 function reviewSource(review: IndependentReviewStatus): string {
   if (review.source === 'self-review') return 'Self-review';
   if (review.source === 'human-gate') return 'Independent review (requested)';
@@ -62,6 +77,8 @@ function ReviewAttemptCard({
   const findings = attempt.issues ?? [];
   const passed = attempt.verdict === 'pass';
   const findingLabel = `${findings.length} finding${findings.length === 1 ? '' : 's'}`;
+  const timing = deriveChecklistStepDurations(attempt.checklistTiming, attempt.startedAt);
+  const elapsed = totalDuration(attempt);
 
   return (
     <View style={styles.attempt}>
@@ -70,6 +87,7 @@ function ReviewAttemptCard({
           <Text style={styles.attemptTitle}>Review round {attemptIndex + 1}</Text>
           <Text style={styles.meta}>
             {shaRange(attempt)} · {attempt.validationDepth || 'static-code'}
+            {elapsed ? ` · ${elapsed}` : ''}
           </Text>
         </View>
         <View style={styles.outcome}>
@@ -94,6 +112,18 @@ function ReviewAttemptCard({
             <Text style={styles.fixStat}>
               Fix after review round {attemptIndex}: {stat(attempt)}
             </Text>
+          ) : null}
+          {timing.length ? (
+            <View style={styles.timing}>
+              <Text style={styles.timingTitle}>Checklist timing · {timing.length} steps</Text>
+              {timing.map((step) => (
+                <View key={`${step.stepNumber}:${step.label}`} style={styles.timingRow}>
+                  <Text style={styles.timingStep}>{step.stepNumber}</Text>
+                  <Text style={styles.timingLabel}>{step.label}</Text>
+                  <Text style={styles.timingDuration}>{formatDuration(step.durationMs)}</Text>
+                </View>
+              ))}
+            </View>
           ) : null}
           {findings.map((issue, issueIndex) => (
             <View key={`${issue.file}:${issue.line ?? ''}:${issueIndex}`} style={styles.finding}>
@@ -395,6 +425,22 @@ const styles = StyleSheet.create({
   roundPassed: { color: colors.statusOk, fontSize: fonts.sizeXs, fontWeight: '800' },
   roundIssues: { color: colors.statusWarn, fontSize: fonts.sizeXs, fontWeight: '800' },
   fixStat: { color: colors.accent, fontFamily: fonts.mono, fontSize: fonts.sizeXs },
+  timing: {
+    backgroundColor: colors.bgSurface,
+    borderRadius: radii.md,
+    gap: spacing.xs,
+    padding: spacing.sm,
+  },
+  timingTitle: { color: colors.textSecondary, fontSize: fonts.sizeXs, fontWeight: '900' },
+  timingRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm },
+  timingStep: {
+    color: colors.textMuted,
+    fontFamily: fonts.mono,
+    fontSize: fonts.sizeXs,
+    width: 20,
+  },
+  timingLabel: { color: colors.textMuted, flex: 1, fontSize: fonts.sizeXs },
+  timingDuration: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: fonts.sizeXs },
   finding: {
     backgroundColor: colors.bgSurface,
     borderRadius: radii.md,

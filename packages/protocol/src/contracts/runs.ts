@@ -395,6 +395,8 @@ export interface IndependentReviewAttempt {
   issues?: SelfReviewIssue[];
   validationDepth?: ReviewValidationDepth;
   usage?: RunnerSessionUsage;
+  /** Checklist marks and timings captured from this review round's role-scoped signal. */
+  checklistTiming?: WorkerSignalChecklistTiming;
   reviewSnapshot?: ReviewDiffSnapshot;
   fixDelta?: ReviewFixDeltaSnapshot;
   artifactPaths?: string[];

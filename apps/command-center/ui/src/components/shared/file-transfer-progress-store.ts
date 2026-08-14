@@ -98,6 +98,16 @@ export function getFileTransfersForRun(runId: string | undefined | null): FileTr
   return filterTransfersForRun(entries, runId);
 }
 
+/** Remove terminal transfer noise while preserving active and failed diagnostics. */
+export function clearCompletedFileTransfers(runId?: string | null): void {
+  const next = entries.filter(
+    (entry) => entry.state !== 'done' || (runId ? entry.runId !== runId : false),
+  );
+  if (next.length === entries.length) return;
+  entries = next;
+  notify();
+}
+
 /** Best summary for pipeline nodes: prefer running, else latest terminal. */
 export function primaryTransferForRun(
   runId: string | undefined | null,
