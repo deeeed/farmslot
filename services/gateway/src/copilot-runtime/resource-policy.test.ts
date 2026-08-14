@@ -18,6 +18,7 @@ function runFixture(input: Pick<Run, 'id' | 'flowType' | 'status' | 'slotId'> & 
     createdAt: 'now',
     updatedAt: 'now',
     ...input,
+    steps: input.steps ?? [],
   };
 }
 
