@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import {
   COPILOT_TMUX_SESSION,
   COPILOT_TMUX_TARGET,
+  COPILOT_TMUX_WINDOW_INDEX,
   COPILOT_TMUX_WINDOW_NAME,
   type SafetyTier,
 } from '@farmslot/protocol';
@@ -75,13 +76,13 @@ export const localCopilotTmuxAdapter: CopilotTmuxAdapter = {
       '-F',
       '#{window_index}',
     ]);
-    if (windowIndex.trim() !== '0') {
+    if (windowIndex.trim() !== COPILOT_TMUX_WINDOW_INDEX) {
       await execFileAsync('tmux', [
         'move-window',
         '-s',
         `${session}:${COPILOT_TMUX_WINDOW_NAME}`,
         '-t',
-        `${session}:0`,
+        `${session}:${COPILOT_TMUX_WINDOW_INDEX}`,
       ]);
     }
     await execFileAsync('tmux', ['set-option', '-t', session, 'base-index', '0']);

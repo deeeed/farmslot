@@ -407,6 +407,7 @@ export class ChatPanel extends ChatPanelState {
     if (session.status !== 'running') {
       if (this.runtimeWorkerRetry) clearTimeout(this.runtimeWorkerRetry);
       this.runtimeWorkerRetry = undefined;
+      this.runtimeWorkerRetryMs = 1000;
       this.runtimeWorkerRefJson = '';
       this.runtimeWorkerSession = '';
       return;
@@ -435,25 +436,30 @@ export class ChatPanel extends ChatPanelState {
       if (!worker || this.runtime?.tmuxTarget !== session.tmuxTarget) return;
       if (this.runtimeWorkerRetry) clearTimeout(this.runtimeWorkerRetry);
       this.runtimeWorkerRetry = undefined;
+      this.runtimeWorkerRetryMs = 1000;
       this.runtimeWorkerSession = tmuxSession;
       this.runtimeWorkerRefJson = JSON.stringify(worker.ref);
+      if (this.runtimeError.startsWith('Co-Pilot terminal unavailable:')) this.runtimeError = '';
     })()
       .catch((error) => {
-        console.warn('[chat-panel] Co-Pilot terminal lookup failed:', error);
+        this.runtimeError = `Co-Pilot terminal unavailable: ${errorMessage(error)}`;
       })
       .finally(() => {
         this.runtimeWorkerLookup = undefined;
         this.runtimeWorkerLookupTarget = '';
         if (
           !this.runtimeWorkerRefJson &&
+          this.isConnected &&
           this.runtime?.status === 'running' &&
           this.runtime.tmuxTarget === session.tmuxTarget
         ) {
           if (this.runtimeWorkerRetry) clearTimeout(this.runtimeWorkerRetry);
+          const retryMs = this.runtimeWorkerRetryMs;
+          this.runtimeWorkerRetryMs = Math.min(retryMs * 2, 10_000);
           this.runtimeWorkerRetry = setTimeout(() => {
             this.runtimeWorkerRetry = undefined;
-            if (this.runtime) void this.resolveRuntimeWorker(this.runtime);
-          }, 1000);
+            if (this.isConnected && this.runtime) void this.resolveRuntimeWorker(this.runtime);
+          }, retryMs);
         }
       });
     return this.runtimeWorkerLookup;

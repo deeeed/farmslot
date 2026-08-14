@@ -60,6 +60,7 @@ export abstract class ChatPanelState extends LitElement {
   protected runtimeWorkerLookup?: Promise<void>;
   protected runtimeWorkerLookupTarget = '';
   protected runtimeWorkerRetry?: ReturnType<typeof setTimeout>;
+  protected runtimeWorkerRetryMs = 1000;
   protected runtimeWorkerSession = '';
   protected resizing = false;
   protected resizeStartY = 0;
