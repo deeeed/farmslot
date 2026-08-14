@@ -205,6 +205,10 @@
       "surface": "na",
       "note": "Command Center copilot surface (web UI)."
     },
+    "copilot.configure": {
+      "surface": "rpc-only",
+      "note": "Shared Co-Pilot runtime configuration is client-neutral; use `farmslot rpc copilot.configure [json]` until a typed CLI lifecycle command is promoted."
+    },
     "copilot.start": {
       "surface": "rpc-only",
       "note": "Shared Co-Pilot runtime lifecycle is client-neutral; use `farmslot rpc copilot.start [json]` until a typed CLI lifecycle command is promoted."

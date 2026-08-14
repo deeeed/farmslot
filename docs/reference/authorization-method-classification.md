@@ -52,6 +52,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `config.templateOptions`             | admin          |                                                          |
 | `config.templatePreview`             | admin          |                                                          |
 | `config.templates`                   | admin          |                                                          |
+| `copilot.configure`                  | admin          |                                                          |
 | `copilot.formatInstruction`          | admin          |                                                          |
 | `copilot.start`                      | admin          |                                                          |
 | `copilot.status`                     | admin          |                                                          |

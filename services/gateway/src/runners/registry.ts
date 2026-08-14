@@ -177,6 +177,9 @@ async function classifyRunnerPaneStateBestEffortLazy(opts: {
 // template expansion); re-exported so existing imports keep working.
 export { DEFAULT_RUNNER, normalizeRunner, RUNNER_ALIASES };
 
+/** Operator Co-Pilot policy default; launch mechanics still come from RunnerDefinition. */
+export const DEFAULT_COPILOT_RUNNER = 'codex';
+
 export function assertSupportedRunnerSpelling(runnerId?: string | null): void {
   if ((runnerId ?? '').trim().toLowerCase() === 'fake') {
     throw new Error("runner 'fake' is no longer supported; use runner 'scripted'");

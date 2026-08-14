@@ -34,7 +34,24 @@ export const TERMINAL_AGENT_STATUSES: ReadonlySet<AgentContextStatus> = new Set(
   'blocked',
   'idle',
 ]);
-export function summarizeAgentContexts(run: Pick<Run, 'agentContexts'>): AgentContextSummary[] {
+
+function taskIdentityForRun(
+  runTaskFile: string | null | undefined,
+  contextTaskFile: string | null | undefined,
+): string | null {
+  if (!runTaskFile || !contextTaskFile) return null;
+  const normalizedRun = runTaskFile.replaceAll('\\', '/');
+  const normalizedContext = contextTaskFile.replaceAll('\\', '/');
+  const taskDirectory = normalizedRun.split('/').at(-2);
+  if (!taskDirectory) return null;
+  const marker = `/${taskDirectory}/`;
+  const markerIndex = normalizedContext.lastIndexOf(marker);
+  return markerIndex >= 0 ? normalizedContext.slice(markerIndex + 1) : null;
+}
+
+export function summarizeAgentContexts(
+  run: Pick<Run, 'agentContexts' | 'taskFile'>,
+): AgentContextSummary[] {
   return (run.agentContexts ?? []).map((ctx) => {
     const {
       id,
@@ -59,6 +76,7 @@ export function summarizeAgentContexts(run: Pick<Run, 'agentContexts'>): AgentCo
       status,
       runId,
       taskFile,
+      taskIdentity: taskIdentityForRun(run.taskFile, taskFile),
       signalFile,
       runner,
       model,

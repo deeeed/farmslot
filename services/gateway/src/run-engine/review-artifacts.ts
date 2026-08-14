@@ -69,6 +69,30 @@ function stricterReviewRecommendation(left: string, right: string): string {
   return REVIEW_RECOMMENDATION_RANK[right] > REVIEW_RECOMMENDATION_RANK[left] ? right : left;
 }
 
+export function reviewRecommendationFromMarkdown(markdown: string): string | null {
+  const lines = markdown.split(/\r?\n/).map((rawLine) =>
+    rawLine
+      .replace(/\*\*|__|`/g, '')
+      .replace(/^\s*[-+]\s*/, '')
+      .replace(/^\s*#{1,6}\s*/, '')
+      .replace(/^\s*\d+[.)]\s*/, '')
+      .trim(),
+  );
+  for (let index = 0; index < lines.length; index += 1) {
+    const inline =
+      /^(?:Recommended Action|Recommendation|Verdict)\s*:\s*(APPROVE|REQUEST_CHANGES|COMMENT)\s*[.!]?$/i.exec(
+        lines[index],
+      );
+    if (inline) return inline[1].toUpperCase();
+    if (/^(?:Recommended Action|Recommendation|Verdict)\s*:?[.!]?$/i.test(lines[index])) {
+      const nextValue = lines.slice(index + 1).find((line) => line.length > 0) ?? '';
+      const following = /^(APPROVE|REQUEST_CHANGES|COMMENT)\s*[.!]?$/i.exec(nextValue);
+      if (following) return following[1].toUpperCase();
+    }
+  }
+  return null;
+}
+
 async function workerGatewayOwnedCopyExcludes(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   workerArtifactsDir: string,
@@ -186,11 +210,8 @@ export async function readReviewArtifacts(runId: string): Promise<ReviewArtifact
       result.summary = summaryMatch?.[1]?.trim().slice(0, 500) ?? reviewMd.slice(0, 300);
 
       // Extract recommendation
-      const recMatch = reviewMd.match(
-        /(?:Recommended Action|Recommendation|Verdict)[:\s]*\n?\s*(APPROVE|REQUEST_CHANGES|COMMENT)/i,
-      );
-      if (recMatch) {
-        markdownRecommendation = recMatch[1].toUpperCase();
+      markdownRecommendation = reviewRecommendationFromMarkdown(reviewMd);
+      if (markdownRecommendation) {
         result.recommendation = markdownRecommendation;
       }
     } catch (err) {

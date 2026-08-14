@@ -16,13 +16,7 @@ export interface PersistedCopilotRuntime {
 export interface CopilotAuditRecord {
   id: string;
   ts: string;
-  action:
-    | 'start'
-    | 'reconnect'
-    | 'send'
-    | 'abort'
-    | 'stop'
-    | 'checkout-transition';
+  action: 'start' | 'configure' | 'reconnect' | 'send' | 'abort' | 'stop' | 'checkout-transition';
   runtimeId: string;
   safetyTier: string;
   checkout: string;
@@ -71,7 +65,9 @@ export class CopilotRuntimeStore {
 
   async load(): Promise<PersistedCopilotRuntime | null> {
     try {
-      const parsed = JSON.parse(await readFile(this.sessionPath, 'utf8')) as PersistedCopilotRuntime;
+      const parsed = JSON.parse(
+        await readFile(this.sessionPath, 'utf8'),
+      ) as PersistedCopilotRuntime;
       if (parsed.schemaVersion !== 1 || !parsed.session?.runtimeId) {
         throw new Error(`Unsupported Co-Pilot runtime store at ${this.sessionPath}`);
       }

@@ -151,7 +151,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
     assert.match(
       cmd,
-      /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --sandbox workspace-write --ask-for-approval never .*--model gpt-5/,
+      /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --sandbox workspace-write --ask-for-approval never .*--model gpt-5/,
     );
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
     assert.match(cmd, /model_reasoning_effort="xhigh"/);
@@ -163,7 +163,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
     assert.match(
       cmd,
-      /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --config 'model_reasoning_effort="xhigh"' .*--model gpt-5/,
+      /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --config 'model_reasoning_effort="xhigh"' .*--model gpt-5/,
     );
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
   });
@@ -182,7 +182,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
     assert.match(
       cmd,
-      /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --dangerously-bypass-approvals-and-sandbox/,
+      /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox/,
     );
   });
 
@@ -196,7 +196,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
     assert.match(
       cmd,
-      /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --dangerously-bypass-approvals-and-sandbox/,
+      /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox/,
     );
   });
 

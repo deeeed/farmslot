@@ -369,6 +369,20 @@ export function renderChatPanelStyles() {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    chat-panel .cp-runtime-config {
+      display: grid;
+      gap: ${spacing.sm};
+      margin: ${spacing.md} 0;
+      padding: ${spacing.md};
+      border: 1px solid ${colors.bgCardHover};
+      border-radius: ${radii.sm};
+    }
+    chat-panel .cp-runtime-autostart {
+      display: flex;
+      align-items: center;
+      gap: ${spacing.sm};
+      color: ${colors.textSecondary};
+    }
     chat-panel .cp-runtime-warning,
     chat-panel .cp-runtime-error,
     chat-panel .cp-runtime-reason {

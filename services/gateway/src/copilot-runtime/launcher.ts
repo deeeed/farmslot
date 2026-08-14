@@ -4,13 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { DEFAULT_RUNNER, type SafetyTier } from '@farmslot/protocol';
+import type { SafetyTier } from '@farmslot/protocol';
 import type { SlotVars } from '@farmslot/slot-config';
 
 import { shellQuote } from '../core/tmux.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import { buildLaunchCommand } from '../runners/launch-command.js';
 import {
+  DEFAULT_COPILOT_RUNNER,
   getRunnerDefinition,
   isKnownRunner,
   normalizeRunner,
@@ -71,13 +72,7 @@ export const localCopilotTmuxAdapter: CopilotTmuxAdapter = {
       '#{window_index}',
     ]);
     if (windowIndex.trim() !== '0') {
-      await execFileAsync('tmux', [
-        'move-window',
-        '-s',
-        `${session}:agent`,
-        '-t',
-        `${session}:0`,
-      ]);
+      await execFileAsync('tmux', ['move-window', '-s', `${session}:agent`, '-t', `${session}:0`]);
     }
     await execFileAsync('tmux', ['set-option', '-t', session, 'base-index', '0']);
     const { stdout } = await execFileAsync('tmux', [
@@ -141,16 +136,13 @@ export function resolveCopilotRunner(input?: { runner?: string; model?: string }
   model: string;
 } {
   const runner = normalizeRunner(
-    input?.runner || process.env.FARMSLOT_COPILOT_RUNNER || DEFAULT_RUNNER,
+    input?.runner || process.env.FARMSLOT_COPILOT_RUNNER || DEFAULT_COPILOT_RUNNER,
   );
   if (!isKnownRunner(runner) || !getRunnerDefinition(runner).supportsInteractivePrompt) {
     throw new Error(`Runner '${runner}' does not support the interactive Co-Pilot runtime`);
   }
   const model =
-    input?.model ||
-    process.env.FARMSLOT_COPILOT_MODEL ||
-    runnerDefaultModel(runner) ||
-    'unknown';
+    input?.model || process.env.FARMSLOT_COPILOT_MODEL || runnerDefaultModel(runner) || 'unknown';
   if (!getRunnerDefinition(runner).acceptsModel(model)) {
     throw new Error(`Runner '${runner}' does not accept model '${model}'`);
   }

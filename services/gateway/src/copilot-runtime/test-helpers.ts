@@ -1,16 +1,10 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type {
-  CopilotCheckoutIdentity,
-  CopilotWorkloadSnapshot,
-} from '@farmslot/protocol';
+import type { CopilotCheckoutIdentity, CopilotWorkloadSnapshot } from '@farmslot/protocol';
 
-import {
-  CopilotRuntimeController,
-  type CopilotRuntimeControllerOptions,
-} from './controller.js';
-import { type CopilotTmuxAdapter,createCopilotRunnerVars } from './launcher.js';
+import { CopilotRuntimeController, type CopilotRuntimeControllerOptions } from './controller.js';
+import { type CopilotTmuxAdapter, createCopilotRunnerVars } from './launcher.js';
 import { CopilotRuntimeStore } from './session-store.js';
 
 export function testCheckout(checkout: string): CopilotCheckoutIdentity {
@@ -53,9 +47,11 @@ export class FakeCopilotTmux implements CopilotTmuxAdapter {
   sessions = new Set<string>();
   launchCount = 0;
   killCount = 0;
+  listCount = 0;
   transcriptPath = '';
 
   async listCandidates(session: string): Promise<string[]> {
+    this.listCount += 1;
     return [...this.sessions]
       .filter((candidate) => candidate === session || candidate.startsWith(`${session}-`))
       .sort();
@@ -86,6 +82,7 @@ export function testController(input: {
   interrupt?: CopilotRuntimeControllerOptions['interrupt'];
   checkoutIdentity?: CopilotCheckoutIdentity;
   emit?: (event: string, payload: unknown) => void;
+  now?: () => Date;
 }) {
   const tmux = input.tmux ?? new FakeCopilotTmux();
   const checkoutIdentity = input.checkoutIdentity ?? testCheckout(input.checkout);
@@ -94,6 +91,7 @@ export function testController(input: {
     tmux,
     checkout: input.checkout,
     emit: input.emit,
+    now: input.now,
     inspectCheckout: async () => ({ ...checkoutIdentity }),
     buildBootstrap: async () => '# deterministic test bootstrap',
     buildLaunch: ({ checkout, runner }) => ({
@@ -101,7 +99,8 @@ export function testController(input: {
       commandHash: 'launch-command-hash',
       vars: createCopilotRunnerVars(checkout),
     }),
-    sendInstruction: async (...args) => (input.sendInstruction ? input.sendInstruction(...args) : true),
+    sendInstruction: async (...args) =>
+      input.sendInstruction ? input.sendInstruction(...args) : true,
     interrupt: async (...args) => (input.interrupt ? input.interrupt(...args) : true),
     workload: testWorkload,
     resolveRuntimeDir: async () => '.agent',

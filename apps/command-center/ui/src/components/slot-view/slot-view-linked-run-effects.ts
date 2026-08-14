@@ -21,6 +21,20 @@ import {
 } from './slot-view-model.js';
 import { requestedRunFromHash } from './slot-view-url-state.js';
 
+function selfReviewProgressDetail(run: Run | null | undefined): string | null {
+  return run?.steps.find((step) => step.name === 'self-review')?.detail ?? null;
+}
+
+function taskContextSignature(run: Run | null | undefined): string {
+  return (run?.agentContexts ?? [])
+    .map(
+      (context) =>
+        `${context.id}:${context.role}:${context.taskFile ?? ''}:${context.status ?? ''}`,
+    )
+    .sort()
+    .join('|');
+}
+
 export function applySlotViewLinkedRun(
   view: SlotView,
   run: Run | null,
@@ -28,6 +42,9 @@ export function applySlotViewLinkedRun(
   source: SlotViewLinkedRunSource = 'rpc',
 ): string | null {
   const previousRunId = view._lastLinkedRunId;
+  const previousActiveTaskFile = view._lastLinkedRunActiveTaskFile;
+  const previousSelfReviewProgress = view._lastLinkedRunSelfReviewProgress;
+  const previousTaskContextSignature = taskContextSignature(view._linkedRun);
   const previousSnapshot = slotViewPendingReviewSnapshot(view._linkedRun);
   if (!run) {
     // Only the RPC source confirms a run is actually gone. A cached null can
@@ -42,6 +59,8 @@ export function applySlotViewLinkedRun(
       clearSelectedSlotViewAgentContextForSlot(view);
     }
     view._lastLinkedRunId = null;
+    view._lastLinkedRunActiveTaskFile = null;
+    view._lastLinkedRunSelfReviewProgress = null;
     return null;
   }
 
@@ -56,6 +75,8 @@ export function applySlotViewLinkedRun(
 
   view._linkedRun = run;
   view._lastLinkedRunId = run.id;
+  view._lastLinkedRunActiveTaskFile = run.activeTaskFile ?? null;
+  view._lastLinkedRunSelfReviewProgress = selfReviewProgressDetail(run);
   if (previousSnapshotKey !== nextSnapshotKey) {
     view._branchDiffGeneration += 1;
     view._liveDiffContents = new Map();
@@ -116,6 +137,17 @@ export function applySlotViewLinkedRun(
   }
   if (transition.shouldResetUnavailableContexts && view._unavailableContextKeys.size > 0) {
     view._unavailableContextKeys = new Set();
+  }
+
+  if (
+    (run.activeTaskFile ?? null) !== previousActiveTaskFile ||
+    selfReviewProgressDetail(run) !== previousSelfReviewProgress ||
+    taskContextSignature(run) !== previousTaskContextSignature
+  ) {
+    view._structuredProgress = undefined;
+    view._taskSteps = [];
+    void view._parseTaskSteps();
+    void view._fetchStructuredProgress();
   }
 
   view._autoPinTaskFolder();

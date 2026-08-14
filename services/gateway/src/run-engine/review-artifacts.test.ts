@@ -11,6 +11,7 @@ import { buildPlanningContextSection, PLANNING_CONTEXT_INPUT } from '../tasks/pl
 import {
   buildIndependentReviewPlanningBrief,
   readFrozenPlanningContext,
+  reviewRecommendationFromMarkdown,
 } from './review-artifacts.js';
 
 const WORKER_SNAPSHOT: PlanningContextProjection = {
@@ -115,5 +116,25 @@ test('malformed frozen snapshot fails loudly instead of briefing a reviewer with
   await assert.rejects(
     () => readFrozenPlanningContext(taskFile),
     /Malformed frozen planning context/,
+  );
+});
+
+test('review recommendation accepts the emphasized field emitted by the review template', () => {
+  assert.equal(
+    reviewRecommendationFromMarkdown('- **Recommended action:** **REQUEST_CHANGES**'),
+    'REQUEST_CHANGES',
+  );
+  assert.equal(
+    reviewRecommendationFromMarkdown('## Recommended Action\n\nREQUEST_CHANGES'),
+    'REQUEST_CHANGES',
+  );
+  assert.equal(reviewRecommendationFromMarkdown('### Verdict: REQUEST_CHANGES'), 'REQUEST_CHANGES');
+  assert.equal(
+    reviewRecommendationFromMarkdown('Recommended Action: REQUEST_CHANGES.'),
+    'REQUEST_CHANGES',
+  );
+  assert.equal(
+    reviewRecommendationFromMarkdown('## 10. Recommended Action\n\nREQUEST_CHANGES'),
+    'REQUEST_CHANGES',
   );
 });

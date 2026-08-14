@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir,readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -20,6 +20,7 @@ function record(home: string): PersistedCopilotRuntime {
       transcriptId: 'global',
       runner: 'cursor',
       model: 'test-model',
+      autostart: false,
       safetyTier: 'sandboxed',
       checkout,
       workload: testWorkload(true),
@@ -45,7 +46,10 @@ test('runtime store persists atomically under FARMSLOT_HOME', async () => {
   await store.save(record(home));
   assert.equal((await store.load())?.session.runtimeId, 'gateway-copilot');
   assert.equal(path.dirname(store.dir), home);
-  assert.equal((await readdir(store.dir)).some((name) => name.includes('.tmp.')), false);
+  assert.equal(
+    (await readdir(store.dir)).some((name) => name.includes('.tmp.')),
+    false,
+  );
 });
 
 test('audit stream is append-only and redacts raw credentials', async () => {

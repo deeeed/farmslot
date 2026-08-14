@@ -39,6 +39,7 @@ import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import {
   normalizeRunner,
+  readRunnerTurnState,
   resolvePrimaryWorkerTarget,
   runnerProcessPatternSource,
   type RunnerSendRecoveryContext,
@@ -80,6 +81,7 @@ import {
 const MAX_INLINE_CI_FIX_ATTEMPTS = 2;
 const MAX_INLINE_CI_FIX_TOTAL = 6;
 const INLINE_FIX_TIMEOUT_MS = 10 * 60_000;
+const INLINE_FIX_HARD_TIMEOUT_MS = 60 * 60_000;
 const INLINE_FIX_FALLBACK_POLL_MS = 30_000;
 
 export function resolveCiFixRetainedSession(run: Run | undefined) {
@@ -100,6 +102,7 @@ export async function sendCiFixNudge(input: {
   taskDir?: string;
 }): Promise<{
   sent: boolean;
+  turnToken?: string;
   retainedSession: ReturnType<typeof resolveCiFixRetainedSession>;
 }> {
   const retainedSession = resolveCiFixRetainedSession(input.run);
@@ -132,7 +135,11 @@ export async function sendCiFixNudge(input: {
     sendLogPrefix: 'ci-monitor',
     forceBusyPoll: input.forceBusyPoll,
   });
-  return { sent: delivery.delivered, retainedSession };
+  return {
+    sent: delivery.delivered,
+    ...(delivery.delivered && delivery.turnToken ? { turnToken: delivery.turnToken } : {}),
+    retainedSession,
+  };
 }
 
 export async function isInlineFixDedupedNow(
@@ -531,6 +538,7 @@ async function attemptInlineCIFix(
       taskDir: writeResult.taskDir,
     });
     let retainedSession = resolveCiFixRetainedSession(run);
+    let acceptedTurnToken: string | undefined;
     try {
       const initialDelivery = await sendCiFixNudge({
         vars,
@@ -546,6 +554,7 @@ async function attemptInlineCIFix(
         console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${retainedSession.reason}`);
       }
       let sent = initialDelivery.sent;
+      acceptedTurnToken = initialDelivery.turnToken;
       if (!sent) {
         // A deferred send never retries on its own, and two immediate probes
         // lose the race against a warm worker that is still booting — the
@@ -559,19 +568,20 @@ async function attemptInlineCIFix(
         const retry = await retryDeferredFixDelivery({
           runId,
           target: workerTarget,
-          send: async (retryTarget) =>
-            (
-              await sendCiFixNudge({
-                vars: vars!,
-                target: retryTarget,
-                runner,
-                prompt: nudgeCmd,
-                run: getRun(runId) ?? run,
-                taskDir: writeResult.taskDir,
-                forceBusyPoll: true,
-                recovery: { runId },
-              })
-            ).sent,
+          send: async (retryTarget) => {
+            const retryDelivery = await sendCiFixNudge({
+              vars: vars!,
+              target: retryTarget,
+              runner,
+              prompt: nudgeCmd,
+              run: getRun(runId) ?? run,
+              taskDir: writeResult.taskDir,
+              forceBusyPoll: true,
+              recovery: { runId },
+            });
+            acceptedTurnToken = retryDelivery.turnToken ?? acceptedTurnToken;
+            return retryDelivery.sent;
+          },
           rediscover: (storedTarget) =>
             rediscoverAcceptingWorkerPane(vars!, session, runner, storedTarget),
           persistTarget: async (adopted, window) => {
@@ -601,7 +611,7 @@ async function attemptInlineCIFix(
         mutateDedup(runId, (s) => {
           s.consecutiveAttempts = Math.max(0, s.consecutiveAttempts - 1);
         });
-        clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt });
+        clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt }, writeResult.taskPath);
         return {
           attempted: true,
           success: false,
@@ -621,7 +631,7 @@ async function attemptInlineCIFix(
       mutateDedup(runId, (s) => {
         s.consecutiveAttempts = Math.max(0, s.consecutiveAttempts - 1);
       });
-      clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt });
+      clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt }, writeResult.taskPath);
       return {
         attempted: true,
         success: false,
@@ -650,8 +660,18 @@ async function attemptInlineCIFix(
       fixProgress: writeResult.progress,
     });
 
-    const deadline = Date.now() + INLINE_FIX_TIMEOUT_MS;
-    while (Date.now() < deadline && !signal.aborted) {
+    let deadline = Date.now() + INLINE_FIX_TIMEOUT_MS;
+    const hardDeadline = Date.now() + INLINE_FIX_HARD_TIMEOUT_MS;
+    while (Date.now() < hardDeadline && !signal.aborted) {
+      if (Date.now() >= deadline) {
+        if (!acceptedTurnToken) break;
+        const turnState = await readRunnerTurnState(vars, workerTarget, runner, acceptedTurnToken);
+        if (turnState?.value !== 'active' || turnState.confidence !== 'high') break;
+        deadline = Math.min(hardDeadline, Date.now() + INLINE_FIX_TIMEOUT_MS);
+        console.log(
+          `[ci-monitor] run ${runId.slice(0, 8)} — exact inline-fix runner turn is still active; extending the wait instead of starting a conflicting follow-up`,
+        );
+      }
       const timeout = Math.min(INLINE_FIX_FALLBACK_POLL_MS, deadline - Date.now());
       try {
         await sleep(timeout, signal);
@@ -691,12 +711,16 @@ async function attemptInlineCIFix(
               );
               await markAgentContextStatus(runId, 'ci-fix', 'blocked', { lastSignalAt });
               await unwatchContext(slotId, 'ci-fix');
-              clearInlineFixState(runId, {
-                phase: 'blocked',
-                lastSignalAt,
-                lastFixCommitSha: currentSha ?? null,
-                fixProgress,
-              });
+              clearInlineFixState(
+                runId,
+                {
+                  phase: 'blocked',
+                  lastSignalAt,
+                  lastFixCommitSha: currentSha ?? null,
+                  fixProgress,
+                },
+                writeResult.taskPath,
+              );
               return {
                 attempted: true,
                 success: false,
@@ -721,12 +745,16 @@ async function attemptInlineCIFix(
               { lastSignalAt },
             );
             await unwatchContext(slotId, 'ci-fix');
-            clearInlineFixState(runId, {
-              phase: 'polling',
-              lastSignalAt,
-              lastFixCommitSha: currentSha ?? null,
-              fixProgress,
-            });
+            clearInlineFixState(
+              runId,
+              {
+                phase: 'polling',
+                lastSignalAt,
+                lastFixCommitSha: currentSha ?? null,
+                fixProgress,
+              },
+              writeResult.taskPath,
+            );
             return {
               attempted: true,
               success: true,
@@ -753,11 +781,15 @@ async function attemptInlineCIFix(
           lastSignalAt: new Date().toISOString(),
         });
         await unwatchContext(slotId, 'ci-fix');
-        clearInlineFixState(runId, {
-          phase: 'polling',
-          lastFixCommitSha: currentSha,
-          fixProgress,
-        });
+        clearInlineFixState(
+          runId,
+          {
+            phase: 'polling',
+            lastFixCommitSha: currentSha,
+            fixProgress,
+          },
+          writeResult.taskPath,
+        );
         return {
           attempted: true,
           success: true,
@@ -775,20 +807,42 @@ async function attemptInlineCIFix(
         );
         await markAgentContextStatus(runId, 'ci-fix', 'failed');
         await unwatchContext(slotId, 'ci-fix');
-        clearInlineFixState(runId, {
-          phase: 'polling',
-          fixProgress,
-        });
+        clearInlineFixState(
+          runId,
+          {
+            phase: 'polling',
+            fixProgress,
+          },
+          writeResult.taskPath,
+        );
         return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
       }
     }
 
+    const terminalTurnState = acceptedTurnToken
+      ? await readRunnerTurnState(vars, workerTarget, runner, acceptedTurnToken)
+      : null;
+    if (terminalTurnState?.value === 'active' && terminalTurnState.confidence === 'high') {
+      const blockedReason = `Inline CI fix runner turn remained active for ${Math.round((Date.now() - startedAt) / 60_000)} minutes; operator inspection required before another task can be dispatched`;
+      console.log(`[ci-monitor] run ${runId.slice(0, 8)} — ${blockedReason}`);
+      await markAgentContextStatus(runId, 'ci-fix', 'blocked');
+      await unwatchContext(slotId, 'ci-fix');
+      clearInlineFixState(runId, { phase: 'blocked' }, writeResult.taskPath);
+      return {
+        attempted: true,
+        success: false,
+        blocked: true,
+        blockedReason,
+        attempts,
+        durationMs: Date.now() - startedAt,
+      };
+    }
     console.log(
-      `[ci-monitor] run ${runId.slice(0, 8)} — inline fix timed out after ${Math.round((Date.now() - startedAt) / 1000)}s`,
+      `[ci-monitor] run ${runId.slice(0, 8)} — inline fix timed out after ${Math.round((Date.now() - startedAt) / 1000)}s without an active runner turn`,
     );
     await markAgentContextStatus(runId, 'ci-fix', 'failed');
     await unwatchContext(slotId, 'ci-fix');
-    clearInlineFixState(runId, { phase: 'polling' });
+    clearInlineFixState(runId, { phase: 'polling' }, writeResult.taskPath);
     return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
   } catch (err) {
     console.warn(
@@ -799,7 +853,7 @@ async function attemptInlineCIFix(
       await unwatchContext(slotId, 'ci-fix');
     }
     vars = vars ?? (await loadSlotVars(slotId));
-    clearInlineFixState(runId, { phase: 'polling' });
+    clearInlineFixState(runId, { phase: 'polling' }, writeResult.taskPath);
     return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
   } finally {
     if (vars) {

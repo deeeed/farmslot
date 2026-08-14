@@ -54,6 +54,34 @@ export interface WorkerSignalChecklistEvent {
   checkedAt: string;
 }
 
+export interface WorkerSignalChecklistStepDuration {
+  stepNumber: number;
+  label: string;
+  durationMs: number;
+}
+
+/**
+ * Derive stable per-step durations from append-only checklist marks.
+ * The first step uses the attempt start when available; older callers without
+ * a start timestamp retain the previous zero-duration behavior.
+ */
+export function deriveChecklistStepDurations(
+  timing: WorkerSignalChecklistTiming | null | undefined,
+  startedAt?: string | null,
+): WorkerSignalChecklistStepDuration[] {
+  if (!timing?.events.length) return [];
+  const events = [...timing.events].sort((a, b) => a.checkedAt.localeCompare(b.checkedAt));
+  const startedMs = startedAt ? Date.parse(startedAt) : Number.NaN;
+  let previousMs = Number.isFinite(startedMs) ? startedMs : null;
+  return events.map((event) => {
+    const checkedMs = Date.parse(event.checkedAt);
+    const durationMs =
+      previousMs != null && Number.isFinite(checkedMs) ? Math.max(0, checkedMs - previousMs) : 0;
+    if (Number.isFinite(checkedMs)) previousMs = checkedMs;
+    return { stepNumber: event.stepNumber, label: event.label, durationMs };
+  });
+}
+
 /** Structured probe result for operator "check SIGNAL.json" flows. */
 export type WorkerSignalProbeCode =
   | 'ready'

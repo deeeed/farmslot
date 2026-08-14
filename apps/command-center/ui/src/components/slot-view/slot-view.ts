@@ -413,6 +413,7 @@ export class SlotView extends SlotViewRecipePresenter {
     return selectSlotViewTaskContext(
       this._agentContexts(),
       this._linkedRun?.flowType ?? this._slot?.currentFlowType,
+      this._linkedRun?.activeTaskFile,
     );
   }
 

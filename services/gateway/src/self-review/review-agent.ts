@@ -12,6 +12,7 @@ import {
   type ReviewValidationDepth,
   type RunnerSessionUsage,
   type SelfReviewIssue,
+  type WorkerSignalChecklistTiming,
 } from '@farmslot/protocol';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
@@ -55,7 +56,7 @@ import {
   resetLiveRunnerContext,
 } from '../runners/session-reactivation.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
-import { getRun, updateRun } from '../runs/store.js';
+import { clearRunActiveTaskFile, getRun, updateRun } from '../runs/store.js';
 import {
   extractRunnerSessionUsage,
   unavailableRunnerSessionUsage,
@@ -152,8 +153,12 @@ export function applyTerminalReviewSignal(
   feedback: ReviewAgentResult,
   signal: ReturnType<typeof parseTerminalSelfReviewSignal>,
 ): ReviewAgentResult {
-  if (!signal || isSuccessfulTerminalReviewSignal(signal)) return feedback;
-  return { verdict: 'pass', issues: [], incomplete: true };
+  if (!signal) return feedback;
+  const withTiming = signal.checklistTiming
+    ? { ...feedback, checklistTiming: signal.checklistTiming }
+    : feedback;
+  if (isSuccessfulTerminalReviewSignal(signal)) return withTiming;
+  return { ...withTiming, verdict: 'pass', issues: [], incomplete: true };
 }
 
 async function readTerminalReviewSignal(
@@ -417,6 +422,7 @@ export interface ReviewAgentResult {
   issues: SelfReviewIssue[];
   validationDepth?: ReviewValidationDepth;
   usage?: RunnerSessionUsage;
+  checklistTiming?: WorkerSignalChecklistTiming;
   reviewSnapshot?: ReviewDiffSnapshot;
   fixDelta?: ReviewFixDeltaSnapshot;
   artifactPaths?: string[];
@@ -695,7 +701,7 @@ async function recoverRunningReviewAgent(params: {
   } finally {
     watcher.stop();
     await unwatchContext(params.slotId, context.id);
-    updateRun(params.runId, { activeTaskFile: undefined });
+    clearRunActiveTaskFile(params.runId, context.taskFile);
     const latest = getRun(params.runId);
     await restoreWorkerChecklistTargetFromSlot(
       params.vars,
@@ -781,6 +787,7 @@ export async function runReviewAgent(
   const reviewChecklistTarget = targetForChecklistBasename(reviewerChecklistBasename(allocated.id));
   const feedbackRelPath = reviewerFeedbackRelPath(allocated.id);
   const resultRelPath = reviewerResultRelPath(allocated.id);
+  const taskMdPath = taskDirRelPath(taskDir, reviewChecklistTarget.checklist);
   let reviewContext = await upsertAgentContext(_runId, 'self-review', {
     id: allocated.id,
     label: allocated.label,
@@ -842,7 +849,6 @@ export async function runReviewAgent(
     // non-interactive runners (e.g. Codex) can read it immediately.
     // The template is in projects/<project>/templates/worker/self-review.md with {{VAR}} placeholders.
     // Long multiline prompts get bracketed-pasted by tmux — so we write to a file.
-    const taskMdPath = taskDirRelPath(taskDir, reviewChecklistTarget.checklist);
     let expandedTemplate = scopeReviewFeedbackPath(
       await expandSelfReviewTemplate(vars, taskDir, _runId, validationDepth),
       feedbackRelPath,
@@ -1344,7 +1350,7 @@ export async function runReviewAgent(
       console.warn(`[self-review] cleanup unwatchContext failed: ${(cleanupErr as Error).message}`);
     }
     if (activeTaskSet) {
-      updateRun(_runId, { activeTaskFile: undefined });
+      clearRunActiveTaskFile(_runId, taskMdPath);
       const parentRun = getRun(_runId);
       await restoreWorkerChecklistTargetFromSlot(
         vars,
