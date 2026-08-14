@@ -1,26 +1,18 @@
 import os from 'node:os';
 
-import type {
-  ActiveResourcePointer,
-  CopilotHostWorkload,
-  CopilotWorkloadSnapshot,
-  CopilotWorkloadTotals,
-  FleetStatus,
-  Run,
+import {
+  ACTIVE_RUN_STATUSES,
+  type ActiveResourcePointer,
+  type CopilotHostWorkload,
+  type CopilotWorkloadSnapshot,
+  type CopilotWorkloadTotals,
+  type FleetStatus,
+  type Run,
+  type RunStatus,
 } from '@farmslot/protocol';
 
 const ACTIVE_AGENT_STATES = new Set(['launching', 'working', 'waiting']);
-const ACTIVE_RUN_STATES = new Set([
-  'grading',
-  'writing-task',
-  'slot-finding',
-  'preparing',
-  'dispatching',
-  'monitoring',
-  'self-reviewing',
-  'completing',
-  'ci-watching',
-]);
+const ACTIVE_RUN_STATES = new Set<RunStatus>(ACTIVE_RUN_STATUSES);
 
 export interface WorkloadResourceInput {
   slotId: string;

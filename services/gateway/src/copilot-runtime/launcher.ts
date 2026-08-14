@@ -4,7 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import type { SafetyTier } from '@farmslot/protocol';
+import {
+  COPILOT_TMUX_SESSION,
+  COPILOT_TMUX_TARGET,
+  COPILOT_TMUX_WINDOW_NAME,
+  type SafetyTier,
+} from '@farmslot/protocol';
 import type { SlotVars } from '@farmslot/slot-config';
 
 import { shellQuote } from '../core/tmux.js';
@@ -21,8 +26,7 @@ import {
 import type { CopilotRuntimeStore } from './session-store.js';
 
 const execFileAsync = promisify(execFile);
-export const COPILOT_TMUX_SESSION = 'farmslot-copilot';
-export const COPILOT_TMUX_TARGET = `${COPILOT_TMUX_SESSION}:agent.0`;
+export { COPILOT_TMUX_SESSION, COPILOT_TMUX_TARGET };
 
 export interface CopilotTmuxAdapter {
   listCandidates(session: string): Promise<string[]>;
@@ -52,7 +56,7 @@ export const localCopilotTmuxAdapter: CopilotTmuxAdapter = {
       '-s',
       session,
       '-n',
-      'agent',
+      COPILOT_TMUX_WINDOW_NAME,
       '-c',
       checkout,
       command,
@@ -60,7 +64,7 @@ export const localCopilotTmuxAdapter: CopilotTmuxAdapter = {
     await execFileAsync('tmux', [
       'set-window-option',
       '-t',
-      `${session}:agent`,
+      `${session}:${COPILOT_TMUX_WINDOW_NAME}`,
       'pane-base-index',
       '0',
     ]);
@@ -72,7 +76,13 @@ export const localCopilotTmuxAdapter: CopilotTmuxAdapter = {
       '#{window_index}',
     ]);
     if (windowIndex.trim() !== '0') {
-      await execFileAsync('tmux', ['move-window', '-s', `${session}:agent`, '-t', `${session}:0`]);
+      await execFileAsync('tmux', [
+        'move-window',
+        '-s',
+        `${session}:${COPILOT_TMUX_WINDOW_NAME}`,
+        '-t',
+        `${session}:0`,
+      ]);
     }
     await execFileAsync('tmux', ['set-option', '-t', session, 'base-index', '0']);
     const { stdout } = await execFileAsync('tmux', [

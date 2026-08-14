@@ -5,11 +5,27 @@ import type { FleetStatus, Run } from '@farmslot/protocol';
 
 import { buildCopilotWorkloadSnapshot } from './resource-policy.js';
 
+function runFixture(input: Pick<Run, 'id' | 'flowType' | 'status' | 'slotId'> & Partial<Run>): Run {
+  return {
+    familyId: input.id,
+    lane: 'production',
+    project: 'test-project',
+    ticketOrPr: input.id,
+    branch: null,
+    taskFile: null,
+    decisions: [],
+    metrics: { nudgeCount: 0, model: null, runner: null },
+    createdAt: 'now',
+    updatedAt: 'now',
+    ...input,
+  };
+}
+
 test('workload counts all primary, nested, QA, recipe, prepare, dev-server, and Co-Pilot roles by host', () => {
-  const run = {
+  const run = runFixture({
     id: 'review-run',
     flowType: 'review-pr',
-    status: 'working',
+    status: 'monitoring',
     slotId: 'slot-1',
     reviewValidationDepth: 'full-live',
     steps: [
@@ -17,22 +33,61 @@ test('workload counts all primary, nested, QA, recipe, prepare, dev-server, and 
       { name: 'recipe', status: 'running' },
     ],
     agentContexts: [
-      { role: 'review', status: 'working', slotId: 'slot-1' },
-      { role: 'self-review-fix', status: 'working', slotId: 'slot-1' },
-      { role: 'ci-fix', status: 'working', slotId: 'slot-1' },
+      {
+        id: 'review',
+        role: 'review',
+        label: 'review',
+        status: 'working',
+        slotId: 'slot-1',
+        runId: 'review-run',
+      },
+      {
+        id: 'self-review-fix',
+        role: 'self-review-fix',
+        label: 'self-review-fix',
+        status: 'working',
+        slotId: 'slot-1',
+        runId: 'review-run',
+      },
+      {
+        id: 'ci-fix',
+        role: 'ci-fix',
+        label: 'ci-fix',
+        status: 'working',
+        slotId: 'slot-1',
+        runId: 'review-run',
+      },
     ],
-  } as unknown as Run;
-  const implementation = {
+  });
+  const implementation = runFixture({
     id: 'dev-run',
     flowType: 'dev',
-    status: 'working',
+    status: 'monitoring',
     slotId: 'slot-1',
     steps: [],
-    agentContexts: [{ role: 'dev', status: 'working', slotId: 'slot-1' }],
-  } as unknown as Run;
+    agentContexts: [
+      {
+        id: 'dev',
+        role: 'dev',
+        label: 'dev',
+        status: 'working',
+        slotId: 'slot-1',
+        runId: 'dev-run',
+      },
+    ],
+  });
   const fleet = {
     checkedAt: 'now',
-    summary: { total: 1, ready: 0, busy: 1, held: 0, manual: 0, disabled: 0, blocked: 0, warmCount: 0 },
+    summary: {
+      total: 1,
+      ready: 0,
+      busy: 1,
+      held: 0,
+      manual: 0,
+      disabled: 0,
+      blocked: 0,
+      warmCount: 0,
+    },
     slots: [{ slot: 'slot-1', machine: 'host-a' }],
   } as unknown as FleetStatus;
   const snapshot = buildCopilotWorkloadSnapshot({

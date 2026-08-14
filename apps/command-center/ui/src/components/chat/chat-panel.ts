@@ -23,7 +23,12 @@ import type {
   CopilotStopResult,
   TmuxWorkerListResult,
 } from '@farmslot/protocol';
-import { Events, Methods } from '@farmslot/protocol';
+import {
+  COPILOT_TMUX_WINDOW_INDEX,
+  COPILOT_TMUX_WINDOW_NAME,
+  Events,
+  Methods,
+} from '@farmslot/protocol';
 
 import './chat-message.js';
 import './chat-history-modal.js';
@@ -111,6 +116,7 @@ export class ChatPanel extends ChatPanelState {
     this.unsubObserver?.();
     this.unsubRuntime?.();
     this.unsubConnection?.();
+    if (this.runtimeWorkerRetry) clearTimeout(this.runtimeWorkerRetry);
     this.stopResize();
   }
 
@@ -399,6 +405,8 @@ export class ChatPanel extends ChatPanelState {
 
   private async resolveRuntimeWorker(session: CopilotRuntimeSession): Promise<void> {
     if (session.status !== 'running') {
+      if (this.runtimeWorkerRetry) clearTimeout(this.runtimeWorkerRetry);
+      this.runtimeWorkerRetry = undefined;
       this.runtimeWorkerRefJson = '';
       this.runtimeWorkerSession = '';
       return;
@@ -407,15 +415,26 @@ export class ChatPanel extends ChatPanelState {
     if (!tmuxSession || (this.runtimeWorkerSession === tmuxSession && this.runtimeWorkerRefJson)) {
       return;
     }
-    if (this.runtimeWorkerLookup) return this.runtimeWorkerLookup;
+    if (this.runtimeWorkerLookup) {
+      if (this.runtimeWorkerLookupTarget === session.tmuxTarget) return this.runtimeWorkerLookup;
+      await this.runtimeWorkerLookup;
+      if (this.runtime?.tmuxTarget === session.tmuxTarget) {
+        return this.resolveRuntimeWorker(session);
+      }
+      return;
+    }
+    this.runtimeWorkerLookupTarget = session.tmuxTarget;
     this.runtimeWorkerLookup = (async () => {
       const result = await gateway.request<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, {});
       const worker = result.workers.find(
         (candidate) =>
           candidate.ref.session === tmuxSession &&
-          (candidate.ref.windowName === 'agent' || candidate.ref.window === '0'),
+          (candidate.ref.windowName === COPILOT_TMUX_WINDOW_NAME ||
+            candidate.ref.window === COPILOT_TMUX_WINDOW_INDEX),
       );
       if (!worker || this.runtime?.tmuxTarget !== session.tmuxTarget) return;
+      if (this.runtimeWorkerRetry) clearTimeout(this.runtimeWorkerRetry);
+      this.runtimeWorkerRetry = undefined;
       this.runtimeWorkerSession = tmuxSession;
       this.runtimeWorkerRefJson = JSON.stringify(worker.ref);
     })()
@@ -424,6 +443,18 @@ export class ChatPanel extends ChatPanelState {
       })
       .finally(() => {
         this.runtimeWorkerLookup = undefined;
+        this.runtimeWorkerLookupTarget = '';
+        if (
+          !this.runtimeWorkerRefJson &&
+          this.runtime?.status === 'running' &&
+          this.runtime.tmuxTarget === session.tmuxTarget
+        ) {
+          if (this.runtimeWorkerRetry) clearTimeout(this.runtimeWorkerRetry);
+          this.runtimeWorkerRetry = setTimeout(() => {
+            this.runtimeWorkerRetry = undefined;
+            if (this.runtime) void this.resolveRuntimeWorker(this.runtime);
+          }, 1000);
+        }
       });
     return this.runtimeWorkerLookup;
   }

@@ -228,6 +228,7 @@ export type {
   WorkerTerminalEvidence,
 } from './runs.js';
 export {
+  ACTIVE_RUN_STATUSES,
   buildComparisonVariant,
   DEFAULT_GRADER_ID,
   hasLiveRecipeEvidence,

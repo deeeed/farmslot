@@ -58,6 +58,8 @@ export abstract class ChatPanelState extends LitElement {
   protected unsubRuntime?: () => void;
   protected toastTimer?: ReturnType<typeof setTimeout>;
   protected runtimeWorkerLookup?: Promise<void>;
+  protected runtimeWorkerLookupTarget = '';
+  protected runtimeWorkerRetry?: ReturnType<typeof setTimeout>;
   protected runtimeWorkerSession = '';
   protected resizing = false;
   protected resizeStartY = 0;
