@@ -199,14 +199,28 @@ export function renderChatPanelStyles() {
       padding: ${spacing.sm};
       overflow: hidden;
     }
+    chat-panel .cp-runtime-head .cp-runtime-pressure {
+      flex: 1;
+    }
+    chat-panel .cp-runtime.compact .cp-runtime-grid,
+    chat-panel .cp-runtime.compact .cp-runtime-warning,
+    chat-panel .cp-runtime.compact .cp-runtime-reason,
+    chat-panel .cp-runtime.compact .cp-runtime-config,
+    chat-panel .cp-runtime.compact .cp-runtime-actions,
+    chat-panel .cp-runtime.compact .cp-dangerous {
+      display: none;
+    }
     chat-panel .cp-terminal terminal-view {
       height: 100%;
       min-height: 0;
     }
     chat-panel .cp-terminal-loading {
       height: 100%;
-      display: grid;
-      place-items: center;
+      display: flex;
+      flex-direction: column;
+      gap: ${spacing.md};
+      align-items: center;
+      justify-content: center;
       color: ${colors.textMuted};
       font-size: ${fonts.sizeSm};
     }

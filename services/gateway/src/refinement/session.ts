@@ -61,6 +61,33 @@ export async function resolveTmuxSessionWorker(session: string): Promise<TmuxWor
   };
 }
 
+export async function resolveTmuxTargetWorker(target: string): Promise<TmuxWorkerRef | null> {
+  try {
+    const { stdout } = await execFileAsync('tmux', [
+      'display-message',
+      '-p',
+      '-t',
+      target,
+      '-F',
+      '#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}',
+    ]);
+    const [sessionName, window, windowName, pane, paneId] = stdout.trim().split('\t');
+    if (!sessionName || !window || !pane) return null;
+    return {
+      nodeId: await localTmuxWorkerNodeId(),
+      session: sessionName,
+      window,
+      ...(windowName ? { windowName } : {}),
+      pane,
+      ...(paneId ? { paneId } : {}),
+      target: paneId || `${sessionName}:${window}.${pane}`,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException & { code?: number }).code === 1) return null;
+    throw error;
+  }
+}
+
 export function defaultRefinementRunnerCommand(
   runner: string | undefined,
   model: string | undefined,

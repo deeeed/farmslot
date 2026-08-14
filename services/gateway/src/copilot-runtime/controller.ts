@@ -31,7 +31,7 @@ import { recordScreenEvidenceSnapshot } from '../chat/screen-evidence.js';
 import { resolveProjectRuntimeDir } from '../core/config.js';
 import { getActiveResources } from '../fleet/resource-manager.js';
 import { getCachedFleet } from '../fleet/state.js';
-import { resolveTmuxSessionWorker } from '../refinement/session.js';
+import { resolveTmuxTargetWorker } from '../refinement/session.js';
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import {
   interruptRunnerTurn,
@@ -81,7 +81,7 @@ export interface CopilotRuntimeControllerOptions {
   interrupt?: typeof interruptRunnerTurn;
   workload?: (copilotRunning: boolean) => CopilotWorkloadSnapshot;
   resolveRuntimeDir?: () => Promise<string>;
-  resolveTerminalWorker?: typeof resolveTmuxSessionWorker;
+  resolveTerminalWorker?: typeof resolveTmuxTargetWorker;
 }
 
 export class CopilotRuntimeController {
@@ -97,7 +97,7 @@ export class CopilotRuntimeController {
   private readonly interrupt: typeof interruptRunnerTurn;
   private readonly workloadOverride?: (copilotRunning: boolean) => CopilotWorkloadSnapshot;
   private readonly resolveRuntimeDir: () => Promise<string>;
-  private readonly resolveTerminalWorker: typeof resolveTmuxSessionWorker;
+  private readonly resolveTerminalWorker: typeof resolveTmuxTargetWorker;
   private persisted: PersistedCopilotRuntime | null = null;
   private initialized = false;
   private startPromise: Promise<CopilotStartResult> | null = null;
@@ -119,7 +119,7 @@ export class CopilotRuntimeController {
     this.workloadOverride = options.workload;
     this.resolveRuntimeDir =
       options.resolveRuntimeDir ?? (() => resolveProjectRuntimeDir('farmslot-farm'));
-    this.resolveTerminalWorker = options.resolveTerminalWorker ?? resolveTmuxSessionWorker;
+    this.resolveTerminalWorker = options.resolveTerminalWorker ?? resolveTmuxTargetWorker;
   }
 
   currentSession(): CopilotRuntimeSession | null {
@@ -152,10 +152,17 @@ export class CopilotRuntimeController {
         this.persisted.session.reconnectedAt = this.timestamp();
         this.persisted.session.updatedAt = this.timestamp();
         await this.tmux.configureTranscript(COPILOT_TMUX_TARGET, this.store.rawTranscriptPath);
-        await this.refreshTerminalWorker();
+        if (!(await this.refreshTerminalWorker())) {
+          this.persisted.session.status = 'failed';
+          this.persisted.session.terminalReason = 'tmux-pane-missing-after-restart';
+          this.persisted.session.stoppedAt = this.timestamp();
+          this.persisted.session.updatedAt = this.timestamp();
+        }
         await this.persist();
-        await this.audit('reconnect', { reason: 'gateway restart reconciliation' });
-        this.startTranscriptMonitor();
+        if (this.persisted.session.status === 'running') {
+          await this.audit('reconnect', { reason: 'gateway restart reconciliation' });
+          this.startTranscriptMonitor();
+        }
       }
     } else if (
       this.persisted &&
@@ -208,6 +215,7 @@ export class CopilotRuntimeController {
           dangerousLaunch: dangerousLaunchBinding({ checkout, runner, model }),
         },
       };
+      await this.refreshTerminalWorker();
       await this.persist();
     } else {
       const previous = this.persisted.session.checkout;
@@ -219,6 +227,7 @@ export class CopilotRuntimeController {
         model: this.persisted.session.model,
       });
       this.persisted.session.updatedAt = this.timestamp();
+      await this.refreshTerminalWorker();
       await this.persist();
       if (previous.head !== checkout.head || previous.branch !== checkout.branch) {
         await this.audit('checkout-transition', {
@@ -227,7 +236,6 @@ export class CopilotRuntimeController {
         });
       }
     }
-    await this.refreshTerminalWorker();
     return { session: this.persisted.session };
   }
 
@@ -297,7 +305,13 @@ export class CopilotRuntimeController {
       this.persisted.session.reconnectedAt = this.timestamp();
       this.persisted.session.updatedAt = this.timestamp();
       await this.tmux.configureTranscript(COPILOT_TMUX_TARGET, this.store.rawTranscriptPath);
-      await this.refreshTerminalWorker();
+      if (!(await this.refreshTerminalWorker())) {
+        this.persisted.session.status = 'failed';
+        this.persisted.session.terminalReason = 'tmux-pane-missing-while-reconnecting';
+        this.persisted.session.stoppedAt = this.timestamp();
+        await this.persist();
+        throw new Error('Co-Pilot tmux pane is missing; start a fresh runtime');
+      }
       await this.persist();
       await this.audit('reconnect', { requestedMode: params.mode ?? 'start' });
       this.emitRuntime();
@@ -393,7 +407,13 @@ export class CopilotRuntimeController {
     this.persisted.session.status = 'running';
     this.persisted.session.workload = this.workload(true);
     this.persisted.session.updatedAt = this.timestamp();
-    await this.refreshTerminalWorker();
+    if (!(await this.refreshTerminalWorker())) {
+      this.persisted.session.status = 'failed';
+      this.persisted.session.terminalReason = 'tmux-pane-missing-after-launch';
+      this.persisted.session.stoppedAt = this.timestamp();
+      await this.persist();
+      throw new Error('Co-Pilot launched without an addressable tmux pane');
+    }
     await this.persist();
     await this.audit('start', { runner, model, safetyTier, paneId: launched.paneId });
     this.emitRuntime();
@@ -511,21 +531,33 @@ export class CopilotRuntimeController {
     return { ok: true, session: status.session };
   }
 
-  private async refreshTerminalWorker(): Promise<void> {
-    if (!this.persisted) return;
+  private async refreshTerminalWorker(force = false): Promise<boolean> {
+    if (!this.persisted) return false;
     if (this.persisted.session.status !== 'running') {
       delete this.persisted.session.terminalWorker;
-      return;
+      return true;
     }
+    const target = this.persisted.paneId ?? COPILOT_TMUX_TARGET;
     if (
-      this.persisted.session.terminalWorker?.paneId &&
-      this.persisted.session.terminalWorker.paneId === this.persisted.paneId &&
-      this.persisted.session.terminalWorker.target === this.persisted.paneId &&
-      this.persisted.session.terminalWorker.nodeId === os.hostname().replace(/\.local$/, '')
+      !force &&
+      this.persisted.session.terminalWorker?.paneId === target &&
+      this.persisted.session.terminalWorker.target === target
     ) {
-      return;
+      return true;
     }
-    this.persisted.session.terminalWorker = await this.resolveTerminalWorker(COPILOT_TMUX_SESSION);
+    const worker = await this.resolveTerminalWorker(target);
+    if (!worker) {
+      delete this.persisted.session.terminalWorker;
+      return false;
+    }
+    if (this.persisted.paneId && worker.paneId !== this.persisted.paneId) {
+      throw new Error(
+        `Co-Pilot tmux identity mismatch: expected ${this.persisted.paneId}, got ${worker.paneId ?? worker.target}`,
+      );
+    }
+    this.persisted.paneId ??= worker.paneId;
+    this.persisted.session.terminalWorker = worker;
+    return true;
   }
 
   private workload(copilotRunning: boolean) {
@@ -640,11 +672,15 @@ export class CopilotRuntimeController {
       await this.setAmbiguous(candidates);
       return;
     }
-    if (candidates.includes(COPILOT_TMUX_SESSION)) return;
+    if (candidates.includes(COPILOT_TMUX_SESSION)) {
+      if (await this.refreshTerminalWorker(true)) return;
+      this.persisted.session.terminalReason = 'tmux-pane-missing-while-running';
+    } else {
+      this.persisted.session.terminalReason = 'tmux-session-missing-while-running';
+    }
 
     this.stopTranscriptMonitor();
     this.persisted.session.status = 'failed';
-    this.persisted.session.terminalReason = 'tmux-session-missing-while-running';
     this.persisted.session.stoppedAt = this.timestamp();
     this.persisted.session.updatedAt = this.timestamp();
     await this.persist();

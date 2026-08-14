@@ -34,8 +34,8 @@ export default function CopilotScreen() {
 
   const openTerminal = useCallback(
     (session: CopilotRuntimeSession) => {
-      if (session.status !== 'running' || !session.terminalWorker) return false;
-      if (openedTarget.current === session.terminalWorker.target) return true;
+      if (session.status !== 'running' || !session.terminalWorker) return;
+      if (openedTarget.current === session.terminalWorker.target) return;
       openedTarget.current = session.terminalWorker.target;
       router.replace({
         pathname: '/terminal/worker',
@@ -44,7 +44,6 @@ export default function CopilotScreen() {
           ...(pendingDraft ? { draft: pendingDraft } : {}),
         },
       });
-      return true;
     },
     [pendingDraft, router],
   );

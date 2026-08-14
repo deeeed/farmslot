@@ -297,13 +297,6 @@ export class ChatPanel extends ChatPanelState {
     };
   }
 
-  private async send() {
-    const text = this.inputText.trim();
-    if (!text || this.sending) return;
-    this.inputText = '';
-    await this.submitPrompt(text);
-  }
-
   private async loadRuntime(reconnected = false) {
     try {
       const result = await gateway.request<CopilotStatusResult>(Methods.COPILOT_STATUS, {});
@@ -641,15 +634,6 @@ export class ChatPanel extends ChatPanelState {
     }
   }
 
-  private onKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      this.send();
-    } else if (e.key === 'Escape') {
-      this.dispatchEvent(new CustomEvent('close', { bubbles: true }));
-    }
-  }
-
   private async onActionConfirm(e: CustomEvent<{ actionId: string }>) {
     const card = e.target as
       | (HTMLElement & {
@@ -909,7 +893,12 @@ export class ChatPanel extends ChatPanelState {
               </div>
             `
           : ''}
-        <section class="cp-runtime" data-testid="copilot-runtime-card">
+        <section
+          class="cp-runtime ${runtimeStatus === 'running' && !this.runtimeDetailsOpen
+            ? 'compact'
+            : ''}"
+          data-testid="copilot-runtime-card"
+        >
           <div class="cp-runtime-head">
             <span class="cp-runtime-status ${runtimeStatus}">${runtimeStatusLabel}</span>
             <span>${this.runtimeNotice}</span>
@@ -917,6 +906,14 @@ export class ChatPanel extends ChatPanelState {
               Pressure ${this.runtime?.workload.severity ?? 'unknown'}
               ${this.runtime ? `· ${this.runtime.workload.totals.total} activities` : ''}
             </span>
+            ${runtimeStatus === 'running'
+              ? html`<button
+                  class="cp-new-btn"
+                  @click=${() => (this.runtimeDetailsOpen = !this.runtimeDetailsOpen)}
+                >
+                  ${this.runtimeDetailsOpen ? 'Hide details' : 'Details'}
+                </button>`
+              : ''}
           </div>
           ${this.runtime
             ? html`
@@ -1058,7 +1055,16 @@ export class ChatPanel extends ChatPanelState {
                       .workerRefJson=${this.runtimeWorkerRefJson}
                       compact
                     ></terminal-view>`
-                  : html`<div class="cp-terminal-loading">Connecting to the Co-Pilot tmux…</div>`}
+                  : html`<div class="cp-terminal-loading">
+                      <span>Co-Pilot terminal unavailable.</span>
+                      <button
+                        class="cp-new-btn"
+                        ?disabled=${this.runtimeLoading}
+                        @click=${() => this.loadRuntime()}
+                      >
+                        ${this.runtimeLoading ? 'Checking…' : 'Retry'}
+                      </button>
+                    </div>`}
               </div>
             `
           : html`
@@ -1087,45 +1093,6 @@ export class ChatPanel extends ChatPanelState {
                 <div class="cp-messages-end"></div>
               </div>
             `}
-        <div class="cp-input-area">
-          <textarea
-            class="cp-input"
-            placeholder="Ask about your fleet… (Enter to send, Shift+Enter for newline)"
-            rows="1"
-            .value=${this.inputText}
-            @input=${(e: InputEvent) => {
-              if (e.target instanceof HTMLTextAreaElement) this.inputText = e.target.value;
-            }}
-            @keydown=${this.onKeyDown}
-            ?disabled=${this.sending || runtimeStatus !== 'running'}
-          ></textarea>
-          ${this.inputText.trim()
-            ? html`
-                <button
-                  class="cp-reset-input-btn"
-                  title="Reset input"
-                  aria-label="Reset Co-Pilot input"
-                  @click=${() => {
-                    this.inputText = '';
-                    void this.updateComplete.then(() => {
-                      const input = this.querySelector('.cp-input');
-                      if (input instanceof HTMLTextAreaElement) input.focus();
-                    });
-                  }}
-                  ?disabled=${this.sending}
-                >
-                  ×
-                </button>
-              `
-            : ''}
-          <button
-            class="cp-send-btn"
-            @click=${this.send}
-            ?disabled=${this.sending || !this.inputText.trim() || runtimeStatus !== 'running'}
-          >
-            ${this.sending ? '…' : '→'}
-          </button>
-        </div>
       </div>
       ${this.historyOpen
         ? html`

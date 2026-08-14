@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
@@ -1034,7 +1035,7 @@ function humanizeFieldPart(value: string): string {
 }
 
 function structuredValue(value: unknown): string | null {
-  if (value === null) return 'None';
+  if (value == null) return 'None';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'string' || typeof value === 'number') return String(value);
   if (Array.isArray(value) && value.every((item) => item == null || typeof item !== 'object')) {
@@ -1080,8 +1081,9 @@ export function StructuredDataBlock({
   title: string;
   value: Record<string, unknown>;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const allFields = flattenStructuredFields(value);
-  const fields = allFields.slice(0, 32);
+  const fields = expanded ? allFields : allFields.slice(0, 32);
   const hiddenFieldCount = allFields.length - fields.length;
   return (
     <View style={styles.stepBlock}>
@@ -1095,8 +1097,10 @@ export function StructuredDataBlock({
             </Text>
           </View>
         ))}
-        {hiddenFieldCount > 0 ? (
-          <Text style={styles.stepFieldOverflow}>+{hiddenFieldCount} more fields</Text>
+        {hiddenFieldCount > 0 && !expanded ? (
+          <Pressable onPress={() => setExpanded(true)}>
+            <Text style={styles.stepFieldOverflow}>Show {hiddenFieldCount} more fields</Text>
+          </Pressable>
         ) : null}
       </View>
     </View>
