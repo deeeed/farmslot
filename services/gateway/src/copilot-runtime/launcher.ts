@@ -11,6 +11,7 @@ import { shellQuote } from '../core/tmux.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import { buildLaunchCommand } from '../runners/launch-command.js';
 import {
+  DEFAULT_COPILOT_RUNNER,
   getRunnerDefinition,
   isKnownRunner,
   normalizeRunner,
@@ -22,7 +23,6 @@ import type { CopilotRuntimeStore } from './session-store.js';
 const execFileAsync = promisify(execFile);
 export const COPILOT_TMUX_SESSION = 'farmslot-copilot';
 export const COPILOT_TMUX_TARGET = `${COPILOT_TMUX_SESSION}:agent.0`;
-export const DEFAULT_COPILOT_RUNNER = 'codex';
 
 export interface CopilotTmuxAdapter {
   listCandidates(session: string): Promise<string[]>;

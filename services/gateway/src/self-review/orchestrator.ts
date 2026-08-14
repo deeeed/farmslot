@@ -1450,7 +1450,10 @@ async function recoverSelfReviewFixPass({
       });
     }
 
-    const terminalAttemptId = fixContext.signalAttemptId;
+    // The watcher can bind an attempt id after recovery starts. Use the terminal
+    // signal's authoritative id instead of the entry-time context snapshot, or
+    // the settlement CAS can discard a fix that actually completed.
+    const terminalAttemptId = fixSignal.attemptId ?? fixContext.signalAttemptId;
 
     if (fixSignal.status === 'blocked') {
       const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);

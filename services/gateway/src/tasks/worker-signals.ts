@@ -166,7 +166,7 @@ export function signalFreshSince(
   const startedMs = parseFiniteIsoMs(startedAt);
   if (startedMs === null) return true;
   const signalMs = parseFiniteIsoMs(signal.timestamp);
-  if (signalMs === null) return true;
+  if (signalMs === null) return false;
   return signalMs >= startedMs;
 }
 

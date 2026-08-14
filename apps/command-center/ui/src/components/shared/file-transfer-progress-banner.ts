@@ -210,7 +210,10 @@ export class FileTransferProgressBanner extends LitElement {
     if (entries.length === 0) return nothing;
     // Directory mirrors already publish one aggregate entry with file/byte progress.
     // Rendering each child duplicates that progress and floods the operator surface.
-    const visibleEntries = entries.filter((entry) => !entry.parentTransferId);
+    const visibleEntries = entries.filter(
+      (entry) => !entry.parentTransferId || entry.state === 'failed' || entry.state === 'cancelled',
+    );
+    if (visibleEntries.length === 0) return nothing;
     const completedCount = visibleEntries.filter((entry) => entry.state === 'done').length;
     const detailedEntries = visibleEntries.filter((entry) => entry.state !== 'done');
     return html`

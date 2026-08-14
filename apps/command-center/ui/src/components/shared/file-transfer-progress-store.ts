@@ -7,6 +7,7 @@
 import { Events, type FileTransferProgress } from '@farmslot/protocol';
 
 import {
+  clearCompletedFileTransferEntries,
   type FileTransferUiEntry,
   filterTransfersForRun,
   pruneFileTransfers,
@@ -100,9 +101,7 @@ export function getFileTransfersForRun(runId: string | undefined | null): FileTr
 
 /** Remove terminal transfer noise while preserving active and failed diagnostics. */
 export function clearCompletedFileTransfers(runId?: string | null): void {
-  const next = entries.filter(
-    (entry) => entry.state !== 'done' || (runId ? entry.runId !== runId : false),
-  );
+  const next = clearCompletedFileTransferEntries(entries, runId);
   if (next.length === entries.length) return;
   entries = next;
   notify();

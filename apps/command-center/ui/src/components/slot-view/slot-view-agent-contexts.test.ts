@@ -8,6 +8,7 @@ import {
   deriveSlotViewAgentContexts,
   isAgentContextUnavailable,
   selectSlotViewAgentContext,
+  selectSlotViewTaskContext,
   slotViewAgentContextChipLabel,
   type SlotViewAgentContextRun,
   type SlotViewAgentContextSlot,
@@ -150,5 +151,41 @@ test('deriveSlotViewAgentContexts keeps multiple reviewer tabs for one run', () 
   assert.deepEqual(
     contexts.map((ctx) => ctx.id),
     ['fix-bug', 'rev-claude', 'rev-codex'],
+  );
+});
+
+test('selectSlotViewTaskContext joins canonical prepared and worker task roots', () => {
+  const contexts = [
+    context({
+      id: 'primary',
+      role: 'primary',
+      taskFile: '.sandbox/farmslot-farm/worker-task/review/547-0814-135435/TASK.md',
+    }),
+    context({
+      id: 'review',
+      role: 'self-review',
+      taskFile: '.sandbox/farmslot-farm/worker-task/review/547-0814-135435/SELF-REVIEW.md',
+    }),
+  ];
+
+  assert.equal(
+    selectSlotViewTaskContext(
+      contexts,
+      'review-pr',
+      '/Users/deeeed/dev/farmslot/.sandbox/farmslot-farm/tasks/review/547-0814-135435/TASK.md',
+    )?.id,
+    'primary',
+  );
+});
+
+test('selectSlotViewTaskContext does not join arbitrary suffix-only paths', () => {
+  const contexts = [
+    context({ id: 'review', role: 'self-review', taskFile: '/tmp/review/547/TASK.md' }),
+    context({ id: 'primary', role: 'primary', taskFile: '/tmp/primary/TASK.md' }),
+  ];
+
+  assert.equal(
+    selectSlotViewTaskContext(contexts, 'review-pr', '/another/root/review/547/TASK.md')?.id,
+    'primary',
   );
 });

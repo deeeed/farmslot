@@ -1,5 +1,5 @@
-// Shared file-watch primitive (ADR-046). Native `fs.watch` with the parent-dir
-// "watch until the file appears" fallback and tilde expansion. Used by the node
+// Shared file-watch primitive (ADR-046). Native parent-directory `fs.watch`
+// survives atomic file replacement and expands tilde paths. Used by the node
 // (primary owner of machine-local monitoring) and by the gateway as a local
 // fallback when a machine has no connected node — one implementation, two callers.
 

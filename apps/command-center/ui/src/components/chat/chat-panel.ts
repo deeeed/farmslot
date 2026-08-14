@@ -324,7 +324,7 @@ export class ChatPanel extends ChatPanelState {
     this.runtimeLoading = true;
     this.runtimeError = '';
     try {
-      if (mode === 'start') await this.saveRuntimeConfig(false);
+      if (mode === 'start') await this.saveRuntimeConfig(false, false);
       const result = await gateway.request<CopilotStartResult>(Methods.COPILOT_START, {
         mode,
         safetyTier: 'sandboxed',
@@ -359,6 +359,8 @@ export class ChatPanel extends ChatPanelState {
     try {
       await this.saveRuntimeConfig(false);
     } catch {
+      // saveRuntimeConfig already surfaced runtimeError. Do not open a dangerous
+      // launch confirmation for configuration that was not persisted.
       return;
     }
     this.dangerousTypedPhrase = '';
@@ -392,8 +394,8 @@ export class ChatPanel extends ChatPanelState {
     if (session.status === 'failed' || session.status === 'ambiguous') this.runtimeNotice = '';
   }
 
-  private async saveRuntimeConfig(showNotice = true) {
-    this.runtimeLoading = true;
+  private async saveRuntimeConfig(showNotice = true, manageLoading = true) {
+    if (manageLoading) this.runtimeLoading = true;
     this.runtimeError = '';
     try {
       const result = await gateway.request<CopilotConfigureResult>(Methods.COPILOT_CONFIGURE, {
@@ -407,7 +409,7 @@ export class ChatPanel extends ChatPanelState {
       this.runtimeError = errorMessage(err);
       throw err;
     } finally {
-      this.runtimeLoading = false;
+      if (manageLoading) this.runtimeLoading = false;
     }
   }
 

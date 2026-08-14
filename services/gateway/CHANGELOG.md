@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(review): accept fresh id-less fix signals consistently during restart recovery, resume an active fix before mirroring its artifacts, and persist per-round checklist timing.
+- fix(review): accept fresh id-less fix signals consistently during restart recovery, resume an active fix before mirroring its artifacts, preserve an accepted long-running CI-fix turn instead of dispatching a conflicting successor, parse emphasized `REQUEST_CHANGES` verdicts without weakening them, and persist per-round checklist timing.
 - feat(copilot): persist configurable runner/model defaults, reconcile optional singleton autostart on gateway startup, pass Codex hook flags as portable shell argv, and report an exited runtime instead of stale `running` state.
 - Fix queued runtime-capability leases suppressing provider rollback, release, and keep-warm cleanup.
 

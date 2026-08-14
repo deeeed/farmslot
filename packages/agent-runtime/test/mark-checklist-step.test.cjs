@@ -53,6 +53,7 @@ parsed = JSON.parse(readFileSync(signal, 'utf8'));
 assert.equal(parsed.status, 'complete');
 assert.equal(parsed.outcome, 'success');
 assert.equal(parsed.disposition, 'fixed');
+assert.equal(parsed.step, 'complete');
 assert.equal(parsed.checklistTiming.events.length, 2);
 
 const devDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-dev-pr-'));

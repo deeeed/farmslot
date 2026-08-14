@@ -57,6 +57,16 @@ export function filterTransfersForRun(
   return entries.filter((e) => e.runId === runId);
 }
 
+/** Clear successful rows globally or for one run; active and diagnostic rows remain visible. */
+export function clearCompletedFileTransferEntries(
+  entries: readonly FileTransferUiEntry[],
+  runId?: string | null,
+): FileTransferUiEntry[] {
+  return entries.filter(
+    (entry) => entry.state !== 'done' || (runId ? entry.runId !== runId : false),
+  );
+}
+
 /**
  * Bind a transfer to a pipeline special node so one run-scoped session cannot
  * animate both package-refresh and finalize at once.

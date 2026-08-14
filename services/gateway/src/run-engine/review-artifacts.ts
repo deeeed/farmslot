@@ -69,6 +69,21 @@ function stricterReviewRecommendation(left: string, right: string): string {
   return REVIEW_RECOMMENDATION_RANK[right] > REVIEW_RECOMMENDATION_RANK[left] ? right : left;
 }
 
+export function reviewRecommendationFromMarkdown(markdown: string): string | null {
+  for (const rawLine of markdown.split(/\r?\n/)) {
+    const line = rawLine
+      .replace(/\*\*|__|`/g, '')
+      .replace(/^\s*[-+]\s*/, '')
+      .trim();
+    const match =
+      /^(?:Recommended Action|Recommendation|Verdict)\s*:\s*(APPROVE|REQUEST_CHANGES|COMMENT)$/i.exec(
+        line,
+      );
+    if (match) return match[1].toUpperCase();
+  }
+  return null;
+}
+
 async function workerGatewayOwnedCopyExcludes(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   workerArtifactsDir: string,
@@ -186,11 +201,8 @@ export async function readReviewArtifacts(runId: string): Promise<ReviewArtifact
       result.summary = summaryMatch?.[1]?.trim().slice(0, 500) ?? reviewMd.slice(0, 300);
 
       // Extract recommendation
-      const recMatch = reviewMd.match(
-        /(?:Recommended Action|Recommendation|Verdict)[:\s]*\n?\s*(APPROVE|REQUEST_CHANGES|COMMENT)/i,
-      );
-      if (recMatch) {
-        markdownRecommendation = recMatch[1].toUpperCase();
+      markdownRecommendation = reviewRecommendationFromMarkdown(reviewMd);
+      if (markdownRecommendation) {
         result.recommendation = markdownRecommendation;
       }
     } catch (err) {

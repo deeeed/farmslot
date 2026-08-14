@@ -7,7 +7,7 @@ import {
   type RunCiWatchState,
 } from '@farmslot/protocol';
 
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { clearRunActiveTaskFile, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -203,7 +203,8 @@ export function triggerForInlineFix(
 }
 
 export function clearInlineFixState(runId: string, patch: Partial<CIWatchPhasePatch>): void {
-  updateRun(runId, { activeTaskFile: undefined });
+  const activeTaskFile = readCIWatchPhaseSnapshot(runId).activeTaskFile;
+  if (activeTaskFile) clearRunActiveTaskFile(runId, activeTaskFile);
   mergeCIWatchOutputPatch(runId, {
     fixInProgress: false,
     fixTrigger: null,

@@ -11,8 +11,9 @@
     "./screen-h264": "./src/screen-h264.ts"
   },
   "scripts": {
+    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src",
     "typecheck": "tsc --noEmit --project tsconfig.json",
-    "quality": "yarn typecheck"
+    "quality": "yarn test && yarn typecheck"
   },
   "dependencies": {
     "@farmslot/protocol": "workspace:*"

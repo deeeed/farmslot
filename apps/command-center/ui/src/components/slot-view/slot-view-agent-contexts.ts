@@ -170,6 +170,13 @@ function normalizedTaskFile(taskFile: string | null | undefined): string {
   return (taskFile ?? '').replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/+$/, '');
 }
 
+function canonicalTaskIdentity(taskFile: string): string | null {
+  const match = taskFile.match(
+    /(?:^|\/)(?:temp\/tasks|projects\/[^/]+\/tasks|\.sandbox\/[^/]+\/(?:tasks|worker-task)|worker-task)\/(.+)$/,
+  );
+  return match?.[1] ?? null;
+}
+
 function taskFilesMatch(
   left: string | null | undefined,
   right: string | null | undefined,
@@ -177,7 +184,10 @@ function taskFilesMatch(
   const a = normalizedTaskFile(left);
   const b = normalizedTaskFile(right);
   if (!a || !b) return false;
-  return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+  if (a === b) return true;
+  const aIdentity = canonicalTaskIdentity(a);
+  const bIdentity = canonicalTaskIdentity(b);
+  return aIdentity != null && aIdentity === bIdentity;
 }
 
 /** Active run checklist is independent from terminal/history navigation. */
