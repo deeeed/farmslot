@@ -377,7 +377,7 @@ async function replaceNativeInput({
     (observed.masked &&
       before?.verifiable &&
       before.value.length === 0 &&
-      observed.value.length === text.length)
+      Array.from(observed.value).length === Array.from(text).length)
   ) {
     return requireSettledInteraction('ui.set_input', result, node.settle !== false);
   }
@@ -410,7 +410,9 @@ async function replaceNativeInput({
   observed = await nativeInputValue(client, selection, session, testId);
   if (
     observed.verifiable &&
-    (observed.masked ? observed.value.length !== text.length : observed.value !== text)
+    (observed.masked
+      ? Array.from(observed.value).length !== Array.from(text).length
+      : observed.value !== text)
   ) {
     throw new Error(
       `ui.set_input could not replace the Android field; expected ${Array.from(text).length} characters and observed ${Array.from(observed.value).length}.`,
