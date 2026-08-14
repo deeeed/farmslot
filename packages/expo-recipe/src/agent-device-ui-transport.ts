@@ -416,15 +416,17 @@ async function nativeInputValue(
   });
   const target = snapshot.nodes.find((candidate) => candidate.identifier === testId);
   const value = typeof target?.value === 'string' ? target.value : target?.label;
-  if (typeof value !== 'string' || value.length === 0) {
+  if (typeof value !== 'string') {
     return { value: '', verifiable: false, masked: false };
   }
   return {
     value,
     verifiable: true,
-    masked: Array.from(value).every(
-      (character) => character === '\u2022' || character === '*' || character === '\u25cf',
-    ),
+    masked:
+      value.length > 0 &&
+      Array.from(value).every(
+        (character) => character === '\u2022' || character === '*' || character === '\u25cf',
+      ),
   };
 }
 

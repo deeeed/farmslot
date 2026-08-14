@@ -513,6 +513,54 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
   assert.equal(calls.find((call) => call.method === 'close')?.options.shutdown, false);
 });
 
+test('fails when an observable Android input remains empty after repair', async () => {
+  let fills = 0;
+  const commands: string[][] = [];
+  const client = {
+    apps: { open: async () => ({ session: 'input-session', identifiers: {} }) },
+    interactions: {
+      fill: async () => {
+        fills += 1;
+        return { settle: { settled: true } };
+      },
+      press: async () => ({ pressed: true }),
+    },
+    capture: {
+      snapshot: async () => ({
+        nodes: [{ identifier: 'field', value: '' }],
+        truncated: false,
+      }),
+    },
+    sessions: { close: async () => ({ session: 'input-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'android',
+    device: 'physical-serial',
+    app: 'io.metamask',
+    session: 'input-session',
+    client,
+    adbPath: '/tools/adb',
+    gestureCommandRunner: {
+      async execFile(_file, args) {
+        commands.push(args);
+        return {};
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      transport.execute(
+        'ui.set_input',
+        { test_id: 'field', value: 'expected' },
+        {} as ActionExecutionContext,
+      ),
+    /could not replace the Android field; expected 8 characters and observed 0/u,
+  );
+  assert.equal(fills, 2);
+  assert.deepEqual(commands, [['-s', 'physical-serial', 'shell', 'input', 'keyevent', '123']]);
+});
+
 test('streams all continuous gestures from resolved native target coordinates', async () => {
   for (const platform of ['ios', 'android'] as const) {
     const commands: Array<{ file: string; args: string[] }> = [];
