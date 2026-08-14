@@ -4,6 +4,8 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+- fix: retry Android input replacement when an empty field exposes its placeholder as the current value.
+
 ## 0.8.1 - 2026-08-14
 
 - Publish against `@farmslot/recipe-harness` 0.15.0 so consumers use one Recipe Protocol 0.21.0 runtime.

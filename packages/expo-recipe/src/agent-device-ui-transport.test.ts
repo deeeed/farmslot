@@ -654,6 +654,58 @@ test('fails when a masked Android input cannot be cleared before replacement', a
   ]);
 });
 
+test('retries an Android input whose empty placeholder is exposed as its value', async () => {
+  let fills = 0;
+  let snapshots = 0;
+  const client = {
+    apps: { open: async () => ({ session: 'input-session', identifiers: {} }) },
+    interactions: {
+      fill: async () => {
+        fills += 1;
+        return { settle: { settled: true } };
+      },
+      press: async () => ({ pressed: true }),
+    },
+    capture: {
+      snapshot: async () => {
+        snapshots += 1;
+        const value =
+          snapshots === 1 || snapshots === 3
+            ? 'Enter password'
+            : snapshots === 2
+              ? '••••'
+              : 'expected';
+        return {
+          nodes: [{ identifier: 'field', value }],
+          truncated: false,
+        };
+      },
+    },
+    sessions: { close: async () => ({ session: 'input-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'android',
+    device: 'physical-serial',
+    app: 'io.metamask',
+    session: 'input-session',
+    client,
+    adbPath: '/tools/adb',
+    gestureCommandRunner: {
+      async execFile() {
+        return {};
+      },
+    },
+  });
+
+  await transport.execute(
+    'ui.set_input',
+    { test_id: 'field', value: 'expected' },
+    {} as ActionExecutionContext,
+  );
+
+  assert.equal(fills, 2);
+});
+
 test('streams all continuous gestures from resolved native target coordinates', async () => {
   for (const platform of ['ios', 'android'] as const) {
     const commands: Array<{ file: string; args: string[] }> = [];

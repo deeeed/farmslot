@@ -403,7 +403,9 @@ async function replaceNativeInput({
     );
   }
   const cleared = await nativeInputValue(client, selection, session, testId);
-  if (cleared.verifiable && cleared.value.length !== 0) {
+  const returnedToUnmaskedInitialValue =
+    before?.verifiable && !before.masked && cleared.value === before.value;
+  if (cleared.verifiable && cleared.value.length !== 0 && !returnedToUnmaskedInitialValue) {
     throw new Error('ui.set_input could not clear the Android field before replacement.');
   }
   result = await fill();
