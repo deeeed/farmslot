@@ -1,0 +1,59 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion Co-Pilot terminal handoff",
+  "description": "Opens the persistent Co-Pilot through native Companion navigation and proves it resolves to the gateway-owned tmux worker.",
+  "proofTargets": [
+    {
+      "id": "copilot-terminal-handoff",
+      "claim": "Companion opens the exact gateway-owned Co-Pilot terminal worker."
+    }
+  ],
+  "workflow": {
+    "entry": "wait-advanced-tab",
+    "nodes": {
+      "wait-advanced-tab": {
+        "action": "ui.wait_for",
+        "test_id": "companion-tab-advanced",
+        "expected": "visible",
+        "intent": "Ensure native tab navigation is available.",
+        "next": "open-advanced"
+      },
+      "open-advanced": {
+        "action": "ui.press",
+        "test_id": "companion-tab-advanced",
+        "intent": "Open Advanced through native tab navigation.",
+        "next": "expose-copilot"
+      },
+      "expose-copilot": {
+        "action": "ui.scroll",
+        "intent": "Expose the Co-Pilot route card.",
+        "next": "open-copilot"
+      },
+      "open-copilot": {
+        "action": "ui.press",
+        "test_id": "companion-advanced-copilot",
+        "intent": "Ask Companion to resolve the persistent Co-Pilot from the gateway.",
+        "next": "wait-terminal"
+      },
+      "wait-terminal": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-worker-terminal",
+        "text": "farmslot-copilot:agent.0",
+        "expected": "visible",
+        "timeout_ms": 15000,
+        "intent": "Prove the routed terminal is the exact gateway-owned Co-Pilot worker.",
+        "proves": ["copilot-terminal-handoff"],
+        "next": "capture-terminal"
+      },
+      "capture-terminal": {
+        "action": "ui.screenshot",
+        "path": "copilot-terminal.png",
+        "label": "Gateway-owned Co-Pilot terminal",
+        "intent": "Let the operator verify that Companion opened the retained Co-Pilot context rather than a different worker.",
+        "proves": ["copilot-terminal-handoff"],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

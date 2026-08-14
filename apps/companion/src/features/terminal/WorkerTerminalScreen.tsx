@@ -602,6 +602,7 @@ export default function WorkerTerminalScreen() {
 
   return (
     <KeyboardAvoidingView
+      testID="companion-screen-worker-terminal"
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={0}
       style={styles.container}

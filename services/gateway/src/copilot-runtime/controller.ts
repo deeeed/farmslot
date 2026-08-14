@@ -142,8 +142,7 @@ export class CopilotRuntimeController {
     this.persisted = await this.store.load();
     if (this.persisted) {
       this.persisted.session.transcriptId = GLOBAL_CHAT_SESSION_ID;
-      this.persisted.session.autostart ??= false;
-      if (dangerousAutostartEnabled()) this.persisted.session.autostart = true;
+      this.persisted.session.autostart ??= dangerousAutostartEnabled();
     }
     const candidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
     this.runtimePresenceCheckedAtMs = this.now().getTime();
@@ -163,7 +162,7 @@ export class CopilotRuntimeController {
         this.persisted.session.reconnectedAt = this.timestamp();
         this.persisted.session.updatedAt = this.timestamp();
         await this.tmux.configureTranscript(COPILOT_TMUX_TARGET, this.store.rawTranscriptPath);
-        if (!(await this.refreshTerminalWorker())) {
+        if (!(await this.refreshTerminalWorker(true))) {
           this.persisted.session.status = 'failed';
           this.persisted.session.terminalReason = 'tmux-pane-missing-after-restart';
           this.persisted.session.stoppedAt = this.timestamp();
@@ -190,7 +189,7 @@ export class CopilotRuntimeController {
       this.persisted?.session.autostart &&
       (this.persisted.session.status === 'stopped' || this.persisted.session.status === 'failed')
     ) {
-      void this.start().catch((error) => {
+      void this.startConfiguredAutostart().catch((error) => {
         // start() has already persisted the failed terminal state. Keep gateway
         // startup non-blocking while making the configured autostart failure loud.
         console.error(`[copilot-runtime] autostart failed: ${(error as Error).message}`);
@@ -279,8 +278,19 @@ export class CopilotRuntimeController {
   }
 
   async start(params: CopilotStartParams = {}): Promise<CopilotStartResult> {
+    return this.startWithPolicy(params, false);
+  }
+
+  private async startConfiguredAutostart(): Promise<CopilotStartResult> {
+    return this.startWithPolicy({}, dangerousAutostartEnabled());
+  }
+
+  private async startWithPolicy(
+    params: CopilotStartParams,
+    allowLocalDangerousAutostart: boolean,
+  ): Promise<CopilotStartResult> {
     if (this.startPromise) return this.startPromise;
-    this.startPromise = this.startOnce(params)
+    this.startPromise = this.startOnce(params, allowLocalDangerousAutostart)
       .catch(async (error) => {
         if (this.persisted?.session.status === 'starting') {
           this.persisted.session.status = 'failed';
@@ -297,7 +307,10 @@ export class CopilotRuntimeController {
     return this.startPromise;
   }
 
-  private async startOnce(params: CopilotStartParams): Promise<CopilotStartResult> {
+  private async startOnce(
+    params: CopilotStartParams,
+    allowLocalDangerousAutostart: boolean,
+  ): Promise<CopilotStartResult> {
     await this.initialize();
     const candidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
     if (
@@ -316,7 +329,7 @@ export class CopilotRuntimeController {
       this.persisted.session.reconnectedAt = this.timestamp();
       this.persisted.session.updatedAt = this.timestamp();
       await this.tmux.configureTranscript(COPILOT_TMUX_TARGET, this.store.rawTranscriptPath);
-      if (!(await this.refreshTerminalWorker())) {
+      if (!(await this.refreshTerminalWorker(true))) {
         this.persisted.session.status = 'failed';
         this.persisted.session.terminalReason = 'tmux-pane-missing-while-reconnecting';
         this.persisted.session.stoppedAt = this.timestamp();
@@ -341,13 +354,13 @@ export class CopilotRuntimeController {
       ...(configuredRunner ? { runner: configuredRunner } : {}),
       ...(configuredModel ? { model: configuredModel } : {}),
     });
-    const localDangerousAutostart = dangerousAutostartEnabled();
+    const localDangerousAutostart = allowLocalDangerousAutostart && dangerousAutostartEnabled();
     const safetyTier = params.safetyTier ?? (localDangerousAutostart ? 'dangerous' : 'sandboxed');
     if (safetyTier === 'full-auto') {
       throw new Error('Co-Pilot V1 supports sandboxed or explicitly confirmed dangerous starts');
     }
     const binding = dangerousLaunchBinding({ checkout, runner, model });
-    if (safetyTier === 'dangerous' && !localDangerousAutostart) {
+    if (safetyTier === 'dangerous' && !allowLocalDangerousAutostart) {
       assertDangerousConfirmation(binding, params.confirmation);
     }
     const startedAt = this.timestamp();
@@ -361,7 +374,7 @@ export class CopilotRuntimeController {
         transcriptId: GLOBAL_CHAT_SESSION_ID,
         runner,
         model,
-        autostart: localDangerousAutostart || (this.persisted?.session.autostart ?? false),
+        autostart: this.persisted?.session.autostart ?? localDangerousAutostart,
         safetyTier,
         checkout,
         workload: this.workload(false),
@@ -728,7 +741,7 @@ export class CopilotRuntimeController {
         transcriptId: GLOBAL_CHAT_SESSION_ID,
         runner: this.persisted?.session.runner ?? runner,
         model: this.persisted?.session.model ?? model,
-        autostart: dangerousAutostartEnabled() || (this.persisted?.session.autostart ?? false),
+        autostart: this.persisted?.session.autostart ?? dangerousAutostartEnabled(),
         safetyTier: this.persisted?.session.safetyTier ?? 'sandboxed',
         checkout,
         workload: this.workload(Boolean(candidates.length)),

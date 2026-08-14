@@ -296,22 +296,38 @@ export const decisionWorkspaceStyles = StyleSheet.create({
   signalArrow: { fontSize: fonts.sizeMd, fontWeight: '900' },
   bullet: { color: colors.textPrimary, fontSize: fonts.sizeSm, marginBottom: spacing.sm },
   reportCard: {
+    alignItems: 'center',
     backgroundColor: colors.bgCard,
     borderRadius: radii.md,
-    padding: spacing.lg,
+    flexDirection: 'row',
+    gap: spacing.md,
     marginBottom: spacing.md,
+    padding: spacing.lg,
+  },
+  reportCardPressed: {
+    backgroundColor: colors.bgCardHover,
+  },
+  reportKindBadge: {
+    backgroundColor: colors.accent + '25',
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  reportKindText: {
+    color: colors.accent,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
   },
   reportTitle: {
     color: colors.textPrimary,
+    flex: 1,
     fontSize: fonts.sizeMd,
     fontWeight: '700',
-    marginBottom: spacing.sm,
   },
-  reportBody: {
-    color: colors.textSecondary,
-    fontFamily: 'Menlo',
+  reportOpenText: {
+    color: colors.accent,
     fontSize: fonts.sizeSm,
-    lineHeight: 18,
+    fontWeight: '800',
   },
   terminalButton: {
     backgroundColor: colors.accent + '25',

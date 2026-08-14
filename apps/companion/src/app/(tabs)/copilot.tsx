@@ -76,7 +76,7 @@ export default function CopilotScreen() {
     connectionStatus !== 'connected'
       ? 'Gateway disconnected'
       : runtime?.status === 'running' && !runtime.terminalWorker
-        ? 'Gateway update required for terminal access'
+        ? (runtime.terminalReason ?? 'Gateway update required for terminal access')
         : runtime
           ? `Co-Pilot is ${runtime.status}`
           : loading

@@ -1,4 +1,4 @@
-import { Stack } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
@@ -6,7 +6,6 @@ import type { FamilyObservabilityArtifact } from '@farmslot/protocol';
 
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { MediaViewer } from '../../components/MediaViewer';
-import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import {
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -22,6 +21,8 @@ import {
   recipeWorkspaceScopeLabel,
   shouldPreserveArtifactForRecipeContext,
 } from '../../lib/workspace-navigation';
+import { routeParamString } from '../workspace-shared/route-params';
+import { WorkspaceSectionTabs } from '../workspace-shared/WorkspaceTabsLayout';
 
 import {
   EvidenceGroupCard,
@@ -40,7 +41,27 @@ import { familyWorkspaceStyles as styles } from './styles/family-workspace.style
 import { EVIDENCE_FILTERS } from './family-workspace-model';
 import { useFamilyWorkspaceController } from './use-family-workspace-controller';
 
+type FamilyWorkspaceTab = 'overview' | 'runs' | 'evidence' | 'changes' | 'retros';
+
+const FAMILY_WORKSPACE_TABS = [
+  { id: 'overview', label: 'Overview', testID: 'companion-family-tab-overview' },
+  { id: 'runs', label: 'Runs', testID: 'companion-family-tab-runs' },
+  { id: 'evidence', label: 'Evidence', testID: 'companion-family-tab-evidence' },
+  { id: 'changes', label: 'Changes', testID: 'companion-family-tab-changes' },
+  { id: 'retros', label: 'Retros', testID: 'companion-family-tab-retros' },
+] as const;
+
+function familyWorkspaceTab(section: string): FamilyWorkspaceTab {
+  if (section === 'runs') return 'runs';
+  if (section === 'evidence' || section === 'compare') return 'evidence';
+  if (section === 'changes' || section === 'ledger') return 'changes';
+  if (section === 'retros') return 'retros';
+  return 'overview';
+}
+
 export default function FamilyWorkspaceScreen() {
+  const { section } = useLocalSearchParams<{ section?: string | string[] }>();
+  const activeTab = familyWorkspaceTab(routeParamString(section));
   const screen = useFamilyWorkspaceController();
 
   if (screen.status === 'loading') {
@@ -70,12 +91,8 @@ export default function FamilyWorkspaceScreen() {
     snapshot,
     error,
     insets,
-    stickyNavVisible,
-    navLayout,
-    stickyNavStyle,
     scrollRef,
     scrollHandler,
-    workspaceNavProps,
     workflowColor,
     familyRetrospectives,
     pendingRetrospectiveCount,
@@ -110,7 +127,6 @@ export default function FamilyWorkspaceScreen() {
     setDocumentViewer,
     evidenceFilter,
     setEvidenceFilter,
-    rememberNavLayout,
     router,
     requestedRecipeRunId,
     requestedArtifactPath,
@@ -130,7 +146,6 @@ export default function FamilyWorkspaceScreen() {
     openFamilyRecipeArtifact,
     openFamilyArtifactWorkspace,
     rememberSection,
-    scrollToSection,
     visualViewerItems,
     viewerIndex,
   } = screen;
@@ -139,12 +154,11 @@ export default function FamilyWorkspaceScreen() {
     <>
       <Stack.Screen options={{ title: 'Family Workspace' }} />
       <View style={baseStyles.container}>
-        <Animated.View
-          pointerEvents={stickyNavVisible && navLayout !== null ? 'auto' : 'none'}
-          style={[styles.stickyWorkspaceNav, stickyNavStyle]}
-        >
-          <RunWorkspaceNav {...workspaceNavProps} />
-        </Animated.View>
+        <WorkspaceSectionTabs
+          activeTab={activeTab}
+          tabs={[...FAMILY_WORKSPACE_TABS]}
+          onSelect={(tabId) => router.setParams({ section: tabId })}
+        />
         <Animated.ScrollView
           ref={scrollRef}
           onScroll={scrollHandler}
@@ -167,70 +181,72 @@ export default function FamilyWorkspaceScreen() {
             </View>
             <Text style={styles.title}>{snapshot.familyRootTicketOrPr}</Text>
             <Text style={baseStyles.textSecondary}>{snapshot.summary}</Text>
-            <View style={styles.metricGrid}>
-              <Metric label="Runs" value={String(snapshot.familyRunCount)} />
-              <Metric label="Active" value={String(snapshot.activeRunCount)} />
-              <Metric
-                label="Evidence files"
-                value={String(snapshot.evidence.length)}
-                onPress={() => scrollToSection('evidence')}
-              />
-              <Metric
-                label="Before→After"
-                value={String(visualPairs.length)}
-                onPress={() => scrollToSection('compare')}
-                disabled={visualPairs.length === 0}
-              />
-              <Metric
-                label="Diff view"
-                value={
-                  snapshot.diffStat.available
-                    ? `+${snapshot.diffStat.additions} -${snapshot.diffStat.deletions}`
-                    : 'none'
-                }
-                onPress={() => scrollToSection('ledger')}
-                disabled={!snapshot.diffStat.available}
-              />
-              <Metric
-                label="Retrospectives"
-                value={`${pendingRetrospectiveCount}/${familyRetrospectives.length}`}
-                onPress={() => scrollToSection('retros')}
-                disabled={familyRetrospectives.length === 0}
-              />
-              <Metric
-                label="Recipe quality"
-                value={`${snapshot.recipeQuality.semantic}${
-                  snapshot.recipeQuality.score != null ? ` · ${snapshot.recipeQuality.score}` : ''
-                }`}
-                onPress={() => {
-                  if (!selectedRun) return;
-                  const recipeTarget = recipeWorkspaceParam(
-                    workspaceRecipeRunForRun(selectedRun.runId),
-                  );
-                  const focusedArtifact = focusedArtifactForRun(selectedRun.runId);
-                  router.push({
-                    pathname: '/workspace/run/[runId]/files',
-                    params: {
-                      runId: selectedRun.runId,
-                      ...targetRouteContext('recipe'),
-                      recipeRun: recipeTarget,
-                      filter: artifactFilterParamForWorkspaceNav('recipe'),
-                      ...(shouldPreserveArtifactForRecipeContext(recipeTarget, focusedArtifact)
-                        ? { artifact: focusedArtifact }
-                        : {}),
-                    },
-                  });
-                }}
-                disabled={!selectedRun || selectedRecipeAvailable === false}
-              />
-            </View>
+            {activeTab === 'overview' ? (
+              <View style={styles.metricGrid}>
+                <Metric
+                  label="Runs"
+                  value={String(snapshot.familyRunCount)}
+                  onPress={() => router.setParams({ section: 'runs' })}
+                />
+                <Metric label="Active" value={String(snapshot.activeRunCount)} />
+                <Metric
+                  label="Evidence files"
+                  value={String(snapshot.evidence.length)}
+                  onPress={() => router.setParams({ section: 'evidence' })}
+                />
+                <Metric
+                  label="Before→After"
+                  value={String(visualPairs.length)}
+                  onPress={() => router.setParams({ section: 'evidence' })}
+                  disabled={visualPairs.length === 0}
+                />
+                <Metric
+                  label="Diff view"
+                  value={
+                    snapshot.diffStat.available
+                      ? `+${snapshot.diffStat.additions} -${snapshot.diffStat.deletions}`
+                      : 'none'
+                  }
+                  onPress={() => router.setParams({ section: 'changes' })}
+                  disabled={!snapshot.diffStat.available}
+                />
+                <Metric
+                  label="Retrospectives"
+                  value={`${pendingRetrospectiveCount}/${familyRetrospectives.length}`}
+                  onPress={() => router.setParams({ section: 'retros' })}
+                  disabled={familyRetrospectives.length === 0}
+                />
+                <Metric
+                  label="Recipe quality"
+                  value={`${snapshot.recipeQuality.semantic}${
+                    snapshot.recipeQuality.score != null ? ` · ${snapshot.recipeQuality.score}` : ''
+                  }`}
+                  onPress={() => {
+                    if (!selectedRun) return;
+                    const recipeTarget = recipeWorkspaceParam(
+                      workspaceRecipeRunForRun(selectedRun.runId),
+                    );
+                    const focusedArtifact = focusedArtifactForRun(selectedRun.runId);
+                    router.push({
+                      pathname: '/workspace/run/[runId]/files',
+                      params: {
+                        runId: selectedRun.runId,
+                        ...targetRouteContext('recipe'),
+                        recipeRun: recipeTarget,
+                        filter: artifactFilterParamForWorkspaceNav('recipe'),
+                        ...(shouldPreserveArtifactForRecipeContext(recipeTarget, focusedArtifact)
+                          ? { artifact: focusedArtifact }
+                          : {}),
+                      },
+                    });
+                  }}
+                  disabled={!selectedRun || selectedRecipeAvailable === false}
+                />
+              </View>
+            ) : null}
           </View>
 
-          <View onLayout={rememberNavLayout}>
-            <RunWorkspaceNav {...workspaceNavProps} />
-          </View>
-
-          {selectedRun && requestedArtifactPath ? (
+          {activeTab === 'overview' && selectedRun && requestedArtifactPath ? (
             <FamilyFocusedArtifactCard
               artifactPath={requestedArtifactPath}
               recipeRunId={requestedRecipeRunId || DECISION_EVIDENCE_RECIPE_RUN_PARAM}
@@ -275,7 +291,7 @@ export default function FamilyWorkspaceScreen() {
               onOpenCompare={() => {
                 if (!priorityVisualPair) return;
                 if (!priorityVisualPairIsRecipe) {
-                  scrollToSection('compare');
+                  router.setParams({ section: 'evidence' });
                   return;
                 }
                 router.push({
@@ -332,7 +348,7 @@ export default function FamilyWorkspaceScreen() {
             />
           ) : null}
 
-          {priorityVisualPair ? (
+          {activeTab === 'overview' && priorityVisualPair ? (
             <FamilyBeforeAfterPriorityPanel
               pair={priorityVisualPair}
               pairCount={priorityVisualPairs.length}
@@ -376,7 +392,7 @@ export default function FamilyWorkspaceScreen() {
               }}
               onOpenCompare={() => {
                 if (!priorityVisualPairIsRecipe) {
-                  scrollToSection('compare');
+                  router.setParams({ section: 'evidence' });
                   return;
                 }
                 if (!selectedRun) return;
@@ -396,7 +412,7 @@ export default function FamilyWorkspaceScreen() {
                   openFamilyArtifactWorkspace(selectedRun.runId);
                   return;
                 }
-                scrollToSection('evidence');
+                router.setParams({ section: 'evidence' });
               }}
               onOpenRecipe={() => {
                 if (!selectedRun) return;
@@ -415,7 +431,7 @@ export default function FamilyWorkspaceScreen() {
                   openSelectedRunDiff();
                   return;
                 }
-                scrollToSection('ledger');
+                router.setParams({ section: 'changes' });
               }}
               onOpenRun={() => {
                 if (!selectedRun) return;
@@ -429,7 +445,7 @@ export default function FamilyWorkspaceScreen() {
                   },
                 });
               }}
-              onOpenRetros={() => scrollToSection('retros')}
+              onOpenRetros={() => router.setParams({ section: 'retros' })}
               onOpenTerminal={() => {
                 if (!selectedRun?.slotId) return;
                 router.push({
@@ -451,150 +467,152 @@ export default function FamilyWorkspaceScreen() {
             />
           ) : null}
 
-          <FamilyWorkspaceCockpit
-            selectedRun={selectedRun}
-            readyDecisionId={readyDecision?.id ?? null}
-            reviewDecisionId={reviewGateDecision?.id ?? null}
-            retroDecisionId={retroDecision?.id ?? null}
-            evidenceCount={snapshot.evidence.length}
-            visualPairCount={priorityVisualPairs.length}
-            ledgerEntryCount={snapshot.familyChangeLedger?.entries.length ?? 0}
-            retrospectiveCount={familyRetrospectives.length}
-            pendingRetrospectiveCount={pendingRetrospectiveCount}
-            recipeArtifactCount={selectedRecipeArtifactCount}
-            recipeAvailable={selectedRecipeAvailable}
-            recipeScopeLabel={recipeWorkspaceScopeLabel(
-              selectedRun ? workspaceRecipeRunForRun(selectedRun.runId) : null,
-            )}
-            diffValue={selectedRun ? selectedDiffValue : 'none'}
-            onJumpFocus={() => scrollToSection('focus')}
-            onJumpCompare={() => {
-              if (!priorityVisualPairIsRecipe) {
-                scrollToSection('compare');
-                return;
-              }
-              if (!selectedRun || !priorityVisualPair) return;
-              router.push({
-                pathname: '/workspace/run/[runId]/files',
-                params: {
-                  runId: selectedRun.runId,
-                  ...targetRouteContext('compare'),
-                  recipeRun: priorityCompareRecipeRunId,
-                  filter: artifactFilterParamForWorkspaceNav('compare'),
-                  artifact: priorityVisualPair.after.path,
-                },
-              });
-            }}
-            onJumpLedger={() => scrollToSection('ledger')}
-            onJumpRetros={() => scrollToSection('retros')}
-            onJumpEvidence={() => scrollToSection('evidence')}
-            onJumpRuns={() => scrollToSection('runs')}
-            onOpenRun={() => {
-              if (!selectedRun) return;
-              const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
-              router.push({
-                pathname: runWorkspacePathnameForStatus(selectedRun.status),
-                params: {
-                  runId: selectedRun.runId,
-                  ...targetRouteContext('run'),
-                  recipeRun: contextRecipeRun,
-                  ...focusedArtifactParamsForRun(selectedRun.runId),
-                },
-              });
-            }}
-            onOpenArtifacts={() => {
-              if (!selectedRun) return;
-              const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
-              router.push({
-                pathname: '/workspace/run/[runId]/files',
-                params: {
-                  runId: selectedRun.runId,
-                  ...artifactRouteContext(
-                    contextRecipeRun,
-                    contextRecipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
-                      ? artifactFilterParamForWorkspaceNav('recipe')
-                      : artifactFilterParamForWorkspaceNav('review'),
-                  ),
-                  recipeRun: contextRecipeRun,
-                  filter:
-                    contextRecipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
-                      ? artifactFilterParamForWorkspaceNav('recipe')
-                      : artifactFilterParamForWorkspaceNav('review'),
-                  ...focusedArtifactParamsForRun(selectedRun.runId),
-                },
-              });
-            }}
-            onOpenRecipe={() => {
-              if (!selectedRun) return;
-              const recipeTarget = recipeWorkspaceParam(
-                workspaceRecipeRunForRun(selectedRun.runId),
-              );
-              const focusedArtifact = focusedArtifactForRun(selectedRun.runId);
-              router.push({
-                pathname: '/workspace/run/[runId]/files',
-                params: {
-                  runId: selectedRun.runId,
-                  ...targetRouteContext('recipe'),
-                  recipeRun: recipeTarget,
-                  filter: artifactFilterParamForWorkspaceNav('recipe'),
-                  ...(shouldPreserveArtifactForRecipeContext(recipeTarget, focusedArtifact)
-                    ? { artifact: focusedArtifact }
-                    : {}),
-                },
-              });
-            }}
-            onOpenDiff={() => {
-              openSelectedRunDiff();
-            }}
-            onOpenSlot={() => {
-              if (!selectedRun?.slotId) return;
-              const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
-              router.push({
-                pathname: '/workspace/slot/[slotId]/slot',
-                params: {
-                  slotId: selectedRun.slotId,
-                  ...targetRouteContext('slot'),
-                  runId: selectedRun.runId,
-                  recipeRun: contextRecipeRun,
-                  ...focusedArtifactParamsForRun(selectedRun.runId),
-                },
-              });
-            }}
-            onOpenPR={() => {
-              if (!selectedRun) return;
-              openPRForRun(selectedRun);
-            }}
-            onOpenTerminal={() => {
-              if (!selectedRun?.slotId) return;
-              const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
-              router.push({
-                pathname: '/workspace/slot/[slotId]/terminal',
-                params: {
-                  slotId: selectedRun.slotId,
-                  ...targetRouteContext('terminal'),
-                  runId: selectedRun.runId,
-                  details: '1',
-                  recipeRun: contextRecipeRun,
-                  ...focusedArtifactParamsForRun(selectedRun.runId),
-                },
-              });
-            }}
-            onOpenDecision={(decisionId) => {
-              if (!selectedRun) return;
-              const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
-              router.push({
-                pathname: '/decision/[id]',
-                params: {
-                  id: decisionId,
-                  ...decisionRouteContextForRun(selectedRun, decisionId),
-                  runId: selectedRun.runId,
-                  recipeRun: contextRecipeRun,
-                  ...focusedArtifactParamsForRun(selectedRun.runId),
-                },
-              });
-            }}
-          />
-          {selectedRun ? (
+          {activeTab === 'overview' ? (
+            <FamilyWorkspaceCockpit
+              selectedRun={selectedRun}
+              readyDecisionId={readyDecision?.id ?? null}
+              reviewDecisionId={reviewGateDecision?.id ?? null}
+              retroDecisionId={retroDecision?.id ?? null}
+              evidenceCount={snapshot.evidence.length}
+              visualPairCount={priorityVisualPairs.length}
+              ledgerEntryCount={snapshot.familyChangeLedger?.entries.length ?? 0}
+              retrospectiveCount={familyRetrospectives.length}
+              pendingRetrospectiveCount={pendingRetrospectiveCount}
+              recipeArtifactCount={selectedRecipeArtifactCount}
+              recipeAvailable={selectedRecipeAvailable}
+              recipeScopeLabel={recipeWorkspaceScopeLabel(
+                selectedRun ? workspaceRecipeRunForRun(selectedRun.runId) : null,
+              )}
+              diffValue={selectedRun ? selectedDiffValue : 'none'}
+              onJumpFocus={() => router.setParams({ section: 'runs' })}
+              onJumpCompare={() => {
+                if (!priorityVisualPairIsRecipe) {
+                  router.setParams({ section: 'evidence' });
+                  return;
+                }
+                if (!selectedRun || !priorityVisualPair) return;
+                router.push({
+                  pathname: '/workspace/run/[runId]/files',
+                  params: {
+                    runId: selectedRun.runId,
+                    ...targetRouteContext('compare'),
+                    recipeRun: priorityCompareRecipeRunId,
+                    filter: artifactFilterParamForWorkspaceNav('compare'),
+                    artifact: priorityVisualPair.after.path,
+                  },
+                });
+              }}
+              onJumpLedger={() => router.setParams({ section: 'changes' })}
+              onJumpRetros={() => router.setParams({ section: 'retros' })}
+              onJumpEvidence={() => router.setParams({ section: 'evidence' })}
+              onJumpRuns={() => router.setParams({ section: 'runs' })}
+              onOpenRun={() => {
+                if (!selectedRun) return;
+                const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
+                router.push({
+                  pathname: runWorkspacePathnameForStatus(selectedRun.status),
+                  params: {
+                    runId: selectedRun.runId,
+                    ...targetRouteContext('run'),
+                    recipeRun: contextRecipeRun,
+                    ...focusedArtifactParamsForRun(selectedRun.runId),
+                  },
+                });
+              }}
+              onOpenArtifacts={() => {
+                if (!selectedRun) return;
+                const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
+                router.push({
+                  pathname: '/workspace/run/[runId]/files',
+                  params: {
+                    runId: selectedRun.runId,
+                    ...artifactRouteContext(
+                      contextRecipeRun,
+                      contextRecipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+                        ? artifactFilterParamForWorkspaceNav('recipe')
+                        : artifactFilterParamForWorkspaceNav('review'),
+                    ),
+                    recipeRun: contextRecipeRun,
+                    filter:
+                      contextRecipeRun !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+                        ? artifactFilterParamForWorkspaceNav('recipe')
+                        : artifactFilterParamForWorkspaceNav('review'),
+                    ...focusedArtifactParamsForRun(selectedRun.runId),
+                  },
+                });
+              }}
+              onOpenRecipe={() => {
+                if (!selectedRun) return;
+                const recipeTarget = recipeWorkspaceParam(
+                  workspaceRecipeRunForRun(selectedRun.runId),
+                );
+                const focusedArtifact = focusedArtifactForRun(selectedRun.runId);
+                router.push({
+                  pathname: '/workspace/run/[runId]/files',
+                  params: {
+                    runId: selectedRun.runId,
+                    ...targetRouteContext('recipe'),
+                    recipeRun: recipeTarget,
+                    filter: artifactFilterParamForWorkspaceNav('recipe'),
+                    ...(shouldPreserveArtifactForRecipeContext(recipeTarget, focusedArtifact)
+                      ? { artifact: focusedArtifact }
+                      : {}),
+                  },
+                });
+              }}
+              onOpenDiff={() => {
+                openSelectedRunDiff();
+              }}
+              onOpenSlot={() => {
+                if (!selectedRun?.slotId) return;
+                const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
+                router.push({
+                  pathname: '/workspace/slot/[slotId]/slot',
+                  params: {
+                    slotId: selectedRun.slotId,
+                    ...targetRouteContext('slot'),
+                    runId: selectedRun.runId,
+                    recipeRun: contextRecipeRun,
+                    ...focusedArtifactParamsForRun(selectedRun.runId),
+                  },
+                });
+              }}
+              onOpenPR={() => {
+                if (!selectedRun) return;
+                openPRForRun(selectedRun);
+              }}
+              onOpenTerminal={() => {
+                if (!selectedRun?.slotId) return;
+                const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
+                router.push({
+                  pathname: '/workspace/slot/[slotId]/terminal',
+                  params: {
+                    slotId: selectedRun.slotId,
+                    ...targetRouteContext('terminal'),
+                    runId: selectedRun.runId,
+                    details: '1',
+                    recipeRun: contextRecipeRun,
+                    ...focusedArtifactParamsForRun(selectedRun.runId),
+                  },
+                });
+              }}
+              onOpenDecision={(decisionId) => {
+                if (!selectedRun) return;
+                const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
+                router.push({
+                  pathname: '/decision/[id]',
+                  params: {
+                    id: decisionId,
+                    ...decisionRouteContextForRun(selectedRun, decisionId),
+                    runId: selectedRun.runId,
+                    recipeRun: contextRecipeRun,
+                    ...focusedArtifactParamsForRun(selectedRun.runId),
+                  },
+                });
+              }}
+            />
+          ) : null}
+          {activeTab === 'runs' && selectedRun ? (
             <View onLayout={rememberSection('focus')}>
               <FamilyRunWorkspaceCard
                 run={selectedRun}
@@ -723,148 +741,372 @@ export default function FamilyWorkspaceScreen() {
             </View>
           ) : null}
 
-          <View onLayout={rememberSection('compare')}>
-            <FamilyComparePanel
-              pairs={priorityVisualPairs}
-              recipeFallback={priorityVisualPairIsRecipe}
-              artifactAuthHeaders={artifactAuthHeaders}
-              onOpenVisual={setViewerUri}
-              onOpenArtifactWorkspace={(artifactValue) => {
-                if (priorityVisualPairIsRecipe) {
+          {activeTab === 'evidence' ? (
+            <View onLayout={rememberSection('compare')}>
+              <FamilyComparePanel
+                pairs={priorityVisualPairs}
+                recipeFallback={priorityVisualPairIsRecipe}
+                artifactAuthHeaders={artifactAuthHeaders}
+                onOpenVisual={setViewerUri}
+                onOpenArtifactWorkspace={(artifactValue) => {
+                  if (priorityVisualPairIsRecipe) {
+                    if (!selectedRun) return;
+                    router.push({
+                      pathname: '/workspace/run/[runId]/files',
+                      params: {
+                        runId: selectedRun.runId,
+                        ...targetRouteContext('compare'),
+                        recipeRun: priorityCompareRecipeRunId,
+                        filter: artifactFilterParamForWorkspaceNav('compare'),
+                        artifact: artifactValue.path,
+                      },
+                    });
+                    return;
+                  }
+                  if (!artifactValue.runId) return;
+                  openFamilyArtifactWorkspace(artifactValue.runId, artifactValue.path);
+                }}
+                onOpenArtifacts={() => {
                   if (!selectedRun) return;
                   router.push({
                     pathname: '/workspace/run/[runId]/files',
                     params: {
                       runId: selectedRun.runId,
                       ...targetRouteContext('compare'),
-                      recipeRun: priorityCompareRecipeRunId,
+                      recipeRun: priorityVisualPairIsRecipe
+                        ? priorityCompareRecipeRunId
+                        : DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                       filter: artifactFilterParamForWorkspaceNav('compare'),
-                      artifact: artifactValue.path,
+                      ...(priorityVisualPairIsRecipe && priorityVisualPair
+                        ? { artifact: priorityVisualPair.after.path }
+                        : {}),
                     },
                   });
-                  return;
-                }
-                if (!artifactValue.runId) return;
-                openFamilyArtifactWorkspace(artifactValue.runId, artifactValue.path);
-              }}
-              onOpenArtifacts={() => {
-                if (!selectedRun) return;
-                router.push({
-                  pathname: '/workspace/run/[runId]/files',
-                  params: {
-                    runId: selectedRun.runId,
-                    ...targetRouteContext('compare'),
-                    recipeRun: priorityVisualPairIsRecipe
-                      ? priorityCompareRecipeRunId
-                      : DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                    filter: artifactFilterParamForWorkspaceNav('compare'),
-                    ...(priorityVisualPairIsRecipe && priorityVisualPair
-                      ? { artifact: priorityVisualPair.after.path }
-                      : {}),
-                  },
-                });
-              }}
-            />
-          </View>
+                }}
+              />
+            </View>
+          ) : null}
 
-          <View onLayout={rememberSection('ledger')}>
-            <FamilyChangeLedgerPanel
-              snapshot={snapshot}
-              onOpenRun={(runIdValue) =>
-                router.push({
-                  pathname: runWorkspacePathnameForStatus(
-                    snapshot.runs.find((run) => run.runId === runIdValue)?.status,
-                  ),
-                  params: {
-                    runId: runIdValue,
-                    ...targetRouteContext('run'),
-                    recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                  },
-                })
-              }
-              onOpenArtifacts={openFamilyArtifactWorkspace}
-              onOpenDiff={(entry, artifactPath) =>
-                router.push({
-                  pathname: '/workspace/run/[runId]/diff',
-                  params: {
-                    runId: entry.runId,
-                    ...diffRouteContext(),
-                    recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                    ...(artifactPath ? { path: artifactPath } : {}),
-                  },
-                })
-              }
-              onOpenSlot={(slotIdValue, runIdValue) =>
-                router.push({
-                  pathname: '/workspace/slot/[slotId]/slot',
-                  params: {
-                    slotId: slotIdValue,
-                    ...targetRouteContext('slot'),
-                    runId: runIdValue,
-                    recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                  },
-                })
-              }
-              onOpenTerminal={(slotIdValue, runIdValue) =>
-                router.push({
-                  pathname: '/workspace/slot/[slotId]/terminal',
-                  params: {
-                    slotId: slotIdValue,
-                    ...targetRouteContext('terminal'),
-                    runId: runIdValue,
-                    details: '1',
-                    recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                  },
-                })
-              }
-            />
-          </View>
+          {activeTab === 'changes' ? (
+            <View onLayout={rememberSection('ledger')}>
+              <FamilyChangeLedgerPanel
+                snapshot={snapshot}
+                onOpenRun={(runIdValue) =>
+                  router.push({
+                    pathname: runWorkspacePathnameForStatus(
+                      snapshot.runs.find((run) => run.runId === runIdValue)?.status,
+                    ),
+                    params: {
+                      runId: runIdValue,
+                      ...targetRouteContext('run'),
+                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                    },
+                  })
+                }
+                onOpenArtifacts={openFamilyArtifactWorkspace}
+                onOpenDiff={(entry, artifactPath) =>
+                  router.push({
+                    pathname: '/workspace/run/[runId]/diff',
+                    params: {
+                      runId: entry.runId,
+                      ...diffRouteContext(),
+                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                      ...(artifactPath ? { path: artifactPath } : {}),
+                    },
+                  })
+                }
+                onOpenSlot={(slotIdValue, runIdValue) =>
+                  router.push({
+                    pathname: '/workspace/slot/[slotId]/slot',
+                    params: {
+                      slotId: slotIdValue,
+                      ...targetRouteContext('slot'),
+                      runId: runIdValue,
+                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                    },
+                  })
+                }
+                onOpenTerminal={(slotIdValue, runIdValue) =>
+                  router.push({
+                    pathname: '/workspace/slot/[slotId]/terminal',
+                    params: {
+                      slotId: slotIdValue,
+                      ...targetRouteContext('terminal'),
+                      runId: runIdValue,
+                      details: '1',
+                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                    },
+                  })
+                }
+              />
+            </View>
+          ) : null}
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-          <View style={styles.section} onLayout={rememberSection('retros')}>
-            <View style={styles.sectionHeader}>
-              <View>
-                <Text style={styles.sectionTitle}>Retrospectives</Text>
+          {activeTab === 'retros' ? (
+            <View style={styles.section} onLayout={rememberSection('retros')}>
+              <View style={styles.sectionHeader}>
+                <View>
+                  <Text style={styles.sectionTitle}>Retrospectives</Text>
+                  <Text style={styles.sectionMeta}>
+                    {pendingRetrospectiveCount} pending · {familyRetrospectives.length} total
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.evidenceNote}>
+                Pending and recorded retrospectives across this family, newest first. Open the
+                retro, artifacts, recipe, diff, slot, or terminal directly from each run.
+              </Text>
+              {familyRetrospectives.length === 0 ? (
+                <Text style={baseStyles.textMuted}>
+                  No retrospectives have been recorded for this family yet.
+                </Text>
+              ) : (
+                familyRetrospectives.map(({ run, decision }) => (
+                  <RetrospectiveCard
+                    key={decision.id}
+                    run={run}
+                    decision={decision}
+                    recipeEvidence={recipeEvidenceForRun(run)}
+                    recipeArtifactCount={recipeCountForRun(run)}
+                    recipeAvailable={recipeAvailableForRun(run)}
+                    gatewayUrl={gatewayUrl}
+                    artifactAuthHeaders={artifactAuthHeaders}
+                    onOpenVisual={setViewerUri}
+                    onOpenDocument={openDocument}
+                    onOpenDiffArtifact={(artifact) =>
+                      openDiffArtifact(artifact, retrospectiveRouteContext)
+                    }
+                    onOpenDecision={() =>
+                      router.push({
+                        pathname: '/decision/[id]',
+                        params: {
+                          id: decision.id,
+                          ...decisionWorkspaceRouteParams('retrospective'),
+                          runId: run.runId,
+                          recipeRun: workspaceRecipeRunForRun(run.runId),
+                          ...focusedArtifactParamsForRun(run.runId),
+                        },
+                      })
+                    }
+                    onOpenRun={() =>
+                      router.push({
+                        pathname: runWorkspacePathnameForStatus(run.status),
+                        params: {
+                          runId: run.runId,
+                          ...retrospectiveRouteContext,
+                          recipeRun: workspaceRecipeRunForRun(run.runId),
+                          ...focusedArtifactParamsForRun(run.runId),
+                        },
+                      })
+                    }
+                    onOpenArtifacts={() =>
+                      router.push({
+                        pathname: '/workspace/run/[runId]/files',
+                        params: {
+                          runId: run.runId,
+                          ...retrospectiveRouteContext,
+                          recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                          filter:
+                            artifactFilterParamForArtifactPath(focusedArtifactForRun(run.runId)) ??
+                            artifactFilterParamForWorkspaceNav('review'),
+                          ...focusedArtifactParamsForRun(run.runId),
+                        },
+                      })
+                    }
+                    onOpenArtifact={(artifactPath) =>
+                      openFamilyArtifactWorkspace(
+                        run.runId,
+                        artifactPath,
+                        retrospectiveRouteContext,
+                      )
+                    }
+                    onOpenRecipe={() =>
+                      router.push({
+                        pathname: '/workspace/run/[runId]/files',
+                        params: {
+                          runId: run.runId,
+                          ...retrospectiveRouteContext,
+                          ...recipeWorkspaceParamsForRun(run),
+                          filter: artifactFilterParamForWorkspaceNav('recipe'),
+                        },
+                      })
+                    }
+                    onOpenRecipeCompare={(artifactPath) => {
+                      const recipeEvidence = recipeEvidenceForRun(run);
+                      router.push({
+                        pathname: '/workspace/run/[runId]/files',
+                        params: {
+                          runId: run.runId,
+                          ...retrospectiveRouteContext,
+                          recipeRun:
+                            recipeEvidence?.recipeRunId ?? CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
+                          filter: artifactFilterParamForWorkspaceNav('compare'),
+                          ...((artifactPath ?? recipeEvidence?.artifactPath)
+                            ? {
+                                artifact: artifactPath ?? recipeEvidence?.artifactPath,
+                              }
+                            : {}),
+                        },
+                      });
+                    }}
+                    onOpenDiff={() => openFamilyRunDiff(run, retrospectiveRouteContext)}
+                    onOpenTerminal={() => {
+                      if (!run.slotId) return;
+                      router.push({
+                        pathname: '/workspace/slot/[slotId]/terminal',
+                        params: {
+                          slotId: run.slotId,
+                          ...retrospectiveRouteContext,
+                          runId: run.runId,
+                          details: '1',
+                          recipeRun: workspaceRecipeRunForRun(run.runId),
+                          ...focusedArtifactParamsForRun(run.runId),
+                        },
+                      });
+                    }}
+                    onOpenSlot={() => {
+                      if (!run.slotId) return;
+                      router.push({
+                        pathname: '/workspace/slot/[slotId]/slot',
+                        params: {
+                          slotId: run.slotId,
+                          ...retrospectiveRouteContext,
+                          runId: run.runId,
+                          recipeRun: workspaceRecipeRunForRun(run.runId),
+                          ...focusedArtifactParamsForRun(run.runId),
+                        },
+                      });
+                    }}
+                    onOpenPR={() => openPRForRun(run, retrospectiveRouteContext)}
+                  />
+                ))
+              )}
+            </View>
+          ) : null}
+
+          {activeTab === 'evidence' ? (
+            <View style={styles.section} onLayout={rememberSection('evidence')}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Evidence workspace</Text>
                 <Text style={styles.sectionMeta}>
-                  {pendingRetrospectiveCount} pending · {familyRetrospectives.length} total
+                  {filteredEvidenceGroups.length} groups · {snapshot.evidence.length} artifacts
+                  {visualPairs.length > 0
+                    ? ` · ${visualPairs.length} pair${visualPairs.length === 1 ? '' : 's'}`
+                    : ''}
                 </Text>
               </View>
-            </View>
-            <Text style={styles.evidenceNote}>
-              Pending and recorded retrospectives across this family, newest first. Open the retro,
-              artifacts, recipe, diff, slot, or terminal directly from each run.
-            </Text>
-            {familyRetrospectives.length === 0 ? (
-              <Text style={baseStyles.textMuted}>
-                No retrospectives have been recorded for this family yet.
+              <View style={styles.filterRow}>
+                {EVIDENCE_FILTERS.map((filter) => (
+                  <Pressable
+                    key={filter.id}
+                    style={[
+                      styles.filterChip,
+                      evidenceFilter === filter.id && styles.filterChipActive,
+                    ]}
+                    onPress={() => setEvidenceFilter(filter.id)}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        evidenceFilter === filter.id && styles.filterChipTextActive,
+                      ]}
+                    >
+                      {filter.label} {evidenceCounts[filter.id]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.evidenceNote}>
+                Grouped by producing run and capture batch. Before/after and video filters match
+                Command Center; review, diff, and recipe are mobile quick filters.
               </Text>
-            ) : (
-              familyRetrospectives.map(({ run, decision }) => (
-                <RetrospectiveCard
-                  key={decision.id}
+              {snapshot.evidence.length === 0 ? (
+                <Text style={baseStyles.textMuted}>No family evidence artifacts found.</Text>
+              ) : filteredEvidenceGroups.length === 0 ? (
+                <Text style={baseStyles.textMuted}>No evidence files match this filter.</Text>
+              ) : (
+                filteredEvidenceGroups.map((group) => (
+                  <EvidenceGroupCard
+                    key={group.key}
+                    group={group}
+                    gatewayUrl={gatewayUrl}
+                    artifactAuthHeaders={artifactAuthHeaders}
+                    onOpenDocument={openDocument}
+                    onOpenDiffArtifact={openDiffArtifact}
+                    onOpenVisual={setViewerUri}
+                    onOpenRun={(runIdValue) =>
+                      router.push({
+                        pathname: runWorkspacePathnameForStatus(
+                          snapshot.runs.find((run) => run.runId === runIdValue)?.status,
+                        ),
+                        params: {
+                          runId: runIdValue,
+                          ...targetRouteContext('run'),
+                          recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                        },
+                      })
+                    }
+                    onOpenArtifacts={openFamilyArtifactWorkspace}
+                    onOpenRecipe={(runIdValue) =>
+                      router.push({
+                        pathname: '/workspace/run/[runId]/files',
+                        params: {
+                          runId: runIdValue,
+                          ...targetRouteContext('recipe'),
+                          recipeRun: CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
+                          filter: artifactFilterParamForWorkspaceNav('recipe'),
+                        },
+                      })
+                    }
+                    onOpenDiff={(sourceRun) => openFamilyRunDiff(sourceRun)}
+                    onOpenTerminal={(slotIdValue, runIdValue) =>
+                      router.push({
+                        pathname: '/workspace/slot/[slotId]/terminal',
+                        params: {
+                          slotId: slotIdValue,
+                          ...targetRouteContext('terminal'),
+                          runId: runIdValue,
+                          details: '1',
+                          recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                        },
+                      })
+                    }
+                    onOpenSlot={(slotIdValue, runIdValue) =>
+                      router.push({
+                        pathname: '/workspace/slot/[slotId]/slot',
+                        params: {
+                          slotId: slotIdValue,
+                          ...targetRouteContext('slot'),
+                          runId: runIdValue,
+                          recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                        },
+                      })
+                    }
+                  />
+                ))
+              )}
+            </View>
+          ) : null}
+
+          {activeTab === 'runs' ? (
+            <View style={styles.section} onLayout={rememberSection('runs')}>
+              <Text style={styles.sectionTitle}>Family runs</Text>
+              {snapshot.runs.map((run) => (
+                <RunCard
+                  key={run.runId}
                   run={run}
-                  decision={decision}
+                  active={run.runId === selectedRun?.runId}
                   recipeEvidence={recipeEvidenceForRun(run)}
                   recipeArtifactCount={recipeCountForRun(run)}
                   recipeAvailable={recipeAvailableForRun(run)}
                   gatewayUrl={gatewayUrl}
                   artifactAuthHeaders={artifactAuthHeaders}
-                  onOpenVisual={setViewerUri}
-                  onOpenDocument={openDocument}
-                  onOpenDiffArtifact={(artifact) =>
-                    openDiffArtifact(artifact, retrospectiveRouteContext)
-                  }
-                  onOpenDecision={() =>
-                    router.push({
-                      pathname: '/decision/[id]',
-                      params: {
-                        id: decision.id,
-                        ...decisionWorkspaceRouteParams('retrospective'),
-                        runId: run.runId,
-                        recipeRun: workspaceRecipeRunForRun(run.runId),
-                        ...focusedArtifactParamsForRun(run.runId),
-                      },
+                  onFocusRun={() =>
+                    router.setParams({
+                      familyId: snapshot.familyId,
+                      runId: run.runId,
                     })
                   }
                   onOpenRun={() =>
@@ -872,9 +1114,8 @@ export default function FamilyWorkspaceScreen() {
                       pathname: runWorkspacePathnameForStatus(run.status),
                       params: {
                         runId: run.runId,
-                        ...retrospectiveRouteContext,
-                        recipeRun: workspaceRecipeRunForRun(run.runId),
-                        ...focusedArtifactParamsForRun(run.runId),
+                        ...targetRouteContext('run'),
+                        recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                       },
                     })
                   }
@@ -883,59 +1124,63 @@ export default function FamilyWorkspaceScreen() {
                       pathname: '/workspace/run/[runId]/files',
                       params: {
                         runId: run.runId,
-                        ...retrospectiveRouteContext,
+                        ...targetRouteContext('artifacts'),
                         recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                        filter:
-                          artifactFilterParamForArtifactPath(focusedArtifactForRun(run.runId)) ??
-                          artifactFilterParamForWorkspaceNav('review'),
-                        ...focusedArtifactParamsForRun(run.runId),
+                        filter: artifactFilterParamForWorkspaceNav('review'),
                       },
                     })
                   }
-                  onOpenArtifact={(artifactPath) =>
-                    openFamilyArtifactWorkspace(run.runId, artifactPath, retrospectiveRouteContext)
+                  onOpenCompare={(artifactPath) =>
+                    openFamilyArtifactWorkspace(run.runId, artifactPath)
                   }
-                  onOpenRecipe={() =>
-                    router.push({
-                      pathname: '/workspace/run/[runId]/files',
-                      params: {
-                        runId: run.runId,
-                        ...retrospectiveRouteContext,
-                        ...recipeWorkspaceParamsForRun(run),
-                        filter: artifactFilterParamForWorkspaceNav('recipe'),
-                      },
-                    })
-                  }
-                  onOpenRecipeCompare={(artifactPath) => {
+                  onOpenRecipeCompare={() => {
                     const recipeEvidence = recipeEvidenceForRun(run);
                     router.push({
                       pathname: '/workspace/run/[runId]/files',
                       params: {
                         runId: run.runId,
-                        ...retrospectiveRouteContext,
+                        ...targetRouteContext('compare'),
                         recipeRun:
                           recipeEvidence?.recipeRunId ?? CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
                         filter: artifactFilterParamForWorkspaceNav('compare'),
-                        ...((artifactPath ?? recipeEvidence?.artifactPath)
-                          ? {
-                              artifact: artifactPath ?? recipeEvidence?.artifactPath,
-                            }
+                        ...(recipeEvidence?.artifactPath
+                          ? { artifact: recipeEvidence.artifactPath }
                           : {}),
                       },
                     });
                   }}
-                  onOpenDiff={() => openFamilyRunDiff(run, retrospectiveRouteContext)}
+                  onOpenRecipe={() =>
+                    router.push({
+                      pathname: '/workspace/run/[runId]/files',
+                      params: {
+                        runId: run.runId,
+                        ...targetRouteContext('recipe'),
+                        recipeRun: CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
+                        filter: artifactFilterParamForWorkspaceNav('recipe'),
+                      },
+                    })
+                  }
+                  onOpenDiff={() => openFamilyRunDiff(run)}
+                  onOpenDecision={(decisionId) =>
+                    router.push({
+                      pathname: '/decision/[id]',
+                      params: {
+                        id: decisionId,
+                        ...decisionRouteContextForRun(run, decisionId),
+                        runId: run.runId,
+                      },
+                    })
+                  }
                   onOpenTerminal={() => {
                     if (!run.slotId) return;
                     router.push({
                       pathname: '/workspace/slot/[slotId]/terminal',
                       params: {
                         slotId: run.slotId,
-                        ...retrospectiveRouteContext,
+                        ...targetRouteContext('terminal'),
                         runId: run.runId,
                         details: '1',
-                        recipeRun: workspaceRecipeRunForRun(run.runId),
-                        ...focusedArtifactParamsForRun(run.runId),
+                        recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                       },
                     });
                   }}
@@ -945,231 +1190,19 @@ export default function FamilyWorkspaceScreen() {
                       pathname: '/workspace/slot/[slotId]/slot',
                       params: {
                         slotId: run.slotId,
-                        ...retrospectiveRouteContext,
+                        ...targetRouteContext('slot'),
                         runId: run.runId,
-                        recipeRun: workspaceRecipeRunForRun(run.runId),
-                        ...focusedArtifactParamsForRun(run.runId),
+                        recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
                       },
                     });
                   }}
-                  onOpenPR={() => openPRForRun(run, retrospectiveRouteContext)}
+                  onOpenPR={() => openPRForRun(run)}
                 />
-              ))
-            )}
-          </View>
-
-          <View style={styles.section} onLayout={rememberSection('evidence')}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Evidence workspace</Text>
-              <Text style={styles.sectionMeta}>
-                {filteredEvidenceGroups.length} groups · {snapshot.evidence.length} artifacts
-                {visualPairs.length > 0
-                  ? ` · ${visualPairs.length} pair${visualPairs.length === 1 ? '' : 's'}`
-                  : ''}
-              </Text>
-            </View>
-            <View style={styles.filterRow}>
-              {EVIDENCE_FILTERS.map((filter) => (
-                <Pressable
-                  key={filter.id}
-                  style={[
-                    styles.filterChip,
-                    evidenceFilter === filter.id && styles.filterChipActive,
-                  ]}
-                  onPress={() => setEvidenceFilter(filter.id)}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      evidenceFilter === filter.id && styles.filterChipTextActive,
-                    ]}
-                  >
-                    {filter.label} {evidenceCounts[filter.id]}
-                  </Text>
-                </Pressable>
               ))}
             </View>
-            <Text style={styles.evidenceNote}>
-              Grouped by producing run and capture batch. Before/after and video filters match
-              Command Center; review, diff, and recipe are mobile quick filters.
-            </Text>
-            {snapshot.evidence.length === 0 ? (
-              <Text style={baseStyles.textMuted}>No family evidence artifacts found.</Text>
-            ) : filteredEvidenceGroups.length === 0 ? (
-              <Text style={baseStyles.textMuted}>No evidence files match this filter.</Text>
-            ) : (
-              filteredEvidenceGroups.map((group) => (
-                <EvidenceGroupCard
-                  key={group.key}
-                  group={group}
-                  gatewayUrl={gatewayUrl}
-                  artifactAuthHeaders={artifactAuthHeaders}
-                  onOpenDocument={openDocument}
-                  onOpenDiffArtifact={openDiffArtifact}
-                  onOpenVisual={setViewerUri}
-                  onOpenRun={(runIdValue) =>
-                    router.push({
-                      pathname: runWorkspacePathnameForStatus(
-                        snapshot.runs.find((run) => run.runId === runIdValue)?.status,
-                      ),
-                      params: {
-                        runId: runIdValue,
-                        ...targetRouteContext('run'),
-                        recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                      },
-                    })
-                  }
-                  onOpenArtifacts={openFamilyArtifactWorkspace}
-                  onOpenRecipe={(runIdValue) =>
-                    router.push({
-                      pathname: '/workspace/run/[runId]/files',
-                      params: {
-                        runId: runIdValue,
-                        ...targetRouteContext('recipe'),
-                        recipeRun: CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
-                        filter: artifactFilterParamForWorkspaceNav('recipe'),
-                      },
-                    })
-                  }
-                  onOpenDiff={(sourceRun) => openFamilyRunDiff(sourceRun)}
-                  onOpenTerminal={(slotIdValue, runIdValue) =>
-                    router.push({
-                      pathname: '/workspace/slot/[slotId]/terminal',
-                      params: {
-                        slotId: slotIdValue,
-                        ...targetRouteContext('terminal'),
-                        runId: runIdValue,
-                        details: '1',
-                        recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                      },
-                    })
-                  }
-                  onOpenSlot={(slotIdValue, runIdValue) =>
-                    router.push({
-                      pathname: '/workspace/slot/[slotId]/slot',
-                      params: {
-                        slotId: slotIdValue,
-                        ...targetRouteContext('slot'),
-                        runId: runIdValue,
-                        recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                      },
-                    })
-                  }
-                />
-              ))
-            )}
-          </View>
+          ) : null}
 
-          <View style={styles.section} onLayout={rememberSection('runs')}>
-            <Text style={styles.sectionTitle}>Family runs</Text>
-            {snapshot.runs.map((run) => (
-              <RunCard
-                key={run.runId}
-                run={run}
-                active={run.runId === selectedRun?.runId}
-                recipeEvidence={recipeEvidenceForRun(run)}
-                recipeArtifactCount={recipeCountForRun(run)}
-                recipeAvailable={recipeAvailableForRun(run)}
-                gatewayUrl={gatewayUrl}
-                artifactAuthHeaders={artifactAuthHeaders}
-                onFocusRun={() =>
-                  router.setParams({
-                    familyId: snapshot.familyId,
-                    runId: run.runId,
-                  })
-                }
-                onOpenRun={() =>
-                  router.push({
-                    pathname: runWorkspacePathnameForStatus(run.status),
-                    params: {
-                      runId: run.runId,
-                      ...targetRouteContext('run'),
-                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                    },
-                  })
-                }
-                onOpenArtifacts={() =>
-                  router.push({
-                    pathname: '/workspace/run/[runId]/files',
-                    params: {
-                      runId: run.runId,
-                      ...targetRouteContext('artifacts'),
-                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                      filter: artifactFilterParamForWorkspaceNav('review'),
-                    },
-                  })
-                }
-                onOpenCompare={(artifactPath) =>
-                  openFamilyArtifactWorkspace(run.runId, artifactPath)
-                }
-                onOpenRecipeCompare={() => {
-                  const recipeEvidence = recipeEvidenceForRun(run);
-                  router.push({
-                    pathname: '/workspace/run/[runId]/files',
-                    params: {
-                      runId: run.runId,
-                      ...targetRouteContext('compare'),
-                      recipeRun: recipeEvidence?.recipeRunId ?? CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
-                      filter: artifactFilterParamForWorkspaceNav('compare'),
-                      ...(recipeEvidence?.artifactPath
-                        ? { artifact: recipeEvidence.artifactPath }
-                        : {}),
-                    },
-                  });
-                }}
-                onOpenRecipe={() =>
-                  router.push({
-                    pathname: '/workspace/run/[runId]/files',
-                    params: {
-                      runId: run.runId,
-                      ...targetRouteContext('recipe'),
-                      recipeRun: CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
-                      filter: artifactFilterParamForWorkspaceNav('recipe'),
-                    },
-                  })
-                }
-                onOpenDiff={() => openFamilyRunDiff(run)}
-                onOpenDecision={(decisionId) =>
-                  router.push({
-                    pathname: '/decision/[id]',
-                    params: {
-                      id: decisionId,
-                      ...decisionRouteContextForRun(run, decisionId),
-                      runId: run.runId,
-                    },
-                  })
-                }
-                onOpenTerminal={() => {
-                  if (!run.slotId) return;
-                  router.push({
-                    pathname: '/workspace/slot/[slotId]/terminal',
-                    params: {
-                      slotId: run.slotId,
-                      ...targetRouteContext('terminal'),
-                      runId: run.runId,
-                      details: '1',
-                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                    },
-                  });
-                }}
-                onOpenSlot={() => {
-                  if (!run.slotId) return;
-                  router.push({
-                    pathname: '/workspace/slot/[slotId]/slot',
-                    params: {
-                      slotId: run.slotId,
-                      ...targetRouteContext('slot'),
-                      runId: run.runId,
-                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                    },
-                  });
-                }}
-                onOpenPR={() => openPRForRun(run)}
-              />
-            ))}
-          </View>
-
-          {snapshot.learnings.length > 0 && (
+          {activeTab === 'retros' && snapshot.learnings.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Learnings</Text>
               {snapshot.learnings.slice(0, 6).map((learning) => (

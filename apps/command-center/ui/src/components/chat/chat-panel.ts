@@ -931,7 +931,7 @@ export class ChatPanel extends ChatPanelState {
                           this.runtimeAutostart = event.target.checked;
                       }}
                     />
-                    Start sandboxed with the Gateway
+                    Start automatically with the Gateway
                   </label>
                   <button
                     class="cp-new-btn"
@@ -1054,8 +1054,7 @@ export class ChatPanel extends ChatPanelState {
                   : this.messages.map(
                       (msg) =>
                         html`<chat-message
-                          .message=${msg}
-                          .nextStepsDisabled=${true}
+                          .message=${msg.nextSteps?.length ? { ...msg, nextSteps: [] } : msg}
                         ></chat-message>`,
                     )}
                 ${view.isStreaming

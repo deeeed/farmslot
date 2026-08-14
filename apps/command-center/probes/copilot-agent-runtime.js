@@ -52,12 +52,25 @@ if (panel.querySelector('textarea.cp-input')) {
   throw new Error('Legacy Co-Pilot composer is still rendered');
 }
 
-panel.querySelector('[data-testid="copilot-reconnect"]')?.click();
+details.click();
+await waitFor(() => !card.classList.contains('compact'), 'expanded reconnect controls');
+const reconnect = await waitFor(
+  () => panel.querySelector('[data-testid="copilot-reconnect"]'),
+  'reconnect control',
+);
+reconnect.click();
 await waitFor(() => /Reconnected/.test(card.textContent || ''), 'reconnect state');
 
 if (startedByProbe) {
-  panel.querySelector('[data-testid="copilot-stop"]')?.click();
+  const stop = await waitFor(
+    () => panel.querySelector('[data-testid="copilot-stop"]'),
+    'stop control',
+  );
+  stop.click();
   await waitFor(() => /Stopped/i.test(card.textContent || ''), 'restored stopped state');
+} else {
+  details.click();
+  await waitFor(() => card.classList.contains('compact'), 'restored compact runtime controls');
 }
 
 const stewardRoutePresent = location.hash.includes('steward');

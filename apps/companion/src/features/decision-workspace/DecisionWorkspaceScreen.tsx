@@ -207,7 +207,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
       embedded ||
       !sourceRunId ||
       !presentation ||
-      !['ready', 'review', 'no-change'].includes(presentation.kind)
+      !['ready', 'review', 'no-change', 'retrospective'].includes(presentation.kind)
     ) {
       return;
     }
@@ -1218,11 +1218,23 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         {presentation.textSections.length > 0 && (
           <View style={styles.section} onLayout={rememberSection('reports')}>
             <Text style={styles.sectionTitle}>Reports</Text>
-            {presentation.textSections.map((section) => (
-              <View key={section.title} style={styles.reportCard}>
-                <Text style={styles.reportTitle}>{section.title}</Text>
-                <Text style={styles.reportBody}>{section.body}</Text>
-              </View>
+            {presentation.textSections.map((section, index) => (
+              <Pressable
+                key={section.title}
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${section.title}`}
+                testID={`companion-decision-report-${index}`}
+                style={({ pressed }) => [styles.reportCard, pressed && styles.reportCardPressed]}
+                onPress={() => setDocumentViewer(section)}
+              >
+                <View style={styles.reportKindBadge}>
+                  <Text style={styles.reportKindText}>MD</Text>
+                </View>
+                <Text style={styles.reportTitle} numberOfLines={1}>
+                  {section.title}
+                </Text>
+                <Text style={styles.reportOpenText}>Open ›</Text>
+              </Pressable>
             ))}
           </View>
         )}
