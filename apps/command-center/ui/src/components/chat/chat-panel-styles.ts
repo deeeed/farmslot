@@ -193,6 +193,23 @@ export function renderChatPanelStyles() {
       display: flex;
       flex-direction: column;
     }
+    chat-panel .cp-terminal {
+      flex: 1;
+      min-height: 200px;
+      padding: ${spacing.sm};
+      overflow: hidden;
+    }
+    chat-panel .cp-terminal terminal-view {
+      height: 100%;
+      min-height: 0;
+    }
+    chat-panel .cp-terminal-loading {
+      height: 100%;
+      display: grid;
+      place-items: center;
+      color: ${colors.textMuted};
+      font-size: ${fonts.sizeSm};
+    }
     chat-panel .cp-streaming {
       background: ${colors.bgCard};
       border: 1px solid ${colors.bgCardHover};

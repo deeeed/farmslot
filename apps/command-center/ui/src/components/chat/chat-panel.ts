@@ -21,12 +21,14 @@ import type {
   CopilotStartResult,
   CopilotStatusResult,
   CopilotStopResult,
+  TmuxWorkerListResult,
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
 
 import './chat-message.js';
 import './chat-history-modal.js';
 import '../shared/runner-model-effort-picker.js';
+import '../terminal/terminal-view.js';
 
 import { gateway, GatewayRequestError } from '../../gateway-client.js';
 import { safeLsSet } from '../../utils/storage.js';
@@ -391,7 +393,39 @@ export class ChatPanel extends ChatPanelState {
     this.runtimeRunner = session.runner;
     this.runtimeModel = session.model;
     this.runtimeAutostart = session.autostart;
+    void this.resolveRuntimeWorker(session);
     if (session.status === 'failed' || session.status === 'ambiguous') this.runtimeNotice = '';
+  }
+
+  private async resolveRuntimeWorker(session: CopilotRuntimeSession): Promise<void> {
+    if (session.status !== 'running') {
+      this.runtimeWorkerRefJson = '';
+      this.runtimeWorkerSession = '';
+      return;
+    }
+    const tmuxSession = session.tmuxTarget.split(':', 1)[0] ?? '';
+    if (!tmuxSession || (this.runtimeWorkerSession === tmuxSession && this.runtimeWorkerRefJson)) {
+      return;
+    }
+    if (this.runtimeWorkerLookup) return this.runtimeWorkerLookup;
+    this.runtimeWorkerLookup = (async () => {
+      const result = await gateway.request<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, {});
+      const worker = result.workers.find(
+        (candidate) =>
+          candidate.ref.session === tmuxSession &&
+          (candidate.ref.windowName === 'agent' || candidate.ref.window === '0'),
+      );
+      if (!worker || this.runtime?.tmuxTarget !== session.tmuxTarget) return;
+      this.runtimeWorkerSession = tmuxSession;
+      this.runtimeWorkerRefJson = JSON.stringify(worker.ref);
+    })()
+      .catch((error) => {
+        console.warn('[chat-panel] Co-Pilot terminal lookup failed:', error);
+      })
+      .finally(() => {
+        this.runtimeWorkerLookup = undefined;
+      });
+    return this.runtimeWorkerLookup;
   }
 
   private async saveRuntimeConfig(showNotice = true, manageLoading = true) {
@@ -1046,34 +1080,43 @@ export class ChatPanel extends ChatPanelState {
               `
             : ''}
         </section>
-        <div class="cp-messages">
-          ${this.messages.length === 0 && !view.isStreaming
-            ? html`<div class="cp-empty">Ask anything about your fleet.</div>`
-            : this.messages.map(
-                (msg) =>
-                  html`<chat-message
-                    .message=${msg}
-                    .nextStepsDisabled=${this.sending}
-                  ></chat-message>`,
-              )}
-          ${view.isStreaming
-            ? html`
-                <div class="cp-streaming">
-                  <div class="cp-streaming-status ${this.streamingError ? 'error' : ''}">
-                    ${this.streamingStatus || 'Working…'}
-                  </div>
-                  <div class="cp-streaming-body ${this.streamingError ? 'error' : ''}">
-                    ${this.streamingError ||
-                    this.streamingText ||
-                    (this.sending ? 'Working…' : '')}${this.streamingError || !this.sending
-                      ? ''
-                      : html`<span style="animation:blink 1s infinite">▌</span>`}
-                  </div>
-                </div>
-              `
-            : ''}
-          <div class="cp-messages-end"></div>
-        </div>
+        ${runtimeStatus === 'running'
+          ? html`
+              <div class="cp-terminal" data-testid="copilot-terminal">
+                ${this.runtimeWorkerRefJson
+                  ? html`<terminal-view
+                      .workerRefJson=${this.runtimeWorkerRefJson}
+                      compact
+                    ></terminal-view>`
+                  : html`<div class="cp-terminal-loading">Connecting to the Co-Pilot tmux…</div>`}
+              </div>
+            `
+          : html`
+              <div class="cp-messages">
+                ${this.messages.length === 0 && !view.isStreaming
+                  ? html`<div class="cp-empty">Start the runtime to ask about your fleet.</div>`
+                  : this.messages.map(
+                      (msg) =>
+                        html`<chat-message
+                          .message=${msg}
+                          .nextStepsDisabled=${this.sending}
+                        ></chat-message>`,
+                    )}
+                ${view.isStreaming
+                  ? html`
+                      <div class="cp-streaming">
+                        <div class="cp-streaming-status ${this.streamingError ? 'error' : ''}">
+                          ${this.streamingStatus || 'Working…'}
+                        </div>
+                        <div class="cp-streaming-body ${this.streamingError ? 'error' : ''}">
+                          ${this.streamingError || this.streamingText || 'Working…'}
+                        </div>
+                      </div>
+                    `
+                  : ''}
+                <div class="cp-messages-end"></div>
+              </div>
+            `}
         <div class="cp-input-area">
           <textarea
             class="cp-input"

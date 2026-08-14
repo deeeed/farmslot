@@ -47,6 +47,7 @@ export abstract class ChatPanelState extends LitElement {
   @state() protected runtimeRunner = '';
   @state() protected runtimeModel = '';
   @state() protected runtimeAutostart = false;
+  @state() protected runtimeWorkerRefJson = '';
   @state() protected dangerousConfirmationOpen = false;
   @state() protected dangerousTypedPhrase = '';
 
@@ -56,6 +57,8 @@ export abstract class ChatPanelState extends LitElement {
   protected unsubConnection?: () => void;
   protected unsubRuntime?: () => void;
   protected toastTimer?: ReturnType<typeof setTimeout>;
+  protected runtimeWorkerLookup?: Promise<void>;
+  protected runtimeWorkerSession = '';
   protected resizing = false;
   protected resizeStartY = 0;
   protected resizeStartHeight = DEFAULT_DRAWER_HEIGHT;
