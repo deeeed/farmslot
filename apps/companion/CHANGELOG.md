@@ -8,7 +8,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 - fix(recipes): declare native Back, Escape, Enter, and Return key presses in the shipped Companion action manifest.
 - fix(copilot): replace the chat and idea composer with the persistent Co-Pilot tmux terminal, land active runs on Timeline, preserve contextual drafts, and render step inputs and outputs as readable fields.
 - fix(review): show full run titles and summaries, color-code projects, collapse singleton family hierarchy, and surface the active pipeline detail and elapsed time directly in the review queue.
-- fix(family): replace the long-scroll family workspace navigation with persistent Overview, Runs, Evidence, Changes, and Retros tabs.
+- fix(family): replace long-scroll workspace navigation with persistent tabs and one compact, icon-backed screen header shared across run, slot, family, gate, and retrospective surfaces.
 - fix(review): show per-step checklist timing inside each review round.
 - fix(review): keep run evidence in shared tabs, add a conditional Gate tab for blockers, review history, freshness, and actions, open reports on demand in the Markdown viewer, and present reviews as rounds separated from worker fixes.
 - fix(connection): retry the first foreground decision sync before warning, and ignore failures from superseded connections.
