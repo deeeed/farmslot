@@ -584,14 +584,34 @@ export const runDetailStyles = StyleSheet.create({
     fontSize: fonts.sizeXs,
     fontWeight: '900',
   },
-  stepJson: {
-    color: colors.textSecondary,
+  stepFieldList: {
     backgroundColor: colors.bgInput,
     borderRadius: radii.md,
-    fontFamily: 'Menlo',
+    overflow: 'hidden',
+  },
+  stepFieldRow: {
+    borderBottomColor: colors.bgCardHover,
+    borderBottomWidth: 1,
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  stepFieldLabel: {
+    color: colors.textMuted,
     fontSize: fonts.sizeXs,
-    lineHeight: 16,
-    padding: spacing.md,
+    fontWeight: '800',
+  },
+  stepFieldOverflow: {
+    color: colors.textMuted,
+    fontSize: fonts.sizeXs,
+    fontWeight: '800',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  stepFieldValue: {
+    color: colors.textSecondary,
+    fontSize: fonts.sizeSm,
+    lineHeight: 18,
   },
   decisionCard: {
     backgroundColor: colors.bgCard,

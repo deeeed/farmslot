@@ -1,7 +1,7 @@
 import { css, html, LitElement, type PropertyValues, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type { FlowType, Run, RunStep } from '@farmslot/protocol';
+import type { FlowType, Run, RunStep, TaskProgressStructured } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 import {
@@ -20,6 +20,7 @@ import {
   subscribeFileTransferStore,
 } from '../shared/file-transfer-progress-store.js';
 
+import { activeTaskProgressStepId, effectiveTaskProgressForRun } from './run-pipeline-model.js';
 import {
   computePackageRefreshStatus,
   pipelineStepTone,
@@ -42,6 +43,7 @@ export class RunPipelineMini extends LitElement {
   @property({ attribute: false }) run?: Run;
   @property({ attribute: false }) steps: RunStep[] = [];
   @property() flowType: FlowType = 'fix-bug';
+  @property({ attribute: false }) taskProgress?: TaskProgressStructured;
   @state() private transferProgress: FileTransferUiEntry | null = null;
 
   private _unsubTransfer: (() => void) | null = null;
@@ -129,7 +131,7 @@ export class RunPipelineMini extends LitElement {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 140px;
+      max-width: 260px;
       margin-left: 4px;
       flex: 0 1 auto;
     }
@@ -151,6 +153,7 @@ export class RunPipelineMini extends LitElement {
     const labelIndex =
       runningIndex >= 0 ? runningIndex : nextIndex >= 0 ? nextIndex : segments.length - 1;
     const active = segments[labelIndex];
+    const taskLabel = this.activeTaskLabel(active);
     const remaining = active
       ? segments.slice(labelIndex + 1).filter((segment) => segment.status === 'pending').length
       : 0;
@@ -181,11 +184,28 @@ export class RunPipelineMini extends LitElement {
             >cancelled</span
           >`
         : active
-          ? html`<span class="active-label" title=${active.title}
-              >${this.shortName(active.name)}${remaining ? ` +${remaining}` : ''}</span
+          ? html`<span class="active-label" title=${taskLabel?.title ?? active.title}
+              >${taskLabel?.label ?? this.shortName(active.name)}${remaining
+                ? ` +${remaining}`
+                : ''}</span
             >`
           : null}
     `;
+  }
+
+  private activeTaskLabel(
+    active: MiniSegment | undefined,
+  ): { label: string; title: string } | null {
+    if (!active) return null;
+    const activeProgressStep = activeTaskProgressStepId(this.run, this.taskProgress);
+    if (!activeProgressStep || active.name !== activeProgressStep) return null;
+    const progress = effectiveTaskProgressForRun(this.run, this.taskProgress);
+    if (!progress?.currentStep) return null;
+    const count = `${progress.completedSteps}/${progress.totalSteps}`;
+    return {
+      label: progress.currentStep,
+      title: `${progress.currentPhase} · ${count} · ${progress.currentStep}`,
+    };
   }
 
   private buildSegments(): MiniSegment[] {

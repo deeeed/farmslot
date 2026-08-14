@@ -72,27 +72,6 @@ export function familyArtifactUrl(
   return artifactUrl(gatewayUrl, artifact.runId, artifact.path);
 }
 
-export function familyRunDecisionNavMeta({
-  run,
-  decision,
-  diffValue,
-  visualPairCount,
-}: {
-  run: FamilyObservabilityRunSummary | null;
-  decision: RunDecision | null | undefined;
-  diffValue: string;
-  visualPairCount: number;
-}): string | null {
-  if (!run || !decision) return null;
-  const parts = [
-    decision.resolvedAt ? 'resolved' : 'pending',
-    `${run.artifacts.length} file${run.artifacts.length === 1 ? '' : 's'}`,
-  ];
-  if (diffValue && diffValue !== 'none') parts.push(diffValue);
-  if (visualPairCount > 0) parts.push(`${visualPairCount} before→after`);
-  return parts.join(' · ');
-}
-
 export function summarizeFamilyRecipeEvidence(
   recipeRuns: RecipeRunArtifactGroup[],
   gatewayUrl: string,

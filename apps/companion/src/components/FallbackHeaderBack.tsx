@@ -1,22 +1,32 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React from 'react';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 
-import { colors, fonts, spacing } from '../lib/theme';
+import { colors } from '../lib/theme';
 
 interface FallbackHeaderBackProps {
   fallbackHref: string;
-  label?: string;
 }
 
-export function FallbackHeaderBack({ fallbackHref, label = 'Back' }: FallbackHeaderBackProps) {
-  const router = useRouter();
+export function HeaderBackButton({ onPress }: { onPress: () => void }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel="Go back"
       hitSlop={12}
       style={styles.button}
+      onPress={onPress}
+    >
+      <Ionicons color={colors.accent} name="chevron-back" size={24} />
+    </Pressable>
+  );
+}
+
+export function FallbackHeaderBack({ fallbackHref }: FallbackHeaderBackProps) {
+  const router = useRouter();
+  return (
+    <HeaderBackButton
       onPress={() => {
         if (router.canGoBack()) {
           router.back();
@@ -24,20 +34,15 @@ export function FallbackHeaderBack({ fallbackHref, label = 'Back' }: FallbackHea
         }
         router.replace(fallbackHref as Parameters<typeof router.replace>[0]);
       }}
-    >
-      <Text style={styles.text}>‹ {label}</Text>
-    </Pressable>
+    />
   );
 }
 
 const styles = StyleSheet.create({
   button: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  text: {
-    color: colors.accent,
-    fontSize: fonts.sizeSm,
-    fontWeight: '800',
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
 });

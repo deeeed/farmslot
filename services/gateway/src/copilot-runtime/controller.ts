@@ -6,6 +6,8 @@ import {
   type ChatAbortResult,
   type ChatSendParams,
   type ChatSendResult,
+  COPILOT_TMUX_WINDOW_INDEX,
+  COPILOT_TMUX_WINDOW_NAME,
   type CopilotConfigureParams,
   type CopilotConfigureResult,
   type CopilotDelivery,
@@ -31,6 +33,7 @@ import { recordScreenEvidenceSnapshot } from '../chat/screen-evidence.js';
 import { resolveProjectRuntimeDir } from '../core/config.js';
 import { getActiveResources } from '../fleet/resource-manager.js';
 import { getCachedFleet } from '../fleet/state.js';
+import { resolveTmuxTargetWorker } from '../refinement/session.js';
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import {
   interruptRunnerTurn,
@@ -39,7 +42,11 @@ import {
 } from '../runners/registry.js';
 import { getAllRuns } from '../runs/store.js';
 
-import { assertDangerousConfirmation, dangerousLaunchBinding } from './authorization.js';
+import {
+  assertDangerousConfirmation,
+  COPILOT_DANGEROUS_TYPED_PHRASE,
+  dangerousLaunchBinding,
+} from './authorization.js';
 import { buildLiveCopilotBootstrapBrief } from './bootstrap-brief.js';
 import {
   buildCopilotLaunch,
@@ -67,6 +74,10 @@ const TRANSCRIPT_READ_LIMIT = 64 * 1024;
 const COPILOT_MESSAGE_DELIVERY_TIMEOUT_MS = 10_000;
 const COPILOT_RUNTIME_RECONCILE_INTERVAL_MS = 5_000;
 
+function dangerousAutostartEnabled(): boolean {
+  return process.env.FARMSLOT_COPILOT_DANGEROUS_AUTOSTART === COPILOT_DANGEROUS_TYPED_PHRASE;
+}
+
 export interface CopilotRuntimeControllerOptions {
   store?: CopilotRuntimeStore;
   tmux?: CopilotTmuxAdapter;
@@ -80,6 +91,7 @@ export interface CopilotRuntimeControllerOptions {
   interrupt?: typeof interruptRunnerTurn;
   workload?: (copilotRunning: boolean) => CopilotWorkloadSnapshot;
   resolveRuntimeDir?: () => Promise<string>;
+  resolveTerminalWorker?: typeof resolveTmuxTargetWorker;
 }
 
 export class CopilotRuntimeController {
@@ -95,6 +107,7 @@ export class CopilotRuntimeController {
   private readonly interrupt: typeof interruptRunnerTurn;
   private readonly workloadOverride?: (copilotRunning: boolean) => CopilotWorkloadSnapshot;
   private readonly resolveRuntimeDir: () => Promise<string>;
+  private readonly resolveTerminalWorker: typeof resolveTmuxTargetWorker;
   private persisted: PersistedCopilotRuntime | null = null;
   private initialized = false;
   private startPromise: Promise<CopilotStartResult> | null = null;
@@ -116,6 +129,7 @@ export class CopilotRuntimeController {
     this.workloadOverride = options.workload;
     this.resolveRuntimeDir =
       options.resolveRuntimeDir ?? (() => resolveProjectRuntimeDir('farmslot-farm'));
+    this.resolveTerminalWorker = options.resolveTerminalWorker ?? resolveTmuxTargetWorker;
   }
 
   currentSession(): CopilotRuntimeSession | null {
@@ -128,7 +142,7 @@ export class CopilotRuntimeController {
     this.persisted = await this.store.load();
     if (this.persisted) {
       this.persisted.session.transcriptId = GLOBAL_CHAT_SESSION_ID;
-      this.persisted.session.autostart ??= false;
+      this.persisted.session.autostart ??= dangerousAutostartEnabled();
     }
     const candidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
     this.runtimePresenceCheckedAtMs = this.now().getTime();
@@ -148,9 +162,17 @@ export class CopilotRuntimeController {
         this.persisted.session.reconnectedAt = this.timestamp();
         this.persisted.session.updatedAt = this.timestamp();
         await this.tmux.configureTranscript(COPILOT_TMUX_TARGET, this.store.rawTranscriptPath);
+        if (!(await this.refreshTerminalWorker(true))) {
+          this.persisted.session.status = 'failed';
+          this.persisted.session.terminalReason = 'tmux-pane-missing-after-restart';
+          this.persisted.session.stoppedAt = this.timestamp();
+          this.persisted.session.updatedAt = this.timestamp();
+        }
         await this.persist();
-        await this.audit('reconnect', { reason: 'gateway restart reconciliation' });
-        this.startTranscriptMonitor();
+        if (this.persisted.session.status === 'running') {
+          await this.audit('reconnect', { reason: 'gateway restart reconciliation' });
+          this.startTranscriptMonitor();
+        }
       }
     } else if (
       this.persisted &&
@@ -167,7 +189,7 @@ export class CopilotRuntimeController {
       this.persisted?.session.autostart &&
       (this.persisted.session.status === 'stopped' || this.persisted.session.status === 'failed')
     ) {
-      void this.start().catch((error) => {
+      void this.startConfiguredAutostart().catch((error) => {
         // start() has already persisted the failed terminal state. Keep gateway
         // startup non-blocking while making the configured autostart failure loud.
         console.error(`[copilot-runtime] autostart failed: ${(error as Error).message}`);
@@ -193,8 +215,8 @@ export class CopilotRuntimeController {
           transcriptId: GLOBAL_CHAT_SESSION_ID,
           runner,
           model,
-          autostart: false,
-          safetyTier: 'sandboxed',
+          autostart: dangerousAutostartEnabled(),
+          safetyTier: dangerousAutostartEnabled() ? 'dangerous' : 'sandboxed',
           checkout,
           workload,
           lastDelivery: this.idleDelivery(now),
@@ -203,6 +225,7 @@ export class CopilotRuntimeController {
           dangerousLaunch: dangerousLaunchBinding({ checkout, runner, model }),
         },
       };
+      await this.refreshTerminalWorker();
       await this.persist();
     } else {
       const previous = this.persisted.session.checkout;
@@ -214,6 +237,7 @@ export class CopilotRuntimeController {
         model: this.persisted.session.model,
       });
       this.persisted.session.updatedAt = this.timestamp();
+      await this.refreshTerminalWorker();
       await this.persist();
       if (previous.head !== checkout.head || previous.branch !== checkout.branch) {
         await this.audit('checkout-transition', {
@@ -254,8 +278,19 @@ export class CopilotRuntimeController {
   }
 
   async start(params: CopilotStartParams = {}): Promise<CopilotStartResult> {
+    return this.startWithPolicy(params, false);
+  }
+
+  private async startConfiguredAutostart(): Promise<CopilotStartResult> {
+    return this.startWithPolicy({}, dangerousAutostartEnabled());
+  }
+
+  private async startWithPolicy(
+    params: CopilotStartParams,
+    allowLocalDangerousAutostart: boolean,
+  ): Promise<CopilotStartResult> {
     if (this.startPromise) return this.startPromise;
-    this.startPromise = this.startOnce(params)
+    this.startPromise = this.startOnce(params, allowLocalDangerousAutostart)
       .catch(async (error) => {
         if (this.persisted?.session.status === 'starting') {
           this.persisted.session.status = 'failed';
@@ -272,7 +307,10 @@ export class CopilotRuntimeController {
     return this.startPromise;
   }
 
-  private async startOnce(params: CopilotStartParams): Promise<CopilotStartResult> {
+  private async startOnce(
+    params: CopilotStartParams,
+    allowLocalDangerousAutostart: boolean,
+  ): Promise<CopilotStartResult> {
     await this.initialize();
     const candidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
     if (
@@ -291,6 +329,13 @@ export class CopilotRuntimeController {
       this.persisted.session.reconnectedAt = this.timestamp();
       this.persisted.session.updatedAt = this.timestamp();
       await this.tmux.configureTranscript(COPILOT_TMUX_TARGET, this.store.rawTranscriptPath);
+      if (!(await this.refreshTerminalWorker(true))) {
+        this.persisted.session.status = 'failed';
+        this.persisted.session.terminalReason = 'tmux-pane-missing-while-reconnecting';
+        this.persisted.session.stoppedAt = this.timestamp();
+        await this.persist();
+        throw new Error('Co-Pilot tmux pane is missing; start a fresh runtime');
+      }
       await this.persist();
       await this.audit('reconnect', { requestedMode: params.mode ?? 'start' });
       this.emitRuntime();
@@ -309,12 +354,15 @@ export class CopilotRuntimeController {
       ...(configuredRunner ? { runner: configuredRunner } : {}),
       ...(configuredModel ? { model: configuredModel } : {}),
     });
-    const safetyTier = params.safetyTier ?? 'sandboxed';
+    const localDangerousAutostart = allowLocalDangerousAutostart && dangerousAutostartEnabled();
+    const safetyTier = params.safetyTier ?? (localDangerousAutostart ? 'dangerous' : 'sandboxed');
     if (safetyTier === 'full-auto') {
       throw new Error('Co-Pilot V1 supports sandboxed or explicitly confirmed dangerous starts');
     }
     const binding = dangerousLaunchBinding({ checkout, runner, model });
-    if (safetyTier === 'dangerous') assertDangerousConfirmation(binding, params.confirmation);
+    if (safetyTier === 'dangerous' && !allowLocalDangerousAutostart) {
+      assertDangerousConfirmation(binding, params.confirmation);
+    }
     const startedAt = this.timestamp();
     this.persisted = {
       schemaVersion: 1,
@@ -326,7 +374,7 @@ export class CopilotRuntimeController {
         transcriptId: GLOBAL_CHAT_SESSION_ID,
         runner,
         model,
-        autostart: this.persisted?.session.autostart ?? false,
+        autostart: this.persisted?.session.autostart ?? localDangerousAutostart,
         safetyTier,
         checkout,
         workload: this.workload(false),
@@ -386,6 +434,13 @@ export class CopilotRuntimeController {
     this.persisted.session.status = 'running';
     this.persisted.session.workload = this.workload(true);
     this.persisted.session.updatedAt = this.timestamp();
+    if (!(await this.refreshTerminalWorker())) {
+      this.persisted.session.status = 'failed';
+      this.persisted.session.terminalReason = 'tmux-pane-missing-after-launch';
+      this.persisted.session.stoppedAt = this.timestamp();
+      await this.persist();
+      throw new Error('Co-Pilot launched without an addressable tmux pane');
+    }
     await this.persist();
     await this.audit('start', { runner, model, safetyTier, paneId: launched.paneId });
     this.emitRuntime();
@@ -496,10 +551,53 @@ export class CopilotRuntimeController {
     status.session.updatedAt = status.session.stoppedAt;
     status.session.terminalReason = params.reason?.trim() || 'operator-requested';
     status.session.workload = this.workload(false);
+    delete status.session.terminalWorker;
     await this.persist();
     await this.audit('stop', { reason: status.session.terminalReason });
     this.emitRuntime();
     return { ok: true, session: status.session };
+  }
+
+  private async refreshTerminalWorker(force = false): Promise<boolean> {
+    if (!this.persisted) return false;
+    if (this.persisted.session.status !== 'running') {
+      delete this.persisted.session.terminalWorker;
+      return true;
+    }
+    const target = this.persisted.paneId ?? COPILOT_TMUX_TARGET;
+    const currentWorker = this.persisted.session.terminalWorker;
+    if (
+      !force &&
+      currentWorker?.paneId === target &&
+      currentWorker.target === target &&
+      currentWorker.session === COPILOT_TMUX_SESSION &&
+      currentWorker.window === COPILOT_TMUX_WINDOW_INDEX &&
+      currentWorker.windowName === COPILOT_TMUX_WINDOW_NAME &&
+      currentWorker.pane === '0'
+    ) {
+      delete this.persisted.session.terminalReason;
+      return true;
+    }
+    const worker = await this.resolveTerminalWorker(target);
+    if (!worker) {
+      delete this.persisted.session.terminalWorker;
+      delete this.persisted.paneId;
+      return false;
+    }
+    if (
+      worker.session !== COPILOT_TMUX_SESSION ||
+      worker.window !== COPILOT_TMUX_WINDOW_INDEX ||
+      worker.windowName !== COPILOT_TMUX_WINDOW_NAME ||
+      worker.pane !== '0'
+    ) {
+      delete this.persisted.session.terminalWorker;
+      delete this.persisted.paneId;
+      return false;
+    }
+    this.persisted.paneId ??= worker.paneId;
+    this.persisted.session.terminalWorker = worker;
+    delete this.persisted.session.terminalReason;
+    return true;
   }
 
   private workload(copilotRunning: boolean) {
@@ -614,11 +712,15 @@ export class CopilotRuntimeController {
       await this.setAmbiguous(candidates);
       return;
     }
-    if (candidates.includes(COPILOT_TMUX_SESSION)) return;
+    if (candidates.includes(COPILOT_TMUX_SESSION)) {
+      if (await this.refreshTerminalWorker(true)) return;
+      this.persisted.session.terminalReason = 'tmux-pane-missing-while-running';
+    } else {
+      this.persisted.session.terminalReason = 'tmux-session-missing-while-running';
+    }
 
     this.stopTranscriptMonitor();
     this.persisted.session.status = 'failed';
-    this.persisted.session.terminalReason = 'tmux-session-missing-while-running';
     this.persisted.session.stoppedAt = this.timestamp();
     this.persisted.session.updatedAt = this.timestamp();
     await this.persist();
@@ -639,7 +741,7 @@ export class CopilotRuntimeController {
         transcriptId: GLOBAL_CHAT_SESSION_ID,
         runner: this.persisted?.session.runner ?? runner,
         model: this.persisted?.session.model ?? model,
-        autostart: this.persisted?.session.autostart ?? false,
+        autostart: this.persisted?.session.autostart ?? dangerousAutostartEnabled(),
         safetyTier: this.persisted?.session.safetyTier ?? 'sandboxed',
         checkout,
         workload: this.workload(Boolean(candidates.length)),

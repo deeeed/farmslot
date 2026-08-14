@@ -5,7 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { isTerminalRunStatus, normalizeRunTags, type Run } from '@farmslot/protocol';
-import { FLOW_COLORS, FLOW_LABELS, RUNNER_COLORS } from '@farmslot/theme';
+import { FLOW_COLORS, FLOW_LABELS, projectColor, RUNNER_COLORS } from '@farmslot/theme';
 
 import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
 import { FilterEmptyState } from '../../components/FilterEmptyState';
@@ -19,7 +19,7 @@ import {
   groupVisualArtifactPairs,
 } from '../../lib/artifact-url';
 import { diffArtifactCandidate } from '../../lib/diff';
-import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
+import { runWorkspacePathnameForStatus } from '../../lib/legacy-run-route';
 import {
   type RunEvidenceSignal,
   runEvidenceSignalRouteTarget,
@@ -57,6 +57,20 @@ const STATUS_COLORS: Record<string, string> = {
   paused: colors.statusWarn,
 };
 const DIFF_ROUTE_CONTEXT = targetWorkspaceRouteContextParams('diff');
+
+function ProjectBadge({ project }: { project: string }) {
+  const color = projectColor(project);
+  return (
+    <Text
+      style={[
+        styles.projectBadge,
+        { backgroundColor: color + '22', borderColor: color + '88', color },
+      ]}
+    >
+      {project}
+    </Text>
+  );
+}
 
 function formatDuration(ms: number | undefined): string {
   if (!ms) return '';
@@ -107,16 +121,11 @@ function RunCard({
   const router = useRouter();
   const statusColor = STATUS_COLORS[run.status] ?? colors.accent;
   const artifactManifest = extractRunArtifactManifest(run);
-  const artifactCount = artifactManifest.length;
   const visualPairSummary = groupVisualArtifactPairs(artifactManifest, (artifact) =>
     artifactUrlForEntry(gatewayUrl, run.id, artifact),
   );
   const primaryVisualPair = visualPairSummary.pairs[0] ?? null;
-  const diffArtifactPath = diffArtifactCandidate(artifactManifest)?.path ?? null;
-  const readyDecision = selectReadyWorkspaceDecision(run);
-  const reviewGateDecision = selectReviewGateWorkspaceDecision(run);
-  const retroDecision = selectRetrospectiveWorkspaceDecision(run);
-  const canOpenDiff = Boolean(diffArtifactPath || run.slotId);
+  const isSingletonFamily = familyRunCount === 1;
   const runPositionLabel =
     familyRunCount === 1
       ? 'Only run'
@@ -125,16 +134,24 @@ function RunCard({
         : `Child run ${familyRunIndex + 1}/${familyRunCount}`;
 
   return (
-    <View style={[styles.familyRunRow, isLastFamilyRun && styles.familyRunRowLast]}>
-      <View style={styles.familyRunRail}>
-        <View style={[styles.familyRunDot, isFamilyRoot && styles.familyRunDotRoot]} />
-        <View
-          style={[
-            styles.familyRunLine,
-            familyRunIndex === familyRunCount - 1 && styles.familyRunLineLast,
-          ]}
-        />
-      </View>
+    <View
+      style={[
+        styles.familyRunRow,
+        isLastFamilyRun && styles.familyRunRowLast,
+        isSingletonFamily && styles.singletonRunRow,
+      ]}
+    >
+      {!isSingletonFamily ? (
+        <View style={styles.familyRunRail}>
+          <View style={[styles.familyRunDot, isFamilyRoot && styles.familyRunDotRoot]} />
+          <View
+            style={[
+              styles.familyRunLine,
+              familyRunIndex === familyRunCount - 1 && styles.familyRunLineLast,
+            ]}
+          />
+        </View>
+      ) : null}
       <Pressable
         testID={`companion-run-${run.id}`}
         accessibilityRole="button"
@@ -142,16 +159,19 @@ function RunCard({
         style={[styles.runCard, isFamilyRoot && styles.rootRunCard]}
         onPress={() =>
           router.push({
-            pathname: '/workspace/run/[runId]/evidence',
+            pathname: runWorkspacePathnameForStatus(run.status),
             params: { runId: run.id, recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM },
           })
         }
       >
         <View style={styles.row}>
           <View style={styles.runBadgeRow}>
-            <View style={styles.familyRunPositionBadge}>
-              <Text style={styles.familyRunPositionText}>{runPositionLabel}</Text>
-            </View>
+            <ProjectBadge project={run.project} />
+            {!isSingletonFamily ? (
+              <View style={styles.familyRunPositionBadge}>
+                <Text style={styles.familyRunPositionText}>{runPositionLabel}</Text>
+              </View>
+            ) : null}
             <View
               style={[
                 styles.flowBadge,
@@ -190,9 +210,8 @@ function RunCard({
             <Text style={[styles.badgeText, { color: statusColor }]}>{run.status}</Text>
           </View>
         </View>
-        <Text style={styles.ticketText} numberOfLines={1}>
-          {run.ticketOrPr}
-        </Text>
+        <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
+        {run.summary ? <Text style={styles.runSummary}>{run.summary}</Text> : null}
         {normalizeRunTags(run.tags).length > 0 ? (
           <View style={styles.tagRow}>
             {normalizeRunTags(run.tags).map((tag) => (
@@ -237,144 +256,6 @@ function RunCard({
           </View>
         ) : null}
         <RunEvidenceSignals run={run} />
-        <View style={styles.quickActionRow}>
-          <RunQuickAction
-            label="Family"
-            onPress={() =>
-              router.push({
-                pathname: '/family/[familyId]',
-                params: {
-                  familyId: run.familyId,
-                  project: run.project,
-                  runId: run.id,
-                  ...familySectionRouteContextParams('focus'),
-                  section: 'focus',
-                },
-              })
-            }
-          />
-          <RunQuickAction
-            label={artifactCount > 0 ? `Evidence ${artifactCount}` : 'Evidence files'}
-            onPress={() =>
-              router.push({
-                pathname: '/workspace/run/[runId]/files',
-                params: {
-                  runId: run.id,
-                  recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                  filter: artifactFilterParamForWorkspaceNav('review'),
-                },
-              })
-            }
-          />
-          <RunQuickAction
-            label="Recipe files"
-            onPress={() =>
-              router.push({
-                pathname: '/workspace/run/[runId]/files',
-                params: {
-                  runId: run.id,
-                  recipeRun: CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
-                  filter: artifactFilterParamForWorkspaceNav('recipe'),
-                },
-              })
-            }
-          />
-          {readyDecision ? (
-            <RunQuickAction
-              label="Ready gate"
-              onPress={() =>
-                router.push({
-                  pathname: '/decision/[id]',
-                  params: { id: readyDecision.id, runId: run.id },
-                })
-              }
-            />
-          ) : null}
-          {reviewGateDecision ? (
-            <RunQuickAction
-              label="Review gate"
-              onPress={() =>
-                router.push({
-                  pathname: '/decision/[id]',
-                  params: { id: reviewGateDecision.id, runId: run.id },
-                })
-              }
-            />
-          ) : null}
-          {retroDecision ? (
-            <RunQuickAction
-              label="Retro gate"
-              onPress={() =>
-                router.push({
-                  pathname: '/decision/[id]',
-                  params: { id: retroDecision.id, runId: run.id },
-                })
-              }
-            />
-          ) : null}
-          {run.prNumber ? (
-            <RunQuickAction
-              label={`PR #${run.prNumber}`}
-              onPress={() => {
-                const prRepo = prRepoFromWorkspaceSource(run, run.prNumber);
-                router.push({
-                  pathname: '/(tabs)/prs',
-                  params: {
-                    pr: String(run.prNumber),
-                    ...(prRepo ? { repo: prRepo } : {}),
-                  },
-                });
-              }}
-            />
-          ) : null}
-          {canOpenDiff ? (
-            <RunQuickAction
-              label="Diff view"
-              onPress={() =>
-                router.push({
-                  pathname: '/workspace/run/[runId]/diff',
-                  params: {
-                    runId: run.id,
-                    ...DIFF_ROUTE_CONTEXT,
-                    recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                    ...(diffArtifactPath ? { path: diffArtifactPath } : {}),
-                  },
-                })
-              }
-            />
-          ) : null}
-          {run.slotId ? (
-            <>
-              <RunQuickAction
-                label="Slot"
-                onPress={() =>
-                  router.push({
-                    pathname: '/workspace/slot/[slotId]/slot',
-                    params: {
-                      slotId: run.slotId!,
-                      runId: run.id,
-                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                    },
-                  })
-                }
-              />
-              <RunQuickAction
-                label="Terminal"
-                onPress={() =>
-                  router.push({
-                    pathname: '/workspace/slot/[slotId]/terminal',
-                    params: {
-                      slotId: run.slotId!,
-                      runId: run.id,
-                      details: '1',
-                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                    },
-                  })
-                }
-              />
-            </>
-          ) : null}
-        </View>
       </Pressable>
     </View>
   );
@@ -449,6 +330,7 @@ function FamilyHeader({
       <View style={styles.familyHeaderTop}>
         <View style={styles.familyTitleBlock}>
           <View style={styles.familyEyebrowRow}>
+            <ProjectBadge project={group.project} />
             <Text style={styles.familyEyebrow}>
               Family {familyIndex + 1}/{familyCount}
             </Text>
@@ -471,9 +353,7 @@ function FamilyHeader({
             ) : null}
             <Text style={styles.familyIdPill}>family:{shortId(group.familyId)}</Text>
           </View>
-          <Text style={styles.familyTitle} numberOfLines={1}>
-            {group.familyRootTicketOrPr}
-          </Text>
+          <Text style={styles.familyTitle}>{group.familyRootTicketOrPr}</Text>
           <Text style={styles.familyMeta} numberOfLines={1}>
             Runs below share this family
             {group.activeCount ? ` · ${group.activeCount} active` : ''}
@@ -507,11 +387,7 @@ function FamilyHeader({
           </Pressable>
         </View>
       </View>
-      {group.familySummary ? (
-        <Text style={styles.familySummary} numberOfLines={1}>
-          {group.familySummary}
-        </Text>
-      ) : null}
+      {group.familySummary ? <Text style={styles.familySummary}>{group.familySummary}</Text> : null}
     </View>
   );
 }
@@ -883,8 +759,21 @@ export default function RunsScreen() {
 
   const runRows = useMemo<RunsListRow[]>(() => {
     const groups = groupRunsByFamily(visibleRuns);
+    const hierarchicalGroups = groups.filter((group) => group.runs.length > 1);
+    const familyIndexById = new Map(
+      hierarchicalGroups.map((group, index) => [group.familyId, index]),
+    );
     return groups.flatMap((group, familyIndex) => [
-      { kind: 'family' as const, group, familyIndex, familyCount: groups.length },
+      ...(group.runs.length > 1
+        ? [
+            {
+              kind: 'family' as const,
+              group,
+              familyIndex: familyIndexById.get(group.familyId) ?? familyIndex,
+              familyCount: hierarchicalGroups.length,
+            },
+          ]
+        : []),
       ...group.runs.map((run, index) => ({
         kind: 'run' as const,
         run,
@@ -1153,6 +1042,7 @@ const styles = StyleSheet.create({
   familyEyebrowRow: {
     alignItems: 'center',
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.sm,
     marginBottom: spacing.sm,
   },
@@ -1269,6 +1159,11 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     paddingRight: spacing.sm,
   },
+  singletonRunRow: {
+    backgroundColor: 'transparent',
+    borderTopWidth: 0,
+    paddingLeft: spacing.sm,
+  },
   familyRunRowLast: {
     borderBottomColor: colors.accent + '22',
     borderBottomLeftRadius: radii.lg,
@@ -1382,6 +1277,15 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textTransform: 'uppercase',
   },
+  projectBadge: {
+    borderRadius: 999,
+    borderWidth: 1,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+    overflow: 'hidden',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+  },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   flowBadge: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: 4 },
   statusBadge: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: 4 },
@@ -1391,6 +1295,12 @@ const styles = StyleSheet.create({
     fontSize: fonts.sizeMd,
     fontWeight: '600',
     marginTop: spacing.md,
+  },
+  runSummary: {
+    color: colors.textSecondary,
+    fontSize: fonts.sizeSm,
+    lineHeight: 18,
+    marginTop: spacing.xs,
   },
   tagRow: {
     flexDirection: 'row',

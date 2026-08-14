@@ -22,6 +22,7 @@ import {
   Methods,
 } from '@farmslot/protocol';
 
+import { runWorkspacePathnameForStatus } from '../../lib/legacy-run-route';
 import { colors, floatingCopilotGutter, fonts, radii, spacing } from '../../lib/theme';
 import { useConnectionStore } from '../../store/connection';
 import { useFilterStore } from '../../store/filters';
@@ -161,7 +162,7 @@ export default function BacklogScreen() {
               item.runId
                 ? () =>
                     router.push({
-                      pathname: '/workspace/run/[runId]/evidence',
+                      pathname: runWorkspacePathnameForStatus(item.lastObservedRunStatus),
                       params: { runId: item.runId! },
                     })
                 : undefined

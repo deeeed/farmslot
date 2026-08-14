@@ -36,6 +36,16 @@ function formatStepDuration(ms: number): string {
   return `${Math.floor(mins / 60)}h${mins % 60}m`;
 }
 
+function stepDuration(step: RunStep): string | null {
+  if (step.durationMs != null && step.durationMs > 0) {
+    return formatStepDuration(step.durationMs);
+  }
+  if (step.status !== 'running' || !step.startedAt) return null;
+  const startedAt = Date.parse(step.startedAt);
+  if (!Number.isFinite(startedAt)) return null;
+  return formatStepDuration(Math.max(0, Date.now() - startedAt));
+}
+
 export function RunPipelineMini({ steps, runStatus }: { steps: RunStep[]; runStatus?: RunStatus }) {
   const isCancelled = runStatus === 'cancelled';
   const visible = steps.filter((s) => s.status !== 'skipped');
@@ -51,6 +61,16 @@ export function RunPipelineMini({ steps, runStatus }: { steps: RunStep[]; runSta
     : 0;
   const allDone = visible.every((s) => eff(s.status) === 'done');
   const hasFailed = visible.some((s) => eff(s.status) === 'failed');
+  const duration = active ? stepDuration(active) : null;
+  const label = isCancelled
+    ? 'cancelled'
+    : allDone
+      ? 'done'
+      : hasFailed
+        ? 'failed'
+        : active
+          ? `${shortName(active.name)}${duration ? ` · ${duration}` : ''}${remaining > 0 ? ` · +${remaining}` : ''}`
+          : '';
 
   return (
     <View style={miniStyles.container}>
@@ -71,25 +91,24 @@ export function RunPipelineMini({ steps, runStatus }: { steps: RunStep[]; runSta
           );
         })}
       </View>
-      <Text
-        style={[
-          miniStyles.label,
-          allDone && { color: colors.statusOk },
-          hasFailed && { color: colors.statusFail },
-          isCancelled && { color: colors.statusFail },
-        ]}
-        numberOfLines={1}
-      >
-        {isCancelled
-          ? 'cancelled'
-          : allDone
-            ? 'done'
-            : hasFailed
-              ? 'failed'
-              : active
-                ? `${shortName(active.name)}${remaining > 0 ? ` +${remaining}` : ''}`
-                : ''}
-      </Text>
+      <View style={miniStyles.summary}>
+        <Text
+          style={[
+            miniStyles.label,
+            allDone && { color: colors.statusOk },
+            hasFailed && { color: colors.statusFail },
+            isCancelled && { color: colors.statusFail },
+          ]}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+        {!allDone && !isCancelled && active?.detail ? (
+          <Text style={miniStyles.detail} numberOfLines={2}>
+            {active.detail}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -180,7 +199,7 @@ const MINI_SEGMENT_HEIGHT = 4;
 
 const miniStyles = StyleSheet.create({
   container: {
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flexDirection: 'row',
     gap: spacing.sm,
     marginTop: spacing.md,
@@ -205,9 +224,17 @@ const miniStyles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: fonts.sizeXs,
     fontWeight: '700',
-    marginLeft: spacing.xs,
-    maxWidth: 100,
     textTransform: 'uppercase',
+  },
+  summary: {
+    flex: 1,
+    minWidth: 0,
+  },
+  detail: {
+    color: colors.textMuted,
+    fontSize: fonts.sizeXs,
+    lineHeight: 15,
+    marginTop: 2,
   },
 });
 

@@ -199,14 +199,28 @@ export function renderChatPanelStyles() {
       padding: ${spacing.sm};
       overflow: hidden;
     }
+    chat-panel .cp-runtime-head .cp-runtime-pressure {
+      flex: 1;
+    }
+    chat-panel .cp-runtime.compact .cp-runtime-grid,
+    chat-panel .cp-runtime.compact .cp-runtime-warning,
+    chat-panel .cp-runtime.compact .cp-runtime-reason,
+    chat-panel .cp-runtime.compact .cp-runtime-config,
+    chat-panel .cp-runtime.compact .cp-runtime-actions,
+    chat-panel .cp-runtime.compact .cp-dangerous {
+      display: none;
+    }
     chat-panel .cp-terminal terminal-view {
       height: 100%;
       min-height: 0;
     }
     chat-panel .cp-terminal-loading {
       height: 100%;
-      display: grid;
-      place-items: center;
+      display: flex;
+      flex-direction: column;
+      gap: ${spacing.md};
+      align-items: center;
+      justify-content: center;
       color: ${colors.textMuted};
       font-size: ${fonts.sizeSm};
     }
@@ -244,71 +258,6 @@ export function renderChatPanelStyles() {
     }
     chat-panel .cp-streaming-body.error {
       color: ${colors.statusFail};
-    }
-    chat-panel .cp-input-area {
-      border-top: 1px solid ${colors.bgCard};
-      padding: ${spacing.md} ${spacing.xl};
-      display: flex;
-      gap: ${spacing.md};
-      align-items: flex-end;
-      flex-shrink: 0;
-    }
-    chat-panel .cp-input {
-      flex: 1;
-      background: ${colors.bgInput};
-      border: 1px solid ${colors.bgCard};
-      border-radius: ${radii.md};
-      color: ${colors.textPrimary};
-      font-family: ${fonts.mono};
-      font-size: ${fonts.sizeSm};
-      padding: ${spacing.md} ${spacing.lg};
-      resize: none;
-      min-height: 36px;
-      max-height: 100px;
-      outline: none;
-      line-height: 1.4;
-    }
-    chat-panel .cp-input:focus {
-      border-color: ${colors.accent}66;
-    }
-    chat-panel .cp-send-btn {
-      background: ${colors.accent};
-      color: #fff;
-      border: none;
-      border-radius: ${radii.md};
-      padding: ${spacing.md} ${spacing.xl};
-      font-family: ${fonts.mono};
-      font-size: ${fonts.sizeSm};
-      cursor: pointer;
-      height: 36px;
-      flex-shrink: 0;
-    }
-    chat-panel .cp-send-btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    chat-panel .cp-send-btn:hover:not(:disabled) {
-      background: ${colors.accentHover};
-    }
-    chat-panel .cp-reset-input-btn {
-      background: ${colors.bgCard};
-      color: ${colors.textMuted};
-      border: 1px solid ${colors.bgCardHover};
-      border-radius: ${radii.md};
-      padding: 0 ${spacing.md};
-      font-family: ${fonts.mono};
-      font-size: ${fonts.sizeMd};
-      cursor: pointer;
-      height: 36px;
-      flex-shrink: 0;
-    }
-    chat-panel .cp-reset-input-btn:hover:not(:disabled) {
-      color: ${colors.textPrimary};
-      border-color: ${colors.accent}66;
-    }
-    chat-panel .cp-reset-input-btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
     }
     chat-panel .cp-empty {
       color: ${colors.textMuted};

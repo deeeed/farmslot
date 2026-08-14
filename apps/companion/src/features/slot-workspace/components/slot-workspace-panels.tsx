@@ -31,6 +31,7 @@ import {
 } from '../../../lib/artifact-url';
 import { type DecisionPresentation, presentDecision } from '../../../lib/decision-presentation';
 import { diffArtifactCandidate } from '../../../lib/diff';
+import { runWorkspacePathnameForStatus } from '../../../lib/legacy-run-route';
 import { prRepoFromWorkspaceSource } from '../../../lib/pr-links';
 import {
   type SlotFamilyContextSummary,
@@ -247,7 +248,7 @@ export function SlotWorkspaceSection({
           prNumber={run.prNumber}
           onOpenRun={() =>
             router.push({
-              pathname: '/workspace/run/[runId]/evidence',
+              pathname: runWorkspacePathnameForStatus(run.status),
               params: {
                 runId: run.id,
                 ...targetRouteContext('run'),
@@ -366,7 +367,7 @@ export function SlotWorkspaceSection({
           onOpenTerminal={onOpenTerminal}
           onOpenRun={() =>
             router.push({
-              pathname: '/workspace/run/[runId]/evidence',
+              pathname: runWorkspacePathnameForStatus(run.status),
               params: {
                 runId: run.id,
                 ...targetRouteContext('run'),
@@ -805,7 +806,7 @@ export function SlotWorkspaceSection({
                 artifactAuthHeaders={artifactAuthHeaders}
                 onOpenRun={() =>
                   router.push({
-                    pathname: '/workspace/run/[runId]/evidence',
+                    pathname: runWorkspacePathnameForStatus(entry.status),
                     params: {
                       runId: entry.runId,
                       ...targetRouteContext('run'),

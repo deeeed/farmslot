@@ -395,11 +395,15 @@ export const runListStyles = css`
     display: flex;
   }
   .run-project {
-    color: ${unsafeCSS(colors.textPrimary)};
-    font-size: 11px;
-    font-weight: 600;
+    background: color-mix(in srgb, var(--project-color) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--project-color) 55%, transparent);
+    border-radius: 4px;
+    color: var(--project-color, ${unsafeCSS(colors.textPrimary)});
+    font-size: 10px;
+    font-weight: 700;
     line-height: 1.25;
     overflow: hidden;
+    padding: 2px 5px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }

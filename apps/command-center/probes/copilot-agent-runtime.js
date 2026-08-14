@@ -22,32 +22,56 @@ const card = await waitFor(
   'runtime card',
 );
 
-const stop = panel.querySelector('[data-testid="copilot-stop"]');
-if (stop) {
-  stop.click();
-  await waitFor(() => /Stopped/i.test(card.textContent || ''), 'stopped state');
+const startedByProbe = !panel.querySelector('[data-testid="copilot-stop"]');
+if (startedByProbe) {
+  panel.querySelector('[data-testid="copilot-start-sandboxed"]')?.click();
+  await waitFor(() => /Running/i.test(card.textContent || ''), 'sandboxed running state');
 }
 
-panel.querySelector('[data-testid="copilot-start-sandboxed"]')?.click();
-await waitFor(() => /Running/i.test(card.textContent || ''), 'sandboxed running state');
-
-await waitFor(() => panel.querySelector('textarea.cp-input'), 'message input');
-await panel.createManualSession();
-const contextualSessionId = panel.activeSessionIdValue;
-if (!contextualSessionId?.startsWith('manual:')) {
-  throw new Error('Could not select a contextual Co-Pilot session before shared-runtime send');
+if (!card.classList.contains('compact')) {
+  throw new Error('Running Co-Pilot controls are not compact by default');
 }
-await panel.submitPrompt('COPILOT_PROBE_SHARED_HISTORY');
-if (panel.activeSessionIdValue !== 'global') {
-  throw new Error('Contextual prompt did not return the panel to the canonical shared transcript');
-}
-await waitFor(() => /COPILOT_PROBE_SHARED_HISTORY/.test(panel.textContent || ''), 'shared history');
+const details = await waitFor(
+  () => panel.querySelector('[data-testid="copilot-details-toggle"]'),
+  'runtime details toggle',
+);
+details.click();
+await waitFor(() => !card.classList.contains('compact'), 'expanded runtime details');
+details.click();
+await waitFor(() => card.classList.contains('compact'), 'collapsed runtime details');
 
-panel.querySelector('[data-testid="copilot-reconnect"]')?.click();
+const terminal = await waitFor(
+  () => panel.querySelector('[data-testid="copilot-terminal"] terminal-view'),
+  'Co-Pilot terminal',
+);
+const terminalWorker = JSON.parse(terminal.workerRefJson || 'null');
+if (!terminalWorker || terminalWorker.target !== panel.runtime?.terminalWorker?.target) {
+  throw new Error('Co-Pilot terminal is not bound to the runtime terminal worker');
+}
+if (panel.querySelector('textarea.cp-input')) {
+  throw new Error('Legacy Co-Pilot composer is still rendered');
+}
+
+details.click();
+await waitFor(() => !card.classList.contains('compact'), 'expanded reconnect controls');
+const reconnect = await waitFor(
+  () => panel.querySelector('[data-testid="copilot-reconnect"]'),
+  'reconnect control',
+);
+reconnect.click();
 await waitFor(() => /Reconnected/.test(card.textContent || ''), 'reconnect state');
 
-panel.querySelector('[data-testid="copilot-stop"]')?.click();
-await waitFor(() => /Stopped/i.test(card.textContent || ''), 'final stopped state');
+if (startedByProbe) {
+  const stop = await waitFor(
+    () => panel.querySelector('[data-testid="copilot-stop"]'),
+    'stop control',
+  );
+  stop.click();
+  await waitFor(() => /Stopped/i.test(card.textContent || ''), 'restored stopped state');
+} else {
+  details.click();
+  await waitFor(() => card.classList.contains('compact'), 'restored compact runtime controls');
+}
 
 const stewardRoutePresent = location.hash.includes('steward');
 if (stewardRoutePresent)
@@ -55,12 +79,11 @@ if (stewardRoutePresent)
 
 return {
   ok: true,
-  start: 'sandboxed',
-  send: 'visible',
-  history: 'shared',
-  contextualSessionId,
-  canonicalTranscriptId: panel.activeSessionIdValue,
+  start: startedByProbe ? 'sandboxed' : 'already-running',
+  terminal: 'exact-worker',
+  controls: 'compact-with-details',
+  composer: 'removed',
   reconnect: 'same-runtime',
-  stop: 'operator-controlled',
+  stop: startedByProbe ? 'restored-stopped' : 'left-running',
   stewardRoutePresent,
 };

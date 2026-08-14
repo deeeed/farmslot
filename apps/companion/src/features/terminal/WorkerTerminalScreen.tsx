@@ -110,6 +110,7 @@ export default function WorkerTerminalScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
+  const draftParam = (Array.isArray(params.draft) ? params.draft[0] : params.draft)?.trim() ?? '';
   const client = useConnectionStore((s) => s.client);
   const status = useConnectionStore((s) => s.status);
   const terminalRef = useRef<XtermTerminalViewHandle>(null);
@@ -121,7 +122,7 @@ export default function WorkerTerminalScreen() {
   const [isSending, setIsSending] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceCopilotStatus>('idle');
   const [voiceMessage, setVoiceMessage] = useState(getVoiceCopilotAvailability().message);
-  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [voiceTranscript, setVoiceTranscript] = useState(draftParam);
   const [voiceDraft, setVoiceDraft] = useState('');
   const [voiceWarning, setVoiceWarning] = useState<string | null>(null);
   const [voiceRuntimeReady, setVoiceRuntimeReady] = useState<boolean | null>(null);
@@ -129,7 +130,7 @@ export default function WorkerTerminalScreen() {
   const [selectedVoiceModelId, setSelectedVoiceModelId] = useState(getPreferredVoiceAsrModelId);
   const [isPreparingVoiceRecorder, setIsPreparingVoiceRecorder] = useState(false);
   const [isFormattingVoice, setIsFormattingVoice] = useState(false);
-  const [voiceComposerOpen, setVoiceComposerOpen] = useState(false);
+  const [voiceComposerOpen, setVoiceComposerOpen] = useState(Boolean(draftParam));
   const [voicePanelWidth, setVoicePanelWidth] = useState(0);
   const [terminalFullscreen, setTerminalFullscreen] = useState(false);
   const [showTmuxShortcuts, setShowTmuxShortcuts] = useState(false);
@@ -183,6 +184,9 @@ export default function WorkerTerminalScreen() {
   );
 
   const title = titleParam || worker?.target || 'Worker terminal';
+  const workerSubtitle = worker
+    ? `${worker.nodeId} · ${worker.session}:${worker.windowName ?? worker.window ?? '0'}.${worker.pane ?? '0'}`
+    : 'Missing worker target';
   const connectionReady = status === 'connected' && Boolean(client);
   const workerReady = connectionReady && Boolean(worker);
   const hasVoiceDraft = voiceDraft.trim().length > 0;
@@ -601,6 +605,7 @@ export default function WorkerTerminalScreen() {
 
   return (
     <KeyboardAvoidingView
+      testID="companion-screen-worker-terminal"
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={0}
       style={styles.container}
@@ -617,7 +622,7 @@ export default function WorkerTerminalScreen() {
                 {title}
               </Text>
               <Text style={styles.subtitle} numberOfLines={1}>
-                {worker ? `${worker.nodeId} · ${worker.target}` : 'Missing worker target'}
+                {workerSubtitle}
               </Text>
             </View>
             <Pressable
@@ -650,7 +655,7 @@ export default function WorkerTerminalScreen() {
                 {title}
               </Text>
               <Text style={styles.subtitle} numberOfLines={1}>
-                {worker ? `${worker.nodeId} · ${worker.target}` : 'Missing worker target'}
+                {workerSubtitle}
               </Text>
             </View>
             <Pressable

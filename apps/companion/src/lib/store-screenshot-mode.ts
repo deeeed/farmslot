@@ -1,4 +1,5 @@
 import {
+  type CopilotRuntimeSession,
   type FleetStatus,
   Methods,
   type PendingDecision,
@@ -100,8 +101,8 @@ function createScreenshotGatewayClient(fixtures: StoreScreenshotFixtures): Gatew
       case Methods.TERMINAL_WORKER_SNAPSHOT:
         payload = terminalSnapshot();
         break;
-      case Methods.CHAT_HISTORY:
-        payload = { messages: fixtures.chatMessages };
+      case Methods.COPILOT_STATUS:
+        payload = { session: storeScreenshotCopilotRuntime(fixtures.workers[0]) };
         break;
       default:
         throw new Error(`Store screenshot mode has no fixture for gateway method ${method}.`);
@@ -129,7 +130,6 @@ interface StoreScreenshotFixtures {
   prs: PRStatus[];
   workerNodes: TmuxWorkerNodeResult[];
   workers: TmuxWorkerNodeResult['workers'];
-  chatMessages: unknown[];
 }
 
 function createStoreScreenshotFixtures(): StoreScreenshotFixtures {
@@ -387,7 +387,67 @@ function createStoreScreenshotFixtures(): StoreScreenshotFixtures {
     },
   ];
   const workers = workerNodes.flatMap((node) => node.workers);
-  return { fleet, runs, decisions, prs, workerNodes, workers, chatMessages: [] };
+  return { fleet, runs, decisions, prs, workerNodes, workers };
+}
+
+function storeScreenshotCopilotRuntime(
+  worker: TmuxWorkerNodeResult['workers'][number],
+): CopilotRuntimeSession {
+  const now = new Date().toISOString();
+  return {
+    runtimeId: 'store-screenshot-copilot',
+    status: 'running',
+    tmuxTarget: worker.ref.target,
+    terminalWorker: worker.ref,
+    transcriptId: 'global',
+    runner: 'codex',
+    model: 'gpt-5.6-sol',
+    autostart: true,
+    safetyTier: 'sandboxed',
+    checkout: {
+      path: '/demo/farmslot',
+      branch: 'main',
+      head: '0123456789abcdef0123456789abcdef01234567',
+      dirtyFileCount: 0,
+      dirtyPaths: [],
+    },
+    workload: {
+      severity: 'normal',
+      totals: {
+        implementation: 0,
+        independentReview: 0,
+        reviewRework: 0,
+        ciFix: 0,
+        fullQa: 0,
+        recipe: 0,
+        prepare: 0,
+        devServer: 0,
+        copilot: 1,
+        total: 1,
+      },
+      hosts: [],
+      policy: {
+        singleton: true,
+        automaticCancellation: false,
+        automaticDispatch: false,
+        automaticFanOut: false,
+      },
+    },
+    lastDelivery: { id: 'store-screenshot-delivery', state: 'idle', requestedAt: now },
+    updatedAt: now,
+    dangerousLaunch: {
+      fingerprint: 'store-screenshot',
+      typedPhrase: 'ENABLE DANGEROUS CO-PILOT',
+      warning: 'Store screenshot fixture',
+      checkout: '/demo/farmslot',
+      branch: 'main',
+      head: '0123456789abcdef0123456789abcdef01234567',
+      dirtyFileCount: 0,
+      runner: 'codex',
+      model: 'gpt-5.6-sol',
+      safetyTier: 'dangerous',
+    },
+  };
 }
 
 function slot(input: {

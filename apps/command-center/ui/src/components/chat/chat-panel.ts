@@ -8,7 +8,6 @@ import type {
   ChatMemorySavedPayload,
   ChatMessage,
   ChatNewResult,
-  ChatNextStep,
   ChatResponsePayload,
   ChatSendIntent,
   ChatSessionContextResult,
@@ -21,14 +20,8 @@ import type {
   CopilotStartResult,
   CopilotStatusResult,
   CopilotStopResult,
-  TmuxWorkerListResult,
 } from '@farmslot/protocol';
-import {
-  COPILOT_TMUX_WINDOW_INDEX,
-  COPILOT_TMUX_WINDOW_NAME,
-  Events,
-  Methods,
-} from '@farmslot/protocol';
+import { Events, Methods } from '@farmslot/protocol';
 
 import './chat-message.js';
 import './chat-history-modal.js';
@@ -65,15 +58,6 @@ import { chatPanelViewModel } from './chat-panel-view-model.js';
 export class ChatPanel extends ChatPanelState {
   protected override createRenderRoot() {
     return this;
-  }
-
-  override updated(changed: Map<string, unknown>) {
-    if (changed.has('open') && this.open) {
-      void this.updateComplete.then(() => {
-        const input = this.querySelector('.cp-input');
-        if (input instanceof HTMLTextAreaElement) input.focus();
-      });
-    }
   }
 
   connectedCallback() {
@@ -116,7 +100,6 @@ export class ChatPanel extends ChatPanelState {
     this.unsubObserver?.();
     this.unsubRuntime?.();
     this.unsubConnection?.();
-    if (this.runtimeWorkerRetry) clearTimeout(this.runtimeWorkerRetry);
     this.stopResize();
   }
 
@@ -304,13 +287,6 @@ export class ChatPanel extends ChatPanelState {
     };
   }
 
-  private async send() {
-    const text = this.inputText.trim();
-    if (!text || this.sending) return;
-    this.inputText = '';
-    await this.submitPrompt(text);
-  }
-
   private async loadRuntime(reconnected = false) {
     try {
       const result = await gateway.request<CopilotStatusResult>(Methods.COPILOT_STATUS, {});
@@ -399,70 +375,10 @@ export class ChatPanel extends ChatPanelState {
     this.runtimeRunner = session.runner;
     this.runtimeModel = session.model;
     this.runtimeAutostart = session.autostart;
-    void this.resolveRuntimeWorker(session);
+    this.runtimeWorkerRefJson = session.terminalWorker
+      ? JSON.stringify(session.terminalWorker)
+      : '';
     if (session.status === 'failed' || session.status === 'ambiguous') this.runtimeNotice = '';
-  }
-
-  private async resolveRuntimeWorker(session: CopilotRuntimeSession): Promise<void> {
-    if (session.status !== 'running') {
-      if (this.runtimeWorkerRetry) clearTimeout(this.runtimeWorkerRetry);
-      this.runtimeWorkerRetry = undefined;
-      this.runtimeWorkerRetryMs = 1000;
-      this.runtimeWorkerRefJson = '';
-      this.runtimeWorkerSession = '';
-      return;
-    }
-    const tmuxSession = session.tmuxTarget.split(':', 1)[0] ?? '';
-    if (!tmuxSession || (this.runtimeWorkerSession === tmuxSession && this.runtimeWorkerRefJson)) {
-      return;
-    }
-    if (this.runtimeWorkerLookup) {
-      if (this.runtimeWorkerLookupTarget === session.tmuxTarget) return this.runtimeWorkerLookup;
-      await this.runtimeWorkerLookup;
-      if (this.runtime?.tmuxTarget === session.tmuxTarget) {
-        return this.resolveRuntimeWorker(session);
-      }
-      return;
-    }
-    this.runtimeWorkerLookupTarget = session.tmuxTarget;
-    this.runtimeWorkerLookup = (async () => {
-      const result = await gateway.request<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, {});
-      const worker = result.workers.find(
-        (candidate) =>
-          candidate.ref.session === tmuxSession &&
-          (candidate.ref.windowName === COPILOT_TMUX_WINDOW_NAME ||
-            candidate.ref.window === COPILOT_TMUX_WINDOW_INDEX),
-      );
-      if (!worker || this.runtime?.tmuxTarget !== session.tmuxTarget) return;
-      if (this.runtimeWorkerRetry) clearTimeout(this.runtimeWorkerRetry);
-      this.runtimeWorkerRetry = undefined;
-      this.runtimeWorkerRetryMs = 1000;
-      this.runtimeWorkerSession = tmuxSession;
-      this.runtimeWorkerRefJson = JSON.stringify(worker.ref);
-      if (this.runtimeError.startsWith('Co-Pilot terminal unavailable:')) this.runtimeError = '';
-    })()
-      .catch((error) => {
-        this.runtimeError = `Co-Pilot terminal unavailable: ${errorMessage(error)}`;
-      })
-      .finally(() => {
-        this.runtimeWorkerLookup = undefined;
-        this.runtimeWorkerLookupTarget = '';
-        if (
-          !this.runtimeWorkerRefJson &&
-          this.isConnected &&
-          this.runtime?.status === 'running' &&
-          this.runtime.tmuxTarget === session.tmuxTarget
-        ) {
-          if (this.runtimeWorkerRetry) clearTimeout(this.runtimeWorkerRetry);
-          const retryMs = this.runtimeWorkerRetryMs;
-          this.runtimeWorkerRetryMs = Math.min(retryMs * 2, 10_000);
-          this.runtimeWorkerRetry = setTimeout(() => {
-            this.runtimeWorkerRetry = undefined;
-            if (this.isConnected && this.runtime) void this.resolveRuntimeWorker(this.runtime);
-          }, retryMs);
-        }
-      });
-    return this.runtimeWorkerLookup;
   }
 
   private async saveRuntimeConfig(showNotice = true, manageLoading = true) {
@@ -708,15 +624,6 @@ export class ChatPanel extends ChatPanelState {
     }
   }
 
-  private onKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      this.send();
-    } else if (e.key === 'Escape') {
-      this.dispatchEvent(new CustomEvent('close', { bubbles: true }));
-    }
-  }
-
   private async onActionConfirm(e: CustomEvent<{ actionId: string }>) {
     const card = e.target as
       | (HTMLElement & {
@@ -763,21 +670,6 @@ export class ChatPanel extends ChatPanelState {
     }
   }
 
-  private async onNextStepSelect(e: CustomEvent<ChatNextStep>) {
-    if (this.sending) return;
-    const step = e.detail;
-    const promptParam = step.params.prompt;
-    const prompt =
-      typeof promptParam === 'string' && promptParam.trim()
-        ? promptParam.trim()
-        : `Follow up on this Co-Pilot next step: ${step.label}`;
-    await this.submitPrompt(
-      prompt,
-      { affordances: [`next-step:${step.id}`] },
-      'diagnostic-readonly',
-    );
-  }
-
   render() {
     if (!this.open) return html``;
 
@@ -798,7 +690,6 @@ export class ChatPanel extends ChatPanelState {
         class="cp-drawer ${this.fullscreen ? 'fullscreen' : ''}"
         style="--cp-height:${this.fullscreen ? '100vh' : `${this.drawerHeight}px`}"
         @action-confirm=${this.onActionConfirm}
-        @next-step-select=${this.onNextStepSelect}
       >
         <div class="cp-resize-handle" title="Resize chat" @pointerdown=${this.startResize}></div>
         <div class="cp-header">
@@ -976,7 +867,12 @@ export class ChatPanel extends ChatPanelState {
               </div>
             `
           : ''}
-        <section class="cp-runtime" data-testid="copilot-runtime-card">
+        <section
+          class="cp-runtime ${runtimeStatus === 'running' && !this.runtimeDetailsOpen
+            ? 'compact'
+            : ''}"
+          data-testid="copilot-runtime-card"
+        >
           <div class="cp-runtime-head">
             <span class="cp-runtime-status ${runtimeStatus}">${runtimeStatusLabel}</span>
             <span>${this.runtimeNotice}</span>
@@ -984,6 +880,15 @@ export class ChatPanel extends ChatPanelState {
               Pressure ${this.runtime?.workload.severity ?? 'unknown'}
               ${this.runtime ? `· ${this.runtime.workload.totals.total} activities` : ''}
             </span>
+            ${runtimeStatus === 'running'
+              ? html`<button
+                  class="cp-new-btn"
+                  data-testid="copilot-details-toggle"
+                  @click=${() => (this.runtimeDetailsOpen = !this.runtimeDetailsOpen)}
+                >
+                  ${this.runtimeDetailsOpen ? 'Hide details' : 'Details'}
+                </button>`
+              : ''}
           </div>
           ${this.runtime
             ? html`
@@ -1026,7 +931,7 @@ export class ChatPanel extends ChatPanelState {
                           this.runtimeAutostart = event.target.checked;
                       }}
                     />
-                    Start sandboxed with the Gateway
+                    Start automatically with the Gateway
                   </label>
                   <button
                     class="cp-new-btn"
@@ -1120,25 +1025,33 @@ export class ChatPanel extends ChatPanelState {
         ${runtimeStatus === 'running'
           ? html`
               <div class="cp-terminal" data-testid="copilot-terminal">
+                ${this.streamingError
+                  ? html`<div class="cp-runtime-error" data-testid="copilot-send-error">
+                      ${this.streamingError}
+                    </div>`
+                  : ''}
                 ${this.runtimeWorkerRefJson
                   ? html`<terminal-view
                       .workerRefJson=${this.runtimeWorkerRefJson}
                       compact
                     ></terminal-view>`
-                  : html`<div class="cp-terminal-loading">Connecting to the Co-Pilot tmux…</div>`}
+                  : html`<div class="cp-terminal-loading">
+                      <span>Co-Pilot terminal unavailable.</span>
+                      <button
+                        class="cp-new-btn"
+                        ?disabled=${this.runtimeLoading}
+                        @click=${() => this.loadRuntime()}
+                      >
+                        ${this.runtimeLoading ? 'Checking…' : 'Retry'}
+                      </button>
+                    </div>`}
               </div>
             `
           : html`
               <div class="cp-messages">
                 ${this.messages.length === 0 && !view.isStreaming
                   ? html`<div class="cp-empty">Start the runtime to ask about your fleet.</div>`
-                  : this.messages.map(
-                      (msg) =>
-                        html`<chat-message
-                          .message=${msg}
-                          .nextStepsDisabled=${this.sending}
-                        ></chat-message>`,
-                    )}
+                  : this.messages.map((msg) => html`<chat-message .message=${msg}></chat-message>`)}
                 ${view.isStreaming
                   ? html`
                       <div class="cp-streaming">
@@ -1154,45 +1067,6 @@ export class ChatPanel extends ChatPanelState {
                 <div class="cp-messages-end"></div>
               </div>
             `}
-        <div class="cp-input-area">
-          <textarea
-            class="cp-input"
-            placeholder="Ask about your fleet… (Enter to send, Shift+Enter for newline)"
-            rows="1"
-            .value=${this.inputText}
-            @input=${(e: InputEvent) => {
-              if (e.target instanceof HTMLTextAreaElement) this.inputText = e.target.value;
-            }}
-            @keydown=${this.onKeyDown}
-            ?disabled=${this.sending || runtimeStatus !== 'running'}
-          ></textarea>
-          ${this.inputText.trim()
-            ? html`
-                <button
-                  class="cp-reset-input-btn"
-                  title="Reset input"
-                  aria-label="Reset Co-Pilot input"
-                  @click=${() => {
-                    this.inputText = '';
-                    void this.updateComplete.then(() => {
-                      const input = this.querySelector('.cp-input');
-                      if (input instanceof HTMLTextAreaElement) input.focus();
-                    });
-                  }}
-                  ?disabled=${this.sending}
-                >
-                  ×
-                </button>
-              `
-            : ''}
-          <button
-            class="cp-send-btn"
-            @click=${this.send}
-            ?disabled=${this.sending || !this.inputText.trim() || runtimeStatus !== 'running'}
-          >
-            ${this.sending ? '…' : '→'}
-          </button>
-        </div>
       </div>
       ${this.historyOpen
         ? html`

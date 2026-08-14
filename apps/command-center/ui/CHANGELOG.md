@@ -4,7 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- fix(copilot): show the shared tmux runtime through the existing xterm terminal instead of rendering raw terminal bytes as chat messages.
+- fix(runs): color-code projects consistently with Companion and show the worker's parsed current checklist item in active mini pipelines.
+- fix(copilot): make the shared tmux terminal the primary Co-Pilot surface, collapse runtime controls, remove the redundant message composer, and use the gateway-owned pane identity instead of filtered inventory discovery.
 - fix(dispatch): cache execution-template variants so domain and mode filters switch immediately.
 - fix(review): follow the authoritative active task across retained review/fix rounds, select the reviewer-authored recommendation after artifact refresh, show per-step timing for each round, and collapse directory mirrors to one clearable aggregate transfer.
 - feat(copilot): configure and persist the shared runtime runner, model, and gateway autostart policy from the existing drawer.

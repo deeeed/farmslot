@@ -8,9 +8,10 @@ import {
   type TabTriggerSlotProps,
 } from 'expo-router/ui';
 import { forwardRef, type ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { HeaderBackButton } from '../../components/FallbackHeaderBack';
 import { colors, floatingCopilotGutter, fonts, spacing } from '../../lib/theme';
 
 export interface WorkspaceTabDefinition {
@@ -18,6 +19,49 @@ export interface WorkspaceTabDefinition {
   label: string;
   name: string;
   testID: string;
+}
+
+export interface WorkspaceSectionTabDefinition {
+  id: string;
+  label: string;
+  testID: string;
+}
+
+export function WorkspaceSectionTabs({
+  activeTab,
+  onSelect,
+  tabs,
+}: {
+  activeTab: string;
+  onSelect: (tabId: string) => void;
+  tabs: WorkspaceSectionTabDefinition[];
+}) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.sectionTabScroller}
+      contentContainerStyle={styles.sectionTabList}
+    >
+      {tabs.map((tab) => {
+        const selected = tab.id === activeTab;
+        return (
+          <Pressable
+            key={tab.id}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            testID={tab.testID}
+            style={[styles.tab, styles.sectionTab, selected && styles.tabActive]}
+            onPress={() => onSelect(tab.id)}
+          >
+            <Text numberOfLines={1} style={[styles.tabLabel, selected && styles.tabLabelActive]}>
+              {tab.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
 }
 
 export function WorkspaceTabsLayout({
@@ -44,18 +88,11 @@ export function WorkspaceTabsLayout({
   return (
     <View style={styles.container}>
       <SafeAreaView edges={['top']} style={styles.header}>
-        <Pressable
-          accessibilityLabel="Go back"
-          accessibilityRole="button"
-          hitSlop={12}
-          style={styles.backButton}
-          onPress={exitWorkspace}
-        >
-          <Text style={styles.backLabel}>‹ Back</Text>
-        </Pressable>
+        <HeaderBackButton onPress={exitWorkspace} />
         <Text style={styles.headerTitle} numberOfLines={1}>
           {title}
         </Text>
+        <View style={styles.headerRight} />
       </SafeAreaView>
       <Tabs options={{ backBehavior: 'none' }} style={styles.tabs}>
         <TabList accessibilityRole="tablist" style={styles.tabList}>
@@ -111,22 +148,11 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
-  backButton: {
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.xs,
-  },
-  backLabel: {
-    color: colors.accent,
-    fontSize: fonts.sizeSm,
-    fontWeight: '800',
-  },
   header: {
     alignItems: 'center',
     backgroundColor: colors.bgSurface,
     flexDirection: 'row',
-    minHeight: 48,
-    paddingBottom: spacing.sm,
-    paddingRight: floatingCopilotGutter,
+    minHeight: 44,
   },
   headerTitle: {
     color: colors.textPrimary,
@@ -134,6 +160,10 @@ const styles = StyleSheet.create({
     fontSize: fonts.sizeMd,
     fontWeight: '900',
     minWidth: 0,
+    textAlign: 'center',
+  },
+  headerRight: {
+    width: 44,
   },
   tabs: {
     flex: 1,
@@ -144,6 +174,20 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     flexDirection: 'row',
     paddingRight: floatingCopilotGutter,
+  },
+  sectionTabScroller: {
+    backgroundColor: colors.bgSurface,
+    flexGrow: 0,
+  },
+  sectionTabList: {
+    borderBottomColor: colors.bgCardHover,
+    borderBottomWidth: 1,
+    minWidth: '100%',
+    paddingRight: floatingCopilotGutter,
+  },
+  sectionTab: {
+    flex: 0,
+    minWidth: 84,
   },
   tab: {
     alignItems: 'center',

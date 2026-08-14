@@ -31,8 +31,11 @@ export async function tmuxSessionExists(session: string): Promise<boolean> {
 
 async function localTmuxWorkerNodeId(): Promise<string> {
   const pools = await loadPoolConfigs();
-  const localPool = pools.find((pool) => isLocal(pool.host, pool.machine));
-  return localPool?.machine ?? os.hostname().replace(/\.local$/, '');
+  const hostname = os.hostname().replace(/\.local$/, '');
+  const localPool =
+    pools.find((pool) => pool.machine === hostname) ??
+    pools.find((pool) => isLocal(pool.host, pool.machine));
+  return localPool?.machine ?? hostname;
 }
 
 export async function resolveTmuxSessionWorker(session: string): Promise<TmuxWorkerRef> {
@@ -56,6 +59,34 @@ export async function resolveTmuxSessionWorker(session: string): Promise<TmuxWor
     ...(paneId ? { paneId } : {}),
     target,
   };
+}
+
+export async function resolveTmuxTargetWorker(target: string): Promise<TmuxWorkerRef | null> {
+  try {
+    const exactTarget = target.startsWith('%') || target.startsWith('=') ? target : `=${target}`;
+    const { stdout } = await execFileAsync('tmux', [
+      'display-message',
+      '-p',
+      '-t',
+      exactTarget,
+      '-F',
+      '#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}',
+    ]);
+    const [sessionName, window, windowName, pane, paneId] = stdout.trim().split('\t');
+    if (!sessionName || !window || !pane) return null;
+    return {
+      nodeId: await localTmuxWorkerNodeId(),
+      session: sessionName,
+      window,
+      ...(windowName ? { windowName } : {}),
+      pane,
+      ...(paneId ? { paneId } : {}),
+      target: paneId || `${sessionName}:${window}.${pane}`,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException & { code?: number }).code === 1) return null;
+    throw error;
+  }
 }
 
 export function defaultRefinementRunnerCommand(

@@ -4,9 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(copilot): expose the singleton's exact persisted tmux pane so clients cannot attach to an unrelated window, and report a missing pane without breaking runtime status.
 - fix(copilot): count only actively executing run states in host-pressure totals so completed and human-gated history cannot make the shared runtime report false overload.
 - fix(review): accept fresh id-less fix signals consistently during restart recovery, resume an active fix before mirroring its artifacts, extend CI-fix waits only for the exact accepted runner turn, parse emphasized and multiline verdicts without weakening them, normalize task identity across configured roots, and persist per-round checklist timing.
-- feat(copilot): persist configurable runner/model defaults, reconcile optional singleton autostart on gateway startup, pass Codex hook flags as portable shell argv, and report an exited runtime instead of stale `running` state after a bounded five-second reconciliation window.
+- feat(copilot): persist configurable runner/model defaults, reconcile optional singleton autostart on gateway startup, support an explicit gitignored dangerous-autostart override for local operator checkouts, pass Codex hook flags as portable shell argv, and report an exited runtime instead of stale `running` state after a bounded five-second reconciliation window.
 - Fix queued runtime-capability leases suppressing provider rollback, release, and keep-warm cleanup.
 
 - fix(runtime-capabilities): expose queued pressure, allow explicit forced cleanup after provider provenance changes, ignore errored siblings as live holders, and show the resolved prepare profile in mismatch gates.

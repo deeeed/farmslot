@@ -1,15 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { LayoutChangeEvent, ScrollView } from 'react-native';
-import {
-  Extrapolation,
-  interpolate,
-  runOnJS,
-  useAnimatedReaction,
-  useAnimatedScrollHandler,
-  useAnimatedStyle,
-  useSharedValue,
-} from 'react-native-reanimated';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -28,7 +18,6 @@ import {
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 
-import type { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import {
   artifactsForRecipeRun,
   artifactUrlForEntry,
@@ -57,9 +46,7 @@ import {
   isWorkerProgressActive,
   shouldAcceptTaskProgressUpdate,
 } from '../../lib/task-progress';
-import { spacing } from '../../lib/theme';
 import {
-  selectPrimaryWorkspaceDecision,
   selectReadyWorkspaceDecision,
   selectRetrospectiveWorkspaceDecision,
   selectReviewGateWorkspaceDecision,
@@ -75,19 +62,13 @@ import {
   targetWorkspaceForArtifactRoute,
   targetWorkspaceRouteContextParams,
   workspaceForFamilySection,
-  workspaceNavCurrentForRoute,
   workspaceRouteContextParams,
 } from '../../lib/workspace-navigation';
-import {
-  type WorkspaceStickyNavLayout,
-  workspaceStickyNavThreshold,
-} from '../../lib/workspace-sticky-nav';
 import { useConnectionStore } from '../../store/connection';
 import { routeParamString } from '../workspace-shared/route-params';
 
 import {
   familyArtifactUrl,
-  familyRunDecisionNavMeta,
   hasRecipeArtifacts,
   recipeRunIdForVisualPair,
   summarizeFamilyRecipeEvidence,
@@ -95,7 +76,6 @@ import {
 } from './components/family-workspace-panels';
 import {
   type FamilyRecipeEvidenceSummary,
-  type FamilySectionKey,
   normalizeFamilySectionParam,
 } from './family-workspace-model';
 
@@ -144,18 +124,11 @@ export function useFamilyWorkspaceController() {
   const [selectedFullRun, setSelectedFullRun] = useState<Run | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
   const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
-  const [navLayout, setNavLayout] = useState<WorkspaceStickyNavLayout | null>(null);
-  const [stickyNavVisible, setStickyNavVisibleState] = useState(false);
-  const scrollRef = useRef<ScrollView>(null);
-  const sectionOffsetsRef = useRef<Partial<Record<FamilySectionKey, number>>>({});
-  const pendingSectionRef = useRef<FamilySectionKey | null>(null);
   const documentAbortRef = useRef<AbortController | null>(null);
   const familyRefreshRequestRef = useRef(0);
   const familyRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedRecipeRunsRequestRef = useRef(0);
   const selectedFullRunRequestRef = useRef(0);
-  const scrollY = useSharedValue(0);
-  const stickyNavVisibleRef = useRef(false);
   const requestedRecipeRunId = routeParamString(recipeRun).trim();
   const requestedArtifactPath = routeParamString(artifact).trim();
   const requestedSection = normalizeFamilySectionParam(section);
@@ -169,47 +142,6 @@ export function useFamilyWorkspaceController() {
       ),
     [decisionKind, requestedSection, workspace],
   );
-
-  const setStickyNavVisible = useCallback((visible: boolean) => {
-    if (stickyNavVisibleRef.current === visible) return;
-    stickyNavVisibleRef.current = visible;
-    setStickyNavVisibleState(visible);
-  }, []);
-  const stickyThreshold = workspaceStickyNavThreshold(navLayout);
-  const scrollHandler = useAnimatedScrollHandler({
-    onScroll: (event) => {
-      scrollY.value = event.contentOffset.y;
-    },
-  });
-  const stickyNavStyle = useAnimatedStyle(() => {
-    const progress = interpolate(
-      scrollY.value,
-      [stickyThreshold, stickyThreshold + 40],
-      [0, 1],
-      Extrapolation.CLAMP,
-    );
-    return {
-      opacity: progress,
-      transform: [
-        {
-          translateY: interpolate(progress, [0, 1], [-8, 0], Extrapolation.CLAMP),
-        },
-      ],
-    };
-  }, [stickyThreshold]);
-
-  useAnimatedReaction(
-    () => scrollY.value > stickyThreshold + 8,
-    (visible, previous) => {
-      if (visible !== previous) runOnJS(setStickyNavVisible)(visible);
-    },
-    [setStickyNavVisible, stickyThreshold],
-  );
-
-  const rememberNavLayout = useCallback((event: LayoutChangeEvent) => {
-    const { y, height } = event.nativeEvent.layout;
-    setNavLayout({ y, height });
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -756,44 +688,6 @@ export function useFamilyWorkspaceController() {
     [artifactRouteContext, diffRouteContext, router, workspaceRouteContext],
   );
 
-  const scrollToSection = useCallback((sectionKey: FamilySectionKey): boolean => {
-    const sectionOffset = sectionOffsetsRef.current[sectionKey];
-    if (typeof sectionOffset !== 'number' || !scrollRef.current) return false;
-    scrollRef.current.scrollTo({
-      y: Math.max(0, sectionOffset - spacing.md),
-      animated: true,
-    });
-    return true;
-  }, []);
-
-  const requestSectionScroll = useCallback(
-    (sectionKey: FamilySectionKey) => {
-      pendingSectionRef.current = sectionKey;
-      if (scrollToSection(sectionKey)) {
-        pendingSectionRef.current = null;
-      }
-    },
-    [scrollToSection],
-  );
-
-  const rememberSection = useCallback(
-    (section: FamilySectionKey) => (event: LayoutChangeEvent) => {
-      sectionOffsetsRef.current[section] = event.nativeEvent.layout.y;
-      if (pendingSectionRef.current !== section) return;
-      requestAnimationFrame(() => {
-        if (scrollToSection(section)) {
-          pendingSectionRef.current = null;
-        }
-      });
-    },
-    [scrollToSection],
-  );
-
-  useEffect(() => {
-    if (!requestedSection || !snapshot) return;
-    requestSectionScroll(requestedSection);
-  }, [requestSectionScroll, requestedSection, snapshot]);
-
   const goBackOrRuns = useCallback(() => {
     if (router.canGoBack()) {
       router.back();
@@ -844,7 +738,6 @@ export function useFamilyWorkspaceController() {
     !selectedActiveTaskProgress && isWorkerProgressActive(selectedFullRun)
       ? fallbackTaskProgressSummary(selectedFullRun)
       : null;
-  const primaryDecision = selectPrimaryWorkspaceDecision(selectedRun);
   const readyDecision = selectReadyWorkspaceDecision(selectedRun);
   const reviewGateDecision = selectReviewGateWorkspaceDecision(selectedRun);
   const retroDecision = selectRetrospectiveWorkspaceDecision(selectedRun);
@@ -943,66 +836,6 @@ export function useFamilyWorkspaceController() {
   const priorityCompareRecipeRunId = priorityVisualPairIsRecipe
     ? recipeRunIdForVisualPair(selectedRecipeRuns, priorityVisualPair)
     : DECISION_EVIDENCE_RECIPE_RUN_PARAM;
-  const selectedReadyMeta = familyRunDecisionNavMeta({
-    run: selectedRun,
-    decision: readyDecision,
-    diffValue: selectedDiffValue,
-    visualPairCount: priorityVisualPairs.length,
-  });
-  const selectedReviewMeta = familyRunDecisionNavMeta({
-    run: selectedRun,
-    decision: reviewGateDecision,
-    diffValue: selectedDiffValue,
-    visualPairCount: priorityVisualPairs.length,
-  });
-  const selectedRetroMeta = familyRunDecisionNavMeta({
-    run: selectedRun,
-    decision: retroDecision,
-    diffValue: selectedDiffValue,
-    visualPairCount: priorityVisualPairs.length,
-  });
-  const workspaceNavCurrent: ComponentProps<typeof RunWorkspaceNav>['current'] =
-    requestedSection === 'retros'
-      ? 'familyRetros'
-      : workspaceNavCurrentForRoute('family', workspaceRouteContext.workspace);
-  const workspaceNavProps = {
-    dense: true,
-    current: workspaceNavCurrent,
-    routeWorkspace: workspaceRouteContext.workspace,
-    routeDecisionKind: workspaceRouteContext.decisionKind,
-    decisionId: primaryDecision?.id ?? null,
-    decisionKind: workspaceDecisionKind(primaryDecision),
-    readyDecisionId: readyDecision?.id ?? null,
-    reviewDecisionId: reviewGateDecision?.id ?? null,
-    retroDecisionId: retroDecision?.id ?? null,
-    readyMeta: selectedReadyMeta,
-    reviewMeta: selectedReviewMeta,
-    retroMeta: selectedRetroMeta,
-    familyRetrospectiveCount: familyRetrospectives.length,
-    pendingFamilyRetrospectiveCount: pendingRetrospectiveCount,
-    familyId: snapshot.familyId,
-    project: snapshot.project ?? project,
-    prNumber: selectedRun?.prNumber ?? snapshot.latestPrNumber,
-    prRepo: prRepoFromWorkspaceSource(
-      selectedRun,
-      selectedRun?.prNumber ?? snapshot.latestPrNumber,
-    ),
-    recipeRunId: selectedRun ? requestedRecipeRunId || DECISION_EVIDENCE_RECIPE_RUN_PARAM : null,
-    recipeAvailable: selectedRecipeAvailable,
-    recipeArtifactCount: selectedRecipeArtifactCount,
-    diffAvailable: selectedRun
-      ? selectedRun.diffStat.available || Boolean(selectedRun.slotId)
-      : snapshot.diffStat.available,
-    artifactCount: selectedRun ? selectedRun.artifacts.length : snapshot.evidence.length,
-    visualPairCount: priorityVisualPairs.length,
-    compareArtifactPath: priorityVisualPair?.after.path ?? null,
-    compareRunId: priorityCompareRunId,
-    compareRecipeRunId: priorityCompareRecipeRunId,
-    artifactPath: requestedArtifactPath || null,
-    slotId: selectedRun?.slotId,
-    runId: selectedRun?.runId ?? snapshot.latestRunId,
-  };
-
   return {
     status: 'ready' as const,
     snapshot,
@@ -1017,7 +850,6 @@ export function useFamilyWorkspaceController() {
     openPRForRun,
     selectedActiveTaskProgress,
     selectedFallbackTaskProgress,
-    primaryDecision,
     readyDecision,
     reviewGateDecision,
     retroDecision,
@@ -1039,10 +871,6 @@ export function useFamilyWorkspaceController() {
     priorityVisualPairIsRecipe,
     priorityCompareRunId,
     priorityCompareRecipeRunId,
-    selectedReadyMeta,
-    selectedReviewMeta,
-    selectedRetroMeta,
-    workspaceNavProps,
     gatewayUrl,
     artifactAuthHeaders,
     viewerUri,
@@ -1051,12 +879,6 @@ export function useFamilyWorkspaceController() {
     setDocumentViewer,
     evidenceFilter,
     setEvidenceFilter,
-    navLayout,
-    stickyNavVisible,
-    scrollRef,
-    scrollHandler,
-    stickyNavStyle,
-    rememberNavLayout,
     router,
     familyId,
     project,
@@ -1076,7 +898,6 @@ export function useFamilyWorkspaceController() {
     evidenceCounts,
     taskProgress,
     taskProgressError,
-    requestSectionScroll,
     targetRouteContext,
     diffRouteContext,
     artifactRouteContext,
@@ -1084,8 +905,6 @@ export function useFamilyWorkspaceController() {
     openDiffArtifact,
     openFamilyRecipeArtifact,
     openFamilyArtifactWorkspace,
-    rememberSection,
-    scrollToSection,
     runForArtifact,
     visualViewerItems,
     viewerIndex,

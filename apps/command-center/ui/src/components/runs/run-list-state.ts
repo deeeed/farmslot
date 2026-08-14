@@ -12,6 +12,7 @@ import type {
   RunListSummaryMeta,
   RunProjectAnalyticsSummary,
   RunStatus,
+  TaskProgressStructured,
 } from '@farmslot/protocol';
 
 import type { GlobalFilters } from '../../state.js';
@@ -119,6 +120,7 @@ export abstract class RunListState extends LitElement {
   @state() actionInProgress = false;
   @state() hydrating = false;
   @state() bootstrapFailed = false;
+  @state() taskProgressByRun = new Map<string, TaskProgressStructured>();
   unsub?: () => void;
   _onHashChange = () => {
     const raw = location.hash.replace(/^#/, '');

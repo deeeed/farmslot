@@ -55,7 +55,9 @@ The Co-Pilot runtime defaults to this Farmslot checkout and Codex `gpt-5.6-sol`.
 runner/model and Gateway-autostart policy through `copilot.configure`; the Gateway persists that
 choice. `FARMSLOT_OPERATOR_CHECKOUT`, `FARMSLOT_COPILOT_RUNNER`, and `FARMSLOT_COPILOT_MODEL`
 remain bootstrap overrides. Dangerous execution still requires the per-start typed confirmation
-returned by `copilot.status`.
+returned by `copilot.status`. A local development checkout can explicitly persist dangerous
+autostart by setting `FARMSLOT_COPILOT_DANGEROUS_AUTOSTART=ENABLE DANGEROUS CO-PILOT` in its
+gitignored `.env`; the default remains sandboxed when that exact value is absent.
 
 ```bash
 yarn workspace @farmslot/gateway quality

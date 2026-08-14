@@ -1,6 +1,7 @@
 import type { SafetyTier } from '../contracts/agents.js';
 
 import { Methods } from './registry.js';
+import type { TmuxWorkerRef } from './tmux.js';
 
 export const CopilotRuntimeMethods = {
   status: Methods.COPILOT_STATUS,
@@ -95,6 +96,8 @@ export interface CopilotRuntimeSession {
   runtimeId: string;
   status: CopilotRuntimeStatus;
   tmuxTarget: string;
+  /** Authoritative terminal identity for clients; avoids rediscovering the singleton via inventory. */
+  terminalWorker?: TmuxWorkerRef;
   transcriptId: string;
   runner: string;
   model: string;

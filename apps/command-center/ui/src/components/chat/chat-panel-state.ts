@@ -26,7 +26,6 @@ export abstract class ChatPanelState extends LitElement {
   @state() protected streamingStatus = '';
   @state() protected streamingError = '';
   @state() protected sending = false;
-  @state() protected inputText = '';
   @state() protected memorySavedToast: string | null = null;
   @state() protected sessionCost = 0;
   @state() protected usageOpen = false;
@@ -48,6 +47,7 @@ export abstract class ChatPanelState extends LitElement {
   @state() protected runtimeModel = '';
   @state() protected runtimeAutostart = false;
   @state() protected runtimeWorkerRefJson = '';
+  @state() protected runtimeDetailsOpen = false;
   @state() protected dangerousConfirmationOpen = false;
   @state() protected dangerousTypedPhrase = '';
 
@@ -57,11 +57,6 @@ export abstract class ChatPanelState extends LitElement {
   protected unsubConnection?: () => void;
   protected unsubRuntime?: () => void;
   protected toastTimer?: ReturnType<typeof setTimeout>;
-  protected runtimeWorkerLookup?: Promise<void>;
-  protected runtimeWorkerLookupTarget = '';
-  protected runtimeWorkerRetry?: ReturnType<typeof setTimeout>;
-  protected runtimeWorkerRetryMs = 1000;
-  protected runtimeWorkerSession = '';
   protected resizing = false;
   protected resizeStartY = 0;
   protected resizeStartHeight = DEFAULT_DRAWER_HEIGHT;
