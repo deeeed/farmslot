@@ -235,6 +235,8 @@ export class RunList extends RunListState {
             );
           }
         } catch (error) {
+          // This optional label can retry later; live task-progress events still update the row.
+          this.taskProgressFetches.delete(run.id);
           console.warn(
             `[run-list] task progress fetch failed for ${run.id}:`,
             error instanceof Error ? error.message : String(error),

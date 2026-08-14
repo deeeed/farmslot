@@ -1,7 +1,7 @@
 import { html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type { ChatMessage, ChatNextStep } from '@farmslot/protocol';
+import type { ChatMessage } from '@farmslot/protocol';
 
 import './chat-action-card.js';
 
@@ -11,7 +11,6 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 export class ChatMessageElement extends LitElement {
   @property({ attribute: false }) message!: ChatMessage;
   @property({ type: Boolean }) isStreaming = false;
-  @property({ type: Boolean }) nextStepsDisabled = false;
 
   protected override createRenderRoot() {
     return this;
@@ -100,42 +99,6 @@ export class ChatMessageElement extends LitElement {
     return value
       .replaceAll(secretSentinel, '[redacted sentinel secret]')
       .replaceAll(snippetSentinel, '[redacted sentinel file snippet]');
-  }
-
-  private renderNextSteps() {
-    const nextSteps = this.message.nextSteps ?? [];
-    if (this.message.role !== 'assistant' || nextSteps.length === 0) return html``;
-
-    return html`
-      <div class="cm-next-steps">
-        <div class="cm-next-title">Next steps</div>
-        <div class="cm-next-list">
-          ${nextSteps.map(
-            (step) => html`
-              <button
-                class="cm-next-step"
-                title="Read-only follow-up"
-                ?disabled=${this.nextStepsDisabled}
-                @click=${() => this.selectNextStep(step)}
-              >
-                <span class="cm-next-label">${step.label}</span>
-                <span class="cm-next-meta">${step.kind} · ${step.safety}</span>
-              </button>
-            `,
-          )}
-        </div>
-      </div>
-    `;
-  }
-
-  private selectNextStep(step: ChatNextStep) {
-    this.dispatchEvent(
-      new CustomEvent<ChatNextStep>('next-step-select', {
-        detail: step,
-        bubbles: true,
-        composed: true,
-      }),
-    );
   }
 
   render() {
@@ -271,58 +234,6 @@ export class ChatMessageElement extends LitElement {
           color: ${colors.textSecondary};
           line-height: 1.4;
         }
-        chat-message .cm-next-steps {
-          max-width: 85%;
-          align-self: flex-start;
-          margin-top: ${spacing.sm};
-          border: 1px solid ${colors.bgCardHover};
-          border-radius: ${radii.sm};
-          padding: ${spacing.sm};
-          background: ${colors.bgSurface};
-          font-family: ${fonts.mono};
-        }
-        chat-message .cm-next-title {
-          color: ${colors.textMuted};
-          font-size: ${fonts.sizeXs};
-          margin-bottom: ${spacing.xs};
-        }
-        chat-message .cm-next-list {
-          display: flex;
-          flex-wrap: wrap;
-          gap: ${spacing.xs};
-        }
-        chat-message .cm-next-step {
-          border: 1px solid ${colors.accent}44;
-          background: ${colors.accent}12;
-          color: ${colors.textPrimary};
-          border-radius: ${radii.sm};
-          padding: ${spacing.xs} ${spacing.sm};
-          font-family: ${fonts.mono};
-          font-size: ${fonts.sizeXs};
-          cursor: pointer;
-          display: flex;
-          flex-direction: column;
-          align-items: flex-start;
-          gap: 2px;
-          min-width: 160px;
-          max-width: 240px;
-          text-align: left;
-        }
-        chat-message .cm-next-step:hover {
-          background: ${colors.accent}22;
-        }
-        chat-message .cm-next-step:disabled {
-          cursor: not-allowed;
-          opacity: 0.55;
-        }
-        chat-message .cm-next-label {
-          overflow-wrap: anywhere;
-          line-height: 1.3;
-        }
-        chat-message .cm-next-meta {
-          color: ${colors.textMuted};
-          font-size: 10px;
-        }
       </style>
       <div class="cm-wrapper">
         <div class="cm-ts">${new Date(this.message.timestamp).toLocaleTimeString()}</div>
@@ -334,7 +245,7 @@ export class ChatMessageElement extends LitElement {
         ${!isUser && this.message.usage?.costUsd
           ? html`<span class="cm-cost-badge">$${this.message.usage.costUsd.toFixed(4)}</span>`
           : ''}
-        ${this.renderToolTrace()} ${this.renderNextSteps()}
+        ${this.renderToolTrace()}
         ${this.message.suggestedActions?.map(
           (action) => html` <chat-action-card .action=${action}></chat-action-card> `,
         ) ?? ''}

@@ -1051,12 +1051,7 @@ export class ChatPanel extends ChatPanelState {
               <div class="cp-messages">
                 ${this.messages.length === 0 && !view.isStreaming
                   ? html`<div class="cp-empty">Start the runtime to ask about your fleet.</div>`
-                  : this.messages.map(
-                      (msg) =>
-                        html`<chat-message
-                          .message=${msg.nextSteps?.length ? { ...msg, nextSteps: [] } : msg}
-                        ></chat-message>`,
-                    )}
+                  : this.messages.map((msg) => html`<chat-message .message=${msg}></chat-message>`)}
                 ${view.isStreaming
                   ? html`
                       <div class="cp-streaming">

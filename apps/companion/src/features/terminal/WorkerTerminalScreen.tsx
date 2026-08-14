@@ -184,6 +184,9 @@ export default function WorkerTerminalScreen() {
   );
 
   const title = titleParam || worker?.target || 'Worker terminal';
+  const workerSubtitle = worker
+    ? `${worker.nodeId} · ${worker.session}:${worker.windowName ?? worker.window}.${worker.pane}`
+    : 'Missing worker target';
   const connectionReady = status === 'connected' && Boolean(client);
   const workerReady = connectionReady && Boolean(worker);
   const hasVoiceDraft = voiceDraft.trim().length > 0;
@@ -619,7 +622,7 @@ export default function WorkerTerminalScreen() {
                 {title}
               </Text>
               <Text style={styles.subtitle} numberOfLines={1}>
-                {worker ? `${worker.nodeId} · ${worker.target}` : 'Missing worker target'}
+                {workerSubtitle}
               </Text>
             </View>
             <Pressable
@@ -652,7 +655,7 @@ export default function WorkerTerminalScreen() {
                 {title}
               </Text>
               <Text style={styles.subtitle} numberOfLines={1}>
-                {worker ? `${worker.nodeId} · ${worker.target}` : 'Missing worker target'}
+                {workerSubtitle}
               </Text>
             </View>
             <Pressable

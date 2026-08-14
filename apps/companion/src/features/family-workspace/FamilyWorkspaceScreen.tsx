@@ -1,6 +1,5 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { Pressable, Text, View } from 'react-native';
-import Animated from 'react-native-reanimated';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import type { FamilyObservabilityArtifact } from '@farmslot/protocol';
 
@@ -52,7 +51,7 @@ const FAMILY_WORKSPACE_TABS = [
 ] as const;
 
 function familyWorkspaceTab(section: string): FamilyWorkspaceTab {
-  if (section === 'runs') return 'runs';
+  if (section === 'runs' || section === 'focus') return 'runs';
   if (section === 'evidence' || section === 'compare') return 'evidence';
   if (section === 'changes' || section === 'ledger') return 'changes';
   if (section === 'retros') return 'retros';
@@ -91,8 +90,6 @@ export default function FamilyWorkspaceScreen() {
     snapshot,
     error,
     insets,
-    scrollRef,
-    scrollHandler,
     workflowColor,
     familyRetrospectives,
     pendingRetrospectiveCount,
@@ -145,7 +142,6 @@ export default function FamilyWorkspaceScreen() {
     openDiffArtifact,
     openFamilyRecipeArtifact,
     openFamilyArtifactWorkspace,
-    rememberSection,
     visualViewerItems,
     viewerIndex,
   } = screen;
@@ -159,10 +155,7 @@ export default function FamilyWorkspaceScreen() {
           tabs={[...FAMILY_WORKSPACE_TABS]}
           onSelect={(tabId) => router.setParams({ section: tabId })}
         />
-        <Animated.ScrollView
-          ref={scrollRef}
-          onScroll={scrollHandler}
-          scrollEventThrottle={16}
+        <ScrollView
           contentContainerStyle={[
             styles.scrollContent,
             {
@@ -613,7 +606,7 @@ export default function FamilyWorkspaceScreen() {
             />
           ) : null}
           {activeTab === 'runs' && selectedRun ? (
-            <View onLayout={rememberSection('focus')}>
+            <View>
               <FamilyRunWorkspaceCard
                 run={selectedRun}
                 activeRunId={selectedRun.runId}
@@ -742,7 +735,7 @@ export default function FamilyWorkspaceScreen() {
           ) : null}
 
           {activeTab === 'evidence' ? (
-            <View onLayout={rememberSection('compare')}>
+            <View>
               <FamilyComparePanel
                 pairs={priorityVisualPairs}
                 recipeFallback={priorityVisualPairIsRecipe}
@@ -788,7 +781,7 @@ export default function FamilyWorkspaceScreen() {
           ) : null}
 
           {activeTab === 'changes' ? (
-            <View onLayout={rememberSection('ledger')}>
+            <View>
               <FamilyChangeLedgerPanel
                 snapshot={snapshot}
                 onOpenRun={(runIdValue) =>
@@ -845,7 +838,7 @@ export default function FamilyWorkspaceScreen() {
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
           {activeTab === 'retros' ? (
-            <View style={styles.section} onLayout={rememberSection('retros')}>
+            <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <View>
                   <Text style={styles.sectionTitle}>Retrospectives</Text>
@@ -987,7 +980,7 @@ export default function FamilyWorkspaceScreen() {
           ) : null}
 
           {activeTab === 'evidence' ? (
-            <View style={styles.section} onLayout={rememberSection('evidence')}>
+            <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Evidence workspace</Text>
                 <Text style={styles.sectionMeta}>
@@ -1091,7 +1084,7 @@ export default function FamilyWorkspaceScreen() {
           ) : null}
 
           {activeTab === 'runs' ? (
-            <View style={styles.section} onLayout={rememberSection('runs')}>
+            <View style={styles.section}>
               <Text style={styles.sectionTitle}>Family runs</Text>
               {snapshot.runs.map((run) => (
                 <RunCard
@@ -1213,7 +1206,7 @@ export default function FamilyWorkspaceScreen() {
               ))}
             </View>
           )}
-        </Animated.ScrollView>
+        </ScrollView>
         <MediaViewer
           visible={!!viewerUri}
           uri={viewerUri}

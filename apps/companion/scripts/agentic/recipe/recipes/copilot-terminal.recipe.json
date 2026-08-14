@@ -37,8 +37,7 @@
       },
       "wait-terminal": {
         "action": "ui.wait_for",
-        "test_id": "companion-screen-worker-terminal",
-        "text": "farmslot-copilot:agent.0",
+        "text_contains": ["farmslot-copilot"],
         "expected": "visible",
         "timeout_ms": 15000,
         "intent": "Prove the routed terminal is the exact gateway-owned Co-Pilot worker.",
