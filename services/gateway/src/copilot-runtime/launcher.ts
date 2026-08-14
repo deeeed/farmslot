@@ -4,13 +4,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { DEFAULT_RUNNER, type SafetyTier } from '@farmslot/protocol';
+import {
+  COPILOT_TMUX_SESSION,
+  COPILOT_TMUX_TARGET,
+  COPILOT_TMUX_WINDOW_INDEX,
+  COPILOT_TMUX_WINDOW_NAME,
+  type SafetyTier,
+} from '@farmslot/protocol';
 import type { SlotVars } from '@farmslot/slot-config';
 
 import { shellQuote } from '../core/tmux.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 import { buildLaunchCommand } from '../runners/launch-command.js';
 import {
+  DEFAULT_COPILOT_RUNNER,
   getRunnerDefinition,
   isKnownRunner,
   normalizeRunner,
@@ -20,8 +27,7 @@ import {
 import type { CopilotRuntimeStore } from './session-store.js';
 
 const execFileAsync = promisify(execFile);
-export const COPILOT_TMUX_SESSION = 'farmslot-copilot';
-export const COPILOT_TMUX_TARGET = `${COPILOT_TMUX_SESSION}:agent.0`;
+export { COPILOT_TMUX_SESSION, COPILOT_TMUX_TARGET };
 
 export interface CopilotTmuxAdapter {
   listCandidates(session: string): Promise<string[]>;
@@ -51,7 +57,7 @@ export const localCopilotTmuxAdapter: CopilotTmuxAdapter = {
       '-s',
       session,
       '-n',
-      'agent',
+      COPILOT_TMUX_WINDOW_NAME,
       '-c',
       checkout,
       command,
@@ -59,7 +65,7 @@ export const localCopilotTmuxAdapter: CopilotTmuxAdapter = {
     await execFileAsync('tmux', [
       'set-window-option',
       '-t',
-      `${session}:agent`,
+      `${session}:${COPILOT_TMUX_WINDOW_NAME}`,
       'pane-base-index',
       '0',
     ]);
@@ -70,13 +76,13 @@ export const localCopilotTmuxAdapter: CopilotTmuxAdapter = {
       '-F',
       '#{window_index}',
     ]);
-    if (windowIndex.trim() !== '0') {
+    if (windowIndex.trim() !== COPILOT_TMUX_WINDOW_INDEX) {
       await execFileAsync('tmux', [
         'move-window',
         '-s',
-        `${session}:agent`,
+        `${session}:${COPILOT_TMUX_WINDOW_NAME}`,
         '-t',
-        `${session}:0`,
+        `${session}:${COPILOT_TMUX_WINDOW_INDEX}`,
       ]);
     }
     await execFileAsync('tmux', ['set-option', '-t', session, 'base-index', '0']);
@@ -141,16 +147,13 @@ export function resolveCopilotRunner(input?: { runner?: string; model?: string }
   model: string;
 } {
   const runner = normalizeRunner(
-    input?.runner || process.env.FARMSLOT_COPILOT_RUNNER || DEFAULT_RUNNER,
+    input?.runner || process.env.FARMSLOT_COPILOT_RUNNER || DEFAULT_COPILOT_RUNNER,
   );
   if (!isKnownRunner(runner) || !getRunnerDefinition(runner).supportsInteractivePrompt) {
     throw new Error(`Runner '${runner}' does not support the interactive Co-Pilot runtime`);
   }
   const model =
-    input?.model ||
-    process.env.FARMSLOT_COPILOT_MODEL ||
-    runnerDefaultModel(runner) ||
-    'unknown';
+    input?.model || process.env.FARMSLOT_COPILOT_MODEL || runnerDefaultModel(runner) || 'unknown';
   if (!getRunnerDefinition(runner).acceptsModel(model)) {
     throw new Error(`Runner '${runner}' does not accept model '${model}'`);
   }

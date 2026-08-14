@@ -56,6 +56,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'config.templateOptions': { classification: 'admin' },
   'config.templatePreview': { classification: 'admin' },
   'config.templates': { classification: 'admin' },
+  'copilot.configure': { classification: 'admin' },
   'copilot.formatInstruction': { classification: 'admin' },
   'copilot.start': { classification: 'admin' },
   'copilot.status': { classification: 'admin' },

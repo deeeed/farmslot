@@ -15,6 +15,7 @@ type SlotViewAgentContextLike = Pick<
   | 'status'
   | 'runId'
   | 'taskFile'
+  | 'taskIdentity'
   | 'signalFile'
   | 'runner'
   | 'model'
@@ -75,6 +76,7 @@ function toAgentContextSummary(ctx: SlotViewAgentContextLike): AgentContextSumma
     status: ctx.status,
     runId: ctx.runId,
     taskFile: ctx.taskFile,
+    taskIdentity: ctx.taskIdentity,
     signalFile: ctx.signalFile,
     runner: ctx.runner,
     model: ctx.model,
@@ -166,11 +168,40 @@ export function selectSlotViewAgentContext(
   return contexts.find((ctx) => ctx.role === 'primary') ?? contexts[0] ?? null;
 }
 
-/** Primary worker checklist is independent from terminal/history navigation. */
+function normalizedTaskFile(taskFile: string | null | undefined): string {
+  return (taskFile ?? '').replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/+$/, '');
+}
+
+function canonicalTaskIdentity(taskFile: string): string | null {
+  const match = taskFile.match(
+    /(?:^|\/)(?:temp\/tasks|projects\/[^/]+\/tasks|\.sandbox\/[^/]+\/(?:tasks|worker-task)|worker-task)\/(.+)$/,
+  );
+  return match?.[1] ?? null;
+}
+
+function taskFilesMatch(
+  context: AgentContextSummary,
+  activeTaskFile: string | null | undefined,
+): boolean {
+  const a = normalizedTaskFile(context.taskFile);
+  const b = normalizedTaskFile(activeTaskFile);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const taskIdentity = normalizedTaskFile(context.taskIdentity);
+  if (taskIdentity && (b === taskIdentity || b.endsWith(`/${taskIdentity}`))) return true;
+  const aIdentity = canonicalTaskIdentity(a);
+  const bIdentity = canonicalTaskIdentity(b);
+  return aIdentity != null && aIdentity === bIdentity;
+}
+
+/** Active run checklist is independent from terminal/history navigation. */
 export function selectSlotViewTaskContext(
   contexts: AgentContextSummary[],
   flowType?: Run['flowType'] | string | null,
+  activeTaskFile?: string | null,
 ): AgentContextSummary | null {
+  const active = contexts.find((ctx) => taskFilesMatch(ctx, activeTaskFile));
+  if (active) return active;
   const primaryRole = primaryRoleForFlow(flowType);
   return (
     contexts.find((ctx) => ctx.role === primaryRole) ??

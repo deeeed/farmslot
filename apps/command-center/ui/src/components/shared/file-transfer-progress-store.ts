@@ -7,6 +7,7 @@
 import { Events, type FileTransferProgress } from '@farmslot/protocol';
 
 import {
+  clearCompletedFileTransferEntries,
   type FileTransferUiEntry,
   filterTransfersForRun,
   pruneFileTransfers,
@@ -96,6 +97,14 @@ export function getFileTransferEntries(): readonly FileTransferUiEntry[] {
 
 export function getFileTransfersForRun(runId: string | undefined | null): FileTransferUiEntry[] {
   return filterTransfersForRun(entries, runId);
+}
+
+/** Remove terminal transfer noise while preserving active and failed diagnostics. */
+export function clearCompletedFileTransfers(runId?: string | null): void {
+  const next = clearCompletedFileTransferEntries(entries, runId);
+  if (next.length === entries.length) return;
+  entries = next;
+  notify();
 }
 
 /** Best summary for pipeline nodes: prefer running, else latest terminal. */

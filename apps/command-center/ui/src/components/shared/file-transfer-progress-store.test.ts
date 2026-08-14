@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { FileTransferProgress } from '@farmslot/protocol';
 
 import {
+  clearCompletedFileTransferEntries,
   type FileTransferUiEntry,
   filterTransfersForRun,
   formatPipelineTransferMeta,
@@ -111,5 +112,19 @@ test('formatPipelineTransferMeta reports failed and cancelled', () => {
       updatedAt: 1,
     }),
     'cancelled',
+  );
+});
+
+test('clearCompletedFileTransferEntries clears only successful rows in the selected scope', () => {
+  const entries: FileTransferUiEntry[] = [
+    { ...progress({ transferId: 'done-a', runId: 'a', state: 'done' }), updatedAt: 1 },
+    { ...progress({ transferId: 'done-b', runId: 'b', state: 'done' }), updatedAt: 2 },
+    { ...progress({ transferId: 'failed-a', runId: 'a', state: 'failed' }), updatedAt: 3 },
+    { ...progress({ transferId: 'running-a', runId: 'a', state: 'running' }), updatedAt: 4 },
+  ];
+
+  assert.deepEqual(
+    clearCompletedFileTransferEntries(entries, 'a').map((entry) => entry.transferId),
+    ['done-b', 'failed-a', 'running-a'],
   );
 });

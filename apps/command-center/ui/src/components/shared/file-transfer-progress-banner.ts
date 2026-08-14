@@ -12,6 +12,7 @@ import {
   transferPercent,
 } from './file-transfer-progress-model.js';
 import {
+  clearCompletedFileTransfers,
   getFileTransfersForRun,
   retainFileTransferStore,
   subscribeFileTransferStore,
@@ -53,6 +54,14 @@ export class FileTransferProgressBanner extends LitElement {
       flex-direction: column;
       gap: 8px;
       pointer-events: auto;
+    }
+    .ftp-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      color: ${unsafeCSS(colors.textMuted)};
+      font-size: 10px;
     }
     .ftp-card {
       border: 1px solid #2a2a44;
@@ -199,6 +208,14 @@ export class FileTransferProgressBanner extends LitElement {
   override render() {
     const entries = this._entries;
     if (entries.length === 0) return nothing;
+    // Directory mirrors already publish one aggregate entry with file/byte progress.
+    // Rendering each child duplicates that progress and floods the operator surface.
+    const visibleEntries = entries.filter(
+      (entry) => !entry.parentTransferId || entry.state === 'failed' || entry.state === 'cancelled',
+    );
+    if (visibleEntries.length === 0) return nothing;
+    const completedCount = visibleEntries.filter((entry) => entry.state === 'done').length;
+    const detailedEntries = visibleEntries.filter((entry) => entry.state !== 'done');
     return html`
       <div
         class="ftp-stack"
@@ -206,7 +223,19 @@ export class FileTransferProgressBanner extends LitElement {
           ? 'file-transfer-progress-inline'
           : 'file-transfer-progress-banner'}
       >
-        ${entries.map((entry) => this._renderCard(entry))}
+        ${completedCount > 0
+          ? html`<div class="ftp-toolbar">
+              <span>${completedCount} completed transfer${completedCount === 1 ? '' : 's'}</span>
+              <button
+                class="ftp-cancel"
+                data-testid="file-transfer-clear-completed"
+                @click=${() => clearCompletedFileTransfers(this.runId || null)}
+              >
+                clear completed
+              </button>
+            </div>`
+          : nothing}
+        ${detailedEntries.map((entry) => this._renderCard(entry))}
       </div>
     `;
   }

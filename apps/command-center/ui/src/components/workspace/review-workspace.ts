@@ -68,6 +68,19 @@ import {
 } from './workspace-evidence-preview.js';
 import type { ReviewWorkspaceTab } from './workspace-url-state.js';
 
+function reviewRecommendation(
+  payload: ReviewGatePayload,
+): 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE' {
+  switch (payload.recommendation?.trim().toUpperCase()) {
+    case 'REQUEST_CHANGES':
+      return 'REQUEST_CHANGES';
+    case 'APPROVE':
+      return 'APPROVE';
+    default:
+      return 'COMMENT';
+  }
+}
+
 @customElement('review-workspace')
 export class ReviewWorkspace extends ReviewWorkspaceState {
   private readonly _onHashChange = () => {
@@ -194,7 +207,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   willUpdate() {
     if (!this._initialized && this.decision) {
       this._includedComments = new Set(this._comments.map((_, i) => i));
-      this._selectedRecommendation = this._payload.recommendation ?? 'COMMENT';
+      this._selectedRecommendation = reviewRecommendation(this._payload);
       this._initialized = true;
       this._readTabFromHash();
       this._normalizeActiveTab();
@@ -224,6 +237,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       } else {
         this._includeEvidence = true;
       }
+      this._selectedRecommendation = reviewRecommendation(this._payload);
       this._normalizeActiveTab();
     }
     // Re-check if slotId changes

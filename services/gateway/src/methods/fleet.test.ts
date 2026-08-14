@@ -121,6 +121,7 @@ test('fleet refresh reconciliation preserves active run ownership when status pr
       status: 'working',
       runId: 'run-active',
       taskFile: '.task/feat/tat-3215-0622-110508/TASK.md',
+      taskIdentity: 'tat-3215-0622-110508/TASK.md',
       signalFile: '.task/feat/tat-3215-0622-110508/SIGNAL.json',
       runner: 'claude',
       model: 'opus',

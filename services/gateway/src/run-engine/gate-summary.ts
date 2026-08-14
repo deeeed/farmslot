@@ -16,6 +16,7 @@
  */
 
 import {
+  deriveChecklistStepDurations,
   type FlowType,
   GATE_SUMMARY_KINDS,
   type GatePolicy,
@@ -87,14 +88,7 @@ function buildChecklist(run: Run): GateSummary['checklist'] {
   const timing = run.metrics.checklistTiming;
   if (!timing?.events?.length) return undefined;
   const events = [...timing.events].sort((a, b) => a.checkedAt.localeCompare(b.checkedAt));
-  let prev: number | null = null;
-  const perStepMs = events.map((e) => {
-    const at = Date.parse(e.checkedAt);
-    // First marked step has no prior mark to delta against — report 0 rather than guess.
-    const durationMs = prev != null && Number.isFinite(at) ? Math.max(0, at - prev) : 0;
-    if (Number.isFinite(at)) prev = at;
-    return { stepNumber: e.stepNumber, label: e.label, durationMs };
-  });
+  const perStepMs = deriveChecklistStepDurations(timing);
   return { events, perStepMs };
 }
 

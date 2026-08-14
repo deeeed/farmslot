@@ -926,6 +926,18 @@ export function updateRun(id: string, partial: Partial<Run>): Run {
   return run;
 }
 
+/**
+ * Clear a workflow-owned task path only while that same task still owns it.
+ * A reviewer/fix cleanup can finish after its successor has already published
+ * a new active task; an unconditional clear would erase the successor.
+ */
+export function clearRunActiveTaskFile(id: string, expectedTaskFile: string): Run {
+  const run = runs.get(id);
+  if (!run) throw new Error(`Run not found: ${id}`);
+  if (run.activeTaskFile !== expectedTaskFile) return run;
+  return updateRun(id, { activeTaskFile: undefined });
+}
+
 export function updateRunAgentContexts(
   id: string,
   mutator: (run: Run, contexts: AgentContext[]) => AgentContext[],

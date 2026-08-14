@@ -193,6 +193,23 @@ export function renderChatPanelStyles() {
       display: flex;
       flex-direction: column;
     }
+    chat-panel .cp-terminal {
+      flex: 1;
+      min-height: 200px;
+      padding: ${spacing.sm};
+      overflow: hidden;
+    }
+    chat-panel .cp-terminal terminal-view {
+      height: 100%;
+      min-height: 0;
+    }
+    chat-panel .cp-terminal-loading {
+      height: 100%;
+      display: grid;
+      place-items: center;
+      color: ${colors.textMuted};
+      font-size: ${fonts.sizeSm};
+    }
     chat-panel .cp-streaming {
       background: ${colors.bgCard};
       border: 1px solid ${colors.bgCardHover};
@@ -368,6 +385,20 @@ export function renderChatPanelStyles() {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    chat-panel .cp-runtime-config {
+      display: grid;
+      gap: ${spacing.sm};
+      margin: ${spacing.md} 0;
+      padding: ${spacing.md};
+      border: 1px solid ${colors.bgCardHover};
+      border-radius: ${radii.sm};
+    }
+    chat-panel .cp-runtime-autostart {
+      display: flex;
+      align-items: center;
+      gap: ${spacing.sm};
+      color: ${colors.textSecondary};
     }
     chat-panel .cp-runtime-warning,
     chat-panel .cp-runtime-error,

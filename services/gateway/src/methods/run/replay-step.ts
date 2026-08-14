@@ -11,6 +11,7 @@ import {
   PR_BOUND_FLOW_TYPES,
   type QueueClaim,
   resolveRunSlotId,
+  type Run,
   type RunEngineState,
   type RunReplayStepParams,
   type RunReplayStepResult,
@@ -67,6 +68,26 @@ const REPLAY_STEP_TO_ACTIVE_STATUS: Partial<Record<string, RunStatus>> = {
 
 function activeStatusForReplayStep(stepName: string): RunStatus {
   return REPLAY_STEP_TO_ACTIVE_STATUS[stepName] ?? 'created';
+}
+
+function hasActiveSelfReviewFix(run: Pick<Run, 'agentContexts'>): boolean {
+  return activeSelfReviewFixTaskFile(run) !== undefined;
+}
+
+function activeSelfReviewFixTaskFile(run: Pick<Run, 'agentContexts'>): string | undefined {
+  return (
+    (run.agentContexts ?? [])
+      .filter(
+        (context) =>
+          context.role === 'self-review-fix' &&
+          (context.status === 'launching' ||
+            context.status === 'working' ||
+            context.status === 'waiting') &&
+          Boolean(context.taskFile?.trim()),
+      )
+      .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))[0]?.taskFile ??
+    undefined
+  );
 }
 
 // Which queue row, if any, replaced this run when it was cancelled?
@@ -520,10 +541,20 @@ export async function runReplayStep(
     // A worker can continue refining evidence after the original gate was built.
     // Replaying only the human gate must therefore refresh the worker-owned mirror
     // first; otherwise the new decision faithfully republishes stale report text.
-    if (replayStepName === PS.HUMAN_GATE && effectiveSlotId && replayTaskFile) {
-      const copied = await refreshArtifactMirror(getRun(params.runId) ?? existing);
+    const runBeforeGateReplay = getRun(params.runId) ?? existing;
+    if (
+      replayStepName === PS.HUMAN_GATE &&
+      effectiveSlotId &&
+      replayTaskFile &&
+      !hasActiveSelfReviewFix(runBeforeGateReplay)
+    ) {
+      const copied = await refreshArtifactMirror(runBeforeGateReplay);
       console.log(
         `[run] replay from ${replayStepName} — refreshed ${copied} worker artifact(s) before rebuilding the gate`,
+      );
+    } else if (replayStepName === PS.HUMAN_GATE && hasActiveSelfReviewFix(runBeforeGateReplay)) {
+      console.log(
+        `[run] replay from ${replayStepName} — active review fix will be resumed before the package mirror`,
       );
     }
 
@@ -592,10 +623,7 @@ export async function runReplayStep(
           const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
           const taskDirRel = `${taskDirName}/${taskRelDir}`;
           const workerTaskDir = `${vars.remoteRepo}/${taskDirRel}`;
-          const preserveSelfReviewFix =
-            existing.agentContexts?.some(
-              (ctx) => ctx.role === 'self-review-fix' && ctx.status === 'working',
-            ) ?? false;
+          const preserveSelfReviewFix = hasActiveSelfReviewFix(getRun(params.runId) ?? existing);
           const {
             CHECKLIST_TARGET_BY_AGENT_ROLE,
             restoreWorkerChecklistTargetFromSlot,
@@ -777,6 +805,10 @@ export async function runReplayStep(
     const replayGeneration =
       getRun(params.runId)?.engineState?.generation ?? existing.engineState?.generation ?? 0;
     const currentBeforeReplayUpdate = getRun(params.runId) ?? existing;
+    const activeFixTaskFile =
+      targetIdx >= 0 && selfReviewIdx >= 0 && targetIdx >= selfReviewIdx
+        ? activeSelfReviewFixTaskFile(currentBeforeReplayUpdate)
+        : undefined;
     const engineStateForReplay = replaysCompletionOrGate
       ? resetPublishGateApprovalForReplay(currentBeforeReplayUpdate.engineState)
       : currentBeforeReplayUpdate.engineState;
@@ -815,7 +847,7 @@ export async function runReplayStep(
       engineState: engineStateForReplay,
       metrics: resetMetrics,
       monitorState: undefined,
-      activeTaskFile: undefined,
+      activeTaskFile: activeFixTaskFile,
       recoveryProposal: {
         status: proposalStatus,
         proposalId: params.intelligenceActionId,

@@ -4,7 +4,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- fix(runs): share active-run and Co-Pilot tmux identity constants across gateway and clients
+- feat(copilot): configure persisted runtime runner, model, and gateway autostart policy through the shared protocol.
+- feat(review): carry normalized per-step checklist timing on worker signals and review attempts.
+- fix(review): carry a gateway-derived task identity so clients match active tasks across configured roots.
 
 ## 0.21.0 - 2026-08-14
 

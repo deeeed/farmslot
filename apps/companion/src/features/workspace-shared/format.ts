@@ -18,6 +18,14 @@ export function formatDuration(ms: number | undefined): string {
   return `${hrs}h ${mins % 60}m`;
 }
 
+export function formatPreciseDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
+  return `${(ms / 3_600_000).toFixed(1)}h`;
+}
+
 export function shortId(value: string | null | undefined): string {
   if (!value) return '-';
   return value.length > 10 ? `${value.slice(0, 8)}…` : value;

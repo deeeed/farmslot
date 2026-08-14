@@ -34,6 +34,18 @@ export type RunStatus =
 
 export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = ['done', 'failed', 'cancelled'];
 
+export const ACTIVE_RUN_STATUSES: readonly RunStatus[] = [
+  'grading',
+  'writing-task',
+  'slot-finding',
+  'preparing',
+  'dispatching',
+  'monitoring',
+  'self-reviewing',
+  'completing',
+  'ci-watching',
+];
+
 export function isTerminalRunStatus(status: RunStatus): boolean {
   return TERMINAL_RUN_STATUSES.includes(status);
 }
@@ -395,6 +407,8 @@ export interface IndependentReviewAttempt {
   issues?: SelfReviewIssue[];
   validationDepth?: ReviewValidationDepth;
   usage?: RunnerSessionUsage;
+  /** Checklist marks and timings captured from this review round's role-scoped signal. */
+  checklistTiming?: WorkerSignalChecklistTiming;
   reviewSnapshot?: ReviewDiffSnapshot;
   fixDelta?: ReviewFixDeltaSnapshot;
   artifactPaths?: string[];

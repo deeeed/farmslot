@@ -170,7 +170,7 @@ describe('codex runner', () => {
     );
     assert.match(
       launch,
-      /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --dangerously-bypass-approvals-and-sandbox .*--model gpt-5\.5/,
+      /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox .*--model gpt-5\.5/,
     );
     assertCodexWorkerDoesNotInjectMcpOverrides(launch);
     assert.match(launch, /model_reasoning_effort="xhigh"/);
@@ -191,7 +191,7 @@ describe('codex runner', () => {
     );
     assert.match(
       launch,
-      /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --dangerously-bypass-approvals-and-sandbox .*model_reasoning_effort="xhigh".*--model gpt-5\.5$/,
+      /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox .*model_reasoning_effort="xhigh".*--model gpt-5\.5$/,
     );
     assert.doesNotMatch(launch, /Read TASK\.md/);
   });
@@ -1489,7 +1489,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
       assert.match(
         cmd,
-        /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --dangerously-bypass-approvals-and-sandbox .*--model gpt-5/,
+        /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox .*--model gpt-5/,
       );
       assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
@@ -1505,7 +1505,7 @@ describe('buildLaunchCommand', () => {
       // Isolated home only when provisioned; else fall back to global ~/.codex.
       assert.match(
         cmd,
-        /if \[ -e '\/tmp\/repo\/\.agent\/codex-home\/auth\.json' \]; then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} .*--model gpt-5/,
+        /if \[ -e '\/tmp\/repo\/\.agent\/codex-home\/auth\.json' \]; then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" .*--model gpt-5/,
       );
       // Must never seed (copy/symlink) into or write config back to the global ~/.codex.
       assert.doesNotMatch(cmd, /ln -sf "\$HOME\/\.codex/);
@@ -1525,7 +1525,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT);
       assert.match(
         cmd,
-        /then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\}/,
+        /then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2"/,
       );
       assert.match(cmd, /model_reasoning_effort="xhigh"/);
     });
@@ -1538,7 +1538,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
       assert.match(
         cmd,
-        /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --dangerously-bypass-approvals-and-sandbox/,
+        /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox/,
       );
     });
 
@@ -1836,7 +1836,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.match(cmd, /export CODEX_HOME='\/tmp\/repo\/runtime\/codex-home'/);
     assert.match(
       cmd,
-      /\/opt\/bin\/codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} resume --sandbox workspace-write --ask-for-approval never --config 'model_reasoning_effort="high"' --model gpt-5 'codex-session'$/,
+      /\/opt\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" resume --sandbox workspace-write --ask-for-approval never --config 'model_reasoning_effort="high"' --model gpt-5 'codex-session'$/,
     );
   });
 

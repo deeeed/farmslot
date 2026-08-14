@@ -4,9 +4,15 @@ import { Methods } from './registry.js';
 
 export const CopilotRuntimeMethods = {
   status: Methods.COPILOT_STATUS,
+  configure: Methods.COPILOT_CONFIGURE,
   start: Methods.COPILOT_START,
   stop: Methods.COPILOT_STOP,
 } as const;
+
+export const COPILOT_TMUX_SESSION = 'farmslot-copilot';
+export const COPILOT_TMUX_WINDOW_NAME = 'agent';
+export const COPILOT_TMUX_WINDOW_INDEX = '0';
+export const COPILOT_TMUX_TARGET = `${COPILOT_TMUX_SESSION}:${COPILOT_TMUX_WINDOW_NAME}.0` as const;
 
 export type CopilotRuntimeStatus =
   | 'stopped'
@@ -92,6 +98,7 @@ export interface CopilotRuntimeSession {
   transcriptId: string;
   runner: string;
   model: string;
+  autostart: boolean;
   safetyTier: SafetyTier;
   checkout: CopilotCheckoutIdentity;
   workload: CopilotWorkloadSnapshot;
@@ -108,6 +115,16 @@ export interface CopilotRuntimeSession {
 export interface CopilotStatusParams {}
 
 export interface CopilotStatusResult {
+  session: CopilotRuntimeSession;
+}
+
+export interface CopilotConfigureParams {
+  runner?: string;
+  model?: string;
+  autostart?: boolean;
+}
+
+export interface CopilotConfigureResult {
   session: CopilotRuntimeSession;
 }
 

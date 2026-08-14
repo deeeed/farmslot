@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(copilot): show the shared tmux runtime through the existing xterm terminal instead of rendering raw terminal bytes as chat messages.
+- fix(dispatch): cache execution-template variants so domain and mode filters switch immediately.
+- fix(review): follow the authoritative active task across retained review/fix rounds, select the reviewer-authored recommendation after artifact refresh, show per-step timing for each round, and collapse directory mirrors to one clearable aggregate transfer.
+- feat(copilot): configure and persist the shared runtime runner, model, and gateway autostart policy from the existing drawer.
 - feat(slot-view): show planned/acquired runtime capabilities with cost, owner, health, provider provenance, release effects, and an operator release control.
 - fix(runners): default Cursor Agent selections to `cursor-grok-4.6-high-fast` and expose the current 4.6 choices.
 - fix(review): render review workspaces and the slot source tree from the frozen reviewed SHAs, so later base or PR movement cannot inflate or replace the operator's diff.

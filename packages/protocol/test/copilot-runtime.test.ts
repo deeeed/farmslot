@@ -17,10 +17,12 @@ import {
 test('Co-Pilot runtime and compatibility method names remain stable', () => {
   assert.deepEqual(CopilotRuntimeMethods, {
     status: 'copilot.status',
+    configure: 'copilot.configure',
     start: 'copilot.start',
     stop: 'copilot.stop',
   });
   assert.equal(CopilotRuntimeMethods.status, Methods.COPILOT_STATUS);
+  assert.equal(CopilotRuntimeMethods.configure, Methods.COPILOT_CONFIGURE);
   assert.equal(CopilotRuntimeMethods.start, Methods.COPILOT_START);
   assert.equal(CopilotRuntimeMethods.stop, Methods.COPILOT_STOP);
   assert.equal(ChatMethods.send, 'chat.send');

@@ -55,7 +55,7 @@ import {
 import { deliverPromptToLiveRunner } from '../runners/session-reactivation.js';
 import { getRunnerStatusProvider } from '../runners/status-provider.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { clearRunActiveTaskFile, getRun, updateRun, updateRunStep } from '../runs/store.js';
 import {
   checklistMarkerCommand,
   restoreWorkerChecklistTargetFromSlot,
@@ -65,7 +65,11 @@ import {
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
-import { normalizeWorkerSignal, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
+import {
+  normalizeWorkerSignal,
+  signalFreshSince,
+  terminalWorkerSignalFromRaw,
+} from '../tasks/worker-signals.js';
 
 import { parseSelfReviewIssueBullets } from './issues.js';
 import { initSelfReviewProgress, startProgressWatcher } from './progress.js';
@@ -297,6 +301,7 @@ export async function executeSelfReview(
         issues: options.resumeFromResult.issues ?? [],
         validationDepth: options.resumeFromResult.validationDepth,
         usage: options.resumeFromResult.usage,
+        checklistTiming: previousAttempt?.checklistTiming,
         reviewSnapshot: options.resumeFromResult.reviewSnapshot,
         fixDelta: options.resumeFromResult.fixDelta,
         artifactPaths: previousAttempt?.artifactPaths,
@@ -1240,7 +1245,7 @@ async function recoverSelfReviewFixPass({
 
   const settleRecoveredFixContext = async (
     status: 'complete' | 'failed' | 'blocked',
-    expectedAttemptId: string,
+    expectedAttemptId: string | undefined,
     patch: Partial<AgentContext> = {},
   ): Promise<boolean> => {
     const updated = await upsertAgentContext(
@@ -1274,9 +1279,9 @@ async function recoverSelfReviewFixPass({
     }
 
     if (fixSignal) {
-      const matchesAttempt = Boolean(
-        fixSignal.attemptId && fixSignal.attemptId === fixContext.signalAttemptId,
-      );
+      const matchesAttempt = fixContext.signalAttemptId
+        ? fixSignal.attemptId === fixContext.signalAttemptId
+        : signalFreshSince(fixSignal, fixContext.attemptStartedAt ?? fixContext.startedAt);
       if (!matchesAttempt) fixSignal = undefined;
     }
 
@@ -1445,8 +1450,10 @@ async function recoverSelfReviewFixPass({
       });
     }
 
-    const terminalAttemptId = fixSignal.attemptId;
-    if (!terminalAttemptId) return null;
+    // The watcher can bind an attempt id after recovery starts. Use the terminal
+    // signal's authoritative id instead of the entry-time context snapshot, or
+    // the settlement CAS can discard a fix that actually completed.
+    const terminalAttemptId = fixSignal.attemptId ?? fixContext.signalAttemptId;
 
     if (fixSignal.status === 'blocked') {
       const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
@@ -1683,8 +1690,8 @@ async function sendFeedbackToWorker(
   );
   await syncChecklistTargetForRole(vars, taskDir, 'self-review-fix');
 
+  const fixTaskRel = taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
   try {
-    const fixTaskRel = taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
     // Mark SELF-REVIEW-FIX.md as the active task file for progress tracking
     updateRun(runId, { activeTaskFile: fixTaskRel });
     const primaryTarget = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
@@ -1880,7 +1887,7 @@ async function sendFeedbackToWorker(
       taskDir,
       run ? { flowType: run.flowType, mode: run.mode ?? undefined } : undefined,
     );
-    updateRun(runId, { activeTaskFile: undefined });
+    clearRunActiveTaskFile(runId, fixTaskRel);
     throw err;
   }
 }
@@ -2133,9 +2140,14 @@ export async function waitForWorkerSignal(
         const parsed: unknown = JSON.parse(raw);
         const normalized = normalizeWorkerSignal(parsed);
         const observed = normalized.ok ? normalized.signal : undefined;
+        // A direct wait owns the changed file boundary and accepts its new attempt id.
+        // Recovery waits are stricter: match the persisted id, or accept an id-less
+        // legacy signal only while no id has been adopted by the durable context.
         const attemptMatches =
           typeof expectedAttemptId === 'function'
-            ? Boolean(expected && observed?.attemptId === expected)
+            ? expected
+              ? observed?.attemptId === expected
+              : !observed?.attemptId
             : !expected || observed?.attemptId === expected;
         if (attemptMatches) lastProgressAt = Date.now();
         const signal = observed ? terminalWorkerSignalFromRaw(raw) : undefined;

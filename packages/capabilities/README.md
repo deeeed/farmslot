@@ -26,11 +26,11 @@ import { encodeNodeFrame, decodeNodeFrame } from '@farmslot/capabilities/screen-
 import { createH264FrameSplitter } from '@farmslot/capabilities/screen-h264';
 ```
 
-| Import                                                     | What it is                                                                                                                          |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `fs-watch` — `watchFile()`                                 | Native `fs.watch` with the "watch the parent directory until the file appears" fallback and tilde expansion. Returns a stop handle. |
-| `screen-frame` — `encodeNodeFrame()` / `decodeNodeFrame()` | The node→gateway capture-frame binary envelope codec (`0xAF` magic). Node encodes, gateway decodes.                                 |
-| `screen-h264` — `createH264FrameSplitter()`                | Splits a raw `adb screenrecord --output-format=h264` byte stream into individual video frames.                                      |
+| Import                                                     | What it is                                                                                                                                                                 |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fs-watch` — `watchFile()`                                 | Native parent-directory `fs.watch` that survives atomic file replacement, filters to the target filename, deduplicates content, and expands tildes. Returns a stop handle. |
+| `screen-frame` — `encodeNodeFrame()` / `decodeNodeFrame()` | The node→gateway capture-frame binary envelope codec (`0xAF` magic). Node encodes, gateway decodes.                                                                        |
+| `screen-h264` — `createH264FrameSplitter()`                | Splits a raw `adb screenrecord --output-format=h264` byte stream into individual video frames.                                                                             |
 
 ## Source layout
 
