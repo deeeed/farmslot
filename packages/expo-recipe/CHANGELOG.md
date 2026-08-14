@@ -6,8 +6,8 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## 0.8.2 - 2026-08-14
 
-- fix: retry Android input replacement when an empty field exposes its placeholder as the current value.
-- fix: send `Back` through native back navigation, fail Android `Escape` when no keyboard was dismissed, and honor the recipe node timeout while waiting for the resulting UI to settle.
+- fix: verify Android input replacement from a targetable native snapshot, retry empty placeholders with a bounded clear timeout, and fail closed when the field cannot be observed.
+- fix: send `Back` through native navigation, require observable keyboard effects for `Escape`, `Enter`, and `Return` on Android and iOS, and honor the recipe node timeout while waiting for the resulting UI to settle.
 
 ## 0.8.1 - 2026-08-14
 

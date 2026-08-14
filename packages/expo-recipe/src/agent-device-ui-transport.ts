@@ -55,7 +55,7 @@ export interface AgentDeviceClientLike {
     swipe(options: Record<string, unknown>): Promise<unknown>;
   };
   command: {
-    back(options: Record<string, unknown>): Promise<unknown>;
+    back?(options: Record<string, unknown>): Promise<unknown>;
     wait(options: Record<string, unknown>): Promise<unknown>;
     keyboard(options: Record<string, unknown>): Promise<unknown>;
   };
@@ -214,13 +214,8 @@ export function createAgentDeviceUiTransport(
           const keyAction = nativeKeyboardAction(node.key);
           const result =
             keyAction === 'back'
-              ? await client.command.back({
-                  ...selection,
-                  session: options.session,
-                  responseLevel: 'digest',
-                })
+              ? await pressNativeBack(client, selection, options.session)
               : requireNativeKeyboardEffect(
-                  options.platform,
                   keyAction,
                   await client.command.keyboard({
                     ...selection,
@@ -343,24 +338,35 @@ function nativeKeyboardAction(value: unknown): 'back' | 'dismiss' | 'enter' {
   );
 }
 
-function requireNativeKeyboardEffect(
-  platform: 'ios' | 'android',
-  action: 'dismiss' | 'enter',
-  result: unknown,
-): unknown {
-  if (platform !== 'android' || action !== 'dismiss' || !result || typeof result !== 'object') {
-    return result;
+function requireNativeKeyboardEffect(action: 'dismiss' | 'enter', result: unknown): unknown {
+  if (!result || typeof result !== 'object') {
+    throw new Error(`ui.key_press ${action} returned no observable keyboard result.`);
   }
   const outcome = result as Record<string, unknown>;
-  if (outcome.wasVisible === false) {
-    throw new Error(
-      'ui.key_press Escape could not dismiss the Android keyboard: it was not visible.',
-    );
+  if (outcome.wasVisible !== true) {
+    throw new Error(`ui.key_press ${action} could not affect the keyboard: it was not visible.`);
   }
-  if (outcome.wasVisible === true && outcome.dismissed !== true) {
-    throw new Error('ui.key_press Escape could not dismiss the visible Android keyboard.');
+  if (action === 'dismiss' && outcome.dismissed !== true) {
+    throw new Error('ui.key_press dismiss could not dismiss the visible keyboard.');
   }
   return result;
+}
+
+async function pressNativeBack(
+  client: AgentDeviceClient,
+  selection: AgentDeviceSelection,
+  session: string,
+): Promise<unknown> {
+  if (!client.command.back) {
+    throw new Error(
+      'ui.key_press Back requires an agent-device client with native back-navigation support.',
+    );
+  }
+  return client.command.back({
+    ...selection,
+    session,
+    responseLevel: 'digest',
+  });
 }
 
 async function replaceNativeInput({
@@ -396,21 +402,23 @@ async function replaceNativeInput({
       timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
     });
   const testId = optionalString(node.test_id ?? node.testID);
-  const before =
-    platform === 'android' && testId
-      ? await nativeInputValue(client, selection, session, testId)
-      : undefined;
   let result = await fill();
-  if (platform !== 'android' || !testId) {
+  if (platform !== 'android') {
     return requireSettledInteraction('ui.set_input', result, node.settle !== false);
   }
+  if (!testId) {
+    throw new Error(
+      'Android ui.set_input requires test_id so replacement can be verified from the native snapshot.',
+    );
+  }
   let observed = await nativeInputValue(client, selection, session, testId);
+  if (!observed.verifiable) {
+    throw new Error('ui.set_input could not verify the Android field after replacement.');
+  }
   if (
-    !observed.verifiable ||
     observed.value === text ||
     (observed.masked &&
-      before?.verifiable &&
-      before.value.length === 0 &&
+      interactionChanged(result) &&
       Array.from(observed.value).length === Array.from(text).length)
   ) {
     return requireSettledInteraction('ui.set_input', result, node.settle !== false);
@@ -430,31 +438,41 @@ async function replaceNativeInput({
     timeoutMs: 10_000,
   });
   if (observed.value.length > 0) {
+    const characterCount = Array.from(observed.value).length;
     await commandRunner.execFile(
       adb,
-      ['-s', serial, 'shell', 'input', 'keyevent', ...Array.from(observed.value, () => '67')],
-      { timeoutMs: 10_000 },
+      [
+        '-s',
+        serial,
+        'shell',
+        'input',
+        'keyevent',
+        ...Array.from({ length: characterCount }, () => '67'),
+      ],
+      { timeoutMs: Math.max(10_000, characterCount * 150 + 2_000) },
     );
   }
   const cleared = await nativeInputValue(client, selection, session, testId);
-  const returnedToUnmaskedInitialValue =
-    before?.verifiable && !before.masked && cleared.value === before.value;
-  if (cleared.verifiable && cleared.value.length !== 0 && !returnedToUnmaskedInitialValue) {
+  if (!cleared.verifiable || cleared.value.length !== 0) {
     throw new Error('ui.set_input could not clear the Android field before replacement.');
   }
   result = await fill();
   observed = await nativeInputValue(client, selection, session, testId);
   if (
-    observed.verifiable &&
+    !observed.verifiable ||
     (observed.masked
       ? Array.from(observed.value).length !== Array.from(text).length
       : observed.value !== text)
   ) {
-    throw new Error(
-      `ui.set_input could not replace the Android field; expected ${Array.from(text).length} characters and observed ${Array.from(observed.value).length}.`,
-    );
+    throw new Error('ui.set_input could not verify the requested Android replacement value.');
   }
   return requireSettledInteraction('ui.set_input', result, node.settle !== false);
+}
+
+function interactionChanged(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return false;
+  const evidence = (result as { evidence?: { changedFromBefore?: unknown } }).evidence;
+  return evidence?.changedFromBefore === true;
 }
 
 async function nativeInputValue(

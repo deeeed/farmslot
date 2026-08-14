@@ -119,7 +119,7 @@
       ]
     },
     "ui.key_press": {
-      "description": "Send Back, Escape, Enter, or Return to the focused native input and wait for the resulting UI transition.",
+      "description": "Send Back through native navigation, or Escape, Enter, or Return to the visible native keyboard, then wait for the resulting UI transition. Keyboard actions fail when no visible keyboard accepts them.",
       "adapters": ["android", "ios"],
       "schema": {
         "type": "object",

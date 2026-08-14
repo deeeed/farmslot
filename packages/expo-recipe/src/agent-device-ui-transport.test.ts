@@ -322,7 +322,12 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
       },
       async keyboard(options: Record<string, unknown>) {
         calls.push({ method: 'keyboard', options });
-        return { action: options.action };
+        return {
+          action: options.action,
+          wasVisible: true,
+          dismissed: options.action === 'dismiss',
+          visible: false,
+        };
       },
       async wait(options: Record<string, unknown>) {
         calls.push({ method: 'wait-stable', options });
@@ -525,19 +530,32 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
   assert.equal(calls.find((call) => call.method === 'close')?.options.shutdown, false);
 });
 
-test('Android Escape fails when the keyboard dismiss command has no effect', async () => {
-  for (const keyboardResult of [
-    { action: 'dismiss', wasVisible: false, dismissed: false },
-    { action: 'dismiss', wasVisible: true, dismissed: false },
+test('native keyboard actions fail when the keyboard command has no effect', async () => {
+  for (const fixture of [
+    {
+      platform: 'ios' as const,
+      key: 'Enter',
+      result: { action: 'enter', wasVisible: false, visible: false },
+    },
+    {
+      platform: 'ios' as const,
+      key: 'Escape',
+      result: { action: 'dismiss', wasVisible: true, dismissed: false },
+    },
+    {
+      platform: 'android' as const,
+      key: 'Escape',
+      result: { action: 'dismiss', wasVisible: false, dismissed: false },
+    },
   ]) {
     const client = {
       apps: { open: async () => ({ session: 's' }) },
-      command: { keyboard: async () => keyboardResult },
+      command: { keyboard: async () => fixture.result },
       sessions: { close: async () => ({ session: 's' }) },
     } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
     const transport = createAgentDeviceUiTransport({
-      platform: 'android',
-      device: 'emulator-5554',
+      platform: fixture.platform,
+      device: fixture.platform === 'android' ? 'emulator-5554' : 'ios-simulator',
       app: 'net.siteed.farmslot.development',
       session: 's',
       client,
@@ -547,10 +565,10 @@ test('Android Escape fails when the keyboard dismiss command has no effect', asy
       () =>
         transport.execute(
           'ui.key_press',
-          { key: 'Escape', settle: false },
+          { key: fixture.key, settle: false },
           {} as ActionExecutionContext,
         ),
-      /could not dismiss/u,
+      /could not/u,
     );
   }
 });
@@ -597,13 +615,13 @@ test('fails when an observable Android input remains empty after repair', async 
         { test_id: 'field', value: 'expected' },
         {} as ActionExecutionContext,
       ),
-    /could not replace the Android field; expected 8 characters and observed 0/u,
+    /could not verify the requested Android replacement value/u,
   );
   assert.equal(fills, 2);
   assert.deepEqual(commands, [['-s', 'physical-serial', 'shell', 'input', 'keyevent', '123']]);
 });
 
-test('does not treat an Android input label as its value', async () => {
+test('fails closed when an Android input exposes only a label', async () => {
   let fills = 0;
   const client = {
     apps: { open: async () => ({ session: 'input-session', identifiers: {} }) },
@@ -630,10 +648,14 @@ test('does not treat an Android input label as its value', async () => {
     client,
   });
 
-  await transport.execute(
-    'ui.set_input',
-    { test_id: 'field', value: 'expected' },
-    {} as ActionExecutionContext,
+  await assert.rejects(
+    () =>
+      transport.execute(
+        'ui.set_input',
+        { test_id: 'field', value: 'expected' },
+        {} as ActionExecutionContext,
+      ),
+    /could not verify the Android field/u,
   );
 
   assert.equal(fills, 1);
@@ -692,7 +714,8 @@ test('fails when a masked Android input cannot be cleared before replacement', a
 
 test('retries an Android input whose empty placeholder is exposed as its value', async () => {
   let fills = 0;
-  let snapshots = 0;
+  const snapshotValues = ['Enter password', '', 'expected'];
+  const snapshotRequests: Array<Record<string, unknown>> = [];
   const client = {
     apps: { open: async () => ({ session: 'input-session', identifiers: {} }) },
     interactions: {
@@ -703,14 +726,9 @@ test('retries an Android input whose empty placeholder is exposed as its value',
       press: async () => ({ pressed: true }),
     },
     capture: {
-      snapshot: async () => {
-        snapshots += 1;
-        const value =
-          snapshots === 1 || snapshots === 3
-            ? 'Enter password'
-            : snapshots === 2
-              ? '••••'
-              : 'expected';
+      snapshot: async (options: Record<string, unknown>) => {
+        snapshotRequests.push(options);
+        const value = snapshotValues.shift();
         return {
           nodes: [{ identifier: 'field', value }],
           truncated: false,
@@ -740,6 +758,8 @@ test('retries an Android input whose empty placeholder is exposed as its value',
   );
 
   assert.equal(fills, 2);
+  assert.equal(snapshotRequests.length, 3);
+  assert.deepEqual(snapshotValues, []);
 });
 
 test('streams all continuous gestures from resolved native target coordinates', async () => {
