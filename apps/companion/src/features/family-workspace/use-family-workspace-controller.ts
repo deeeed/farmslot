@@ -47,7 +47,6 @@ import {
   shouldAcceptTaskProgressUpdate,
 } from '../../lib/task-progress';
 import {
-  selectPrimaryWorkspaceDecision,
   selectReadyWorkspaceDecision,
   selectRetrospectiveWorkspaceDecision,
   selectReviewGateWorkspaceDecision,
@@ -70,7 +69,6 @@ import { routeParamString } from '../workspace-shared/route-params';
 
 import {
   familyArtifactUrl,
-  familyRunDecisionNavMeta,
   hasRecipeArtifacts,
   recipeRunIdForVisualPair,
   summarizeFamilyRecipeEvidence,
@@ -740,7 +738,6 @@ export function useFamilyWorkspaceController() {
     !selectedActiveTaskProgress && isWorkerProgressActive(selectedFullRun)
       ? fallbackTaskProgressSummary(selectedFullRun)
       : null;
-  const primaryDecision = selectPrimaryWorkspaceDecision(selectedRun);
   const readyDecision = selectReadyWorkspaceDecision(selectedRun);
   const reviewGateDecision = selectReviewGateWorkspaceDecision(selectedRun);
   const retroDecision = selectRetrospectiveWorkspaceDecision(selectedRun);
@@ -839,24 +836,6 @@ export function useFamilyWorkspaceController() {
   const priorityCompareRecipeRunId = priorityVisualPairIsRecipe
     ? recipeRunIdForVisualPair(selectedRecipeRuns, priorityVisualPair)
     : DECISION_EVIDENCE_RECIPE_RUN_PARAM;
-  const selectedReadyMeta = familyRunDecisionNavMeta({
-    run: selectedRun,
-    decision: readyDecision,
-    diffValue: selectedDiffValue,
-    visualPairCount: priorityVisualPairs.length,
-  });
-  const selectedReviewMeta = familyRunDecisionNavMeta({
-    run: selectedRun,
-    decision: reviewGateDecision,
-    diffValue: selectedDiffValue,
-    visualPairCount: priorityVisualPairs.length,
-  });
-  const selectedRetroMeta = familyRunDecisionNavMeta({
-    run: selectedRun,
-    decision: retroDecision,
-    diffValue: selectedDiffValue,
-    visualPairCount: priorityVisualPairs.length,
-  });
   return {
     status: 'ready' as const,
     snapshot,
@@ -871,7 +850,6 @@ export function useFamilyWorkspaceController() {
     openPRForRun,
     selectedActiveTaskProgress,
     selectedFallbackTaskProgress,
-    primaryDecision,
     readyDecision,
     reviewGateDecision,
     retroDecision,
@@ -893,9 +871,6 @@ export function useFamilyWorkspaceController() {
     priorityVisualPairIsRecipe,
     priorityCompareRunId,
     priorityCompareRecipeRunId,
-    selectedReadyMeta,
-    selectedReviewMeta,
-    selectedRetroMeta,
     gatewayUrl,
     artifactAuthHeaders,
     viewerUri,
