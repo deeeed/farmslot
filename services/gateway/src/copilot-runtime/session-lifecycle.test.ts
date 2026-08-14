@@ -19,6 +19,15 @@ test('first start creates one canonical runner and later starts reuse it across 
   assert.equal(second.reused, true);
   assert.equal(second.session.runtimeId, first.session.runtimeId);
   assert.equal(second.session.transcriptId, 'global');
+  assert.deepEqual(second.session.terminalWorker, {
+    nodeId: 'test-node',
+    session: COPILOT_TMUX_SESSION,
+    window: '0',
+    windowName: 'agent',
+    pane: '0',
+    paneId: '%99',
+    target: '%99',
+  });
   assert.equal(tmux.launchCount, 1);
   await controller.stop({ reason: 'test-complete' });
 });

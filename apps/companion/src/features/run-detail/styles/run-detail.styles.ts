@@ -601,6 +601,13 @@ export const runDetailStyles = StyleSheet.create({
     fontSize: fonts.sizeXs,
     fontWeight: '800',
   },
+  stepFieldOverflow: {
+    color: colors.textMuted,
+    fontSize: fonts.sizeXs,
+    fontWeight: '800',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
   stepFieldValue: {
     color: colors.textSecondary,
     fontSize: fonts.sizeSm,

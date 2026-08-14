@@ -8,6 +8,7 @@ import {
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
   extractRunArtifactManifest,
 } from '../../../lib/artifact-url';
+import { runWorkspacePathnameForStatus } from '../../../lib/legacy-run-route';
 import { prRepoFromWorkspaceSource } from '../../../lib/pr-links';
 import {
   selectReadyWorkspaceDecision,
@@ -128,7 +129,7 @@ export function SlotDiffCockpit({
           onPress={() => {
             if (!targetRunId) return;
             router.push({
-              pathname: '/workspace/run/[runId]/evidence',
+              pathname: runWorkspacePathnameForStatus(run?.status),
               params: {
                 runId: targetRunId,
                 ...runRouteContext,

@@ -104,6 +104,15 @@ export function testController(input: {
     interrupt: async (...args) => (input.interrupt ? input.interrupt(...args) : true),
     workload: testWorkload,
     resolveRuntimeDir: async () => '.agent',
+    resolveTerminalWorker: async (session) => ({
+      nodeId: 'test-node',
+      session,
+      window: '0',
+      windowName: 'agent',
+      pane: '0',
+      paneId: '%99',
+      target: '%99',
+    }),
   });
   return { controller, tmux, checkoutIdentity };
 }

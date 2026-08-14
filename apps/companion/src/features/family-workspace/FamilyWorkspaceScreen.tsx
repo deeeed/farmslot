@@ -11,6 +11,7 @@ import {
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
 } from '../../lib/artifact-url';
+import { runWorkspacePathnameForStatus } from '../../lib/legacy-run-route';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { baseStyles, spacing } from '../../lib/theme';
 import {
@@ -236,7 +237,7 @@ export default function FamilyWorkspaceScreen() {
               prNumber={selectedRun.prNumber}
               onOpenRun={() =>
                 router.push({
-                  pathname: '/workspace/run/[runId]/evidence',
+                  pathname: runWorkspacePathnameForStatus(selectedRun.status),
                   params: {
                     runId: selectedRun.runId,
                     ...targetRouteContext('run'),
@@ -419,7 +420,7 @@ export default function FamilyWorkspaceScreen() {
               onOpenRun={() => {
                 if (!selectedRun) return;
                 router.push({
-                  pathname: '/workspace/run/[runId]/evidence',
+                  pathname: runWorkspacePathnameForStatus(selectedRun.status),
                   params: {
                     runId: selectedRun.runId,
                     ...targetRouteContext('run'),
@@ -492,7 +493,7 @@ export default function FamilyWorkspaceScreen() {
               if (!selectedRun) return;
               const contextRecipeRun = workspaceRecipeRunForRun(selectedRun.runId);
               router.push({
-                pathname: '/workspace/run/[runId]/evidence',
+                pathname: runWorkspacePathnameForStatus(selectedRun.status),
                 params: {
                   runId: selectedRun.runId,
                   ...targetRouteContext('run'),
@@ -606,7 +607,7 @@ export default function FamilyWorkspaceScreen() {
                 }
                 onOpenRun={() =>
                   router.push({
-                    pathname: '/workspace/run/[runId]/evidence',
+                    pathname: runWorkspacePathnameForStatus(selectedRun.status),
                     params: {
                       runId: selectedRun.runId,
                       ...targetRouteContext('run'),
@@ -771,7 +772,9 @@ export default function FamilyWorkspaceScreen() {
               snapshot={snapshot}
               onOpenRun={(runIdValue) =>
                 router.push({
-                  pathname: '/workspace/run/[runId]/evidence',
+                  pathname: runWorkspacePathnameForStatus(
+                    snapshot.runs.find((run) => run.runId === runIdValue)?.status,
+                  ),
                   params: {
                     runId: runIdValue,
                     ...targetRouteContext('run'),
@@ -866,7 +869,7 @@ export default function FamilyWorkspaceScreen() {
                   }
                   onOpenRun={() =>
                     router.push({
-                      pathname: '/workspace/run/[runId]/evidence',
+                      pathname: runWorkspacePathnameForStatus(run.status),
                       params: {
                         runId: run.runId,
                         ...retrospectiveRouteContext,
@@ -1006,7 +1009,9 @@ export default function FamilyWorkspaceScreen() {
                   onOpenVisual={setViewerUri}
                   onOpenRun={(runIdValue) =>
                     router.push({
-                      pathname: '/workspace/run/[runId]/evidence',
+                      pathname: runWorkspacePathnameForStatus(
+                        snapshot.runs.find((run) => run.runId === runIdValue)?.status,
+                      ),
                       params: {
                         runId: runIdValue,
                         ...targetRouteContext('run'),
@@ -1075,7 +1080,7 @@ export default function FamilyWorkspaceScreen() {
                 }
                 onOpenRun={() =>
                   router.push({
-                    pathname: '/workspace/run/[runId]/evidence',
+                    pathname: runWorkspacePathnameForStatus(run.status),
                     params: {
                       runId: run.runId,
                       ...targetRouteContext('run'),

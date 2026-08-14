@@ -16,6 +16,7 @@ import {
   type VisualArtifactPair,
 } from '../../../lib/artifact-url';
 import { diffArtifactCandidate } from '../../../lib/diff';
+import { runWorkspacePathnameForStatus } from '../../../lib/legacy-run-route';
 import { prRepoFromWorkspaceSource } from '../../../lib/pr-links';
 import { fallbackTaskProgressSummary, taskProgressPercent } from '../../../lib/task-progress';
 import { colors } from '../../../lib/theme';
@@ -192,7 +193,7 @@ export function TerminalWorkspaceCockpit({
   const openRun = () => {
     if (!targetRunId) return;
     router.push({
-      pathname: '/workspace/run/[runId]/evidence',
+      pathname: runWorkspacePathnameForStatus(run?.status),
       params: {
         runId: targetRunId,
         ...targetRouteContext('run'),
@@ -716,7 +717,7 @@ export function TerminalFullscreenWorkspaceRail({
   const openRun = () => {
     if (!targetRunId) return;
     router.push({
-      pathname: '/workspace/run/[runId]/evidence',
+      pathname: runWorkspacePathnameForStatus(run?.status),
       params: {
         runId: targetRunId,
         ...targetRouteContext('run'),

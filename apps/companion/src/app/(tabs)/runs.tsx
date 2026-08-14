@@ -19,6 +19,7 @@ import {
   groupVisualArtifactPairs,
 } from '../../lib/artifact-url';
 import { diffArtifactCandidate } from '../../lib/diff';
+import { runWorkspacePathnameForStatus } from '../../lib/legacy-run-route';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import {
   type RunEvidenceSignal,
@@ -142,9 +143,7 @@ function RunCard({
         style={[styles.runCard, isFamilyRoot && styles.rootRunCard]}
         onPress={() =>
           router.push({
-            pathname: isTerminalRunStatus(run.status)
-              ? '/workspace/run/[runId]/evidence'
-              : '/workspace/run/[runId]/timeline',
+            pathname: runWorkspacePathnameForStatus(run.status),
             params: { runId: run.id, recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM },
           })
         }

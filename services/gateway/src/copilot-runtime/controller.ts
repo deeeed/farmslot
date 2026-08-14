@@ -31,6 +31,7 @@ import { recordScreenEvidenceSnapshot } from '../chat/screen-evidence.js';
 import { resolveProjectRuntimeDir } from '../core/config.js';
 import { getActiveResources } from '../fleet/resource-manager.js';
 import { getCachedFleet } from '../fleet/state.js';
+import { resolveTmuxSessionWorker } from '../refinement/session.js';
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import {
   interruptRunnerTurn,
@@ -80,6 +81,7 @@ export interface CopilotRuntimeControllerOptions {
   interrupt?: typeof interruptRunnerTurn;
   workload?: (copilotRunning: boolean) => CopilotWorkloadSnapshot;
   resolveRuntimeDir?: () => Promise<string>;
+  resolveTerminalWorker?: typeof resolveTmuxSessionWorker;
 }
 
 export class CopilotRuntimeController {
@@ -95,6 +97,7 @@ export class CopilotRuntimeController {
   private readonly interrupt: typeof interruptRunnerTurn;
   private readonly workloadOverride?: (copilotRunning: boolean) => CopilotWorkloadSnapshot;
   private readonly resolveRuntimeDir: () => Promise<string>;
+  private readonly resolveTerminalWorker: typeof resolveTmuxSessionWorker;
   private persisted: PersistedCopilotRuntime | null = null;
   private initialized = false;
   private startPromise: Promise<CopilotStartResult> | null = null;
@@ -116,6 +119,7 @@ export class CopilotRuntimeController {
     this.workloadOverride = options.workload;
     this.resolveRuntimeDir =
       options.resolveRuntimeDir ?? (() => resolveProjectRuntimeDir('farmslot-farm'));
+    this.resolveTerminalWorker = options.resolveTerminalWorker ?? resolveTmuxSessionWorker;
   }
 
   currentSession(): CopilotRuntimeSession | null {
@@ -148,6 +152,7 @@ export class CopilotRuntimeController {
         this.persisted.session.reconnectedAt = this.timestamp();
         this.persisted.session.updatedAt = this.timestamp();
         await this.tmux.configureTranscript(COPILOT_TMUX_TARGET, this.store.rawTranscriptPath);
+        await this.refreshTerminalWorker();
         await this.persist();
         await this.audit('reconnect', { reason: 'gateway restart reconciliation' });
         this.startTranscriptMonitor();
@@ -222,12 +227,7 @@ export class CopilotRuntimeController {
         });
       }
     }
-    this.persisted.session.terminalWorker = {
-      nodeId: os.hostname().replace(/\.local$/u, ''),
-      session: COPILOT_TMUX_SESSION,
-      target: COPILOT_TMUX_TARGET,
-      ...(this.persisted.paneId ? { paneId: this.persisted.paneId } : {}),
-    };
+    await this.refreshTerminalWorker();
     return { session: this.persisted.session };
   }
 
@@ -297,6 +297,7 @@ export class CopilotRuntimeController {
       this.persisted.session.reconnectedAt = this.timestamp();
       this.persisted.session.updatedAt = this.timestamp();
       await this.tmux.configureTranscript(COPILOT_TMUX_TARGET, this.store.rawTranscriptPath);
+      await this.refreshTerminalWorker();
       await this.persist();
       await this.audit('reconnect', { requestedMode: params.mode ?? 'start' });
       this.emitRuntime();
@@ -392,6 +393,7 @@ export class CopilotRuntimeController {
     this.persisted.session.status = 'running';
     this.persisted.session.workload = this.workload(true);
     this.persisted.session.updatedAt = this.timestamp();
+    await this.refreshTerminalWorker();
     await this.persist();
     await this.audit('start', { runner, model, safetyTier, paneId: launched.paneId });
     this.emitRuntime();
@@ -502,10 +504,28 @@ export class CopilotRuntimeController {
     status.session.updatedAt = status.session.stoppedAt;
     status.session.terminalReason = params.reason?.trim() || 'operator-requested';
     status.session.workload = this.workload(false);
+    delete status.session.terminalWorker;
     await this.persist();
     await this.audit('stop', { reason: status.session.terminalReason });
     this.emitRuntime();
     return { ok: true, session: status.session };
+  }
+
+  private async refreshTerminalWorker(): Promise<void> {
+    if (!this.persisted) return;
+    if (this.persisted.session.status !== 'running') {
+      delete this.persisted.session.terminalWorker;
+      return;
+    }
+    if (
+      this.persisted.session.terminalWorker?.paneId &&
+      this.persisted.session.terminalWorker.paneId === this.persisted.paneId &&
+      this.persisted.session.terminalWorker.target === this.persisted.paneId &&
+      this.persisted.session.terminalWorker.nodeId === os.hostname().replace(/\.local$/, '')
+    ) {
+      return;
+    }
+    this.persisted.session.terminalWorker = await this.resolveTerminalWorker(COPILOT_TMUX_SESSION);
   }
 
   private workload(copilotRunning: boolean) {

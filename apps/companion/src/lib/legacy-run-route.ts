@@ -1,3 +1,5 @@
+import { isTerminalRunStatus, type RunStatus } from '@farmslot/protocol';
+
 export type RunWorkspaceTab = 'diff' | 'evidence' | 'files' | 'timeline';
 
 export function runWorkspaceTabForLegacyPackageTab(packageTab: string): RunWorkspaceTab {
@@ -12,3 +14,11 @@ export const runWorkspacePathnames = {
   files: '/workspace/run/[runId]/files',
   timeline: '/workspace/run/[runId]/timeline',
 } as const;
+
+export function runWorkspacePathnameForStatus(
+  status: RunStatus | null | undefined,
+): (typeof runWorkspacePathnames)[keyof typeof runWorkspacePathnames] {
+  return status && !isTerminalRunStatus(status)
+    ? runWorkspacePathnames.timeline
+    : runWorkspacePathnames.evidence;
+}

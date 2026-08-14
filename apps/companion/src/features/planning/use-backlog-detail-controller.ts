@@ -9,6 +9,7 @@ import {
   Methods,
 } from '@farmslot/protocol';
 
+import { runWorkspacePathnameForStatus } from '../../lib/legacy-run-route';
 import { spacing } from '../../lib/theme';
 import { useConnectionStore } from '../../store/connection';
 
@@ -77,7 +78,10 @@ export function useBacklogDetailController(itemId: string | undefined) {
       closeSpec: () => setSpecOpen(false),
       openEdit: (id: string) => router.push({ pathname: '/backlog/edit/[id]', params: { id } }),
       openRun: (runId: string) =>
-        router.push({ pathname: '/workspace/run/[runId]/evidence', params: { runId } }),
+        router.push({
+          pathname: runWorkspacePathnameForStatus(item?.lastObservedRunStatus),
+          params: { runId },
+        }),
       openSpec: () => setSpecOpen(true),
       refresh,
     },

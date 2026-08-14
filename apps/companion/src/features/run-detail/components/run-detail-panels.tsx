@@ -1048,7 +1048,6 @@ function flattenStructuredFields(
   path: string[] = [],
   fields: StructuredField[] = [],
 ): StructuredField[] {
-  if (fields.length >= 32) return fields;
   const scalar = structuredValue(value);
   if (scalar !== null) {
     fields.push({
@@ -1081,7 +1080,9 @@ export function StructuredDataBlock({
   title: string;
   value: Record<string, unknown>;
 }) {
-  const fields = flattenStructuredFields(value);
+  const allFields = flattenStructuredFields(value);
+  const fields = allFields.slice(0, 32);
+  const hiddenFieldCount = allFields.length - fields.length;
   return (
     <View style={styles.stepBlock}>
       <Text style={styles.stepBlockTitle}>{title}</Text>
@@ -1094,6 +1095,9 @@ export function StructuredDataBlock({
             </Text>
           </View>
         ))}
+        {hiddenFieldCount > 0 ? (
+          <Text style={styles.stepFieldOverflow}>+{hiddenFieldCount} more fields</Text>
+        ) : null}
       </View>
     </View>
   );

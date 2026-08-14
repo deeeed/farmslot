@@ -30,6 +30,7 @@ export default function CopilotScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const openedTarget = useRef('');
+  const pendingDraft = routeParam(draft).trim();
 
   const openTerminal = useCallback(
     (session: CopilotRuntimeSession) => {
@@ -40,12 +41,12 @@ export default function CopilotScreen() {
         pathname: '/terminal/worker',
         params: {
           ...tmuxWorkerRouteParamsFromRef(session.terminalWorker, 'Co-Pilot'),
-          ...(routeParam(draft).trim() ? { draft: routeParam(draft) } : {}),
+          ...(pendingDraft ? { draft: pendingDraft } : {}),
         },
       });
       return true;
     },
-    [draft, router],
+    [pendingDraft, router],
   );
 
   const refresh = useCallback(async () => {
@@ -79,11 +80,13 @@ export default function CopilotScreen() {
   const statusLabel =
     connectionStatus !== 'connected'
       ? 'Gateway disconnected'
-      : runtime
-        ? `Co-Pilot is ${runtime.status}`
-        : loading
-          ? 'Finding Co-Pilot…'
-          : 'Co-Pilot unavailable';
+      : runtime?.status === 'running' && !runtime.terminalWorker
+        ? 'Gateway update required for terminal access'
+        : runtime
+          ? `Co-Pilot is ${runtime.status}`
+          : loading
+            ? 'Finding Co-Pilot…'
+            : 'Co-Pilot unavailable';
 
   return (
     <View
@@ -103,6 +106,12 @@ export default function CopilotScreen() {
         Co-Pilot uses one persistent gateway-owned tmux session. Start or configure it in Command
         Center when it is not running.
       </Text>
+      {pendingDraft ? (
+        <View style={styles.pendingDraft}>
+          <Text style={styles.pendingDraftLabel}>Pending instruction</Text>
+          <Text style={styles.pendingDraftText}>{pendingDraft}</Text>
+        </View>
+      ) : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <Pressable
         style={[styles.button, loading && styles.buttonDisabled]}
@@ -144,6 +153,23 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
     width: 56,
   },
+  pendingDraft: {
+    backgroundColor: colors.bgCard,
+    borderColor: colors.bgCardHover,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    marginTop: spacing.lg,
+    padding: spacing.md,
+    width: '100%',
+  },
+  pendingDraftLabel: {
+    color: colors.textMuted,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+    marginBottom: spacing.xs,
+    textTransform: 'uppercase',
+  },
+  pendingDraftText: { color: colors.textSecondary, fontSize: fonts.sizeSm, lineHeight: 19 },
   status: { color: colors.textSecondary, fontSize: fonts.sizeMd, marginTop: spacing.sm },
   title: { color: colors.textPrimary, fontSize: 24, fontWeight: '900' },
 });

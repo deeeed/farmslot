@@ -31,8 +31,11 @@ export async function tmuxSessionExists(session: string): Promise<boolean> {
 
 async function localTmuxWorkerNodeId(): Promise<string> {
   const pools = await loadPoolConfigs();
-  const localPool = pools.find((pool) => isLocal(pool.host, pool.machine));
-  return localPool?.machine ?? os.hostname().replace(/\.local$/, '');
+  const hostname = os.hostname().replace(/\.local$/, '');
+  const localPool =
+    pools.find((pool) => pool.machine === hostname) ??
+    pools.find((pool) => isLocal(pool.host, pool.machine));
+  return localPool?.machine ?? hostname;
 }
 
 export async function resolveTmuxSessionWorker(session: string): Promise<TmuxWorkerRef> {
