@@ -291,7 +291,7 @@ export function buildTmuxWorkerRows(
   }
   return rows;
 }
-function firstRouteParam(value: string | string[] | undefined): string | undefined {
+export function firstRouteParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 

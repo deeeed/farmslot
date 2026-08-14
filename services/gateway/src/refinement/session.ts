@@ -63,11 +63,12 @@ export async function resolveTmuxSessionWorker(session: string): Promise<TmuxWor
 
 export async function resolveTmuxTargetWorker(target: string): Promise<TmuxWorkerRef | null> {
   try {
+    const exactTarget = target.startsWith('%') || target.startsWith('=') ? target : `=${target}`;
     const { stdout } = await execFileAsync('tmux', [
       'display-message',
       '-p',
       '-t',
-      target,
+      exactTarget,
       '-F',
       '#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}',
     ]);

@@ -8,7 +8,6 @@ import type {
   ChatMemorySavedPayload,
   ChatMessage,
   ChatNewResult,
-  ChatNextStep,
   ChatResponsePayload,
   ChatSendIntent,
   ChatSessionContextResult,
@@ -59,15 +58,6 @@ import { chatPanelViewModel } from './chat-panel-view-model.js';
 export class ChatPanel extends ChatPanelState {
   protected override createRenderRoot() {
     return this;
-  }
-
-  override updated(changed: Map<string, unknown>) {
-    if (changed.has('open') && this.open) {
-      void this.updateComplete.then(() => {
-        const input = this.querySelector('.cp-input');
-        if (input instanceof HTMLTextAreaElement) input.focus();
-      });
-    }
   }
 
   connectedCallback() {
@@ -680,21 +670,6 @@ export class ChatPanel extends ChatPanelState {
     }
   }
 
-  private async onNextStepSelect(e: CustomEvent<ChatNextStep>) {
-    if (this.sending) return;
-    const step = e.detail;
-    const promptParam = step.params.prompt;
-    const prompt =
-      typeof promptParam === 'string' && promptParam.trim()
-        ? promptParam.trim()
-        : `Follow up on this Co-Pilot next step: ${step.label}`;
-    await this.submitPrompt(
-      prompt,
-      { affordances: [`next-step:${step.id}`] },
-      'diagnostic-readonly',
-    );
-  }
-
   render() {
     if (!this.open) return html``;
 
@@ -715,7 +690,6 @@ export class ChatPanel extends ChatPanelState {
         class="cp-drawer ${this.fullscreen ? 'fullscreen' : ''}"
         style="--cp-height:${this.fullscreen ? '100vh' : `${this.drawerHeight}px`}"
         @action-confirm=${this.onActionConfirm}
-        @next-step-select=${this.onNextStepSelect}
       >
         <div class="cp-resize-handle" title="Resize chat" @pointerdown=${this.startResize}></div>
         <div class="cp-header">
@@ -909,6 +883,7 @@ export class ChatPanel extends ChatPanelState {
             ${runtimeStatus === 'running'
               ? html`<button
                   class="cp-new-btn"
+                  data-testid="copilot-details-toggle"
                   @click=${() => (this.runtimeDetailsOpen = !this.runtimeDetailsOpen)}
                 >
                   ${this.runtimeDetailsOpen ? 'Hide details' : 'Details'}
@@ -1050,6 +1025,11 @@ export class ChatPanel extends ChatPanelState {
         ${runtimeStatus === 'running'
           ? html`
               <div class="cp-terminal" data-testid="copilot-terminal">
+                ${this.streamingError
+                  ? html`<div class="cp-runtime-error" data-testid="copilot-send-error">
+                      ${this.streamingError}
+                    </div>`
+                  : ''}
                 ${this.runtimeWorkerRefJson
                   ? html`<terminal-view
                       .workerRefJson=${this.runtimeWorkerRefJson}
@@ -1075,7 +1055,7 @@ export class ChatPanel extends ChatPanelState {
                       (msg) =>
                         html`<chat-message
                           .message=${msg}
-                          .nextStepsDisabled=${this.sending}
+                          .nextStepsDisabled=${true}
                         ></chat-message>`,
                     )}
                 ${view.isStreaming

@@ -13,12 +13,8 @@ import {
 } from '@farmslot/protocol';
 
 import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
-import { tmuxWorkerRouteParamsFromRef } from '../../lib/tmux-workers';
+import { firstRouteParam, tmuxWorkerRouteParamsFromRef } from '../../lib/tmux-workers';
 import { useConnectionStore } from '../../store/connection';
-
-function routeParam(value: string | string[] | undefined): string {
-  return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
-}
 
 export default function CopilotScreen() {
   const router = useRouter();
@@ -30,7 +26,7 @@ export default function CopilotScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const openedTarget = useRef('');
-  const pendingDraft = routeParam(draft).trim();
+  const pendingDraft = firstRouteParam(draft)?.trim() ?? '';
 
   const openTerminal = useCallback(
     (session: CopilotRuntimeSession) => {
@@ -115,9 +111,18 @@ export default function CopilotScreen() {
       <Pressable
         style={[styles.button, loading && styles.buttonDisabled]}
         disabled={loading || connectionStatus !== 'connected'}
-        onPress={() => void refresh()}
+        onPress={() => {
+          openedTarget.current = '';
+          void refresh();
+        }}
       >
-        <Text style={styles.buttonText}>{loading ? 'Checking…' : 'Open terminal'}</Text>
+        <Text style={styles.buttonText}>
+          {loading
+            ? 'Checking…'
+            : runtime?.status === 'running'
+              ? 'Open terminal'
+              : 'Refresh status'}
+        </Text>
       </Pressable>
     </View>
   );

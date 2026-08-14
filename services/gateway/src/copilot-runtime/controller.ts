@@ -6,6 +6,8 @@ import {
   type ChatAbortResult,
   type ChatSendParams,
   type ChatSendResult,
+  COPILOT_TMUX_WINDOW_INDEX,
+  COPILOT_TMUX_WINDOW_NAME,
   type CopilotConfigureParams,
   type CopilotConfigureResult,
   type CopilotDelivery,
@@ -538,25 +540,38 @@ export class CopilotRuntimeController {
       return true;
     }
     const target = this.persisted.paneId ?? COPILOT_TMUX_TARGET;
+    const currentWorker = this.persisted.session.terminalWorker;
     if (
       !force &&
-      this.persisted.session.terminalWorker?.paneId === target &&
-      this.persisted.session.terminalWorker.target === target
+      currentWorker?.paneId === target &&
+      currentWorker.target === target &&
+      currentWorker.session === COPILOT_TMUX_SESSION &&
+      currentWorker.window === COPILOT_TMUX_WINDOW_INDEX &&
+      currentWorker.windowName === COPILOT_TMUX_WINDOW_NAME &&
+      currentWorker.pane === '0'
     ) {
+      delete this.persisted.session.terminalReason;
       return true;
     }
     const worker = await this.resolveTerminalWorker(target);
     if (!worker) {
       delete this.persisted.session.terminalWorker;
+      delete this.persisted.paneId;
       return false;
     }
-    if (this.persisted.paneId && worker.paneId !== this.persisted.paneId) {
-      throw new Error(
-        `Co-Pilot tmux identity mismatch: expected ${this.persisted.paneId}, got ${worker.paneId ?? worker.target}`,
-      );
+    if (
+      worker.session !== COPILOT_TMUX_SESSION ||
+      worker.window !== COPILOT_TMUX_WINDOW_INDEX ||
+      worker.windowName !== COPILOT_TMUX_WINDOW_NAME ||
+      worker.pane !== '0'
+    ) {
+      delete this.persisted.session.terminalWorker;
+      delete this.persisted.paneId;
+      return false;
     }
     this.persisted.paneId ??= worker.paneId;
     this.persisted.session.terminalWorker = worker;
+    delete this.persisted.session.terminalReason;
     return true;
   }
 
