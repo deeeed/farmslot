@@ -12,6 +12,7 @@ import {
 } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../../lib/theme';
+import { formatPreciseDuration } from '../../workspace-shared/format';
 
 function latestReadyReviews(run: Run): IndependentReviewStatus[] {
   for (let index = run.decisions.length - 1; index >= 0; index -= 1) {
@@ -40,18 +41,10 @@ function stat(attempt: IndependentReviewAttempt): string | null {
   return `${paths} · +${diff.additions} −${diff.deletions}`;
 }
 
-function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return '—';
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
-  return `${(ms / 3_600_000).toFixed(1)}h`;
-}
-
 function totalDuration(attempt: IndependentReviewAttempt): string | null {
   if (!attempt.startedAt || !attempt.completedAt) return null;
   const durationMs = Date.parse(attempt.completedAt) - Date.parse(attempt.startedAt);
-  return Number.isFinite(durationMs) && durationMs >= 0 ? formatDuration(durationMs) : null;
+  return Number.isFinite(durationMs) && durationMs >= 0 ? formatPreciseDuration(durationMs) : null;
 }
 
 function reviewSource(review: IndependentReviewStatus): string {
@@ -120,7 +113,9 @@ function ReviewAttemptCard({
                 <View key={`${step.stepNumber}:${step.label}`} style={styles.timingRow}>
                   <Text style={styles.timingStep}>{step.stepNumber}</Text>
                   <Text style={styles.timingLabel}>{step.label}</Text>
-                  <Text style={styles.timingDuration}>{formatDuration(step.durationMs)}</Text>
+                  <Text style={styles.timingDuration}>
+                    {formatPreciseDuration(step.durationMs)}
+                  </Text>
                 </View>
               ))}
             </View>

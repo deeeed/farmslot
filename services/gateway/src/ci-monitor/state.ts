@@ -202,8 +202,12 @@ export function triggerForInlineFix(
   return null;
 }
 
-export function clearInlineFixState(runId: string, patch: Partial<CIWatchPhasePatch>): void {
-  const activeTaskFile = readCIWatchPhaseSnapshot(runId).activeTaskFile;
+export function clearInlineFixState(
+  runId: string,
+  patch: Partial<CIWatchPhasePatch>,
+  expectedTaskFile?: string,
+): void {
+  const activeTaskFile = expectedTaskFile ?? readCIWatchPhaseSnapshot(runId).activeTaskFile;
   if (activeTaskFile) clearRunActiveTaskFile(runId, activeTaskFile);
   mergeCIWatchOutputPatch(runId, {
     fixInProgress: false,

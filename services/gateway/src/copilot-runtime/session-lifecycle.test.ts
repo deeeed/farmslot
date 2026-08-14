@@ -71,6 +71,25 @@ test('stop records an explicit terminal reason', async () => {
   assert.equal(stopped.session.terminalReason, 'operator-requested');
 });
 
+test('status throttles repeated tmux presence probes', async () => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-status-throttle-'));
+  let nowMs = Date.parse('2026-08-14T00:00:00Z');
+  const { controller, tmux } = testController({
+    home,
+    checkout: process.cwd(),
+    now: () => new Date(nowMs),
+  });
+  await controller.start({ runner: 'cursor', model: 'test-model' });
+  const afterStart = tmux.listCount;
+  await controller.status();
+  await controller.status();
+  assert.equal(tmux.listCount, afterStart);
+  nowMs += 5_001;
+  await controller.status();
+  assert.equal(tmux.listCount, afterStart + 1);
+  await controller.stop({ reason: 'status-throttle-test' });
+});
+
 test('hook-driven runners remain starting until bootstrap delivery is proven', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'copilot-bootstrap-state-'));
   let settleDelivery: ((accepted: boolean) => void) | undefined;

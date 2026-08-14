@@ -124,4 +124,13 @@ test('review recommendation accepts the emphasized field emitted by the review t
     reviewRecommendationFromMarkdown('- **Recommended action:** **REQUEST_CHANGES**'),
     'REQUEST_CHANGES',
   );
+  assert.equal(
+    reviewRecommendationFromMarkdown('## Recommended Action\n\nREQUEST_CHANGES'),
+    'REQUEST_CHANGES',
+  );
+  assert.equal(reviewRecommendationFromMarkdown('### Verdict: REQUEST_CHANGES'), 'REQUEST_CHANGES');
+  assert.equal(
+    reviewRecommendationFromMarkdown('Recommended Action: REQUEST_CHANGES.'),
+    'REQUEST_CHANGES',
+  );
 });

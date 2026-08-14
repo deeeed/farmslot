@@ -65,6 +65,7 @@ type Emit = (event: string, payload: unknown) => void;
 const TRANSCRIPT_POLL_MS = 750;
 const TRANSCRIPT_READ_LIMIT = 64 * 1024;
 const COPILOT_MESSAGE_DELIVERY_TIMEOUT_MS = 10_000;
+const COPILOT_RUNTIME_RECONCILE_INTERVAL_MS = 5_000;
 
 export interface CopilotRuntimeControllerOptions {
   store?: CopilotRuntimeStore;
@@ -99,6 +100,7 @@ export class CopilotRuntimeController {
   private startPromise: Promise<CopilotStartResult> | null = null;
   private transcriptTimer: ReturnType<typeof setInterval> | null = null;
   private transcriptPollInFlight = false;
+  private runtimePresenceCheckedAtMs = 0;
 
   constructor(options: CopilotRuntimeControllerOptions = {}) {
     this.store = options.store ?? new CopilotRuntimeStore();
@@ -129,6 +131,7 @@ export class CopilotRuntimeController {
       this.persisted.session.autostart ??= false;
     }
     const candidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
+    this.runtimePresenceCheckedAtMs = this.now().getTime();
     if (
       candidates.length > 1 ||
       (candidates.length === 1 && candidates[0] !== COPILOT_TMUX_SESSION)
@@ -600,6 +603,9 @@ export class CopilotRuntimeController {
     ) {
       return;
     }
+    const nowMs = this.now().getTime();
+    if (nowMs - this.runtimePresenceCheckedAtMs < COPILOT_RUNTIME_RECONCILE_INTERVAL_MS) return;
+    this.runtimePresenceCheckedAtMs = nowMs;
     const candidates = await this.tmux.listCandidates(COPILOT_TMUX_SESSION);
     if (
       candidates.length > 1 ||

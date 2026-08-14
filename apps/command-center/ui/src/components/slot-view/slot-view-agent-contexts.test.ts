@@ -189,3 +189,24 @@ test('selectSlotViewTaskContext does not join arbitrary suffix-only paths', () =
     'primary',
   );
 });
+
+test('selectSlotViewTaskContext uses gateway identity for configured task roots', () => {
+  const contexts = [
+    context({
+      id: 'review',
+      role: 'self-review',
+      taskFile: '/worker/custom-root/review/547/SELF-REVIEW.md',
+      taskIdentity: '547/SELF-REVIEW.md',
+    }),
+    context({ id: 'primary', role: 'primary', taskFile: '/worker/custom-root/review/547/TASK.md' }),
+  ];
+
+  assert.equal(
+    selectSlotViewTaskContext(
+      contexts,
+      'review-pr',
+      '/prepared/different-root/review/547/SELF-REVIEW.md',
+    )?.id,
+    'review',
+  );
+});

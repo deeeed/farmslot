@@ -163,8 +163,9 @@ export function signalFreshSince(
   signal: WorkerSignal,
   startedAt: string | null | undefined,
 ): boolean {
+  if (startedAt == null || startedAt.trim() === '') return true;
   const startedMs = parseFiniteIsoMs(startedAt);
-  if (startedMs === null) return true;
+  if (startedMs === null) return false;
   const signalMs = parseFiniteIsoMs(signal.timestamp);
   if (signalMs === null) return false;
   return signalMs >= startedMs;
@@ -174,9 +175,14 @@ export function signalFreshAfterAll(
   signal: WorkerSignal,
   floors: Array<string | null | undefined>,
 ): boolean {
-  const parsedFloors = floors.map(parseFiniteIsoMs).filter((ms): ms is number => ms !== null);
+  const suppliedFloors = floors.filter(
+    (floor): floor is string => floor != null && floor.trim() !== '',
+  );
+  if (suppliedFloors.length === 0) return true;
+  const parsedFloors = suppliedFloors.map(parseFiniteIsoMs);
+  if (parsedFloors.some((ms) => ms === null)) return false;
   if (parsedFloors.length === 0) return true;
   const signalMs = parseFiniteIsoMs(signal.timestamp);
-  if (signalMs === null) return true;
-  return signalMs >= Math.max(...parsedFloors);
+  if (signalMs === null) return false;
+  return signalMs >= Math.max(...(parsedFloors as number[]));
 }

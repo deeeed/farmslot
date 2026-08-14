@@ -611,7 +611,7 @@ async function attemptInlineCIFix(
         mutateDedup(runId, (s) => {
           s.consecutiveAttempts = Math.max(0, s.consecutiveAttempts - 1);
         });
-        clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt });
+        clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt }, writeResult.taskPath);
         return {
           attempted: true,
           success: false,
@@ -631,7 +631,7 @@ async function attemptInlineCIFix(
       mutateDedup(runId, (s) => {
         s.consecutiveAttempts = Math.max(0, s.consecutiveAttempts - 1);
       });
-      clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt });
+      clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt }, writeResult.taskPath);
       return {
         attempted: true,
         success: false,
@@ -664,6 +664,7 @@ async function attemptInlineCIFix(
     const hardDeadline = Date.now() + INLINE_FIX_HARD_TIMEOUT_MS;
     while (Date.now() < hardDeadline && !signal.aborted) {
       if (Date.now() >= deadline) {
+        if (!acceptedTurnToken) break;
         const turnState = await readRunnerTurnState(vars, workerTarget, runner, acceptedTurnToken);
         if (turnState?.value !== 'active' || turnState.confidence !== 'high') break;
         deadline = Math.min(hardDeadline, Date.now() + INLINE_FIX_TIMEOUT_MS);
@@ -710,12 +711,16 @@ async function attemptInlineCIFix(
               );
               await markAgentContextStatus(runId, 'ci-fix', 'blocked', { lastSignalAt });
               await unwatchContext(slotId, 'ci-fix');
-              clearInlineFixState(runId, {
-                phase: 'blocked',
-                lastSignalAt,
-                lastFixCommitSha: currentSha ?? null,
-                fixProgress,
-              });
+              clearInlineFixState(
+                runId,
+                {
+                  phase: 'blocked',
+                  lastSignalAt,
+                  lastFixCommitSha: currentSha ?? null,
+                  fixProgress,
+                },
+                writeResult.taskPath,
+              );
               return {
                 attempted: true,
                 success: false,
@@ -740,12 +745,16 @@ async function attemptInlineCIFix(
               { lastSignalAt },
             );
             await unwatchContext(slotId, 'ci-fix');
-            clearInlineFixState(runId, {
-              phase: 'polling',
-              lastSignalAt,
-              lastFixCommitSha: currentSha ?? null,
-              fixProgress,
-            });
+            clearInlineFixState(
+              runId,
+              {
+                phase: 'polling',
+                lastSignalAt,
+                lastFixCommitSha: currentSha ?? null,
+                fixProgress,
+              },
+              writeResult.taskPath,
+            );
             return {
               attempted: true,
               success: true,
@@ -772,11 +781,15 @@ async function attemptInlineCIFix(
           lastSignalAt: new Date().toISOString(),
         });
         await unwatchContext(slotId, 'ci-fix');
-        clearInlineFixState(runId, {
-          phase: 'polling',
-          lastFixCommitSha: currentSha,
-          fixProgress,
-        });
+        clearInlineFixState(
+          runId,
+          {
+            phase: 'polling',
+            lastFixCommitSha: currentSha,
+            fixProgress,
+          },
+          writeResult.taskPath,
+        );
         return {
           attempted: true,
           success: true,
@@ -794,26 +807,27 @@ async function attemptInlineCIFix(
         );
         await markAgentContextStatus(runId, 'ci-fix', 'failed');
         await unwatchContext(slotId, 'ci-fix');
-        clearInlineFixState(runId, {
-          phase: 'polling',
-          fixProgress,
-        });
+        clearInlineFixState(
+          runId,
+          {
+            phase: 'polling',
+            fixProgress,
+          },
+          writeResult.taskPath,
+        );
         return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
       }
     }
 
-    const terminalTurnState = await readRunnerTurnState(
-      vars,
-      workerTarget,
-      runner,
-      acceptedTurnToken,
-    );
+    const terminalTurnState = acceptedTurnToken
+      ? await readRunnerTurnState(vars, workerTarget, runner, acceptedTurnToken)
+      : null;
     if (terminalTurnState?.value === 'active' && terminalTurnState.confidence === 'high') {
       const blockedReason = `Inline CI fix runner turn remained active for ${Math.round((Date.now() - startedAt) / 60_000)} minutes; operator inspection required before another task can be dispatched`;
       console.log(`[ci-monitor] run ${runId.slice(0, 8)} — ${blockedReason}`);
       await markAgentContextStatus(runId, 'ci-fix', 'blocked');
       await unwatchContext(slotId, 'ci-fix');
-      clearInlineFixState(runId, { phase: 'blocked' });
+      clearInlineFixState(runId, { phase: 'blocked' }, writeResult.taskPath);
       return {
         attempted: true,
         success: false,
@@ -828,7 +842,7 @@ async function attemptInlineCIFix(
     );
     await markAgentContextStatus(runId, 'ci-fix', 'failed');
     await unwatchContext(slotId, 'ci-fix');
-    clearInlineFixState(runId, { phase: 'polling' });
+    clearInlineFixState(runId, { phase: 'polling' }, writeResult.taskPath);
     return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
   } catch (err) {
     console.warn(
@@ -839,7 +853,7 @@ async function attemptInlineCIFix(
       await unwatchContext(slotId, 'ci-fix');
     }
     vars = vars ?? (await loadSlotVars(slotId));
-    clearInlineFixState(runId, { phase: 'polling' });
+    clearInlineFixState(runId, { phase: 'polling' }, writeResult.taskPath);
     return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
   } finally {
     if (vars) {

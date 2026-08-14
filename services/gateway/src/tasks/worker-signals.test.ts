@@ -89,9 +89,17 @@ test('signal freshness compares against durable context floors', () => {
 
   assert.equal(signalFreshSince(signal, '2026-05-05T01:00:00Z'), true);
   assert.equal(signalFreshSince(signal, '2026-05-05T01:13:08Z'), false);
+  assert.equal(signalFreshSince(signal, undefined), true);
+  assert.equal(signalFreshSince(signal, 'not-a-date'), false);
   assert.equal(signalFreshAfterAll(signal, ['2026-05-05T00:48:51Z', '2026-05-05T01:00:00Z']), true);
   assert.equal(
     signalFreshAfterAll(signal, ['2026-05-05T00:48:51Z', '2026-05-05T01:13:08Z']),
+    false,
+  );
+  assert.equal(signalFreshAfterAll(signal, [undefined, null]), true);
+  assert.equal(signalFreshAfterAll(signal, ['not-a-date']), false);
+  assert.equal(
+    signalFreshAfterAll({ ...signal, timestamp: 'not-a-date' }, ['2026-05-05T01:00:00Z']),
     false,
   );
 });

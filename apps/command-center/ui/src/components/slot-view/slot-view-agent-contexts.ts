@@ -15,6 +15,7 @@ type SlotViewAgentContextLike = Pick<
   | 'status'
   | 'runId'
   | 'taskFile'
+  | 'taskIdentity'
   | 'signalFile'
   | 'runner'
   | 'model'
@@ -75,6 +76,7 @@ function toAgentContextSummary(ctx: SlotViewAgentContextLike): AgentContextSumma
     status: ctx.status,
     runId: ctx.runId,
     taskFile: ctx.taskFile,
+    taskIdentity: ctx.taskIdentity,
     signalFile: ctx.signalFile,
     runner: ctx.runner,
     model: ctx.model,
@@ -178,13 +180,15 @@ function canonicalTaskIdentity(taskFile: string): string | null {
 }
 
 function taskFilesMatch(
-  left: string | null | undefined,
-  right: string | null | undefined,
+  context: AgentContextSummary,
+  activeTaskFile: string | null | undefined,
 ): boolean {
-  const a = normalizedTaskFile(left);
-  const b = normalizedTaskFile(right);
+  const a = normalizedTaskFile(context.taskFile);
+  const b = normalizedTaskFile(activeTaskFile);
   if (!a || !b) return false;
   if (a === b) return true;
+  const taskIdentity = normalizedTaskFile(context.taskIdentity);
+  if (taskIdentity && (b === taskIdentity || b.endsWith(`/${taskIdentity}`))) return true;
   const aIdentity = canonicalTaskIdentity(a);
   const bIdentity = canonicalTaskIdentity(b);
   return aIdentity != null && aIdentity === bIdentity;
@@ -196,7 +200,7 @@ export function selectSlotViewTaskContext(
   flowType?: Run['flowType'] | string | null,
   activeTaskFile?: string | null,
 ): AgentContextSummary | null {
-  const active = contexts.find((ctx) => taskFilesMatch(ctx.taskFile, activeTaskFile));
+  const active = contexts.find((ctx) => taskFilesMatch(ctx, activeTaskFile));
   if (active) return active;
   const primaryRole = primaryRoleForFlow(flowType);
   return (

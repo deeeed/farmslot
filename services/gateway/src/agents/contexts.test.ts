@@ -233,7 +233,7 @@ test('summarizeAgentContexts emits an explicit public field allowlist', () => {
     status: 'working',
     slotId: 'slot-1',
     runId: 'run-1',
-    taskFile: '.task/review/TASK.md',
+    taskFile: '/worker/custom-root/review/run-1/TASK.md',
     signalFile: '.task/review/SIGNAL.json',
     runner: 'codex',
     model: 'gpt',
@@ -243,6 +243,7 @@ test('summarizeAgentContexts emits an explicit public field allowlist', () => {
     completedAt: '2026-04-25T00:02:00Z',
   };
   const summary = summarizeAgentContexts({
+    taskFile: '/repo/custom-root/review/run-1/TASK.md',
     agentContexts: [context],
   });
 
@@ -262,12 +263,14 @@ test('summarizeAgentContexts emits an explicit public field allowlist', () => {
       'status',
       'target',
       'taskFile',
+      'taskIdentity',
       'updatedAt',
     ].sort(),
   );
   assert.equal('slotId' in summary[0], false);
   assert.equal('startedAt' in summary[0], false);
   assert.equal('completedAt' in summary[0], false);
+  assert.equal(summary[0].taskIdentity, 'run-1/TASK.md');
 });
 
 test('upsertAgentContext keeps independent role contexts across rapid updates', async (t) => {

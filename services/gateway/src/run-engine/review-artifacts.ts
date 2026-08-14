@@ -70,16 +70,24 @@ function stricterReviewRecommendation(left: string, right: string): string {
 }
 
 export function reviewRecommendationFromMarkdown(markdown: string): string | null {
-  for (const rawLine of markdown.split(/\r?\n/)) {
-    const line = rawLine
+  const lines = markdown.split(/\r?\n/).map((rawLine) =>
+    rawLine
       .replace(/\*\*|__|`/g, '')
       .replace(/^\s*[-+]\s*/, '')
-      .trim();
-    const match =
-      /^(?:Recommended Action|Recommendation|Verdict)\s*:\s*(APPROVE|REQUEST_CHANGES|COMMENT)$/i.exec(
-        line,
+      .replace(/^\s*#{1,6}\s*/, '')
+      .trim(),
+  );
+  for (let index = 0; index < lines.length; index += 1) {
+    const inline =
+      /^(?:Recommended Action|Recommendation|Verdict)\s*:\s*(APPROVE|REQUEST_CHANGES|COMMENT)\s*[.!]?$/i.exec(
+        lines[index],
       );
-    if (match) return match[1].toUpperCase();
+    if (inline) return inline[1].toUpperCase();
+    if (/^(?:Recommended Action|Recommendation|Verdict)\s*:?[.!]?$/i.test(lines[index])) {
+      const nextValue = lines.slice(index + 1).find((line) => line.length > 0) ?? '';
+      const following = /^(APPROVE|REQUEST_CHANGES|COMMENT)\s*[.!]?$/i.exec(nextValue);
+      if (following) return following[1].toUpperCase();
+    }
   }
   return null;
 }

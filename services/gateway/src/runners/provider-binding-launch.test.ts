@@ -13,7 +13,7 @@ describe('codex account binding leaves launch home setup unchanged', () => {
     assert.match(a, /export CODEX_HOME=/);
     assert.match(a, /FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--config'/);
     assert.match(a, /FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='features\.hooks=true'/);
-    assert.match(a, /unset CODEX_HOME; FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--disable'/);
+    assert.match(a, /unset CODEX_HOME; export FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1='--disable'/);
     assert.match(a, /FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2='plugin_hooks'/);
   });
 
