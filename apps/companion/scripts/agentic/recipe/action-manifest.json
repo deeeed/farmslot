@@ -122,6 +122,36 @@
         }
       ]
     },
+    "ui.key_press": {
+      "description": "Send Back, Escape, Enter, or Return to the focused native input and wait for the resulting UI transition.",
+      "adapters": ["android", "ios"],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": ["Back", "Escape", "Enter", "Return"]
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "settle": {
+            "type": "boolean"
+          }
+        },
+        "required": ["key"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "ui.key_press",
+          "intent": "Continue the requested keyboard interaction.",
+          "key": "Enter",
+          "next": "done"
+        }
+      ]
+    },
     "ui.set_input": {
       "description": "Set text on a native input. Values remain part of retained recipe artifacts, so recipes must not contain secrets.",
       "schema": {
