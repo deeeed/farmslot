@@ -75,6 +75,7 @@ export function reviewRecommendationFromMarkdown(markdown: string): string | nul
       .replace(/\*\*|__|`/g, '')
       .replace(/^\s*[-+]\s*/, '')
       .replace(/^\s*#{1,6}\s*/, '')
+      .replace(/^\s*\d+[.)]\s*/, '')
       .trim(),
   );
   for (let index = 0; index < lines.length; index += 1) {

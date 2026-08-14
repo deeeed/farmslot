@@ -179,10 +179,13 @@ export function signalFreshAfterAll(
     (floor): floor is string => floor != null && floor.trim() !== '',
   );
   if (suppliedFloors.length === 0) return true;
-  const parsedFloors = suppliedFloors.map(parseFiniteIsoMs);
-  if (parsedFloors.some((ms) => ms === null)) return false;
-  if (parsedFloors.length === 0) return true;
+  let latestFloorMs = Number.NEGATIVE_INFINITY;
+  for (const floor of suppliedFloors) {
+    const floorMs = parseFiniteIsoMs(floor);
+    if (floorMs === null) return false;
+    latestFloorMs = Math.max(latestFloorMs, floorMs);
+  }
   const signalMs = parseFiniteIsoMs(signal.timestamp);
   if (signalMs === null) return false;
-  return signalMs >= Math.max(...(parsedFloors as number[]));
+  return signalMs >= latestFloorMs;
 }
