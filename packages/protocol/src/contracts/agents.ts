@@ -34,8 +34,6 @@ export interface AgentContext {
   slotId: string;
   runId: string;
   taskFile?: string | null;
-  /** Run-relative task identity derived by the gateway, independent of the configured task root. */
-  taskIdentity?: string | null;
   signalFile?: string | null;
   /** Machine-readable reviewer verdict/issues artifact required for this reviewer attempt. */
   reviewResultFile?: string | null;
@@ -73,6 +71,8 @@ export interface AgentContextSummary {
   status: AgentContextStatus;
   runId?: string | null;
   taskFile?: string | null;
+  /** Run-relative task identity derived by the gateway, independent of the configured task root. */
+  taskIdentity?: string | null;
   signalFile?: string | null;
   runner?: string | null;
   model?: string | null;
