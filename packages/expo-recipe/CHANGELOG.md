@@ -4,6 +4,10 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+## 0.8.1 - 2026-08-14
+
+- Publish against `@farmslot/recipe-harness` 0.15.0 so consumers use one Recipe Protocol 0.21.0 runtime.
+
 ## 0.8.0 - 2026-08-14
 
 - fix: route standard Back, Escape, Enter, and Return key presses through the native device keyboard on opaque Android and iOS runtimes, then wait for the resulting UI transition.
