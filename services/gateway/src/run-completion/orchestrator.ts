@@ -120,6 +120,7 @@ export {
   localPrBodyPathResidues,
   postProcessPRBody,
   readEvidenceManifest,
+  sanitizePRBody,
   scanArtifacts,
   uploadArtifacts,
 } from './publication-artifacts.js';
