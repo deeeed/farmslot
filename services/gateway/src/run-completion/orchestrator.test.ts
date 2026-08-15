@@ -27,6 +27,7 @@ import {
   publicationStatusForRun,
   readCommentsTriageSummary,
   readEvidenceManifest,
+  sanitizePRBody,
   selectedEvidenceKeysForPublication,
 } from './orchestrator.js';
 import { makeRun } from './test-fixtures.js';
@@ -146,6 +147,20 @@ test('localPrBodyPathResidues flags local media paths before approved publicatio
   );
   assert.deepEqual(localPrBodyPathResidues('remote https://cdn.example/screenshots/after.png'), []);
   assert.deepEqual(localPrBodyPathResidues('remote https://cdn.example/videos/after.webm'), []);
+  assert.deepEqual(
+    localPrBodyPathResidues(
+      '<a href="https://raw.githubusercontent.com/owner/repo/main/fixes/1/recipe-runs/inherited-run/before.mp4?sha=abc">recipe-runs/inherited-run/before.mp4</a>',
+    ),
+    [],
+    'a local-looking label backed by a hosted evidence URL is already published',
+  );
+  assert.deepEqual(
+    localPrBodyPathResidues(
+      '[recipe-runs/inherited-run/before.mp4](https://cdn.example/fixes/1/before.mp4)',
+    ),
+    [],
+    'markdown links to hosted evidence are already published',
+  );
   assert.deepEqual(localPrBodyPathResidues('see /Users/me/task/artifacts/after.png'), [
     '/Users/me/task/artifacts/after.png',
   ]);
@@ -199,6 +214,22 @@ test('localPrBodyPathResidues flags local media paths before approved publicatio
     ),
     ['artifacts/before.png'],
     'residues outside code blocks still get flagged',
+  );
+});
+
+test('sanitizePRBody preserves uploaded evidence links with local-looking labels', () => {
+  const hostedAnchor =
+    '<a href="https://cdn.example/reviews/1/before.mp4">recipe-runs/inherited/before.mp4</a>';
+  const hostedMarkdown =
+    '[artifacts/screenshots/after.png](https://cdn.example/reviews/1/after.png)';
+
+  assert.equal(
+    sanitizePRBody(`${hostedAnchor}\n${hostedMarkdown}`),
+    `${hostedAnchor}\n${hostedMarkdown}`,
+  );
+  assert.equal(
+    sanitizePRBody('See artifacts/screenshots/after.png\nKeep this.').trim(),
+    'Keep this.',
   );
 });
 

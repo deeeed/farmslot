@@ -409,6 +409,31 @@ function stripCodeBlocks(body: string): string {
   return body.replace(/```[\s\S]*?```/g, '').replace(/~~~[\s\S]*?~~~/g, '');
 }
 
+function stripRemoteLinks(body: string): string {
+  return body
+    .replace(/<a\b[^>]*\bhref=["']https?:\/\/[^"']+["'][^>]*>[\s\S]*?<\/a>/gi, ' ')
+    .replace(/!?\[[^\]]*\]\(https?:\/\/[^)]+\)/gi, ' ');
+}
+
+function protectRemoteLinks(body: string): { body: string; restore: (value: string) => string } {
+  const links: string[] = [];
+  const protect = (link: string) => {
+    const token = `__FARMSLOT_REMOTE_LINK_${links.length}__`;
+    links.push(link);
+    return token;
+  };
+  const protectedBody = body
+    .replace(/<a\b[^>]*\bhref=["']https?:\/\/[^"']+["'][^>]*>[\s\S]*?<\/a>/gi, protect)
+    .replace(/!?\[[^\]]*\]\(https?:\/\/[^)]+\)/gi, protect);
+  return {
+    body: protectedBody,
+    restore: (value) =>
+      value.replace(/__FARMSLOT_REMOTE_LINK_(\d+)__/g, (_match, index: string) => {
+        return links[Number(index)] ?? '';
+      }),
+  };
+}
+
 // A path a reader must be able to SEE (screenshots, recordings) is evidence: it
 // has to be uploaded, and quoting it in backticks does not make it visible.
 // Everything else in inline code is provenance narration — worker reports cite
@@ -449,7 +474,10 @@ function matchResidues(scanned: string, mediaOnly: boolean): string[] {
 }
 
 export function localPrBodyPathResidues(body: string): string[] {
-  const { prose, spans } = extractInlineCodeSpans(stripCodeBlocks(body));
+  // A local-looking label is safe when the enclosing link points at uploaded
+  // remote evidence. Validate the link as one unit instead of re-scanning its
+  // visible text as though it were an unresolved path.
+  const { prose, spans } = extractInlineCodeSpans(stripRemoteLinks(stripCodeBlocks(body)));
   const residues = [...matchResidues(prose, false), ...matchResidues(spans, true)];
   return [...new Set(residues)].slice(0, 10);
 }
@@ -460,8 +488,9 @@ function assertNoLocalPrBodyPathResidues(body: string): void {
   throw new Error(`PR body still contains local artifact path(s): ${residues.join(', ')}`);
 }
 
-function sanitizePRBody(body: string): string {
-  let result = body;
+export function sanitizePRBody(body: string): string {
+  const protectedLinks = protectRemoteLinks(body);
+  let result = protectedLinks.body;
   // Strip markdown image/link refs pointing to local paths
   result = result.replace(
     /!?\[[^\]]*\]\([^)]*(?:\.task\/|temp\/|\/Users\/|\/home\/|\/tmp\/|file:\/\/)[^)]*\)/g,
@@ -485,7 +514,7 @@ function sanitizePRBody(body: string): string {
   );
   // Collapse multiple blank lines left by stripping
   result = result.replace(/\n{3,}/g, '\n\n');
-  return result;
+  return protectedLinks.restore(result);
 }
 
 function prefixPromotedEvidenceManifestPath(
@@ -694,6 +723,10 @@ export async function postProcessPRBody(
       }
     }
 
+    // Structured manifests and fallback rewrites are generated after the
+    // initial sanitize pass. Apply the same publication boundary to their
+    // output so a manifest summary cannot reintroduce a task-local path.
+    body = sanitizePRBody(body);
     if (options.failOnError) assertNoLocalPrBodyPathResidues(body);
 
     // Auto-check author checklist boxes (CI may be gated on these)
