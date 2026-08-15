@@ -1,0 +1,120 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion fullscreen Before/After comparison",
+  "description": "Opens a real run evidence pair, expands it fullscreen, and proves horizontal Before-to-After swiping.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["run_id"],
+    "properties": {
+      "run_id": { "type": "string" }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "fullscreen-before-after",
+      "claim": "A Companion evidence pair opens as a labeled fullscreen comparison and swipes from Before to After."
+    }
+  ],
+  "workflow": {
+    "entry": "wait-review",
+    "nodes": {
+      "wait-review": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-review",
+        "expected": "visible",
+        "intent": "Start from the live review queue.",
+        "next": "open-run"
+      },
+      "open-run": {
+        "action": "ui.press",
+        "selector": "label=\"Open run {{params.run_id}}\"",
+        "intent": "Open a run with real paired evidence.",
+        "next": "wait-run"
+      },
+      "wait-run": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-run-detail",
+        "expected": "visible",
+        "intent": "Keep the selected run's evidence available for comparison.",
+        "next": "open-evidence"
+      },
+      "open-evidence": {
+        "action": "ui.press",
+        "test_id": "companion-run-tab-evidence",
+        "intent": "Select the run's visual evidence workspace.",
+        "next": "wait-evidence"
+      },
+      "wait-evidence": {
+        "action": "ui.wait_for",
+        "test_id": "companion-before-after-primary-before",
+        "expected": "visible",
+        "intent": "Keep the primary visual delta available for inspection.",
+        "next": "open-comparison"
+      },
+      "open-comparison": {
+        "action": "ui.press",
+        "test_id": "companion-before-after-primary-before",
+        "intent": "Expand the shared comparison from its Before preview.",
+        "next": "wait-fullscreen"
+      },
+      "wait-fullscreen": {
+        "action": "ui.wait_for",
+        "test_id": "companion-before-after-primary-fullscreen",
+        "expected": "visible",
+        "intent": "Confirm the dedicated fullscreen comparison is visible.",
+        "next": "capture-before"
+      },
+      "capture-before": {
+        "action": "ui.screenshot",
+        "path": "screenshots/fullscreen-before.png",
+        "label": "Fullscreen Before state",
+        "intent": "Preserve the labeled baseline at a size where its visual details can be judged.",
+        "proves": ["fullscreen-before-after"],
+        "next": "swipe-after"
+      },
+      "swipe-after": {
+        "action": "ui.swipe",
+        "target": "companion-before-after-primary-fullscreen-page-before",
+        "direction": "left",
+        "distance": 240,
+        "duration_ms": 350,
+        "intent": "Swipe the fullscreen comparison to its After state.",
+        "next": "confirm-after-selected"
+      },
+      "confirm-after-selected": {
+        "action": "ui.wait_for",
+        "test_id": "companion-before-after-primary-fullscreen-page-selected-after",
+        "expected": "visible",
+        "intent": "Prove the swipe selected the After state before accepting its screenshot as evidence.",
+        "proves": ["fullscreen-before-after"],
+        "next": "capture-after"
+      },
+      "capture-after": {
+        "action": "ui.screenshot",
+        "path": "screenshots/fullscreen-after.png",
+        "label": "Fullscreen After state",
+        "intent": "Preserve the changed state at the same reviewable scale after the native gesture.",
+        "proves": ["fullscreen-before-after"],
+        "next": "open-after-artifact"
+      },
+      "open-after-artifact": {
+        "action": "ui.press",
+        "test_id": "companion-before-after-primary-fullscreen-page-after",
+        "intent": "Open the selected artifact from fullscreen without leaving the comparison modal above the destination.",
+        "next": "wait-comparison-dismissed"
+      },
+      "wait-comparison-dismissed": {
+        "action": "ui.wait_for",
+        "test_id": "companion-before-after-primary-fullscreen",
+        "expected": "hidden",
+        "intent": "Prove artifact navigation dismisses the fullscreen comparison first.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

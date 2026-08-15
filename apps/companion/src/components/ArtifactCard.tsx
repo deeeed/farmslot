@@ -8,10 +8,11 @@ import {
   artifactSource,
   classifyArtifact,
   formatBytes,
-  formatVisualArtifactPairLabel,
   type VisualArtifactPair,
 } from '../lib/artifact-url';
 import { colors, fonts, radii, spacing } from '../lib/theme';
+
+import { BeforeAfterPreview } from './BeforeAfterPreview';
 
 interface ArtifactCardProps {
   url: string;
@@ -159,71 +160,12 @@ export function ComparisonCard({
   onOpenAfter?: () => void;
 }) {
   return (
-    <View style={styles.comparisonCard}>
-      <View style={styles.comparisonHeader}>
-        <View style={styles.comparisonTitleBlock}>
-          <Text style={styles.comparisonEyebrow}>Required comparison</Text>
-          <Text style={styles.comparisonTitle}>Before → After delta</Text>
-          <Text style={styles.comparisonSubtitle} numberOfLines={1}>
-            {formatVisualArtifactPairLabel(pair)}
-          </Text>
-        </View>
-        <View style={styles.comparisonArrowBadge}>
-          <Text style={styles.comparisonArrowBadgeText}>Before → After</Text>
-        </View>
-      </View>
-      <View style={styles.comparisonRow}>
-        <View style={styles.comparisonHalf}>
-          <Text style={styles.comparisonLabel}>Before</Text>
-          <ComparisonMedia item={pair.before} authHeaders={authHeaders} onOpen={onOpenBefore} />
-        </View>
-        <View style={styles.comparisonHalf}>
-          <Text style={styles.comparisonLabel}>After</Text>
-          <ComparisonMedia item={pair.after} authHeaders={authHeaders} onOpen={onOpenAfter} />
-        </View>
-      </View>
-    </View>
-  );
-}
-
-function ComparisonMedia({
-  item,
-  authHeaders,
-  onOpen,
-}: {
-  item: ArtifactPair['before'];
-  authHeaders?: ArtifactHttpHeaders;
-  onOpen?: () => void;
-}) {
-  const mediaType = classifyArtifact(item);
-  if (mediaType === 'video') return <ComparisonVideo url={item.url} authHeaders={authHeaders} />;
-  if (mediaType === 'image') {
-    const image = (
-      <Image
-        source={artifactSource(item.url, authHeaders)}
-        style={styles.comparisonVideo}
-        resizeMode="contain"
-      />
-    );
-    return onOpen ? <Pressable onPress={onOpen}>{image}</Pressable> : image;
-  }
-  return (
-    <View style={styles.comparisonVideo}>
-      <Text style={styles.documentHint}>{item.path.split('/').pop() ?? item.path}</Text>
-    </View>
-  );
-}
-
-function ComparisonVideo({ url, authHeaders }: { url: string; authHeaders?: ArtifactHttpHeaders }) {
-  const source = React.useMemo(() => artifactSource(url, authHeaders), [authHeaders, url]);
-  const player = useVideoPlayer(source);
-  return (
-    <VideoView
-      player={player}
-      style={styles.comparisonVideo}
-      nativeControls
-      fullscreenOptions={{ enable: true }}
-      contentFit="contain"
+    <BeforeAfterPreview
+      pair={pair}
+      authHeaders={authHeaders}
+      onOpenBefore={onOpenBefore}
+      onOpenAfter={onOpenAfter}
+      imageHeight={120}
     />
   );
 }
@@ -296,73 +238,5 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: fonts.sizeXs,
     fontWeight: '800',
-  },
-  comparisonCard: {
-    backgroundColor: colors.bgCard,
-    borderRadius: radii.md,
-    padding: spacing.lg,
-  },
-  comparisonHeader: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    gap: spacing.md,
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  comparisonTitleBlock: {
-    flex: 1,
-  },
-  comparisonEyebrow: {
-    color: colors.accent,
-    fontSize: fonts.sizeXs,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-    marginBottom: 2,
-    textTransform: 'uppercase',
-  },
-  comparisonTitle: {
-    color: colors.textPrimary,
-    fontSize: fonts.sizeSm,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-  },
-  comparisonSubtitle: {
-    color: colors.textMuted,
-    fontSize: fonts.sizeXs,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  comparisonArrowBadge: {
-    backgroundColor: colors.accent + '22',
-    borderColor: colors.accent + '55',
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  comparisonArrowBadgeText: {
-    color: colors.accent,
-    fontSize: 9,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-  },
-  comparisonRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  comparisonHalf: {
-    flex: 1,
-  },
-  comparisonLabel: {
-    color: colors.textMuted,
-    fontSize: fonts.sizeXs,
-    marginBottom: spacing.xs,
-    textTransform: 'uppercase',
-  },
-  comparisonVideo: {
-    width: '100%',
-    height: 120,
-    backgroundColor: colors.bgInput,
-    borderRadius: radii.sm,
   },
 });

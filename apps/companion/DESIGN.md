@@ -3,7 +3,7 @@
 ## Source of truth
 
 - Status: Active evidence-first UX simplification
-- Last refreshed: 2026-08-03
+- Last refreshed: 2026-08-15
 - Primary product surfaces: Mobile Companion review flow, evidence viewer, PR/diff context, worker terminal control.
 - Evidence reviewed: `docs/PRD-mobile-companion-canonical.md`, `docs/ROADMAP-next.md`, `docs/adr/052-recipe-derived-visual-review-boards.md`, current Expo Router routes under `src/app`, run/evidence/diff/terminal feature modules, and the full-surface UX catalog recipes.
 
@@ -100,6 +100,10 @@
 - Existing components to reuse:
   - `EvidenceReviewWorkspace`, `BeforeAfterPreview`, `MobileDiffViewer`, `XtermTerminalView`, `RunWorkspaceNav`.
 - New/changed components:
+  - `BeforeAfterPreview` is the single evidence-pair renderer: one full-width state at a time,
+    explicit Before/After tabs, horizontal swipe, and a tap-through to the selected artifact.
+    Multi-pair surfaces change pairs with separate controls so pair navigation cannot be confused
+    with swiping between the two states.
   - `WorkspaceTabsLayout` shared real-tab shell for Slot and Run workspaces, including Run Files.
   - Shared run-gate panel used by the conditional Gate tab and compatibility decision route;
     no second gate presentation model.

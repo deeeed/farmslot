@@ -1,5 +1,21 @@
-import React from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Image,
+  type LayoutChangeEvent,
+  Modal,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  Platform,
+  Pressable,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   type ArtifactHttpHeaders,
@@ -11,28 +27,104 @@ import {
 } from '../lib/artifact-url';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
+type CompareSide = 'before' | 'after';
+
 interface BeforeAfterPreviewProps<T extends ArtifactManifestEntry = ArtifactManifestEntry> {
   pair: VisualArtifactPair<T>;
-  authHeaders: ArtifactHttpHeaders;
-  onOpenArtifact: (artifactPath: string) => void;
+  authHeaders?: ArtifactHttpHeaders;
+  onOpenArtifact?: (artifactPath: string) => void;
+  onOpenBefore?: () => void;
+  onOpenAfter?: () => void;
   title?: string;
   eyebrow?: string;
   hint?: string;
   imageHeight?: number;
+  allowFullscreen?: boolean;
+  initialSide?: CompareSide;
+  testIdPrefix?: string;
+  playVideo?: boolean;
 }
 
+/** Shared Companion renderer for every before/after evidence pair. */
 export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactManifestEntry>({
   pair,
   authHeaders,
   onOpenArtifact,
+  onOpenBefore,
+  onOpenAfter,
   title = 'Before → After delta',
   eyebrow = 'Required comparison',
-  hint = 'Tap to inspect',
-  imageHeight = 78,
+  hint = 'Swipe to compare',
+  imageHeight = 120,
+  allowFullscreen = true,
+  initialSide = 'before',
+  testIdPrefix,
+  playVideo = false,
 }: BeforeAfterPreviewProps<T>) {
+  const { height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const fullscreenTopInset = Math.max(
+    insets.top,
+    Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight ?? 0),
+  );
+  const fullscreenBottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 10 : 0);
+  const scrollRef = useRef<ScrollView>(null);
+  const [side, setSide] = useState<CompareSide>(initialSide);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
   const comparisonLabel = formatVisualArtifactPairLabel(pair);
+  const pairIdentity = `${pair.before.path}:${pair.after.path}`;
+  const resolvedTestIdPrefix =
+    testIdPrefix ?? `companion-before-after-${stableTestIdSuffix(pairIdentity)}`;
+
+  useEffect(() => {
+    setSide(initialSide);
+    scrollRef.current?.scrollTo({
+      x: initialSide === 'after' ? viewportWidth : 0,
+      animated: false,
+    });
+  }, [initialSide, pairIdentity]);
+
+  const selectSide = (nextSide: CompareSide) => {
+    setSide(nextSide);
+    scrollRef.current?.scrollTo({
+      x: nextSide === 'after' ? viewportWidth : 0,
+      animated: true,
+    });
+  };
+
+  const openSide = (target: CompareSide) => {
+    setSide(target);
+    if (allowFullscreen) {
+      setFullscreenOpen(true);
+      return;
+    }
+    const artifact = target === 'before' ? pair.before : pair.after;
+    const callback = target === 'before' ? onOpenBefore : onOpenAfter;
+    if (callback) callback();
+    else onOpenArtifact?.(artifact.path);
+  };
+
+  const handleLayout = (event: LayoutChangeEvent) => {
+    const width = event.nativeEvent.layout.width;
+    setViewportWidth(width);
+    if (side === 'after') {
+      requestAnimationFrame(() => scrollRef.current?.scrollTo({ x: width, animated: false }));
+    }
+  };
+
+  const handleScrollEnd = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (viewportWidth <= 0) return;
+    setSide(event.nativeEvent.contentOffset.x >= viewportWidth / 2 ? 'after' : 'before');
+  };
+
+  const dismissFullscreenThen = (open?: () => void) => {
+    setFullscreenOpen(false);
+    if (open) requestAnimationFrame(open);
+  };
+
   return (
-    <View style={styles.card}>
+    <View style={styles.card} testID={`${resolvedTestIdPrefix}-preview`}>
       <View style={styles.header}>
         <View style={styles.titleBlock}>
           <Text style={styles.eyebrow}>{eyebrow}</Text>
@@ -43,71 +135,281 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
         </View>
         <Text style={styles.hint}>{hint}</Text>
       </View>
-      <View style={styles.row}>
-        <ComparePane
-          label="Before"
-          artifact={pair.before}
-          tone={colors.statusWarn}
-          authHeaders={authHeaders}
-          imageHeight={imageHeight}
-          onOpenArtifact={onOpenArtifact}
+
+      <View style={styles.segmentedControl} accessibilityRole="tablist">
+        <SideTab
+          side="before"
+          selected={side === 'before'}
+          onPress={() => selectSide('before')}
+          testIdPrefix={resolvedTestIdPrefix}
         />
-        <View style={styles.arrow}>
-          <Text style={styles.arrowText}>→</Text>
-          <Text style={styles.arrowLabel}>Changed</Text>
-        </View>
-        <ComparePane
-          label="After"
-          artifact={pair.after}
-          tone={colors.statusOk}
-          authHeaders={authHeaders}
-          imageHeight={imageHeight}
-          onOpenArtifact={onOpenArtifact}
+        <SideTab
+          side="after"
+          selected={side === 'after'}
+          onPress={() => selectSide('after')}
+          testIdPrefix={resolvedTestIdPrefix}
         />
       </View>
+
+      <View style={styles.viewport} onLayout={handleLayout}>
+        {viewportWidth > 0 ? (
+          <ScrollView
+            ref={scrollRef}
+            horizontal
+            pagingEnabled
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={handleScrollEnd}
+            onScrollEndDrag={handleScrollEnd}
+          >
+            <ComparePage
+              side="before"
+              artifact={pair.before}
+              width={viewportWidth}
+              imageHeight={imageHeight}
+              authHeaders={authHeaders}
+              active={playVideo && side === 'before'}
+              onOpen={() => openSide('before')}
+              openLabel={allowFullscreen ? 'Fullscreen' : 'Open file'}
+              testIdPrefix={resolvedTestIdPrefix}
+            />
+            <ComparePage
+              side="after"
+              artifact={pair.after}
+              width={viewportWidth}
+              imageHeight={imageHeight}
+              authHeaders={authHeaders}
+              active={playVideo && side === 'after'}
+              onOpen={() => openSide('after')}
+              openLabel={allowFullscreen ? 'Fullscreen' : 'Open file'}
+              testIdPrefix={resolvedTestIdPrefix}
+            />
+          </ScrollView>
+        ) : (
+          <View style={{ height: imageHeight }} />
+        )}
+      </View>
+
+      <View style={styles.swipeHint}>
+        <Text style={styles.swipeArrow}>‹</Text>
+        <Text style={styles.swipeText}>
+          {side === 'before' ? 'Before' : 'After'} · swipe ·{' '}
+          {allowFullscreen ? 'tap for fullscreen' : 'tap to open file'}
+        </Text>
+        <Text style={styles.swipeArrow}>›</Text>
+      </View>
+
+      {allowFullscreen && fullscreenOpen ? (
+        <Modal
+          visible={fullscreenOpen}
+          animationType="fade"
+          presentationStyle="fullScreen"
+          onRequestClose={() => setFullscreenOpen(false)}
+        >
+          <View
+            style={[
+              styles.fullscreen,
+              { paddingTop: fullscreenTopInset, paddingBottom: fullscreenBottomInset },
+            ]}
+            testID={`${resolvedTestIdPrefix}-fullscreen`}
+          >
+            <View style={styles.fullscreenHeader}>
+              <View style={styles.fullscreenTitleBlock}>
+                <Text style={styles.fullscreenEyebrow}>Before / After comparison</Text>
+                <Text style={styles.fullscreenTitle} numberOfLines={1}>
+                  {comparisonLabel}
+                </Text>
+              </View>
+              <Pressable
+                style={styles.closeButton}
+                onPress={() => setFullscreenOpen(false)}
+                testID={`${resolvedTestIdPrefix}-close`}
+                accessibilityRole="button"
+                accessibilityLabel="Close before after comparison"
+              >
+                <Text style={styles.closeButtonText}>Close</Text>
+              </Pressable>
+            </View>
+            <ScrollView
+              style={styles.fullscreenBody}
+              contentContainerStyle={styles.fullscreenBodyContent}
+            >
+              <BeforeAfterPreview
+                pair={pair}
+                authHeaders={authHeaders}
+                onOpenArtifact={(artifactPath) =>
+                  dismissFullscreenThen(() => onOpenArtifact?.(artifactPath))
+                }
+                onOpenBefore={onOpenBefore ? () => dismissFullscreenThen(onOpenBefore) : undefined}
+                onOpenAfter={onOpenAfter ? () => dismissFullscreenThen(onOpenAfter) : undefined}
+                title={title}
+                eyebrow={eyebrow}
+                hint="Swipe left or right"
+                imageHeight={Math.max(
+                  120,
+                  windowHeight - fullscreenTopInset - fullscreenBottomInset - 220,
+                )}
+                allowFullscreen={false}
+                playVideo
+                initialSide={side}
+                testIdPrefix={`${resolvedTestIdPrefix}-fullscreen-page`}
+              />
+            </ScrollView>
+          </View>
+        </Modal>
+      ) : null}
     </View>
   );
 }
 
-function ComparePane<T extends ArtifactManifestEntry>({
-  label,
-  artifact,
-  tone,
-  authHeaders,
-  imageHeight,
-  onOpenArtifact,
+function stableTestIdSuffix(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function SideTab({
+  side,
+  selected,
+  onPress,
+  testIdPrefix,
 }: {
-  label: 'Before' | 'After';
-  artifact: T & { url: string };
-  tone: string;
-  authHeaders: ArtifactHttpHeaders;
-  imageHeight: number;
-  onOpenArtifact: (artifactPath: string) => void;
+  side: CompareSide;
+  selected: boolean;
+  onPress: () => void;
+  testIdPrefix: string;
 }) {
-  const mediaType = classifyArtifact(artifact);
+  const before = side === 'before';
+  const tone = before ? colors.statusWarn : colors.statusOk;
   return (
     <Pressable
-      style={[styles.pane, { borderColor: tone + '66' }]}
-      onPress={() => onOpenArtifact(artifact.path)}
-      accessibilityRole="button"
-      accessibilityLabel={`${label} artifact ${artifact.path}`}
+      style={[styles.sideTab, selected && { backgroundColor: tone + '22', borderColor: tone }]}
+      onPress={onPress}
+      testID={`${testIdPrefix}-tab-${side}`}
+      accessibilityRole="tab"
+      accessibilityState={{ selected }}
+      accessibilityLabel={`Show ${side} evidence`}
     >
-      <Text style={[styles.label, { color: tone }]}>{label}</Text>
-      {mediaType === 'image' ? (
-        <Image
-          source={artifactSource(artifact.url, authHeaders)}
-          style={[styles.image, { height: imageHeight }]}
-          resizeMode="cover"
-        />
-      ) : (
-        <View style={[styles.document, { height: imageHeight }]}>
-          <Text style={[styles.documentKind, { color: tone }]}>{mediaType.toUpperCase()}</Text>
-        </View>
-      )}
-      <Text style={styles.path} numberOfLines={1}>
-        {artifact.path.split('/').pop() ?? artifact.path}
+      <Text style={[styles.sideTabText, { color: selected ? tone : colors.textMuted }]}>
+        {before ? 'Before' : 'After'}
       </Text>
+      <View
+        style={[styles.sideDot, { backgroundColor: tone }]}
+        testID={selected ? `${testIdPrefix}-selected-${side}` : undefined}
+      />
     </Pressable>
+  );
+}
+
+function ComparePage<T extends ArtifactManifestEntry>({
+  side,
+  artifact,
+  width,
+  imageHeight,
+  authHeaders,
+  active,
+  onOpen,
+  openLabel,
+  testIdPrefix,
+}: {
+  side: CompareSide;
+  artifact: T & { url: string };
+  width: number;
+  imageHeight: number;
+  authHeaders?: ArtifactHttpHeaders;
+  active: boolean;
+  onOpen: () => void;
+  openLabel: string;
+  testIdPrefix: string;
+}) {
+  const tone = side === 'before' ? colors.statusWarn : colors.statusOk;
+  return (
+    <Pressable
+      style={[styles.page, { borderColor: tone + '66', width }]}
+      onPress={onOpen}
+      testID={`${testIdPrefix}-${side}`}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${side} artifact ${artifact.path}`}
+    >
+      <CompareMedia
+        artifact={artifact}
+        authHeaders={authHeaders}
+        height={imageHeight}
+        active={active}
+      />
+      <View style={styles.pageFooter}>
+        <Text style={[styles.pageLabel, { color: tone }]}>{side}</Text>
+        <Text style={styles.path} numberOfLines={1}>
+          {artifact.path.split('/').pop() ?? artifact.path}
+        </Text>
+        <Text style={styles.openLabel}>{openLabel}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function CompareMedia<T extends ArtifactManifestEntry>({
+  artifact,
+  authHeaders,
+  height,
+  active,
+}: {
+  artifact: T & { url: string };
+  authHeaders?: ArtifactHttpHeaders;
+  height: number;
+  active: boolean;
+}) {
+  const mediaType = classifyArtifact(artifact);
+  if (mediaType === 'video') {
+    return active ? (
+      <ComparisonVideo artifact={artifact} authHeaders={authHeaders} height={height} />
+    ) : (
+      <View style={[styles.document, { height }]}>
+        <Text style={styles.documentKind}>VIDEO</Text>
+      </View>
+    );
+  }
+  if (mediaType === 'image') {
+    return (
+      <Image
+        source={artifactSource(artifact.url, authHeaders)}
+        style={[styles.media, { height }]}
+        resizeMode="contain"
+      />
+    );
+  }
+  return (
+    <View style={[styles.document, { height }]}>
+      <Text style={styles.documentKind}>{mediaType.toUpperCase()}</Text>
+    </View>
+  );
+}
+
+function ComparisonVideo<T extends ArtifactManifestEntry>({
+  artifact,
+  authHeaders,
+  height,
+}: {
+  artifact: T & { url: string };
+  authHeaders?: ArtifactHttpHeaders;
+  height: number;
+}) {
+  const source = React.useMemo(
+    () => artifactSource(artifact.url, authHeaders),
+    [artifact.url, authHeaders],
+  );
+  const player = useVideoPlayer(source);
+  return (
+    <VideoView
+      player={player}
+      style={[styles.media, { height }]}
+      nativeControls
+      fullscreenOptions={{ enable: true }}
+      contentFit="contain"
+    />
   );
 }
 
@@ -118,6 +420,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: 1,
     gap: spacing.sm,
+    overflow: 'hidden',
     padding: spacing.sm,
   },
   header: {
@@ -152,70 +455,132 @@ const styles = StyleSheet.create({
     fontSize: fonts.sizeXs,
     fontWeight: '800',
   },
-  row: {
+  segmentedControl: {
+    backgroundColor: colors.bgCard,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    padding: 3,
+  },
+  sideTab: {
     alignItems: 'center',
+    borderColor: 'transparent',
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    flex: 1,
     flexDirection: 'row',
     gap: spacing.xs,
+    justifyContent: 'center',
+    minHeight: 32,
+    paddingHorizontal: spacing.sm,
   },
-  pane: {
+  sideTabText: {
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  sideDot: { borderRadius: 999, height: 5, width: 5 },
+  viewport: {
+    borderRadius: radii.md,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  page: {
     backgroundColor: colors.bgCard,
     borderRadius: radii.md,
     borderWidth: 1,
-    flex: 1,
-    padding: spacing.xs,
+    overflow: 'hidden',
   },
-  label: {
-    fontSize: fonts.sizeXs,
-    fontWeight: '900',
-    marginBottom: spacing.xs,
-    textTransform: 'uppercase',
-  },
-  image: {
+  media: {
     backgroundColor: colors.bgInput,
-    borderRadius: radii.sm,
     width: '100%',
   },
   document: {
     alignItems: 'center',
     backgroundColor: colors.bgInput,
-    borderRadius: radii.sm,
     justifyContent: 'center',
     width: '100%',
   },
   documentKind: {
+    color: colors.textMuted,
     fontSize: fonts.sizeXs,
     fontWeight: '900',
+  },
+  pageFooter: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.sm,
+  },
+  pageLabel: {
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   path: {
     color: colors.textMuted,
+    flex: 1,
     fontSize: fonts.sizeXs,
-    marginTop: spacing.xs,
   },
-  arrow: {
-    alignItems: 'center',
-    backgroundColor: colors.accent + '22',
-    borderColor: colors.accent + '55',
-    borderRadius: radii.md,
-    borderWidth: 1,
-    gap: 1,
-    minHeight: 34,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 2,
-    justifyContent: 'center',
-    minWidth: 38,
-  },
-  arrowText: {
+  openLabel: {
     color: colors.accent,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+  },
+  swipeHint: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.sm,
+  },
+  swipeArrow: {
+    color: colors.accent,
+    fontSize: fonts.sizeMd,
+    fontWeight: '900',
+  },
+  swipeText: {
+    color: colors.textMuted,
+    fontSize: fonts.sizeXs,
+    fontWeight: '800',
+  },
+  fullscreen: {
+    backgroundColor: colors.bgBase,
+    flex: 1,
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  fullscreenHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+  },
+  fullscreenBody: { flex: 1 },
+  fullscreenBodyContent: { flexGrow: 1 },
+  fullscreenTitleBlock: { flex: 1 },
+  fullscreenEyebrow: {
+    color: colors.accent,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  fullscreenTitle: {
+    color: colors.textPrimary,
     fontSize: fonts.sizeSm,
     fontWeight: '900',
-    lineHeight: 16,
+    marginTop: 2,
   },
-  arrowLabel: {
+  closeButton: {
+    backgroundColor: colors.accent + '22',
+    borderColor: colors.accent + '66',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  closeButtonText: {
     color: colors.accent,
-    fontSize: 8,
+    fontSize: fonts.sizeXs,
     fontWeight: '900',
-    letterSpacing: 0.3,
-    lineHeight: 10,
-    textTransform: 'uppercase',
   },
 });
