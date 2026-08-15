@@ -1,4 +1,4 @@
-import type React from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
@@ -16,6 +16,7 @@ import {
 
 import { ArtifactCard, ComparisonCard } from '../../../components/ArtifactCard';
 import { BeforeAfterPreview } from '../../../components/BeforeAfterPreview';
+import { PairNavigation } from '../../../components/EvidenceReviewWorkspace';
 import {
   TaskProgressFallbackPanel,
   TaskProgressPanel,
@@ -586,7 +587,14 @@ export function FamilyComparePanel({
   onOpenArtifactWorkspace: (artifact: FamilyCompareArtifact) => void;
   onOpenArtifacts: () => void;
 }) {
+  const pairIdentity = useMemo(
+    () => pairs.map((pair) => `${pair.before.path}:${pair.after.path}`).join('|'),
+    [pairs],
+  );
+  const [pairIndex, setPairIndex] = useState(0);
+  useEffect(() => setPairIndex(0), [pairIdentity]);
   if (pairs.length === 0) return null;
+  const pair = pairs[Math.min(pairIndex, pairs.length - 1)] ?? pairs[0];
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
@@ -605,35 +613,37 @@ export function FamilyComparePanel({
           </Text>
         </Pressable>
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        {pairs.slice(0, 6).map((pair) => (
-          <View key={`${pair.before.path}:${pair.after.path}`} style={styles.comparePairCard}>
-            <ComparisonCard
-              pair={pair}
-              authHeaders={artifactAuthHeaders}
-              onOpenBefore={() => onOpenVisual(pair.before.url)}
-              onOpenAfter={() => onOpenVisual(pair.after.url)}
-            />
-            <View style={styles.comparePairActions}>
-              <Pressable
-                style={styles.comparePairAction}
-                onPress={() => onOpenArtifactWorkspace(pair.before)}
-              >
-                <Text style={styles.comparePairActionText}>Before artifacts</Text>
-              </Pressable>
-              <Pressable
-                style={styles.comparePairAction}
-                onPress={() => onOpenArtifactWorkspace(pair.after)}
-              >
-                <Text style={styles.comparePairActionText}>After artifacts</Text>
-              </Pressable>
-            </View>
-          </View>
-        ))}
-      </ScrollView>
-      {pairs.length > 6 ? (
-        <Text style={styles.compareMoreText}>+{pairs.length - 6} more pairs in artifacts</Text>
+      {pairs.length > 1 ? (
+        <PairNavigation
+          index={pairIndex}
+          total={pairs.length}
+          testIdPrefix="companion-family-before-after-pairs"
+          onPrevious={() => setPairIndex((index) => Math.max(0, index - 1))}
+          onNext={() => setPairIndex((index) => Math.min(pairs.length - 1, index + 1))}
+        />
       ) : null}
+      <View>
+        <ComparisonCard
+          pair={pair}
+          authHeaders={artifactAuthHeaders}
+          onOpenBefore={() => onOpenVisual(pair.before.url)}
+          onOpenAfter={() => onOpenVisual(pair.after.url)}
+        />
+        <View style={styles.comparePairActions}>
+          <Pressable
+            style={styles.comparePairAction}
+            onPress={() => onOpenArtifactWorkspace(pair.before)}
+          >
+            <Text style={styles.comparePairActionText}>Before artifacts</Text>
+          </Pressable>
+          <Pressable
+            style={styles.comparePairAction}
+            onPress={() => onOpenArtifactWorkspace(pair.after)}
+          >
+            <Text style={styles.comparePairActionText}>After artifacts</Text>
+          </Pressable>
+        </View>
+      </View>
     </View>
   );
 }
@@ -2529,7 +2539,7 @@ export function artifactKindStyle(kind: ReturnType<typeof familyArtifactKind>) {
   return styles.artifactKindSetup;
 }
 
-export function ArtifactCell({ children }: { children: React.ReactNode }) {
+export function ArtifactCell({ children }: { children: ReactNode }) {
   return <View style={styles.artifactCell}>{children}</View>;
 }
 

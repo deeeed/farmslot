@@ -149,7 +149,7 @@ export default function FamilyWorkspaceScreen() {
   return (
     <>
       <Stack.Screen options={{ title: 'Family Workspace' }} />
-      <View style={baseStyles.container}>
+      <View style={baseStyles.container} testID="companion-screen-family-workspace">
         <WorkspaceSectionTabs
           activeTab={activeTab}
           tabs={[...FAMILY_WORKSPACE_TABS]}
@@ -1208,6 +1208,7 @@ export default function FamilyWorkspaceScreen() {
           )}
         </ScrollView>
         <MediaViewer
+          testID="companion-artifact-media-viewer"
           visible={!!viewerUri}
           uri={viewerUri}
           items={visualViewerItems}

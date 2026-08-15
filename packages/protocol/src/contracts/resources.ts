@@ -7,6 +7,14 @@ export type ResourceStreamState = 'unknown' | 'starting' | 'ready' | 'error';
 
 export type ResourceWatchType = 'pid-file' | 'port-listen' | 'process-poll';
 
+export interface ResourceWatchRuntimeStats {
+  watches: number;
+  byType: Record<ResourceWatchType, number>;
+  activeProcessPolls: number;
+  queuedProcessPolls: number;
+  maxConcurrentProcessPolls: number;
+}
+
 export type SlotActionPlacement = 'slot-header' | 'resource-panel';
 export type SlotActionStyle = 'primary' | 'secondary' | 'danger';
 export type SlotActionRefreshTarget = 'resources' | 'fleet' | 'slot' | 'none';
@@ -41,7 +49,7 @@ export interface ResourceWatchConfig {
   path?: string; // pid-file: PID file path (template vars expanded by gateway)
   port?: string; // port-listen: port number or template var (e.g. "{{port}}")
   cmd?: string; // process-poll: shell command (template vars expanded by gateway)
-  intervalMs?: number; // zombie check / poll interval (default: 10000)
+  intervalMs?: number; // zombie check / poll interval (default: 30000)
 }
 
 export interface ResourceDefinition {

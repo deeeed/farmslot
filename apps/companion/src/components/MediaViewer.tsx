@@ -42,6 +42,7 @@ interface MediaViewerProps {
   initialIndex?: number;
   onClose: () => void;
   authHeaders?: ArtifactHttpHeaders;
+  testID?: string;
 }
 
 export function MediaViewer({
@@ -51,6 +52,7 @@ export function MediaViewer({
   initialIndex = 0,
   onClose,
   authHeaders,
+  testID,
 }: MediaViewerProps) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -89,7 +91,7 @@ export function MediaViewer({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <GestureHandlerRootView style={styles.modalRoot}>
-        <SafeAreaView style={styles.backdrop}>
+        <SafeAreaView style={styles.backdrop} testID={testID}>
           <ScrollView
             ref={scrollRef}
             horizontal
@@ -143,7 +145,11 @@ export function MediaViewer({
               </Pressable>
             </View>
           )}
-          <Pressable style={[styles.closeButton, { top: topInset + 12 }]} onPress={onClose}>
+          <Pressable
+            style={[styles.closeButton, { top: topInset + 12 }]}
+            onPress={onClose}
+            testID={testID ? `${testID}-close` : undefined}
+          >
             <Text style={styles.closeText}>Close</Text>
           </Pressable>
         </SafeAreaView>

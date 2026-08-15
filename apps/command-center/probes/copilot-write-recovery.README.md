@@ -22,7 +22,7 @@ The probe runs in-page, so it cannot read `/tmp/farmslot-dev.log` itself (browse
 
 ```bash
 # Dev server (gateway:7777 + vite:5174). Capture logs because assertion 5 needs them.
-cd apps/command-center && yarn dev > /tmp/farmslot-dev.log 2>&1 &
+cd apps/command-center && yarn farmdev > /tmp/farmslot-dev.log 2>&1 &
 
 # Wait for gateway health
 until curl -sf http://localhost:7777/health > /dev/null; do sleep 1; done

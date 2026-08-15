@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 
 import {
   buildSlotStorageCleanupCommand,
+  normalizeTaskRelativeDir,
   parseSlotStorageCleanupOutput,
 } from './slot-storage-cleanup.js';
 
@@ -37,6 +38,15 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
+test('task paths normalize relative to their configured task root', () => {
+  assert.equal(normalizeTaskRelativeDir('.task/fix/active/TASK.md', '.task'), 'fix/active');
+  assert.equal(
+    normalizeTaskRelativeDir('temp/tasks/fix/active/TASK.md', 'temp/tasks'),
+    'fix/active',
+  );
+  assert.equal(normalizeTaskRelativeDir('fix/active/TASK.md', '.task'), 'fix/active');
+});
+
 test('slot storage cleanup prunes old worker task/runtime caches but preserves active and recent data', async () => {
   const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-storage-cleanup-'));
   const oldTask = path.join(repo, '.task/fix/old');
@@ -57,7 +67,7 @@ test('slot storage cleanup prunes old worker task/runtime caches but preserves a
     taskDirName: '.task',
     artifactDirName: '.task',
     runtimeDirName: '.agent',
-    activeTaskRel: 'fix/active',
+    activeTaskRel: '.task/fix/active/TASK.md',
     includeBrowserProfiles: false,
     retentionHours: 0.5,
   });
@@ -67,11 +77,84 @@ test('slot storage cleanup prunes old worker task/runtime caches but preserves a
   assert.equal(await exists(oldTask), false);
   assert.equal(await exists(activeTask), true);
   assert.equal(await exists(recentTask), true);
-  assert.equal(await exists(oldRuntime), false);
+  assert.equal(await exists(oldRuntime), true, 'active task preserves shared runtime caches');
   assert.equal(await exists(recentRuntime), true);
   assert.equal(await exists(oldProfile), true);
   assert.ok(parsed.deleted.some((entry) => entry.path === oldTask));
+  assert.ok(
+    parsed.skipped.some(
+      (entry) =>
+        entry.path === path.join(repo, '.agent/artifacts') && entry.reason === 'active task',
+    ),
+  );
+});
+
+test('slot storage cleanup prunes expired runtime caches when the slot has no active task', async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-storage-cleanup-runtime-'));
+  const oldRuntime = path.join(repo, '.agent/artifacts/old-run');
+  await mkdir(oldRuntime, { recursive: true });
+  await touchOld(oldRuntime);
+
+  const command = buildSlotStorageCleanupCommand({
+    repo,
+    taskDirName: '.task',
+    artifactDirName: '.task',
+    runtimeDirName: '.agent',
+    retentionHours: 0.5,
+  });
+  const { stdout } = await execFileAsync('/bin/sh', ['-c', command]);
+  const parsed = parseSlotStorageCleanupOutput(stdout);
+
+  assert.equal(await exists(oldRuntime), false);
   assert.ok(parsed.deleted.some((entry) => entry.path === oldRuntime));
+});
+
+test('slot storage cleanup preserves active task and artifact directories when roots differ', async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-storage-cleanup-split-roots-'));
+  const activeTask = path.join(repo, '.task/fix/active');
+  const activeArtifacts = path.join(repo, '.artifacts/fix/active');
+  const oldTask = path.join(repo, '.task/fix/old');
+  const oldArtifacts = path.join(repo, '.artifacts/fix/old');
+  await Promise.all(
+    [activeTask, activeArtifacts, oldTask, oldArtifacts].map((dir) =>
+      mkdir(dir, { recursive: true }),
+    ),
+  );
+  await Promise.all([activeTask, activeArtifacts, oldTask, oldArtifacts].map(touchOld));
+
+  const command = buildSlotStorageCleanupCommand({
+    repo,
+    taskDirName: '.task',
+    artifactDirName: '.artifacts',
+    runtimeDirName: '.agent',
+    activeTaskRel: 'fix/active/TASK.md',
+    retentionHours: 0.5,
+  });
+  await execFileAsync('/bin/sh', ['-c', command]);
+
+  assert.equal(await exists(activeTask), true);
+  assert.equal(await exists(activeArtifacts), true);
+  assert.equal(await exists(oldTask), false);
+  assert.equal(await exists(oldArtifacts), false);
+});
+
+test('slot storage cleanup preserves an active task directory containing dots', async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-storage-cleanup-dotted-task-'));
+  const activeTask = path.join(repo, '.task/fix/review.v2');
+  await mkdir(activeTask, { recursive: true });
+  await touchOld(activeTask);
+
+  const command = buildSlotStorageCleanupCommand({
+    repo,
+    taskDirName: '.task',
+    artifactDirName: '.task',
+    runtimeDirName: '.agent',
+    activeTaskRel: 'fix/review.v2',
+    retentionHours: 0.5,
+  });
+  await execFileAsync('/bin/sh', ['-c', command]);
+
+  assert.equal(await exists(activeTask), true);
 });
 
 test('slot storage cleanup removes old browser profiles only when explicit cleanup includes them', async () => {
@@ -95,7 +178,7 @@ test('slot storage cleanup removes old browser profiles only when explicit clean
   assert.deepEqual(parsed.deleted, [{ label: 'browser-profile', path: oldProfile }]);
 });
 
-test('slot storage cleanup keeps the active task plus the newest configured completed tasks', async () => {
+test('slot storage cleanup keeps every task inside the retention window', async () => {
   const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-storage-cleanup-count-'));
   const taskDirs = ['run-1', 'run-2', 'run-3', 'run-4', 'run-5'].map((name) =>
     path.join(repo, '.task/fix', name),
@@ -109,19 +192,15 @@ test('slot storage cleanup keeps the active task plus the newest configured comp
     artifactDirName: '.task',
     runtimeDirName: '.agent',
     activeTaskRel: 'fix/run-1',
-    keepRuns: 2,
     retentionHours: 999,
   });
   const { stdout } = await execFileAsync('/bin/sh', ['-c', command]);
   const parsed = parseSlotStorageCleanupOutput(stdout);
 
   assert.equal(await exists(taskDirs[0]), true, 'active task is preserved beyond count cap');
-  assert.equal(await exists(taskDirs[1]), false, 'older completed task beyond cap is pruned');
-  assert.equal(await exists(taskDirs[2]), false, 'older completed task beyond cap is pruned');
+  assert.equal(await exists(taskDirs[1]), true, 'recent completed task is kept');
+  assert.equal(await exists(taskDirs[2]), true, 'recent completed task is kept');
   assert.equal(await exists(taskDirs[3]), true, 'second newest completed task is preserved');
   assert.equal(await exists(taskDirs[4]), true, 'newest completed task is preserved');
-  assert.deepEqual(parsed.deleted.map((entry) => path.basename(entry.path)).sort(), [
-    'run-2',
-    'run-3',
-  ]);
+  assert.deepEqual(parsed.deleted, []);
 });

@@ -1,16 +1,5 @@
-import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Image,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  useWindowDimensions,
-  View,
-} from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
   type ArtifactHttpHeaders,
@@ -29,6 +18,8 @@ import {
 } from '../lib/artifact-workspace';
 import { diffArtifactCandidate } from '../lib/diff';
 import { colors, fonts, radii, spacing } from '../lib/theme';
+
+import { BeforeAfterPreview } from './BeforeAfterPreview';
 
 interface EvidenceReviewWorkspaceProps {
   runId: string;
@@ -68,8 +59,6 @@ export function EvidenceReviewWorkspace({
   onOpenCompareArtifactWorkspace,
   authHeaders,
 }: EvidenceReviewWorkspaceProps) {
-  const { width } = useWindowDimensions();
-  const cardWidth = Math.max(1, Math.min(width - spacing.md * 2, width - spacing.xl * 2));
   const [evidenceFilter, setEvidenceFilter] = useState<ArtifactWorkspaceFilter>('all');
   const artifactCounts = useMemo(() => buildArtifactWorkspaceCounts(artifacts), [artifacts]);
   const filteredArtifacts = useMemo(
@@ -84,13 +73,14 @@ export function EvidenceReviewWorkspace({
       })),
     [filteredArtifacts, gatewayUrl, runId],
   );
-  const evidenceSummary = useMemo(() => summarizeEvidenceCompleteness(artifacts, pairs.length), [
-    artifacts,
-    pairs.length,
-  ]);
-  const packageDiffArtifactPath = useMemo(() => diffArtifactCandidate(artifacts)?.path ?? null, [
-    artifacts,
-  ]);
+  const evidenceSummary = useMemo(
+    () => summarizeEvidenceCompleteness(artifacts, pairs.length),
+    [artifacts, pairs.length],
+  );
+  const packageDiffArtifactPath = useMemo(
+    () => diffArtifactCandidate(artifacts)?.path ?? null,
+    [artifacts],
+  );
   const visibleEvidenceFilters = useMemo(
     () => EVIDENCE_FILTERS.filter((filter) => filter.id === 'all' || artifactCounts[filter.id] > 0),
     [artifactCounts],
@@ -106,26 +96,10 @@ export function EvidenceReviewWorkspace({
     [pairs],
   );
   const [compareIndex, setCompareIndex] = useState(0);
-  const compareScrollRef = useRef<ScrollView>(null);
-  const compareIndexRef = useRef(compareIndex);
-
-  useEffect(() => {
-    compareIndexRef.current = compareIndex;
-  }, [compareIndex]);
 
   useEffect(() => {
     setCompareIndex(0);
-    compareIndexRef.current = 0;
-    compareScrollRef.current?.scrollTo({ x: 0, animated: false });
   }, [compareIdentity]);
-
-  useEffect(() => {
-    const index = Math.min(compareIndexRef.current, Math.max(0, pairs.length - 1));
-    compareScrollRef.current?.scrollTo({
-      x: index * (cardWidth + spacing.md),
-      animated: false,
-    });
-  }, [cardWidth, pairs.length, compareIdentity]);
 
   return (
     <View style={styles.workspace}>
@@ -141,40 +115,30 @@ export function EvidenceReviewWorkspace({
         <View style={styles.railSection}>
           <RailHeader
             title="Before → After Compare"
-            subtitle="Swipe pairs first; tap either side to zoom the exact visual change"
+            subtitle="Swipe each pair between its explicit Before and After states"
             index={compareIndex}
             total={pairs.length}
           />
-          <ScrollView
-            ref={compareScrollRef}
-            horizontal
-            snapToInterval={cardWidth + spacing.md}
-            decelerationRate="fast"
-            showsHorizontalScrollIndicator={false}
-            onMomentumScrollEnd={(event) => {
-              setCompareIndex(scrollIndex(event, cardWidth));
-            }}
-          >
-            {pairs.map((pair, index) => (
-              <View key={`${pair.before.path}:${pair.after.path}`} style={{ width: cardWidth }}>
-                <LargeComparisonCard
-                  pair={pair}
-                  active={index === compareIndex}
-                  onOpenVisual={onOpenVisual}
-                  onOpenArtifactWorkspace={
-                    onOpenCompareArtifactWorkspace ?? onOpenArtifactWorkspace
-                  }
-                  onOpenDiff={
-                    packageDiffArtifactPath && onOpenDiff
-                      ? () => onOpenDiff(packageDiffArtifactPath)
-                      : undefined
-                  }
-                  authHeaders={authHeaders}
-                  style={{ marginRight: spacing.md }}
-                />
-              </View>
-            ))}
-          </ScrollView>
+          {pairs.length > 1 ? (
+            <PairNavigation
+              index={compareIndex}
+              total={pairs.length}
+              testIdPrefix="companion-before-after-pairs"
+              onPrevious={() => setCompareIndex((index) => Math.max(0, index - 1))}
+              onNext={() => setCompareIndex((index) => Math.min(pairs.length - 1, index + 1))}
+            />
+          ) : null}
+          <LargeComparisonCard
+            pair={pairs[compareIndex] ?? pairs[0]}
+            onOpenVisual={onOpenVisual}
+            onOpenArtifactWorkspace={onOpenCompareArtifactWorkspace ?? onOpenArtifactWorkspace}
+            onOpenDiff={
+              packageDiffArtifactPath && onOpenDiff
+                ? () => onOpenDiff(packageDiffArtifactPath)
+                : undefined
+            }
+            authHeaders={authHeaders}
+          />
         </View>
       )}
 
@@ -233,10 +197,6 @@ export function EvidenceReviewWorkspace({
   );
 }
 
-function scrollIndex(event: NativeSyntheticEvent<NativeScrollEvent>, cardWidth: number): number {
-  return Math.round(event.nativeEvent.contentOffset.x / (cardWidth + spacing.md));
-}
-
 function sortReviewArtifacts(artifacts: ArtifactManifestEntry[]): ArtifactManifestEntry[] {
   const purposeOrder: Record<string, number> = {
     'video-before': 0,
@@ -254,6 +214,50 @@ function sortReviewArtifacts(artifacts: ArtifactManifestEntry[]): ArtifactManife
     const purposeDelta = (purposeOrder[a.purpose] ?? 99) - (purposeOrder[b.purpose] ?? 99);
     return purposeDelta !== 0 ? purposeDelta : a.path.localeCompare(b.path);
   });
+}
+
+export function PairNavigation({
+  index,
+  total,
+  onPrevious,
+  onNext,
+  testIdPrefix,
+}: {
+  index: number;
+  total: number;
+  onPrevious: () => void;
+  onNext: () => void;
+  testIdPrefix?: string;
+}) {
+  return (
+    <View style={styles.pairNavigation}>
+      <Pressable
+        style={[styles.pairNavigationButton, index === 0 && styles.pairNavigationButtonDisabled]}
+        disabled={index === 0}
+        onPress={onPrevious}
+        testID={testIdPrefix ? `${testIdPrefix}-previous` : undefined}
+      >
+        <Text style={styles.pairNavigationText}>‹ Previous pair</Text>
+      </Pressable>
+      <Text
+        style={styles.pairNavigationIndex}
+        testID={testIdPrefix ? `${testIdPrefix}-index-${index + 1}` : undefined}
+      >
+        Pair {index + 1}/{total}
+      </Text>
+      <Pressable
+        style={[
+          styles.pairNavigationButton,
+          index === total - 1 && styles.pairNavigationButtonDisabled,
+        ]}
+        disabled={index === total - 1}
+        onPress={onNext}
+        testID={testIdPrefix ? `${testIdPrefix}-next` : undefined}
+      >
+        <Text style={styles.pairNavigationText}>Next pair ›</Text>
+      </Pressable>
+    </View>
+  );
 }
 
 function summarizeEvidenceCompleteness(artifacts: ArtifactManifestEntry[], pairCount: number) {
@@ -307,7 +311,11 @@ function EvidenceCompletenessCard({
         ) : null}
       </View>
       <View style={styles.completenessRail}>
-        <CompletenessPill label="Pairs" value={String(summary.pairCount)} ok={summary.pairCount > 0} />
+        <CompletenessPill
+          label="Pairs"
+          value={String(summary.pairCount)}
+          ok={summary.pairCount > 0}
+        />
         <CompletenessPill label="Videos" value={String(summary.videos)} ok />
         <CompletenessPill
           label="Diff"
@@ -324,15 +332,7 @@ function EvidenceCompletenessCard({
   );
 }
 
-function CompletenessPill({
-  label,
-  value,
-  ok,
-}: {
-  label: string;
-  value: string;
-  ok: boolean;
-}) {
+function CompletenessPill({ label, value, ok }: { label: string; value: string; ok: boolean }) {
   const color = ok ? colors.statusOk : colors.statusWarn;
   return (
     <View style={[styles.completenessPill, { borderColor: color + '88' }]}>
@@ -354,12 +354,14 @@ function MissingEvidenceCard({
       <Text style={styles.missingEvidenceTitle}>No before → after pair found</Text>
       <Text style={styles.missingEvidenceText}>
         This package still has {summary.visualArtifacts} visual file
-        {summary.visualArtifacts === 1 ? '' : 's'}, but no paired before/after delta. Ask the
-        worker for paired screenshots or inspect the Files tab.
+        {summary.visualArtifacts === 1 ? '' : 's'}, but no paired before/after delta. Ask the worker
+        for paired screenshots or inspect the Files tab.
       </Text>
       {onOpenDiff ? (
         <Pressable style={styles.missingEvidenceButton} onPress={onOpenDiff}>
-          <Text style={styles.missingEvidenceButtonText}>Review diff while evidence is missing</Text>
+          <Text style={styles.missingEvidenceButtonText}>
+            Review diff while evidence is missing
+          </Text>
         </Pressable>
       ) : null}
     </View>
@@ -394,54 +396,32 @@ function RailHeader({
 
 function LargeComparisonCard({
   pair,
-  active,
   onOpenVisual,
   onOpenArtifactWorkspace,
   onOpenDiff,
-  style,
   authHeaders,
 }: {
   pair: VisualArtifactPair;
-  active: boolean;
   onOpenVisual: (uri: string) => void;
   onOpenArtifactWorkspace?: (artifact: ArtifactManifestEntry) => void;
   onOpenDiff?: () => void;
-  style?: object;
   authHeaders?: ArtifactHttpHeaders;
 }) {
   const beforeName = artifactDisplayName(pair.before);
   const afterName = artifactDisplayName(pair.after);
   return (
-    <View style={[styles.largeCard, style]}>
-      <View style={styles.compareCardHeader}>
-        <View style={styles.compareTitleBlock}>
-          <Text style={styles.compareEyebrow}>Visual difference</Text>
-          <Text style={styles.largeCardTitle} numberOfLines={1}>
-            {comparisonStem(pair)}
-          </Text>
-        </View>
-        <View style={styles.compareArrowBadge}>
-          <Text style={styles.compareArrowText}>BEFORE → AFTER</Text>
-        </View>
-      </View>
-      <View style={styles.compareRow}>
-        <ComparePane
-          label="Before"
-          item={pair.before}
-          active={active}
-          onOpenVisual={onOpenVisual}
-          onOpenArtifactWorkspace={onOpenArtifactWorkspace}
-          authHeaders={authHeaders}
-        />
-        <ComparePane
-          label="After"
-          item={pair.after}
-          active={active}
-          onOpenVisual={onOpenVisual}
-          onOpenArtifactWorkspace={onOpenArtifactWorkspace}
-          authHeaders={authHeaders}
-        />
-      </View>
+    <View style={styles.largeCard}>
+      <BeforeAfterPreview
+        pair={pair}
+        authHeaders={authHeaders}
+        onOpenBefore={() => onOpenVisual(pair.before.url)}
+        onOpenAfter={() => onOpenVisual(pair.after.url)}
+        eyebrow="Visual difference"
+        title={comparisonStem(pair)}
+        hint="Swipe left or right"
+        imageHeight={210}
+        testIdPrefix="companion-before-after-primary"
+      />
       <View style={styles.deltaChecklist}>
         <Text style={styles.deltaChecklistLabel}>Identify before vs after</Text>
         <Text style={styles.deltaChecklistText} numberOfLines={1}>
@@ -457,6 +437,22 @@ function LargeComparisonCard({
           <Pressable style={styles.deltaAction} onPress={() => onOpenVisual(pair.after.url)}>
             <Text style={styles.deltaActionText}>Open after fullscreen</Text>
           </Pressable>
+          {onOpenArtifactWorkspace ? (
+            <>
+              <Pressable
+                style={styles.deltaAction}
+                onPress={() => onOpenArtifactWorkspace(pair.before)}
+              >
+                <Text style={styles.deltaActionText}>Before artifacts</Text>
+              </Pressable>
+              <Pressable
+                style={styles.deltaAction}
+                onPress={() => onOpenArtifactWorkspace(pair.after)}
+              >
+                <Text style={styles.deltaActionText}>After artifacts</Text>
+              </Pressable>
+            </>
+          ) : null}
           {onOpenDiff ? (
             <Pressable style={styles.deltaAction} onPress={onOpenDiff}>
               <Text style={styles.deltaActionText}>Open diff</Text>
@@ -464,55 +460,6 @@ function LargeComparisonCard({
           ) : null}
         </View>
       </View>
-    </View>
-  );
-}
-
-function ComparePane({
-  label,
-  item,
-  active,
-  onOpenVisual,
-  onOpenArtifactWorkspace,
-  authHeaders,
-}: {
-  label: string;
-  item: VisualArtifactPair['before'];
-  active: boolean;
-  onOpenVisual: (uri: string) => void;
-  onOpenArtifactWorkspace?: (artifact: ArtifactManifestEntry) => void;
-  authHeaders?: ArtifactHttpHeaders;
-}) {
-  return (
-    <View
-      style={[
-        styles.comparePane,
-        label === 'Before' ? styles.comparePaneBefore : styles.comparePaneAfter,
-      ]}
-    >
-      <Text
-        style={[styles.compareLabel, label === 'Before' ? styles.beforeLabel : styles.afterLabel]}
-      >
-        {label}
-      </Text>
-      <EvidenceMedia
-        artifact={item}
-        height={210}
-        active={active}
-        onOpenVisual={onOpenVisual}
-        authHeaders={authHeaders}
-      />
-      <Text style={styles.pathText} numberOfLines={1}>
-        {item.path.split('/').pop() ?? item.path}
-      </Text>
-      {onOpenArtifactWorkspace ? (
-        <Pressable
-          style={styles.compareArtifactButton}
-          onPress={() => onOpenArtifactWorkspace(item)}
-        >
-          <Text style={styles.compareArtifactText}>{label} artifacts</Text>
-        </Pressable>
-      ) : null}
     </View>
   );
 }
@@ -627,114 +574,6 @@ function documentArtifactLabel(artifact: ArtifactManifestEntry): string {
   if (lowerPath.endsWith('.md')) return 'MD';
   if (lowerPath.endsWith('.txt')) return 'TXT';
   return 'DOC';
-}
-
-function EvidenceMedia({
-  artifact,
-  height,
-  active,
-  onOpenVisual,
-  onOpenDocument,
-  onOpenDiff,
-  authHeaders,
-}: {
-  artifact: ReviewArtifact;
-  height: number;
-  active: boolean;
-  onOpenVisual: (uri: string) => void;
-  onOpenDocument?: (artifact: ReviewArtifact) => void;
-  onOpenDiff?: (path: string) => void;
-  authHeaders?: ArtifactHttpHeaders;
-}) {
-  const mediaType = classifyArtifact(artifact);
-  const isDiffArtifact = diffArtifactCandidate([artifact])?.path === artifact.path;
-  if (mediaType === 'image') {
-    return (
-      <Pressable onPress={() => onOpenVisual(artifact.url)}>
-        <Image
-          source={artifactSource(artifact.url, authHeaders)}
-          style={[styles.media, { height }]}
-          resizeMode="contain"
-        />
-      </Pressable>
-    );
-  }
-  if (mediaType === 'video') {
-    if (!active) {
-      return (
-        <Pressable
-          style={[styles.documentPane, { height }]}
-          onPress={() => onOpenVisual(artifact.url)}
-        >
-          <Text style={styles.documentIcon}>VIDEO</Text>
-          <Text style={styles.documentHint}>Swipe here to preview or tap to open</Text>
-        </Pressable>
-      );
-    }
-    // Mount the video player only for the active carousel card so background
-    // videos do not keep decoding or playing while the operator swipes. The
-    // inactive branch above unmounts EvidenceVideo, which is the pause/stop
-    // mechanism and intentionally resets playback on swipe; keep it covered by
-    // manual device QA when changing carousel/player behavior.
-    return (
-      <EvidenceVideo
-        url={artifact.url}
-        height={height}
-        authHeaders={authHeaders}
-        onOpen={() => onOpenVisual(artifact.url)}
-      />
-    );
-  }
-  if (mediaType === 'document') {
-    return (
-      <Pressable
-        style={[styles.documentPane, { height }]}
-        onPress={() => (isDiffArtifact ? onOpenDiff?.(artifact.path) : onOpenDocument?.(artifact))}
-      >
-        <Text style={styles.documentIcon}>{isDiffArtifact ? 'DIFF' : 'DOC'}</Text>
-        <Text style={styles.documentHint}>
-          {isDiffArtifact ? 'Tap to review diff' : 'Tap to read'}
-        </Text>
-      </Pressable>
-    );
-  }
-  return (
-    <View style={[styles.documentPane, { height }]}>
-      <Text style={styles.documentIcon}>FILE</Text>
-    </View>
-  );
-}
-
-function EvidenceVideo({
-  url,
-  height,
-  onOpen,
-  authHeaders,
-}: {
-  url: string;
-  height: number;
-  onOpen: () => void;
-  authHeaders?: ArtifactHttpHeaders;
-}) {
-  const source = React.useMemo(() => artifactSource(url, authHeaders), [authHeaders, url]);
-  const player = useVideoPlayer(source);
-  return (
-    <View>
-      <VideoView
-        player={player}
-        style={[styles.media, { height }]}
-        nativeControls
-        fullscreenOptions={{ enable: true }}
-        contentFit="contain"
-      />
-      <View pointerEvents="none" style={styles.videoPlayBadge}>
-        <Text style={styles.videoPlayText}>▶ Inline preview</Text>
-      </View>
-      <Pressable style={styles.videoOpenButton} onPress={onOpen}>
-        <Text style={styles.videoOpenText}>Open</Text>
-      </Pressable>
-    </View>
-  );
 }
 
 function comparisonStem(pair: VisualArtifactPair): string {
@@ -876,48 +715,34 @@ const styles = StyleSheet.create({
     fontSize: fonts.sizeSm,
     fontWeight: '800',
   },
+  pairNavigation: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  pairNavigationButton: {
+    backgroundColor: colors.accent + '18',
+    borderColor: colors.accent + '55',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  pairNavigationButtonDisabled: { opacity: 0.35 },
+  pairNavigationText: {
+    color: colors.accent,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+  },
+  pairNavigationIndex: {
+    color: colors.textMuted,
+    fontSize: fonts.sizeXs,
+    fontWeight: '800',
+  },
   largeCard: {
     backgroundColor: colors.bgCard,
     borderRadius: radii.lg,
     padding: spacing.lg,
-  },
-  largeCardTitle: {
-    color: colors.textPrimary,
-    fontSize: fonts.sizeMd,
-    fontWeight: '800',
-  },
-  compareCardHeader: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    gap: spacing.md,
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  compareTitleBlock: { flex: 1 },
-  compareEyebrow: {
-    color: colors.accent,
-    fontSize: fonts.sizeXs,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-    marginBottom: spacing.xs,
-    textTransform: 'uppercase',
-  },
-  compareArrowBadge: {
-    backgroundColor: colors.accent + '18',
-    borderColor: colors.accent + '66',
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  compareArrowText: {
-    color: colors.accent,
-    fontSize: 10,
-    fontWeight: '900',
-  },
-  compareRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
   },
   deltaChecklist: {
     backgroundColor: colors.bgInput,
@@ -963,90 +788,6 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontSize: fonts.sizeXs,
     fontWeight: '900',
-  },
-  comparePane: {
-    borderRadius: radii.md,
-    borderWidth: 1,
-    flex: 1,
-    padding: spacing.xs,
-  },
-  comparePaneBefore: { borderColor: colors.statusWarn + '66' },
-  comparePaneAfter: { borderColor: colors.statusOk + '66' },
-  compareLabel: {
-    fontSize: fonts.sizeXs,
-    fontWeight: '900',
-    marginBottom: spacing.xs,
-    textTransform: 'uppercase',
-  },
-  beforeLabel: { color: colors.statusWarn },
-  afterLabel: { color: colors.statusOk },
-  compareArtifactButton: {
-    alignItems: 'center',
-    backgroundColor: colors.accent + '18',
-    borderColor: colors.accent + '55',
-    borderRadius: 999,
-    borderWidth: 1,
-    marginTop: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  compareArtifactText: {
-    color: colors.accent,
-    fontSize: fonts.sizeXs,
-    fontWeight: '900',
-  },
-  media: {
-    width: '100%',
-    backgroundColor: colors.bgInput,
-    borderRadius: radii.md,
-  },
-  videoOpenButton: {
-    position: 'absolute',
-    top: spacing.md,
-    right: spacing.md,
-    backgroundColor: 'rgba(0,0,0,0.62)',
-    borderRadius: 999,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  videoOpenText: {
-    color: '#fff',
-    fontSize: fonts.sizeXs,
-    fontWeight: '800',
-  },
-  videoPlayBadge: {
-    backgroundColor: 'rgba(0,0,0,0.62)',
-    borderColor: 'rgba(255,255,255,0.22)',
-    borderRadius: 999,
-    borderWidth: 1,
-    bottom: spacing.md,
-    left: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    position: 'absolute',
-  },
-  videoPlayText: {
-    color: '#fff',
-    fontSize: fonts.sizeXs,
-    fontWeight: '900',
-  },
-  documentPane: {
-    width: '100%',
-    backgroundColor: colors.bgInput,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-  },
-  documentIcon: {
-    color: colors.textPrimary,
-    fontSize: fonts.sizeLg,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
-  documentHint: {
-    color: colors.textMuted,
-    fontSize: fonts.sizeSm,
   },
   compactEvidenceList: {
     gap: spacing.sm,
@@ -1153,11 +894,5 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontSize: fonts.sizeXs,
     fontWeight: '900',
-  },
-  pathText: {
-    color: colors.textMuted,
-    flex: 1,
-    fontSize: fonts.sizeXs,
-    marginTop: spacing.sm,
   },
 });

@@ -759,6 +759,7 @@ export function RunBeforeAfterPriorityPanel({
         pair={pair}
         authHeaders={authHeaders}
         onOpenArtifact={onOpenArtifact}
+        testIdPrefix="companion-run-before-after-primary"
         eyebrow={eyebrow}
         title={title}
         hint={`${pairCount} pair${pairCount === 1 ? '' : 's'}`}

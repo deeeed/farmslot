@@ -44,6 +44,7 @@
     "recipe:dry-run": "bash scripts/agentic/run-recipe.sh run --dry-run",
     "recipe:run": "bash scripts/agentic/run-recipe.sh run",
     "recipe:run:bridge": "bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/bridge-status.recipe.json",
+    "recipe:run:before-after": "bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/before-after-comparison.recipe.json",
     "recipe:run:copilot-terminal": "bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/copilot-terminal.recipe.json",
     "recipe:run:continuous-gestures": "bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/continuous-gestures.recipe.json",
     "recipe:run:native-input-actions": "bash scripts/agentic/run-recipe.sh run scripts/agentic/recipe/recipes/native-input-actions.recipe.json",

@@ -28,6 +28,8 @@ export abstract class RunDetailState extends LitElement {
   @state() liveTimeoutPrStatus: PRStatus | null = null;
   @state() liveTimeoutPrStatusRefreshing = false;
   @state() liveTimeoutPrStatusFailed = false;
+  @state() _ciPoking = false;
+  @state() _ciPokeStatus: { ok: boolean; msg: string } | null = null;
   @state() _now = Date.now();
   @state() selectedStep: RunStep | null = null;
   @state() selectedStepProgress: TaskProgressStructured | null = null;

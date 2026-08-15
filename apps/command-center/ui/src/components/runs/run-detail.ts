@@ -37,6 +37,7 @@ import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
+import { CIWatchPokeController } from './ci-watch-actions.js';
 import {
   checkInteractiveHandoffSignal,
   confirmForceComplete,
@@ -58,6 +59,7 @@ import {
   isLiveTimeoutPrStatusAllGreen,
   isTaskProgressRunActive,
   pendingCITimeoutDecision,
+  readCiWatchOutputs,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
   runFamilyPrStatus,
@@ -91,6 +93,11 @@ import {
 export class RunDetail extends RunDetailState {
   static styles = runDetailStyles;
 
+  private readonly _ciPoke = new CIWatchPokeController((state) => {
+    this._ciPoking = state.poking;
+    this._ciPokeStatus = state.status;
+  });
+
   connectedCallback() {
     super.connectedCallback();
     this.syncRun(getState());
@@ -112,6 +119,7 @@ export class RunDetail extends RunDetailState {
     this.unsubCI = gateway.subscribe<CiCheckUpdatedPayload>(Events.CI_CHECK_UPDATED, (p) => {
       if (p.runId === this.runId) {
         this.ciStatus = p;
+        this._ciPoke.observePoll(p.runId, p.pollCount);
       }
     });
     this._clock = setInterval(() => {
@@ -143,6 +151,7 @@ export class RunDetail extends RunDetailState {
     if (this._clock) clearInterval(this._clock);
     if (this._jumpTimer) clearTimeout(this._jumpTimer);
     if (this._recipeRunsDelayedRefreshTimer) clearTimeout(this._recipeRunsDelayedRefreshTimer);
+    this._ciPoke.dispose();
   }
 
   private syncRun(s: AppState) {
@@ -164,6 +173,7 @@ export class RunDetail extends RunDetailState {
     const wasHydrating = this._hydrating;
     if (this.runId !== this._lastRequestedRunId) {
       this._lastRequestedRunId = this.runId;
+      this._ciPoke.reset();
       this._missingRunFetchAttempted = false;
       this._directRunRefreshFailed = false;
       this._directRunUnavailable = false;
@@ -770,6 +780,9 @@ export class RunDetail extends RunDetailState {
           prStatus: this.prStatus,
           liveTimeoutPrStatusRefreshing: this.liveTimeoutPrStatusRefreshing,
           liveTimeoutPrStatusFailed: this.liveTimeoutPrStatusFailed,
+          poking: this._ciPoking,
+          pokeStatus: this._ciPokeStatus,
+          onPokeNow: () => void this._pokeCIWatch(run.id),
           now: this._now,
         }),
       _renderRunEvidence: (run) => this._renderRunEvidence(run),
@@ -795,6 +808,13 @@ export class RunDetail extends RunDetailState {
 
   private async _setRunTags(run: Run, tags: string[]) {
     await gateway.request(Methods.RUN_TAGS_SET, { runId: run.id, tags });
+  }
+
+  private async _pokeCIWatch(runId: string): Promise<void> {
+    const ciStep = this.run?.steps.find((step) => step.name === 'ci-watch');
+    const outputPollCount = readCiWatchOutputs(ciStep?.outputs)?.pollCount;
+    const beforePoll = this.ciStatus?.pollCount ?? outputPollCount;
+    await this._ciPoke.poke(runId, typeof beforePoll === 'number' ? beforePoll : null);
   }
 
   private renderGateSection(run: Run) {

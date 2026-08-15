@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- fix(dev): make the root `yarn dev` command use the canonical Command Center `farmdev` launcher and update operator instructions.
 - fix(copilot): update the live CDP probe for the terminal-first retained runtime, exact worker binding, compact controls, and removed legacy composer.
 - feat(runtime-capabilities): add Gateway lifecycle smoke tools, a browser/CDP probe, and reusable Companion on-demand lifecycle proof.
 - fix(copilot): keep contextual prompts and runner output in the canonical shared transcript, and normalize private terminal control sequences completely (MANUAL-000071).

@@ -19,9 +19,6 @@ export abstract class StepInspectorState extends LitElement {
   @state() protected _lightboxOpen = false;
   @state() protected _lightboxItems: LightboxItem[] = [];
   @state() protected _lightboxIndex = 0;
-  protected _pokeStatusTimer: number | null = null;
-  @state() protected _lastPokePollCount: number | null = null;
-
   protected _prevLastOutput = '';
   protected _prevStepName = '';
 }

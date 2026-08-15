@@ -3,6 +3,10 @@
 import { execSync } from 'node:child_process';
 import os from 'node:os';
 
+import type { ResourceWatchRuntimeStats } from '@farmslot/protocol';
+
+import { getResourceWatchRuntimeStats } from './resource-watch.js';
+
 export interface SystemMetrics {
   cpuPercent: number;
   memoryPercent: number;
@@ -12,6 +16,7 @@ export interface SystemMetrics {
   loadAvg1: number;
   loadAvg5: number;
   thermalPressure?: 'nominal' | 'fair' | 'serious' | 'critical';
+  resourceWatches?: ResourceWatchRuntimeStats;
   collectedAt: string;
 }
 
@@ -120,6 +125,7 @@ export function collectMetrics(): SystemMetrics {
     loadAvg1: Math.round(loadAvg1 * 100) / 100,
     loadAvg5: Math.round(loadAvg5 * 100) / 100,
     thermalPressure: getThermalPressure(),
+    resourceWatches: getResourceWatchRuntimeStats(),
     collectedAt: new Date().toISOString(),
   };
 }

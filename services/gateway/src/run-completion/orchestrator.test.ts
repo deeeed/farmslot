@@ -27,6 +27,7 @@ import {
   publicationStatusForRun,
   readCommentsTriageSummary,
   readEvidenceManifest,
+  sanitizePRBody,
   selectedEvidenceKeysForPublication,
 } from './orchestrator.js';
 import { makeRun } from './test-fixtures.js';
@@ -146,6 +147,20 @@ test('localPrBodyPathResidues flags local media paths before approved publicatio
   );
   assert.deepEqual(localPrBodyPathResidues('remote https://cdn.example/screenshots/after.png'), []);
   assert.deepEqual(localPrBodyPathResidues('remote https://cdn.example/videos/after.webm'), []);
+  assert.deepEqual(
+    localPrBodyPathResidues(
+      '<a href="https://raw.githubusercontent.com/owner/repo/main/fixes/1/recipe-runs/inherited-run/before.mp4?sha=abc">recipe-runs/inherited-run/before.mp4</a>',
+    ),
+    [],
+    'a local-looking label backed by a hosted evidence URL is already published',
+  );
+  assert.deepEqual(
+    localPrBodyPathResidues(
+      '[recipe-runs/inherited-run/before.mp4](https://cdn.example/fixes/1/before.mp4)',
+    ),
+    [],
+    'markdown links to hosted evidence are already published',
+  );
   assert.deepEqual(localPrBodyPathResidues('see /Users/me/task/artifacts/after.png'), [
     '/Users/me/task/artifacts/after.png',
   ]);
@@ -199,6 +214,97 @@ test('localPrBodyPathResidues flags local media paths before approved publicatio
     ),
     ['artifacts/before.png'],
     'residues outside code blocks still get flagged',
+  );
+});
+
+test('sanitizePRBody preserves uploaded evidence links with local-looking labels', () => {
+  const hostedAnchor =
+    '<a href="https://cdn.example/reviews/1/before.mp4">recipe-runs/inherited/before.mp4</a>';
+  const hostedMarkdown =
+    '[artifacts/screenshots/after.png](https://cdn.example/reviews/1/after.png)';
+
+  assert.equal(
+    sanitizePRBody(`${hostedAnchor}\n${hostedMarkdown}`),
+    `${hostedAnchor}\n${hostedMarkdown}`,
+  );
+  assert.equal(
+    sanitizePRBody('See artifacts/screenshots/after.png\nKeep this.').trim(),
+    'Keep this.',
+  );
+  const hostedImage = '<img src="https://cdn.example/reviews/1/after.png" />';
+  assert.equal(
+    sanitizePRBody(`| ${hostedImage} | artifacts/screenshots/after.png |`).trim(),
+    `| ${hostedImage} |  |`,
+  );
+  assert.equal(
+    sanitizePRBody(
+      '<img src="https://cdn.example/reviews/1/after.png" alt="artifacts/screenshots/after-state.png" />',
+    ),
+    '<img src="https://cdn.example/reviews/1/after.png" alt="After State" />',
+  );
+  assert.equal(
+    sanitizePRBody('| a | b |\n| --- | --- |\n| x | artifacts/y/z.png |\n| q | r |'),
+    '| a | b |\n| --- | --- |\n| q | r |',
+  );
+  assert.equal(sanitizePRBody('- one\n- see artifacts/y/z.png\n- three'), '- one\n- three');
+  assert.equal(
+    sanitizePRBody(`${hostedMarkdown} (from artifacts/screenshots/after.png)`).trim(),
+    hostedMarkdown,
+  );
+  assert.equal(
+    sanitizePRBody(`${hostedMarkdown} (source: artifacts/screenshots/after.png)`).trim(),
+    hostedMarkdown,
+  );
+  assert.equal(
+    sanitizePRBody(
+      `<tr><td colspan="2"><strong>Companion before/after — recipe-runs/fs-4/before.mp4</strong></td></tr>`,
+    ).trim(),
+    `<tr><td colspan="2"><strong>Companion before/after — Before</strong></td></tr>`,
+  );
+  assert.equal(
+    sanitizePRBody(
+      `<tr><td>${hostedImage}</td><td><strong>Companion before/after — recipe-runs/fs-4/before.mp4</strong></td></tr>`,
+    ).trim(),
+    `<tr><td>${hostedImage}</td><td><strong>Companion before/after — Before</strong></td></tr>`,
+  );
+  assert.equal(
+    sanitizePRBody(`${hostedMarkdown} (captured at artifacts/screenshots/after.png)`).trim(),
+    hostedMarkdown,
+  );
+  assert.equal(
+    sanitizePRBody(`- **Source**: artifacts/screenshots/after.png → ${hostedMarkdown}`).trim(),
+    `- **Source**: ${hostedMarkdown}`,
+  );
+  assert.equal(
+    sanitizePRBody(`| proof | ${hostedMarkdown} | \`artifacts/screenshots/after.png\` |`).trim(),
+    `| proof | ${hostedMarkdown} |  |`,
+  );
+
+  const generatedSection = buildEvidenceSection(
+    {
+      preferred_mode: 'screenshots',
+      before_after_pairs: [
+        {
+          label: 'recipe-runs/fs-4/before.mp4 vs after',
+          before: 'recipe-runs/fs-4/before-state.png',
+          after: 'recipe-runs/fs-4/after-state.png',
+        },
+      ],
+    },
+    new Map([
+      ['recipe-runs/fs-4/before-state.png', 'https://cdn.example/reviews/1/before.png'],
+      ['recipe-runs/fs-4/after-state.png', 'https://cdn.example/reviews/1/after.png'],
+    ]),
+  );
+  assert.ok(generatedSection);
+  const sanitizedSection = sanitizePRBody(generatedSection);
+  assert.match(sanitizedSection, /<strong>Before vs after<\/strong>/);
+  assert.match(sanitizedSection, /src="https:\/\/cdn\.example\/reviews\/1\/before\.png"/);
+  assert.match(sanitizedSection, /src="https:\/\/cdn\.example\/reviews\/1\/after\.png"/);
+  assert.deepEqual(localPrBodyPathResidues(sanitizedSection), []);
+  assert.equal(
+    sanitizePRBody('__FARMSLOT_REMOTE_LINK_0__\n' + hostedMarkdown),
+    '__FARMSLOT_REMOTE_LINK_0__\n' + hostedMarkdown,
   );
 });
 

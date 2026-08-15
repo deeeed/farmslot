@@ -401,12 +401,64 @@ export function assertSelectedEvidencePublished(
 const LOCAL_PR_BODY_PATH_PATTERNS: RegExp[] = [
   /file:\/\/\/[^\s)>'"]+/gi,
   /(^|[\s(='"])`?(?:\/Users|\/home|\/tmp)\/[^\s)>'"`]+/g,
-  /(^|[\s(='"])`?(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"`]+/gi,
+  /(^|[\s(='"])`?(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"`]+/gi,
   /(^|[\s(='"])(?:\.\/)?(?:before|after|evidence)[^/\s)>'"]*\.(?:png|jpe?g|gif|mp4|mov|webm)/gi,
 ];
 
 function stripCodeBlocks(body: string): string {
   return body.replace(/```[\s\S]*?```/g, '').replace(/~~~[\s\S]*?~~~/g, '');
+}
+
+const REMOTE_LINK_PATTERNS = [
+  /<a\b[^>]*\bhref=["']https?:\/\/[^"']+["'][^>]*>[\s\S]*?<\/a>/gi,
+  /<img\b[^>]*\bsrc=["']https?:\/\/[^"']+["'][^>]*>/gi,
+  /!?\[[^\]]*\]\(https?:\/\/[^)]+\)/gi,
+] as const;
+
+function replaceRemoteLinks(body: string, replace: (link: string) => string): string {
+  return REMOTE_LINK_PATTERNS.reduce(
+    (value, pattern) => value.replace(pattern, (link) => replace(link)),
+    body,
+  );
+}
+
+function stripRemoteLinks(body: string): string {
+  return replaceRemoteLinks(body, () => ' ');
+}
+
+function protectRemoteLinks(body: string): {
+  body: string;
+  hasProtectedLink: (value: string) => boolean;
+  restore: (value: string) => string;
+} {
+  const links: string[] = [];
+  let tokenPrefix = '__FARMSLOT_REMOTE_LINK_';
+  while (body.includes(tokenPrefix)) tokenPrefix = `_${tokenPrefix}`;
+  const protect = (link: string) => {
+    const token = `${tokenPrefix}${links.length}__`;
+    links.push(
+      link.startsWith('<img')
+        ? link.replace(/(\balt=["'])([^"']*)(["'])/i, (_match, open, alt: string, close) => {
+            const cleanedAlt = alt.replace(
+              new RegExp(LOCAL_ARTIFACT_PATH_SOURCE, 'gi'),
+              readableArtifactName,
+            );
+            return `${open}${cleanedAlt}${close}`;
+          })
+        : link,
+    );
+    return token;
+  };
+  const protectedBody = replaceRemoteLinks(body, protect);
+  const tokenPattern = new RegExp(`${tokenPrefix}(\\d+)__`, 'g');
+  return {
+    body: protectedBody,
+    hasProtectedLink: (value) => value.includes(tokenPrefix),
+    restore: (value) =>
+      value.replace(tokenPattern, (_match, index: string) => {
+        return links[Number(index)] ?? '';
+      }),
+  };
 }
 
 // A path a reader must be able to SEE (screenshots, recordings) is evidence: it
@@ -449,7 +501,10 @@ function matchResidues(scanned: string, mediaOnly: boolean): string[] {
 }
 
 export function localPrBodyPathResidues(body: string): string[] {
-  const { prose, spans } = extractInlineCodeSpans(stripCodeBlocks(body));
+  // A local-looking label is safe when the enclosing link points at uploaded
+  // remote evidence. Validate the link as one unit instead of re-scanning its
+  // visible text as though it were an unresolved path.
+  const { prose, spans } = extractInlineCodeSpans(stripRemoteLinks(stripCodeBlocks(body)));
   const residues = [...matchResidues(prose, false), ...matchResidues(spans, true)];
   return [...new Set(residues)].slice(0, 10);
 }
@@ -460,8 +515,21 @@ function assertNoLocalPrBodyPathResidues(body: string): void {
   throw new Error(`PR body still contains local artifact path(s): ${residues.join(', ')}`);
 }
 
-function sanitizePRBody(body: string): string {
-  let result = body;
+const LOCAL_ARTIFACT_PATH_SOURCE = String.raw`(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"\x60|]+`;
+
+function readableArtifactName(value: string): string {
+  const basename = value.split('/').pop() ?? value;
+  return basename
+    .replace(/\.[^.]+$/, '')
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+export function sanitizePRBody(body: string): string {
+  const protectedLinks = protectRemoteLinks(body);
+  let result = protectedLinks.body;
   // Strip markdown image/link refs pointing to local paths
   result = result.replace(
     /!?\[[^\]]*\]\([^)]*(?:\.task\/|temp\/|\/Users\/|\/home\/|\/tmp\/|file:\/\/)[^)]*\)/g,
@@ -472,12 +540,47 @@ function sanitizePRBody(body: string): string {
     /^\s*(?:\/Users\/|\/home\/|\/tmp\/|~\/)\S+\.(?:mp4|mov|png|jpg|jpeg|gif)\s*$/gm,
     '',
   );
-  // Strip generated artifact-reference lines. The final PR should contain
-  // uploaded evidence URLs, not task-local artifact package paths.
-  result = result.replace(
-    /^.*(^|[\s|<(='"]`?)(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"`|]+.*$/gim,
-    '',
-  );
+  const localArtifactPath = new RegExp(LOCAL_ARTIFACT_PATH_SOURCE, 'i');
+  const generatedCaptionLine = /<tr\b[^>]*>.*<strong\b[^>]*>/i;
+  // Plain local-reference lines have no publishable value. Generated evidence
+  // captions and lines containing hosted evidence keep their surrounding text.
+  const originalLines = result.split('\n');
+  result = originalLines
+    .map((line) => {
+      if (!localArtifactPath.test(line)) return line;
+      if (!protectedLinks.hasProtectedLink(line) && !generatedCaptionLine.test(line)) return '';
+
+      let cleaned = line;
+      cleaned = cleaned.replace(
+        new RegExp(String.raw`\s*\([^\n)]*${LOCAL_ARTIFACT_PATH_SOURCE}[^\n)]*\)`, 'gi'),
+        '',
+      );
+      cleaned = cleaned.replace(
+        new RegExp(
+          String.raw`\x60{1,2}[^\x60\n]*${LOCAL_ARTIFACT_PATH_SOURCE}[^\x60\n]*\x60{1,2}`,
+          'gi',
+        ),
+        '',
+      );
+      if (generatedCaptionLine.test(cleaned)) {
+        cleaned = cleaned.replace(
+          new RegExp(LOCAL_ARTIFACT_PATH_SOURCE, 'gi'),
+          readableArtifactName,
+        );
+      } else {
+        cleaned = cleaned.replace(
+          new RegExp(String.raw`(^|[\s|<(='"\x60])${LOCAL_ARTIFACT_PATH_SOURCE}`, 'gi'),
+          '$1',
+        );
+      }
+      cleaned = cleaned
+        .replace(/\x60{1,2}\s*\x60{1,2}/g, '')
+        .replace(/([:|])\s*(?:→|—)\s*/g, '$1 ')
+        .replace(/\s+(?:—|-|:)\s*(?=<\/[^>]+>)/g, '');
+      return cleaned;
+    })
+    .filter((line, index) => line !== '' || originalLines[index] === '')
+    .join('\n');
   // Strip markdown image refs with just artifact filenames (before.mp4, after.mp4, evidence-*.png)
   result = result.replace(
     /!\[[^\]]*\]\((?:before|after|evidence)[^)]*\.(?:mp4|mov|png|jpg|jpeg)\)/g,
@@ -485,7 +588,7 @@ function sanitizePRBody(body: string): string {
   );
   // Collapse multiple blank lines left by stripping
   result = result.replace(/\n{3,}/g, '\n\n');
-  return result;
+  return protectedLinks.restore(result);
 }
 
 function prefixPromotedEvidenceManifestPath(
@@ -694,6 +797,10 @@ export async function postProcessPRBody(
       }
     }
 
+    // Structured manifests and fallback rewrites are generated after the
+    // initial sanitize pass. Apply the same publication boundary to their
+    // output so a manifest summary cannot reintroduce a task-local path.
+    body = sanitizePRBody(body);
     if (options.failOnError) assertNoLocalPrBodyPathResidues(body);
 
     // Auto-check author checklist boxes (CI may be gated on these)

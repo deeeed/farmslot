@@ -9,6 +9,8 @@ export interface BotComment {
   label: string;
   action: string;
   bodyPreview: string;
+  /** Digest of the complete comment body; used when previews are truncated. */
+  bodyFingerprint?: string;
   createdAt: string;
   source: string;
   workerResponded: boolean;

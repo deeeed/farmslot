@@ -1316,6 +1316,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         </View>
 
         <MediaViewer
+          testID="companion-artifact-media-viewer"
           visible={canShowViewer}
           uri={viewerUri}
           items={visualViewerItems}

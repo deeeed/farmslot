@@ -3,9 +3,7 @@ import { customElement } from 'lit/decorators.js';
 
 import {
   type FamilyObservabilityArtifact,
-  Methods,
   resolveRunSlotId,
-  type RunCIWatchPokeResult,
   type RunStep,
 } from '@farmslot/protocol';
 
@@ -13,10 +11,10 @@ import '../shared/media-lightbox.js';
 import '../shared/step-artifacts.js';
 import '../shared/slot-prepare-options.js';
 
-import { gateway } from '../../gateway-client.js';
 import { colors } from '../../styles/theme-tokens.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
+import { CIWatchPokeController } from './ci-watch-actions.js';
 import { formatDuration, stepStatusColor } from './run-utils.js';
 import { renderStepInspectorCiWatchBanner } from './step-inspector-ci-watch-renderer.js';
 import {
@@ -42,6 +40,12 @@ import { stepInspectorStyles } from './step-inspector-styles.js';
 @customElement('step-inspector')
 export class StepInspector extends StepInspectorState {
   static styles = stepInspectorStyles;
+
+  private _ciPokeRunId = '';
+  private readonly _ciPoke = new CIWatchPokeController((state) => {
+    this._poking = state.poking;
+    this._pokeStatus = state.status;
+  });
 
   render() {
     if (!this.step) return nothing;
@@ -356,6 +360,11 @@ export class StepInspector extends StepInspectorState {
   }
 
   updated() {
+    const runId = this.run?.id ?? '';
+    if (runId !== this._ciPokeRunId) {
+      this._ciPokeRunId = runId;
+      this._ciPoke.reset();
+    }
     const stepName = this.step?.name ?? '';
     if (stepName !== this._prevStepName) {
       this._prevStepName = stepName;
@@ -368,15 +377,9 @@ export class StepInspector extends StepInspectorState {
       if (el) el.scrollTop = el.scrollHeight;
     }
     this._syncTickTimer();
-    this._syncPokeState();
-  }
-
-  private _syncPokeState() {
-    if (!this._poking || this._lastPokePollCount == null) return;
     const pollCount = (this.step?.outputs as Record<string, unknown> | undefined)?.pollCount;
-    if (typeof pollCount === 'number' && pollCount > this._lastPokePollCount) {
-      this._poking = false;
-      this._lastPokePollCount = null;
+    if (this.run) {
+      this._ciPoke.observePoll(this.run.id, typeof pollCount === 'number' ? pollCount : null);
     }
   }
 
@@ -398,10 +401,7 @@ export class StepInspector extends StepInspectorState {
       window.clearInterval(this._tickTimer);
       this._tickTimer = null;
     }
-    if (this._pokeStatusTimer != null) {
-      window.clearTimeout(this._pokeStatusTimer);
-      this._pokeStatusTimer = null;
-    }
+    this._ciPoke.dispose();
   }
 
   private _renderLogPaths(key: string, value: unknown) {
@@ -588,39 +588,7 @@ export class StepInspector extends StepInspectorState {
     if (!this.step || !this.run || this._poking) return;
     const runId = this.run.id;
     const beforePoll = (this.step.outputs as Record<string, unknown> | undefined)?.pollCount;
-    this._lastPokePollCount = typeof beforePoll === 'number' ? beforePoll : null;
-    this._poking = true;
-    this._setPokeStatus(null);
-    try {
-      const res = (await gateway.request(Methods.RUN_CI_WATCH_POKE, {
-        runId,
-      })) as RunCIWatchPokeResult;
-      if (res.ok) {
-        this._setPokeStatus(true, res.woken ? 'Woken — polling now' : 'No active poll to wake');
-      } else {
-        this._poking = false;
-        this._setPokeStatus(false, res.reason);
-      }
-    } catch (err) {
-      this._poking = false;
-      this._setPokeStatus(false, (err as Error).message || 'Poke failed');
-    }
-  }
-
-  private _setPokeStatus(ok: boolean | null, msg?: string) {
-    if (this._pokeStatusTimer != null) {
-      window.clearTimeout(this._pokeStatusTimer);
-      this._pokeStatusTimer = null;
-    }
-    if (ok === null) {
-      this._pokeStatus = null;
-      return;
-    }
-    this._pokeStatus = { ok, msg: msg ?? '' };
-    this._pokeStatusTimer = window.setTimeout(() => {
-      this._pokeStatus = null;
-      this._pokeStatusTimer = null;
-    }, 5000);
+    await this._ciPoke.poke(runId, typeof beforePoll === 'number' ? beforePoll : null);
   }
 
   private _stepDurationLabel(step: RunStep): string {

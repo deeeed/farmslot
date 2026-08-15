@@ -28,7 +28,7 @@ export interface InlineCIFix {
   success: boolean;
   attempts: number;
   commitSha?: string;
-  /** True only when HEAD advanced during the fix — dedup must gate on this. */
+  /** True only when HEAD advanced during the fix. */
   commitChanged?: boolean;
   durationMs?: number;
   blocked?: boolean;
@@ -139,7 +139,7 @@ export function mutateDedup(runId: string, mutator: (s: RunCiWatchState) => void
 
 function botSignature(comments: BotComment[]): string {
   return comments
-    .map((c) => `${c.author}|${c.createdAt}|${c.bodyPreview}`)
+    .map((c) => `${c.author}|${c.createdAt}|${c.bodyFingerprint ?? c.bodyPreview}`)
     .sort()
     .join('\u0000');
 }
@@ -170,6 +170,9 @@ export function recordInlineFixSuccess(
   commitSha?: string,
 ): void {
   if (!commitSha) return;
+  // "Success" includes a report-backed no-change completion. Recording the
+  // input signature at the unchanged HEAD is what prevents a triaged bot
+  // comment from launching a fresh worker turn on every CI poll.
   const signature = fixInputSignature(comments, failedChecks);
   mutateDedup(runId, (s) => {
     s.dedup = { signature, commitSha };

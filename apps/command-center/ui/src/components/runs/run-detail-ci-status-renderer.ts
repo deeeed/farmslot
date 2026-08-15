@@ -14,6 +14,9 @@ export interface RunCiStatusRenderContext {
   prStatus: PRStatus | null;
   liveTimeoutPrStatusRefreshing: boolean;
   liveTimeoutPrStatusFailed: boolean;
+  poking: boolean;
+  pokeStatus: { ok: boolean; msg: string } | null;
+  onPokeNow: () => void;
   now: number;
 }
 
@@ -51,6 +54,7 @@ export function renderRunCiStatus(run: Run, ctx: RunCiStatusRenderContext): unkn
   const phase = ci.phase ?? out?.phase;
   const activeTask = (ci.activeTaskFile ?? out?.activeTaskFile ?? '').split('/').pop() || '';
   const fixInProgress = isCIWatchWorkerFixActive(phase, ci.fixInProgress ?? out?.fixInProgress);
+  const canPoke = ciStep?.status === 'running' && !fixInProgress;
   const pollIntervalMs = ci.pollIntervalMs ?? out?.pollIntervalMs ?? 60_000;
   const lastCheckedAt =
     ci.lastCheckedAt ??
@@ -59,11 +63,13 @@ export function renderRunCiStatus(run: Run, ctx: RunCiStatusRenderContext): unkn
       ? out.checkTimeline[out.checkTimeline.length - 1]?.timestamp
       : undefined);
   const nextPollAt = ci.nextPollAt ?? out?.nextPollAt;
-  const nextCheckMs = nextPollAt
-    ? Math.max(0, new Date(nextPollAt).getTime() - ctx.now)
-    : lastCheckedAt
-      ? Math.max(0, new Date(lastCheckedAt).getTime() + pollIntervalMs - ctx.now)
-      : null;
+  const nextCheckMs = fixInProgress
+    ? null
+    : nextPollAt
+      ? Math.max(0, new Date(nextPollAt).getTime() - ctx.now)
+      : lastCheckedAt
+        ? Math.max(0, new Date(lastCheckedAt).getTime() + pollIntervalMs - ctx.now)
+        : null;
   const nextCheck = nextCheckMs !== null ? formatDuration(nextCheckMs) : '';
   const nextCheckColor =
     nextCheckMs === null
@@ -124,6 +130,29 @@ export function renderRunCiStatus(run: Run, ctx: RunCiStatusRenderContext): unkn
                 worker fixing now
               </span>
             `
+          : nothing}
+        ${canPoke
+          ? html`
+              <button
+                type="button"
+                ?disabled=${ctx.poking}
+                @click=${ctx.onPokeNow}
+                title="Wake CI-watch and check GitHub now"
+                style="padding:4px 10px; border-radius:4px; border:1px solid ${colors.accent}; background:${colors.accent}18; color:${colors.accent}; font:inherit; font-size:${fonts.sizeXs}; font-weight:800; cursor:${ctx.poking
+                  ? 'wait'
+                  : 'pointer'}; opacity:${ctx.poking ? '0.65' : '1'};"
+              >
+                ${ctx.poking ? 'Checking…' : 'Check now'}
+              </button>
+            `
+          : nothing}
+        ${ctx.pokeStatus
+          ? html`<span
+              style="color:${ctx.pokeStatus.ok
+                ? colors.statusOk
+                : colors.statusFail}; font-size:${fonts.sizeXs}"
+              >${ctx.pokeStatus.msg}</span
+            >`
           : nothing}
         ${elapsed
           ? html`<span style="color:${colors.textMuted}; margin-left:auto"

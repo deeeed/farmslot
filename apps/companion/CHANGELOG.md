@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- fix(recipes): keep the native recipe HUD visible without hiding the app's accessibility tree from live UI actions.
+- fix(review): use one swipeable Before/After evidence component across review, run, family, gate, diff, and artifact surfaces.
 - fix(recipes): expose a named native-input recipe command for repeatable keyboard and navigation validation.
 - fix(recipes): declare native Back, Escape, Enter, and Return key presses in the shipped Companion action manifest.
 - fix(review): share the project badge color mapping with Command Center so projects remain visually consistent across clients.
