@@ -237,6 +237,17 @@ test('sanitizePRBody preserves uploaded evidence links with local-looking labels
     `| ${hostedImage} |  |`,
   );
   assert.equal(
+    sanitizePRBody(
+      '<img src="https://cdn.example/reviews/1/after.png" alt="artifacts/screenshots/after-state.png" />',
+    ),
+    '<img src="https://cdn.example/reviews/1/after.png" alt="After State" />',
+  );
+  assert.equal(
+    sanitizePRBody('| a | b |\n| --- | --- |\n| x | artifacts/y/z.png |\n| q | r |'),
+    '| a | b |\n| --- | --- |\n| q | r |',
+  );
+  assert.equal(sanitizePRBody('- one\n- see artifacts/y/z.png\n- three'), '- one\n- three');
+  assert.equal(
     sanitizePRBody(`${hostedMarkdown} (from artifacts/screenshots/after.png)`).trim(),
     hostedMarkdown,
   );

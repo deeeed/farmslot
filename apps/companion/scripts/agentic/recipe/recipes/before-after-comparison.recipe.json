@@ -9,7 +9,7 @@
     "properties": {
       "run_id": {
         "type": "string",
-        "description": "Run whose evidence package and family each expose at least two visual pairs."
+        "description": "Run with a workspace gate decision whose evidence package and family each expose at least two visual pairs."
       },
       "family_id": {
         "type": "string",

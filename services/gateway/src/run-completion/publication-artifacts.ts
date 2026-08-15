@@ -436,7 +436,17 @@ function protectRemoteLinks(body: string): {
   while (body.includes(tokenPrefix)) tokenPrefix = `_${tokenPrefix}`;
   const protect = (link: string) => {
     const token = `${tokenPrefix}${links.length}__`;
-    links.push(link);
+    links.push(
+      link.startsWith('<img')
+        ? link.replace(/(\balt=["'])([^"']*)(["'])/i, (_match, open, alt: string, close) => {
+            const cleanedAlt = alt.replace(
+              new RegExp(LOCAL_ARTIFACT_PATH_SOURCE, 'gi'),
+              readableArtifactName,
+            );
+            return `${open}${cleanedAlt}${close}`;
+          })
+        : link,
+    );
     return token;
   };
   const protectedBody = replaceRemoteLinks(body, protect);
@@ -534,8 +544,8 @@ export function sanitizePRBody(body: string): string {
   const generatedCaptionLine = /<tr\b[^>]*>.*<strong\b[^>]*>/i;
   // Plain local-reference lines have no publishable value. Generated evidence
   // captions and lines containing hosted evidence keep their surrounding text.
-  result = result
-    .split('\n')
+  const originalLines = result.split('\n');
+  result = originalLines
     .map((line) => {
       if (!localArtifactPath.test(line)) return line;
       if (!protectedLinks.hasProtectedLink(line) && !generatedCaptionLine.test(line)) return '';
@@ -569,6 +579,7 @@ export function sanitizePRBody(body: string): string {
         .replace(/\s+(?:—|-|:)\s*(?=<\/[^>]+>)/g, '');
       return cleaned;
     })
+    .filter((line, index) => line !== '' || originalLines[index] === '')
     .join('\n');
   // Strip markdown image refs with just artifact filenames (before.mp4, after.mp4, evidence-*.png)
   result = result.replace(
