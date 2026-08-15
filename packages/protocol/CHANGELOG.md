@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- fix(ci): carry full bot-comment fingerprints so edited findings cannot be hidden by preview truncation.
 - fix(runs): share active-run and authoritative Co-Pilot terminal identity across gateway and clients.
 - feat(copilot): configure persisted runtime runner, model, and gateway autostart policy through the shared protocol.
 - feat(review): carry normalized per-step checklist timing on worker signals and review attempts.

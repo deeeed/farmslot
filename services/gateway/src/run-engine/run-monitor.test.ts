@@ -4,13 +4,16 @@ import test from 'node:test';
 import type { Run, RunDecision, WorkerSignal } from '@farmslot/protocol';
 
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+import {
+  artifactContractWaiverArgs,
+  artifactContractWorkerInstruction,
+  artifactTerminalCommandForSignal,
+  terminalContractFailureKind,
+} from '../tasks/worker-terminal-contract.js';
 
 import {
   applyBudgetWarnOnce,
   applyHandoffAutoResolution,
-  artifactContractWaiverArgs,
-  artifactContractWorkerInstruction,
-  artifactTerminalCommandForSignal,
   bindSignalToMonitorContext,
   handoffDecisionStillPending,
   isFreshTerminalHandoffSignal,
@@ -24,7 +27,6 @@ import {
   shouldHoldForMissingTerminalSignal,
   shouldSkipMonitorNudge,
   signalMatchesMonitorContext,
-  terminalContractFailureKind,
 } from './run-monitor.js';
 
 test('artifact contract revalidation preserves an explicit learnings waiver', () => {

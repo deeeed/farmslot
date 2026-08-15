@@ -3,9 +3,7 @@ import { customElement } from 'lit/decorators.js';
 
 import {
   type FamilyObservabilityArtifact,
-  Methods,
   resolveRunSlotId,
-  type RunCIWatchPokeResult,
   type RunStep,
 } from '@farmslot/protocol';
 
@@ -13,10 +11,10 @@ import '../shared/media-lightbox.js';
 import '../shared/step-artifacts.js';
 import '../shared/slot-prepare-options.js';
 
-import { gateway } from '../../gateway-client.js';
 import { colors } from '../../styles/theme-tokens.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
+import { pokeCIWatchNow } from './ci-watch-actions.js';
 import { formatDuration, stepStatusColor } from './run-utils.js';
 import { renderStepInspectorCiWatchBanner } from './step-inspector-ci-watch-renderer.js';
 import {
@@ -592,14 +590,16 @@ export class StepInspector extends StepInspectorState {
     this._poking = true;
     this._setPokeStatus(null);
     try {
-      const res = (await gateway.request(Methods.RUN_CI_WATCH_POKE, {
-        runId,
-      })) as RunCIWatchPokeResult;
+      const res = await pokeCIWatchNow(runId);
       if (res.ok) {
-        this._setPokeStatus(true, res.woken ? 'Woken — polling now' : 'No active poll to wake');
+        this._setPokeStatus(true, res.message);
+        if (!res.woken || this._lastPokePollCount == null) {
+          this._poking = false;
+          this._lastPokePollCount = null;
+        }
       } else {
         this._poking = false;
-        this._setPokeStatus(false, res.reason);
+        this._setPokeStatus(false, res.message);
       }
     } catch (err) {
       this._poking = false;

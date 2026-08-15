@@ -2,6 +2,7 @@
 // All gh calls route through github-client.ghRequest (concurrency + ETag + quota).
 
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join as pathJoin, resolve as pathResolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -643,6 +644,7 @@ interface BotCommentInternal {
   label: string;
   action: string;
   bodyPreview: string;
+  bodyFingerprint: string;
   createdAt: string;
   source: string;
   workerResponded: boolean;
@@ -691,6 +693,9 @@ export function matchBotComments(
         label,
         action,
         bodyPreview: (c.body || '').slice(0, 200),
+        bodyFingerprint: createHash('sha256')
+          .update(c.body || '')
+          .digest('hex'),
         createdAt: c.created_at || '',
         source: 'issue_comment',
         workerResponded: !!(latestCommit && c.created_at < latestCommit),
@@ -709,6 +714,9 @@ export function matchBotComments(
         label,
         action,
         bodyPreview: (rc.body || '').slice(0, 200),
+        bodyFingerprint: createHash('sha256')
+          .update(rc.body || '')
+          .digest('hex'),
         createdAt: rc.created_at || '',
         source: 'review_comment',
         // Review comments should stay actionable until the thread is explicitly
@@ -729,6 +737,7 @@ function toBotComment(bc: BotCommentInternal) {
     label: bc.label,
     action: bc.action,
     bodyPreview: bc.bodyPreview,
+    bodyFingerprint: bc.bodyFingerprint,
     createdAt: bc.createdAt,
     source: bc.source,
     workerResponded: bc.workerResponded,

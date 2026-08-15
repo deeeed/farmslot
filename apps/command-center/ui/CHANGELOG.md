@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(ci-watch): expose Check now in run summaries and hide the polling countdown while a worker fix is active.
 - fix(runs): color-code projects consistently with Companion and show the worker's parsed current checklist item in active mini pipelines.
 - fix(copilot): make the shared tmux terminal the primary Co-Pilot surface, collapse runtime controls, remove the redundant message composer, and use the gateway-owned pane identity instead of filtered inventory discovery.
 - fix(dispatch): cache execution-template variants so domain and mode filters switch immediately.

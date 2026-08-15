@@ -683,6 +683,7 @@ test('matchBotComments classifies cursor bugbot findings as actionable for exten
       action: 'nudge_worker',
       bodyPreview:
         '### Path validation fails for base /perps with query strings\n\n**Low Severity**',
+      bodyFingerprint: '1e4db69999f48dc72d6e623614ceb413c458b1d829687ac02b78cbec0a914a26',
       createdAt: '2026-04-25T02:56:29Z',
       source: 'review_comment',
       workerResponded: false,
