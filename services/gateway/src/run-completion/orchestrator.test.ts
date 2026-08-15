@@ -248,14 +248,49 @@ test('sanitizePRBody preserves uploaded evidence links with local-looking labels
     sanitizePRBody(
       `<tr><td colspan="2"><strong>Companion before/after — recipe-runs/fs-4/before.mp4</strong></td></tr>`,
     ).trim(),
-    '',
+    `<tr><td colspan="2"><strong>Companion before/after — Before</strong></td></tr>`,
   );
   assert.equal(
     sanitizePRBody(
       `<tr><td>${hostedImage}</td><td><strong>Companion before/after — recipe-runs/fs-4/before.mp4</strong></td></tr>`,
     ).trim(),
-    `<tr><td>${hostedImage}</td><td><strong>Companion before/after</strong></td></tr>`,
+    `<tr><td>${hostedImage}</td><td><strong>Companion before/after — Before</strong></td></tr>`,
   );
+  assert.equal(
+    sanitizePRBody(`${hostedMarkdown} (captured at artifacts/screenshots/after.png)`).trim(),
+    hostedMarkdown,
+  );
+  assert.equal(
+    sanitizePRBody(`- **Source**: artifacts/screenshots/after.png → ${hostedMarkdown}`).trim(),
+    `- **Source**: ${hostedMarkdown}`,
+  );
+  assert.equal(
+    sanitizePRBody(`| proof | ${hostedMarkdown} | \`artifacts/screenshots/after.png\` |`).trim(),
+    `| proof | ${hostedMarkdown} |  |`,
+  );
+
+  const generatedSection = buildEvidenceSection(
+    {
+      preferred_mode: 'screenshots',
+      before_after_pairs: [
+        {
+          label: 'recipe-runs/fs-4/before.mp4 vs after',
+          before: 'recipe-runs/fs-4/before-state.png',
+          after: 'recipe-runs/fs-4/after-state.png',
+        },
+      ],
+    },
+    new Map([
+      ['recipe-runs/fs-4/before-state.png', 'https://cdn.example/reviews/1/before.png'],
+      ['recipe-runs/fs-4/after-state.png', 'https://cdn.example/reviews/1/after.png'],
+    ]),
+  );
+  assert.ok(generatedSection);
+  const sanitizedSection = sanitizePRBody(generatedSection);
+  assert.match(sanitizedSection, /<strong>Before vs after<\/strong>/);
+  assert.match(sanitizedSection, /src="https:\/\/cdn\.example\/reviews\/1\/before\.png"/);
+  assert.match(sanitizedSection, /src="https:\/\/cdn\.example\/reviews\/1\/after\.png"/);
+  assert.deepEqual(localPrBodyPathResidues(sanitizedSection), []);
   assert.equal(
     sanitizePRBody('__FARMSLOT_REMOTE_LINK_0__\n' + hostedMarkdown),
     '__FARMSLOT_REMOTE_LINK_0__\n' + hostedMarkdown,

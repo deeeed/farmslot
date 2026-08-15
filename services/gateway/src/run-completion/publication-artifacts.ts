@@ -505,6 +505,18 @@ function assertNoLocalPrBodyPathResidues(body: string): void {
   throw new Error(`PR body still contains local artifact path(s): ${residues.join(', ')}`);
 }
 
+const LOCAL_ARTIFACT_PATH_SOURCE = String.raw`(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"\x60|]+`;
+
+function readableArtifactName(value: string): string {
+  const basename = value.split('/').pop() ?? value;
+  return basename
+    .replace(/\.[^.]+$/, '')
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 export function sanitizePRBody(body: string): string {
   const protectedLinks = protectRemoteLinks(body);
   let result = protectedLinks.body;
@@ -518,26 +530,46 @@ export function sanitizePRBody(body: string): string {
     /^\s*(?:\/Users\/|\/home\/|\/tmp\/|~\/)\S+\.(?:mp4|mov|png|jpg|jpeg|gif)\s*$/gm,
     '',
   );
-  const localArtifactPath =
-    /(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"`|]+/i;
-  // A line that only points at a task-local artifact has no publishable value.
-  // Keep mixed rows only when they also contain a protected hosted link.
+  const localArtifactPath = new RegExp(LOCAL_ARTIFACT_PATH_SOURCE, 'i');
+  const generatedCaptionLine = /<tr\b[^>]*>.*<strong\b[^>]*>/i;
+  // Plain local-reference lines have no publishable value. Generated evidence
+  // captions and lines containing hosted evidence keep their surrounding text.
   result = result
     .split('\n')
-    .filter((line) => protectedLinks.hasProtectedLink(line) || !localArtifactPath.test(line))
+    .map((line) => {
+      if (!localArtifactPath.test(line)) return line;
+      if (!protectedLinks.hasProtectedLink(line) && !generatedCaptionLine.test(line)) return '';
+
+      let cleaned = line;
+      cleaned = cleaned.replace(
+        new RegExp(String.raw`\s*\([^\n)]*${LOCAL_ARTIFACT_PATH_SOURCE}[^\n)]*\)`, 'gi'),
+        '',
+      );
+      cleaned = cleaned.replace(
+        new RegExp(
+          String.raw`\x60{1,2}[^\x60\n]*${LOCAL_ARTIFACT_PATH_SOURCE}[^\x60\n]*\x60{1,2}`,
+          'gi',
+        ),
+        '',
+      );
+      if (generatedCaptionLine.test(cleaned)) {
+        cleaned = cleaned.replace(
+          new RegExp(LOCAL_ARTIFACT_PATH_SOURCE, 'gi'),
+          readableArtifactName,
+        );
+      } else {
+        cleaned = cleaned.replace(
+          new RegExp(String.raw`(^|[\s|<(='"\x60])${LOCAL_ARTIFACT_PATH_SOURCE}`, 'gi'),
+          '$1',
+        );
+      }
+      cleaned = cleaned
+        .replace(/\x60{1,2}\s*\x60{1,2}/g, '')
+        .replace(/([:|])\s*(?:→|—)\s*/g, '$1 ')
+        .replace(/\s+(?:—|-|:)\s*(?=<\/[^>]+>)/g, '');
+      return cleaned;
+    })
     .join('\n');
-  result = result.replace(
-    /\s*\((?:from|source)\s*:?\s*(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"`|]+\)/gim,
-    '',
-  );
-  // Strip task-local artifact path tokens without deleting the whole line.
-  // Generated evidence rows can contain both a hosted image/link and a local
-  // caption path; deleting the line would silently break the hosted table.
-  result = result.replace(
-    /(^|[\s|<(='"]`?)(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"`|]+/gim,
-    '$1',
-  );
-  result = result.replace(/\s+(?:—|-|:)\s*(?=<\/[^>]+>)/g, '');
   // Strip markdown image refs with just artifact filenames (before.mp4, after.mp4, evidence-*.png)
   result = result.replace(
     /!\[[^\]]*\]\((?:before|after|evidence)[^)]*\.(?:mp4|mov|png|jpg|jpeg)\)/g,

@@ -370,6 +370,7 @@ function FamilyHeader({
         <View style={styles.familyHeaderActions}>
           <Pressable
             style={styles.familyOpenButton}
+            accessibilityLabel={`Open family ${group.familyId}`}
             onPress={() =>
               router.push({
                 pathname: '/family/[familyId]',

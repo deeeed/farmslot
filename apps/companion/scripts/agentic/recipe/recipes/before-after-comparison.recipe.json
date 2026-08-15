@@ -5,11 +5,15 @@
   "paramsSchema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["run_id"],
+    "required": ["run_id", "family_id"],
     "properties": {
       "run_id": {
         "type": "string",
         "description": "Run whose evidence package and family each expose at least two visual pairs."
+      },
+      "family_id": {
+        "type": "string",
+        "description": "Family containing the run and at least two visual pairs."
       }
     }
   },
@@ -54,6 +58,19 @@
         "action": "ui.press",
         "test_id": "companion-run-tab-evidence",
         "intent": "Select the run's visual evidence workspace.",
+        "next": "open-gate"
+      },
+      "open-gate": {
+        "action": "ui.press",
+        "test_id": "companion-open-run-gate",
+        "intent": "Open the run's real decision workspace, which owns the shared evidence review component.",
+        "next": "wait-decision"
+      },
+      "wait-decision": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-decision-workspace",
+        "expected": "visible",
+        "intent": "Confirm the decision workspace mounted before testing its evidence controls.",
         "next": "wait-evidence"
       },
       "wait-evidence": {
@@ -150,6 +167,13 @@
         "action": "ui.press",
         "test_id": "companion-before-after-primary-fullscreen-page-after",
         "intent": "Open the selected artifact from fullscreen without leaving the comparison modal above the destination.",
+        "next": "wait-comparison-dismissed"
+      },
+      "wait-comparison-dismissed": {
+        "action": "ui.wait_for",
+        "test_id": "companion-before-after-primary-fullscreen",
+        "expected": "hidden",
+        "intent": "Prove artifact navigation dismisses the fullscreen comparison before the viewer is used.",
         "next": "wait-artifact-viewer"
       },
       "wait-artifact-viewer": {
@@ -163,19 +187,25 @@
         "action": "ui.press",
         "test_id": "companion-artifact-media-viewer-close",
         "intent": "Return to the run workspace after proving artifact navigation.",
-        "next": "wait-comparison-dismissed"
+        "next": "return-review"
       },
-      "wait-comparison-dismissed": {
+      "return-review": {
+        "action": "ui.press",
+        "test_id": "companion-tab-review",
+        "intent": "Return through the app navigation before opening the related family.",
+        "next": "wait-review-returned"
+      },
+      "wait-review-returned": {
         "action": "ui.wait_for",
-        "test_id": "companion-before-after-primary-fullscreen",
-        "expected": "hidden",
-        "intent": "Prove artifact navigation dismisses the fullscreen comparison first.",
+        "test_id": "companion-screen-review",
+        "expected": "visible",
+        "intent": "Confirm the live review queue is visible again.",
         "next": "open-family"
       },
       "open-family": {
         "action": "ui.press",
-        "test_id": "companion-workspace-shortcut-family",
-        "intent": "Open the same run family to verify its shared comparison controls.",
+        "selector": "label=\"Open family {{params.family_id}}\"",
+        "intent": "Open the same run family from the live queue to verify its shared comparison controls.",
         "next": "wait-family"
       },
       "wait-family": {
