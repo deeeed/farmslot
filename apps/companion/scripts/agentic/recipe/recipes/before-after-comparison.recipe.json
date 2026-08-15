@@ -187,11 +187,24 @@
         "action": "ui.press",
         "test_id": "companion-artifact-media-viewer-close",
         "intent": "Return to the run workspace after proving artifact navigation.",
+        "next": "return-run"
+      },
+      "return-run": {
+        "action": "ui.press",
+        "selector": "label=\"Go back\"",
+        "intent": "Return from the decision workspace to the run workspace.",
+        "next": "wait-run-returned"
+      },
+      "wait-run-returned": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-run-detail",
+        "expected": "visible",
+        "intent": "Confirm the run workspace is visible again.",
         "next": "return-review"
       },
       "return-review": {
         "action": "ui.press",
-        "test_id": "companion-tab-review",
+        "selector": "label=\"Go back\"",
         "intent": "Return through the app navigation before opening the related family.",
         "next": "wait-review-returned"
       },
