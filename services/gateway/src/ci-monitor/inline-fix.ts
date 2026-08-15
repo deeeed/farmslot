@@ -66,6 +66,8 @@ import {
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
+import { isNoCodeTerminalDisposition, normalizeWorkerSignal } from '../tasks/worker-signals.js';
+import { validateTerminalSignalArtifacts } from '../tasks/worker-terminal-contract.js';
 
 import {
   clearInlineFixState,
@@ -696,7 +698,14 @@ async function attemptInlineCIFix(
           await execOnSlot(vars, `cat '${signalPath}' 2>/dev/null || true`)
         ).stdout.trim();
         if (raw) {
-          const ws = JSON.parse(raw) as WorkerSignal;
+          const parsedSignal = normalizeWorkerSignal(JSON.parse(raw) as WorkerSignal);
+          if (!parsedSignal.ok) {
+            console.warn(
+              `[ci-monitor] run ${runId.slice(0, 8)} — invalid ${CI_FIX_CHECKLIST_TARGET.signal}: ${parsedSignal.reason}`,
+            );
+            continue;
+          }
+          const ws = parsedSignal.signal;
           if (
             ws.status === 'complete' ||
             ws.status === 'done' ||
@@ -731,10 +740,131 @@ async function attemptInlineCIFix(
                 durationMs: Date.now() - startedAt,
               };
             }
-            mutateDedup(runId, (s) => {
-              s.consecutiveAttempts = 0;
-            });
             const commitChanged = !!(currentSha && currentSha !== beforeSha);
+            let validatedNoChange = false;
+            if (!commitChanged && isNoCodeTerminalDisposition(ws.disposition)) {
+              if (!currentSha) {
+                const blockedReason =
+                  'Cannot accept no-change CI completion without resolving the current HEAD';
+                console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${blockedReason}`);
+                await markAgentContextStatus(runId, 'ci-fix', 'blocked', { lastSignalAt });
+                await unwatchContext(slotId, 'ci-fix');
+                clearInlineFixState(
+                  runId,
+                  {
+                    phase: 'blocked',
+                    lastSignalAt,
+                    lastFixCommitSha: null,
+                    fixProgress,
+                  },
+                  writeResult.taskPath,
+                );
+                return {
+                  attempted: true,
+                  success: false,
+                  blocked: true,
+                  blockedReason,
+                  attempts,
+                  commitChanged: false,
+                  durationMs: Date.now() - startedAt,
+                };
+              }
+              let artifactValidation: Awaited<ReturnType<typeof validateTerminalSignalArtifacts>>;
+              try {
+                artifactValidation = await validateTerminalSignalArtifacts(
+                  slotId,
+                  signalPath,
+                  ws,
+                  writeResult.taskPath,
+                );
+              } catch (error) {
+                const blockedReason = `Terminal signal artifact validation failed: ${(error as Error).message}`;
+                console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${blockedReason}`);
+                await markAgentContextStatus(runId, 'ci-fix', 'failed', { lastSignalAt });
+                await unwatchContext(slotId, 'ci-fix');
+                clearInlineFixState(
+                  runId,
+                  {
+                    phase: 'blocked',
+                    lastSignalAt,
+                    lastFixCommitSha: currentSha ?? null,
+                    fixProgress,
+                  },
+                  writeResult.taskPath,
+                );
+                return {
+                  attempted: true,
+                  success: false,
+                  blocked: true,
+                  blockedReason,
+                  attempts,
+                  commitSha: currentSha ?? undefined,
+                  commitChanged: false,
+                  durationMs: Date.now() - startedAt,
+                };
+              }
+              if (!artifactValidation.ok) {
+                const blockedReason = artifactValidation.message;
+                console.warn(
+                  `[ci-monitor] run ${runId.slice(0, 8)} — rejected no-change evidence: ${blockedReason}`,
+                );
+                await markAgentContextStatus(runId, 'ci-fix', 'blocked', { lastSignalAt });
+                await unwatchContext(slotId, 'ci-fix');
+                clearInlineFixState(
+                  runId,
+                  {
+                    phase: 'blocked',
+                    lastSignalAt,
+                    lastFixCommitSha: currentSha ?? null,
+                    fixProgress,
+                  },
+                  writeResult.taskPath,
+                );
+                return {
+                  attempted: true,
+                  success: false,
+                  blocked: true,
+                  blockedReason,
+                  attempts,
+                  commitSha: currentSha ?? undefined,
+                  commitChanged: false,
+                  durationMs: Date.now() - startedAt,
+                };
+              }
+              validatedNoChange = true;
+            }
+            if (ws.status !== 'failed' && !commitChanged && !validatedNoChange) {
+              const blockedReason =
+                'Worker reported a successful CI fix without advancing HEAD or providing a validated no-change disposition';
+              console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${blockedReason}`);
+              await markAgentContextStatus(runId, 'ci-fix', 'blocked', { lastSignalAt });
+              await unwatchContext(slotId, 'ci-fix');
+              clearInlineFixState(
+                runId,
+                {
+                  phase: 'blocked',
+                  lastSignalAt,
+                  lastFixCommitSha: currentSha ?? null,
+                  fixProgress,
+                },
+                writeResult.taskPath,
+              );
+              return {
+                attempted: true,
+                success: false,
+                blocked: true,
+                blockedReason,
+                attempts,
+                commitSha: currentSha ?? undefined,
+                commitChanged: false,
+                durationMs: Date.now() - startedAt,
+              };
+            }
+            if (ws.status !== 'failed') {
+              mutateDedup(runId, (s) => {
+                s.consecutiveAttempts = 0;
+              });
+            }
             console.log(
               `[ci-monitor] run ${runId.slice(0, 8)} — ${CI_FIX_CHECKLIST_TARGET.signal} detected, sha=${currentSha?.slice(0, 8)}${commitChanged ? '' : ' (no push)'}`,
             );
@@ -745,6 +875,7 @@ async function attemptInlineCIFix(
               { lastSignalAt },
             );
             await unwatchContext(slotId, 'ci-fix');
+            const success = ws.status !== 'failed';
             clearInlineFixState(
               runId,
               {
@@ -757,7 +888,7 @@ async function attemptInlineCIFix(
             );
             return {
               attempted: true,
-              success: true,
+              success,
               attempts,
               commitSha: currentSha ?? undefined,
               commitChanged,

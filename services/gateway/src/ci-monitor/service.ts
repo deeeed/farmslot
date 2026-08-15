@@ -518,8 +518,12 @@ export async function monitorCI(
             detail: `commit ${inlineFix.commitSha?.slice(0, 8)}${inlineFix.commitChanged ? '' : ' (no push)'}`,
           });
           lastInlineCIFix = inlineFix;
+          // A worker can legitimately resolve a bot comment as a false positive
+          // without changing HEAD. Its terminal signal still handles this exact
+          // comment revision, so persist the signature and do not pay for the
+          // same inference again on the next poll.
+          recordInlineFixSuccess(runId, effectiveActionable, [], inlineFix.commitSha);
           if (inlineFix.commitChanged) {
-            recordInlineFixSuccess(runId, effectiveActionable, [], inlineFix.commitSha);
             markTimeoutProgress('inline fix committed', {
               checkFingerprint,
               headSha: inlineFix.commitSha ?? headShaNow,
@@ -580,11 +584,13 @@ export async function monitorCI(
           return buildOutcome('comments', [], actionId);
         }
       } else if (dedupedActionable.length > 0) {
-        // All actionable comments already handled — keep polling for CI/merge
-        forceNextRefresh = await waitForNextPoll('deduped', {
-          dedupReason: `${dedupedActionable.length} comments filtered`,
-        });
-        continue;
+        // Green checks plus only already-handled comments is terminal, just as
+        // green checks with no comments is. The comment remains on GitHub, so
+        // polling again would otherwise keep this run alive forever.
+        console.log(
+          `[ci-monitor] run ${runId.slice(0, 8)} — all watched checks passed; ${dedupedActionable.length} handled comment(s) ignored`,
+        );
+        return buildOutcome('passed');
       }
 
       console.log(
@@ -743,8 +749,10 @@ export async function monitorCI(
           detail: `commit ${inlineFix.commitSha?.slice(0, 8)}${inlineFix.commitChanged ? '' : ' (no push)'}`,
         });
         lastInlineCIFix = inlineFix;
+        // A no-change completion is authoritative for this exact comment
+        // signature at this HEAD and must suppress duplicate worker turns.
+        recordInlineFixSuccess(runId, effectiveActionable, [], inlineFix.commitSha);
         if (inlineFix.commitChanged) {
-          recordInlineFixSuccess(runId, effectiveActionable, [], inlineFix.commitSha);
           markTimeoutProgress('inline fix committed', {
             checkFingerprint,
             headSha: inlineFix.commitSha ?? headShaNow,
