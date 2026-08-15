@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion fullscreen Before/After comparison",
-  "description": "Opens a real run with paired evidence, proves inline and fullscreen Before-to-After swiping, then verifies the family pair navigator.",
+  "description": "Opens a real run with paired evidence, proves inline and fullscreen Before-to-After swiping and file navigation, then verifies the family pair navigator.",
   "paramsSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -25,6 +25,10 @@
     {
       "id": "inline-before-after",
       "claim": "The run evidence card swipes between Before and After."
+    },
+    {
+      "id": "fullscreen-file-navigation",
+      "claim": "Opening the fullscreen After page dismisses the comparison and opens the artifact in the run Files workspace."
     },
     {
       "id": "family-pair-navigation",
@@ -167,6 +171,7 @@
         "test_id": "companion-screen-run-files",
         "expected": "visible",
         "intent": "Confirm the selected After artifact opened in the run's Files workspace.",
+        "proves": ["fullscreen-file-navigation"],
         "next": "return-review"
       },
       "return-review": {
