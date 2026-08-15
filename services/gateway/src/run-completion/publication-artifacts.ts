@@ -401,7 +401,7 @@ export function assertSelectedEvidencePublished(
 const LOCAL_PR_BODY_PATH_PATTERNS: RegExp[] = [
   /file:\/\/\/[^\s)>'"]+/gi,
   /(^|[\s(='"])`?(?:\/Users|\/home|\/tmp)\/[^\s)>'"`]+/g,
-  /(^|[\s(='"])`?(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"`]+/gi,
+  /(^|[\s(='"])`?(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"`]+/gi,
   /(^|[\s(='"])(?:\.\/)?(?:before|after|evidence)[^/\s)>'"]*\.(?:png|jpe?g|gif|mp4|mov|webm)/gi,
 ];
 
@@ -426,7 +426,11 @@ function stripRemoteLinks(body: string): string {
   return replaceRemoteLinks(body, () => ' ');
 }
 
-function protectRemoteLinks(body: string): { body: string; restore: (value: string) => string } {
+function protectRemoteLinks(body: string): {
+  body: string;
+  hasProtectedLink: (value: string) => boolean;
+  restore: (value: string) => string;
+} {
   const links: string[] = [];
   let tokenPrefix = '__FARMSLOT_REMOTE_LINK_';
   while (body.includes(tokenPrefix)) tokenPrefix = `_${tokenPrefix}`;
@@ -439,6 +443,7 @@ function protectRemoteLinks(body: string): { body: string; restore: (value: stri
   const tokenPattern = new RegExp(`${tokenPrefix}(\\d+)__`, 'g');
   return {
     body: protectedBody,
+    hasProtectedLink: (value) => value.includes(tokenPrefix),
     restore: (value) =>
       value.replace(tokenPattern, (_match, index: string) => {
         return links[Number(index)] ?? '';
@@ -513,17 +518,26 @@ export function sanitizePRBody(body: string): string {
     /^\s*(?:\/Users\/|\/home\/|\/tmp\/|~\/)\S+\.(?:mp4|mov|png|jpg|jpeg|gif)\s*$/gm,
     '',
   );
+  const localArtifactPath =
+    /(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"`|]+/i;
+  // A line that only points at a task-local artifact has no publishable value.
+  // Keep mixed rows only when they also contain a protected hosted link.
+  result = result
+    .split('\n')
+    .filter((line) => protectedLinks.hasProtectedLink(line) || !localArtifactPath.test(line))
+    .join('\n');
   result = result.replace(
-    /\s*\(from\s+(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"`|]+\)/gim,
+    /\s*\((?:from|source)\s*:?\s*(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"`|]+\)/gim,
     '',
   );
   // Strip task-local artifact path tokens without deleting the whole line.
   // Generated evidence rows can contain both a hosted image/link and a local
   // caption path; deleting the line would silently break the hosted table.
   result = result.replace(
-    /(^|[\s|<(='"]`?)(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"`|]+/gim,
+    /(^|[\s|<(='"]`?)(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s<)>'"`|]+/gim,
     '$1',
   );
+  result = result.replace(/\s+(?:—|-|:)\s*(?=<\/[^>]+>)/g, '');
   // Strip markdown image refs with just artifact filenames (before.mp4, after.mp4, evidence-*.png)
   result = result.replace(
     /!\[[^\]]*\]\((?:before|after|evidence)[^)]*\.(?:mp4|mov|png|jpg|jpeg)\)/g,

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
@@ -2539,7 +2539,7 @@ export function artifactKindStyle(kind: ReturnType<typeof familyArtifactKind>) {
   return styles.artifactKindSetup;
 }
 
-export function ArtifactCell({ children }: { children: React.ReactNode }) {
+export function ArtifactCell({ children }: { children: ReactNode }) {
   return <View style={styles.artifactCell}>{children}</View>;
 }
 

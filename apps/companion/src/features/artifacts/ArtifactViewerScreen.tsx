@@ -656,6 +656,7 @@ export default function ArtifactViewerScreen() {
         </Text>
       )}
       <MediaViewer
+        testID="companion-artifact-media-viewer"
         visible={!!viewerUri}
         uri={viewerUri}
         items={visualViewerItems}

@@ -229,7 +229,7 @@ test('sanitizePRBody preserves uploaded evidence links with local-looking labels
   );
   assert.equal(
     sanitizePRBody('See artifacts/screenshots/after.png\nKeep this.').trim(),
-    'See \nKeep this.',
+    'Keep this.',
   );
   const hostedImage = '<img src="https://cdn.example/reviews/1/after.png" />';
   assert.equal(
@@ -239,6 +239,22 @@ test('sanitizePRBody preserves uploaded evidence links with local-looking labels
   assert.equal(
     sanitizePRBody(`${hostedMarkdown} (from artifacts/screenshots/after.png)`).trim(),
     hostedMarkdown,
+  );
+  assert.equal(
+    sanitizePRBody(`${hostedMarkdown} (source: artifacts/screenshots/after.png)`).trim(),
+    hostedMarkdown,
+  );
+  assert.equal(
+    sanitizePRBody(
+      `<tr><td colspan="2"><strong>Companion before/after — recipe-runs/fs-4/before.mp4</strong></td></tr>`,
+    ).trim(),
+    '',
+  );
+  assert.equal(
+    sanitizePRBody(
+      `<tr><td>${hostedImage}</td><td><strong>Companion before/after — recipe-runs/fs-4/before.mp4</strong></td></tr>`,
+    ).trim(),
+    `<tr><td>${hostedImage}</td><td><strong>Companion before/after</strong></td></tr>`,
   );
   assert.equal(
     sanitizePRBody('__FARMSLOT_REMOTE_LINK_0__\n' + hostedMarkdown),

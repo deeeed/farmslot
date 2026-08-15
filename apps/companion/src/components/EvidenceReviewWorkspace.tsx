@@ -895,10 +895,4 @@ const styles = StyleSheet.create({
     fontSize: fonts.sizeXs,
     fontWeight: '900',
   },
-  pathText: {
-    color: colors.textMuted,
-    flex: 1,
-    fontSize: fonts.sizeXs,
-    marginTop: spacing.sm,
-  },
 });

@@ -1,13 +1,16 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion fullscreen Before/After comparison",
-  "description": "Opens a real run evidence pair, expands it fullscreen, and proves horizontal Before-to-After swiping.",
+  "description": "Opens a real run with at least two paired evidence sets, proves inline and fullscreen Before-to-After swiping, then verifies the family pair navigator.",
   "paramsSchema": {
     "type": "object",
     "additionalProperties": false,
     "required": ["run_id"],
     "properties": {
-      "run_id": { "type": "string" }
+      "run_id": {
+        "type": "string",
+        "description": "Run whose evidence package and family each expose at least two visual pairs."
+      }
     }
   },
   "proofTargets": [
@@ -18,6 +21,10 @@
     {
       "id": "inline-pair-navigation",
       "claim": "The evidence card swipes between Before and After, and the pair controls select the next visual pair."
+    },
+    {
+      "id": "family-pair-navigation",
+      "claim": "The family evidence surface selects one pair at a time and advances through its explicit pair controls."
     }
   ],
   "workflow": {
@@ -143,6 +150,19 @@
         "action": "ui.press",
         "test_id": "companion-before-after-primary-fullscreen-page-after",
         "intent": "Open the selected artifact from fullscreen without leaving the comparison modal above the destination.",
+        "next": "wait-artifact-viewer"
+      },
+      "wait-artifact-viewer": {
+        "action": "ui.wait_for",
+        "test_id": "companion-artifact-media-viewer",
+        "expected": "visible",
+        "intent": "Prove the selected artifact opened after the comparison dismissed.",
+        "next": "close-artifact-viewer"
+      },
+      "close-artifact-viewer": {
+        "action": "ui.press",
+        "test_id": "companion-artifact-media-viewer-close",
+        "intent": "Return to the run workspace after proving artifact navigation.",
         "next": "wait-comparison-dismissed"
       },
       "wait-comparison-dismissed": {
@@ -150,6 +170,46 @@
         "test_id": "companion-before-after-primary-fullscreen",
         "expected": "hidden",
         "intent": "Prove artifact navigation dismisses the fullscreen comparison first.",
+        "next": "open-family"
+      },
+      "open-family": {
+        "action": "ui.press",
+        "test_id": "companion-workspace-shortcut-family",
+        "intent": "Open the same run family to verify its shared comparison controls.",
+        "next": "wait-family"
+      },
+      "wait-family": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-family-workspace",
+        "expected": "visible",
+        "intent": "Confirm the family workspace opened.",
+        "next": "open-family-evidence"
+      },
+      "open-family-evidence": {
+        "action": "ui.press",
+        "test_id": "companion-family-tab-evidence",
+        "intent": "Open the family evidence tab.",
+        "next": "wait-family-pairs"
+      },
+      "wait-family-pairs": {
+        "action": "ui.wait_for",
+        "test_id": "companion-family-before-after-pairs-index-1",
+        "expected": "visible",
+        "intent": "Confirm the first family pair is selected without a nested horizontal rail.",
+        "next": "next-family-pair"
+      },
+      "next-family-pair": {
+        "action": "ui.press",
+        "test_id": "companion-family-before-after-pairs-next",
+        "intent": "Advance the family evidence surface using its explicit pair control.",
+        "next": "confirm-family-next-pair"
+      },
+      "confirm-family-next-pair": {
+        "action": "ui.wait_for",
+        "test_id": "companion-family-before-after-pairs-index-2",
+        "expected": "visible",
+        "intent": "Confirm the family evidence surface selected the second pair.",
+        "proves": ["family-pair-navigation"],
         "next": "done"
       },
       "done": {
