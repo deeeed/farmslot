@@ -6,14 +6,12 @@ import { resolveProjectTaskDirName } from '../core/config.js';
 import { execOnSlot, getProjectField, type RawProjectJson, type SlotVars } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
 
-const DEFAULT_RETENTION_HOURS = 168;
-const DEFAULT_KEEP_RUNS = 5;
+const DEFAULT_RETENTION_HOURS = 7 * 24;
 const CLEANUP_TIMEOUT_MS = 120_000;
 
 export interface SlotStorageCleanupOptions {
   activeTaskRel?: string | null;
   includeBrowserProfiles?: boolean;
-  keepRuns?: number;
   retentionHours?: number;
 }
 
@@ -35,14 +33,6 @@ function cleanupRetentionHours(input?: number): number {
   if (!raw) return DEFAULT_RETENTION_HOURS;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RETENTION_HOURS;
-}
-
-function cleanupKeepRuns(input?: number): number {
-  if (typeof input === 'number' && Number.isInteger(input) && input >= 0) return input;
-  const raw = process.env.FARMSLOT_SLOT_STORAGE_KEEP_RUNS;
-  if (!raw) return DEFAULT_KEEP_RUNS;
-  const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : DEFAULT_KEEP_RUNS;
 }
 
 function safeRelativeDir(input: string | undefined, fallback: string): string {
@@ -90,16 +80,21 @@ export function buildSlotStorageCleanupCommand(input: SlotStorageCleanupCommandI
     1,
     Math.floor(cleanupRetentionHours(input.retentionHours) * 60),
   );
-  const keepRuns = cleanupKeepRuns(input.keepRuns);
   const taskRoot = remoteJoin(input.repo, safeRelativeDir(input.taskDirName, DEFAULT_TASK_DIR));
   const artifactRoot = remoteJoin(
     input.repo,
     safeRelativeDir(input.artifactDirName, input.taskDirName),
   );
   const runtimeRoot = remoteJoin(input.repo, safeRelativeDir(input.runtimeDirName, '.agent'));
-  const activeTaskRel = safeRelativePath(input.activeTaskRel);
-  const activeTaskPath = activeTaskRel ? remoteJoin(taskRoot, activeTaskRel) : '';
+  const activeTaskInput = safeRelativePath(input.activeTaskRel);
+  const activeTaskRel =
+    path.posix.basename(activeTaskInput) === 'TASK.md'
+      ? path.posix.dirname(activeTaskInput)
+      : activeTaskInput;
   const taskRoots = unique([taskRoot, artifactRoot]);
+  const activeTaskPaths = activeTaskRel
+    ? taskRoots.map((root) => remoteJoin(root, activeTaskRel))
+    : [];
   const runtimeChildRoots = unique([
     remoteJoin(runtimeRoot, 'artifacts'),
     remoteJoin(runtimeRoot, 'recipe-runs'),
@@ -107,10 +102,9 @@ export function buildSlotStorageCleanupCommand(input: SlotStorageCleanupCommandI
     remoteJoin(input.repo, 'temp/agentic'),
   ]);
   const config = {
-    activeTaskPath,
+    activeTaskPaths,
     cutoffMinutes: retentionMinutes,
     includeBrowserProfiles: input.includeBrowserProfiles === true,
-    keepRuns,
     repo: input.repo.replace(/\/+$/, ''),
     runtimeChildRoots,
     runtimeRoot,
@@ -129,9 +123,8 @@ export function buildSlotStorageCleanupCommand(input: SlotStorageCleanupCommandI
     '',
     'cfg = json.loads(sys.argv[1])',
     'repo = os.path.abspath(cfg["repo"])',
-    'active_task = os.path.abspath(cfg["activeTaskPath"]) if cfg.get("activeTaskPath") else ""',
+    'active_tasks = {os.path.abspath(path) for path in cfg.get("activeTaskPaths", [])}',
     'cutoff_seconds = float(cfg["cutoffMinutes"]) * 60.0',
-    'keep_runs = int(cfg["keepRuns"])',
     'now = time.time()',
     '',
     'def inside_repo(path):',
@@ -178,15 +171,12 @@ export function buildSlotStorageCleanupCommand(input: SlotStorageCleanupCommandI
     '    for path in candidates:',
     '        unique[os.path.abspath(path)] = path',
     '    ordered = sorted(unique.values(), key=lambda p: os.stat(p).st_mtime, reverse=True)',
-    '    kept = 0',
     '    for path in ordered:',
-    '        if active_task and os.path.abspath(path) == active_task:',
+    '        if os.path.abspath(path) in active_tasks:',
     '            continue',
     '        age_seconds = now - os.stat(path).st_mtime',
-    '        if kept >= keep_runs or age_seconds > cutoff_seconds:',
+    '        if age_seconds > cutoff_seconds:',
     '            delete_dir(label, path)',
-    '        else:',
-    '            kept += 1',
     '',
     'for root in cfg["taskRoots"]:',
     '    if not inside_repo(root):',
@@ -194,9 +184,15 @@ export function buildSlotStorageCleanupCommand(input: SlotStorageCleanupCommandI
     '        continue',
     '    prune("task-dir", task_candidates(root))',
     '',
+    '# Runtime caches can be shared by the task that currently owns the slot.',
+    '# Only prune them once the slot has no active task; release performs that',
+    '# cleanup after copying the completed task artifacts back to the gateway.',
     'for root in cfg["runtimeChildRoots"]:',
     '    if not inside_repo(root):',
     '        print_skipped("runtime-cache", root, "outside repo")',
+    '        continue',
+    '    if active_tasks:',
+    '        print_skipped("runtime-cache", root, "active task")',
     '        continue',
     '    prune("runtime-cache", direct_children(root))',
     '',

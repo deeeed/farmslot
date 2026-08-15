@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(storage): retain inactive run artifacts for the full seven-day window while always preserving active task and runtime evidence.
 - fix(ci-watch): remember report-backed no-change bot-comment triage at the current HEAD, reject failed worker signals, and finish green runs without repeating inference.
 - fix(copilot): expose the singleton's exact persisted tmux pane so clients cannot attach to an unrelated window, and report a missing pane without breaking runtime status.
 - fix(copilot): count only actively executing run states in host-pressure totals so completed and human-gated history cannot make the shared runtime report false overload.

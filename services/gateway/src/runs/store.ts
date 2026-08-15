@@ -1132,7 +1132,7 @@ export async function archiveRun(id: string): Promise<boolean> {
   return true;
 }
 
-const CLEANUP_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const CLEANUP_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function cleanupRuns(
   dryRun: boolean,
@@ -1154,7 +1154,12 @@ export async function cleanupRuns(
     }
   }
 
-  // Scan for failed/cancelled runs older than 7 days → archive
+  // Snapshot ownership before archiving evicts failed/cancelled runs from the
+  // live map. Dry-run and real cleanup must evaluate the same task directories.
+  const cleanupRunSnapshot = [...runs.values()].filter((run) => !isRunStoreLeak(run));
+
+  // Scan for failed/cancelled runs older than 7 days → archive.
+  // Active, held, gated, and CI-watching runs never enter this branch.
   for (const [id, run] of runs) {
     if (run.status !== 'failed' && run.status !== 'cancelled') continue;
     const age = now - new Date(run.updatedAt).getTime();
@@ -1197,9 +1202,10 @@ export async function cleanupRuns(
       const taskPath = path.join(tasksDir, td);
       const taskStat = await stat(taskPath).catch(() => null);
       if (!taskStat?.isDirectory()) continue;
+      if (now - taskStat.mtimeMs < CLEANUP_AGE_MS) continue;
 
       // Check if any run references this task dir
-      const matchingRun = [...runs.values()].find(
+      const matchingRun = cleanupRunSnapshot.find(
         (r) => r.taskFile && path.dirname(r.taskFile) === taskPath,
       );
       if (matchingRun && (matchingRun.status === 'failed' || matchingRun.status === 'cancelled')) {
