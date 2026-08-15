@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(storage): retain inactive run artifacts for the full seven-day window while always preserving active task and runtime evidence.
 - fix(copilot): expose the singleton's exact persisted tmux pane so clients cannot attach to an unrelated window, and report a missing pane without breaking runtime status.
 - fix(copilot): count only actively executing run states in host-pressure totals so completed and human-gated history cannot make the shared runtime report false overload.
 - fix(review): accept fresh id-less fix signals consistently during restart recovery, resume an active fix before mirroring its artifacts, extend CI-fix waits only for the exact accepted runner turn, parse emphasized and multiline verdicts without weakening them, normalize task identity across configured roots, and persist per-round checklist timing.
