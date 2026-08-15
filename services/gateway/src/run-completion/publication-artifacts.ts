@@ -409,26 +409,38 @@ function stripCodeBlocks(body: string): string {
   return body.replace(/```[\s\S]*?```/g, '').replace(/~~~[\s\S]*?~~~/g, '');
 }
 
+const REMOTE_LINK_PATTERNS = [
+  /<a\b[^>]*\bhref=["']https?:\/\/[^"']+["'][^>]*>[\s\S]*?<\/a>/gi,
+  /<img\b[^>]*\bsrc=["']https?:\/\/[^"']+["'][^>]*>/gi,
+  /!?\[[^\]]*\]\(https?:\/\/[^)]+\)/gi,
+] as const;
+
+function replaceRemoteLinks(body: string, replace: (link: string) => string): string {
+  return REMOTE_LINK_PATTERNS.reduce(
+    (value, pattern) => value.replace(pattern, (link) => replace(link)),
+    body,
+  );
+}
+
 function stripRemoteLinks(body: string): string {
-  return body
-    .replace(/<a\b[^>]*\bhref=["']https?:\/\/[^"']+["'][^>]*>[\s\S]*?<\/a>/gi, ' ')
-    .replace(/!?\[[^\]]*\]\(https?:\/\/[^)]+\)/gi, ' ');
+  return replaceRemoteLinks(body, () => ' ');
 }
 
 function protectRemoteLinks(body: string): { body: string; restore: (value: string) => string } {
   const links: string[] = [];
+  let tokenPrefix = '__FARMSLOT_REMOTE_LINK_';
+  while (body.includes(tokenPrefix)) tokenPrefix = `_${tokenPrefix}`;
   const protect = (link: string) => {
-    const token = `__FARMSLOT_REMOTE_LINK_${links.length}__`;
+    const token = `${tokenPrefix}${links.length}__`;
     links.push(link);
     return token;
   };
-  const protectedBody = body
-    .replace(/<a\b[^>]*\bhref=["']https?:\/\/[^"']+["'][^>]*>[\s\S]*?<\/a>/gi, protect)
-    .replace(/!?\[[^\]]*\]\(https?:\/\/[^)]+\)/gi, protect);
+  const protectedBody = replaceRemoteLinks(body, protect);
+  const tokenPattern = new RegExp(`${tokenPrefix}(\\d+)__`, 'g');
   return {
     body: protectedBody,
     restore: (value) =>
-      value.replace(/__FARMSLOT_REMOTE_LINK_(\d+)__/g, (_match, index: string) => {
+      value.replace(tokenPattern, (_match, index: string) => {
         return links[Number(index)] ?? '';
       }),
   };
@@ -501,11 +513,16 @@ export function sanitizePRBody(body: string): string {
     /^\s*(?:\/Users\/|\/home\/|\/tmp\/|~\/)\S+\.(?:mp4|mov|png|jpg|jpeg|gif)\s*$/gm,
     '',
   );
-  // Strip generated artifact-reference lines. The final PR should contain
-  // uploaded evidence URLs, not task-local artifact package paths.
   result = result.replace(
-    /^.*(^|[\s|<(='"]`?)(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"`|]+.*$/gim,
+    /\s*\(from\s+(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"`|]+\)/gim,
     '',
+  );
+  // Strip task-local artifact path tokens without deleting the whole line.
+  // Generated evidence rows can contain both a hosted image/link and a local
+  // caption path; deleting the line would silently break the hosted table.
+  result = result.replace(
+    /(^|[\s|<(='"]`?)(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"`|]+/gim,
+    '$1',
   );
   // Strip markdown image refs with just artifact filenames (before.mp4, after.mp4, evidence-*.png)
   result = result.replace(

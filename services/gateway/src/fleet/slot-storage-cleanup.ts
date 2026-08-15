@@ -67,6 +67,21 @@ function safeRelativePath(input: string | null | undefined): string {
   return normalized;
 }
 
+export function normalizeTaskRelativeDir(
+  input: string | null | undefined,
+  taskDirName: string,
+): string {
+  const safeInput = safeRelativePath(input);
+  if (!safeInput) return '';
+  const safeTaskRoot = safeRelativeDir(taskDirName, DEFAULT_TASK_DIR).replace(/\/+$/, '');
+  const withoutTaskRoot = safeInput.startsWith(`${safeTaskRoot}/`)
+    ? safeInput.slice(safeTaskRoot.length + 1)
+    : safeInput;
+  return path.posix.basename(withoutTaskRoot) === 'TASK.md'
+    ? path.posix.dirname(withoutTaskRoot)
+    : withoutTaskRoot;
+}
+
 function unique(values: string[]): string[] {
   return [...new Set(values)];
 }
@@ -86,11 +101,7 @@ export function buildSlotStorageCleanupCommand(input: SlotStorageCleanupCommandI
     safeRelativeDir(input.artifactDirName, input.taskDirName),
   );
   const runtimeRoot = remoteJoin(input.repo, safeRelativeDir(input.runtimeDirName, '.agent'));
-  const activeTaskInput = safeRelativePath(input.activeTaskRel);
-  const activeTaskRel =
-    path.posix.basename(activeTaskInput) === 'TASK.md'
-      ? path.posix.dirname(activeTaskInput)
-      : activeTaskInput;
+  const activeTaskRel = normalizeTaskRelativeDir(input.activeTaskRel, input.taskDirName);
   const taskRoots = unique([taskRoot, artifactRoot]);
   const activeTaskPaths = activeTaskRel
     ? taskRoots.map((root) => remoteJoin(root, activeTaskRel))

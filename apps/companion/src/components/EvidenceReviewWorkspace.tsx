@@ -123,6 +123,7 @@ export function EvidenceReviewWorkspace({
             <PairNavigation
               index={compareIndex}
               total={pairs.length}
+              testIdPrefix="companion-before-after-pairs"
               onPrevious={() => setCompareIndex((index) => Math.max(0, index - 1))}
               onNext={() => setCompareIndex((index) => Math.min(pairs.length - 1, index + 1))}
             />
@@ -215,16 +216,18 @@ function sortReviewArtifacts(artifacts: ArtifactManifestEntry[]): ArtifactManife
   });
 }
 
-function PairNavigation({
+export function PairNavigation({
   index,
   total,
   onPrevious,
   onNext,
+  testIdPrefix,
 }: {
   index: number;
   total: number;
   onPrevious: () => void;
   onNext: () => void;
+  testIdPrefix?: string;
 }) {
   return (
     <View style={styles.pairNavigation}>
@@ -232,10 +235,14 @@ function PairNavigation({
         style={[styles.pairNavigationButton, index === 0 && styles.pairNavigationButtonDisabled]}
         disabled={index === 0}
         onPress={onPrevious}
+        testID={testIdPrefix ? `${testIdPrefix}-previous` : undefined}
       >
         <Text style={styles.pairNavigationText}>‹ Previous pair</Text>
       </Pressable>
-      <Text style={styles.pairNavigationIndex}>
+      <Text
+        style={styles.pairNavigationIndex}
+        testID={testIdPrefix ? `${testIdPrefix}-index-${index + 1}` : undefined}
+      >
         Pair {index + 1}/{total}
       </Text>
       <Pressable
@@ -245,6 +252,7 @@ function PairNavigation({
         ]}
         disabled={index === total - 1}
         onPress={onNext}
+        testID={testIdPrefix ? `${testIdPrefix}-next` : undefined}
       >
         <Text style={styles.pairNavigationText}>Next pair ›</Text>
       </Pressable>
@@ -391,20 +399,18 @@ function LargeComparisonCard({
   onOpenVisual,
   onOpenArtifactWorkspace,
   onOpenDiff,
-  style,
   authHeaders,
 }: {
   pair: VisualArtifactPair;
   onOpenVisual: (uri: string) => void;
   onOpenArtifactWorkspace?: (artifact: ArtifactManifestEntry) => void;
   onOpenDiff?: () => void;
-  style?: object;
   authHeaders?: ArtifactHttpHeaders;
 }) {
   const beforeName = artifactDisplayName(pair.before);
   const afterName = artifactDisplayName(pair.after);
   return (
-    <View style={[styles.largeCard, style]}>
+    <View style={styles.largeCard}>
       <BeforeAfterPreview
         pair={pair}
         authHeaders={authHeaders}
@@ -782,59 +788,6 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontSize: fonts.sizeXs,
     fontWeight: '900',
-  },
-  media: {
-    width: '100%',
-    backgroundColor: colors.bgInput,
-    borderRadius: radii.md,
-  },
-  videoOpenButton: {
-    position: 'absolute',
-    top: spacing.md,
-    right: spacing.md,
-    backgroundColor: 'rgba(0,0,0,0.62)',
-    borderRadius: 999,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  videoOpenText: {
-    color: '#fff',
-    fontSize: fonts.sizeXs,
-    fontWeight: '800',
-  },
-  videoPlayBadge: {
-    backgroundColor: 'rgba(0,0,0,0.62)',
-    borderColor: 'rgba(255,255,255,0.22)',
-    borderRadius: 999,
-    borderWidth: 1,
-    bottom: spacing.md,
-    left: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    position: 'absolute',
-  },
-  videoPlayText: {
-    color: '#fff',
-    fontSize: fonts.sizeXs,
-    fontWeight: '900',
-  },
-  documentPane: {
-    width: '100%',
-    backgroundColor: colors.bgInput,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-  },
-  documentIcon: {
-    color: colors.textPrimary,
-    fontSize: fonts.sizeLg,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
-  documentHint: {
-    color: colors.textMuted,
-    fontSize: fonts.sizeSm,
   },
   compactEvidenceList: {
     gap: spacing.sm,

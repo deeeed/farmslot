@@ -61,9 +61,6 @@ export abstract class RunDetailState extends LitElement {
   _recipeRunsRefreshInFlightRunId = '';
   _pendingRecipeRunSelectionId = '';
   _recipeRunsDelayedRefreshTimer?: ReturnType<typeof setTimeout>;
-  _ciPokeStatusTimer?: ReturnType<typeof setTimeout>;
-  _ciPokeRequestSeq = 0;
-  _ciPokePollCount: number | null = null;
   unsub?: () => void;
   unsubProgress?: () => void;
   unsubCI?: () => void;

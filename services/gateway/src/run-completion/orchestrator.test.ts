@@ -229,7 +229,20 @@ test('sanitizePRBody preserves uploaded evidence links with local-looking labels
   );
   assert.equal(
     sanitizePRBody('See artifacts/screenshots/after.png\nKeep this.').trim(),
-    'Keep this.',
+    'See \nKeep this.',
+  );
+  const hostedImage = '<img src="https://cdn.example/reviews/1/after.png" />';
+  assert.equal(
+    sanitizePRBody(`| ${hostedImage} | artifacts/screenshots/after.png |`).trim(),
+    `| ${hostedImage} |  |`,
+  );
+  assert.equal(
+    sanitizePRBody(`${hostedMarkdown} (from artifacts/screenshots/after.png)`).trim(),
+    hostedMarkdown,
+  );
+  assert.equal(
+    sanitizePRBody('__FARMSLOT_REMOTE_LINK_0__\n' + hostedMarkdown),
+    '__FARMSLOT_REMOTE_LINK_0__\n' + hostedMarkdown,
   );
 });
 

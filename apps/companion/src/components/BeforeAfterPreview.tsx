@@ -79,10 +79,6 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
 
   useEffect(() => {
     setSide(initialSide);
-    scrollRef.current?.scrollTo({
-      x: initialSide === 'after' ? viewportWidth : 0,
-      animated: false,
-    });
   }, [initialSide, pairIdentity]);
 
   const selectSide = (nextSide: CompareSide) => {
@@ -154,10 +150,12 @@ export function BeforeAfterPreview<T extends ArtifactManifestEntry = ArtifactMan
       <View style={styles.viewport} onLayout={handleLayout}>
         {viewportWidth > 0 ? (
           <ScrollView
+            key={`${pairIdentity}:${initialSide}:${viewportWidth}`}
             ref={scrollRef}
             horizontal
             pagingEnabled
             nestedScrollEnabled
+            contentOffset={{ x: initialSide === 'after' ? viewportWidth : 0, y: 0 }}
             showsHorizontalScrollIndicator={false}
             onMomentumScrollEnd={handleScrollEnd}
             onScrollEndDrag={handleScrollEnd}

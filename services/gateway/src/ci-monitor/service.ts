@@ -583,18 +583,14 @@ export async function monitorCI(
         if (actionId === 'dispatch-pr-complete') {
           return buildOutcome('comments', [], actionId);
         }
-      } else if (dedupedActionable.length > 0) {
-        // Green checks plus only already-handled comments is terminal, just as
-        // green checks with no comments is. The comment remains on GitHub, so
-        // polling again would otherwise keep this run alive forever.
-        console.log(
-          `[ci-monitor] run ${runId.slice(0, 8)} — all watched checks passed; ${dedupedActionable.length} handled comment(s) ignored`,
-        );
-        return buildOutcome('passed');
       }
 
       console.log(
-        `[ci-monitor] run ${runId.slice(0, 8)} — all watched checks passed, no actionable comments`,
+        `[ci-monitor] run ${runId.slice(0, 8)} — all watched checks passed${
+          dedupedActionable.length > 0
+            ? `; ${dedupedActionable.length} handled comment(s) ignored`
+            : ', no actionable comments'
+        }`,
       );
       return buildOutcome('passed');
     }
@@ -635,8 +631,8 @@ export async function monitorCI(
           detail: `commit ${inlineFix.commitSha?.slice(0, 8)}${inlineFix.commitChanged ? '' : ' (no push)'}`,
         });
         lastInlineCIFix = inlineFix;
+        recordInlineFixSuccess(runId, [], failedNames, inlineFix.commitSha);
         if (inlineFix.commitChanged) {
-          recordInlineFixSuccess(runId, [], failedNames, inlineFix.commitSha);
           markTimeoutProgress('inline fix committed', {
             checkFingerprint,
             headSha: inlineFix.commitSha ?? headShaNow,

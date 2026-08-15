@@ -14,6 +14,10 @@
     {
       "id": "fullscreen-before-after",
       "claim": "A Companion evidence pair opens as a labeled fullscreen comparison and swipes from Before to After."
+    },
+    {
+      "id": "inline-pair-navigation",
+      "claim": "The evidence card swipes between Before and After, and the pair controls select the next visual pair."
     }
   ],
   "workflow": {
@@ -50,6 +54,43 @@
         "test_id": "companion-before-after-primary-before",
         "expected": "visible",
         "intent": "Keep the primary visual delta available for inspection.",
+        "next": "swipe-inline-after"
+      },
+      "swipe-inline-after": {
+        "action": "ui.swipe",
+        "target": "companion-before-after-primary-before",
+        "direction": "left",
+        "distance": 240,
+        "duration_ms": 350,
+        "intent": "Prove the shared card itself changes from Before to After.",
+        "next": "confirm-inline-after"
+      },
+      "confirm-inline-after": {
+        "action": "ui.wait_for",
+        "test_id": "companion-before-after-primary-selected-after",
+        "expected": "visible",
+        "intent": "Confirm the inline swipe selected After.",
+        "proves": ["inline-pair-navigation"],
+        "next": "select-inline-before"
+      },
+      "select-inline-before": {
+        "action": "ui.press",
+        "test_id": "companion-before-after-primary-tab-before",
+        "intent": "Return the shared card to Before before changing pairs.",
+        "next": "next-pair"
+      },
+      "next-pair": {
+        "action": "ui.press",
+        "test_id": "companion-before-after-pairs-next",
+        "intent": "Select the next evidence pair without nesting horizontal rails.",
+        "next": "confirm-next-pair"
+      },
+      "confirm-next-pair": {
+        "action": "ui.wait_for",
+        "test_id": "companion-before-after-pairs-index-2",
+        "expected": "visible",
+        "intent": "Confirm the pair navigator advanced to the second pair.",
+        "proves": ["inline-pair-navigation"],
         "next": "open-comparison"
       },
       "open-comparison": {

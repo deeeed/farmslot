@@ -45,7 +45,7 @@ import {
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
-import { cleanupSlotStorage } from '../../fleet/slot-storage-cleanup.js';
+import { cleanupSlotStorage, normalizeTaskRelativeDir } from '../../fleet/slot-storage-cleanup.js';
 import { findActiveGateHeldRunForSlot } from '../../run-engine/gate-held-lifecycle.js';
 import { runnerPromptSubmitKey } from '../../runners/registry.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
@@ -384,7 +384,10 @@ async function slotReleaseImpl(
   let idleBranchAfterRelease: string | undefined;
   if (!keepWork) {
     // Read task_file from status
-    const taskRel = (await readSlotField(params.slotId, 'task_file')) as string | null;
+    const taskRel = normalizeTaskRelativeDir(
+      (await readSlotField(params.slotId, 'task_file')) as string | null,
+      taskDirName,
+    );
 
     if (!skipArtifacts && taskRel) {
       step('artifacts', 'Collecting artifacts...');

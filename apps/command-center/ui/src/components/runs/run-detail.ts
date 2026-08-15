@@ -37,7 +37,7 @@ import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
-import { pokeCIWatchNow } from './ci-watch-actions.js';
+import { CIWatchPokeController } from './ci-watch-actions.js';
 import {
   checkInteractiveHandoffSignal,
   confirmForceComplete,
@@ -93,6 +93,11 @@ import {
 export class RunDetail extends RunDetailState {
   static styles = runDetailStyles;
 
+  private readonly _ciPoke = new CIWatchPokeController((state) => {
+    this._ciPoking = state.poking;
+    this._ciPokeStatus = state.status;
+  });
+
   connectedCallback() {
     super.connectedCallback();
     this.syncRun(getState());
@@ -114,14 +119,7 @@ export class RunDetail extends RunDetailState {
     this.unsubCI = gateway.subscribe<CiCheckUpdatedPayload>(Events.CI_CHECK_UPDATED, (p) => {
       if (p.runId === this.runId) {
         this.ciStatus = p;
-        if (
-          this._ciPoking &&
-          this._ciPokePollCount != null &&
-          p.pollCount > this._ciPokePollCount
-        ) {
-          this._ciPoking = false;
-          this._ciPokePollCount = null;
-        }
+        this._ciPoke.observePoll(p.runId, p.pollCount);
       }
     });
     this._clock = setInterval(() => {
@@ -153,7 +151,7 @@ export class RunDetail extends RunDetailState {
     if (this._clock) clearInterval(this._clock);
     if (this._jumpTimer) clearTimeout(this._jumpTimer);
     if (this._recipeRunsDelayedRefreshTimer) clearTimeout(this._recipeRunsDelayedRefreshTimer);
-    if (this._ciPokeStatusTimer) clearTimeout(this._ciPokeStatusTimer);
+    this._ciPoke.dispose();
   }
 
   private syncRun(s: AppState) {
@@ -175,14 +173,7 @@ export class RunDetail extends RunDetailState {
     const wasHydrating = this._hydrating;
     if (this.runId !== this._lastRequestedRunId) {
       this._lastRequestedRunId = this.runId;
-      this._ciPokeRequestSeq++;
-      this._ciPoking = false;
-      this._ciPokePollCount = null;
-      this._ciPokeStatus = null;
-      if (this._ciPokeStatusTimer) {
-        clearTimeout(this._ciPokeStatusTimer);
-        this._ciPokeStatusTimer = undefined;
-      }
+      this._ciPoke.reset();
       this._missingRunFetchAttempted = false;
       this._directRunRefreshFailed = false;
       this._directRunUnavailable = false;
@@ -820,41 +811,10 @@ export class RunDetail extends RunDetailState {
   }
 
   private async _pokeCIWatch(runId: string): Promise<void> {
-    if (this._ciPoking) return;
-    const requestSeq = ++this._ciPokeRequestSeq;
     const ciStep = this.run?.steps.find((step) => step.name === 'ci-watch');
     const outputPollCount = readCiWatchOutputs(ciStep?.outputs)?.pollCount;
     const beforePoll = this.ciStatus?.pollCount ?? outputPollCount;
-    this._ciPokePollCount = typeof beforePoll === 'number' ? beforePoll : null;
-    this._ciPoking = true;
-    this._setCIPokeStatus(null);
-    try {
-      const result = await pokeCIWatchNow(runId);
-      if (requestSeq !== this._ciPokeRequestSeq || this.runId !== runId) return;
-      this._setCIPokeStatus(result.ok, result.message);
-      if (!result.ok || !result.woken || this._ciPokePollCount == null) {
-        this._ciPoking = false;
-        this._ciPokePollCount = null;
-      }
-    } catch (error) {
-      if (requestSeq !== this._ciPokeRequestSeq || this.runId !== runId) return;
-      this._ciPoking = false;
-      this._ciPokePollCount = null;
-      this._setCIPokeStatus(false, (error as Error).message || 'Check failed');
-    }
-  }
-
-  private _setCIPokeStatus(ok: boolean | null, msg = ''): void {
-    if (this._ciPokeStatusTimer) clearTimeout(this._ciPokeStatusTimer);
-    if (ok === null) {
-      this._ciPokeStatus = null;
-      return;
-    }
-    this._ciPokeStatus = { ok, msg };
-    this._ciPokeStatusTimer = setTimeout(() => {
-      this._ciPokeStatus = null;
-      this._ciPokeStatusTimer = undefined;
-    }, 5000);
+    await this._ciPoke.poke(runId, typeof beforePoll === 'number' ? beforePoll : null);
   }
 
   private renderGateSection(run: Run) {

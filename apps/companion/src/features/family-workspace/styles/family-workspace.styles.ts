@@ -688,10 +688,6 @@ export const familyWorkspaceStyles = StyleSheet.create({
     fontWeight: '800',
     marginTop: spacing.sm,
   },
-  comparePairCard: {
-    marginRight: spacing.md,
-    width: 320,
-  },
   comparePairActions: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -711,12 +707,6 @@ export const familyWorkspaceStyles = StyleSheet.create({
     fontSize: fonts.sizeXs,
     fontWeight: '900',
     textAlign: 'center',
-  },
-  compareMoreText: {
-    color: colors.textMuted,
-    fontSize: fonts.sizeXs,
-    fontWeight: '800',
-    marginTop: spacing.sm,
   },
   filterRow: {
     flexDirection: 'row',

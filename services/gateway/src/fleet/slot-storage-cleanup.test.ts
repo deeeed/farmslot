@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 
 import {
   buildSlotStorageCleanupCommand,
+  normalizeTaskRelativeDir,
   parseSlotStorageCleanupOutput,
 } from './slot-storage-cleanup.js';
 
@@ -37,6 +38,15 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
+test('task paths normalize relative to their configured task root', () => {
+  assert.equal(normalizeTaskRelativeDir('.task/fix/active/TASK.md', '.task'), 'fix/active');
+  assert.equal(
+    normalizeTaskRelativeDir('temp/tasks/fix/active/TASK.md', 'temp/tasks'),
+    'fix/active',
+  );
+  assert.equal(normalizeTaskRelativeDir('fix/active/TASK.md', '.task'), 'fix/active');
+});
+
 test('slot storage cleanup prunes old worker task/runtime caches but preserves active and recent data', async () => {
   const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-storage-cleanup-'));
   const oldTask = path.join(repo, '.task/fix/old');
@@ -57,7 +67,7 @@ test('slot storage cleanup prunes old worker task/runtime caches but preserves a
     taskDirName: '.task',
     artifactDirName: '.task',
     runtimeDirName: '.agent',
-    activeTaskRel: 'fix/active/TASK.md',
+    activeTaskRel: '.task/fix/active/TASK.md',
     includeBrowserProfiles: false,
     retentionHours: 0.5,
   });
