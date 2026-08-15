@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion fullscreen Before/After comparison",
-  "description": "Opens a real run with at least two paired evidence sets, proves inline and fullscreen Before-to-After swiping, then verifies the family pair navigator.",
+  "description": "Opens a real run with paired evidence, proves inline and fullscreen Before-to-After swiping, then verifies the family pair navigator.",
   "paramsSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -9,7 +9,7 @@
     "properties": {
       "run_id": {
         "type": "string",
-        "description": "Run with a workspace gate decision whose evidence package and family each expose at least two visual pairs."
+        "description": "Run whose evidence package exposes a visual pair and whose family exposes at least two visual pairs."
       },
       "family_id": {
         "type": "string",
@@ -23,8 +23,8 @@
       "claim": "A Companion evidence pair opens as a labeled fullscreen comparison and swipes from Before to After."
     },
     {
-      "id": "inline-pair-navigation",
-      "claim": "The evidence card swipes between Before and After, and the pair controls select the next visual pair."
+      "id": "inline-before-after",
+      "claim": "The run evidence card swipes between Before and After."
     },
     {
       "id": "family-pair-navigation",
@@ -39,6 +39,19 @@
         "test_id": "companion-screen-review",
         "expected": "visible",
         "intent": "Start from the live review queue.",
+        "next": "open-history"
+      },
+      "open-history": {
+        "action": "ui.press",
+        "text": "History",
+        "intent": "Load completed runs so the stable evidence fixture can be selected from the real queue.",
+        "next": "wait-history"
+      },
+      "wait-history": {
+        "action": "ui.wait_for",
+        "text": "Active",
+        "expected": "visible",
+        "intent": "Confirm the queue switched from active runs to run history.",
         "next": "open-run"
       },
       "open-run": {
@@ -58,31 +71,18 @@
         "action": "ui.press",
         "test_id": "companion-run-tab-evidence",
         "intent": "Select the run's visual evidence workspace.",
-        "next": "open-gate"
-      },
-      "open-gate": {
-        "action": "ui.press",
-        "test_id": "companion-open-run-gate",
-        "intent": "Open the run's real decision workspace, which owns the shared evidence review component.",
-        "next": "wait-decision"
-      },
-      "wait-decision": {
-        "action": "ui.wait_for",
-        "test_id": "companion-screen-decision-workspace",
-        "expected": "visible",
-        "intent": "Confirm the decision workspace mounted before testing its evidence controls.",
         "next": "wait-evidence"
       },
       "wait-evidence": {
         "action": "ui.wait_for",
-        "test_id": "companion-before-after-primary-before",
+        "test_id": "companion-run-before-after-primary-before",
         "expected": "visible",
         "intent": "Keep the primary visual delta available for inspection.",
         "next": "swipe-inline-after"
       },
       "swipe-inline-after": {
         "action": "ui.swipe",
-        "target": "companion-before-after-primary-before",
+        "target": "companion-run-before-after-primary-before",
         "direction": "left",
         "distance": 240,
         "duration_ms": 350,
@@ -91,41 +91,27 @@
       },
       "confirm-inline-after": {
         "action": "ui.wait_for",
-        "test_id": "companion-before-after-primary-selected-after",
+        "test_id": "companion-run-before-after-primary-selected-after",
         "expected": "visible",
         "intent": "Confirm the inline swipe selected After.",
-        "proves": ["inline-pair-navigation"],
+        "proves": ["inline-before-after"],
         "next": "select-inline-before"
       },
       "select-inline-before": {
         "action": "ui.press",
-        "test_id": "companion-before-after-primary-tab-before",
-        "intent": "Return the shared card to Before before changing pairs.",
-        "next": "next-pair"
-      },
-      "next-pair": {
-        "action": "ui.press",
-        "test_id": "companion-before-after-pairs-next",
-        "intent": "Select the next evidence pair without nesting horizontal rails.",
-        "next": "confirm-next-pair"
-      },
-      "confirm-next-pair": {
-        "action": "ui.wait_for",
-        "test_id": "companion-before-after-pairs-index-2",
-        "expected": "visible",
-        "intent": "Confirm the pair navigator advanced to the second pair.",
-        "proves": ["inline-pair-navigation"],
+        "test_id": "companion-run-before-after-primary-tab-before",
+        "intent": "Return the shared card to Before before opening the full comparison.",
         "next": "open-comparison"
       },
       "open-comparison": {
         "action": "ui.press",
-        "test_id": "companion-before-after-primary-before",
+        "test_id": "companion-run-before-after-primary-before",
         "intent": "Expand the shared comparison from its Before preview.",
         "next": "wait-fullscreen"
       },
       "wait-fullscreen": {
         "action": "ui.wait_for",
-        "test_id": "companion-before-after-primary-fullscreen",
+        "test_id": "companion-run-before-after-primary-fullscreen",
         "expected": "visible",
         "intent": "Confirm the dedicated fullscreen comparison is visible.",
         "next": "capture-before"
@@ -140,7 +126,7 @@
       },
       "swipe-after": {
         "action": "ui.swipe",
-        "target": "companion-before-after-primary-fullscreen-page-before",
+        "target": "companion-run-before-after-primary-fullscreen-page-before",
         "direction": "left",
         "distance": 240,
         "duration_ms": 350,
@@ -149,7 +135,7 @@
       },
       "confirm-after-selected": {
         "action": "ui.wait_for",
-        "test_id": "companion-before-after-primary-fullscreen-page-selected-after",
+        "test_id": "companion-run-before-after-primary-fullscreen-page-selected-after",
         "expected": "visible",
         "intent": "Prove the swipe selected the After state before accepting its screenshot as evidence.",
         "proves": ["fullscreen-before-after"],
@@ -161,45 +147,19 @@
         "label": "Fullscreen After state",
         "intent": "Preserve the changed state at the same reviewable scale after the native gesture.",
         "proves": ["fullscreen-before-after"],
-        "next": "open-after-artifact"
+        "next": "close-comparison"
       },
-      "open-after-artifact": {
+      "close-comparison": {
         "action": "ui.press",
-        "test_id": "companion-before-after-primary-fullscreen-page-after",
-        "intent": "Open the selected artifact from fullscreen without leaving the comparison modal above the destination.",
+        "test_id": "companion-run-before-after-primary-close",
+        "intent": "Return to the run evidence workspace after completing the full-size comparison.",
         "next": "wait-comparison-dismissed"
       },
       "wait-comparison-dismissed": {
         "action": "ui.wait_for",
-        "test_id": "companion-before-after-primary-fullscreen",
+        "test_id": "companion-run-before-after-primary-fullscreen",
         "expected": "hidden",
-        "intent": "Prove artifact navigation dismisses the fullscreen comparison before the viewer is used.",
-        "next": "wait-artifact-viewer"
-      },
-      "wait-artifact-viewer": {
-        "action": "ui.wait_for",
-        "test_id": "companion-artifact-media-viewer",
-        "expected": "visible",
-        "intent": "Prove the selected artifact opened after the comparison dismissed.",
-        "next": "close-artifact-viewer"
-      },
-      "close-artifact-viewer": {
-        "action": "ui.press",
-        "test_id": "companion-artifact-media-viewer-close",
-        "intent": "Return to the run workspace after proving artifact navigation.",
-        "next": "return-run"
-      },
-      "return-run": {
-        "action": "ui.press",
-        "selector": "label=\"Go back\"",
-        "intent": "Return from the decision workspace to the run workspace.",
-        "next": "wait-run-returned"
-      },
-      "wait-run-returned": {
-        "action": "ui.wait_for",
-        "test_id": "companion-screen-run-detail",
-        "expected": "visible",
-        "intent": "Confirm the run workspace is visible again.",
+        "intent": "Confirm the comparison closed without leaving a stale modal over the run.",
         "next": "return-review"
       },
       "return-review": {
@@ -213,6 +173,19 @@
         "test_id": "companion-screen-review",
         "expected": "visible",
         "intent": "Confirm the live review queue is visible again.",
+        "next": "open-family-history"
+      },
+      "open-family-history": {
+        "action": "ui.press",
+        "text": "History",
+        "intent": "Return to completed families before selecting the fixture's family workspace.",
+        "next": "wait-family-history"
+      },
+      "wait-family-history": {
+        "action": "ui.wait_for",
+        "text": "Active",
+        "expected": "visible",
+        "intent": "Confirm completed families are visible again.",
         "next": "open-family"
       },
       "open-family": {

@@ -10,7 +10,10 @@ import { StyleSheet, Text, View } from 'react-native';
 // known limitation). On Android/web FullWindowOverlay is a passthrough.
 const FullWindowOverlay = resolveFullWindowOverlay();
 
-function resolveFullWindowOverlay(): React.ComponentType<{ children: React.ReactNode }> | null {
+function resolveFullWindowOverlay(): React.ComponentType<{
+  children: React.ReactNode;
+  unstable_accessibilityContainerViewIsModal?: boolean;
+}> | null {
   try {
     return require('react-native-screens').FullWindowOverlay ?? null;
   } catch (error) {
@@ -40,7 +43,13 @@ export function RecipeHud({ state }: Readonly<RecipeHudProps>): React.ReactEleme
   if (!state || state.status === 'idle') return null;
   const progress = formatProgress(state.currentStep, state.totalSteps);
   const overlay = (
-    <View pointerEvents="none" style={styles.container}>
+    <View
+      accessibilityElementsHidden
+      accessible={false}
+      importantForAccessibility="no-hide-descendants"
+      pointerEvents="none"
+      style={styles.container}
+    >
       <View style={[styles.pill, state.status === 'fail' ? styles.fail : styles.active]}>
         <Text style={styles.pillText}>
           {state.status.toUpperCase()}
@@ -59,7 +68,13 @@ export function RecipeHud({ state }: Readonly<RecipeHudProps>): React.ReactEleme
       </View>
     </View>
   );
-  return FullWindowOverlay ? <FullWindowOverlay>{overlay}</FullWindowOverlay> : overlay;
+  return FullWindowOverlay ? (
+    <FullWindowOverlay unstable_accessibilityContainerViewIsModal={false}>
+      {overlay}
+    </FullWindowOverlay>
+  ) : (
+    overlay
+  );
 }
 
 function formatProgress(currentStep?: number, totalSteps?: number): string {
