@@ -560,7 +560,7 @@ export default function ArtifactViewerScreen() {
   }
 
   return (
-    <View style={baseStyles.container}>
+    <View testID="companion-screen-run-files" style={baseStyles.container}>
       {stickyNavVisible ? (
         <View style={styles.stickyFilterChrome}>
           <ArtifactStickyFilter

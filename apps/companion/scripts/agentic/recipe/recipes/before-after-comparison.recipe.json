@@ -147,19 +147,26 @@
         "label": "Fullscreen After state",
         "intent": "Preserve the changed state at the same reviewable scale after the native gesture.",
         "proves": ["fullscreen-before-after"],
-        "next": "close-comparison"
+        "next": "open-after-artifact"
       },
-      "close-comparison": {
+      "open-after-artifact": {
         "action": "ui.press",
-        "test_id": "companion-run-before-after-primary-close",
-        "intent": "Return to the run evidence workspace after completing the full-size comparison.",
+        "test_id": "companion-run-before-after-primary-fullscreen-page-after",
+        "intent": "Open the selected After file from the completed full-size comparison.",
         "next": "wait-comparison-dismissed"
       },
       "wait-comparison-dismissed": {
         "action": "ui.wait_for",
         "test_id": "companion-run-before-after-primary-fullscreen",
         "expected": "hidden",
-        "intent": "Confirm the comparison closed without leaving a stale modal over the run.",
+        "intent": "Confirm file navigation dismissed the comparison instead of leaving a stale modal.",
+        "next": "wait-after-file"
+      },
+      "wait-after-file": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-run-files",
+        "expected": "visible",
+        "intent": "Confirm the selected After artifact opened in the run's Files workspace.",
         "next": "return-review"
       },
       "return-review": {
