@@ -35,6 +35,7 @@ import {
   fsWriteFiles,
 } from './commands/fs.js';
 import {
+  getResourceWatchRuntimeStats,
   type ResourceStatusChange,
   startResourceWatch,
   stopAllResourceWatches,
@@ -681,6 +682,7 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
           pid: process.pid,
           uptime: process.uptime(),
           platform: process.platform,
+          resourceWatches: getResourceWatchRuntimeStats(),
         });
         break;
       }

@@ -1,7 +1,7 @@
 import type { RecipeRuntimeCapabilityDeclaration } from '../recipe/common.js';
 
 import type { AgentContextSummary, SlotAgent } from './agents.js';
-import type { ResourceRollup } from './resources.js';
+import type { ResourceRollup, ResourceWatchRuntimeStats } from './resources.js';
 import type { RunLane } from './runs.js';
 
 export type SlotLifecycle =
@@ -163,6 +163,7 @@ export interface NodeSystemMetrics {
   loadAvg1: number;
   loadAvg5: number;
   thermalPressure?: ThermalPressure; // macOS only
+  resourceWatches?: ResourceWatchRuntimeStats;
   collectedAt: string;
 }
 

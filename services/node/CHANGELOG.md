@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- perf(resources): stagger and bound external health probes per node, cancel queued probes from replaced watch sets, reduce fallback polling frequency, avoid CDP/lsof repair while a watched PID is healthy, and expose aggregate watch pressure through node health.
+
 - fix(deploy): require an explicit machine-scoped credential for remote installs, protect credential-bearing service files, and reliably re-bootstrap macOS launchd jobs instead of reporting success after a failed legacy reload.
 
 - fix(fs): enforce `FILE_TRANSFER_CHUNK_MAX_BYTES` fail-closed on `fs.readChunk` length and `fs.writeChunk` payload (MANUAL-000095 self-review).

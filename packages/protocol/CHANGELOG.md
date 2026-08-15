@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- perf(resources): expose aggregate node watch pressure in the existing machine-metrics stream.
 - fix(ci): carry full bot-comment fingerprints so edited findings cannot be hidden by preview truncation.
 - fix(runs): share active-run and authoritative Co-Pilot terminal identity across gateway and clients.
 - feat(copilot): configure persisted runtime runner, model, and gateway autostart policy through the shared protocol.

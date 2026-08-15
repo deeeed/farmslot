@@ -16,13 +16,13 @@ export interface WatchInstruction {
     port?: number; // port-listen: TCP port
     cmd?: string; // process-poll: shell command (exit 0 = running)
     cwd?: string; // working directory for cmd
-    intervalMs?: number; // poll interval (default: 10000)
+    intervalMs?: number; // poll interval (default: 30000)
   };
 }
 
 export type ResourceStatusValue = 'running' | 'stopped' | 'unknown' | 'relaunched';
 
-import type { ResourceSidecarMeta } from '@farmslot/protocol';
+import type { ResourceSidecarMeta, ResourceWatchRuntimeStats } from '@farmslot/protocol';
 export type { ResourceSidecarMeta } from '@farmslot/protocol';
 
 export interface ResourceStatusChange {
@@ -56,15 +56,78 @@ interface ActiveWatch {
   relaunchWindow?: ReturnType<typeof setTimeout>;
   relaunchPrevPid?: number;
   pollInFlight?: boolean;
+  stopped?: boolean;
 }
 
 const RELAUNCH_WINDOW_MS = 2_000;
 const PORT_CHECK_TIMEOUT_MS = 1_000;
+const DEFAULT_POLL_INTERVAL_MS = 30_000;
+const MAX_CONCURRENT_PROCESS_POLLS = 2;
+const INITIAL_PROCESS_POLL_SPREAD_MS = 5_000;
+
+let activeProcessPolls = 0;
+let queuedProcessPolls = 0;
+const processPollWaiters: Array<() => void> = [];
+
+async function withProcessPollPermit<T>(
+  shouldRun: () => boolean,
+  run: () => Promise<T>,
+): Promise<T | undefined> {
+  if (!shouldRun()) return undefined;
+  if (activeProcessPolls >= MAX_CONCURRENT_PROCESS_POLLS) {
+    queuedProcessPolls += 1;
+    try {
+      await new Promise<void>((resolve) => processPollWaiters.push(resolve));
+    } finally {
+      queuedProcessPolls -= 1;
+    }
+  } else {
+    activeProcessPolls += 1;
+  }
+  try {
+    // Watch sets are replaced on reconnect and config refresh. A queued poll
+    // from the previous set must not survive that replacement and consume a
+    // process slot after its timer has been stopped.
+    if (!shouldRun()) return undefined;
+    return await run();
+  } finally {
+    const next = processPollWaiters.shift();
+    if (next) next();
+    else activeProcessPolls -= 1;
+  }
+}
 
 const activeWatches = new Map<string, ActiveWatch>(); // key: "slotId:resourceId"
 
 function watchKey(slotId: string, resourceId: string): string {
   return `${slotId}:${resourceId}`;
+}
+
+function isWatchActive(aw: ActiveWatch): boolean {
+  return !aw.stopped && activeWatches.get(watchKey(aw.slotId, aw.resourceId)) === aw;
+}
+
+function initialProcessPollDelay(aw: ActiveWatch): number {
+  const key = watchKey(aw.slotId, aw.resourceId);
+  let hash = 0;
+  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash % INITIAL_PROCESS_POLL_SPREAD_MS;
+}
+
+export function getResourceWatchRuntimeStats(): ResourceWatchRuntimeStats {
+  const byType: Record<WatchType, number> = {
+    'pid-file': 0,
+    'port-listen': 0,
+    'process-poll': 0,
+  };
+  for (const watch of activeWatches.values()) byType[watch.instruction.watch.type] += 1;
+  return {
+    watches: activeWatches.size,
+    byType,
+    activeProcessPolls,
+    queuedProcessPolls,
+    maxConcurrentProcessPolls: MAX_CONCURRENT_PROCESS_POLLS,
+  };
 }
 
 // ─── PID file watcher ───
@@ -128,9 +191,13 @@ async function checkPidFileStatusWithRepair(aw: ActiveWatch): Promise<{
   meta?: ResourceSidecarMeta;
 }> {
   const pidPath = aw.instruction.watch.path!;
+  const current = checkPidFileStatus(pidPath);
+  if (current.status === 'running') return current;
+
   const repairCmd = aw.instruction.watch.cmd;
   if (repairCmd) {
-    const status = await checkProcessStatus(repairCmd, aw.instruction.watch.cwd);
+    const status = await checkProcessStatus(aw, repairCmd, aw.instruction.watch.cwd);
+    if (!status) return current;
     if (status !== 'running') return { status: 'stopped' };
   }
   return checkPidFileStatus(pidPath);
@@ -141,7 +208,7 @@ function startPidFileWatch(
   onChange: (change: ResourceStatusChange) => void,
 ): void {
   const pidPath = aw.instruction.watch.path!;
-  const intervalMs = aw.instruction.watch.intervalMs ?? 10_000;
+  const intervalMs = aw.instruction.watch.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
   const flushRelaunchAsStopped = () => {
     aw.relaunchWindow = undefined;
@@ -285,18 +352,22 @@ export async function checkPortStatus(port: number): Promise<ResourceStatusValue
   return ipv4 || ipv6 ? 'running' : 'stopped';
 }
 
-function runWatchPoll(aw: ActiveWatch, label: string, poll: () => Promise<void>): void {
+async function runWatchPoll(
+  aw: ActiveWatch,
+  label: string,
+  poll: () => Promise<void>,
+): Promise<void> {
   if (aw.pollInFlight) return;
   aw.pollInFlight = true;
-  poll()
-    .catch((err) => {
-      console.warn(
-        `[resource-watch] ${label} poll failed for ${aw.slotId}:${aw.resourceId}: ${err.message}`,
-      );
-    })
-    .finally(() => {
-      aw.pollInFlight = false;
-    });
+  try {
+    await poll();
+  } catch (err) {
+    console.warn(
+      `[resource-watch] ${label} poll failed for ${aw.slotId}:${aw.resourceId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  } finally {
+    aw.pollInFlight = false;
+  }
 }
 
 function startPortListenWatch(
@@ -304,7 +375,7 @@ function startPortListenWatch(
   onChange: (change: ResourceStatusChange) => void,
 ): void {
   const port = aw.instruction.watch.port!;
-  const intervalMs = aw.instruction.watch.intervalMs ?? 10_000;
+  const intervalMs = aw.instruction.watch.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
   const poll = async () => {
     const status = await checkPortStatus(port);
@@ -315,17 +386,26 @@ function startPortListenWatch(
   };
 
   // Initial check
-  runWatchPoll(aw, 'port', poll);
+  void runWatchPoll(aw, 'port', poll);
   aw.pollTimer = setInterval(() => {
-    runWatchPoll(aw, 'port', poll);
+    void runWatchPoll(aw, 'port', poll);
   }, intervalMs);
 }
 
 // ─── Process poll watcher ───
 
-async function checkProcessStatus(cmd: string, cwd?: string): Promise<ResourceStatusValue> {
-  const result = await exec({ cmd, cwd, timeout: 5_000 });
-  return result.exitCode === 0 ? 'running' : 'stopped';
+async function checkProcessStatus(
+  aw: ActiveWatch,
+  cmd: string,
+  cwd?: string,
+): Promise<ResourceStatusValue | undefined> {
+  return withProcessPollPermit(
+    () => isWatchActive(aw),
+    async () => {
+      const result = await exec({ cmd, cwd, timeout: 5_000 });
+      return result.exitCode === 0 ? 'running' : 'stopped';
+    },
+  );
 }
 
 function startProcessPollWatch(
@@ -334,21 +414,28 @@ function startProcessPollWatch(
 ): void {
   const cmd = aw.instruction.watch.cmd!;
   const cwd = aw.instruction.watch.cwd;
-  const intervalMs = aw.instruction.watch.intervalMs ?? 10_000;
+  const intervalMs = aw.instruction.watch.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
   const poll = async () => {
-    const status = await checkProcessStatus(cmd, cwd);
+    const status = await checkProcessStatus(aw, cmd, cwd);
+    if (!status) return;
     if (status !== aw.lastStatus) {
       aw.lastStatus = status;
       onChange({ slotId: aw.slotId, resourceId: aw.resourceId, status });
     }
   };
 
-  // Initial check
-  runWatchPoll(aw, 'process', poll);
-  aw.pollTimer = setInterval(() => {
-    runWatchPoll(aw, 'process', poll);
-  }, intervalMs);
+  // Stagger expensive initial probes across the host. Schedule each next poll
+  // only after the previous one completes, so a slow command cannot build an
+  // unbounded per-watch backlog.
+  const schedule = (delayMs: number) => {
+    aw.pollTimer = setTimeout(async () => {
+      if (!isWatchActive(aw)) return;
+      await runWatchPoll(aw, 'process', poll);
+      if (isWatchActive(aw)) schedule(intervalMs);
+    }, delayMs);
+  };
+  schedule(initialProcessPollDelay(aw));
 }
 
 // ─── Public API ───
@@ -395,6 +482,7 @@ export function startResourceWatch(
 function stopSingleWatch(key: string): void {
   const aw = activeWatches.get(key);
   if (!aw) return;
+  aw.stopped = true;
   if (aw.fsWatcher) aw.fsWatcher.close();
   if (aw.pollTimer) clearInterval(aw.pollTimer);
   if (aw.relaunchWindow) clearTimeout(aw.relaunchWindow);
