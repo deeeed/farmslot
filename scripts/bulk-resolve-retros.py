@@ -132,7 +132,10 @@ def main():
 
     if not args.dry_run and not gateway_alive():
         print("ERROR: gateway not reachable at", GATEWAY_HEALTH, file=sys.stderr)
-        print("Start it with: cd apps/command-center && yarn dev > /tmp/farmslot-dev.log 2>&1 &", file=sys.stderr)
+        print(
+            "Start it with: cd apps/command-center && yarn farmdev > /tmp/farmslot-dev.log 2>&1 &",
+            file=sys.stderr,
+        )
         return 2
 
     if args.run_ids:

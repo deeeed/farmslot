@@ -11,7 +11,7 @@ These instructions apply to everything under `apps/command-center/`.
 
 - Every UI change must be validated in a real browser via **CDP**, not only by typecheck.
 - Preferred controller browser launch:
-  - `cd apps/command-center && yarn dev`
+  - `cd apps/command-center && yarn farmdev`
   - launch Chrome with:
     - `--remote-debugging-port=9323`
     - `--user-data-dir=~/.chrome-farmslot`
