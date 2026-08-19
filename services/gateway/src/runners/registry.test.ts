@@ -251,6 +251,11 @@ describe('cursor runner', () => {
     assert.equal(runnerPaneShowsCurrentInteractiveProgress('✻ Reading…', 'claude'), true);
   });
 
+  it('scopes Claude Churning progress labels away from Codex panes', () => {
+    assert.equal(runnerPaneShowsCurrentInteractiveProgress('✻ Churning… (4s)', 'claude'), true);
+    assert.equal(runnerPaneShowsCurrentInteractiveProgress('Churning...\n›', 'codex'), false);
+  });
+
   it('detects Cursor idle prompt above trailing blank input-box rows', () => {
     assert.equal(
       runnerPaneLooksIdle(

@@ -18,7 +18,7 @@ export const ATTRIBUTION_MODELS = {
 export const STALE_MODELS = {
   claude: 'claude-haiku-4-5',
   codex: 'gpt-5.3',
-  grok: 'grok-2-1212',
+  grok: 'grok-4.5',
 };
 
 export function claudeProjectDir(repo) {

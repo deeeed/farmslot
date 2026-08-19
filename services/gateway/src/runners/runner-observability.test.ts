@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   buildClaudeObservabilityFallbackCommand,
@@ -38,21 +39,35 @@ test('remote observability install prefers the prepared immutable node-support b
   assert.match(command, /scripts\/lib\/provider-accounts\.mjs/);
 });
 
-test('immutable observability support covers every relative installer import', () => {
-  const installer = readFileSync(
-    new URL('../../../../scripts/install-runner-observability.mjs', import.meta.url),
-    'utf8',
-  );
-  const importedPaths = [...installer.matchAll(/from\s+['"](\.\/[^'"]+)['"]/g)].map(
-    ([, specifier]) =>
-      path.posix.normalize(
-        path.posix.join(path.posix.dirname(INSTALLER_RELATIVE_PATH), specifier!),
-      ),
-  );
+const farmslotRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
+function relativeImportClosure(entryPath: string): string[] {
+  const pending = [entryPath];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const relativePath = pending.pop()!;
+    if (visited.has(relativePath)) continue;
+    visited.add(relativePath);
+    const source = readFileSync(path.join(farmslotRoot, relativePath), 'utf8');
+    const specifiers = [
+      ...source.matchAll(/\b(?:import|export)\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]/g),
+    ].map(([, specifier]) => specifier!);
+    for (const specifier of specifiers) {
+      if (!specifier.startsWith('.')) continue;
+      const dependencyPath = path.posix.normalize(
+        path.posix.join(path.posix.dirname(relativePath), specifier),
+      );
+      assert.equal(dependencyPath.startsWith('../'), false);
+      pending.push(dependencyPath);
+    }
+  }
+  return [...visited].sort();
+}
+
+test('immutable observability support covers the installer relative-import closure', () => {
   assert.deepEqual(
     [...RUNNER_OBSERVABILITY_SUPPORT_PATHS].sort(),
-    [INSTALLER_RELATIVE_PATH, ...importedPaths].sort(),
+    relativeImportClosure(INSTALLER_RELATIVE_PATH),
   );
 });
 

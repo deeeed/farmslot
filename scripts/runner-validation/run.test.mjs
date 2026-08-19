@@ -10,9 +10,11 @@ import { turnBoundaryOrdered } from './lib/hooks.mjs';
 import { detectLaunchBlocker } from './lib/pane-blockers.mjs';
 import { paneShowsBusyComposer, paneShowsBypassPermissions } from './lib/pane-patterns.mjs';
 import {
+  ATTRIBUTION_MODELS,
   grokCwdMatches,
   modelsMatch,
   selfTestChooseRunnerSessionPath,
+  STALE_MODELS,
 } from './lib/session-attribution.mjs';
 import { usageExtractedOk } from './lib/session-usage-harness.mjs';
 import { listRunners, resolveRunnerList } from './runners/index.mjs';
@@ -111,6 +113,9 @@ test('grok session paths use realpath repo key on macOS', () => {
 test('session-attribution modelsMatch aligns with protocol aliases', () => {
   assert.equal(modelsMatch('opus', 'claude-opus-4-8'), true);
   assert.equal(modelsMatch('opus', 'claude-haiku-4-5'), false);
+  assert.equal(ATTRIBUTION_MODELS.grok, 'grok-4.6');
+  assert.equal(STALE_MODELS.grok, 'grok-4.5');
+  assert.equal(modelsMatch(ATTRIBUTION_MODELS.grok, STALE_MODELS.grok), false);
   selfTestChooseRunnerSessionPath();
 });
 

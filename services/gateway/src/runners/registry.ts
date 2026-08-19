@@ -1112,7 +1112,7 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
   if (idx === -1) return false;
   const after = compactPane.slice(idx + needle.length);
   return (
-    /\b(Working|Running|Reading|Explored|Edited|Editing|Ran|Starting session|Thinking|Thought|Turn completed|UserPromptSubmit hook|SessionStart hook|Effecting|Pollinating|Churning)\b/i.test(
+    /\b(Working|Running|Reading|Explored|Edited|Editing|Ran|Starting session|Thinking|Thought|Turn completed|UserPromptSubmit hook|SessionStart hook|Effecting|Pollinating)\b/i.test(
       after,
     ) || /[•✔✖]\s/.test(after)
   );
@@ -1235,9 +1235,11 @@ export function runnerPaneShowsCurrentInteractiveProgress(
       // so it shares claude's matcher. Without this, codex progress is never recognized as
       // "task already running" and the readiness gate falsely times out against the timer.
       (runner === 'claude' || runner === 'codex'
-        ? /(?:[✻✢✽✶✷✸✹✺✼✣*•]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating|Churning)[…\.]?/i.test(
+        ? /(?:[✻✢✽✶✷✸✹✺✼✣*•]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating)[…\.]?/i.test(
             tail[i] ?? '',
-          ) || /running in the background|esc to interrupt/i.test(tail[i] ?? '')
+          ) ||
+          (runner === 'claude' && /(?:[✻✢✽✶✷✸✹✺✼✣*•]\s*)?Churning[…\.]?/i.test(tail[i] ?? '')) ||
+          /running in the background|esc to interrupt/i.test(tail[i] ?? '')
         : /[⠁-⣿⠀]+\s*(Reading|Composing|Working|Editing|Running|Starting session)\b(?:\s+\d+\s+tokens)?/i.test(
             tail[i] ?? '',
           )) ||
