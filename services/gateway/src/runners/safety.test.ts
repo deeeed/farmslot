@@ -441,14 +441,14 @@ describe('buildCursorAgentLaunch', () => {
 });
 
 describe('buildGrokLaunch', () => {
-  it('defaults to grok-4.5, xhigh effort, and leaves the task prompt for post-launch delivery', () => {
+  it('defaults to grok-4.6, xhigh effort, and leaves the task prompt for post-launch delivery', () => {
     const cmd = buildGrokLaunch({
       binary: 'grok',
       model: null,
       prompt: 'hi',
       repo: '/tmp/repo',
     });
-    assert.equal(cmd, "cd '/tmp/repo' && grok --effort xhigh --model grok-4.5");
+    assert.equal(cmd, "cd '/tmp/repo' && grok --effort xhigh --model grok-4.6");
     // Prompt is not argv-injected (post-launch delivery only).
     assert.doesNotMatch(cmd, /\bhi\b/);
   });

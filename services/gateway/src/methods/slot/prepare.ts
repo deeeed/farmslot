@@ -53,7 +53,10 @@ import {
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
-import { NODE_SUPPORT_HASH_FILENAME } from '../../runners/runner-observability.js';
+import {
+  NODE_SUPPORT_HASH_FILENAME,
+  RUNNER_OBSERVABILITY_SUPPORT_PATHS,
+} from '../../runners/runner-observability.js';
 import { getRun } from '../../runs/store.js';
 
 import { runHealthCheck } from './check.js';
@@ -279,12 +282,18 @@ async function slotPrepareInner(
       projectJson,
       farmslotRoot,
     );
-    const installerPath = 'scripts/install-runner-observability.mjs';
-    const supportPaths = hookSupportPaths.some(
-      (supportPath) => supportPath === installerPath || installerPath.startsWith(`${supportPath}/`),
-    )
-      ? hookSupportPaths
-      : [...hookSupportPaths, installerPath].sort();
+    const supportPaths = [...hookSupportPaths];
+    for (const requiredPath of RUNNER_OBSERVABILITY_SUPPORT_PATHS) {
+      if (
+        !supportPaths.some(
+          (supportPath) =>
+            supportPath === requiredPath || requiredPath.startsWith(`${supportPath}/`),
+        )
+      ) {
+        supportPaths.push(requiredPath);
+      }
+    }
+    supportPaths.sort();
     if (slotIsLocal) {
       hookSupportDir = farmslotRoot;
       step('support', 'Using local node support source');

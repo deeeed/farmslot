@@ -4,10 +4,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   buildClaudeObservabilityFallbackCommand,
   buildRunnerObservabilityInstallCommand,
+  INSTALLER_RELATIVE_PATH,
+  RUNNER_OBSERVABILITY_SUPPORT_PATHS,
   withRunnerObservabilityInstall,
 } from './runner-observability.js';
 
@@ -33,6 +36,101 @@ test('remote observability install prefers the prepared immutable node-support b
     /farmslot-node\/support\/\$\{support_hash\}\/scripts\/install-runner-observability\.mjs/,
   );
   assert.match(command, /farmslot-node\/scripts\/install-runner-observability\.mjs/);
+  assert.match(command, /scripts\/lib\/provider-accounts\.mjs/);
+});
+
+const farmslotRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+
+function relativeImportClosure(entryPath: string): string[] {
+  const pending = [entryPath];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const relativePath = pending.pop()!;
+    if (visited.has(relativePath)) continue;
+    visited.add(relativePath);
+    const source = readFileSync(path.join(farmslotRoot, relativePath), 'utf8');
+    const specifiers = [
+      ...source.matchAll(/\b(?:import|export)\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]/g),
+    ].map(([, specifier]) => specifier!);
+    for (const specifier of specifiers) {
+      if (!specifier.startsWith('.')) continue;
+      const dependencyPath = path.posix.normalize(
+        path.posix.join(path.posix.dirname(relativePath), specifier),
+      );
+      assert.equal(dependencyPath.startsWith('../'), false);
+      pending.push(dependencyPath);
+    }
+  }
+  return [...visited].sort();
+}
+
+test('immutable observability support covers the installer relative-import closure', () => {
+  assert.deepEqual(
+    [...RUNNER_OBSERVABILITY_SUPPORT_PATHS].sort(),
+    relativeImportClosure(INSTALLER_RELATIVE_PATH),
+  );
+});
+
+test('remote observability install falls back when an immutable bundle is incomplete', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'farmslot-observability-support-'));
+  try {
+    const home = path.join(root, 'home');
+    const repo = path.join(root, 'repo');
+    const runtimeDir = '.agent';
+    const supportHash = 'a'.repeat(64);
+    const supportRoot = path.join(home, 'farmslot-node', 'support', supportHash);
+    const fallbackInstaller = path.join(home, 'farmslot-node', INSTALLER_RELATIVE_PATH);
+    const immutableInstaller = path.join(supportRoot, INSTALLER_RELATIVE_PATH);
+    const selectedPath = path.join(root, 'selected-installer');
+    const fakeBin = path.join(root, 'bin');
+    const fakeNode = path.join(fakeBin, 'node');
+
+    mkdirSync(path.dirname(fallbackInstaller), { recursive: true });
+    mkdirSync(path.dirname(immutableInstaller), { recursive: true });
+    mkdirSync(path.join(repo, runtimeDir, '.observability'), { recursive: true });
+    mkdirSync(fakeBin, { recursive: true });
+    writeFileSync(fallbackInstaller, 'fallback\n');
+    writeFileSync(immutableInstaller, 'immutable\n');
+    writeFileSync(
+      path.join(repo, runtimeDir, '.observability', 'node-support-hash'),
+      `${supportHash}\n`,
+    );
+    writeFileSync(fakeNode, '#!/bin/sh\nprintf "%s\\n" "$1" > "$SELECTED_INSTALLER"\n', {
+      mode: 0o755,
+    });
+
+    const command = buildRunnerObservabilityInstallCommand(
+      {
+        host: 'remote-fixture-host.local',
+        machine: 'remote-fixture-host',
+        remoteRepo: repo,
+        slotId: 'remote-fixture-host-slot-1',
+      } as never,
+      'claude',
+      repo,
+      runtimeDir,
+    );
+    const run = () =>
+      execFileSync('/bin/bash', ['-c', command], {
+        env: {
+          ...process.env,
+          HOME: home,
+          PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+          SELECTED_INSTALLER: selectedPath,
+        },
+      });
+
+    run();
+    assert.equal(readFileSync(selectedPath, 'utf8').trim(), fallbackInstaller);
+
+    const importedDependency = path.join(supportRoot, 'scripts/lib/provider-accounts.mjs');
+    mkdirSync(path.dirname(importedDependency), { recursive: true });
+    writeFileSync(importedDependency, 'dependency\n');
+    run();
+    assert.equal(readFileSync(selectedPath, 'utf8').trim(), immutableInstaller);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('Claude observability fallback replaces corrupt runtime settings', () => {

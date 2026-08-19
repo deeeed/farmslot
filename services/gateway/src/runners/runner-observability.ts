@@ -7,7 +7,11 @@ import { shellQuote } from '../core/tmux.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 
 const REMOTE_AGENT_DIR = '~/farmslot-node';
-const INSTALLER_RELATIVE_PATH = 'scripts/install-runner-observability.mjs';
+export const INSTALLER_RELATIVE_PATH = 'scripts/install-runner-observability.mjs';
+export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [
+  INSTALLER_RELATIVE_PATH,
+  'scripts/lib/provider-accounts.mjs',
+] as const;
 export const NODE_SUPPORT_HASH_FILENAME = 'node-support-hash';
 const localHostname = os.hostname().replace(/\.local$/, '');
 
@@ -69,12 +73,15 @@ export function buildRunnerObservabilityInstallCommand(
     NODE_SUPPORT_HASH_FILENAME,
   );
   const fallbackInstaller = '${HOME}/farmslot-node/' + INSTALLER_RELATIVE_PATH;
-  const supportInstaller =
-    '${HOME}/farmslot-node/support/${support_hash}/' + INSTALLER_RELATIVE_PATH;
+  const supportRoot = '${HOME}/farmslot-node/support/${support_hash}';
+  const supportInstaller = `${supportRoot}/${INSTALLER_RELATIVE_PATH}`;
+  const supportReady = RUNNER_OBSERVABILITY_SUPPORT_PATHS.map(
+    (relativePath) => `[ -f "${supportRoot}/${relativePath}" ]`,
+  ).join(' && ');
   return [
     `support_hash="$(cat ${shellExpressionForRemotePath(supportHashPath)} 2>/dev/null || true)"`,
     `installer="${fallbackInstaller}"`,
-    `case "$support_hash" in ''|*[!0-9a-f]*) ;; *) candidate="${supportInstaller}"; [ ! -f "$candidate" ] || installer="$candidate" ;; esac`,
+    `case "$support_hash" in ''|*[!0-9a-f]*) ;; *) ${supportReady} && installer="${supportInstaller}" ;; esac`,
     `node "$installer" ${parts.join(' ')}`,
   ].join('; ');
 }

@@ -2123,7 +2123,7 @@ export const DEFAULT_CODEX_EFFORT = 'xhigh';
 export const DEFAULT_CURSOR_MODEL = 'cursor-grok-4.6-high-fast';
 
 /** Default Grok model used when no slot/task/project/user override is set. */
-export const DEFAULT_GROK_MODEL = 'grok-4.5';
+export const DEFAULT_GROK_MODEL = 'grok-4.6';
 
 /** Default Grok reasoning effort when dispatch/launch omits effort. */
 export const DEFAULT_GROK_EFFORT = 'xhigh';

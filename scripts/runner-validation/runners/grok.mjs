@@ -11,7 +11,7 @@ export const OBSERVABILITY_TRANSPORT = 'native';
 export const REGISTERED_EVENTS = [];
 
 const GROK_BIN = path.join(os.homedir(), '.grok/bin/grok');
-const DEFAULT_MODEL = 'grok-4.5';
+const DEFAULT_MODEL = 'grok-4.6';
 
 export function prepareRepo(repo) {
   execFileSync('git', ['init'], { cwd: repo, stdio: 'pipe' });
