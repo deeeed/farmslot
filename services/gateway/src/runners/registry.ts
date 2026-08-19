@@ -1112,7 +1112,7 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
   if (idx === -1) return false;
   const after = compactPane.slice(idx + needle.length);
   return (
-    /\b(Working|Running|Reading|Explored|Edited|Editing|Ran|Starting session|Thinking|Thought|Turn completed|UserPromptSubmit hook|SessionStart hook|Effecting|Pollinating)\b/i.test(
+    /\b(Working|Running|Reading|Explored|Edited|Editing|Ran|Starting session|Thinking|Thought|Turn completed|UserPromptSubmit hook|SessionStart hook|Effecting|Pollinating|Churning)\b/i.test(
       after,
     ) || /[•✔✖]\s/.test(after)
   );
@@ -1235,7 +1235,7 @@ export function runnerPaneShowsCurrentInteractiveProgress(
       // so it shares claude's matcher. Without this, codex progress is never recognized as
       // "task already running" and the readiness gate falsely times out against the timer.
       (runner === 'claude' || runner === 'codex'
-        ? /(?:[✻✢✽✶✷✸✹✺✼✣*•]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating)[…\.]?/i.test(
+        ? /(?:[✻✢✽✶✷✸✹✺✼✣*•]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating|Churning)[…\.]?/i.test(
             tail[i] ?? '',
           ) || /running in the background|esc to interrupt/i.test(tail[i] ?? '')
         : /[⠁-⣿⠀]+\s*(Reading|Composing|Working|Editing|Running|Starting session)\b(?:\s+\d+\s+tokens)?/i.test(
@@ -3215,9 +3215,12 @@ export async function sendRunnerPostLaunchPrompt(
       snapshotNote = ` Snapshot write failed: ${(err as Error).message}`;
     }
   }
+  const verificationDetail = requirePromptDigest
+    ? 'Exact prompt acknowledgement did not arrive. Pane output cannot replace the required runner acknowledgement.'
+    : `The pane did not change, echo "${marker}", or show runner progress, meaning the runner input handler was not live.`;
   throw new Error(
     `Prompt delivery failed after ${sentAttempts} send attempt(s) in tmux target ${target}. ` +
-      `The pane did not change, echo "${marker}", or show runner progress, meaning the runner input handler was not live.${snapshotNote}\n` +
+      `${verificationDetail}${snapshotNote}\n` +
       `Last pane content:\n${failurePane}`,
   );
 }

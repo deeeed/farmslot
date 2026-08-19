@@ -212,9 +212,9 @@ Signals:
 
 Two validated paths:
 
-1. **Fast smoke (shell):** `grok -p '<prompt>' --model grok-4.5` — single-turn, proves binary + response marker.
+1. **Fast smoke (shell):** `grok -p '<prompt>' --model grok-4.6` — single-turn, proves binary + response marker.
 2. **Production-parity (interactive):**
-   - launch `grok --model grok-4.5` from shell
+   - launch `grok --model grok-4.6` from shell
    - run [scripts/resolve-launch-blockers.sh](scripts/resolve-launch-blockers.sh) `<pane> grok` — sends `Enter` on the `(current)` project row
    - submit prompt with `send-keys -l` + `C-m`
    - wait for response marker in pane output

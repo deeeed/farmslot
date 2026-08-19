@@ -772,6 +772,22 @@ describe('cursor runner', () => {
     );
   });
 
+  it('recognizes Claude Churning progress labels during readiness wait', async () => {
+    const message = await dispatchPrompt('.task/feat/manual-000107/TASK.md');
+    const pane = `
+❯ Follow the checklist in .task/feat/manual-000107/TASK.md.
+
+✻ Churning… (4s · ↓ 107 tokens)
+
+───────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────
+  ● high · /effort
+`;
+
+    assert.equal(runnerPaneShowsTaskAlreadyRunning(pane, message, 'TASK.md', 'claude'), true);
+  });
+
   it('recognizes a Codex task already executing (animated "Working (…)" timer) during readiness wait', async () => {
     const message = await dispatchPrompt('temp/tasks/feat/tat-3215-0601-200704/TASK.md');
     const pane = `
@@ -1438,7 +1454,11 @@ describe('buildLaunchCommand', () => {
       );
       assert.match(
         cmd,
-        /candidate="\$\{HOME\}\/farmslot-node\/support\/\$\{support_hash\}\/scripts\/install-runner-observability\.mjs"/,
+        /\[ -f "\$\{HOME\}\/farmslot-node\/support\/\$\{support_hash\}\/scripts\/lib\/provider-accounts\.mjs" \]/,
+      );
+      assert.match(
+        cmd,
+        /installer="\$\{HOME\}\/farmslot-node\/support\/\$\{support_hash\}\/scripts\/install-runner-observability\.mjs"/,
       );
       assert.match(cmd, /node "\$installer"/);
       assert.match(cmd, /--repo "\$\{HOME\}\/work\/repo"/);
@@ -1681,16 +1701,16 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
       assert.equal(
         cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && grok --effort xhigh --model grok-4.5`,
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && grok --effort xhigh --model grok-4.6`,
       );
     });
 
-    it('falls back to inline Grok launcher with grok-4.5 and xhigh effort', () => {
+    it('falls back to inline Grok launcher with grok-4.6 and xhigh effort', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '/usr/local/bin/grok' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
       assert.equal(
         cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-4.5`,
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-4.6`,
       );
       assert.doesNotMatch(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--single/);
@@ -1720,7 +1740,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-4\.5$/,
+        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-4\.6$/,
       );
       assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);

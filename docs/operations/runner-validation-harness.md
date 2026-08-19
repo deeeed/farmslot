@@ -175,7 +175,7 @@ Encoded in `scripts/runner-validation/runners/<id>.mjs` — **not** shared assum
 ### Grok (native event observability) — priority runner
 
 Grok is interactive-first in production (`needsPostLaunchPrompt: true`). Its production-parity
-`interaction-smoke` launches `grok --model grok-4.5`, resolves the project-directory prompt,
+`interaction-smoke` launches `grok --model grok-4.6`, resolves the project-directory prompt,
 submits through the shared capability, and verifies native exact-prompt acceptance plus completion.
 
 Improvement backlog for Grok:

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(dispatch): ship complete remote observability bundles, fall back from incomplete immutable bundles, and recognize Claude's Churning progress without duplicate task sends.
+- fix(runners): launch standalone Grok with the shared `grok-4.6` default.
 - fix(publication): preserve hosted evidence links while stripping task-local paths reintroduced by generated PR sections.
 - fix(storage): retain inactive run artifacts for the full seven-day window while always preserving active task and runtime evidence.
 - fix(ci-watch): remember report-backed no-change bot-comment triage at the current HEAD, reject failed worker signals, and finish green runs without repeating inference.

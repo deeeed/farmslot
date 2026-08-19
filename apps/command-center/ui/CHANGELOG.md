@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(runners): select `grok-4.6` by default for the standalone Grok runner.
 - fix(ci-watch): expose Check now in run summaries, share one bounded poke controller across run surfaces, and hide the polling countdown while a worker fix is active.
 - fix(runs): color-code projects consistently with Companion and show the worker's parsed current checklist item in active mini pipelines.
 - fix(copilot): make the shared tmux terminal the primary Co-Pilot surface, collapse runtime controls, remove the redundant message composer, and use the gateway-owned pane identity instead of filtered inventory discovery.
