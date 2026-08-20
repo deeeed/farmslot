@@ -55,7 +55,7 @@ import {
   fleetCanvasUrlStateHash,
   type FleetCanvasViewMode,
 } from './fleet-canvas-url-state.js';
-import { cleanupTargetSetMatches } from './machine-pressure-model.js';
+import { cleanupExecutionTargets, cleanupTargetSetMatches } from './machine-pressure-model.js';
 
 export interface ResourceEntry {
   slotId: string;
@@ -721,6 +721,7 @@ export class FleetCanvas extends LitElement {
       }
       const result = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
         dryRun: false,
+        targets: cleanupExecutionTargets(reviewed.cleanupCandidates),
       });
       this.showResourceFlash(
         `stopped ${result.stopped}/${result.targets.length}${result.failed ? `, failed ${result.failed}` : ''}`,

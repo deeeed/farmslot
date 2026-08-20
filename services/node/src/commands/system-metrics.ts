@@ -20,6 +20,7 @@ const PROCESS_SAMPLE_TIMEOUT_MS = 4_000;
 const PROCESS_EXECUTABLE_MAX_CHARS = 120;
 const PROCESS_SAMPLE_ELEVATED_INTERVAL_MS = 60_000;
 const PROCESS_SAMPLE_NORMAL_INTERVAL_MS = 5 * 60_000;
+export const PROCESS_INVENTORY_FAILURE_RETRY_MS = 60_000;
 const PROCESS_GENERATION = `${process.pid}:${new Date(Date.now() - process.uptime() * 1000).toISOString()}`;
 
 const processSampler = {
@@ -35,6 +36,7 @@ let processSampleId = 0;
 let processInventoryInFlight: Promise<NodeProcessInventory> | null = null;
 let pendingProcessInventory: NodeProcessInventory | undefined;
 let lastProcessInventoryAt = 0;
+let lastProcessInventoryFailedAt = 0;
 
 export type ProcessInventoryRunner = () => Promise<string>;
 
@@ -271,6 +273,7 @@ export function collectProcessInventory(
       processSampler.lastDurationMs = Date.now() - startedAt;
       processSampler.lastError = undefined;
       lastProcessInventoryAt = Date.now();
+      lastProcessInventoryFailedAt = 0;
       const parsed = parseProcessInventory(output, PROCESS_SAMPLE_MAX_ENTRIES, priorityPids);
       return {
         generation: PROCESS_GENERATION,
@@ -284,6 +287,7 @@ export function collectProcessInventory(
     .catch((error: unknown) => {
       processSampler.failures += 1;
       processSampler.lastDurationMs = Date.now() - startedAt;
+      lastProcessInventoryFailedAt = Date.now();
       processSampler.lastError = (error instanceof Error ? error.message : String(error)).slice(
         0,
         160,
@@ -329,6 +333,13 @@ export function processInventoryCadenceMs(params: {
 
 function processInventoryDue(params: Parameters<typeof processInventoryCadenceMs>[0]): boolean {
   const interval = processInventoryCadenceMs(params);
+  if (
+    lastProcessInventoryFailedAt > 0 &&
+    Date.now() - lastProcessInventoryFailedAt < PROCESS_INVENTORY_FAILURE_RETRY_MS
+  ) {
+    processSampler.skippedCadence += 1;
+    return false;
+  }
   if (lastProcessInventoryAt === 0 || Date.now() - lastProcessInventoryAt >= interval) return true;
   processSampler.skippedCadence += 1;
   return false;

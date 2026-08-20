@@ -153,10 +153,24 @@ mock.module('./tmux-workers.js', {
   },
 });
 
-const { resourceHostPressure, resourcePressureSnapshot, resourcePressureSnapshotForModel } =
-  await import('./resource.js');
+const {
+  resourceCleanup,
+  resourceHostPressure,
+  resourcePressureSnapshot,
+  resourcePressureSnapshotForModel,
+} = await import('./resource.js');
 
 test('resource pressure snapshot exposes bounded trends and active attribution', async () => {
+  const exactCleanup = await resourceCleanup({
+    dryRun: true,
+    targets: [{ machine: 'macpro', slotId: 'slot-2', resourceId: 'metro' }],
+  });
+  assert.deepEqual(
+    exactCleanup.targets.map((target) => `${target.machine}:${target.slotId}:${target.resourceId}`),
+    ['macpro:slot-2:metro'],
+  );
+  assert.equal((await resourceCleanup({ dryRun: true, targets: [] })).targets.length, 0);
+
   const hostOnly = await resourceHostPressure('macpro', 'farmslot-farm');
   assert.equal(hostOnly.machine, 'macpro');
   assert.equal(hostOnly.online, true);
@@ -195,10 +209,12 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
     '/Users/developer/Applications/Private Tool.app/Contents/MacOS/Private Tool';
   result.machines[0].processAttribution.sampler!.lastError =
     'Command /Users/developer/bin/ps failed';
+  result.machines[0].processAttribution.degradedReason = 'Tmux attribution unavailable';
   const modelProjection = resourcePressureSnapshotForModel(result);
   const serialized = JSON.stringify(modelProjection);
   assert.doesNotMatch(serialized, /rootPid|topPid|lastError|\/Users\/developer/);
   assert.doesNotMatch(serialized, /"slotId"|"runId"|"resourceId"|"system"|"watchState"/);
   assert.doesNotMatch(serialized, /"cleanupCandidates":\[/);
   assert.match(serialized, /"process":"Private Tool"/);
+  assert.match(serialized, /"degradedReason":"Tmux attribution unavailable"/);
 });

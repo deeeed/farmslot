@@ -109,6 +109,15 @@ export async function resourceCleanup(
   const statuses = new Set(params.statuses ?? ['running', 'stale']);
   const slotFilter = new Set(params.slotIds ?? []);
   const resourceFilter = new Set(params.resourceIds ?? []);
+  const exactTargets = new Set(
+    (params.targets ?? []).map(
+      (target) => `${target.machine}:${target.slotId}:${target.resourceId}`,
+    ),
+  );
+  const exactTargetSlots = new Set(
+    (params.targets ?? []).map((target) => `${target.machine}:${target.slotId}`),
+  );
+  const exactTargetsEnabled = params.targets !== undefined;
   const fleet = await loadFleetStatus();
   const slots = fleet.slots.filter((slot) => {
     if (!slot.enabled) return false;
@@ -117,6 +126,9 @@ export async function resourceCleanup(
     if (params.machine && slot.machine !== params.machine) return false;
     if (params.project && slot.project !== params.project) return false;
     if (slotFilter.size > 0 && !slotFilter.has(slot.slot)) return false;
+    if (exactTargetsEnabled && !exactTargetSlots.has(`${slot.machine}:${slot.slot}`)) {
+      return false;
+    }
     return true;
   });
 
@@ -133,6 +145,9 @@ export async function resourceCleanup(
       continue;
     }
     for (const resource of resources) {
+      if (exactTargetsEnabled && !exactTargets.has(`${slot.machine}:${slot.slot}:${resource.id}`)) {
+        continue;
+      }
       if (resourceFilter.size > 0 && !resourceFilter.has(resource.id)) continue;
       if (!statuses.has(resource.status)) continue;
       if (!resource.definition.controllable || !resource.definition.hooks?.shutdown) continue;
@@ -337,15 +352,19 @@ export async function resourcePressureSnapshot(
     machines,
     cleanupCandidates: cleanupCandidates.map((target) => {
       const machine = machines.find((candidate) => candidate.machine === target.machine);
-      const group = machine?.processAttribution.groups.find(
+      const exactGroup = machine?.processAttribution.groups.find(
         (candidate) =>
           candidate.slotId === target.slotId && candidate.resourceId === target.resourceId,
       );
+      const group =
+        exactGroup ??
+        machine?.processAttribution.groups.find((candidate) => candidate.slotId === target.slotId);
       return {
         ...target,
         ...(group
           ? {
               processImpact: {
+                scope: exactGroup ? 'resource' : 'slot-related',
                 process: group.topExecutable,
                 processCount: group.processCount,
                 treeCpuPercent: group.cpuPercent,
@@ -391,6 +410,7 @@ export interface ResourcePressureModelSnapshot {
     processAttribution: {
       sampledAt?: string;
       unavailableReason?: string;
+      degradedReason?: string;
       truncated: boolean;
       omittedGroups: number;
       classCounts: ResourcePressureMachine['processAttribution']['classCounts'];
@@ -448,6 +468,9 @@ export function resourcePressureSnapshotForModel(
             : {}),
           ...(machine.processAttribution.unavailableReason
             ? { unavailableReason: machine.processAttribution.unavailableReason }
+            : {}),
+          ...(machine.processAttribution.degradedReason
+            ? { degradedReason: machine.processAttribution.degradedReason }
             : {}),
           truncated: machine.processAttribution.truncated,
           omittedGroups: machine.processAttribution.omittedGroups,

@@ -19,6 +19,10 @@ export function cleanupTargetSetMatches(
   return keys(reviewed).join('\n') === keys(fresh).join('\n');
 }
 
+export function cleanupExecutionTargets(targets: CleanupTarget[]): CleanupTarget[] {
+  return targets.map(({ machine, resourceId, slotId }) => ({ machine, resourceId, slotId }));
+}
+
 export function pressureSparklinePoints(values: number[], maxValue: number): string {
   const samples = values.slice(-PRESSURE_CHART_SAMPLES);
   if (samples.length === 0 || maxValue <= 0) return '';

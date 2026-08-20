@@ -190,6 +190,11 @@ export class ResourceCleanupPreview extends LitElement {
                         </div>
                         <div>
                           ${impact.classification} ownership · ${impact.confidence} confidence
+                        </div>
+                        <div>
+                          ${impact.scope === 'resource'
+                            ? 'Verified resource-owned tree'
+                            : 'Related slot tree; not verified as the resource owner'}
                         </div>`
                     : html`Process impact is unavailable in the bounded census. The project shutdown
                       hook determines the exact processes it stops.`}

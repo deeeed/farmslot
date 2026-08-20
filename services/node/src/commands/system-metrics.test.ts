@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   collectProcessInventory,
   parseProcessInventory,
+  PROCESS_INVENTORY_FAILURE_RETRY_MS,
   processInventoryCadenceMs,
 } from './system-metrics.js';
 
@@ -87,6 +88,7 @@ test('concurrent inventory requests share one command and report skipped overlap
 });
 
 test('process sampling cadence is five minutes normally and one minute under pressure', () => {
+  assert.equal(PROCESS_INVENTORY_FAILURE_RETRY_MS, 60_000);
   assert.equal(
     processInventoryCadenceMs({ cpuPercent: 20, memoryPercent: 40, loadAvg1: 2, cpuCores: 10 }),
     300_000,

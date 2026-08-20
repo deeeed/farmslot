@@ -119,6 +119,8 @@ export interface ResourceCleanupParams {
   project?: string;
   slotIds?: string[];
   resourceIds?: string[];
+  /** Exact reviewed targets. When present, cleanup cannot widen beyond these triples. */
+  targets?: Array<{ machine: string; slotId: string; resourceId: string }>;
   statuses?: import('../contracts/index.js').ResourceStatus[];
 }
 
@@ -265,6 +267,7 @@ export interface ResourcePressureCleanupCandidate extends ResourceCleanupTarget 
   effect: 'configured-shutdown-hook';
   activeWorkExcluded: true;
   processImpact?: {
+    scope: 'resource' | 'slot-related';
     process: string;
     processCount: number;
     treeCpuPercent: number;
