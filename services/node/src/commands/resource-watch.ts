@@ -100,6 +100,14 @@ const sharedProcessPollStats = {
   lastDurationMs: null as number | null,
 };
 
+/** Reset cumulative provider telemetry between deterministic test cases. */
+export function resetResourceWatchStatsForTests(): void {
+  sharedProcessPollStats.executions = 0;
+  sharedProcessPollStats.fanout = 0;
+  sharedProcessPollStats.failures = 0;
+  sharedProcessPollStats.lastDurationMs = null;
+}
+
 async function withProcessPollPermit<T>(
   shouldRun: () => boolean,
   run: () => Promise<T>,

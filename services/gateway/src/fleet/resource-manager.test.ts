@@ -8,6 +8,7 @@ import {
   buildBrowserPidFileCapturableCommand,
   buildBrowserPidRecoveryCommand,
   inferSharedProcessPollProvider,
+  isEmptyIosSimulatorProbe,
   isSimulatorDeviceProbe,
   isSlotResourceConfigured,
   purgeRemovedSlotWarnings,
@@ -120,6 +121,24 @@ test('shared process-poll provider is explicit for new configs and inferred for 
     ),
     'ios-simulator-inventory',
   );
+});
+
+test('empty iOS simulator selectors are skipped instead of becoming always-true probes', () => {
+  assert.equal(
+    isEmptyIosSimulatorProbe(
+      iosSimResource,
+      "xcrun simctl list devices booted 2>/dev/null | grep -q ''",
+    ),
+    true,
+  );
+  assert.equal(
+    isEmptyIosSimulatorProbe(
+      iosSimResource,
+      "xcrun simctl list devices booted 2>/dev/null | grep -q 'mm-1'",
+    ),
+    false,
+  );
+  assert.equal(isEmptyIosSimulatorProbe(metroResource, "grep -q ''"), false);
 });
 
 test('shouldProbeResourceForSlot suppresses simulator probes without an active run', () => {

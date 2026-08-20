@@ -75,7 +75,7 @@ async function buildPRCommentHardcoded(
     '|---|---|',
     `| Run | \`${run.id.slice(0, 8)}\` |`,
     `| Duration | ${durationMin} |`,
-    `| Model | ${run.metrics.runner ?? ''}/${run.metrics.model ?? ''} |`,
+    `| Model | ${run.metrics.runner ?? 'unknown'}/${run.metrics.model ?? 'unknown'} |`,
     `| Nudges | ${run.metrics.nudgeCount} |`,
   ];
 

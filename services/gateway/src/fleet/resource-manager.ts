@@ -203,6 +203,22 @@ export function inferSharedProcessPollProvider(
   return undefined;
 }
 
+export function isEmptyIosSimulatorProbe(
+  resourceDef: Pick<ResourceDefinition, 'type' | 'platform'> & {
+    watch?: Pick<NonNullable<ResourceDefinition['watch']>, 'type'>;
+  },
+  expandedCommand: string,
+): boolean {
+  return (
+    resourceDef.watch?.type === 'process-poll' &&
+    resourceDef.type === 'device' &&
+    resourceDef.platform === 'ios' &&
+    /^xcrun\s+simctl\s+list\s+devices\s+booted\s+2>\/dev\/null\s*\|\s*grep\s+-q\s+'\s*'$/.test(
+      expandedCommand.trim(),
+    )
+  );
+}
+
 export function shouldProbeResourceForSlot(
   slot: Pick<SlotStatus, 'currentRunId' | 'lifecycle'> | undefined,
   resourceDef: Pick<ResourceDefinition, 'type' | 'platform'> & {
@@ -987,15 +1003,18 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
             expandedWatch.cwd = slotVars.remoteRepo;
           }
 
-          const sharedProvider = inferSharedProcessPollProvider(
-            {
-              type: def.type as ResourceDefinition['type'],
-              platform: def.platform,
-              watch: {
-                type: def.watch.type as ResourceWatchType,
-                provider: def.watch.provider,
-              },
+          const watchDefinition = {
+            type: def.type as ResourceDefinition['type'],
+            platform: def.platform,
+            watch: {
+              type: def.watch.type as ResourceWatchType,
+              provider: def.watch.provider,
             },
+          };
+          if (isEmptyIosSimulatorProbe(watchDefinition, expandedWatch.cmd ?? '')) continue;
+
+          const sharedProvider = inferSharedProcessPollProvider(
+            watchDefinition,
             expandedWatch.cmd ?? '',
             String(slotVars.resourceVars.simulator ?? ''),
           );
@@ -1018,6 +1037,8 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
                   );
                 }
               }
+            } else if (def.watch.provider) {
+              continue;
             }
           }
 

@@ -6,6 +6,7 @@ import {
   checkPortStatus,
   getResourceWatchRuntimeStats,
   parseBootedIosSimulatorInventory,
+  resetResourceWatchStatsForTests,
   setResourceWatchExecForTests,
   startResourceWatch,
   stopAllResourceWatches,
@@ -102,7 +103,7 @@ test('startResourceWatch replaces the complete slot watch set, including with em
 test('twelve iOS simulator watches share one inventory subprocess per cycle', async () => {
   let execCalls = 0;
   const updates = new Map<string, string>();
-  const baseline = getResourceWatchRuntimeStats().sharedProcessPolls;
+  resetResourceWatchStatsForTests();
   setResourceWatchExecForTests(async () => {
     execCalls += 1;
     return {
@@ -139,8 +140,8 @@ test('twelve iOS simulator watches share one inventory subprocess per cycle', as
     assert.equal(updates.get('slot-6'), 'stopped');
     const stats = getResourceWatchRuntimeStats();
     assert.equal(stats.maxConcurrentProcessPolls, 2);
-    assert.equal(stats.sharedProcessPolls!.executions - (baseline?.executions ?? 0), 1);
-    assert.equal(stats.sharedProcessPolls!.fanout - (baseline?.fanout ?? 0), 12);
+    assert.equal(stats.sharedProcessPolls!.executions, 1);
+    assert.equal(stats.sharedProcessPolls!.fanout, 12);
   } finally {
     stopAllResourceWatches();
     setResourceWatchExecForTests();
@@ -352,7 +353,7 @@ test('a replaced iOS watch ignores stale inventory and receives a fresh shared r
 
 test('a failed shared inventory probe preserves cached status instead of flapping every slot', async () => {
   const updates: string[] = [];
-  const baselineFailures = getResourceWatchRuntimeStats().sharedProcessPolls?.failures ?? 0;
+  resetResourceWatchStatsForTests();
   setResourceWatchExecForTests(async () => ({
     stdout: '',
     stderr: 'CoreSimulator unavailable',
@@ -375,9 +376,7 @@ test('a failed shared inventory probe preserves cached status instead of flappin
       ],
       (change) => updates.push(change.status),
     );
-    await waitFor(
-      () => (getResourceWatchRuntimeStats().sharedProcessPolls?.failures ?? 0) > baselineFailures,
-    );
+    await waitFor(() => (getResourceWatchRuntimeStats().sharedProcessPolls?.failures ?? 0) === 1);
     assert.deepEqual(updates, []);
   } finally {
     stopAllResourceWatches();
