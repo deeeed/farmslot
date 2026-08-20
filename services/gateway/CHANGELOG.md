@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- feat(resources): retain a bounded per-machine pressure history and attribute process ancestry to active, retained, stale, manual, or unknown run/tmux/resource ownership through the read-only pressure snapshot.
+- feat(resources): retain a bounded per-machine pressure history, attribute process ancestry to active, retained, stale, manual, or unknown run/tmux/resource ownership, and attach configured-hook cleanup impact to the read-only pressure snapshot.
 - perf(resources): fan legacy and explicitly typed iOS simulator watches into the node's shared inventory provider instead of multiplying `simctl` processes by slot count.
 - fix(run-completion): make worker-report PR comments and formal-review internal metrics project-configurable and opt-in by default, preventing model, token, and cost metadata from being posted unless explicitly enabled.
 - fix(dispatch): ship complete remote observability bundles, fall back from incomplete immutable bundles, and recognize Claude's Churning progress without duplicate task sends.

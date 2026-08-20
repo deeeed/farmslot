@@ -26,6 +26,7 @@ import { Events, Methods, primaryRoleForFlow } from '@farmslot/protocol';
 
 import './machine-group.js';
 import './machine-pressure-overview.js';
+import './resource-cleanup-preview.js';
 import './resource-overview.js';
 import '../slot-actions/slot-actions-modal.js';
 import '../slot-actions/fleet-refresh-modal.js';
@@ -54,6 +55,7 @@ import {
   fleetCanvasUrlStateHash,
   type FleetCanvasViewMode,
 } from './fleet-canvas-url-state.js';
+import { cleanupTargetSetMatches } from './machine-pressure-model.js';
 
 export interface ResourceEntry {
   slotId: string;
@@ -99,6 +101,7 @@ export class FleetCanvas extends LitElement {
   @state() private resourceActionFlash = '';
   @state() private resourceWatchesEnabled = true;
   @state() private resourcePressure?: ResourcePressureSnapshotResult;
+  @state() private resourceCleanupPreview?: ResourcePressureSnapshotResult;
   /** machine → provider subscription snapshot (labels only). */
   private _providerAccountsUnsub: (() => void) | null = null;
   private _resourceFetched = false;
@@ -215,6 +218,7 @@ export class FleetCanvas extends LitElement {
     }
     .resource-controls {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: ${unsafeCSS(spacing.sm)};
       padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
@@ -251,6 +255,11 @@ export class FleetCanvas extends LitElement {
     }
     .resource-flash-err {
       color: ${unsafeCSS(colors.statusFail)};
+    }
+    .resource-watch-note {
+      flex-basis: 100%;
+      color: ${unsafeCSS(colors.textMuted)};
+      line-height: 1.45;
     }
   `;
 
@@ -681,13 +690,11 @@ export class FleetCanvas extends LitElement {
   private async previewResourceCleanup() {
     this.resourceActionBusy = true;
     try {
-      const result = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
-        dryRun: true,
-      });
-      this.showResourceFlash(
-        `would stop ${result.targets.length} idle running/stale resource${result.targets.length === 1 ? '' : 's'}`,
-        true,
+      const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
+        Methods.RESOURCE_PRESSURE_SNAPSHOT,
       );
+      this.resourcePressure = snapshot;
+      this.resourceCleanupPreview = snapshot;
     } catch (err) {
       this.showResourceFlash(err instanceof Error ? err.message : String(err), false);
     } finally {
@@ -695,20 +702,23 @@ export class FleetCanvas extends LitElement {
     }
   }
 
-  private async cleanupBackgroundResources() {
+  private async confirmResourceCleanup() {
+    const reviewed = this.resourceCleanupPreview;
+    if (!reviewed) return;
     this.resourceActionBusy = true;
     try {
-      const preview = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
+      const fresh = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
         dryRun: true,
       });
-      if (preview.targets.length === 0) {
-        this.showResourceFlash('no idle running/stale resources to stop', true);
+      if (!cleanupTargetSetMatches(reviewed.cleanupCandidates, fresh.targets)) {
+        const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
+          Methods.RESOURCE_PRESSURE_SNAPSHOT,
+        );
+        this.resourcePressure = snapshot;
+        this.resourceCleanupPreview = snapshot;
+        this.showResourceFlash('eligible targets changed — review the updated preview', false);
         return;
       }
-      const confirmed = window.confirm(
-        `Stop ${preview.targets.length} idle running/stale resource(s)? Active, held, and working slots are excluded.`,
-      );
-      if (!confirmed) return;
       const result = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
         dryRun: false,
       });
@@ -716,6 +726,7 @@ export class FleetCanvas extends LitElement {
         `stopped ${result.stopped}/${result.targets.length}${result.failed ? `, failed ${result.failed}` : ''}`,
         result.ok,
       );
+      this.resourceCleanupPreview = undefined;
       await this.fetchResourceData();
     } catch (err) {
       this.showResourceFlash(err instanceof Error ? err.message : String(err), false);
@@ -725,6 +736,14 @@ export class FleetCanvas extends LitElement {
   }
 
   private async setResourceWatches(enabled: boolean) {
+    if (
+      !enabled &&
+      !window.confirm(
+        'Pause resource liveness watches? This stops background resource probes and marks cached resource status unknown. It does not stop apps, agents, builds, or host pressure metrics.',
+      )
+    ) {
+      return;
+    }
     this.resourceActionBusy = true;
     try {
       const result = await gateway.request<ResourceWatchSetEnabledResult>(
@@ -907,23 +926,30 @@ export class FleetCanvas extends LitElement {
         <button ?disabled=${this.resourceActionBusy} @click=${() => this.fetchResourcePressure()}>
           Refresh pressure
         </button>
-        <button ?disabled=${this.resourceActionBusy} @click=${() => this.previewResourceCleanup()}>
+        <button
+          title="Inspect the exact eligible resources and estimated process impact; does not stop anything"
+          ?disabled=${this.resourceActionBusy}
+          @click=${() => this.previewResourceCleanup()}
+        >
           Preview cleanup
         </button>
         <button
           class="danger"
+          title="Opens the same impact preview; shutdown requires a second explicit action"
           ?disabled=${this.resourceActionBusy}
-          @click=${() => this.cleanupBackgroundResources()}
+          @click=${() => this.previewResourceCleanup()}
         >
-          Stop idle resources
+          Review & stop idle
         </button>
         <button
+          title="Stops background resource liveness probes only; does not stop apps, agents, builds, or pressure metrics"
           ?disabled=${this.resourceActionBusy || !this.resourceWatchesEnabled}
           @click=${() => this.setResourceWatches(false)}
         >
           Pause watches
         </button>
         <button
+          title="Restarts node-owned resource liveness probes and repopulates cached resource status"
           ?disabled=${this.resourceActionBusy || this.resourceWatchesEnabled}
           @click=${() => this.setResourceWatches(true)}
         >
@@ -937,8 +963,23 @@ export class FleetCanvas extends LitElement {
               >${this.resourceActionFlash.slice(this.resourceActionFlash.indexOf(':') + 1)}</span
             >`
           : ''}
+        <span class="resource-watch-note">
+          Watches track resource liveness from cached node probes. Pausing stops those probes and
+          marks resource status unknown; it does not stop apps, agents, builds, or host pressure
+          metrics.
+        </span>
       </div>
       <machine-pressure-overview .snapshot=${this.resourcePressure}></machine-pressure-overview>
+      ${this.resourceCleanupPreview
+        ? html`<resource-cleanup-preview
+            .snapshot=${this.resourceCleanupPreview}
+            .busy=${this.resourceActionBusy}
+            @cleanup-preview-close=${() => {
+              if (!this.resourceActionBusy) this.resourceCleanupPreview = undefined;
+            }}
+            @cleanup-preview-confirm=${() => this.confirmResourceCleanup()}
+          ></resource-cleanup-preview>`
+        : ''}
       ${groups.length === 0
         ? html`<div class="empty">No resources found</div>`
         : groups.map(

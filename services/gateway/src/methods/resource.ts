@@ -11,6 +11,7 @@ import {
   ResourceHealthResult,
   ResourceListParams,
   ResourceListResult,
+  ResourcePressureCleanupCandidate,
   ResourcePressureConcern,
   ResourcePressureMachine,
   ResourcePressureSeverity,
@@ -334,7 +335,28 @@ export async function resourcePressureSnapshot(
       workingSlots: machines.reduce((sum, m) => sum + m.slots.working, 0),
     },
     machines,
-    cleanupCandidates,
+    cleanupCandidates: cleanupCandidates.map((target) => {
+      const machine = machines.find((candidate) => candidate.machine === target.machine);
+      const group = machine?.processAttribution.groups.find(
+        (candidate) =>
+          candidate.slotId === target.slotId && candidate.resourceId === target.resourceId,
+      );
+      return {
+        ...target,
+        ...(group
+          ? {
+              processImpact: {
+                process: group.topExecutable,
+                processCount: group.processCount,
+                treeCpuPercent: group.cpuPercent,
+                hotRssBytes: group.topRssBytes,
+                classification: group.classification,
+                confidence: group.confidence,
+              },
+            }
+          : {}),
+      };
+    }),
   };
 }
 
@@ -450,8 +472,8 @@ export function resourcePressureSnapshotForModel(
 function pressureCleanupCandidates(
   slots: SlotStatus[],
   resourcesBySlot: Map<string, Awaited<ReturnType<typeof resolvePressureSlotResources>>>,
-): ResourceCleanupResult['targets'] {
-  const targets: ResourceCleanupResult['targets'] = [];
+): ResourcePressureCleanupCandidate[] {
+  const targets: ResourcePressureCleanupCandidate[] = [];
   for (const slot of slots) {
     if (!slot.enabled || slot.lifecycle === 'disabled' || slot.lifecycle === 'manual') continue;
     if (!slotAllowsDefaultResourceCleanup(slot)) continue;
@@ -465,6 +487,10 @@ function pressureCleanupCandidates(
         resourceId: resource.id,
         label: resource.definition.label,
         status: resource.status,
+        slotLifecycle: slot.lifecycle,
+        currentRunId: slot.currentRunId ?? null,
+        effect: 'configured-shutdown-hook',
+        activeWorkExcluded: true,
       });
     }
   }

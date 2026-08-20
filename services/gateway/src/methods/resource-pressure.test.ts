@@ -7,8 +7,10 @@ let tmuxFailure = false;
 mock.module('../fleet/resource-manager.js', {
   namedExports: {
     executeResourceControl: async () => ({ ok: true }),
-    getActiveResources: () =>
-      new Map([['metro', { pid: 42, startedAt: collectedAt, runId: 'run-1' }]]),
+    getActiveResources: (slotId: string) =>
+      slotId === 'slot-1'
+        ? new Map([['metro', { pid: 42, startedAt: collectedAt, runId: 'run-1' }]])
+        : undefined,
     getCachedResourceStatus: () => 'running',
     getResourceWatchRuntimeState: () => ({ enabled: true, updatedAt: collectedAt }),
     pollSlotResources: async () => [],
@@ -92,6 +94,15 @@ mock.module('../fleet/state.js', {
           agent: 'working',
           currentRunId: 'run-1',
         },
+        {
+          slot: 'slot-2',
+          machine: 'macpro',
+          project: 'farmslot-farm',
+          enabled: true,
+          lifecycle: 'ready',
+          agent: 'idle',
+          currentRunId: null,
+        },
       ],
       machines: [
         {
@@ -157,7 +168,21 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   assert.equal(result.machines[0].processAttribution.groups[0].runId, 'run-1');
   assert.equal(result.machines[0].processAttribution.sampler?.executions, 1);
   assert.equal(result.machines[0].processAttribution.sampledProcesses, 1);
-  assert.equal(result.cleanupCandidates.length, 0);
+  assert.equal(result.cleanupCandidates.length, 1);
+  assert.deepEqual(
+    {
+      slotId: result.cleanupCandidates[0].slotId,
+      slotLifecycle: result.cleanupCandidates[0].slotLifecycle,
+      effect: result.cleanupCandidates[0].effect,
+      activeWorkExcluded: result.cleanupCandidates[0].activeWorkExcluded,
+    },
+    {
+      slotId: 'slot-2',
+      slotLifecycle: 'ready',
+      effect: 'configured-shutdown-hook',
+      activeWorkExcluded: true,
+    },
+  );
 
   tmuxFailure = true;
   const degraded = await resourcePressureSnapshot({ machine: 'macpro' });

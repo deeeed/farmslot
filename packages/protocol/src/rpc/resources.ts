@@ -259,6 +259,21 @@ export interface ResourcePressureMachine {
   };
 }
 
+export interface ResourcePressureCleanupCandidate extends ResourceCleanupTarget {
+  slotLifecycle: import('../contracts/index.js').SlotLifecycle;
+  currentRunId: string | null;
+  effect: 'configured-shutdown-hook';
+  activeWorkExcluded: true;
+  processImpact?: {
+    process: string;
+    processCount: number;
+    treeCpuPercent: number;
+    hotRssBytes: number;
+    classification: ProcessOwnershipClass;
+    confidence: ProcessAttributionConfidence;
+  };
+}
+
 export interface ResourcePressureSnapshotResult {
   checkedAt: string;
   watchState: { enabled: boolean; updatedAt: string | null };
@@ -275,5 +290,5 @@ export interface ResourcePressureSnapshotResult {
     workingSlots: number;
   };
   machines: ResourcePressureMachine[];
-  cleanupCandidates: ResourceCleanupResult['targets'];
+  cleanupCandidates: ResourcePressureCleanupCandidate[];
 }

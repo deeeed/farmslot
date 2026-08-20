@@ -8,6 +8,17 @@ type PressureGroup =
 
 const PRESSURE_CHART_SAMPLES = 30;
 
+type CleanupTarget = { machine: string; resourceId: string; slotId: string };
+
+export function cleanupTargetSetMatches(
+  reviewed: CleanupTarget[],
+  fresh: CleanupTarget[],
+): boolean {
+  const keys = (targets: CleanupTarget[]) =>
+    targets.map((target) => `${target.machine}:${target.slotId}:${target.resourceId}`).sort();
+  return keys(reviewed).join('\n') === keys(fresh).join('\n');
+}
+
 export function pressureSparklinePoints(values: number[], maxValue: number): string {
   const samples = values.slice(-PRESSURE_CHART_SAMPLES);
   if (samples.length === 0 || maxValue <= 0) return '';

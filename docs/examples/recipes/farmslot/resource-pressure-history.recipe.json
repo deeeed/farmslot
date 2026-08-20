@@ -50,6 +50,13 @@
         "next": "capture-pressure-history",
         "intent": "Press the selected machine Details through CDP and verify three real SVG history plots with core-normalized load."
       },
+      "assert-cleanup-preview": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs eval fleet --file apps/command-center/scripts/probes/resource-cleanup-preview.js",
+        "timeout_ms": 20000,
+        "next": "capture-cleanup-preview",
+        "intent": "Verify Preview cleanup and Review & stop idle open the same read-only impact review without mutating resources."
+      },
       "probe-pressure-rpc": {
         "action": "command",
         "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-pressure-rpc.mjs --machine '{{params.machine}}'",
@@ -62,8 +69,16 @@
         "path": "screenshots/resource-pressure-history.png",
         "label": "Core-aware pressure history and expandable process attribution",
         "note": "Reviewer evidence: bounded SVG trends, class pills, managed slot ownership, and sampler health",
-        "next": "done",
+        "next": "assert-cleanup-preview",
         "intent": "Record reviewer-visible proof of the lightweight resource pressure dashboard."
+      },
+      "capture-cleanup-preview": {
+        "action": "ui.screenshot",
+        "path": "screenshots/resource-cleanup-preview.png",
+        "label": "Two-step idle resource cleanup impact review",
+        "note": "Reviewer evidence: exact targets, configured-hook effect, process impact, exclusions, and explicit second action",
+        "next": "done",
+        "intent": "Record the shared read-only preview used by both cleanup entry points before any shutdown action."
       },
       "done": {
         "action": "end",

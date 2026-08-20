@@ -4,12 +4,20 @@ import { test } from 'node:test';
 import type { ProcessAttributionGroup } from '@farmslot/protocol';
 
 import {
+  cleanupTargetSetMatches,
   pressureProcessCpu,
   pressureProcessName,
   pressureSampleAge,
   pressureSparklinePoints,
   visiblePressureGroups,
 } from './machine-pressure-model.js';
+
+test('cleanup target comparison is order-independent and detects drift', () => {
+  const first = { machine: 'macwork', slotId: 'slot-1', resourceId: 'metro' };
+  const second = { machine: 'macpro', slotId: 'slot-2', resourceId: 'browser' };
+  assert.equal(cleanupTargetSetMatches([first, second], [second, first]), true);
+  assert.equal(cleanupTargetSetMatches([first], [second]), false);
+});
 
 function group(classification: ProcessAttributionGroup['classification'], pid: number) {
   return { classification, rootPid: pid } as ProcessAttributionGroup;
