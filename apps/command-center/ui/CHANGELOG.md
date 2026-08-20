@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.7.0 - 2026-08-20
+
 - perf(resources): make Resource view discovery cache-first instead of running `resource.health` for every slot, show bounded machine pressure trends plus read-only process attribution, and require a two-step cleanup impact review with explicit watch-pause guidance.
 - fix(runners): select `grok-4.6` by default for the standalone Grok runner.
 - fix(ci-watch): expose Check now in run summaries, share one bounded poke controller across run surfaces, and hide the polling countdown while a worker fix is active.

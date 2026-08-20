@@ -1,10 +1,11 @@
 {
-  "version": "0.6.1",
-  "date": "2026-08-11",
+  "version": "0.7.0",
+  "date": "2026-08-20",
   "items": [
-    "fix(copilot): let run diagnostics read redacted prepare logs explicitly disclosed by gateway step evidence while keeping filesystem access bounded to `.omx/logs`",
-    "feat(run-monitor): per-flow turn/token soft budgets for mechanical flows, with built-in update-branch defaults, pre-delivery warm baselines, bounded local/remote transcript sampling through runner capabilities, fail-closed integrity warnings, and retry-safe confirmed nudges (MANUAL-000096)",
-    "fix(artifacts): treat cleaned or never-created run artifact roots as a quiet not-found result while preserving diagnostics for real filesystem failures",
-    "fix(runs): route terminal no-code dispositions through explicit confirmation on publication-gated worker flows, suppress publication on gate-less flows, and preserve that disposition when replaying completion or gate steps instead of presenting autonomous dev runs as publish-ready"
+    "feat(resources): retain a bounded per-machine pressure history, attribute process ancestry to active, retained, stale, manual, or unknown run/tmux/resource ownership, and attach configured-hook cleanup impact to the read-only pressure snapshot",
+    "perf(resources): fan legacy and explicitly typed iOS simulator watches into the node's shared inventory provider instead of multiplying `simctl` processes by slot count",
+    "fix(dispatch): ship complete remote observability bundles, fall back from incomplete immutable bundles, and recognize Claude's Churning progress without duplicate task sends",
+    "fix(runners): launch standalone Grok with the shared `grok-4.6` default",
+    "fix(publication): preserve hosted evidence links while stripping task-local paths reintroduced by generated PR sections"
   ]
 }

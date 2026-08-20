@@ -1,7 +1,11 @@
 {
-  "version": "0.6.1",
-  "date": "2026-08-11",
+  "version": "0.7.0",
+  "date": "2026-08-20",
   "items": [
-    "fix(pairing): let operators select the gateway profiles encoded in Companion pairing QR codes, invalidate stale QR codes when pairing inputs change, default to one LAN address instead of syncing every detected interface, choose existing principals from the gateway inventory, and revoke active device credentials from the same access panel"
+    "perf(resources): make Resource view discovery cache-first instead of running `resource.health` for every slot, show bounded machine pressure trends plus read-only process attribution, and require a two-step cleanup impact review with explicit watch-pause guidance",
+    "fix(runners): select `grok-4.6` by default for the standalone Grok runner",
+    "fix(runs): color-code projects consistently with Companion and show the worker's parsed current checklist item in active mini pipelines",
+    "fix(copilot): make the shared tmux terminal the primary Co-Pilot surface, collapse runtime controls, remove the redundant message composer, and use the gateway-owned pane identity instead of filtered inventory discovery",
+    "fix(dispatch): cache execution-template variants so domain and mode filters switch immediately"
   ]
 }
