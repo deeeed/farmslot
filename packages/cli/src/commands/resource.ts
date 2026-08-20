@@ -69,24 +69,44 @@ export function registerResourceCommand(program: Command): void {
     .command('pressure')
     .description('Show bounded host pressure history and process attribution')
     .option('--machine <machine>', 'Filter by machine')
+    .option('--machines <machines...>', 'Filter by one or more machines')
     .option('--project <project>', 'Filter by project')
-    .action(async (options: { machine?: string; project?: string }, command: Command) => {
-      const { client, output } = resolveContext(command);
-      const emit = createEmitter(output, command);
-      try {
-        const result = await withProgress(
-          'Loading resource pressure',
-          () =>
-            client.call<ResourcePressureSnapshotResult>(Methods.RESOURCE_PRESSURE_SNAPSHOT, {
-              ...(options.machine ? { machine: options.machine } : {}),
-              ...(options.project ? { project: options.project } : {}),
-            }),
-          !emit.machine,
-        );
-        if (emit.machine) emit.ok(result);
-        else output.write(`${formatResourcePressure(result)}\n`);
-      } catch (error) {
-        emit.fail(error);
-      }
-    });
+    .option('--projects <projects...>', 'Filter by one or more projects')
+    .action(
+      async (
+        options: {
+          machine?: string;
+          machines?: string[];
+          project?: string;
+          projects?: string[];
+        },
+        command: Command,
+      ) => {
+        const { client, output } = resolveContext(command);
+        const emit = createEmitter(output, command);
+        const machines = [
+          ...(options.machine ? [options.machine] : []),
+          ...(options.machines ?? []),
+        ];
+        const projects = [
+          ...(options.project ? [options.project] : []),
+          ...(options.projects ?? []),
+        ];
+        try {
+          const result = await withProgress(
+            'Loading resource pressure',
+            () =>
+              client.call<ResourcePressureSnapshotResult>(Methods.RESOURCE_PRESSURE_SNAPSHOT, {
+                ...(machines.length ? { machines: [...new Set(machines)] } : {}),
+                ...(projects.length ? { projects: [...new Set(projects)] } : {}),
+              }),
+            !emit.machine,
+          );
+          if (emit.machine) emit.ok(result);
+          else output.write(`${formatResourcePressure(result)}\n`);
+        } catch (error) {
+          emit.fail(error);
+        }
+      },
+    );
 }

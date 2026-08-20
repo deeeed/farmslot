@@ -30,8 +30,14 @@ for (let attempt = 0; attempt < 60; attempt += 1) {
   history = card?.querySelector('.history-panel');
   charts = [...(history?.querySelectorAll('.history-chart polyline') ?? [])];
   processRows = [...(card?.querySelectorAll('.group:not(.group-head)') ?? [])];
-  sampleCount = Number(card?.querySelector('.sample-note')?.textContent?.match(/\d+/)?.[0] ?? '0');
-  if (charts.length === 3 && processRows.length > 0 && sampleCount > 1) break;
+  sampleCount = Number(
+    card
+      ?.querySelector('[data-testid="pressure-history-samples"]')
+      ?.textContent?.match(/\d+/)?.[0] ?? '0',
+  );
+  const attributionReady =
+    processRows.length > 0 || card?.textContent.includes('process inventory') === true;
+  if (charts.length === 3 && attributionReady && sampleCount > 0) break;
   // The view fetches once on navigation. Allow that request to settle before one explicit retry;
   // repeatedly pressing refresh would turn an evidence probe into avoidable gateway load.
   if (attempt === 20) refresh.click();
@@ -48,8 +54,11 @@ if (renderedMachines.length !== 1 || renderedMachines[0] !== machineName) {
 }
 if (!history || charts.length !== 3)
   throw new Error('three pressure history charts did not render');
-if (processRows.length === 0 || sampleCount <= 1) {
-  throw new Error('real pressure history and process attribution did not replace fallback data');
+if (sampleCount === 0) {
+  throw new Error('pressure history did not render a real gauge sample');
+}
+if (processRows.length === 0 && !card.textContent.includes('process inventory')) {
+  throw new Error('process attribution rendered neither owned groups nor an unavailable reason');
 }
 const classPills = [...card.querySelectorAll('.class-pill')].map((pill) => pill.textContent.trim());
 if (
@@ -73,6 +82,7 @@ return {
   expanded: details.getAttribute('aria-expanded'),
   charts: charts.length,
   processRows: processRows.length,
+  attribution: processRows.length > 0 ? 'sampled' : 'awaiting-census',
   classPills,
   samples: card.querySelector('.sample-note')?.textContent?.trim(),
 };

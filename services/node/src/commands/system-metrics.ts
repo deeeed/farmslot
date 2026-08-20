@@ -34,6 +34,7 @@ const processSampler = {
 };
 let processSampleId = 0;
 let processInventoryInFlight: Promise<NodeProcessInventory> | null = null;
+let processInventoryPriorityPids = new Set<number>();
 let pendingProcessInventory: NodeProcessInventory | undefined;
 let lastProcessInventoryAt = 0;
 let lastProcessInventoryFailedAt = 0;
@@ -261,6 +262,7 @@ export function collectProcessInventory(
   priorityPids: ReadonlySet<number> = new Set(),
 ): Promise<NodeProcessInventory> {
   processSampler.attempts += 1;
+  for (const pid of priorityPids) processInventoryPriorityPids.add(pid);
   if (processInventoryInFlight) {
     processSampler.skippedBusy += 1;
     return processInventoryInFlight;
@@ -274,7 +276,11 @@ export function collectProcessInventory(
       processSampler.lastError = undefined;
       lastProcessInventoryAt = Date.now();
       lastProcessInventoryFailedAt = 0;
-      const parsed = parseProcessInventory(output, PROCESS_SAMPLE_MAX_ENTRIES, priorityPids);
+      const parsed = parseProcessInventory(
+        output,
+        PROCESS_SAMPLE_MAX_ENTRIES,
+        processInventoryPriorityPids,
+      );
       return {
         generation: PROCESS_GENERATION,
         sampleId,
@@ -308,6 +314,7 @@ export function collectProcessInventory(
     })
     .finally(() => {
       processInventoryInFlight = null;
+      processInventoryPriorityPids = new Set();
     });
   return processInventoryInFlight;
 }

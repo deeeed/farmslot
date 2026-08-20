@@ -14,8 +14,10 @@ test('pressure formatter includes trends, classes, sampler degradation, and no m
     filters: {},
     summary: {
       machines: 1,
+      omittedMachines: 0,
       severity: 'warn',
       cleanupCandidates: 0,
+      omittedCleanupCandidates: 0,
       runningResources: 1,
       staleResources: 0,
       busySlots: 1,

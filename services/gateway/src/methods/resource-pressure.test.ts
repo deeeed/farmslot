@@ -4,6 +4,7 @@ import { mock, test } from 'node:test';
 const collectedAt = new Date().toISOString();
 let tmuxFailure = false;
 let omitPollStatus = false;
+let resourceResolutionCalls = 0;
 const controlledTargets: string[] = [];
 
 mock.module('../fleet/resource-manager.js', {
@@ -19,19 +20,22 @@ mock.module('../fleet/resource-manager.js', {
     getCachedResourceStatus: () => 'running',
     getResourceWatchRuntimeState: () => ({ enabled: true, updatedAt: collectedAt }),
     pollSlotResources: async () => (omitPollStatus ? [] : [{ id: 'metro', status: 'stopped' }]),
-    resolveSlotResources: async () => [
-      {
-        id: 'metro',
-        status: 'running',
-        definition: {
-          type: 'dev-server',
-          label: 'Metro',
-          streamable: false,
-          controllable: true,
-          hooks: { shutdown: 'stop-metro' },
+    resolveSlotResources: async () => {
+      resourceResolutionCalls += 1;
+      return [
+        {
+          id: 'metro',
+          status: 'running',
+          definition: {
+            type: 'dev-server',
+            label: 'Metro',
+            streamable: false,
+            controllable: true,
+            hooks: { shutdown: 'stop-metro' },
+          },
         },
-      },
-    ],
+      ];
+    },
     setResourceWatchesEnabled: async () => ({ ok: true, enabled: true }),
   },
 });
@@ -50,7 +54,7 @@ mock.module('../fleet/node-health.js', {
       generation: 'node:1',
       sampleId: 1,
       collectedAt,
-      totalProcesses: 1,
+      totalProcesses: 2,
       maxEntries: 256,
       truncated: false,
       health: {
@@ -67,6 +71,14 @@ mock.module('../fleet/node-health.js', {
           ppid: 1,
           cpuPercent: 20,
           rssBytes: 1_048_576,
+          elapsedSeconds: 10,
+          executable: 'node',
+        },
+        {
+          pid: 43,
+          ppid: 1,
+          cpuPercent: 10,
+          rssBytes: 524_288,
           elapsedSeconds: 10,
           executable: 'node',
         },
@@ -108,6 +120,15 @@ mock.module('../fleet/state.js', {
           agent: 'idle',
           currentRunId: null,
         },
+        {
+          slot: 'foreign-slot',
+          machine: 'macpro',
+          project: 'other-farm',
+          enabled: true,
+          lifecycle: 'busy',
+          agent: 'working',
+          currentRunId: 'run-2',
+        },
       ],
       machines: [
         {
@@ -133,7 +154,10 @@ mock.module('../fleet/state.js', {
 
 mock.module('../runs/store.js', {
   namedExports: {
-    getAllRuns: () => [{ id: 'run-1', status: 'monitoring' }],
+    getAllRuns: () => [
+      { id: 'run-1', slotId: 'slot-1', status: 'monitoring' },
+      { id: 'run-2', slotId: 'foreign-slot', status: 'monitoring' },
+    ],
   },
 });
 
@@ -150,6 +174,13 @@ mock.module('./tmux-workers.js', {
             pid: 42,
             linkedSlotId: 'slot-1',
             linkedRunId: 'run-1',
+            status: { label: 'active', source: 'hook', confidence: 'high', state: 'active' },
+          },
+          {
+            ref: { nodeId: 'macpro', session: 'foreign-slot', target: 'foreign-slot:dev' },
+            pid: 43,
+            linkedSlotId: 'foreign-slot',
+            linkedRunId: 'run-2',
             status: { label: 'active', source: 'hook', confidence: 'high', state: 'active' },
           },
         ],
@@ -201,6 +232,12 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   assert.equal(busyCleanup.targets[0].ok, false);
   assert.equal(busyCleanup.ok, false);
   assert.deepEqual(controlledTargets, ['slot-2:metro', 'slot-2:metro']);
+  const wrongMachineCleanup = await resourceCleanup({
+    dryRun: false,
+    targets: [{ machine: 'mini', slotId: 'slot-2', resourceId: 'metro' }],
+  });
+  assert.equal(wrongMachineCleanup.targets[0].project, 'unknown');
+  assert.match(wrongMachineCleanup.targets[0].detail ?? '', /slot no longer exists/);
 
   const hostOnly = await resourceHostPressure('macpro', 'farmslot-farm');
   assert.equal(hostOnly.machine, 'macpro');
@@ -211,11 +248,17 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
     projects: ['farmslot-farm'],
   });
   assert.equal(result.machines.length, 1);
+  assert.equal(result.summary.omittedMachines, 0);
+  assert.equal(result.summary.omittedCleanupCandidates, 0);
   assert.equal(result.machines[0].history.length, 1);
   assert.equal(result.machines[0].processAttribution.groups[0].classification, 'active');
   assert.equal(result.machines[0].processAttribution.groups[0].runId, 'run-1');
   assert.equal(result.machines[0].processAttribution.sampler?.executions, 1);
-  assert.equal(result.machines[0].processAttribution.sampledProcesses, 1);
+  assert.equal(result.machines[0].processAttribution.sampledProcesses, 2);
+  assert.doesNotMatch(
+    JSON.stringify(result.machines[0].processAttribution.groups),
+    /run-2|foreign-slot/,
+  );
   assert.equal(result.cleanupCandidates.length, 1);
   assert.deepEqual(
     {
@@ -231,11 +274,16 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
       activeWorkExcluded: true,
     },
   );
+  const resolutionCallsAfterFirstSnapshot = resourceResolutionCalls;
 
   tmuxFailure = true;
-  const degraded = await resourcePressureSnapshot({ machine: 'macpro' });
+  const degraded = await resourcePressureSnapshot({
+    machine: 'macpro',
+    project: 'farmslot-farm',
+  });
   tmuxFailure = false;
   assert.equal(degraded.machines[0].history.length, 1);
+  assert.equal(resourceResolutionCalls, resolutionCallsAfterFirstSnapshot);
   assert.equal(degraded.machines[0].processAttribution.groups[0].classification, 'active');
   assert.match(degraded.machines[0].processAttribution.degradedReason ?? '', /tmux timeout/i);
 

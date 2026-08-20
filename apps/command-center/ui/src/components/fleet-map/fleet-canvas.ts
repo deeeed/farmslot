@@ -12,7 +12,6 @@ import type {
   ResourceCleanupResult,
   ResourceListResult,
   ResourcePressureCleanupCandidate,
-  ResourcePressureSnapshotParams,
   ResourcePressureSnapshotResult,
   ResourceStatus,
   ResourceStatusUpdatedPayload,
@@ -456,17 +455,11 @@ export class FleetCanvas extends LitElement {
 
   private syncState(s: AppState) {
     const prev = this.slots;
-    const previousPressureFilter = JSON.stringify([this.filterProjects, this.filterMachines]);
     this.slots = s.fleet?.slots ?? [];
     this.hydrating = isHydrating(s, 'fleet');
     this.bootstrapFailed = s.bootstrapFailed.fleet;
     this.filterProjects = s.globalFilters.projects;
     this.filterMachines = s.globalFilters.machines;
-    const pressureFilterChanged =
-      previousPressureFilter !== JSON.stringify([this.filterProjects, this.filterMachines]);
-    if (pressureFilterChanged && this.groupBy === 'resource' && this._resourceFetched) {
-      void this.fetchResourcePressure();
-    }
     // Populate machineHealthMap from fleet.machines
     if (s.fleet?.machines) {
       const next = new Map(this.machineHealthMap);
@@ -596,7 +589,7 @@ export class FleetCanvas extends LitElement {
     try {
       this.resourcePressure = await gateway.request<ResourcePressureSnapshotResult>(
         Methods.RESOURCE_PRESSURE_SNAPSHOT,
-        this.pressureRequestParams(),
+        {},
       );
       this.resourceWatchesEnabled = this.resourcePressure.watchState.enabled;
     } catch (err) {
@@ -605,14 +598,6 @@ export class FleetCanvas extends LitElement {
         err instanceof Error ? err.message : String(err),
       );
     }
-  }
-
-  private pressureRequestParams(): ResourcePressureSnapshotParams {
-    const machines = this.pressureVisibleMachines;
-    return {
-      ...(machines ? { machines } : {}),
-      ...(this.filterProjects.length > 0 ? { projects: this.filterProjects } : {}),
-    };
   }
 
   private get filteredSlots(): SlotStatus[] {
@@ -732,7 +717,7 @@ export class FleetCanvas extends LitElement {
     try {
       const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
         Methods.RESOURCE_PRESSURE_SNAPSHOT,
-        this.pressureRequestParams(),
+        {},
       );
       this.resourcePressure = snapshot;
       this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
@@ -764,14 +749,13 @@ export class FleetCanvas extends LitElement {
     try {
       const fresh = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
         dryRun: true,
-        ...this.pressureRequestParams(),
         targets: selectedTargets,
       });
       const freshTargets = this.cleanupTargetsForFilters(fresh.targets);
       if (!cleanupTargetsRemainEligible(selectedTargets, freshTargets)) {
         const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
           Methods.RESOURCE_PRESSURE_SNAPSHOT,
-          this.pressureRequestParams(),
+          {},
         );
         this.resourcePressure = snapshot;
         this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
@@ -1050,8 +1034,8 @@ export class FleetCanvas extends LitElement {
         <span class="resource-watch-note">
           Watches track resource liveness from cached node probes. Pausing stops those probes and
           marks resource status unknown; it does not stop apps, agents, builds, or host pressure
-          metrics. Slot search limits visible machine cards and cleanup rows; pressure values remain
-          whole-machine.
+          metrics. Global selectors and slot search limit visible machine cards and cleanup rows;
+          pressure values remain whole-machine.
         </span>
       </div>
       <machine-pressure-overview

@@ -48,7 +48,11 @@ import { loadFleetStatus } from '../fleet/state.js';
 
 const RESOURCE_STATUSES: ResourceStatus[] = ['unknown', 'running', 'stopped', 'error', 'stale'];
 const PRESSURE_RESOURCE_RESOLUTION_CONCURRENCY = 4;
+const PRESSURE_RESOURCE_CACHE_TTL_MS = 30_000;
+const PRESSURE_RESOURCE_CACHE_MAX_SLOTS = 512;
 const PROCESS_INVENTORY_MAX_AGE_MS = 7 * 60_000;
+const MAX_PRESSURE_MACHINES = 32;
+const MAX_PRESSURE_CLEANUP_CANDIDATES = 256;
 
 const EMPTY_PROCESS_CLASS_COUNTS: Record<ProcessOwnershipClass, number> = {
   active: 0,
@@ -57,6 +61,10 @@ const EMPTY_PROCESS_CLASS_COUNTS: Record<ProcessOwnershipClass, number> = {
   manual: 0,
   unknown: 0,
 };
+const pressureResourceCache = new Map<
+  string,
+  { cachedAt: number; resources: Awaited<ReturnType<typeof resolveSlotResources>> }
+>();
 
 export async function resourceList(params: ResourceListParams): Promise<ResourceListResult> {
   const resources = await resolveSlotResources(params.slotId);
@@ -174,7 +182,10 @@ export async function resourceCleanup(
     for (const requested of params.targets) {
       const key = `${requested.machine}:${requested.slotId}:${requested.resourceId}`;
       if (resolvedKeys.has(key)) continue;
-      const slot = fleet.slots.find((candidate) => candidate.slot === requested.slotId);
+      const slot = fleet.slots.find(
+        (candidate) =>
+          candidate.machine === requested.machine && candidate.slot === requested.slotId,
+      );
       targets.push({
         slotId: requested.slotId,
         machine: requested.machine,
@@ -269,8 +280,11 @@ export async function resourcePressureSnapshot(
     machineNames.add(health.machine);
   }
 
+  const sortedMachineNames = [...machineNames].sort();
+  const omittedMachines = Math.max(0, sortedMachineNames.length - MAX_PRESSURE_MACHINES);
+  const returnedMachineNames = sortedMachineNames.slice(0, MAX_PRESSURE_MACHINES);
   const machines: ResourcePressureMachine[] = [];
-  for (const machine of [...machineNames].sort()) {
+  for (const machine of returnedMachineNames) {
     const health = healthByMachine.get(machine);
     const machineSlots = slots.filter((slot) => slot.machine === machine);
     const byStatus = emptyStatusCounts();
@@ -306,12 +320,22 @@ export async function resourcePressureSnapshot(
         status: getCachedResourceStatus(slot.slot, resourceId),
       })),
     );
+    const scopedSlotIds = new Set(machineSlots.map((slot) => slot.slot));
+    const scopedRunIds = new Set(
+      machineSlots.flatMap((slot) => (slot.currentRunId ? [slot.currentRunId] : [])),
+    );
     const attribution = processInventory
       ? attributeProcessInventory({
           inventory: processInventory,
-          workers: tmuxWorkers.filter((worker) => worker.ref.nodeId === machine),
+          workers: tmuxWorkers.filter(
+            (worker) =>
+              worker.ref.nodeId === machine &&
+              (!worker.linkedSlotId || scopedSlotIds.has(worker.linkedSlotId)),
+          ),
           slots: machineSlots,
-          runs: allRuns,
+          runs: allRuns.filter(
+            (run) => scopedRunIds.has(run.id) || (run.slotId && scopedSlotIds.has(run.slotId)),
+          ),
           resources: attributionResources,
         })
       : {
@@ -377,6 +401,18 @@ export async function resourcePressureSnapshot(
     });
   }
 
+  const returnedMachineSet = new Set(returnedMachineNames);
+  const returnedCleanupCandidates = cleanupCandidates.filter((target) =>
+    returnedMachineSet.has(target.machine),
+  );
+  const boundedCleanupCandidates = returnedCleanupCandidates.slice(
+    0,
+    MAX_PRESSURE_CLEANUP_CANDIDATES,
+  );
+  const omittedCleanupCandidates = Math.max(
+    0,
+    cleanupCandidates.length - boundedCleanupCandidates.length,
+  );
   return {
     checkedAt: new Date().toISOString(),
     watchState,
@@ -385,35 +421,34 @@ export async function resourcePressureSnapshot(
     filters: params,
     summary: {
       machines: machines.length,
+      omittedMachines,
       severity: aggregateSeverity(machines),
-      cleanupCandidates: cleanupCandidates.length,
+      cleanupCandidates: boundedCleanupCandidates.length,
+      omittedCleanupCandidates,
       runningResources: machines.reduce((sum, m) => sum + m.resources.byStatus.running, 0),
       staleResources: machines.reduce((sum, m) => sum + m.resources.byStatus.stale, 0),
       busySlots: machines.reduce((sum, m) => sum + m.slots.busy, 0),
       workingSlots: machines.reduce((sum, m) => sum + m.slots.working, 0),
     },
     machines,
-    cleanupCandidates: cleanupCandidates.map((target) => {
+    cleanupCandidates: boundedCleanupCandidates.map((target) => {
       const machine = machines.find((candidate) => candidate.machine === target.machine);
       const exactGroup = machine?.processAttribution.groups.find(
         (candidate) =>
           candidate.slotId === target.slotId && candidate.resourceId === target.resourceId,
       );
-      const group =
-        exactGroup ??
-        machine?.processAttribution.groups.find((candidate) => candidate.slotId === target.slotId);
       return {
         ...target,
-        ...(group
+        ...(exactGroup
           ? {
               processImpact: {
-                scope: exactGroup ? 'resource' : 'slot-related',
-                process: group.topExecutable,
-                processCount: group.processCount,
-                treeCpuPercent: group.cpuPercent,
-                hotRssBytes: group.topRssBytes,
-                classification: group.classification,
-                confidence: group.confidence,
+                scope: 'resource' as const,
+                process: exactGroup.topExecutable,
+                processCount: exactGroup.processCount,
+                treeCpuPercent: exactGroup.cpuPercent,
+                hotRssBytes: exactGroup.topRssBytes,
+                classification: exactGroup.classification,
+                confidence: exactGroup.confidence,
               },
             }
           : {}),
@@ -576,8 +611,26 @@ export function isUnresolvableSlotError(err: unknown): boolean {
 }
 
 export async function resolvePressureSlotResources(slotId: string) {
+  const cached = pressureResourceCache.get(slotId);
+  if (cached && Date.now() - cached.cachedAt < PRESSURE_RESOURCE_CACHE_TTL_MS) {
+    return cached.resources.map((resource) => ({
+      ...resource,
+      status: getCachedResourceStatus(slotId, resource.id),
+    }));
+  }
   try {
-    return await resolveSlotResources(slotId);
+    const resources = await resolveSlotResources(slotId);
+    if (
+      !pressureResourceCache.has(slotId) &&
+      pressureResourceCache.size >= PRESSURE_RESOURCE_CACHE_MAX_SLOTS
+    ) {
+      const oldest = [...pressureResourceCache.entries()].sort(
+        ([, a], [, b]) => a.cachedAt - b.cachedAt,
+      )[0]?.[0];
+      if (oldest) pressureResourceCache.delete(oldest);
+    }
+    pressureResourceCache.set(slotId, { cachedAt: Date.now(), resources });
+    return resources;
   } catch (err) {
     if (!isUnresolvableSlotError(err)) throw err;
     console.warn(`[resource] skipping pressure resources for ${slotId}: ${(err as Error).message}`);

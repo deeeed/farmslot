@@ -579,7 +579,9 @@ export class MachinePressureOverview extends LitElement {
     return html`<div class="history-panel">
       <div class="history-heading">
         <strong>Pressure history</strong>
-        <span class="sample-note">${history.length} samples · ${minutes} min</span>
+        <span class="sample-note" data-testid="pressure-history-samples"
+          >${history.length} samples · ${minutes} min</span
+        >
       </div>
       ${this.renderHistorySeries(
         'CPU utilization',

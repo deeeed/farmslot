@@ -87,6 +87,26 @@ test('concurrent inventory requests share one command and report skipped overlap
   assert.ok(a.health.skippedBusy >= 1);
 });
 
+test('an in-flight census incorporates ownership PIDs from later callers', async () => {
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const lines = [psLine(1, 0)];
+  for (let pid = 2; pid <= 300; pid += 1) lines.push(psLine(pid, 1, 300 - pid, 1024));
+  lines.push(psLine(900, 1, 0, 1024));
+  const runner = async () => {
+    await gate;
+    return lines.join('\n');
+  };
+  const first = collectProcessInventory(runner);
+  const second = collectProcessInventory(runner, new Set([900]));
+  release?.();
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(a.sampleId, b.sampleId);
+  assert.ok(a.processes.some((process) => process.pid === 900));
+});
+
 test('process sampling cadence is five minutes normally and one minute under pressure', () => {
   assert.equal(PROCESS_INVENTORY_FAILURE_RETRY_MS, 60_000);
   assert.equal(

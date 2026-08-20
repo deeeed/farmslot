@@ -234,10 +234,11 @@ await test('resource_pressure_snapshot returns read-only pressure summary', asyn
   assert(!r.isError, `error: ${r.content}`);
   const data = JSON.parse(r.content);
   assert(typeof data.checkedAt === 'string', 'missing checkedAt');
-  assert(typeof data.watchAutoStartEnabled === 'boolean', 'missing watch state');
   assert(typeof data.summary?.machines === 'number', 'missing machine count');
+  assert(typeof data.summary?.cleanupCandidates === 'number', 'missing cleanup candidate count');
   assert(Array.isArray(data.machines), 'missing machines array');
-  assert(Array.isArray(data.cleanupCandidates), 'missing cleanup candidates array');
+  assert(!('watchAutoStartEnabled' in data), 'model projection leaked watch control state');
+  assert(!('cleanupCandidates' in data), 'model projection leaked cleanup candidate details');
 });
 
 await test('read-only investigator guard rejects recursion and write tools', async () => {

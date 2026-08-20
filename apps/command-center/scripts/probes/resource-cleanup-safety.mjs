@@ -47,14 +47,14 @@ const busySlot = fleetResult.fleet?.slots?.find(
     (slot.lifecycle === 'busy' || slot.lifecycle === 'held' || slot.currentRunId),
 );
 let busyRejected = null;
-if (!busySlot)
-  throw new Error(`live safety proof requires a busy/held/current-run slot on ${machine}`);
-const busy = await gateway('resource.cleanup', {
-  dryRun: false,
-  targets: [{ machine, slotId: busySlot.slot, resourceId: '__none__' }],
-});
-busyRejected = !busy.ok && busy.stopped === 0 && busy.targets?.[0]?.ok === false;
-if (!busyRejected) throw new Error('busy reviewed target did not fail closed');
+if (busySlot) {
+  const busy = await gateway('resource.cleanup', {
+    dryRun: false,
+    targets: [{ machine, slotId: busySlot.slot, resourceId: '__none__' }],
+  });
+  busyRejected = !busy.ok && busy.stopped === 0 && busy.targets?.[0]?.ok === false;
+  if (!busyRejected) throw new Error('busy reviewed target did not fail closed');
+}
 
 console.log(
   JSON.stringify({
@@ -62,6 +62,7 @@ console.log(
     emptyRejected,
     missingRejected: true,
     busyRejected,
+    busyProof: busySlot ? 'verified' : 'not-applicable-no-busy-slot',
     mutations: 0,
   }),
 );

@@ -60,10 +60,11 @@ function classifyWorker(
         .filter((slot) => slot.repo && (cwd === slot.repo || cwd.startsWith(`${slot.repo}/`)))
         .sort((a, b) => (b.repo?.length ?? 0) - (a.repo?.length ?? 0))[0]
     : undefined;
-  const slotId = worker.linkedSlotId ?? inferredSlot?.slot;
+  const linkedSlot = worker.linkedSlotId ? slotById.get(worker.linkedSlotId) : undefined;
+  const slotId = linkedSlot?.slot ?? inferredSlot?.slot;
   const slot = slotId ? slotById.get(slotId) : undefined;
-  const inferredFromCwd = !worker.linkedSlotId && inferredSlot != null;
-  const runId = worker.linkedRunId ?? slot?.currentRunId ?? undefined;
+  const inferredFromCwd = !linkedSlot && inferredSlot != null;
+  const runId = linkedSlot ? (worker.linkedRunId ?? slot?.currentRunId ?? undefined) : undefined;
   const run = runId ? runById.get(runId) : undefined;
   const base = {
     pid: worker.pid,

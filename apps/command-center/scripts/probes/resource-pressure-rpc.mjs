@@ -17,6 +17,12 @@ const { stdout } = await execFileAsync(
 const snapshot = JSON.parse(stdout);
 const machine = snapshot.machines?.find((candidate) => candidate.machine === machineName);
 if (!machine) throw new Error(`resource pressure RPC omitted ${machineName}`);
+if (
+  typeof snapshot.summary?.omittedMachines !== 'number' ||
+  typeof snapshot.summary?.omittedCleanupCandidates !== 'number'
+) {
+  throw new Error('resource pressure RPC omitted envelope truncation metadata');
+}
 if (!Array.isArray(machine.history) || machine.history.length === 0) {
   throw new Error('resource pressure RPC returned no history');
 }

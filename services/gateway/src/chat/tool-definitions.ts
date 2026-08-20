@@ -380,7 +380,7 @@ export const FLEET_TOOLS: Tool[] = [
   {
     name: 'resource_pressure_snapshot',
     description:
-      'Read a fleet resource-pressure snapshot for Co-Pilot diagnosis: machine health, slot load, resource status counts, and idle cleanup candidates. Read-only; use this before proposing cleanup or watch changes.',
+      'Read a bounded fleet resource-pressure snapshot for Co-Pilot diagnosis: machine health, slot load, resource status counts, cleanup-candidate counts, and sanitized process attribution. Read-only; exact cleanup targets remain operator-only.',
     parameters: Type.Object({
       machine: Type.Optional(
         Type.String({

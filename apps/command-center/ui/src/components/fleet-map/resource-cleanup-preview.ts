@@ -168,9 +168,14 @@ export class ResourceCleanupPreview extends LitElement {
 
   protected willUpdate(changed: Map<PropertyKey, unknown>) {
     if (changed.has('snapshot')) {
-      this.selectedKeys = new Set(
-        (this.snapshot?.cleanupCandidates ?? []).map((candidate) => this.key(candidate)),
-      );
+      const candidates = this.snapshot?.cleanupCandidates ?? [];
+      const candidateKeys = new Set(candidates.map((candidate) => this.key(candidate)));
+      const previousSnapshot = changed.get('snapshot') as
+        | ResourcePressureSnapshotResult
+        | undefined;
+      this.selectedKeys = previousSnapshot
+        ? new Set([...this.selectedKeys].filter((key) => candidateKeys.has(key)))
+        : candidateKeys;
     }
   }
 
@@ -253,11 +258,7 @@ export class ResourceCleanupPreview extends LitElement {
                         <div>
                           ${impact.classification} ownership · ${impact.confidence} confidence
                         </div>
-                        <div>
-                          ${impact.scope === 'resource'
-                            ? 'Verified resource-owned tree'
-                            : 'Related slot tree; not verified as the resource owner'}
-                        </div>`
+                        <div>Verified resource-owned tree</div>`
                     : html`Process impact is unavailable in the bounded census. The project shutdown
                       hook determines the exact processes it stops.`}
                 </div>

@@ -69,7 +69,7 @@
         "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-cleanup-safety.mjs --machine '{{params.machine}}'",
         "timeout_ms": 20000,
         "next": "open-and-assert-machine-details",
-        "intent": "Prove live cleanup rejects empty, missing, and busy exact targets without mutating a real resource."
+        "intent": "Prove live cleanup rejects empty and missing exact targets without mutation, and rejects a busy target when the selected machine has one."
       },
       "capture-pressure-history": {
         "action": "ui.screenshot",
