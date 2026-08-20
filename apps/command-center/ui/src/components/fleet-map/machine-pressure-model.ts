@@ -19,6 +19,18 @@ export function cleanupTargetSetMatches(
   return keys(reviewed).join('\n') === keys(fresh).join('\n');
 }
 
+export function cleanupTargetsRemainEligible(
+  selected: CleanupTarget[],
+  fresh: CleanupTarget[],
+): boolean {
+  const freshKeys = new Set(
+    fresh.map((target) => `${target.machine}:${target.slotId}:${target.resourceId}`),
+  );
+  return selected.every((target) =>
+    freshKeys.has(`${target.machine}:${target.slotId}:${target.resourceId}`),
+  );
+}
+
 export function cleanupExecutionTargets(targets: CleanupTarget[]): CleanupTarget[] {
   return targets.map(({ machine, resourceId, slotId }) => ({ machine, resourceId, slotId }));
 }

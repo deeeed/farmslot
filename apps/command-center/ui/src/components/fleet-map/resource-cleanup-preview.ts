@@ -179,11 +179,17 @@ export class ResourceCleanupPreview extends LitElement {
     const selected = candidates.filter((candidate) => this.selectedKeys.has(this.key(candidate)));
     const machines = new Set(selected.map((candidate) => candidate.machine)).size;
     const selectedCpu = selected.reduce(
-      (total, candidate) => total + (candidate.processImpact?.treeCpuPercent ?? 0),
+      (total, candidate) =>
+        total +
+        (candidate.processImpact?.scope === 'resource'
+          ? candidate.processImpact.treeCpuPercent
+          : 0),
       0,
     );
     const selectedRss = selected.reduce(
-      (total, candidate) => total + (candidate.processImpact?.hotRssBytes ?? 0),
+      (total, candidate) =>
+        total +
+        (candidate.processImpact?.scope === 'resource' ? candidate.processImpact.hotRssBytes : 0),
       0,
     );
     return html`<section

@@ -22,6 +22,7 @@ import {
   ResourceWatchSetEnabledResult,
   selectResourcePressureGroups,
   SlotStatus,
+  TmuxWorkerSummary,
 } from '@farmslot/protocol';
 
 import { isMissingProjectConfigError, SlotConfigError } from '../core/config.js';
@@ -125,7 +126,7 @@ export async function resourceCleanup(
   const slots = fleet.slots.filter((slot) => {
     if (!slot.enabled) return false;
     if (slot.lifecycle === 'disabled' || slot.lifecycle === 'manual') return false;
-    if (!params.includeBusy && !slotAllowsDefaultResourceCleanup(slot)) return false;
+    if ((!dryRun || !params.includeBusy) && !slotAllowsDefaultResourceCleanup(slot)) return false;
     if (params.machine && slot.machine !== params.machine) return false;
     if (params.project && slot.project !== params.project) return false;
     if (slotFilter.size > 0 && !slotFilter.has(slot.slot)) return false;
@@ -269,7 +270,11 @@ export async function resourcePressureSnapshot(
     const attribution = processInventory
       ? attributeProcessInventory({
           inventory: processInventory,
-          workers: tmuxWorkers.filter((worker) => worker.ref.nodeId === machine),
+          workers: tmuxWorkers.filter(
+            (worker) =>
+              worker.ref.nodeId === machine &&
+              workerMatchesPressureSlots(worker, machineSlots, Boolean(params.project)),
+          ),
           slots: machineSlots,
           runs: allRuns,
           resources: attributionResources,
@@ -549,6 +554,18 @@ function matchesPressureFilters(slot: SlotStatus, params: ResourcePressureSnapsh
   if (params.machine && slot.machine !== params.machine) return false;
   if (params.project && slot.project !== params.project) return false;
   return true;
+}
+
+function workerMatchesPressureSlots(
+  worker: TmuxWorkerSummary,
+  slots: SlotStatus[],
+  projectFiltered: boolean,
+): boolean {
+  if (!projectFiltered) return true;
+  if (worker.linkedSlotId) return slots.some((slot) => slot.slot === worker.linkedSlotId);
+  const cwd = worker.cwd;
+  if (!cwd) return false;
+  return slots.some((slot) => slot.repo && (cwd === slot.repo || cwd.startsWith(`${slot.repo}/`)));
 }
 
 export function slotAllowsDefaultResourceCleanup(

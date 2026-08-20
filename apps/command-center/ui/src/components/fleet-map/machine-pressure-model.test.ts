@@ -6,6 +6,7 @@ import type { ProcessAttributionGroup } from '@farmslot/protocol';
 import {
   cleanupExecutionTargets,
   cleanupTargetSetMatches,
+  cleanupTargetsRemainEligible,
   pressureProcessCpu,
   pressureProcessName,
   pressureSampleAge,
@@ -18,6 +19,8 @@ test('cleanup target comparison is order-independent and detects drift', () => {
   const second = { machine: 'macpro', slotId: 'slot-2', resourceId: 'browser' };
   assert.equal(cleanupTargetSetMatches([first, second], [second, first]), true);
   assert.equal(cleanupTargetSetMatches([first], [second]), false);
+  assert.equal(cleanupTargetsRemainEligible([first], [first, second]), true);
+  assert.equal(cleanupTargetsRemainEligible([first], [second]), false);
   const extended = { ...first, ignored: 'value' };
   assert.deepEqual(cleanupExecutionTargets([extended]), [first]);
 });

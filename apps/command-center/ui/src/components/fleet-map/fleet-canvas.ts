@@ -56,7 +56,7 @@ import {
   fleetCanvasUrlStateHash,
   type FleetCanvasViewMode,
 } from './fleet-canvas-url-state.js';
-import { cleanupExecutionTargets, cleanupTargetSetMatches } from './machine-pressure-model.js';
+import { cleanupExecutionTargets, cleanupTargetsRemainEligible } from './machine-pressure-model.js';
 
 export interface ResourceEntry {
   slotId: string;
@@ -455,11 +455,17 @@ export class FleetCanvas extends LitElement {
 
   private syncState(s: AppState) {
     const prev = this.slots;
+    const previousPressureFilter = JSON.stringify([this.filterProjects, this.filterMachines]);
     this.slots = s.fleet?.slots ?? [];
     this.hydrating = isHydrating(s, 'fleet');
     this.bootstrapFailed = s.bootstrapFailed.fleet;
     this.filterProjects = s.globalFilters.projects;
     this.filterMachines = s.globalFilters.machines;
+    const pressureFilterChanged =
+      previousPressureFilter !== JSON.stringify([this.filterProjects, this.filterMachines]);
+    if (pressureFilterChanged && this.groupBy === 'resource' && this._resourceFetched) {
+      void this.fetchResourcePressure();
+    }
     // Populate machineHealthMap from fleet.machines
     if (s.fleet?.machines) {
       const next = new Map(this.machineHealthMap);
@@ -589,6 +595,7 @@ export class FleetCanvas extends LitElement {
     try {
       this.resourcePressure = await gateway.request<ResourcePressureSnapshotResult>(
         Methods.RESOURCE_PRESSURE_SNAPSHOT,
+        this.pressureRequestParams(),
       );
       this.resourceWatchesEnabled = this.resourcePressure.watchState.enabled;
     } catch (err) {
@@ -597,6 +604,13 @@ export class FleetCanvas extends LitElement {
         err instanceof Error ? err.message : String(err),
       );
     }
+  }
+
+  private pressureRequestParams(): { machine?: string; project?: string } {
+    return {
+      ...(this.filterMachines.length === 1 ? { machine: this.filterMachines[0] } : {}),
+      ...(this.filterProjects.length === 1 ? { project: this.filterProjects[0] } : {}),
+    };
   }
 
   private get filteredSlots(): SlotStatus[] {
@@ -708,6 +722,7 @@ export class FleetCanvas extends LitElement {
     try {
       const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
         Methods.RESOURCE_PRESSURE_SNAPSHOT,
+        this.pressureRequestParams(),
       );
       this.resourcePressure = snapshot;
       this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
@@ -739,11 +754,13 @@ export class FleetCanvas extends LitElement {
     try {
       const fresh = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
         dryRun: true,
+        ...this.pressureRequestParams(),
       });
       const freshTargets = this.cleanupTargetsForFilters(fresh.targets);
-      if (!cleanupTargetSetMatches(reviewed.cleanupCandidates, freshTargets)) {
+      if (!cleanupTargetsRemainEligible(selectedTargets, freshTargets)) {
         const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
           Methods.RESOURCE_PRESSURE_SNAPSHOT,
+          this.pressureRequestParams(),
         );
         this.resourcePressure = snapshot;
         this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
