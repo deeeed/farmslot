@@ -239,7 +239,8 @@ await test('resource_pressure_snapshot returns read-only pressure summary', asyn
   const data = JSON.parse(r.content);
   assert(typeof data.checkedAt === 'string', 'missing checkedAt');
   assert(typeof data.summary?.machines === 'number', 'missing machine count');
-  assert(data.summary.machines > 0, 'empty Co-Pilot arrays incorrectly matched no machines');
+  assert(!('machines' in data.filters), 'empty Co-Pilot machine array was forwarded');
+  assert(!('projects' in data.filters), 'empty Co-Pilot project array was forwarded');
   assert(typeof data.summary?.cleanupCandidates === 'number', 'missing cleanup candidate count');
   assert(Array.isArray(data.machines), 'missing machines array');
   assert(!('watchAutoStartEnabled' in data), 'model projection leaked watch control state');
