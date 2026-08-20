@@ -12,6 +12,7 @@ import type {
   ResourceCleanupResult,
   ResourceListResult,
   ResourcePressureCleanupCandidate,
+  ResourcePressureSnapshotParams,
   ResourcePressureSnapshotResult,
   ResourceStatus,
   ResourceStatusUpdatedPayload,
@@ -606,10 +607,11 @@ export class FleetCanvas extends LitElement {
     }
   }
 
-  private pressureRequestParams(): { machine?: string; project?: string } {
+  private pressureRequestParams(): ResourcePressureSnapshotParams {
+    const machines = this.pressureVisibleMachines;
     return {
-      ...(this.filterMachines.length === 1 ? { machine: this.filterMachines[0] } : {}),
-      ...(this.filterProjects.length === 1 ? { project: this.filterProjects[0] } : {}),
+      ...(machines ? { machines } : {}),
+      ...(this.filterProjects.length > 0 ? { projects: this.filterProjects } : {}),
     };
   }
 
@@ -680,7 +682,15 @@ export class FleetCanvas extends LitElement {
   }
 
   private get pressureVisibleMachines(): string[] | undefined {
-    if (this.filterMachines.length === 0 && this.filterProjects.length === 0) return undefined;
+    if (
+      this.filterMachines.length === 0 &&
+      this.filterProjects.length === 0 &&
+      this.search.length === 0
+    )
+      return undefined;
+    if (this.search.length > 0) {
+      return [...new Set(this.filteredSlots.map((slot) => slot.machine))];
+    }
     return [
       ...new Set(
         this.slots
@@ -755,6 +765,7 @@ export class FleetCanvas extends LitElement {
       const fresh = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
         dryRun: true,
         ...this.pressureRequestParams(),
+        targets: selectedTargets,
       });
       const freshTargets = this.cleanupTargetsForFilters(fresh.targets);
       if (!cleanupTargetsRemainEligible(selectedTargets, freshTargets)) {
@@ -772,7 +783,7 @@ export class FleetCanvas extends LitElement {
         targets: selectedTargets,
       });
       this.showResourceFlash(
-        `stopped ${result.stopped}/${result.targets.length}${result.failed ? `, failed ${result.failed}` : ''}`,
+        `stopped ${result.stopped}/${selectedTargets.length}${result.failed ? `, failed ${result.failed}` : ''}`,
         result.ok,
       );
       this.resourceCleanupPreview = undefined;
@@ -784,14 +795,16 @@ export class FleetCanvas extends LitElement {
     }
   }
 
-  private cleanupTargetsForFilters<T extends { machine: string; project?: string }>(
+  private cleanupTargetsForFilters<T extends { machine: string; project?: string; slotId: string }>(
     targets: T[],
   ): T[] {
+    const searchedSlotIds = new Set(this.filteredSlots.map((slot) => slot.slot));
     return targets.filter(
       (target) =>
         (this.filterMachines.length === 0 || this.filterMachines.includes(target.machine)) &&
         (this.filterProjects.length === 0 ||
-          (target.project != null && this.filterProjects.includes(target.project))),
+          (target.project != null && this.filterProjects.includes(target.project))) &&
+        (this.search.length === 0 || searchedSlotIds.has(target.slotId)),
     );
   }
 

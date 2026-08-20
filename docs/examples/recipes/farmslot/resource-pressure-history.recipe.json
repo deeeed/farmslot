@@ -61,8 +61,15 @@
         "action": "command",
         "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-pressure-rpc.mjs --machine '{{params.machine}}'",
         "timeout_ms": 20000,
-        "next": "open-and-assert-machine-details",
+        "next": "probe-cleanup-safety",
         "intent": "Verify the typed read-only backend shape and health-event stripping before interacting with the UI."
+      },
+      "probe-cleanup-safety": {
+        "action": "command",
+        "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-cleanup-safety.mjs --machine '{{params.machine}}'",
+        "timeout_ms": 20000,
+        "next": "open-and-assert-machine-details",
+        "intent": "Prove live cleanup rejects empty, missing, and busy exact targets without mutating a real resource."
       },
       "capture-pressure-history": {
         "action": "ui.screenshot",

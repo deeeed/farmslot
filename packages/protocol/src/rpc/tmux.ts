@@ -84,6 +84,8 @@ export interface TmuxWorkerListParams {
   includeDisconnected?: boolean;
   /** Limit inventory collection to one machine. */
   machine?: string;
+  /** Limit inventory collection to a set of machines. */
+  machines?: string[];
 }
 
 export interface TmuxWorkerListResult {

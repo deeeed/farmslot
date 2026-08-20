@@ -638,14 +638,17 @@ export async function tmuxWorkerList(
 ): Promise<TmuxWorkerListResult> {
   const observedAt = Date.now();
   const [allPools, fleet] = await Promise.all([loadPoolConfigs(), loadFleetStatus()]);
-  const pools = params.machine
-    ? allPools.filter((pool) => pool.machine === params.machine)
-    : allPools;
+  const requestedMachines = new Set(params.machines ?? []);
+  if (params.machine) requestedMachines.add(params.machine);
+  const pools =
+    requestedMachines.size > 0
+      ? allPools.filter((pool) => requestedMachines.has(pool.machine))
+      : allPools;
   const activeRuns = listRuns({ active: true }).runs;
   const poolMachines = pools.map((pool) => pool.machine).filter(Boolean);
   const connectedMachines = getAllNodes()
     .map((node) => node.machine)
-    .filter((machine) => !params.machine || machine === params.machine);
+    .filter((machine) => requestedMachines.size === 0 || requestedMachines.has(machine));
   const connectedNodeIds = new Set(connectedMachines);
   const nodeIds = [...poolMachines, ...connectedMachines];
 

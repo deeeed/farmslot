@@ -63,5 +63,12 @@ test('resourceCleanup live execution still fails closed for an unresolvable slot
 });
 
 test('resourceCleanup live execution requires exact reviewed targets', async () => {
-  await assert.rejects(() => resourceCleanup({ dryRun: false }), /requires exact reviewed targets/);
+  await assert.rejects(
+    () => resourceCleanup({ dryRun: false }),
+    /requires non-empty exact reviewed targets/,
+  );
+  await assert.rejects(
+    () => resourceCleanup({ dryRun: false, targets: [] }),
+    /requires non-empty exact reviewed targets/,
+  );
 });

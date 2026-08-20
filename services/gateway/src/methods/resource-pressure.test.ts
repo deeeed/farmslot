@@ -185,14 +185,19 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
     includeBusy: true,
     targets: [{ machine: 'macpro', slotId: 'slot-1', resourceId: 'metro' }],
   });
-  assert.equal(busyCleanup.targets.length, 0);
+  assert.equal(busyCleanup.targets.length, 1);
+  assert.equal(busyCleanup.targets[0].ok, false);
+  assert.equal(busyCleanup.ok, false);
   assert.deepEqual(controlledTargets, ['slot-2:metro']);
 
   const hostOnly = await resourceHostPressure('macpro', 'farmslot-farm');
   assert.equal(hostOnly.machine, 'macpro');
   assert.equal(hostOnly.online, true);
 
-  const result = await resourcePressureSnapshot({ machine: 'macpro' });
+  const result = await resourcePressureSnapshot({
+    machines: ['macpro'],
+    projects: ['farmslot-farm'],
+  });
   assert.equal(result.machines.length, 1);
   assert.equal(result.machines[0].history.length, 1);
   assert.equal(result.machines[0].processAttribution.groups[0].classification, 'active');

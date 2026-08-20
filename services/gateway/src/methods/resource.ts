@@ -22,7 +22,6 @@ import {
   ResourceWatchSetEnabledResult,
   selectResourcePressureGroups,
   SlotStatus,
-  TmuxWorkerSummary,
 } from '@farmslot/protocol';
 
 import { isMissingProjectConfigError, SlotConfigError } from '../core/config.js';
@@ -107,8 +106,8 @@ export async function resourceCleanup(
   params: ResourceCleanupParams,
 ): Promise<ResourceCleanupResult> {
   const dryRun = params.dryRun !== false;
-  if (!dryRun && params.targets === undefined) {
-    throw new Error('live resource cleanup requires exact reviewed targets');
+  if (!dryRun && (!params.targets || params.targets.length === 0)) {
+    throw new Error('live resource cleanup requires non-empty exact reviewed targets');
   }
   const statuses = new Set(params.statuses ?? ['running', 'stale']);
   const slotFilter = new Set(params.slotIds ?? []);
@@ -128,7 +127,9 @@ export async function resourceCleanup(
     if (slot.lifecycle === 'disabled' || slot.lifecycle === 'manual') return false;
     if ((!dryRun || !params.includeBusy) && !slotAllowsDefaultResourceCleanup(slot)) return false;
     if (params.machine && slot.machine !== params.machine) return false;
+    if (params.machines?.length && !params.machines.includes(slot.machine)) return false;
     if (params.project && slot.project !== params.project) return false;
+    if (params.projects?.length && !params.projects.includes(slot.project)) return false;
     if (slotFilter.size > 0 && !slotFilter.has(slot.slot)) return false;
     if (exactTargetsEnabled && !exactTargetSlots.has(`${slot.machine}:${slot.slot}`)) {
       return false;
@@ -166,13 +167,39 @@ export async function resourceCleanup(
     }
   }
 
+  if (!dryRun && params.targets) {
+    const resolvedKeys = new Set(
+      targets.map((target) => `${target.machine}:${target.slotId}:${target.resourceId}`),
+    );
+    for (const requested of params.targets) {
+      const key = `${requested.machine}:${requested.slotId}:${requested.resourceId}`;
+      if (resolvedKeys.has(key)) continue;
+      const slot = fleet.slots.find((candidate) => candidate.slot === requested.slotId);
+      targets.push({
+        slotId: requested.slotId,
+        machine: requested.machine,
+        project: slot?.project ?? 'unknown',
+        resourceId: requested.resourceId,
+        label: requested.resourceId,
+        status: 'unknown',
+        ok: false,
+        detail: slot
+          ? 'reviewed target is no longer eligible for idle resource cleanup'
+          : 'reviewed target slot no longer exists',
+      });
+    }
+  }
+
   if (!dryRun) {
     for (const target of targets) {
+      if (target.ok === false) continue;
       const result = await executeResourceControl(target.slotId, target.resourceId, 'shutdown');
       target.ok = result.ok;
       target.detail = result.detail;
     }
-    const slotsToVerify = [...new Set(targets.map((target) => target.slotId))];
+    const slotsToVerify = [
+      ...new Set(targets.filter((target) => target.ok !== false).map((target) => target.slotId)),
+    ];
     for (const slotId of slotsToVerify) {
       const statuses = await pollSlotResources(slotId);
       const statusByResource = new Map(statuses.map((status) => [status.id, status.status]));
@@ -211,6 +238,7 @@ export async function resourcePressureSnapshot(
       await tmuxWorkerList({
         includeDisconnected: true,
         ...(params.machine ? { machine: params.machine } : {}),
+        ...(params.machines?.length ? { machines: params.machines } : {}),
       })
     ).workers;
   } catch (error) {
@@ -226,7 +254,12 @@ export async function resourcePressureSnapshot(
   for (const slot of slots) machineNames.add(slot.machine);
   for (const health of fleet.machines ?? []) {
     if (params.machine && health.machine !== params.machine) continue;
-    if (params.project && !slots.some((slot) => slot.machine === health.machine)) continue;
+    if (params.machines?.length && !params.machines.includes(health.machine)) continue;
+    if (
+      (params.project || params.projects?.length) &&
+      !slots.some((slot) => slot.machine === health.machine)
+    )
+      continue;
     machineNames.add(health.machine);
   }
 
@@ -270,11 +303,7 @@ export async function resourcePressureSnapshot(
     const attribution = processInventory
       ? attributeProcessInventory({
           inventory: processInventory,
-          workers: tmuxWorkers.filter(
-            (worker) =>
-              worker.ref.nodeId === machine &&
-              workerMatchesPressureSlots(worker, machineSlots, Boolean(params.project)),
-          ),
+          workers: tmuxWorkers.filter((worker) => worker.ref.nodeId === machine),
           slots: machineSlots,
           runs: allRuns,
           resources: attributionResources,
@@ -552,20 +581,10 @@ export async function resolvePressureSlotResources(slotId: string) {
 
 function matchesPressureFilters(slot: SlotStatus, params: ResourcePressureSnapshotParams): boolean {
   if (params.machine && slot.machine !== params.machine) return false;
+  if (params.machines?.length && !params.machines.includes(slot.machine)) return false;
   if (params.project && slot.project !== params.project) return false;
+  if (params.projects?.length && !params.projects.includes(slot.project)) return false;
   return true;
-}
-
-function workerMatchesPressureSlots(
-  worker: TmuxWorkerSummary,
-  slots: SlotStatus[],
-  projectFiltered: boolean,
-): boolean {
-  if (!projectFiltered) return true;
-  if (worker.linkedSlotId) return slots.some((slot) => slot.slot === worker.linkedSlotId);
-  const cwd = worker.cwd;
-  if (!cwd) return false;
-  return slots.some((slot) => slot.repo && (cwd === slot.repo || cwd.startsWith(`${slot.repo}/`)));
 }
 
 export function slotAllowsDefaultResourceCleanup(
