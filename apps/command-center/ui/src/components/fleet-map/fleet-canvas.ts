@@ -574,27 +574,30 @@ export class FleetCanvas extends LitElement {
     // Renders table immediately with "unknown" status dots
     const nextDefs = new Map<string, SlotResource[]>();
     const nextStatus = new Map<string, Map<string, ResourceStatus>>(this.slotResourceStatus);
-    await Promise.all(
-      resourceSlots.map(async (s) => {
-        try {
-          const listRes = await gateway.request<ResourceListResult>(Methods.RESOURCE_LIST, {
-            slotId: s.slot,
-          });
-          if (listRes.resources.length > 0) {
-            nextDefs.set(s.slot, listRes.resources);
-            nextStatus.set(
-              s.slot,
-              new Map(listRes.resources.map((resource) => [resource.id, resource.status])),
+    for (let index = 0; index < resourceSlots.length; index += 4) {
+      const batch = resourceSlots.slice(index, index + 4);
+      await Promise.all(
+        batch.map(async (s) => {
+          try {
+            const listRes = await gateway.request<ResourceListResult>(Methods.RESOURCE_LIST, {
+              slotId: s.slot,
+            });
+            if (listRes.resources.length > 0) {
+              nextDefs.set(s.slot, listRes.resources);
+              nextStatus.set(
+                s.slot,
+                new Map(listRes.resources.map((resource) => [resource.id, resource.status])),
+              );
+            }
+          } catch (err) {
+            console.warn(
+              `[fleet-canvas] resource list failed for ${s.slot}:`,
+              err instanceof Error ? err.message : String(err),
             );
           }
-        } catch (err) {
-          console.warn(
-            `[fleet-canvas] resource list failed for ${s.slot}:`,
-            err instanceof Error ? err.message : String(err),
-          );
-        }
-      }),
-    );
+        }),
+      );
+    }
     this.slotResourceDefs = nextDefs;
     this.slotResourceStatus = nextStatus;
     this._resourceFetched = true;
@@ -620,7 +623,7 @@ export class FleetCanvas extends LitElement {
   }
 
   private pressureRequestParams(): ResourcePressureSnapshotParams {
-    const machines = this.pressureVisibleMachines;
+    const machines = this.pressureScopedMachines;
     return {
       ...(machines ? { machines } : {}),
       ...(this.filterProjects.length > 0 ? { projects: this.filterProjects } : {}),
@@ -703,6 +706,11 @@ export class FleetCanvas extends LitElement {
     if (this.search.length > 0) {
       return [...new Set(this.filteredSlots.map((slot) => slot.machine))];
     }
+    return this.pressureScopedMachines;
+  }
+
+  private get pressureScopedMachines(): string[] | undefined {
+    if (this.filterMachines.length === 0 && this.filterProjects.length === 0) return undefined;
     return [
       ...new Set(
         this.slots

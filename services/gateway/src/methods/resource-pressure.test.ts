@@ -346,12 +346,19 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   result.machines[0].processAttribution.groups[0].topExecutable =
     '/Users/developer/Applications/Private Tool.app/Contents/MacOS/Private Tool';
   const originalGroup = result.machines[0].processAttribution.groups[0];
-  const gatewayOmittedGroups = result.machines[0].processAttribution.omittedGroups;
   result.machines[0].processAttribution.groups = Array.from({ length: 10 }, (_, index) => ({
     ...originalGroup,
     rootPid: originalGroup.rootPid + index,
     topPid: originalGroup.topPid + index,
   }));
+  result.machines[0].processAttribution.managedGroupCount = 10;
+  result.machines[0].processAttribution.managedClassCounts = {
+    active: 10,
+    retained: 0,
+    stale: 0,
+    manual: 0,
+    unknown: 0,
+  };
   result.machines[0].processAttribution.sampler!.lastError =
     'Command /Users/developer/bin/ps failed';
   result.machines[0].processAttribution.degradedReason = 'Tmux attribution unavailable';
@@ -362,8 +369,6 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   assert.doesNotMatch(serialized, /"cleanupCandidates":\[/);
   assert.match(serialized, /"process":"Private Tool"/);
   assert.match(serialized, /"degradedReason":"Tmux attribution unavailable"/);
-  assert.equal(
-    modelProjection.machines[0].processAttribution.omittedGroups,
-    gatewayOmittedGroups + 2,
-  );
+  assert.equal(modelProjection.machines[0].processAttribution.omittedGroups, 2);
+  assert.equal(modelProjection.machines[0].processAttribution.classCounts.active, 10);
 });

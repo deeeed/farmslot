@@ -452,6 +452,16 @@ export async function resourcePressureSnapshot(
     const omittedAttributionGroups =
       attribution.omittedGroups +
       Math.max(0, attribution.groups.length - boundedAttributionGroups.length);
+    const managedAttributionGroups = attribution.groups.filter(
+      (group) => group.slotId || group.resourceId,
+    );
+    const managedClassCounts = managedAttributionGroups.reduce(
+      (counts, group) => {
+        counts[group.classification] += 1;
+        return counts;
+      },
+      { ...EMPTY_PROCESS_CLASS_COUNTS },
+    );
     allAttributionGroups.set(machine, attribution.groups);
     machines.push({
       machine,
@@ -492,6 +502,8 @@ export async function resourcePressureSnapshot(
         maxEntries: processInventory?.maxEntries ?? 0,
         omittedGroups: omittedAttributionGroups,
         classCounts: attribution.classCounts,
+        managedGroupCount: managedAttributionGroups.length,
+        managedClassCounts,
         groups: boundedAttributionGroups,
       },
       slots: {
@@ -641,13 +653,7 @@ export function resourcePressureSnapshotForModel(
         : machine.processAttribution.groups;
       const modelGroups = selectResourcePressureGroups(modelSourceGroups, 8);
       const modelClassCounts = projectScoped
-        ? modelSourceGroups.reduce(
-            (counts, group) => {
-              counts[group.classification] += 1;
-              return counts;
-            },
-            { ...EMPTY_PROCESS_CLASS_COUNTS },
-          )
+        ? machine.processAttribution.managedClassCounts
         : machine.processAttribution.classCounts;
       return {
         machine: machine.machine,
@@ -671,8 +677,10 @@ export function resourcePressureSnapshotForModel(
             : {}),
           truncated: machine.processAttribution.truncated,
           omittedGroups:
-            machine.processAttribution.omittedGroups +
-            Math.max(0, machine.processAttribution.groups.length - modelGroups.length),
+            (projectScoped
+              ? machine.processAttribution.managedGroupCount
+              : machine.processAttribution.omittedGroups +
+                machine.processAttribution.groups.length) - modelGroups.length,
           classCounts: modelClassCounts,
           ...(safeSampler ? { sampler: safeSampler } : {}),
           groups: modelGroups.map((group) => ({

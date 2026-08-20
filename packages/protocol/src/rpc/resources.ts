@@ -227,6 +227,8 @@ export interface ResourcePressureMachine {
     maxEntries: number;
     omittedGroups: number;
     classCounts: Record<ProcessOwnershipClass, number>;
+    managedGroupCount: number;
+    managedClassCounts: Record<ProcessOwnershipClass, number>;
     groups: ProcessAttributionGroup[];
     sampler?: import('../contracts/index.js').NodeProcessSamplerHealth;
   };

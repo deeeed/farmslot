@@ -87,6 +87,21 @@ if (
 ) {
   throw new Error('pressure history labels are incomplete');
 }
+const scopedRequest = JSON.stringify(requestParams);
+const originalSearch = fleet.search;
+fleet.search = '__pressure_local_search_no_match__';
+await fleet.updateComplete;
+if (JSON.stringify(fleet.pressureRequestParams()) !== scopedRequest) {
+  throw new Error('slot search incorrectly changed the pressure RPC scope');
+}
+const searchCards = [
+  ...(fleetRoot
+    .querySelector('machine-pressure-overview')
+    ?.shadowRoot?.querySelectorAll('.machine') ?? []),
+];
+if (searchCards.length !== 0) throw new Error('slot search did not filter pressure cards locally');
+fleet.search = originalSearch;
+await fleet.updateComplete;
 
 return {
   machine: machineName,
@@ -95,6 +110,7 @@ return {
   charts: charts.length,
   processRows: processRows.length,
   attribution: processRows.length > 0 ? 'sampled' : 'awaiting-census',
+  searchScope: 'local-only',
   classPills,
   samples: card.querySelector('.sample-note')?.textContent?.trim(),
 };

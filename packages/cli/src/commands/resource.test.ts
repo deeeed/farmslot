@@ -49,6 +49,8 @@ test('pressure formatter includes trends, classes, sampler degradation, and no m
           maxEntries: 256,
           omittedGroups: 1,
           classCounts: { active: 1, retained: 0, stale: 0, manual: 0, unknown: 1 },
+          managedGroupCount: 1,
+          managedClassCounts: { active: 1, retained: 0, stale: 0, manual: 0, unknown: 0 },
           groups: [
             {
               rootPid: 42,
