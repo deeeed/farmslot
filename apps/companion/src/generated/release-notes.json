@@ -1,9 +1,11 @@
 {
   "version": "0.4.1",
-  "date": "2026-08-11",
+  "date": "2026-08-20",
   "items": [
-    "fix(notifications): recognize monitor budget violations while keeping them non-actionable for Companion push notifications (MANUAL-000096)",
-    "fix(connection): keep clean production installs on the pairing screen by rejecting an empty gateway URL before constructing a WebSocket",
-    "fix(review): expose shared workspace filters on the Review tab and replace its simulated filter modal with the native form-sheet route used by the rest of Companion"
+    "Use the persistent Co-Pilot tmux terminal from Companion and land active runs directly on Timeline",
+    "Navigate run, slot, family, gate, and retrospective workspaces through compact persistent tabs",
+    "Review evidence through shared Before/After, Gate, report, round, and per-step timing surfaces",
+    "Keep recipe HUD accessibility intact and support named native Back, Escape, Enter, and Return actions",
+    "Improve foreground decision reconnection and keep project colors consistent with Command Center"
   ]
 }
