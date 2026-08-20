@@ -6,10 +6,21 @@ const findDeep = (root, selector) =>
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const routeParams = new URLSearchParams(location.hash.split('?')[1] ?? '');
 const machineName = routeParams.get('pressureMachine') ?? 'macwork';
+const projectName = routeParams.get('projects');
 
 const fleet = findDeep(document, 'fleet-canvas');
 if (!fleet) throw new Error('fleet-canvas not found');
 const fleetRoot = fleet.shadowRoot;
+const requestParams = fleet.pressureRequestParams();
+if (
+  requestParams.machines?.length !== 1 ||
+  requestParams.machines[0] !== machineName ||
+  (projectName && !requestParams.projects?.includes(projectName))
+) {
+  throw new Error(
+    `global filters were not forwarded to pressure RPC: ${JSON.stringify(requestParams)}`,
+  );
+}
 const refresh = [...fleetRoot.querySelectorAll('button')].find((button) =>
   button.textContent.includes('Refresh pressure'),
 );
@@ -79,6 +90,7 @@ if (
 
 return {
   machine: machineName,
+  project: projectName,
   expanded: details.getAttribute('aria-expanded'),
   charts: charts.length,
   processRows: processRows.length,

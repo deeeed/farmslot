@@ -46,20 +46,21 @@ test('resourceCleanup dry-run skips a stale fleet slot that no longer resolves',
     ok: true,
     dryRun: true,
     targets: [],
+    omittedTargets: 0,
     stopped: 0,
     failed: 0,
   });
 });
 
 test('resourceCleanup live execution still fails closed for an unresolvable slot', async () => {
-  await assert.rejects(
-    () =>
-      resourceCleanup({
-        dryRun: false,
-        targets: [{ machine: 'test-machine', slotId: 'stale-slot', resourceId: 'metro' }],
-      }),
-    missingSlot,
-  );
+  const result = await resourceCleanup({
+    dryRun: false,
+    targets: [{ machine: 'test-machine', slotId: 'stale-slot', resourceId: 'metro' }],
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.failed, 1);
+  assert.equal(result.targets[0].ok, false);
+  assert.match(result.targets[0].detail ?? '', /stale-slot.*not found/);
 });
 
 test('resourceCleanup live execution requires exact reviewed targets', async () => {
@@ -70,5 +71,17 @@ test('resourceCleanup live execution requires exact reviewed targets', async () 
   await assert.rejects(
     () => resourceCleanup({ dryRun: false, targets: [] }),
     /requires non-empty exact reviewed targets/,
+  );
+  await assert.rejects(
+    () =>
+      resourceCleanup({
+        dryRun: false,
+        targets: Array.from({ length: 257 }, (_, index) => ({
+          machine: 'test-machine',
+          slotId: 'stale-slot',
+          resourceId: `resource-${index}`,
+        })),
+      }),
+    /at most 256 targets/,
   );
 });

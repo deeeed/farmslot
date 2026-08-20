@@ -64,7 +64,7 @@ function classifyWorker(
   const slotId = linkedSlot?.slot ?? inferredSlot?.slot;
   const slot = slotId ? slotById.get(slotId) : undefined;
   const inferredFromCwd = !linkedSlot && inferredSlot != null;
-  const runId = linkedSlot ? (worker.linkedRunId ?? slot?.currentRunId ?? undefined) : undefined;
+  const runId = (linkedSlot ? worker.linkedRunId : undefined) ?? slot?.currentRunId ?? undefined;
   const run = runId ? runById.get(runId) : undefined;
   const base = {
     pid: worker.pid,
@@ -266,14 +266,15 @@ export function attributeProcessInventory(params: {
     const seed = classifyWorker(worker, slotById, runById);
     if (!seed || !byPid.has(seed.pid)) continue;
     const resourceSeed = seeds.get(seed.pid);
-    const mergedSeed = resourceSeed?.resourceId
-      ? {
-          ...seed,
-          resourceId: resourceSeed.resourceId,
-          evidence: [...seed.evidence, ...resourceSeed.evidence],
-        }
-      : seed;
-    if (seed.runId || seed.slotId || !resourceSeed) seeds.set(seed.pid, mergedSeed);
+    if (resourceSeed?.resourceId) {
+      seeds.set(seed.pid, {
+        ...resourceSeed,
+        tmuxTarget: seed.tmuxTarget,
+        evidence: [...resourceSeed.evidence, ...seed.evidence],
+      });
+    } else {
+      seeds.set(seed.pid, seed);
+    }
   }
 
   const groups = new Map<string, ProcessAttributionGroup & { cpuRaw: number; rssRaw: number }>();

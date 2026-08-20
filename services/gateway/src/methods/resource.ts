@@ -53,6 +53,7 @@ const PRESSURE_RESOURCE_CACHE_MAX_SLOTS = 512;
 const PROCESS_INVENTORY_MAX_AGE_MS = 7 * 60_000;
 const MAX_PRESSURE_MACHINES = 32;
 const MAX_PRESSURE_CLEANUP_CANDIDATES = 256;
+const MAX_RESOURCE_CLEANUP_TARGETS = 256;
 
 const EMPTY_PROCESS_CLASS_COUNTS: Record<ProcessOwnershipClass, number> = {
   active: 0,
@@ -117,6 +118,11 @@ export async function resourceCleanup(
   if (!dryRun && (!params.targets || params.targets.length === 0)) {
     throw new Error('live resource cleanup requires non-empty exact reviewed targets');
   }
+  if ((params.targets?.length ?? 0) > MAX_RESOURCE_CLEANUP_TARGETS) {
+    throw new Error(`resource cleanup accepts at most ${MAX_RESOURCE_CLEANUP_TARGETS} targets`);
+  }
+  const machineFilter = combinedFilter(params.machine, params.machines);
+  const projectFilter = combinedFilter(params.project, params.projects);
   const statuses = new Set(params.statuses ?? ['running', 'stale']);
   const slotFilter = new Set(params.slotIds ?? []);
   const resourceFilter = new Set(params.resourceIds ?? []);
@@ -134,10 +140,8 @@ export async function resourceCleanup(
     if (!slot.enabled) return false;
     if (slot.lifecycle === 'disabled' || slot.lifecycle === 'manual') return false;
     if (!slotAllowsDefaultResourceCleanup(slot)) return false;
-    if (params.machine && slot.machine !== params.machine) return false;
-    if (params.machines?.length && !params.machines.includes(slot.machine)) return false;
-    if (params.project && slot.project !== params.project) return false;
-    if (params.projects?.length && !params.projects.includes(slot.project)) return false;
+    if (machineFilter.size > 0 && !machineFilter.has(slot.machine)) return false;
+    if (projectFilter.size > 0 && !projectFilter.has(slot.project)) return false;
     if (slotFilter.size > 0 && !slotFilter.has(slot.slot)) return false;
     if (exactTargetsEnabled && !exactTargetSlots.has(`${slot.machine}:${slot.slot}`)) {
       return false;
@@ -151,7 +155,24 @@ export async function resourceCleanup(
     try {
       resources = await resolveSlotResources(slot.slot);
     } catch (err) {
-      if (!dryRun || !isUnresolvableSlotError(err)) throw err;
+      if (!dryRun && params.targets) {
+        for (const requested of params.targets.filter(
+          (target) => target.machine === slot.machine && target.slotId === slot.slot,
+        )) {
+          targets.push({
+            slotId: requested.slotId,
+            machine: requested.machine,
+            project: slot.project,
+            resourceId: requested.resourceId,
+            label: requested.resourceId,
+            status: 'unknown',
+            ok: false,
+            detail: `reviewed target could not be resolved: ${(err as Error).message}`,
+          });
+        }
+        continue;
+      }
+      if (!isUnresolvableSlotError(err)) throw err;
       console.warn(
         `[resource] skipping cleanup preview for ${slot.slot}: ${(err as Error).message}`,
       );
@@ -234,9 +255,18 @@ export async function resourceCleanup(
     }
   }
 
-  const stopped = dryRun ? 0 : targets.filter((target) => target.ok).length;
-  const failed = dryRun ? 0 : targets.filter((target) => target.ok === false).length;
-  return { ok: failed === 0, dryRun, targets, stopped, failed };
+  const boundedTargets = dryRun ? targets.slice(0, MAX_RESOURCE_CLEANUP_TARGETS) : targets;
+  const omittedTargets = Math.max(0, targets.length - boundedTargets.length);
+  const stopped = dryRun ? 0 : boundedTargets.filter((target) => target.ok).length;
+  const failed = dryRun ? 0 : boundedTargets.filter((target) => target.ok === false).length;
+  return {
+    ok: failed === 0,
+    dryRun,
+    targets: boundedTargets,
+    omittedTargets,
+    stopped,
+    failed,
+  };
 }
 
 export async function resourcePressureSnapshot(
@@ -250,12 +280,13 @@ export async function resourcePressureSnapshot(
   ]);
   let tmuxWorkers: Awaited<ReturnType<typeof tmuxWorkerList>>['workers'] = [];
   let tmuxAttributionError: string | undefined;
+  const machineFilter = combinedFilter(params.machine, params.machines);
+  const projectFilter = combinedFilter(params.project, params.projects);
   try {
     tmuxWorkers = (
       await tmuxWorkerList({
         includeDisconnected: true,
-        ...(params.machine ? { machine: params.machine } : {}),
-        ...(params.machines?.length ? { machines: params.machines } : {}),
+        ...(machineFilter.size ? { machines: [...machineFilter] } : {}),
       })
     ).workers;
   } catch (error) {
@@ -270,13 +301,8 @@ export async function resourcePressureSnapshot(
   const machineNames = new Set<string>();
   for (const slot of slots) machineNames.add(slot.machine);
   for (const health of fleet.machines ?? []) {
-    if (params.machine && health.machine !== params.machine) continue;
-    if (params.machines?.length && !params.machines.includes(health.machine)) continue;
-    if (
-      (params.project || params.projects?.length) &&
-      !slots.some((slot) => slot.machine === health.machine)
-    )
-      continue;
+    if (machineFilter.size > 0 && !machineFilter.has(health.machine)) continue;
+    if (projectFilter.size > 0 && !slots.some((slot) => slot.machine === health.machine)) continue;
     machineNames.add(health.machine);
   }
 
@@ -327,11 +353,16 @@ export async function resourcePressureSnapshot(
     const attribution = processInventory
       ? attributeProcessInventory({
           inventory: processInventory,
-          workers: tmuxWorkers.filter(
-            (worker) =>
-              worker.ref.nodeId === machine &&
-              (!worker.linkedSlotId || scopedSlotIds.has(worker.linkedSlotId)),
-          ),
+          workers: tmuxWorkers.filter((worker) => {
+            if (worker.ref.nodeId !== machine) return false;
+            if (worker.linkedSlotId) return scopedSlotIds.has(worker.linkedSlotId);
+            if (projectFilter.size === 0) return true;
+            const cwd = worker.cwd;
+            if (!cwd) return false;
+            return machineSlots.some(
+              (slot) => slot.repo && (cwd === slot.repo || cwd.startsWith(`${slot.repo}/`)),
+            );
+          }),
           slots: machineSlots,
           runs: allRuns.filter(
             (run) => scopedRunIds.has(run.id) || (run.slotId && scopedSlotIds.has(run.slotId)),
@@ -530,6 +561,7 @@ export function resourcePressureSnapshotForModel(
             lastDurationMs: sampler.lastDurationMs,
           }
         : undefined;
+      const modelGroups = selectResourcePressureGroups(machine.processAttribution.groups, 8);
       return {
         machine: machine.machine,
         online: machine.online,
@@ -551,19 +583,19 @@ export function resourcePressureSnapshotForModel(
             ? { degradedReason: machine.processAttribution.degradedReason }
             : {}),
           truncated: machine.processAttribution.truncated,
-          omittedGroups: machine.processAttribution.omittedGroups,
+          omittedGroups:
+            machine.processAttribution.omittedGroups +
+            Math.max(0, machine.processAttribution.groups.length - modelGroups.length),
           classCounts: machine.processAttribution.classCounts,
           ...(safeSampler ? { sampler: safeSampler } : {}),
-          groups: selectResourcePressureGroups(machine.processAttribution.groups, 8).map(
-            (group) => ({
-              process: processName(group.topExecutable),
-              processCount: group.processCount,
-              cpuPercent: group.cpuPercent,
-              hotRssBytes: group.topRssBytes,
-              classification: group.classification,
-              confidence: group.confidence,
-            }),
-          ),
+          groups: modelGroups.map((group) => ({
+            process: processName(group.topExecutable),
+            processCount: group.processCount,
+            cpuPercent: group.cpuPercent,
+            hotRssBytes: group.topRssBytes,
+            classification: group.classification,
+            confidence: group.confidence,
+          })),
         },
       };
     }),
@@ -639,11 +671,16 @@ export async function resolvePressureSlotResources(slotId: string) {
 }
 
 function matchesPressureFilters(slot: SlotStatus, params: ResourcePressureSnapshotParams): boolean {
-  if (params.machine && slot.machine !== params.machine) return false;
-  if (params.machines?.length && !params.machines.includes(slot.machine)) return false;
-  if (params.project && slot.project !== params.project) return false;
-  if (params.projects?.length && !params.projects.includes(slot.project)) return false;
+  const machines = combinedFilter(params.machine, params.machines);
+  const projects = combinedFilter(params.project, params.projects);
+  if (machines.size > 0 && !machines.has(slot.machine)) return false;
+  if (projects.size > 0 && !projects.has(slot.project)) return false;
   return true;
+}
+
+/** Singular and plural selectors are one union so mixed-version clients cannot self-conflict. */
+function combinedFilter(primary?: string, values?: string[]): Set<string> {
+  return new Set([...(primary ? [primary] : []), ...(values ?? [])]);
 }
 
 export function slotAllowsDefaultResourceCleanup(

@@ -360,145 +360,163 @@ export class MachinePressureOverview extends LitElement {
     const machines = this.visibleMachines
       ? this.snapshot.machines.filter((machine) => this.visibleMachines!.includes(machine.machine))
       : this.snapshot.machines;
-    if (machines.length === 0) return html`<div class="empty">No machines match the filters.</div>`;
-    return html`<div class="grid">
-      ${machines.map((machine) => {
-        const latest = machine.history.at(-1);
-        const expanded = this.expandedMachines.has(machine.machine);
-        const cpuValues = machine.history.map((sample) => sample.pressure.cpu);
-        const memoryValues = machine.history.map((sample) => sample.pressure.memory);
-        const loadValues = machine.history
-          .map((sample) => sample.pressure.load1)
-          .filter((value): value is number => value != null);
-        const loadMax = Math.max(2, Math.ceil(Math.max(0, ...loadValues)));
-        const cores = machine.capacity?.cpuCores ?? machine.system?.cpuCores ?? 0;
-        const classes = machine.processAttribution.classCounts;
-        const topGroup = machine.processAttribution.groups[0];
-        const groups = visiblePressureGroups(machine.processAttribution.groups, expanded ? 12 : 4);
-        const processNote = machine.processAttribution.sampledProcesses
-          ? `${machine.processAttribution.sampledProcesses}/${machine.processAttribution.totalProcesses} sampled · ${pressureSampleAge(machine.processAttribution.sampledAt)}`
-          : (machine.processAttribution.unavailableReason ?? 'awaiting process sample');
-        return html`<section class="machine ${machine.severity}" data-machine=${machine.machine}>
-          <header>
-            <div>
-              <strong>${machine.machine}</strong>
-              <span class="sample-note"> · ${machine.history.length} samples</span>
-            </div>
-            <div class="heading-actions">
-              <span
-                class="severity ${machine.severity}"
-                title=${machine.concerns.map((concern) => concern.reason).join('\n')}
-                >${machine.severity}</span
-              >
-              <button
-                class="expand"
-                data-testid=${`pressure-details-${machine.machine}`}
-                aria-expanded=${expanded}
-                @click=${() => this.toggle(machine.machine)}
-              >
-                ${expanded ? 'Collapse' : 'Details'}
-              </button>
-            </div>
-          </header>
-          ${machine.severity !== 'ok'
-            ? html`<div class="diagnosis">
-                ${topGroup
-                  ? html`<div>
-                      Top observed tree:
-                      <strong>${pressureProcessName(topGroup.topExecutable)}</strong> ·
-                      ${pressureProcessCpu(topGroup.cpuPercent)} tree CPU ·
-                      ${pressureBytes(topGroup.topRssBytes)} hot RSS ·
-                      ${topGroup.slotId?.replace(`${machine.machine}-`, '') ??
-                      (topGroup.classification === 'unknown'
-                        ? 'system / unmapped'
-                        : topGroup.classification)}
-                    </div>`
-                  : ''}
-                ${machine.concerns[0]
-                  ? html`<div class="diagnosis-reason">${machine.concerns[0].reason}</div>`
-                  : ''}
-              </div>`
-            : ''}
-          <div class="metrics">
-            ${this.renderMetric({
-              label: 'CPU',
-              value: latest ? `${Math.round(latest.pressure.cpu * 100)}%` : '–',
-              detail: cores > 0 ? `${cores} logical cores` : 'whole machine',
-              values: cpuValues,
-              maxValue: 1,
-              tone: 'cpu',
-            })}
-            ${this.renderMetric({
-              label: 'Memory',
-              value: latest ? `${Math.round(latest.pressure.memory * 100)}%` : '–',
-              detail: machine.system
-                ? `${machine.system.memoryUsedGb}/${machine.system.memoryTotalGb} GB used`
-                : 'awaiting metrics',
-              values: memoryValues,
-              maxValue: 1,
-              tone: 'memory',
-            })}
-            ${this.renderMetric({
-              label: 'Load / core',
-              value: latest?.pressure.load1 == null ? '–' : `${latest.pressure.load1.toFixed(2)}×`,
-              detail:
-                latest && cores > 0
-                  ? `${latest.loadAvg1.toFixed(1)} load / ${cores} cores`
-                  : 'needs core count',
-              values: loadValues,
-              maxValue: loadMax,
-              capacityLine: true,
-              tone: 'load',
-            })}
-          </div>
-          ${expanded ? this.renderHistory(machine) : ''}
-          <div class="classes">
-            <span class="class-pill active">active ${classes.active}</span>
-            <span class="class-pill retained">retained ${classes.retained}</span>
-            <span class="class-pill stale">stale ${classes.stale}</span>
-            <span class="class-pill manual">manual ${classes.manual}</span>
-            <span class="class-pill unknown">system / unmapped ${classes.unknown}</span>
-          </div>
-          <div class="section-title">
-            <span>Top processes + managed work</span>
-            <span class="sample-note">${processNote}</span>
-          </div>
-          <div class="groups">
-            ${groups.length > 0
-              ? html`<div class="group group-head">
-                  <span>Owner</span><span>Hot process</span
-                  ><span class="process-stat">Tree CPU</span
-                  ><span class="process-stat">Hot RSS</span>
+    const omitted = this.snapshot.summary;
+    if (machines.length === 0)
+      return html`<div class="empty">
+        No machines match the
+        filters.${omitted.omittedMachines > 0
+          ? ` ${omitted.omittedMachines} machine(s) were outside the bounded response; select a machine to load it directly.`
+          : ''}
+      </div>`;
+    return html`${omitted.omittedMachines > 0 || omitted.omittedCleanupCandidates > 0
+        ? html`<div class="diagnosis">
+            Bounded response omitted ${omitted.omittedMachines} machine(s) and
+            ${omitted.omittedCleanupCandidates} cleanup candidate(s). Narrow the global selectors to
+            inspect them directly.
+          </div>`
+        : ''}
+      <div class="grid">
+        ${machines.map((machine) => {
+          const latest = machine.history.at(-1);
+          const expanded = this.expandedMachines.has(machine.machine);
+          const cpuValues = machine.history.map((sample) => sample.pressure.cpu);
+          const memoryValues = machine.history.map((sample) => sample.pressure.memory);
+          const loadValues = machine.history
+            .map((sample) => sample.pressure.load1)
+            .filter((value): value is number => value != null);
+          const loadMax = Math.max(2, Math.ceil(Math.max(0, ...loadValues)));
+          const cores = machine.capacity?.cpuCores ?? machine.system?.cpuCores ?? 0;
+          const classes = machine.processAttribution.classCounts;
+          const topGroup = machine.processAttribution.groups[0];
+          const groups = visiblePressureGroups(
+            machine.processAttribution.groups,
+            expanded ? 12 : 4,
+          );
+          const processNote = machine.processAttribution.sampledProcesses
+            ? `${machine.processAttribution.sampledProcesses}/${machine.processAttribution.totalProcesses} sampled · ${pressureSampleAge(machine.processAttribution.sampledAt)}`
+            : (machine.processAttribution.unavailableReason ?? 'awaiting process sample');
+          return html`<section class="machine ${machine.severity}" data-machine=${machine.machine}>
+            <header>
+              <div>
+                <strong>${machine.machine}</strong>
+                <span class="sample-note"> · ${machine.history.length} samples</span>
+              </div>
+              <div class="heading-actions">
+                <span
+                  class="severity ${machine.severity}"
+                  title=${machine.concerns.map((concern) => concern.reason).join('\n')}
+                  >${machine.severity}</span
+                >
+                <button
+                  class="expand"
+                  data-testid=${`pressure-details-${machine.machine}`}
+                  aria-expanded=${expanded}
+                  @click=${() => this.toggle(machine.machine)}
+                >
+                  ${expanded ? 'Collapse' : 'Details'}
+                </button>
+              </div>
+            </header>
+            ${machine.severity !== 'ok'
+              ? html`<div class="diagnosis">
+                  ${topGroup
+                    ? html`<div>
+                        Top observed tree:
+                        <strong>${pressureProcessName(topGroup.topExecutable)}</strong> ·
+                        ${pressureProcessCpu(topGroup.cpuPercent)} tree CPU ·
+                        ${pressureBytes(topGroup.topRssBytes)} hot RSS ·
+                        ${topGroup.slotId?.replace(`${machine.machine}-`, '') ??
+                        (topGroup.classification === 'unknown'
+                          ? 'system / unmapped'
+                          : topGroup.classification)}
+                      </div>`
+                    : ''}
+                  ${machine.concerns[0]
+                    ? html`<div class="diagnosis-reason">${machine.concerns[0].reason}</div>`
+                    : ''}
                 </div>`
               : ''}
-            ${groups.map((group) => {
-              const hotName = pressureProcessName(group.topExecutable);
-              const rootName = pressureProcessName(group.executable);
-              const displayName = hotName.length < 8 && rootName !== hotName ? rootName : hotName;
-              return html`<div
-                class="group"
-                title=${`${group.classification}; confidence ${group.confidence}; ${group.evidence.join(', ')}`}
-              >
-                <span class="owner ${group.classification}"
-                  >${group.slotId?.replace(`${machine.machine}-`, '') ??
-                  (group.classification === 'unknown' ? 'system' : group.classification)}</span
+            <div class="metrics">
+              ${this.renderMetric({
+                label: 'CPU',
+                value: latest ? `${Math.round(latest.pressure.cpu * 100)}%` : '–',
+                detail: cores > 0 ? `${cores} logical cores` : 'whole machine',
+                values: cpuValues,
+                maxValue: 1,
+                tone: 'cpu',
+              })}
+              ${this.renderMetric({
+                label: 'Memory',
+                value: latest ? `${Math.round(latest.pressure.memory * 100)}%` : '–',
+                detail: machine.system
+                  ? `${machine.system.memoryUsedGb}/${machine.system.memoryTotalGb} GB used`
+                  : 'awaiting metrics',
+                values: memoryValues,
+                maxValue: 1,
+                tone: 'memory',
+              })}
+              ${this.renderMetric({
+                label: 'Load / core',
+                value:
+                  latest?.pressure.load1 == null ? '–' : `${latest.pressure.load1.toFixed(2)}×`,
+                detail:
+                  latest && cores > 0
+                    ? `${latest.loadAvg1.toFixed(1)} load / ${cores} cores`
+                    : 'needs core count',
+                values: loadValues,
+                maxValue: loadMax,
+                capacityLine: true,
+                tone: 'load',
+              })}
+            </div>
+            ${expanded ? this.renderHistory(machine) : ''}
+            <div class="classes">
+              <span class="class-pill active">active ${classes.active}</span>
+              <span class="class-pill retained">retained ${classes.retained}</span>
+              <span class="class-pill stale">stale ${classes.stale}</span>
+              <span class="class-pill manual">manual ${classes.manual}</span>
+              <span class="class-pill unknown">system / unmapped ${classes.unknown}</span>
+            </div>
+            <div class="section-title">
+              <span>Top processes + managed work</span>
+              <span class="sample-note">${processNote}</span>
+            </div>
+            <div class="groups">
+              ${groups.length > 0
+                ? html`<div class="group group-head">
+                    <span>Owner</span><span>Hot process</span
+                    ><span class="process-stat">Tree CPU</span
+                    ><span class="process-stat">Hot RSS</span>
+                  </div>`
+                : ''}
+              ${groups.map((group) => {
+                const hotName = pressureProcessName(group.topExecutable);
+                const rootName = pressureProcessName(group.executable);
+                const displayName = hotName.length < 8 && rootName !== hotName ? rootName : hotName;
+                return html`<div
+                  class="group"
+                  title=${`${group.classification}; confidence ${group.confidence}; ${group.evidence.join(', ')}`}
                 >
-                <span class="process-name">${displayName}</span>
-                <span class="process-stat">${pressureProcessCpu(group.cpuPercent)}</span>
-                <span class="process-stat">${pressureBytes(group.topRssBytes)}</span>
-              </div>`;
-            })}
-            ${groups.length === 0
-              ? html`<span class="sample-note"
-                  >${machine.processAttribution.unavailableReason ??
-                  'No process attribution available yet.'}</span
-                >`
-              : ''}
-          </div>
-          ${expanded ? this.renderDetails(machine) : ''}
-        </section>`;
-      })}
-    </div>`;
+                  <span class="owner ${group.classification}"
+                    >${group.slotId?.replace(`${machine.machine}-`, '') ??
+                    (group.classification === 'unknown' ? 'system' : group.classification)}</span
+                  >
+                  <span class="process-name">${displayName}</span>
+                  <span class="process-stat">${pressureProcessCpu(group.cpuPercent)}</span>
+                  <span class="process-stat">${pressureBytes(group.topRssBytes)}</span>
+                </div>`;
+              })}
+              ${groups.length === 0
+                ? html`<span class="sample-note"
+                    >${machine.processAttribution.unavailableReason ??
+                    'No process attribution available yet.'}</span
+                  >`
+                : ''}
+            </div>
+            ${expanded ? this.renderDetails(machine) : ''}
+          </section>`;
+        })}
+      </div>`;
   }
 
   private renderMetric(options: {

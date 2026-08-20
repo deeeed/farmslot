@@ -7,11 +7,18 @@ const execFileAsync = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const machineArg = process.argv.indexOf('--machine');
 const machineName = machineArg >= 0 ? process.argv[machineArg + 1] : 'macwork';
+const projectArg = process.argv.indexOf('--project');
+const projectName = projectArg >= 0 ? process.argv[projectArg + 1] : undefined;
 if (!machineName) throw new Error('--machine requires a value');
 const cdp = path.join(root, 'apps/command-center/scripts/cdp.mjs');
 const { stdout } = await execFileAsync(
   process.execPath,
-  [cdp, 'gateway', 'resource.pressure.snapshot', JSON.stringify({ machine: machineName })],
+  [
+    cdp,
+    'gateway',
+    'resource.pressure.snapshot',
+    JSON.stringify({ machine: machineName, ...(projectName ? { project: projectName } : {}) }),
+  ],
   { cwd: root, env: process.env, maxBuffer: 1024 * 1024 },
 );
 const snapshot = JSON.parse(stdout);
@@ -40,14 +47,37 @@ if (attribution.sampledProcesses > 0 && !attribution.sampledAt) {
 if (machine.system && 'processInventory' in machine.system) {
   throw new Error('resource pressure RPC leaked raw inventory through MachineHealth.system');
 }
+if (projectName) {
+  const { stdout: fleetStdout } = await execFileAsync(
+    process.execPath,
+    [cdp, 'gateway', 'fleet.status', '{}'],
+    {
+      cwd: root,
+      env: process.env,
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  const fleet = JSON.parse(fleetStdout).fleet;
+  const allowedSlots = new Set(
+    (fleet?.slots ?? [])
+      .filter((slot) => slot.machine === machineName && slot.project === projectName)
+      .map((slot) => slot.slot),
+  );
+  const leaked = attribution.groups.find(
+    (group) => group.slotId && !allowedSlots.has(group.slotId),
+  );
+  if (leaked) throw new Error(`project-filtered attribution leaked slot ${leaked.slotId}`);
+}
 console.log(
   JSON.stringify({
     machine: machine.machine,
+    project: projectName ?? null,
     historySamples: machine.history.length,
     sampledAt: attribution.sampledAt,
     groups: attribution.groups.length,
     classCounts: attribution.classCounts,
     omittedGroups: attribution.omittedGroups,
     rawInventoryInHealth: false,
+    managedIdentityScope: projectName ? 'project-filtered' : 'whole-machine',
   }),
 );

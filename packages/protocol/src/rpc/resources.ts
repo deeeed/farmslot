@@ -141,6 +141,7 @@ export interface ResourceCleanupResult {
   ok: boolean;
   dryRun: boolean;
   targets: ResourceCleanupTarget[];
+  omittedTargets: number;
   stopped: number;
   failed: number;
 }

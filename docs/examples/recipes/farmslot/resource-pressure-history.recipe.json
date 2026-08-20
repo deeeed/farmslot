@@ -17,6 +17,10 @@
       "machine": {
         "type": "string",
         "default": "macwork"
+      },
+      "project": {
+        "type": "string",
+        "default": "audiolab-farm"
       }
     }
   },
@@ -25,7 +29,7 @@
     "nodes": {
       "open-resource-pressure": {
         "action": "ui.navigate",
-        "target": "{{params.ui_url}}/#fleet?group=resource&view=card&machines={{params.machine}}&pressureMachine={{params.machine}}",
+        "target": "{{params.ui_url}}/#fleet?group=resource&view=card&projects={{params.project}}&machines={{params.machine}}&pressureMachine={{params.machine}}",
         "next": "dismiss-whats-new",
         "intent": "Open the cache-first fleet Resource view where node pressure history is rendered."
       },
@@ -55,21 +59,28 @@
         "cmd": "node apps/command-center/scripts/cdp.mjs eval fleet --file apps/command-center/scripts/probes/resource-cleanup-preview.js",
         "timeout_ms": 20000,
         "next": "capture-cleanup-preview",
-        "intent": "Verify Preview cleanup and Review & stop idle open the same read-only impact review without mutating resources."
+        "intent": "Verify both entry points open the same impact review and intercept the explicit second-step confirmation before it reaches the gateway, using a clearly labelled UI-only candidate when the live filtered fleet has none."
       },
       "probe-pressure-rpc": {
         "action": "command",
-        "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-pressure-rpc.mjs --machine '{{params.machine}}'",
+        "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-pressure-rpc.mjs --machine '{{params.machine}}' --project '{{params.project}}'",
         "timeout_ms": 20000,
-        "next": "probe-cleanup-safety",
+        "next": "prove-cleanup-contract",
         "intent": "Verify the typed read-only backend shape and health-event stripping before interacting with the UI."
+      },
+      "prove-cleanup-contract": {
+        "action": "command",
+        "cmd": "node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json --workers 1 src/methods/resource-pressure.test.ts",
+        "timeout_ms": 30000,
+        "next": "probe-cleanup-safety",
+        "intent": "Deterministically prove busy targets, changed targets, resolution failures, and unverifiable shutdowns fail closed without depending on live fleet occupancy."
       },
       "probe-cleanup-safety": {
         "action": "command",
         "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-cleanup-safety.mjs --machine '{{params.machine}}'",
         "timeout_ms": 20000,
         "next": "open-and-assert-machine-details",
-        "intent": "Prove live cleanup rejects empty and missing exact targets without mutation, and rejects a busy target when the selected machine has one."
+        "intent": "Prove the live gateway rejects empty and missing exact targets without invoking a resource shutdown."
       },
       "capture-pressure-history": {
         "action": "ui.screenshot",
@@ -83,7 +94,7 @@
         "action": "ui.screenshot",
         "path": "screenshots/resource-cleanup-preview.png",
         "label": "Two-step idle resource cleanup impact review",
-        "note": "Reviewer evidence: exact targets, configured-hook effect, process impact, exclusions, and explicit second action",
+        "note": "Reviewer evidence: selectable exact targets, exclusions, and an intercepted explicit second action; a clearly labelled UI-only fixture is used when no live target is eligible",
         "next": "done",
         "intent": "Record the shared read-only preview used by both cleanup entry points before any shutdown action."
       },

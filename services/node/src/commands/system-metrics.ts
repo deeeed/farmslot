@@ -380,7 +380,24 @@ export async function collectMetrics(): Promise<SystemMetrics> {
       })
       .catch((error: unknown) => {
         // collectProcessInventory normally resolves failures into health metadata;
-        // keep an explicit terminal recovery path if that contract ever regresses.
+        // if that contract regresses, retain the failure for the next metrics event.
+        processSampler.failures += 1;
+        lastProcessInventoryFailedAt = Date.now();
+        processSampler.lastError = (error instanceof Error ? error.message : String(error)).slice(
+          0,
+          160,
+        );
+        pendingProcessInventory = {
+          generation: PROCESS_GENERATION,
+          sampleId: processSampleId,
+          collectedAt: new Date().toISOString(),
+          failed: true,
+          processes: [],
+          totalProcesses: 0,
+          maxEntries: PROCESS_SAMPLE_MAX_ENTRIES,
+          truncated: false,
+          health: samplerHealth(),
+        };
         console.error(`[system-metrics] process inventory scheduling failed: ${String(error)}`);
       });
   }

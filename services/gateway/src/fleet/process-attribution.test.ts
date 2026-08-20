@@ -181,6 +181,28 @@ test('worker correlation preserves resource identity when both seeds share a PID
   assert.equal(group?.resourceId, 'metro');
 });
 
+test('resource ownership remains authoritative when a shared tmux seed looks manual', () => {
+  const result = attributeProcessInventory({
+    inventory: processes,
+    slots: [slot('resource-slot', 'ready', null)],
+    runs: [run('active-run', 'monitoring')],
+    workers: [worker(14, 'worker', { linkedSlotId: 'resource-slot' })],
+    resources: [
+      {
+        pid: 14,
+        slotId: 'resource-slot',
+        resourceId: 'metro',
+        runId: 'active-run',
+        status: 'running',
+      },
+    ],
+  });
+  const group = result.groups.find((candidate) => candidate.rootPid === 14);
+  assert.equal(group?.classification, 'active');
+  assert.equal(group?.resourceId, 'metro');
+  assert.ok(group?.evidence.some((evidence) => evidence.startsWith('tmux:')));
+});
+
 test('an unmapped tmux tree is manual rather than an unknown system process', () => {
   const inventory = structuredClone(processes);
   inventory.processes = [

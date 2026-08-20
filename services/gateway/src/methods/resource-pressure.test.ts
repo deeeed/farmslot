@@ -4,6 +4,7 @@ import { mock, test } from 'node:test';
 const collectedAt = new Date().toISOString();
 let tmuxFailure = false;
 let omitPollStatus = false;
+let failedResolutionSlot = '';
 let resourceResolutionCalls = 0;
 const controlledTargets: string[] = [];
 
@@ -20,8 +21,9 @@ mock.module('../fleet/resource-manager.js', {
     getCachedResourceStatus: () => 'running',
     getResourceWatchRuntimeState: () => ({ enabled: true, updatedAt: collectedAt }),
     pollSlotResources: async () => (omitPollStatus ? [] : [{ id: 'metro', status: 'stopped' }]),
-    resolveSlotResources: async () => {
+    resolveSlotResources: async (slotId: string) => {
       resourceResolutionCalls += 1;
+      if (slotId === failedResolutionSlot) throw new Error('project config unavailable');
       return [
         {
           id: 'metro',
@@ -232,6 +234,15 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   assert.equal(busyCleanup.targets[0].ok, false);
   assert.equal(busyCleanup.ok, false);
   assert.deepEqual(controlledTargets, ['slot-2:metro', 'slot-2:metro']);
+  failedResolutionSlot = 'slot-2';
+  const unresolvedCleanup = await resourceCleanup({
+    dryRun: false,
+    targets: [{ machine: 'macpro', slotId: 'slot-2', resourceId: 'metro' }],
+  });
+  failedResolutionSlot = '';
+  assert.equal(unresolvedCleanup.ok, false);
+  assert.equal(unresolvedCleanup.targets[0].ok, false);
+  assert.match(unresolvedCleanup.targets[0].detail ?? '', /project config unavailable/);
   const wrongMachineCleanup = await resourceCleanup({
     dryRun: false,
     targets: [{ machine: 'mini', slotId: 'slot-2', resourceId: 'metro' }],
@@ -274,6 +285,16 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
       activeWorkExcluded: true,
     },
   );
+  const unionFiltered = await resourcePressureSnapshot({
+    machine: 'missing-machine',
+    machines: ['macpro'],
+    project: 'missing-project',
+    projects: ['farmslot-farm'],
+  });
+  assert.deepEqual(
+    unionFiltered.machines.map((machine) => machine.machine),
+    ['macpro'],
+  );
   const resolutionCallsAfterFirstSnapshot = resourceResolutionCalls;
 
   tmuxFailure = true;
@@ -289,6 +310,13 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
 
   result.machines[0].processAttribution.groups[0].topExecutable =
     '/Users/developer/Applications/Private Tool.app/Contents/MacOS/Private Tool';
+  const originalGroup = result.machines[0].processAttribution.groups[0];
+  const gatewayOmittedGroups = result.machines[0].processAttribution.omittedGroups;
+  result.machines[0].processAttribution.groups = Array.from({ length: 10 }, (_, index) => ({
+    ...originalGroup,
+    rootPid: originalGroup.rootPid + index,
+    topPid: originalGroup.topPid + index,
+  }));
   result.machines[0].processAttribution.sampler!.lastError =
     'Command /Users/developer/bin/ps failed';
   result.machines[0].processAttribution.degradedReason = 'Tmux attribution unavailable';
@@ -299,4 +327,8 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   assert.doesNotMatch(serialized, /"cleanupCandidates":\[/);
   assert.match(serialized, /"process":"Private Tool"/);
   assert.match(serialized, /"degradedReason":"Tmux attribution unavailable"/);
+  assert.equal(
+    modelProjection.machines[0].processAttribution.omittedGroups,
+    gatewayOmittedGroups + 2,
+  );
 });

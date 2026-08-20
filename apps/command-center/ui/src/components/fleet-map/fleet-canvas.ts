@@ -12,6 +12,7 @@ import type {
   ResourceCleanupResult,
   ResourceListResult,
   ResourcePressureCleanupCandidate,
+  ResourcePressureSnapshotParams,
   ResourcePressureSnapshotResult,
   ResourceStatus,
   ResourceStatusUpdatedPayload,
@@ -106,6 +107,7 @@ export class FleetCanvas extends LitElement {
   /** machine → provider subscription snapshot (labels only). */
   private _providerAccountsUnsub: (() => void) | null = null;
   private _resourceFetched = false;
+  private _resourcePressureFetchEpoch = 0;
   private unsub?: () => void;
   private _unsubConnected?: () => void;
   private _unsubDisconnected?: () => void;
@@ -455,11 +457,17 @@ export class FleetCanvas extends LitElement {
 
   private syncState(s: AppState) {
     const prev = this.slots;
+    const previousPressureFilter = JSON.stringify([this.filterProjects, this.filterMachines]);
     this.slots = s.fleet?.slots ?? [];
     this.hydrating = isHydrating(s, 'fleet');
     this.bootstrapFailed = s.bootstrapFailed.fleet;
     this.filterProjects = s.globalFilters.projects;
     this.filterMachines = s.globalFilters.machines;
+    const pressureFilterChanged =
+      previousPressureFilter !== JSON.stringify([this.filterProjects, this.filterMachines]);
+    if (pressureFilterChanged && this.groupBy === 'resource' && this._resourceFetched) {
+      void this.fetchResourcePressure();
+    }
     // Populate machineHealthMap from fleet.machines
     if (s.fleet?.machines) {
       const next = new Map(this.machineHealthMap);
@@ -586,18 +594,29 @@ export class FleetCanvas extends LitElement {
   }
 
   private async fetchResourcePressure() {
+    const epoch = ++this._resourcePressureFetchEpoch;
     try {
-      this.resourcePressure = await gateway.request<ResourcePressureSnapshotResult>(
+      const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
         Methods.RESOURCE_PRESSURE_SNAPSHOT,
-        {},
+        this.pressureRequestParams(),
       );
-      this.resourceWatchesEnabled = this.resourcePressure.watchState.enabled;
+      if (epoch !== this._resourcePressureFetchEpoch) return;
+      this.resourcePressure = snapshot;
+      this.resourceWatchesEnabled = snapshot.watchState.enabled;
     } catch (err) {
       console.warn(
         '[fleet-canvas] resource pressure fetch failed:',
         err instanceof Error ? err.message : String(err),
       );
     }
+  }
+
+  private pressureRequestParams(): ResourcePressureSnapshotParams {
+    const machines = this.pressureVisibleMachines;
+    return {
+      ...(machines ? { machines } : {}),
+      ...(this.filterProjects.length > 0 ? { projects: this.filterProjects } : {}),
+    };
   }
 
   private get filteredSlots(): SlotStatus[] {
@@ -717,7 +736,7 @@ export class FleetCanvas extends LitElement {
     try {
       const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
         Methods.RESOURCE_PRESSURE_SNAPSHOT,
-        {},
+        this.pressureRequestParams(),
       );
       this.resourcePressure = snapshot;
       this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
@@ -755,7 +774,7 @@ export class FleetCanvas extends LitElement {
       if (!cleanupTargetsRemainEligible(selectedTargets, freshTargets)) {
         const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
           Methods.RESOURCE_PRESSURE_SNAPSHOT,
-          {},
+          this.pressureRequestParams(),
         );
         this.resourcePressure = snapshot;
         this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
@@ -782,13 +801,13 @@ export class FleetCanvas extends LitElement {
   private cleanupTargetsForFilters<T extends { machine: string; project?: string; slotId: string }>(
     targets: T[],
   ): T[] {
-    const searchedSlotIds = new Set(this.filteredSlots.map((slot) => slot.slot));
+    const searchedSlots = new Set(this.filteredSlots.map((slot) => `${slot.machine}:${slot.slot}`));
     return targets.filter(
       (target) =>
         (this.filterMachines.length === 0 || this.filterMachines.includes(target.machine)) &&
         (this.filterProjects.length === 0 ||
           (target.project != null && this.filterProjects.includes(target.project))) &&
-        (this.search.length === 0 || searchedSlotIds.has(target.slotId)),
+        (this.search.length === 0 || searchedSlots.has(`${target.machine}:${target.slotId}`)),
     );
   }
 
