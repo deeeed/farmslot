@@ -65,6 +65,7 @@ import { loadBindingsCache } from './integrations/github-bindings-cache.js';
 import { initGitHubClient } from './integrations/github-client.js';
 import { initPrLinkage } from './integrations/pr-linkage.js';
 import { initImprovementEngine } from './intelligence/improvement-engine.js';
+import { reconcileMachineParking } from './machine-parking/recovery.js';
 import { refreshBranches } from './methods/dispatch.js';
 import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
@@ -744,10 +745,23 @@ async function main(): Promise<void> {
     runtimeCapabilityRegistry.cleanupExpiredWarmProviders().catch((err) => {
       console.error(`[runtime-capability] startup warm cleanup error: ${(err as Error).message}`);
     });
-    reconcileRuntimeCapabilityLeases(runtimeCapabilityRegistry).catch((err) => {
-      console.error(`[runtime-capability] startup reconcile error: ${(err as Error).message}`);
-    });
-    recoverActiveRuns()
+    (async () => {
+      try {
+        await reconcileRuntimeCapabilityLeases(runtimeCapabilityRegistry);
+      } catch (err) {
+        // Lease reconciliation is advisory to run recovery, but it must be attempted first so
+        // machine parking observes the most accurate provider ownership available.
+        console.error(`[runtime-capability] startup reconcile error: ${(err as Error).message}`);
+      }
+      try {
+        await reconcileMachineParking();
+      } catch (err) {
+        // A malformed park record is isolated from normal active-run recovery. The durable
+        // record remains available for status/repair instead of blocking every unrelated run.
+        console.error(`[machine-pause] startup reconcile error: ${(err as Error).message}`);
+      }
+      await recoverActiveRuns();
+    })()
       .then(() => scanFailedRunsForAutoRecovery())
       .catch((err) => {
         console.error(`[run-engine] recovery error: ${(err as Error).message}`);

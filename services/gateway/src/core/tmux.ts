@@ -46,13 +46,26 @@ export function parseTmuxKeys(keys: string): string[] {
 export function tmuxSendTextCommand(
   target: string,
   text: string,
-  opts?: { enter?: boolean; submitKey?: 'Enter' | 'C-m'; suffix?: string },
+  opts?: {
+    enter?: boolean;
+    submitKey?: 'Enter' | 'C-m';
+    /** Opt-in gap between literal text and submit for TUIs with paste-burst detection. */
+    submitDelayMs?: number;
+    suffix?: string;
+  },
 ): string {
+  const submitDelayMs = opts?.submitDelayMs ?? 0;
+  if (!Number.isInteger(submitDelayMs) || submitDelayMs < 0 || submitDelayMs > 1_000) {
+    throw new Error(
+      `tmux submitDelayMs must be an integer between 0 and 1000 (got ${submitDelayMs})`,
+    );
+  }
   const suffix = opts?.suffix ? ` ${opts.suffix}` : '';
   const commands = [
     tmuxShellSnippet(`send-keys -t ${shellQuote(target)} -l ${shellQuote(text)}${suffix}`),
   ];
   if (opts?.enter) {
+    if (submitDelayMs > 0) commands.push(`sleep ${submitDelayMs / 1_000}`);
     commands.push(
       tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${opts.submitKey ?? 'Enter'}${suffix}`),
     );
@@ -193,6 +206,33 @@ export async function respawnTmuxWindowWithCommand(
   if (collapse.exitCode !== 0) {
     throw new Error(
       `Failed to collapse tmux window ${target} to a single pane after launch: ${collapse.stderr || collapse.stdout || `exit ${collapse.exitCode}`}`,
+    );
+  }
+}
+
+/** Replace one exact pane without terminating sibling panes in the same window. */
+export async function respawnTmuxPaneWithCommand(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  paneId: string,
+  command: string,
+  options?: { preservePaneAfterExit?: boolean },
+): Promise<void> {
+  if (!/^%\d+$/.test(paneId)) throw new Error(`Invalid exact tmux pane id: ${paneId}`);
+  const launchCommand = buildTmuxRespawnLaunchCommand(
+    command,
+    vars.remoteRepo,
+    options?.preservePaneAfterExit,
+  );
+  const respawned = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `respawn-pane -k -t ${shellQuote(paneId)} -c ${shellQuote(vars.remoteRepo)} ` +
+        shellQuote(launchCommand),
+    ),
+  );
+  if (respawned.exitCode !== 0) {
+    throw new Error(
+      `Failed to launch command in tmux pane ${paneId}: ${respawned.stderr || respawned.stdout || `exit ${respawned.exitCode}`}`,
     );
   }
 }

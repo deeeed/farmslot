@@ -51,6 +51,7 @@ import {
   type EvalExperimentCreateParams as RpcIndexEvalExperimentCreateParams,
   Methods as DomainIndexMethods,
 } from '../../src/rpc/index.js';
+import { MachinePauseMethods } from '../../src/rpc/machine-pause.js';
 import { ResourceMethods } from '../../src/rpc/resources.js';
 import { type RunContextBundleParams, RunMethods } from '../../src/rpc/run.js';
 import {
@@ -79,6 +80,7 @@ const packageSlotTypes = await import('@farmslot/protocol/contracts/slots');
 const packageSlotMethods = await import('@farmslot/protocol/rpc/slot');
 const packageRootTypes = await import('@farmslot/protocol/contracts');
 const packageRootMethods = await import('@farmslot/protocol/rpc');
+const packageMachinePauseMethods = await import('@farmslot/protocol/rpc/machine-pause');
 
 assert.ok(packageRuns.FLOW_STEPS['fix-bug'].includes('grade'));
 assert.equal(packageRunMethods.RunMethods.create, Methods.RUN_CREATE);
@@ -99,6 +101,7 @@ assert.equal(typeof packageSlotTypes, 'object');
 assert.equal(packageSlotMethods.SlotMethods.check, Methods.SLOT_CHECK);
 assert.ok(packageRootTypes.FLOW_STEPS['fix-bug'].includes('grade'));
 assert.equal(packageRootMethods.Methods.RUN_CREATE, Methods.RUN_CREATE);
+assert.equal(packageMachinePauseMethods.MachinePauseMethods.preview, Methods.MACHINE_PAUSE_PREVIEW);
 assert.equal(LIVE_RECIPE_EVIDENCE_FILES.has('summary.json'), true);
 assert.equal(
   hasLiveRecipeEvidence({
@@ -201,6 +204,16 @@ for (const [name, actual, expected] of [
       refreshSlots: Methods.FLEET_REFRESH_SLOTS,
       refreshSlotsCancel: Methods.FLEET_REFRESH_SLOTS_CANCEL,
       prSummary: Methods.FLEET_PR_SUMMARY,
+    },
+  ],
+  [
+    'MachinePauseMethods',
+    MachinePauseMethods,
+    {
+      preview: Methods.MACHINE_PAUSE_PREVIEW,
+      execute: Methods.MACHINE_PAUSE_EXECUTE,
+      status: Methods.MACHINE_PAUSE_STATUS,
+      restore: Methods.MACHINE_PAUSE_RESTORE,
     },
   ],
   [

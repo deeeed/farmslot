@@ -57,6 +57,7 @@ import {
 } from '../../runners/launch-command.js';
 import {
   assertSupportedRunnerSpelling,
+  captureRunnerPromptAcceptanceBaseline,
   detectRunnerLaunchBlocker,
   normalizeRunner,
   runnerDefaultModel,
@@ -77,6 +78,7 @@ import {
   captureRunnerSessionMetadata,
   isRunnerAliveUnderPane,
   listRunnerSessionFiles,
+  recaptureRunnerSessionMetadataIfMissing,
 } from '../../runners/session-process.js';
 import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.js';
 import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
@@ -150,7 +152,7 @@ async function captureAgentPaneTarget(
     await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `display-message -p -t ${shellQuote(target)} '#{session_name}:#{window_index}.#{pane_index}|#{window_name}' 2>/dev/null`,
+        `display-message -p -t ${shellQuote(target)} '#{session_name}:#{window_index}.#{pane_index}|#{window_name}|#{pane_id}' 2>/dev/null`,
       ),
     )
   ).stdout.trim();
@@ -1321,12 +1323,19 @@ export async function dispatchExecute(
     step('launch', `${runner} launched in tmux target ${workerTarget}`);
     primaryTarget = await captureAgentPaneTarget(vars, session, workerTarget);
     const workerPaneId = await resolveTmuxPaneId(vars, primaryTarget.target ?? workerTarget);
+    const sessionCaptureOptions = {
+      sinceMs: currentRun ? (dispatchStartedAtMs(currentRun) ?? Date.now()) : Date.now(),
+      paneId: workerPaneId,
+      slotId: vars.slotId,
+    };
+    let promptSessionCaptureOptions = {};
     if (!resumedReviewSession) {
-      sessionMeta = await captureRunnerSessionMetadata(vars, runner, sessionFilesBefore, {
-        sinceMs: currentRun ? (dispatchStartedAtMs(currentRun) ?? Date.now()) : Date.now(),
-        paneId: workerPaneId,
-        slotId: vars.slotId,
-      });
+      sessionMeta = await captureRunnerSessionMetadata(
+        vars,
+        runner,
+        sessionFilesBefore,
+        sessionCaptureOptions,
+      );
     }
 
     // For Claude runner: wait for prompt readiness then send task.
@@ -1349,6 +1358,12 @@ export async function dispatchExecute(
     if (!resumedReviewSession && runnerNeedsPostLaunchPrompt(runner)) {
       step('task', 'Waiting for agent ready...');
       const handoffAckSinceMs = Date.now();
+      const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
+        vars,
+        workerTarget,
+        runner,
+        handoffAckSinceMs,
+      );
       await sendRunnerPostLaunchPrompt(
         vars,
         workerTarget,
@@ -1363,12 +1378,26 @@ export async function dispatchExecute(
           launchAckSignalPath: `${workerTaskDir}/SIGNAL.json`,
           requirePromptDigest: true,
           handoffAckSinceMs,
+          promptAcceptanceBaselineMs,
           softAcceptOnHandoffAck: true,
           providerAccountLabel: accountBind?.bind.accountLabel ?? null,
           runtimeDir: projectVars?.runtimeDir,
         },
       );
+      promptSessionCaptureOptions = {
+        promptText: taskPrompt,
+        promptAcceptedSinceMs: promptAcceptanceBaselineMs,
+      };
       step('task', 'Task prompt delivered and verified');
+    }
+    if (!resumedReviewSession) {
+      sessionMeta = await recaptureRunnerSessionMetadataIfMissing(
+        vars,
+        runner,
+        sessionFilesBefore,
+        sessionMeta,
+        { ...sessionCaptureOptions, ...promptSessionCaptureOptions },
+      );
     }
     if (currentRun?.repeatReviewContext) {
       if (!resumedReviewSession && repeatReviewSessionIntent === 'resume') {
@@ -1416,14 +1445,13 @@ export async function dispatchExecute(
     if (latestRun) {
       // Stamp the account that actually reached launch (label only — never email/path).
       if (
-        sessionMeta.runnerSessionId ||
-        sessionMeta.runnerSessionPath ||
+        (sessionMeta.runnerSessionId && sessionMeta.runnerSessionPath) ||
         accountBind?.bind.accountLabel
       ) {
         updateRunStore(params.runId, {
           metrics: {
             ...latestRun.metrics,
-            ...(sessionMeta.runnerSessionId || sessionMeta.runnerSessionPath
+            ...(sessionMeta.runnerSessionId && sessionMeta.runnerSessionPath
               ? {
                   runnerSessionId: sessionMeta.runnerSessionId,
                   runnerSessionPath: sessionMeta.runnerSessionPath,

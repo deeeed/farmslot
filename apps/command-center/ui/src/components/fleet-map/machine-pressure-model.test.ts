@@ -6,6 +6,8 @@ import type { ProcessAttributionGroup } from '@farmslot/protocol';
 import {
   cleanupExecutionTargets,
   cleanupTargetsRemainEligible,
+  pressureLoadRatio,
+  pressureOwnershipLabel,
   pressureProcessCpu,
   pressureProcessName,
   pressureSampleAge,
@@ -46,6 +48,10 @@ test('process presentation shortens app paths and expresses multi-core CPU', () 
   assert.equal(pressureProcessName('(simctl)'), 'simctl');
   assert.equal(pressureProcessCpu(279.2), '2.8 cores');
   assert.equal(pressureProcessCpu(55.1), '55.1%');
+  assert.equal(pressureLoadRatio(1.324), '1.32×');
+  assert.equal(pressureLoadRatio(undefined), '–');
+  assert.equal(pressureOwnershipLabel('unknown'), 'system / unmapped');
+  assert.equal(pressureOwnershipLabel('active'), 'active');
 });
 
 test('bounded process rows retain managed and stale work', () => {

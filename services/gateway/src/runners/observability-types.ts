@@ -91,6 +91,8 @@ export interface RunnerObservability {
   getSessionBinding?(
     vars: SlotVars,
     target: string,
+    /** Current exact pane-process start; providers must not bind older session activity. */
+    observedNotBeforeMs?: number,
   ): Promise<{
     sessionId: string;
     sessionPath: string;

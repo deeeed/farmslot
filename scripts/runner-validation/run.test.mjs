@@ -19,23 +19,122 @@ import {
 import { usageExtractedOk } from './lib/session-usage-harness.mjs';
 import { listRunners, resolveRunnerList } from './runners/index.mjs';
 import { listScenarios } from './scenarios/index.mjs';
+import {
+  runBinding as machinePauseRunBinding,
+  runScenario as runMachinePauseScenario,
+} from './scenarios/machine-pause-restore-smoke.mjs';
 
 const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/panes');
 
-test('runner-validation catalog includes four runners and nineteen scenarios', () => {
+test('runner-validation catalog includes four runners and twenty scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
-  assert.equal(listScenarios().length, 19);
+  assert.equal(listScenarios().length, 20);
   assert.ok(listScenarios().includes('review-recovery-terminal-contract'));
   assert.ok(listScenarios().includes('self-review-fix-turn-lease'));
   assert.ok(listScenarios().includes('hook-smoke'));
   assert.ok(listScenarios().includes('pane-smoke'));
   assert.ok(listScenarios().includes('interaction-smoke'));
+  assert.ok(listScenarios().includes('machine-pause-restore-smoke'));
   assert.ok(listScenarios().includes('dispatch-prompt-trust'));
   assert.ok(listScenarios().includes('retained-handoff-smoke'));
   assert.ok(listScenarios().includes('copilot-runtime-smoke'));
   assert.ok(listScenarios().includes('retained-safe-send-smoke'));
   assert.ok(listScenarios().includes('session-attribution-smoke'));
   assert.ok(listScenarios().includes('token-usage-smoke'));
+});
+
+test('machine pause/restore scenario uses production RPCs and structured continuity proof only', () => {
+  const source = fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      'scenarios/machine-pause-restore-smoke.mjs',
+    ),
+    'utf8',
+  );
+  for (const method of [
+    'machine.pause.preview',
+    'machine.pause.execute',
+    'machine.pause.status',
+    'machine.pause.restore',
+  ]) {
+    assert.match(source, new RegExp(`['"]${method.replaceAll('.', '[.]')}['"]`));
+  }
+  assert.match(source, /recoveryProof/);
+  assert.match(source, /acknowledgement[?][.]kind === 'structured'/);
+  assert.match(source, /fleetStatus[.]fleet[.]slots[.]find/);
+  assert.match(source, /const cleanupStatus = rpc\('machine[.]pause[.]status'/);
+  assert.doesNotMatch(source, /report[.]machine && report[.]parkedRecord/);
+  assert.doesNotMatch(source, /capture-pane|paneTail|innerText/);
+});
+
+test('machine pause/restore unsupported runner is a non-green skip', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'machine-pause-skip-'));
+  try {
+    const result = await runMachinePauseScenario({
+      runnerAdapter: { RUNNER_ID: 'cursor' },
+      timeoutMs: 100,
+      outDir,
+    });
+    assert.equal(result.skipped, true);
+    assert.equal(result.pass, false);
+    assert.equal(result.report.pass, false);
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('machine pause/restore missing run id is a non-green skip', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'machine-pause-missing-run-'));
+  const previous = process.env.FARMSLOT_MACHINE_PAUSE_RUN_ID;
+  delete process.env.FARMSLOT_MACHINE_PAUSE_RUN_ID;
+  try {
+    const result = await runMachinePauseScenario({
+      runnerAdapter: { RUNNER_ID: 'codex' },
+      timeoutMs: 100,
+      outDir,
+    });
+    assert.equal(result.skipped, true);
+    assert.equal(result.pass, false);
+    assert.equal(result.report.pass, false);
+  } finally {
+    if (previous === undefined) delete process.env.FARMSLOT_MACHINE_PAUSE_RUN_ID;
+    else process.env.FARMSLOT_MACHINE_PAUSE_RUN_ID = previous;
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('machine pause/restore binding resolves the dev flow primary atomically', () => {
+  const binding = machinePauseRunBinding({
+    flowType: 'dev',
+    metrics: {
+      runner: 'codex',
+      runnerSessionId: 'metrics-session',
+      runnerSessionPath: '/sessions/metrics.jsonl',
+    },
+    agentContexts: [
+      {
+        id: 'dev',
+        role: 'dev',
+        runner: 'codex',
+        runnerSessionId: 'dev-session',
+        runnerSessionPath: null,
+        target: { session: 'ff-1', window: 'dev', target: 'ff-1:dev' },
+      },
+      {
+        id: 'legacy-primary',
+        role: 'primary',
+        runnerSessionId: 'wrong-session',
+        runnerSessionPath: '/sessions/wrong.jsonl',
+      },
+    ],
+  });
+  assert.deepEqual(binding, {
+    runnerId: 'codex',
+    sessionId: 'dev-session',
+    sessionPath: null,
+    contextId: 'dev',
+    target: { session: 'ff-1', window: 'dev', target: 'ff-1:dev' },
+  });
 });
 
 test('runner groups reserve pane-only for runners without structured observability', () => {

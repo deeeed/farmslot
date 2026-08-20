@@ -246,6 +246,7 @@ test('cancel marks in-flight steps skipped and records the operator reason', asy
   );
   assert.equal(result.run.metrics.outcome, 'cancelled');
   assert.deepEqual(result.run.agentContexts, []);
+  assert.equal(result.run.park, undefined, 'normal non-park cancel must not invent park state');
   assert.equal(
     result.run.backlogReconcilePending,
     true,

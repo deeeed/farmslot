@@ -1,8 +1,11 @@
+import path from 'node:path';
+
+import { resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { resolveTmuxPaneId } from '../core/tmux.js';
 
 import { claudeHookObservability } from './claude-observability.js';
-import { readRunnerPaneObservabilityState } from './observability-files.js';
+import { observedAtFromRecord, readRunnerPaneObservabilityState } from './observability-files.js';
 import type { RunnerObservability, SlotVars } from './observability-types.js';
 
 type CodexPromptProbe =
@@ -290,6 +293,106 @@ export function parseCodexSessionBindingProbe(raw: string): CodexSessionBindingP
   throw new Error(`Invalid Codex session binding probe: ${raw}`);
 }
 
+type CodexNativeBindingProbe =
+  | { status: 'matched'; sessionId: string; sessionPath: string; observedAt: number }
+  | { status: 'unavailable' | 'identity-mismatch' | 'ambiguous' };
+
+export function parseCodexNativeBindingProbe(raw: string): CodexNativeBindingProbe {
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  if (
+    parsed.status === 'matched' &&
+    typeof parsed.sessionId === 'string' &&
+    typeof parsed.sessionPath === 'string' &&
+    typeof parsed.observedAt === 'number'
+  ) {
+    return {
+      status: 'matched',
+      sessionId: parsed.sessionId,
+      sessionPath: parsed.sessionPath,
+      observedAt: parsed.observedAt,
+    };
+  }
+  if (
+    parsed.status === 'unavailable' ||
+    parsed.status === 'identity-mismatch' ||
+    parsed.status === 'ambiguous'
+  ) {
+    return { status: parsed.status };
+  }
+  throw new Error(`Invalid Codex native binding probe: ${raw}`);
+}
+
+export function buildCodexNativeBindingProbeCommand(options: {
+  repo: string;
+  isolatedSessionsRoot: string;
+  globalSessionsRoot?: string;
+  observedNotBeforeMs: number;
+  preferred?: { sessionId: string; sessionPath: string };
+}): string {
+  return `
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+repo = os.path.realpath(${JSON.stringify(options.repo)})
+isolated_root = Path(${JSON.stringify(options.isolatedSessionsRoot)})
+global_root = Path(${JSON.stringify(options.globalSessionsRoot ?? '')}) if ${options.globalSessionsRoot ? 'True' : 'False'} else Path.home() / '.codex' / 'sessions'
+not_before_ms = ${Math.floor(options.observedNotBeforeMs)}
+preferred_id = ${options.preferred ? JSON.stringify(options.preferred.sessionId) : 'None'}
+preferred_path = ${options.preferred ? JSON.stringify(options.preferred.sessionPath) : 'None'}
+
+def candidate(path):
+    try:
+        canonical = os.path.realpath(path)
+        observed_at = int(os.stat(canonical).st_mtime * 1000)
+        if observed_at < not_before_ms:
+            return None
+        with open(canonical) as handle:
+            first = json.loads(handle.readline())
+        if first.get('type') != 'session_meta':
+            return None
+        payload = first.get('payload', {})
+        session_id = payload.get('id')
+        cwd = payload.get('cwd')
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        if not isinstance(cwd, str) or os.path.realpath(cwd) != repo:
+            return None
+        return {'sessionId': session_id, 'sessionPath': canonical, 'observedAt': observed_at}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+if preferred_id is not None and preferred_path is not None:
+    preferred = candidate(preferred_path)
+    if preferred is None or preferred['sessionId'] != preferred_id:
+        print(json.dumps({'status': 'identity-mismatch'}))
+        raise SystemExit(0)
+    print(json.dumps({'status': 'matched', **preferred}))
+    raise SystemExit(0)
+
+matches = []
+seen = set()
+for root in (isolated_root, global_root):
+    if not root.is_dir():
+        continue
+    paths = sorted(root.rglob('*.jsonl'), key=lambda item: item.stat().st_mtime, reverse=True)
+    for path in paths[:400]:
+        item = candidate(path)
+        if item is None or item['sessionPath'] in seen:
+            continue
+        seen.add(item['sessionPath'])
+        matches.append(item)
+
+if len(matches) == 1:
+    print(json.dumps({'status': 'matched', **matches[0]}))
+elif len(matches) > 1:
+    print(json.dumps({'status': 'ambiguous'}))
+else:
+    print(json.dumps({'status': 'unavailable'}))
+PY`;
+}
+
 export function buildCodexSessionBindingProbeCommand(
   sessionPath: string,
   persistedSessionId?: string,
@@ -404,6 +507,47 @@ async function readCodexPromptAcceptance(
 export const codexSessionObservability: RunnerObservability = {
   ...claudeHookObservability,
   promptAcceptanceMode: 'native-text',
+  async getSessionBinding(vars, target, observedNotBeforeMs = 0) {
+    const paneId = await resolveTmuxPaneId(vars, target);
+    if (!paneId) return null;
+    const paneState = await readRunnerPaneObservabilityState(vars, paneId);
+    const paneObservedAt = paneState ? observedAtFromRecord(paneState) : null;
+    const preferred =
+      paneObservedAt != null &&
+      paneObservedAt >= observedNotBeforeMs &&
+      paneState?.session_id?.trim() &&
+      paneState.transcript_path?.trim()
+        ? {
+            sessionId: paneState.session_id.trim(),
+            sessionPath: paneState.transcript_path.trim(),
+          }
+        : undefined;
+    const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
+    const result = await execOnSlot(
+      vars,
+      buildCodexNativeBindingProbeCommand({
+        repo: vars.remoteRepo,
+        isolatedSessionsRoot: path.posix.join(
+          vars.remoteRepo,
+          runtimeDir,
+          'codex-home',
+          'sessions',
+        ),
+        observedNotBeforeMs,
+        ...(preferred ? { preferred } : {}),
+      }),
+      { timeout: 10_000 },
+    );
+    if (result.exitCode !== 0) return null;
+    const probe = parseCodexNativeBindingProbe(result.stdout.trim());
+    return probe.status === 'matched'
+      ? {
+          sessionId: probe.sessionId,
+          sessionPath: probe.sessionPath,
+          observedAt: probe.observedAt,
+        }
+      : null;
+  },
   async getTurnState(vars, target, expectedTurnToken) {
     const binding = await resolveCodexPaneBinding(vars, target);
     if (!binding) return null;

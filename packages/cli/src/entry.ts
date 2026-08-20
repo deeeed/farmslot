@@ -17,6 +17,7 @@ import { registerFleetCommand } from './commands/fleet.js';
 import { registerGatewayCommand } from './commands/gateway.js';
 import { registerGraphCommand } from './commands/graph.js';
 import { registerInternalCommand } from './commands/internal.js';
+import { registerMachineCommand } from './commands/machine.js';
 import { registerNodeCommand } from './commands/node.js';
 import { registerPairCommand } from './commands/pair.js';
 import { registerPRCommand } from './commands/pr.js';
@@ -61,6 +62,7 @@ program.exitOverride();
 
 registerFleetCommand(program);
 registerInternalCommand(program);
+registerMachineCommand(program);
 registerBacklogCommand(program);
 registerDecisionCommand(program);
 registerUpCommand(program);

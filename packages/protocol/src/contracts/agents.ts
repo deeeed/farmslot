@@ -23,6 +23,8 @@ export interface AgentContextTarget {
   session: string;
   window?: string | null;
   pane?: string | null;
+  /** Stable tmux pane identity (`%N`); required by destructive runner lifecycle operations. */
+  paneId?: string | null;
   target: string;
 }
 

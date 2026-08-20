@@ -82,6 +82,7 @@ import '../components/device-grid/device-grid.js';
 import './chat-dev.js';
 import './terminal-attachment-dev.js';
 import './machine-health-dev.js';
+import './machine-pause-dev.js';
 import './config-dev.js';
 import '../components/recipe-graph/recipe-graph.js';
 import '../components/slot-actions/slot-actions-panel.js';
@@ -182,6 +183,7 @@ type DevRoute =
   | 'interactive-packets'
   | 'chat'
   | 'machine-health'
+  | 'machine-pause'
   | 'config'
   | 'llm-settings'
   | 'improvement'
@@ -221,6 +223,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup
   { route: 'device-grid', label: 'Device Grid', group: 'screens' },
   { route: 'chat', label: 'Chat Co-Pilot', group: 'screens' },
   { route: 'machine-health', label: 'Machine Health', group: 'screens' },
+  { route: 'machine-pause', label: 'Machine Pause & Restore', group: 'components' },
   { route: 'config', label: 'Config Manager', group: 'screens' },
   { route: 'llm-settings', label: 'LLM Settings', group: 'screens' },
   { route: 'family-observability', label: 'Retrospective', group: 'screens' },
@@ -473,6 +476,8 @@ export class DevHarness extends LitElement {
         return html`<chat-dev-harness></chat-dev-harness>`;
       case 'machine-health':
         return html`<machine-health-dev></machine-health-dev>`;
+      case 'machine-pause':
+        return html`<machine-pause-dev></machine-pause-dev>`;
       case 'config':
         return html`<config-dev></config-dev>`;
       case 'llm-settings':

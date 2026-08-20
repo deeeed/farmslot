@@ -10,6 +10,7 @@ import {
   readRunnerObservabilityFiles,
   readRunnerPaneObservabilityState,
 } from './observability-files.js';
+import type { ObservabilityReading } from './observability-types.js';
 import {
   getRunnerDefinition,
   getRunnerObservability,
@@ -25,6 +26,7 @@ import {
   RUNNER_SESSION_CAPTURE_POLL_MS,
   RUNNER_SESSION_DISPATCH_SLACK_MS,
   runnerSessionIdForPath,
+  sessionPathStartedAfterDispatch,
   statSessionPathMtimeMs,
 } from './session-path-resolution.js';
 
@@ -34,6 +36,24 @@ export interface RunnerSessionBinding {
   runnerSessionPath: string;
   runnerSessionId: string;
   source: RunnerSessionBindingSource;
+}
+
+export interface RunnerSessionMetadata {
+  runnerSessionPath: string | null;
+  runnerSessionId: string | null;
+}
+
+export interface RunnerSessionCaptureOptions {
+  sinceMs?: number;
+  observedNotBeforeMs?: number;
+  paneId?: string | null;
+  slotId?: string | null;
+  excludedSessionId?: string | null;
+  excludedSessionPath?: string | null;
+  /** Exact first prompt, used only for runner-native fallback attribution. */
+  promptText?: string;
+  /** Provider-clock boundary captured immediately before prompt delivery. */
+  promptAcceptedSinceMs?: number | null;
 }
 
 export async function readPaneProcessStartedAtMs(
@@ -243,16 +263,13 @@ export function resumableSessionProbeCommand(runnerSessionPath: string): string 
   return `test -e ${shellQuote(runnerSessionPath)}`;
 }
 
-export async function listRunnerSessionFiles(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+export function buildRunnerSessionDiscoveryCommand(
+  repo: string,
   runner: string,
-): Promise<string[]> {
-  if (!runnerPersistsSessionFiles(runner)) return [];
-  const repo = vars.remoteRepo;
-  // Codex runs with CODEX_HOME=<repo>/<runtimeDir>/codex-home (see buildCodexHomeSetup), so its
-  // rollouts live there. Resolve the SAME runtime dir the launcher uses — no globbing/guessing.
-  const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
-  const script = `
+  runtimeDir: string,
+  homeRoot?: string,
+): string {
+  return `
 python3 - <<'PY'
 import json
 import os
@@ -262,7 +279,7 @@ from urllib.parse import quote
 repo = ${JSON.stringify(repo)}
 runner = ${JSON.stringify(runner)}
 runtime_dir = ${JSON.stringify(runtimeDir)}
-home = Path.home()
+home = Path(${homeRoot === undefined ? 'str(Path.home())' : JSON.stringify(homeRoot)})
 paths = []
 
 def grok_repo_key(repo_path: str) -> str:
@@ -310,33 +327,54 @@ elif runner == 'grok':
                 # Grok writes summary.json at runtime; skip partial/unreadable files during discovery.
                 continue
 else:
-    # The worker's CODEX_HOME is the exact <repo>/<runtimeDir>/codex-home the launcher set, so
-    # its rollouts live there — not ~/.codex/sessions. Use that exact path; only fall back to the
-    # global home if the per-slot home is absent (e.g. observability install was skipped).
-    sessions_root = Path(repo) / runtime_dir / 'codex-home' / 'sessions'
-    if not sessions_root.is_dir():
-        sessions_root = home / '.codex' / 'sessions'
-    if sessions_root.is_dir():
-        cutoff = time() - (7 * 24 * 60 * 60)
-        seen = 0
-        for path in sorted(sessions_root.rglob('*.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True):
-            if seen >= 200:
-                break
-            try:
-                if path.stat().st_mtime < cutoff:
-                    continue
-                with path.open() as f:
-                    first = json.loads(next(f))
-                if first.get('type') == 'session_meta' and repo_path_matches(first.get('payload', {}).get('cwd'), repo):
-                    canonical = os.path.realpath(path)
-                    if canonical not in paths:
-                        paths.append(canonical)
-                seen += 1
-            except Exception:
-                # Codex session discovery scans CLI-owned files; skip malformed/non-session files.
+    # The normal launcher writes under the slot-isolated CODEX_HOME. When its
+    # auth bootstrap is unavailable, buildCodexHomeSetup deliberately falls back
+    # to the host-global ~/.codex. A stale isolated sessions directory can still
+    # exist in that case, so directory existence cannot choose the active root.
+    # Search both and let exact cwd/session metadata attribution decide.
+    session_roots = [
+        Path(repo) / runtime_dir / 'codex-home' / 'sessions',
+        home / '.codex' / 'sessions',
+    ]
+    candidates = []
+    for sessions_root in session_roots:
+        if sessions_root.is_dir():
+            candidates.extend(sessions_root.rglob('*.jsonl'))
+    def candidate_mtime(path):
+        try:
+            return path.stat().st_mtime
+        except Exception:
+            return 0
+    cutoff = time() - (7 * 24 * 60 * 60)
+    seen = 0
+    for path in sorted(candidates, key=candidate_mtime, reverse=True):
+        if seen >= 200:
+            break
+        try:
+            if path.stat().st_mtime < cutoff:
                 continue
+            with path.open() as f:
+                first = json.loads(next(f))
+            if first.get('type') == 'session_meta' and repo_path_matches(first.get('payload', {}).get('cwd'), repo):
+                canonical = os.path.realpath(path)
+                if canonical not in paths:
+                    paths.append(canonical)
+            seen += 1
+        except Exception:
+            # Codex session discovery scans CLI-owned files; skip malformed/non-session files.
+            continue
 print(json.dumps(paths))
 PY`;
+}
+
+export async function listRunnerSessionFiles(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+): Promise<string[]> {
+  if (!runnerPersistsSessionFiles(runner)) return [];
+  const repo = vars.remoteRepo;
+  const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
+  const script = buildRunnerSessionDiscoveryCommand(repo, runner, runtimeDir);
   const result = await execOnSlot(vars, script);
   return JSON.parse(result.stdout || '[]') as string[];
 }
@@ -385,6 +423,7 @@ async function tryHookSessionBinding(
       nativeBinding = await getRunnerObservability(runner)?.getSessionBinding?.(
         vars,
         options.paneId,
+        paneStartedAt ?? undefined,
       );
     } catch (error) {
       // Native attribution is optional evidence. A transient probe failure must
@@ -495,6 +534,114 @@ async function tryFilesystemSessionBinding(
   };
 }
 
+interface PromptBoundSessionDeps {
+  listSessionFiles: typeof listRunnerSessionFiles;
+  loadMtimes: typeof loadSessionMtimesMs;
+  resolveSessionId: typeof resolveSessionIdFromPath;
+  promptAcceptedInSession(
+    vars: Awaited<ReturnType<typeof loadSlotVars>>,
+    runner: string,
+    target: string,
+    sessionId: string,
+    sessionPath: string,
+    promptText: string,
+    sinceMs: number,
+  ): Promise<ObservabilityReading<boolean> | null>;
+}
+
+const PROMPT_BOUND_SESSION_DEPS: PromptBoundSessionDeps = {
+  listSessionFiles: listRunnerSessionFiles,
+  loadMtimes: loadSessionMtimesMs,
+  resolveSessionId: resolveSessionIdFromPath,
+  async promptAcceptedInSession(vars, runner, target, sessionId, sessionPath, promptText, sinceMs) {
+    return (
+      (await getRunnerObservability(runner)?.promptAcceptedInSession?.(
+        vars,
+        target,
+        sessionId,
+        sessionPath,
+        promptText,
+        sinceMs,
+      )) ?? null
+    );
+  },
+};
+
+/**
+ * Resolve a fresh session by exact runner-native prompt evidence when hook/pane
+ * binding is unavailable (for example Codex's global-home fallback disables
+ * plugin hooks). More than one exact match is ambiguous and fails closed.
+ */
+export async function resolvePromptBoundRunnerSession(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  beforePaths: readonly string[],
+  options: Pick<
+    RunnerSessionCaptureOptions,
+    | 'sinceMs'
+    | 'paneId'
+    | 'excludedSessionId'
+    | 'excludedSessionPath'
+    | 'promptText'
+    | 'promptAcceptedSinceMs'
+  >,
+  deps: PromptBoundSessionDeps = PROMPT_BOUND_SESSION_DEPS,
+): Promise<RunnerSessionBinding | null> {
+  const promptText = options.promptText;
+  const promptAcceptedSinceMs = options.promptAcceptedSinceMs;
+  const observability = getRunnerObservability(runner);
+  if (
+    !promptText?.trim() ||
+    promptAcceptedSinceMs == null ||
+    !observability?.promptAcceptedInSession
+  ) {
+    return null;
+  }
+
+  const before = new Set(beforePaths);
+  const paths = await deps.listSessionFiles(vars, runner);
+  const mtimes = await deps.loadMtimes(vars, paths);
+  const candidates = paths
+    .filter((sessionPath) => {
+      if (before.has(sessionPath) || sessionPath === options.excludedSessionPath) return false;
+      const mtimeMs = mtimes.get(sessionPath);
+      if (mtimeMs === undefined) return false;
+      return options.sinceMs === undefined
+        ? true
+        : sessionPathStartedAfterDispatch(mtimeMs, options.sinceMs);
+    })
+    .sort((a, b) => (mtimes.get(b) ?? 0) - (mtimes.get(a) ?? 0));
+
+  const matches: RunnerSessionBinding[] = [];
+  for (const sessionPath of candidates) {
+    const sessionId = await deps.resolveSessionId(vars, runner, sessionPath);
+    if (!sessionId || sessionId === options.excludedSessionId) continue;
+    const reading = await deps.promptAcceptedInSession(
+      vars,
+      runner,
+      options.paneId ?? '',
+      sessionId,
+      sessionPath,
+      promptText,
+      promptAcceptedSinceMs,
+    );
+    if (
+      reading?.value === true &&
+      reading.confidence === 'high' &&
+      reading.source === 'signal' &&
+      reading.exactPromptMatch === true
+    ) {
+      matches.push({
+        runnerSessionId: sessionId,
+        runnerSessionPath: sessionPath,
+        source: 'native',
+      });
+      if (matches.length > 1) return null;
+    }
+  }
+  return matches[0] ?? null;
+}
+
 export async function resolveRunnerSessionBinding(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
@@ -521,6 +668,97 @@ export async function resolveRunnerSessionBinding(
   return tryFilesystemSessionBinding(vars, runner, beforePaths, options);
 }
 
+export interface ExactLiveRunnerSessionBindingOptions {
+  paneId: string;
+  slotId: string;
+  expectedSessionId: string;
+  expectedSessionPath: string;
+}
+
+export type ExactLiveRunnerSessionBindingResult =
+  | {
+      ok: true;
+      binding: RunnerSessionBinding & { canonicalSessionPath: string };
+    }
+  | {
+      ok: false;
+      reason: string;
+      binding?: RunnerSessionBinding & { canonicalSessionPath?: string };
+    };
+
+interface ExactLiveRunnerSessionBindingDeps {
+  readPaneStartedAt: typeof readPaneProcessStartedAtMs;
+  resolveBinding: typeof resolveRunnerSessionBinding;
+  canonicalizePath: typeof canonicalizeRunnerSessionPath;
+}
+
+const EXACT_LIVE_BINDING_DEPS: ExactLiveRunnerSessionBindingDeps = {
+  readPaneStartedAt: readPaneProcessStartedAtMs,
+  resolveBinding: resolveRunnerSessionBinding,
+  canonicalizePath: canonicalizeRunnerSessionPath,
+};
+
+/** Prove the live runner in one exact pane still owns the persisted session id and path. */
+export async function verifyExactLiveRunnerSessionBinding(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  options: ExactLiveRunnerSessionBindingOptions,
+  deps: ExactLiveRunnerSessionBindingDeps = EXACT_LIVE_BINDING_DEPS,
+): Promise<ExactLiveRunnerSessionBindingResult> {
+  const paneStartedAtMs = await deps.readPaneStartedAt(vars, options.paneId, runner);
+  if (paneStartedAtMs == null) {
+    return { ok: false, reason: `live runner process start is unavailable for ${options.paneId}` };
+  }
+  const binding = await deps.resolveBinding(vars, runner, [], {
+    paneId: options.paneId,
+    slotId: options.slotId,
+    paneStartedAtMs,
+  });
+  if (!binding) {
+    return {
+      ok: false,
+      reason: `active runner session binding is unavailable for ${options.paneId}`,
+    };
+  }
+  const [canonicalActivePath, canonicalExpectedPath] = await Promise.all([
+    deps.canonicalizePath(vars, binding.runnerSessionPath),
+    deps.canonicalizePath(vars, options.expectedSessionPath),
+  ]);
+  if (!canonicalActivePath || !canonicalExpectedPath) {
+    return {
+      ok: false,
+      reason: `runner session path canonicalization failed for ${options.paneId}`,
+      binding,
+    };
+  }
+  const canonicalBinding = { ...binding, canonicalSessionPath: canonicalActivePath };
+  if (binding.runnerSessionId !== options.expectedSessionId) {
+    return {
+      ok: false,
+      reason: `active runner session id '${binding.runnerSessionId}' does not match persisted '${options.expectedSessionId}'`,
+      binding: canonicalBinding,
+    };
+  }
+  if (canonicalActivePath !== canonicalExpectedPath) {
+    return {
+      ok: false,
+      reason: `active runner session path '${canonicalActivePath}' does not match persisted '${canonicalExpectedPath}'`,
+      binding: canonicalBinding,
+    };
+  }
+  return { ok: true, binding: canonicalBinding };
+}
+
+export async function canonicalizeRunnerSessionPath(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  sessionPath: string,
+): Promise<string | null> {
+  const command = `python3 -c ${shellQuote('import os,sys; print(os.path.realpath(sys.argv[1]))')} ${shellQuote(sessionPath)}`;
+  const result = await execOnSlot(vars, command, { timeout: 10_000 });
+  if (result.exitCode !== 0) return null;
+  return result.stdout.trim() || null;
+}
+
 export async function resolveRunnerSessionForRun(
   run: Pick<Run, 'startedAt' | 'steps' | 'metrics'>,
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -538,15 +776,8 @@ export async function captureRunnerSessionMetadata(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
   beforePaths: string[],
-  options: {
-    sinceMs?: number;
-    observedNotBeforeMs?: number;
-    paneId?: string | null;
-    slotId?: string | null;
-    excludedSessionId?: string | null;
-    excludedSessionPath?: string | null;
-  } = {},
-): Promise<{ runnerSessionPath: string | null; runnerSessionId: string | null }> {
+  options: RunnerSessionCaptureOptions = {},
+): Promise<RunnerSessionMetadata> {
   if (!runnerPersistsSessionFiles(runner)) {
     return { runnerSessionPath: null, runnerSessionId: null };
   }
@@ -574,8 +805,52 @@ export async function captureRunnerSessionMetadata(
         runnerSessionId: binding.runnerSessionId,
       };
     }
+    const promptBound = await resolvePromptBoundRunnerSession(vars, runner, beforePaths, options);
+    if (promptBound) {
+      return {
+        runnerSessionPath: promptBound.runnerSessionPath,
+        runnerSessionId: promptBound.runnerSessionId,
+      };
+    }
   }
   return { runnerSessionPath: null, runnerSessionId: null };
+}
+
+type CaptureRunnerSessionMetadata = typeof captureRunnerSessionMetadata;
+
+/**
+ * A runner may not create its persisted session until its first prompt is
+ * accepted. Preserve an exact pre-prompt binding when one exists; otherwise
+ * capture again after prompt acceptance using the same dispatch boundary and
+ * pane attribution. Each attempt must supply the complete id/path pair by
+ * itself — fields are never borrowed across attempts.
+ */
+export async function recaptureRunnerSessionMetadataIfMissing(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  beforePaths: string[],
+  initial: RunnerSessionMetadata,
+  options: RunnerSessionCaptureOptions = {},
+  capture: CaptureRunnerSessionMetadata = captureRunnerSessionMetadata,
+): Promise<RunnerSessionMetadata> {
+  const initialBinding = resolvePersistedRunnerSessionBinding([
+    {
+      label: 'pre-prompt session capture',
+      runnerSessionId: initial.runnerSessionId,
+      runnerSessionPath: initial.runnerSessionPath,
+    },
+  ]).binding;
+  if (initialBinding) return initialBinding;
+
+  const recaptured = await capture(vars, runner, beforePaths, options);
+  const recapturedBinding = resolvePersistedRunnerSessionBinding([
+    {
+      label: 'post-prompt session capture',
+      runnerSessionId: recaptured.runnerSessionId,
+      runnerSessionPath: recaptured.runnerSessionPath,
+    },
+  ]).binding;
+  return recapturedBinding ?? { runnerSessionId: null, runnerSessionPath: null };
 }
 
 /**

@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.19.0`
+Protocol version: `0.22.0`
 
 ## WebSocket frame shape
 
@@ -96,9 +96,18 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `config.templateOptions`             | config           | bounded-write | —      | —      | Config TemplateOptions gateway method.             |
 | `config.templatePreview`             | config           | bounded-write | —      | —      | Config TemplatePreview gateway method.             |
 | `config.templates`                   | config           | bounded-write | —      | —      | Config Templates gateway method.                   |
+| `copilot.configure`                  | copilot          | bounded-write | —      | —      | Copilot Configure gateway method.                  |
 | `copilot.formatInstruction`          | copilot          | bounded-write | —      | —      | Copilot FormatInstruction gateway method.          |
+| `copilot.start`                      | copilot          | bounded-write | —      | —      | Copilot Start gateway method.                      |
+| `copilot.status`                     | copilot          | read-only     | —      | —      | Copilot Status gateway method.                     |
+| `copilot.stop`                       | copilot          | bounded-write | —      | —      | Copilot Stop gateway method.                       |
+| `credential.issue`                   | credential       | bounded-write | —      | —      | Credential Issue gateway method.                   |
+| `credential.list`                    | credential       | read-only     | —      | —      | Credential List gateway method.                    |
+| `credential.revoke`                  | credential       | bounded-write | —      | —      | Credential Revoke gateway method.                  |
 | `decision.list`                      | decision         | read-only     | —      | —      | Decision List gateway method.                      |
 | `decision.resolve`                   | decision         | high-impact   | —      | —      | Decision Resolve gateway method.                   |
+| `diagnostics.fileTransfer.remoteE2e` | diagnostics      | bounded-write | —      | —      | Diagnostics FileTransfer RemoteE2e gateway method. |
+| `diagnostics.fileTransfer.smoke`     | diagnostics      | bounded-write | —      | —      | Diagnostics FileTransfer Smoke gateway method.     |
 | `diagnostics.run`                    | diagnostics      | bounded-write | —      | —      | Diagnostics Run gateway method.                    |
 | `dispatch.candidates`                | dispatch         | bounded-write | —      | —      | Dispatch Candidates gateway method.                |
 | `dispatch.matchProject`              | dispatch         | bounded-write | —      | —      | Dispatch MatchProject gateway method.              |
@@ -116,6 +125,9 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `eval.trial.start`                   | eval             | bounded-write | —      | —      | Eval Trial Start gateway method.                   |
 | `family.observability.get`           | family           | read-only     | —      | —      | Family Observability Get gateway method.           |
 | `family.report.generate`             | family           | bounded-write | —      | —      | Family Report Generate gateway method.             |
+| `file.transfer.cancel`               | file             | bounded-write | —      | —      | File Transfer Cancel gateway method.               |
+| `file.transfer.list`                 | file             | read-only     | —      | —      | File Transfer List gateway method.                 |
+| `file.transfer.smoke`                | file             | bounded-write | —      | —      | File Transfer Smoke gateway method.                |
 | `finetune.exportDPO`                 | finetune         | bounded-write | —      | —      | Finetune ExportDPO gateway method.                 |
 | `finetune.exportSFT`                 | finetune         | bounded-write | —      | —      | Finetune ExportSFT gateway method.                 |
 | `finetune.index`                     | finetune         | bounded-write | —      | —      | Finetune Index gateway method.                     |
@@ -157,6 +169,10 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `llm.config.get`                     | llm              | read-only     | —      | —      | Llm Config Get gateway method.                     |
 | `llm.config.set`                     | llm              | bounded-write | —      | —      | Llm Config Set gateway method.                     |
 | `llm.tiers`                          | llm              | bounded-write | —      | —      | Llm Tiers gateway method.                          |
+| `machine.pause.execute`              | machine          | lifecycle     | —      | —      | Machine Pause Execute gateway method.              |
+| `machine.pause.preview`              | machine          | lifecycle     | —      | —      | Machine Pause Preview gateway method.              |
+| `machine.pause.restore`              | machine          | lifecycle     | —      | —      | Machine Pause Restore gateway method.              |
+| `machine.pause.status`               | machine          | lifecycle     | —      | —      | Machine Pause Status gateway method.               |
 | `node.health`                        | node             | bounded-write | —      | —      | Node Health gateway method.                        |
 | `node.health.all`                    | node             | bounded-write | —      | —      | Node Health All gateway method.                    |
 | `nodes.deploy`                       | nodes            | bounded-write | —      | —      | Nodes Deploy gateway method.                       |
@@ -175,6 +191,10 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `pr.reviewComments`                  | pr               | bounded-write | —      | —      | Pr ReviewComments gateway method.                  |
 | `pr.status`                          | pr               | read-only     | —      | —      | Pr Status gateway method.                          |
 | `pr.submitReview`                    | pr               | bounded-write | —      | —      | Pr SubmitReview gateway method.                    |
+| `principal.create`                   | principal        | bounded-write | —      | —      | Principal Create gateway method.                   |
+| `principal.grant`                    | principal        | bounded-write | —      | —      | Principal Grant gateway method.                    |
+| `principal.list`                     | principal        | read-only     | —      | —      | Principal List gateway method.                     |
+| `principal.revokeRole`               | principal        | bounded-write | —      | —      | Principal RevokeRole gateway method.               |
 | `providerAccounts.snapshot`          | providerAccounts | bounded-write | —      | —      | ProviderAccounts Snapshot gateway method.          |
 | `recipe.cancel`                      | recipe           | bounded-write | —      | —      | Recipe Cancel gateway method.                      |
 | `recipe.command`                     | recipe           | bounded-write | —      | —      | Recipe Command gateway method.                     |
@@ -185,6 +205,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `resource.control`                   | resource         | bounded-write | —      | —      | Resource Control gateway method.                   |
 | `resource.health`                    | resource         | bounded-write | —      | —      | Resource Health gateway method.                    |
 | `resource.list`                      | resource         | read-only     | —      | —      | Resource List gateway method.                      |
+| `resource.pressure.snapshot`         | resource         | bounded-write | —      | —      | Resource Pressure Snapshot gateway method.         |
 | `resource.watch.setEnabled`          | resource         | bounded-write | —      | —      | Resource Watch SetEnabled gateway method.          |
 | `roadmap.delete`                     | roadmap          | high-impact   | —      | —      | Roadmap Delete gateway method.                     |
 | `roadmap.get`                        | roadmap          | read-only     | —      | —      | Roadmap Get gateway method.                        |
@@ -234,6 +255,10 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.slotHistory`                    | run              | bounded-write | —      | —      | Run SlotHistory gateway method.                    |
 | `run.tags.list`                      | run              | read-only     | —      | —      | Run Tags List gateway method.                      |
 | `run.tags.set`                       | run              | bounded-write | —      | —      | Run Tags Set gateway method.                       |
+| `runtime.capability.acquire`         | runtime          | bounded-write | —      | —      | Runtime Capability Acquire gateway method.         |
+| `runtime.capability.list`            | runtime          | read-only     | —      | —      | Runtime Capability List gateway method.            |
+| `runtime.capability.release`         | runtime          | lifecycle     | —      | —      | Runtime Capability Release gateway method.         |
+| `runtime.capability.status`          | runtime          | read-only     | —      | —      | Runtime Capability Status gateway method.          |
 | `screen.subscribe`                   | screen           | bounded-write | —      | —      | Screen Subscribe gateway method.                   |
 | `screen.thumbnail`                   | screen           | bounded-write | —      | —      | Screen Thumbnail gateway method.                   |
 | `screen.unsubscribe`                 | screen           | bounded-write | —      | —      | Screen Unsubscribe gateway method.                 |
@@ -314,9 +339,11 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `chat.response`                 | chat      | Chat Response gateway event.                 |
 | `ci.check.updated`              | ci        | Ci Check Updated gateway event.              |
 | `copilot.observer.notification` | copilot   | Copilot Observer Notification gateway event. |
+| `copilot.runtime.updated`       | copilot   | Copilot Runtime Updated gateway event.       |
 | `decision.new`                  | decision  | Decision New gateway event.                  |
 | `decision.resolved`             | decision  | Decision Resolved gateway event.             |
 | `decision.updated`              | decision  | Decision Updated gateway event.              |
+| `file.transfer.progress`        | file      | File Transfer Progress gateway event.        |
 | `fleet.refresh.scheduled`       | fleet     | Fleet Refresh Scheduled gateway event.       |
 | `fleet.refresh.slot-update`     | fleet     | Fleet Refresh Slot Update gateway event.     |
 | `fleet.refresh.summary`         | fleet     | Fleet Refresh Summary gateway event.         |
@@ -325,6 +352,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `github.rateLimit`              | github    | Github RateLimit gateway event.              |
 | `hello`                         | hello     | Hello gateway event.                         |
 | `llm.auth.login.progress`       | llm       | Llm Auth Login Progress gateway event.       |
+| `machine.pause.updated`         | machine   | Machine Pause Updated gateway event.         |
 | `monitor.violation`             | monitor   | Monitor Violation gateway event.             |
 | `node.connected`                | node      | Node Connected gateway event.                |
 | `node.disconnected`             | node      | Node Disconnected gateway event.             |
@@ -343,6 +371,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.improvement.failed`        | run       | Run Improvement Failed gateway event.        |
 | `run.step.completed`            | run       | Run Step Completed gateway event.            |
 | `run.updated`                   | run       | Run Updated gateway event.                   |
+| `runtime.capability.lifecycle`  | runtime   | Runtime Capability Lifecycle gateway event.  |
 | `script.complete`               | script    | Script Complete gateway event.               |
 | `script.output`                 | script    | Script Output gateway event.                 |
 | `slot.changed`                  | slot      | Slot Changed gateway event.                  |

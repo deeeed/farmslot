@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   FleetStatus,
   MachineHealth,
+  MachineParkRecord,
   MonitorViolation,
   PendingDecision,
   PRStatus,
@@ -110,6 +111,9 @@ export const Events = {
   RUN_DECISION_UPDATED: 'run.decision.updated',
   RUN_DELETED: 'run.deleted',
   RUN_IMPROVEMENT_FAILED: 'run.improvement.failed',
+
+  // Machine-scoped pause/release/restore progress
+  MACHINE_PAUSE_UPDATED: 'machine.pause.updated',
 
   // Connection
   HELLO: 'hello',
@@ -346,6 +350,12 @@ export interface RunImprovementFailedPayload {
 
 export interface RunDeletedPayload {
   runId: string;
+}
+
+export interface MachinePauseUpdatedPayload {
+  machine: string;
+  operationId: string;
+  record: MachineParkRecord;
 }
 
 export interface HelloPayload {

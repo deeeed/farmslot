@@ -269,6 +269,11 @@
       "import": "./dist/rpc/intelligence.js",
       "default": "./dist/rpc/intelligence.js"
     },
+    "./rpc/machine-pause": {
+      "types": "./dist/rpc/machine-pause.d.ts",
+      "import": "./dist/rpc/machine-pause.js",
+      "default": "./dist/rpc/machine-pause.js"
+    },
     "./rpc/nodes": {
       "types": "./dist/rpc/nodes.d.ts",
       "import": "./dist/rpc/nodes.js",

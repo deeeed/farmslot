@@ -232,6 +232,12 @@ export const Methods = {
   SLOT_ACTION_LIST: 'slot.action.list',
   SLOT_ACTION_RUN: 'slot.action.run',
 
+  // Machine-scoped run parking
+  MACHINE_PAUSE_PREVIEW: 'machine.pause.preview',
+  MACHINE_PAUSE_EXECUTE: 'machine.pause.execute',
+  MACHINE_PAUSE_STATUS: 'machine.pause.status',
+  MACHINE_PAUSE_RESTORE: 'machine.pause.restore',
+
   // Proof-plan-driven runtime capability leases
   RUNTIME_CAPABILITY_LIST: 'runtime.capability.list',
   RUNTIME_CAPABILITY_ACQUIRE: 'runtime.capability.acquire',

@@ -5,7 +5,9 @@ import type { AgentContextTarget } from '@farmslot/protocol';
 export { buildDispatchRoleShellCommand } from '../../core/tmux.js';
 
 export function parseCapturedAgentPaneTarget(session: string, raw: string): AgentContextTarget {
-  const [rawTarget = session, windowName = null] = raw ? raw.split('|', 2) : [session, null];
+  const [rawTarget = session, windowName = null, paneId = null] = raw
+    ? raw.split('|', 3)
+    : [session, null, null];
   const match = rawTarget.match(/^[^:]+:(\d+)(?:\.(\d+))?$/);
   const window = windowName?.trim() || match?.[1] || null;
   // Named windows are stable across reordered indices; numeric targets drift when
@@ -18,6 +20,7 @@ export function parseCapturedAgentPaneTarget(session: string, raw: string): Agen
     session,
     window,
     pane: match?.[2] ?? null,
+    ...(paneId?.trim() ? { paneId: paneId.trim() } : {}),
     target,
   };
 }

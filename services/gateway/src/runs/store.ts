@@ -99,6 +99,11 @@ function isProductionRunsDir(): boolean {
 }
 const runs = new Map<string, Run>();
 
+/** Resolved persistence root shared by run-adjacent durable journals. */
+export function runsDirectory(): string {
+  return RUNS_DIR;
+}
+
 const ACTIVE_STATUSES: Set<RunStatus> = new Set([
   'created',
   'grading',

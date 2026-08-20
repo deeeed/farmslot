@@ -96,6 +96,10 @@ import {
   type LLMAuthRemoveParams,
   type LLMAuthTestParams,
   type LLMConfigSetParams,
+  type MachinePauseExecuteParams,
+  type MachinePausePreviewParams,
+  type MachinePauseRestoreParams,
+  type MachinePauseStatusParams,
   Methods,
   type NodeHealthAllResult,
   type NodeHealthParams,
@@ -219,6 +223,12 @@ import {
 } from '../fleet/resource-manager.js';
 import { slotCleanup } from '../fleet/slot-cleanup.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import {
+  machinePauseExecute,
+  machinePausePreview,
+  machinePauseRestore,
+  machinePauseStatus,
+} from '../machine-parking/service.js';
 import { analyticsBackfill, analyticsQuery } from '../methods/analytics.js';
 import {
   backlogArchive,
@@ -1196,6 +1206,14 @@ async function routeAuthorizedMethod(
       return resourceWatchSetEnabled(p as ResourceWatchSetEnabledParams);
     case Methods.RESOURCE_PRESSURE_SNAPSHOT:
       return resourcePressureSnapshot(p as ResourcePressureSnapshotParams);
+    case Methods.MACHINE_PAUSE_PREVIEW:
+      return machinePausePreview(p as MachinePausePreviewParams);
+    case Methods.MACHINE_PAUSE_EXECUTE:
+      return machinePauseExecute(p as MachinePauseExecuteParams);
+    case Methods.MACHINE_PAUSE_STATUS:
+      return machinePauseStatus((p as MachinePauseStatusParams).machine);
+    case Methods.MACHINE_PAUSE_RESTORE:
+      return machinePauseRestore(p as MachinePauseRestoreParams);
     case Methods.RUNTIME_CAPABILITY_LIST:
       return runtimeCapabilityList(p as RuntimeCapabilityListParams);
     case Methods.RUNTIME_CAPABILITY_ACQUIRE:

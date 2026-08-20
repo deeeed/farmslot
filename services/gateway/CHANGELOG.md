@@ -4,6 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(machine-pause): add durable machine-scoped preview, orchestration/release parking, exact restore, restart reconciliation, and partial residual reporting.
+- feat(runners): add capability-declared graceful park exits and exact persisted-session reload helpers.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.7.0 - 2026-08-20

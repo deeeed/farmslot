@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict';
 import { execFile as execFileCb, spawn } from 'node:child_process';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import {
   buildFindRunnerDescendantPidCommand,
+  buildRunnerSessionDiscoveryCommand,
   readPaneProcessStartedAtMs,
+  recaptureRunnerSessionMetadataIfMissing,
   resolvePersistedRunnerSessionBinding,
+  resolvePromptBoundRunnerSession,
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
+  verifyExactLiveRunnerSessionBinding,
 } from './session-process.js';
 import { makeVars } from './test-fixtures.js';
 
@@ -159,6 +166,207 @@ test('retained session send option maps one atomic binding', () => {
       },
     },
   );
+});
+
+test('post-prompt capture recovers an initially late exact runner session binding', async () => {
+  const captureOptions = {
+    sinceMs: 100,
+    observedNotBeforeMs: 120,
+    paneId: '%20',
+    slotId: 'mini-ff-1',
+  };
+  let calls = 0;
+  const result = await recaptureRunnerSessionMetadataIfMissing(
+    makeVars({ slotId: 'mini-ff-1' }),
+    'codex',
+    ['/sessions/pre-existing.jsonl'],
+    { runnerSessionId: null, runnerSessionPath: null },
+    captureOptions,
+    async (_vars, runner, beforePaths, options) => {
+      calls += 1;
+      assert.equal(runner, 'codex');
+      assert.deepEqual(beforePaths, ['/sessions/pre-existing.jsonl']);
+      assert.deepEqual(options, captureOptions);
+      return {
+        runnerSessionId: '01a0203f-4495-7f42-a499-abbe0d93f9e2',
+        runnerSessionPath: '/sessions/late.jsonl',
+      };
+    },
+  );
+
+  assert.equal(calls, 1);
+  assert.deepEqual(result, {
+    runnerSessionId: '01a0203f-4495-7f42-a499-abbe0d93f9e2',
+    runnerSessionPath: '/sessions/late.jsonl',
+  });
+});
+
+test('post-prompt capture never borrows half a binding from the pre-prompt attempt', async () => {
+  const result = await recaptureRunnerSessionMetadataIfMissing(
+    makeVars(),
+    'codex',
+    [],
+    { runnerSessionId: 'pre-prompt-id', runnerSessionPath: null },
+    {},
+    async () => ({ runnerSessionId: null, runnerSessionPath: '/sessions/post-prompt.jsonl' }),
+  );
+
+  assert.deepEqual(result, { runnerSessionId: null, runnerSessionPath: null });
+});
+
+test('Codex discovery searches isolated and global session roots', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'runner-session-roots-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'repo');
+  const fakeHome = path.join(root, 'home');
+  const isolated = path.join(repo, 'runtime/codex-home/sessions/isolated.jsonl');
+  const global = path.join(fakeHome, '.codex/sessions/global.jsonl');
+  await Promise.all([
+    mkdir(path.dirname(isolated), { recursive: true }),
+    mkdir(path.dirname(global), { recursive: true }),
+  ]);
+  const session = (id: string) =>
+    `${JSON.stringify({ type: 'session_meta', payload: { id, cwd: repo } })}\n`;
+  await Promise.all([
+    writeFile(isolated, session('isolated')),
+    writeFile(global, session('global')),
+  ]);
+
+  const command = buildRunnerSessionDiscoveryCommand(repo, 'codex', 'runtime', fakeHome);
+  const { stdout } = await execFile('bash', ['-c', command]);
+  assert.deepEqual(
+    new Set(JSON.parse(stdout)),
+    new Set(await Promise.all([realpath(isolated), realpath(global)])),
+  );
+});
+
+test('prompt-bound fallback attributes one initially late global Codex session exactly', async () => {
+  const latePath = '/home/test/.codex/sessions/late.jsonl';
+  const unrelatedPath = '/repo/runtime/codex-home/sessions/unrelated.jsonl';
+  const result = await resolvePromptBoundRunnerSession(
+    makeVars({ slotId: 'mini-ff-1' }),
+    'codex',
+    ['/repo/runtime/codex-home/sessions/pre-existing.jsonl'],
+    {
+      sinceMs: 1_000,
+      paneId: '%20',
+      promptText: 'Read and execute the exact TASK.md',
+      promptAcceptedSinceMs: 1_500,
+    },
+    {
+      listSessionFiles: async () => [unrelatedPath, latePath],
+      loadMtimes: async () =>
+        new Map([
+          [unrelatedPath, 2_000],
+          [latePath, 2_100],
+        ]),
+      resolveSessionId: async (_vars, _runner, sessionPath) =>
+        sessionPath === latePath ? 'late-session' : 'unrelated-session',
+      promptAcceptedInSession: async (_vars, _runner, target, sessionId, sessionPath) => {
+        assert.equal(target, '%20');
+        return sessionPath === latePath
+          ? {
+              value: true,
+              source: 'signal',
+              confidence: 'high',
+              observedAt: 2_100,
+              exactPromptMatch: true,
+              sessionId,
+            }
+          : null;
+      },
+    },
+  );
+
+  assert.deepEqual(result, {
+    runnerSessionId: 'late-session',
+    runnerSessionPath: latePath,
+    source: 'native',
+  });
+});
+
+test('prompt-bound fallback rejects two concurrent exact prompt matches', async () => {
+  const paths = ['/sessions/one.jsonl', '/sessions/two.jsonl'];
+  const result = await resolvePromptBoundRunnerSession(
+    makeVars(),
+    'codex',
+    [],
+    { promptText: 'same prompt', promptAcceptedSinceMs: 1_000 },
+    {
+      listSessionFiles: async () => paths,
+      loadMtimes: async () => new Map(paths.map((sessionPath) => [sessionPath, 2_000])),
+      resolveSessionId: async (_vars, _runner, sessionPath) => sessionPath,
+      promptAcceptedInSession: async (_vars, _runner, _target, sessionId) => ({
+        value: true,
+        source: 'signal',
+        confidence: 'high',
+        observedAt: 2_000,
+        exactPromptMatch: true,
+        sessionId,
+      }),
+    },
+  );
+
+  assert.equal(result, null);
+});
+
+test('exact live binding verifier supports Claude, Codex, and Grok pane-native attribution', async () => {
+  type VerifyDeps = NonNullable<Parameters<typeof verifyExactLiveRunnerSessionBinding>[3]>;
+  for (const runner of ['claude', 'codex', 'grok']) {
+    const deps: VerifyDeps = {
+      readPaneStartedAt: async () => 1_000,
+      resolveBinding: async (_vars, resolvedRunner, _before, options) => {
+        assert.equal(resolvedRunner, runner);
+        assert.equal(options?.paneId, '%20');
+        return {
+          runnerSessionId: `${runner}-session`,
+          runnerSessionPath: `/alias/${runner}-session.jsonl`,
+          source: runner === 'codex' ? 'native' : 'hook',
+        };
+      },
+      canonicalizePath: async (_vars, sessionPath) =>
+        sessionPath.replace('/alias/', '/canonical/').replace('/persisted/', '/canonical/'),
+    };
+    const result = await verifyExactLiveRunnerSessionBinding(
+      makeVars(),
+      runner,
+      {
+        paneId: '%20',
+        slotId: 'slot-1',
+        expectedSessionId: `${runner}-session`,
+        expectedSessionPath: `/persisted/${runner}-session.jsonl`,
+      },
+      deps,
+    );
+    assert.equal(result.ok, true, `${runner} should accept its exact live binding`);
+    if (result.ok)
+      assert.equal(result.binding.canonicalSessionPath.startsWith('/canonical/'), true);
+  }
+});
+
+test('exact live binding verifier rejects a new same-runner session in the persisted pane', async () => {
+  const result = await verifyExactLiveRunnerSessionBinding(
+    makeVars(),
+    'codex',
+    {
+      paneId: '%20',
+      slotId: 'slot-1',
+      expectedSessionId: 'parked-session',
+      expectedSessionPath: '/sessions/parked-session.jsonl',
+    },
+    {
+      readPaneStartedAt: async () => 2_000,
+      resolveBinding: async () => ({
+        runnerSessionId: 'new-session',
+        runnerSessionPath: '/sessions/new-session.jsonl',
+        source: 'native',
+      }),
+      canonicalizePath: async (_vars, sessionPath) => sessionPath,
+    },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok)
+    assert.match(result.reason, /new-session.*does not match persisted.*parked-session/);
 });
 
 test('pane process start is resolved from the live tmux pane', async () => {

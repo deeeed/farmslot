@@ -234,6 +234,15 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `llm.config.set`   | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `llm.tiers`        | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 
+## machine.\*
+
+| Method                  | Surface       | CLI command                        | TUI | Note |
+| ----------------------- | ------------- | ---------------------------------- | --- | ---- |
+| `machine.pause.preview` | typed-command | `farmslot machine pause`           |     |      |
+| `machine.pause.execute` | typed-command | `farmslot machine pause --execute` |     |      |
+| `machine.pause.status`  | typed-command | `farmslot machine status`          |     |      |
+| `machine.pause.restore` | typed-command | `farmslot machine restore`         |     |      |
+
 ## node.\*
 
 | Method            | Surface  | CLI command | TUI | Note                                                                                           |
