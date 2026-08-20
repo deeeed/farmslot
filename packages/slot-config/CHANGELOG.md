@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- feat(ci): allow projects to opt in to PR worker-report comments, which remain disabled by default.
+- perf(resources): allow project resource watches to declare a typed shared-poll provider and provider lookup target while retaining the legacy command fallback.
 - feat(runtime-capabilities): validate and normalize `prepare.core`, explicit compatibility profiles, and project-owned capability provider graphs with typed action references, costs, sharing, and dependencies.
 
 - feat(session-usage): runner-neutral incremental complete-line sampling with 1MiB reads, split-write preservation, and explicit integrity failure for oversized records (MANUAL-000096).

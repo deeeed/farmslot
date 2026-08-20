@@ -16,13 +16,21 @@ export interface WatchInstruction {
     port?: number; // port-listen: TCP port
     cmd?: string; // process-poll: shell command (exit 0 = running)
     cwd?: string; // working directory for cmd
+    /** Additive hint: new nodes coalesce this provider; old nodes still execute cmd. */
+    provider?: ResourceWatchProvider;
+    /** Provider-specific lookup key, such as simulator name or UDID. */
+    target?: string;
     intervalMs?: number; // poll interval (default: 30000)
   };
 }
 
 export type ResourceStatusValue = 'running' | 'stopped' | 'unknown' | 'relaunched';
 
-import type { ResourceSidecarMeta, ResourceWatchRuntimeStats } from '@farmslot/protocol';
+import type {
+  ResourceSidecarMeta,
+  ResourceWatchProvider,
+  ResourceWatchRuntimeStats,
+} from '@farmslot/protocol';
 export type { ResourceSidecarMeta } from '@farmslot/protocol';
 
 export interface ResourceStatusChange {
@@ -57,6 +65,7 @@ interface ActiveWatch {
   relaunchPrevPid?: number;
   pollInFlight?: boolean;
   stopped?: boolean;
+  onChange: (change: ResourceStatusChange) => void;
 }
 
 const RELAUNCH_WINDOW_MS = 2_000;
@@ -64,10 +73,32 @@ const PORT_CHECK_TIMEOUT_MS = 1_000;
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const MAX_CONCURRENT_PROCESS_POLLS = 2;
 const INITIAL_PROCESS_POLL_SPREAD_MS = 5_000;
+const SHARED_POLL_INITIAL_DEBOUNCE_MS = 250;
+const MIN_SHARED_POLL_INTERVAL_MS = 30_000;
+const IOS_SIMULATOR_INVENTORY_PROVIDER = 'ios-simulator-inventory';
+const IOS_SIMULATOR_INVENTORY_TIMEOUT_MS = 10_000;
+
+type ResourceWatchExec = typeof exec;
+let executeWatchCommand: ResourceWatchExec = exec;
+
+/** Deterministic test seam; production always uses node exec. */
+export function setResourceWatchExecForTests(replacement?: ResourceWatchExec): void {
+  executeWatchCommand = replacement ?? exec;
+}
 
 let activeProcessPolls = 0;
 let queuedProcessPolls = 0;
 const processPollWaiters: Array<() => void> = [];
+
+let sharedIosPollTimer: ReturnType<typeof setTimeout> | undefined;
+let sharedIosPollInFlight = false;
+let sharedIosWatchGeneration = 0;
+const sharedProcessPollStats = {
+  executions: 0,
+  fanout: 0,
+  failures: 0,
+  lastDurationMs: null as number | null,
+};
 
 async function withProcessPollPermit<T>(
   shouldRun: () => boolean,
@@ -127,7 +158,116 @@ export function getResourceWatchRuntimeStats(): ResourceWatchRuntimeStats {
     activeProcessPolls,
     queuedProcessPolls,
     maxConcurrentProcessPolls: MAX_CONCURRENT_PROCESS_POLLS,
+    sharedProcessPolls: {
+      providers: activeIosSimulatorWatches().length > 0 ? 1 : 0,
+      ...sharedProcessPollStats,
+    },
   };
+}
+
+function isIosSimulatorInventoryWatch(aw: ActiveWatch): boolean {
+  return (
+    aw.instruction.watch.type === 'process-poll' &&
+    aw.instruction.watch.provider === IOS_SIMULATOR_INVENTORY_PROVIDER &&
+    Boolean(aw.instruction.watch.target)
+  );
+}
+
+function activeIosSimulatorWatches(): ActiveWatch[] {
+  return [...activeWatches.values()].filter(
+    (watch) => isWatchActive(watch) && isIosSimulatorInventoryWatch(watch),
+  );
+}
+
+function sharedIosPollIntervalMs(): number {
+  const requested = activeIosSimulatorWatches().map(
+    (watch) => watch.instruction.watch.intervalMs ?? DEFAULT_POLL_INTERVAL_MS,
+  );
+  return Math.max(MIN_SHARED_POLL_INTERVAL_MS, requested.length > 0 ? Math.min(...requested) : 0);
+}
+
+export function parseBootedIosSimulatorInventory(stdout: string): Set<string> {
+  const parsed = JSON.parse(stdout) as {
+    devices?: Record<string, Array<{ name?: unknown; udid?: unknown; state?: unknown }>>;
+  };
+  const booted = new Set<string>();
+  for (const devices of Object.values(parsed.devices ?? {})) {
+    for (const device of devices) {
+      if (device.state !== 'Booted') continue;
+      if (typeof device.name === 'string' && device.name) booted.add(device.name);
+      if (typeof device.udid === 'string' && device.udid) booted.add(device.udid);
+    }
+  }
+  return booted;
+}
+
+function scheduleSharedIosPoll(delayMs: number): void {
+  if (sharedIosPollTimer || sharedIosPollInFlight || activeIosSimulatorWatches().length === 0)
+    return;
+  sharedIosPollTimer = setTimeout(() => {
+    sharedIosPollTimer = undefined;
+    void runSharedIosPoll();
+  }, delayMs);
+}
+
+async function runSharedIosPoll(): Promise<void> {
+  if (sharedIosPollInFlight) return;
+  const generation = sharedIosWatchGeneration;
+  const watches = activeIosSimulatorWatches();
+  if (watches.length === 0) return;
+  sharedIosPollInFlight = true;
+  let executionStartedAt: number | null = null;
+  try {
+    const result = await withProcessPollPermit(
+      () => watches.some(isWatchActive),
+      async () => {
+        executionStartedAt = Date.now();
+        sharedProcessPollStats.executions += 1;
+        return executeWatchCommand({
+          argv: ['xcrun', 'simctl', 'list', 'devices', 'booted', '-j'],
+          timeout: IOS_SIMULATOR_INVENTORY_TIMEOUT_MS,
+          maxBuffer: 4 * 1024 * 1024,
+        });
+      },
+    );
+    if (!result) return;
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr.trim() || `simctl exited ${result.exitCode}`);
+    }
+    const booted = parseBootedIosSimulatorInventory(result.stdout);
+    for (const watch of watches) {
+      if (!isWatchActive(watch)) continue;
+      const target = watch.instruction.watch.target!;
+      const status: ResourceStatusValue = booted.has(target) ? 'running' : 'stopped';
+      sharedProcessPollStats.fanout += 1;
+      if (status === watch.lastStatus) continue;
+      watch.lastStatus = status;
+      watch.onChange({ slotId: watch.slotId, resourceId: watch.resourceId, status });
+    }
+  } catch (error) {
+    sharedProcessPollStats.failures += 1;
+    console.warn(
+      `[resource-watch] shared ${IOS_SIMULATOR_INVENTORY_PROVIDER} poll failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } finally {
+    if (executionStartedAt !== null) {
+      sharedProcessPollStats.lastDurationMs = Date.now() - executionStartedAt;
+    }
+    sharedIosPollInFlight = false;
+    const watchesChanged = generation !== sharedIosWatchGeneration;
+    scheduleSharedIosPoll(
+      watchesChanged ? SHARED_POLL_INITIAL_DEBOUNCE_MS : sharedIosPollIntervalMs(),
+    );
+  }
+}
+
+function startSharedIosSimulatorWatch(): void {
+  sharedIosWatchGeneration += 1;
+  if (sharedIosPollTimer) {
+    clearTimeout(sharedIosPollTimer);
+    sharedIosPollTimer = undefined;
+  }
+  scheduleSharedIosPoll(SHARED_POLL_INITIAL_DEBOUNCE_MS);
 }
 
 // ─── PID file watcher ───
@@ -402,7 +542,7 @@ async function checkProcessStatus(
   return withProcessPollPermit(
     () => isWatchActive(aw),
     async () => {
-      const result = await exec({ cmd, cwd, timeout: 5_000 });
+      const result = await executeWatchCommand({ cmd, cwd, timeout: 5_000 });
       return result.exitCode === 0 ? 'running' : 'stopped';
     },
   );
@@ -458,6 +598,7 @@ export function startResourceWatch(
       resourceId: inst.id,
       instruction: inst,
       lastStatus: 'unknown',
+      onChange,
     };
     activeWatches.set(key, aw);
 
@@ -469,7 +610,11 @@ export function startResourceWatch(
         if (inst.watch.port) startPortListenWatch(aw, onChange);
         break;
       case 'process-poll':
-        if (inst.watch.cmd) startProcessPollWatch(aw, onChange);
+        if (inst.watch.provider === IOS_SIMULATOR_INVENTORY_PROVIDER && inst.watch.target) {
+          startSharedIosSimulatorWatch();
+        } else if (inst.watch.cmd) {
+          startProcessPollWatch(aw, onChange);
+        }
         break;
     }
 
@@ -482,11 +627,22 @@ export function startResourceWatch(
 function stopSingleWatch(key: string): void {
   const aw = activeWatches.get(key);
   if (!aw) return;
+  const wasSharedIosWatch = isIosSimulatorInventoryWatch(aw);
   aw.stopped = true;
   if (aw.fsWatcher) aw.fsWatcher.close();
   if (aw.pollTimer) clearInterval(aw.pollTimer);
   if (aw.relaunchWindow) clearTimeout(aw.relaunchWindow);
   activeWatches.delete(key);
+  if (wasSharedIosWatch) {
+    const remainingSharedWatches = activeIosSimulatorWatches();
+    if (sharedIosPollTimer) {
+      clearTimeout(sharedIosPollTimer);
+      sharedIosPollTimer = undefined;
+    }
+    if (remainingSharedWatches.length > 0) {
+      scheduleSharedIosPoll(sharedIosPollIntervalMs());
+    }
+  }
 }
 
 export function stopResourceWatch(slotId: string): void {

@@ -42,7 +42,11 @@ export function paginatedPrCommentOutputContainsRun(output: string, runId: strin
 export function shouldPostWorkerReportComment(
   flowType: FlowType,
   reportArtifactName: string | undefined,
+  enabled = false,
 ): boolean {
+  // Worker reports can contain internal run metadata (runner/model, token
+  // usage, and cost), so projects must opt in before any report reaches a PR.
+  if (!enabled) return false;
   // dev/fix-bug use pr-description.md as their sole outcome artifact. It is
   // published as the PR body, so reposting it as a comment duplicates the
   // content and can expose local evidence paths before body post-processing.

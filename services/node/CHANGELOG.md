@@ -4,6 +4,7 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- perf(resources): coalesce all iOS simulator liveness watches into one bounded `simctl` inventory probe per node cycle, fan results out by simulator name or UDID, and discard stale results when watch sets are replaced.
 - perf(resources): stagger and bound external health probes per node, cancel queued probes from replaced watch sets, reduce fallback polling frequency, avoid CDP/lsof repair while a watched PID is healthy, and expose aggregate watch pressure through node health.
 
 - fix(deploy): require an explicit machine-scoped credential for remote installs, protect credential-bearing service files, and reliably re-bootstrap macOS launchd jobs instead of reporting success after a failed legacy reload.

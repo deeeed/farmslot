@@ -6,6 +6,20 @@ export type ResourceStatus = 'unknown' | 'running' | 'stopped' | 'error' | 'stal
 export type ResourceStreamState = 'unknown' | 'starting' | 'ready' | 'error';
 
 export type ResourceWatchType = 'pid-file' | 'port-listen' | 'process-poll';
+export type ResourceWatchProvider = 'ios-simulator-inventory';
+
+export interface SharedProcessPollRuntimeStats {
+  /** Number of shared provider groups currently active. */
+  providers: number;
+  /** Cumulative host inventory subprocess executions. */
+  executions: number;
+  /** Cumulative per-watch status evaluations, including unchanged results. */
+  fanout: number;
+  /** Cumulative provider execution or parse failures. */
+  failures: number;
+  /** Duration of the most recent real provider execution, excluding permit wait. */
+  lastDurationMs: number | null;
+}
 
 export interface ResourceWatchRuntimeStats {
   watches: number;
@@ -13,6 +27,8 @@ export interface ResourceWatchRuntimeStats {
   activeProcessPolls: number;
   queuedProcessPolls: number;
   maxConcurrentProcessPolls: number;
+  /** Host-inventory probes shared across many slot watches. Counters are cumulative; providers is current. */
+  sharedProcessPolls?: SharedProcessPollRuntimeStats;
 }
 
 export type SlotActionPlacement = 'slot-header' | 'resource-panel';
@@ -49,6 +65,10 @@ export interface ResourceWatchConfig {
   path?: string; // pid-file: PID file path (template vars expanded by gateway)
   port?: string; // port-listen: port number or template var (e.g. "{{port}}")
   cmd?: string; // process-poll: shell command (template vars expanded by gateway)
+  /** Optional typed provider that lets a new node coalesce the command while old nodes use cmd. */
+  provider?: ResourceWatchProvider;
+  /** Provider-specific lookup key, for example simulator name or UDID. */
+  target?: string;
   intervalMs?: number; // zombie check / poll interval (default: 30000)
 }
 

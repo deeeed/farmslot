@@ -830,7 +830,11 @@ export async function runCompletionPipeline(
   // `done` until the whole pipeline returns, so status is `completing` during
   // this call. The fact that we reached step 3 is itself the evidence we need.
   const reportIsSubstantive = typeof report === 'string' && report.trim().length > 0;
-  const shouldPostReport = shouldPostWorkerReportComment(run.flowType, reportArtifact?.fileName);
+  const shouldPostReport = shouldPostWorkerReportComment(
+    run.flowType,
+    reportArtifact?.fileName,
+    pv?.projectJson.ci?.post_worker_report_comment === true,
+  );
   if (!isReviewPR && shouldPostReport && ciRepo && prNumber && reportIsSubstantive) {
     flags.prCommentPosted = await postPRComment(run, report, ciRepo, prNumber);
   } else if (!isReviewPR && shouldPostReport && ciRepo && prNumber) {
@@ -1063,7 +1067,11 @@ export async function publishCompletionPackage(
     const reportIsSubstantive = typeof report === 'string' && report.trim().length > 0;
     if (
       reportIsSubstantive &&
-      shouldPostWorkerReportComment(latestRun.flowType, reportArtifact?.fileName)
+      shouldPostWorkerReportComment(
+        latestRun.flowType,
+        reportArtifact?.fileName,
+        pv?.projectJson.ci?.post_worker_report_comment === true,
+      )
     ) {
       emit('substep', {
         name: 'post-worker-report',
