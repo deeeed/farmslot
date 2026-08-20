@@ -6,6 +6,9 @@ import os from 'node:os';
 import type {
   Headroom,
   MachineHealth,
+  NodePressureHistorySample,
+  NodePressureRatios,
+  NodeProcessInventory,
   NodeSystemMetrics,
   RecipeRuntimeCapabilityDeclaration,
 } from '@farmslot/protocol';
@@ -13,6 +16,9 @@ import type {
 import { getCachedFleet } from './state.js';
 
 const healthMap = new Map<string, MachineHealth>();
+const pressureHistory = new Map<string, NodePressureHistorySample[]>();
+const processInventoryMap = new Map<string, NodeProcessInventory>();
+export const NODE_PRESSURE_HISTORY_LIMIT = 120;
 let localCollectionTimer: ReturnType<typeof setInterval> | null = null;
 let prevCpuTimes: { idle: number; total: number } | null = null;
 
@@ -28,20 +34,83 @@ export function computeHeadroom(cpu: number, mem: number, disk: number): Headroo
 
 export function updateMachineMetrics(machine: string, metrics: NodeSystemMetrics): void {
   const existing = healthMap.get(machine);
-  const capacity = existing?.capacity ?? computeCapacity(machine);
+  const computedCapacity = existing?.capacity ?? computeCapacity(machine);
+  const capacity = {
+    ...computedCapacity,
+    cpuCores:
+      typeof metrics.cpuCores === 'number' && metrics.cpuCores > 0
+        ? metrics.cpuCores
+        : computedCapacity.cpuCores,
+  };
+  updateProcessInventory(machine, metrics.processInventory);
+  recordPressureSample(machine, metrics, capacity.cpuCores);
+  const { processInventory: _processInventory, ...system } = metrics;
   healthMap.set(machine, {
     machine,
     online: true,
     ...(existing?.capabilities ? { capabilities: existing.capabilities } : {}),
-    system: metrics,
+    system,
     capacity,
     headroom: computeHeadroom(metrics.cpuPercent, metrics.memoryPercent, metrics.diskPercent),
   });
 }
 
+function updateProcessInventory(machine: string, incoming: NodeProcessInventory | undefined): void {
+  if (!incoming) return;
+  const current = processInventoryMap.get(machine);
+  if (
+    current &&
+    incoming.generation === current.generation &&
+    incoming.sampleId <= current.sampleId
+  ) {
+    return;
+  }
+  processInventoryMap.set(machine, incoming);
+}
+
+function normalizedPressure(metrics: NodeSystemMetrics, cpuCores: number): NodePressureRatios {
+  if (metrics.pressure) return metrics.pressure;
+  const rounded = (value: number) => Math.round(value * 1_000) / 1_000;
+  return {
+    cpu: rounded(metrics.cpuPercent / 100),
+    memory: rounded(metrics.memoryPercent / 100),
+    disk: rounded(metrics.diskPercent / 100),
+    ...(cpuCores > 0
+      ? {
+          load1: rounded(metrics.loadAvg1 / cpuCores),
+          load5: rounded(metrics.loadAvg5 / cpuCores),
+        }
+      : {}),
+  };
+}
+
+function recordPressureSample(machine: string, metrics: NodeSystemMetrics, cpuCores: number): void {
+  const samples = pressureHistory.get(machine) ?? [];
+  const latest = samples.at(-1);
+  const collectedAtMs = Date.parse(metrics.collectedAt);
+  if (!Number.isFinite(collectedAtMs)) return;
+  if (latest && collectedAtMs <= Date.parse(latest.collectedAt)) return;
+  const inventory = metrics.processInventory;
+  samples.push({
+    ...(inventory ? { generation: inventory.generation, sampleId: inventory.sampleId } : {}),
+    collectedAt: metrics.collectedAt,
+    pressure: normalizedPressure(metrics, cpuCores),
+    cpuPercent: metrics.cpuPercent,
+    memoryPercent: metrics.memoryPercent,
+    diskPercent: metrics.diskPercent,
+    loadAvg1: metrics.loadAvg1,
+    loadAvg5: metrics.loadAvg5,
+  });
+  if (samples.length > NODE_PRESSURE_HISTORY_LIMIT) {
+    samples.splice(0, samples.length - NODE_PRESSURE_HISTORY_LIMIT);
+  }
+  pressureHistory.set(machine, samples);
+}
+
 // ─── Mark machine offline ───
 
 export function markMachineOffline(machine: string): void {
+  processInventoryMap.delete(machine);
   const existing = healthMap.get(machine);
   if (existing) {
     existing.online = false;
@@ -157,14 +226,27 @@ function getLocalMemoryUsage(): { usedBytes: number; totalBytes: number } {
 export function collectLocalMetrics(): NodeSystemMetrics {
   const { usedBytes: usedMem, totalBytes: totalMem } = getLocalMemoryUsage();
   const [loadAvg1, loadAvg5] = os.loadavg();
+  const cpuCores = os.cpus().length;
+  const cpuPercent = getLocalCpuPercent();
+  const memoryPercent = Math.round((usedMem / totalMem) * 100);
+  const diskPercent = getLocalDiskPercent();
+  const rounded = (value: number) => Math.round(value * 1_000) / 1_000;
   return {
-    cpuPercent: getLocalCpuPercent(),
-    memoryPercent: Math.round((usedMem / totalMem) * 100),
+    cpuPercent,
+    memoryPercent,
     memoryUsedGb: Math.round((usedMem / 1073741824) * 10) / 10,
     memoryTotalGb: Math.round((totalMem / 1073741824) * 10) / 10,
-    diskPercent: getLocalDiskPercent(),
+    diskPercent,
     loadAvg1: Math.round(loadAvg1 * 100) / 100,
     loadAvg5: Math.round(loadAvg5 * 100) / 100,
+    cpuCores,
+    pressure: {
+      cpu: rounded(cpuPercent / 100),
+      memory: rounded(memoryPercent / 100),
+      disk: rounded(diskPercent / 100),
+      load1: rounded(loadAvg1 / Math.max(1, cpuCores)),
+      load5: rounded(loadAvg5 / Math.max(1, cpuCores)),
+    },
     thermalPressure: getLocalThermal(),
     collectedAt: new Date().toISOString(),
   };
@@ -225,6 +307,15 @@ export function getMachineHealth(machine: string): MachineHealth | undefined {
 
 export function getAllMachineHealth(): MachineHealth[] {
   return Array.from(healthMap.values());
+}
+
+export function getMachinePressureHistory(machine: string): NodePressureHistorySample[] {
+  return pressureHistory.get(machine)?.map((sample) => structuredClone(sample)) ?? [];
+}
+
+export function getMachineProcessInventory(machine: string): NodeProcessInventory | undefined {
+  const inventory = processInventoryMap.get(machine);
+  return inventory ? structuredClone(inventory) : undefined;
 }
 
 // ─── Enrich fleet status with hostLoad per slot ───

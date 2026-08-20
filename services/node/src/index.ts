@@ -598,7 +598,7 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
       }
 
       case 'system.metrics': {
-        const metrics = collectMetrics();
+        const metrics = await collectMetrics();
         sendResponse(frame.id, true, metrics);
         break;
       }

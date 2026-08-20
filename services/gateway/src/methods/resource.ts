@@ -2,6 +2,7 @@
 
 import type {
   MachineHealth,
+  ProcessOwnershipClass,
   ResourceCleanupParams,
   ResourceCleanupResult,
   ResourceControlParams,
@@ -10,6 +11,11 @@ import type {
   ResourceHealthResult,
   ResourceListParams,
   ResourceListResult,
+  ResourcePressureConcern,
+  ResourcePressureMachine,
+  ResourcePressureSeverity,
+  ResourcePressureSnapshotParams,
+  ResourcePressureSnapshotResult,
   ResourceStatus,
   ResourceWatchSetEnabledParams,
   ResourceWatchSetEnabledResult,
@@ -17,8 +23,15 @@ import type {
 } from '@farmslot/protocol';
 
 import { isMissingProjectConfigError, SlotConfigError } from '../core/config.js';
+import { getMachinePressureHistory, getMachineProcessInventory } from '../fleet/node-health.js';
+import {
+  attributeProcessInventory,
+  type ProcessAttributionResource,
+} from '../fleet/process-attribution.js';
 import {
   executeResourceControl,
+  getActiveResources,
+  getCachedResourceStatus,
   getResourceWatchRuntimeState,
   pollSlotResources,
   resolveSlotResources,
@@ -28,59 +41,13 @@ import { loadFleetStatus } from '../fleet/state.js';
 
 const RESOURCE_STATUSES: ResourceStatus[] = ['unknown', 'running', 'stopped', 'error', 'stale'];
 
-type PressureSeverity = 'ok' | 'warn' | 'critical';
-
-interface PressureConcern {
-  severity: Exclude<PressureSeverity, 'ok'>;
-  reason: string;
-}
-
-export interface ResourcePressureSnapshotParams {
-  machine?: string;
-  project?: string;
-}
-
-export interface ResourcePressureMachine {
-  machine: string;
-  online: boolean | null;
-  headroom: MachineHealth['headroom'] | 'unknown';
-  severity: PressureSeverity;
-  concerns: PressureConcern[];
-  system?: MachineHealth['system'];
-  capacity?: MachineHealth['capacity'];
-  slots: {
-    total: number;
-    ready: number;
-    busy: number;
-    working: number;
-    manual: number;
-    disabled: number;
-  };
-  resources: {
-    total: number;
-    byStatus: Record<ResourceStatus, number>;
-    cleanupCandidates: number;
-  };
-}
-
-export interface ResourcePressureSnapshotResult {
-  checkedAt: string;
-  watchState: { enabled: boolean; updatedAt: string | null };
-  watchAutoStartEnabled: boolean;
-  cleanupScope: 'non-active-slots-only';
-  filters: ResourcePressureSnapshotParams;
-  summary: {
-    machines: number;
-    severity: PressureSeverity;
-    cleanupCandidates: number;
-    runningResources: number;
-    staleResources: number;
-    busySlots: number;
-    workingSlots: number;
-  };
-  machines: ResourcePressureMachine[];
-  cleanupCandidates: ResourceCleanupResult['targets'];
-}
+const EMPTY_PROCESS_CLASS_COUNTS: Record<ProcessOwnershipClass, number> = {
+  active: 0,
+  retained: 0,
+  stale: 0,
+  manual: 0,
+  unknown: 0,
+};
 
 export async function resourceList(params: ResourceListParams): Promise<ResourceListResult> {
   const resources = await resolveSlotResources(params.slotId);
@@ -182,14 +149,28 @@ export async function resourcePressureSnapshot(
   params: ResourcePressureSnapshotParams = {},
 ): Promise<ResourcePressureSnapshotResult> {
   const fleet = await loadFleetStatus();
-  const cleanupPreview = await resourceCleanup({ dryRun: true, ...params });
   const watchState = getResourceWatchRuntimeState();
+  const [{ tmuxWorkerList }, { getAllRuns }] = await Promise.all([
+    import('./tmux-workers.js'),
+    import('../runs/store.js'),
+  ]);
+  const tmuxInventory = await tmuxWorkerList({ includeDisconnected: true });
+  const allRuns = getAllRuns();
   const healthByMachine = new Map((fleet.machines ?? []).map((health) => [health.machine, health]));
   const slots = fleet.slots.filter((slot) => matchesPressureFilters(slot, params));
+  const resourcesBySlot = new Map<
+    string,
+    Awaited<ReturnType<typeof resolvePressureSlotResources>>
+  >();
+  for (const slot of slots) {
+    resourcesBySlot.set(slot.slot, await resolvePressureSlotResources(slot.slot));
+  }
+  const cleanupCandidates = pressureCleanupCandidates(slots, resourcesBySlot);
   const machineNames = new Set<string>();
   for (const slot of slots) machineNames.add(slot.machine);
   for (const health of fleet.machines ?? []) {
     if (params.machine && health.machine !== params.machine) continue;
+    if (params.project && !slots.some((slot) => slot.machine === health.machine)) continue;
     machineNames.add(health.machine);
   }
 
@@ -199,19 +180,42 @@ export async function resourcePressureSnapshot(
     const machineSlots = slots.filter((slot) => slot.machine === machine);
     const byStatus = emptyStatusCounts();
     for (const slot of machineSlots) {
-      const resources = await resolvePressureSlotResources(slot.slot);
+      const resources = resourcesBySlot.get(slot.slot) ?? [];
       for (const resource of resources) byStatus[resource.status] += 1;
     }
-    const cleanupCandidates = cleanupPreview.targets.filter(
+    const machineCleanupCandidates = cleanupCandidates.filter(
       (target) => target.machine === machine,
     ).length;
     const concerns = buildPressureConcerns(
       health,
       machineSlots,
       byStatus,
-      cleanupCandidates,
+      machineCleanupCandidates,
       watchState.enabled,
     );
+    const processInventory = getMachineProcessInventory(machine);
+    const attributionResources: ProcessAttributionResource[] = machineSlots.flatMap((slot) =>
+      [...(getActiveResources(slot.slot)?.entries() ?? [])].map(([resourceId, pointer]) => ({
+        pid: pointer.pid,
+        slotId: slot.slot,
+        resourceId,
+        runId: pointer.runId,
+        status: getCachedResourceStatus(slot.slot, resourceId),
+      })),
+    );
+    const attribution = processInventory
+      ? attributeProcessInventory({
+          inventory: processInventory,
+          workers: tmuxInventory.workers.filter((worker) => worker.ref.nodeId === machine),
+          slots: machineSlots,
+          runs: allRuns,
+          resources: attributionResources,
+        })
+      : {
+          groups: [],
+          omittedGroups: 0,
+          classCounts: { ...EMPTY_PROCESS_CLASS_COUNTS },
+        };
     machines.push({
       machine,
       online: health?.online ?? null,
@@ -220,6 +224,24 @@ export async function resourcePressureSnapshot(
       concerns,
       ...(health?.system ? { system: health.system } : {}),
       ...(health?.capacity ? { capacity: health.capacity } : {}),
+      history: getMachinePressureHistory(machine),
+      processAttribution: {
+        ...(processInventory
+          ? {
+              sampledAt: processInventory.collectedAt,
+              generation: processInventory.generation,
+              sampleId: processInventory.sampleId,
+              sampler: processInventory.health,
+            }
+          : {}),
+        truncated: processInventory?.truncated ?? false,
+        sampledProcesses: processInventory?.processes.length ?? 0,
+        totalProcesses: processInventory?.totalProcesses ?? 0,
+        maxEntries: processInventory?.maxEntries ?? 0,
+        omittedGroups: attribution.omittedGroups,
+        classCounts: attribution.classCounts,
+        groups: attribution.groups,
+      },
       slots: {
         total: machineSlots.length,
         ready: machineSlots.filter((slot) => slot.lifecycle === 'ready').length,
@@ -232,7 +254,7 @@ export async function resourcePressureSnapshot(
       resources: {
         total: RESOURCE_STATUSES.reduce((sum, status) => sum + byStatus[status], 0),
         byStatus,
-        cleanupCandidates,
+        cleanupCandidates: machineCleanupCandidates,
       },
     });
   }
@@ -246,15 +268,39 @@ export async function resourcePressureSnapshot(
     summary: {
       machines: machines.length,
       severity: aggregateSeverity(machines),
-      cleanupCandidates: cleanupPreview.targets.length,
+      cleanupCandidates: cleanupCandidates.length,
       runningResources: machines.reduce((sum, m) => sum + m.resources.byStatus.running, 0),
       staleResources: machines.reduce((sum, m) => sum + m.resources.byStatus.stale, 0),
       busySlots: machines.reduce((sum, m) => sum + m.slots.busy, 0),
       workingSlots: machines.reduce((sum, m) => sum + m.slots.working, 0),
     },
     machines,
-    cleanupCandidates: cleanupPreview.targets,
+    cleanupCandidates,
   };
+}
+
+function pressureCleanupCandidates(
+  slots: SlotStatus[],
+  resourcesBySlot: Map<string, Awaited<ReturnType<typeof resolvePressureSlotResources>>>,
+): ResourceCleanupResult['targets'] {
+  const targets: ResourceCleanupResult['targets'] = [];
+  for (const slot of slots) {
+    if (!slot.enabled || slot.lifecycle === 'disabled' || slot.lifecycle === 'manual') continue;
+    if (!slotAllowsDefaultResourceCleanup(slot)) continue;
+    for (const resource of resourcesBySlot.get(slot.slot) ?? []) {
+      if (resource.status !== 'running' && resource.status !== 'stale') continue;
+      if (!resource.definition.controllable || !resource.definition.hooks?.shutdown) continue;
+      targets.push({
+        slotId: slot.slot,
+        machine: slot.machine,
+        project: slot.project,
+        resourceId: resource.id,
+        label: resource.definition.label,
+        status: resource.status,
+      });
+    }
+  }
+  return targets;
 }
 
 // The fleet snapshot and slot-config resolution do not see the same set of
@@ -309,8 +355,8 @@ function buildPressureConcerns(
   byStatus: Record<ResourceStatus, number>,
   cleanupCandidates: number,
   resourceWatchesEnabled: boolean,
-): PressureConcern[] {
-  const concerns: PressureConcern[] = [];
+): ResourcePressureConcern[] {
+  const concerns: ResourcePressureConcern[] = [];
   if (!resourceWatchesEnabled) {
     concerns.push({
       severity: 'warn',
@@ -328,7 +374,9 @@ function buildPressureConcerns(
       concerns.push({ severity: 'warn', reason: 'Machine headroom is yellow.' });
     }
     const system = health.system;
-    if (system) {
+    if (!system) {
+      concerns.push({ severity: 'warn', reason: 'No system metrics available yet.' });
+    } else {
       addMetricConcern(concerns, 'CPU', system.cpuPercent, 90, 70);
       addMetricConcern(concerns, 'memory', system.memoryPercent, 90, 80);
       addMetricConcern(concerns, 'disk', system.diskPercent, 95, 85);
@@ -378,7 +426,7 @@ function buildPressureConcerns(
 }
 
 function addMetricConcern(
-  concerns: PressureConcern[],
+  concerns: ResourcePressureConcern[],
   label: string,
   value: number,
   critical: number,
@@ -391,13 +439,13 @@ function addMetricConcern(
   }
 }
 
-function pressureSeverity(concerns: PressureConcern[]): PressureSeverity {
+function pressureSeverity(concerns: ResourcePressureConcern[]): ResourcePressureSeverity {
   if (concerns.some((concern) => concern.severity === 'critical')) return 'critical';
   if (concerns.some((concern) => concern.severity === 'warn')) return 'warn';
   return 'ok';
 }
 
-function aggregateSeverity(machines: ResourcePressureMachine[]): PressureSeverity {
+function aggregateSeverity(machines: ResourcePressureMachine[]): ResourcePressureSeverity {
   if (machines.some((machine) => machine.severity === 'critical')) return 'critical';
   if (machines.some((machine) => machine.severity === 'warn')) return 'warn';
   return 'ok';

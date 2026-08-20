@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat(resources): add `farmslot resource pressure` for compact read-only machine trends, sampler health, and attributed process groups.
 - feat(backlog): let `backlog update --project` repair an item's owning farm; the gateway clears project-owned slots, templates, app, prepare, scripted-runner, and launch-plan configuration.
 
 - feat(execution-template): `options` human output lists domain-filtered sources with the `--domain` value that re-enables them (MANUAL-000076).

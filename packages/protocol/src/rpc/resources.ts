@@ -8,6 +8,7 @@ export const ResourceMethods = {
   health: Methods.RESOURCE_HEALTH,
   cleanup: Methods.RESOURCE_CLEANUP,
   watchSetEnabled: Methods.RESOURCE_WATCH_SET_ENABLED,
+  pressureSnapshot: Methods.RESOURCE_PRESSURE_SNAPSHOT,
   streamSubscribe: Methods.STREAM_SUBSCRIBE,
   streamUnsubscribe: Methods.STREAM_UNSUBSCRIBE,
   streamSnapshot: Methods.STREAM_SNAPSHOT,
@@ -151,4 +152,106 @@ export interface ResourceWatchSetEnabledResult {
   affectedMachines: string[];
   affectedSlots: string[];
   detail?: string;
+}
+
+export type ResourcePressureSeverity = 'ok' | 'warn' | 'critical';
+export type ProcessOwnershipClass = 'active' | 'retained' | 'stale' | 'manual' | 'unknown';
+export type ProcessAttributionConfidence = 'high' | 'medium' | 'low';
+
+export interface NodePressureHistorySample {
+  generation?: string;
+  sampleId?: number;
+  collectedAt: string;
+  pressure: import('../contracts/index.js').NodePressureRatios;
+  cpuPercent: number;
+  memoryPercent: number;
+  diskPercent: number;
+  loadAvg1: number;
+  loadAvg5: number;
+}
+
+export interface ProcessAttributionGroup {
+  rootPid: number;
+  processCount: number;
+  executable: string;
+  topPid: number;
+  topExecutable: string;
+  topCpuPercent: number;
+  topRssBytes: number;
+  cpuPercent: number;
+  rssBytes: number;
+  classification: ProcessOwnershipClass;
+  confidence: ProcessAttributionConfidence;
+  cleanupEligible: boolean;
+  evidence: string[];
+  slotId?: string;
+  runId?: string;
+  resourceId?: string;
+  tmuxTarget?: string;
+}
+
+export interface ResourcePressureSnapshotParams {
+  machine?: string;
+  project?: string;
+}
+
+export interface ResourcePressureConcern {
+  severity: Exclude<ResourcePressureSeverity, 'ok'>;
+  reason: string;
+}
+
+export interface ResourcePressureMachine {
+  machine: string;
+  online: boolean | null;
+  headroom: import('../contracts/index.js').MachineHealth['headroom'] | 'unknown';
+  severity: ResourcePressureSeverity;
+  concerns: ResourcePressureConcern[];
+  system?: import('../contracts/index.js').MachineHealth['system'];
+  capacity?: import('../contracts/index.js').MachineHealth['capacity'];
+  history: NodePressureHistorySample[];
+  processAttribution: {
+    sampledAt?: string;
+    generation?: string;
+    sampleId?: number;
+    truncated: boolean;
+    sampledProcesses: number;
+    totalProcesses: number;
+    maxEntries: number;
+    omittedGroups: number;
+    classCounts: Record<ProcessOwnershipClass, number>;
+    groups: ProcessAttributionGroup[];
+    sampler?: import('../contracts/index.js').NodeProcessSamplerHealth;
+  };
+  slots: {
+    total: number;
+    ready: number;
+    busy: number;
+    working: number;
+    manual: number;
+    disabled: number;
+  };
+  resources: {
+    total: number;
+    byStatus: Record<import('../contracts/index.js').ResourceStatus, number>;
+    cleanupCandidates: number;
+  };
+}
+
+export interface ResourcePressureSnapshotResult {
+  checkedAt: string;
+  watchState: { enabled: boolean; updatedAt: string | null };
+  watchAutoStartEnabled: boolean;
+  cleanupScope: 'non-active-slots-only';
+  filters: ResourcePressureSnapshotParams;
+  summary: {
+    machines: number;
+    severity: ResourcePressureSeverity;
+    cleanupCandidates: number;
+    runningResources: number;
+    staleResources: number;
+    busySlots: number;
+    workingSlots: number;
+  };
+  machines: ResourcePressureMachine[];
+  cleanupCandidates: ResourceCleanupResult['targets'];
 }

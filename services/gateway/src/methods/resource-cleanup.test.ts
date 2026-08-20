@@ -8,6 +8,8 @@ const missingSlot = new SlotConfigError('SLOT_NOT_FOUND', "Slot 'stale-slot' not
 mock.module('../fleet/resource-manager.js', {
   namedExports: {
     executeResourceControl: async () => ({ ok: true }),
+    getActiveResources: () => undefined,
+    getCachedResourceStatus: () => 'unknown',
     getResourceWatchRuntimeState: () => ({ enabled: true, updatedAt: null }),
     pollSlotResources: async () => [],
     resolveSlotResources: async () => {
@@ -19,6 +21,7 @@ mock.module('../fleet/resource-manager.js', {
 
 mock.module('../fleet/state.js', {
   namedExports: {
+    getCachedFleet: () => null,
     loadFleetStatus: async () => ({
       slots: [
         {

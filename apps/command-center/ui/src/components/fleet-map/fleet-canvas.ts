@@ -10,8 +10,8 @@ import type {
   NodeInfo,
   NodesListResult,
   ResourceCleanupResult,
-  ResourceHealthResult,
   ResourceListResult,
+  ResourcePressureSnapshotResult,
   ResourceStatus,
   ResourceStatusUpdatedPayload,
   ResourceWatchSetEnabledResult,
@@ -25,6 +25,7 @@ import type {
 import { Events, Methods, primaryRoleForFlow } from '@farmslot/protocol';
 
 import './machine-group.js';
+import './machine-pressure-overview.js';
 import './resource-overview.js';
 import '../slot-actions/slot-actions-modal.js';
 import '../slot-actions/fleet-refresh-modal.js';
@@ -97,6 +98,7 @@ export class FleetCanvas extends LitElement {
   @state() private resourceActionBusy = false;
   @state() private resourceActionFlash = '';
   @state() private resourceWatchesEnabled = true;
+  @state() private resourcePressure?: ResourcePressureSnapshotResult;
   /** machine → provider subscription snapshot (labels only). */
   private _providerAccountsUnsub: (() => void) | null = null;
   private _resourceFetched = false;
@@ -545,6 +547,7 @@ export class FleetCanvas extends LitElement {
     // Phase 1: fetch resource definitions (fast — reads project.json, no hooks)
     // Renders table immediately with "unknown" status dots
     const nextDefs = new Map<string, SlotResource[]>();
+    const nextStatus = new Map<string, Map<string, ResourceStatus>>(this.slotResourceStatus);
     await Promise.all(
       this.slots.map(async (s) => {
         try {
@@ -553,6 +556,10 @@ export class FleetCanvas extends LitElement {
           });
           if (listRes.resources.length > 0) {
             nextDefs.set(s.slot, listRes.resources);
+            nextStatus.set(
+              s.slot,
+              new Map(listRes.resources.map((resource) => [resource.id, resource.status])),
+            );
           }
         } catch (err) {
           console.warn(
@@ -563,32 +570,23 @@ export class FleetCanvas extends LitElement {
       }),
     );
     this.slotResourceDefs = nextDefs;
+    this.slotResourceStatus = nextStatus;
     this._resourceFetched = true;
+    await this.fetchResourcePressure();
+  }
 
-    // Phase 2: fetch health status (slow — runs hooks via agents)
-    // Updates status dots as results arrive
-    const nextStatus = new Map<string, Map<string, ResourceStatus>>(this.slotResourceStatus);
-    await Promise.all(
-      this.slots.map(async (s) => {
-        try {
-          const healthRes = await gateway.request<ResourceHealthResult>(Methods.RESOURCE_HEALTH, {
-            slotId: s.slot,
-          });
-          if (healthRes.resources.length > 0) {
-            const resMap = new Map<string, ResourceStatus>();
-            for (const r of healthRes.resources) resMap.set(r.id, r.status);
-            nextStatus.set(s.slot, resMap);
-            // Progressive update — each slot's health updates the UI immediately
-            this.slotResourceStatus = new Map(nextStatus);
-          }
-        } catch (err) {
-          console.warn(
-            `[fleet-canvas] resource health failed for ${s.slot}:`,
-            err instanceof Error ? err.message : String(err),
-          );
-        }
-      }),
-    );
+  private async fetchResourcePressure() {
+    try {
+      this.resourcePressure = await gateway.request<ResourcePressureSnapshotResult>(
+        Methods.RESOURCE_PRESSURE_SNAPSHOT,
+      );
+      this.resourceWatchesEnabled = this.resourcePressure.watchState.enabled;
+    } catch (err) {
+      console.warn(
+        '[fleet-canvas] resource pressure fetch failed:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 
   private get filteredSlots(): SlotStatus[] {
@@ -909,6 +907,9 @@ export class FleetCanvas extends LitElement {
     return html`
       <div class="resource-controls">
         <span>Resource pressure</span>
+        <button ?disabled=${this.resourceActionBusy} @click=${() => this.fetchResourcePressure()}>
+          Refresh pressure
+        </button>
         <button ?disabled=${this.resourceActionBusy} @click=${() => this.previewResourceCleanup()}>
           Preview cleanup
         </button>
@@ -940,6 +941,7 @@ export class FleetCanvas extends LitElement {
             >`
           : ''}
       </div>
+      <machine-pressure-overview .snapshot=${this.resourcePressure}></machine-pressure-overview>
       ${groups.map(
         (g) => html`
           <resource-overview

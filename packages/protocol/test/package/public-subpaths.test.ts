@@ -212,6 +212,7 @@ for (const [name, actual, expected] of [
       health: Methods.RESOURCE_HEALTH,
       cleanup: Methods.RESOURCE_CLEANUP,
       watchSetEnabled: Methods.RESOURCE_WATCH_SET_ENABLED,
+      pressureSnapshot: Methods.RESOURCE_PRESSURE_SNAPSHOT,
       streamSubscribe: Methods.STREAM_SUBSCRIBE,
       streamUnsubscribe: Methods.STREAM_UNSUBSCRIBE,
       streamSnapshot: Methods.STREAM_SNAPSHOT,
