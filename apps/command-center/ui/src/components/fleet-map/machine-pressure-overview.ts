@@ -106,6 +106,25 @@ export class MachinePressureOverview extends LitElement {
       gap: ${unsafeCSS(spacing.sm)};
       margin-bottom: ${unsafeCSS(spacing.md)};
     }
+    .diagnosis {
+      margin-bottom: ${unsafeCSS(spacing.md)};
+      padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+      border-left: 2px solid ${unsafeCSS(colors.statusWarn)};
+      border-radius: 3px;
+      background: ${unsafeCSS(colors.statusWarn)}0d;
+      color: ${unsafeCSS(colors.textSecondary)};
+      line-height: 1.5;
+    }
+    .machine.critical .diagnosis {
+      border-left-color: ${unsafeCSS(colors.statusFail)};
+      background: ${unsafeCSS(colors.statusFail)}0d;
+    }
+    .diagnosis strong {
+      color: ${unsafeCSS(colors.textPrimary)};
+    }
+    .diagnosis-reason {
+      color: ${unsafeCSS(colors.textMuted)};
+    }
     .metric {
       min-width: 0;
       padding: ${unsafeCSS(spacing.sm)};
@@ -349,6 +368,7 @@ export class MachinePressureOverview extends LitElement {
         const loadMax = Math.max(2, Math.ceil(Math.max(0, ...loadValues)));
         const cores = machine.capacity?.cpuCores ?? machine.system?.cpuCores ?? 0;
         const classes = machine.processAttribution.classCounts;
+        const topGroup = machine.processAttribution.groups[0];
         const groups = visiblePressureGroups(machine.processAttribution.groups, expanded ? 12 : 4);
         const processNote = machine.processAttribution.sampledProcesses
           ? `${machine.processAttribution.sampledProcesses}/${machine.processAttribution.totalProcesses} sampled · ${pressureSampleAge(machine.processAttribution.sampledAt)}`
@@ -375,6 +395,25 @@ export class MachinePressureOverview extends LitElement {
               </button>
             </div>
           </header>
+          ${machine.severity !== 'ok'
+            ? html`<div class="diagnosis">
+                ${topGroup
+                  ? html`<div>
+                      Top observed tree:
+                      <strong>${pressureProcessName(topGroup.topExecutable)}</strong> ·
+                      ${pressureProcessCpu(topGroup.cpuPercent)} tree CPU ·
+                      ${pressureBytes(topGroup.topRssBytes)} hot RSS ·
+                      ${topGroup.slotId?.replace(`${machine.machine}-`, '') ??
+                      (topGroup.classification === 'unknown'
+                        ? 'system / unmapped'
+                        : topGroup.classification)}
+                    </div>`
+                  : ''}
+                ${machine.concerns[0]
+                  ? html`<div class="diagnosis-reason">${machine.concerns[0].reason}</div>`
+                  : ''}
+              </div>`
+            : ''}
           <div class="metrics">
             ${this.renderMetric({
               label: 'CPU',

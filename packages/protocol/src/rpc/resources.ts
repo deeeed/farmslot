@@ -189,6 +189,29 @@ export interface ProcessAttributionGroup {
   tmuxTarget?: string;
 }
 
+export function selectResourcePressureGroups(
+  groups: ProcessAttributionGroup[],
+  limit: number,
+  options: { preserveAllManaged?: boolean } = {},
+): ProcessAttributionGroup[] {
+  if (limit <= 0) return [];
+  const hottest = groups[0] ? [groups[0]] : [];
+  const managedCandidates = groups.filter(
+    (group) =>
+      !hottest.includes(group) && ['active', 'retained', 'stale'].includes(group.classification),
+  );
+  const managed = options.preserveAllManaged
+    ? managedCandidates
+    : managedCandidates.slice(0, Math.max(0, limit - hottest.length));
+  const pinned = [...hottest, ...managed];
+  return [
+    ...groups
+      .filter((group) => !pinned.includes(group))
+      .slice(0, Math.max(0, limit - pinned.length)),
+    ...pinned,
+  ].sort((a, b) => groups.indexOf(a) - groups.indexOf(b));
+}
+
 export interface ResourcePressureSnapshotParams {
   machine?: string;
   project?: string;

@@ -1,4 +1,7 @@
-import type { ResourcePressureSnapshotResult } from '@farmslot/protocol';
+import {
+  type ResourcePressureSnapshotResult,
+  selectResourcePressureGroups,
+} from '@farmslot/protocol';
 
 type PressureGroup =
   ResourcePressureSnapshotResult['machines'][number]['processAttribution']['groups'][number];
@@ -41,19 +44,5 @@ export function pressureSampleAge(sampledAt: string | undefined, now = Date.now(
 }
 
 export function visiblePressureGroups(groups: PressureGroup[], limit: number): PressureGroup[] {
-  const hottest = groups[0] ? [groups[0]] : [];
-  const required = groups
-    .filter(
-      (group) =>
-        !hottest.includes(group) && ['active', 'retained', 'stale'].includes(group.classification),
-    )
-    .slice(0, Math.max(0, limit - hottest.length));
-  const pinned = [...hottest, ...required];
-  const visible = [
-    ...groups
-      .filter((group) => !pinned.includes(group))
-      .slice(0, Math.max(0, limit - pinned.length)),
-    ...pinned,
-  ];
-  return visible.sort((a, b) => groups.indexOf(a) - groups.indexOf(b));
+  return selectResourcePressureGroups(groups, limit, { preserveAllManaged: true });
 }

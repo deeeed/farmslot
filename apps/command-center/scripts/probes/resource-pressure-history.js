@@ -46,6 +46,10 @@ if (
 ) {
   throw new Error('process attribution class counts did not render');
 }
+const activeCount = Number(classPills.find((label) => label.startsWith('active '))?.split(' ')[1]);
+if (!(activeCount > 0) || !card.querySelector('.owner.active')) {
+  throw new Error('active managed process attribution did not survive the display cap');
+}
 if (charts.some((chart) => chart.namespaceURI !== 'http://www.w3.org/2000/svg')) {
   throw new Error('pressure history chart is not in the SVG namespace');
 }

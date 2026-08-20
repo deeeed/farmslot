@@ -104,6 +104,21 @@ test('tmux cwd infers active slot ownership when session correlation is unavaila
   assert.ok(active?.evidence.includes('cwd-slot:active-slot'));
 });
 
+test('a capped attribution response keeps the hottest group and managed work', () => {
+  const result = attributeProcessInventory({
+    inventory: processes,
+    slots: [slot('active-slot', 'busy', 'active-run')],
+    runs: [run('active-run', 'monitoring')],
+    workers: [worker(10, 'active', { linkedSlotId: 'active-slot', linkedRunId: 'active-run' })],
+    resources: [],
+    maxGroups: 2,
+  });
+  assert.equal(result.groups.length, 2);
+  assert.equal(result.groups[0].rootPid, 19);
+  assert.equal(result.groups[1].classification, 'active');
+  assert.equal(result.omittedGroups, 8);
+});
+
 test('configured resource ownership attributes descendants through process ancestry', () => {
   const inventory = structuredClone(processes);
   inventory.processes[5].ppid = 14;

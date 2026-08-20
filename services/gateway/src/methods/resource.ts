@@ -1,6 +1,6 @@
 // methods/resource.ts — resource.list + resource.control + resource.health handlers
 
-import type {
+import {
   MachineHealth,
   ProcessOwnershipClass,
   ResourceCleanupParams,
@@ -19,6 +19,7 @@ import type {
   ResourceStatus,
   ResourceWatchSetEnabledParams,
   ResourceWatchSetEnabledResult,
+  selectResourcePressureGroups,
   SlotStatus,
 } from '@farmslot/protocol';
 
@@ -41,6 +42,8 @@ import {
 import { loadFleetStatus } from '../fleet/state.js';
 
 const RESOURCE_STATUSES: ResourceStatus[] = ['unknown', 'running', 'stopped', 'error', 'stale'];
+const PRESSURE_RESOURCE_RESOLUTION_CONCURRENCY = 4;
+const PROCESS_INVENTORY_MAX_AGE_MS = 6 * 60_000;
 
 const EMPTY_PROCESS_CLASS_COUNTS: Record<ProcessOwnershipClass, number> = {
   active: 0,
@@ -177,20 +180,21 @@ export async function resourcePressureSnapshot(
     import('./tmux-workers.js'),
     import('../runs/store.js'),
   ]);
-  const tmuxInventory = await tmuxWorkerList({
-    includeDisconnected: true,
-    ...(params.machine ? { machine: params.machine } : {}),
-  });
+  let tmuxWorkers: Awaited<ReturnType<typeof tmuxWorkerList>>['workers'] = [];
+  try {
+    tmuxWorkers = (
+      await tmuxWorkerList({
+        includeDisconnected: true,
+        ...(params.machine ? { machine: params.machine } : {}),
+      })
+    ).workers;
+  } catch (error) {
+    console.warn(`[resource] pressure tmux attribution degraded: ${(error as Error).message}`);
+  }
   const allRuns = getAllRuns();
   const healthByMachine = new Map((fleet.machines ?? []).map((health) => [health.machine, health]));
   const slots = fleet.slots.filter((slot) => matchesPressureFilters(slot, params));
-  const resourcesBySlot = new Map<
-    string,
-    Awaited<ReturnType<typeof resolvePressureSlotResources>>
-  >();
-  for (const slot of slots) {
-    resourcesBySlot.set(slot.slot, await resolvePressureSlotResources(slot.slot));
-  }
+  const resourcesBySlot = await resolvePressureResourcesForSlots(slots);
   const cleanupCandidates = pressureCleanupCandidates(slots, resourcesBySlot);
   const machineNames = new Set<string>();
   for (const slot of slots) machineNames.add(slot.machine);
@@ -219,7 +223,14 @@ export async function resourcePressureSnapshot(
       machineCleanupCandidates,
       watchState.enabled,
     );
-    const processInventory = getMachineProcessInventory(machine);
+    const latestProcessInventory = getMachineProcessInventory(machine);
+    const processInventoryAgeMs = latestProcessInventory
+      ? Date.now() - Date.parse(latestProcessInventory.collectedAt)
+      : Number.POSITIVE_INFINITY;
+    const processInventory =
+      latestProcessInventory && processInventoryAgeMs <= PROCESS_INVENTORY_MAX_AGE_MS
+        ? latestProcessInventory
+        : undefined;
     const attributionResources: ProcessAttributionResource[] = machineSlots.flatMap((slot) =>
       [...(getActiveResources(slot.slot)?.entries() ?? [])].map(([resourceId, pointer]) => ({
         pid: pointer.pid,
@@ -232,7 +243,7 @@ export async function resourcePressureSnapshot(
     const attribution = processInventory
       ? attributeProcessInventory({
           inventory: processInventory,
-          workers: tmuxInventory.workers.filter((worker) => worker.ref.nodeId === machine),
+          workers: tmuxWorkers.filter((worker) => worker.ref.nodeId === machine),
           slots: machineSlots,
           runs: allRuns,
           resources: attributionResources,
@@ -260,8 +271,9 @@ export async function resourcePressureSnapshot(
               sampler: processInventory.health,
             }
           : {
-              unavailableReason:
-                health?.online === false
+              unavailableReason: latestProcessInventory
+                ? 'Last process inventory is stale; waiting for the node to refresh it.'
+                : health?.online === false
                   ? 'Node is offline.'
                   : health?.system
                     ? getNode(machine)
@@ -315,38 +327,112 @@ export async function resourcePressureSnapshot(
   };
 }
 
+async function resolvePressureResourcesForSlots(slots: SlotStatus[]) {
+  const resources = new Map<string, Awaited<ReturnType<typeof resolvePressureSlotResources>>>();
+  for (let index = 0; index < slots.length; index += PRESSURE_RESOURCE_RESOLUTION_CONCURRENCY) {
+    const batch = slots.slice(index, index + PRESSURE_RESOURCE_RESOLUTION_CONCURRENCY);
+    const resolved = await Promise.all(
+      batch.map(
+        async (slot) => [slot.slot, await resolvePressureSlotResources(slot.slot)] as const,
+      ),
+    );
+    for (const [slotId, slotResources] of resolved) resources.set(slotId, slotResources);
+  }
+  return resources;
+}
+
+export interface ResourcePressureModelSnapshot {
+  checkedAt: string;
+  filters: ResourcePressureSnapshotParams;
+  summary: ResourcePressureSnapshotResult['summary'];
+  machines: Array<{
+    machine: string;
+    online: ResourcePressureMachine['online'];
+    headroom: ResourcePressureMachine['headroom'];
+    severity: ResourcePressureMachine['severity'];
+    concerns: ResourcePressureMachine['concerns'];
+    capacity?: ResourcePressureMachine['capacity'];
+    history: ResourcePressureMachine['history'];
+    slots: ResourcePressureMachine['slots'];
+    resources: ResourcePressureMachine['resources'];
+    processAttribution: {
+      sampledAt?: string;
+      unavailableReason?: string;
+      truncated: boolean;
+      omittedGroups: number;
+      classCounts: ResourcePressureMachine['processAttribution']['classCounts'];
+      sampler?: Omit<
+        NonNullable<ResourcePressureMachine['processAttribution']['sampler']>,
+        'lastError'
+      >;
+      groups: Array<{
+        process: string;
+        processCount: number;
+        cpuPercent: number;
+        hotRssBytes: number;
+        classification: ProcessOwnershipClass;
+        confidence: ResourcePressureMachine['processAttribution']['groups'][number]['confidence'];
+      }>;
+    };
+  }>;
+}
+
 /** Bounded privacy projection for model context; operator RPC keeps the full admin detail. */
-export function resourcePressureSnapshotForModel(snapshot: ResourcePressureSnapshotResult) {
+export function resourcePressureSnapshotForModel(
+  snapshot: ResourcePressureSnapshotResult,
+): ResourcePressureModelSnapshot {
   const processName = (executable: string) =>
     executable.match(/\/([^/]+)\.app(?:\/|$)/)?.[1] ?? executable.split('/').at(-1) ?? 'process';
   return {
-    ...snapshot,
-    machines: snapshot.machines.map((machine) => ({
-      ...machine,
-      history: machine.history.slice(-12),
-      processAttribution: {
-        ...machine.processAttribution,
-        ...(machine.processAttribution.sampler
-          ? {
-              sampler: {
-                ...machine.processAttribution.sampler,
-                lastError: undefined,
-              },
-            }
-          : {}),
-        groups: machine.processAttribution.groups.slice(0, 8).map((group) => ({
-          process: processName(group.topExecutable),
-          processCount: group.processCount,
-          cpuPercent: group.cpuPercent,
-          hotRssBytes: group.topRssBytes,
-          classification: group.classification,
-          confidence: group.confidence,
-          ...(group.slotId ? { slotId: group.slotId } : {}),
-          ...(group.runId ? { runId: group.runId } : {}),
-          ...(group.resourceId ? { resourceId: group.resourceId } : {}),
-        })),
-      },
-    })),
+    checkedAt: snapshot.checkedAt,
+    filters: snapshot.filters,
+    summary: snapshot.summary,
+    machines: snapshot.machines.map((machine) => {
+      const sampler = machine.processAttribution.sampler;
+      const safeSampler = sampler
+        ? {
+            attempts: sampler.attempts,
+            executions: sampler.executions,
+            failures: sampler.failures,
+            skippedBusy: sampler.skippedBusy,
+            skippedCadence: sampler.skippedCadence,
+            lastDurationMs: sampler.lastDurationMs,
+          }
+        : undefined;
+      return {
+        machine: machine.machine,
+        online: machine.online,
+        headroom: machine.headroom,
+        severity: machine.severity,
+        concerns: machine.concerns,
+        ...(machine.capacity ? { capacity: machine.capacity } : {}),
+        history: machine.history.slice(-12),
+        slots: machine.slots,
+        resources: machine.resources,
+        processAttribution: {
+          ...(machine.processAttribution.sampledAt
+            ? { sampledAt: machine.processAttribution.sampledAt }
+            : {}),
+          ...(machine.processAttribution.unavailableReason
+            ? { unavailableReason: machine.processAttribution.unavailableReason }
+            : {}),
+          truncated: machine.processAttribution.truncated,
+          omittedGroups: machine.processAttribution.omittedGroups,
+          classCounts: machine.processAttribution.classCounts,
+          ...(safeSampler ? { sampler: safeSampler } : {}),
+          groups: selectResourcePressureGroups(machine.processAttribution.groups, 8, {
+            preserveAllManaged: true,
+          }).map((group) => ({
+            process: processName(group.topExecutable),
+            processCount: group.processCount,
+            cpuPercent: group.cpuPercent,
+            hotRssBytes: group.topRssBytes,
+            classification: group.classification,
+            confidence: group.confidence,
+          })),
+        },
+      };
+    }),
   };
 }
 

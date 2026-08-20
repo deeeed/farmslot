@@ -33,6 +33,7 @@ const processSampler = {
 };
 let processSampleId = 0;
 let processInventoryInFlight: Promise<NodeProcessInventory> | null = null;
+let pendingProcessInventory: NodeProcessInventory | undefined;
 let lastProcessInventoryAt = 0;
 
 export type ProcessInventoryRunner = () => Promise<string>;
@@ -172,11 +173,20 @@ export function parseProcessInventory(
   }
 
   const byPid = new Map(parsed.map((entry) => [entry.pid, entry]));
+  const tmuxRoots = new Set(
+    parsed.filter((entry) => /(?:^|\/)tmux$/u.test(entry.executable)).map((entry) => entry.pid),
+  );
+  const tmuxTreePids = new Set([
+    ...tmuxRoots,
+    ...parsed.filter((entry) => tmuxRoots.has(entry.ppid)).map((entry) => entry.pid),
+  ]);
   const selected = new Map<number, NodeProcessSample>();
   let ancestryTruncated = false;
   const candidates = [...parsed].sort(
     (a, b) =>
-      Number(priorityPids.has(b.pid)) - Number(priorityPids.has(a.pid)) ||
+      Number(priorityPids.has(b.pid)) * 2 +
+        Number(tmuxTreePids.has(b.pid)) -
+        (Number(priorityPids.has(a.pid)) * 2 + Number(tmuxTreePids.has(a.pid))) ||
       b.cpuPercent - a.cpuPercent ||
       b.rssBytes - a.rssBytes ||
       a.pid - b.pid,
@@ -330,18 +340,24 @@ export async function collectMetrics(): Promise<SystemMetrics> {
   const memoryPercent = Math.round((usedMem / totalMem) * 100);
   const diskPercent = getDiskPercent();
   const thermalPressure = getThermalPressure();
-  const processInventory = processInventoryDue({
-    cpuPercent,
-    memoryPercent,
-    loadAvg1,
-    cpuCores,
-    thermalPressure,
-  })
-    ? await collectProcessInventory(
-        undefined,
-        new Set([...getCachedTmuxPanePids(), ...getCachedResourceWatchPids()]),
-      )
-    : undefined;
+  const processInventory = pendingProcessInventory;
+  pendingProcessInventory = undefined;
+  if (
+    processInventoryDue({
+      cpuPercent,
+      memoryPercent,
+      loadAvg1,
+      cpuCores,
+      thermalPressure,
+    })
+  ) {
+    void collectProcessInventory(
+      undefined,
+      new Set([...getCachedTmuxPanePids(), ...getCachedResourceWatchPids()]),
+    ).then((inventory) => {
+      pendingProcessInventory = inventory;
+    });
+  }
 
   return {
     cpuPercent,

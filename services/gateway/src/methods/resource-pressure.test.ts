@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-const collectedAt = '2026-08-20T00:00:00.000Z';
+const collectedAt = new Date().toISOString();
+let tmuxFailure = false;
 
 mock.module('../fleet/resource-manager.js', {
   namedExports: {
@@ -114,19 +115,22 @@ mock.module('../runs/store.js', {
 
 mock.module('./tmux-workers.js', {
   namedExports: {
-    tmuxWorkerList: async () => ({
-      observedAt: Date.now(),
-      nodes: [],
-      workers: [
-        {
-          ref: { nodeId: 'macpro', session: 'slot-1', target: 'slot-1:dev' },
-          pid: 42,
-          linkedSlotId: 'slot-1',
-          linkedRunId: 'run-1',
-          status: { label: 'active', source: 'hook', confidence: 'high', state: 'active' },
-        },
-      ],
-    }),
+    tmuxWorkerList: async () => {
+      if (tmuxFailure) throw new Error('tmux timeout');
+      return {
+        observedAt: Date.now(),
+        nodes: [],
+        workers: [
+          {
+            ref: { nodeId: 'macpro', session: 'slot-1', target: 'slot-1:dev' },
+            pid: 42,
+            linkedSlotId: 'slot-1',
+            linkedRunId: 'run-1',
+            status: { label: 'active', source: 'hook', confidence: 'high', state: 'active' },
+          },
+        ],
+      };
+    },
   },
 });
 
@@ -147,6 +151,12 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   assert.equal(result.machines[0].processAttribution.sampledProcesses, 1);
   assert.equal(result.cleanupCandidates.length, 0);
 
+  tmuxFailure = true;
+  const degraded = await resourcePressureSnapshot({ machine: 'macpro' });
+  tmuxFailure = false;
+  assert.equal(degraded.machines[0].history.length, 1);
+  assert.equal(degraded.machines[0].processAttribution.groups[0].classification, 'active');
+
   result.machines[0].processAttribution.groups[0].topExecutable =
     '/Users/developer/Applications/Private Tool.app/Contents/MacOS/Private Tool';
   result.machines[0].processAttribution.sampler!.lastError =
@@ -154,5 +164,7 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   const modelProjection = resourcePressureSnapshotForModel(result);
   const serialized = JSON.stringify(modelProjection);
   assert.doesNotMatch(serialized, /rootPid|topPid|lastError|\/Users\/developer/);
+  assert.doesNotMatch(serialized, /"slotId"|"runId"|"resourceId"|"system"|"watchState"/);
+  assert.doesNotMatch(serialized, /"cleanupCandidates":\[/);
   assert.match(serialized, /"process":"Private Tool"/);
 });

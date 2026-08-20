@@ -55,6 +55,16 @@ test('cached ownership roots survive the cap even when idle', () => {
   assert.ok(parsed.processes.some((process) => process.pid === 200));
 });
 
+test('first census keeps an idle tmux tree before pane PID cache is warm', () => {
+  const lines = [psLine(1, 0)];
+  for (let pid = 2; pid <= 20; pid += 1) lines.push(psLine(pid, 1, 20 - pid, 1024));
+  lines.push('100 1 0.0 1024 00:01 /opt/homebrew/bin/tmux');
+  lines.push('101 100 0.0 1024 00:01 -zsh');
+  const parsed = parseProcessInventory(lines.join('\n'), 5);
+  assert.ok(parsed.processes.some((process) => process.pid === 100));
+  assert.ok(parsed.processes.some((process) => process.pid === 101));
+});
+
 test('concurrent inventory requests share one command and report skipped overlap', async () => {
   let executions = 0;
   let release: (() => void) | undefined;

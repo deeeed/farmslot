@@ -7,6 +7,7 @@ import {
   type ProcessOwnershipClass,
   type ResourceStatus,
   type Run,
+  selectResourcePressureGroups,
   type SlotStatus,
   type TmuxWorkerSummary,
 } from '@farmslot/protocol';
@@ -330,17 +331,8 @@ export function attributeProcessInventory(params: {
   const classCounts = { ...EMPTY_CLASS_COUNTS };
   for (const group of allGroups) classCounts[group.classification] += 1;
   const maxGroups = params.maxGroups ?? MAX_ATTRIBUTION_GROUPS;
-  const managed = allGroups
-    .filter((group) => ['active', 'retained', 'stale'].includes(group.classification))
-    .slice(0, Math.min(8, maxGroups));
-  const visible = [
-    ...allGroups
-      .filter((group) => !managed.includes(group))
-      .slice(0, Math.max(0, maxGroups - managed.length)),
-    ...managed,
-  ].sort((a, b) => allGroups.indexOf(a) - allGroups.indexOf(b));
   return {
-    groups: visible,
+    groups: selectResourcePressureGroups(allGroups, maxGroups),
     omittedGroups: Math.max(0, allGroups.length - maxGroups),
     classCounts,
   };

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -30,8 +31,24 @@ const classTotal = Object.values(attribution.classCounts ?? {}).reduce(
   0,
 );
 if (classTotal === 0) throw new Error('resource pressure RPC returned empty class counts');
+if (!(attribution.classCounts.active > 0)) {
+  throw new Error('resource pressure RPC returned no active managed class');
+}
+if (!attribution.groups.some((group) => group.classification === 'active')) {
+  throw new Error('active managed group did not survive the response cap');
+}
+if (!(attribution.omittedGroups > 0)) {
+  throw new Error('live proof requires an unknown-heavy truncated group set');
+}
 if (machine.system && 'processInventory' in machine.system) {
   throw new Error('resource pressure RPC leaked raw inventory through MachineHealth.system');
+}
+const samplerSource = await readFile(
+  path.join(root, 'services/node/src/commands/system-metrics.ts'),
+  'utf8',
+);
+if (!samplerSource.includes("'comm='") || samplerSource.includes("'command='")) {
+  throw new Error('process sampler is not using the comm-only executable field');
 }
 
 console.log(
@@ -41,6 +58,9 @@ console.log(
     sampledAt: attribution.sampledAt,
     groups: attribution.groups.length,
     classCounts: attribution.classCounts,
+    omittedGroups: attribution.omittedGroups,
+    managedGroupPreserved: true,
+    commOnlyExecutable: true,
     rawInventoryInHealth: false,
   }),
 );
