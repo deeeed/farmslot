@@ -4,6 +4,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.22.0 - 2026-08-20
+
 - feat(resources): add bounded normalized pressure history, ownership-safe process inventory and attribution contracts, cleanup-impact preview metadata, plus the typed `resource.pressure.snapshot` RPC.
 - perf(resources): add backward-compatible typed shared-poll provider hints and aggregate execution/fan-out/failure telemetry to resource-watch contracts.
 - fix(runners): default standalone Grok runs to the available `grok-4.6` model.
