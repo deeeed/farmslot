@@ -187,7 +187,9 @@ export function inferSharedProcessPollProvider(
     resourceDef.watch?.type === 'process-poll' &&
     resourceDef.type === 'device' &&
     resourceDef.platform === 'ios' &&
-    /\bxcrun\s+simctl\s+list\s+devices\s+booted\b/.test(expandedCommand)
+    /^xcrun\s+simctl\s+list\s+devices\s+booted\s+2>\/dev\/null\s*\|\s*grep\s+-q\s+'[^']+'$/.test(
+      expandedCommand.trim(),
+    )
   ) {
     // Migration bridge: current project configs already use this canonical
     // command. New configs declare provider explicitly; old nodes ignore the

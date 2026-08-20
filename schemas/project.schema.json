@@ -1103,6 +1103,12 @@
             "watch": {
               "type": "object",
               "description": "How the gateway monitors this resource's liveness.",
+              "allOf": [
+                {
+                  "if": { "required": ["provider"] },
+                  "then": { "required": ["cmd", "target"] }
+                }
+              ],
               "properties": {
                 "type": {
                   "type": "string",

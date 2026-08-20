@@ -68,8 +68,18 @@ test('isSimulatorDeviceProbe only matches iOS simctl device probes', () => {
 
 test('shared process-poll provider is explicit for new configs and inferred for legacy iOS probes', () => {
   assert.equal(
-    inferSharedProcessPollProvider(iosSimResource, 'xcrun simctl list devices booted | grep mm-1'),
+    inferSharedProcessPollProvider(
+      iosSimResource,
+      "xcrun simctl list devices booted 2>/dev/null | grep -q 'mm-1'",
+    ),
     'ios-simulator-inventory',
+  );
+  assert.equal(
+    inferSharedProcessPollProvider(
+      iosSimResource,
+      "xcrun simctl list devices booted 2>/dev/null | grep -q 'mm-1' && test -f ready",
+    ),
+    undefined,
   );
   assert.equal(inferSharedProcessPollProvider(metroResource, 'lsof -i :8061'), undefined);
   assert.equal(
