@@ -1076,6 +1076,29 @@
         "^[a-z][a-z0-9-]*$": {
           "type": "object",
           "required": ["type", "label", "streamable", "controllable"],
+          "allOf": [
+            {
+              "if": {
+                "properties": { "watch": { "required": ["provider"] } },
+                "required": ["watch"]
+              },
+              "then": {
+                "properties": {
+                  "type": { "const": "device" },
+                  "platform": { "const": "ios" },
+                  "watch": {
+                    "properties": {
+                      "type": { "const": "process-poll" },
+                      "cmd": { "type": "string", "pattern": "\\S" },
+                      "target": { "type": "string", "pattern": "\\S" }
+                    },
+                    "required": ["type", "cmd", "target"]
+                  }
+                },
+                "required": ["platform"]
+              }
+            }
+          ],
           "properties": {
             "type": {
               "type": "string",
@@ -1120,6 +1143,15 @@
                 "cmd": {
                   "type": "string",
                   "description": "Shell command returning 0 if alive (for process-poll type)."
+                },
+                "provider": {
+                  "type": "string",
+                  "enum": ["ios-simulator-inventory"],
+                  "description": "Optional typed provider that coalesces compatible process polls into one host inventory query. Older nodes ignore it and use cmd."
+                },
+                "target": {
+                  "type": "string",
+                  "description": "Provider lookup key after template expansion, such as an iOS simulator name or UDID."
                 },
                 "intervalMs": {
                   "type": "integer",
@@ -1218,6 +1250,16 @@
           "type": "string",
           "description": "Optional human-gate suffix appended to PR titles created by workers (injected as {{PR_TITLE_SUFFIX}} in templates). Whitespace is normalized to one leading separator so Conventional Commit title linters still see the commit type first.",
           "examples": ["[NOT-READY]"]
+        },
+        "post_worker_report_comment": {
+          "type": "boolean",
+          "description": "Whether completed runs may post the worker report and internal run metadata as a PR comment. Disabled by default; projects must opt in explicitly.",
+          "default": false
+        },
+        "include_internal_metrics_in_pr_comments": {
+          "type": "boolean",
+          "description": "Whether formal review comments may include runner/model, cost, and token metadata. Disabled by default; projects must opt in explicitly.",
+          "default": false
         },
         "watch_checks": {
           "type": "array",

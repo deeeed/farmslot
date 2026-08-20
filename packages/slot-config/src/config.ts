@@ -244,6 +244,10 @@ export interface RawProjectJson {
     repo?: string;
     pr_labels?: string[];
     pr_title_suffix?: string;
+    /** Opt in to posting the worker report and run metadata as a PR comment. Defaults to false. */
+    post_worker_report_comment?: boolean;
+    /** Opt in to model, cost, and token fields in formal review comments. Defaults to false. */
+    include_internal_metrics_in_pr_comments?: boolean;
     default_scope?: string;
     watch_checks?: string[];
     check_groups?: Array<{
@@ -283,7 +287,15 @@ export interface RawProjectJson {
       label: string;
       streamable?: boolean;
       controllable?: boolean;
-      watch?: { type: string; path?: string; port?: string; cmd?: string; intervalMs?: number };
+      watch?: {
+        type: string;
+        path?: string;
+        port?: string;
+        cmd?: string;
+        provider?: 'ios-simulator-inventory';
+        target?: string;
+        intervalMs?: number;
+      };
       hooks?: Record<string, string>;
       actions?: Record<string, RawSlotActionDefinition>;
     }

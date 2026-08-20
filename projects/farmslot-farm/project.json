@@ -313,6 +313,8 @@
       "controllable": true,
       "watch": {
         "type": "process-poll",
+        "provider": "ios-simulator-inventory",
+        "target": "{{simulator}}",
         "cmd": "xcrun simctl list devices booted 2>/dev/null | grep -q '{{simulator}}'"
       },
       "hooks": {

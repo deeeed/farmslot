@@ -7,6 +7,8 @@ import {
   buildBrowserNodeWatchCommand,
   buildBrowserPidFileCapturableCommand,
   buildBrowserPidRecoveryCommand,
+  inferSharedProcessPollProvider,
+  isEmptyIosSimulatorProbe,
   isSimulatorDeviceProbe,
   isSlotResourceConfigured,
   purgeRemovedSlotWarnings,
@@ -63,6 +65,80 @@ test('slotHasActiveRun requires an active slot lifecycle', () => {
 test('isSimulatorDeviceProbe only matches iOS simctl device probes', () => {
   assert.equal(isSimulatorDeviceProbe(iosSimResource), true);
   assert.equal(isSimulatorDeviceProbe(metroResource), false);
+});
+
+test('shared process-poll provider is explicit for new configs and inferred for legacy iOS probes', () => {
+  assert.equal(
+    inferSharedProcessPollProvider(
+      iosSimResource,
+      "xcrun simctl list devices booted 2>/dev/null | grep -q 'mm-1'",
+      'mm-1',
+    ),
+    'ios-simulator-inventory',
+  );
+  assert.equal(
+    inferSharedProcessPollProvider(
+      iosSimResource,
+      "xcrun simctl list devices booted 2>/dev/null | grep -q 'different-sim'",
+      'mm-1',
+    ),
+    undefined,
+  );
+  assert.equal(
+    inferSharedProcessPollProvider(
+      iosSimResource,
+      "xcrun simctl list devices booted 2>/dev/null | grep -q 'mm-1' && test -f ready",
+      'mm-1',
+    ),
+    undefined,
+  );
+  assert.equal(inferSharedProcessPollProvider(metroResource, 'lsof -i :8061', 'mm-1'), undefined);
+  assert.equal(
+    inferSharedProcessPollProvider(
+      {
+        ...metroResource,
+        watch: {
+          type: 'process-poll',
+          provider: 'ios-simulator-inventory',
+        },
+      },
+      'custom legacy fallback',
+      'mm-1',
+    ),
+    undefined,
+  );
+  assert.equal(
+    inferSharedProcessPollProvider(
+      {
+        ...iosSimResource,
+        watch: {
+          type: 'process-poll',
+          provider: 'ios-simulator-inventory',
+        },
+      },
+      'custom legacy fallback',
+      'mm-1',
+    ),
+    'ios-simulator-inventory',
+  );
+});
+
+test('empty iOS simulator selectors are skipped instead of becoming always-true probes', () => {
+  assert.equal(
+    isEmptyIosSimulatorProbe(
+      iosSimResource,
+      "xcrun simctl list devices booted 2>/dev/null | grep -q ''",
+    ),
+    true,
+  );
+  assert.equal(
+    isEmptyIosSimulatorProbe(
+      iosSimResource,
+      "xcrun simctl list devices booted 2>/dev/null | grep -q 'mm-1'",
+    ),
+    false,
+  );
+  assert.equal(isEmptyIosSimulatorProbe(metroResource, "grep -q ''"), false);
 });
 
 test('shouldProbeResourceForSlot suppresses simulator probes without an active run', () => {

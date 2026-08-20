@@ -50,11 +50,14 @@ test('PR comment identity is stable per run and supports legacy comments', () =>
   );
 });
 
-test('worker report comments exclude flows whose report is the PR description', () => {
+test('worker report comments default off and require a project opt-in', () => {
   assert.equal(shouldPostWorkerReportComment('dev', 'pr-description.md'), false);
   assert.equal(shouldPostWorkerReportComment('fix-bug', 'pr-description.md'), false);
-  assert.equal(shouldPostWorkerReportComment('dev', 'report.md'), true);
-  assert.equal(shouldPostWorkerReportComment('review-pr', 'review.md'), true);
-  assert.equal(shouldPostWorkerReportComment('pr-complete', 'comments-report.md'), true);
-  assert.equal(shouldPostWorkerReportComment('update-branch', 'report.md'), true);
+  assert.equal(shouldPostWorkerReportComment('pr-complete', 'comments-report.md'), false);
+  assert.equal(shouldPostWorkerReportComment('dev', 'pr-description.md', true), false);
+  assert.equal(shouldPostWorkerReportComment('fix-bug', 'pr-description.md', true), false);
+  assert.equal(shouldPostWorkerReportComment('dev', 'report.md', true), true);
+  assert.equal(shouldPostWorkerReportComment('review-pr', 'review.md', true), true);
+  assert.equal(shouldPostWorkerReportComment('pr-complete', 'comments-report.md', true), true);
+  assert.equal(shouldPostWorkerReportComment('update-branch', 'report.md', true), true);
 });

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- perf(resources): add backward-compatible typed shared-poll provider hints and aggregate execution/fan-out/failure telemetry to resource-watch contracts.
 - fix(runners): default standalone Grok runs to the available `grok-4.6` model.
 - perf(resources): expose aggregate node watch pressure in the existing machine-metrics stream.
 - fix(ci): carry full bot-comment fingerprints so edited findings cannot be hidden by preview truncation.

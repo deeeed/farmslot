@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
+import Ajv2020 from 'ajv/dist/2020.js';
+
 import { farmslotRoot } from './repo-root.js';
 
 type JsonSchema = {
@@ -79,4 +81,39 @@ test('project schema rejects invalid Recipe v1 hook shapes', async () => {
   assert.deepEqual(validateHooksAgainstSchema(schema, { recipe_unknown: 'node runner.js' }), [
     'hooks.recipe_unknown is not declared by project.schema.json',
   ]);
+});
+
+test('project schema restricts the iOS inventory provider to compatible fallback watches', async () => {
+  const schema = await readProjectSchema();
+  const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
+  const resource = {
+    type: 'device',
+    platform: 'ios',
+    label: 'iOS simulator',
+    streamable: true,
+    controllable: true,
+    watch: {
+      type: 'process-poll',
+      provider: 'ios-simulator-inventory',
+      target: '{{simulator}}',
+      cmd: "xcrun simctl list devices booted 2>/dev/null | grep -q '{{simulator}}'",
+    },
+  };
+  const project = (candidate: unknown) => ({ name: 'schema-test', resources: { sim: candidate } });
+
+  assert.equal(validate(project(resource)), true, JSON.stringify(validate.errors));
+  assert.equal(validate(project({ ...resource, type: 'service' })), false);
+  assert.equal(validate(project({ ...resource, platform: 'android' })), false);
+  assert.equal(
+    validate(project({ ...resource, watch: { ...resource.watch, type: 'port-listen' } })),
+    false,
+  );
+  const { cmd: _cmd, ...watchWithoutCommand } = resource.watch;
+  assert.equal(validate(project({ ...resource, watch: watchWithoutCommand })), false);
+  assert.equal(validate(project({ ...resource, watch: { ...resource.watch, cmd: '' } })), false);
+  assert.equal(validate(project({ ...resource, watch: { ...resource.watch, cmd: '   ' } })), false);
+  assert.equal(
+    validate(project({ ...resource, watch: { ...resource.watch, target: '   ' } })),
+    false,
+  );
 });

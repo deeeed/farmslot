@@ -15,6 +15,7 @@ import {
   type ResourceStateUpdate,
   type ResourceStatus,
   type ResourceStreamStatus,
+  type ResourceWatchProvider,
   type ResourceWatchSetEnabledResult,
   type ResourceWatchType,
   type SlotResource,
@@ -61,6 +62,7 @@ let broadcastFn: ((event: string, payload: unknown) => void) | null = null;
 const RESOURCE_POLL_CONCURRENCY = 4;
 let pollAllInFlight = false;
 const warnedUnconfiguredResources = new Map<string, string>();
+const loggedLegacySharedProviderInferences = new Set<string>();
 
 export function purgeRemovedSlotWarnings(
   warnings: Map<string, string>,
@@ -158,13 +160,63 @@ export function slotHasActiveRun(slot: Pick<SlotStatus, 'currentRunId' | 'lifecy
 
 export function isSimulatorDeviceProbe(
   resourceDef: Pick<ResourceDefinition, 'type' | 'platform'> & {
-    watch?: Pick<NonNullable<ResourceDefinition['watch']>, 'type' | 'cmd'>;
+    watch?: Pick<NonNullable<ResourceDefinition['watch']>, 'type' | 'cmd' | 'provider'>;
     hooks?: Pick<NonNullable<ResourceDefinition['hooks']>, 'health'>;
   },
 ): boolean {
   if (resourceDef.type !== 'device' || resourceDef.platform !== 'ios') return false;
+  if (resourceDef.watch?.provider === 'ios-simulator-inventory') return true;
   const probeCommand = `${resourceDef.watch?.cmd ?? ''}\n${resourceDef.hooks?.health ?? ''}`;
   return /\bsimctl\b/.test(probeCommand);
+}
+
+export function inferSharedProcessPollProvider(
+  resourceDef: Pick<ResourceDefinition, 'type' | 'platform'> & {
+    watch?: Pick<NonNullable<ResourceDefinition['watch']>, 'type' | 'provider'>;
+  },
+  expandedCommand: string,
+  expectedLegacyTarget: string,
+): ResourceWatchProvider | undefined {
+  if (resourceDef.watch?.provider) {
+    return resourceDef.watch.type === 'process-poll' &&
+      resourceDef.type === 'device' &&
+      resourceDef.platform === 'ios'
+      ? resourceDef.watch.provider
+      : undefined;
+  }
+  const legacyCommandMatch = expandedCommand
+    .trim()
+    .match(
+      /^xcrun\s+simctl\s+list\s+devices\s+booted\s+2>\/dev\/null\s*\|\s*grep\s+-q\s+'([^']+)'$/,
+    );
+  if (
+    resourceDef.watch?.type === 'process-poll' &&
+    resourceDef.type === 'device' &&
+    resourceDef.platform === 'ios' &&
+    legacyCommandMatch?.[1] === expectedLegacyTarget
+  ) {
+    // Migration bridge: current project configs already use this canonical
+    // command. New configs declare provider explicitly; old nodes ignore the
+    // additive provider/target fields and keep executing the command fallback.
+    return 'ios-simulator-inventory';
+  }
+  return undefined;
+}
+
+export function isEmptyIosSimulatorProbe(
+  resourceDef: Pick<ResourceDefinition, 'type' | 'platform'> & {
+    watch?: Pick<NonNullable<ResourceDefinition['watch']>, 'type'>;
+  },
+  expandedCommand: string,
+): boolean {
+  return (
+    resourceDef.watch?.type === 'process-poll' &&
+    resourceDef.type === 'device' &&
+    resourceDef.platform === 'ios' &&
+    /^xcrun\s+simctl\s+list\s+devices\s+booted\s+2>\/dev\/null\s*\|\s*grep\s+-q\s+'\s*'$/.test(
+      expandedCommand.trim(),
+    )
+  );
 }
 
 export function shouldProbeResourceForSlot(
@@ -365,6 +417,8 @@ export async function resolveSlotResources(slotId: string): Promise<SlotResource
               path: def.watch.path,
               port: def.watch.port,
               cmd: def.watch.cmd,
+              provider: def.watch.provider,
+              target: def.watch.target,
               intervalMs: def.watch.intervalMs,
             }
           : undefined,
@@ -904,6 +958,8 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
             port?: number;
             cmd?: string;
             cwd?: string;
+            provider?: ResourceWatchProvider;
+            target?: string;
             intervalMs?: number;
           };
         }> = [];
@@ -918,6 +974,8 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
             port?: number;
             cmd?: string;
             cwd?: string;
+            provider?: ResourceWatchProvider;
+            target?: string;
             intervalMs?: number;
           } = { type: def.watch.type };
 
@@ -943,6 +1001,45 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
             if (hasUnresolvedPlaceholders(expanded)) continue;
             expandedWatch.cmd = expanded;
             expandedWatch.cwd = slotVars.remoteRepo;
+          }
+
+          const watchDefinition = {
+            type: def.type as ResourceDefinition['type'],
+            platform: def.platform,
+            watch: {
+              type: def.watch.type as ResourceWatchType,
+              provider: def.watch.provider,
+            },
+          };
+          if (isEmptyIosSimulatorProbe(watchDefinition, expandedWatch.cmd ?? '')) continue;
+
+          const sharedProvider = inferSharedProcessPollProvider(
+            watchDefinition,
+            expandedWatch.cmd ?? '',
+            String(slotVars.resourceVars.simulator ?? ''),
+          );
+          if (sharedProvider) {
+            const targetTemplate =
+              def.watch.target ??
+              (sharedProvider === 'ios-simulator-inventory'
+                ? String(slotVars.resourceVars.simulator ?? '')
+                : '');
+            const target = expandTemplate(targetTemplate, slotVars, projectVars).trim();
+            if (target && !hasUnresolvedPlaceholders(target)) {
+              expandedWatch.provider = sharedProvider;
+              expandedWatch.target = target;
+              if (!def.watch.provider) {
+                const inferenceKey = `${projectName}:${id}`;
+                if (!loggedLegacySharedProviderInferences.has(inferenceKey)) {
+                  loggedLegacySharedProviderInferences.add(inferenceKey);
+                  console.log(
+                    `[resource-manager] inferred shared ${sharedProvider} provider for legacy ${inferenceKey}; declare watch.provider + watch.target in project.json`,
+                  );
+                }
+              }
+            } else if (def.watch.provider) {
+              continue;
+            }
           }
 
           if (def.watch.intervalMs) {

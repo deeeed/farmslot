@@ -243,6 +243,28 @@ Three layout modes within slot-view:
 | `port-listen`  | periodic local TCP connect probe             | port open/closed                         |
 | `process-poll` | periodic shell command execution             | exit code change                         |
 
+`process-poll` also supports an additive shared-provider hint. The command remains
+the compatibility fallback for older nodes; an upgraded node uses the provider to
+run one host inventory query and fan the result out to every matching slot watch.
+
+```jsonc
+"ios-sim": {
+  "watch": {
+    "type": "process-poll",
+    "provider": "ios-simulator-inventory",
+    "target": "{{simulator}}",
+    "cmd": "xcrun simctl list devices booted 2>/dev/null | grep -q '{{simulator}}'"
+  }
+}
+```
+
+The iOS provider runs `simctl` once per node cycle, indexes booted devices by name
+and UDID, then updates every registered slot. It enforces a 30-second minimum
+interval, shares the existing global process-poll concurrency budget, never overlaps
+its own polls, ignores results for replaced watches, and preserves cached status on
+transient inventory failure. Node health exposes cumulative shared execution,
+fan-out, failure, and duration counters so a future slot-count multiplier is visible.
+
 **Config:** `watch` field added to `ResourceDefinition` in `project.json`:
 
 ```jsonc
