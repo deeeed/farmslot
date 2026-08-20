@@ -10,15 +10,6 @@ const PRESSURE_CHART_SAMPLES = 30;
 
 type CleanupTarget = { machine: string; resourceId: string; slotId: string };
 
-export function cleanupTargetSetMatches(
-  reviewed: CleanupTarget[],
-  fresh: CleanupTarget[],
-): boolean {
-  const keys = (targets: CleanupTarget[]) =>
-    targets.map((target) => `${target.machine}:${target.slotId}:${target.resourceId}`).sort();
-  return keys(reviewed).join('\n') === keys(fresh).join('\n');
-}
-
 export function cleanupTargetsRemainEligible(
   selected: CleanupTarget[],
   fresh: CleanupTarget[],

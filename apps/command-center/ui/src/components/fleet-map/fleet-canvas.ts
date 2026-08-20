@@ -561,7 +561,7 @@ export class FleetCanvas extends LitElement {
   }
 
   private async fetchResourceData() {
-    const resourceSlots = this.filteredSlots;
+    const resourceSlots = this.resourceScopedSlots;
     if (resourceSlots.length === 0) {
       this.slotResourceDefs = new Map();
       this.slotResourceStatus = new Map();
@@ -631,13 +631,7 @@ export class FleetCanvas extends LitElement {
   }
 
   private get filteredSlots(): SlotStatus[] {
-    let result = this.slots;
-    if (this.filterProjects.length > 0) {
-      result = result.filter((s) => this.filterProjects.includes(s.project));
-    }
-    if (this.filterMachines.length > 0) {
-      result = result.filter((s) => this.filterMachines.includes(s.machine));
-    }
+    let result = this.resourceScopedSlots;
     if (this.search) {
       const q = this.search.toLowerCase();
       result = result.filter(
@@ -648,6 +642,14 @@ export class FleetCanvas extends LitElement {
       );
     }
     return result;
+  }
+
+  private get resourceScopedSlots(): SlotStatus[] {
+    return this.slots.filter(
+      (slot) =>
+        (this.filterProjects.length === 0 || this.filterProjects.includes(slot.project)) &&
+        (this.filterMachines.length === 0 || this.filterMachines.includes(slot.machine)),
+    );
   }
 
   private get groups(): Array<{ key: string; slots: SlotStatus[] }> {
@@ -711,17 +713,7 @@ export class FleetCanvas extends LitElement {
 
   private get pressureScopedMachines(): string[] | undefined {
     if (this.filterMachines.length === 0 && this.filterProjects.length === 0) return undefined;
-    return [
-      ...new Set(
-        this.slots
-          .filter(
-            (slot) =>
-              (this.filterMachines.length === 0 || this.filterMachines.includes(slot.machine)) &&
-              (this.filterProjects.length === 0 || this.filterProjects.includes(slot.project)),
-          )
-          .map((slot) => slot.machine),
-      ),
-    ];
+    return [...new Set(this.resourceScopedSlots.map((slot) => slot.machine))];
   }
 
   private setGroupBy(mode: FleetCanvasGroupBy) {

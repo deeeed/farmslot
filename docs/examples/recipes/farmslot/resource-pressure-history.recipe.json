@@ -52,7 +52,7 @@
         "cmd": "node apps/command-center/scripts/cdp.mjs eval fleet --file apps/command-center/scripts/probes/resource-pressure-history.js",
         "timeout_ms": 20000,
         "next": "capture-pressure-history",
-        "intent": "Press the selected machine Details through CDP and verify three real SVG history plots with core-normalized load."
+        "intent": "Verify three compact SVG pressure trends, then press Details and confirm expansion adds process diagnosis without duplicating the graphs."
       },
       "assert-cleanup-preview": {
         "action": "command",

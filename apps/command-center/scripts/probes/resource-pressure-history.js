@@ -28,7 +28,6 @@ if (!refresh) throw new Error('pressure refresh button not found');
 
 let card;
 let details;
-let history;
 let charts = [];
 let processRows = [];
 let sampleCount = 0;
@@ -38,8 +37,7 @@ for (let attempt = 0; attempt < 60; attempt += 1) {
   details = card?.querySelector(`[data-testid="pressure-details-${CSS.escape(machineName)}"]`);
   if (details?.getAttribute('aria-expanded') !== 'true') details?.click();
   await sleep(250);
-  history = card?.querySelector('.history-panel');
-  charts = [...(history?.querySelectorAll('.history-chart polyline') ?? [])];
+  charts = [...(card?.querySelectorAll('.metrics .sparkline polyline') ?? [])];
   processRows = [...(card?.querySelectorAll('.group:not(.group-head)') ?? [])];
   sampleCount = Number(
     card
@@ -63,8 +61,8 @@ const renderedMachines = [
 if (renderedMachines.length !== 1 || renderedMachines[0] !== machineName) {
   throw new Error(`global machine filter rendered unexpected cards: ${renderedMachines.join(',')}`);
 }
-if (!history || charts.length !== 3)
-  throw new Error('three pressure history charts did not render');
+if (charts.length !== 3) throw new Error('three compact pressure trend charts did not render');
+if (card.querySelector('.history-panel')) throw new Error('Details duplicated pressure graphs');
 if (sampleCount === 0) {
   throw new Error('pressure history did not render a real gauge sample');
 }
@@ -81,12 +79,8 @@ if (
 if (charts.some((chart) => chart.namespaceURI !== 'http://www.w3.org/2000/svg')) {
   throw new Error('pressure history chart is not in the SVG namespace');
 }
-if (
-  !history.textContent.includes('CPU utilization') ||
-  !history.textContent.includes('Load / core')
-) {
-  throw new Error('pressure history labels are incomplete');
-}
+if (!card.textContent.includes('CPU') || !card.textContent.includes('Load / core'))
+  throw new Error('pressure trend labels are incomplete');
 const scopedRequest = JSON.stringify(requestParams);
 const originalSearch = fleet.search;
 fleet.search = '__pressure_local_search_no_match__';
