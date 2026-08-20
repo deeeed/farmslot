@@ -10,6 +10,7 @@ mock.module('../fleet/resource-manager.js', {
     executeResourceControl: async () => ({ ok: true }),
     getActiveResources: () => undefined,
     getCachedResourceStatus: () => 'unknown',
+    getCachedSlotResources: () => undefined,
     getResourceWatchRuntimeState: () => ({ enabled: true, updatedAt: null }),
     pollSlotResources: async () => [],
     resolveSlotResources: async () => {

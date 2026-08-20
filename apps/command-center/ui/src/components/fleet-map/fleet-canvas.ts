@@ -466,7 +466,8 @@ export class FleetCanvas extends LitElement {
     const pressureFilterChanged =
       previousPressureFilter !== JSON.stringify([this.filterProjects, this.filterMachines]);
     if (pressureFilterChanged && this.groupBy === 'resource' && this._resourceFetched) {
-      void this.fetchResourcePressure();
+      this.resourceCleanupPreview = undefined;
+      void this.fetchResourceData();
     }
     // Populate machineHealthMap from fleet.machines
     if (s.fleet?.machines) {
@@ -560,14 +561,21 @@ export class FleetCanvas extends LitElement {
   }
 
   private async fetchResourceData() {
-    if (this.slots.length === 0) return;
+    const resourceSlots = this.filteredSlots;
+    if (resourceSlots.length === 0) {
+      this.slotResourceDefs = new Map();
+      this.slotResourceStatus = new Map();
+      this._resourceFetched = true;
+      await this.fetchResourcePressure();
+      return;
+    }
 
     // Phase 1: fetch resource definitions (fast — reads project.json, no hooks)
     // Renders table immediately with "unknown" status dots
     const nextDefs = new Map<string, SlotResource[]>();
     const nextStatus = new Map<string, Map<string, ResourceStatus>>(this.slotResourceStatus);
     await Promise.all(
-      this.slots.map(async (s) => {
+      resourceSlots.map(async (s) => {
         try {
           const listRes = await gateway.request<ResourceListResult>(Methods.RESOURCE_LIST, {
             slotId: s.slot,

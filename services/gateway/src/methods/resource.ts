@@ -39,6 +39,7 @@ import {
   executeResourceControl,
   getActiveResources,
   getCachedResourceStatus,
+  getCachedSlotResources,
   getResourceWatchRuntimeState,
   pollSlotResources,
   resolveSlotResources,
@@ -116,10 +117,18 @@ export async function resourceCleanup(
   params: ResourceCleanupParams,
 ): Promise<ResourceCleanupResult> {
   const dryRun = params.dryRun !== false;
-  if (!dryRun && (!params.targets || params.targets.length === 0)) {
+  const requestedTargets = [
+    ...new Map(
+      (params.targets ?? []).map((target) => [
+        `${target.machine}:${target.slotId}:${target.resourceId}`,
+        target,
+      ]),
+    ).values(),
+  ];
+  if (!dryRun && requestedTargets.length === 0) {
     throw new Error('live resource cleanup requires non-empty exact reviewed targets');
   }
-  if ((params.targets?.length ?? 0) > MAX_RESOURCE_CLEANUP_TARGETS) {
+  if (requestedTargets.length > MAX_RESOURCE_CLEANUP_TARGETS) {
     throw new Error(`resource cleanup accepts at most ${MAX_RESOURCE_CLEANUP_TARGETS} targets`);
   }
   if (
@@ -144,12 +153,10 @@ export async function resourceCleanup(
   const slotFilter = new Set(params.slotIds ?? []);
   const resourceFilter = new Set(params.resourceIds ?? []);
   const exactTargets = new Set(
-    (params.targets ?? []).map(
-      (target) => `${target.machine}:${target.slotId}:${target.resourceId}`,
-    ),
+    requestedTargets.map((target) => `${target.machine}:${target.slotId}:${target.resourceId}`),
   );
   const exactTargetSlots = new Set(
-    (params.targets ?? []).map((target) => `${target.machine}:${target.slotId}`),
+    requestedTargets.map((target) => `${target.machine}:${target.slotId}`),
   );
   const exactTargetsEnabled = params.targets !== undefined;
   const fleet = await loadFleetStatus();
@@ -172,8 +179,8 @@ export async function resourceCleanup(
     try {
       resources = await resolveSlotResources(slot.slot);
     } catch (err) {
-      if (!dryRun && params.targets) {
-        for (const requested of params.targets.filter(
+      if (!dryRun && requestedTargets.length > 0) {
+        for (const requested of requestedTargets.filter(
           (target) => target.machine === slot.machine && target.slotId === slot.slot,
         )) {
           targets.push({
@@ -213,11 +220,11 @@ export async function resourceCleanup(
     }
   }
 
-  if (!dryRun && params.targets) {
+  if (!dryRun && requestedTargets.length > 0) {
     const resolvedKeys = new Set(
       targets.map((target) => `${target.machine}:${target.slotId}:${target.resourceId}`),
     );
-    for (const requested of params.targets) {
+    for (const requested of requestedTargets) {
       const key = `${requested.machine}:${requested.slotId}:${requested.resourceId}`;
       if (resolvedKeys.has(key)) continue;
       const slot = fleet.slots.find(
@@ -319,10 +326,16 @@ export async function resourcePressureSnapshot(
   const severityOrder: Record<ResourcePressureSeverity, number> = { critical: 2, warn: 1, ok: 0 };
   const preliminary = sortedMachineNames.map((machine) => {
     const machineSlots = slots.filter((slot) => slot.machine === machine);
+    const cachedStatuses = emptyStatusCounts();
+    for (const slot of machineSlots) {
+      for (const status of getCachedSlotResources(slot.slot)?.values() ?? []) {
+        cachedStatuses[status] += 1;
+      }
+    }
     const concerns = buildPressureConcerns(
       healthByMachine.get(machine),
       machineSlots,
-      emptyStatusCounts(),
+      cachedStatuses,
       0,
       watchState.enabled,
     );

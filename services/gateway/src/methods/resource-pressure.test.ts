@@ -20,6 +20,7 @@ mock.module('../fleet/resource-manager.js', {
         ? new Map([['metro', { pid: 42, startedAt: collectedAt, runId: 'run-1' }]])
         : undefined,
     getCachedResourceStatus: () => 'running',
+    getCachedSlotResources: () => new Map([['metro', 'running']]),
     getResourceWatchRuntimeState: () => ({ enabled: true, updatedAt: collectedAt }),
     pollSlotResources: async () => (omitPollStatus ? [] : [{ id: 'metro', status: 'stopped' }]),
     resolveSlotResources: async (slotId: string) => {
@@ -228,7 +229,10 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   assert.equal((await resourceCleanup({ dryRun: true, targets: [] })).targets.length, 0);
   const executedCleanup = await resourceCleanup({
     dryRun: false,
-    targets: [{ machine: 'macpro', slotId: 'slot-2', resourceId: 'metro' }],
+    targets: [
+      { machine: 'macpro', slotId: 'slot-2', resourceId: 'metro' },
+      { machine: 'macpro', slotId: 'slot-2', resourceId: 'metro' },
+    ],
   });
   assert.equal(executedCleanup.stopped, 1);
   assert.deepEqual(controlledTargets, ['slot-2:metro']);
