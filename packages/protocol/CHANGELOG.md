@@ -4,9 +4,11 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- feat(machine-pause): add typed machine-scoped pause, release, durable park, and restore contracts.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.23.0 - 2026-08-20
+
+- feat(machine-pause): add typed machine-scoped pause, release, durable park, and restore contracts.
 
 ## 0.22.0 - 2026-08-20
 

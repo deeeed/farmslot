@@ -4,8 +4,11 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- test(machine-pause): add the Command Center CDP proof probe for machine-scoped pause, release, residual, and restore controls.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.8.0 - 2026-08-20
+
+- test(machine-pause): add the Command Center CDP proof probe for machine-scoped pause, release, residual, and restore controls.
 
 ## 0.7.0 - 2026-08-20
 
