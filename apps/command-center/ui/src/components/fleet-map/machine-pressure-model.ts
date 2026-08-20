@@ -41,9 +41,9 @@ export function pressureSampleAge(sampledAt: string | undefined, now = Date.now(
 }
 
 export function visiblePressureGroups(groups: PressureGroup[], limit: number): PressureGroup[] {
-  const required = (['stale', 'active'] as const)
-    .map((classification) => groups.find((group) => group.classification === classification))
-    .filter((group): group is PressureGroup => group != null);
+  const required = groups
+    .filter((group) => ['active', 'retained', 'stale'].includes(group.classification))
+    .slice(0, limit);
   const visible = [
     ...groups
       .filter((group) => !required.includes(group))

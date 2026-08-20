@@ -39,7 +39,7 @@ function formatMachine(machine: ResourcePressureMachine): string[] {
   if (sampler) {
     lines.push(
       dim(
-        `  sampler executions=${sampler.executions} failures=${sampler.failures} skippedBusy=${sampler.skippedBusy} avoided=${sampler.skippedCadence} last=${sampler.lastDurationMs ?? '-'}ms`,
+        `  sampler executions=${sampler.executions} failures=${sampler.failures} skippedBusy=${sampler.skippedBusy} avoided=${sampler.skippedCadence} last=${sampler.lastDurationMs ?? '-'}ms${sampler.lastError ? ` error=${sampler.lastError}` : ''}`,
       ),
     );
   }

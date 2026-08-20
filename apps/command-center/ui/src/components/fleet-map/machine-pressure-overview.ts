@@ -254,6 +254,9 @@ export class MachinePressureOverview extends LitElement {
       color: ${unsafeCSS(colors.textMuted)};
       line-height: 1.5;
     }
+    .sampler-error {
+      color: ${unsafeCSS(colors.statusFail)};
+    }
     .history-panel {
       margin-top: ${unsafeCSS(spacing.md)};
       padding: ${unsafeCSS(spacing.md)};
@@ -486,7 +489,7 @@ export class MachinePressureOverview extends LitElement {
         ${process.sampledProcesses === 0
           ? 'No process inventory received yet.'
           : process.truncated
-            ? `Inventory capped at ${process.maxEntries}; highest-pressure process trees with complete ancestry are prioritized.`
+            ? `Inventory capped at ${process.maxEntries}; hottest processes are retained${process.ancestryTruncated ? ', with some parent chains shortened at the cap' : ' with complete sampled ancestry'}.`
             : 'Complete process inventory retained for this sample.'}
         ${process.omittedGroups > 0
           ? ` ${process.omittedGroups} lower-pressure groups omitted.`
@@ -502,6 +505,9 @@ export class MachinePressureOverview extends LitElement {
             executions · ${process.sampler.skippedCadence} avoided probes ·
             ${process.sampler.failures} failures
           </div>`
+        : ''}
+      ${process.sampler?.lastError
+        ? html`<div class="sampler-error">Sampler error: ${process.sampler.lastError}</div>`
         : ''}
       ${machine.concerns.map((concern) => html`<div>• ${concern.reason}</div>`)}
     </div>`;

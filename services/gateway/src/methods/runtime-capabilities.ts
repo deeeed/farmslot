@@ -36,7 +36,7 @@ import {
 } from '../runtime-capabilities/registry.js';
 import { RuntimeCapabilityStore } from '../runtime-capabilities/store.js';
 
-import { resourceControl, resourceHealth, resourcePressureSnapshot } from './resource.js';
+import { resourceControl, resourceHealth, resourceHostPressure } from './resource.js';
 import { slotActionRun } from './slot-actions.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -165,11 +165,7 @@ async function pressureFor(
   const fleet = await loadFleetStatus();
   const slot = fleet.slots.find((candidate) => candidate.slot === slotId);
   const machineName = slot?.machine ?? slotVars.machine;
-  const snapshot = await resourcePressureSnapshot({
-    machine: machineName,
-    project: entry.project,
-  });
-  const machine = snapshot.machines.find((candidate) => candidate.machine === machineName);
+  const machine = await resourceHostPressure(machineName, entry.project);
   const localSlot = isLocal(slotVars.host, slotVars.machine);
   const unavailableReason = !localSlot
     ? machine?.online === false
@@ -180,8 +176,8 @@ async function pressureFor(
     : undefined;
   const staleLocalAvailability = localSlot && machine?.online !== true;
   const pressure: RuntimeCapabilityPressureSnapshot = {
-    severity: staleLocalAvailability ? 'ok' : (machine?.severity ?? snapshot.summary.severity),
-    ...(!staleLocalAvailability && machine?.concerns[0]?.reason
+    severity: staleLocalAvailability ? 'ok' : machine.severity,
+    ...(!staleLocalAvailability && machine.concerns[0]?.reason
       ? { reason: machine.concerns[0].reason }
       : {}),
     machine: machineName,

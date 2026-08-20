@@ -23,6 +23,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { isMissingProjectConfigError, SlotConfigError } from '../core/config.js';
+import { getNode } from '../fleet/machine-registry.js';
 import { getMachinePressureHistory, getMachineProcessInventory } from '../fleet/node-health.js';
 import {
   attributeProcessInventory,
@@ -63,6 +64,28 @@ export async function resourceControl(
 export async function resourceHealth(params: ResourceHealthParams): Promise<ResourceHealthResult> {
   const results = await pollSlotResources(params.slotId, { probeInactiveSimulators: true });
   return { slotId: params.slotId, resources: results };
+}
+
+/** Host-only pressure read for admission paths; never loads resources, tmux, runs, or census data. */
+export async function resourceHostPressure(machine: string, project?: string) {
+  const fleet = await loadFleetStatus();
+  const health = fleet.machines?.find((candidate) => candidate.machine === machine);
+  const slots = fleet.slots.filter(
+    (slot) => slot.machine === machine && (!project || slot.project === project),
+  );
+  const concerns = buildPressureConcerns(
+    health,
+    slots,
+    emptyStatusCounts(),
+    0,
+    getResourceWatchRuntimeState().enabled,
+  );
+  return {
+    machine,
+    online: health?.online ?? null,
+    severity: pressureSeverity(concerns),
+    concerns,
+  };
 }
 
 export async function resourceWatchSetEnabled(
@@ -238,10 +261,13 @@ export async function resourcePressureSnapshot(
                 health?.online === false
                   ? 'Node is offline.'
                   : health?.system
-                    ? 'Connected node has not provided a process inventory yet.'
+                    ? getNode(machine)
+                      ? 'Connected node has not provided a process inventory yet.'
+                      : 'Local gauge fallback does not collect process inventory; connect the Farmslot node for attribution.'
                     : 'System metrics are not available yet.',
             }),
         truncated: processInventory?.truncated ?? false,
+        ancestryTruncated: processInventory?.ancestryTruncated ?? false,
         sampledProcesses: processInventory?.processes.length ?? 0,
         totalProcesses: processInventory?.totalProcesses ?? 0,
         maxEntries: processInventory?.maxEntries ?? 0,

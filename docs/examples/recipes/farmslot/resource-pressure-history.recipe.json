@@ -49,7 +49,7 @@
       },
       "probe-pressure-rpc": {
         "action": "command",
-        "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/cdp.mjs gateway resource.pressure.snapshot '{\"machine\":\"macwork\"}'",
+        "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-pressure-rpc.mjs",
         "timeout_ms": 20000,
         "next": "capture-pressure-history",
         "intent": "Capture the typed read-only backend result that owns the UI trends and attribution policy."

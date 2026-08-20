@@ -214,6 +214,7 @@ export interface ResourcePressureMachine {
     generation?: string;
     sampleId?: number;
     truncated: boolean;
+    ancestryTruncated: boolean;
     sampledProcesses: number;
     totalProcesses: number;
     maxEntries: number;

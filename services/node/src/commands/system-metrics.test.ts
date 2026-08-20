@@ -21,6 +21,7 @@ test('process inventory is bounded and retains ancestry for high-pressure proces
   assert.ok(parsed.processes.every((process) => process.executable !== '/bin/ps'));
   assert.equal(parsed.processes.length, 32);
   assert.equal(parsed.truncated, true);
+  assert.equal(parsed.ancestryTruncated, false);
   assert.ok(parsed.processes.some((process) => process.pid === 400));
   assert.ok(parsed.processes.some((process) => process.pid === 399));
   assert.ok(parsed.processes.every((process) => !process.executable.includes(' ')));
@@ -33,6 +34,17 @@ test('process inventory is bounded and retains ancestry for high-pressure proces
         retainedPids.has(process.ppid),
     ),
   );
+});
+
+test('a hottest process survives when its ancestry exceeds the entry cap', () => {
+  const lines = [psLine(1, 0)];
+  for (let pid = 2; pid <= 40; pid += 1) {
+    lines.push(psLine(pid, pid - 1, pid === 40 ? 100 : 0, 1024));
+  }
+  const parsed = parseProcessInventory(lines.join('\n'), 5);
+  assert.equal(parsed.processes.length, 5);
+  assert.ok(parsed.processes.some((process) => process.pid === 40));
+  assert.equal(parsed.ancestryTruncated, true);
 });
 
 test('concurrent inventory requests share one command and report skipped overlap', async () => {

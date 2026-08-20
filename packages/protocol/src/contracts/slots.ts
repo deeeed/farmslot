@@ -190,6 +190,7 @@ export interface NodeProcessInventory {
   totalProcesses: number;
   maxEntries: number;
   truncated: boolean;
+  ancestryTruncated?: boolean;
   health: NodeProcessSamplerHealth;
 }
 

@@ -130,10 +130,14 @@ mock.module('./tmux-workers.js', {
   },
 });
 
-const { resourcePressureSnapshot, resourcePressureSnapshotForModel } =
+const { resourceHostPressure, resourcePressureSnapshot, resourcePressureSnapshotForModel } =
   await import('./resource.js');
 
 test('resource pressure snapshot exposes bounded trends and active attribution', async () => {
+  const hostOnly = await resourceHostPressure('macpro', 'farmslot-farm');
+  assert.equal(hostOnly.machine, 'macpro');
+  assert.equal(hostOnly.online, true);
+
   const result = await resourcePressureSnapshot({ machine: 'macpro' });
   assert.equal(result.machines.length, 1);
   assert.equal(result.machines[0].history.length, 1);

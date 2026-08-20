@@ -138,7 +138,12 @@ function elapsedSeconds(value: string): number {
 export function parseProcessInventory(
   output: string,
   maxEntries = PROCESS_SAMPLE_MAX_ENTRIES,
-): { processes: NodeProcessSample[]; totalProcesses: number; truncated: boolean } {
+): {
+  processes: NodeProcessSample[];
+  totalProcesses: number;
+  truncated: boolean;
+  ancestryTruncated: boolean;
+} {
   const parsed: NodeProcessSample[] = [];
   for (const line of output.split('\n')) {
     const match = line.match(/^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/);
@@ -160,11 +165,13 @@ export function parseProcessInventory(
       processes: parsed.sort((a, b) => a.pid - b.pid),
       totalProcesses: parsed.length,
       truncated: false,
+      ancestryTruncated: false,
     };
   }
 
   const byPid = new Map(parsed.map((entry) => [entry.pid, entry]));
   const selected = new Map<number, NodeProcessSample>();
+  let ancestryTruncated = false;
   const candidates = [...parsed].sort(
     (a, b) => b.cpuPercent - a.cpuPercent || b.rssBytes - a.rssBytes || a.pid - b.pid,
   );
@@ -178,13 +185,16 @@ export function parseProcessInventory(
       chain.push(current);
       current = byPid.get(current.ppid);
     }
-    if (selected.size + chain.length > maxEntries) continue;
-    for (const process of chain.reverse()) selected.set(process.pid, process);
+    const remaining = maxEntries - selected.size;
+    const retainedChain = chain.length > remaining ? chain.slice(0, remaining) : chain;
+    if (retainedChain.length < chain.length) ancestryTruncated = true;
+    for (const process of retainedChain.reverse()) selected.set(process.pid, process);
   }
   return {
     processes: [...selected.values()].sort((a, b) => a.pid - b.pid),
     totalProcesses: parsed.length,
     truncated: true,
+    ancestryTruncated,
   };
 }
 
@@ -362,7 +372,6 @@ export function startMetricsSubscription(
   getCpuPercent();
   subscriptionTimer = setInterval(() => {
     if (subscriptionCollecting) {
-      processSampler.skippedBusy += 1;
       return;
     }
     subscriptionCollecting = true;

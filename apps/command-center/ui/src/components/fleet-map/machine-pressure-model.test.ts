@@ -43,6 +43,16 @@ test('bounded process rows retain managed and stale work', () => {
     visiblePressureGroups(groups, 2).map((entry) => entry.rootPid),
     [1, 4],
   );
+  const managed = [
+    group('unknown', 1),
+    group('active', 2),
+    group('stale', 3),
+    group('retained', 4),
+  ];
+  assert.deepEqual(
+    visiblePressureGroups(managed, 3).map((entry) => entry.rootPid),
+    [2, 3, 4],
+  );
   assert.equal(
     pressureSampleAge('2026-08-20T00:00:00.000Z', Date.parse('2026-08-20T00:01:30.000Z')),
     '1m ago',

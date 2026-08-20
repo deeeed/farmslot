@@ -41,6 +41,7 @@ test('pressure formatter includes trends, classes, sampler degradation, and no m
         ],
         processAttribution: {
           truncated: true,
+          ancestryTruncated: false,
           sampledProcesses: 1,
           totalProcesses: 400,
           maxEntries: 256,
@@ -69,6 +70,7 @@ test('pressure formatter includes trends, classes, sampler degradation, and no m
             skippedBusy: 1,
             skippedCadence: 4,
             lastDurationMs: 4,
+            lastError: 'ps timed out',
           },
         },
         slots: { total: 1, ready: 0, busy: 1, working: 1, manual: 0, disabled: 0 },
@@ -86,6 +88,7 @@ test('pressure formatter includes trends, classes, sampler degradation, and no m
   assert.match(output, /active=1/);
   assert.match(output, /skippedBusy=1/);
   assert.match(output, /avoided=4/);
+  assert.match(output, /error=ps timed out/);
   assert.match(output, /sampled=1\/400 \(truncated\)/);
   assert.doesNotMatch(output, /kill|stop|cleanup command/i);
 });
