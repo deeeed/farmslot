@@ -160,6 +160,27 @@ test('configured resource ownership attributes descendants through process ances
   assert.equal(resourceGroup?.confidence, 'high');
 });
 
+test('worker correlation preserves resource identity when both seeds share a PID', () => {
+  const result = attributeProcessInventory({
+    inventory: processes,
+    slots: [slot('resource-slot', 'busy', 'active-run')],
+    runs: [run('active-run', 'monitoring')],
+    workers: [worker(14, 'worker', { linkedSlotId: 'resource-slot', linkedRunId: 'active-run' })],
+    resources: [
+      {
+        pid: 14,
+        slotId: 'resource-slot',
+        resourceId: 'metro',
+        runId: 'active-run',
+        status: 'running',
+      },
+    ],
+  });
+  const group = result.groups.find((candidate) => candidate.rootPid === 14);
+  assert.equal(group?.classification, 'active');
+  assert.equal(group?.resourceId, 'metro');
+});
+
 test('an unmapped tmux tree is manual rather than an unknown system process', () => {
   const inventory = structuredClone(processes);
   inventory.processes = [

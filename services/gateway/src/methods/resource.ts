@@ -48,7 +48,7 @@ import { loadFleetStatus } from '../fleet/state.js';
 
 const RESOURCE_STATUSES: ResourceStatus[] = ['unknown', 'running', 'stopped', 'error', 'stale'];
 const PRESSURE_RESOURCE_RESOLUTION_CONCURRENCY = 4;
-const PROCESS_INVENTORY_MAX_AGE_MS = 6 * 60_000;
+const PROCESS_INVENTORY_MAX_AGE_MS = 7 * 60_000;
 
 const EMPTY_PROCESS_CLASS_COUNTS: Record<ProcessOwnershipClass, number> = {
   active: 0,
@@ -106,6 +106,9 @@ export async function resourceCleanup(
   params: ResourceCleanupParams,
 ): Promise<ResourceCleanupResult> {
   const dryRun = params.dryRun !== false;
+  if (!dryRun && params.targets === undefined) {
+    throw new Error('live resource cleanup requires exact reviewed targets');
+  }
   const statuses = new Set(params.statuses ?? ['running', 'stale']);
   const slotFilter = new Set(params.slotIds ?? []);
   const resourceFilter = new Set(params.resourceIds ?? []);

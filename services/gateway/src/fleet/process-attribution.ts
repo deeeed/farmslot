@@ -264,7 +264,15 @@ export function attributeProcessInventory(params: {
   for (const worker of params.workers) {
     const seed = classifyWorker(worker, slotById, runById);
     if (!seed || !byPid.has(seed.pid)) continue;
-    if (seed.runId || seed.slotId || !seeds.has(seed.pid)) seeds.set(seed.pid, seed);
+    const resourceSeed = seeds.get(seed.pid);
+    const mergedSeed = resourceSeed?.resourceId
+      ? {
+          ...seed,
+          resourceId: resourceSeed.resourceId,
+          evidence: [...seed.evidence, ...resourceSeed.evidence],
+        }
+      : seed;
+    if (seed.runId || seed.slotId || !resourceSeed) seeds.set(seed.pid, mergedSeed);
   }
 
   const groups = new Map<string, ProcessAttributionGroup & { cpuRaw: number; rssRaw: number }>();

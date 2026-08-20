@@ -3,10 +3,14 @@ import { mock, test } from 'node:test';
 
 const collectedAt = new Date().toISOString();
 let tmuxFailure = false;
+const controlledTargets: string[] = [];
 
 mock.module('../fleet/resource-manager.js', {
   namedExports: {
-    executeResourceControl: async () => ({ ok: true }),
+    executeResourceControl: async (slotId: string, resourceId: string) => {
+      controlledTargets.push(`${slotId}:${resourceId}`);
+      return { ok: true };
+    },
     getActiveResources: (slotId: string) =>
       slotId === 'slot-1'
         ? new Map([['metro', { pid: 42, startedAt: collectedAt, runId: 'run-1' }]])
@@ -170,6 +174,12 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
     ['macpro:slot-2:metro'],
   );
   assert.equal((await resourceCleanup({ dryRun: true, targets: [] })).targets.length, 0);
+  const executedCleanup = await resourceCleanup({
+    dryRun: false,
+    targets: [{ machine: 'macpro', slotId: 'slot-2', resourceId: 'metro' }],
+  });
+  assert.equal(executedCleanup.stopped, 1);
+  assert.deepEqual(controlledTargets, ['slot-2:metro']);
 
   const hostOnly = await resourceHostPressure('macpro', 'farmslot-farm');
   assert.equal(hostOnly.machine, 'macpro');

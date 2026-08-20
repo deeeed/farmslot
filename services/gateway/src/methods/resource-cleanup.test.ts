@@ -52,5 +52,16 @@ test('resourceCleanup dry-run skips a stale fleet slot that no longer resolves',
 });
 
 test('resourceCleanup live execution still fails closed for an unresolvable slot', async () => {
-  await assert.rejects(() => resourceCleanup({ dryRun: false }), missingSlot);
+  await assert.rejects(
+    () =>
+      resourceCleanup({
+        dryRun: false,
+        targets: [{ machine: 'test-machine', slotId: 'stale-slot', resourceId: 'metro' }],
+      }),
+    missingSlot,
+  );
+});
+
+test('resourceCleanup live execution requires exact reviewed targets', async () => {
+  await assert.rejects(() => resourceCleanup({ dryRun: false }), /requires exact reviewed targets/);
 });

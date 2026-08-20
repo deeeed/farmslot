@@ -694,7 +694,7 @@ export class FleetCanvas extends LitElement {
         Methods.RESOURCE_PRESSURE_SNAPSHOT,
       );
       this.resourcePressure = snapshot;
-      this.resourceCleanupPreview = snapshot;
+      this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
     } catch (err) {
       this.showResourceFlash(err instanceof Error ? err.message : String(err), false);
     } finally {
@@ -710,12 +710,13 @@ export class FleetCanvas extends LitElement {
       const fresh = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
         dryRun: true,
       });
-      if (!cleanupTargetSetMatches(reviewed.cleanupCandidates, fresh.targets)) {
+      const freshTargets = this.cleanupTargetsForFilters(fresh.targets);
+      if (!cleanupTargetSetMatches(reviewed.cleanupCandidates, freshTargets)) {
         const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
           Methods.RESOURCE_PRESSURE_SNAPSHOT,
         );
         this.resourcePressure = snapshot;
-        this.resourceCleanupPreview = snapshot;
+        this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
         this.showResourceFlash('eligible targets changed — review the updated preview', false);
         return;
       }
@@ -734,6 +735,28 @@ export class FleetCanvas extends LitElement {
     } finally {
       this.resourceActionBusy = false;
     }
+  }
+
+  private cleanupTargetsForFilters<T extends { machine: string; project?: string }>(
+    targets: T[],
+  ): T[] {
+    return targets.filter(
+      (target) =>
+        (this.filterMachines.length === 0 || this.filterMachines.includes(target.machine)) &&
+        (this.filterProjects.length === 0 ||
+          (target.project != null && this.filterProjects.includes(target.project))),
+    );
+  }
+
+  private cleanupPreviewForFilters(
+    snapshot: ResourcePressureSnapshotResult,
+  ): ResourcePressureSnapshotResult {
+    const cleanupCandidates = this.cleanupTargetsForFilters(snapshot.cleanupCandidates);
+    return {
+      ...snapshot,
+      summary: { ...snapshot.summary, cleanupCandidates: cleanupCandidates.length },
+      cleanupCandidates,
+    };
   }
 
   private async setResourceWatches(enabled: boolean) {

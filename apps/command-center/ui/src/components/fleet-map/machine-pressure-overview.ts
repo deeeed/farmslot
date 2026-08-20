@@ -525,11 +525,13 @@ export class MachinePressureOverview extends LitElement {
     const process = machine.processAttribution;
     return html`<div class="detail-note">
       <div>
-        ${process.sampledProcesses === 0
-          ? 'No process inventory received yet.'
-          : process.truncated
-            ? `Inventory capped at ${process.maxEntries}; hottest processes are retained${process.ancestryTruncated ? ', with some parent chains shortened at the cap' : ' with complete sampled ancestry'}.`
-            : 'Complete process inventory retained for this sample.'}
+        ${process.unavailableReason
+          ? process.unavailableReason
+          : process.sampledProcesses === 0
+            ? 'No process inventory received yet.'
+            : process.truncated
+              ? `Inventory capped at ${process.maxEntries}; hottest processes are retained${process.ancestryTruncated ? ', with some parent chains shortened at the cap' : ' with complete sampled ancestry'}.`
+              : 'Complete process inventory retained for this sample.'}
         ${process.omittedGroups > 0
           ? ` ${process.omittedGroups} lower-pressure groups omitted.`
           : ''}
