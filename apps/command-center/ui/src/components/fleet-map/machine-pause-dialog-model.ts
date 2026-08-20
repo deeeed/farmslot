@@ -177,6 +177,14 @@ export function sortMachinePauseRecords<T extends { runId: string; updatedAt: st
   });
 }
 
+export function machinePauseShouldRefetch(
+  trigger: 'progress' | 'completion',
+  busy: 'loading' | 'preview' | 'execute' | 'restore' | null,
+): boolean {
+  if (trigger === 'completion') return true;
+  return busy !== 'execute' && busy !== 'restore';
+}
+
 export function machinePressurePercent(ratio: number | undefined): string {
   return ratio == null ? '–' : `${Math.round(ratio * 100)}%`;
 }

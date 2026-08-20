@@ -42,6 +42,16 @@ const handle: MachinePauseRecoveryHandle = {
   capturedAt: '2026-08-21T00:00:00.000Z',
 };
 const EXACT_PANE_ROW = 'slot-1\tworker\t%1\t101\n';
+const verifyPersistedLiveBinding = async () =>
+  ({
+    ok: true,
+    binding: {
+      runnerSessionId: handle.sessionId,
+      runnerSessionPath: handle.sessionPath,
+      canonicalSessionPath: handle.sessionPath,
+      source: 'native',
+    },
+  }) as const;
 
 test('park lifecycle timeout policy keeps exit bounded and reload on launch-ready budget', () => {
   assert.equal(RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS, 10_000);
@@ -56,6 +66,7 @@ test('inspectRunnerRecovery requires aligned static capabilities and an availabl
         ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
         : { exitCode: 0, stdout: '', stderr: '' },
     findRunnerPid: async () => '202',
+    verifyLiveBinding: verifyPersistedLiveBinding,
   };
   for (const runnerId of ['claude', 'codex', 'grok']) {
     assert.equal(
@@ -156,6 +167,27 @@ test('inspectRunnerRecovery fails closed for zero, ambiguous, and uninspectable 
   assert.equal(stoppedRestore.liveTarget.state, 'stopped');
 });
 
+test('inspectRunnerRecovery rejects a new same-runner session in the exact persisted pane', async () => {
+  const inspection = await inspectRunnerRecovery(
+    { vars, runnerId: 'claude', recoveryHandle: handle, expectedRunnerState: 'stopped-or-live' },
+    {
+      exec: async (_vars, command) =>
+        command.includes('display-message')
+          ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+          : { exitCode: 0, stdout: '', stderr: '' },
+      findRunnerPid: async () => '202',
+      verifyLiveBinding: async () => ({
+        ok: false,
+        reason: "active runner session id 'new-session' does not match persisted 'session-123'",
+      }),
+    },
+  );
+  assert.equal(inspection.supported, false);
+  assert.equal(inspection.liveTarget.state, 'live');
+  assert.equal(inspection.liveBinding.valid, false);
+  assert.match(inspection.reason ?? '', /new-session.*does not match persisted.*session-123/);
+});
+
 test('runnerRunningForPark reports structured residual liveness', async () => {
   type RunningDeps = NonNullable<Parameters<typeof runnerRunningForPark>[1]>;
   const deps: RunningDeps = {
@@ -164,6 +196,7 @@ test('runnerRunningForPark reports structured residual liveness', async () => {
         ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
         : { exitCode: 0, stdout: '', stderr: '' },
     findRunnerPid: async () => '202',
+    verifyLiveBinding: verifyPersistedLiveBinding,
     respawnPane: async () => {},
     sleep: async () => {},
   };
@@ -188,6 +221,7 @@ test('stopRunnerForPark sends only the registry graceful-exit command and confir
         return { exitCode: 0, stdout: '', stderr: '' };
       },
       findRunnerPid: async () => (++probes === 1 ? '202' : ''),
+      verifyLiveBinding: verifyPersistedLiveBinding,
       respawnPane: async () => {},
       sleep: async () => {},
     },
@@ -222,6 +256,7 @@ test('stopRunnerForPark applies the runner-owned Codex submit delay', async () =
           : { exitCode: 0, stdout: '', stderr: '' };
       },
       findRunnerPid: async () => (++probes === 1 ? '202' : ''),
+      verifyLiveBinding: verifyPersistedLiveBinding,
       respawnPane: async () => {},
       sleep: async () => {},
     },
@@ -278,6 +313,7 @@ test('reloadRunnerForPark respawns only the exact pane when its window may have 
         return { exitCode: 0, stdout: '', stderr: '' };
       },
       findRunnerPid: async () => (runnerProbes++ === 0 ? '' : '202'),
+      verifyLiveBinding: verifyPersistedLiveBinding,
       respawnPane: async (_vars, target, command) => {
         assert.equal(target, '%1');
         respawned = command;

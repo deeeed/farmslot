@@ -23,7 +23,11 @@ import {
   type SessionReloadCapability,
   WORKER_ENV_PREFIX,
 } from './registry.js';
-import { findRunnerDescendantPid, resumableSessionProbeCommand } from './session-process.js';
+import {
+  findRunnerDescendantPid,
+  resumableSessionProbeCommand,
+  verifyExactLiveRunnerSessionBinding,
+} from './session-process.js';
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 
@@ -42,6 +46,13 @@ export interface RunnerRecoveryInspection {
     state?: 'live' | 'stopped';
     reason?: string;
   };
+  liveBinding: {
+    valid: boolean;
+    sessionId?: string;
+    canonicalSessionPath?: string;
+    source?: string;
+    reason?: string;
+  };
   reason?: string;
 }
 
@@ -56,9 +67,10 @@ export interface InspectRunnerRecoveryOptions {
 /** Inspect registry declarations and prove the exact persisted session still exists. */
 export async function inspectRunnerRecovery(
   options: InspectRunnerRecoveryOptions,
-  deps: Pick<RunnerSessionLifecycleDeps, 'exec' | 'findRunnerPid'> = {
+  deps: Pick<RunnerSessionLifecycleDeps, 'exec' | 'findRunnerPid' | 'verifyLiveBinding'> = {
     exec: execOnSlot,
     findRunnerPid: findRunnerDescendantPid,
+    verifyLiveBinding: verifyExactLiveRunnerSessionBinding,
   },
 ): Promise<RunnerRecoveryInspection> {
   const rawRunnerId = options.runnerId?.trim() ?? '';
@@ -91,6 +103,7 @@ export async function inspectRunnerRecovery(
     sessionReload,
     recoveryHandle,
     liveTarget: { valid: false, reason: reason ?? 'live runner target not inspected' },
+    liveBinding: { valid: false, reason: reason ?? 'live runner binding not inspected' },
     ...(reason ? { reason } : {}),
   };
   if (!inspection.supported || !options.recoveryHandle) return inspection;
@@ -106,6 +119,7 @@ export async function inspectRunnerRecovery(
       supported: false,
       recoveryHandle: { valid: false, reason: pathReason },
       liveTarget: { valid: false, reason: pathReason },
+      liveBinding: { valid: false, reason: pathReason },
       reason: pathReason,
     };
   }
@@ -116,6 +130,7 @@ export async function inspectRunnerRecovery(
       ...inspection,
       supported: false,
       liveTarget: { valid: false, reason: targetReason },
+      liveBinding: { valid: false, reason: targetReason },
       reason: targetReason,
     };
   }
@@ -130,12 +145,45 @@ export async function inspectRunnerRecovery(
       ...inspection,
       supported: false,
       liveTarget: { valid: false, reason: targetReason },
+      liveBinding: { valid: false, reason: targetReason },
       reason: targetReason,
+    };
+  }
+  if (state === 'live') {
+    const binding = await (deps.verifyLiveBinding ?? verifyExactLiveRunnerSessionBinding)(
+      options.vars,
+      runnerId,
+      {
+        paneId: pane.paneId,
+        slotId: options.vars.slotId,
+        expectedSessionId: options.recoveryHandle.sessionId,
+        expectedSessionPath: options.recoveryHandle.sessionPath,
+      },
+    );
+    if (!binding.ok) {
+      return {
+        ...inspection,
+        supported: false,
+        liveTarget: { valid: true, paneTarget: pane.paneId, state },
+        liveBinding: { valid: false, reason: binding.reason },
+        reason: binding.reason,
+      };
+    }
+    return {
+      ...inspection,
+      liveTarget: { valid: true, paneTarget: pane.paneId, state },
+      liveBinding: {
+        valid: true,
+        sessionId: binding.binding.runnerSessionId,
+        canonicalSessionPath: binding.binding.canonicalSessionPath,
+        source: binding.binding.source,
+      },
     };
   }
   return {
     ...inspection,
     liveTarget: { valid: true, paneTarget: pane.paneId, state },
+    liveBinding: { valid: false, reason: 'runner is stopped' },
   };
 }
 
@@ -147,6 +195,7 @@ function unsupportedInspection(runnerId: string, reason: string): RunnerRecovery
     sessionReload: { supported: false, capability: 'none' },
     recoveryHandle: { valid: false, reason },
     liveTarget: { valid: false, reason },
+    liveBinding: { valid: false, reason },
     reason,
   };
 }
@@ -211,6 +260,7 @@ interface RunnerSessionLifecycleDeps {
   capturePromptBaseline?: typeof captureRunnerPromptAcceptanceBaseline;
   probePromptHandoff?: typeof runnerHasDurablePromptHandoff;
   writePromptSentinel?: typeof writeRunnerPromptSentinel;
+  verifyLiveBinding?: typeof verifyExactLiveRunnerSessionBinding;
   sleep(ms: number): Promise<void>;
 }
 
@@ -221,6 +271,7 @@ const DEFAULT_DEPS: RunnerSessionLifecycleDeps = {
   capturePromptBaseline: captureRunnerPromptAcceptanceBaseline,
   probePromptHandoff: runnerHasDurablePromptHandoff,
   writePromptSentinel: writeRunnerPromptSentinel,
+  verifyLiveBinding: verifyExactLiveRunnerSessionBinding,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 

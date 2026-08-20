@@ -16,6 +16,7 @@ import {
   resolvePromptBoundRunnerSession,
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
+  verifyExactLiveRunnerSessionBinding,
 } from './session-process.js';
 import { makeVars } from './test-fixtures.js';
 
@@ -307,6 +308,65 @@ test('prompt-bound fallback rejects two concurrent exact prompt matches', async 
   );
 
   assert.equal(result, null);
+});
+
+test('exact live binding verifier supports Claude, Codex, and Grok pane-native attribution', async () => {
+  type VerifyDeps = NonNullable<Parameters<typeof verifyExactLiveRunnerSessionBinding>[3]>;
+  for (const runner of ['claude', 'codex', 'grok']) {
+    const deps: VerifyDeps = {
+      readPaneStartedAt: async () => 1_000,
+      resolveBinding: async (_vars, resolvedRunner, _before, options) => {
+        assert.equal(resolvedRunner, runner);
+        assert.equal(options?.paneId, '%20');
+        return {
+          runnerSessionId: `${runner}-session`,
+          runnerSessionPath: `/alias/${runner}-session.jsonl`,
+          source: runner === 'codex' ? 'native' : 'hook',
+        };
+      },
+      canonicalizePath: async (_vars, sessionPath) =>
+        sessionPath.replace('/alias/', '/canonical/').replace('/persisted/', '/canonical/'),
+    };
+    const result = await verifyExactLiveRunnerSessionBinding(
+      makeVars(),
+      runner,
+      {
+        paneId: '%20',
+        slotId: 'slot-1',
+        expectedSessionId: `${runner}-session`,
+        expectedSessionPath: `/persisted/${runner}-session.jsonl`,
+      },
+      deps,
+    );
+    assert.equal(result.ok, true, `${runner} should accept its exact live binding`);
+    if (result.ok)
+      assert.equal(result.binding.canonicalSessionPath.startsWith('/canonical/'), true);
+  }
+});
+
+test('exact live binding verifier rejects a new same-runner session in the persisted pane', async () => {
+  const result = await verifyExactLiveRunnerSessionBinding(
+    makeVars(),
+    'codex',
+    {
+      paneId: '%20',
+      slotId: 'slot-1',
+      expectedSessionId: 'parked-session',
+      expectedSessionPath: '/sessions/parked-session.jsonl',
+    },
+    {
+      readPaneStartedAt: async () => 2_000,
+      resolveBinding: async () => ({
+        runnerSessionId: 'new-session',
+        runnerSessionPath: '/sessions/new-session.jsonl',
+        source: 'native',
+      }),
+      canonicalizePath: async (_vars, sessionPath) => sessionPath,
+    },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok)
+    assert.match(result.reason, /new-session.*does not match persisted.*parked-session/);
 });
 
 test('pane process start is resolved from the live tmux pane', async () => {

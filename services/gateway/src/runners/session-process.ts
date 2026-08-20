@@ -667,6 +667,97 @@ export async function resolveRunnerSessionBinding(
   return tryFilesystemSessionBinding(vars, runner, beforePaths, options);
 }
 
+export interface ExactLiveRunnerSessionBindingOptions {
+  paneId: string;
+  slotId: string;
+  expectedSessionId: string;
+  expectedSessionPath: string;
+}
+
+export type ExactLiveRunnerSessionBindingResult =
+  | {
+      ok: true;
+      binding: RunnerSessionBinding & { canonicalSessionPath: string };
+    }
+  | {
+      ok: false;
+      reason: string;
+      binding?: RunnerSessionBinding & { canonicalSessionPath?: string };
+    };
+
+interface ExactLiveRunnerSessionBindingDeps {
+  readPaneStartedAt: typeof readPaneProcessStartedAtMs;
+  resolveBinding: typeof resolveRunnerSessionBinding;
+  canonicalizePath: typeof canonicalizeRunnerSessionPath;
+}
+
+const EXACT_LIVE_BINDING_DEPS: ExactLiveRunnerSessionBindingDeps = {
+  readPaneStartedAt: readPaneProcessStartedAtMs,
+  resolveBinding: resolveRunnerSessionBinding,
+  canonicalizePath: canonicalizeRunnerSessionPath,
+};
+
+/** Prove the live runner in one exact pane still owns the persisted session id and path. */
+export async function verifyExactLiveRunnerSessionBinding(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  options: ExactLiveRunnerSessionBindingOptions,
+  deps: ExactLiveRunnerSessionBindingDeps = EXACT_LIVE_BINDING_DEPS,
+): Promise<ExactLiveRunnerSessionBindingResult> {
+  const paneStartedAtMs = await deps.readPaneStartedAt(vars, options.paneId, runner);
+  if (paneStartedAtMs == null) {
+    return { ok: false, reason: `live runner process start is unavailable for ${options.paneId}` };
+  }
+  const binding = await deps.resolveBinding(vars, runner, [], {
+    paneId: options.paneId,
+    slotId: options.slotId,
+    paneStartedAtMs,
+  });
+  if (!binding) {
+    return {
+      ok: false,
+      reason: `active runner session binding is unavailable for ${options.paneId}`,
+    };
+  }
+  const [canonicalActivePath, canonicalExpectedPath] = await Promise.all([
+    deps.canonicalizePath(vars, binding.runnerSessionPath),
+    deps.canonicalizePath(vars, options.expectedSessionPath),
+  ]);
+  if (!canonicalActivePath || !canonicalExpectedPath) {
+    return {
+      ok: false,
+      reason: `runner session path canonicalization failed for ${options.paneId}`,
+      binding,
+    };
+  }
+  const canonicalBinding = { ...binding, canonicalSessionPath: canonicalActivePath };
+  if (binding.runnerSessionId !== options.expectedSessionId) {
+    return {
+      ok: false,
+      reason: `active runner session id '${binding.runnerSessionId}' does not match persisted '${options.expectedSessionId}'`,
+      binding: canonicalBinding,
+    };
+  }
+  if (canonicalActivePath !== canonicalExpectedPath) {
+    return {
+      ok: false,
+      reason: `active runner session path '${canonicalActivePath}' does not match persisted '${canonicalExpectedPath}'`,
+      binding: canonicalBinding,
+    };
+  }
+  return { ok: true, binding: canonicalBinding };
+}
+
+export async function canonicalizeRunnerSessionPath(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  sessionPath: string,
+): Promise<string | null> {
+  const command = `python3 -c ${shellQuote('import os,sys; print(os.path.realpath(sys.argv[1]))')} ${shellQuote(sessionPath)}`;
+  const result = await execOnSlot(vars, command, { timeout: 10_000 });
+  if (result.exitCode !== 0) return null;
+  return result.stdout.trim() || null;
+}
+
 export async function resolveRunnerSessionForRun(
   run: Pick<Run, 'startedAt' | 'steps' | 'metrics'>,
   vars: Awaited<ReturnType<typeof loadSlotVars>>,

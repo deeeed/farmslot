@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -54,7 +53,6 @@ import {
   runtimeCapabilityRelease,
   runtimeCapabilityStatus,
 } from '../methods/runtime-capabilities.js';
-import { farmslotRoot } from '../projects/repo-root.js';
 import {
   withMachineRunTransition,
   withRunTransitionWhileMachineHeld,
@@ -67,7 +65,13 @@ import {
   stopRunnerForPark,
 } from '../runners/session-lifecycle.js';
 import { resolveRunRetainedSessionBinding } from '../runners/session-process.js';
-import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { getAllRuns, getRun, persistRunNow, runsDirectory, updateRun } from '../runs/store.js';
+
+import {
+  type MachineParkingIntentJournal,
+  MachineParkingIntentJournalStore,
+  type MachineParkingIntentKind,
+} from './journal.js';
 
 type Fleet = Awaited<ReturnType<typeof loadFleetStatus>>;
 type MachineParkingRecoveryProof = NonNullable<MachineParkRecord['recoveryProof']>;
@@ -80,9 +84,13 @@ export interface MachineParkingDependencies {
   loadFleet(): Promise<Fleet>;
   updatePark(runId: string, park: MachineParkRecord | null): Run;
   persistRun(run: Run, reason: string): Promise<void>;
-  writeIntentJournal(records: MachineParkRecord[]): Promise<void>;
-  deleteIntentJournal(operationId: string): Promise<void>;
-  loadIntentJournals(): Promise<MachineParkRecord[][]>;
+  writeIntentJournal(kind: MachineParkingIntentKind, records: MachineParkRecord[]): Promise<void>;
+  deleteIntentJournal(
+    machine: string,
+    kind: MachineParkingIntentKind,
+    operationId: string,
+  ): Promise<void>;
+  loadIntentJournals(): Promise<MachineParkingIntentJournal[]>;
   emit(event: string, payload: unknown): Promise<void>;
   pressure(machine: string): Promise<ResourcePressureMachine | undefined>;
   observeResources(slotId: string): Promise<SlotResource[]>;
@@ -100,7 +108,7 @@ export interface MachineParkingDependencies {
   inspectRecoveryHandle(
     run: Run,
     handle: MachinePauseRecoveryHandle,
-    expectedRunnerState: 'live' | 'stopped-or-live',
+    expectedRunnerState: 'live' | 'stopped' | 'stopped-or-live',
   ): Promise<void>;
   pauseRun(runId: string, emit: (event: string, payload: unknown) => void): Promise<void>;
   resumeRun(
@@ -143,54 +151,16 @@ interface CachedPreview {
 const PREVIEW_TTL_MS = 5 * 60_000;
 const PREVIEW_CACHE_LIMIT = 100;
 const previewCache = new Map<string, CachedPreview>();
-const intentJournalDir = path.join(
-  farmslotRoot,
-  '.runs',
-  `machine-parking-batches-${process.env.GATEWAY_PORT?.trim() || '7777'}`,
-);
+const intentJournalStore = new MachineParkingIntentJournalStore(runsDirectory());
 
-function intentJournalPath(operationId: string): string {
-  const digest = createHash('sha256').update(operationId).digest('hex');
-  return path.join(intentJournalDir, `${digest}.json`);
-}
-
-async function defaultWriteIntentJournal(records: MachineParkRecord[]): Promise<void> {
-  if (records.length === 0) throw new Error('machine parking intent journal requires records');
-  await mkdir(intentJournalDir, { recursive: true });
-  const target = intentJournalPath(records[0]!.operationId);
-  const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temp, JSON.stringify({ version: 1, records }, null, 2), 'utf8');
-  await rename(temp, target);
-}
-
-async function defaultDeleteIntentJournal(operationId: string): Promise<void> {
-  try {
-    await unlink(intentJournalPath(operationId));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+async function defaultLoadIntentJournals(): Promise<MachineParkingIntentJournal[]> {
+  const result = await intentJournalStore.load();
+  for (const issue of result.quarantined) {
+    console.error(
+      `[machine-pause] quarantined malformed intent journal ${issue.file}: ${issue.reason}`,
+    );
   }
-}
-
-async function defaultLoadIntentJournals(): Promise<MachineParkRecord[][]> {
-  let files: string[];
-  try {
-    files = await readdir(intentJournalDir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
-  }
-  const journals: MachineParkRecord[][] = [];
-  for (const file of files.filter((name) => name.endsWith('.json')).sort()) {
-    const parsed = JSON.parse(await readFile(path.join(intentJournalDir, file), 'utf8')) as {
-      version?: unknown;
-      records?: unknown;
-    };
-    if (parsed.version !== 1 || !Array.isArray(parsed.records)) {
-      throw new Error(`invalid machine parking intent journal: ${file}`);
-    }
-    journals.push(parsed.records as MachineParkRecord[]);
-  }
-  return journals;
+  return result.journals;
 }
 
 async function broadcast(event: string, payload: unknown): Promise<void> {
@@ -261,7 +231,7 @@ async function defaultResolveRecoveryHandle(run: Run): Promise<MachinePauseRecov
 async function defaultInspectRecoveryHandle(
   run: Run,
   handle: MachinePauseRecoveryHandle,
-  expectedRunnerState: 'live' | 'stopped-or-live',
+  expectedRunnerState: 'live' | 'stopped' | 'stopped-or-live',
 ): Promise<void> {
   if (!run.slotId) throw new Error('run has no slot');
   const vars = await loadSlotVars(run.slotId);
@@ -318,8 +288,9 @@ const defaultDependencies: MachineParkingDependencies = {
   loadFleet: loadFleetStatus,
   updatePark: (runId, park) => updateRun(runId, { park }),
   persistRun: persistRunNow,
-  writeIntentJournal: defaultWriteIntentJournal,
-  deleteIntentJournal: defaultDeleteIntentJournal,
+  writeIntentJournal: (kind, records) => intentJournalStore.write(kind, records),
+  deleteIntentJournal: (machine, kind, operationId) =>
+    intentJournalStore.delete(machine, kind, operationId),
   loadIntentJournals: defaultLoadIntentJournals,
   emit: broadcast,
   pressure: defaultPressure,
@@ -448,13 +419,14 @@ export class MachineParkingService {
 
   async status(machineInput: string): Promise<MachinePauseStatusResult> {
     const machine = assertMachine(machineInput);
-    assertKnownMachine(machine, await this.deps.loadFleet());
+    const records = this.deps
+      .allRuns()
+      .flatMap((run) => (run.park?.machine === machine ? [structuredClone(run.park)] : []))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    if (records.length === 0) assertKnownMachine(machine, await this.deps.loadFleet());
     return {
       machine,
-      records: this.deps
-        .allRuns()
-        .flatMap((run) => (run.park?.machine === machine ? [structuredClone(run.park)] : []))
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+      records,
       ...(await this.optionalPressure(machine)),
     };
   }
@@ -526,9 +498,24 @@ export class MachineParkingService {
       }
       assertExecutableRestore(fresh.runs, params.reviewedTargets);
       const selected = fresh.runs.filter((item) => item.selected);
-      const intent = await this.persistRestoreIntents(selected, operationId, params.previewId);
+      const zeroEffect = selected.filter(
+        (item) => item.eligibility.code === 'ELIGIBLE_ZERO_EFFECT_REPAIR',
+      );
+      for (const item of zeroEffect) {
+        await this.settleZeroEffectRestore(item, operationId, params.previewId);
+      }
+      const effectful = selected.filter(
+        (item) => item.eligibility.code !== 'ELIGIBLE_ZERO_EFFECT_REPAIR',
+      );
+      const intent =
+        effectful.length > 0
+          ? await this.persistRestoreIntents(effectful, operationId, params.previewId)
+          : {
+              records: zeroEffect.map((item) => structuredClone(this.requireRun(item.runId).park!)),
+              durable: true,
+            };
       if (intent.durable) {
-        for (const item of selected) {
+        for (const item of effectful) {
           try {
             await this.restoreOne(item.runId);
           } catch (error) {
@@ -544,7 +531,10 @@ export class MachineParkingService {
       this.pressureCache.delete(machine);
       const records = intent.durable
         ? this.recordsForOperation(operationId, machine)
-        : intent.records;
+        : [
+            ...zeroEffect.map((item) => structuredClone(this.requireRun(item.runId).park!)),
+            ...intent.records,
+          ];
       const outcome = operationOutcome(records, 'restored');
       return {
         ok: outcome === 'complete',
@@ -855,8 +845,34 @@ export class MachineParkingService {
     const activeLeases = capabilityStatus.leases.filter(
       (lease) => lease.owner.runId === run.id && lease.state === 'acquired',
     );
+    for (const lease of capabilityStatus.leases.filter(capabilityLeaseBlocksStop)) {
+      const provider = capabilityStatus.catalog.find((entry) => entry.id === lease.capabilityId);
+      const hasSlotAction = provider
+        ? Object.values(provider.actions).some((action) => action.kind === 'slot-action')
+        : false;
+      const mapped = affected.some((resource) =>
+        capabilityProvidersForResource(capabilityStatus, resource.id).has(lease.capabilityId),
+      );
+      if (hasSlotAction && !mapped) {
+        return reject(
+          'CAPABILITY_SLOT_ACTION_UNMAPPED',
+          `active capability '${lease.capabilityId}' uses slot actions without a proven managed resource`,
+          emptyManifest(),
+          handle.runnerId,
+        );
+      }
+    }
     for (const resource of affected) {
       const providerIds = capabilityProvidersForResource(capabilityStatus, resource.id);
+      const selectedHolders = activeLeases.filter((lease) => providerIds.has(lease.capabilityId));
+      if (providerIds.size > 0 && selectedHolders.length === 0) {
+        return reject(
+          'CAPABILITY_RESOURCE_UNOWNED',
+          `resource '${resource.id}' is capability-backed but not leased by run '${run.id}'`,
+          emptyManifest(),
+          handle.runnerId,
+        );
+      }
       const foreignHolders = capabilityStatus.leases.filter(
         (lease) =>
           providerIds.has(lease.capabilityId) &&
@@ -1004,7 +1020,10 @@ export class MachineParkingService {
       return { run, record };
     });
     try {
-      await this.deps.writeIntentJournal(nextRecords.map(({ record }) => record));
+      await this.deps.writeIntentJournal(
+        'pause',
+        nextRecords.map(({ record }) => record),
+      );
     } catch (error) {
       return {
         records: intentFailureRecords(
@@ -1016,7 +1035,7 @@ export class MachineParkingService {
       };
     }
     const resolved = nextRecords.map(({ run, record }) => this.deps.updatePark(run.id, record));
-    const durable = await this.settleIntentDurability(resolved, 'machine-pause-intent');
+    const durable = await this.settleIntentDurability(resolved, 'pause', 'machine-pause-intent');
     for (const run of resolved) await this.emitRecord(run.park!);
     for (const { item } of preflight) {
       this.recoveryHandles.delete(recoveryHandleKey(item.runId, item.generation));
@@ -1060,9 +1079,14 @@ export class MachineParkingService {
     }
     await this.patchRecord(runId, (current) => ({ ...current, phase: 'resources-stopping' }));
     let failed = false;
+    const beforeCapabilityStatus =
+      record.resourceManifest.capabilityLeases.length > 0
+        ? await this.deps.capabilityStatus(record.slotId)
+        : null;
     for (const lease of record.resourceManifest.capabilityLeases) {
-      const before = await this.deps.capabilityStatus(record.slotId);
-      const currentLease = before.leases.find((candidate) => candidate.id === lease.leaseId);
+      const currentLease = beforeCapabilityStatus?.leases.find(
+        (candidate) => candidate.id === lease.leaseId,
+      );
       if (currentLease?.state === 'released') {
         await this.patchCapability(runId, lease.leaseId, {
           state: 'released',
@@ -1088,11 +1112,7 @@ export class MachineParkingService {
           continue;
         }
         const released = result.released.some((item) => item.id === lease.leaseId);
-        const after = released ? null : await this.deps.capabilityStatus(record.slotId);
-        if (
-          !released &&
-          after?.leases.find((candidate) => candidate.id === lease.leaseId)?.state !== 'released'
-        ) {
+        if (!released) {
           throw new Error('capability registry did not release or retain the exact lease');
         }
         await this.patchCapability(runId, lease.leaseId, {
@@ -1218,6 +1238,19 @@ export class MachineParkingService {
         if (!isPauseMode(record.mode)) {
           return reject('INVALID_MODE', `park record has invalid mode '${String(record.mode)}'`);
         }
+        if (zeroEffectRecord(run, record)) {
+          return {
+            runId: run.id,
+            generation: record.generation,
+            selected,
+            eligibility: {
+              eligible: true,
+              code: 'ELIGIBLE_ZERO_EFFECT_REPAIR',
+              reason: 'No pause side effect landed; restore will settle the durable record only.',
+            },
+            record,
+          };
+        }
         if (run.status !== 'paused')
           return reject('RUN_NOT_PAUSED', `run status is '${run.status}'`);
         if ((run.engineState?.generation ?? 0) !== record.generation) {
@@ -1238,7 +1271,11 @@ export class MachineParkingService {
         }
         if (record.mode === 'release') {
           try {
-            await this.deps.inspectRecoveryHandle(run, record.recoveryHandle!, 'stopped-or-live');
+            await this.deps.inspectRecoveryHandle(
+              run,
+              record.recoveryHandle!,
+              expectedRestoreRunnerState(record),
+            );
           } catch (error) {
             return reject('RECOVERY_HANDLE_STALE', messageOf(error));
           }
@@ -1283,7 +1320,11 @@ export class MachineParkingService {
         const run = this.requireRun(item.runId);
         if (!item.record.recoveryHandle)
           throw new Error(`run ${item.runId} has no recovery handle`);
-        await this.deps.inspectRecoveryHandle(run, item.record.recoveryHandle, 'stopped-or-live');
+        await this.deps.inspectRecoveryHandle(
+          run,
+          item.record.recoveryHandle,
+          expectedRestoreRunnerState(item.record),
+        );
       }),
     );
     for (const item of items) {
@@ -1316,7 +1357,10 @@ export class MachineParkingService {
       };
     });
     try {
-      await this.deps.writeIntentJournal(nextRecords.map(({ record }) => record));
+      await this.deps.writeIntentJournal(
+        'restore',
+        nextRecords.map(({ record }) => record),
+      );
     } catch (error) {
       return {
         records: intentFailureRecords(
@@ -1328,9 +1372,28 @@ export class MachineParkingService {
       };
     }
     const updated = nextRecords.map(({ run, record }) => this.deps.updatePark(run.id, record));
-    const durable = await this.settleIntentDurability(updated, 'machine-restore-intent');
+    const durable = await this.settleIntentDurability(updated, 'restore', 'machine-restore-intent');
     for (const run of updated) await this.emitRecord(run.park!);
     return { records: updated.map((run) => structuredClone(run.park!)), durable };
+  }
+
+  private async settleZeroEffectRestore(
+    item: MachinePauseRestorePreviewRun,
+    operationId: string,
+    previewId: string,
+  ): Promise<void> {
+    const run = this.requireRun(item.runId);
+    if (!run.park || !zeroEffectRecord(run, run.park)) {
+      throw new Error(`run ${item.runId} no longer has a zero-effect restore record`);
+    }
+    await this.patchRecord(run.id, (record) => ({
+      ...record,
+      operationId,
+      previewId,
+      phase: 'restored',
+      restoredAt: this.deps.now(),
+      restoredGeneration: run.engineState?.generation ?? record.generation,
+    }));
   }
 
   private async restoreOne(runId: string): Promise<void> {
@@ -1710,13 +1773,17 @@ export class MachineParkingService {
     return false;
   }
 
-  private async settleIntentDurability(runs: Run[], reason: string): Promise<boolean> {
+  private async settleIntentDurability(
+    runs: Run[],
+    kind: MachineParkingIntentKind,
+    reason: string,
+  ): Promise<boolean> {
     let durable = await this.persistIntentRecords(runs, reason);
     const operationId = runs[0]?.park?.operationId;
     if (!operationId) return false;
     if (durable) {
       try {
-        await this.deps.deleteIntentJournal(operationId);
+        await this.deps.deleteIntentJournal(runs[0]!.park!.machine, kind, operationId);
         return true;
       } catch (error) {
         const failed = intentFailureRecords(
@@ -1734,7 +1801,10 @@ export class MachineParkingService {
       }
     }
     try {
-      await this.deps.writeIntentJournal(runs.map((run) => structuredClone(run.park!)));
+      await this.deps.writeIntentJournal(
+        kind,
+        runs.map((run) => structuredClone(run.park!)),
+      );
     } catch (error) {
       console.error(`[machine-pause] intent journal repair failed: ${messageOf(error)}`);
     }
@@ -1744,7 +1814,8 @@ export class MachineParkingService {
   private async repairIntentJournals(): Promise<Set<string>> {
     const blockedRunIds = new Set<string>();
     const journals = await this.deps.loadIntentJournals();
-    for (const records of journals) {
+    for (const journal of journals) {
+      const { records } = journal;
       if (records.length === 0) continue;
       const repaired: Run[] = [];
       for (const record of records) {
@@ -1760,7 +1831,7 @@ export class MachineParkingService {
         repaired.map((run) => this.deps.persistRun(run, 'machine-pause-journal-repair')),
       );
       if (results.every((result) => result.status === 'fulfilled')) {
-        await this.deps.deleteIntentJournal(records[0]!.operationId);
+        await this.deps.deleteIntentJournal(journal.machine, journal.kind, journal.operationId);
       } else {
         for (const record of records) blockedRunIds.add(record.runId);
       }
@@ -2019,12 +2090,10 @@ function capabilityProvidersForResource(
 ): Set<string> {
   return new Set(
     status.catalog
-      .filter(
-        (entry) =>
-          entry.id === resourceId ||
-          Object.values(entry.actions).some(
-            (action) => action.kind === 'resource' && action.resourceId === resourceId,
-          ),
+      .filter((entry) =>
+        Object.values(entry.actions).some(
+          (action) => action.kind === 'resource' && action.resourceId === resourceId,
+        ),
       )
       .map((entry) => entry.id),
   );
@@ -2106,6 +2175,14 @@ function zeroEffectIntent(
     residuals.runner === 'running' &&
     residuals.resources.every((resource) => resource.state === 'running')
   );
+}
+
+function zeroEffectRecord(run: Run, record: MachineParkRecord): boolean {
+  return zeroEffectIntent(run, record, record.residuals);
+}
+
+function expectedRestoreRunnerState(record: MachineParkRecord): 'stopped' | 'stopped-or-live' {
+  return record.phase === 'parked' ? 'stopped' : 'stopped-or-live';
 }
 
 function settledPhase(phase: MachineParkPhase): boolean {

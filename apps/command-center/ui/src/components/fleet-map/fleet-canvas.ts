@@ -68,7 +68,10 @@ import {
   type FleetCanvasViewMode,
 } from './fleet-canvas-url-state.js';
 import type { MachinePauseBusyAction } from './machine-pause-dialog.js';
-import { sortMachinePauseRecords } from './machine-pause-dialog-model.js';
+import {
+  machinePauseShouldRefetch,
+  sortMachinePauseRecords,
+} from './machine-pause-dialog-model.js';
 import { cleanupExecutionTargets, cleanupTargetsRemainEligible } from './machine-pressure-model.js';
 
 export interface ResourceEntry {
@@ -677,8 +680,7 @@ export class FleetCanvas extends LitElement {
 
   private closeMachinePause() {
     this._machinePauseFetchEpoch += 1;
-    if (this._machinePauseEventTimer) clearTimeout(this._machinePauseEventTimer);
-    this._machinePauseEventTimer = undefined;
+    this.clearMachinePauseEventRefresh();
     this.machinePauseMachine = '';
     this.machinePausePreview = undefined;
     this.machinePauseStatus = undefined;
@@ -688,6 +690,11 @@ export class FleetCanvas extends LitElement {
     this.machinePauseConnectionStale = false;
     this._machinePauseSelector = { kind: 'all' };
     this._machinePauseRestoreSelector = { kind: 'all' };
+  }
+
+  private clearMachinePauseEventRefresh() {
+    if (this._machinePauseEventTimer) clearTimeout(this._machinePauseEventTimer);
+    this._machinePauseEventTimer = undefined;
   }
 
   private async setMachinePauseMode(mode: MachinePauseMode) {
@@ -792,6 +799,7 @@ export class FleetCanvas extends LitElement {
       records: sortMachinePauseRecords(next),
       ...(this.machinePauseStatus?.pressure ? { pressure: this.machinePauseStatus.pressure } : {}),
     };
+    if (!machinePauseShouldRefetch('progress', this.machinePauseBusy)) return;
     if (this._machinePauseEventTimer) clearTimeout(this._machinePauseEventTimer);
     this._machinePauseEventTimer = setTimeout(() => {
       this._machinePauseEventTimer = undefined;
@@ -801,6 +809,7 @@ export class FleetCanvas extends LitElement {
 
   private async executeMachinePause(params: MachinePauseExecuteParams) {
     if (params.machine !== this.machinePauseMachine || this.machinePauseBusy) return;
+    this.clearMachinePauseEventRefresh();
     this.machinePauseBusy = 'execute';
     this.machinePauseActionError = '';
     try {
@@ -817,11 +826,15 @@ export class FleetCanvas extends LitElement {
       if (!result.ok) {
         this.machinePauseActionError = `Pause ${result.outcome}; inspect the durable per-run errors and residuals below.`;
       }
-      await this.fetchMachinePauseState(false);
+      if (machinePauseShouldRefetch('completion', this.machinePauseBusy)) {
+        await this.fetchMachinePauseState(false);
+      }
     } catch (err) {
       if (params.machine === this.machinePauseMachine) {
         this.machinePauseActionError = `Pause failed: ${err instanceof Error ? err.message : String(err)}`;
-        await this.fetchMachinePauseState(false);
+        if (machinePauseShouldRefetch('completion', this.machinePauseBusy)) {
+          await this.fetchMachinePauseState(false);
+        }
       }
     } finally {
       if (params.machine === this.machinePauseMachine && this.machinePauseBusy === 'execute') {
@@ -832,6 +845,7 @@ export class FleetCanvas extends LitElement {
 
   private async restoreMachinePause(params: Extract<MachinePauseRestoreParams, { execute: true }>) {
     if (params.machine !== this.machinePauseMachine || this.machinePauseBusy) return;
+    this.clearMachinePauseEventRefresh();
     this.machinePauseBusy = 'restore';
     this.machinePauseActionError = '';
     try {
@@ -848,11 +862,15 @@ export class FleetCanvas extends LitElement {
       if (!result.ok) {
         this.machinePauseActionError = `Restore ${result.outcome}; inspect the durable per-run errors and residuals below.`;
       }
-      await this.fetchMachinePauseState(false);
+      if (machinePauseShouldRefetch('completion', this.machinePauseBusy)) {
+        await this.fetchMachinePauseState(false);
+      }
     } catch (err) {
       if (params.machine === this.machinePauseMachine) {
         this.machinePauseActionError = `Restore failed: ${err instanceof Error ? err.message : String(err)}`;
-        await this.fetchMachinePauseState(false);
+        if (machinePauseShouldRefetch('completion', this.machinePauseBusy)) {
+          await this.fetchMachinePauseState(false);
+        }
       }
     } finally {
       if (params.machine === this.machinePauseMachine && this.machinePauseBusy === 'restore') {

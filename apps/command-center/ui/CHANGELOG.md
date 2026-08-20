@@ -6,7 +6,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 - feat(resources): open machine-scoped pause, release, durable progress, and selective restore controls from each pressure card, with backend-owned eligibility and reconnect refetch.
-- fix(resources): preserve reviewed restore selectors, scope pause and restore confirmations independently, interpret residuals by lifecycle phase, and retain load and sampler diagnostics in machine relief details.
+- fix(resources): preserve reviewed restore selectors, scope pause and restore confirmations independently, interpret residuals by lifecycle phase, retain load and sampler diagnostics, and defer progress-event refetches until machine relief mutations finish.
 
 ## 0.7.0 - 2026-08-20
 

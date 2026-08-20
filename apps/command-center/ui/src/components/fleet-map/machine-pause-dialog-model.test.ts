@@ -7,6 +7,7 @@ import {
   machineParkRecordSummary,
   machineParkResidualAssessment,
   machinePauseMutationDisabled,
+  machinePauseShouldRefetch,
   machinePressurePercent,
   restoreExecuteParams,
   reviewedPauseTargets,
@@ -170,4 +171,12 @@ test('updated pause records sort newest first with deterministic ties', () => {
     ]).map((record) => record.runId),
     ['run-c', 'run-a', 'run-b'],
   );
+});
+
+test('progress merges suppress refetch during mutation while completion refetches once', () => {
+  assert.equal(machinePauseShouldRefetch('progress', 'execute'), false);
+  assert.equal(machinePauseShouldRefetch('progress', 'restore'), false);
+  assert.equal(machinePauseShouldRefetch('progress', null), true);
+  assert.equal(machinePauseShouldRefetch('completion', 'execute'), true);
+  assert.equal(machinePauseShouldRefetch('completion', 'restore'), true);
 });
