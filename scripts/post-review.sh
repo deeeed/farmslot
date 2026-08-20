@@ -37,6 +37,7 @@ RUN_ID=""
 SKIP_SESSION_USAGE=false
 SKIP_ARTIFACT_UPLOAD=false
 SKIP_ARCHIVE=false
+INCLUDE_INTERNAL_METRICS=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -55,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     --skip-session-usage) SKIP_SESSION_USAGE=true; shift ;;
     --skip-artifact-upload) SKIP_ARTIFACT_UPLOAD=true; shift ;;
     --skip-archive)      SKIP_ARCHIVE=true; shift ;;
+    --include-internal-metrics) INCLUDE_INTERNAL_METRICS=true; shift ;;
     --dry-run)           DRY_RUN=true; shift ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
@@ -206,6 +208,11 @@ elif [ -n "${USAGE_OUTPUT:-}" ]; then
 fi
 COST="${COST:-N/A}"
 TOTAL_TOKENS="${TOTAL_TOKENS:-N/A}"
+INTERNAL_METRICS_ROWS=""
+if [ "$INCLUDE_INTERNAL_METRICS" = true ]; then
+  printf -v INTERNAL_METRICS_ROWS '| **Runner** | %s / %s |\n| **Cost** | %s (%s tokens) |' \
+    "$RUNNER" "$MODEL" "$COST" "$TOTAL_TOKENS"
+fi
 
 # ── Parse recipe.json for step count ──────────────────────────────
 RECIPE_SUMMARY=""
@@ -326,9 +333,8 @@ cat > "$COMMENT_FILE" <<HEADER
 |---|---|
 | **Recommendation** | ${RECOMMENDATION} |
 | **Reviewed commit** | \`${REVIEW_COMMIT_ID}\` |
-| **Runner** | ${RUNNER} / ${MODEL} |
+${INTERNAL_METRICS_ROWS}
 | **Tier** | ${TIER} |
-| **Cost** | ${COST} (${TOTAL_TOKENS} tokens) |
 | **Recipe** | ${RECIPE_SUMMARY} |
 
 ### Summary

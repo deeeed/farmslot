@@ -1076,6 +1076,25 @@
         "^[a-z][a-z0-9-]*$": {
           "type": "object",
           "required": ["type", "label", "streamable", "controllable"],
+          "allOf": [
+            {
+              "if": {
+                "properties": { "watch": { "required": ["provider"] } },
+                "required": ["watch"]
+              },
+              "then": {
+                "properties": {
+                  "type": { "const": "device" },
+                  "platform": { "const": "ios" },
+                  "watch": {
+                    "properties": { "type": { "const": "process-poll" } },
+                    "required": ["type", "cmd", "target"]
+                  }
+                },
+                "required": ["platform"]
+              }
+            }
+          ],
           "properties": {
             "type": {
               "type": "string",
@@ -1103,12 +1122,6 @@
             "watch": {
               "type": "object",
               "description": "How the gateway monitors this resource's liveness.",
-              "allOf": [
-                {
-                  "if": { "required": ["provider"] },
-                  "then": { "required": ["cmd", "target"] }
-                }
-              ],
               "properties": {
                 "type": {
                   "type": "string",
@@ -1237,6 +1250,11 @@
         "post_worker_report_comment": {
           "type": "boolean",
           "description": "Whether completed runs may post the worker report and internal run metadata as a PR comment. Disabled by default; projects must opt in explicitly.",
+          "default": false
+        },
+        "include_internal_metrics_in_pr_comments": {
+          "type": "boolean",
+          "description": "Whether formal review comments may include runner/model, cost, and token metadata. Disabled by default; projects must opt in explicitly.",
           "default": false
         },
         "watch_checks": {

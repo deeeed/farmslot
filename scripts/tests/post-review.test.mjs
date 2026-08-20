@@ -30,29 +30,41 @@ test('post-review dry run renders the exact reviewed commit', (t) => {
   );
   const commitId = 'c43949daf0c2a35f4a293f7078b5a00d3afa036b';
 
-  const output = execFileSync(
-    'bash',
-    [
-      path.join(root, 'scripts/post-review.sh'),
-      '--pr',
-      '489',
-      '--repo',
-      'deeeed/farmslot',
-      '--commit-id',
-      commitId,
-      '--slot',
-      'test-review',
-      '--task-dir',
-      'task',
-      '--recommendation',
-      'COMMENT',
-      '--skip-session-usage',
-      '--skip-artifact-upload',
-      '--skip-archive',
-      '--dry-run',
-    ],
-    { cwd: root, env: { ...process.env, FARMSLOT_POOL_DIR: poolDir }, encoding: 'utf8' },
-  );
+  const args = [
+    path.join(root, 'scripts/post-review.sh'),
+    '--pr',
+    '489',
+    '--repo',
+    'deeeed/farmslot',
+    '--commit-id',
+    commitId,
+    '--slot',
+    'test-review',
+    '--task-dir',
+    'task',
+    '--recommendation',
+    'COMMENT',
+    '--skip-session-usage',
+    '--skip-artifact-upload',
+    '--skip-archive',
+    '--dry-run',
+  ];
+  const options = {
+    cwd: root,
+    env: { ...process.env, FARMSLOT_POOL_DIR: poolDir },
+    encoding: 'utf8',
+  };
+  const output = execFileSync('bash', args, options);
 
   assert.match(output, new RegExp(`Reviewed commit.*${commitId}`));
+  assert.doesNotMatch(output, /\| \*\*Runner\*\* \|/);
+  assert.doesNotMatch(output, /\| \*\*Cost\*\* \|/);
+
+  const metricsOutput = execFileSync(
+    'bash',
+    [...args.slice(0, -1), '--include-internal-metrics', '--dry-run'],
+    { cwd: root, env: { ...process.env, FARMSLOT_POOL_DIR: poolDir }, encoding: 'utf8' },
+  );
+  assert.match(metricsOutput, /\| \*\*Runner\*\* \| unknown \/ unknown \|/);
+  assert.match(metricsOutput, /\| \*\*Cost\*\* \| N\/A \(N\/A tokens\) \|/);
 });

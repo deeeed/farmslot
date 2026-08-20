@@ -5,7 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - perf(resources): fan legacy and explicitly typed iOS simulator watches into the node's shared inventory provider instead of multiplying `simctl` processes by slot count.
-- fix(run-completion): make worker-report PR comments project-configurable and opt-in by default, preventing model, token, and cost metadata from being posted unless explicitly enabled.
+- fix(run-completion): make worker-report PR comments and formal-review internal metrics project-configurable and opt-in by default, preventing model, token, and cost metadata from being posted unless explicitly enabled.
 - fix(dispatch): ship complete remote observability bundles, fall back from incomplete immutable bundles, and recognize Claude's Churning progress without duplicate task sends.
 - fix(runners): launch standalone Grok with the shared `grok-4.6` default.
 - fix(publication): preserve hosted evidence links while stripping task-local paths reintroduced by generated PR sections.

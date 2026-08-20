@@ -246,6 +246,8 @@ export interface RawProjectJson {
     pr_title_suffix?: string;
     /** Opt in to posting the worker report and run metadata as a PR comment. Defaults to false. */
     post_worker_report_comment?: boolean;
+    /** Opt in to model, cost, and token fields in formal review comments. Defaults to false. */
+    include_internal_metrics_in_pr_comments?: boolean;
     default_scope?: string;
     watch_checks?: string[];
     check_groups?: Array<{

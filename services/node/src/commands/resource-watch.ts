@@ -640,7 +640,12 @@ function stopSingleWatch(key: string): void {
       sharedIosPollTimer = undefined;
     }
     if (remainingSharedWatches.length > 0) {
-      scheduleSharedIosPoll(sharedIosPollIntervalMs());
+      const hasUninitializedWatch = remainingSharedWatches.some(
+        (watch) => watch.lastStatus === 'unknown',
+      );
+      scheduleSharedIosPoll(
+        hasUninitializedWatch ? SHARED_POLL_INITIAL_DEBOUNCE_MS : sharedIosPollIntervalMs(),
+      );
     }
   }
 }

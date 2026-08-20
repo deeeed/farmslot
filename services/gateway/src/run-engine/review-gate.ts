@@ -31,6 +31,7 @@ import {
   type LowCaption,
   readEvidenceManifest,
   scanArtifacts,
+  type SessionCostSnapshot,
   uploadArtifacts,
 } from '../run-completion/orchestrator.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
@@ -343,11 +344,16 @@ export async function executeReviewGate(runId: string): Promise<void> {
       : DEFAULT_TASK_DIR;
     const overrideRec = resolvedDecision?.selectionData?.recommendation as string | undefined;
 
-    // Populate Runner / Model / Cost / Tokens fields in the comment header.
-    // session-usage.sh needs RUNNER_SESSION_PATH from run.metrics — the script on its own can't resolve it.
-    const costSnapshot = await extractAndPersistSessionCost(runId);
-    const runner = current.metrics.runner?.trim();
-    const model = current.metrics.model?.trim();
+    const includeInternalMetrics =
+      pv?.projectJson.ci?.include_internal_metrics_in_pr_comments === true;
+    // Completion persists internal metrics later. Resolve them here only when
+    // this project explicitly includes them in its formal review comment.
+    const costSnapshot: Pick<SessionCostSnapshot, 'costUsd' | 'totalTokens'> =
+      includeInternalMetrics
+        ? await extractAndPersistSessionCost(runId)
+        : { costUsd: null, totalTokens: null };
+    const runner = includeInternalMetrics ? current.metrics.runner?.trim() : undefined;
+    const model = includeInternalMetrics ? current.metrics.model?.trim() : undefined;
 
     // Inline the visual evidence into the main comment body (was posted as a separate follow-up comment).
     let evidenceTmpFile: string | null = null;
@@ -394,6 +400,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
           postReviewArgs.push('--cost', costSnapshot.costUsd.toFixed(4));
         if (typeof costSnapshot.totalTokens === 'number')
           postReviewArgs.push('--total-tokens', String(costSnapshot.totalTokens));
+        if (includeInternalMetrics) postReviewArgs.push('--include-internal-metrics');
         postReviewArgs.push(
           ...reviewEvidencePostArgs(resolvedDecision?.selectionData, evidenceTmpFile),
         );

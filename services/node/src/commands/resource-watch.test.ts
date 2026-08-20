@@ -235,6 +235,56 @@ test('removing one shared watch does not trigger an extra inventory probe', asyn
   }
 });
 
+test('removing a watch before the first shared probe preserves prompt initial status', async () => {
+  let execCalls = 0;
+  const updates: string[] = [];
+  setResourceWatchExecForTests(async () => {
+    execCalls += 1;
+    return { stdout: simulatorInventory(['sim-a']), stderr: '', exitCode: 0 };
+  });
+  try {
+    startResourceWatch(
+      'slot-a',
+      [
+        {
+          id: 'ios-sim',
+          watch: {
+            type: 'process-poll',
+            cmd: 'legacy-a',
+            provider: 'ios-simulator-inventory',
+            target: 'sim-a',
+            intervalMs: 60_000,
+          },
+        },
+      ],
+      (change) => updates.push(change.status),
+    );
+    startResourceWatch(
+      'slot-b',
+      [
+        {
+          id: 'ios-sim',
+          watch: {
+            type: 'process-poll',
+            cmd: 'legacy-b',
+            provider: 'ios-simulator-inventory',
+            target: 'sim-b',
+            intervalMs: 60_000,
+          },
+        },
+      ],
+      () => {},
+    );
+    stopResourceWatch('slot-b');
+
+    await waitFor(() => updates.includes('running'));
+    assert.equal(execCalls, 1);
+  } finally {
+    stopAllResourceWatches();
+    setResourceWatchExecForTests();
+  }
+});
+
 test('a replaced iOS watch ignores stale inventory and receives a fresh shared result', async () => {
   let execCalls = 0;
   const firstPoll = {

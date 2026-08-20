@@ -71,17 +71,27 @@ test('shared process-poll provider is explicit for new configs and inferred for 
     inferSharedProcessPollProvider(
       iosSimResource,
       "xcrun simctl list devices booted 2>/dev/null | grep -q 'mm-1'",
+      'mm-1',
     ),
     'ios-simulator-inventory',
   );
   assert.equal(
     inferSharedProcessPollProvider(
       iosSimResource,
-      "xcrun simctl list devices booted 2>/dev/null | grep -q 'mm-1' && test -f ready",
+      "xcrun simctl list devices booted 2>/dev/null | grep -q 'different-sim'",
+      'mm-1',
     ),
     undefined,
   );
-  assert.equal(inferSharedProcessPollProvider(metroResource, 'lsof -i :8061'), undefined);
+  assert.equal(
+    inferSharedProcessPollProvider(
+      iosSimResource,
+      "xcrun simctl list devices booted 2>/dev/null | grep -q 'mm-1' && test -f ready",
+      'mm-1',
+    ),
+    undefined,
+  );
+  assert.equal(inferSharedProcessPollProvider(metroResource, 'lsof -i :8061', 'mm-1'), undefined);
   assert.equal(
     inferSharedProcessPollProvider(
       {
@@ -92,6 +102,7 @@ test('shared process-poll provider is explicit for new configs and inferred for 
         },
       },
       'custom legacy fallback',
+      'mm-1',
     ),
     undefined,
   );
@@ -105,6 +116,7 @@ test('shared process-poll provider is explicit for new configs and inferred for 
         },
       },
       'custom legacy fallback',
+      'mm-1',
     ),
     'ios-simulator-inventory',
   );

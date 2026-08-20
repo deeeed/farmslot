@@ -175,6 +175,7 @@ export function inferSharedProcessPollProvider(
     watch?: Pick<NonNullable<ResourceDefinition['watch']>, 'type' | 'provider'>;
   },
   expandedCommand: string,
+  expectedLegacyTarget: string,
 ): ResourceWatchProvider | undefined {
   if (resourceDef.watch?.provider) {
     return resourceDef.watch.type === 'process-poll' &&
@@ -183,13 +184,16 @@ export function inferSharedProcessPollProvider(
       ? resourceDef.watch.provider
       : undefined;
   }
+  const legacyCommandMatch = expandedCommand
+    .trim()
+    .match(
+      /^xcrun\s+simctl\s+list\s+devices\s+booted\s+2>\/dev\/null\s*\|\s*grep\s+-q\s+'([^']+)'$/,
+    );
   if (
     resourceDef.watch?.type === 'process-poll' &&
     resourceDef.type === 'device' &&
     resourceDef.platform === 'ios' &&
-    /^xcrun\s+simctl\s+list\s+devices\s+booted\s+2>\/dev\/null\s*\|\s*grep\s+-q\s+'[^']+'$/.test(
-      expandedCommand.trim(),
-    )
+    legacyCommandMatch?.[1] === expectedLegacyTarget
   ) {
     // Migration bridge: current project configs already use this canonical
     // command. New configs declare provider explicitly; old nodes ignore the
@@ -993,6 +997,7 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
               },
             },
             expandedWatch.cmd ?? '',
+            String(slotVars.resourceVars.simulator ?? ''),
           );
           if (sharedProvider) {
             const targetTemplate =
