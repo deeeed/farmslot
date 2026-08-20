@@ -35,6 +35,14 @@ for (let attempt = 0; attempt < 45; attempt += 1) {
 }
 if (!card) throw new Error(`${machineName} pressure card not found`);
 if (!details) throw new Error(`${machineName} pressure Details button not found`);
+const renderedMachines = [
+  ...(fleetRoot
+    .querySelector('machine-pressure-overview')
+    ?.shadowRoot?.querySelectorAll('.machine') ?? []),
+].map((element) => element.getAttribute('data-machine'));
+if (renderedMachines.length !== 1 || renderedMachines[0] !== machineName) {
+  throw new Error(`global machine filter rendered unexpected cards: ${renderedMachines.join(',')}`);
+}
 if (!history || charts.length !== 3)
   throw new Error('three pressure history charts did not render');
 const classPills = [...card.querySelectorAll('.class-pill')].map((pill) => pill.textContent.trim());

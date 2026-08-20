@@ -1,5 +1,5 @@
 import { css, html, LitElement, unsafeCSS } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 
 import type { ResourcePressureSnapshotResult } from '@farmslot/protocol';
 
@@ -15,6 +15,7 @@ import {
 export class ResourceCleanupPreview extends LitElement {
   @property({ attribute: false }) snapshot?: ResourcePressureSnapshotResult;
   @property({ type: Boolean }) busy = false;
+  @state() private selectedKeys: Set<string> = new Set();
 
   static styles = css`
     :host {
@@ -64,6 +65,15 @@ export class ResourceCleanupPreview extends LitElement {
       border-left: 2px solid ${unsafeCSS(colors.statusOk)};
       background: ${unsafeCSS(colors.statusOk)}0d;
     }
+    .selection-controls {
+      display: flex;
+      gap: ${unsafeCSS(spacing.sm)};
+      margin-top: ${unsafeCSS(spacing.sm)};
+    }
+    .selection-controls button {
+      padding: 2px 7px;
+      font-size: 9px;
+    }
     .targets {
       overflow: auto;
       display: grid;
@@ -81,6 +91,15 @@ export class ResourceCleanupPreview extends LitElement {
     }
     .target strong {
       color: ${unsafeCSS(colors.textPrimary)};
+    }
+    .target-select {
+      display: flex;
+      align-items: flex-start;
+      gap: ${unsafeCSS(spacing.sm)};
+    }
+    input[type='checkbox'] {
+      margin-top: 2px;
+      accent-color: ${unsafeCSS(colors.accent)};
     }
     .meta,
     .impact {
@@ -147,9 +166,26 @@ export class ResourceCleanupPreview extends LitElement {
     }
   `;
 
+  protected willUpdate(changed: Map<PropertyKey, unknown>) {
+    if (changed.has('snapshot')) {
+      this.selectedKeys = new Set(
+        (this.snapshot?.cleanupCandidates ?? []).map((candidate) => this.key(candidate)),
+      );
+    }
+  }
+
   render() {
     const candidates = this.snapshot?.cleanupCandidates ?? [];
-    const machines = new Set(candidates.map((candidate) => candidate.machine)).size;
+    const selected = candidates.filter((candidate) => this.selectedKeys.has(this.key(candidate)));
+    const machines = new Set(selected.map((candidate) => candidate.machine)).size;
+    const selectedCpu = selected.reduce(
+      (total, candidate) => total + (candidate.processImpact?.treeCpuPercent ?? 0),
+      0,
+    );
+    const selectedRss = selected.reduce(
+      (total, candidate) => total + (candidate.processImpact?.hotRssBytes ?? 0),
+      0,
+    );
     return html`<section
       class="dialog"
       role="dialog"
@@ -166,6 +202,16 @@ export class ResourceCleanupPreview extends LitElement {
           Active, held, manual, disabled, working, and current-run slots are excluded. Manual and
           system/unmapped process groups are never cleanup targets.
         </div>
+        ${candidates.length > 0
+          ? html`<div class="selection-controls">
+              <button ?disabled=${this.busy} @click=${() => this.selectAll(candidates)}>
+                Select all
+              </button>
+              <button ?disabled=${this.busy} @click=${() => (this.selectedKeys = new Set())}>
+                Clear
+              </button>
+            </div>`
+          : ''}
       </header>
       ${candidates.length === 0
         ? html`<div class="empty">No idle running or stale resources are eligible.</div>`
@@ -174,11 +220,21 @@ export class ResourceCleanupPreview extends LitElement {
               const impact = candidate.processImpact;
               return html`<article class="target">
                 <div class="meta">
-                  <strong>${candidate.label}</strong>
-                  <div>${candidate.slotId} · ${candidate.machine}</div>
-                  <div>${candidate.project} · ${candidate.resourceId}</div>
-                  <div class="status">${candidate.status} · ${candidate.slotLifecycle}</div>
-                  <div>Effect: configured shutdown hook</div>
+                  <label class="target-select">
+                    <input
+                      type="checkbox"
+                      .checked=${this.selectedKeys.has(this.key(candidate))}
+                      ?disabled=${this.busy}
+                      @change=${() => this.toggle(candidate)}
+                    />
+                    <span>
+                      <strong>${candidate.label}</strong>
+                      <div>${candidate.slotId} · ${candidate.machine}</div>
+                      <div>${candidate.project} · ${candidate.resourceId}</div>
+                      <div class="status">${candidate.status} · ${candidate.slotLifecycle}</div>
+                      <div>Effect: configured shutdown hook</div>
+                    </span>
+                  </label>
                 </div>
                 <div class="impact ${impact ? 'impact-known' : 'impact-unknown'}">
                   ${impact
@@ -204,8 +260,10 @@ export class ResourceCleanupPreview extends LitElement {
           </div>`}
       <footer>
         <span class="summary"
-          >${candidates.length} resource${candidates.length === 1 ? '' : 's'} on ${machines}
-          machine${machines === 1 ? '' : 's'}</span
+          >${selected.length}/${candidates.length} selected on ${machines}
+          machine${machines === 1 ? '' : 's'}${selectedCpu > 0
+            ? ` · ${pressureProcessCpu(selectedCpu)} known tree CPU`
+            : ''}${selectedRss > 0 ? ` · ${pressureBytes(selectedRss)} known hot RSS` : ''}</span
         >
         <div class="actions">
           <button ?disabled=${this.busy} @click=${() => this.emit('cleanup-preview-close')}>
@@ -213,20 +271,36 @@ export class ResourceCleanupPreview extends LitElement {
           </button>
           <button
             class="danger"
-            ?disabled=${this.busy || candidates.length === 0}
-            @click=${() => this.emit('cleanup-preview-confirm')}
+            ?disabled=${this.busy || selected.length === 0}
+            @click=${() => this.emit('cleanup-preview-confirm', { targets: selected })}
           >
             ${this.busy
               ? 'Revalidating…'
-              : `Stop ${candidates.length} reviewed resource${candidates.length === 1 ? '' : 's'}`}
+              : `Stop ${selected.length} selected resource${selected.length === 1 ? '' : 's'}`}
           </button>
         </div>
       </footer>
     </section>`;
   }
 
-  private emit(name: string) {
-    this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true }));
+  private key(candidate: { machine: string; resourceId: string; slotId: string }) {
+    return `${candidate.machine}:${candidate.slotId}:${candidate.resourceId}`;
+  }
+
+  private toggle(candidate: { machine: string; resourceId: string; slotId: string }) {
+    const next = new Set(this.selectedKeys);
+    const key = this.key(candidate);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    this.selectedKeys = next;
+  }
+
+  private selectAll(candidates: Array<{ machine: string; resourceId: string; slotId: string }>) {
+    this.selectedKeys = new Set(candidates.map((candidate) => this.key(candidate)));
+  }
+
+  private emit(name: string, detail?: unknown) {
+    this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
   }
 }
 

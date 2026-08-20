@@ -20,10 +20,32 @@ const assertPreview = async () => {
       if (!text.includes('configured shutdown hook') || !text.includes('Active, held, manual')) {
         throw new Error('cleanup preview omitted effect or exclusion explanation');
       }
+      const targets = root.querySelectorAll('.target').length;
+      const checkboxes = [...root.querySelectorAll('input[type="checkbox"]')];
+      if (checkboxes.length !== targets || checkboxes.some((checkbox) => !checkbox.checked)) {
+        throw new Error('cleanup rows are not selected by default');
+      }
+      const modalButton = (label) =>
+        [...root.querySelectorAll('button')].find((button) => button.textContent.trim() === label);
+      const confirm = [...root.querySelectorAll('button')].find((button) =>
+        button.textContent.includes('selected resource'),
+      );
+      if (targets > 0) {
+        modalButton('Clear')?.click();
+        await sleep(50);
+        if (!confirm?.disabled)
+          throw new Error('empty cleanup selection did not disable execution');
+        modalButton('Select all')?.click();
+        await sleep(50);
+        if (confirm.disabled) throw new Error('Select all did not restore cleanup execution');
+      } else if (!confirm?.disabled) {
+        throw new Error('zero-target cleanup preview did not disable execution');
+      }
       return {
-        targets: root.querySelectorAll('.target').length,
+        targets,
         hasImpact: Boolean(root.querySelector('.impact-known')),
         empty: text.includes('No idle running or stale resources are eligible.'),
+        selectionVerified: true,
       };
     }
     await sleep(100);
@@ -35,7 +57,10 @@ const previewButton = buttonNamed('Preview cleanup');
 if (!previewButton) throw new Error('Preview cleanup button not found');
 previewButton.click();
 const previewResult = await assertPreview();
-fleetRoot.querySelector('resource-cleanup-preview')?.shadowRoot?.querySelector('button')?.click();
+const firstPreviewRoot = fleetRoot.querySelector('resource-cleanup-preview')?.shadowRoot;
+[...(firstPreviewRoot?.querySelectorAll('button') ?? [])]
+  .find((button) => button.textContent.trim() === 'Cancel')
+  ?.click();
 await sleep(100);
 
 const stopButton = buttonNamed('Review & stop idle');

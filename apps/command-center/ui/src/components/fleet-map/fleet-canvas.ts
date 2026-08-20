@@ -11,6 +11,7 @@ import type {
   NodesListResult,
   ResourceCleanupResult,
   ResourceListResult,
+  ResourcePressureCleanupCandidate,
   ResourcePressureSnapshotResult,
   ResourceStatus,
   ResourceStatusUpdatedPayload,
@@ -664,6 +665,21 @@ export class FleetCanvas extends LitElement {
       .map(([key, val]) => ({ key, label: val.label, entries: val.entries }));
   }
 
+  private get pressureVisibleMachines(): string[] | undefined {
+    if (this.filterMachines.length === 0 && this.filterProjects.length === 0) return undefined;
+    return [
+      ...new Set(
+        this.slots
+          .filter(
+            (slot) =>
+              (this.filterMachines.length === 0 || this.filterMachines.includes(slot.machine)) &&
+              (this.filterProjects.length === 0 || this.filterProjects.includes(slot.project)),
+          )
+          .map((slot) => slot.machine),
+      ),
+    ];
+  }
+
   private setGroupBy(mode: FleetCanvasGroupBy) {
     this.groupBy = mode;
     localStorage.setItem('farmslot:fleet-groupBy', mode);
@@ -702,9 +718,23 @@ export class FleetCanvas extends LitElement {
     }
   }
 
-  private async confirmResourceCleanup() {
+  private async confirmResourceCleanup(selected: ResourcePressureCleanupCandidate[]) {
     const reviewed = this.resourceCleanupPreview;
-    if (!reviewed) return;
+    if (!reviewed || selected.length === 0) return;
+    const reviewedKeys = new Set(
+      cleanupExecutionTargets(reviewed.cleanupCandidates).map(
+        (target) => `${target.machine}:${target.slotId}:${target.resourceId}`,
+      ),
+    );
+    const selectedTargets = cleanupExecutionTargets(selected);
+    if (
+      selectedTargets.some(
+        (target) => !reviewedKeys.has(`${target.machine}:${target.slotId}:${target.resourceId}`),
+      )
+    ) {
+      this.showResourceFlash('selected cleanup target is not in the reviewed preview', false);
+      return;
+    }
     this.resourceActionBusy = true;
     try {
       const fresh = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
@@ -722,7 +752,7 @@ export class FleetCanvas extends LitElement {
       }
       const result = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
         dryRun: false,
-        targets: cleanupExecutionTargets(reviewed.cleanupCandidates),
+        targets: selectedTargets,
       });
       this.showResourceFlash(
         `stopped ${result.stopped}/${result.targets.length}${result.failed ? `, failed ${result.failed}` : ''}`,
@@ -993,7 +1023,10 @@ export class FleetCanvas extends LitElement {
           metrics.
         </span>
       </div>
-      <machine-pressure-overview .snapshot=${this.resourcePressure}></machine-pressure-overview>
+      <machine-pressure-overview
+        .snapshot=${this.resourcePressure}
+        .visibleMachines=${this.pressureVisibleMachines}
+      ></machine-pressure-overview>
       ${this.resourceCleanupPreview
         ? html`<resource-cleanup-preview
             .snapshot=${this.resourceCleanupPreview}
@@ -1001,7 +1034,9 @@ export class FleetCanvas extends LitElement {
             @cleanup-preview-close=${() => {
               if (!this.resourceActionBusy) this.resourceCleanupPreview = undefined;
             }}
-            @cleanup-preview-confirm=${() => this.confirmResourceCleanup()}
+            @cleanup-preview-confirm=${(
+              event: CustomEvent<{ targets: ResourcePressureCleanupCandidate[] }>,
+            ) => this.confirmResourceCleanup(event.detail.targets)}
           ></resource-cleanup-preview>`
         : ''}
       ${groups.length === 0

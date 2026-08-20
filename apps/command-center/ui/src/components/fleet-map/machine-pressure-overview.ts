@@ -17,6 +17,7 @@ import {
 @customElement('machine-pressure-overview')
 export class MachinePressureOverview extends LitElement {
   @property({ attribute: false }) snapshot?: ResourcePressureSnapshotResult;
+  @property({ attribute: false }) visibleMachines?: string[];
   @state() private expandedMachines: Set<string> = new Set();
 
   static styles = css`
@@ -356,8 +357,12 @@ export class MachinePressureOverview extends LitElement {
 
   render() {
     if (!this.snapshot) return html`<div class="empty">Loading pressure history…</div>`;
+    const machines = this.visibleMachines
+      ? this.snapshot.machines.filter((machine) => this.visibleMachines!.includes(machine.machine))
+      : this.snapshot.machines;
+    if (machines.length === 0) return html`<div class="empty">No machines match the filters.</div>`;
     return html`<div class="grid">
-      ${this.snapshot.machines.map((machine) => {
+      ${machines.map((machine) => {
         const latest = machine.history.at(-1);
         const expanded = this.expandedMachines.has(machine.machine);
         const cpuValues = machine.history.map((sample) => sample.pressure.cpu);

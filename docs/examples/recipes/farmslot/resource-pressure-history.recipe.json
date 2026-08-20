@@ -25,7 +25,7 @@
     "nodes": {
       "open-resource-pressure": {
         "action": "ui.navigate",
-        "target": "{{params.ui_url}}/#fleet?group=resource&view=card&pressureMachine={{params.machine}}",
+        "target": "{{params.ui_url}}/#fleet?group=resource&view=card&machines={{params.machine}}&pressureMachine={{params.machine}}",
         "next": "dismiss-whats-new",
         "intent": "Open the cache-first fleet Resource view where node pressure history is rendered."
       },
