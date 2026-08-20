@@ -1606,6 +1606,8 @@ export interface MachineParkRecord {
   prePauseCurrentStep: MachineParkCurrentStep | null;
   resourceManifest: MachineParkResourceManifest;
   recoveryHandle: MachinePauseRecoveryHandle | null;
+  /** Restore intent classification persisted before any selected batch member mutates. */
+  restoreDisposition?: 'zero-effect' | 'effectful';
   /** Exact runner-native acknowledgement captured before orchestration resumes. */
   recoveryProof?: {
     sessionId: string;

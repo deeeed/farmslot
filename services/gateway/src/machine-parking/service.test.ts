@@ -327,6 +327,35 @@ function harness(initialRuns: Run[]): Harness {
   return { service: new MachineParkingService(deps), runs, calls, deps };
 }
 
+function mixedRestoreHarness(): Harness {
+  const zero = activeRun('run-zero', 'slot-zero');
+  zero.park = {
+    ...parkedRecord(zero.id, 'slot-zero'),
+    phase: 'partial',
+    errors: [
+      {
+        phase: 'orchestration-pausing',
+        action: 'run.pause',
+        code: 'EFFECT_FAILED',
+        message: 'pause failed before mutation',
+        occurredAt: '2026-08-21T00:00:01.000Z',
+        retryable: true,
+      },
+    ],
+  };
+  const effect = activeRun('run-effect', 'slot-effect');
+  effect.status = 'paused';
+  effect.park = {
+    ...parkedRecord(effect.id, 'slot-effect'),
+    mode: 'release',
+    recoveryHandle: recoveryHandle(effect.id, 'slot-effect'),
+    residuals: { runner: 'stopped', resources: [] },
+  };
+  const ctx = harness([zero, effect]);
+  ctx.deps.runnerRunning = async (run) => (run.id === effect.id ? 'stopped' : 'running');
+  return ctx;
+}
+
 test('preview returns backend-selected and backend-owned eligibility for every machine run', async () => {
   const good = activeRun('run-good', 'slot-good');
   const rejected = makeRun({
@@ -461,6 +490,19 @@ test('foreign active unmapped slot-action capability also fails closed', async (
     health: { kind: 'slot-action', actionId: 'browser-health' },
     release: { kind: 'slot-action', actionId: 'browser-stop' },
   };
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(preview.runs[0]?.eligibility.code, 'CAPABILITY_SLOT_ACTION_UNMAPPED');
+});
+
+test('mixed resource acquire and slot-action release fails closed for selected capability', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const status = capabilityStatusFor('run-a');
+  status.catalog[0]!.actions.release = { kind: 'slot-action', actionId: 'browser-stop' };
   ctx.deps.capabilityStatus = async () => structuredClone(status);
   const preview = await ctx.service.preview({
     machine: 'machine-a',
@@ -787,6 +829,146 @@ test('restore settles zero-effect failure without lifecycle or resource effects 
     selector: { kind: 'all' },
   });
   assert.equal(rePause.runs[0]?.eligibility.eligible, true);
+});
+
+test('mixed restore stale session fails all selected preflight before zero-effect mutation', async () => {
+  const ctx = mixedRestoreHarness();
+  let inspections = 0;
+  ctx.deps.inspectRecoveryHandle = async () => {
+    inspections += 1;
+    if (inspections >= 3) throw new Error('session disappeared at final preflight');
+  };
+  const preview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  const zeroBefore = structuredClone(ctx.runs.get('run-zero')!.park);
+  await assert.rejects(
+    () =>
+      ctx.service.restore({
+        machine: 'machine-a',
+        selector: { kind: 'all' },
+        execute: true,
+        previewId: preview.previewId,
+        reviewedTargets: preview.runs.map(({ runId, generation }) => ({ runId, generation })),
+        operationId: 'mixed-stale',
+      }),
+    /session disappeared/,
+  );
+  assert.deepEqual(ctx.runs.get('run-zero')?.park, zeroBefore);
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('journal-write:mixed-stale')),
+    false,
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('resume:')),
+    false,
+  );
+});
+
+test('mixed restore journal failure returns complete batch with zero mutations and effects', async () => {
+  const ctx = mixedRestoreHarness();
+  const preview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  const before = new Map([...ctx.runs].map(([id, run]) => [id, structuredClone(run.park)]));
+  ctx.deps.writeIntentJournal = async () => {
+    throw new Error('restore journal unavailable');
+  };
+  const result = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: preview.previewId,
+    reviewedTargets: preview.runs.map(({ runId, generation }) => ({ runId, generation })),
+    operationId: 'mixed-journal-failure',
+  });
+  assert.equal(result.records.length, 2);
+  assert.equal(
+    result.records.every((record) => record.phase === 'failed'),
+    true,
+  );
+  assert.deepEqual(ctx.runs.get('run-zero')?.park, before.get('run-zero'));
+  assert.deepEqual(ctx.runs.get('run-effect')?.park, before.get('run-effect'));
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('resume:')),
+    false,
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('start-resource:')),
+    false,
+  );
+});
+
+test('mixed restore success is one journaled idempotent batch', async () => {
+  const ctx = mixedRestoreHarness();
+  const preview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  const params = {
+    machine: 'machine-a',
+    selector: { kind: 'all' } as const,
+    execute: true as const,
+    previewId: preview.previewId,
+    reviewedTargets: preview.runs.map(({ runId, generation }) => ({ runId, generation })),
+    operationId: 'mixed-success',
+  };
+  const first = await ctx.service.restore(params);
+  const second = await ctx.service.restore(params);
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(first.records.length, 2);
+  assert.equal(
+    first.records.every((record) => record.phase === 'restored'),
+    true,
+  );
+  assert.equal(ctx.calls.filter((call) => call === 'journal-write:mixed-success').length, 1);
+  assert.equal(ctx.calls.filter((call) => call === 'resume:run-effect').length, 1);
+  assert.equal(ctx.calls.includes('resume:run-zero'), false);
+});
+
+test('mixed restore partial intent crash journal repairs complete batch deterministically', async () => {
+  const ctx = mixedRestoreHarness();
+  const preview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  const persist = ctx.deps.persistRun;
+  ctx.deps.persistRun = async (run, reason) => {
+    if (run.id === 'run-effect' && reason === 'machine-restore-intent') {
+      throw new Error('simulated crash during run intent write');
+    }
+    await persist(run, reason);
+  };
+  const params = {
+    machine: 'machine-a',
+    selector: { kind: 'all' } as const,
+    execute: true as const,
+    previewId: preview.previewId,
+    reviewedTargets: preview.runs.map(({ runId, generation }) => ({ runId, generation })),
+    operationId: 'mixed-crash',
+  };
+  const failed = await ctx.service.restore(params);
+  assert.equal(failed.records.length, 2);
+  assert.equal(
+    failed.records.every((record) => record.phase === 'failed'),
+    true,
+  );
+  const retry = await ctx.service.restore(params);
+  assert.equal(
+    retry.records.every((record) => record.phase === 'failed'),
+    true,
+  );
+  await ctx.service.reconcile();
+  assert.equal(ctx.runs.get('run-zero')?.park, null);
+  assert.equal(ctx.runs.get('run-effect')?.park?.phase, 'parked');
+  const repairedPreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  assert.equal(repairedPreview.runs[0]?.eligibility.eligible, true);
 });
 
 test('atomic intent journal failure returns typed records without attaching partial intent', async () => {
@@ -1449,6 +1631,43 @@ test('stale restore session fails final preflight before capability acquire or r
     ctx.calls.some((call) => call.startsWith('start-resource:')),
     false,
   );
+});
+
+test('parked release session appearing after final preflight becomes partial without resume', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const pausePreview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: pausePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'release-before-late-session',
+  });
+  let inspections = 0;
+  ctx.deps.inspectRecoveryHandle = async (_run, _handle, expected) => {
+    inspections += 1;
+    assert.equal(expected, 'stopped');
+    if (inspections >= 4) throw new Error('runner became live after final preflight');
+  };
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  const result = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'late-session',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(ctx.runs.get('run-a')?.park?.phase, 'partial');
+  assert.equal(ctx.calls.includes('resume:run-a'), false);
 });
 
 test('structured continuation rejection prevents generation resume', async () => {

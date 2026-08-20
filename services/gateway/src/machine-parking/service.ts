@@ -498,26 +498,15 @@ export class MachineParkingService {
       }
       assertExecutableRestore(fresh.runs, params.reviewedTargets);
       const selected = fresh.runs.filter((item) => item.selected);
-      const zeroEffect = selected.filter(
-        (item) => item.eligibility.code === 'ELIGIBLE_ZERO_EFFECT_REPAIR',
-      );
-      for (const item of zeroEffect) {
-        await this.settleZeroEffectRestore(item, operationId, params.previewId);
-      }
-      const effectful = selected.filter(
-        (item) => item.eligibility.code !== 'ELIGIBLE_ZERO_EFFECT_REPAIR',
-      );
-      const intent =
-        effectful.length > 0
-          ? await this.persistRestoreIntents(effectful, operationId, params.previewId)
-          : {
-              records: zeroEffect.map((item) => structuredClone(this.requireRun(item.runId).park!)),
-              durable: true,
-            };
+      const intent = await this.persistRestoreIntents(selected, operationId, params.previewId);
       if (intent.durable) {
-        for (const item of effectful) {
+        for (const item of selected) {
           try {
-            await this.restoreOne(item.runId);
+            if (item.eligibility.code === 'ELIGIBLE_ZERO_EFFECT_REPAIR') {
+              await this.settleZeroEffectRestore(item, operationId, params.previewId);
+            } else {
+              await this.restoreOne(item.runId, expectedRestoreRunnerState(item.record));
+            }
           } catch (error) {
             await this.settleUnexpectedFailure(
               item.runId,
@@ -531,10 +520,7 @@ export class MachineParkingService {
       this.pressureCache.delete(machine);
       const records = intent.durable
         ? this.recordsForOperation(operationId, machine)
-        : [
-            ...zeroEffect.map((item) => structuredClone(this.requireRun(item.runId).park!)),
-            ...intent.records,
-          ];
+        : intent.records;
       const outcome = operationOutcome(records, 'restored');
       return {
         ok: outcome === 'complete',
@@ -850,9 +836,21 @@ export class MachineParkingService {
       const hasSlotAction = provider
         ? Object.values(provider.actions).some((action) => action.kind === 'slot-action')
         : false;
+      const selectedLifecycleSlotAction =
+        lease.owner.runId === run.id &&
+        (provider?.actions.acquire.kind === 'slot-action' ||
+          provider?.actions.release.kind === 'slot-action');
       const mapped = affected.some((resource) =>
         capabilityProvidersForResource(capabilityStatus, resource.id).has(lease.capabilityId),
       );
+      if (selectedLifecycleSlotAction) {
+        return reject(
+          'CAPABILITY_SLOT_ACTION_UNMAPPED',
+          `selected capability '${lease.capabilityId}' uses slot-action acquire/release without explicit affected-resource metadata`,
+          emptyManifest(),
+          handle.runnerId,
+        );
+      }
       if (hasSlotAction && !mapped) {
         return reject(
           'CAPABILITY_SLOT_ACTION_UNMAPPED',
@@ -1316,6 +1314,7 @@ export class MachineParkingService {
     const fleet = await this.deps.loadFleet();
     await Promise.all(
       items.map(async (item) => {
+        if (item.eligibility.code === 'ELIGIBLE_ZERO_EFFECT_REPAIR') return;
         if (item.record.mode !== 'release') return;
         const run = this.requireRun(item.runId);
         if (!item.record.recoveryHandle)
@@ -1330,8 +1329,11 @@ export class MachineParkingService {
     for (const item of items) {
       const current = this.requireRun(item.runId);
       const slot = fleet.slots.find((candidate) => candidate.slot === item.record.slotId);
+      const zeroEffect = item.eligibility.code === 'ELIGIBLE_ZERO_EFFECT_REPAIR';
       if (
-        current.status !== 'paused' ||
+        (zeroEffect
+          ? !current.park || !zeroEffectRecord(current, current.park)
+          : current.status !== 'paused') ||
         (current.engineState?.generation ?? 0) !== item.generation ||
         current.slotId !== item.record.slotId ||
         !current.park ||
@@ -1351,7 +1353,14 @@ export class MachineParkingService {
           ...structuredClone(run.park!),
           operationId,
           previewId,
-          phase: run.park!.mode === 'release' ? 'resources-restoring' : 'orchestration-resuming',
+          restoreDisposition:
+            item.eligibility.code === 'ELIGIBLE_ZERO_EFFECT_REPAIR' ? 'zero-effect' : 'effectful',
+          phase:
+            item.eligibility.code === 'ELIGIBLE_ZERO_EFFECT_REPAIR'
+              ? run.park!.phase
+              : run.park!.mode === 'release'
+                ? 'resources-restoring'
+                : 'orchestration-resuming',
           updatedAt: this.deps.now(),
         } satisfies MachineParkRecord,
       };
@@ -1396,13 +1405,16 @@ export class MachineParkingService {
     }));
   }
 
-  private async restoreOne(runId: string): Promise<void> {
+  private async restoreOne(
+    runId: string,
+    expectedRunnerState: 'stopped' | 'stopped-or-live',
+  ): Promise<void> {
     const initial = this.requireRun(runId);
     const record = initial.park!;
     let failed = false;
     let resumeAcknowledgement: RunResumeAcknowledgement | null = null;
     if (record.mode === 'release') {
-      await this.deps.inspectRecoveryHandle(initial, record.recoveryHandle!, 'stopped-or-live');
+      await this.deps.inspectRecoveryHandle(initial, record.recoveryHandle!, expectedRunnerState);
       for (const lease of record.resourceManifest.capabilityLeases) {
         let shouldAcquire = lease.state === 'released';
         if (lease.state === 'held' || lease.state === 'reacquired') continue;

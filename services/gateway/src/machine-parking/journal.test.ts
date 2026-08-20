@@ -9,7 +9,29 @@ import type { MachineParkRecord } from '@farmslot/protocol';
 import { MachineParkingIntentJournalStore } from './journal.js';
 
 function record(machine: string, operationId: string): MachineParkRecord {
-  return { machine, operationId } as MachineParkRecord;
+  return {
+    version: 1,
+    machine,
+    operationId,
+    previewId: 'preview',
+    runId: 'run-a',
+    generation: 1,
+    slotId: 'slot-a',
+    mode: 'orchestration',
+    phase: 'intent-persisted',
+    prePauseStatus: 'monitoring',
+    prePauseCurrentStep: { index: 0, name: 'monitor', status: 'running' },
+    resourceManifest: {
+      capturedAt: '2026-08-21T00:00:00.000Z',
+      resources: [],
+      capabilityLeases: [],
+    },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'running', resources: [] },
+    createdAt: '2026-08-21T00:00:00.000Z',
+    updatedAt: '2026-08-21T00:00:00.000Z',
+  };
 }
 
 test('journal identity includes machine and operation kind but not gateway port', async (t) => {
@@ -46,10 +68,37 @@ test('malformed journal is quarantined without aborting valid recovery', async (
   );
   await mkdir(path.dirname(malformed), { recursive: true });
   await writeFile(malformed, '{not json', 'utf8');
+  const wrongName = path.join(path.dirname(malformed), 'wrong-name.json');
+  await writeFile(
+    wrongName,
+    JSON.stringify({
+      version: 1,
+      kind: 'pause',
+      machine: 'machine-a',
+      operationId: 'wrong-name-op',
+      records: [record('machine-a', 'wrong-name-op')],
+    }),
+    'utf8',
+  );
+  const invalidRecord = store.pathFor('machine-a', 'pause', 'invalid-record');
+  await writeFile(
+    invalidRecord,
+    JSON.stringify({
+      version: 1,
+      kind: 'pause',
+      machine: 'machine-a',
+      operationId: 'invalid-record',
+      records: [{ machine: 'machine-a', operationId: 'invalid-record' }],
+    }),
+    'utf8',
+  );
 
   const loaded = await store.load();
   assert.equal(loaded.journals.length, 1);
   assert.equal(loaded.journals[0]?.operationId, 'valid-op');
-  assert.equal(loaded.quarantined.length, 1);
-  assert.equal(loaded.quarantined[0]?.file, malformed);
+  assert.equal(loaded.quarantined.length, 3);
+  assert.deepEqual(
+    new Set(loaded.quarantined.map((item) => item.file)),
+    new Set([malformed, wrongName, invalidRecord]),
+  );
 });

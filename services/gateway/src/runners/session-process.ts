@@ -423,6 +423,7 @@ async function tryHookSessionBinding(
       nativeBinding = await getRunnerObservability(runner)?.getSessionBinding?.(
         vars,
         options.paneId,
+        paneStartedAt ?? undefined,
       );
     } catch (error) {
       // Native attribution is optional evidence. A transient probe failure must

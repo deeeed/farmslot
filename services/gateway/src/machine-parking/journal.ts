@@ -84,6 +84,12 @@ export class MachineParkingIntentJournalStore {
       try {
         const parsed = JSON.parse(await readFile(source, 'utf8')) as MachineParkingIntentJournal;
         validateJournal(parsed);
+        if (
+          path.basename(source) !==
+          path.basename(this.pathFor(parsed.machine, parsed.kind, parsed.operationId))
+        ) {
+          throw new Error('machine parking intent journal filename does not match identity');
+        }
         journals.push(parsed);
       } catch (error) {
         const quarantineFile = `${source}.invalid-${randomUUID()}`;
@@ -106,11 +112,54 @@ function validateJournal(value: MachineParkingIntentJournal): void {
     !Array.isArray(value.records) ||
     value.records.length === 0 ||
     value.records.some(
-      (record) => record.machine !== value.machine || record.operationId !== value.operationId,
+      (record) =>
+        record.machine !== value.machine ||
+        record.operationId !== value.operationId ||
+        !validRecord(record),
     )
   ) {
     throw new Error('invalid machine parking intent journal');
   }
+}
+
+function validRecord(record: MachineParkRecord): boolean {
+  const handle = record.recoveryHandle;
+  return (
+    record?.version === 1 &&
+    typeof record.runId === 'string' &&
+    Boolean(record.runId) &&
+    Number.isInteger(record.generation) &&
+    typeof record.slotId === 'string' &&
+    Boolean(record.slotId) &&
+    (record.mode === 'orchestration' || record.mode === 'release') &&
+    typeof record.phase === 'string' &&
+    typeof record.prePauseStatus === 'string' &&
+    Array.isArray(record.errors) &&
+    Array.isArray(record.resourceManifest?.resources) &&
+    Array.isArray(record.resourceManifest?.capabilityLeases) &&
+    typeof record.resourceManifest?.capturedAt === 'string' &&
+    (handle === null ||
+      (handle?.version === 1 &&
+        typeof handle.runnerId === 'string' &&
+        Boolean(handle.runnerId) &&
+        typeof handle.contextId === 'string' &&
+        Boolean(handle.contextId) &&
+        typeof handle.sessionId === 'string' &&
+        Boolean(handle.sessionId) &&
+        typeof handle.sessionPath === 'string' &&
+        Boolean(handle.sessionPath) &&
+        typeof handle.target?.session === 'string' &&
+        typeof handle.target?.target === 'string' &&
+        typeof handle.target?.paneId === 'string' &&
+        Boolean(handle.target.paneId))) &&
+    (record.restoreDisposition === undefined ||
+      record.restoreDisposition === 'zero-effect' ||
+      record.restoreDisposition === 'effectful') &&
+    (record.residuals?.runner === 'running' ||
+      record.residuals?.runner === 'stopped' ||
+      record.residuals?.runner === 'unknown') &&
+    Array.isArray(record.residuals?.resources)
+  );
 }
 
 function messageOf(error: unknown): string {
