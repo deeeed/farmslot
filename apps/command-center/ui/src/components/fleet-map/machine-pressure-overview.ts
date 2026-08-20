@@ -1,4 +1,4 @@
-import { css, html, LitElement, unsafeCSS } from 'lit';
+import { css, html, LitElement, svg, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type { ResourcePressureSnapshotResult } from '@farmslot/protocol';
@@ -32,7 +32,8 @@ export class MachinePressureOverview extends LitElement {
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: start;
       gap: ${unsafeCSS(spacing.md)};
     }
     .machine {
@@ -247,8 +248,78 @@ export class MachinePressureOverview extends LitElement {
       color: ${unsafeCSS(colors.textMuted)};
       line-height: 1.5;
     }
-    @media (max-width: 700px) {
-      .grid,
+    .history-panel {
+      margin-top: ${unsafeCSS(spacing.md)};
+      padding: ${unsafeCSS(spacing.md)};
+      border: 1px solid ${unsafeCSS(colors.bgCard)};
+      border-radius: 6px;
+      background: ${unsafeCSS(colors.bgInput)}66;
+    }
+    .history-heading,
+    .history-labels {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .history-heading {
+      color: ${unsafeCSS(colors.textPrimary)};
+      margin-bottom: ${unsafeCSS(spacing.sm)};
+    }
+    .history-series + .history-series {
+      margin-top: ${unsafeCSS(spacing.sm)};
+    }
+    .history-labels {
+      color: ${unsafeCSS(colors.textMuted)};
+      font-size: 9px;
+    }
+    .history-labels strong {
+      color: ${unsafeCSS(colors.textPrimary)};
+      font-size: 10px;
+    }
+    .history-chart {
+      display: block;
+      width: 100%;
+      height: 56px;
+      margin-top: 2px;
+      border-radius: 4px;
+      background: ${unsafeCSS(colors.bgSurface)};
+    }
+    .history-chart polyline {
+      fill: none;
+      stroke: ${unsafeCSS(colors.accent)};
+      stroke-width: 4;
+      vector-effect: non-scaling-stroke;
+    }
+    .history-chart polygon {
+      fill: ${unsafeCSS(colors.accent)}66;
+    }
+    .history-series.memory .history-chart polyline {
+      stroke: ${unsafeCSS(colors.lifecycleManual)};
+    }
+    .history-series.memory .history-chart polygon {
+      fill: ${unsafeCSS(colors.lifecycleManual)}66;
+    }
+    .history-series.load .history-chart polyline {
+      stroke: ${unsafeCSS(colors.statusWarn)};
+    }
+    .history-series.load .history-chart polygon {
+      fill: ${unsafeCSS(colors.statusWarn)}66;
+    }
+    .history-chart .capacity-line {
+      stroke: ${unsafeCSS(colors.statusWarn)}aa;
+      stroke-width: 1;
+      stroke-dasharray: 3 3;
+      vector-effect: non-scaling-stroke;
+    }
+    @media (max-width: 1800px) {
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 900px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
       .metrics {
         grid-template-columns: 1fr;
       }
@@ -325,6 +396,7 @@ export class MachinePressureOverview extends LitElement {
               tone: 'load',
             })}
           </div>
+          ${expanded ? this.renderHistory(machine) : ''}
           <div class="classes">
             <span class="class-pill active">active ${classes.active}</span>
             <span class="class-pill retained">retained ${classes.retained}</span>
@@ -380,11 +452,11 @@ export class MachinePressureOverview extends LitElement {
       <span class="metric-value">${options.value}</span>
       <span class="metric-detail" title=${options.detail}>${options.detail}</span>
       <svg class="sparkline" viewBox="0 0 100 24" preserveAspectRatio="none">
-        ${areaPoints ? html`<polygon points=${areaPoints}></polygon>` : ''}
+        ${areaPoints ? svg`<polygon points=${areaPoints}></polygon>` : ''}
         ${options.capacityLine
-          ? html`<line class="capacity-line" x1="0" y1="12.5" x2="100" y2="12.5"></line>`
+          ? svg`<line class="capacity-line" x1="0" y1="12.5" x2="100" y2="12.5"></line>`
           : ''}
-        ${points ? html`<polyline points=${points}></polyline>` : ''}
+        ${points ? svg`<polyline points=${points}></polyline>` : ''}
       </svg>
     </div>`;
   }
@@ -414,6 +486,85 @@ export class MachinePressureOverview extends LitElement {
           </div>`
         : ''}
       ${machine.concerns.map((concern) => html`<div>• ${concern.reason}</div>`)}
+    </div>`;
+  }
+
+  private renderHistory(machine: ResourcePressureSnapshotResult['machines'][number]) {
+    const history = machine.history;
+    const firstAt = history[0]?.collectedAt;
+    const lastAt = history.at(-1)?.collectedAt;
+    const minutes =
+      firstAt && lastAt
+        ? Math.max(0, Math.round((Date.parse(lastAt) - Date.parse(firstAt)) / 60_000))
+        : 0;
+    const cpu = history.map((sample) => sample.pressure.cpu);
+    const memory = history.map((sample) => sample.pressure.memory);
+    const load = history
+      .map((sample) => sample.pressure.load1)
+      .filter((value): value is number => value != null);
+    const loadMax = Math.max(2, Math.ceil(Math.max(0, ...load)));
+    return html`<div class="history-panel">
+      <div class="history-heading">
+        <strong>Pressure history</strong>
+        <span class="sample-note">${history.length} samples · ${minutes} min</span>
+      </div>
+      ${this.renderHistorySeries(
+        'CPU utilization',
+        cpu,
+        1,
+        'cpu',
+        (value) => `${Math.round(value * 100)}%`,
+      )}
+      ${this.renderHistorySeries(
+        'Memory',
+        memory,
+        1,
+        'memory',
+        (value) => `${Math.round(value * 100)}%`,
+      )}
+      ${this.renderHistorySeries(
+        'Load / core',
+        load,
+        loadMax,
+        'load',
+        (value) => `${value.toFixed(2)}×`,
+        1,
+      )}
+    </div>`;
+  }
+
+  private renderHistorySeries(
+    label: string,
+    values: number[],
+    maxValue: number,
+    tone: 'cpu' | 'memory' | 'load',
+    format: (value: number) => string,
+    capacity?: number,
+  ) {
+    const points = pressureSparklinePoints(values, maxValue);
+    const areaPoints = points ? `0,24 ${points} 100,24` : '';
+    const current = values.at(-1);
+    const min = values.length > 0 ? Math.min(...values) : undefined;
+    const max = values.length > 0 ? Math.max(...values) : undefined;
+    const capacityY = capacity == null ? null : 23 - Math.min(1, capacity / maxValue) * 21;
+    return html`<div class="history-series ${tone}">
+      <div class="history-labels">
+        <strong>${label} ${current == null ? '–' : format(current)}</strong>
+        <span>${min == null ? '–' : format(min)} min · ${max == null ? '–' : format(max)} max</span>
+      </div>
+      <svg class="history-chart" viewBox="0 0 100 24" preserveAspectRatio="none">
+        ${areaPoints ? svg`<polygon points=${areaPoints}></polygon>` : ''}
+        ${capacityY == null
+          ? ''
+          : svg`<line
+              class="capacity-line"
+              x1="0"
+              y1=${capacityY}
+              x2="100"
+              y2=${capacityY}
+            ></line>`}
+        ${points ? svg`<polyline points=${points}></polyline>` : ''}
+      </svg>
     </div>`;
   }
 
