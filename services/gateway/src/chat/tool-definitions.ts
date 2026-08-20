@@ -389,7 +389,8 @@ export const FLEET_TOOLS: Tool[] = [
       ),
       machines: Type.Optional(
         Type.Array(Type.String(), {
-          description: 'Optional list of machine filters; combined with machine as a union.',
+          description:
+            'Optional non-empty machine filters; combined with machine as a union. Empty arrays are ignored by Co-Pilot.',
           maxItems: 32,
         }),
       ),
@@ -400,7 +401,8 @@ export const FLEET_TOOLS: Tool[] = [
       ),
       projects: Type.Optional(
         Type.Array(Type.String(), {
-          description: 'Optional list of project filters; combined with project as a union.',
+          description:
+            'Optional non-empty project filters; combined with project as a union. Empty arrays are ignored by Co-Pilot.',
           maxItems: 32,
         }),
       ),

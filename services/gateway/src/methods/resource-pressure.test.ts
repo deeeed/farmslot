@@ -150,6 +150,22 @@ mock.module('../fleet/state.js', {
             collectedAt,
           },
         },
+        ...Array.from({ length: 33 }, (_, index) => ({
+          machine: index === 32 ? 'zz-critical' : `extra-${String(index).padStart(2, '0')}`,
+          online: true,
+          headroom: index === 32 ? 'red' : 'green',
+          capacity: { maxSlots: 0, activeSlots: 0, cpuCores: 10 },
+          system: {
+            cpuPercent: index === 32 ? 95 : 10,
+            memoryPercent: 20,
+            memoryUsedGb: 4,
+            memoryTotalGb: 32,
+            diskPercent: 30,
+            loadAvg1: 1,
+            loadAvg5: 1,
+            collectedAt,
+          },
+        })),
       ],
     }),
   },
@@ -260,6 +276,9 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   const emptyFiltered = await resourcePressureSnapshot({ machines: [] });
   assert.equal(emptyFiltered.machines.length, 0);
   assert.equal(tmuxCalls, tmuxCallsBeforeEmptyFilter);
+  const blankFiltered = await resourcePressureSnapshot({ machine: '   ' });
+  assert.equal(blankFiltered.machines.length, 0);
+  assert.equal(tmuxCalls, tmuxCallsBeforeEmptyFilter);
 
   const result = await resourcePressureSnapshot({
     machines: ['macpro'],
@@ -302,6 +321,11 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
     unionFiltered.machines.map((machine) => machine.machine),
     ['macpro'],
   );
+  const capped = await resourcePressureSnapshot();
+  assert.equal(capped.machines.length, 32);
+  assert.equal(capped.summary.omittedMachines, 2);
+  assert.ok(capped.machines.some((machine) => machine.machine === 'zz-critical'));
+  assert.equal(capped.summary.severity, 'critical');
   const resolutionCallsAfterFirstSnapshot = resourceResolutionCalls;
 
   tmuxFailure = true;

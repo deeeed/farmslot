@@ -73,7 +73,7 @@
         "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-cleanup-safety.mjs --machine '{{params.machine}}'",
         "timeout_ms": 20000,
         "next": "open-and-assert-machine-details",
-        "intent": "Prove the live gateway rejects empty, missing, and busy exact targets without invoking a resource shutdown."
+        "intent": "Prove the live gateway rejects empty and missing exact targets plus a real busy slot before resource resolution, without risking a resource shutdown."
       },
       "capture-pressure-history": {
         "action": "ui.screenshot",

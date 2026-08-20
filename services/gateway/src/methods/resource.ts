@@ -301,26 +301,11 @@ export async function resourcePressureSnapshot(
     import('./tmux-workers.js'),
     import('../runs/store.js'),
   ]);
-  let tmuxWorkers: Awaited<ReturnType<typeof tmuxWorkerList>>['workers'] = [];
-  let tmuxAttributionError: string | undefined;
   const machineFilter = combinedFilter(params.machine, params.machines);
   const projectFilter = combinedFilter(params.project, params.projects);
-  try {
-    tmuxWorkers = (
-      await tmuxWorkerList({
-        includeDisconnected: true,
-        ...(machineFilter.size ? { machines: [...machineFilter] } : {}),
-      })
-    ).workers;
-  } catch (error) {
-    tmuxAttributionError = error instanceof Error ? error.message : String(error);
-    console.warn(`[resource] pressure tmux attribution degraded: ${tmuxAttributionError}`);
-  }
   const allRuns = getAllRuns();
   const healthByMachine = new Map((fleet.machines ?? []).map((health) => [health.machine, health]));
   const slots = fleet.slots.filter((slot) => matchesPressureFilters(slot, params));
-  const resourcesBySlot = await resolvePressureResourcesForSlots(slots);
-  const cleanupCandidates = pressureCleanupCandidates(slots, resourcesBySlot);
   const machineNames = new Set<string>();
   for (const slot of slots) machineNames.add(slot.machine);
   for (const health of fleet.machines ?? []) {
@@ -331,12 +316,58 @@ export async function resourcePressureSnapshot(
 
   const sortedMachineNames = [...machineNames].sort();
   const omittedMachines = Math.max(0, sortedMachineNames.length - MAX_PRESSURE_MACHINES);
+  const severityOrder: Record<ResourcePressureSeverity, number> = { critical: 2, warn: 1, ok: 0 };
+  const preliminary = sortedMachineNames.map((machine) => {
+    const machineSlots = slots.filter((slot) => slot.machine === machine);
+    const concerns = buildPressureConcerns(
+      healthByMachine.get(machine),
+      machineSlots,
+      emptyStatusCounts(),
+      0,
+      watchState.enabled,
+    );
+    const history = getMachinePressureHistory(machine);
+    const latest = history.at(-1)?.pressure;
+    return {
+      machine,
+      severity: pressureSeverity(concerns),
+      pressure: Math.max(latest?.cpu ?? 0, latest?.memory ?? 0, latest?.load1 ?? 0),
+      history,
+    };
+  });
+  const returnedMachineNames = preliminary
+    .sort(
+      (a, b) =>
+        severityOrder[b.severity] - severityOrder[a.severity] ||
+        b.pressure - a.pressure ||
+        a.machine.localeCompare(b.machine),
+    )
+    .slice(0, MAX_PRESSURE_MACHINES)
+    .map((entry) => entry.machine)
+    .sort();
+  const returnedMachineSet = new Set(returnedMachineNames);
+  const historyByMachine = new Map(preliminary.map((entry) => [entry.machine, entry.history]));
+  const returnedSlots = slots.filter((slot) => returnedMachineSet.has(slot.machine));
+  const resourcesBySlot = await resolvePressureResourcesForSlots(returnedSlots);
+  const cleanupCandidates = pressureCleanupCandidates(returnedSlots, resourcesBySlot);
+  let tmuxWorkers: Awaited<ReturnType<typeof tmuxWorkerList>>['workers'] = [];
+  let tmuxAttributionError: string | undefined;
+  if (returnedMachineNames.length > 0) {
+    try {
+      tmuxWorkers = (
+        await tmuxWorkerList({ includeDisconnected: true, machines: returnedMachineNames })
+      ).workers;
+    } catch (error) {
+      tmuxAttributionError = error instanceof Error ? error.message : String(error);
+      console.warn(`[resource] pressure tmux attribution degraded: ${tmuxAttributionError}`);
+    }
+  }
   const machines: ResourcePressureMachine[] = [];
   const allAttributionGroups = new Map<
     string,
     ResourcePressureMachine['processAttribution']['groups']
   >();
-  for (const machine of sortedMachineNames) {
+  for (const machine of returnedMachineNames) {
     const health = healthByMachine.get(machine);
     const machineSlots = slots.filter((slot) => slot.machine === machine);
     const byStatus = emptyStatusCounts();
@@ -417,7 +448,7 @@ export async function resourcePressureSnapshot(
       concerns,
       ...(health?.system ? { system: health.system } : {}),
       ...(health?.capacity ? { capacity: health.capacity } : {}),
-      history: getMachinePressureHistory(machine),
+      history: historyByMachine.get(machine) ?? [],
       processAttribution: {
         ...(tmuxAttributionError
           ? { degradedReason: `Tmux attribution unavailable: ${tmuxAttributionError}` }
@@ -467,30 +498,7 @@ export async function resourcePressureSnapshot(
     });
   }
 
-  const severityOrder: Record<ResourcePressureSeverity, number> = { critical: 2, warn: 1, ok: 0 };
-  const pressureScore = (machine: ResourcePressureMachine) => {
-    const latest = machine.history.at(-1)?.pressure;
-    return Math.max(latest?.cpu ?? 0, latest?.memory ?? 0, latest?.load1 ?? 0);
-  };
-  const returnedMachineSet = new Set(
-    [...machines]
-      .sort(
-        (a, b) =>
-          severityOrder[b.severity] - severityOrder[a.severity] ||
-          pressureScore(b) - pressureScore(a) ||
-          a.machine.localeCompare(b.machine),
-      )
-      .slice(0, MAX_PRESSURE_MACHINES)
-      .map((machine) => machine.machine),
-  );
-  const returnedMachines = machines.filter((machine) => returnedMachineSet.has(machine.machine));
-  const returnedCleanupCandidates = cleanupCandidates.filter((target) =>
-    returnedMachineSet.has(target.machine),
-  );
-  const boundedCleanupCandidates = returnedCleanupCandidates.slice(
-    0,
-    MAX_PRESSURE_CLEANUP_CANDIDATES,
-  );
+  const boundedCleanupCandidates = cleanupCandidates.slice(0, MAX_PRESSURE_CLEANUP_CANDIDATES);
   const omittedCleanupCandidates = Math.max(
     0,
     cleanupCandidates.length - boundedCleanupCandidates.length,
@@ -502,17 +510,17 @@ export async function resourcePressureSnapshot(
     cleanupScope: 'non-active-slots-only',
     filters: params,
     summary: {
-      machines: returnedMachines.length,
+      machines: machines.length,
       omittedMachines,
-      severity: aggregateSeverity(returnedMachines),
+      severity: aggregateSeverity(machines),
       cleanupCandidates: boundedCleanupCandidates.length,
       omittedCleanupCandidates,
-      runningResources: returnedMachines.reduce((sum, m) => sum + m.resources.byStatus.running, 0),
-      staleResources: returnedMachines.reduce((sum, m) => sum + m.resources.byStatus.stale, 0),
-      busySlots: returnedMachines.reduce((sum, m) => sum + m.slots.busy, 0),
-      workingSlots: returnedMachines.reduce((sum, m) => sum + m.slots.working, 0),
+      runningResources: machines.reduce((sum, m) => sum + m.resources.byStatus.running, 0),
+      staleResources: machines.reduce((sum, m) => sum + m.resources.byStatus.stale, 0),
+      busySlots: machines.reduce((sum, m) => sum + m.slots.busy, 0),
+      workingSlots: machines.reduce((sum, m) => sum + m.slots.working, 0),
     },
-    machines: returnedMachines,
+    machines,
     cleanupCandidates: boundedCleanupCandidates.map((target) => {
       const exactGroup = allAttributionGroups
         .get(target.machine)
@@ -619,6 +627,15 @@ export function resourcePressureSnapshotForModel(
         ? machine.processAttribution.groups.filter((group) => group.slotId || group.resourceId)
         : machine.processAttribution.groups;
       const modelGroups = selectResourcePressureGroups(modelSourceGroups, 8);
+      const modelClassCounts = projectScoped
+        ? modelSourceGroups.reduce(
+            (counts, group) => {
+              counts[group.classification] += 1;
+              return counts;
+            },
+            { ...EMPTY_PROCESS_CLASS_COUNTS },
+          )
+        : machine.processAttribution.classCounts;
       return {
         machine: machine.machine,
         online: machine.online,
@@ -643,7 +660,7 @@ export function resourcePressureSnapshotForModel(
           omittedGroups:
             machine.processAttribution.omittedGroups +
             Math.max(0, machine.processAttribution.groups.length - modelGroups.length),
-          classCounts: machine.processAttribution.classCounts,
+          classCounts: modelClassCounts,
           ...(safeSampler ? { sampler: safeSampler } : {}),
           groups: modelGroups.map((group) => ({
             process: processName(group.topExecutable),
@@ -751,11 +768,15 @@ function matchesPressureFilters(slot: SlotStatus, params: ResourcePressureSnapsh
 
 /** Singular and plural selectors are one union so mixed-version clients cannot self-conflict. */
 function combinedFilter(primary?: string, values?: string[]): Set<string> {
-  return new Set([...(primary ? [primary] : []), ...(values ?? [])]);
+  return new Set(
+    [...(primary ? [primary] : []), ...(values ?? [])].map((value) => value.trim()).filter(Boolean),
+  );
 }
 
 function explicitEmptyFilter(primary?: string, values?: string[]): boolean {
-  return !primary && values !== undefined && values.length === 0;
+  return (
+    (primary !== undefined || values !== undefined) && combinedFilter(primary, values).size === 0
+  );
 }
 
 function emptyPressureSnapshot(

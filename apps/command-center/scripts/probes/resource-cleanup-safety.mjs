@@ -60,6 +60,7 @@ console.log(
     emptyRejected,
     missingRejected: true,
     busyRejected,
+    busyProof: 'slot-gate-before-resource-resolution',
     mutations: 0,
   }),
 );

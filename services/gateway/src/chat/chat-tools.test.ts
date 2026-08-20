@@ -230,11 +230,16 @@ await test('chat_session_context returns session meter', async () => {
 });
 
 await test('resource_pressure_snapshot returns read-only pressure summary', async () => {
-  const r = await executeTool('resource_pressure_snapshot', {}, 'test-6b3');
+  const r = await executeTool(
+    'resource_pressure_snapshot',
+    { machines: [], projects: [] },
+    'test-6b3',
+  );
   assert(!r.isError, `error: ${r.content}`);
   const data = JSON.parse(r.content);
   assert(typeof data.checkedAt === 'string', 'missing checkedAt');
   assert(typeof data.summary?.machines === 'number', 'missing machine count');
+  assert(data.summary.machines > 0, 'empty Co-Pilot arrays incorrectly matched no machines');
   assert(typeof data.summary?.cleanupCandidates === 'number', 'missing cleanup candidate count');
   assert(Array.isArray(data.machines), 'missing machines array');
   assert(!('watchAutoStartEnabled' in data), 'model projection leaked watch control state');

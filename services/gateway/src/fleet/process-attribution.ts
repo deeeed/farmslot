@@ -341,8 +341,10 @@ export function attributeProcessInventory(params: {
   const classCounts = { ...EMPTY_CLASS_COUNTS };
   for (const group of allGroups) classCounts[group.classification] += 1;
   const maxGroups = params.maxGroups ?? MAX_ATTRIBUTION_GROUPS;
+  const selectedGroups =
+    maxGroups >= allGroups.length ? allGroups : selectResourcePressureGroups(allGroups, maxGroups);
   return {
-    groups: selectResourcePressureGroups(allGroups, maxGroups),
+    groups: selectedGroups,
     omittedGroups: Math.max(0, allGroups.length - maxGroups),
     classCounts,
   };

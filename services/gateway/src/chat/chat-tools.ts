@@ -438,24 +438,24 @@ export async function executeTool(
       case 'resource_pressure_snapshot': {
         const { resourcePressureSnapshot, resourcePressureSnapshotForModel } =
           await import('../methods/resource.js');
+        const machines = Array.isArray(args.machines)
+          ? args.machines.filter(
+              (value): value is string => typeof value === 'string' && value.length > 0,
+            )
+          : [];
+        const projects = Array.isArray(args.projects)
+          ? args.projects.filter(
+              (value): value is string => typeof value === 'string' && value.length > 0,
+            )
+          : [];
+        const machine = typeof args.machine === 'string' ? args.machine.trim() : '';
+        const project = typeof args.project === 'string' ? args.project.trim() : '';
         result = resourcePressureSnapshotForModel(
           await resourcePressureSnapshot({
-            ...(typeof args.machine === 'string' ? { machine: args.machine } : {}),
-            ...(Array.isArray(args.machines)
-              ? {
-                  machines: args.machines.filter(
-                    (value): value is string => typeof value === 'string',
-                  ),
-                }
-              : {}),
-            ...(typeof args.project === 'string' ? { project: args.project } : {}),
-            ...(Array.isArray(args.projects)
-              ? {
-                  projects: args.projects.filter(
-                    (value): value is string => typeof value === 'string',
-                  ),
-                }
-              : {}),
+            ...(machine ? { machine } : {}),
+            ...(machines.length > 0 ? { machines } : {}),
+            ...(project ? { project } : {}),
+            ...(projects.length > 0 ? { projects } : {}),
           }),
         );
         break;
