@@ -299,7 +299,7 @@ Gateway expands template vars to absolute paths before sending to the node. The 
 
 **Authority boundary:** Cleanup must use configured resource hooks through `resource.control`/gateway resource-manager paths. It must not hardcode project names, ports, process patterns, or raw `pkill` logic in Farmslot. Projects that need custom teardown semantics should express those semantics in their `project.json` resource shutdown hooks.
 
-**Safety defaults:** Cleanup defaults to dry-run preview. `includeBusy` may widen diagnosis in a dry run, but live cleanup always excludes busy, held, actively working, manual, disabled, and current-run slots and requires a non-empty exact reviewed target set. This keeps pressure relief targeted at stale background resources rather than active or retained runs.
+**Safety defaults:** Cleanup defaults to dry-run preview and always excludes busy, held, actively working, manual, disabled, and current-run slots. Live cleanup additionally requires a non-empty exact reviewed target set. This keeps pressure relief targeted at stale background resources rather than active or retained runs.
 
 **Diagnosis boundary:** The read-only pressure snapshot must report the runtime watch state. If watches are paused, cached resource statuses may be `unknown`; machine health and slot activity remain the primary pressure evidence. Resource cleanup is not a substitute for stopping active builds or retained run slots; those require their owning lifecycle controls. Watch pause/resume is persisted in the gateway's local runtime cache so node reconnects or gateway restarts do not silently re-arm an operator-paused watch set.
 

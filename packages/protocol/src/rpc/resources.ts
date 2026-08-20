@@ -114,7 +114,6 @@ export interface ResourceHealthResult {
 
 export interface ResourceCleanupParams {
   dryRun?: boolean;
-  includeBusy?: boolean;
   machine?: string;
   machines?: string[];
   project?: string;

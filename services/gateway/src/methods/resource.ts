@@ -125,7 +125,7 @@ export async function resourceCleanup(
   const slots = fleet.slots.filter((slot) => {
     if (!slot.enabled) return false;
     if (slot.lifecycle === 'disabled' || slot.lifecycle === 'manual') return false;
-    if ((!dryRun || !params.includeBusy) && !slotAllowsDefaultResourceCleanup(slot)) return false;
+    if (!slotAllowsDefaultResourceCleanup(slot)) return false;
     if (params.machine && slot.machine !== params.machine) return false;
     if (params.machines?.length && !params.machines.includes(slot.machine)) return false;
     if (params.project && slot.project !== params.project) return false;
@@ -205,7 +205,13 @@ export async function resourceCleanup(
       const statusByResource = new Map(statuses.map((status) => [status.id, status.status]));
       for (const target of targets.filter((item) => item.slotId === slotId)) {
         const afterStatus = statusByResource.get(target.resourceId);
-        if (!afterStatus) continue;
+        if (!afterStatus) {
+          target.ok = false;
+          target.detail = target.detail
+            ? `${target.detail}; shutdown verification returned no resource status`
+            : 'shutdown verification returned no resource status';
+          continue;
+        }
         target.afterStatus = afterStatus;
         if (afterStatus === 'running' || afterStatus === 'stale') {
           target.ok = false;

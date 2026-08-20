@@ -1050,7 +1050,8 @@ export class FleetCanvas extends LitElement {
         <span class="resource-watch-note">
           Watches track resource liveness from cached node probes. Pausing stops those probes and
           marks resource status unknown; it does not stop apps, agents, builds, or host pressure
-          metrics.
+          metrics. Slot search limits visible machine cards and cleanup rows; pressure values remain
+          whole-machine.
         </span>
       </div>
       <machine-pressure-overview

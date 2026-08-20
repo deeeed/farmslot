@@ -3,6 +3,7 @@ import { mock, test } from 'node:test';
 
 const collectedAt = new Date().toISOString();
 let tmuxFailure = false;
+let omitPollStatus = false;
 const controlledTargets: string[] = [];
 
 mock.module('../fleet/resource-manager.js', {
@@ -17,7 +18,7 @@ mock.module('../fleet/resource-manager.js', {
         : undefined,
     getCachedResourceStatus: () => 'running',
     getResourceWatchRuntimeState: () => ({ enabled: true, updatedAt: collectedAt }),
-    pollSlotResources: async () => [],
+    pollSlotResources: async () => (omitPollStatus ? [] : [{ id: 'metro', status: 'stopped' }]),
     resolveSlotResources: async () => [
       {
         id: 'metro',
@@ -180,15 +181,26 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   });
   assert.equal(executedCleanup.stopped, 1);
   assert.deepEqual(controlledTargets, ['slot-2:metro']);
+  omitPollStatus = true;
+  const unverifiedCleanup = await resourceCleanup({
+    dryRun: false,
+    targets: [{ machine: 'macpro', slotId: 'slot-2', resourceId: 'metro' }],
+  });
+  omitPollStatus = false;
+  assert.equal(unverifiedCleanup.ok, false);
+  assert.equal(unverifiedCleanup.failed, 1);
+  assert.match(
+    unverifiedCleanup.targets[0].detail ?? '',
+    /verification returned no resource status/,
+  );
   const busyCleanup = await resourceCleanup({
     dryRun: false,
-    includeBusy: true,
     targets: [{ machine: 'macpro', slotId: 'slot-1', resourceId: 'metro' }],
   });
   assert.equal(busyCleanup.targets.length, 1);
   assert.equal(busyCleanup.targets[0].ok, false);
   assert.equal(busyCleanup.ok, false);
-  assert.deepEqual(controlledTargets, ['slot-2:metro']);
+  assert.deepEqual(controlledTargets, ['slot-2:metro', 'slot-2:metro']);
 
   const hostOnly = await resourceHostPressure('macpro', 'farmslot-farm');
   assert.equal(hostOnly.machine, 'macpro');

@@ -10,9 +10,17 @@ if (!fleet) throw new Error('fleet-canvas not found');
 const fleetRoot = fleet.shadowRoot;
 const buttonNamed = (text) =>
   [...fleetRoot.querySelectorAll('button')].find((button) => button.textContent.trim() === text);
+const waitForEnabledButton = async (text) => {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const button = buttonNamed(text);
+    if (button && !button.disabled) return button;
+    await sleep(250);
+  }
+  throw new Error(`${text} button did not become ready`);
+};
 
 const assertPreview = async () => {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
     const preview = fleetRoot.querySelector('resource-cleanup-preview');
     const root = preview?.shadowRoot;
     if (root?.querySelector('[role="dialog"]')) {
@@ -27,18 +35,22 @@ const assertPreview = async () => {
       }
       const modalButton = (label) =>
         [...root.querySelectorAll('button')].find((button) => button.textContent.trim() === label);
-      const confirm = [...root.querySelectorAll('button')].find((button) =>
-        button.textContent.includes('selected resource'),
-      );
+      const confirmButton = () =>
+        [...root.querySelectorAll('button')].find((button) =>
+          button.textContent.includes('selected resource'),
+        );
       if (targets > 0) {
         modalButton('Clear')?.click();
-        await sleep(50);
-        if (!confirm?.disabled)
+        await preview.updateComplete;
+        await sleep(0);
+        if (!confirmButton()?.disabled)
           throw new Error('empty cleanup selection did not disable execution');
         modalButton('Select all')?.click();
-        await sleep(50);
-        if (confirm.disabled) throw new Error('Select all did not restore cleanup execution');
-      } else if (!confirm?.disabled) {
+        await preview.updateComplete;
+        await sleep(0);
+        if (confirmButton()?.disabled)
+          throw new Error('Select all did not restore cleanup execution');
+      } else if (!confirmButton()?.disabled) {
         throw new Error('zero-target cleanup preview did not disable execution');
       }
       return {
@@ -48,13 +60,12 @@ const assertPreview = async () => {
         selectionVerified: true,
       };
     }
-    await sleep(100);
+    await sleep(250);
   }
   throw new Error('cleanup impact preview did not open');
 };
 
-const previewButton = buttonNamed('Preview cleanup');
-if (!previewButton) throw new Error('Preview cleanup button not found');
+const previewButton = await waitForEnabledButton('Preview cleanup');
 previewButton.click();
 const previewResult = await assertPreview();
 const firstPreviewRoot = fleetRoot.querySelector('resource-cleanup-preview')?.shadowRoot;
@@ -63,8 +74,7 @@ const firstPreviewRoot = fleetRoot.querySelector('resource-cleanup-preview')?.sh
   ?.click();
 await sleep(100);
 
-const stopButton = buttonNamed('Review & stop idle');
-if (!stopButton) throw new Error('Review & stop idle button not found');
+const stopButton = await waitForEnabledButton('Review & stop idle');
 stopButton.click();
 const stopResult = await assertPreview();
 const pauseButton = buttonNamed('Pause watches');

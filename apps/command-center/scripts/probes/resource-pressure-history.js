@@ -20,18 +20,21 @@ let details;
 let history;
 let charts = [];
 let processRows = [];
-for (let attempt = 0; attempt < 45; attempt += 1) {
+let sampleCount = 0;
+for (let attempt = 0; attempt < 60; attempt += 1) {
   const overview = fleetRoot.querySelector('machine-pressure-overview');
   card = overview?.shadowRoot?.querySelector(`[data-machine="${CSS.escape(machineName)}"]`);
   details = card?.querySelector(`[data-testid="pressure-details-${CSS.escape(machineName)}"]`);
   if (details?.getAttribute('aria-expanded') !== 'true') details?.click();
-  await sleep(100);
+  await sleep(250);
   history = card?.querySelector('.history-panel');
   charts = [...(history?.querySelectorAll('.history-chart polyline') ?? [])];
   processRows = [...(card?.querySelectorAll('.group:not(.group-head)') ?? [])];
-  if (charts.length === 3) break;
-  refresh.click();
-  await sleep(900);
+  sampleCount = Number(card?.querySelector('.sample-note')?.textContent?.match(/\d+/)?.[0] ?? '0');
+  if (charts.length === 3 && processRows.length > 0 && sampleCount > 1) break;
+  // The view fetches once on navigation. Allow that request to settle before one explicit retry;
+  // repeatedly pressing refresh would turn an evidence probe into avoidable gateway load.
+  if (attempt === 20) refresh.click();
 }
 if (!card) throw new Error(`${machineName} pressure card not found`);
 if (!details) throw new Error(`${machineName} pressure Details button not found`);
@@ -45,6 +48,9 @@ if (renderedMachines.length !== 1 || renderedMachines[0] !== machineName) {
 }
 if (!history || charts.length !== 3)
   throw new Error('three pressure history charts did not render');
+if (processRows.length === 0 || sampleCount <= 1) {
+  throw new Error('real pressure history and process attribution did not replace fallback data');
+}
 const classPills = [...card.querySelectorAll('.class-pill')].map((pill) => pill.textContent.trim());
 if (
   classPills.length !== 5 ||
