@@ -31,6 +31,14 @@ mock.module('../fleet/resource-manager.js', {
 
 mock.module('../fleet/node-health.js', {
   namedExports: {
+    getMachineProcessSamplerHealth: () => ({
+      attempts: 1,
+      executions: 1,
+      failures: 0,
+      skippedBusy: 0,
+      skippedCadence: 0,
+      lastDurationMs: 3,
+    }),
     getMachineProcessInventory: () => ({
       generation: 'node:1',
       sampleId: 1,
@@ -156,6 +164,7 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   tmuxFailure = false;
   assert.equal(degraded.machines[0].history.length, 1);
   assert.equal(degraded.machines[0].processAttribution.groups[0].classification, 'active');
+  assert.match(degraded.machines[0].processAttribution.degradedReason ?? '', /tmux timeout/i);
 
   result.machines[0].processAttribution.groups[0].topExecutable =
     '/Users/developer/Applications/Private Tool.app/Contents/MacOS/Private Tool';

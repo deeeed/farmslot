@@ -101,7 +101,24 @@ test('tmux cwd infers active slot ownership when session correlation is unavaila
   assert.equal(active?.slotId, 'active-slot');
   assert.equal(active?.runId, 'active-run');
   assert.equal(active?.confidence, 'medium');
-  assert.ok(active?.evidence.includes('cwd-slot:active-slot'));
+  assert.ok(active?.evidence.includes('cwd-longest-prefix:active-slot'));
+});
+
+test('cwd inference picks the longest registered repo prefix for nested checkouts', () => {
+  const result = attributeProcessInventory({
+    inventory: processes,
+    slots: [
+      slot('parent-slot', 'busy', 'parent-run', '/Users/dev/repo'),
+      slot('nested-slot', 'busy', 'nested-run', '/Users/dev/repo/packages/app'),
+    ],
+    runs: [run('parent-run', 'monitoring'), run('nested-run', 'monitoring')],
+    workers: [worker(10, 'unmatched-session', { cwd: '/Users/dev/repo/packages/app/src' })],
+    resources: [],
+  });
+  const active = result.groups.find((group) => group.rootPid === 10);
+  assert.equal(active?.slotId, 'nested-slot');
+  assert.equal(active?.runId, 'nested-run');
+  assert.equal(active?.confidence, 'medium');
 });
 
 test('a capped attribution response keeps the hottest group and managed work', () => {

@@ -472,7 +472,7 @@ export class MachinePressureOverview extends LitElement {
               const displayName = hotName.length < 8 && rootName !== hotName ? rootName : hotName;
               return html`<div
                 class="group"
-                title=${`${group.evidence.join(', ')}; hot pid ${group.topPid}; root ${group.rootPid}:${group.executable}; confidence ${group.confidence}`}
+                title=${`${group.classification}; confidence ${group.confidence}; ${group.evidence.join(', ')}`}
               >
                 <span class="owner ${group.classification}"
                   >${group.slotId?.replace(`${machine.machine}-`, '') ??
@@ -547,6 +547,9 @@ export class MachinePressureOverview extends LitElement {
         : ''}
       ${process.sampler?.lastError
         ? html`<div class="sampler-error">Sampler error: ${process.sampler.lastError}</div>`
+        : ''}
+      ${process.degradedReason
+        ? html`<div class="sampler-error">${process.degradedReason}</div>`
         : ''}
       ${machine.concerns.map((concern) => html`<div>• ${concern.reason}</div>`)}
     </div>`;

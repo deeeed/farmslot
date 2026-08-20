@@ -284,15 +284,17 @@ export function collectProcessInventory(
     .catch((error: unknown) => {
       processSampler.failures += 1;
       processSampler.lastDurationMs = Date.now() - startedAt;
-      lastProcessInventoryAt = Date.now();
       processSampler.lastError = (error instanceof Error ? error.message : String(error)).slice(
         0,
         160,
       );
+      // Recovery: publish health-only failure metadata and leave cadence due so
+      // the next gauge tick retries; the gateway keeps any prior good census.
       return {
         generation: PROCESS_GENERATION,
         sampleId,
         collectedAt: new Date().toISOString(),
+        failed: true,
         processes: [],
         totalProcesses: 0,
         maxEntries: PROCESS_SAMPLE_MAX_ENTRIES,
@@ -354,9 +356,15 @@ export async function collectMetrics(): Promise<SystemMetrics> {
     void collectProcessInventory(
       undefined,
       new Set([...getCachedTmuxPanePids(), ...getCachedResourceWatchPids()]),
-    ).then((inventory) => {
-      pendingProcessInventory = inventory;
-    });
+    )
+      .then((inventory) => {
+        pendingProcessInventory = inventory;
+      })
+      .catch((error: unknown) => {
+        // collectProcessInventory normally resolves failures into health metadata;
+        // keep an explicit terminal recovery path if that contract ever regresses.
+        console.error(`[system-metrics] process inventory scheduling failed: ${String(error)}`);
+      });
   }
 
   return {

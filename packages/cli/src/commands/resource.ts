@@ -44,9 +44,7 @@ function formatMachine(machine: ResourcePressureMachine): string[] {
       ),
     );
   }
-  for (const group of selectResourcePressureGroups(machine.processAttribution.groups, 8, {
-    preserveAllManaged: true,
-  })) {
+  for (const group of selectResourcePressureGroups(machine.processAttribution.groups, 8)) {
     lines.push(
       `  ${(group.classification === 'unknown' ? 'system' : group.classification).padEnd(8)} root=${String(group.rootPid).padEnd(6)} treeCpu=${group.cpuPercent >= 100 ? `${(group.cpuPercent / 100).toFixed(1)}c` : `${group.cpuPercent.toFixed(1)}%`} hotRss=${Math.round(group.topRssBytes / 1_048_576)}MB hot=${group.topPid}:${processName(group.topExecutable)}  ${dim(group.evidence.join(', '))}`,
     );

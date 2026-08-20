@@ -10,6 +10,7 @@ import type {
   NodePressureHistorySample,
   NodePressureRatios,
   NodeProcessInventory,
+  NodeProcessSamplerHealth,
   NodeSystemMetrics,
   RecipeRuntimeCapabilityDeclaration,
 } from '@farmslot/protocol';
@@ -19,6 +20,7 @@ import { getCachedFleet } from './state.js';
 const healthMap = new Map<string, MachineHealth>();
 const pressureHistory = new Map<string, NodePressureHistorySample[]>();
 const processInventoryMap = new Map<string, NodeProcessInventory>();
+const processSamplerHealthMap = new Map<string, NodeProcessSamplerHealth>();
 export const NODE_PRESSURE_HISTORY_LIMIT = 120;
 let localCollectionTimer: ReturnType<typeof setInterval> | null = null;
 let prevCpuTimes: { idle: number; total: number } | null = null;
@@ -58,6 +60,7 @@ export function updateMachineMetrics(machine: string, metrics: NodeMetricsSample
 
 function updateProcessInventory(machine: string, incoming: NodeProcessInventory | undefined): void {
   if (!incoming) return;
+  processSamplerHealthMap.set(machine, incoming.health);
   const current = processInventoryMap.get(machine);
   if (
     current &&
@@ -66,15 +69,7 @@ function updateProcessInventory(machine: string, incoming: NodeProcessInventory 
   ) {
     return;
   }
-  if (
-    current &&
-    incoming.generation === current.generation &&
-    incoming.processes.length === 0 &&
-    incoming.health.lastError
-  ) {
-    processInventoryMap.set(machine, { ...current, health: incoming.health });
-    return;
-  }
+  if (incoming.failed || (incoming.processes.length === 0 && incoming.health.lastError)) return;
   processInventoryMap.set(machine, incoming);
 }
 
@@ -123,6 +118,7 @@ export function markMachineOffline(machine: string): void {
   // A process census is unsafe once the node disconnects; bounded gauge history
   // remains useful for reconnect diagnosis and contains no PID/path data.
   processInventoryMap.delete(machine);
+  processSamplerHealthMap.delete(machine);
   const existing = healthMap.get(machine);
   if (existing) {
     existing.online = false;
@@ -327,7 +323,18 @@ export function getMachinePressureHistory(machine: string): NodePressureHistoryS
 
 export function getMachineProcessInventory(machine: string): NodeProcessInventory | undefined {
   const inventory = processInventoryMap.get(machine);
-  return inventory ? structuredClone(inventory) : undefined;
+  if (!inventory) return undefined;
+  return structuredClone({
+    ...inventory,
+    health: processSamplerHealthMap.get(machine) ?? inventory.health,
+  });
+}
+
+export function getMachineProcessSamplerHealth(
+  machine: string,
+): NodeProcessSamplerHealth | undefined {
+  const health = processSamplerHealthMap.get(machine);
+  return health ? structuredClone(health) : undefined;
 }
 
 // ─── Enrich fleet status with hostLoad per slot ───

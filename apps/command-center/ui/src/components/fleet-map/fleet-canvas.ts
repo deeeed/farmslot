@@ -901,9 +901,6 @@ export class FleetCanvas extends LitElement {
     if (!this._resourceFetched) {
       return html`<div class="empty">Loading resources...</div>`;
     }
-    if (groups.length === 0) {
-      return html`<div class="empty">No resources found</div>`;
-    }
     return html`
       <div class="resource-controls">
         <span>Resource pressure</span>
@@ -942,17 +939,19 @@ export class FleetCanvas extends LitElement {
           : ''}
       </div>
       <machine-pressure-overview .snapshot=${this.resourcePressure}></machine-pressure-overview>
-      ${groups.map(
-        (g) => html`
-          <resource-overview
-            .resourceId=${g.key}
-            .label=${g.label}
-            .entries=${g.entries}
-            .onlineMachines=${this.onlineMachines}
-            @refresh-resources=${() => this.fetchResourceData()}
-          ></resource-overview>
-        `,
-      )}
+      ${groups.length === 0
+        ? html`<div class="empty">No resources found</div>`
+        : groups.map(
+            (g) => html`
+              <resource-overview
+                .resourceId=${g.key}
+                .label=${g.label}
+                .entries=${g.entries}
+                .onlineMachines=${this.onlineMachines}
+                @refresh-resources=${() => this.fetchResourceData()}
+              ></resource-overview>
+            `,
+          )}
     `;
   }
 }

@@ -11,6 +11,7 @@ import {
   getMachineHealth,
   getMachinePressureHistory,
   getMachineProcessInventory,
+  getMachineProcessSamplerHealth,
   markMachineOnline,
   NODE_PRESSURE_HISTORY_LIMIT,
   updateMachineMetrics,
@@ -50,6 +51,43 @@ test('machine health preserves node capture capabilities across metrics updates'
   updateMachineMetrics(machine, metrics);
   assert.deepEqual(getMachineHealth(machine)?.capabilities, capabilities);
   assert.equal(getMachineHealth(machine)?.system?.cpuPercent, 10);
+});
+
+test('a first failed process attempt publishes sampler health without creating a census', () => {
+  const machine = `failed-census-node-${Date.now()}`;
+  const collectedAt = new Date().toISOString();
+  const metrics: NodeMetricsSample = {
+    cpuPercent: 10,
+    memoryPercent: 20,
+    memoryUsedGb: 3,
+    memoryTotalGb: 16,
+    diskPercent: 30,
+    loadAvg1: 1,
+    loadAvg5: 1,
+    collectedAt,
+    processInventory: {
+      generation: 'failed-generation',
+      sampleId: 1,
+      collectedAt,
+      processes: [],
+      totalProcesses: 0,
+      maxEntries: 256,
+      truncated: false,
+      failed: true,
+      health: {
+        attempts: 1,
+        executions: 1,
+        failures: 1,
+        skippedBusy: 0,
+        skippedCadence: 0,
+        lastDurationMs: 4_000,
+        lastError: 'ps timed out',
+      },
+    },
+  };
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineProcessInventory(machine), undefined);
+  assert.equal(getMachineProcessSamplerHealth(machine)?.lastError, 'ps timed out');
 });
 
 test('pressure history is bounded and rejects duplicate or out-of-order samples', () => {

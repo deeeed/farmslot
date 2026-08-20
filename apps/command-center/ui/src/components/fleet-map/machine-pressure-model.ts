@@ -38,11 +38,13 @@ export function pressureBytes(bytes: number): string {
 
 export function pressureSampleAge(sampledAt: string | undefined, now = Date.now()): string {
   if (!sampledAt) return 'awaiting process sample';
-  const seconds = Math.max(0, Math.round((now - Date.parse(sampledAt)) / 1_000));
+  const sampledAtMs = Date.parse(sampledAt);
+  if (!Number.isFinite(sampledAtMs)) return 'unknown sample age';
+  const seconds = Math.max(0, Math.round((now - sampledAtMs) / 1_000));
   if (seconds < 60) return `${seconds}s ago`;
   return `${Math.floor(seconds / 60)}m ago`;
 }
 
 export function visiblePressureGroups(groups: PressureGroup[], limit: number): PressureGroup[] {
-  return selectResourcePressureGroups(groups, limit, { preserveAllManaged: true });
+  return selectResourcePressureGroups(groups, limit);
 }

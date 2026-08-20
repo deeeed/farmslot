@@ -13,6 +13,10 @@
       "gateway_url": {
         "type": "string",
         "default": "ws://localhost:7777"
+      },
+      "machine": {
+        "type": "string",
+        "default": "macwork"
       }
     }
   },
@@ -21,7 +25,7 @@
     "nodes": {
       "open-resource-pressure": {
         "action": "ui.navigate",
-        "target": "{{params.ui_url}}/#fleet?group=resource&view=card",
+        "target": "{{params.ui_url}}/#fleet?group=resource&view=card&pressureMachine={{params.machine}}",
         "next": "dismiss-whats-new",
         "intent": "Open the cache-first fleet Resource view where node pressure history is rendered."
       },
@@ -36,22 +40,22 @@
         "action": "ui.wait_for",
         "selector": "machine-pressure-overview",
         "timeout_ms": 45000,
-        "next": "open-and-assert-machine-details",
+        "next": "probe-pressure-rpc",
         "intent": "Confirm the overview exposes core-aware utilization and bounded ownership summaries."
       },
       "open-and-assert-machine-details": {
         "action": "command",
         "cmd": "node apps/command-center/scripts/cdp.mjs eval fleet --file apps/command-center/scripts/probes/resource-pressure-history.js",
         "timeout_ms": 20000,
-        "next": "probe-pressure-rpc",
-        "intent": "Press macwork Details through CDP and verify three real SVG history plots with core-normalized load."
+        "next": "capture-pressure-history",
+        "intent": "Press the selected machine Details through CDP and verify three real SVG history plots with core-normalized load."
       },
       "probe-pressure-rpc": {
         "action": "command",
-        "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-pressure-rpc.mjs",
+        "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-pressure-rpc.mjs --machine '{{params.machine}}'",
         "timeout_ms": 20000,
-        "next": "capture-pressure-history",
-        "intent": "Capture the typed read-only backend result that owns the UI trends and attribution policy."
+        "next": "open-and-assert-machine-details",
+        "intent": "Verify the typed read-only backend shape and health-event stripping before interacting with the UI."
       },
       "capture-pressure-history": {
         "action": "ui.screenshot",

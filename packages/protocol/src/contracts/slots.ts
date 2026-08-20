@@ -191,6 +191,8 @@ export interface NodeProcessInventory {
   maxEntries: number;
   truncated: boolean;
   ancestryTruncated?: boolean;
+  /** Health-only failed attempt; does not represent a process census. */
+  failed?: boolean;
   health: NodeProcessSamplerHealth;
 }
 

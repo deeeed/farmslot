@@ -25,7 +25,11 @@ import {
 
 import { isMissingProjectConfigError, SlotConfigError } from '../core/config.js';
 import { getNode } from '../fleet/machine-registry.js';
-import { getMachinePressureHistory, getMachineProcessInventory } from '../fleet/node-health.js';
+import {
+  getMachinePressureHistory,
+  getMachineProcessInventory,
+  getMachineProcessSamplerHealth,
+} from '../fleet/node-health.js';
 import {
   attributeProcessInventory,
   type ProcessAttributionResource,
@@ -181,6 +185,7 @@ export async function resourcePressureSnapshot(
     import('../runs/store.js'),
   ]);
   let tmuxWorkers: Awaited<ReturnType<typeof tmuxWorkerList>>['workers'] = [];
+  let tmuxAttributionError: string | undefined;
   try {
     tmuxWorkers = (
       await tmuxWorkerList({
@@ -189,7 +194,8 @@ export async function resourcePressureSnapshot(
       })
     ).workers;
   } catch (error) {
-    console.warn(`[resource] pressure tmux attribution degraded: ${(error as Error).message}`);
+    tmuxAttributionError = error instanceof Error ? error.message : String(error);
+    console.warn(`[resource] pressure tmux attribution degraded: ${tmuxAttributionError}`);
   }
   const allRuns = getAllRuns();
   const healthByMachine = new Map((fleet.machines ?? []).map((health) => [health.machine, health]));
@@ -224,6 +230,7 @@ export async function resourcePressureSnapshot(
       watchState.enabled,
     );
     const latestProcessInventory = getMachineProcessInventory(machine);
+    const processSampler = getMachineProcessSamplerHealth(machine);
     const processInventoryAgeMs = latestProcessInventory
       ? Date.now() - Date.parse(latestProcessInventory.collectedAt)
       : Number.POSITIVE_INFINITY;
@@ -263,12 +270,15 @@ export async function resourcePressureSnapshot(
       ...(health?.capacity ? { capacity: health.capacity } : {}),
       history: getMachinePressureHistory(machine),
       processAttribution: {
+        ...(tmuxAttributionError
+          ? { degradedReason: `Tmux attribution unavailable: ${tmuxAttributionError}` }
+          : {}),
         ...(processInventory
           ? {
               sampledAt: processInventory.collectedAt,
               generation: processInventory.generation,
               sampleId: processInventory.sampleId,
-              sampler: processInventory.health,
+              ...(processSampler ? { sampler: processSampler } : {}),
             }
           : {
               unavailableReason: latestProcessInventory
@@ -281,6 +291,7 @@ export async function resourcePressureSnapshot(
                       : 'Local gauge fallback does not collect process inventory; connect the Farmslot node for attribution.'
                     : 'System metrics are not available yet.',
             }),
+        ...(!processInventory && processSampler ? { sampler: processSampler } : {}),
         truncated: processInventory?.truncated ?? false,
         ancestryTruncated: processInventory?.ancestryTruncated ?? false,
         sampledProcesses: processInventory?.processes.length ?? 0,
@@ -420,16 +431,16 @@ export function resourcePressureSnapshotForModel(
           omittedGroups: machine.processAttribution.omittedGroups,
           classCounts: machine.processAttribution.classCounts,
           ...(safeSampler ? { sampler: safeSampler } : {}),
-          groups: selectResourcePressureGroups(machine.processAttribution.groups, 8, {
-            preserveAllManaged: true,
-          }).map((group) => ({
-            process: processName(group.topExecutable),
-            processCount: group.processCount,
-            cpuPercent: group.cpuPercent,
-            hotRssBytes: group.topRssBytes,
-            classification: group.classification,
-            confidence: group.confidence,
-          })),
+          groups: selectResourcePressureGroups(machine.processAttribution.groups, 8).map(
+            (group) => ({
+              process: processName(group.topExecutable),
+              processCount: group.processCount,
+              cpuPercent: group.cpuPercent,
+              hotRssBytes: group.topRssBytes,
+              classification: group.classification,
+              confidence: group.confidence,
+            }),
+          ),
         },
       };
     }),

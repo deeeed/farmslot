@@ -79,7 +79,7 @@ function classifyWorker(
       confidence: inferredFromCwd ? 'medium' : 'high',
       evidence: [
         `tmux:${worker.ref.target}`,
-        ...(inferredFromCwd ? [`cwd-slot:${slotId}`] : []),
+        ...(inferredFromCwd ? [`cwd-longest-prefix:${slotId}`] : []),
         `missing-run:${runId}`,
       ],
     };
@@ -91,7 +91,7 @@ function classifyWorker(
       confidence: inferredFromCwd ? 'medium' : 'high',
       evidence: [
         `tmux:${worker.ref.target}`,
-        ...(inferredFromCwd ? [`cwd-slot:${slotId}`] : []),
+        ...(inferredFromCwd ? [`cwd-longest-prefix:${slotId}`] : []),
         `active-run:${run.id}`,
       ],
     };
