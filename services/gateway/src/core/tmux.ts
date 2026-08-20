@@ -46,13 +46,26 @@ export function parseTmuxKeys(keys: string): string[] {
 export function tmuxSendTextCommand(
   target: string,
   text: string,
-  opts?: { enter?: boolean; submitKey?: 'Enter' | 'C-m'; suffix?: string },
+  opts?: {
+    enter?: boolean;
+    submitKey?: 'Enter' | 'C-m';
+    /** Opt-in gap between literal text and submit for TUIs with paste-burst detection. */
+    submitDelayMs?: number;
+    suffix?: string;
+  },
 ): string {
+  const submitDelayMs = opts?.submitDelayMs ?? 0;
+  if (!Number.isInteger(submitDelayMs) || submitDelayMs < 0 || submitDelayMs > 1_000) {
+    throw new Error(
+      `tmux submitDelayMs must be an integer between 0 and 1000 (got ${submitDelayMs})`,
+    );
+  }
   const suffix = opts?.suffix ? ` ${opts.suffix}` : '';
   const commands = [
     tmuxShellSnippet(`send-keys -t ${shellQuote(target)} -l ${shellQuote(text)}${suffix}`),
   ];
   if (opts?.enter) {
+    if (submitDelayMs > 0) commands.push(`sleep ${submitDelayMs / 1_000}`);
     commands.push(
       tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${opts.submitKey ?? 'Enter'}${suffix}`),
     );

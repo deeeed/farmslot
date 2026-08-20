@@ -125,6 +125,10 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `llm.config.get`                     | admin          |                                                          |
 | `llm.config.set`                     | admin          |                                                          |
 | `llm.tiers`                          | admin          |                                                          |
+| `machine.pause.execute`              | admin          |                                                          |
+| `machine.pause.preview`              | admin          |                                                          |
+| `machine.pause.restore`              | admin          |                                                          |
+| `machine.pause.status`               | admin          |                                                          |
 | `node.connect`                       | node-subject   |                                                          |
 | `node.health`                        | operator       |                                                          |
 | `node.health.all`                    | operator       |                                                          |

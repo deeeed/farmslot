@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { MachineParkRecord } from '@farmslot/protocol';
+
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import { runCancel, runForceComplete, runPause } from './lifecycle-control.js';
@@ -9,6 +11,28 @@ async function cleanupRun(runId: string): Promise<void> {
   if (!getRun(runId)) return;
   updateRun(runId, { status: 'done', completedAt: new Date().toISOString() });
   await deleteRun(runId);
+}
+
+function parkedRecord(runId: string, slotId: string): MachineParkRecord {
+  return {
+    version: 1,
+    operationId: `park-${runId}`,
+    previewId: `preview-${runId}`,
+    runId,
+    generation: 0,
+    machine: 'machine-a',
+    slotId,
+    mode: 'orchestration',
+    phase: 'parked',
+    prePauseStatus: 'monitoring',
+    prePauseCurrentStep: { index: 0, name: 'monitor', status: 'running' },
+    resourceManifest: { capturedAt: new Date().toISOString(), resources: [], capabilityLeases: [] },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'running', resources: [] },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 test('runCancel marks non-terminal runs cancelled without slot release side effects', async (t) => {
@@ -56,6 +80,46 @@ test('runCancel rejects terminal runs', async (t) => {
   t.after(() => cleanupRun(run.id));
 
   await assert.rejects(() => runCancel({ runId: run.id }), /already in terminal state/);
+});
+
+test('runCancel clears a parked record after terminal cleanup succeeds', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-cancel-parked`,
+  });
+  updateRun(run.id, { status: 'paused', park: parkedRecord(run.id, 'detached-slot') });
+  t.after(() => cleanupRun(run.id));
+
+  const result = await runCancel({ runId: run.id });
+  assert.equal(result.run.status, 'cancelled');
+  assert.equal(result.run.park, null);
+});
+
+test('runCancel retains parked residual evidence when terminal cleanup fails', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-cancel-parked-partial`,
+    slotId: 'missing-machine-park-slot',
+  });
+  updateRun(run.id, {
+    status: 'paused',
+    park: parkedRecord(run.id, 'missing-machine-park-slot'),
+  });
+  t.after(() => cleanupRun(run.id));
+
+  const result = await runCancel({ runId: run.id });
+  assert.equal(result.run.status, 'cancelled');
+  assert.equal(
+    result.effects?.some((effect) => effect.status === 'failed'),
+    true,
+  );
+  assert.equal(result.run.park?.phase, 'cancelled');
+  assert.equal(
+    result.run.park?.errors.some((error) => error.code === 'TERMINAL_CLEANUP_FAILED'),
+    true,
+  );
 });
 
 test('runPause pauses monitoring runs and rejects non-pausable statuses', async (t) => {

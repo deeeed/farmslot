@@ -48,6 +48,7 @@ import {
   grokPaneShowsColdStartSession,
   isRunnerPaneRetired,
   keyForClassifierTrustAction,
+  KNOWN_RUNNERS,
   normalizeRunner,
   resolveLaunchBlockerWithFreshEvidence,
   resolveSafeSendTimeoutMs,
@@ -1892,6 +1893,41 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.equal(getRunnerDefinition('codex').sessionReload, 'with-prompt');
     assert.equal(getRunnerDefinition('cursor').retainedSessionHandoff, 'in-place');
     assert.equal(getRunnerDefinition('cursor').sessionReload, 'none');
+  });
+
+  it('aligns every static session-reload declaration with graceful exit and command support', () => {
+    const vars = makeVars({ dispatchCmd: '' });
+    for (const [runnerId, definition] of Object.entries(KNOWN_RUNNERS)) {
+      if (definition.sessionReload === 'with-prompt') {
+        assert.ok(definition.gracefulExit?.command, `${runnerId} needs a graceful park exit`);
+        assert.doesNotThrow(
+          () =>
+            buildRunnerSessionReloadCommand(vars, runnerId, 'unknown', `${runnerId}-session`, {
+              initialPrompt: 'Continue the parked run',
+            }),
+          `${runnerId} declares reload support but cannot build its reload command`,
+        );
+      } else {
+        assert.equal(
+          definition.gracefulExit,
+          null,
+          `${runnerId} must fail closed for release park`,
+        );
+        assert.throws(
+          () => buildRunnerSessionReloadCommand(vars, runnerId, 'unknown', 'session'),
+          /does not support persisted session reload/,
+        );
+      }
+    }
+  });
+
+  it('declares the Codex-only graceful-exit paste-burst delay statically', () => {
+    assert.deepEqual(getRunnerDefinition('codex').gracefulExit, {
+      command: '/exit',
+      submitDelayMs: 50,
+    });
+    assert.deepEqual(getRunnerDefinition('claude').gracefulExit, { command: '/exit' });
+    assert.deepEqual(getRunnerDefinition('grok').gracefulExit, { command: '/exit' });
   });
 });
 

@@ -62,6 +62,20 @@ describe('tmuxSendTextCommand', () => {
     assert.match(command, /send-keys -t 'mm-1:bugfix' -l 'echo ok'/);
     assert.match(command, /send-keys -t 'mm-1:bugfix' Enter/);
     assert.doesNotMatch(command, /send-keys -t 'mm-1:bugfix' C-m/);
+    assert.doesNotMatch(command, /sleep/);
+  });
+
+  it('inserts only the requested bounded delay between literal text and submit', () => {
+    const literal = tmuxShellSnippet(`send-keys -t 'ff-1:dev' -l '/exit'`);
+    const submit = tmuxShellSnippet(`send-keys -t 'ff-1:dev' Enter`);
+    assert.equal(
+      tmuxSendTextCommand('ff-1:dev', '/exit', { enter: true, submitDelayMs: 50 }),
+      `${literal}\nsleep 0.05\n${submit}`,
+    );
+    assert.throws(
+      () => tmuxSendTextCommand('ff-1:dev', '/exit', { enter: true, submitDelayMs: 1_001 }),
+      /integer between 0 and 1000/,
+    );
   });
 });
 

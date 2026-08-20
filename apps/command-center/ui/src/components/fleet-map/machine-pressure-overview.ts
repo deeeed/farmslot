@@ -1,5 +1,5 @@
 import { css, html, LitElement, svg, unsafeCSS } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property } from 'lit/decorators.js';
 
 import type { ResourcePressureSnapshotResult } from '@farmslot/protocol';
 
@@ -7,6 +7,7 @@ import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 
 import {
   pressureBytes,
+  pressureOwnershipLabel,
   pressureProcessCpu,
   pressureProcessName,
   pressureSampleAge,
@@ -18,7 +19,6 @@ import {
 export class MachinePressureOverview extends LitElement {
   @property({ attribute: false }) snapshot?: ResourcePressureSnapshotResult;
   @property({ attribute: false }) visibleMachines?: string[];
-  @state() private expandedMachines: Set<string> = new Set();
 
   static styles = css`
     :host {
@@ -267,16 +267,6 @@ export class MachinePressureOverview extends LitElement {
     .sample-note {
       font-size: 9px;
     }
-    .detail-note {
-      margin-top: ${unsafeCSS(spacing.sm)};
-      padding-top: ${unsafeCSS(spacing.sm)};
-      border-top: 1px solid ${unsafeCSS(colors.bgCard)};
-      color: ${unsafeCSS(colors.textMuted)};
-      line-height: 1.5;
-    }
-    .sampler-error {
-      color: ${unsafeCSS(colors.statusFail)};
-    }
     @media (max-width: 1800px) {
       .grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -315,7 +305,6 @@ export class MachinePressureOverview extends LitElement {
       <div class="grid">
         ${machines.map((machine) => {
           const latest = machine.history.at(-1);
-          const expanded = this.expandedMachines.has(machine.machine);
           const cpuValues = machine.history.map((sample) => sample.pressure.cpu);
           const memoryValues = machine.history.map((sample) => sample.pressure.memory);
           const loadValues = machine.history
@@ -325,10 +314,7 @@ export class MachinePressureOverview extends LitElement {
           const cores = machine.capacity?.cpuCores ?? machine.system?.cpuCores ?? 0;
           const classes = machine.processAttribution.classCounts;
           const topGroup = machine.processAttribution.groups[0];
-          const groups = visiblePressureGroups(
-            machine.processAttribution.groups,
-            expanded ? 12 : 4,
-          );
+          const groups = visiblePressureGroups(machine.processAttribution.groups, 6);
           const processNote = machine.processAttribution.sampledProcesses
             ? `${machine.processAttribution.sampledProcesses}/${machine.processAttribution.totalProcesses} sampled · ${pressureSampleAge(machine.processAttribution.sampledAt)}`
             : (machine.processAttribution.unavailableReason ?? 'awaiting process sample');
@@ -349,10 +335,10 @@ export class MachinePressureOverview extends LitElement {
                 <button
                   class="expand"
                   data-testid=${`pressure-details-${machine.machine}`}
-                  aria-expanded=${expanded}
-                  @click=${() => this.toggle(machine.machine)}
+                  aria-haspopup="dialog"
+                  @click=${() => this.openMachine(machine.machine)}
                 >
-                  ${expanded ? 'Collapse' : 'Details'}
+                  Runs & relief
                 </button>
               </div>
             </header>
@@ -365,9 +351,7 @@ export class MachinePressureOverview extends LitElement {
                         ${pressureProcessCpu(topGroup.cpuPercent)} tree CPU ·
                         ${pressureBytes(topGroup.topRssBytes)} hot RSS ·
                         ${topGroup.slotId?.replace(`${machine.machine}-`, '') ??
-                        (topGroup.classification === 'unknown'
-                          ? 'system / unmapped'
-                          : topGroup.classification)}
+                        pressureOwnershipLabel(topGroup.classification)}
                       </div>`
                     : ''}
                   ${machine.concerns[0]
@@ -437,7 +421,7 @@ export class MachinePressureOverview extends LitElement {
                 >
                   <span class="owner ${group.classification}"
                     >${group.slotId?.replace(`${machine.machine}-`, '') ??
-                    (group.classification === 'unknown' ? 'system' : group.classification)}</span
+                    pressureOwnershipLabel(group.classification)}</span
                   >
                   <span class="process-name">${displayName}</span>
                   <span class="process-stat">${pressureProcessCpu(group.cpuPercent)}</span>
@@ -451,7 +435,6 @@ export class MachinePressureOverview extends LitElement {
                   >`
                 : ''}
             </div>
-            ${expanded ? this.renderDetails(machine) : ''}
           </section>`;
         })}
       </div>`;
@@ -482,47 +465,14 @@ export class MachinePressureOverview extends LitElement {
     </div>`;
   }
 
-  private renderDetails(machine: ResourcePressureSnapshotResult['machines'][number]) {
-    const process = machine.processAttribution;
-    return html`<div class="detail-note">
-      <div>
-        ${process.unavailableReason
-          ? process.unavailableReason
-          : process.sampledProcesses === 0
-            ? 'No process inventory received yet.'
-            : process.truncated
-              ? `Inventory capped at ${process.maxEntries}; hottest processes are retained${process.ancestryTruncated ? ', with some parent chains shortened at the cap' : ' with complete sampled ancestry'}.`
-              : 'Complete process inventory retained for this sample.'}
-        ${process.omittedGroups > 0
-          ? ` ${process.omittedGroups} lower-pressure groups omitted.`
-          : ''}
-      </div>
-      <div>
-        System / unmapped means no verified Farmslot run, slot tmux pane, or active resource PID
-        owns that tree. It is never cleanup-eligible.
-      </div>
-      ${process.sampler
-        ? html`<div>
-            Sampler ${process.sampler.lastDurationMs ?? '–'}ms · ${process.sampler.executions}
-            executions · ${process.sampler.skippedCadence} avoided probes ·
-            ${process.sampler.failures} failures
-          </div>`
-        : ''}
-      ${process.sampler?.lastError
-        ? html`<div class="sampler-error">Sampler error: ${process.sampler.lastError}</div>`
-        : ''}
-      ${process.degradedReason
-        ? html`<div class="sampler-error">${process.degradedReason}</div>`
-        : ''}
-      ${machine.concerns.map((concern) => html`<div>• ${concern.reason}</div>`)}
-    </div>`;
-  }
-
-  private toggle(machine: string) {
-    const next = new Set(this.expandedMachines);
-    if (next.has(machine)) next.delete(machine);
-    else next.add(machine);
-    this.expandedMachines = next;
+  private openMachine(machine: string) {
+    this.dispatchEvent(
+      new CustomEvent('machine-pressure-open', {
+        detail: { machine },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 }
 

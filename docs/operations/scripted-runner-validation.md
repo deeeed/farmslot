@@ -133,3 +133,23 @@ The scripted worker writes into the worker task directory:
 - command mode also writes stdout/stderr/result artifacts
 
 Use these artifacts when proving success/failure in PR validation notes.
+
+## Machine pause/restore live proof
+
+Release-park proof requires a runner with validated persisted-session reload; the `scripted`
+simulator cannot prove this boundary. Create a dedicated `mode=validation` run through the
+checkout-local CLI using Claude, Codex, or Grok, wait until it is `monitoring` or `ci-watching`,
+then run:
+
+```sh
+FARMSLOT_MACHINE_PAUSE_RUN_ID=<validation-run-id> \
+  node scripts/runner-validation/run.mjs \
+  --runner codex \
+  --scenario machine-pause-restore-smoke
+```
+
+The scenario refuses non-validation runs. It calls the production gateway's
+`machine.pause.preview`, `machine.pause.execute`, `machine.pause.status`, and
+`machine.pause.restore` methods and passes only when the durable record proves resource ordering,
+exact structured prompt acceptance, a live restored process, and the same persisted runner session
+identity. Tmux pane text is captured nowhere in the verdict.

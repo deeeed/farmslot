@@ -35,7 +35,6 @@ for (let attempt = 0; attempt < 60; attempt += 1) {
   const overview = fleetRoot.querySelector('machine-pressure-overview');
   card = overview?.shadowRoot?.querySelector(`[data-machine="${CSS.escape(machineName)}"]`);
   details = card?.querySelector(`[data-testid="pressure-details-${CSS.escape(machineName)}"]`);
-  if (details?.getAttribute('aria-expanded') !== 'true') details?.click();
   await sleep(250);
   charts = [...(card?.querySelectorAll('.metrics .sparkline polyline') ?? [])];
   processRows = [...(card?.querySelectorAll('.group:not(.group-head)') ?? [])];
@@ -52,7 +51,7 @@ for (let attempt = 0; attempt < 60; attempt += 1) {
   if (attempt === 20) refresh.click();
 }
 if (!card) throw new Error(`${machineName} pressure card not found`);
-if (!details) throw new Error(`${machineName} pressure Details button not found`);
+if (!details) throw new Error(`${machineName} run relief action not found`);
 const renderedMachines = [
   ...(fleetRoot
     .querySelector('machine-pressure-overview')
@@ -100,7 +99,7 @@ await fleet.updateComplete;
 return {
   machine: machineName,
   project: projectName,
-  expanded: details.getAttribute('aria-expanded'),
+  action: details.textContent.trim(),
   charts: charts.length,
   processRows: processRows.length,
   attribution: processRows.length > 0 ? 'sampled' : 'awaiting-census',

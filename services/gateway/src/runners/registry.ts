@@ -93,6 +93,13 @@ export const WORKER_ENV_PREFIX =
 export type RetainedSessionHandoff = 'resume-with-prompt' | 'in-place' | 'unsupported';
 export type SessionReloadCapability = 'with-prompt' | 'none';
 
+export interface RunnerGracefulExitCapability {
+  /** Literal text delivered through tmux before any resource shutdown. */
+  command: string;
+  /** Runner-specific paste-burst guard before submitting the literal command. */
+  submitDelayMs?: number;
+}
+
 export interface RunnerDefinition {
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
@@ -111,6 +118,8 @@ export interface RunnerDefinition {
   persistsSessionFiles: boolean;
   /** Whether persisted sessions can be reloaded with an initial prompt in argv. */
   sessionReload: SessionReloadCapability;
+  /** Static, runner-owned graceful process exit contract. Null means fail closed. */
+  gracefulExit: RunnerGracefulExitCapability | null;
   /** How a completed worker session receives a chained task without TUI parsing. */
   retainedSessionHandoff: RetainedSessionHandoff;
   /** Exact persisted-session identity can gate retained prompt delivery. */
@@ -206,6 +215,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: '/clear',
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
+    gracefulExit: { command: '/exit' },
     retainedSessionHandoff: 'resume-with-prompt',
     supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: false,
@@ -243,6 +253,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
+    gracefulExit: { command: '/exit', submitDelayMs: 50 },
     retainedSessionHandoff: 'resume-with-prompt',
     supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: true,
@@ -284,6 +295,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: false,
     sessionReload: 'none',
+    gracefulExit: null,
     retainedSessionHandoff: 'in-place',
     supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
@@ -316,6 +328,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
+    gracefulExit: { command: '/exit' },
     retainedSessionHandoff: 'in-place',
     supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: true,
@@ -344,6 +357,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: false,
     sessionReload: 'none',
+    gracefulExit: null,
     retainedSessionHandoff: 'unsupported',
     supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
@@ -368,6 +382,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: false,
     sessionReload: 'none',
+    gracefulExit: null,
     retainedSessionHandoff: 'unsupported',
     supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
@@ -392,6 +407,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: false,
     sessionReload: 'none',
+    gracefulExit: null,
     retainedSessionHandoff: 'unsupported',
     supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,

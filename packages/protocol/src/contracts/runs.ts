@@ -4,7 +4,12 @@ import type {
   WorkerSignalChecklistTiming,
 } from '../transport/signal.js';
 
-import type { AgentContext, SafetyTier, ScriptedRunnerConfig } from './agents.js';
+import type {
+  AgentContext,
+  AgentContextTarget,
+  SafetyTier,
+  ScriptedRunnerConfig,
+} from './agents.js';
 import type { FailureCategory, RunRecoveryProposalConfidence } from './chat.js';
 import type { TaskTemplateSelection, TemplateProvenance } from './evals.js';
 import type { EvidenceQualityReport, RecipeQualityArtifact } from './recipes.js';
@@ -1469,6 +1474,157 @@ export function isValidDomainName(value: string): boolean {
   return DOMAIN_NAME_RE.test(value);
 }
 
+// ─── Machine pause / park lifecycle ───
+
+export type MachinePauseMode = 'orchestration' | 'release';
+
+/** Durable checkpoints used to resume an interrupted park/restore operation. */
+export type MachineParkPhase =
+  | 'intent-persisted'
+  | 'orchestration-pausing'
+  | 'orchestration-paused'
+  | 'runner-stopping'
+  | 'runner-stopped'
+  | 'resources-stopping'
+  | 'parked'
+  | 'resources-restoring'
+  | 'runner-reloading'
+  | 'orchestration-resuming'
+  | 'restored'
+  | 'cancelling'
+  | 'partial'
+  | 'failed'
+  | 'cancelled';
+
+export type MachineParkResourcePhase =
+  | 'observed-running'
+  | 'stopping'
+  | 'stopped'
+  | 'restoring'
+  | 'restored'
+  | 'failed';
+
+export type MachineParkCapabilityLeaseState =
+  | 'held'
+  | 'releasing'
+  | 'released'
+  | 'reacquiring'
+  | 'reacquired'
+  | 'failed';
+
+export interface MachineParkCapabilityLease {
+  leaseId: string;
+  /** Lease created when restore reacquires this capability; differs from the released lease id. */
+  restoredLeaseId?: string;
+  capabilityId: string;
+  state: MachineParkCapabilityLeaseState;
+  parameters: Record<string, unknown>;
+  proofRequirement: import('./runtime-capabilities.js').RuntimeCapabilityProofRequirement;
+  ownerFamilyId?: string;
+  /** Optional provider-resource association; leases remain first-class manifest entries. */
+  resourceId?: string;
+  error?: string;
+}
+
+/** One resource that was observed running when release-pause intent was captured. */
+export interface MachineParkResource {
+  resourceId: string;
+  label: string;
+  type: import('./resources.js').ResourceType;
+  observedStatus: 'running';
+  phase: MachineParkResourcePhase;
+  capabilityLeaseIds: string[];
+  stoppedAt?: string;
+  restoredAt?: string;
+  error?: string;
+}
+
+export interface MachineParkResourceManifest {
+  capturedAt: string;
+  resources: MachineParkResource[];
+  capabilityLeases: MachineParkCapabilityLease[];
+}
+
+/** Exact persisted runner identity required to restore a released worker. */
+export interface MachinePauseRecoveryHandle {
+  version: 1;
+  runnerId: string;
+  contextId: string;
+  sessionId: string;
+  sessionPath: string;
+  target: AgentContextTarget;
+  model: string | null;
+  effort?: string | null;
+  safetyTier?: SafetyTier;
+  runtimeDir?: string;
+  taskDir?: string;
+  capturedAt: string;
+}
+
+export interface MachineParkError {
+  phase: MachineParkPhase;
+  action: string;
+  code: string;
+  message: string;
+  occurredAt: string;
+  retryable: boolean;
+  resourceId?: string;
+}
+
+export type MachineParkResidualState = 'running' | 'stopped' | 'unknown';
+
+export interface MachineParkResiduals {
+  runner: MachineParkResidualState;
+  resources: Array<{
+    resourceId: string;
+    state: MachineParkResidualState;
+    detail?: string;
+  }>;
+}
+
+export interface MachineParkCurrentStep {
+  index: number;
+  name: string;
+  status: RunStepStatus;
+}
+
+/** Write-ahead per-run record; persisted on Run before any release side effect. */
+export interface MachineParkRecord {
+  version: 1;
+  operationId: string;
+  previewId: string;
+  runId: string;
+  generation: number;
+  restoredGeneration?: number;
+  machine: string;
+  slotId: string;
+  mode: MachinePauseMode;
+  phase: MachineParkPhase;
+  prePauseStatus: RunStatus;
+  prePauseCurrentStep: MachineParkCurrentStep | null;
+  resourceManifest: MachineParkResourceManifest;
+  recoveryHandle: MachinePauseRecoveryHandle | null;
+  /** Exact runner-native acknowledgement captured before orchestration resumes. */
+  recoveryProof?: {
+    sessionId: string;
+    live: true;
+    acknowledgement: {
+      kind: 'structured';
+      source: string;
+      reason: string;
+      turnToken?: string;
+    };
+    acceptedAt: string;
+  };
+  errors: MachineParkError[];
+  residuals: MachineParkResiduals;
+  createdAt: string;
+  updatedAt: string;
+  parkedAt?: string;
+  restoredAt?: string;
+  cancelledAt?: string;
+}
+
 export interface Run {
   id: string;
   familyId: string;
@@ -1610,6 +1766,8 @@ export interface Run {
   analyticsEmittedAt?: string;
   /** Present when this run record was imported from a portable bundle (ADR-039). */
   importProvenance?: RunImportProvenance;
+  /** Durable machine-scoped pause/release/restore state. */
+  park?: MachineParkRecord | null;
   /** Imported reference-only runs must not be re-dispatched or activated on slot. */
   readOnly?: boolean;
   /** Slot HEAD SHA captured at dispatch (after prepare) — base for per-run iteration diff. */

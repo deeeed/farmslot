@@ -7,6 +7,7 @@ import * as dispatchPromptSmoke from './dispatch-prompt-smoke.mjs';
 import * as dispatchPromptTrust from './dispatch-prompt-trust.mjs';
 import * as hookSmoke from './hook-smoke.mjs';
 import * as interactionSmoke from './interaction-smoke.mjs';
+import * as machinePauseRestoreSmoke from './machine-pause-restore-smoke.mjs';
 import * as modeSwitch from './mode-switch.mjs';
 import * as paneSmoke from './pane-smoke.mjs';
 import * as promptAccepted from './prompt-accepted.mjs';
@@ -22,6 +23,7 @@ export const SCENARIOS = {
   'hook-smoke': hookSmoke,
   'pane-smoke': paneSmoke,
   'interaction-smoke': interactionSmoke,
+  'machine-pause-restore-smoke': machinePauseRestoreSmoke,
   'dispatch-prompt-smoke': dispatchPromptSmoke,
   'dispatch-prompt-dropped-enter': dispatchPromptDroppedEnter,
   'dispatch-prompt-mcp-race': dispatchPromptMcpRace,

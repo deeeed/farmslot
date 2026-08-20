@@ -6,6 +6,10 @@ import {
 type PressureGroup =
   ResourcePressureSnapshotResult['machines'][number]['processAttribution']['groups'][number];
 
+export function pressureOwnershipLabel(classification: PressureGroup['classification']): string {
+  return classification === 'unknown' ? 'system / unmapped' : classification;
+}
+
 const PRESSURE_CHART_SAMPLES = 30;
 
 type CleanupTarget = { machine: string; resourceId: string; slotId: string };
