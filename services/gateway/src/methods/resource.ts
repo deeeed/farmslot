@@ -177,7 +177,10 @@ export async function resourcePressureSnapshot(
     import('./tmux-workers.js'),
     import('../runs/store.js'),
   ]);
-  const tmuxInventory = await tmuxWorkerList({ includeDisconnected: true });
+  const tmuxInventory = await tmuxWorkerList({
+    includeDisconnected: true,
+    ...(params.machine ? { machine: params.machine } : {}),
+  });
   const allRuns = getAllRuns();
   const healthByMachine = new Map((fleet.machines ?? []).map((health) => [health.machine, health]));
   const slots = fleet.slots.filter((slot) => matchesPressureFilters(slot, params));
@@ -323,6 +326,14 @@ export function resourcePressureSnapshotForModel(snapshot: ResourcePressureSnaps
       history: machine.history.slice(-12),
       processAttribution: {
         ...machine.processAttribution,
+        ...(machine.processAttribution.sampler
+          ? {
+              sampler: {
+                ...machine.processAttribution.sampler,
+                lastError: undefined,
+              },
+            }
+          : {}),
         groups: machine.processAttribution.groups.slice(0, 8).map((group) => ({
           process: processName(group.topExecutable),
           processCount: group.processCount,

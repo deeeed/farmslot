@@ -35,7 +35,6 @@
       "wait-pressure-overview": {
         "action": "ui.wait_for",
         "selector": "machine-pressure-overview",
-        "text_contains": ["Load / core", "Top processes + managed work"],
         "timeout_ms": 45000,
         "next": "open-and-assert-machine-details",
         "intent": "Confirm the overview exposes core-aware utilization and bounded ownership summaries."

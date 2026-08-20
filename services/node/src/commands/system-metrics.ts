@@ -9,7 +9,8 @@ import type {
   NodeProcessSample,
 } from '@farmslot/protocol';
 
-import { getResourceWatchRuntimeStats } from './resource-watch.js';
+import { getCachedResourceWatchPids, getResourceWatchRuntimeStats } from './resource-watch.js';
+import { getCachedTmuxPanePids } from './tmux.js';
 
 export type SystemMetrics = NodeMetricsSample;
 
@@ -138,6 +139,7 @@ function elapsedSeconds(value: string): number {
 export function parseProcessInventory(
   output: string,
   maxEntries = PROCESS_SAMPLE_MAX_ENTRIES,
+  priorityPids: ReadonlySet<number> = new Set(),
 ): {
   processes: NodeProcessSample[];
   totalProcesses: number;
@@ -173,7 +175,11 @@ export function parseProcessInventory(
   const selected = new Map<number, NodeProcessSample>();
   let ancestryTruncated = false;
   const candidates = [...parsed].sort(
-    (a, b) => b.cpuPercent - a.cpuPercent || b.rssBytes - a.rssBytes || a.pid - b.pid,
+    (a, b) =>
+      Number(priorityPids.has(b.pid)) - Number(priorityPids.has(a.pid)) ||
+      b.cpuPercent - a.cpuPercent ||
+      b.rssBytes - a.rssBytes ||
+      a.pid - b.pid,
   );
   for (const entry of candidates) {
     if (selected.size >= maxEntries) break;
@@ -240,6 +246,7 @@ function samplerHealth() {
 
 export function collectProcessInventory(
   runner: ProcessInventoryRunner = runProcessInventoryCommand,
+  priorityPids: ReadonlySet<number> = new Set(),
 ): Promise<NodeProcessInventory> {
   processSampler.attempts += 1;
   if (processInventoryInFlight) {
@@ -254,7 +261,7 @@ export function collectProcessInventory(
       processSampler.lastDurationMs = Date.now() - startedAt;
       processSampler.lastError = undefined;
       lastProcessInventoryAt = Date.now();
-      const parsed = parseProcessInventory(output);
+      const parsed = parseProcessInventory(output, PROCESS_SAMPLE_MAX_ENTRIES, priorityPids);
       return {
         generation: PROCESS_GENERATION,
         sampleId,
@@ -330,7 +337,10 @@ export async function collectMetrics(): Promise<SystemMetrics> {
     cpuCores,
     thermalPressure,
   })
-    ? await collectProcessInventory()
+    ? await collectProcessInventory(
+        undefined,
+        new Set([...getCachedTmuxPanePids(), ...getCachedResourceWatchPids()]),
+      )
     : undefined;
 
   return {

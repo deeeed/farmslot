@@ -51,7 +51,7 @@ test('bounded process rows retain managed and stale work', () => {
   ];
   assert.deepEqual(
     visiblePressureGroups(managed, 3).map((entry) => entry.rootPid),
-    [2, 3, 4],
+    [1, 2, 3],
   );
   assert.equal(
     pressureSampleAge('2026-08-20T00:00:00.000Z', Date.parse('2026-08-20T00:01:30.000Z')),

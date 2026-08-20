@@ -82,6 +82,8 @@ export interface TmuxWorkerNodeResult {
 export interface TmuxWorkerListParams {
   /** Include registered pool machines that currently have no connected node. Default true. */
   includeDisconnected?: boolean;
+  /** Limit inventory collection to one machine. */
+  machine?: string;
 }
 
 export interface TmuxWorkerListResult {

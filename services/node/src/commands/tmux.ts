@@ -18,6 +18,10 @@ interface PaneCacheEntry {
 
 let paneInventoryCache: { observedAt: number; panes: NodeTmuxPane[] } | null = null;
 const paneChangeCache = new Map<string, PaneCacheEntry>();
+
+export function getCachedTmuxPanePids(): number[] {
+  return paneInventoryCache?.panes.flatMap((pane) => (pane.pid ? [pane.pid] : [])) ?? [];
+}
 const gitBranchCache = new Map<string, { observedAt: number; branch?: string }>();
 const gitBranchWatchers = new Map<string, FSWatcher[]>();
 

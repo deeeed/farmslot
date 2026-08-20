@@ -47,6 +47,14 @@ test('a hottest process survives when its ancestry exceeds the entry cap', () =>
   assert.equal(parsed.ancestryTruncated, true);
 });
 
+test('cached ownership roots survive the cap even when idle', () => {
+  const lines = [psLine(1, 0)];
+  for (let pid = 2; pid <= 20; pid += 1) lines.push(psLine(pid, 1, 20 - pid, 1024));
+  lines.push(psLine(200, 1, 0, 1024));
+  const parsed = parseProcessInventory(lines.join('\n'), 5, new Set([200]));
+  assert.ok(parsed.processes.some((process) => process.pid === 200));
+});
+
 test('concurrent inventory requests share one command and report skipped overlap', async () => {
   let executions = 0;
   let release: (() => void) | undefined;

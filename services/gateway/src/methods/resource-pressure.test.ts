@@ -149,8 +149,10 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
 
   result.machines[0].processAttribution.groups[0].topExecutable =
     '/Users/developer/Applications/Private Tool.app/Contents/MacOS/Private Tool';
+  result.machines[0].processAttribution.sampler!.lastError =
+    'Command /Users/developer/bin/ps failed';
   const modelProjection = resourcePressureSnapshotForModel(result);
   const serialized = JSON.stringify(modelProjection);
-  assert.doesNotMatch(serialized, /rootPid|topPid|\/Users\/developer/);
+  assert.doesNotMatch(serialized, /rootPid|topPid|lastError|\/Users\/developer/);
   assert.match(serialized, /"process":"Private Tool"/);
 });
