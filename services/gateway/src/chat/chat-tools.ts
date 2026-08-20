@@ -436,11 +436,28 @@ export async function executeTool(
         break;
       }
       case 'resource_pressure_snapshot': {
-        const { resourcePressureSnapshot } = await import('../methods/resource.js');
-        result = await resourcePressureSnapshot({
-          ...(typeof args.machine === 'string' ? { machine: args.machine } : {}),
-          ...(typeof args.project === 'string' ? { project: args.project } : {}),
-        });
+        const { resourcePressureSnapshot, resourcePressureSnapshotForModel } =
+          await import('../methods/resource.js');
+        const machines = Array.isArray(args.machines)
+          ? args.machines.filter(
+              (value): value is string => typeof value === 'string' && value.length > 0,
+            )
+          : [];
+        const projects = Array.isArray(args.projects)
+          ? args.projects.filter(
+              (value): value is string => typeof value === 'string' && value.length > 0,
+            )
+          : [];
+        const machine = typeof args.machine === 'string' ? args.machine.trim() : '';
+        const project = typeof args.project === 'string' ? args.project.trim() : '';
+        result = resourcePressureSnapshotForModel(
+          await resourcePressureSnapshot({
+            ...(machine ? { machine } : {}),
+            ...(machines.length > 0 ? { machines } : {}),
+            ...(project ? { project } : {}),
+            ...(projects.length > 0 ? { projects } : {}),
+          }),
+        );
         break;
       }
       case 'resource_refresh': {

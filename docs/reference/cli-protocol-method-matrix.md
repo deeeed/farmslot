@@ -304,13 +304,14 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## resource.\*
 
-| Method                      | Surface  | CLI command | TUI | Note                                                                                           |
-| --------------------------- | -------- | ----------- | --- | ---------------------------------------------------------------------------------------------- |
-| `resource.list`             | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `resource.control`          | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `resource.health`           | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `resource.cleanup`          | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `resource.watch.setEnabled` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| Method                       | Surface       | CLI command                  | TUI | Note                                                                                           |
+| ---------------------------- | ------------- | ---------------------------- | --- | ---------------------------------------------------------------------------------------------- |
+| `resource.list`              | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `resource.control`           | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `resource.health`            | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `resource.cleanup`           | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `resource.watch.setEnabled`  | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `resource.pressure.snapshot` | typed-command | `farmslot resource pressure` |     |                                                                                                |
 
 ## roadmap.\*
 

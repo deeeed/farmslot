@@ -10,8 +10,10 @@ import type {
   NodeInfo,
   NodesListResult,
   ResourceCleanupResult,
-  ResourceHealthResult,
   ResourceListResult,
+  ResourcePressureCleanupCandidate,
+  ResourcePressureSnapshotParams,
+  ResourcePressureSnapshotResult,
   ResourceStatus,
   ResourceStatusUpdatedPayload,
   ResourceWatchSetEnabledResult,
@@ -25,6 +27,8 @@ import type {
 import { Events, Methods, primaryRoleForFlow } from '@farmslot/protocol';
 
 import './machine-group.js';
+import './machine-pressure-overview.js';
+import './resource-cleanup-preview.js';
 import './resource-overview.js';
 import '../slot-actions/slot-actions-modal.js';
 import '../slot-actions/fleet-refresh-modal.js';
@@ -53,6 +57,7 @@ import {
   fleetCanvasUrlStateHash,
   type FleetCanvasViewMode,
 } from './fleet-canvas-url-state.js';
+import { cleanupExecutionTargets, cleanupTargetsRemainEligible } from './machine-pressure-model.js';
 
 export interface ResourceEntry {
   slotId: string;
@@ -97,9 +102,12 @@ export class FleetCanvas extends LitElement {
   @state() private resourceActionBusy = false;
   @state() private resourceActionFlash = '';
   @state() private resourceWatchesEnabled = true;
+  @state() private resourcePressure?: ResourcePressureSnapshotResult;
+  @state() private resourceCleanupPreview?: ResourcePressureSnapshotResult;
   /** machine → provider subscription snapshot (labels only). */
   private _providerAccountsUnsub: (() => void) | null = null;
   private _resourceFetched = false;
+  private _resourcePressureFetchEpoch = 0;
   private unsub?: () => void;
   private _unsubConnected?: () => void;
   private _unsubDisconnected?: () => void;
@@ -213,6 +221,7 @@ export class FleetCanvas extends LitElement {
     }
     .resource-controls {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: ${unsafeCSS(spacing.sm)};
       padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
@@ -249,6 +258,11 @@ export class FleetCanvas extends LitElement {
     }
     .resource-flash-err {
       color: ${unsafeCSS(colors.statusFail)};
+    }
+    .resource-watch-note {
+      flex-basis: 100%;
+      color: ${unsafeCSS(colors.textMuted)};
+      line-height: 1.45;
     }
   `;
 
@@ -443,11 +457,18 @@ export class FleetCanvas extends LitElement {
 
   private syncState(s: AppState) {
     const prev = this.slots;
+    const previousPressureFilter = JSON.stringify([this.filterProjects, this.filterMachines]);
     this.slots = s.fleet?.slots ?? [];
     this.hydrating = isHydrating(s, 'fleet');
     this.bootstrapFailed = s.bootstrapFailed.fleet;
     this.filterProjects = s.globalFilters.projects;
     this.filterMachines = s.globalFilters.machines;
+    const pressureFilterChanged =
+      previousPressureFilter !== JSON.stringify([this.filterProjects, this.filterMachines]);
+    if (pressureFilterChanged && this.groupBy === 'resource' && this._resourceFetched) {
+      this.resourceCleanupPreview = undefined;
+      void this.fetchResourceData();
+    }
     // Populate machineHealthMap from fleet.machines
     if (s.fleet?.machines) {
       const next = new Map(this.machineHealthMap);
@@ -540,65 +561,77 @@ export class FleetCanvas extends LitElement {
   }
 
   private async fetchResourceData() {
-    if (this.slots.length === 0) return;
+    const resourceSlots = this.resourceScopedSlots;
+    if (resourceSlots.length === 0) {
+      this.slotResourceDefs = new Map();
+      this.slotResourceStatus = new Map();
+      this._resourceFetched = true;
+      await this.fetchResourcePressure();
+      return;
+    }
 
     // Phase 1: fetch resource definitions (fast — reads project.json, no hooks)
     // Renders table immediately with "unknown" status dots
     const nextDefs = new Map<string, SlotResource[]>();
-    await Promise.all(
-      this.slots.map(async (s) => {
-        try {
-          const listRes = await gateway.request<ResourceListResult>(Methods.RESOURCE_LIST, {
-            slotId: s.slot,
-          });
-          if (listRes.resources.length > 0) {
-            nextDefs.set(s.slot, listRes.resources);
-          }
-        } catch (err) {
-          console.warn(
-            `[fleet-canvas] resource list failed for ${s.slot}:`,
-            err instanceof Error ? err.message : String(err),
-          );
-        }
-      }),
-    );
-    this.slotResourceDefs = nextDefs;
-    this._resourceFetched = true;
-
-    // Phase 2: fetch health status (slow — runs hooks via agents)
-    // Updates status dots as results arrive
     const nextStatus = new Map<string, Map<string, ResourceStatus>>(this.slotResourceStatus);
-    await Promise.all(
-      this.slots.map(async (s) => {
-        try {
-          const healthRes = await gateway.request<ResourceHealthResult>(Methods.RESOURCE_HEALTH, {
-            slotId: s.slot,
-          });
-          if (healthRes.resources.length > 0) {
-            const resMap = new Map<string, ResourceStatus>();
-            for (const r of healthRes.resources) resMap.set(r.id, r.status);
-            nextStatus.set(s.slot, resMap);
-            // Progressive update — each slot's health updates the UI immediately
-            this.slotResourceStatus = new Map(nextStatus);
+    for (let index = 0; index < resourceSlots.length; index += 4) {
+      const batch = resourceSlots.slice(index, index + 4);
+      await Promise.all(
+        batch.map(async (s) => {
+          try {
+            const listRes = await gateway.request<ResourceListResult>(Methods.RESOURCE_LIST, {
+              slotId: s.slot,
+            });
+            if (listRes.resources.length > 0) {
+              nextDefs.set(s.slot, listRes.resources);
+              nextStatus.set(
+                s.slot,
+                new Map(listRes.resources.map((resource) => [resource.id, resource.status])),
+              );
+            }
+          } catch (err) {
+            console.warn(
+              `[fleet-canvas] resource list failed for ${s.slot}:`,
+              err instanceof Error ? err.message : String(err),
+            );
           }
-        } catch (err) {
-          console.warn(
-            `[fleet-canvas] resource health failed for ${s.slot}:`,
-            err instanceof Error ? err.message : String(err),
-          );
-        }
-      }),
-    );
+        }),
+      );
+    }
+    this.slotResourceDefs = nextDefs;
+    this.slotResourceStatus = nextStatus;
+    this._resourceFetched = true;
+    await this.fetchResourcePressure();
+  }
+
+  private async fetchResourcePressure() {
+    const epoch = ++this._resourcePressureFetchEpoch;
+    try {
+      const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
+        Methods.RESOURCE_PRESSURE_SNAPSHOT,
+        this.pressureRequestParams(),
+      );
+      if (epoch !== this._resourcePressureFetchEpoch) return;
+      this.resourcePressure = snapshot;
+      this.resourceWatchesEnabled = snapshot.watchState.enabled;
+    } catch (err) {
+      console.warn(
+        '[fleet-canvas] resource pressure fetch failed:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  private pressureRequestParams(): ResourcePressureSnapshotParams {
+    const machines = this.pressureScopedMachines;
+    return {
+      ...(machines ? { machines } : {}),
+      ...(this.filterProjects.length > 0 ? { projects: this.filterProjects } : {}),
+    };
   }
 
   private get filteredSlots(): SlotStatus[] {
-    let result = this.slots;
-    if (this.filterProjects.length > 0) {
-      result = result.filter((s) => this.filterProjects.includes(s.project));
-    }
-    if (this.filterMachines.length > 0) {
-      result = result.filter((s) => this.filterMachines.includes(s.machine));
-    }
+    let result = this.resourceScopedSlots;
     if (this.search) {
       const q = this.search.toLowerCase();
       result = result.filter(
@@ -609,6 +642,14 @@ export class FleetCanvas extends LitElement {
       );
     }
     return result;
+  }
+
+  private get resourceScopedSlots(): SlotStatus[] {
+    return this.slots.filter(
+      (slot) =>
+        (this.filterProjects.length === 0 || this.filterProjects.includes(slot.project)) &&
+        (this.filterMachines.length === 0 || this.filterMachines.includes(slot.machine)),
+    );
   }
 
   private get groups(): Array<{ key: string; slots: SlotStatus[] }> {
@@ -657,6 +698,24 @@ export class FleetCanvas extends LitElement {
       .map(([key, val]) => ({ key, label: val.label, entries: val.entries }));
   }
 
+  private get pressureVisibleMachines(): string[] | undefined {
+    if (
+      this.filterMachines.length === 0 &&
+      this.filterProjects.length === 0 &&
+      this.search.length === 0
+    )
+      return undefined;
+    if (this.search.length > 0) {
+      return [...new Set(this.filteredSlots.map((slot) => slot.machine))];
+    }
+    return this.pressureScopedMachines;
+  }
+
+  private get pressureScopedMachines(): string[] | undefined {
+    if (this.filterMachines.length === 0 && this.filterProjects.length === 0) return undefined;
+    return [...new Set(this.resourceScopedSlots.map((slot) => slot.machine))];
+  }
+
   private setGroupBy(mode: FleetCanvasGroupBy) {
     this.groupBy = mode;
     localStorage.setItem('farmslot:fleet-groupBy', mode);
@@ -683,13 +742,12 @@ export class FleetCanvas extends LitElement {
   private async previewResourceCleanup() {
     this.resourceActionBusy = true;
     try {
-      const result = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
-        dryRun: true,
-      });
-      this.showResourceFlash(
-        `would stop ${result.targets.length} idle running/stale resource${result.targets.length === 1 ? '' : 's'}`,
-        true,
+      const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
+        Methods.RESOURCE_PRESSURE_SNAPSHOT,
+        this.pressureRequestParams(),
       );
+      this.resourcePressure = snapshot;
+      this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
     } catch (err) {
       this.showResourceFlash(err instanceof Error ? err.message : String(err), false);
     } finally {
@@ -697,27 +755,49 @@ export class FleetCanvas extends LitElement {
     }
   }
 
-  private async cleanupBackgroundResources() {
+  private async confirmResourceCleanup(selected: ResourcePressureCleanupCandidate[]) {
+    const reviewed = this.resourceCleanupPreview;
+    if (!reviewed || selected.length === 0) return;
+    const reviewedKeys = new Set(
+      cleanupExecutionTargets(reviewed.cleanupCandidates).map(
+        (target) => `${target.machine}:${target.slotId}:${target.resourceId}`,
+      ),
+    );
+    const selectedTargets = cleanupExecutionTargets(selected);
+    if (
+      selectedTargets.some(
+        (target) => !reviewedKeys.has(`${target.machine}:${target.slotId}:${target.resourceId}`),
+      )
+    ) {
+      this.showResourceFlash('selected cleanup target is not in the reviewed preview', false);
+      return;
+    }
     this.resourceActionBusy = true;
     try {
-      const preview = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
+      const fresh = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
         dryRun: true,
+        targets: selectedTargets,
       });
-      if (preview.targets.length === 0) {
-        this.showResourceFlash('no idle running/stale resources to stop', true);
+      const freshTargets = this.cleanupTargetsForFilters(fresh.targets);
+      if (!cleanupTargetsRemainEligible(selectedTargets, freshTargets)) {
+        const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
+          Methods.RESOURCE_PRESSURE_SNAPSHOT,
+          this.pressureRequestParams(),
+        );
+        this.resourcePressure = snapshot;
+        this.resourceCleanupPreview = this.cleanupPreviewForFilters(snapshot);
+        this.showResourceFlash('eligible targets changed — review the updated preview', false);
         return;
       }
-      const confirmed = window.confirm(
-        `Stop ${preview.targets.length} idle running/stale resource(s)? Active, held, and working slots are excluded.`,
-      );
-      if (!confirmed) return;
       const result = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
         dryRun: false,
+        targets: selectedTargets,
       });
       this.showResourceFlash(
-        `stopped ${result.stopped}/${result.targets.length}${result.failed ? `, failed ${result.failed}` : ''}`,
+        `stopped ${result.stopped}/${selectedTargets.length}${result.failed ? `, failed ${result.failed}` : ''}`,
         result.ok,
       );
+      this.resourceCleanupPreview = undefined;
       await this.fetchResourceData();
     } catch (err) {
       this.showResourceFlash(err instanceof Error ? err.message : String(err), false);
@@ -726,7 +806,39 @@ export class FleetCanvas extends LitElement {
     }
   }
 
+  private cleanupTargetsForFilters<T extends { machine: string; project?: string; slotId: string }>(
+    targets: T[],
+  ): T[] {
+    const searchedSlots = new Set(this.filteredSlots.map((slot) => `${slot.machine}:${slot.slot}`));
+    return targets.filter(
+      (target) =>
+        (this.filterMachines.length === 0 || this.filterMachines.includes(target.machine)) &&
+        (this.filterProjects.length === 0 ||
+          (target.project != null && this.filterProjects.includes(target.project))) &&
+        (this.search.length === 0 || searchedSlots.has(`${target.machine}:${target.slotId}`)),
+    );
+  }
+
+  private cleanupPreviewForFilters(
+    snapshot: ResourcePressureSnapshotResult,
+  ): ResourcePressureSnapshotResult {
+    const cleanupCandidates = this.cleanupTargetsForFilters(snapshot.cleanupCandidates);
+    return {
+      ...snapshot,
+      summary: { ...snapshot.summary, cleanupCandidates: cleanupCandidates.length },
+      cleanupCandidates,
+    };
+  }
+
   private async setResourceWatches(enabled: boolean) {
+    if (
+      !enabled &&
+      !window.confirm(
+        'Pause resource liveness watches? This stops background resource probes and marks cached resource status unknown. It does not stop apps, agents, builds, or host pressure metrics.',
+      )
+    ) {
+      return;
+    }
     this.resourceActionBusy = true;
     try {
       const result = await gateway.request<ResourceWatchSetEnabledResult>(
@@ -903,29 +1015,36 @@ export class FleetCanvas extends LitElement {
     if (!this._resourceFetched) {
       return html`<div class="empty">Loading resources...</div>`;
     }
-    if (groups.length === 0) {
-      return html`<div class="empty">No resources found</div>`;
-    }
     return html`
       <div class="resource-controls">
         <span>Resource pressure</span>
-        <button ?disabled=${this.resourceActionBusy} @click=${() => this.previewResourceCleanup()}>
+        <button ?disabled=${this.resourceActionBusy} @click=${() => this.fetchResourcePressure()}>
+          Refresh pressure
+        </button>
+        <button
+          title="Inspect the exact eligible resources and estimated process impact; does not stop anything"
+          ?disabled=${this.resourceActionBusy}
+          @click=${() => this.previewResourceCleanup()}
+        >
           Preview cleanup
         </button>
         <button
           class="danger"
+          title="Opens the same impact preview; shutdown requires a second explicit action"
           ?disabled=${this.resourceActionBusy}
-          @click=${() => this.cleanupBackgroundResources()}
+          @click=${() => this.previewResourceCleanup()}
         >
-          Stop idle resources
+          Review & stop idle
         </button>
         <button
+          title="Stops background resource liveness probes only; does not stop apps, agents, builds, or pressure metrics"
           ?disabled=${this.resourceActionBusy || !this.resourceWatchesEnabled}
           @click=${() => this.setResourceWatches(false)}
         >
           Pause watches
         </button>
         <button
+          title="Restarts node-owned resource liveness probes and repopulates cached resource status"
           ?disabled=${this.resourceActionBusy || this.resourceWatchesEnabled}
           @click=${() => this.setResourceWatches(true)}
         >
@@ -939,18 +1058,42 @@ export class FleetCanvas extends LitElement {
               >${this.resourceActionFlash.slice(this.resourceActionFlash.indexOf(':') + 1)}</span
             >`
           : ''}
+        <span class="resource-watch-note">
+          Watches track resource liveness from cached node probes. Pausing stops those probes and
+          marks resource status unknown; it does not stop apps, agents, builds, or host pressure
+          metrics. Global selectors and slot search limit visible machine cards and cleanup rows;
+          pressure values remain whole-machine.
+        </span>
       </div>
-      ${groups.map(
-        (g) => html`
-          <resource-overview
-            .resourceId=${g.key}
-            .label=${g.label}
-            .entries=${g.entries}
-            .onlineMachines=${this.onlineMachines}
-            @refresh-resources=${() => this.fetchResourceData()}
-          ></resource-overview>
-        `,
-      )}
+      <machine-pressure-overview
+        .snapshot=${this.resourcePressure}
+        .visibleMachines=${this.pressureVisibleMachines}
+      ></machine-pressure-overview>
+      ${this.resourceCleanupPreview
+        ? html`<resource-cleanup-preview
+            .snapshot=${this.resourceCleanupPreview}
+            .busy=${this.resourceActionBusy}
+            @cleanup-preview-close=${() => {
+              if (!this.resourceActionBusy) this.resourceCleanupPreview = undefined;
+            }}
+            @cleanup-preview-confirm=${(
+              event: CustomEvent<{ targets: ResourcePressureCleanupCandidate[] }>,
+            ) => this.confirmResourceCleanup(event.detail.targets)}
+          ></resource-cleanup-preview>`
+        : ''}
+      ${groups.length === 0
+        ? html`<div class="empty">No resources found</div>`
+        : groups.map(
+            (g) => html`
+              <resource-overview
+                .resourceId=${g.key}
+                .label=${g.label}
+                .entries=${g.entries}
+                .onlineMachines=${this.onlineMachines}
+                @refresh-resources=${() => this.fetchResourceData()}
+              ></resource-overview>
+            `,
+          )}
     `;
   }
 }

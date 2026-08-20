@@ -154,6 +154,48 @@ export type { SlotRunHistoryEntry } from './runs.js';
 export type ThermalPressure = 'nominal' | 'fair' | 'serious' | 'critical';
 export type Headroom = 'green' | 'yellow' | 'red';
 
+export interface NodePressureRatios {
+  cpu: number;
+  memory: number;
+  disk: number;
+  load1?: number;
+  load5?: number;
+}
+
+/** Ownership-safe process data: executable name/path only, never argv or environment. */
+export interface NodeProcessSample {
+  pid: number;
+  ppid: number;
+  cpuPercent: number;
+  rssBytes: number;
+  elapsedSeconds: number;
+  executable: string;
+}
+
+export interface NodeProcessSamplerHealth {
+  attempts: number;
+  executions: number;
+  failures: number;
+  skippedBusy: number;
+  skippedCadence: number;
+  lastDurationMs: number | null;
+  lastError?: string;
+}
+
+export interface NodeProcessInventory {
+  generation: string;
+  sampleId: number;
+  collectedAt: string;
+  processes: NodeProcessSample[];
+  totalProcesses: number;
+  maxEntries: number;
+  truncated: boolean;
+  ancestryTruncated?: boolean;
+  /** Health-only failed attempt; does not represent a process census. */
+  failed?: boolean;
+  health: NodeProcessSamplerHealth;
+}
+
 export interface NodeSystemMetrics {
   cpuPercent: number; // 0-100
   memoryPercent: number; // 0-100
@@ -162,9 +204,16 @@ export interface NodeSystemMetrics {
   diskPercent: number; // 0-100
   loadAvg1: number;
   loadAvg5: number;
+  cpuCores?: number;
+  pressure?: NodePressureRatios;
   thermalPressure?: ThermalPressure; // macOS only
   resourceWatches?: ResourceWatchRuntimeStats;
   collectedAt: string;
+}
+
+/** Private node→gateway sample; process census is never part of MachineHealth.system. */
+export interface NodeMetricsSample extends NodeSystemMetrics {
+  processInventory?: NodeProcessInventory;
 }
 
 export interface MachineHealth {

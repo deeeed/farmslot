@@ -174,6 +174,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'resource.control': { classification: 'admin' },
   'resource.health': { classification: 'admin' },
   'resource.list': { classification: 'admin' },
+  'resource.pressure.snapshot': { classification: 'admin' },
   'resource.watch.setEnabled': { classification: 'admin' },
   'roadmap.delete': { classification: 'admin' },
   'roadmap.get': { classification: 'admin' },

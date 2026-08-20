@@ -623,6 +623,10 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "resource.pressure.snapshot": {
+      "surface": "typed-command",
+      "command": "farmslot resource pressure"
+    },
     "resource.watch.setEnabled": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."

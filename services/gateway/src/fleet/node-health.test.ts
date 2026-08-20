@@ -1,9 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { NodeSystemMetrics, RecipeRuntimeCapabilityDeclaration } from '@farmslot/protocol';
+import type {
+  NodeMetricsSample,
+  NodeSystemMetrics,
+  RecipeRuntimeCapabilityDeclaration,
+} from '@farmslot/protocol';
 
-import { getMachineHealth, markMachineOnline, updateMachineMetrics } from './node-health.js';
+import {
+  getMachineHealth,
+  getMachinePressureHistory,
+  getMachineProcessInventory,
+  getMachineProcessSamplerHealth,
+  markMachineOnline,
+  NODE_PRESSURE_HISTORY_LIMIT,
+  updateMachineMetrics,
+} from './node-health.js';
 
 test('machine health preserves node capture capabilities across metrics updates', () => {
   const machine = `capability-node-${Date.now()}`;
@@ -39,4 +51,135 @@ test('machine health preserves node capture capabilities across metrics updates'
   updateMachineMetrics(machine, metrics);
   assert.deepEqual(getMachineHealth(machine)?.capabilities, capabilities);
   assert.equal(getMachineHealth(machine)?.system?.cpuPercent, 10);
+});
+
+test('a first failed process attempt publishes sampler health without creating a census', () => {
+  const machine = `failed-census-node-${Date.now()}`;
+  const collectedAt = new Date().toISOString();
+  const metrics: NodeMetricsSample = {
+    cpuPercent: 10,
+    memoryPercent: 20,
+    memoryUsedGb: 3,
+    memoryTotalGb: 16,
+    diskPercent: 30,
+    loadAvg1: 1,
+    loadAvg5: 1,
+    collectedAt,
+    processInventory: {
+      generation: 'failed-generation',
+      sampleId: 1,
+      collectedAt,
+      processes: [],
+      totalProcesses: 0,
+      maxEntries: 256,
+      truncated: false,
+      failed: true,
+      health: {
+        attempts: 1,
+        executions: 1,
+        failures: 1,
+        skippedBusy: 0,
+        skippedCadence: 0,
+        lastDurationMs: 4_000,
+        lastError: 'ps timed out',
+      },
+    },
+  };
+  updateMachineMetrics(machine, metrics);
+  assert.equal(getMachineProcessInventory(machine), undefined);
+  assert.equal(getMachineProcessSamplerHealth(machine)?.lastError, 'ps timed out');
+});
+
+test('pressure history is bounded and rejects duplicate or out-of-order samples', () => {
+  const machine = `history-node-${Date.now()}`;
+  const base = Date.now();
+  for (let index = 0; index <= NODE_PRESSURE_HISTORY_LIMIT; index += 1) {
+    updateMachineMetrics(machine, {
+      cpuPercent: index,
+      memoryPercent: 20,
+      memoryUsedGb: 3,
+      memoryTotalGb: 16,
+      diskPercent: 30,
+      loadAvg1: 1,
+      loadAvg5: 1,
+      cpuCores: 10,
+      collectedAt: new Date(base + index * 1_000).toISOString(),
+    });
+  }
+  const history = getMachinePressureHistory(machine);
+  assert.equal(history.length, NODE_PRESSURE_HISTORY_LIMIT);
+  assert.equal(history[0].cpuPercent, 1);
+  assert.equal(history.at(-1)?.cpuPercent, NODE_PRESSURE_HISTORY_LIMIT);
+
+  updateMachineMetrics(machine, {
+    cpuPercent: 99,
+    memoryPercent: 99,
+    memoryUsedGb: 15,
+    memoryTotalGb: 16,
+    diskPercent: 99,
+    loadAvg1: 99,
+    loadAvg5: 99,
+    collectedAt: new Date(base).toISOString(),
+  });
+  assert.equal(getMachinePressureHistory(machine).at(-1)?.cpuPercent, NODE_PRESSURE_HISTORY_LIMIT);
+});
+
+test('node restart replaces process generation and stale same-generation samples cannot regress it', () => {
+  const machine = `restart-node-${Date.now()}`;
+  const metrics = (
+    generation: string,
+    sampleId: number,
+    collectedAt: string,
+  ): NodeMetricsSample => ({
+    cpuPercent: 10,
+    memoryPercent: 20,
+    memoryUsedGb: 3,
+    memoryTotalGb: 16,
+    diskPercent: 30,
+    loadAvg1: 1,
+    loadAvg5: 1,
+    collectedAt,
+    processInventory: {
+      generation,
+      sampleId,
+      collectedAt,
+      processes: [
+        {
+          pid: 42,
+          ppid: 1,
+          cpuPercent: 1,
+          rssBytes: 1024,
+          elapsedSeconds: 10,
+          executable: 'node',
+        },
+      ],
+      totalProcesses: 1,
+      maxEntries: 256,
+      truncated: false,
+      health: {
+        attempts: sampleId,
+        executions: sampleId,
+        failures: 0,
+        skippedBusy: 0,
+        skippedCadence: 0,
+        lastDurationMs: 1,
+      },
+    },
+  });
+  const now = Date.now();
+  updateMachineMetrics(machine, metrics('generation-a', 2, new Date(now).toISOString()));
+  updateMachineMetrics(machine, metrics('generation-a', 1, new Date(now + 1_000).toISOString()));
+  assert.equal(getMachineProcessInventory(machine)?.sampleId, 2);
+  assert.equal('processInventory' in (getMachineHealth(machine)?.system ?? {}), false);
+  const failed = metrics('generation-a', 3, new Date(now + 1_500).toISOString());
+  failed.processInventory!.processes = [];
+  failed.processInventory!.totalProcesses = 0;
+  failed.processInventory!.health.failures = 1;
+  failed.processInventory!.health.lastError = 'ps timed out';
+  updateMachineMetrics(machine, failed);
+  assert.equal(getMachineProcessInventory(machine)?.sampleId, 2);
+  assert.equal(getMachineProcessInventory(machine)?.processes.length, 1);
+  assert.equal(getMachineProcessInventory(machine)?.health.lastError, 'ps timed out');
+  updateMachineMetrics(machine, metrics('generation-b', 1, new Date(now + 2_000).toISOString()));
+  assert.equal(getMachineProcessInventory(machine)?.generation, 'generation-b');
 });

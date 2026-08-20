@@ -138,6 +138,10 @@ async function withProcessPollPermit<T>(
 
 const activeWatches = new Map<string, ActiveWatch>(); // key: "slotId:resourceId"
 
+export function getCachedResourceWatchPids(): number[] {
+  return [...activeWatches.values()].flatMap((watch) => (watch.lastPid ? [watch.lastPid] : []));
+}
+
 function watchKey(slotId: string, resourceId: string): string {
   return `${slotId}:${resourceId}`;
 }

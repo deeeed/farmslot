@@ -380,16 +380,30 @@ export const FLEET_TOOLS: Tool[] = [
   {
     name: 'resource_pressure_snapshot',
     description:
-      'Read a fleet resource-pressure snapshot for Co-Pilot diagnosis: machine health, slot load, resource status counts, and idle cleanup candidates. Read-only; use this before proposing cleanup or watch changes.',
+      'Read a bounded fleet resource-pressure snapshot for Co-Pilot diagnosis: machine health, slot load, resource status counts, cleanup-candidate counts, and sanitized process attribution. Read-only; exact cleanup targets remain operator-only.',
     parameters: Type.Object({
       machine: Type.Optional(
         Type.String({
           description: 'Optional machine filter, e.g. mini or runner-local.',
         }),
       ),
+      machines: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            'Optional non-empty machine filters; combined with machine as a union. Empty arrays are ignored by Co-Pilot.',
+          maxItems: 32,
+        }),
+      ),
       project: Type.Optional(
         Type.String({
           description: 'Optional project filter, e.g. example-mobile.',
+        }),
+      ),
+      projects: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            'Optional non-empty project filters; combined with project as a union. Empty arrays are ignored by Co-Pilot.',
+          maxItems: 32,
         }),
       ),
     }),

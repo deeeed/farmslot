@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- feat(resources): add filter-aware core-normalized pressure trends, expandable process attribution, watch-state guidance, and selectable two-step idle cleanup previews with exact-target revalidation.
 - fix(dev): make the root `yarn dev` command use the canonical Command Center `farmdev` launcher and update operator instructions.
 - fix(copilot): update the live CDP probe for the terminal-first retained runtime, exact worker binding, compact controls, and removed legacy composer.
 - feat(runtime-capabilities): add Gateway lifecycle smoke tools, a browser/CDP probe, and reusable Companion on-demand lifecycle proof.

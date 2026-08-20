@@ -598,7 +598,9 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
       }
 
       case 'system.metrics': {
-        const metrics = collectMetrics();
+        // Keep a completed census queued for the subscribed node.metrics event; an ad-hoc
+        // gauge RPC must not consume the only process sample before the gateway sees it.
+        const metrics = await collectMetrics({ consumeProcessInventory: false });
         sendResponse(frame.id, true, metrics);
         break;
       }

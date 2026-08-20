@@ -1,24 +1,45 @@
 // system-metrics.ts — Collect host-level CPU, memory, disk, load, thermal metrics
 
-import { execSync } from 'node:child_process';
+import { execFile, execSync } from 'node:child_process';
 import os from 'node:os';
 
-import type { ResourceWatchRuntimeStats } from '@farmslot/protocol';
+import type {
+  NodeMetricsSample,
+  NodeProcessInventory,
+  NodeProcessSample,
+} from '@farmslot/protocol';
 
-import { getResourceWatchRuntimeStats } from './resource-watch.js';
+import { getCachedResourceWatchPids, getResourceWatchRuntimeStats } from './resource-watch.js';
+import { getCachedTmuxPanePids } from './tmux.js';
 
-export interface SystemMetrics {
-  cpuPercent: number;
-  memoryPercent: number;
-  memoryUsedGb: number;
-  memoryTotalGb: number;
-  diskPercent: number;
-  loadAvg1: number;
-  loadAvg5: number;
-  thermalPressure?: 'nominal' | 'fair' | 'serious' | 'critical';
-  resourceWatches?: ResourceWatchRuntimeStats;
-  collectedAt: string;
-}
+export type SystemMetrics = NodeMetricsSample;
+
+const PROCESS_SAMPLE_MAX_ENTRIES = 256;
+const PROCESS_SAMPLE_MAX_BYTES = 512 * 1024;
+const PROCESS_SAMPLE_TIMEOUT_MS = 4_000;
+const PROCESS_EXECUTABLE_MAX_CHARS = 120;
+const PROCESS_SAMPLE_ELEVATED_INTERVAL_MS = 60_000;
+const PROCESS_SAMPLE_NORMAL_INTERVAL_MS = 5 * 60_000;
+export const PROCESS_INVENTORY_FAILURE_RETRY_MS = 60_000;
+const PROCESS_GENERATION = `${process.pid}:${new Date(Date.now() - process.uptime() * 1000).toISOString()}`;
+
+const processSampler = {
+  attempts: 0,
+  executions: 0,
+  failures: 0,
+  skippedBusy: 0,
+  skippedCadence: 0,
+  lastDurationMs: null as number | null,
+  lastError: undefined as string | undefined,
+};
+let processSampleId = 0;
+let processInventoryInFlight: Promise<NodeProcessInventory> | null = null;
+let processInventoryPriorityPids = new Set<number>();
+let pendingProcessInventory: NodeProcessInventory | undefined;
+let lastProcessInventoryAt = 0;
+let lastProcessInventoryFailedAt = 0;
+
+export type ProcessInventoryRunner = () => Promise<string>;
 
 // Previous CPU snapshot for delta computation
 let prevCpuTimes: { idle: number; total: number } | null = null;
@@ -112,19 +133,302 @@ function getMemoryUsage(): { usedBytes: number; totalBytes: number } {
   return { usedBytes: totalBytes - os.freemem(), totalBytes };
 }
 
-export function collectMetrics(): SystemMetrics {
+function elapsedSeconds(value: string): number {
+  const match = value.match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
+  if (!match) return 0;
+  const [, days = '0', hours = '0', minutes = '0', seconds = '0'] = match;
+  return Number(days) * 86_400 + Number(hours) * 3_600 + Number(minutes) * 60 + Number(seconds);
+}
+
+export function parseProcessInventory(
+  output: string,
+  maxEntries = PROCESS_SAMPLE_MAX_ENTRIES,
+  priorityPids: ReadonlySet<number> = new Set(),
+): {
+  processes: NodeProcessSample[];
+  totalProcesses: number;
+  truncated: boolean;
+  ancestryTruncated: boolean;
+} {
+  const parsed: NodeProcessSample[] = [];
+  for (const line of output.split('\n')) {
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/);
+    if (!match) continue;
+    const [, pid, ppid, cpu, rssKb, elapsed, executable] = match;
+    if (Number(ppid) === process.pid && /(?:^|\/)ps$/u.test(executable)) continue;
+    parsed.push({
+      pid: Number(pid),
+      ppid: Number(ppid),
+      cpuPercent: Number(cpu),
+      rssBytes: Number(rssKb) * 1024,
+      elapsedSeconds: elapsedSeconds(elapsed),
+      executable: executable.slice(0, PROCESS_EXECUTABLE_MAX_CHARS),
+    });
+  }
+
+  if (parsed.length <= maxEntries) {
+    return {
+      processes: parsed.sort((a, b) => a.pid - b.pid),
+      totalProcesses: parsed.length,
+      truncated: false,
+      ancestryTruncated: false,
+    };
+  }
+
+  const byPid = new Map(parsed.map((entry) => [entry.pid, entry]));
+  const tmuxRoots = new Set(
+    parsed.filter((entry) => /(?:^|\/)tmux$/u.test(entry.executable)).map((entry) => entry.pid),
+  );
+  const tmuxTreePids = new Set(tmuxRoots);
+  for (let depth = 0; depth < 4; depth += 1) {
+    let added = false;
+    for (const entry of parsed) {
+      if (tmuxTreePids.has(entry.pid) || !tmuxTreePids.has(entry.ppid)) continue;
+      tmuxTreePids.add(entry.pid);
+      added = true;
+    }
+    if (!added) break;
+  }
+  const selected = new Map<number, NodeProcessSample>();
+  let ancestryTruncated = false;
+  const candidates = [...parsed].sort(
+    (a, b) =>
+      Number(priorityPids.has(b.pid)) * 2 +
+        Number(tmuxTreePids.has(b.pid)) -
+        (Number(priorityPids.has(a.pid)) * 2 + Number(tmuxTreePids.has(a.pid))) ||
+      b.cpuPercent - a.cpuPercent ||
+      b.rssBytes - a.rssBytes ||
+      a.pid - b.pid,
+  );
+  for (const entry of candidates) {
+    if (selected.size >= maxEntries) break;
+    const chain: NodeProcessSample[] = [];
+    const visited = new Set<number>();
+    let current: NodeProcessSample | undefined = entry;
+    while (current && !selected.has(current.pid) && !visited.has(current.pid)) {
+      visited.add(current.pid);
+      chain.push(current);
+      current = byPid.get(current.ppid);
+    }
+    const remaining = maxEntries - selected.size;
+    const retainedChain = chain.length > remaining ? chain.slice(0, remaining) : chain;
+    if (retainedChain.length < chain.length) ancestryTruncated = true;
+    for (const process of retainedChain.reverse()) selected.set(process.pid, process);
+  }
+  return {
+    processes: [...selected.values()].sort((a, b) => a.pid - b.pid),
+    totalProcesses: parsed.length,
+    truncated: true,
+    ancestryTruncated,
+  };
+}
+
+function runProcessInventoryCommand(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      '/bin/ps',
+      [
+        '-e',
+        '-o',
+        'pid=',
+        '-o',
+        'ppid=',
+        '-o',
+        'pcpu=',
+        '-o',
+        'rss=',
+        '-o',
+        'etime=',
+        '-o',
+        'comm=',
+      ],
+      { encoding: 'utf8', maxBuffer: PROCESS_SAMPLE_MAX_BYTES, timeout: PROCESS_SAMPLE_TIMEOUT_MS },
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve(stdout);
+      },
+    );
+  });
+}
+
+function samplerHealth() {
+  return {
+    attempts: processSampler.attempts,
+    executions: processSampler.executions,
+    failures: processSampler.failures,
+    skippedBusy: processSampler.skippedBusy,
+    skippedCadence: processSampler.skippedCadence,
+    lastDurationMs: processSampler.lastDurationMs,
+    ...(processSampler.lastError ? { lastError: processSampler.lastError } : {}),
+  };
+}
+
+export function collectProcessInventory(
+  runner: ProcessInventoryRunner = runProcessInventoryCommand,
+  priorityPids: ReadonlySet<number> = new Set(),
+): Promise<NodeProcessInventory> {
+  processSampler.attempts += 1;
+  for (const pid of priorityPids) processInventoryPriorityPids.add(pid);
+  if (processInventoryInFlight) {
+    processSampler.skippedBusy += 1;
+    return processInventoryInFlight;
+  }
+  const startedAt = Date.now();
+  const sampleId = ++processSampleId;
+  processSampler.executions += 1;
+  processInventoryInFlight = runner()
+    .then((output) => {
+      processSampler.lastDurationMs = Date.now() - startedAt;
+      processSampler.lastError = undefined;
+      lastProcessInventoryAt = Date.now();
+      lastProcessInventoryFailedAt = 0;
+      const parsed = parseProcessInventory(
+        output,
+        PROCESS_SAMPLE_MAX_ENTRIES,
+        processInventoryPriorityPids,
+      );
+      return {
+        generation: PROCESS_GENERATION,
+        sampleId,
+        collectedAt: new Date().toISOString(),
+        ...parsed,
+        maxEntries: PROCESS_SAMPLE_MAX_ENTRIES,
+        health: samplerHealth(),
+      };
+    })
+    .catch((error: unknown) => {
+      processSampler.failures += 1;
+      processSampler.lastDurationMs = Date.now() - startedAt;
+      lastProcessInventoryFailedAt = Date.now();
+      processSampler.lastError = (error instanceof Error ? error.message : String(error)).slice(
+        0,
+        160,
+      );
+      // Recovery: publish health-only failure metadata and leave cadence due so
+      // the next gauge tick retries; the gateway keeps any prior good census.
+      return {
+        generation: PROCESS_GENERATION,
+        sampleId,
+        collectedAt: new Date().toISOString(),
+        failed: true,
+        processes: [],
+        totalProcesses: 0,
+        maxEntries: PROCESS_SAMPLE_MAX_ENTRIES,
+        truncated: false,
+        health: samplerHealth(),
+      };
+    })
+    .finally(() => {
+      processInventoryInFlight = null;
+      processInventoryPriorityPids = new Set();
+    });
+  return processInventoryInFlight;
+}
+
+function ratio(value: number): number {
+  return Math.round(value * 1_000) / 1_000;
+}
+
+export function processInventoryCadenceMs(params: {
+  cpuPercent: number;
+  memoryPercent: number;
+  loadAvg1: number;
+  cpuCores: number;
+  thermalPressure?: 'nominal' | 'fair' | 'serious' | 'critical';
+}): number {
+  const elevated =
+    params.cpuPercent >= 70 ||
+    params.memoryPercent >= 80 ||
+    params.loadAvg1 >= params.cpuCores ||
+    (params.thermalPressure != null && params.thermalPressure !== 'nominal');
+  return elevated ? PROCESS_SAMPLE_ELEVATED_INTERVAL_MS : PROCESS_SAMPLE_NORMAL_INTERVAL_MS;
+}
+
+function processInventoryDue(params: Parameters<typeof processInventoryCadenceMs>[0]): boolean {
+  const interval = processInventoryCadenceMs(params);
+  if (
+    lastProcessInventoryFailedAt > 0 &&
+    Date.now() - lastProcessInventoryFailedAt < PROCESS_INVENTORY_FAILURE_RETRY_MS
+  ) {
+    processSampler.skippedCadence += 1;
+    return false;
+  }
+  if (lastProcessInventoryAt === 0 || Date.now() - lastProcessInventoryAt >= interval) return true;
+  processSampler.skippedCadence += 1;
+  return false;
+}
+
+export async function collectMetrics(
+  options: { consumeProcessInventory?: boolean } = {},
+): Promise<SystemMetrics> {
   const { usedBytes: usedMem, totalBytes: totalMem } = getMemoryUsage();
   const [loadAvg1, loadAvg5] = os.loadavg();
+  const cpuCores = os.cpus().length;
+  const cpuPercent = getCpuPercent();
+  const memoryPercent = Math.round((usedMem / totalMem) * 100);
+  const diskPercent = getDiskPercent();
+  const thermalPressure = getThermalPressure();
+  const consumeProcessInventory = options.consumeProcessInventory !== false;
+  const processInventory = consumeProcessInventory ? pendingProcessInventory : undefined;
+  if (consumeProcessInventory) pendingProcessInventory = undefined;
+  if (
+    processInventoryDue({
+      cpuPercent,
+      memoryPercent,
+      loadAvg1,
+      cpuCores,
+      thermalPressure,
+    })
+  ) {
+    void collectProcessInventory(
+      undefined,
+      new Set([...getCachedTmuxPanePids(), ...getCachedResourceWatchPids()]),
+    )
+      .then((inventory) => {
+        pendingProcessInventory = inventory;
+      })
+      .catch((error: unknown) => {
+        // collectProcessInventory normally resolves failures into health metadata;
+        // if that contract regresses, retain the failure for the next metrics event.
+        processSampler.failures += 1;
+        lastProcessInventoryFailedAt = Date.now();
+        processSampler.lastError = (error instanceof Error ? error.message : String(error)).slice(
+          0,
+          160,
+        );
+        pendingProcessInventory = {
+          generation: PROCESS_GENERATION,
+          sampleId: processSampleId,
+          collectedAt: new Date().toISOString(),
+          failed: true,
+          processes: [],
+          totalProcesses: 0,
+          maxEntries: PROCESS_SAMPLE_MAX_ENTRIES,
+          truncated: false,
+          health: samplerHealth(),
+        };
+        console.error(`[system-metrics] process inventory scheduling failed: ${String(error)}`);
+      });
+  }
 
   return {
-    cpuPercent: getCpuPercent(),
-    memoryPercent: Math.round((usedMem / totalMem) * 100),
+    cpuPercent,
+    memoryPercent,
     memoryUsedGb: Math.round((usedMem / 1073741824) * 10) / 10,
     memoryTotalGb: Math.round((totalMem / 1073741824) * 10) / 10,
-    diskPercent: getDiskPercent(),
+    diskPercent,
     loadAvg1: Math.round(loadAvg1 * 100) / 100,
     loadAvg5: Math.round(loadAvg5 * 100) / 100,
-    thermalPressure: getThermalPressure(),
+    cpuCores,
+    pressure: {
+      cpu: ratio(cpuPercent / 100),
+      memory: ratio(memoryPercent / 100),
+      disk: ratio(diskPercent / 100),
+      load1: ratio(loadAvg1 / Math.max(1, cpuCores)),
+      load5: ratio(loadAvg5 / Math.max(1, cpuCores)),
+    },
+    ...(processInventory ? { processInventory } : {}),
+    thermalPressure,
     resourceWatches: getResourceWatchRuntimeStats(),
     collectedAt: new Date().toISOString(),
   };
@@ -134,6 +438,7 @@ export function collectMetrics(): SystemMetrics {
 
 let subscriptionTimer: ReturnType<typeof setInterval> | null = null;
 let onMetrics: ((m: SystemMetrics) => void) | null = null;
+let subscriptionCollecting = false;
 
 export function startMetricsSubscription(
   intervalMs: number,
@@ -144,7 +449,15 @@ export function startMetricsSubscription(
   // Take initial CPU snapshot (first reading will be 0, second will be real)
   getCpuPercent();
   subscriptionTimer = setInterval(() => {
-    if (onMetrics) onMetrics(collectMetrics());
+    if (subscriptionCollecting) {
+      return;
+    }
+    subscriptionCollecting = true;
+    void collectMetrics()
+      .then((metrics) => onMetrics?.(metrics))
+      .finally(() => {
+        subscriptionCollecting = false;
+      });
   }, intervalMs);
 }
 
@@ -153,5 +466,6 @@ export function stopMetricsSubscription(): void {
     clearInterval(subscriptionTimer);
     subscriptionTimer = null;
   }
+  subscriptionCollecting = false;
   onMetrics = null;
 }

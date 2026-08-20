@@ -125,6 +125,7 @@ import {
   type ResourceControlParams,
   type ResourceHealthParams,
   type ResourceListParams,
+  type ResourcePressureSnapshotParams,
   type ResourceWatchSetEnabledParams,
   type RoadmapDeleteParams,
   type RoadmapGetParams,
@@ -367,6 +368,7 @@ import {
   resourceControl,
   resourceHealth,
   resourceList,
+  resourcePressureSnapshot,
   resourceWatchSetEnabled,
 } from '../methods/resource.js';
 import {
@@ -1192,6 +1194,8 @@ async function routeAuthorizedMethod(
       return resourceCleanup(p as ResourceCleanupParams);
     case Methods.RESOURCE_WATCH_SET_ENABLED:
       return resourceWatchSetEnabled(p as ResourceWatchSetEnabledParams);
+    case Methods.RESOURCE_PRESSURE_SNAPSHOT:
+      return resourcePressureSnapshot(p as ResourcePressureSnapshotParams);
     case Methods.RUNTIME_CAPABILITY_LIST:
       return runtimeCapabilityList(p as RuntimeCapabilityListParams);
     case Methods.RUNTIME_CAPABILITY_ACQUIRE:

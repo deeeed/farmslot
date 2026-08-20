@@ -1,0 +1,100 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Command Center lightweight resource pressure history",
+  "description": "Proves the fleet Resource view exposes bounded core-aware trends and expandable read-only process attribution from the typed pressure RPC.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "ui_url": {
+        "type": "string",
+        "default": "http://localhost:5174"
+      },
+      "gateway_url": {
+        "type": "string",
+        "default": "ws://localhost:7777"
+      },
+      "machine": {
+        "type": "string",
+        "default": "macwork"
+      },
+      "project": {
+        "type": "string",
+        "default": "audiolab-farm"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open-resource-pressure",
+    "nodes": {
+      "open-resource-pressure": {
+        "action": "ui.navigate",
+        "target": "{{params.ui_url}}/#fleet?group=resource&view=card&projects={{params.project}}&machines={{params.machine}}&pressureMachine={{params.machine}}",
+        "next": "dismiss-whats-new",
+        "intent": "Open the cache-first fleet Resource view where node pressure history is rendered."
+      },
+      "dismiss-whats-new": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/agentic/dismiss-whats-new-if-present.mjs",
+        "timeout_ms": 20000,
+        "next": "wait-pressure-overview",
+        "intent": "Clear the release overlay so the pressure dashboard remains visible and interactive."
+      },
+      "wait-pressure-overview": {
+        "action": "ui.wait_for",
+        "selector": "machine-pressure-overview",
+        "timeout_ms": 45000,
+        "next": "probe-pressure-rpc",
+        "intent": "Confirm the overview exposes core-aware utilization and bounded ownership summaries."
+      },
+      "open-and-assert-machine-details": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs eval fleet --file apps/command-center/scripts/probes/resource-pressure-history.js",
+        "timeout_ms": 20000,
+        "next": "capture-pressure-history",
+        "intent": "Verify three compact SVG pressure trends, then press Details and confirm expansion adds process diagnosis without duplicating the graphs."
+      },
+      "assert-cleanup-preview": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs eval fleet --file apps/command-center/scripts/probes/resource-cleanup-preview.js",
+        "timeout_ms": 20000,
+        "next": "capture-cleanup-preview",
+        "intent": "Verify both entry points open the same impact review and intercept the explicit second-step confirmation before it reaches the gateway, using a clearly labelled UI-only candidate when the live filtered fleet has none."
+      },
+      "probe-pressure-rpc": {
+        "action": "command",
+        "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-pressure-rpc.mjs --machine '{{params.machine}}' --project '{{params.project}}'",
+        "timeout_ms": 20000,
+        "next": "probe-cleanup-safety",
+        "intent": "Verify the typed read-only backend shape and health-event stripping before interacting with the UI."
+      },
+      "probe-cleanup-safety": {
+        "action": "command",
+        "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/probes/resource-cleanup-safety.mjs --machine '{{params.machine}}'",
+        "timeout_ms": 20000,
+        "next": "open-and-assert-machine-details",
+        "intent": "Prove the live gateway rejects empty and missing exact targets plus a real busy slot before resource resolution, without risking a resource shutdown."
+      },
+      "capture-pressure-history": {
+        "action": "ui.screenshot",
+        "path": "screenshots/resource-pressure-history.png",
+        "label": "Core-aware pressure history and expandable process attribution",
+        "note": "Reviewer evidence: bounded SVG trends, class pills, managed slot ownership, and sampler health",
+        "next": "assert-cleanup-preview",
+        "intent": "Record reviewer-visible proof of the lightweight resource pressure dashboard."
+      },
+      "capture-cleanup-preview": {
+        "action": "ui.screenshot",
+        "path": "screenshots/resource-cleanup-preview.png",
+        "label": "Two-step idle resource cleanup impact review",
+        "note": "Reviewer evidence: selectable exact targets, exclusions, and an intercepted explicit second action; a clearly labelled UI-only fixture is used when no live target is eligible",
+        "next": "done",
+        "intent": "Record the shared read-only preview used by both cleanup entry points before any shutdown action."
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

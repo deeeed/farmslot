@@ -158,6 +158,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `resource.control`                   | admin          |                                                          |
 | `resource.health`                    | admin          |                                                          |
 | `resource.list`                      | admin          |                                                          |
+| `resource.pressure.snapshot`         | admin          |                                                          |
 | `resource.watch.setEnabled`          | admin          |                                                          |
 | `roadmap.delete`                     | admin          |                                                          |
 | `roadmap.get`                        | admin          |                                                          |
