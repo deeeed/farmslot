@@ -233,7 +233,14 @@ export async function resourcePressureSnapshot(
               sampleId: processInventory.sampleId,
               sampler: processInventory.health,
             }
-          : {}),
+          : {
+              unavailableReason:
+                health?.online === false
+                  ? 'Node is offline.'
+                  : health?.system
+                    ? 'Connected node has not provided a process inventory yet.'
+                    : 'System metrics are not available yet.',
+            }),
         truncated: processInventory?.truncated ?? false,
         sampledProcesses: processInventory?.processes.length ?? 0,
         totalProcesses: processInventory?.totalProcesses ?? 0,
@@ -276,6 +283,33 @@ export async function resourcePressureSnapshot(
     },
     machines,
     cleanupCandidates,
+  };
+}
+
+/** Bounded privacy projection for model context; operator RPC keeps the full admin detail. */
+export function resourcePressureSnapshotForModel(snapshot: ResourcePressureSnapshotResult) {
+  const processName = (executable: string) =>
+    executable.match(/\/([^/]+)\.app(?:\/|$)/)?.[1] ?? executable.split('/').at(-1) ?? 'process';
+  return {
+    ...snapshot,
+    machines: snapshot.machines.map((machine) => ({
+      ...machine,
+      history: machine.history.slice(-12),
+      processAttribution: {
+        ...machine.processAttribution,
+        groups: machine.processAttribution.groups.slice(0, 8).map((group) => ({
+          process: processName(group.topExecutable),
+          processCount: group.processCount,
+          cpuPercent: group.cpuPercent,
+          hotRssBytes: group.topRssBytes,
+          classification: group.classification,
+          confidence: group.confidence,
+          ...(group.slotId ? { slotId: group.slotId } : {}),
+          ...(group.runId ? { runId: group.runId } : {}),
+          ...(group.resourceId ? { resourceId: group.resourceId } : {}),
+        })),
+      },
+    })),
   };
 }
 

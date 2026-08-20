@@ -130,7 +130,8 @@ mock.module('./tmux-workers.js', {
   },
 });
 
-const { resourcePressureSnapshot } = await import('./resource.js');
+const { resourcePressureSnapshot, resourcePressureSnapshotForModel } =
+  await import('./resource.js');
 
 test('resource pressure snapshot exposes bounded trends and active attribution', async () => {
   const result = await resourcePressureSnapshot({ machine: 'macpro' });
@@ -141,4 +142,11 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   assert.equal(result.machines[0].processAttribution.sampler?.executions, 1);
   assert.equal(result.machines[0].processAttribution.sampledProcesses, 1);
   assert.equal(result.cleanupCandidates.length, 0);
+
+  result.machines[0].processAttribution.groups[0].topExecutable =
+    '/Users/developer/Applications/Private Tool.app/Contents/MacOS/Private Tool';
+  const modelProjection = resourcePressureSnapshotForModel(result);
+  const serialized = JSON.stringify(modelProjection);
+  assert.doesNotMatch(serialized, /rootPid|topPid|\/Users\/developer/);
+  assert.match(serialized, /"process":"Private Tool"/);
 });

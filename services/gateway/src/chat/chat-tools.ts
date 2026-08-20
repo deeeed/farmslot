@@ -436,11 +436,14 @@ export async function executeTool(
         break;
       }
       case 'resource_pressure_snapshot': {
-        const { resourcePressureSnapshot } = await import('../methods/resource.js');
-        result = await resourcePressureSnapshot({
-          ...(typeof args.machine === 'string' ? { machine: args.machine } : {}),
-          ...(typeof args.project === 'string' ? { project: args.project } : {}),
-        });
+        const { resourcePressureSnapshot, resourcePressureSnapshotForModel } =
+          await import('../methods/resource.js');
+        result = resourcePressureSnapshotForModel(
+          await resourcePressureSnapshot({
+            ...(typeof args.machine === 'string' ? { machine: args.machine } : {}),
+            ...(typeof args.project === 'string' ? { project: args.project } : {}),
+          }),
+        );
         break;
       }
       case 'resource_refresh': {

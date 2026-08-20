@@ -59,7 +59,6 @@ test('pressure formatter includes trends, classes, sampler degradation, and no m
               rssBytes: 1_048_576,
               classification: 'active',
               confidence: 'high',
-              cleanupEligible: false,
               evidence: ['active-run:run-1'],
             },
           ],
@@ -86,7 +85,7 @@ test('pressure formatter includes trends, classes, sampler degradation, and no m
   assert.match(output, /CPU 20%→20%/);
   assert.match(output, /active=1/);
   assert.match(output, /skippedBusy=1/);
-  assert.match(output, /skippedCadence=4/);
+  assert.match(output, /avoided=4/);
   assert.match(output, /sampled=1\/400 \(truncated\)/);
   assert.doesNotMatch(output, /kill|stop|cleanup command/i);
 });

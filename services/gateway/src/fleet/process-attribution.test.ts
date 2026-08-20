@@ -81,14 +81,10 @@ test('process attribution covers all ownership classes and never cleans manual o
     manual: 1,
     unknown: 6,
   });
-  assert.equal(
-    result.groups.find((group) => group.classification === 'stale')?.cleanupEligible,
-    true,
-  );
   assert.ok(
-    result.groups
-      .filter((group) => group.classification === 'manual' || group.classification === 'unknown')
-      .every((group) => !group.cleanupEligible),
+    result.groups.every(
+      (group) => !Object.keys(group).some((key) => key.toLowerCase().endsWith('eligible')),
+    ),
   );
 });
 
@@ -104,6 +100,8 @@ test('tmux cwd infers active slot ownership when session correlation is unavaila
   assert.equal(active?.classification, 'active');
   assert.equal(active?.slotId, 'active-slot');
   assert.equal(active?.runId, 'active-run');
+  assert.equal(active?.confidence, 'medium');
+  assert.ok(active?.evidence.includes('cwd-slot:active-slot'));
 });
 
 test('configured resource ownership attributes descendants through process ancestry', () => {
@@ -145,5 +143,8 @@ test('an unmapped tmux tree is manual rather than an unknown system process', ()
   });
   assert.equal(result.groups[0].classification, 'manual');
   assert.equal(result.groups[0].confidence, 'low');
-  assert.equal(result.groups[0].cleanupEligible, false);
+  assert.equal(
+    Object.keys(result.groups[0]).some((key) => key.toLowerCase().endsWith('eligible')),
+    false,
+  );
 });

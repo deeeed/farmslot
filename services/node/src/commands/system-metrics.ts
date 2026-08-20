@@ -4,14 +4,14 @@ import { execFile, execSync } from 'node:child_process';
 import os from 'node:os';
 
 import type {
+  NodeMetricsSample,
   NodeProcessInventory,
   NodeProcessSample,
-  NodeSystemMetrics,
 } from '@farmslot/protocol';
 
 import { getResourceWatchRuntimeStats } from './resource-watch.js';
 
-export type SystemMetrics = NodeSystemMetrics;
+export type SystemMetrics = NodeMetricsSample;
 
 const PROCESS_SAMPLE_MAX_ENTRIES = 256;
 const PROCESS_SAMPLE_MAX_BYTES = 512 * 1024;

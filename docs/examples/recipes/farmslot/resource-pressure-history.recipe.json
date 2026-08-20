@@ -1,0 +1,71 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Command Center lightweight resource pressure history",
+  "description": "Proves the fleet Resource view exposes bounded core-aware trends and expandable read-only process attribution from the typed pressure RPC.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "ui_url": {
+        "type": "string",
+        "default": "http://localhost:5174"
+      },
+      "gateway_url": {
+        "type": "string",
+        "default": "ws://localhost:7777"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open-resource-pressure",
+    "nodes": {
+      "open-resource-pressure": {
+        "action": "ui.navigate",
+        "target": "{{params.ui_url}}/#fleet?group=resource&view=card",
+        "next": "dismiss-whats-new",
+        "intent": "Open the cache-first fleet Resource view where node pressure history is rendered."
+      },
+      "dismiss-whats-new": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/agentic/dismiss-whats-new-if-present.mjs",
+        "timeout_ms": 20000,
+        "next": "wait-pressure-overview",
+        "intent": "Clear the release overlay so the pressure dashboard remains visible and interactive."
+      },
+      "wait-pressure-overview": {
+        "action": "ui.wait_for",
+        "selector": "machine-pressure-overview",
+        "text_contains": ["Load / core", "Top processes + managed work"],
+        "timeout_ms": 45000,
+        "next": "open-and-assert-machine-details",
+        "intent": "Confirm the overview exposes core-aware utilization and bounded ownership summaries."
+      },
+      "open-and-assert-machine-details": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs eval fleet --file apps/command-center/scripts/probes/resource-pressure-history.js",
+        "timeout_ms": 20000,
+        "next": "probe-pressure-rpc",
+        "intent": "Press macwork Details through CDP and verify three real SVG history plots with core-normalized load."
+      },
+      "probe-pressure-rpc": {
+        "action": "command",
+        "cmd": "FARMSLOT_GATEWAY='{{params.gateway_url}}' node apps/command-center/scripts/cdp.mjs gateway resource.pressure.snapshot '{\"machine\":\"macwork\"}'",
+        "timeout_ms": 20000,
+        "next": "capture-pressure-history",
+        "intent": "Capture the typed read-only backend result that owns the UI trends and attribution policy."
+      },
+      "capture-pressure-history": {
+        "action": "ui.screenshot",
+        "path": "screenshots/resource-pressure-history.png",
+        "label": "Core-aware pressure history and expandable process attribution",
+        "note": "Reviewer evidence: bounded SVG trends, class pills, managed slot ownership, and sampler health",
+        "next": "done",
+        "intent": "Record reviewer-visible proof of the lightweight resource pressure dashboard."
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

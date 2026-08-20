@@ -303,6 +303,8 @@ Gateway expands template vars to absolute paths before sending to the node. The 
 
 **Diagnosis boundary:** The read-only pressure snapshot must report the runtime watch state. If watches are paused, cached resource statuses may be `unknown`; machine health and slot activity remain the primary pressure evidence. Default cleanup is not a substitute for stopping active builds or retained run slots unless an operator explicitly opts into a busier action. Watch pause/resume is persisted in the gateway's local runtime cache so node reconnects or gateway restarts do not silently re-arm an operator-paused watch set.
 
+**Bounded process attribution (2026-08-20):** The private node-to-gateway metrics sample may attach one ownership-safe process census (`pid`, `ppid`, CPU, RSS, elapsed time, executable name/path; never argv or environment). It reuses the metrics cadence, runs at most once per minute under pressure and once per five minutes otherwise, and is capped by time, output bytes, and retained entries. The gateway stores that census separately from `MachineHealth.system`, so fleet health events and ordinary health readers never receive raw PID/path data. The admin-only pressure RPC exposes bounded attributed groups; the Co-Pilot projection removes PIDs and paths and caps history/groups again. Attribution is display-only: stale/manual/unknown classes do not authorize process termination, and cleanup remains exclusively hook-driven through `resource.cleanup`.
+
 ## Consequences
 
 **Positive:**

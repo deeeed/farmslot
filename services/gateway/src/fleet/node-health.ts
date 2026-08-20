@@ -6,6 +6,7 @@ import os from 'node:os';
 import type {
   Headroom,
   MachineHealth,
+  NodeMetricsSample,
   NodePressureHistorySample,
   NodePressureRatios,
   NodeProcessInventory,
@@ -32,7 +33,7 @@ export function computeHeadroom(cpu: number, mem: number, disk: number): Headroo
 
 // ─── Update from agent push ───
 
-export function updateMachineMetrics(machine: string, metrics: NodeSystemMetrics): void {
+export function updateMachineMetrics(machine: string, metrics: NodeMetricsSample): void {
   const existing = healthMap.get(machine);
   const computedCapacity = existing?.capacity ?? computeCapacity(machine);
   const capacity = {
@@ -65,6 +66,15 @@ function updateProcessInventory(machine: string, incoming: NodeProcessInventory 
   ) {
     return;
   }
+  if (
+    current &&
+    incoming.generation === current.generation &&
+    incoming.processes.length === 0 &&
+    incoming.health.lastError
+  ) {
+    processInventoryMap.set(machine, { ...current, health: incoming.health });
+    return;
+  }
   processInventoryMap.set(machine, incoming);
 }
 
@@ -84,7 +94,7 @@ function normalizedPressure(metrics: NodeSystemMetrics, cpuCores: number): NodeP
   };
 }
 
-function recordPressureSample(machine: string, metrics: NodeSystemMetrics, cpuCores: number): void {
+function recordPressureSample(machine: string, metrics: NodeMetricsSample, cpuCores: number): void {
   const samples = pressureHistory.get(machine) ?? [];
   const latest = samples.at(-1);
   const collectedAtMs = Date.parse(metrics.collectedAt);
@@ -110,6 +120,8 @@ function recordPressureSample(machine: string, metrics: NodeSystemMetrics, cpuCo
 // ─── Mark machine offline ───
 
 export function markMachineOffline(machine: string): void {
+  // A process census is unsafe once the node disconnects; bounded gauge history
+  // remains useful for reconnect diagnosis and contains no PID/path data.
   processInventoryMap.delete(machine);
   const existing = healthMap.get(machine);
   if (existing) {

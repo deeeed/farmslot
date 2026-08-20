@@ -182,7 +182,6 @@ export interface ProcessAttributionGroup {
   rssBytes: number;
   classification: ProcessOwnershipClass;
   confidence: ProcessAttributionConfidence;
-  cleanupEligible: boolean;
   evidence: string[];
   slotId?: string;
   runId?: string;
@@ -211,6 +210,7 @@ export interface ResourcePressureMachine {
   history: NodePressureHistorySample[];
   processAttribution: {
     sampledAt?: string;
+    unavailableReason?: string;
     generation?: string;
     sampleId?: number;
     truncated: boolean;

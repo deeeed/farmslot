@@ -61,6 +61,7 @@ function classifyWorker(
     : undefined;
   const slotId = worker.linkedSlotId ?? inferredSlot?.slot;
   const slot = slotId ? slotById.get(slotId) : undefined;
+  const inferredFromCwd = !worker.linkedSlotId && inferredSlot != null;
   const runId = worker.linkedRunId ?? slot?.currentRunId ?? undefined;
   const run = runId ? runById.get(runId) : undefined;
   const base = {
@@ -74,16 +75,24 @@ function classifyWorker(
     return {
       ...base,
       classification: 'stale',
-      confidence: 'high',
-      evidence: [`tmux:${worker.ref.target}`, `missing-run:${runId}`],
+      confidence: inferredFromCwd ? 'medium' : 'high',
+      evidence: [
+        `tmux:${worker.ref.target}`,
+        ...(inferredFromCwd ? [`cwd-slot:${slotId}`] : []),
+        `missing-run:${runId}`,
+      ],
     };
   }
   if (run && !isTerminalRunStatus(run.status)) {
     return {
       ...base,
       classification: 'active',
-      confidence: 'high',
-      evidence: [`tmux:${worker.ref.target}`, `active-run:${run.id}`],
+      confidence: inferredFromCwd ? 'medium' : 'high',
+      evidence: [
+        `tmux:${worker.ref.target}`,
+        ...(inferredFromCwd ? [`cwd-slot:${slotId}`] : []),
+        `active-run:${run.id}`,
+      ],
     };
   }
   if (run) {
@@ -92,7 +101,7 @@ function classifyWorker(
       return {
         ...base,
         classification: 'stale',
-        confidence: 'high',
+        confidence: inferredFromCwd ? 'medium' : 'high',
         evidence: [
           `tmux:${worker.ref.target}`,
           `terminal-run:${run.id}`,
@@ -103,7 +112,7 @@ function classifyWorker(
     return {
       ...base,
       classification: 'retained',
-      confidence: 'high',
+      confidence: inferredFromCwd ? 'medium' : 'high',
       evidence: [`tmux:${worker.ref.target}`, `terminal-run:${run.id}`],
     };
   }
@@ -126,7 +135,7 @@ function classifyWorker(
   return {
     ...base,
     classification: 'manual',
-    confidence: slot ? 'high' : 'medium',
+    confidence: slot && !inferredFromCwd ? 'high' : 'medium',
     evidence: [
       `tmux:${worker.ref.target}`,
       slot ? `${slot.lifecycle}-slot:${slot.slot}` : 'unlinked-tmux-session',
@@ -299,7 +308,6 @@ export function attributeProcessInventory(params: {
       rssBytes: 0,
       classification,
       confidence: owner?.confidence ?? 'low',
-      cleanupEligible: classification === 'stale',
       evidence: owner?.evidence ?? ['no-run-slot-resource-or-tmux-owner'],
       ...(owner?.slotId ? { slotId: owner.slotId } : {}),
       ...(owner?.runId ? { runId: owner.runId } : {}),

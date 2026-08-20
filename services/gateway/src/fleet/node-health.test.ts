@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { NodeSystemMetrics, RecipeRuntimeCapabilityDeclaration } from '@farmslot/protocol';
+import type {
+  NodeMetricsSample,
+  NodeSystemMetrics,
+  RecipeRuntimeCapabilityDeclaration,
+} from '@farmslot/protocol';
 
 import {
   getMachineHealth,
@@ -88,7 +92,7 @@ test('node restart replaces process generation and stale same-generation samples
     generation: string,
     sampleId: number,
     collectedAt: string,
-  ): NodeSystemMetrics => ({
+  ): NodeMetricsSample => ({
     cpuPercent: 10,
     memoryPercent: 20,
     memoryUsedGb: 3,
@@ -101,8 +105,17 @@ test('node restart replaces process generation and stale same-generation samples
       generation,
       sampleId,
       collectedAt,
-      processes: [],
-      totalProcesses: 0,
+      processes: [
+        {
+          pid: 42,
+          ppid: 1,
+          cpuPercent: 1,
+          rssBytes: 1024,
+          elapsedSeconds: 10,
+          executable: 'node',
+        },
+      ],
+      totalProcesses: 1,
       maxEntries: 256,
       truncated: false,
       health: {
@@ -119,7 +132,16 @@ test('node restart replaces process generation and stale same-generation samples
   updateMachineMetrics(machine, metrics('generation-a', 2, new Date(now).toISOString()));
   updateMachineMetrics(machine, metrics('generation-a', 1, new Date(now + 1_000).toISOString()));
   assert.equal(getMachineProcessInventory(machine)?.sampleId, 2);
-  assert.equal(getMachineHealth(machine)?.system?.processInventory, undefined);
+  assert.equal('processInventory' in (getMachineHealth(machine)?.system ?? {}), false);
+  const failed = metrics('generation-a', 3, new Date(now + 1_500).toISOString());
+  failed.processInventory!.processes = [];
+  failed.processInventory!.totalProcesses = 0;
+  failed.processInventory!.health.failures = 1;
+  failed.processInventory!.health.lastError = 'ps timed out';
+  updateMachineMetrics(machine, failed);
+  assert.equal(getMachineProcessInventory(machine)?.sampleId, 2);
+  assert.equal(getMachineProcessInventory(machine)?.processes.length, 1);
+  assert.equal(getMachineProcessInventory(machine)?.health.lastError, 'ps timed out');
   updateMachineMetrics(machine, metrics('generation-b', 1, new Date(now + 2_000).toISOString()));
   assert.equal(getMachineProcessInventory(machine)?.generation, 'generation-b');
 });

@@ -39,13 +39,13 @@ function formatMachine(machine: ResourcePressureMachine): string[] {
   if (sampler) {
     lines.push(
       dim(
-        `  sampler executions=${sampler.executions} failures=${sampler.failures} skippedBusy=${sampler.skippedBusy} skippedCadence=${sampler.skippedCadence} last=${sampler.lastDurationMs ?? '-'}ms`,
+        `  sampler executions=${sampler.executions} failures=${sampler.failures} skippedBusy=${sampler.skippedBusy} avoided=${sampler.skippedCadence} last=${sampler.lastDurationMs ?? '-'}ms`,
       ),
     );
   }
   for (const group of machine.processAttribution.groups.slice(0, 8)) {
     lines.push(
-      `  ${(group.classification === 'unknown' ? 'system' : group.classification).padEnd(8)} root=${String(group.rootPid).padEnd(6)} cpu=${group.cpuPercent >= 100 ? `${(group.cpuPercent / 100).toFixed(1)}c` : `${group.cpuPercent.toFixed(1)}%`} rss=${Math.round(group.topRssBytes / 1_048_576)}MB hot=${group.topPid}:${processName(group.topExecutable)}  ${dim(group.evidence.join(', '))}`,
+      `  ${(group.classification === 'unknown' ? 'system' : group.classification).padEnd(8)} root=${String(group.rootPid).padEnd(6)} treeCpu=${group.cpuPercent >= 100 ? `${(group.cpuPercent / 100).toFixed(1)}c` : `${group.cpuPercent.toFixed(1)}%`} hotRss=${Math.round(group.topRssBytes / 1_048_576)}MB hot=${group.topPid}:${processName(group.topExecutable)}  ${dim(group.evidence.join(', '))}`,
     );
   }
   return lines;

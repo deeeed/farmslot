@@ -203,10 +203,14 @@ export interface NodeSystemMetrics {
   loadAvg5: number;
   cpuCores?: number;
   pressure?: NodePressureRatios;
-  processInventory?: NodeProcessInventory;
   thermalPressure?: ThermalPressure; // macOS only
   resourceWatches?: ResourceWatchRuntimeStats;
   collectedAt: string;
+}
+
+/** Private node→gateway sample; process census is never part of MachineHealth.system. */
+export interface NodeMetricsSample extends NodeSystemMetrics {
+  processInventory?: NodeProcessInventory;
 }
 
 export interface MachineHealth {

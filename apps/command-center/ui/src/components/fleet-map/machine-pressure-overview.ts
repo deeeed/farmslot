@@ -221,6 +221,12 @@ export class MachinePressureOverview extends LitElement {
       border-radius: 4px;
       background: ${unsafeCSS(colors.bgInput)}88;
     }
+    .group-head {
+      color: ${unsafeCSS(colors.textMuted)};
+      background: transparent;
+      text-transform: uppercase;
+      font-size: 8px;
+    }
     .owner,
     .process-name {
       overflow: hidden;
@@ -337,12 +343,13 @@ export class MachinePressureOverview extends LitElement {
         const loadValues = machine.history
           .map((sample) => sample.pressure.load1)
           .filter((value): value is number => value != null);
+        const loadMax = Math.max(2, Math.ceil(Math.max(0, ...loadValues)));
         const cores = machine.capacity?.cpuCores ?? machine.system?.cpuCores ?? 0;
         const classes = machine.processAttribution.classCounts;
         const groups = visiblePressureGroups(machine.processAttribution.groups, expanded ? 12 : 4);
         const processNote = machine.processAttribution.sampledProcesses
           ? `${machine.processAttribution.sampledProcesses}/${machine.processAttribution.totalProcesses} sampled · ${pressureSampleAge(machine.processAttribution.sampledAt)}`
-          : 'awaiting process sample';
+          : (machine.processAttribution.unavailableReason ?? 'awaiting process sample');
         return html`<section class="machine ${machine.severity}" data-machine=${machine.machine}>
           <header>
             <div>
@@ -357,6 +364,7 @@ export class MachinePressureOverview extends LitElement {
               >
               <button
                 class="expand"
+                data-testid=${`pressure-details-${machine.machine}`}
                 aria-expanded=${expanded}
                 @click=${() => this.toggle(machine.machine)}
               >
@@ -391,7 +399,7 @@ export class MachinePressureOverview extends LitElement {
                   ? `${latest.loadAvg1.toFixed(1)} load / ${cores} cores`
                   : 'needs core count',
               values: loadValues,
-              maxValue: 2,
+              maxValue: loadMax,
               capacityLine: true,
               tone: 'load',
             })}
@@ -409,6 +417,13 @@ export class MachinePressureOverview extends LitElement {
             <span class="sample-note">${processNote}</span>
           </div>
           <div class="groups">
+            ${groups.length > 0
+              ? html`<div class="group group-head">
+                  <span>Owner</span><span>Hot process</span
+                  ><span class="process-stat">Tree CPU</span
+                  ><span class="process-stat">Hot RSS</span>
+                </div>`
+              : ''}
             ${groups.map((group) => {
               const hotName = pressureProcessName(group.topExecutable);
               const rootName = pressureProcessName(group.executable);
@@ -427,7 +442,10 @@ export class MachinePressureOverview extends LitElement {
               </div>`;
             })}
             ${groups.length === 0
-              ? html`<span class="sample-note">No process attribution available yet.</span>`
+              ? html`<span class="sample-note"
+                  >${machine.processAttribution.unavailableReason ??
+                  'No process attribution available yet.'}</span
+                >`
               : ''}
           </div>
           ${expanded ? this.renderDetails(machine) : ''}
@@ -468,7 +486,7 @@ export class MachinePressureOverview extends LitElement {
         ${process.sampledProcesses === 0
           ? 'No process inventory received yet.'
           : process.truncated
-            ? `Inventory capped at ${process.maxEntries}; hottest processes and complete sampled ancestry are retained.`
+            ? `Inventory capped at ${process.maxEntries}; highest-pressure process trees with complete ancestry are prioritized.`
             : 'Complete process inventory retained for this sample.'}
         ${process.omittedGroups > 0
           ? ` ${process.omittedGroups} lower-pressure groups omitted.`
@@ -481,7 +499,7 @@ export class MachinePressureOverview extends LitElement {
       ${process.sampler
         ? html`<div>
             Sampler ${process.sampler.lastDurationMs ?? '–'}ms · ${process.sampler.executions}
-            executions · ${process.sampler.skippedCadence} cadence skips ·
+            executions · ${process.sampler.skippedCadence} avoided probes ·
             ${process.sampler.failures} failures
           </div>`
         : ''}
