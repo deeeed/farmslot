@@ -1,4 +1,10 @@
-import type { MachinePauseReviewedTarget, MachinePauseSelector } from '@farmslot/protocol';
+import type {
+  MachineParkPhase,
+  MachinePauseMode,
+  MachinePauseRestoreParams,
+  MachinePauseReviewedTarget,
+  MachinePauseSelector,
+} from '@farmslot/protocol';
 
 type ReviewedRun = {
   runId: string;
@@ -17,6 +23,23 @@ export function reviewedRestoreTargets(
   preview: { runs: readonly ReviewedRun[] } | undefined,
 ): MachinePauseReviewedTarget[] {
   return reviewedTargets(preview?.runs ?? []);
+}
+
+export function restoreExecuteParams(
+  machine: string,
+  preview: {
+    previewId: string;
+    selector: MachinePauseSelector;
+    runs: readonly ReviewedRun[];
+  },
+): Extract<MachinePauseRestoreParams, { execute: true }> {
+  return {
+    machine,
+    selector: preview.selector,
+    execute: true,
+    previewId: preview.previewId,
+    reviewedTargets: reviewedRestoreTargets(preview),
+  };
 }
 
 function reviewedTargets(runs: readonly ReviewedRun[]): MachinePauseReviewedTarget[] {
@@ -69,23 +92,89 @@ export function machinePauseMutationDisabled(input: {
 }
 
 export function machineParkRecordSummary(record: {
+  mode: MachinePauseMode;
   phase: string;
   errors: readonly unknown[];
   residuals: {
     runner: 'running' | 'stopped' | 'unknown';
-    resources: ReadonlyArray<{ state: 'running' | 'stopped' | 'unknown' }>;
+    resources: ReadonlyArray<{
+      resourceId: string;
+      state: 'running' | 'stopped' | 'unknown';
+    }>;
   };
 }): string {
-  const residualResources = record.residuals.resources.filter(
-    (resource) => resource.state !== 'stopped',
-  ).length;
+  const residuals = machineParkResidualAssessment(record);
   const parts: string[] = [record.phase];
   if (record.errors.length > 0) parts.push(`${record.errors.length} action error(s)`);
-  if (record.residuals.runner !== 'stopped') {
-    parts.push(`runner ${record.residuals.runner}`);
+  if (residuals.runner.warning) {
+    parts.push(`runner ${residuals.runner.actual} unexpected`);
   }
-  if (residualResources > 0) parts.push(`${residualResources} residual resource(s)`);
+  const unexpectedResources = residuals.resources.filter((resource) => resource.warning).length;
+  if (unexpectedResources > 0) parts.push(`${unexpectedResources} unexpected resource(s)`);
   return parts.join(' · ');
+}
+
+type ResidualState = 'running' | 'stopped' | 'unknown';
+
+export interface MachineParkResidualAssessment {
+  runner: { actual: ResidualState; expected?: ResidualState; warning: boolean };
+  resources: Array<{
+    resourceId: string;
+    actual: ResidualState;
+    expected?: ResidualState;
+    warning: boolean;
+  }>;
+  hasWarnings: boolean;
+}
+
+function expectedResidualState(
+  mode: MachinePauseMode,
+  phase: MachineParkPhase | string,
+): ResidualState | undefined {
+  if (phase === 'restored') return 'running';
+  if (mode === 'orchestration' && (phase === 'orchestration-paused' || phase === 'parked')) {
+    return 'running';
+  }
+  if (mode === 'release' && phase === 'parked') return 'stopped';
+  return undefined;
+}
+
+export function machineParkResidualAssessment(record: {
+  mode: MachinePauseMode;
+  phase: MachineParkPhase | string;
+  residuals: {
+    runner: ResidualState;
+    resources: ReadonlyArray<{ resourceId: string; state: ResidualState }>;
+  };
+}): MachineParkResidualAssessment {
+  const expected = expectedResidualState(record.mode, record.phase);
+  const runnerWarning =
+    record.residuals.runner === 'unknown' ||
+    (expected != null && record.residuals.runner !== expected);
+  const resources = record.residuals.resources.map((resource) => ({
+    resourceId: resource.resourceId,
+    actual: resource.state,
+    ...(expected ? { expected } : {}),
+    warning: resource.state === 'unknown' || (expected != null && resource.state !== expected),
+  }));
+  return {
+    runner: {
+      actual: record.residuals.runner,
+      ...(expected ? { expected } : {}),
+      warning: runnerWarning,
+    },
+    resources,
+    hasWarnings: runnerWarning || resources.some((resource) => resource.warning),
+  };
+}
+
+export function sortMachinePauseRecords<T extends { runId: string; updatedAt: string }>(
+  records: readonly T[],
+): T[] {
+  return [...records].sort((left, right) => {
+    const byUpdatedAt = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    return byUpdatedAt || left.runId.localeCompare(right.runId);
+  });
 }
 
 export function machinePressurePercent(ratio: number | undefined): string {

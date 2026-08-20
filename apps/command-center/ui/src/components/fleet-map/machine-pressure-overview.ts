@@ -7,6 +7,7 @@ import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 
 import {
   pressureBytes,
+  pressureLoadRatio,
   pressureOwnershipLabel,
   pressureProcessCpu,
   pressureProcessName,
@@ -380,8 +381,7 @@ export class MachinePressureOverview extends LitElement {
               })}
               ${this.renderMetric({
                 label: 'Load / core',
-                value:
-                  latest?.pressure.load1 == null ? '–' : `${latest.pressure.load1.toFixed(2)}×`,
+                value: pressureLoadRatio(latest?.pressure.load1),
                 detail:
                   latest && cores > 0
                     ? `${latest.loadAvg1.toFixed(1)} load / ${cores} cores`

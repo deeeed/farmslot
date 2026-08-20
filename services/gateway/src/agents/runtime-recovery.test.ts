@@ -32,7 +32,7 @@ function killTmuxSession(): void {
   }
 }
 
-function launchLiveCodexPane(): void {
+function launchLiveCodexPane(): string {
   killTmuxSession();
   execFileSync(
     'tmux',
@@ -50,6 +50,11 @@ function launchLiveCodexPane(): void {
     { stdio: 'ignore' },
   );
   waitForLiveCodexPane();
+  return execFileSync(
+    'tmux',
+    ['display-message', '-p', '-t', `=${sessionName}:dev`, '#{pane_id}'],
+    { encoding: 'utf8' },
+  ).trim();
 }
 
 function waitForLiveCodexPane(): void {
@@ -118,7 +123,7 @@ test('restore-window preserves working status for an already-live runner', async
     t.skip('tmux unavailable');
     return;
   }
-  launchLiveCodexPane();
+  const paneId = launchLiveCodexPane();
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
@@ -139,6 +144,7 @@ test('restore-window preserves working status for an already-live runner', async
   const context = getRun(run.id)?.agentContexts?.find((ctx) => ctx.id === 'dev');
   assert.equal(context?.status, 'working');
   assert.equal(context?.target?.session, sessionName);
+  assert.equal(context?.target?.paneId, paneId);
   assert.equal(context?.target?.window, 'dev');
   assert.equal(context?.completedAt, undefined);
 });
@@ -148,7 +154,7 @@ test('reload-session persists live target when the runner is already alive', asy
     t.skip('tmux unavailable');
     return;
   }
-  launchLiveCodexPane();
+  const paneId = launchLiveCodexPane();
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
@@ -182,6 +188,7 @@ test('reload-session persists live target when the runner is already alive', asy
   const context = getRun(run.id)?.agentContexts?.find((ctx) => ctx.id === 'dev');
   assert.equal(context?.status, 'working');
   assert.equal(context?.target?.session, sessionName);
+  assert.equal(context?.target?.paneId, paneId);
   assert.equal(context?.target?.window, 'dev');
   assert.equal(context?.completedAt, undefined);
 });

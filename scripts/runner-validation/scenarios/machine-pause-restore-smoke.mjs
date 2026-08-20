@@ -71,10 +71,10 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
       runner,
       skipped: true,
       skipReason: `runner '${runner}' has no validated release-park session reload`,
-      pass: true,
+      pass: false,
     };
     const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
-    return { scenario: SCENARIO_ID, runner, outPath, pass: true, skipped: true, report };
+    return { scenario: SCENARIO_ID, runner, outPath, pass: false, skipped: true, report };
   }
   if (!runId) {
     const report = {
@@ -82,10 +82,10 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
       skipped: true,
       skipReason:
         'live gateway proof requires FARMSLOT_MACHINE_PAUSE_RUN_ID for a dedicated mode=validation run currently in monitoring or ci-watching',
-      pass: true,
+      pass: false,
     };
     const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
-    return { scenario: SCENARIO_ID, runner, outPath, pass: true, skipped: true, report };
+    return { scenario: SCENARIO_ID, runner, outPath, pass: false, skipped: true, report };
   }
 
   const operationId = `runner-validation-machine-pause-${process.pid}-${Date.now()}`;
@@ -106,6 +106,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
     structuredAcceptance: null,
     continuity: null,
     cleanupRestore: null,
+    cleanupStatus: null,
     pass: false,
     error: null,
   };
@@ -242,22 +243,27 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
       resourcesRestored;
   } catch (error) {
     report.error = error?.message || String(error);
-    if (report.machine && report.parkedRecord && report.restoredRecord?.phase !== 'restored') {
+    if (report.machine) {
       try {
-        const selector = { kind: 'include', runIds: [runId] };
-        const preview = rpc('machine.pause.restore', { machine: report.machine, selector });
-        const target = selectedRun(preview, runId);
-        if (target?.eligibility.eligible) {
-          report.cleanupRestore = rpc('machine.pause.restore', {
-            machine: report.machine,
-            selector,
-            execute: true,
-            previewId: preview.previewId,
-            reviewedTargets: [{ runId, generation: target.generation }],
-            operationId: `${operationId}-cleanup-restore`,
-          });
-        } else {
-          report.cleanupRestore = { skipped: true, reason: target?.eligibility.reason };
+        const cleanupStatus = rpc('machine.pause.status', { machine: report.machine });
+        const durableRecord = cleanupStatus.records.find((record) => record.runId === runId);
+        report.cleanupStatus = durableRecord ?? null;
+        if (durableRecord && !['restored', 'cancelled'].includes(durableRecord.phase)) {
+          const selector = { kind: 'include', runIds: [runId] };
+          const preview = rpc('machine.pause.restore', { machine: report.machine, selector });
+          const target = selectedRun(preview, runId);
+          if (target?.eligibility.eligible) {
+            report.cleanupRestore = rpc('machine.pause.restore', {
+              machine: report.machine,
+              selector,
+              execute: true,
+              previewId: preview.previewId,
+              reviewedTargets: [{ runId, generation: target.generation }],
+              operationId: `${operationId}-cleanup-restore`,
+            });
+          } else {
+            report.cleanupRestore = { skipped: true, reason: target?.eligibility.reason };
+          }
         }
       } catch (cleanupError) {
         report.cleanupRestore = { error: cleanupError?.message || String(cleanupError) };

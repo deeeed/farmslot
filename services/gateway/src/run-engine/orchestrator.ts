@@ -430,7 +430,22 @@ async function finalizeNonThrownTerminalRun(
   }
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
 }
-export async function startRun(runId: string): Promise<void> {
+export interface RunEngineStepStartAcknowledgement {
+  runId: string;
+  generation: number;
+  stepName: string;
+  status: RunStatus;
+  acknowledgedAt: string;
+}
+
+export interface StartRunOptions {
+  /** Fail closed when the caller's generation ownership changed before start. */
+  expectedGeneration?: number;
+  /** Fires after the generation check and durable running-step/status writes. */
+  onStepStarted?: (proof: RunEngineStepStartAcknowledgement) => void;
+}
+
+export async function startRun(runId: string, options: StartRunOptions = {}): Promise<void> {
   const initialRun = getRun(runId);
   if (!initialRun) throw new Error(`Run not found: ${runId}`);
   // Eval replay task normalization is intentionally repeated here and again at
@@ -444,6 +459,11 @@ export async function startRun(runId: string): Promise<void> {
 
   // Capture generation — if a replay bumps it mid-loop, this loop should bail
   const myGen = getRunGeneration(runId);
+  if (options.expectedGeneration !== undefined && options.expectedGeneration !== myGen) {
+    throw new Error(
+      `Run ${runId} generation changed before engine start: expected ${options.expectedGeneration}, found ${myGen}`,
+    );
+  }
 
   const startIdx = findStartStep(run, steps);
   console.log(
@@ -472,9 +492,10 @@ export async function startRun(runId: string): Promise<void> {
 
     // Mark step running + update run status
     const status = STEP_TO_STATUS[stepName];
+    const acknowledgedAt = new Date().toISOString();
     updateRunStep(runId, stepName, {
       status: 'running',
-      startedAt: new Date().toISOString(),
+      startedAt: acknowledgedAt,
       detail: undefined,
       outputs: undefined,
       completedAt: undefined,
@@ -482,6 +503,13 @@ export async function startRun(runId: string): Promise<void> {
     });
     updateRun(runId, { status });
     broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+    options.onStepStarted?.({
+      runId,
+      generation: myGen,
+      stepName,
+      status,
+      acknowledgedAt,
+    });
 
     try {
       const stepIO = await executeStep(runId, stepName);
@@ -799,6 +827,50 @@ export async function startRun(runId: string): Promise<void> {
     });
     broadcastFn(Events.RUN_COMPLETED, { run: getRun(runId) });
   }
+}
+
+type StartRunDriver = (runId: string, options?: StartRunOptions) => Promise<void>;
+
+/**
+ * Start a generation in the background but resolve only after the engine has
+ * durably claimed its first running step. A pre-ack rejection, stale return, or
+ * no-step completion rejects the caller instead of reporting a false resume.
+ */
+export function startRunWithStepAcknowledgement(
+  runId: string,
+  expectedGeneration: number,
+  drive: StartRunDriver = startRun,
+): Promise<RunEngineStepStartAcknowledgement> {
+  return new Promise((resolve, reject) => {
+    let acknowledged = false;
+    void drive(runId, {
+      expectedGeneration,
+      onStepStarted: (proof) => {
+        if (acknowledged) return;
+        acknowledged = true;
+        resolve(proof);
+      },
+    }).then(
+      () => {
+        if (!acknowledged) {
+          reject(
+            new Error(
+              `Run ${runId} engine returned before acknowledging generation ${expectedGeneration}`,
+            ),
+          );
+        }
+      },
+      (error) => {
+        if (!acknowledged) {
+          reject(error);
+          return;
+        }
+        console.error(
+          `[run-engine] generation ${expectedGeneration} failed after resume acknowledgement for ${runId.slice(0, 8)}: ${(error as Error).message}`,
+        );
+      },
+    );
+  });
 }
 
 // ─── Cancel a running engine ───

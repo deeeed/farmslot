@@ -32,10 +32,12 @@ interface SelectionOptions {
 interface PauseOptions extends SelectionOptions {
   execute?: boolean;
   mode?: MachinePauseMode;
+  previewId?: string;
 }
 
 interface RestoreOptions extends SelectionOptions {
   execute?: boolean;
+  previewId?: string;
 }
 
 function collect(value: string, previous: string[]): string[] {
@@ -241,12 +243,52 @@ export function pauseNextCommand(
   machine: string,
   mode: MachinePauseMode,
   selector: MachinePauseSelector,
+  previewId?: string,
 ): string {
-  return `farmslot machine pause ${shellQuote(machine)} --mode ${mode}${selectionArgs(selector)} --execute`;
+  const pin = previewId ? ` --preview-id ${shellQuote(previewId)}` : '';
+  return `farmslot machine pause ${shellQuote(machine)} --mode ${mode}${selectionArgs(selector)}${pin} --execute`;
 }
 
-export function restoreNextCommand(machine: string, selector: MachinePauseSelector): string {
-  return `farmslot machine restore ${shellQuote(machine)}${selectionArgs(selector)} --execute`;
+export function restoreNextCommand(
+  machine: string,
+  selector: MachinePauseSelector,
+  previewId?: string,
+): string {
+  const pin = previewId ? ` --preview-id ${shellQuote(previewId)}` : '';
+  return `farmslot machine restore ${shellQuote(machine)}${selectionArgs(selector)}${pin} --execute`;
+}
+
+export function resolveReviewedPreviewId(
+  suppliedPreviewId: string | undefined,
+  preview: MachinePausePreviewResult | MachinePauseRestoreResult,
+  nextCommand: string,
+): string {
+  if (!suppliedPreviewId || suppliedPreviewId === preview.previewId) {
+    return suppliedPreviewId ?? preview.previewId;
+  }
+  throw Object.assign(
+    new Error(
+      `Reviewed preview ${shellQuote(suppliedPreviewId)} is stale; the fresh preview is ${shellQuote(preview.previewId)}. Nothing changed.`,
+    ),
+    {
+      code: 'MACHINE_PREVIEW_STALE',
+      userAction: `Review the fresh result, then run ${nextCommand}.`,
+      details: {
+        suppliedPreviewId,
+        freshPreviewId: preview.previewId,
+        preview,
+      },
+    },
+  );
+}
+
+function assertPreviewIdRequiresExecute(options: { execute?: boolean; previewId?: string }): void {
+  if (!options.previewId || options.execute) return;
+  throw Object.assign(new Error('--preview-id can only be used with --execute.'), {
+    code: 'MACHINE_PREVIEW_ID_REQUIRES_EXECUTE',
+    userAction:
+      'Run the preview without --preview-id, then copy the exact pinned command it prints.',
+  });
 }
 
 function partialError(
@@ -264,12 +306,12 @@ function partialError(
   );
 }
 
-function previewRejectedError(preview: unknown, nextCommand: string): Error {
+function previewRejectedError(preview: unknown, previewCommand: string): Error {
   return Object.assign(
     new Error('The reviewed selection contains ineligible runs; nothing changed.'),
     {
       code: 'MACHINE_PAUSE_PREFLIGHT_REJECTED',
-      userAction: `Adjust the selection and preview again with ${nextCommand.replace(/ --execute$/u, '')}.`,
+      userAction: `Adjust the selection and preview again with ${previewCommand}.`,
       details: preview,
     },
   );
@@ -308,6 +350,7 @@ export function registerMachineCommand(program: Command): void {
       ]),
     )
     .option('--execute', 'Execute the reviewed pause (default is preview)')
+    .option('--preview-id <id>', 'Pin execution to a previously reviewed preview')
     .addOption(selectionOption('--run <run-id>'))
     .addOption(selectionOption('--exclude-run <run-id>'))
     .action(async (machineId: string, options: PauseOptions, command: Command) => {
@@ -316,13 +359,13 @@ export function registerMachineCommand(program: Command): void {
       const { client, output } = resolveContext(command);
       const emit = createEmitter(output, command);
       try {
+        assertPreviewIdRequiresExecute(options);
         if (options.execute && !options.mode) {
           throw Object.assign(new Error('--execute requires an explicit --mode.'), {
             code: 'MACHINE_MODE_REQUIRED',
             userAction: `Review with \`farmslot machine pause ${shellQuote(machineId)} --mode orchestration\` or \`--mode release\`, then repeat with --execute.`,
           });
         }
-        const nextCommand = pauseNextCommand(machineId, mode, selector);
         const previewParams = {
           machine: machineId,
           mode,
@@ -333,23 +376,25 @@ export function registerMachineCommand(program: Command): void {
           () => client.call<MachinePausePreviewResult>(MachinePauseMethods.preview, previewParams),
           !emit.machine,
         );
+        const nextCommand = pauseNextCommand(machineId, mode, selector, preview.previewId);
+        const previewCommand = pauseNextCommand(machineId, mode, selector).replace(
+          / --execute$/u,
+          '',
+        );
         if (!options.execute) {
           emitResult(output, emit, preview, nextCommand);
           return;
         }
         if (!emit.machine) output.write(`${formatMachinePauseResult(preview, nextCommand)}\n\n`);
+        const reviewedPreviewId = resolveReviewedPreviewId(options.previewId, preview, nextCommand);
         if (rejectedTargetsFromPreview(preview).length > 0) {
-          emit.fail(previewRejectedError(preview, nextCommand));
+          emit.fail(previewRejectedError(preview, previewCommand));
           return;
-        }
-        const previewId = preview.previewId;
-        if (!previewId) {
-          throw new Error('Gateway pause preview did not return a previewId.');
         }
         const executeParams = {
           machine: machineId,
           mode,
-          previewId,
+          previewId: reviewedPreviewId,
           reviewedTargets: reviewedTargetsFromPreview(preview),
         } satisfies MachinePauseExecuteParams;
         const result = await withProgress(
@@ -389,6 +434,7 @@ export function registerMachineCommand(program: Command): void {
     .description('Preview or execute restoration of paused runs on a machine')
     .argument('<machine>', 'Machine identifier')
     .option('--execute', 'Execute the reviewed restore (default is preview)')
+    .option('--preview-id <id>', 'Pin execution to a previously reviewed preview')
     .addOption(selectionOption('--run <run-id>'))
     .addOption(selectionOption('--exclude-run <run-id>'))
     .action(async (machineId: string, options: RestoreOptions, command: Command) => {
@@ -396,7 +442,7 @@ export function registerMachineCommand(program: Command): void {
       const { client, output } = resolveContext(command);
       const emit = createEmitter(output, command);
       try {
-        const nextCommand = restoreNextCommand(machineId, selector);
+        assertPreviewIdRequiresExecute(options);
         const previewParams = {
           machine: machineId,
           selector,
@@ -407,24 +453,23 @@ export function registerMachineCommand(program: Command): void {
           () => client.call<MachinePauseRestoreResult>(MachinePauseMethods.restore, previewParams),
           !emit.machine,
         );
+        const nextCommand = restoreNextCommand(machineId, selector, preview.previewId);
+        const previewCommand = restoreNextCommand(machineId, selector).replace(/ --execute$/u, '');
         if (!options.execute) {
           emitResult(output, emit, preview, nextCommand);
           return;
         }
         if (!emit.machine) output.write(`${formatMachinePauseResult(preview, nextCommand)}\n\n`);
+        const reviewedPreviewId = resolveReviewedPreviewId(options.previewId, preview, nextCommand);
         if (rejectedTargetsFromPreview(preview).length > 0) {
-          emit.fail(previewRejectedError(preview, nextCommand));
+          emit.fail(previewRejectedError(preview, previewCommand));
           return;
-        }
-        const previewId = preview.previewId;
-        if (!previewId) {
-          throw new Error('Gateway restore preview did not return a previewId.');
         }
         const restoreParams = {
           machine: machineId,
           selector,
           execute: true,
-          previewId,
+          previewId: reviewedPreviewId,
           reviewedTargets: reviewedTargetsFromPreview(preview),
         } satisfies MachinePauseRestoreParams;
         const result = await withProgress(

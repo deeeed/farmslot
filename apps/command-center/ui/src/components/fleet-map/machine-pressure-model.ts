@@ -53,6 +53,10 @@ export function pressureProcessCpu(cpuPercent: number): string {
   return cpuPercent >= 100 ? `${(cpuPercent / 100).toFixed(1)} cores` : `${cpuPercent.toFixed(1)}%`;
 }
 
+export function pressureLoadRatio(ratio: number | undefined): string {
+  return ratio == null ? '–' : `${ratio.toFixed(2)}×`;
+}
+
 export function pressureBytes(bytes: number): string {
   if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
   return `${Math.round(bytes / 1_048_576)} MB`;

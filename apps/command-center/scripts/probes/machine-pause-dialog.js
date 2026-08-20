@@ -26,6 +26,30 @@ if (
 ) {
   throw new Error('unknown process ownership label or safety explanation is missing');
 }
+const pressureValues = [
+  ...root.querySelectorAll('[data-testid="machine-pause-pressure"] .mpd-stat-value'),
+].map((value) => value.textContent.trim());
+if (pressureValues[0] !== '88%' || pressureValues[1] !== '84%' || pressureValues[2] !== '1.32×') {
+  throw new Error(`pressure formats are incorrect: ${pressureValues.join(', ')}`);
+}
+const sampler = root.querySelector('[data-testid="machine-pause-sampler"]');
+const degraded = root.querySelector('[data-testid="machine-pause-sampler-degraded"]');
+const compactText = (element) => element?.textContent.replace(/\s+/g, ' ').trim() ?? '';
+const samplerText = compactText(sampler);
+const degradedText = compactText(degraded);
+const rootText = compactText(root);
+if (
+  !samplerText.includes('84ms') ||
+  !samplerText.includes('12 executions') ||
+  !samplerText.includes('8 avoided probes') ||
+  !samplerText.includes('1 failures') ||
+  !samplerText.includes('Process inventory timed out once') ||
+  !degradedText.includes('last complete bounded sample') ||
+  !rootText.includes('3 lower-pressure group(s) omitted') ||
+  !rootText.includes('Sustained CPU and memory pressure')
+) {
+  throw new Error('sampler diagnostics, truncation, degradation, or concerns are incomplete');
+}
 
 const previewRows = [...root.querySelectorAll('[data-testid="machine-pause-preview"] .mpd-run')];
 const rejectedRows = previewRows.filter((row) => row.classList.contains('rejected'));
@@ -48,20 +72,68 @@ if (
 ) {
   throw new Error('durable action errors are missing');
 }
-if (!status.textContent.includes('Residual runner')) {
-  throw new Error('residual worker/resource state is missing');
+if (status.querySelector('.mpd-residuals') || !status.textContent.includes('Observed state')) {
+  throw new Error('healthy known residual states were rendered as warnings');
 }
 
 let pauseExecute = root.querySelector('[data-testid="machine-pause-execute"]');
 let restoreExecute = root.querySelector('[data-testid="machine-pause-restore-execute"]');
-let confirm = root.querySelector('.mpd-confirm input[type="checkbox"]');
-if (!confirm) throw new Error('explicit confirmation control is missing');
-if (confirm.checked) {
-  confirm.click();
-  await sleep(0);
+let pauseConfirm = root.querySelector('[data-testid="machine-pause-confirm"]');
+let restoreConfirm = root.querySelector('[data-testid="machine-restore-confirm"]');
+if (!pauseConfirm || !restoreConfirm) throw new Error('scoped confirmation controls are missing');
+for (const checkbox of [pauseConfirm, restoreConfirm]) {
+  if (checkbox.checked) checkbox.click();
 }
+await sleep(0);
 if (!pauseExecute?.disabled || !restoreExecute?.disabled) {
   throw new Error('mutations must require explicit confirmation');
+}
+
+const restoreEvents = [];
+dialog.addEventListener('machine-pause-restore', (event) => restoreEvents.push(event.detail));
+
+// Confirming restore must not arm pause. The fixture applies the emitted all selector and then
+// returns an exclude preview, just as a backend refresh would.
+restoreConfirm.click();
+await sleep(0);
+if (restoreExecute.disabled || !pauseExecute.disabled) {
+  throw new Error('restore confirmation armed the wrong action');
+}
+restoreExecute.click();
+await sleep(20);
+if (
+  restoreEvents.length !== 1 ||
+  restoreEvents[0].selector.kind !== 'all' ||
+  restoreEvents[0].execute !== true
+) {
+  throw new Error(
+    `default all restore selector was not preserved: ${JSON.stringify(restoreEvents)}`,
+  );
+}
+
+pauseExecute = root.querySelector('[data-testid="machine-pause-execute"]');
+restoreExecute = root.querySelector('[data-testid="machine-pause-restore-execute"]');
+pauseConfirm = root.querySelector('[data-testid="machine-pause-confirm"]');
+restoreConfirm = root.querySelector('[data-testid="machine-restore-confirm"]');
+if (pauseConfirm.checked || restoreConfirm.checked) {
+  throw new Error('restore preview refresh did not reset scoped confirmation');
+}
+pauseConfirm.click();
+await sleep(0);
+if (pauseExecute.disabled || !restoreExecute.disabled) {
+  throw new Error('pause confirmation armed the wrong action');
+}
+pauseConfirm.click();
+restoreConfirm.click();
+await sleep(0);
+restoreExecute.click();
+await sleep(20);
+if (
+  restoreEvents.length !== 2 ||
+  restoreEvents[1].selector.kind !== 'exclude' ||
+  restoreEvents[1].selector.runIds.join(',') !== 'run-monitor-18'
+) {
+  throw new Error(`exclude restore selector was not preserved: ${JSON.stringify(restoreEvents)}`);
 }
 
 const buttonWithText = (section, text) =>
@@ -79,12 +151,14 @@ const checkedAfterClear = root.querySelectorAll(
 );
 pauseExecute = root.querySelector('[data-testid="machine-pause-execute"]');
 restoreExecute = root.querySelector('[data-testid="machine-pause-restore-execute"]');
-confirm = root.querySelector('.mpd-confirm input[type="checkbox"]');
+pauseConfirm = root.querySelector('[data-testid="machine-pause-confirm"]');
+restoreConfirm = root.querySelector('[data-testid="machine-restore-confirm"]');
 if (checkedAfterClear.length !== 0) throw new Error('Clear left backend-selected rows checked');
 if (!pauseExecute?.disabled || !restoreExecute?.disabled) {
   throw new Error('Clear did not disable both exact mutation controls');
 }
-confirm.click();
+pauseConfirm.click();
+restoreConfirm.click();
 await sleep(0);
 if (!pauseExecute.disabled || !restoreExecute.disabled) {
   throw new Error('confirmation enabled an empty mutation batch');
@@ -104,12 +178,33 @@ await sleep(20);
 
 pauseExecute = root.querySelector('[data-testid="machine-pause-execute"]');
 restoreExecute = root.querySelector('[data-testid="machine-pause-restore-execute"]');
-confirm = root.querySelector('.mpd-confirm input[type="checkbox"]');
-if (confirm.checked) throw new Error('selection refresh did not reset confirmation');
-confirm.click();
+pauseConfirm = root.querySelector('[data-testid="machine-pause-confirm"]');
+restoreConfirm = root.querySelector('[data-testid="machine-restore-confirm"]');
+if (pauseConfirm.checked || restoreConfirm.checked) {
+  throw new Error('selection refresh did not reset scoped confirmations');
+}
+restoreConfirm.click();
+await sleep(0);
+if (restoreExecute.disabled || !pauseExecute.disabled) {
+  throw new Error('restore-only confirmation did not remain scoped after reselection');
+}
+restoreConfirm.click();
+pauseConfirm.click();
+await sleep(0);
+if (pauseExecute.disabled || !restoreExecute.disabled) {
+  throw new Error('pause-only confirmation did not remain scoped after reselection');
+}
+restoreConfirm.click();
 await sleep(0);
 if (pauseExecute.disabled || restoreExecute.disabled) {
-  throw new Error('reviewed eligible selections did not re-enable exact actions');
+  throw new Error('reviewed eligible selections did not re-enable their exact actions');
+}
+// Return the fixture to its default-all preview through the same restore event path so the probe
+// remains repeatable without writing component state.
+restoreExecute.click();
+await sleep(20);
+if (restoreEvents[2]?.selector.kind !== 'include') {
+  throw new Error('eligible reselection did not emit its reviewed include selector');
 }
 
 return {
@@ -121,6 +216,10 @@ return {
   rejectedDisabled: rejectedCheckbox.disabled,
   restoreRows: restore.querySelectorAll('.mpd-run').length,
   confirmationRequired: true,
+  confirmationsScoped: true,
+  restoreSelectors: restoreEvents.slice(0, 2).map((event) => event.selector.kind),
+  loadPerCore: pressureValues[2],
+  samplerDiagnostics: true,
   clearDisabledMutations: true,
   eligibleReselectionEnabledMutations: true,
   durableStatus: true,

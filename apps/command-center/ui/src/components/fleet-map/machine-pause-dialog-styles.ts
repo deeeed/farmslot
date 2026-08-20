@@ -251,6 +251,10 @@ export const machinePauseDialogStyles = css`
     color: ${unsafeCSS(colors.textSecondary)};
     font-size: ${unsafeCSS(fonts.sizeXs)};
   }
+  .mpd-confirmations {
+    display: grid;
+    gap: 4px;
+  }
   .mpd-confirm input {
     accent-color: ${unsafeCSS(colors.statusWarn)};
   }

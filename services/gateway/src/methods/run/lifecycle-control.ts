@@ -1,5 +1,6 @@
 import {
   Events,
+  type Run,
   type RunCancelParams,
   type RunCancelResult,
   type RunForceCompleteParams,
@@ -13,11 +14,17 @@ import {
 import { selectAgentContext } from '../../agents/contexts.js';
 import { execOnSlot } from '../../core/exec.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
-import { bumpRunGeneration, cancelRunEngine, startRun } from '../../run-engine/orchestrator.js';
+import {
+  bumpRunGeneration,
+  cancelRunEngine,
+  type RunEngineStepStartAcknowledgement,
+  startRunWithStepAcknowledgement,
+} from '../../run-engine/orchestrator.js';
 import {
   cancelTransitionDeps,
   defaultCancelCollaborators,
 } from '../../run-lifecycle/cancel-transition.js';
+import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { routeRunTransition } from '../../run-lifecycle/transition-router.js';
 import {
   isRunnerPaneRetired,
@@ -40,61 +47,69 @@ type Emit = (event: string, payload: unknown) => void;
  * which caller invoked it.
  */
 export async function runCancel(params: RunCancelParams): Promise<RunCancelResult> {
+  return withRunTransition(params.runId, () => runCancelTransitionLocked(params));
+}
+
+export async function runCancelTransitionLocked(params: RunCancelParams): Promise<RunCancelResult> {
   const { machineParkingService } = await import('../../machine-parking/service.js');
-  // Hold the machine tail through intent, terminal mutation, and cleanup settlement. A restore
-  // cannot start between a no-op wait and the cancel mutation and resurrect the parked run.
-  return machineParkingService.withRunMachineLock(params.runId, async () => {
-    const parkedCancel = await machineParkingService.prepareRunCancel(params.runId);
-    const { run, effects } = await routeRunTransition(
-      {
-        kind: 'cancel',
-        runId: params.runId,
-        actor: 'operator',
-        ...(params.reason ? { reason: params.reason } : {}),
-      },
-      cancelTransitionDeps(defaultCancelCollaborators()),
+  const parkedCancel = await machineParkingService.prepareRunCancel(params.runId);
+  const { run, effects } = await routeRunTransition(
+    {
+      kind: 'cancel',
+      runId: params.runId,
+      actor: 'operator',
+      ...(params.reason ? { reason: params.reason } : {}),
+    },
+    cancelTransitionDeps(defaultCancelCollaborators()),
+  );
+
+  // A cancel can reach its terminal state while an advisory effect failed. Returning
+  // only `run` reported unqualified success for a partially-applied cancel; the
+  // outcomes travel with the result so callers and operators can see the gap.
+  const failed = effects.filter((effect) => effect.status === 'failed');
+  // The router publishes `cancelled` before the after-effects finish. The mutation's
+  // write-ahead marker blocks archive/delete until backlog settlement clears it, so
+  // a failed settle always leaves a live repair source.
+  let settled = run;
+  if (failed.length > 0) {
+    // The backlog projection is repaired from this durable marker on next load,
+    // so a failed settle self-heals instead of waiting for someone to notice.
+    if (failed.some((effect) => effect.name === 'backlog-settle')) {
+      // A marker-clear write can itself fail after the backlog write succeeds. Re-set
+      // it on any reported settle failure so restart reconciliation remains conservative.
+      settled = getRun(run.id)
+        ? updateRun(run.id, { backlogReconcilePending: true })
+        : { ...run, backlogReconcilePending: true };
+    }
+    console.warn(
+      `[run] cancel ${run.id.slice(0, 8)} applied with ${failed.length} failed effect(s): ${failed
+        .map((effect) => `${effect.name} (${effect.detail ?? 'no detail'})`)
+        .join('; ')}`,
     );
+  }
 
-    // A cancel can reach its terminal state while an advisory effect failed. Returning
-    // only `run` reported unqualified success for a partially-applied cancel; the
-    // outcomes travel with the result so callers and operators can see the gap.
-    const failed = effects.filter((effect) => effect.status === 'failed');
-    // The router publishes `cancelled` before the after-effects finish. The mutation's
-    // write-ahead marker blocks archive/delete until backlog settlement clears it, so
-    // a failed settle always leaves a live repair source.
-    let settled = run;
-    if (failed.length > 0) {
-      // The backlog projection is repaired from this durable marker on next load,
-      // so a failed settle self-heals instead of waiting for someone to notice.
-      if (failed.some((effect) => effect.name === 'backlog-settle')) {
-        // A marker-clear write can itself fail after the backlog write succeeds. Re-set
-        // it on any reported settle failure so restart reconciliation remains conservative.
-        settled = getRun(run.id)
-          ? updateRun(run.id, { backlogReconcilePending: true })
-          : { ...run, backlogReconcilePending: true };
-      }
-      console.warn(
-        `[run] cancel ${run.id.slice(0, 8)} applied with ${failed.length} failed effect(s): ${failed
-          .map((effect) => `${effect.name} (${effect.detail ?? 'no detail'})`)
-          .join('; ')}`,
-      );
-    }
+  if (parkedCancel) {
+    await machineParkingService.finalizeRunCancel(params.runId, effects);
+    settled = getRun(params.runId) ?? settled;
+  }
 
-    if (parkedCancel) {
-      await machineParkingService.finalizeRunCancel(params.runId, effects);
-      settled = getRun(params.runId) ?? settled;
-    }
-
-    return { run: settled, effects };
-  });
+  return { run: settled, effects };
 }
 
 export async function runForceComplete(
   params: RunForceCompleteParams,
   emit: Emit,
 ): Promise<RunForceCompleteResult> {
+  return withRunTransition(params.runId, () => runForceCompleteTransitionLocked(params, emit));
+}
+
+export async function runForceCompleteTransitionLocked(
+  params: RunForceCompleteParams,
+  emit: Emit,
+): Promise<RunForceCompleteResult> {
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  assertNotMachineParkManaged(existing);
 
   const completableStatuses = new Set(['ci-watching']);
   if (!completableStatuses.has(existing.status)) {
@@ -113,8 +128,22 @@ export async function runForceComplete(
 }
 
 export async function runPause(params: RunPauseParams, emit: Emit): Promise<RunPauseResult> {
+  return withRunTransition(params.runId, () => runPauseTransitionLocked(params, emit));
+}
+
+export interface RunPauseTransitionOptions {
+  /** Machine workflow holds the coordinator and owns the active park record. */
+  machineParkingPause?: boolean;
+}
+
+export async function runPauseTransitionLocked(
+  params: RunPauseParams,
+  emit: Emit,
+  options: RunPauseTransitionOptions = {},
+): Promise<RunPauseResult> {
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  if (!options.machineParkingPause) assertNotMachineParkManaged(existing);
 
   // Can only pause runs that are actively monitoring/watching
   const pausableStatuses = new Set(['monitoring', 'ci-watching']);
@@ -132,90 +161,155 @@ export async function runPause(params: RunPauseParams, emit: Emit): Promise<RunP
 }
 
 export async function runResume(params: RunResumeParams, emit: Emit): Promise<RunResumeResult> {
+  const result = await withRunTransition(params.runId, () =>
+    runResumeTransitionLocked(params, emit),
+  );
+  return { run: result.run };
+}
+
+export interface RunResumeAcknowledgement {
+  run: Run;
+  previousGeneration: number;
+  generation: number;
+  stepName: string;
+  status: 'monitoring' | 'ci-watching';
+  acknowledgedAt: string;
+}
+
+export interface RunResumeTransitionOptions {
+  /** Release restore already delivered an exact continuation prompt. */
+  suppressMonitorNudge?: boolean;
+  /** Machine workflow holds the coordinator and owns the active park record. */
+  machineParkingRestore?: boolean;
+}
+
+export interface RunResumeTransitionDependencies {
+  nudgeMonitor(run: Run, emit: Emit): Promise<void>;
+  redrive(runId: string, expectedGeneration: number): Promise<RunEngineStepStartAcknowledgement>;
+}
+
+const DEFAULT_RUN_RESUME_DEPS: RunResumeTransitionDependencies = {
+  nudgeMonitor: nudgeResumedMonitor,
+  redrive: startRunWithStepAcknowledgement,
+};
+
+export async function runResumeTransitionLocked(
+  params: RunResumeParams,
+  emit: Emit,
+  options: RunResumeTransitionOptions = {},
+  deps: RunResumeTransitionDependencies = DEFAULT_RUN_RESUME_DEPS,
+): Promise<RunResumeAcknowledgement> {
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
 
   if (existing.status !== 'paused') {
     throw new Error(`Run ${params.runId} is not paused (status=${existing.status})`);
   }
+  if (!options.machineParkingRestore) assertNotMachineParkManaged(existing);
 
   // Find the step that was running when paused
   const currentStep = existing.steps.find((s) => s.status === 'running');
 
-  // If resuming monitoring, check if worker is idle at prompt and nudge it
-  if (currentStep?.name === 'monitor' && existing.slotId) {
-    try {
-      const { loadSlotVars } = await import('../../core/config.js');
-      const vars = await loadSlotVars(existing.slotId);
-      // Preserve the pre-retained-binding resume behavior: a missing or ambiguous
-      // context must not prevent the base worker session from being nudged.
-      const target = await resolveTmuxSession(existing.slotId, vars);
-      // Capture last few lines of tmux pane to check for idle prompt
-      const { stdout } = await execOnSlot(
-        vars,
-        tmuxShellSnippet(`capture-pane -t ${shellQuote(target)} -p -S '-5'`),
-      );
-      // Strip ANSI escape codes and check for Claude Code prompt patterns
-      const clean = stdout.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/[^\x20-\x7E\n❯⏵⏸]/g, '');
-      const lines = clean
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean);
-      const runner = normalizeRunner(existing.metrics.runner);
-      const retainedSession = resolveRunRetainedSessionBinding(
-        existing,
-        selectAgentContext(existing, { role: 'primary' }),
-      );
-      const nudge = runnerContinueCommand(runner);
-      // ADR-032 Phase 3: when the pane is retired for this runner (Claude), skip the pane-idle
-      // pre-gate and let the hook-only safe-send own the idle/busy decision. Pane-fallback runners
-      // (Codex) and pane-only runners keep the pane gate.
-      if (nudge && (isRunnerPaneRetired(runner) || runnerPaneLooksIdle(lines, runner))) {
-        // ADR-032 Phase 3: pass the run context so a hook-only degraded hold persists through
-        // the ADR-031 intelligence-action audit, not just a console warning.
-        const sent = await sendRunnerInstructionSafely(
-          vars,
-          target,
-          runner,
-          nudge,
-          'run-resume',
-          undefined,
-          {
-            recovery: { runId: existing.id, emit },
-            ...retainedSessionSendOption(retainedSession),
-          },
-        );
-        console.log(
-          `[run] worker idle at prompt — ${sent ? 'submitted' : 'failed to submit'} resume instruction`,
-        );
-      } else {
-        console.log(`[run] worker still active — no nudge needed`);
-      }
-    } catch (err) {
-      console.warn(`[run] resume nudge check failed: ${(err as Error).message}`);
-    }
+  if (!currentStep) {
+    throw new Error(`Run ${params.runId} has no running step to resume`);
+  }
+  if (currentStep.name !== 'monitor' && currentStep.name !== 'ci-watch') {
+    throw new Error(`Run ${params.runId} cannot resume non-idempotent step: ${currentStep.name}`);
+  }
+  if (currentStep.name === 'monitor' && !options.suppressMonitorNudge) {
+    await deps.nudgeMonitor(existing, emit);
   }
 
-  if (currentStep) {
-    // Re-mark as running — startRun will pick up from this step
-    const status =
-      currentStep.name === 'ci-watch' ? ('ci-watching' as const) : ('monitoring' as const);
-    updateRun(params.runId, { status });
-  }
-
+  const status = currentStep.name === 'ci-watch' ? 'ci-watching' : 'monitoring';
+  updateRun(params.runId, { status });
   // Take ownership from any stale pre-pause loop still unwinding (e.g. a
   // push-verification wait that saw the abort after this resume): the bumped
   // generation makes the old loop bail instead of racing the new one.
-  bumpRunGeneration(params.runId);
-  // Re-drive the engine (restarts monitor/ci-watch loop)
-  startRun(params.runId).catch((err) => {
-    console.error(
-      `[run-engine] resume failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+  const previousGeneration = existing.engineState?.generation ?? 0;
+  const generation = bumpRunGeneration(params.runId);
+  let proof: RunEngineStepStartAcknowledgement;
+  try {
+    proof = await deps.redrive(params.runId, generation);
+  } catch (error) {
+    updateRun(params.runId, { status: 'paused' });
+    throw error;
+  }
+  if (
+    proof.runId !== params.runId ||
+    proof.generation !== generation ||
+    proof.stepName !== currentStep.name ||
+    proof.status !== status
+  ) {
+    updateRun(params.runId, { status: 'paused' });
+    throw new Error(
+      `Run ${params.runId} resume acknowledgement did not match generation ${generation}/${currentStep.name}`,
     );
-  });
+  }
 
   const run = getRun(params.runId)!;
   emit(Events.RUN_UPDATED, { run });
   console.log(`[run] resumed run ${params.runId.slice(0, 8)}`);
-  return { run };
+  return {
+    run,
+    previousGeneration,
+    generation,
+    stepName: currentStep.name,
+    status,
+    acknowledgedAt: proof.acknowledgedAt,
+  };
+}
+
+async function nudgeResumedMonitor(existing: Run, emit: Emit): Promise<void> {
+  if (!existing.slotId) return;
+  try {
+    const { loadSlotVars } = await import('../../core/config.js');
+    const vars = await loadSlotVars(existing.slotId);
+    // Preserve the pre-retained-binding resume behavior: a missing or ambiguous
+    // context must not prevent the base worker session from being nudged.
+    const target = await resolveTmuxSession(existing.slotId, vars);
+    const { stdout } = await execOnSlot(
+      vars,
+      tmuxShellSnippet(`capture-pane -t ${shellQuote(target)} -p -S '-5'`),
+    );
+    const clean = stdout.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/[^\x20-\x7E\n❯⏵⏸]/g, '');
+    const lines = clean
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const runner = normalizeRunner(existing.metrics.runner);
+    const retainedSession = resolveRunRetainedSessionBinding(
+      existing,
+      selectAgentContext(existing, { role: 'primary' }),
+    );
+    const nudge = runnerContinueCommand(runner);
+    if (nudge && (isRunnerPaneRetired(runner) || runnerPaneLooksIdle(lines, runner))) {
+      const sent = await sendRunnerInstructionSafely(
+        vars,
+        target,
+        runner,
+        nudge,
+        'run-resume',
+        undefined,
+        {
+          recovery: { runId: existing.id, emit },
+          ...retainedSessionSendOption(retainedSession),
+        },
+      );
+      console.log(
+        `[run] worker idle at prompt — ${sent ? 'submitted' : 'failed to submit'} resume instruction`,
+      );
+    } else {
+      console.log(`[run] worker still active — no nudge needed`);
+    }
+  } catch (error) {
+    console.warn(`[run] resume nudge check failed: ${(error as Error).message}`);
+  }
+}
+
+function assertNotMachineParkManaged(run: Run): void {
+  if (run.park && run.park.phase !== 'restored' && run.park.phase !== 'cancelled') {
+    throw new Error(
+      `Run ${run.id} is managed by machine pause phase '${run.park.phase}'; use machine restore or cancel`,
+    );
+  }
 }

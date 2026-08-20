@@ -8,6 +8,7 @@ import type {
   MachinePauseExecuteResult,
   MachinePauseMode,
   MachinePausePreviewResult,
+  MachinePauseRestoreParams,
   MachinePauseRestoreResult,
   MachinePauseSelector,
   MachinePauseStatusResult,
@@ -67,6 +68,7 @@ import {
   type FleetCanvasViewMode,
 } from './fleet-canvas-url-state.js';
 import type { MachinePauseBusyAction } from './machine-pause-dialog.js';
+import { sortMachinePauseRecords } from './machine-pause-dialog-model.js';
 import { cleanupExecutionTargets, cleanupTargetsRemainEligible } from './machine-pressure-model.js';
 
 export interface ResourceEntry {
@@ -787,7 +789,7 @@ export class FleetCanvas extends LitElement {
     next.push(payload.record);
     this.machinePauseStatus = {
       machine: payload.machine,
-      records: next,
+      records: sortMachinePauseRecords(next),
       ...(this.machinePauseStatus?.pressure ? { pressure: this.machinePauseStatus.pressure } : {}),
     };
     if (this._machinePauseEventTimer) clearTimeout(this._machinePauseEventTimer);
@@ -828,26 +830,16 @@ export class FleetCanvas extends LitElement {
     }
   }
 
-  private async restoreMachinePause(detail: {
-    machine: string;
-    previewId: string;
-    reviewedTargets: MachinePauseExecuteParams['reviewedTargets'];
-  }) {
-    if (detail.machine !== this.machinePauseMachine || this.machinePauseBusy) return;
+  private async restoreMachinePause(params: Extract<MachinePauseRestoreParams, { execute: true }>) {
+    if (params.machine !== this.machinePauseMachine || this.machinePauseBusy) return;
     this.machinePauseBusy = 'restore';
     this.machinePauseActionError = '';
     try {
       const result = await gateway.request<MachinePauseRestoreResult>(
         Methods.MACHINE_PAUSE_RESTORE,
-        {
-          machine: detail.machine,
-          selector: { kind: 'include', runIds: detail.reviewedTargets.map((run) => run.runId) },
-          execute: true,
-          previewId: detail.previewId,
-          reviewedTargets: detail.reviewedTargets,
-        },
+        params,
       );
-      if (detail.machine !== this.machinePauseMachine) return;
+      if (params.machine !== this.machinePauseMachine) return;
       this.machinePauseStatus = {
         machine: result.machine,
         records: result.records,
@@ -858,12 +850,12 @@ export class FleetCanvas extends LitElement {
       }
       await this.fetchMachinePauseState(false);
     } catch (err) {
-      if (detail.machine === this.machinePauseMachine) {
+      if (params.machine === this.machinePauseMachine) {
         this.machinePauseActionError = `Restore failed: ${err instanceof Error ? err.message : String(err)}`;
         await this.fetchMachinePauseState(false);
       }
     } finally {
-      if (detail.machine === this.machinePauseMachine && this.machinePauseBusy === 'restore') {
+      if (params.machine === this.machinePauseMachine && this.machinePauseBusy === 'restore') {
         this.machinePauseBusy = null;
       }
     }
@@ -1342,11 +1334,7 @@ export class FleetCanvas extends LitElement {
               }>,
             ) => this.setMachinePauseSelection(event.detail)}
             @machine-pause-restore=${(
-              event: CustomEvent<{
-                machine: string;
-                previewId: string;
-                reviewedTargets: MachinePauseExecuteParams['reviewedTargets'];
-              }>,
+              event: CustomEvent<Extract<MachinePauseRestoreParams, { execute: true }>>,
             ) => this.restoreMachinePause(event.detail)}
           ></machine-pause-dialog>`
         : ''}

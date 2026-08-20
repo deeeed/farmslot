@@ -10,6 +10,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { makeRun } from '../run-engine/test-fixtures.js';
+import { withMachineRunTransition } from '../run-lifecycle/transition-coordinator.js';
 
 import { type MachineParkingDependencies, MachineParkingService } from './service.js';
 
@@ -20,7 +21,12 @@ function recoveryHandle(runId: string, slotId: string): MachinePauseRecoveryHand
     contextId: 'primary',
     sessionId: `session-${runId}`,
     sessionPath: `/sessions/${runId}.jsonl`,
-    target: { session: slotId, window: 'worker', target: `${slotId}:worker` },
+    target: {
+      session: slotId,
+      window: 'worker',
+      paneId: `%${runId.replace(/\D/g, '') || '1'}`,
+      target: `${slotId}:worker`,
+    },
     model: 'sonnet',
     capturedAt: '2026-08-21T00:00:00.000Z',
   };
@@ -37,6 +43,63 @@ function runningResource(id = 'browser-cdp'): SlotResource {
       hooks: { health: 'health', shutdown: 'stop', boot: 'start' },
     },
     status: 'running',
+  };
+}
+
+function capabilityStatusFor(
+  runId: string,
+  options: { foreignRunId?: string; leaseState?: 'acquired' | 'released' } = {},
+): RuntimeCapabilityStatusResult {
+  const lease = (ownerRunId: string, id: string) => ({
+    id,
+    slotId: 'slot-a',
+    project: 'test',
+    capabilityId: 'browser-cdp',
+    owner: { runId: ownerRunId },
+    state: options.leaseState ?? ('acquired' as const),
+    referenceCount: 1,
+    parameters: {},
+    provenance: { project: 'test', providerId: 'browser-cdp', version: '1', digest: 'x' },
+    health: { state: 'healthy' as const },
+    dependencyLeaseIds: [],
+    updatedAt: '2026-08-21T00:00:00.000Z',
+  });
+  return {
+    slotId: 'slot-a',
+    project: 'test',
+    catalog: [
+      {
+        id: 'browser-cdp',
+        project: 'test',
+        label: 'Browser',
+        description: 'Browser',
+        version: '1',
+        sharePolicy: 'exclusive',
+        actions: {
+          acquire: { kind: 'resource', resourceId: 'browser-cdp', action: 'boot' },
+          health: { kind: 'resource', resourceId: 'browser-cdp', action: 'health' },
+          release: { kind: 'resource', resourceId: 'browser-cdp', action: 'shutdown' },
+        },
+        cost: { class: 'high', resources: [] },
+        releaseEffects: [],
+        provenance: { project: 'test', providerId: 'browser-cdp', version: '1', digest: 'x' },
+        availability: { state: 'available' },
+      },
+    ],
+    leases: [
+      lease(runId, 'lease-browser'),
+      ...(options.foreignRunId ? [lease(options.foreignRunId, 'lease-foreign')] : []),
+    ],
+    proofPlans: {
+      [runId]: {
+        version: 1,
+        slotId: 'slot-a',
+        ownerRunId: runId,
+        createdAt: '2026-08-21T00:00:00.000Z',
+        requirements: [{ capabilityId: 'browser-cdp', reason: 'visual proof', mode: 'visual' }],
+      },
+    },
+    events: [],
   };
 }
 
@@ -75,6 +138,7 @@ function harness(initialRuns: Run[]): Harness {
     initialRuns.map((run) => [run.id, 'running']),
   );
   const calls: string[] = [];
+  const journals = new Map<string, MachineParkRecord[]>();
   let tick = 0;
   const status: RuntimeCapabilityStatusResult = {
     slotId: 'unused',
@@ -113,6 +177,16 @@ function harness(initialRuns: Run[]): Harness {
     persistRun: async (run, reason) => {
       calls.push(`persist:${run.id}:${reason}`);
     },
+    writeIntentJournal: async (records) => {
+      calls.push(`journal-write:${records[0]!.operationId}`);
+      journals.set(records[0]!.operationId, structuredClone(records));
+    },
+    deleteIntentJournal: async (operationId) => {
+      calls.push(`journal-delete:${operationId}`);
+      journals.delete(operationId);
+    },
+    loadIntentJournals: async () =>
+      [...journals.values()].map((records) => structuredClone(records)),
     emit: async (event) => {
       calls.push(`emit:${event}`);
     },
@@ -161,6 +235,7 @@ function harness(initialRuns: Run[]): Harness {
       };
     },
     resolveRecoveryHandle: async (run) => recoveryHandle(run.id, run.slotId!),
+    inspectRecoveryHandle: async () => {},
     pauseRun: async (runId, emit) => {
       calls.push(`pause:${runId}`);
       runs.get(runId)!.status = 'paused';
@@ -169,12 +244,21 @@ function harness(initialRuns: Run[]): Harness {
     resumeRun: async (runId, emit) => {
       calls.push(`resume:${runId}`);
       const run = runs.get(runId)!;
+      const previousGeneration = run.engineState?.generation ?? 0;
       run.status = run.park!.prePauseStatus;
       run.engineState = {
         ...run.engineState,
         generation: (run.engineState?.generation ?? 0) + 1,
       };
       emit('run.updated', { runId });
+      return {
+        run,
+        previousGeneration,
+        generation: run.engineState.generation!,
+        stepName: run.park!.prePauseCurrentStep!.name,
+        status: run.status as 'monitoring' | 'ci-watching',
+        acknowledgedAt: '2026-08-21T00:00:31.000Z',
+      };
     },
     stopRunner: async (run) => {
       calls.push(`stop-runner:${run.id}`);
@@ -232,6 +316,99 @@ test('preview returns backend-selected and backend-owned eligibility for every m
   );
   assert.equal(preview.eligibleCount, 1);
   assert.equal(preview.rejectedCount, 0);
+});
+
+test('raw RPC modes and unknown status machines fail before state access or effects', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  await assert.rejects(
+    () =>
+      ctx.service.preview({
+        machine: 'machine-a',
+        mode: 'invalid' as never,
+        selector: { kind: 'all' },
+      }),
+    /mode must be exactly/,
+  );
+  await assert.rejects(
+    () =>
+      ctx.service.execute({
+        machine: 'machine-a',
+        mode: 'invalid' as never,
+        previewId: 'raw-preview',
+        reviewedTargets: [],
+      }),
+    /mode must be exactly/,
+  );
+  await assert.rejects(() => ctx.service.status('machine-missing'), /Machine not found/);
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('pause:')),
+    false,
+  );
+});
+
+test('release preview rejects a capability-backed resource with a foreign holder', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  ctx.deps.capabilityStatus = async () =>
+    capabilityStatusFor('run-a', { foreignRunId: 'run-foreign' });
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.deepEqual(preview.runs[0]?.eligibility, {
+    eligible: false,
+    code: 'CAPABILITY_FOREIGN_HOLDER',
+    reason: "resource 'browser-cdp' is held by run-foreign/browser-cdp",
+  });
+  await assert.rejects(
+    () =>
+      ctx.service.execute({
+        machine: 'machine-a',
+        mode: 'release',
+        previewId: preview.previewId,
+        reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+      }),
+    /batch rejected before mutation/,
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('stop-resource:')),
+    false,
+  );
+});
+
+test('registry-retained capability never falls through to direct resource shutdown', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  ctx.deps.capabilityStatus = async () => capabilityStatusFor('run-a');
+  ctx.deps.releaseCapability = async () => ({
+    ok: true,
+    released: [],
+    retained: capabilityStatusFor('run-a').leases,
+    effects: [],
+    failures: [],
+  });
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  const result = await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'retained-provider',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('stop-resource:')),
+    false,
+  );
+  assert.equal(
+    ctx.runs
+      .get('run-a')
+      ?.park?.errors.some((error) => error.action === 'capability.release-retained'),
+    true,
+  );
 });
 
 test('empty include renders every pause and restore row unselected while execute fails closed', async () => {
@@ -340,14 +517,8 @@ test('missing session path rejects the whole final preflight before writing any 
     mode: 'release',
     selector: { kind: 'all' },
   });
-  const handleCalls = new Map<string, number>();
-  ctx.deps.resolveRecoveryHandle = async (run) => {
-    const count = (handleCalls.get(run.id) ?? 0) + 1;
-    handleCalls.set(run.id, count);
-    if (run.id === 'run-b' && count === 2) {
-      throw new Error('Persisted runner session path is unavailable');
-    }
-    return recoveryHandle(run.id, run.slotId!);
+  ctx.deps.inspectRecoveryHandle = async (run) => {
+    if (run.id === 'run-b') throw new Error('Persisted runner session path is unavailable');
   };
 
   await assert.rejects(
@@ -369,6 +540,114 @@ test('missing session path rejects the whole final preflight before writing any 
   );
 });
 
+test('intent persistence failure returns complete typed failures, applies zero effects, and repairs on restart', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a'), activeRun('run-b', 'slot-b')]);
+  const persist = ctx.deps.persistRun;
+  ctx.deps.persistRun = async (run, reason) => {
+    if (run.id === 'run-b' && reason === 'machine-pause-intent') {
+      throw new Error('disk write failed');
+    }
+    await persist(run, reason);
+  };
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'orchestration',
+    selector: { kind: 'all' },
+  });
+  const params = {
+    machine: 'machine-a',
+    mode: 'orchestration' as const,
+    previewId: preview.previewId,
+    reviewedTargets: preview.runs.map(({ runId, generation }) => ({ runId, generation })),
+    operationId: 'persist-failure',
+  };
+  const result = await ctx.service.execute(params);
+  assert.equal(result.ok, false);
+  assert.equal(result.records.length, 2);
+  assert.equal(
+    result.records.every((record) => record.phase === 'failed'),
+    true,
+  );
+  assert.equal(
+    result.records.every((record) =>
+      record.errors.some((error) => error.code === 'INTENT_BATCH_NOT_DURABLE'),
+    ),
+    true,
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('pause:')),
+    false,
+  );
+
+  const retry = await ctx.service.execute(params);
+  assert.equal(
+    retry.records.every((record) => record.phase === 'failed'),
+    true,
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('pause:')),
+    false,
+  );
+
+  await ctx.service.reconcile();
+  assert.equal(ctx.runs.get('run-a')?.park, null);
+  assert.equal(ctx.runs.get('run-b')?.park, null);
+});
+
+test('pause throw leaves durable partial evidence that restart clears as zero-effect', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  ctx.deps.pauseRun = async () => {
+    throw new Error('pause transition failed before status mutation');
+  };
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'orchestration',
+    selector: { kind: 'all' },
+  });
+  const result = await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'orchestration',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'pause-throw',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(ctx.runs.get('run-a')?.status, 'monitoring');
+  assert.equal(ctx.runs.get('run-a')?.park?.phase, 'partial');
+  await ctx.service.reconcile();
+  assert.equal(ctx.runs.get('run-a')?.park, null);
+});
+
+test('atomic intent journal failure returns typed records without attaching partial intent', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a'), activeRun('run-b', 'slot-b')]);
+  ctx.deps.writeIntentJournal = async () => {
+    throw new Error('journal unavailable');
+  };
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'orchestration',
+    selector: { kind: 'all' },
+  });
+  const result = await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'orchestration',
+    previewId: preview.previewId,
+    reviewedTargets: preview.runs.map(({ runId, generation }) => ({ runId, generation })),
+    operationId: 'journal-failure',
+  });
+  assert.equal(result.records.length, 2);
+  assert.equal(
+    result.records.every((record) => record.phase === 'failed'),
+    true,
+  );
+  assert.equal(ctx.runs.get('run-a')?.park, undefined);
+  assert.equal(ctx.runs.get('run-b')?.park, undefined);
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('pause:')),
+    false,
+  );
+});
+
 test('ambiguous live runner target rejects final preflight with zero mutation', async () => {
   const ctx = harness([activeRun('run-a', 'slot-a')]);
   const preview = await ctx.service.preview({
@@ -376,13 +655,8 @@ test('ambiguous live runner target rejects final preflight with zero mutation', 
     mode: 'release',
     selector: { kind: 'all' },
   });
-  let calls = 0;
-  ctx.deps.resolveRecoveryHandle = async (run) => {
-    calls += 1;
-    if (calls === 2) {
-      throw new Error("Exact runner target ff-a:dev is ambiguous: found 2 live 'codex' processes");
-    }
-    return recoveryHandle(run.id, run.slotId!);
+  ctx.deps.inspectRecoveryHandle = async () => {
+    throw new Error("Exact runner target ff-a:dev is ambiguous: found 2 live 'codex' processes");
   };
 
   await assert.rejects(
@@ -452,6 +726,39 @@ test('orchestration pause leaves runner and resources live and is operation-id i
     ctx.calls.some((call) => call.startsWith('stop-resource:')),
     false,
   );
+});
+
+test('advisory emit failure never relabels a successful pause or restore', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  ctx.deps.emit = async () => {
+    throw new Error('client disconnected');
+  };
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'orchestration',
+    selector: { kind: 'all' },
+  });
+  const paused = await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'orchestration',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'emit-advisory-pause',
+  });
+  assert.equal(paused.ok, true);
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  const restored = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'emit-advisory-restore',
+  });
+  assert.equal(restored.ok, true);
 });
 
 test('successful parked cancel clears its durable park record only after cleanup settles', async () => {
@@ -636,6 +943,45 @@ test('different reviewed batches on one machine execute through one promise tail
   assert.equal(resultA.ok, true);
   assert.equal(resultB.ok, true);
   assert.equal(ctx.calls.indexOf('pause:run-a') < ctx.calls.indexOf('pause:run-b'), true);
+});
+
+test('external machine transition cannot enter while release effects hold the machine tail', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  let releaseStop!: () => void;
+  let stopEntered!: () => void;
+  const stopGate = new Promise<void>((resolve) => {
+    releaseStop = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    stopEntered = resolve;
+  });
+  ctx.deps.stopRunner = async () => {
+    stopEntered();
+    await stopGate;
+  };
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  const executing = ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'hold-machine-tail',
+  });
+  await entered;
+  let externalEntered = false;
+  const external = withMachineRunTransition('machine-a', async () => {
+    externalEntered = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(externalEntered, false);
+  releaseStop();
+  await executing;
+  await external;
+  assert.equal(externalEntered, true);
 });
 
 test('release pause continues other runs after a partial resource failure without rollback', async () => {
@@ -862,6 +1208,49 @@ test('release restore starts only the manifest, reloads the exact session, then 
   );
 });
 
+test('stale restore session fails final preflight before capability acquire or resource boot', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const pausePreview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: pausePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'release-before-stale-session',
+  });
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  ctx.deps.inspectRecoveryHandle = async () => {
+    throw new Error('persisted session path disappeared');
+  };
+  await assert.rejects(
+    () =>
+      ctx.service.restore({
+        machine: 'machine-a',
+        selector: { kind: 'all' },
+        execute: true,
+        previewId: restorePreview.previewId,
+        reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+        operationId: 'stale-session-restore',
+      }),
+    /stale|session path disappeared/,
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('acquire-capability:')),
+    false,
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('start-resource:')),
+    false,
+  );
+});
+
 test('structured continuation rejection prevents generation resume', async () => {
   const ctx = harness([activeRun('run-a', 'slot-a')]);
   const pausePreview = await ctx.service.preview({
@@ -898,6 +1287,47 @@ test('structured continuation rejection prevents generation resume', async () =>
   assert.equal(ctx.runs.get('run-a')?.park?.phase, 'partial');
   assert.equal(ctx.runs.get('run-a')?.engineState?.generation, 3);
   assert.equal(ctx.calls.includes('resume:run-a'), false);
+});
+
+test('resume redrive rejection stays paused, advances the fence, and never reports restored', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const pausePreview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'orchestration',
+    selector: { kind: 'all' },
+  });
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'orchestration',
+    previewId: pausePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'pause-before-redrive-failure',
+  });
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  ctx.deps.resumeRun = async (runId) => {
+    const run = ctx.runs.get(runId)!;
+    run.engineState = { ...run.engineState, generation: 4 };
+    run.status = 'paused';
+    throw new Error('engine redrive acknowledgement failed');
+  };
+  const result = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'redrive-failure',
+  });
+  const park = ctx.runs.get('run-a')!.park!;
+  assert.equal(result.ok, false);
+  assert.equal(ctx.runs.get('run-a')?.status, 'paused');
+  assert.equal(park.phase, 'partial');
+  assert.equal(park.generation, 4);
+  assert.equal(park.restoredAt, undefined);
+  assert.equal(park.restoredGeneration, undefined);
 });
 
 test('restart reconciliation marks interrupted release records partial with residuals', async () => {

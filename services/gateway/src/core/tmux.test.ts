@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   buildTmuxRespawnLaunchCommand,
   parseTmuxKeys,
+  respawnTmuxPaneWithCommand,
   selectExactTmuxWindowPane,
   selectResolvedTmuxSession,
   shellQuote,
@@ -30,6 +31,15 @@ describe('buildTmuxRespawnLaunchCommand', () => {
     assert.equal(
       buildTmuxRespawnLaunchCommand('codex review', '/tmp/reviewer'),
       `exec bash -lc 'codex review'`,
+    );
+  });
+});
+
+describe('respawnTmuxPaneWithCommand', () => {
+  it('rejects a window target so callers cannot kill sibling panes', async () => {
+    await assert.rejects(
+      () => respawnTmuxPaneWithCommand({} as never, 'ff-1:dev', 'codex resume session'),
+      /Invalid exact tmux pane id/,
     );
   });
 });

@@ -6,6 +6,7 @@ import type {
   MachineParkResourceManifest,
   MachinePauseMode,
   MachinePausePreviewResult,
+  MachinePauseRestoreParams,
   MachinePauseRestoreResult,
   MachinePauseSelector,
   MachinePauseStatusResult,
@@ -21,7 +22,10 @@ const pressure: ResourcePressureMachine = {
   online: true,
   headroom: 'red',
   severity: 'critical',
-  concerns: [{ severity: 'critical', reason: 'Sustained CPU and memory pressure.' }],
+  concerns: [
+    { severity: 'critical', reason: 'Sustained CPU and memory pressure.' },
+    { severity: 'warn', reason: 'Load has remained above logical core capacity.' },
+  ],
   history: [
     {
       collectedAt: sampledAt,
@@ -35,12 +39,12 @@ const pressure: ResourcePressureMachine = {
   ],
   processAttribution: {
     sampledAt,
-    truncated: false,
-    ancestryTruncated: false,
+    truncated: true,
+    ancestryTruncated: true,
     sampledProcesses: 192,
     totalProcesses: 192,
     maxEntries: 256,
-    omittedGroups: 0,
+    omittedGroups: 3,
     classCounts: { active: 2, retained: 1, stale: 1, manual: 0, unknown: 1 },
     managedGroupCount: 4,
     managedClassCounts: { active: 2, retained: 1, stale: 1, manual: 0, unknown: 0 },
@@ -107,6 +111,16 @@ const pressure: ResourcePressureMachine = {
         evidence: ['no verified Farmslot owner'],
       },
     ],
+    sampler: {
+      attempts: 14,
+      executions: 12,
+      failures: 1,
+      skippedBusy: 1,
+      skippedCadence: 8,
+      lastDurationMs: 84,
+      lastError: 'Process inventory timed out once.',
+    },
+    degradedReason: 'Process attribution is using the last complete bounded sample.',
   },
   slots: { total: 6, ready: 2, busy: 3, working: 2, manual: 0, disabled: 1 },
   resources: {
@@ -162,6 +176,7 @@ const parkedRecord: MachineParkRecord = {
       session: 'farmslot-ci-29',
       window: '0',
       pane: '0',
+      paneId: '%29',
       target: 'farmslot-ci-29:0.0',
     },
     model: 'gpt-5.5',
@@ -214,12 +229,18 @@ function selectorIncludes(selector: MachinePauseSelector, runId: string): boolea
   return !selector.runIds.includes(runId);
 }
 
+function selectorKey(selector: MachinePauseSelector): string {
+  return selector.kind === 'all'
+    ? 'all'
+    : `${selector.kind}-${selector.runIds.join('-') || 'none'}`;
+}
+
 function pausePreview(
   mode: MachinePauseMode,
   selector: MachinePauseSelector,
 ): MachinePausePreviewResult {
   return {
-    previewId: `pause-preview-${mode}`,
+    previewId: `pause-preview-${mode}-${selectorKey(selector)}`,
     machine: 'macwork',
     mode,
     selector,
@@ -294,7 +315,7 @@ function restorePreview(selector: MachinePauseSelector): MachinePauseRestoreResu
     ok: true,
     outcome: 'preview',
     execute: false,
-    previewId: 'restore-preview-dev',
+    previewId: `restore-preview-${selectorKey(selector)}`,
     machine: 'macwork',
     selector,
     records: [parkedRecord, partialRecord],
@@ -316,9 +337,9 @@ function restorePreview(selector: MachinePauseSelector): MachinePauseRestoreResu
         generation: partialRecord.generation,
         selected: selectorIncludes(selector, partialRecord.runId),
         eligibility: {
-          eligible: false,
-          code: 'residual-resource-running',
-          reason: 'Resolve the running Metro residual before restoring this run.',
+          eligible: true,
+          code: 'partial-retry-restorable',
+          reason: 'The durable partial record can retry restore from its saved checkpoint.',
         },
         record: partialRecord,
       },
@@ -333,10 +354,7 @@ export class MachinePauseDev extends LitElement {
     kind: 'include',
     runIds: ['run-monitor-17', 'run-ci-31'],
   };
-  @state() private restoreSelector: MachinePauseSelector = {
-    kind: 'include',
-    runIds: [parkedRecord.runId],
-  };
+  @state() private restoreSelector: MachinePauseSelector = { kind: 'all' };
 
   protected override createRenderRoot() {
     return this;
@@ -358,6 +376,14 @@ export class MachinePauseDev extends LitElement {
       ) => {
         if (event.detail.scope === 'pause') this.pauseSelector = event.detail.selector;
         else this.restoreSelector = event.detail.selector;
+      }}
+      @machine-pause-restore=${(
+        event: CustomEvent<Extract<MachinePauseRestoreParams, { execute: true }>>,
+      ) => {
+        this.restoreSelector =
+          event.detail.selector.kind === 'all'
+            ? { kind: 'exclude', runIds: [partialRecord.runId] }
+            : { kind: 'all' };
       }}
     ></machine-pause-dialog>`;
   }

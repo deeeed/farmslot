@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -43,12 +44,21 @@ import {
 import { loadFleetStatus } from '../fleet/state.js';
 import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
 import { resourcePressureSnapshot } from '../methods/resource.js';
-import { runPause, runResume } from '../methods/run/lifecycle-control.js';
+import {
+  runPauseTransitionLocked,
+  type RunResumeAcknowledgement,
+  runResumeTransitionLocked,
+} from '../methods/run/lifecycle-control.js';
 import {
   runtimeCapabilityAcquire,
   runtimeCapabilityRelease,
   runtimeCapabilityStatus,
 } from '../methods/runtime-capabilities.js';
+import { farmslotRoot } from '../projects/repo-root.js';
+import {
+  withMachineRunTransition,
+  withRunTransitionWhileMachineHeld,
+} from '../run-lifecycle/transition-coordinator.js';
 import { normalizeRunner } from '../runners/registry.js';
 import {
   inspectRunnerRecovery,
@@ -70,10 +80,13 @@ export interface MachineParkingDependencies {
   loadFleet(): Promise<Fleet>;
   updatePark(runId: string, park: MachineParkRecord | null): Run;
   persistRun(run: Run, reason: string): Promise<void>;
+  writeIntentJournal(records: MachineParkRecord[]): Promise<void>;
+  deleteIntentJournal(operationId: string): Promise<void>;
+  loadIntentJournals(): Promise<MachineParkRecord[][]>;
   emit(event: string, payload: unknown): Promise<void>;
   pressure(machine: string): Promise<ResourcePressureMachine | undefined>;
   observeResources(slotId: string): Promise<SlotResource[]>;
-  capabilityStatus(slotId: string, runId: string): Promise<RuntimeCapabilityStatusResult>;
+  capabilityStatus(slotId: string, runId?: string): Promise<RuntimeCapabilityStatusResult>;
   releaseCapability(params: {
     slotId: string;
     runId: string;
@@ -84,8 +97,17 @@ export interface MachineParkingDependencies {
     params: RuntimeCapabilityAcquireParams,
   ): Promise<RuntimeCapabilityAcquireResult>;
   resolveRecoveryHandle(run: Run): Promise<MachinePauseRecoveryHandle>;
+  inspectRecoveryHandle(
+    run: Run,
+    handle: MachinePauseRecoveryHandle,
+    expectedRunnerState: 'live' | 'stopped-or-live',
+  ): Promise<void>;
   pauseRun(runId: string, emit: (event: string, payload: unknown) => void): Promise<void>;
-  resumeRun(runId: string, emit: (event: string, payload: unknown) => void): Promise<void>;
+  resumeRun(
+    runId: string,
+    emit: (event: string, payload: unknown) => void,
+    options: { suppressMonitorNudge: boolean },
+  ): Promise<RunResumeAcknowledgement>;
   stopRunner(run: Run, handle: MachinePauseRecoveryHandle): Promise<void>;
   reloadRunner(
     run: Run,
@@ -120,8 +142,56 @@ interface CachedPreview {
 
 const PREVIEW_TTL_MS = 5 * 60_000;
 const PREVIEW_CACHE_LIMIT = 100;
-const machineTails = new Map<string, Promise<void>>();
 const previewCache = new Map<string, CachedPreview>();
+const intentJournalDir = path.join(
+  farmslotRoot,
+  '.runs',
+  `machine-parking-batches-${process.env.GATEWAY_PORT?.trim() || '7777'}`,
+);
+
+function intentJournalPath(operationId: string): string {
+  const digest = createHash('sha256').update(operationId).digest('hex');
+  return path.join(intentJournalDir, `${digest}.json`);
+}
+
+async function defaultWriteIntentJournal(records: MachineParkRecord[]): Promise<void> {
+  if (records.length === 0) throw new Error('machine parking intent journal requires records');
+  await mkdir(intentJournalDir, { recursive: true });
+  const target = intentJournalPath(records[0]!.operationId);
+  const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temp, JSON.stringify({ version: 1, records }, null, 2), 'utf8');
+  await rename(temp, target);
+}
+
+async function defaultDeleteIntentJournal(operationId: string): Promise<void> {
+  try {
+    await unlink(intentJournalPath(operationId));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+async function defaultLoadIntentJournals(): Promise<MachineParkRecord[][]> {
+  let files: string[];
+  try {
+    files = await readdir(intentJournalDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  const journals: MachineParkRecord[][] = [];
+  for (const file of files.filter((name) => name.endsWith('.json')).sort()) {
+    const parsed = JSON.parse(await readFile(path.join(intentJournalDir, file), 'utf8')) as {
+      version?: unknown;
+      records?: unknown;
+    };
+    if (parsed.version !== 1 || !Array.isArray(parsed.records)) {
+      throw new Error(`invalid machine parking intent journal: ${file}`);
+    }
+    journals.push(parsed.records as MachineParkRecord[]);
+  }
+  return journals;
+}
 
 async function broadcast(event: string, payload: unknown): Promise<void> {
   const { broadcastEvent } = await import('../server.js');
@@ -152,6 +222,7 @@ async function defaultResolveRecoveryHandle(run: Run): Promise<MachinePauseRecov
   if (!run.slotId) throw new Error('run has no slot');
   const context = selectAgentContext(run, { role: 'primary' });
   if (!context?.target) throw new Error('primary agent context has no exact tmux target');
+  if (!context.target.paneId) throw new Error('primary agent context has no exact tmux pane id');
   const rawRunnerId = context.runner ?? run.metrics.runner;
   if (!rawRunnerId?.trim()) throw new Error('run has no persisted runner identity');
   const runnerId = normalizeRunner(rawRunnerId);
@@ -165,33 +236,48 @@ async function defaultResolveRecoveryHandle(run: Run): Promise<MachinePauseRecov
     );
   }
   const projectVars = await loadProjectVars(run.project);
+  const safetyTier = resolveDispatchSafetyTier({
+    runTier: run.safetyTier,
+    projectDefaultRaw: projectVars.projectJson.default_safety_tier,
+  });
   const handle: MachinePauseRecoveryHandle = {
     version: 1,
     runnerId,
     contextId: context.id,
     sessionId: binding.binding.runnerSessionId,
     sessionPath: binding.binding.runnerSessionPath,
-    target: structuredClone(context.target),
+    target: { ...structuredClone(context.target), paneId: context.target.paneId },
     model: context.model ?? run.metrics.model ?? null,
     ...(run.effort ? { effort: run.effort } : {}),
-    ...(resolveDispatchSafetyTier({
-      runTier: run.safetyTier,
-      projectDefaultRaw: projectVars.projectJson.default_safety_tier,
-    })
-      ? {
-          safetyTier: resolveDispatchSafetyTier({
-            runTier: run.safetyTier,
-            projectDefaultRaw: projectVars.projectJson.default_safety_tier,
-          }),
-        }
-      : {}),
+    ...(safetyTier ? { safetyTier } : {}),
     runtimeDir: await resolveProjectRuntimeDir(run.project),
     ...(run.taskFile ? { taskDir: path.posix.dirname(run.taskFile) } : {}),
     capturedAt: new Date().toISOString(),
   };
-  const inspection = await inspectRunnerRecovery({ vars, runnerId, recoveryHandle: handle });
-  if (!inspection.supported) throw new Error(inspection.reason ?? 'runner recovery unsupported');
+  await defaultInspectRecoveryHandle(run, handle, 'live');
   return handle;
+}
+
+async function defaultInspectRecoveryHandle(
+  run: Run,
+  handle: MachinePauseRecoveryHandle,
+  expectedRunnerState: 'live' | 'stopped-or-live',
+): Promise<void> {
+  if (!run.slotId) throw new Error('run has no slot');
+  const vars = await loadSlotVars(run.slotId);
+  const session = await resolveTmuxSession(run.slotId, vars, { strict: true });
+  if (session !== handle.target.session) {
+    throw new Error(
+      `slot session changed from '${handle.target.session}' to '${session}'; recovery handle is stale`,
+    );
+  }
+  const inspection = await inspectRunnerRecovery({
+    vars,
+    runnerId: handle.runnerId,
+    recoveryHandle: handle,
+    expectedRunnerState,
+  });
+  if (!inspection.supported) throw new Error(inspection.reason ?? 'runner recovery unsupported');
 }
 
 async function defaultReloadRunner(
@@ -232,44 +318,47 @@ const defaultDependencies: MachineParkingDependencies = {
   loadFleet: loadFleetStatus,
   updatePark: (runId, park) => updateRun(runId, { park }),
   persistRun: persistRunNow,
+  writeIntentJournal: defaultWriteIntentJournal,
+  deleteIntentJournal: defaultDeleteIntentJournal,
+  loadIntentJournals: defaultLoadIntentJournals,
   emit: broadcast,
   pressure: defaultPressure,
   observeResources: defaultObserveResources,
-  capabilityStatus: (slotId, runId) => runtimeCapabilityStatus({ slotId, ownerRunId: runId }),
+  capabilityStatus: (slotId, runId) =>
+    runtimeCapabilityStatus({ slotId, ...(runId ? { ownerRunId: runId } : {}) }),
   releaseCapability: ({ slotId, runId, leaseId, capabilityId }) =>
     runtimeCapabilityRelease({ slotId, ownerRunId: runId, leaseId, capabilityId }),
   acquireCapability: runtimeCapabilityAcquire,
   resolveRecoveryHandle: defaultResolveRecoveryHandle,
-  pauseRun: async (runId, emit) => {
-    await runPause({ runId }, emit);
-  },
-  resumeRun: async (runId, emit) => {
-    await runResume({ runId }, emit);
-  },
+  inspectRecoveryHandle: defaultInspectRecoveryHandle,
+  pauseRun: (runId, emit) =>
+    withRunTransitionWhileMachineHeld(runId, async () => {
+      await runPauseTransitionLocked({ runId }, emit, { machineParkingPause: true });
+    }),
+  resumeRun: (runId, emit, options) =>
+    withRunTransitionWhileMachineHeld(runId, () =>
+      runResumeTransitionLocked({ runId }, emit, {
+        machineParkingRestore: true,
+        suppressMonitorNudge: options.suppressMonitorNudge,
+      }),
+    ),
   stopRunner: async (run, handle) => {
     if (!run.slotId) throw new Error('run has no slot');
     const vars = await loadSlotVars(run.slotId);
-    const result = await stopRunnerForPark({
-      vars,
-      runnerId: handle.runnerId,
-      target: handle.target.target,
-    });
+    const result = await stopRunnerForPark({ vars, recoveryHandle: handle });
     if (!result.ok) throw new Error(result.error);
   },
   reloadRunner: defaultReloadRunner,
   runnerRunning: async (run, handle) => {
     if (!run.slotId) return 'unknown';
-    return runnerRunningForPark({
-      vars: await loadSlotVars(run.slotId),
-      runnerId: handle.runnerId,
-      target: handle.target.target,
-    });
+    return runnerRunningForPark({ vars: await loadSlotVars(run.slotId), recoveryHandle: handle });
   },
   stopResource: (slotId, resourceId) => executeResourceControl(slotId, resourceId, 'shutdown'),
   startResource: (slotId, resourceId) => executeResourceControl(slotId, resourceId, 'boot'),
 };
 
 export class MachineParkingService {
+  private readonly recoveryHandles = new Map<string, MachinePauseRecoveryHandle>();
   private readonly pressureCache = new Map<
     string,
     {
@@ -283,6 +372,7 @@ export class MachineParkingService {
 
   async preview(params: MachinePausePreviewParams): Promise<MachinePausePreviewResult> {
     const machine = assertMachine(params.machine);
+    assertPauseMode(params.mode);
     assertSelector(params.selector);
     const result = await this.buildPausePreview({ ...params, machine });
     this.cachePreview(result.previewId, { kind: 'pause', pause: result });
@@ -291,8 +381,9 @@ export class MachineParkingService {
 
   async execute(params: MachinePauseExecuteParams): Promise<MachinePauseExecuteResult> {
     const machine = assertMachine(params.machine);
+    assertPauseMode(params.mode);
     const operationId = params.operationId?.trim() || this.deps.operationId();
-    return withMachineLock(machine, async () => {
+    return withMachineRunTransition(machine, async () => {
       const idempotent = this.idempotentRecords(operationId, machine);
       if (idempotent.length > 0) {
         if (idempotent.some((record) => record.mode !== params.mode)) {
@@ -323,10 +414,25 @@ export class MachineParkingService {
         throw new Error('machine pause preview is stale; preview the batch again');
       }
       assertExecutablePreview(fresh.runs, params.reviewedTargets);
-      const records = await this.persistPauseIntents(fresh, operationId);
-      for (const record of records) await this.parkOne(record.runId);
+      const intent = await this.persistPauseIntents(fresh, operationId);
+      if (intent.durable) {
+        for (const record of intent.records) {
+          try {
+            await this.parkOne(record.runId);
+          } catch (error) {
+            await this.settleUnexpectedFailure(
+              record.runId,
+              'partial',
+              'machine-pause.unexpected',
+              error,
+            );
+          }
+        }
+      }
       this.pressureCache.delete(machine);
-      const completed = this.recordsForOperation(operationId, machine);
+      const completed = intent.durable
+        ? this.recordsForOperation(operationId, machine)
+        : intent.records;
       const outcome = operationOutcome(completed, 'parked');
       return {
         ok: outcome === 'complete',
@@ -342,6 +448,7 @@ export class MachineParkingService {
 
   async status(machineInput: string): Promise<MachinePauseStatusResult> {
     const machine = assertMachine(machineInput);
+    assertKnownMachine(machine, await this.deps.loadFleet());
     return {
       machine,
       records: this.deps
@@ -371,7 +478,7 @@ export class MachineParkingService {
       };
     }
     const operationId = params.operationId?.trim() || this.deps.operationId();
-    return withMachineLock(machine, async () => {
+    return withMachineRunTransition(machine, async () => {
       const idempotent = this.idempotentRecords(operationId, machine);
       if (idempotent.length > 0) {
         assertReviewedRecords(idempotent, params.reviewedTargets, params.previewId);
@@ -419,10 +526,25 @@ export class MachineParkingService {
       }
       assertExecutableRestore(fresh.runs, params.reviewedTargets);
       const selected = fresh.runs.filter((item) => item.selected);
-      await this.persistRestoreIntents(selected, operationId, params.previewId);
-      for (const item of selected) await this.restoreOne(item.runId);
+      const intent = await this.persistRestoreIntents(selected, operationId, params.previewId);
+      if (intent.durable) {
+        for (const item of selected) {
+          try {
+            await this.restoreOne(item.runId);
+          } catch (error) {
+            await this.settleUnexpectedFailure(
+              item.runId,
+              'partial',
+              'machine-restore.unexpected',
+              error,
+            );
+          }
+        }
+      }
       this.pressureCache.delete(machine);
-      const records = this.recordsForOperation(operationId, machine);
+      const records = intent.durable
+        ? this.recordsForOperation(operationId, machine)
+        : intent.records;
       const outcome = operationOutcome(records, 'restored');
       return {
         ok: outcome === 'complete',
@@ -457,6 +579,7 @@ export class MachineParkingService {
   }
 
   async reconcile(): Promise<{ reconciled: number; partial: number }> {
+    const journalBlockedRuns = await this.repairIntentJournals();
     const machines = [
       ...new Set(
         this.deps
@@ -467,14 +590,29 @@ export class MachineParkingService {
     let reconciled = 0;
     let partial = 0;
     for (const machine of machines) {
-      await withMachineLock(machine, async () => {
+      await withMachineRunTransition(machine, async () => {
         for (const run of this.deps
           .allRuns()
           .filter((candidate) =>
-            Boolean(candidate.park?.machine === machine && !settledPhase(candidate.park.phase)),
+            Boolean(
+              candidate.park?.machine === machine &&
+              !settledPhase(candidate.park.phase) &&
+              !journalBlockedRuns.has(candidate.id),
+            ),
           )) {
           const record = run.park!;
           const residuals = await this.observeResiduals(run, record);
+          if (zeroEffectIntent(run, record, residuals)) {
+            const cleared = this.deps.updatePark(run.id, null);
+            await this.deps.persistRun(cleared, 'machine-pause-zero-effect-recovery');
+            try {
+              await this.deps.emit(Events.RUN_UPDATED, { run: cleared });
+            } catch (error) {
+              console.warn(`[machine-pause] zero-effect recovery emit failed: ${messageOf(error)}`);
+            }
+            reconciled += 1;
+            continue;
+          }
           let phase: MachineParkPhase = 'partial';
           if (isTerminalRunStatus(run.status)) phase = 'cancelled';
           else if (record.mode === 'orchestration' && run.status === 'paused') phase = 'parked';
@@ -497,7 +635,9 @@ export class MachineParkingService {
             residuals,
             ...(phase === 'parked' ? { parkedAt: current.parkedAt ?? this.deps.now() } : {}),
             ...(phase === 'restored' ? { restoredAt: current.restoredAt ?? this.deps.now() } : {}),
-            ...(phase === 'cancelled' ? { cancelledAt: this.deps.now() } : {}),
+            ...(phase === 'cancelled'
+              ? { cancelledAt: current.cancelledAt ?? this.deps.now() }
+              : {}),
           }));
           reconciled += 1;
           if (phase === 'partial') partial += 1;
@@ -505,11 +645,6 @@ export class MachineParkingService {
       });
     }
     return { reconciled, partial };
-  }
-
-  async withRunMachineLock<T>(runId: string, operation: () => Promise<T>): Promise<T> {
-    const machine = this.deps.getRun(runId)?.park?.machine;
-    return machine ? withMachineLock(machine, operation) : operation();
   }
 
   async prepareRunCancel(runId: string): Promise<boolean> {
@@ -672,6 +807,10 @@ export class MachineParkingService {
     let handle: MachinePauseRecoveryHandle;
     try {
       handle = await this.deps.resolveRecoveryHandle(run);
+      this.recoveryHandles.set(recoveryHandleKey(run.id, generation), structuredClone(handle));
+      while (this.recoveryHandles.size > 512) {
+        this.recoveryHandles.delete(this.recoveryHandles.keys().next().value!);
+      }
     } catch (error) {
       return reject(
         'RUNNER_RECOVERY_UNSUPPORTED',
@@ -683,7 +822,7 @@ export class MachineParkingService {
     try {
       [resources, capabilityStatus] = await Promise.all([
         this.deps.observeResources(run.slotId),
-        this.deps.capabilityStatus(run.slotId, run.id),
+        this.deps.capabilityStatus(run.slotId),
       ]);
     } catch (error) {
       return reject(
@@ -713,7 +852,28 @@ export class MachineParkingService {
         Boolean(resource.definition.hooks?.shutdown && resource.definition.hooks?.boot),
     );
     const proofPlan = capabilityStatus.proofPlans[run.id];
-    const activeLeases = capabilityStatus.leases.filter((lease) => lease.state === 'acquired');
+    const activeLeases = capabilityStatus.leases.filter(
+      (lease) => lease.owner.runId === run.id && lease.state === 'acquired',
+    );
+    for (const resource of affected) {
+      const providerIds = capabilityProvidersForResource(capabilityStatus, resource.id);
+      const foreignHolders = capabilityStatus.leases.filter(
+        (lease) =>
+          providerIds.has(lease.capabilityId) &&
+          lease.owner.runId !== run.id &&
+          capabilityLeaseBlocksStop(lease),
+      );
+      if (foreignHolders.length > 0) {
+        return reject(
+          'CAPABILITY_FOREIGN_HOLDER',
+          `resource '${resource.id}' is held by ${foreignHolders
+            .map((lease) => `${lease.owner.runId}/${lease.capabilityId}`)
+            .join(', ')}`,
+          emptyManifest(),
+          handle.runnerId,
+        );
+      }
+    }
     const capabilityLeases: MachineParkCapabilityLease[] = [];
     for (const lease of activeLeases) {
       const proofRequirement = proofPlan?.requirements.find(
@@ -727,13 +887,9 @@ export class MachineParkingService {
           handle.runnerId,
         );
       }
-      const catalog = capabilityStatus.catalog.find((entry) => entry.id === lease.capabilityId);
-      const resourceId = catalog
-        ? Object.values(catalog.actions)
-            .filter((action) => action.kind === 'resource')
-            .map((action) => action.resourceId)
-            .find((id) => affected.some((resource) => resource.id === id))
-        : undefined;
+      const resourceId = affected
+        .map((resource) => resource.id)
+        .find((id) => capabilityProvidersForResource(capabilityStatus, id).has(lease.capabilityId));
       capabilityLeases.push({
         leaseId: lease.id,
         capabilityId: lease.capabilityId,
@@ -777,20 +933,31 @@ export class MachineParkingService {
   private async persistPauseIntents(
     preview: MachinePausePreviewResult,
     operationId: string,
-  ): Promise<MachineParkRecord[]> {
+  ): Promise<{ records: MachineParkRecord[]; durable: boolean }> {
     const now = this.deps.now();
     const records = preview.runs
       .filter((item) => item.selected)
       .map((item) => {
         const run = this.requireRun(item.runId);
         const handle =
-          preview.mode === 'release' ? this.deps.resolveRecoveryHandle(run) : Promise.resolve(null);
+          preview.mode === 'release'
+            ? Promise.resolve(
+                this.recoveryHandles.get(recoveryHandleKey(run.id, item.generation)) ?? null,
+              )
+            : Promise.resolve(null);
         return { item, run, handle };
       });
     // Resolve every recovery input before the first in-memory or durable park write. A handle
     // drifting after preview rejects the entire batch without leaving a half-created record.
     const preflight = await Promise.all(
-      records.map(async ({ item, run, handle }) => ({ item, run, recoveryHandle: await handle })),
+      records.map(async ({ item, run, handle }) => {
+        const recoveryHandle = await handle;
+        if (preview.mode === 'release') {
+          if (!recoveryHandle) throw new Error(`run ${run.id} has no fresh recovery handle`);
+          await this.deps.inspectRecoveryHandle(run, recoveryHandle, 'live');
+        }
+        return { item, run, recoveryHandle };
+      }),
     );
     const fleet = await this.deps.loadFleet();
     for (const { item, run } of preflight) {
@@ -836,10 +1003,25 @@ export class MachineParkingService {
       };
       return { run, record };
     });
+    try {
+      await this.deps.writeIntentJournal(nextRecords.map(({ record }) => record));
+    } catch (error) {
+      return {
+        records: intentFailureRecords(
+          nextRecords.map(({ record }) => record),
+          error,
+          this.deps.now(),
+        ),
+        durable: false,
+      };
+    }
     const resolved = nextRecords.map(({ run, record }) => this.deps.updatePark(run.id, record));
-    await Promise.all(resolved.map((run) => this.deps.persistRun(run, 'machine-pause-intent')));
+    const durable = await this.settleIntentDurability(resolved, 'machine-pause-intent');
     for (const run of resolved) await this.emitRecord(run.park!);
-    return resolved.map((run) => structuredClone(run.park!));
+    for (const { item } of preflight) {
+      this.recoveryHandles.delete(recoveryHandleKey(item.runId, item.generation));
+    }
+    return { records: resolved.map((run) => structuredClone(run.park!)), durable };
   }
 
   private async parkOne(runId: string): Promise<void> {
@@ -879,6 +1061,15 @@ export class MachineParkingService {
     await this.patchRecord(runId, (current) => ({ ...current, phase: 'resources-stopping' }));
     let failed = false;
     for (const lease of record.resourceManifest.capabilityLeases) {
+      const before = await this.deps.capabilityStatus(record.slotId);
+      const currentLease = before.leases.find((candidate) => candidate.id === lease.leaseId);
+      if (currentLease?.state === 'released') {
+        await this.patchCapability(runId, lease.leaseId, {
+          state: 'released',
+          error: undefined,
+        });
+        continue;
+      }
       await this.patchCapability(runId, lease.leaseId, { state: 'releasing', error: undefined });
       try {
         const result = await this.deps.releaseCapability({
@@ -889,7 +1080,25 @@ export class MachineParkingService {
         });
         const failure = result.failures.find((item) => item.leaseId === lease.leaseId);
         if (!result.ok || failure) throw new Error(failure?.reason ?? 'capability release failed');
-        await this.patchCapability(runId, lease.leaseId, { state: 'released', error: undefined });
+        if (result.retained.some((item) => item.id === lease.leaseId)) {
+          await this.patchCapability(runId, lease.leaseId, {
+            state: 'held',
+            error: 'capability registry retained this lease',
+          });
+          continue;
+        }
+        const released = result.released.some((item) => item.id === lease.leaseId);
+        const after = released ? null : await this.deps.capabilityStatus(record.slotId);
+        if (
+          !released &&
+          after?.leases.find((candidate) => candidate.id === lease.leaseId)?.state !== 'released'
+        ) {
+          throw new Error('capability registry did not release or retain the exact lease');
+        }
+        await this.patchCapability(runId, lease.leaseId, {
+          state: 'released',
+          error: undefined,
+        });
       } catch (error) {
         failed = true;
         await this.patchCapability(runId, lease.leaseId, {
@@ -900,6 +1109,7 @@ export class MachineParkingService {
       }
     }
     for (const resource of record.resourceManifest.resources) {
+      if (resource.capabilityLeaseIds.length > 0) continue;
       await this.patchResource(runId, resource.resourceId, { phase: 'stopping', error: undefined });
       try {
         const result = await this.deps.stopResource(record.slotId, resource.resourceId);
@@ -924,8 +1134,61 @@ export class MachineParkingService {
         );
       }
     }
+    if (record.resourceManifest.capabilityLeases.length > 0) {
+      const finalCapabilityStatus = await this.deps.capabilityStatus(record.slotId);
+      for (const lease of record.resourceManifest.capabilityLeases) {
+        const state = finalCapabilityStatus.leases.find(
+          (candidate) => candidate.id === lease.leaseId,
+        )?.state;
+        if (state === 'released') {
+          await this.patchCapability(runId, lease.leaseId, {
+            state: 'released',
+            error: undefined,
+          });
+          continue;
+        }
+        failed = true;
+        await this.patchCapability(runId, lease.leaseId, {
+          state: 'failed',
+          error: `capability lease remained '${state ?? 'missing'}' after release`,
+        });
+        await this.appendError(
+          runId,
+          'resources-stopping',
+          'capability.release-retained',
+          new Error(`capability lease '${lease.leaseId}' remained '${state ?? 'missing'}'`),
+        );
+      }
+    }
     const latest = this.requireRun(runId);
     const residuals = await this.observeResiduals(latest, latest.park!);
+    if (residuals.runner !== 'stopped') {
+      failed = true;
+      await this.appendError(
+        runId,
+        'runner-stopping',
+        'runner.residual',
+        new Error(`runner remained '${residuals.runner}' after release pause`),
+      );
+    }
+    for (const residual of residuals.resources) {
+      if (residual.state === 'stopped') {
+        await this.patchResource(runId, residual.resourceId, {
+          phase: 'stopped',
+          stoppedAt: this.deps.now(),
+          error: undefined,
+        });
+        continue;
+      }
+      failed = true;
+      await this.appendError(
+        runId,
+        'resources-stopping',
+        'resource.residual',
+        new Error(`resource '${residual.resourceId}' remained '${residual.state}'`),
+        residual.resourceId,
+      );
+    }
     await this.patchRecord(runId, (current) => ({
       ...current,
       phase: failed ? 'partial' : 'parked',
@@ -938,51 +1201,64 @@ export class MachineParkingService {
     const fleet = await this.deps.loadFleet();
     assertKnownMachine(machine, fleet);
     const records = selectRestoreRuns(this.deps.allRuns(), machine, selector);
-    const runs: MachinePauseRestorePreviewRun[] = records.map((run) => {
-      const record = structuredClone(run.park!);
-      const selected = selectedBySelector(run.id, selector);
-      const reject = (code: string, reason: string): MachinePauseRestorePreviewRun => ({
-        runId: run.id,
-        generation: run.engineState?.generation ?? 0,
-        selected,
-        eligibility: { eligible: false, code, reason },
-        record,
-      });
-      if (record.phase === 'restored' || record.phase === 'cancelled') {
-        return reject('NOT_PARKED', `park record is '${record.phase}'`);
-      }
-      if (run.status !== 'paused') return reject('RUN_NOT_PAUSED', `run status is '${run.status}'`);
-      if ((run.engineState?.generation ?? 0) !== record.generation) {
-        return reject('GENERATION_CHANGED', 'run generation changed while parked');
-      }
-      const slot = fleet.slots.find((candidate) => candidate.slot === record.slotId);
-      if (!slot || slot.machine !== machine) {
-        return reject(
-          'MACHINE_MISMATCH',
-          'recorded slot no longer belongs to the selected machine',
-        );
-      }
-      if (record.mode === 'release' && slot.currentRunId !== run.id) {
-        return reject('SLOT_OWNERSHIP_CHANGED', 'slot no longer has the reviewed run ownership');
-      }
-      if (record.mode === 'release' && !record.recoveryHandle) {
-        return reject('RECOVERY_HANDLE_MISSING', 'release park has no runner recovery handle');
-      }
-      return {
-        runId: run.id,
-        generation: record.generation,
-        selected,
-        eligibility: {
-          eligible: true,
-          code: 'ELIGIBLE_RESTORE',
-          reason:
-            record.mode === 'release'
-              ? 'The parked generation and exact slot ownership still match the durable record.'
-              : 'The parked orchestration generation still belongs to the recorded machine slot.',
-        },
-        record,
-      };
-    });
+    const runs: MachinePauseRestorePreviewRun[] = await Promise.all(
+      records.map(async (run) => {
+        const record = structuredClone(run.park!);
+        const selected = selectedBySelector(run.id, selector);
+        const reject = (code: string, reason: string): MachinePauseRestorePreviewRun => ({
+          runId: run.id,
+          generation: run.engineState?.generation ?? 0,
+          selected,
+          eligibility: { eligible: false, code, reason },
+          record,
+        });
+        if (record.phase === 'restored' || record.phase === 'cancelled') {
+          return reject('NOT_PARKED', `park record is '${record.phase}'`);
+        }
+        if (!isPauseMode(record.mode)) {
+          return reject('INVALID_MODE', `park record has invalid mode '${String(record.mode)}'`);
+        }
+        if (run.status !== 'paused')
+          return reject('RUN_NOT_PAUSED', `run status is '${run.status}'`);
+        if ((run.engineState?.generation ?? 0) !== record.generation) {
+          return reject('GENERATION_CHANGED', 'run generation changed while parked');
+        }
+        const slot = fleet.slots.find((candidate) => candidate.slot === record.slotId);
+        if (!slot || slot.machine !== machine) {
+          return reject(
+            'MACHINE_MISMATCH',
+            'recorded slot no longer belongs to the selected machine',
+          );
+        }
+        if (record.mode === 'release' && slot.currentRunId !== run.id) {
+          return reject('SLOT_OWNERSHIP_CHANGED', 'slot no longer has the reviewed run ownership');
+        }
+        if (record.mode === 'release' && !record.recoveryHandle) {
+          return reject('RECOVERY_HANDLE_MISSING', 'release park has no runner recovery handle');
+        }
+        if (record.mode === 'release') {
+          try {
+            await this.deps.inspectRecoveryHandle(run, record.recoveryHandle!, 'stopped-or-live');
+          } catch (error) {
+            return reject('RECOVERY_HANDLE_STALE', messageOf(error));
+          }
+        }
+        return {
+          runId: run.id,
+          generation: record.generation,
+          selected,
+          eligibility: {
+            eligible: true,
+            code: 'ELIGIBLE_RESTORE',
+            reason:
+              record.mode === 'release'
+                ? 'The parked generation and exact slot ownership still match the durable record.'
+                : 'The parked orchestration generation still belongs to the recorded machine slot.',
+          },
+          record,
+        };
+      }),
+    );
     return {
       machine,
       selector: structuredClone(selector),
@@ -999,8 +1275,17 @@ export class MachineParkingService {
     items: MachinePauseRestorePreviewRun[],
     operationId: string,
     previewId: string,
-  ): Promise<void> {
+  ): Promise<{ records: MachineParkRecord[]; durable: boolean }> {
     const fleet = await this.deps.loadFleet();
+    await Promise.all(
+      items.map(async (item) => {
+        if (item.record.mode !== 'release') return;
+        const run = this.requireRun(item.runId);
+        if (!item.record.recoveryHandle)
+          throw new Error(`run ${item.runId} has no recovery handle`);
+        await this.deps.inspectRecoveryHandle(run, item.record.recoveryHandle, 'stopped-or-live');
+      }),
+    );
     for (const item of items) {
       const current = this.requireRun(item.runId);
       const slot = fleet.slots.find((candidate) => candidate.slot === item.record.slotId);
@@ -1017,25 +1302,44 @@ export class MachineParkingService {
         throw new Error(`run ${item.runId} changed during restore preflight; preview again`);
       }
     }
-    const updated = items.map((item) => {
+    const nextRecords = items.map((item) => {
       const run = this.requireRun(item.runId);
-      return this.deps.updatePark(run.id, {
-        ...structuredClone(run.park!),
-        operationId,
-        previewId,
-        phase: run.park!.mode === 'release' ? 'resources-restoring' : 'orchestration-resuming',
-        updatedAt: this.deps.now(),
-      });
+      return {
+        run,
+        record: {
+          ...structuredClone(run.park!),
+          operationId,
+          previewId,
+          phase: run.park!.mode === 'release' ? 'resources-restoring' : 'orchestration-resuming',
+          updatedAt: this.deps.now(),
+        } satisfies MachineParkRecord,
+      };
     });
-    await Promise.all(updated.map((run) => this.deps.persistRun(run, 'machine-restore-intent')));
+    try {
+      await this.deps.writeIntentJournal(nextRecords.map(({ record }) => record));
+    } catch (error) {
+      return {
+        records: intentFailureRecords(
+          nextRecords.map(({ record }) => record),
+          error,
+          this.deps.now(),
+        ),
+        durable: false,
+      };
+    }
+    const updated = nextRecords.map(({ run, record }) => this.deps.updatePark(run.id, record));
+    const durable = await this.settleIntentDurability(updated, 'machine-restore-intent');
     for (const run of updated) await this.emitRecord(run.park!);
+    return { records: updated.map((run) => structuredClone(run.park!)), durable };
   }
 
   private async restoreOne(runId: string): Promise<void> {
     const initial = this.requireRun(runId);
     const record = initial.park!;
     let failed = false;
+    let resumeAcknowledgement: RunResumeAcknowledgement | null = null;
     if (record.mode === 'release') {
+      await this.deps.inspectRecoveryHandle(initial, record.recoveryHandle!, 'stopped-or-live');
       for (const lease of record.resourceManifest.capabilityLeases) {
         let shouldAcquire = lease.state === 'released';
         if (lease.state === 'held' || lease.state === 'reacquired') continue;
@@ -1096,16 +1400,18 @@ export class MachineParkingService {
         }
       }
       let observed = await this.deps.observeResources(record.slotId);
+      const observedById = new Map(observed.map((resource) => [resource.id, resource.status]));
       for (const resource of record.resourceManifest.resources) {
         await this.patchResource(runId, resource.resourceId, {
           phase: 'restoring',
           error: undefined,
         });
         try {
-          const status = observed.find((item) => item.id === resource.resourceId)?.status;
+          const status = observedById.get(resource.resourceId);
           if (status === 'stopped') {
             const result = await this.deps.startResource(record.slotId, resource.resourceId);
             if (!result.ok) throw new Error(result.detail ?? 'resource boot failed');
+            observedById.set(resource.resourceId, 'running');
           } else if (status !== 'running') {
             throw new Error(
               `resource '${resource.resourceId}' is '${status ?? 'missing'}'; refusing an unobserved boot`,
@@ -1130,7 +1436,26 @@ export class MachineParkingService {
             resource.resourceId,
           );
         }
+      }
+      try {
         observed = await this.deps.observeResources(record.slotId);
+        const finalById = new Map(observed.map((resource) => [resource.id, resource.status]));
+        for (const resource of record.resourceManifest.resources) {
+          if (finalById.get(resource.resourceId) === 'running') continue;
+          failed = true;
+          await this.appendError(
+            runId,
+            'resources-restoring',
+            'resource.restore-verify',
+            new Error(
+              `resource '${resource.resourceId}' is '${finalById.get(resource.resourceId) ?? 'missing'}' after restore`,
+            ),
+            resource.resourceId,
+          );
+        }
+      } catch (error) {
+        failed = true;
+        await this.appendError(runId, 'resources-restoring', 'resource.restore-verify', error);
       }
       if (!failed) {
         try {
@@ -1175,10 +1500,23 @@ export class MachineParkingService {
           ...current,
           phase: 'orchestration-resuming',
         }));
-        await this.withQueuedEmit((emit) => this.deps.resumeRun(runId, emit));
+        resumeAcknowledgement = await this.withQueuedEmit((emit) =>
+          this.deps.resumeRun(runId, emit, {
+            suppressMonitorNudge: record.mode === 'release',
+          }),
+        );
+        if (
+          resumeAcknowledgement.run.id !== runId ||
+          resumeAcknowledgement.generation <= resumeAcknowledgement.previousGeneration ||
+          resumeAcknowledgement.stepName !== record.prePauseCurrentStep?.name
+        ) {
+          throw new Error('run resume acknowledgement did not match the parked generation/step');
+        }
       } catch (error) {
         failed = true;
         await this.appendError(runId, 'orchestration-resuming', 'run.resume', error);
+        const generation = this.requireRun(runId).engineState?.generation ?? record.generation;
+        await this.patchRecord(runId, (current) => ({ ...current, generation }));
       }
     }
     const latest = this.requireRun(runId);
@@ -1191,8 +1529,7 @@ export class MachineParkingService {
         ? {}
         : {
             restoredAt: this.deps.now(),
-            restoredGeneration:
-              this.requireRun(runId).engineState?.generation ?? current.generation,
+            restoredGeneration: resumeAcknowledgement?.generation ?? current.generation,
           }),
     }));
   }
@@ -1309,21 +1646,169 @@ export class MachineParkingService {
   }
 
   private async emitRecord(record: MachineParkRecord): Promise<void> {
-    await this.deps.emit(Events.MACHINE_PAUSE_UPDATED, {
-      machine: record.machine,
-      operationId: record.operationId,
-      record: structuredClone(record),
-    });
+    try {
+      await this.deps.emit(Events.MACHINE_PAUSE_UPDATED, {
+        machine: record.machine,
+        operationId: record.operationId,
+        record: structuredClone(record),
+      });
+    } catch (error) {
+      // Progress publication is advisory after the record is durable. A disconnected client
+      // must not turn a successful lifecycle effect into a partial park/restore result.
+      console.warn(`[machine-pause] progress emit failed: ${messageOf(error)}`);
+    }
   }
 
-  private async withQueuedEmit(
-    operation: (emit: (event: string, payload: unknown) => void) => Promise<void>,
-  ): Promise<void> {
+  private async withQueuedEmit<T>(
+    operation: (emit: (event: string, payload: unknown) => void) => Promise<T>,
+  ): Promise<T> {
     let tail = Promise.resolve();
-    await operation((event, payload) => {
-      tail = tail.then(() => this.deps.emit(event, payload));
+    const result = await operation((event, payload) => {
+      tail = tail.then(async () => {
+        try {
+          await this.deps.emit(event, payload);
+        } catch (error) {
+          // run.pause/run.resume already mutated durable state; publication is advisory.
+          console.warn(`[machine-pause] lifecycle emit failed for ${event}: ${messageOf(error)}`);
+        }
+      });
     });
     await tail;
+    return result;
+  }
+
+  private async persistIntentRecords(runs: Run[], reason: string): Promise<boolean> {
+    const results = await Promise.allSettled(runs.map((run) => this.deps.persistRun(run, reason)));
+    const failures = results.flatMap((result, index) =>
+      result.status === 'rejected' ? [{ run: runs[index]!, error: result.reason }] : [],
+    );
+    if (failures.length === 0) return true;
+    const occurredAt = this.deps.now();
+    const failedIds = failures.map(({ run }) => run.id).join(', ');
+    for (const run of runs) {
+      const current = run.park!;
+      this.deps.updatePark(run.id, {
+        ...structuredClone(current),
+        phase: 'failed',
+        updatedAt: occurredAt,
+        errors: [
+          ...current.errors,
+          {
+            phase: 'failed',
+            action: 'intent.persist',
+            code: 'INTENT_BATCH_NOT_DURABLE',
+            message: `zero effects applied because intent persistence failed for: ${failedIds}`,
+            occurredAt,
+            retryable: true,
+          },
+        ],
+      });
+    }
+    await Promise.allSettled(
+      runs.map((run) => this.deps.persistRun(this.requireRun(run.id), `${reason}-failed`)),
+    );
+    return false;
+  }
+
+  private async settleIntentDurability(runs: Run[], reason: string): Promise<boolean> {
+    let durable = await this.persistIntentRecords(runs, reason);
+    const operationId = runs[0]?.park?.operationId;
+    if (!operationId) return false;
+    if (durable) {
+      try {
+        await this.deps.deleteIntentJournal(operationId);
+        return true;
+      } catch (error) {
+        const failed = intentFailureRecords(
+          runs.map((run) => run.park!),
+          error,
+          this.deps.now(),
+        );
+        for (const record of failed) this.deps.updatePark(record.runId, record);
+        await Promise.allSettled(
+          failed.map((record) =>
+            this.deps.persistRun(this.requireRun(record.runId), `${reason}-journal-cleanup-failed`),
+          ),
+        );
+        durable = false;
+      }
+    }
+    try {
+      await this.deps.writeIntentJournal(runs.map((run) => structuredClone(run.park!)));
+    } catch (error) {
+      console.error(`[machine-pause] intent journal repair failed: ${messageOf(error)}`);
+    }
+    return durable;
+  }
+
+  private async repairIntentJournals(): Promise<Set<string>> {
+    const blockedRunIds = new Set<string>();
+    const journals = await this.deps.loadIntentJournals();
+    for (const records of journals) {
+      if (records.length === 0) continue;
+      const repaired: Run[] = [];
+      for (const record of records) {
+        const run = this.deps.getRun(record.runId);
+        if (!run) continue;
+        if (run.park?.operationId === record.operationId && run.park.phase !== 'intent-persisted') {
+          repaired.push(run);
+          continue;
+        }
+        repaired.push(this.deps.updatePark(run.id, structuredClone(record)));
+      }
+      const results = await Promise.allSettled(
+        repaired.map((run) => this.deps.persistRun(run, 'machine-pause-journal-repair')),
+      );
+      if (results.every((result) => result.status === 'fulfilled')) {
+        await this.deps.deleteIntentJournal(records[0]!.operationId);
+      } else {
+        for (const record of records) blockedRunIds.add(record.runId);
+      }
+    }
+    return blockedRunIds;
+  }
+
+  private async settleUnexpectedFailure(
+    runId: string,
+    phase: MachineParkPhase,
+    action: string,
+    error: unknown,
+  ): Promise<void> {
+    const run = this.deps.getRun(runId);
+    if (!run?.park) {
+      console.error(
+        `[machine-pause] ${action} for ${runId} failed without a park record: ${messageOf(error)}`,
+      );
+      return;
+    }
+    const residuals = await this.observeResiduals(run, run.park);
+    const occurredAt = this.deps.now();
+    const next: MachineParkRecord = {
+      ...structuredClone(run.park),
+      phase,
+      residuals,
+      updatedAt: occurredAt,
+      errors: [
+        ...run.park.errors,
+        {
+          phase,
+          action,
+          code: 'UNEXPECTED_EFFECT_FAILURE',
+          message: messageOf(error),
+          occurredAt,
+          retryable: true,
+        },
+      ],
+    };
+    const updated = this.deps.updatePark(runId, next);
+    try {
+      await this.deps.persistRun(updated, action);
+    } catch (persistError) {
+      console.error(
+        `[machine-pause] could not persist ${action} failure for ${runId}: ${messageOf(persistError)}`,
+      );
+    }
+    await this.emitRecord(next);
   }
 
   private requireRun(runId: string): Run {
@@ -1402,23 +1887,6 @@ export const machinePauseExecute = (params: MachinePauseExecuteParams) =>
 export const machinePauseStatus = (machine: string) => machineParkingService.status(machine);
 export const machinePauseRestore = (params: MachinePauseRestoreParams) =>
   machineParkingService.restore(params);
-async function withMachineLock<T>(machine: string, operation: () => Promise<T>): Promise<T> {
-  const previous = machineTails.get(machine) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const tail = previous.then(() => current);
-  machineTails.set(machine, tail);
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (machineTails.get(machine) === tail) machineTails.delete(machine);
-  }
-}
-
 function selectPauseRuns(
   runs: Run[],
   fleet: Fleet,
@@ -1529,6 +1997,39 @@ function currentRunStep(run: Run): MachineParkCurrentStep | null {
   return { index, name: run.steps[index]!.name, status: run.steps[index]!.status };
 }
 
+function recoveryHandleKey(runId: string, generation: number): string {
+  return `${runId}:${generation}`;
+}
+
+function capabilityLeaseBlocksStop(
+  lease: RuntimeCapabilityStatusResult['leases'][number],
+): boolean {
+  return (
+    lease.state === 'queued' ||
+    lease.state === 'acquiring' ||
+    lease.state === 'acquired' ||
+    lease.state === 'releasing' ||
+    (lease.state === 'error' && Boolean(lease.cleanupFailure))
+  );
+}
+
+function capabilityProvidersForResource(
+  status: RuntimeCapabilityStatusResult,
+  resourceId: string,
+): Set<string> {
+  return new Set(
+    status.catalog
+      .filter(
+        (entry) =>
+          entry.id === resourceId ||
+          Object.values(entry.actions).some(
+            (action) => action.kind === 'resource' && action.resourceId === resourceId,
+          ),
+      )
+      .map((entry) => entry.id),
+  );
+}
+
 export function buildMachineParkingContinuationPrompt(
   run: Pick<Run, 'id' | 'project' | 'ticketOrPr' | 'taskFile'>,
   record: MachineParkRecord,
@@ -1564,6 +2065,49 @@ function operationOutcome(
   return completed > 0 ? 'partial' : 'failed';
 }
 
+function intentFailureRecords(
+  records: readonly MachineParkRecord[],
+  error: unknown,
+  occurredAt: string,
+): MachineParkRecord[] {
+  return records.map((record) => ({
+    ...structuredClone(record),
+    phase: 'failed',
+    updatedAt: occurredAt,
+    errors: [
+      ...record.errors,
+      {
+        phase: 'failed',
+        action: 'intent.journal',
+        code: 'INTENT_BATCH_NOT_DURABLE',
+        message: `zero effects applied: ${messageOf(error)}`,
+        occurredAt,
+        retryable: true,
+      },
+    ],
+  }));
+}
+
+function zeroEffectIntent(
+  run: Run,
+  record: MachineParkRecord,
+  residuals: MachineParkRecord['residuals'],
+): boolean {
+  if (run.status !== record.prePauseStatus) return false;
+  if (
+    record.phase !== 'intent-persisted' &&
+    record.phase !== 'orchestration-pausing' &&
+    record.phase !== 'failed' &&
+    record.phase !== 'partial'
+  ) {
+    return false;
+  }
+  return (
+    residuals.runner === 'running' &&
+    residuals.resources.every((resource) => resource.state === 'running')
+  );
+}
+
 function settledPhase(phase: MachineParkPhase): boolean {
   return phase === 'parked' || phase === 'restored' || phase === 'cancelled';
 }
@@ -1572,6 +2116,16 @@ function assertMachine(machine: string): string {
   if (typeof machine !== 'string' || !machine.trim()) throw new Error('machine is required');
   if (machine !== machine.trim()) throw new Error('machine must not have surrounding whitespace');
   return machine;
+}
+
+function assertPauseMode(mode: unknown): asserts mode is MachinePauseMode {
+  if (!isPauseMode(mode)) {
+    throw new Error("mode must be exactly 'orchestration' or 'release'");
+  }
+}
+
+function isPauseMode(mode: unknown): mode is MachinePauseMode {
+  return mode === 'orchestration' || mode === 'release';
 }
 
 function assertKnownMachine(machine: string, fleet: Fleet): void {

@@ -28,13 +28,20 @@ const handle: MachinePauseRecoveryHandle = {
   contextId: 'primary',
   sessionId: 'session-123',
   sessionPath: '/sessions/session-123.jsonl',
-  target: { session: 'slot-1', window: 'worker', target: 'slot-1:worker' },
+  target: {
+    session: 'slot-1',
+    window: 'worker',
+    pane: '1',
+    paneId: '%1',
+    target: 'slot-1:worker',
+  },
   model: 'sonnet',
   safetyTier: 'dangerous',
   runtimeDir: 'runtime',
   taskDir: 'tasks/run-1',
   capturedAt: '2026-08-21T00:00:00.000Z',
 };
+const EXACT_PANE_ROW = 'slot-1\tworker\t%1\t101\n';
 
 test('park lifecycle timeout policy keeps exit bounded and reload on launch-ready budget', () => {
   assert.equal(RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS, 10_000);
@@ -45,8 +52,8 @@ test('park lifecycle timeout policy keeps exit bounded and reload on launch-read
 test('inspectRunnerRecovery requires aligned static capabilities and an available exact handle', async () => {
   const available = {
     exec: async (_vars: unknown, command: string) =>
-      command.includes('list-panes')
-        ? { exitCode: 0, stdout: '%1\t101\n', stderr: '' }
+      command.includes('display-message')
+        ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
         : { exitCode: 0, stdout: '', stderr: '' },
     findRunnerPid: async () => '202',
   };
@@ -102,48 +109,67 @@ test('inspectRunnerRecovery fails closed for zero, ambiguous, and uninspectable 
 
   const noLive = await inspect({
     exec: async (_vars, command) =>
-      command.includes('list-panes')
-        ? { exitCode: 0, stdout: '%1\t101\n', stderr: '' }
+      command.includes('display-message')
+        ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
         : { exitCode: 0, stdout: '', stderr: '' },
     findRunnerPid: async () => '',
   });
   assert.equal(noLive.supported, false);
-  assert.match(noLive.reason ?? '', /has no live 'claude' process/);
+  assert.match(noLive.reason ?? '', /is stopped; expected live 'claude' process/);
 
   const ambiguous = await inspect({
     exec: async (_vars, command) =>
-      command.includes('list-panes')
-        ? { exitCode: 0, stdout: '%1\t101\n%2\t102\n', stderr: '' }
+      command.includes('display-message')
+        ? { exitCode: 0, stdout: `${EXACT_PANE_ROW}${EXACT_PANE_ROW}`, stderr: '' }
         : { exitCode: 0, stdout: '', stderr: '' },
     findRunnerPid: async (_vars, panePid) => `runner-${panePid}`,
   });
   assert.equal(ambiguous.supported, false);
-  assert.match(ambiguous.reason ?? '', /ambiguous: found 2/);
+  assert.match(ambiguous.reason ?? '', /Expected one exact tmux pane %1, found 2/);
 
   const uninspectable = await inspect({
     exec: async (_vars, command) =>
-      command.includes('list-panes')
+      command.includes('display-message')
         ? { exitCode: 1, stdout: '', stderr: 'missing tmux target' }
         : { exitCode: 0, stdout: '', stderr: '' },
     findRunnerPid: async () => '',
   });
   assert.equal(uninspectable.supported, false);
   assert.match(uninspectable.reason ?? '', /uninspectable: missing tmux target/);
+
+  const stoppedRestore = await inspectRunnerRecovery(
+    {
+      vars,
+      runnerId: 'claude',
+      recoveryHandle: handle,
+      expectedRunnerState: 'stopped-or-live',
+    },
+    {
+      exec: async (_vars, command) =>
+        command.includes('display-message')
+          ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+          : { exitCode: 0, stdout: '', stderr: '' },
+      findRunnerPid: async () => '',
+    },
+  );
+  assert.equal(stoppedRestore.supported, true);
+  assert.equal(stoppedRestore.liveTarget.state, 'stopped');
 });
 
 test('runnerRunningForPark reports structured residual liveness', async () => {
-  const deps = {
-    exec: async () => ({ exitCode: 0, stdout: '%1\t101\n', stderr: '' }),
+  type RunningDeps = NonNullable<Parameters<typeof runnerRunningForPark>[1]>;
+  const deps: RunningDeps = {
+    exec: async (_vars, command) =>
+      command.includes('display-message')
+        ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+        : { exitCode: 0, stdout: '', stderr: '' },
     findRunnerPid: async () => '202',
-    respawn: async () => {},
+    respawnPane: async () => {},
     sleep: async () => {},
   };
+  assert.equal(await runnerRunningForPark({ vars, recoveryHandle: handle }, deps), 'running');
   assert.equal(
-    await runnerRunningForPark({ vars, runnerId: 'claude', target: handle.target.target }, deps),
-    'running',
-  );
-  assert.equal(
-    await runnerRunningForPark({ vars, runnerId: '', target: handle.target.target }, deps),
+    await runnerRunningForPark({ vars, recoveryHandle: { ...handle, runnerId: '' } }, deps),
     'unknown',
   );
 });
@@ -152,17 +178,17 @@ test('stopRunnerForPark sends only the registry graceful-exit command and confir
   const commands: string[] = [];
   let probes = 0;
   const result = await stopRunnerForPark(
-    { vars, runnerId: 'claude', target: handle.target.target, timeoutMs: 100 },
+    { vars, recoveryHandle: handle, timeoutMs: 100 },
     {
       exec: async (_vars, command) => {
         commands.push(command);
-        if (command.includes('list-panes')) {
-          return { exitCode: 0, stdout: '%1\t101\n', stderr: '' };
+        if (command.includes('display-message')) {
+          return { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' };
         }
         return { exitCode: 0, stdout: '', stderr: '' };
       },
       findRunnerPid: async () => (++probes === 1 ? '202' : ''),
-      respawn: async () => {},
+      respawnPane: async () => {},
       sleep: async () => {},
     },
   );
@@ -187,16 +213,16 @@ test('stopRunnerForPark applies the runner-owned Codex submit delay', async () =
   const commands: string[] = [];
   let probes = 0;
   const result = await stopRunnerForPark(
-    { vars, runnerId: 'codex', target: handle.target.target, timeoutMs: 100 },
+    { vars, recoveryHandle: { ...handle, runnerId: 'codex' }, timeoutMs: 100 },
     {
       exec: async (_vars, command) => {
         commands.push(command);
-        return command.includes('list-panes')
-          ? { exitCode: 0, stdout: '%1\t101\n', stderr: '' }
+        return command.includes('display-message')
+          ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
           : { exitCode: 0, stdout: '', stderr: '' };
       },
       findRunnerPid: async () => (++probes === 1 ? '202' : ''),
-      respawn: async () => {},
+      respawnPane: async () => {},
       sleep: async () => {},
     },
   );
@@ -206,44 +232,54 @@ test('stopRunnerForPark applies the runner-owned Codex submit delay', async () =
   assert.match(exitCommand, /-l '\/exit'[\s\S]*sleep 0[.]05[\s\S]*send-keys[^\n]*Enter/);
 });
 
-test('stopRunnerForPark fails closed when a window contains multiple matching runners', async () => {
+test('stopRunnerForPark fails closed when the intended pane is gone despite a live sibling', async () => {
   const commands: string[] = [];
+  let matcherCalls = 0;
   const result = await stopRunnerForPark(
-    { vars, runnerId: 'claude', target: handle.target.target, timeoutMs: 100 },
+    { vars, recoveryHandle: handle, timeoutMs: 100 },
     {
       exec: async (_vars, command) => {
         commands.push(command);
-        return { exitCode: 0, stdout: '%1\t101\n%2\t102\n', stderr: '' };
+        return command.includes('display-message')
+          ? { exitCode: 1, stdout: '', stderr: "can't find pane: %1" }
+          : { exitCode: 0, stdout: '', stderr: '' };
       },
-      findRunnerPid: async (_vars, panePid) => `runner-${panePid}`,
-      respawn: async () => {},
+      findRunnerPid: async () => {
+        matcherCalls += 1;
+        return 'sibling-runner-must-not-be-used';
+      },
+      respawnPane: async () => {},
       sleep: async () => {},
     },
   );
   assert.equal(result.ok, false);
   assert.equal(result.status, 'failed');
-  assert.match(result.error, /Refusing ambiguous graceful exit/);
+  assert.match(result.error, /Exact runner target is uninspectable: can't find pane: %1/);
+  assert.equal(matcherCalls, 0);
   assert.equal(
     commands.some((command) => command.includes("'/exit'")),
     false,
   );
 });
 
-test('reloadRunnerForPark probes and reloads the exact persisted session', async () => {
+test('reloadRunnerForPark respawns only the exact pane when its window may have siblings', async () => {
   let respawned = '';
+  let runnerProbes = 0;
+  const inspectionCommands: string[] = [];
   const result = await reloadRunnerForPark(
     { vars, recoveryHandle: handle, initialPrompt: 'Continue the parked run', timeoutMs: 100 },
     {
       exec: async (_vars, command) => {
+        inspectionCommands.push(command);
         if (command.includes('test -e')) return { exitCode: 0, stdout: '', stderr: '' };
-        if (command.includes('list-panes')) {
-          return { exitCode: 0, stdout: '%1\t101\n', stderr: '' };
+        if (command.includes('display-message')) {
+          return { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' };
         }
         return { exitCode: 0, stdout: '', stderr: '' };
       },
-      findRunnerPid: async () => '202',
-      respawn: async (_vars, target, command) => {
-        assert.equal(target, 'slot-1:worker');
+      findRunnerPid: async () => (runnerProbes++ === 0 ? '' : '202'),
+      respawnPane: async (_vars, target, command) => {
+        assert.equal(target, '%1');
         respawned = command;
       },
       writePromptSentinel: async () => ({ digest: 'digest', sentAt: 100 }),
@@ -261,7 +297,7 @@ test('reloadRunnerForPark probes and reloads the exact persisted session', async
     ok: true,
     status: 'reloaded',
     runnerId: 'claude',
-    target: 'slot-1:worker',
+    target: '%1',
     sessionId: 'session-123',
     live: true,
     acknowledgement: {
@@ -272,6 +308,12 @@ test('reloadRunnerForPark probes and reloads the exact persisted session', async
     },
   });
   assert.match(respawned, /--resume 'session-123' 'Continue the parked run'/);
+  assert.equal(
+    inspectionCommands
+      .filter((command) => command.includes('display-message'))
+      .every((command) => command.includes("-t '%1'")),
+    true,
+  );
 });
 
 test('reloadRunnerForPark fails closed when the persisted session path is gone', async () => {
@@ -281,7 +323,7 @@ test('reloadRunnerForPark fails closed when the persisted session path is gone',
     {
       exec: async () => ({ exitCode: 1, stdout: '', stderr: '' }),
       findRunnerPid: async () => '',
-      respawn: async () => {
+      respawnPane: async () => {
         respawned = true;
       },
       sleep: async () => {},
@@ -297,9 +339,12 @@ test('reloadRunnerForPark rejects an empty continuation prompt before respawn', 
   const result = await reloadRunnerForPark(
     { vars, recoveryHandle: handle, initialPrompt: '   ' },
     {
-      exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      exec: async (_vars, command) =>
+        command.includes('display-message')
+          ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+          : { exitCode: 0, stdout: '', stderr: '' },
       findRunnerPid: async () => '',
-      respawn: async () => {
+      respawnPane: async () => {
         respawned = true;
       },
       sleep: async () => {},
@@ -315,11 +360,11 @@ test('reloadRunnerForPark times out without treating process liveness as prompt 
     { vars, recoveryHandle: handle, initialPrompt: 'Continue exactly', timeoutMs: 1 },
     {
       exec: async (_vars, command) =>
-        command.includes('list-panes')
-          ? { exitCode: 0, stdout: '%1\t101\n', stderr: '' }
+        command.includes('display-message')
+          ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
           : { exitCode: 0, stdout: '', stderr: '' },
-      findRunnerPid: async () => '202',
-      respawn: async () => {},
+      findRunnerPid: async () => '',
+      respawnPane: async () => {},
       writePromptSentinel: async () => ({ digest: 'digest', sentAt: 100 }),
       capturePromptBaseline: async () => 100,
       probePromptHandoff: async () => ({

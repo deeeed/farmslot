@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { Command } from 'commander';
+import { WebSocketServer } from 'ws';
 
 import type {
   MachineParkRecord,
@@ -16,9 +23,49 @@ import {
   pauseNextCommand,
   registerMachineCommand,
   rejectedTargetsFromPreview,
+  resolveReviewedPreviewId,
   restoreNextCommand,
   reviewedTargetsFromPreview,
 } from './machine.js';
+
+const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const repoRoot = path.resolve(packageDir, '../..');
+const tsxBin = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
+const entry = path.join(packageDir, 'src', 'entry.ts');
+
+interface CliRun {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+function spawnCli(args: string[], home: string): Promise<CliRun> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(tsxBin, [entry, ...args], {
+      cwd: packageDir,
+      env: { ...process.env, FARMSLOT_HOME: home },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('CLI fixture timed out'));
+    }, 30_000);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => (stdout += chunk));
+    child.stderr.on('data', (chunk: string) => (stderr += chunk));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on('close', (status) => {
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr });
+    });
+  });
+}
 
 const pressure: ResourcePressureMachine = {
   machine: 'macwork',
@@ -184,13 +231,44 @@ test('exact next commands preserve mode and reviewed selection', () => {
     pauseNextCommand("mac'$(touch nope)", 'orchestration', { kind: 'all' }),
     "farmslot machine pause 'mac'\\''$(touch nope)' --mode orchestration --execute",
   );
+  assert.equal(
+    pauseNextCommand('macpro', 'orchestration', { kind: 'all' }, 'preview-all'),
+    "farmslot machine pause 'macpro' --mode orchestration --preview-id 'preview-all' --execute",
+  );
+  assert.equal(
+    restoreNextCommand('macpro', { kind: 'exclude', runIds: ['run-old'] }, 'preview-exclude'),
+    "farmslot machine restore 'macpro' --exclude-run 'run-old' --preview-id 'preview-exclude' --execute",
+  );
+});
+
+test('reviewed preview ids accept an exact match and reject stale reviews with the fresh preview', () => {
+  const preview = previewResult();
+  const nextCommand = pauseNextCommand('macwork', 'release', preview.selector, preview.previewId);
+  assert.equal(resolveReviewedPreviewId('preview-1', preview, nextCommand), 'preview-1');
+  assert.equal(resolveReviewedPreviewId(undefined, preview, nextCommand), 'preview-1');
+  assert.throws(
+    () => resolveReviewedPreviewId('preview-old', preview, nextCommand),
+    (error: unknown) => {
+      const rich = error as {
+        code?: string;
+        userAction?: string;
+        details?: { suppliedPreviewId?: string; freshPreviewId?: string; preview?: unknown };
+      };
+      assert.equal(rich.code, 'MACHINE_PREVIEW_STALE');
+      assert.match(rich.userAction ?? '', /--preview-id 'preview-1'/u);
+      assert.equal(rich.details?.suppliedPreviewId, 'preview-old');
+      assert.equal(rich.details?.freshPreviewId, 'preview-1');
+      assert.equal(rich.details?.preview, preview);
+      return true;
+    },
+  );
 });
 
 test('preview formatter shows pressure, eligibility, recovery, resources, and exact next command', () => {
   const preview = previewResult();
   const output = formatMachinePauseResult(
     preview,
-    "farmslot machine pause 'macwork' --mode release --execute",
+    "farmslot machine pause 'macwork' --mode release --preview-id 'preview-1' --execute",
   );
   assert.match(output, /macwork {2}mode=release/u);
   assert.match(
@@ -203,7 +281,10 @@ test('preview formatter shows pressure, eligibility, recovery, resources, and ex
   assert.match(output, /capability leases: lease-1/u);
   assert.match(output, /run-2 {2}selected {2}rejected/u);
   assert.match(output, /reason \(UNSAFE_STATUS\): current step publication is not eligible/u);
-  assert.match(output, /Next {2}farmslot machine pause 'macwork' --mode release --execute/u);
+  assert.match(
+    output,
+    /Next {2}farmslot machine pause 'macwork' --mode release --preview-id 'preview-1' --execute/u,
+  );
 });
 
 test('durable status formatter preserves phases, errors, and residuals', () => {
@@ -274,4 +355,190 @@ test('execution target handoff contains only eligible reviewed generations', () 
     rejectedTargetsFromPreview(preview).map((run) => run.runId),
     ['run-2'],
   );
+});
+
+test('machine JSON execution accepts a matching pin and preserves a stale preview in one error envelope', async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const preview = previewResult();
+  preview.runs = [preview.runs[0]];
+  preview.eligibleCount = 1;
+  preview.rejectedCount = 0;
+
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(server, 'listening');
+  server.on('connection', (socket) => {
+    socket.on('message', (data) => {
+      const request = JSON.parse(String(data)) as {
+        id: string;
+        method: string;
+        params: Record<string, unknown>;
+      };
+      if (request.method === 'auth.connect') {
+        socket.send(JSON.stringify({ type: 'res', id: request.id, ok: true, payload: {} }));
+        return;
+      }
+      calls.push({ method: request.method, params: request.params });
+      if (request.method === 'machine.pause.preview') {
+        socket.send(JSON.stringify({ type: 'res', id: request.id, ok: true, payload: preview }));
+        return;
+      }
+      if (request.method === 'machine.pause.execute') {
+        socket.send(
+          JSON.stringify({
+            type: 'res',
+            id: request.id,
+            ok: true,
+            payload: {
+              ok: true,
+              outcome: 'complete',
+              operationId: 'operation-1',
+              machine: 'macwork',
+              mode: 'release',
+              records: [],
+            },
+          }),
+        );
+        return;
+      }
+      if (request.method === 'machine.pause.restore') {
+        const execute = request.params.execute === true;
+        socket.send(
+          JSON.stringify({
+            type: 'res',
+            id: request.id,
+            ok: true,
+            payload: {
+              ok: true,
+              outcome: execute ? 'complete' : 'preview',
+              execute,
+              previewId: 'restore-preview-1',
+              ...(execute ? { operationId: 'restore-operation-1' } : {}),
+              machine: 'macwork',
+              selector: request.params.selector,
+              runs: [],
+              records: [],
+            },
+          }),
+        );
+        return;
+      }
+      socket.send(
+        JSON.stringify({
+          type: 'res',
+          id: request.id,
+          ok: false,
+          error: { code: 'UNEXPECTED_METHOD', message: request.method },
+        }),
+      );
+    });
+  });
+
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const url = `ws://127.0.0.1:${address.port}`;
+  const home = mkdtempSync(path.join(os.tmpdir(), 'farmslot-machine-preview-'));
+  try {
+    const common = [
+      '--url',
+      url,
+      '--timeout',
+      '3000',
+      '--json',
+      'machine',
+      'pause',
+      'macwork',
+      '--mode',
+      'release',
+      '--run',
+      'run-1',
+      '--execute',
+    ];
+    const matching = await spawnCli([...common, '--preview-id', 'preview-1'], home);
+    assert.equal(matching.status, 0, matching.stderr);
+    const matchingEnvelope = JSON.parse(matching.stdout) as {
+      status: string;
+      data: { outcome: string };
+    };
+    assert.equal(matchingEnvelope.status, 'ok');
+    assert.equal(matchingEnvelope.data.outcome, 'complete');
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ['machine.pause.preview', 'machine.pause.execute'],
+    );
+    assert.equal(calls[1].params.previewId, 'preview-1');
+
+    const stale = await spawnCli([...common, '--preview-id', 'preview-old'], home);
+    assert.equal(stale.status, 1, stale.stderr);
+    const staleEnvelope = JSON.parse(stale.stdout) as {
+      status: string;
+      error: {
+        code: string;
+        details: { suppliedPreviewId: string; freshPreviewId: string; preview: unknown };
+      };
+    };
+    assert.equal(staleEnvelope.status, 'error');
+    assert.equal(staleEnvelope.error.code, 'MACHINE_PREVIEW_STALE');
+    assert.equal(staleEnvelope.error.details.suppliedPreviewId, 'preview-old');
+    assert.equal(staleEnvelope.error.details.freshPreviewId, 'preview-1');
+    assert.deepEqual(staleEnvelope.error.details.preview, preview);
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ['machine.pause.preview', 'machine.pause.execute', 'machine.pause.preview'],
+      'stale review must fail before a second execute RPC',
+    );
+
+    const restoreCommon = [
+      '--url',
+      url,
+      '--timeout',
+      '3000',
+      '--json',
+      'machine',
+      'restore',
+      'macwork',
+      '--exclude-run',
+      'run-old',
+      '--execute',
+    ];
+    const restoreMatching = await spawnCli(
+      [...restoreCommon, '--preview-id', 'restore-preview-1'],
+      home,
+    );
+    assert.equal(restoreMatching.status, 0, restoreMatching.stderr);
+    const restoreEnvelope = JSON.parse(restoreMatching.stdout) as {
+      status: string;
+      data: { outcome: string };
+    };
+    assert.equal(restoreEnvelope.status, 'ok');
+    assert.equal(restoreEnvelope.data.outcome, 'complete');
+    assert.equal(calls[4].params.previewId, 'restore-preview-1');
+
+    const restoreStale = await spawnCli(
+      [...restoreCommon, '--preview-id', 'restore-preview-old'],
+      home,
+    );
+    assert.equal(restoreStale.status, 1, restoreStale.stderr);
+    const restoreStaleEnvelope = JSON.parse(restoreStale.stdout) as {
+      error: { code: string; details: { freshPreviewId: string } };
+    };
+    assert.equal(restoreStaleEnvelope.error.code, 'MACHINE_PREVIEW_STALE');
+    assert.equal(restoreStaleEnvelope.error.details.freshPreviewId, 'restore-preview-1');
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      [
+        'machine.pause.preview',
+        'machine.pause.execute',
+        'machine.pause.preview',
+        'machine.pause.restore',
+        'machine.pause.restore',
+        'machine.pause.restore',
+      ],
+      'stale restore review must fail before a second restore execution RPC',
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 });

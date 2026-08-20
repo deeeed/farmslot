@@ -152,7 +152,7 @@ async function captureAgentPaneTarget(
     await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `display-message -p -t ${shellQuote(target)} '#{session_name}:#{window_index}.#{pane_index}|#{window_name}' 2>/dev/null`,
+        `display-message -p -t ${shellQuote(target)} '#{session_name}:#{window_index}.#{pane_index}|#{window_name}|#{pane_id}' 2>/dev/null`,
       ),
     )
   ).stdout.trim();

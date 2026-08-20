@@ -3,7 +3,7 @@ import type { MachinePauseRecoveryHandle } from '@farmslot/protocol';
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
-  respawnTmuxWindowWithCommand,
+  respawnTmuxPaneWithCommand,
   shellQuote,
   tmuxSendTextCommand,
   tmuxShellSnippet,
@@ -36,7 +36,12 @@ export interface RunnerRecoveryInspection {
   gracefulStop: { supported: boolean; command?: string };
   sessionReload: { supported: boolean; capability: SessionReloadCapability };
   recoveryHandle: { valid: boolean; reason?: string };
-  liveTarget: { valid: boolean; paneTarget?: string; reason?: string };
+  liveTarget: {
+    valid: boolean;
+    paneTarget?: string;
+    state?: 'live' | 'stopped';
+    reason?: string;
+  };
   reason?: string;
 }
 
@@ -44,8 +49,8 @@ export interface InspectRunnerRecoveryOptions {
   vars: SlotVars;
   runnerId: string | null | undefined;
   recoveryHandle: MachinePauseRecoveryHandle | null | undefined;
-  /** Release preflight defaults true; reload sets false because the parked runner is stopped. */
-  requireLiveTarget?: boolean;
+  /** Release requires live; restore preview may accept stopped or live; reload requires stopped. */
+  expectedRunnerState?: 'live' | 'stopped' | 'stopped-or-live';
 }
 
 /** Inspect registry declarations and prove the exact persisted session still exists. */
@@ -104,20 +109,9 @@ export async function inspectRunnerRecovery(
       reason: pathReason,
     };
   }
-  if (options.requireLiveTarget === false) {
-    return {
-      ...inspection,
-      liveTarget: { valid: false, reason: 'live target check deferred for stopped-session reload' },
-    };
-  }
-  const target = await runnerPids(
-    options.vars,
-    options.recoveryHandle.target.target,
-    runnerId,
-    deps,
-  );
-  if ('error' in target) {
-    const targetReason = `Exact runner target is uninspectable: ${target.error}`;
+  const pane = await inspectExactPane(options.vars, options.recoveryHandle, deps);
+  if ('error' in pane) {
+    const targetReason = `Exact runner target is uninspectable: ${pane.error}`;
     return {
       ...inspection,
       supported: false,
@@ -125,11 +119,13 @@ export async function inspectRunnerRecovery(
       reason: targetReason,
     };
   }
-  if (target.processes.length !== 1) {
-    const targetReason =
-      target.processes.length === 0
-        ? `Exact runner target ${options.recoveryHandle.target.target} has no live '${runnerId}' process`
-        : `Exact runner target ${options.recoveryHandle.target.target} is ambiguous: found ${target.processes.length} live '${runnerId}' processes`;
+  const runnerPid = await deps.findRunnerPid(options.vars, pane.panePid, runnerId, {
+    timeout: 10_000,
+  });
+  const state = runnerPid ? 'live' : 'stopped';
+  const expected = options.expectedRunnerState ?? 'live';
+  if (expected !== 'stopped-or-live' && state !== expected) {
+    const targetReason = `Exact runner pane ${pane.paneId} is ${state}; expected ${expected} '${runnerId}' process`;
     return {
       ...inspection,
       supported: false,
@@ -139,7 +135,7 @@ export async function inspectRunnerRecovery(
   }
   return {
     ...inspection,
-    liveTarget: { valid: true, paneTarget: target.processes[0]!.paneTarget },
+    liveTarget: { valid: true, paneTarget: pane.paneId, state },
   };
 }
 
@@ -171,6 +167,9 @@ function validateRecoveryHandle(
   if (!handle.target.session.trim() || !handle.target.target.trim()) {
     return 'persisted runner tmux target is incomplete';
   }
+  if (!/^%\d+$/.test(handle.target.paneId)) {
+    return 'persisted runner tmux pane id is missing or invalid';
+  }
   if (!Number.isFinite(Date.parse(handle.capturedAt))) {
     return 'persisted runner recovery capture time is invalid';
   }
@@ -196,21 +195,19 @@ export type StopRunnerForParkResult =
 
 export interface StopRunnerForParkOptions {
   vars: SlotVars;
-  runnerId: string;
-  target: string;
+  recoveryHandle: MachinePauseRecoveryHandle;
   timeoutMs?: number;
 }
 
 export interface RunnerRunningForParkOptions {
   vars: SlotVars;
-  runnerId: string;
-  target: string;
+  recoveryHandle: MachinePauseRecoveryHandle;
 }
 
 interface RunnerSessionLifecycleDeps {
   exec: typeof execOnSlot;
   findRunnerPid: typeof findRunnerDescendantPid;
-  respawn: typeof respawnTmuxWindowWithCommand;
+  respawnPane: typeof respawnTmuxPaneWithCommand;
   capturePromptBaseline?: typeof captureRunnerPromptAcceptanceBaseline;
   probePromptHandoff?: typeof runnerHasDurablePromptHandoff;
   writePromptSentinel?: typeof writeRunnerPromptSentinel;
@@ -220,7 +217,7 @@ interface RunnerSessionLifecycleDeps {
 const DEFAULT_DEPS: RunnerSessionLifecycleDeps = {
   exec: execOnSlot,
   findRunnerPid: findRunnerDescendantPid,
-  respawn: respawnTmuxWindowWithCommand,
+  respawnPane: respawnTmuxPaneWithCommand,
   capturePromptBaseline: captureRunnerPromptAcceptanceBaseline,
   probePromptHandoff: runnerHasDurablePromptHandoff,
   writePromptSentinel: writeRunnerPromptSentinel,
@@ -232,13 +229,18 @@ export async function runnerRunningForPark(
   options: RunnerRunningForParkOptions,
   deps: RunnerSessionLifecycleDeps = DEFAULT_DEPS,
 ): Promise<'running' | 'stopped' | 'unknown'> {
-  const rawRunnerId = options.runnerId.trim();
-  if (!rawRunnerId) return 'unknown';
-  const runnerId = normalizeRunner(rawRunnerId);
-  if (!isKnownRunner(runnerId)) return 'unknown';
-  const result = await runnerPids(options.vars, options.target.trim(), runnerId, deps);
-  if ('error' in result) return 'unknown';
-  return result.processes.length > 0 ? 'running' : 'stopped';
+  const handle = options.recoveryHandle;
+  const inspection = await inspectRunnerRecovery(
+    {
+      vars: options.vars,
+      runnerId: handle.runnerId,
+      recoveryHandle: handle,
+      expectedRunnerState: 'stopped-or-live',
+    },
+    deps,
+  );
+  if (!inspection.supported) return 'unknown';
+  return inspection.liveTarget.state === 'live' ? 'running' : 'stopped';
 }
 
 /** Gracefully exit a runner using only its registry-declared command. */
@@ -246,9 +248,10 @@ export async function stopRunnerForPark(
   options: StopRunnerForParkOptions,
   deps: RunnerSessionLifecycleDeps = DEFAULT_DEPS,
 ): Promise<StopRunnerForParkResult> {
-  const rawRunnerId = options.runnerId.trim();
+  const handle = options.recoveryHandle;
+  const rawRunnerId = handle.runnerId.trim();
   const runnerId = rawRunnerId ? normalizeRunner(rawRunnerId) : '';
-  const target = options.target.trim();
+  const target = handle.target.paneId;
   if (!isKnownRunner(runnerId) || !getRunnerDefinition(runnerId).gracefulExit) {
     return {
       ok: false,
@@ -260,25 +263,24 @@ export async function stopRunnerForPark(
     };
   }
 
-  const initial = await runnerPids(options.vars, target, runnerId, deps);
-  if ('error' in initial) {
-    return failure('failed', runnerId, target, 'unknown', initial.error);
-  }
-  if (initial.processes.length === 0) {
-    return { ok: true, status: 'already-stopped', runnerId, target, residualRunner: 'stopped' };
-  }
-  if (initial.processes.length > 1) {
-    return failure(
-      'failed',
+  const inspection = await inspectRunnerRecovery(
+    {
+      vars: options.vars,
       runnerId,
-      target,
-      'unknown',
-      `Refusing ambiguous graceful exit: found ${initial.processes.length} '${runnerId}' processes under ${target}`,
-    );
+      recoveryHandle: handle,
+      expectedRunnerState: 'stopped-or-live',
+    },
+    deps,
+  );
+  if (!inspection.supported) {
+    return failure('failed', runnerId, target, 'unknown', inspection.reason!);
+  }
+  if (inspection.liveTarget.state === 'stopped') {
+    return { ok: true, status: 'already-stopped', runnerId, target, residualRunner: 'stopped' };
   }
 
   const definition = getRunnerDefinition(runnerId);
-  const sendTarget = initial.processes[0]!.paneTarget;
+  const sendTarget = handle.target.paneId;
   const sent = await deps.exec(
     options.vars,
     tmuxSendTextCommand(sendTarget, definition.gracefulExit!.command, {
@@ -300,11 +302,19 @@ export async function stopRunnerForPark(
 
   const deadline = Date.now() + (options.timeoutMs ?? RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS);
   while (Date.now() < deadline) {
-    const remaining = await runnerPids(options.vars, target, runnerId, deps);
-    if ('error' in remaining) {
-      return failure('failed', runnerId, target, 'unknown', remaining.error);
+    const remaining = await inspectRunnerRecovery(
+      {
+        vars: options.vars,
+        runnerId,
+        recoveryHandle: handle,
+        expectedRunnerState: 'stopped-or-live',
+      },
+      deps,
+    );
+    if (!remaining.supported) {
+      return failure('failed', runnerId, target, 'unknown', remaining.reason!);
     }
-    if (remaining.processes.length === 0) {
+    if (remaining.liveTarget.state === 'stopped') {
       return {
         ok: true,
         status: 'stopped',
@@ -381,13 +391,13 @@ export async function reloadRunnerForPark(
       vars: options.vars,
       runnerId: handle.runnerId,
       recoveryHandle: handle,
-      requireLiveTarget: false,
+      expectedRunnerState: 'stopped',
     },
     { exec: deps.exec, findRunnerPid: deps.findRunnerPid },
   );
   const inspected = await inspection;
   const runnerId = inspected.runnerId;
-  const target = handle.target.target;
+  const target = handle.target.paneId;
   if (!inspected.supported) {
     return reloadFailure(
       inspected.reason?.includes('session path is unavailable')
@@ -446,7 +456,7 @@ export async function reloadRunnerForPark(
         initialPrompt,
       },
     )}`;
-    await deps.respawn(options.vars, target, command, { preserveWindowAfterExit: true });
+    await deps.respawnPane(options.vars, target, command, { preservePaneAfterExit: true });
   } catch (error) {
     return reloadFailure('failed', runnerId, target, handle.sessionId, (error as Error).message);
   }
@@ -468,11 +478,16 @@ export async function reloadRunnerForPark(
     );
     lastReason = acknowledgement.reason;
     if (acknowledgement.accepted) {
-      const running = await runnerPids(options.vars, target, runnerId, deps);
-      if ('error' in running) {
-        return reloadFailure('failed', runnerId, target, handle.sessionId, running.error);
-      }
-      if (running.processes.length > 0) {
+      const running = await inspectRunnerRecovery(
+        {
+          vars: options.vars,
+          runnerId,
+          recoveryHandle: handle,
+          expectedRunnerState: 'live',
+        },
+        deps,
+      );
+      if (running.supported) {
         return {
           ok: true,
           status: 'reloaded',
@@ -511,31 +526,45 @@ function reloadFailure(
   return { ok: false, status, runnerId, target, sessionId, error };
 }
 
-async function runnerPids(
+async function inspectExactPane(
   vars: SlotVars,
-  target: string,
-  runnerId: string,
-  deps: Pick<RunnerSessionLifecycleDeps, 'exec' | 'findRunnerPid'>,
-): Promise<{ processes: Array<{ paneTarget: string; runnerPid: string }> } | { error: string }> {
+  handle: MachinePauseRecoveryHandle,
+  deps: Pick<RunnerSessionLifecycleDeps, 'exec'>,
+): Promise<
+  { paneId: string; panePid: string; session: string; windowName: string } | { error: string }
+> {
+  const paneId = handle.target.paneId;
   const panes = await deps.exec(
     vars,
     tmuxShellSnippet(
-      `list-panes -t ${shellQuote(target)} -F '#{pane_id}\t#{pane_pid}' 2>/dev/null`,
+      `display-message -p -t ${shellQuote(paneId)} '#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_pid}' 2>/dev/null`,
     ),
     { timeout: 10_000 },
   );
   if (panes.exitCode !== 0) {
-    return { error: panes.stderr || panes.stdout || `Cannot inspect tmux target ${target}` };
+    return { error: panes.stderr || panes.stdout || `Cannot inspect tmux pane ${paneId}` };
   }
-  const processes: Array<{ paneTarget: string; runnerPid: string }> = [];
-  for (const line of panes.stdout
+  const rows = panes.stdout
     .split('\n')
     .map((value) => value.trim())
-    .filter(Boolean)) {
-    const [paneTarget, panePid] = line.split('\t', 2);
-    if (!paneTarget || !panePid) continue;
-    const runnerPid = await deps.findRunnerPid(vars, panePid, runnerId, { timeout: 10_000 });
-    if (runnerPid) processes.push({ paneTarget, runnerPid });
+    .filter(Boolean);
+  if (rows.length !== 1) {
+    return { error: `Expected one exact tmux pane ${paneId}, found ${rows.length}` };
   }
-  return { processes };
+  const [session, windowName, observedPaneId, panePid] = rows[0]!.split('\t', 4);
+  if (observedPaneId !== paneId || !panePid) {
+    return { error: `Tmux pane identity changed for ${paneId}` };
+  }
+  if (session !== handle.target.session) {
+    return {
+      error: `Tmux pane ${paneId} moved from session ${handle.target.session} to ${session ?? 'unknown'}`,
+    };
+  }
+  const expectedWindow = handle.target.window?.trim();
+  if (expectedWindow && !/^\d+$/.test(expectedWindow) && windowName !== expectedWindow) {
+    return {
+      error: `Tmux pane ${paneId} moved from window ${expectedWindow} to ${windowName ?? 'unknown'}`,
+    };
+  }
+  return { paneId, panePid, session, windowName: windowName ?? '' };
 }

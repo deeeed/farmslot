@@ -609,6 +609,16 @@ test('parseCapturedAgentPaneTarget falls back to numeric window when name is emp
   });
 });
 
+test('parseCapturedAgentPaneTarget retains stable pane identity beside named window target', () => {
+  assert.deepEqual(parseCapturedAgentPaneTarget('ff-1', 'ff-1:2.1|dev|%42'), {
+    session: 'ff-1',
+    window: 'dev',
+    pane: '1',
+    paneId: '%42',
+    target: 'ff-1:dev',
+  });
+});
+
 test('findAffinitySlot respects family/lane/variant identity when provided', () => {
   const matching = makeSlot({
     slot: 'held-good',

@@ -116,6 +116,7 @@ function agentTargetFromWorkerRef(ref: TmuxWorkerRef): AgentContextTarget {
     session: ref.session,
     window: ref.windowName ?? ref.window ?? null,
     pane: ref.pane ?? null,
+    ...(ref.paneId ? { paneId: ref.paneId } : {}),
     target: ref.windowName ? `${ref.session}:${ref.windowName}` : ref.target,
   };
 }

@@ -13,7 +13,9 @@ import type {
 import type { FailureCategory, RunRecoveryProposalConfidence } from './chat.js';
 import type { TaskTemplateSelection, TemplateProvenance } from './evals.js';
 import type { EvidenceQualityReport, RecipeQualityArtifact } from './recipes.js';
+import type { ResourceType } from './resources.js';
 import type { RunImportProvenance } from './run-bundles.js';
+import type { RuntimeCapabilityProofRequirement } from './runtime-capabilities.js';
 import type { SlotHealth } from './slots.js';
 import type { ProfileFitSuggestion, ValidationPlanStep } from './validation-plan.js';
 
@@ -1519,7 +1521,7 @@ export interface MachineParkCapabilityLease {
   capabilityId: string;
   state: MachineParkCapabilityLeaseState;
   parameters: Record<string, unknown>;
-  proofRequirement: import('./runtime-capabilities.js').RuntimeCapabilityProofRequirement;
+  proofRequirement: RuntimeCapabilityProofRequirement;
   ownerFamilyId?: string;
   /** Optional provider-resource association; leases remain first-class manifest entries. */
   resourceId?: string;
@@ -1530,7 +1532,7 @@ export interface MachineParkCapabilityLease {
 export interface MachineParkResource {
   resourceId: string;
   label: string;
-  type: import('./resources.js').ResourceType;
+  type: ResourceType;
   observedStatus: 'running';
   phase: MachineParkResourcePhase;
   capabilityLeaseIds: string[];
@@ -1552,7 +1554,7 @@ export interface MachinePauseRecoveryHandle {
   contextId: string;
   sessionId: string;
   sessionPath: string;
-  target: AgentContextTarget;
+  target: AgentContextTarget & { paneId: string };
   model: string | null;
   effort?: string | null;
   safetyTier?: SafetyTier;

@@ -210,6 +210,33 @@ export async function respawnTmuxWindowWithCommand(
   }
 }
 
+/** Replace one exact pane without terminating sibling panes in the same window. */
+export async function respawnTmuxPaneWithCommand(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  paneId: string,
+  command: string,
+  options?: { preservePaneAfterExit?: boolean },
+): Promise<void> {
+  if (!/^%\d+$/.test(paneId)) throw new Error(`Invalid exact tmux pane id: ${paneId}`);
+  const launchCommand = buildTmuxRespawnLaunchCommand(
+    command,
+    vars.remoteRepo,
+    options?.preservePaneAfterExit,
+  );
+  const respawned = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `respawn-pane -k -t ${shellQuote(paneId)} -c ${shellQuote(vars.remoteRepo)} ` +
+        shellQuote(launchCommand),
+    ),
+  );
+  if (respawned.exitCode !== 0) {
+    throw new Error(
+      `Failed to launch command in tmux pane ${paneId}: ${respawned.stderr || respawned.stdout || `exit ${respawned.exitCode}`}`,
+    );
+  }
+}
+
 export interface TmuxWindowRef {
   windowId: string;
   windowIndex: number;

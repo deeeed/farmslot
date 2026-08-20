@@ -15,8 +15,10 @@ import {
   eligibleRunIds,
   EMPTY_MACHINE_PAUSE_SELECTOR,
   machineParkRecordSummary,
+  machineParkResidualAssessment,
   machinePauseMutationDisabled,
   machinePressurePercent,
+  restoreExecuteParams,
   reviewedPauseTargets,
   reviewedRestoreTargets,
   selectedRejectedRunCount,
@@ -26,6 +28,7 @@ import {
 import { machinePauseDialogStyles } from './machine-pause-dialog-styles.js';
 import {
   pressureBytes,
+  pressureLoadRatio,
   pressureOwnershipLabel,
   pressureProcessCpu,
   pressureProcessName,
@@ -47,7 +50,8 @@ export class MachinePauseDialog extends LitElement {
   @property() actionError = '';
   @property({ type: Boolean }) connectionStale = false;
 
-  @state() private confirmed = false;
+  @state() private pauseConfirmed = false;
+  @state() private restoreConfirmed = false;
 
   static override styles = machinePauseDialogStyles;
 
@@ -65,16 +69,20 @@ export class MachinePauseDialog extends LitElement {
     if (changed.has('preview')) {
       const previous = changed.get('preview') as MachinePausePreviewResult | undefined;
       if (this.preview?.previewId !== previous?.previewId) {
-        this.confirmed = false;
+        this.pauseConfirmed = false;
       }
     }
     if (changed.has('restorePreview')) {
       const previous = changed.get('restorePreview') as MachinePauseRestoreResult | undefined;
       if (this.restorePreview?.previewId !== previous?.previewId) {
-        this.confirmed = false;
+        this.restoreConfirmed = false;
       }
     }
-    if (changed.has('mode') || changed.has('machine')) this.confirmed = false;
+    if (changed.has('mode')) this.pauseConfirmed = false;
+    if (changed.has('machine') || (changed.has('connectionStale') && this.connectionStale)) {
+      this.pauseConfirmed = false;
+      this.restoreConfirmed = false;
+    }
   }
 
   private onKeydown = (event: KeyboardEvent) => {
@@ -101,7 +109,8 @@ export class MachinePauseDialog extends LitElement {
   }
 
   private changeSelection(scope: 'pause' | 'restore', selector: MachinePauseSelector) {
-    this.confirmed = false;
+    if (scope === 'pause') this.pauseConfirmed = false;
+    else this.restoreConfirmed = false;
     this.dispatchEvent(
       new CustomEvent('machine-pause-selection-change', {
         detail: { scope, selector },
@@ -112,7 +121,7 @@ export class MachinePauseDialog extends LitElement {
   }
 
   private executePause() {
-    if (!this.preview || !this.confirmed || this.connectionStale || this.busy) return;
+    if (!this.preview || !this.pauseConfirmed || this.connectionStale || this.busy) return;
     const reviewedTargets = reviewedPauseTargets(this.preview);
     if (reviewedTargets.length === 0) return;
     this.dispatchEvent(
@@ -130,16 +139,12 @@ export class MachinePauseDialog extends LitElement {
   }
 
   private executeRestore() {
-    if (!this.restorePreview || !this.confirmed || this.connectionStale || this.busy) return;
-    const reviewedTargets = reviewedRestoreTargets(this.restorePreview);
-    if (reviewedTargets.length === 0) return;
+    if (!this.restorePreview || !this.restoreConfirmed || this.connectionStale || this.busy) return;
+    const params = restoreExecuteParams(this.machine, this.restorePreview);
+    if (params.reviewedTargets.length === 0) return;
     this.dispatchEvent(
       new CustomEvent('machine-pause-restore', {
-        detail: {
-          machine: this.machine,
-          previewId: this.restorePreview.previewId,
-          reviewedTargets,
-        },
+        detail: params,
         bubbles: true,
         composed: true,
       }),
@@ -156,14 +161,14 @@ export class MachinePauseDialog extends LitElement {
     const pauseDisabled = machinePauseMutationDisabled({
       reviewedTargetCount: pauseTargets.length,
       selectedRejectedCount: pauseSelectionBlocked ? 1 : 0,
-      confirmed: this.confirmed,
+      confirmed: this.pauseConfirmed,
       busy: !!this.busy,
       connectionStale: this.connectionStale,
     });
     const restoreDisabled = machinePauseMutationDisabled({
       reviewedTargetCount: restoreTargets.length,
       selectedRejectedCount: restoreSelectionBlocked ? 1 : 0,
-      confirmed: this.confirmed,
+      confirmed: this.restoreConfirmed,
       busy: !!this.busy,
       connectionStale: this.connectionStale,
     });
@@ -240,17 +245,34 @@ export class MachinePauseDialog extends LitElement {
           </div>
 
           <footer class="mpd-footer">
-            <label class="mpd-confirm">
-              <input
-                type="checkbox"
-                .checked=${this.confirmed}
-                ?disabled=${!!this.busy || this.connectionStale}
-                @change=${(event: Event) => {
-                  this.confirmed = (event.currentTarget as HTMLInputElement).checked;
-                }}
-              />
-              I reviewed the selected runs, recovery policies, and affected resources.
-            </label>
+            <div class="mpd-confirmations">
+              <label class="mpd-confirm">
+                <input
+                  data-testid="machine-pause-confirm"
+                  type="checkbox"
+                  .checked=${this.pauseConfirmed}
+                  ?disabled=${!!this.busy || this.connectionStale}
+                  @change=${(event: Event) => {
+                    this.pauseConfirmed = (event.currentTarget as HTMLInputElement).checked;
+                  }}
+                />
+                Confirm selected pause, recovery policy, and affected resources.
+              </label>
+              ${(this.restorePreview?.runs.length ?? 0) > 0
+                ? html`<label class="mpd-confirm">
+                    <input
+                      data-testid="machine-restore-confirm"
+                      type="checkbox"
+                      .checked=${this.restoreConfirmed}
+                      ?disabled=${!!this.busy || this.connectionStale}
+                      @change=${(event: Event) => {
+                        this.restoreConfirmed = (event.currentTarget as HTMLInputElement).checked;
+                      }}
+                    />
+                    Confirm selected restore and exact reviewed manifest.
+                  </label>`
+                : nothing}
+            </div>
             <div class="mpd-footer-actions">
               ${(this.restorePreview?.runs.length ?? 0) > 0
                 ? html`<button
@@ -289,7 +311,7 @@ export class MachinePauseDialog extends LitElement {
       ${[
         ['CPU', machinePressurePercent(latest?.pressure.cpu)],
         ['Memory', machinePressurePercent(latest?.pressure.memory)],
-        ['Load / core', machinePressurePercent(latest?.pressure.load1)],
+        ['Load / core', pressureLoadRatio(latest?.pressure.load1)],
         ['Pressure', pressure?.severity ?? 'awaiting sample'],
       ].map(
         ([label, value]) =>
@@ -340,9 +362,30 @@ export class MachinePauseDialog extends LitElement {
       </div>
       ${process.truncated || process.omittedGroups > 0
         ? html`<div class="mpd-muted">
-            Bounded inventory: ${process.omittedGroups} lower-pressure group(s) omitted.
+            Inventory capped at ${process.maxEntries}; ${process.omittedGroups} lower-pressure
+            group(s) omitted${process.ancestryTruncated ? ' and some ancestry was shortened' : ''}.
           </div>`
         : nothing}
+      ${process.sampler
+        ? html`<div class="mpd-muted" data-testid="machine-pause-sampler">
+            Sampler ${process.sampler.lastDurationMs ?? '–'}ms · ${process.sampler.executions}
+            executions · ${process.sampler.skippedCadence} avoided probes ·
+            ${process.sampler.failures} failures
+            ${process.sampler.lastError
+              ? html`<span class="mpd-action-error">
+                  · last error: ${process.sampler.lastError}
+                </span>`
+              : nothing}
+          </div>`
+        : nothing}
+      ${process.degradedReason
+        ? html`<div class="mpd-banner warning" data-testid="machine-pause-sampler-degraded">
+            ${process.degradedReason}
+          </div>`
+        : nothing}
+      ${pressure.concerns.map(
+        (concern) => html`<div class="mpd-muted">${concern.severity}: ${concern.reason}</div>`,
+      )}
       <div class="mpd-muted" data-testid="machine-pause-unmapped-note">
         System / unmapped means no verified Farmslot run, slot, or resource owns that process tree;
         it is never cleanup-eligible.
@@ -526,9 +569,7 @@ export class MachinePauseDialog extends LitElement {
   }
 
   private renderRecord(record: MachineParkRecord) {
-    const residualResources = record.residuals.resources.filter(
-      (resource) => resource.state !== 'stopped',
-    );
+    const residuals = machineParkResidualAssessment(record);
     return html`<div class="mpd-run ${record.errors.length > 0 ? 'error' : ''}">
       <span></span>
       <div>
@@ -548,16 +589,29 @@ export class MachinePauseDialog extends LitElement {
         )}
       </div>
       <div>
-        ${record.residuals.runner !== 'stopped' || residualResources.length > 0
+        ${residuals.hasWarnings
           ? html`<div class="mpd-residuals">
-              Residual runner: ${record.residuals.runner}; resources:
-              ${residualResources.length > 0
-                ? residualResources
-                    .map((resource) => `${resource.resourceId} ${resource.state}`)
-                    .join(', ')
-                : 'none'}
+              Unexpected state: runner
+              ${residuals.runner.actual}${residuals.runner.expected
+                ? ` (expected ${residuals.runner.expected})`
+                : ''};
+              resources:
+              ${residuals.resources
+                .filter((resource) => resource.warning)
+                .map(
+                  (resource) =>
+                    `${resource.resourceId} ${resource.actual}${resource.expected ? ` (expected ${resource.expected})` : ''}`,
+                )
+                .join(', ') || 'none'}
             </div>`
-          : html`<div class="mpd-resources">No residual worker or resources reported.</div>`}
+          : html`<div class="mpd-resources">
+              Observed state: runner ${residuals.runner.actual}; resources
+              ${residuals.resources.length > 0
+                ? residuals.resources
+                    .map((resource) => `${resource.resourceId} ${resource.actual}`)
+                    .join(', ')
+                : 'none'}.
+            </div>`}
       </div>
     </div>`;
   }
