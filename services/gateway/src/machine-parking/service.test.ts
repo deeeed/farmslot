@@ -962,13 +962,65 @@ test('mixed restore partial intent crash journal repairs complete batch determin
     true,
   );
   await ctx.service.reconcile();
-  assert.equal(ctx.runs.get('run-zero')?.park, null);
+  assert.equal(ctx.runs.get('run-zero')?.park?.phase, 'restored');
+  assert.equal(ctx.runs.get('run-zero')?.park?.operationId, 'mixed-crash');
   assert.equal(ctx.runs.get('run-effect')?.park?.phase, 'parked');
   const repairedPreview = await ctx.service.restore({
     machine: 'machine-a',
     selector: { kind: 'all' },
   });
   assert.equal(repairedPreview.runs[0]?.eligibility.eligible, true);
+});
+
+test('startup settles durable zero-effect restore intent after crash before member settlement', async () => {
+  const ctx = mixedRestoreHarness();
+  const zero = ctx.runs.get('run-zero')!;
+  const effect = ctx.runs.get('run-effect')!;
+  zero.park = {
+    ...zero.park!,
+    operationId: 'post-intent-crash',
+    previewId: 'post-intent-preview',
+    restoreDisposition: 'zero-effect',
+  };
+  effect.park = {
+    ...effect.park!,
+    operationId: 'post-intent-crash',
+    previewId: 'post-intent-preview',
+    restoreDisposition: 'effectful',
+    phase: 'resources-restoring',
+  };
+
+  await ctx.service.reconcile();
+  assert.equal(zero.park?.phase, 'restored');
+  assert.equal(zero.park?.operationId, 'post-intent-crash');
+  assert.equal(zero.park?.previewId, 'post-intent-preview');
+  assert.equal(zero.park?.generation, 3);
+  assert.equal(effect.park?.phase, 'parked');
+
+  const retry = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: 'post-intent-preview',
+    reviewedTargets: [
+      { runId: 'run-zero', generation: 3 },
+      { runId: 'run-effect', generation: 3 },
+    ],
+    operationId: 'post-intent-crash',
+  });
+  assert.equal(retry.records.length, 2);
+  await assert.rejects(
+    () =>
+      ctx.service.restore({
+        machine: 'machine-a',
+        selector: { kind: 'all' },
+        execute: true,
+        previewId: 'post-intent-preview',
+        reviewedTargets: [{ runId: 'run-zero', generation: 3 }],
+        operationId: 'post-intent-crash',
+      }),
+    /reviewedTargets do not exactly match/,
+  );
 });
 
 test('atomic intent journal failure returns typed records without attaching partial intent', async () => {

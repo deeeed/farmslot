@@ -578,6 +578,17 @@ export class MachineParkingService {
           )) {
           const record = run.park!;
           const residuals = await this.observeResiduals(run, record);
+          if (record.restoreDisposition === 'zero-effect') {
+            await this.patchRecord(run.id, (current) => ({
+              ...current,
+              phase: 'restored',
+              residuals,
+              restoredAt: current.restoredAt ?? this.deps.now(),
+              restoredGeneration: current.restoredGeneration ?? current.generation,
+            }));
+            reconciled += 1;
+            continue;
+          }
           if (zeroEffectIntent(run, record, residuals)) {
             const cleared = this.deps.updatePark(run.id, null);
             await this.deps.persistRun(cleared, 'machine-pause-zero-effect-recovery');

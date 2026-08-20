@@ -122,44 +122,246 @@ function validateJournal(value: MachineParkingIntentJournal): void {
   }
 }
 
+const PARK_PHASES = new Set([
+  'intent-persisted',
+  'orchestration-pausing',
+  'orchestration-paused',
+  'runner-stopping',
+  'runner-stopped',
+  'resources-stopping',
+  'parked',
+  'resources-restoring',
+  'runner-reloading',
+  'orchestration-resuming',
+  'restored',
+  'cancelling',
+  'partial',
+  'failed',
+  'cancelled',
+]);
+const RUN_STATUSES = new Set([
+  'created',
+  'grading',
+  'writing-task',
+  'slot-finding',
+  'preparing',
+  'dispatching',
+  'monitoring',
+  'self-reviewing',
+  'completing',
+  'human-gating',
+  'ci-watching',
+  'paused',
+  'done',
+  'blocked',
+  'failed',
+  'cancelled',
+]);
+const STEP_STATUSES = new Set(['pending', 'running', 'done', 'failed', 'skipped']);
+const RESOURCE_TYPES = new Set(['device', 'browser', 'dev-server', 'service']);
+const RESOURCE_PHASES = new Set([
+  'observed-running',
+  'stopping',
+  'stopped',
+  'restoring',
+  'restored',
+  'failed',
+]);
+const LEASE_STATES = new Set([
+  'held',
+  'releasing',
+  'released',
+  'reacquiring',
+  'reacquired',
+  'failed',
+]);
+const RESIDUAL_STATES = new Set(['running', 'stopped', 'unknown']);
+
 function validRecord(record: MachineParkRecord): boolean {
-  const handle = record.recoveryHandle;
+  if (!isRecord(record)) return false;
+  const manifest = record.resourceManifest;
   return (
-    record?.version === 1 &&
-    typeof record.runId === 'string' &&
-    Boolean(record.runId) &&
-    Number.isInteger(record.generation) &&
-    typeof record.slotId === 'string' &&
-    Boolean(record.slotId) &&
+    record.version === 1 &&
+    nonEmpty(record.operationId) &&
+    nonEmpty(record.previewId) &&
+    nonEmpty(record.runId) &&
+    nonNegativeInteger(record.generation) &&
+    optionalNonNegativeInteger(record.restoredGeneration) &&
+    nonEmpty(record.machine) &&
+    nonEmpty(record.slotId) &&
     (record.mode === 'orchestration' || record.mode === 'release') &&
-    typeof record.phase === 'string' &&
-    typeof record.prePauseStatus === 'string' &&
-    Array.isArray(record.errors) &&
-    Array.isArray(record.resourceManifest?.resources) &&
-    Array.isArray(record.resourceManifest?.capabilityLeases) &&
-    typeof record.resourceManifest?.capturedAt === 'string' &&
-    (handle === null ||
-      (handle?.version === 1 &&
-        typeof handle.runnerId === 'string' &&
-        Boolean(handle.runnerId) &&
-        typeof handle.contextId === 'string' &&
-        Boolean(handle.contextId) &&
-        typeof handle.sessionId === 'string' &&
-        Boolean(handle.sessionId) &&
-        typeof handle.sessionPath === 'string' &&
-        Boolean(handle.sessionPath) &&
-        typeof handle.target?.session === 'string' &&
-        typeof handle.target?.target === 'string' &&
-        typeof handle.target?.paneId === 'string' &&
-        Boolean(handle.target.paneId))) &&
+    PARK_PHASES.has(record.phase) &&
+    RUN_STATUSES.has(record.prePauseStatus) &&
+    validCurrentStep(record.prePauseCurrentStep) &&
+    isRecord(manifest) &&
+    iso(manifest.capturedAt) &&
+    Array.isArray(manifest.resources) &&
+    manifest.resources.every(validResource) &&
+    Array.isArray(manifest.capabilityLeases) &&
+    manifest.capabilityLeases.every(validCapabilityLease) &&
+    validRecoveryHandle(record.recoveryHandle) &&
     (record.restoreDisposition === undefined ||
       record.restoreDisposition === 'zero-effect' ||
       record.restoreDisposition === 'effectful') &&
-    (record.residuals?.runner === 'running' ||
-      record.residuals?.runner === 'stopped' ||
-      record.residuals?.runner === 'unknown') &&
-    Array.isArray(record.residuals?.resources)
+    validRecoveryProof(record.recoveryProof) &&
+    Array.isArray(record.errors) &&
+    record.errors.every(validParkError) &&
+    validResiduals(record.residuals) &&
+    iso(record.createdAt) &&
+    iso(record.updatedAt) &&
+    optionalIso(record.parkedAt) &&
+    optionalIso(record.restoredAt) &&
+    optionalIso(record.cancelledAt)
   );
+}
+
+function validResource(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    nonEmpty(value.resourceId) &&
+    nonEmpty(value.label) &&
+    RESOURCE_TYPES.has(value.type as string) &&
+    value.observedStatus === 'running' &&
+    RESOURCE_PHASES.has(value.phase as string) &&
+    Array.isArray(value.capabilityLeaseIds) &&
+    value.capabilityLeaseIds.every(nonEmpty) &&
+    optionalIso(value.stoppedAt) &&
+    optionalIso(value.restoredAt) &&
+    optionalString(value.error)
+  );
+}
+
+function validCapabilityLease(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const proof = value.proofRequirement;
+  return (
+    nonEmpty(value.leaseId) &&
+    optionalString(value.restoredLeaseId, true) &&
+    nonEmpty(value.capabilityId) &&
+    LEASE_STATES.has(value.state as string) &&
+    isRecord(value.parameters) &&
+    isRecord(proof) &&
+    proof.capabilityId === value.capabilityId &&
+    nonEmpty(proof.reason) &&
+    (proof.mode === 'state' || proof.mode === 'visual' || proof.mode === 'mixed') &&
+    (proof.parameters === undefined || isRecord(proof.parameters)) &&
+    optionalString(value.ownerFamilyId, true) &&
+    optionalString(value.resourceId, true) &&
+    optionalString(value.error)
+  );
+}
+
+function validParkError(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    PARK_PHASES.has(value.phase as string) &&
+    nonEmpty(value.action) &&
+    nonEmpty(value.code) &&
+    nonEmpty(value.message) &&
+    iso(value.occurredAt) &&
+    typeof value.retryable === 'boolean' &&
+    optionalString(value.resourceId, true)
+  );
+}
+
+function validResiduals(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    RESIDUAL_STATES.has(value.runner as string) &&
+    Array.isArray(value.resources) &&
+    value.resources.every(
+      (resource) =>
+        isRecord(resource) &&
+        nonEmpty(resource.resourceId) &&
+        RESIDUAL_STATES.has(resource.state as string) &&
+        optionalString(resource.detail),
+    )
+  );
+}
+
+function validCurrentStep(value: unknown): boolean {
+  return (
+    value === null ||
+    (isRecord(value) &&
+      nonNegativeInteger(value.index) &&
+      nonEmpty(value.name) &&
+      STEP_STATUSES.has(value.status as string))
+  );
+}
+
+function validRecoveryHandle(value: unknown): boolean {
+  if (value === null) return true;
+  if (!isRecord(value) || !isRecord(value.target)) return false;
+  return (
+    value.version === 1 &&
+    nonEmpty(value.runnerId) &&
+    nonEmpty(value.contextId) &&
+    nonEmpty(value.sessionId) &&
+    nonEmpty(value.sessionPath) &&
+    nonEmpty(value.target.session) &&
+    nonEmpty(value.target.target) &&
+    typeof value.target.paneId === 'string' &&
+    /^%\d+$/.test(value.target.paneId) &&
+    (value.target.window === undefined ||
+      value.target.window === null ||
+      typeof value.target.window === 'string') &&
+    (value.target.pane === undefined ||
+      value.target.pane === null ||
+      typeof value.target.pane === 'string') &&
+    (value.model === null || typeof value.model === 'string') &&
+    optionalString(value.effort) &&
+    (value.safetyTier === undefined ||
+      value.safetyTier === 'sandboxed' ||
+      value.safetyTier === 'full-auto' ||
+      value.safetyTier === 'dangerous') &&
+    optionalString(value.runtimeDir) &&
+    optionalString(value.taskDir) &&
+    iso(value.capturedAt)
+  );
+}
+
+function validRecoveryProof(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isRecord(value) || !isRecord(value.acknowledgement)) return false;
+  return (
+    nonEmpty(value.sessionId) &&
+    value.live === true &&
+    value.acknowledgement.kind === 'structured' &&
+    nonEmpty(value.acknowledgement.source) &&
+    nonEmpty(value.acknowledgement.reason) &&
+    optionalString(value.acknowledgement.turnToken, true) &&
+    iso(value.acceptedAt)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function nonEmpty(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function optionalString(value: unknown, requireNonEmpty = false): boolean {
+  return (
+    value === undefined || (typeof value === 'string' && (!requireNonEmpty || value.length > 0))
+  );
+}
+
+function nonNegativeInteger(value: unknown): boolean {
+  return Number.isInteger(value) && Number(value) >= 0;
+}
+
+function optionalNonNegativeInteger(value: unknown): boolean {
+  return value === undefined || nonNegativeInteger(value);
+}
+
+function iso(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0 && Number.isFinite(Date.parse(value));
+}
+
+function optionalIso(value: unknown): boolean {
+  return value === undefined || iso(value);
 }
 
 function messageOf(error: unknown): string {

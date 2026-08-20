@@ -34,6 +34,72 @@ function record(machine: string, operationId: string): MachineParkRecord {
   };
 }
 
+function richRecord(operationId: string): MachineParkRecord {
+  const base = record('machine-a', operationId);
+  return {
+    ...base,
+    mode: 'release',
+    phase: 'resources-restoring',
+    restoreDisposition: 'effectful',
+    resourceManifest: {
+      capturedAt: base.createdAt,
+      resources: [
+        {
+          resourceId: 'browser',
+          label: 'Browser',
+          type: 'browser',
+          observedStatus: 'running',
+          phase: 'stopped',
+          capabilityLeaseIds: ['lease-1'],
+          stoppedAt: base.createdAt,
+        },
+      ],
+      capabilityLeases: [
+        {
+          leaseId: 'lease-1',
+          capabilityId: 'browser',
+          state: 'released',
+          parameters: {},
+          proofRequirement: { capabilityId: 'browser', reason: 'proof', mode: 'visual' },
+          resourceId: 'browser',
+        },
+      ],
+    },
+    recoveryHandle: {
+      version: 1,
+      runnerId: 'codex',
+      contextId: 'primary',
+      sessionId: 'session-1',
+      sessionPath: '/sessions/session-1.jsonl',
+      target: { session: 'slot-a', window: 'worker', paneId: '%1', target: 'slot-a:worker' },
+      model: 'gpt-5',
+      safetyTier: 'dangerous',
+      capturedAt: base.createdAt,
+    },
+    recoveryProof: {
+      sessionId: 'session-1',
+      live: true,
+      acknowledgement: { kind: 'structured', source: 'hook', reason: 'accepted' },
+      acceptedAt: base.createdAt,
+    },
+    errors: [
+      {
+        phase: 'partial',
+        action: 'test',
+        code: 'TEST',
+        message: 'test',
+        occurredAt: base.createdAt,
+        retryable: true,
+      },
+    ],
+    residuals: {
+      runner: 'stopped',
+      resources: [{ resourceId: 'browser', state: 'stopped', detail: 'observed stopped' }],
+    },
+    parkedAt: base.createdAt,
+  };
+}
+
 test('journal identity includes machine and operation kind but not gateway port', async (t) => {
   const runsDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-machine-journal-'));
   t.after(() => rm(runsDir, { recursive: true, force: true }));
@@ -101,4 +167,96 @@ test('malformed journal is quarantined without aborting valid recovery', async (
     new Set(loaded.quarantined.map((item) => item.file)),
     new Set([malformed, wrongName, invalidRecord]),
   );
+});
+
+test('deep-invalid record tables quarantine per file while valid journal loads', async (t) => {
+  const runsDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-machine-journal-'));
+  t.after(() => rm(runsDir, { recursive: true, force: true }));
+  const store = new MachineParkingIntentJournalStore(runsDir);
+  await store.write('restore', [richRecord('valid-rich')]);
+  const invalid: Array<{ name: string; mutate(record: MachineParkRecord): unknown }> = [
+    { name: 'null', mutate: () => null },
+    {
+      name: 'phase',
+      mutate: (value) => ({ ...value, phase: 'bogus' }),
+    },
+    {
+      name: 'resource-state',
+      mutate: (value) => ({
+        ...value,
+        resourceManifest: {
+          ...value.resourceManifest,
+          resources: [{ ...value.resourceManifest.resources[0]!, phase: 'bogus' }],
+        },
+      }),
+    },
+    {
+      name: 'resource-type',
+      mutate: (value) => ({
+        ...value,
+        resourceManifest: {
+          ...value.resourceManifest,
+          resources: [{ ...value.resourceManifest.resources[0]!, type: 'bogus' }],
+        },
+      }),
+    },
+    {
+      name: 'lease-state',
+      mutate: (value) => ({
+        ...value,
+        resourceManifest: {
+          ...value.resourceManifest,
+          capabilityLeases: [{ ...value.resourceManifest.capabilityLeases[0]!, state: 'bogus' }],
+        },
+      }),
+    },
+    {
+      name: 'timestamp',
+      mutate: (value) => ({ ...value, updatedAt: 'not-a-date' }),
+    },
+    {
+      name: 'pane',
+      mutate: (value) => ({
+        ...value,
+        recoveryHandle: {
+          ...value.recoveryHandle!,
+          target: { ...value.recoveryHandle!.target, paneId: 'worker.1' },
+        },
+      }),
+    },
+    {
+      name: 'current-step',
+      mutate: (value) => ({
+        ...value,
+        prePauseCurrentStep: { index: -1, name: '', status: 'bogus' },
+      }),
+    },
+    {
+      name: 'recovery-proof',
+      mutate: (value) => ({
+        ...value,
+        recoveryProof: { ...value.recoveryProof!, acceptedAt: 'invalid' },
+      }),
+    },
+  ];
+  for (const entry of invalid) {
+    const operationId = `invalid-${entry.name}`;
+    const file = store.pathFor('machine-a', 'restore', operationId);
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        kind: 'restore',
+        machine: 'machine-a',
+        operationId,
+        records: [entry.mutate(richRecord(operationId))],
+      }),
+      'utf8',
+    );
+  }
+
+  const loaded = await store.load();
+  assert.equal(loaded.journals.length, 1);
+  assert.equal(loaded.journals[0]?.operationId, 'valid-rich');
+  assert.equal(loaded.quarantined.length, invalid.length);
 });
