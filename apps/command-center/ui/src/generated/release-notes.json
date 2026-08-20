@@ -2,7 +2,7 @@
   "version": "0.8.0",
   "date": "2026-08-20",
   "items": [
-    "Pause orchestration or release idle machine resources directly from each pressure card.",
+    "Pause orchestration or release reviewed machine resources directly from each pressure card.",
     "Preview exact runs and processes before acting, then selectively restore them with durable progress and clear residual errors.",
     "Inspect per-core load, sampler health, and detailed process ownership without duplicating charts or adding UI polling."
   ]
