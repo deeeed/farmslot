@@ -1087,7 +1087,11 @@
                   "type": { "const": "device" },
                   "platform": { "const": "ios" },
                   "watch": {
-                    "properties": { "type": { "const": "process-poll" } },
+                    "properties": {
+                      "type": { "const": "process-poll" },
+                      "cmd": { "type": "string", "pattern": "\\S" },
+                      "target": { "type": "string", "pattern": "\\S" }
+                    },
                     "required": ["type", "cmd", "target"]
                   }
                 },

@@ -57,6 +57,7 @@ test('post-review dry run renders the exact reviewed commit', (t) => {
   const output = execFileSync('bash', args, options);
 
   assert.match(output, new RegExp(`Reviewed commit.*${commitId}`));
+  assert.match(output, new RegExp(`Reviewed commit.*${commitId}.*\\n\\| \\*\\*Tier\\*\\* \\|`));
   assert.doesNotMatch(output, /\| \*\*Runner\*\* \|/);
   assert.doesNotMatch(output, /\| \*\*Cost\*\* \|/);
 

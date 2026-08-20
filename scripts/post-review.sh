@@ -210,7 +210,7 @@ COST="${COST:-N/A}"
 TOTAL_TOKENS="${TOTAL_TOKENS:-N/A}"
 INTERNAL_METRICS_ROWS=""
 if [ "$INCLUDE_INTERNAL_METRICS" = true ]; then
-  printf -v INTERNAL_METRICS_ROWS '| **Runner** | %s / %s |\n| **Cost** | %s (%s tokens) |' \
+  printf -v INTERNAL_METRICS_ROWS '| **Runner** | %s / %s |\n| **Cost** | %s (%s tokens) |\n' \
     "$RUNNER" "$MODEL" "$COST" "$TOTAL_TOKENS"
 fi
 
@@ -333,8 +333,7 @@ cat > "$COMMENT_FILE" <<HEADER
 |---|---|
 | **Recommendation** | ${RECOMMENDATION} |
 | **Reviewed commit** | \`${REVIEW_COMMIT_ID}\` |
-${INTERNAL_METRICS_ROWS}
-| **Tier** | ${TIER} |
+${INTERNAL_METRICS_ROWS}| **Tier** | ${TIER} |
 | **Recipe** | ${RECIPE_SUMMARY} |
 
 ### Summary

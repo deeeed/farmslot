@@ -110,4 +110,9 @@ test('project schema restricts the iOS inventory provider to compatible fallback
   );
   const { cmd: _cmd, ...watchWithoutCommand } = resource.watch;
   assert.equal(validate(project({ ...resource, watch: watchWithoutCommand })), false);
+  assert.equal(validate(project({ ...resource, watch: { ...resource.watch, cmd: '' } })), false);
+  assert.equal(
+    validate(project({ ...resource, watch: { ...resource.watch, target: '   ' } })),
+    false,
+  );
 });
