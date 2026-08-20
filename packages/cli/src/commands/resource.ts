@@ -55,6 +55,13 @@ function formatMachine(machine: ResourcePressureMachine): string[] {
 export function formatResourcePressure(result: ResourcePressureSnapshotResult): string {
   const lines = [
     `${bold('Resource pressure')}  ${result.summary.severity}  machines=${result.summary.machines} busy=${result.summary.busySlots} cleanupCandidates=${result.summary.cleanupCandidates}`,
+    ...(result.summary.omittedMachines || result.summary.omittedCleanupCandidates
+      ? [
+          dim(
+            `Bounded response omitted machines=${result.summary.omittedMachines} cleanupCandidates=${result.summary.omittedCleanupCandidates}; narrow --machine/--machines or --project/--projects to inspect them.`,
+          ),
+        ]
+      : []),
     '',
   ];
   for (const machine of result.machines) {

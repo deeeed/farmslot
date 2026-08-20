@@ -441,7 +441,21 @@ export async function executeTool(
         result = resourcePressureSnapshotForModel(
           await resourcePressureSnapshot({
             ...(typeof args.machine === 'string' ? { machine: args.machine } : {}),
+            ...(Array.isArray(args.machines)
+              ? {
+                  machines: args.machines.filter(
+                    (value): value is string => typeof value === 'string',
+                  ),
+                }
+              : {}),
             ...(typeof args.project === 'string' ? { project: args.project } : {}),
+            ...(Array.isArray(args.projects)
+              ? {
+                  projects: args.projects.filter(
+                    (value): value is string => typeof value === 'string',
+                  ),
+                }
+              : {}),
           }),
         );
         break;

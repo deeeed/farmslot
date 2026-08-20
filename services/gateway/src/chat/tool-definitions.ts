@@ -387,9 +387,21 @@ export const FLEET_TOOLS: Tool[] = [
           description: 'Optional machine filter, e.g. mini or runner-local.',
         }),
       ),
+      machines: Type.Optional(
+        Type.Array(Type.String(), {
+          description: 'Optional list of machine filters; combined with machine as a union.',
+          maxItems: 32,
+        }),
+      ),
       project: Type.Optional(
         Type.String({
           description: 'Optional project filter, e.g. example-mobile.',
+        }),
+      ),
+      projects: Type.Optional(
+        Type.Array(Type.String(), {
+          description: 'Optional list of project filters; combined with project as a union.',
+          maxItems: 32,
         }),
       ),
     }),

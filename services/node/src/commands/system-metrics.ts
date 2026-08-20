@@ -179,10 +179,16 @@ export function parseProcessInventory(
   const tmuxRoots = new Set(
     parsed.filter((entry) => /(?:^|\/)tmux$/u.test(entry.executable)).map((entry) => entry.pid),
   );
-  const tmuxTreePids = new Set([
-    ...tmuxRoots,
-    ...parsed.filter((entry) => tmuxRoots.has(entry.ppid)).map((entry) => entry.pid),
-  ]);
+  const tmuxTreePids = new Set(tmuxRoots);
+  for (let depth = 0; depth < 4; depth += 1) {
+    let added = false;
+    for (const entry of parsed) {
+      if (tmuxTreePids.has(entry.pid) || !tmuxTreePids.has(entry.ppid)) continue;
+      tmuxTreePids.add(entry.pid);
+      added = true;
+    }
+    if (!added) break;
+  }
   const selected = new Map<number, NodeProcessSample>();
   let ancestryTruncated = false;
   const candidates = [...parsed].sort(
@@ -352,7 +358,9 @@ function processInventoryDue(params: Parameters<typeof processInventoryCadenceMs
   return false;
 }
 
-export async function collectMetrics(): Promise<SystemMetrics> {
+export async function collectMetrics(
+  options: { consumeProcessInventory?: boolean } = {},
+): Promise<SystemMetrics> {
   const { usedBytes: usedMem, totalBytes: totalMem } = getMemoryUsage();
   const [loadAvg1, loadAvg5] = os.loadavg();
   const cpuCores = os.cpus().length;
@@ -360,8 +368,9 @@ export async function collectMetrics(): Promise<SystemMetrics> {
   const memoryPercent = Math.round((usedMem / totalMem) * 100);
   const diskPercent = getDiskPercent();
   const thermalPressure = getThermalPressure();
-  const processInventory = pendingProcessInventory;
-  pendingProcessInventory = undefined;
+  const consumeProcessInventory = options.consumeProcessInventory !== false;
+  const processInventory = consumeProcessInventory ? pendingProcessInventory : undefined;
+  if (consumeProcessInventory) pendingProcessInventory = undefined;
   if (
     processInventoryDue({
       cpuPercent,

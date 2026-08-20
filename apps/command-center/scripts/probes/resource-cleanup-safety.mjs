@@ -40,11 +40,26 @@ if (missing.ok || missing.stopped !== 0 || missing.targets?.[0]?.ok !== false) {
   throw new Error('missing reviewed target did not fail closed');
 }
 
+const fleetResult = await gateway('fleet.status', {});
+const busySlot = fleetResult.fleet?.slots?.find(
+  (slot) =>
+    slot.machine === machine &&
+    (slot.lifecycle === 'busy' || slot.lifecycle === 'held' || slot.currentRunId),
+);
+if (!busySlot) throw new Error(`live safety proof requires a busy slot on ${machine}`);
+const busy = await gateway('resource.cleanup', {
+  dryRun: false,
+  targets: [{ machine, slotId: busySlot.slot, resourceId: '__none__' }],
+});
+const busyRejected = !busy.ok && busy.stopped === 0 && busy.targets?.[0]?.ok === false;
+if (!busyRejected) throw new Error('busy reviewed target did not fail closed');
+
 console.log(
   JSON.stringify({
     machine,
     emptyRejected,
     missingRejected: true,
+    busyRejected,
     mutations: 0,
   }),
 );

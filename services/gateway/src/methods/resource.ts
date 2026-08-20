@@ -52,6 +52,7 @@ const PRESSURE_RESOURCE_CACHE_TTL_MS = 30_000;
 const PRESSURE_RESOURCE_CACHE_MAX_SLOTS = 512;
 const PROCESS_INVENTORY_MAX_AGE_MS = 7 * 60_000;
 const MAX_PRESSURE_MACHINES = 32;
+const MAX_PRESSURE_ATTRIBUTION_GROUPS = 32;
 const MAX_PRESSURE_CLEANUP_CANDIDATES = 256;
 const MAX_RESOURCE_CLEANUP_TARGETS = 256;
 
@@ -121,8 +122,24 @@ export async function resourceCleanup(
   if ((params.targets?.length ?? 0) > MAX_RESOURCE_CLEANUP_TARGETS) {
     throw new Error(`resource cleanup accepts at most ${MAX_RESOURCE_CLEANUP_TARGETS} targets`);
   }
+  if (
+    dryRun &&
+    (explicitEmptyFilter(params.machine, params.machines) ||
+      explicitEmptyFilter(params.project, params.projects))
+  ) {
+    return {
+      ok: true,
+      dryRun: true,
+      targets: [],
+      omittedTargets: 0,
+      stopped: 0,
+      failed: 0,
+    };
+  }
   const machineFilter = combinedFilter(params.machine, params.machines);
   const projectFilter = combinedFilter(params.project, params.projects);
+  const machineFilterPresent = params.machine !== undefined || params.machines !== undefined;
+  const projectFilterPresent = params.project !== undefined || params.projects !== undefined;
   const statuses = new Set(params.statuses ?? ['running', 'stale']);
   const slotFilter = new Set(params.slotIds ?? []);
   const resourceFilter = new Set(params.resourceIds ?? []);
@@ -140,8 +157,8 @@ export async function resourceCleanup(
     if (!slot.enabled) return false;
     if (slot.lifecycle === 'disabled' || slot.lifecycle === 'manual') return false;
     if (!slotAllowsDefaultResourceCleanup(slot)) return false;
-    if (machineFilter.size > 0 && !machineFilter.has(slot.machine)) return false;
-    if (projectFilter.size > 0 && !projectFilter.has(slot.project)) return false;
+    if (machineFilterPresent && !machineFilter.has(slot.machine)) return false;
+    if (projectFilterPresent && !projectFilter.has(slot.project)) return false;
     if (slotFilter.size > 0 && !slotFilter.has(slot.slot)) return false;
     if (exactTargetsEnabled && !exactTargetSlots.has(`${slot.machine}:${slot.slot}`)) {
       return false;
@@ -272,8 +289,14 @@ export async function resourceCleanup(
 export async function resourcePressureSnapshot(
   params: ResourcePressureSnapshotParams = {},
 ): Promise<ResourcePressureSnapshotResult> {
-  const fleet = await loadFleetStatus();
   const watchState = getResourceWatchRuntimeState();
+  if (
+    explicitEmptyFilter(params.machine, params.machines) ||
+    explicitEmptyFilter(params.project, params.projects)
+  ) {
+    return emptyPressureSnapshot(params, watchState);
+  }
+  const fleet = await loadFleetStatus();
   const [{ tmuxWorkerList }, { getAllRuns }] = await Promise.all([
     import('./tmux-workers.js'),
     import('../runs/store.js'),
@@ -308,9 +331,12 @@ export async function resourcePressureSnapshot(
 
   const sortedMachineNames = [...machineNames].sort();
   const omittedMachines = Math.max(0, sortedMachineNames.length - MAX_PRESSURE_MACHINES);
-  const returnedMachineNames = sortedMachineNames.slice(0, MAX_PRESSURE_MACHINES);
   const machines: ResourcePressureMachine[] = [];
-  for (const machine of returnedMachineNames) {
+  const allAttributionGroups = new Map<
+    string,
+    ResourcePressureMachine['processAttribution']['groups']
+  >();
+  for (const machine of sortedMachineNames) {
     const health = healthByMachine.get(machine);
     const machineSlots = slots.filter((slot) => slot.machine === machine);
     const byStatus = emptyStatusCounts();
@@ -368,12 +394,21 @@ export async function resourcePressureSnapshot(
             (run) => scopedRunIds.has(run.id) || (run.slotId && scopedSlotIds.has(run.slotId)),
           ),
           resources: attributionResources,
+          maxGroups: processInventory.processes.length,
         })
       : {
           groups: [],
           omittedGroups: 0,
           classCounts: { ...EMPTY_PROCESS_CLASS_COUNTS },
         };
+    const boundedAttributionGroups = selectResourcePressureGroups(
+      attribution.groups,
+      MAX_PRESSURE_ATTRIBUTION_GROUPS,
+    );
+    const omittedAttributionGroups =
+      attribution.omittedGroups +
+      Math.max(0, attribution.groups.length - boundedAttributionGroups.length);
+    allAttributionGroups.set(machine, attribution.groups);
     machines.push({
       machine,
       online: health?.online ?? null,
@@ -411,9 +446,9 @@ export async function resourcePressureSnapshot(
         sampledProcesses: processInventory?.processes.length ?? 0,
         totalProcesses: processInventory?.totalProcesses ?? 0,
         maxEntries: processInventory?.maxEntries ?? 0,
-        omittedGroups: attribution.omittedGroups,
+        omittedGroups: omittedAttributionGroups,
         classCounts: attribution.classCounts,
-        groups: attribution.groups,
+        groups: boundedAttributionGroups,
       },
       slots: {
         total: machineSlots.length,
@@ -432,7 +467,23 @@ export async function resourcePressureSnapshot(
     });
   }
 
-  const returnedMachineSet = new Set(returnedMachineNames);
+  const severityOrder: Record<ResourcePressureSeverity, number> = { critical: 2, warn: 1, ok: 0 };
+  const pressureScore = (machine: ResourcePressureMachine) => {
+    const latest = machine.history.at(-1)?.pressure;
+    return Math.max(latest?.cpu ?? 0, latest?.memory ?? 0, latest?.load1 ?? 0);
+  };
+  const returnedMachineSet = new Set(
+    [...machines]
+      .sort(
+        (a, b) =>
+          severityOrder[b.severity] - severityOrder[a.severity] ||
+          pressureScore(b) - pressureScore(a) ||
+          a.machine.localeCompare(b.machine),
+      )
+      .slice(0, MAX_PRESSURE_MACHINES)
+      .map((machine) => machine.machine),
+  );
+  const returnedMachines = machines.filter((machine) => returnedMachineSet.has(machine.machine));
   const returnedCleanupCandidates = cleanupCandidates.filter((target) =>
     returnedMachineSet.has(target.machine),
   );
@@ -451,23 +502,24 @@ export async function resourcePressureSnapshot(
     cleanupScope: 'non-active-slots-only',
     filters: params,
     summary: {
-      machines: machines.length,
+      machines: returnedMachines.length,
       omittedMachines,
-      severity: aggregateSeverity(machines),
+      severity: aggregateSeverity(returnedMachines),
       cleanupCandidates: boundedCleanupCandidates.length,
       omittedCleanupCandidates,
-      runningResources: machines.reduce((sum, m) => sum + m.resources.byStatus.running, 0),
-      staleResources: machines.reduce((sum, m) => sum + m.resources.byStatus.stale, 0),
-      busySlots: machines.reduce((sum, m) => sum + m.slots.busy, 0),
-      workingSlots: machines.reduce((sum, m) => sum + m.slots.working, 0),
+      runningResources: returnedMachines.reduce((sum, m) => sum + m.resources.byStatus.running, 0),
+      staleResources: returnedMachines.reduce((sum, m) => sum + m.resources.byStatus.stale, 0),
+      busySlots: returnedMachines.reduce((sum, m) => sum + m.slots.busy, 0),
+      workingSlots: returnedMachines.reduce((sum, m) => sum + m.slots.working, 0),
     },
-    machines,
+    machines: returnedMachines,
     cleanupCandidates: boundedCleanupCandidates.map((target) => {
-      const machine = machines.find((candidate) => candidate.machine === target.machine);
-      const exactGroup = machine?.processAttribution.groups.find(
-        (candidate) =>
-          candidate.slotId === target.slotId && candidate.resourceId === target.resourceId,
-      );
+      const exactGroup = allAttributionGroups
+        .get(target.machine)
+        ?.find(
+          (candidate) =>
+            candidate.slotId === target.slotId && candidate.resourceId === target.resourceId,
+        );
       return {
         ...target,
         ...(exactGroup
@@ -561,7 +613,12 @@ export function resourcePressureSnapshotForModel(
             lastDurationMs: sampler.lastDurationMs,
           }
         : undefined;
-      const modelGroups = selectResourcePressureGroups(machine.processAttribution.groups, 8);
+      const projectScoped =
+        snapshot.filters.project !== undefined || snapshot.filters.projects !== undefined;
+      const modelSourceGroups = projectScoped
+        ? machine.processAttribution.groups.filter((group) => group.slotId || group.resourceId)
+        : machine.processAttribution.groups;
+      const modelGroups = selectResourcePressureGroups(modelSourceGroups, 8);
       return {
         machine: machine.machine,
         online: machine.online,
@@ -643,8 +700,14 @@ export function isUnresolvableSlotError(err: unknown): boolean {
 }
 
 export async function resolvePressureSlotResources(slotId: string) {
+  const now = Date.now();
+  for (const [cachedSlotId, entry] of pressureResourceCache) {
+    if (now - entry.cachedAt >= PRESSURE_RESOURCE_CACHE_TTL_MS) {
+      pressureResourceCache.delete(cachedSlotId);
+    }
+  }
   const cached = pressureResourceCache.get(slotId);
-  if (cached && Date.now() - cached.cachedAt < PRESSURE_RESOURCE_CACHE_TTL_MS) {
+  if (cached) {
     return cached.resources.map((resource) => ({
       ...resource,
       status: getCachedResourceStatus(slotId, resource.id),
@@ -661,7 +724,7 @@ export async function resolvePressureSlotResources(slotId: string) {
       )[0]?.[0];
       if (oldest) pressureResourceCache.delete(oldest);
     }
-    pressureResourceCache.set(slotId, { cachedAt: Date.now(), resources });
+    pressureResourceCache.set(slotId, { cachedAt: now, resources });
     return resources;
   } catch (err) {
     if (!isUnresolvableSlotError(err)) throw err;
@@ -673,14 +736,52 @@ export async function resolvePressureSlotResources(slotId: string) {
 function matchesPressureFilters(slot: SlotStatus, params: ResourcePressureSnapshotParams): boolean {
   const machines = combinedFilter(params.machine, params.machines);
   const projects = combinedFilter(params.project, params.projects);
-  if (machines.size > 0 && !machines.has(slot.machine)) return false;
-  if (projects.size > 0 && !projects.has(slot.project)) return false;
+  if (
+    (params.machine !== undefined || params.machines !== undefined) &&
+    !machines.has(slot.machine)
+  )
+    return false;
+  if (
+    (params.project !== undefined || params.projects !== undefined) &&
+    !projects.has(slot.project)
+  )
+    return false;
   return true;
 }
 
 /** Singular and plural selectors are one union so mixed-version clients cannot self-conflict. */
 function combinedFilter(primary?: string, values?: string[]): Set<string> {
   return new Set([...(primary ? [primary] : []), ...(values ?? [])]);
+}
+
+function explicitEmptyFilter(primary?: string, values?: string[]): boolean {
+  return !primary && values !== undefined && values.length === 0;
+}
+
+function emptyPressureSnapshot(
+  filters: ResourcePressureSnapshotParams,
+  watchState: { enabled: boolean; updatedAt: string | null },
+): ResourcePressureSnapshotResult {
+  return {
+    checkedAt: new Date().toISOString(),
+    watchState,
+    watchAutoStartEnabled: watchState.enabled,
+    cleanupScope: 'non-active-slots-only',
+    filters,
+    summary: {
+      machines: 0,
+      omittedMachines: 0,
+      severity: 'ok',
+      cleanupCandidates: 0,
+      omittedCleanupCandidates: 0,
+      runningResources: 0,
+      staleResources: 0,
+      busySlots: 0,
+      workingSlots: 0,
+    },
+    machines: [],
+    cleanupCandidates: [],
+  };
 }
 
 export function slotAllowsDefaultResourceCleanup(

@@ -6,6 +6,7 @@ let tmuxFailure = false;
 let omitPollStatus = false;
 let failedResolutionSlot = '';
 let resourceResolutionCalls = 0;
+let tmuxCalls = 0;
 const controlledTargets: string[] = [];
 
 mock.module('../fleet/resource-manager.js', {
@@ -166,6 +167,7 @@ mock.module('../runs/store.js', {
 mock.module('./tmux-workers.js', {
   namedExports: {
     tmuxWorkerList: async () => {
+      tmuxCalls += 1;
       if (tmuxFailure) throw new Error('tmux timeout');
       return {
         observedAt: Date.now(),
@@ -253,6 +255,11 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   const hostOnly = await resourceHostPressure('macpro', 'farmslot-farm');
   assert.equal(hostOnly.machine, 'macpro');
   assert.equal(hostOnly.online, true);
+
+  const tmuxCallsBeforeEmptyFilter = tmuxCalls;
+  const emptyFiltered = await resourcePressureSnapshot({ machines: [] });
+  assert.equal(emptyFiltered.machines.length, 0);
+  assert.equal(tmuxCalls, tmuxCallsBeforeEmptyFilter);
 
   const result = await resourcePressureSnapshot({
     machines: ['macpro'],

@@ -93,4 +93,7 @@ test('pressure formatter includes trends, classes, sampler degradation, and no m
   assert.match(output, /error=ps timed out/);
   assert.match(output, /sampled=1\/400 \(truncated\)/);
   assert.doesNotMatch(output, /kill|stop|cleanup command/i);
+  result.summary.omittedMachines = 2;
+  result.summary.omittedCleanupCandidates = 3;
+  assert.match(formatResourcePressure(result), /omitted machines=2 cleanupCandidates=3/);
 });
