@@ -6,6 +6,7 @@ import type {
   ExecutionTemplateCatalogOption,
   ExecutionTemplateOptions,
   FlowType,
+  PressureAdmissionDecision,
   ProfileFitSuggestion,
   QueueItem,
   ReviewRunnerId,
@@ -31,6 +32,7 @@ import {
 import { renderDispatchCandidateSelection } from './dispatch-wizard-candidates-renderer.js';
 import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
 import type { PublicationReviewLoopDraft } from './dispatch-wizard-draft.js';
+import { renderDispatchPressurePanel } from './dispatch-wizard-pressure-renderer.js';
 import { renderDispatchWizardPrimaryControls } from './dispatch-wizard-primary-controls-renderer.js';
 import {
   type PublicationReviewPlanItem,
@@ -132,6 +134,14 @@ interface DispatchWizardViewContext {
   addWorkerReviewLoop: () => void;
   addExternalReviewLoop: () => void;
   candidateDispatchable: (candidate: DispatchCandidatesResult['candidates'][number]) => boolean;
+  pressureOverrideAvailable: (candidate: DispatchCandidatesResult['candidates'][number]) => boolean;
+  beginPressureOverride: (slotId: string, intent?: 'nudge' | 'fresh') => void;
+  selectedPressureDecision: PressureAdmissionDecision | null;
+  pressureOverrideConfirmed: boolean;
+  pressureOverrideReason: string;
+  setPressureOverrideConfirmed: (confirmed: boolean) => void;
+  setPressureOverrideReason: (reason: string) => void;
+  refreshPressureDecision: () => void;
   slotSummaryLabel: (slotId: string) => string;
   selectSlot: (slotId: string) => void;
   setNudgeIntent: (slotId: string, intent: 'nudge' | 'fresh') => void;
@@ -261,9 +271,19 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               nudgeIntentVersion: ctx.nudgeIntentVersion,
               sameTaskSlot: ctx.sameTaskSlot,
               candidateDispatchable: ctx.candidateDispatchable,
+              pressureOverrideAvailable: ctx.pressureOverrideAvailable,
               slotSummaryLabel: ctx.slotSummaryLabel,
               selectSlot: ctx.selectSlot,
               setNudgeIntent: ctx.setNudgeIntent,
+              beginPressureOverride: ctx.beginPressureOverride,
+            })}
+            ${renderDispatchPressurePanel({
+              decision: ctx.selectedPressureDecision,
+              overrideConfirmed: ctx.pressureOverrideConfirmed,
+              overrideReason: ctx.pressureOverrideReason,
+              setOverrideConfirmed: ctx.setPressureOverrideConfirmed,
+              setOverrideReason: ctx.setPressureOverrideReason,
+              refreshDecision: ctx.refreshPressureDecision,
             })}
             ${renderActionFooter(ctx)}
           `

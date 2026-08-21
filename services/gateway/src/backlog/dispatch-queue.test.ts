@@ -37,11 +37,50 @@ import {
   removeQueueItemInternalNow,
   reorderItems,
   selectQueueDispatchSlot,
+  setQueueDispatchPressureCaptureForTests,
   stampQueueItemRunId,
   stampQueueItemRunIdNow,
   tryDispatchNext,
   updateItem,
 } from './dispatch-queue.js';
+
+/** Slot-selection fixtures predate pressure admission: admit every machine so
+ * the existing scoring/identity assertions stay deterministic. Pressure-hold
+ * behavior has its own coverage in methods/dispatch/preview.test.ts. */
+const admitAllPressure: NonNullable<
+  Parameters<typeof selectQueueDispatchSlot>[2]
+>['capturePressure'] = async (machines) =>
+  new Map(
+    machines.map((machine) => [
+      machine,
+      {
+        outcome: 'admitted' as const,
+        machine,
+        state: 'green' as const,
+        evidence: {
+          machine,
+          generation: `${machine}|test|1|2026-04-15T00:00:00.000Z`,
+          evaluatedAt: '2026-04-15T00:00:00.000Z',
+          samples: [],
+          consecutiveCriticalSamples: 0,
+          requiredConsecutiveCriticalSamples: 3,
+          staleAfterMs: 150_000,
+          latestSampleAt: '2026-04-15T00:00:00.000Z',
+        },
+      },
+    ]),
+  );
+
+function selectSlotAdmitted(
+  slots: Parameters<typeof selectQueueDispatchSlot>[0],
+  item: Parameters<typeof selectQueueDispatchSlot>[1],
+) {
+  return selectQueueDispatchSlot(slots, item, { capturePressure: admitAllPressure });
+}
+
+// tryDispatchNext reaches selectQueueDispatchSlot internally. Stub the
+// capture globally so auto-dispatch tests never touch the live snapshot path.
+setQueueDispatchPressureCaptureForTests(admitAllPressure);
 
 async function cleanupRun(runId: string): Promise<void> {
   if (!getRun(runId)) {
@@ -588,7 +627,7 @@ test('selectQueueDispatchSlot prefers identity-matching held comparison slot', a
       taskStepProgress: null,
     },
   ];
-  assert.equal(await selectQueueDispatchSlot(slots, item), 'held-slot');
+  assert.equal(await selectSlotAdmitted(slots, item), 'held-slot');
 });
 
 test('selectQueueDispatchSlot avoids mismatched held comparison slot and falls back to ready slot', async () => {
@@ -669,7 +708,7 @@ test('selectQueueDispatchSlot avoids mismatched held comparison slot and falls b
       taskStepProgress: null,
     },
   ];
-  assert.equal(await selectQueueDispatchSlot(slots, item), 'ready-slot');
+  assert.equal(await selectSlotAdmitted(slots, item), 'ready-slot');
 });
 
 function plainCliSlot(slotId: string): SlotStatus {
@@ -728,7 +767,7 @@ test('selectQueueDispatchSlot never stamps profileFit onto unset prepareProfile'
   const slots = [plainCliSlot('plain-cli')];
 
   assert.equal(item.prepareProfile, undefined);
-  assert.equal(await selectQueueDispatchSlot(slots, item), 'plain-cli');
+  assert.equal(await selectSlotAdmitted(slots, item), 'plain-cli');
   assert.equal(item.prepareProfile, undefined);
 });
 
@@ -755,7 +794,7 @@ test('selectQueueDispatchSlot ignores exposes false-positive companion tokens wh
   };
   const slots = [plainCliSlot('mini-ff-2')];
 
-  assert.equal(await selectQueueDispatchSlot(slots, item), 'mini-ff-2');
+  assert.equal(await selectSlotAdmitted(slots, item), 'mini-ff-2');
   assert.equal(item.prepareProfile, undefined);
 });
 
@@ -782,7 +821,7 @@ test('selectQueueDispatchSlot preserves explicit sandbox prepareProfile despite 
   };
   const slots = [plainCliSlot('plain-cli')];
 
-  assert.equal(await selectQueueDispatchSlot(slots, item), 'plain-cli');
+  assert.equal(await selectSlotAdmitted(slots, item), 'plain-cli');
   assert.equal(item.prepareProfile, 'sandbox');
 });
 
@@ -800,7 +839,7 @@ test('selectQueueDispatchSlot still gates explicit sandbox-companion to simulato
   const slots = [plainCliSlot('plain-cli')];
 
   await assert.rejects(
-    () => selectQueueDispatchSlot(slots, item),
+    () => selectSlotAdmitted(slots, item),
     /No free slots for project farmslot-farm have resources required by prepare profile sandbox-companion/,
   );
   assert.equal(item.prepareProfile, 'sandbox-companion');
@@ -819,7 +858,7 @@ test('selectQueueDispatchSlot does not defer bare GitHub refs when prepare is un
   const slots = [plainCliSlot('plain-cli')];
 
   // Profile-fit no longer drives queue selection, so missing ticket metadata is not a stall.
-  assert.equal(await selectQueueDispatchSlot(slots, item), 'plain-cli');
+  assert.equal(await selectSlotAdmitted(slots, item), 'plain-cli');
   assert.equal(item.prepareProfile, undefined);
 });
 
@@ -866,7 +905,7 @@ test('selectQueueDispatchSlot does not defer non-farmslot queues on unavailable 
     },
   ];
 
-  assert.equal(await selectQueueDispatchSlot(slots, item), 'mm-cli');
+  assert.equal(await selectSlotAdmitted(slots, item), 'mm-cli');
 });
 
 test('selectQueueDispatchSlot spreads launch candidates away from active siblings when possible', async () => {
@@ -956,7 +995,7 @@ test('selectQueueDispatchSlot spreads launch candidates away from active sibling
   };
 
   try {
-    assert.equal(await selectQueueDispatchSlot(slots, item), 'slot-b');
+    assert.equal(await selectSlotAdmitted(slots, item), 'slot-b');
     assert.equal(
       await selectQueueDispatchSlot(slots, { ...item, allowedSlots: ['slot-a'] }),
       'slot-a',

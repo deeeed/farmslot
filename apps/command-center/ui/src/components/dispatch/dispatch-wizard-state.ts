@@ -88,6 +88,11 @@ export abstract class DispatchWizardState extends LitElement {
   /** Bumped whenever `_nudgeIntents` mutates so Lit re-renders the wizard rows. (Map mutation
    * isn't observable to @state shallow-equality, so we route changes through a counter.) */
   @state() _nudgeIntentVersion = 0;
+  /** Deliberate pressure-override collection for the selected rejected row.
+   * Cleared on slot change and candidate refresh. The confirmation is bound
+   * to the exact rendered decision, never carried across evidence. */
+  @state() _pressureOverrideConfirmed = false;
+  @state() _pressureOverrideReason = '';
   @state() _loadingCandidates = false;
   @state() _loadingProjectConfigs = false;
   @state() _allProjectSlots: SlotStatus[] = [];

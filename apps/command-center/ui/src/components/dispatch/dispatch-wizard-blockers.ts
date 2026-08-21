@@ -34,6 +34,8 @@ export interface DispatchWizardBlockingInput {
   variantInputBlocked: boolean;
   comparisonFlow: boolean;
   comparisonParentRunId: string;
+  /** Operator confirmed the deliberate pressure override with a reason. */
+  pressureOverrideReady: boolean;
 }
 
 export interface DispatchWizardBlockingState {
@@ -74,6 +76,7 @@ export function deriveDispatchWizardBlockingState(
     slotOverride: input.slotOverride,
     selectedCandidate: selectedCandidate(input.candidates, input.slotOverride),
     dispatchableCandidateCount: dispatchableCandidates(input.candidates).length,
+    pressureOverrideReady: input.pressureOverrideReady,
   });
   const queueBlockedReasonValue = queueBlockedReason({
     canDispatch: canDispatchValue,

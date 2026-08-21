@@ -19,6 +19,7 @@ export function buildDispatchPreviewParamsForRun(
     | 'mode'
     | 'domain'
     | 'executionTemplateId'
+    | 'pressureOverride'
   >,
 ): DispatchPreviewParams {
   // For PR-bound flows the run's branch IS the PR head, so pass it as
@@ -43,6 +44,17 @@ export function buildDispatchPreviewParamsForRun(
     prepareProfile: run.prepareProfile || undefined,
     allowedSlots: run.allowedSlots && run.allowedSlots.length > 0 ? run.allowedSlots : undefined,
     targetBranch,
+    // Wire shape only. The persisted audit principal travels through the
+    // internal dispatchPreview option, never through preview params.
+    ...(run.pressureOverride
+      ? {
+          pressureOverride: {
+            machine: run.pressureOverride.machine,
+            pressureGeneration: run.pressureOverride.pressureGeneration,
+            reason: run.pressureOverride.reason,
+          },
+        }
+      : {}),
   };
 }
 export function determineSelectionMethodForRun(

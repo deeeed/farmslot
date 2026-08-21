@@ -30,6 +30,7 @@ import {
 import { resolveTmuxPaneId, resolveTmuxSession, shellQuote } from '../../core/tmux.js';
 import { readLaunchAckSignalSnapshot } from '../../runners/prompt-delivery-evidence.js';
 import { normalizeRunner, runnerRetainedSessionHandoff } from '../../runners/registry.js';
+import { dispatchStartedAtMs } from '../../runners/session-path-resolution.js';
 import { resolvePersistedRunnerSessionBinding } from '../../runners/session-process.js';
 import {
   deliverPromptWithRetainedFallback,
@@ -40,7 +41,11 @@ import { isWorkerAlive } from '../../self-review/worker-lifecycle.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
-import { ensureWorkerRoleTarget, isRunnerAliveInAnyPane } from './execute.js';
+import {
+  enforceDispatchPressureGate,
+  ensureWorkerRoleTarget,
+  isRunnerAliveInAnyPane,
+} from './execute.js';
 import { terminalizePriorRunOnSlot } from './nudge.js';
 import { resolveDispatchSafetyTier } from './safety-tier.js';
 import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from './slot-scoring.js';
@@ -362,6 +367,24 @@ export async function warmSessionHandoffDispatch(
     acceptExistingLaunchAck: false,
     recovery: { runId: params.runId, emit },
   };
+  // Delivery-boundary pressure gate (MANUAL-000109): warm-session handoff is
+  // a new task delivery even though it reuses an existing runner. Keep this
+  // check immediately before the send, after target/session resolution, and
+  // persist any one-shot consumption before the runner can receive the prompt.
+  const latestRequestingRun = getRun(params.runId) ?? requestingRun;
+  await enforceDispatchPressureGate({
+    machine: vars.machine,
+    runId: params.runId,
+    run: latestRequestingRun,
+    attemptKey: `${params.runId}:${dispatchStartedAtMs(latestRequestingRun) ?? 'no-attempt'}`,
+    onInfo: (detail) => step('info', detail),
+    deps: {
+      persistRun: async (runId, patch) => {
+        const { updateRun, persistRunNow } = await import('../../runs/store.js');
+        await persistRunNow(updateRun(runId, patch), 'pressure-override-consumption');
+      },
+    },
+  });
   const delivery = await deliverPromptWithRetainedFallback(deliveryOptions);
   if (!delivery.delivered) {
     return warmHandoffFailureFromRetainedDelivery(delivery);

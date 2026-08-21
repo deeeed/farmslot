@@ -4,6 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(dispatch): add a durable admin kill switch for pressure-based dispatch prevention. It defaults enabled, persists atomically under FARMSLOT_HOME with updatedAt and the authenticated principal, and fails safe to enabled on a corrupt file. Disabling admits every machine with a backend-owned `disabled` decision while sampling, history, charts, and every other safety check continue (MANUAL-000109).
+- feat(resources): persist the bounded normalized pressure ring to a versioned store under FARMSLOT_HOME (atomic temp+rename, validation/quarantine on load, gauges and timestamps only, never process paths or PIDs) and rehydrate it before fleet/resource recovery so pressure charts and dispatch admission warm-start after a restart instead of waiting for three live 30s samples (MANUAL-000109).
+- feat(dispatch): reject new dispatches only on sustained critical pressure over the bounded sample ring. One policy drives candidates, preview, queued selection, every FIND_SLOT binding (warm/nudge/fresh/affinity/operator picks), run activation, and final launch/delivery boundaries. All admission reads stay in memory and reuse attribution cached by explicit resource snapshots, never starting resource or tmux work. The policy fails closed on unavailable, offline, restored-only, stale, or malformed evidence; holds queued items instead of failing them; and admits a rejected machine only through a generation-bound, principal-audited override consumed durably for exactly one dispatch attempt, never touching existing work (MANUAL-000109).
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.8.0 - 2026-08-20

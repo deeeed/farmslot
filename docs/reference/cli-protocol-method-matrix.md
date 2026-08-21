@@ -116,17 +116,19 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## dispatch.\*
 
-| Method                        | Surface       | CLI command                    | TUI | Note                                                                                           |
-| ----------------------------- | ------------- | ------------------------------ | --- | ---------------------------------------------------------------------------------------------- |
-| `dispatch.preview`            | typed-command | `farmslot dispatch`            |     |                                                                                                |
-| `dispatch.matchProject`       | rpc-only      |                                |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `dispatch.candidates`         | rpc-only      |                                |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `dispatch.queue.add`          | rpc-only      |                                |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `dispatch.queue.list`         | typed-command | `farmslot dispatch queue list` |     |                                                                                                |
-| `dispatch.queue.remove`       | rpc-only      |                                |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `dispatch.queue.removeOrphan` | rpc-only      |                                |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `dispatch.queue.update`       | rpc-only      |                                |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `dispatch.queue.reorder`      | rpc-only      |                                |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| Method                                  | Surface       | CLI command                                   | TUI      | Note                                                                                           |
+| --------------------------------------- | ------------- | --------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------- | --- |
+| `dispatch.preview`                      | typed-command | `farmslot dispatch`                           |          |                                                                                                |
+| `dispatch.pressureAdmission.get`        | typed-command | `farmslot dispatch pressure-admission status` |          |                                                                                                |
+| `dispatch.pressureAdmission.setEnabled` | typed-command | `farmslot dispatch pressure-admission enable  | disable` |                                                                                                |     |
+| `dispatch.matchProject`                 | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `dispatch.candidates`                   | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `dispatch.queue.add`                    | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `dispatch.queue.list`                   | typed-command | `farmslot dispatch queue list`                |          |                                                                                                |
+| `dispatch.queue.remove`                 | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `dispatch.queue.removeOrphan`           | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `dispatch.queue.update`                 | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `dispatch.queue.reorder`                | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 
 ## eval.\*
 
@@ -313,14 +315,15 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## resource.\*
 
-| Method                       | Surface       | CLI command                  | TUI | Note                                                                                           |
-| ---------------------------- | ------------- | ---------------------------- | --- | ---------------------------------------------------------------------------------------------- |
-| `resource.list`              | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `resource.control`           | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `resource.health`            | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `resource.cleanup`           | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `resource.watch.setEnabled`  | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `resource.pressure.snapshot` | typed-command | `farmslot resource pressure` |     |                                                                                                |
+| Method                       | Surface       | CLI command                  | TUI | Note                                                                                                                                                 |
+| ---------------------------- | ------------- | ---------------------------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resource.list`              | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                       |
+| `resource.control`           | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                       |
+| `resource.health`            | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                       |
+| `resource.cleanup`           | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                       |
+| `resource.watch.setEnabled`  | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                       |
+| `resource.pressure.snapshot` | typed-command | `farmslot resource pressure` |     |                                                                                                                                                      |
+| `resource.pressure.history`  | rpc-only      |                              |     | Lightweight history-only read for fast Command Center first paint; the typed `farmslot resource pressure` command already renders the full snapshot. |
 
 ## roadmap.\*
 

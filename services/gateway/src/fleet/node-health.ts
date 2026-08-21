@@ -3,25 +3,34 @@
 import { execSync } from 'node:child_process';
 import os from 'node:os';
 
-import type {
-  Headroom,
-  MachineHealth,
-  NodeMetricsSample,
-  NodePressureHistorySample,
-  NodePressureRatios,
-  NodeProcessInventory,
-  NodeProcessSamplerHealth,
-  NodeSystemMetrics,
-  RecipeRuntimeCapabilityDeclaration,
+import {
+  DEFAULT_PRESSURE_STALE_AFTER_MS,
+  type Headroom,
+  type MachineHealth,
+  type NodeMetricsSample,
+  type NodePressureHistoryFreshness,
+  type NodePressureHistorySample,
+  type NodePressureRatios,
+  type NodeProcessInventory,
+  type NodeProcessSamplerHealth,
+  type NodeSystemMetrics,
+  type RecipeRuntimeCapabilityDeclaration,
 } from '@farmslot/protocol';
 
+import { loadPressureHistory, savePressureHistory } from './pressure-history-store.js';
 import { getCachedFleet } from './state.js';
 
 const healthMap = new Map<string, MachineHealth>();
 const pressureHistory = new Map<string, NodePressureHistorySample[]>();
 const processInventoryMap = new Map<string, NodeProcessInventory>();
 const processSamplerHealthMap = new Map<string, NodeProcessSamplerHealth>();
+/** Machines that have delivered a live sample since this gateway booted.
+ * Absent = the ring (if any) was rehydrated from the persisted store. */
+const liveSampleSinceBoot = new Set<string>();
 export const NODE_PRESSURE_HISTORY_LIMIT = 120;
+const PRESSURE_HISTORY_PERSIST_DEBOUNCE_MS = 5_000;
+const PRESSURE_SAMPLE_FUTURE_SKEW_MS = 30_000;
+let pressurePersistTimer: ReturnType<typeof setTimeout> | null = null;
 let localCollectionTimer: ReturnType<typeof setInterval> | null = null;
 let prevCpuTimes: { idle: number; total: number } | null = null;
 
@@ -89,17 +98,46 @@ function normalizedPressure(metrics: NodeSystemMetrics, cpuCores: number): NodeP
   };
 }
 
+function isNormalizedPressure(value: NodePressureRatios): boolean {
+  const boundedRatios = [value.cpu, value.memory, value.disk];
+  const loadRatios = [value.load1, value.load5];
+  return (
+    boundedRatios.every((ratio) => Number.isFinite(ratio) && ratio >= 0 && ratio <= 1) &&
+    loadRatios.every((ratio) => ratio === undefined || (Number.isFinite(ratio) && ratio >= 0))
+  );
+}
+
+/** Reject malformed live samples before they can mark a rehydrated ring as
+ * live. The admission policy also validates its input, but the boot marker is
+ * set here, so validation must happen at the storage boundary too. */
+function isRecordablePressureSample(
+  metrics: NodeMetricsSample,
+  pressure: NodePressureRatios,
+  collectedAtMs: number,
+): boolean {
+  return (
+    collectedAtMs <= Date.now() + PRESSURE_SAMPLE_FUTURE_SKEW_MS &&
+    [metrics.cpuPercent, metrics.memoryPercent, metrics.diskPercent].every(
+      (value) => Number.isFinite(value) && value >= 0 && value <= 100,
+    ) &&
+    [metrics.loadAvg1, metrics.loadAvg5].every((value) => Number.isFinite(value) && value >= 0) &&
+    isNormalizedPressure(pressure)
+  );
+}
+
 function recordPressureSample(machine: string, metrics: NodeMetricsSample, cpuCores: number): void {
   const samples = pressureHistory.get(machine) ?? [];
   const latest = samples.at(-1);
   const collectedAtMs = Date.parse(metrics.collectedAt);
   if (!Number.isFinite(collectedAtMs)) return;
   if (latest && collectedAtMs <= Date.parse(latest.collectedAt)) return;
+  const pressure = normalizedPressure(metrics, cpuCores);
+  if (!isRecordablePressureSample(metrics, pressure, collectedAtMs)) return;
   const inventory = metrics.processInventory;
   samples.push({
     ...(inventory ? { generation: inventory.generation, sampleId: inventory.sampleId } : {}),
     collectedAt: metrics.collectedAt,
-    pressure: normalizedPressure(metrics, cpuCores),
+    pressure,
     cpuPercent: metrics.cpuPercent,
     memoryPercent: metrics.memoryPercent,
     diskPercent: metrics.diskPercent,
@@ -110,6 +148,82 @@ function recordPressureSample(machine: string, metrics: NodeMetricsSample, cpuCo
     samples.splice(0, samples.length - NODE_PRESSURE_HISTORY_LIMIT);
   }
   pressureHistory.set(machine, samples);
+  liveSampleSinceBoot.add(machine);
+  schedulePressureHistoryPersist();
+}
+
+// ─── Persisted pressure history (MANUAL-000109) ───
+
+/**
+ * Rehydrate the bounded normalized ring from the persisted store. Called once
+ * at startup BEFORE ordinary fleet/resource recovery so Command Center and
+ * dispatch admission warm-start immediately instead of waiting for three live
+ * 30s samples. Live samples always win: a machine that already produced one
+ * this boot keeps its live ring.
+ */
+export function rehydratePressureHistory(): void {
+  const loaded = loadPressureHistory(NODE_PRESSURE_HISTORY_LIMIT);
+  if (loaded.quarantinedReason) {
+    console.error(`[node-health] pressure history store quarantined: ${loaded.quarantinedReason}`);
+  }
+  let restored = 0;
+  for (const [machine, samples] of loaded.machines) {
+    if (liveSampleSinceBoot.has(machine)) continue;
+    pressureHistory.set(machine, samples);
+    restored += 1;
+  }
+  if (restored > 0) {
+    console.log(`[node-health] rehydrated pressure history for ${restored} machine(s)`);
+  }
+}
+
+/** Coalesce per-machine sample pushes into one atomic write every few seconds. */
+function schedulePressureHistoryPersist(): void {
+  if (pressurePersistTimer) return;
+  pressurePersistTimer = setTimeout(() => {
+    pressurePersistTimer = null;
+    try {
+      savePressureHistory(pressureHistory, NODE_PRESSURE_HISTORY_LIMIT);
+    } catch (error) {
+      // A failed persist only costs warm-start after the NEXT restart; the
+      // live ring is intact. Log loudly so a permanently broken store path is
+      // visible instead of silently discovered at the next boot.
+      console.error(`[node-health] pressure history persist failed: ${(error as Error).message}`);
+    }
+  }, PRESSURE_HISTORY_PERSIST_DEBOUNCE_MS);
+  pressurePersistTimer.unref?.();
+}
+
+/** Freshness of a machine's ring: restored-vs-live plus explicit staleness. */
+export function getMachinePressureHistoryFreshness(
+  machine: string,
+  now = Date.now(),
+): NodePressureHistoryFreshness {
+  const latest = pressureHistory.get(machine)?.at(-1);
+  const latestSampleAt = latest?.collectedAt ?? null;
+  const ageMs = latestSampleAt ? Math.max(0, now - Date.parse(latestSampleAt)) : null;
+  return {
+    source: !latest ? 'none' : liveSampleSinceBoot.has(machine) ? 'live' : 'restored',
+    latestSampleAt,
+    ageMs,
+    stale: ageMs === null || ageMs > DEFAULT_PRESSURE_STALE_AFTER_MS,
+  };
+}
+
+/** Machines with any ring content, including rehydrated machines whose node
+ * has not reconnected yet this boot. */
+export function listPressureHistoryMachines(): string[] {
+  return [...new Set([...pressureHistory.keys(), ...healthMap.keys()])].sort();
+}
+
+/** Test hook: reset in-memory pressure state (ring, live markers, timers). */
+export function resetPressureHistoryForTest(): void {
+  pressureHistory.clear();
+  liveSampleSinceBoot.clear();
+  if (pressurePersistTimer) {
+    clearTimeout(pressurePersistTimer);
+    pressurePersistTimer = null;
+  }
 }
 
 // ─── Mark machine offline ───

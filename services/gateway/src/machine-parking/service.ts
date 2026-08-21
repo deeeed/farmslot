@@ -35,6 +35,7 @@ import {
 import { selectAgentContext } from '../agents/contexts.js';
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { resolveTmuxSession } from '../core/tmux.js';
+import { readMachinePressure } from '../fleet/pressure-read.js';
 import {
   executeResourceControl,
   pollSlotResources,
@@ -42,7 +43,6 @@ import {
 } from '../fleet/resource-manager.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
-import { resourcePressureSnapshot } from '../methods/resource.js';
 import {
   runPauseTransitionLocked,
   type RunResumeAcknowledgement,
@@ -170,9 +170,9 @@ async function broadcast(event: string, payload: unknown): Promise<void> {
 
 async function defaultPressure(machine: string): Promise<ResourcePressureMachine | undefined> {
   try {
-    return (await resourcePressureSnapshot({ machine })).machines.find(
-      (candidate) => candidate.machine === machine,
-    );
+    // Shared 1s-deduped read so machine relief and dispatch admission never
+    // multiply the expensive snapshot work for the same machine.
+    return await readMachinePressure(machine);
   } catch (error) {
     // Pressure is optional response context. A sampling failure must not turn an already-durable
     // park/restore mutation into a reported RPC failure.

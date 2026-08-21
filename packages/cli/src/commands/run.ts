@@ -221,6 +221,9 @@ export interface RunCreateCliOptions {
   scriptedStepDelayMs?: string;
   scriptedCommandRef?: string;
   scriptedTimeoutMs?: string;
+  pressureMachine?: string;
+  pressureGeneration?: string;
+  pressureOverrideReason?: string;
 }
 
 function optionalPositiveInteger(value: string | undefined, field: string): number | undefined {
@@ -260,6 +263,30 @@ function buildScriptedConfig(opts: RunCreateCliOptions): Record<string, unknown>
   return undefined;
 }
 
+/**
+ * Backend-decision pass-through only: the pair --pressure-machine +
+ * --pressure-generation echoes the decision the gateway printed at preview
+ * time (preview identity). Adding --pressure-override-reason turns the same
+ * pair into a deliberate one-dispatch override. The CLI computes nothing.
+ */
+function buildPressureAdmissionParams(opts: RunCreateCliOptions): Record<string, unknown> {
+  const machine = opts.pressureMachine?.trim();
+  const generation = opts.pressureGeneration?.trim();
+  const overrideReason = opts.pressureOverrideReason?.trim();
+  if (!machine && !generation && !overrideReason) return {};
+  if (!machine || !generation) {
+    throw new Error(
+      'Pressure options require both --pressure-machine and --pressure-generation (copy them from `farmslot dispatch preview`).',
+    );
+  }
+  if (overrideReason) {
+    return {
+      pressureOverride: { machine, pressureGeneration: generation, reason: overrideReason },
+    };
+  }
+  return { pressureAdmissionRef: { machine, pressureGeneration: generation } };
+}
+
 export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, unknown> {
   if (opts.ticket && opts.task) {
     throw new Error('Use either --ticket or --task, not both.');
@@ -286,6 +313,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
     familyRootTicketOrPr: opts.familyRootTicketOrPr || undefined,
     lane: opts.lane || undefined,
     variant: opts.variant || undefined,
+    ...buildPressureAdmissionParams(opts),
   };
 
   if (opts.task) {
@@ -697,6 +725,18 @@ export function registerRunCommand(program: Command): void {
     .option('--family-root-ticket-or-pr <ref>', 'Family root ticket/PR label')
     .option('--lane <lane>', 'Run lane (production, validation, comparison)')
     .option('--variant <name>', 'Run variant, required for comparison siblings')
+    .option(
+      '--pressure-machine <machine>',
+      'Machine from the pressure decision shown by `farmslot dispatch preview`',
+    )
+    .option(
+      '--pressure-generation <generation>',
+      'Pressure generation from that decision; execution rejects if it moved',
+    )
+    .option(
+      '--pressure-override-reason <reason>',
+      'Deliberate one-dispatch pressure override reason (with --pressure-machine/--pressure-generation)',
+    )
     .action(async (opts: RunCreateCliOptions, cmd: Command) => {
       const ctx = resolveContext(cmd);
       const emit = createEmitter(ctx.output, cmd);

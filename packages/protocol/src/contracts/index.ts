@@ -12,6 +12,7 @@ export * from './execution-templates.js';
 export * from './family.js';
 export * from './interactive-operator-packets.js';
 export * from './pr-recommendation.js';
+export * from './pressure-admission.js';
 export * from './provider-accounts.js';
 export * from './recipes.js';
 export * from './resources.js';

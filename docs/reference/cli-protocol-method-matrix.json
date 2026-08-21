@@ -266,6 +266,14 @@
       "surface": "typed-command",
       "command": "farmslot dispatch"
     },
+    "dispatch.pressureAdmission.get": {
+      "surface": "typed-command",
+      "command": "farmslot dispatch pressure-admission status"
+    },
+    "dispatch.pressureAdmission.setEnabled": {
+      "surface": "typed-command",
+      "command": "farmslot dispatch pressure-admission enable|disable"
+    },
     "dispatch.queue.add": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
@@ -642,6 +650,10 @@
     "resource.pressure.snapshot": {
       "surface": "typed-command",
       "command": "farmslot resource pressure"
+    },
+    "resource.pressure.history": {
+      "surface": "rpc-only",
+      "note": "Lightweight history-only read for fast Command Center first paint; the typed `farmslot resource pressure` command already renders the full snapshot."
     },
     "resource.watch.setEnabled": {
       "surface": "rpc-only",

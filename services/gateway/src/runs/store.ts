@@ -44,6 +44,7 @@ import {
   runnerDefaultModel,
   runnerDefaultSafetyTier,
 } from '../runners/registry.js';
+import { currentSessionOriginator } from '../security/work-originator.js';
 
 import { emitAnalyticsForTerminalRun } from './analytics.js';
 import { isLeakedGatewayTestFixture, isLeakedGatewayTestRun } from './test-run-leak.js';
@@ -536,6 +537,50 @@ export async function loadAllRuns(): Promise<void> {
   console.log(`[run-store] loaded ${runs.size} runs from disk`);
 }
 
+/**
+ * Boundary validation + principal audit stamp for a requested one-dispatch
+ * pressure override. The wire shape carries only machine/generation/reason;
+ * the authenticated session originator is the sole authority for the audit
+ * principal ('system' only for trusted in-process callers).
+ */
+function normalizePressureOverrideRequest(params: RunCreateParams): Run['pressureOverride'] {
+  const override = params.pressureOverride;
+  if (!override) return undefined;
+  const machine = typeof override.machine === 'string' ? override.machine.trim() : '';
+  const pressureGeneration =
+    typeof override.pressureGeneration === 'string' ? override.pressureGeneration.trim() : '';
+  const reason = typeof override.reason === 'string' ? override.reason.trim() : '';
+  if (!machine || !pressureGeneration || !reason) {
+    throw new Error(
+      'pressureOverride requires machine, pressureGeneration, and a non-empty operator reason',
+    );
+  }
+  const originator = currentSessionOriginator();
+  return {
+    machine,
+    pressureGeneration,
+    reason,
+    principalId: originator.kind === 'principal' ? originator.principalId : 'system',
+    requestedAt: new Date().toISOString(),
+    scope: 'single-dispatch',
+  };
+}
+
+/** Boundary validation for the preview identity of an admitted decision. */
+function normalizePressureAdmissionRefRequest(
+  params: RunCreateParams,
+): Run['pressureAdmissionRef'] {
+  const ref = params.pressureAdmissionRef;
+  if (!ref) return undefined;
+  const machine = typeof ref.machine === 'string' ? ref.machine.trim() : '';
+  const pressureGeneration =
+    typeof ref.pressureGeneration === 'string' ? ref.pressureGeneration.trim() : '';
+  if (!machine || !pressureGeneration) {
+    throw new Error('pressureAdmissionRef requires machine and pressureGeneration');
+  }
+  return { machine, pressureGeneration };
+}
+
 export function createRun(
   params: RunCreateParams,
   options?: {
@@ -594,6 +639,11 @@ export function createRun(
       `Invalid domain: ${String(params.domain)} — must be a lowercase slug (a-z, 0-9, '._-', no leading/trailing punctuation)`,
     );
   }
+  if (params.pressureOverride && params.pressureAdmissionRef) {
+    throw new Error('run.create accepts either pressureOverride or pressureAdmissionRef, not both');
+  }
+  const pressureOverride = normalizePressureOverrideRequest(params);
+  const pressureAdmissionRef = normalizePressureAdmissionRefRequest(params);
   const tierExplicit = params.safetyTier !== undefined;
   const resolvedTier = tierExplicit
     ? params.safetyTier
@@ -666,6 +716,8 @@ export function createRun(
     slotId: params.slotId ?? null,
     branch: params.branch ?? null,
     completionPolicy: params.completionPolicy,
+    ...(pressureOverride ? { pressureOverride } : {}),
+    ...(pressureAdmissionRef ? { pressureAdmissionRef } : {}),
     startRef,
     prNumber: startRef ? undefined : (prNumberFromRunInput(params) ?? undefined),
     allowedSlots:

@@ -53,6 +53,26 @@ export function candidateDispatchable(candidate: DispatchCandidate): boolean {
   return candidate.free === true || candidate.nudgeEligible === true;
 }
 
+/** Backend pressure rejection for this row's machine, when present. */
+export function candidatePressureRejection(candidate: DispatchCandidate) {
+  const decision = candidate.pressureAdmission;
+  return decision?.outcome === 'rejected' ? decision : null;
+}
+
+/**
+ * True when the row's effective backend ineligibility is an overridable
+ * sustained-pressure rejection, so the wizard may offer a deliberate override
+ * on the disabled row. Keys off the structured `ineligibilitySource` the
+ * gateway sets. The reason message stays display-only.
+ */
+export function pressureOverrideAvailable(candidate: DispatchCandidate): boolean {
+  // Applies to fresh AND nudge rows: a rejected nudge row keeps its nudge
+  // intent through the override flow instead of degrading to an invalid
+  // busy-slot fresh dispatch.
+  const rejection = candidatePressureRejection(candidate);
+  return Boolean(rejection?.overridable && candidate.ineligibilitySource === 'pressure');
+}
+
 export function dispatchableCandidates(
   candidates: ReadonlyArray<DispatchCandidate>,
 ): DispatchCandidate[] {

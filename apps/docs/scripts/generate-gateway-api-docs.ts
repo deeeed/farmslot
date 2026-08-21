@@ -135,7 +135,9 @@ function inferSafetyTier(method: string): string {
     method.includes('doctor') ||
     method.includes('get') ||
     method.includes('read') ||
-    method.includes('capabilities')
+    method.includes('capabilities') ||
+    // History-only pressure read: in-memory rings + freshness, no mutation.
+    method === 'resource.pressure.history'
   ) {
     return 'read-only';
   }

@@ -1,6 +1,6 @@
 import type { DispatchCandidatesResult, FlowType, Run, SlotStatus } from '@farmslot/protocol';
 
-import { candidateDispatchable } from './dispatch-wizard-selectors.js';
+import { candidateDispatchable, pressureOverrideAvailable } from './dispatch-wizard-selectors.js';
 
 export type DispatchMode = 'interactive' | 'autonomous';
 export type NudgeIntent = 'nudge' | 'fresh';
@@ -66,10 +66,17 @@ export function deriveCandidateResultState(input: CandidateResultStateInput): Ca
     comparisonFamilyId: input.comparisonFamilyId,
   });
   const scoringChanged = scoringKey !== input.lastFetchScoringKey;
+  // A pressure-rejected row is not dispatchable, but the operator may have
+  // deliberately selected it to review the decision or collect an override.
+  // periodic candidate refreshes must not bounce the selection off it.
   const overrideStillValid =
     !scoringChanged &&
     Boolean(input.previousOverride) &&
-    dispatchable.some((candidate) => candidate.slotId === input.previousOverride);
+    input.candidates.some(
+      (candidate) =>
+        candidate.slotId === input.previousOverride &&
+        (candidateDispatchable(candidate) || pressureOverrideAvailable(candidate)),
+    );
   return {
     candidates: input.candidates,
     slotOverride: overrideStillValid ? input.previousOverride : (dispatchable[0]?.slotId ?? ''),

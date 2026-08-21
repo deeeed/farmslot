@@ -74,7 +74,9 @@ import {
   candidateDispatchable,
   dispatchableCandidates,
   findSameTaskSlot,
+  pressureOverrideAvailable,
   resolveTargetBranch,
+  selectedCandidate,
   selectedNudgeIntent,
   slotSummaryLabel,
 } from './dispatch-wizard-selectors.js';
@@ -545,7 +547,10 @@ export class DispatchWizard extends DispatchWizardState {
       });
       if (!this.mockMode) this._candidatesEverLoaded = true;
       if (gen !== this._fetchGen) return; // superseded by newer filter/project change
-      this._applyCandidateResult(res, prevOverride);
+      // Prefer the CURRENT selection over the fetch-start snapshot: a row the
+      // operator clicked while this fetch was in flight (e.g. a pressure
+      // Override pick) must survive the apply instead of being auto-replaced.
+      this._applyCandidateResult(res, this._slotOverride || prevOverride);
       void this._fetchProfileFitSuggestion(project, gen);
     } catch (err) {
       if (gen !== this._fetchGen) return;
@@ -606,6 +611,9 @@ export class DispatchWizard extends DispatchWizardState {
     if (next.nudgeIntentsChanged) this._nudgeIntentVersion++;
     this._lastFetchScoringKey = next.scoringKey;
     this._slotOverride = next.slotOverride;
+    // Fresh candidates carry fresh pressure evidence. A half-completed
+    // override confirmation must not survive onto a decision it never saw.
+    this._resetPressureOverrideDraft();
     if (next.slotOverride !== prevOverride) void this._fetchTemplateOptions();
   }
 
@@ -894,6 +902,35 @@ export class DispatchWizard extends DispatchWizardState {
     if (nextHash && location.hash !== nextHash) history.replaceState(null, '', nextHash);
   }
 
+  /** Backend pressure decision for the currently selected candidate row. */
+  private _selectedPressureDecision() {
+    return selectedCandidate(this._candidates, this._slotOverride)?.pressureAdmission ?? null;
+  }
+
+  private _pressureOverrideReady(): boolean {
+    return this._pressureOverrideConfirmed && this._pressureOverrideReason.trim().length > 0;
+  }
+
+  /** Any change of slot or evidence invalidates a half-completed override. */
+  private _resetPressureOverrideDraft(): void {
+    this._pressureOverrideConfirmed = false;
+    this._pressureOverrideReason = '';
+  }
+
+  private _beginPressureOverride(slotId: string, intent?: 'nudge' | 'fresh'): void {
+    this._closeExecutionTemplatePreview(false);
+    this._slotOverride = slotId;
+    this._resetPressureOverrideDraft();
+    // A rejected busy nudge candidate keeps its explicit reuse intent through
+    // the override flow. The created run carries nudgeReuse/freshReuse, never
+    // an invalid busy-slot plain dispatch.
+    if (intent) {
+      this._nudgeIntents.set(slotId, intent);
+      this._nudgeIntentVersion++;
+    }
+    void this._fetchTemplateOptions();
+  }
+
   private _setNudgeIntent(slotId: string, intent: 'nudge' | 'fresh'): void {
     // Defensive: the click handler closes over the candidate list at render time, but
     // `_fetchCandidates` can replace the array (machine filter flip, WS reconnect) before
@@ -931,6 +968,7 @@ export class DispatchWizard extends DispatchWizardState {
       variantInputBlocked: this._variantInputBlocked(),
       comparisonFlow: this._comparisonFlow,
       comparisonParentRunId: this._comparisonParentRunId,
+      pressureOverrideReady: this._pressureOverrideReady(),
     });
     const templateReason = this._templateOptionsError
       ? 'Execution-template options are unavailable.'
@@ -966,7 +1004,34 @@ export class DispatchWizard extends DispatchWizardState {
     const taskTemplate = this._executionTemplates
       ? undefined
       : selectedTaskTemplate(this._templateOptions, this._selectedTaskTemplateFileName);
+    // Forward the backend-rendered decision identity: a confirmed override for
+    // a rejected machine, or the admitted decision's preview identity so
+    // execution can reject stale evidence. Values come from the gateway
+    // decision verbatim. The wizard computes nothing.
+    const selectedPressure = this._selectedPressureDecision();
+    const pressureOverride =
+      selectedPressure?.outcome === 'rejected' &&
+      selectedPressure.overridable &&
+      selectedPressure.evidence.generation &&
+      this._pressureOverrideReady()
+        ? {
+            machine: selectedPressure.machine,
+            pressureGeneration: selectedPressure.evidence.generation,
+            reason: this._pressureOverrideReason.trim(),
+          }
+        : undefined;
+    const pressureAdmissionRef =
+      !pressureOverride &&
+      selectedPressure?.outcome === 'admitted' &&
+      selectedPressure.evidence.generation
+        ? {
+            machine: selectedPressure.machine,
+            pressureGeneration: selectedPressure.evidence.generation,
+          }
+        : undefined;
     return buildDispatchWizardPayloadDraft({
+      pressureOverride,
+      pressureAdmissionRef,
       flowType: this._flowType,
       project: this._project,
       ticketId: this._ticketId,
@@ -1317,10 +1382,25 @@ export class DispatchWizard extends DispatchWizardState {
         slotSummaryLabel({ slotId, slots: this._allProjectSlots, runs: getState().runs ?? [] }),
       selectSlot: (slotId) => {
         this._closeExecutionTemplatePreview(false);
+        if (this._slotOverride !== slotId) this._resetPressureOverrideDraft();
         this._slotOverride = slotId;
         void this._fetchTemplateOptions();
       },
       setNudgeIntent: (slotId, intent) => this._setNudgeIntent(slotId, intent),
+      pressureOverrideAvailable,
+      beginPressureOverride: (slotId, intent) => this._beginPressureOverride(slotId, intent),
+      selectedPressureDecision: this._selectedPressureDecision(),
+      pressureOverrideConfirmed: this._pressureOverrideConfirmed,
+      pressureOverrideReason: this._pressureOverrideReason,
+      setPressureOverrideConfirmed: (confirmed) => {
+        this._pressureOverrideConfirmed = confirmed;
+      },
+      setPressureOverrideReason: (reason) => {
+        this._pressureOverrideReason = reason;
+      },
+      refreshPressureDecision: () => {
+        if (this._project) void this._fetchCandidates(this._project);
+      },
       dispatchBlocked: () => blockers.dispatchBlocked,
       dispatchBlockedReason: () => blockers.dispatchBlockedReason,
       queueBlocked: () => blockers.queueBlocked,

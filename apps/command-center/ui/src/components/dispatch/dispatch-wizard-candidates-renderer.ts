@@ -25,9 +25,15 @@ export interface DispatchCandidateSelectionRenderContext {
   nudgeIntentVersion: number;
   sameTaskSlot: SlotStatus | null;
   candidateDispatchable: (candidate: DispatchCandidate) => boolean;
+  /** Backend-flagged overridable pressure rejection on this row. */
+  pressureOverrideAvailable: (candidate: DispatchCandidate) => boolean;
   slotSummaryLabel: (slotId: string) => string;
   selectSlot: (slotId: string) => void;
   setNudgeIntent: (slotId: string, intent: NudgeIntent) => void;
+  /** Select a pressure-rejected row to collect the deliberate override. The
+   * intent keeps a busy nudge candidate on its reuse path (nudge/fresh)
+   * instead of degrading to an invalid busy-slot fresh dispatch. */
+  beginPressureOverride: (slotId: string, intent?: NudgeIntent) => void;
 }
 
 function candidateBadges(
@@ -35,7 +41,13 @@ function candidateBadges(
   hadTask: boolean,
 ): SlotChoiceOption['badges'] {
   if (candidate.ineligibleReason) {
-    return [{ label: 'NOT ELIGIBLE', tone: 'danger', title: candidate.ineligibleReason }];
+    return [
+      {
+        label: candidate.ineligibilitySource === 'pressure' ? 'PRESSURE REJECTED' : 'NOT ELIGIBLE',
+        tone: 'danger',
+        title: candidate.ineligibleReason,
+      },
+    ];
   }
   if (candidate.nudgeEligible) return [{ label: 'REUSE WORKER', tone: 'warning' }];
   if (candidate.familyAffinity) return [{ label: 'same family', tone: 'positive' }];
@@ -43,9 +55,19 @@ function candidateBadges(
   return [];
 }
 
+function pressureCauseDetails(candidate: DispatchCandidate): SlotChoiceBadge[] {
+  const decision = candidate.pressureAdmission;
+  if (decision?.outcome !== 'rejected') return [];
+  return decision.causes.slice(0, 3).map((cause) => ({
+    label: `${cause.process} ${Math.round(cause.cpuPercent)}%`,
+    title: `${cause.classification}/${cause.confidence}, ${cause.processCount} process(es)${cause.cleanupEligible ? '' : '; explains pressure, not a cleanup target'}`,
+    tone: 'warning' as const,
+  }));
+}
+
 function candidateDetails(candidate: DispatchCandidate): SlotChoiceBadge[] {
   const meta = candidate.nudgeMeta;
-  if (!meta) return [];
+  if (!meta) return pressureCauseDetails(candidate);
   return [
     {
       label: `ctx ${meta.ctxPct != null ? `${meta.ctxPct}%` : '?'}`,
@@ -128,7 +150,37 @@ function candidateOption(
               title: 'Stop the current worker on this slot and dispatch a fresh run',
             },
           ]
-        : [],
+        : ctx.pressureOverrideAvailable(candidate)
+          ? candidate.nudgeEligible
+            ? canNudge
+              ? [
+                  {
+                    id: 'pressure-override-nudge',
+                    label: 'Override + Nudge',
+                    active: candidate.slotId === selectedSlot,
+                    title:
+                      'Machine is pressure-rejected. Review the decision, confirm a one-dispatch override, and reuse the existing worker session.',
+                  },
+                ]
+              : [
+                  {
+                    id: 'pressure-override-fresh',
+                    label: 'Override + Fresh',
+                    active: candidate.slotId === selectedSlot,
+                    title:
+                      'Machine is pressure-rejected and this runner cannot be nudged. Review the decision, confirm a one-dispatch override, and relaunch fresh.',
+                  },
+                ]
+            : [
+                {
+                  id: 'pressure-override',
+                  label: 'Override',
+                  active: candidate.slotId === selectedSlot,
+                  title:
+                    'Machine is pressure-rejected. Select to review the decision and confirm a one-dispatch override.',
+                },
+              ]
+          : [],
   };
 }
 
@@ -178,6 +230,12 @@ export function renderDispatchCandidateSelection(ctx: DispatchCandidateSelection
             @slot-choice-action=${(event: CustomEvent<SlotChoiceActionDetail>) => {
               if (event.detail.actionId === 'nudge' || event.detail.actionId === 'fresh') {
                 ctx.setNudgeIntent(event.detail.slotId, event.detail.actionId);
+              } else if (event.detail.actionId === 'pressure-override') {
+                ctx.beginPressureOverride(event.detail.slotId);
+              } else if (event.detail.actionId === 'pressure-override-nudge') {
+                ctx.beginPressureOverride(event.detail.slotId, 'nudge');
+              } else if (event.detail.actionId === 'pressure-override-fresh') {
+                ctx.beginPressureOverride(event.detail.slotId, 'fresh');
               }
             }}
           ></slot-choice-list>`

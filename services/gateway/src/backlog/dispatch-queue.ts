@@ -11,6 +11,7 @@ import {
   type DispatchQueueUpdateParams,
   isTerminalRunStatus,
   normalizeRunTags,
+  type PressureAdmissionDecision,
   type QueueClaim,
   type QueueItem,
   type Run,
@@ -20,7 +21,11 @@ import {
 import type { InternalDispatchQueueAddParams } from '../core/queue-types.js';
 import { evalSuiteCapUsage } from '../evals/suite-cap-store.js';
 import { farmslotRoot, loadFleetStatus } from '../fleet/state.js';
-import { resolveDispatchPreviewFromFleet } from '../methods/dispatch.js';
+import {
+  capturePressureAdmissionDecisionsLightweight,
+  isFreeSlot,
+  resolveDispatchPreviewFromFleet,
+} from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { discardUndurableRun, getAllRuns, getRun, runRecordPath } from '../runs/store.js';
 import type { WorkOriginator } from '../security/work-originator.js';
@@ -905,11 +910,81 @@ function requiredPrepareProfileForQueueItem(item: QueueItem): string | null {
   return item.prepareProfile ?? null;
 }
 
+/** Queue ticks always use the lightweight in-memory capture: no slot resource
+ * resolution and no tmux/process attribution, ever. Deterministic tests stub
+ * it. */
+type QueuePressureCapture = (
+  machines: string[],
+) => Promise<Map<string, PressureAdmissionDecision>> | Map<string, PressureAdmissionDecision>;
+
+const defaultQueuePressureCapture: QueuePressureCapture = (machines) =>
+  capturePressureAdmissionDecisionsLightweight(machines);
+
+let queuePressureCaptureImpl: QueuePressureCapture = defaultQueuePressureCapture;
+
+export function setQueueDispatchPressureCaptureForTests(fn?: QueuePressureCapture): void {
+  queuePressureCaptureImpl = fn ?? defaultQueuePressureCapture;
+}
+
+/**
+ * True when the item has free project slots but every one of them sits on a
+ * pressure-rejected machine. The queue holds the item (returns null from
+ * selection) instead of letting the preview resolver throw and the tick treat
+ * a policy decline as a dispatch failure.
+ */
+export function queueItemHeldByPressure(
+  slots: readonly SlotStatus[],
+  project: string,
+  pressureDecisions: ReadonlyMap<string, PressureAdmissionDecision>,
+  allowedSlots?: readonly string[] | null,
+): boolean {
+  // Scope to the exact allow list the resolver will see (item allowlist or
+  // spread-policy subset). An admitted free slot outside it must not defeat
+  // the hold while every allowed slot still resolves to a rejected machine.
+  const allow = allowedSlots && allowedSlots.length > 0 ? new Set(allowedSlots) : null;
+  const freeProjectSlots = slots.filter(
+    (slot) => slot.project === project && isFreeSlot(slot) && (!allow || allow.has(slot.slot)),
+  );
+  if (freeProjectSlots.length === 0) return false;
+  return freeProjectSlots.every(
+    (slot) => pressureDecisions.get(slot.machine)?.outcome === 'rejected',
+  );
+}
+
 export async function selectQueueDispatchSlot(
   slots: SlotStatus[],
   item: QueueItem,
+  deps: { capturePressure?: QueuePressureCapture } = {},
 ): Promise<string | null> {
   const requiredPrepareProfile = requiredPrepareProfileForQueueItem(item);
+  const capturePressure = deps.capturePressure ?? queuePressureCaptureImpl;
+  // No dispatchable slot at all (ready/held, allowlist-scoped): stay queued
+  // WITHOUT any pressure work. A tick over a fully busy fleet must stay
+  // free. Pinned items keep the resolver's explicit-slot handling.
+  const allow =
+    item.allowedSlots && item.allowedSlots.length > 0 ? new Set(item.allowedSlots) : null;
+  const eligibleSlots = slots.filter(
+    (slot) =>
+      slot.project === item.project &&
+      canDispatchQueuedItemToSlot(slot) &&
+      (!allow || allow.has(slot.slot)),
+  );
+  if (!item.slotId && eligibleSlots.length === 0) return null;
+  // One lightweight pressure capture per selection pass; queued automatic
+  // dispatch must exclude pressure-rejected machines exactly like FIND_SLOT.
+  const pressureDecisions = await capturePressure([
+    ...new Set(
+      (item.slotId ? slots.filter((slot) => slot.project === item.project) : eligibleSlots).map(
+        (slot) => slot.machine,
+      ),
+    ),
+  ]);
+  if (queueItemHeldByPressure(slots, item.project, pressureDecisions, item.allowedSlots)) {
+    console.log(
+      `[dispatch-queue] holding ${item.id} (${item.project}/${item.ticketOrPr}): every allowed free machine is pressure-rejected`,
+    );
+    return null;
+  }
   if (item.launchSlotPolicy === 'spread' && item.launchGroupId) {
     const activeSiblingSlots = new Set(
       getAllRuns()
@@ -927,19 +1002,30 @@ export async function selectQueueDispatchSlot(
         (slotId) => !activeSiblingSlots.has(slotId),
       );
       if (allowed.length > 0) {
+        if (queueItemHeldByPressure(slots, item.project, pressureDecisions, allowed)) {
+          console.log(
+            `[dispatch-queue] holding ${item.id} (${item.project}/${item.ticketOrPr}): every spread-allowed free machine is pressure-rejected`,
+          );
+          return null;
+        }
         const preview = resolveDispatchPreviewFromFleet(
           { ...buildQueuePreviewParams(item), allowedSlots: allowed },
           slots,
           undefined,
-          { requiredPrepareProfile },
+          { requiredPrepareProfile, pressureDecisions },
         );
+        if (preview.pressureAdmission?.outcome === 'rejected') return null;
         return preview.preview.slotId;
       }
     }
   }
   const preview = resolveDispatchPreviewFromFleet(buildQueuePreviewParams(item), slots, undefined, {
     requiredPrepareProfile,
+    pressureDecisions,
   });
+  // A pinned queue item whose machine is pressure-rejected stays queued until
+  // pressure recedes; automatic selection already excluded rejected machines.
+  if (preview.pressureAdmission?.outcome === 'rejected') return null;
   return preview.preview.slotId;
 }
 

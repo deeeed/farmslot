@@ -1,8 +1,14 @@
 import type { Command } from 'commander';
 
-import type { DispatchPreviewResult, DispatchQueueListResult } from '@farmslot/protocol';
+import type {
+  DispatchPreviewResult,
+  DispatchQueueListResult,
+  PressureAdmissionDecision,
+  PressureAdmissionGetResult,
+  PressureAdmissionSetEnabledResult,
+} from '@farmslot/protocol';
 
-import { bold, cyan, dim, green } from '../colors.js';
+import { bold, cyan, dim, green, red, yellow } from '../colors.js';
 import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
 import { withProgress } from '../progress.js';
@@ -10,6 +16,67 @@ import { withProgress } from '../progress.js';
 import { executeRunCreate, type RunCreateCliOptions, runWizardDispatch } from './run.js';
 
 const DISPATCH_MODES = new Set(['interactive', 'autonomous', 'validation']);
+
+/**
+ * Render the backend-owned pressure admission decision. The CLI prints the
+ * decision verbatim: sustained sample evidence, attributed causes, rejection
+ * reason, refresh state, and the exact override syntax. It never re-derives
+ * thresholds client-side.
+ */
+export function renderPressureAdmission(decision: PressureAdmissionDecision): string[] {
+  const lines: string[] = [];
+  const evidence = decision.evidence;
+  const stateLabel =
+    decision.outcome === 'admitted'
+      ? decision.state === 'green'
+        ? green(decision.state)
+        : yellow(decision.state)
+      : red(decision.state);
+  lines.push(`  Pressure:  ${stateLabel} on ${decision.machine}`);
+  if (evidence.samples.length > 0) {
+    lines.push(
+      `    Samples:   ${evidence.consecutiveCriticalSamples}/${evidence.requiredConsecutiveCriticalSamples} consecutive critical (newest ${evidence.latestSampleAt ?? 'unknown'})`,
+    );
+    for (const sample of evidence.samples.slice(-4)) {
+      const load = sample.load1 !== undefined ? ` load1 ${sample.load1.toFixed(2)}` : '';
+      const marker = sample.critical ? red('critical') : dim('ok');
+      lines.push(
+        `      ${sample.collectedAt}  cpu ${(sample.cpu * 100).toFixed(0)}% mem ${(sample.memory * 100).toFixed(0)}% disk ${(sample.disk * 100).toFixed(0)}%${load}  ${marker}`,
+      );
+    }
+  }
+  if (evidence.generation) {
+    lines.push(`    Generation: ${evidence.generation}`);
+  }
+  if (decision.outcome === 'admitted') {
+    if (decision.state === 'override' && decision.override) {
+      lines.push(
+        `    Override:  accepted for this dispatch only (principal ${decision.override.principalId}: ${decision.override.reason})`,
+      );
+    }
+    return lines;
+  }
+  lines.push(`    Rejected:  ${red(decision.code)}: ${decision.reason}`);
+  if (decision.causes.length > 0) {
+    lines.push('    Causes:');
+    for (const cause of decision.causes) {
+      const target = cause.slotId ? ` slot ${cause.slotId}` : '';
+      const cleanup = cause.cleanupEligible
+        ? ''
+        : dim(' (explains pressure; not a cleanup target)');
+      lines.push(
+        `      ${cause.process} ×${cause.processCount}  ${cause.cpuPercent.toFixed(0)}% cpu  ${(cause.rssBytes / 1073741824).toFixed(1)}GB  ${cause.classification}/${cause.confidence}${target}${cleanup}`,
+      );
+    }
+  }
+  lines.push(`    Refresh:   re-run \`farmslot dispatch preview\` for a fresh decision`);
+  if (decision.overridable && evidence.generation) {
+    lines.push(
+      `    Override:  farmslot run create … --pressure-machine ${decision.machine} --pressure-generation '${evidence.generation}' --pressure-override-reason '<why this one dispatch is safe>'`,
+    );
+  }
+  return lines;
+}
 
 function parseDispatchMode(value: string | undefined) {
   if (!value) return undefined;
@@ -94,6 +161,9 @@ export function registerDispatchCommand(program: Command): void {
                     `  Digest:    ${p.executionTemplate.sha256.slice(0, 12)}`,
                   ]
                 : []),
+              ...(result.pressureAdmission
+                ? renderPressureAdmission(result.pressureAdmission)
+                : []),
               '',
             ].join('\n'),
           );
@@ -103,6 +173,75 @@ export function registerDispatchCommand(program: Command): void {
         return;
       }
     });
+
+  const admission = dispatch
+    .command('pressure-admission')
+    .description('Durable kill switch for sustained-pressure dispatch prevention');
+
+  const renderAdmissionControl = (
+    output: { write: (text: string) => void },
+    state: { enabled: boolean; updatedAt: string | null; updatedBy: string | null },
+  ) => {
+    output.write(
+      [
+        `${bold('Pressure admission')}: ${state.enabled ? green('enabled') : red('DISABLED')}`,
+        state.updatedAt
+          ? `  Last change: ${state.updatedAt} by ${state.updatedBy ?? 'unknown'}`
+          : `  Last change: never (gateway default)`,
+        state.enabled
+          ? ''
+          : `  ${yellow('Dispatches are NOT pressure-gated. Sampling, history, and charts continue.')}`,
+        '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  };
+
+  admission
+    .command('status')
+    .description('Show whether pressure-based dispatch prevention is active')
+    .action(async (_opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const state = await client.call<PressureAdmissionGetResult>(
+          'dispatch.pressureAdmission.get',
+          {},
+        );
+        if (emit.machine) emit.ok(state);
+        else renderAdmissionControl(output, state);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  for (const [verb, enabled] of [
+    ['enable', true],
+    ['disable', false],
+  ] as const) {
+    admission
+      .command(verb)
+      .description(
+        enabled
+          ? 'Re-enable pressure-based dispatch prevention'
+          : 'Disable pressure rejection/override prompts (sampling and charts continue)',
+      )
+      .action(async (_opts: unknown, cmd: Command) => {
+        const { client, output } = resolveContext(cmd);
+        const emit = createEmitter(output, cmd);
+        try {
+          const state = await client.call<PressureAdmissionSetEnabledResult>(
+            'dispatch.pressureAdmission.setEnabled',
+            { enabled },
+          );
+          if (emit.machine) emit.ok(state);
+          else renderAdmissionControl(output, state);
+        } catch (err) {
+          emit.fail(err);
+        }
+      });
+  }
 
   const queue = dispatch.command('queue').description('Inspect the shared dispatch queue');
 

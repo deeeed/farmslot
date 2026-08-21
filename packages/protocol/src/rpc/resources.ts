@@ -9,6 +9,7 @@ export const ResourceMethods = {
   cleanup: Methods.RESOURCE_CLEANUP,
   watchSetEnabled: Methods.RESOURCE_WATCH_SET_ENABLED,
   pressureSnapshot: Methods.RESOURCE_PRESSURE_SNAPSHOT,
+  pressureHistory: Methods.RESOURCE_PRESSURE_HISTORY,
   streamSubscribe: Methods.STREAM_SUBSCRIBE,
   streamUnsubscribe: Methods.STREAM_UNSUBSCRIBE,
   streamSnapshot: Methods.STREAM_SNAPSHOT,
@@ -174,6 +175,49 @@ export interface NodePressureHistorySample {
   loadAvg5: number;
 }
 
+/** Shared default freshness window for the pressure ring: a newest sample
+ * older than this counts as stale, both here and for dispatch admission. */
+export const DEFAULT_PRESSURE_STALE_AFTER_MS = 150_000;
+
+/** Freshness of a machine's bounded pressure history. `restored` means the
+ * ring was rehydrated from the gateway's persisted store after a restart and
+ * no live sample has arrived yet this boot; consumers get the history
+ * immediately instead of waiting for three live 30s samples, with staleness
+ * stated explicitly. `none` means the machine has no samples at all. */
+export interface NodePressureHistoryFreshness {
+  source: 'live' | 'restored' | 'none';
+  latestSampleAt: string | null;
+  ageMs: number | null;
+  /** True when the newest sample is older than the admission staleness window. */
+  stale: boolean;
+}
+
+// ─── Lightweight history-only read ───
+//
+// `resource.pressure.snapshot` resolves slot resources and process/tmux
+// attribution before returning, so it cannot be the first paint after a
+// gateway restart. `resource.pressure.history` reads ONLY the in-memory
+// (possibly rehydrated) rings plus freshness and returns immediately; clients
+// render charts from it first and load the full snapshot in the background.
+// This is deliberately its own contract, not a partial snapshot shape.
+
+export interface ResourcePressureHistoryParams {
+  machine?: string;
+  machines?: string[];
+}
+
+export interface ResourcePressureHistoryMachine {
+  machine: string;
+  online: boolean | null;
+  history: NodePressureHistorySample[];
+  historyFreshness: NodePressureHistoryFreshness;
+}
+
+export interface ResourcePressureHistoryResult {
+  checkedAt: string;
+  machines: ResourcePressureHistoryMachine[];
+}
+
 export interface ProcessAttributionGroup {
   rootPid: number;
   processCount: number;
@@ -214,6 +258,7 @@ export interface ResourcePressureMachine {
   system?: import('../contracts/index.js').MachineHealth['system'];
   capacity?: import('../contracts/index.js').MachineHealth['capacity'];
   history: NodePressureHistorySample[];
+  historyFreshness?: NodePressureHistoryFreshness;
   processAttribution: {
     sampledAt?: string;
     unavailableReason?: string;

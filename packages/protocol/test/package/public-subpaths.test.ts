@@ -174,6 +174,8 @@ for (const [name, actual, expected] of [
     DispatchMethods,
     {
       preview: Methods.DISPATCH_PREVIEW,
+      pressureAdmissionGet: Methods.DISPATCH_PRESSURE_ADMISSION_GET,
+      pressureAdmissionSetEnabled: Methods.DISPATCH_PRESSURE_ADMISSION_SET_ENABLED,
       matchProject: Methods.DISPATCH_MATCH_PROJECT,
       candidates: Methods.DISPATCH_CANDIDATES,
       queueAdd: Methods.DISPATCH_QUEUE_ADD,
@@ -226,6 +228,7 @@ for (const [name, actual, expected] of [
       cleanup: Methods.RESOURCE_CLEANUP,
       watchSetEnabled: Methods.RESOURCE_WATCH_SET_ENABLED,
       pressureSnapshot: Methods.RESOURCE_PRESSURE_SNAPSHOT,
+      pressureHistory: Methods.RESOURCE_PRESSURE_HISTORY,
       streamSubscribe: Methods.STREAM_SUBSCRIBE,
       streamUnsubscribe: Methods.STREAM_UNSUBSCRIBE,
       streamSnapshot: Methods.STREAM_SNAPSHOT,
