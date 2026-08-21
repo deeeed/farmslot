@@ -142,6 +142,7 @@ export class FleetCanvas extends LitElement {
   private _machinePauseRestoreSelector: MachinePauseSelector = { kind: 'all' };
   private _machinePauseEventTimer?: ReturnType<typeof setTimeout>;
   private _pressureHistoryRefreshTimer?: ReturnType<typeof setTimeout>;
+  private _resourcePressureReconnectTimer?: ReturnType<typeof setTimeout>;
   private unsub?: () => void;
   private _unsubConnected?: () => void;
   private _unsubDisconnected?: () => void;
@@ -338,8 +339,10 @@ export class FleetCanvas extends LitElement {
         versionMatch: p.versionMatch ?? p.protocolVersion === this.gatewayProtocolVersion,
       });
       this.nodeInfo = nextInfo;
-      // Reconnect refreshes the charts through the lightweight history read.
-      this.schedulePressureHistoryRefresh();
+      // A reconnect is rare and can recover an initial snapshot/control fetch
+      // that raced node startup. Coalesce a burst of node registrations into
+      // one explicit full refresh while the resource view is open.
+      this.scheduleResourcePressureReconnectRefresh();
     });
     this._unsubDisconnected = gateway.subscribe<NodeDisconnectedPayload>(
       Events.NODE_DISCONNECTED,
@@ -475,8 +478,16 @@ export class FleetCanvas extends LitElement {
     }
   }
 
+  private clearResourcePressureReconnectRefresh() {
+    if (this._resourcePressureReconnectTimer) {
+      clearTimeout(this._resourcePressureReconnectTimer);
+      this._resourcePressureReconnectTimer = undefined;
+    }
+  }
+
   disconnectedCallback() {
     this.clearPressureHistoryRefresh();
+    this.clearResourcePressureReconnectRefresh();
     this._providerAccountsUnsub?.();
     this._providerAccountsUnsub = null;
     super.disconnectedCallback();
@@ -1193,6 +1204,14 @@ export class FleetCanvas extends LitElement {
             err instanceof Error ? err.message : String(err),
           );
         });
+    }, 2_000);
+  }
+
+  private scheduleResourcePressureReconnectRefresh(): void {
+    if (this.groupBy !== 'resource' || this._resourcePressureReconnectTimer) return;
+    this._resourcePressureReconnectTimer = setTimeout(() => {
+      this._resourcePressureReconnectTimer = undefined;
+      void this.fetchResourcePressure();
     }, 2_000);
   }
 

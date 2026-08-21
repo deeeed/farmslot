@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import type { PressureAdmissionDecision } from '@farmslot/protocol';
+
 const root = mkdtempSync(join(tmpdir(), 'farmslot-provenance-'));
 const queueFile = join(root, 'dispatch-queue.json');
 const backlogFile = join(root, 'backlog.json');
@@ -86,6 +88,7 @@ test('legacy migration is per-store, observable, one-time, and public projection
   const logs: string[] = [];
   const originalLog = console.log;
   console.log = (...args: unknown[]) => logs.push(args.map(String).join(' '));
+  queue.setQueueDispatchPressureCaptureForTests(admittedPressure);
   try {
     const legacyOriginator = { kind: 'principal' as const, principalId: 'local-admin' };
     await queue.loadQueue(legacyOriginator);
@@ -274,9 +277,34 @@ test('legacy migration is per-store, observable, one-time, and public projection
       new RegExp(`${added.id}[\\s\\S]*cannot be resolved`, 'u'),
     );
   } finally {
+    queue.setQueueDispatchPressureCaptureForTests();
     console.log = originalLog;
   }
 });
+
+function admittedPressure(machines: string[]): Map<string, PressureAdmissionDecision> {
+  const collectedAt = new Date().toISOString();
+  return new Map(
+    machines.map((machine) => [
+      machine,
+      {
+        outcome: 'admitted' as const,
+        machine,
+        state: 'green' as const,
+        evidence: {
+          machine,
+          generation: `${machine}|provenance-test`,
+          evaluatedAt: collectedAt,
+          samples: [],
+          consecutiveCriticalSamples: 0,
+          requiredConsecutiveCriticalSamples: 3,
+          staleAfterMs: 150_000,
+          latestSampleAt: collectedAt,
+        },
+      },
+    ]),
+  );
+}
 
 function readyFleet(slot: string) {
   return {

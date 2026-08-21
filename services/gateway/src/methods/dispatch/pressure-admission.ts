@@ -425,8 +425,11 @@ export function evaluatePressureAdmission(
 
 // ─── Capture adapters ───
 
-function disabledDecisions(machines: string[]): Map<string, PressureAdmissionDecision> {
-  const disabledAt = new Date().toISOString();
+function disabledDecisions(
+  machines: string[],
+  now: number,
+): Map<string, PressureAdmissionDecision> {
+  const disabledAt = new Date(now).toISOString();
   return new Map(
     machines.map((machine) => [
       machine,
@@ -522,8 +525,11 @@ function validationFixtureCapture(
     }),
   );
   return {
-    ...historyOnlyCapture(machine),
+    machine,
     online: true,
+    headroom: 'red',
+    severity: 'critical',
+    concerns: [],
     historyFreshness: {
       source: 'live',
       latestSampleAt: samples.at(-1)?.collectedAt ?? null,
@@ -531,6 +537,25 @@ function validationFixtureCapture(
       stale: false,
     },
     history: samples,
+    processAttribution: {
+      unavailableReason: 'Validation fixture has no process attribution.',
+      truncated: false,
+      ancestryTruncated: false,
+      sampledProcesses: 0,
+      totalProcesses: 0,
+      maxEntries: 0,
+      omittedGroups: 0,
+      classCounts: { active: 0, retained: 0, stale: 0, manual: 0, unknown: 0 },
+      managedGroupCount: 0,
+      managedClassCounts: { active: 0, retained: 0, stale: 0, manual: 0, unknown: 0 },
+      groups: [],
+    },
+    slots: { total: 0, ready: 0, busy: 0, working: 0, manual: 0, disabled: 0 },
+    resources: {
+      total: 0,
+      byStatus: { unknown: 0, running: 0, stopped: 0, error: 0, stale: 0 },
+      cleanupCandidates: 0,
+    },
   };
 }
 
@@ -560,29 +585,38 @@ function evaluateForMachine(
   return fixture ? stampValidationFixture(decision) : decision;
 }
 
-/** Standard admission capture over in-memory history and cached attribution. */
-export function capturePressureAdmissionDecisions(
+type PressureCaptureOptions = {
+  override?: PressureDispatchOverride;
+  principalId?: string;
+  config?: PressureAdmissionConfig;
+};
+
+function captureInMemoryPressureAdmissionDecisions(
   machines: string[],
-  options?: {
-    override?: PressureDispatchOverride;
-    principalId?: string;
-    config?: PressureAdmissionConfig;
-  },
+  options?: PressureCaptureOptions,
 ): Map<string, PressureAdmissionDecision> {
   const uniqueMachines = [...new Set(machines)];
   if (uniqueMachines.length === 0) return new Map();
+  const now = Date.now();
   // Durable kill switch: when off, every machine is admitted with
   // state='disabled' and no pressure read happens. Sampling, history, and
   // charts continue elsewhere; only dispatch prevention pauses.
-  if (!isPressureAdmissionEnabled()) return disabledDecisions(uniqueMachines);
+  if (!isPressureAdmissionEnabled()) return disabledDecisions(uniqueMachines, now);
   const config = options?.config ?? resolvePressureAdmissionConfig();
-  const now = Date.now();
   return new Map(
     uniqueMachines.map((machine) => [
       machine,
       evaluateForMachine(machine, historyOnlyCapture(machine), config, now, options),
     ]),
   );
+}
+
+/** Standard admission capture over in-memory history and cached attribution. */
+export function capturePressureAdmissionDecisions(
+  machines: string[],
+  options?: PressureCaptureOptions,
+): Map<string, PressureAdmissionDecision> {
+  return captureInMemoryPressureAdmissionDecisions(machines, options);
 }
 
 /**
@@ -592,23 +626,9 @@ export function capturePressureAdmissionDecisions(
  */
 export function capturePressureAdmissionDecisionsLightweight(
   machines: string[],
-  options?: {
-    override?: PressureDispatchOverride;
-    principalId?: string;
-    config?: PressureAdmissionConfig;
-  },
+  options?: PressureCaptureOptions,
 ): Map<string, PressureAdmissionDecision> {
-  const uniqueMachines = [...new Set(machines)];
-  if (uniqueMachines.length === 0) return new Map();
-  if (!isPressureAdmissionEnabled()) return disabledDecisions(uniqueMachines);
-  const config = options?.config ?? resolvePressureAdmissionConfig();
-  const now = Date.now();
-  return new Map(
-    uniqueMachines.map((machine) => [
-      machine,
-      evaluateForMachine(machine, historyOnlyCapture(machine), config, now, options),
-    ]),
-  );
+  return captureInMemoryPressureAdmissionDecisions(machines, options);
 }
 
 /** Error code carried by pressure-rejected dispatch attempts. */

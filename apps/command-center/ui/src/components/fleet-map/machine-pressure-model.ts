@@ -14,9 +14,13 @@ export function mergePressureHistoryForRender(
   const byMachine = new Map(preview?.map((machine) => [machine.machine, machine]) ?? []);
   return machines.map((machine) => {
     const latest = byMachine.get(machine.machine);
-    return latest
-      ? { ...machine, history: latest.history, historyFreshness: latest.historyFreshness }
-      : machine;
+    if (!latest) return machine;
+    const snapshotAt = Date.parse(machine.history.at(-1)?.collectedAt ?? '');
+    const previewAt = Date.parse(latest.history.at(-1)?.collectedAt ?? '');
+    if (!Number.isFinite(previewAt) || (Number.isFinite(snapshotAt) && previewAt <= snapshotAt)) {
+      return machine;
+    }
+    return { ...machine, history: latest.history, historyFreshness: latest.historyFreshness };
   });
 }
 

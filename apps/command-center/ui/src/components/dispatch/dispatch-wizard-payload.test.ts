@@ -35,6 +35,14 @@ const baseDraft = {
   comparison: {},
 } satisfies Partial<DispatchPayloadDraft>;
 
+test('rejected nudge rows retain cached pressure-cause details', () => {
+  const source = readFileSync(
+    new URL('./dispatch-wizard-candidates-renderer.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /\.\.\.pressureCauseDetails\(candidate\),/u);
+});
+
 test('buildRunCreateParams matches golden fix-bug payload', () => {
   const payload = buildRunCreateParams({
     ...baseDraft,

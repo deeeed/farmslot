@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import type {
@@ -20,6 +21,19 @@ import {
   pressureSparklinePoints,
   visiblePressureGroups,
 } from './machine-pressure-model.js';
+
+test('node reconnect retries one debounced explicit pressure snapshot', () => {
+  const source = readFileSync(new URL('./fleet-canvas.ts', import.meta.url), 'utf8');
+  assert.match(
+    source,
+    /Events\.NODE_CONNECTED[\s\S]*scheduleResourcePressureReconnectRefresh\(\)/u,
+  );
+  assert.match(
+    source,
+    /scheduleResourcePressureReconnectRefresh[\s\S]*void this\.fetchResourcePressure\(\)/u,
+  );
+  assert.match(source, /clearResourcePressureReconnectRefresh\(\)[\s\S]*disconnectedCallback/u);
+});
 
 test('live history refresh updates snapshot charts without replacing attribution', () => {
   const oldSample = {
@@ -60,6 +74,21 @@ test('live history refresh updates snapshot charts without replacing attribution
   assert.equal(merged.history.length, 2);
   assert.equal(merged.historyFreshness?.source, 'live');
   assert.equal(merged.processAttribution, attribution);
+
+  const newestSample = { ...newSample, collectedAt: '2026-08-21T09:01:00.000Z' };
+  const newerSnapshot = {
+    ...snapshotMachine,
+    history: [oldSample, newSample, newestSample],
+    historyFreshness: {
+      source: 'live' as const,
+      latestSampleAt: newestSample.collectedAt,
+      ageMs: 500,
+      stale: false,
+    },
+  };
+  const [preserved] = mergePressureHistoryForRender([newerSnapshot], [previewMachine]);
+  assert.equal(preserved.history.at(-1)?.collectedAt, newestSample.collectedAt);
+  assert.equal(preserved.history.length, 3);
 });
 
 test('cleanup eligibility detects drift and execution strips display fields', () => {

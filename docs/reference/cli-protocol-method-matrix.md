@@ -116,19 +116,19 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## dispatch.\*
 
-| Method                                  | Surface       | CLI command                                   | TUI      | Note                                                                                           |
-| --------------------------------------- | ------------- | --------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------- | --- |
-| `dispatch.preview`                      | typed-command | `farmslot dispatch`                           |          |                                                                                                |
-| `dispatch.pressureAdmission.get`        | typed-command | `farmslot dispatch pressure-admission status` |          |                                                                                                |
-| `dispatch.pressureAdmission.setEnabled` | typed-command | `farmslot dispatch pressure-admission enable  | disable` |                                                                                                |     |
-| `dispatch.matchProject`                 | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `dispatch.candidates`                   | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `dispatch.queue.add`                    | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `dispatch.queue.list`                   | typed-command | `farmslot dispatch queue list`                |          |                                                                                                |
-| `dispatch.queue.remove`                 | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `dispatch.queue.removeOrphan`           | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `dispatch.queue.update`                 | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `dispatch.queue.reorder`                | rpc-only      |                                               |          | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| Method                                  | Surface       | CLI command                                            | TUI | Note                                                                                           |
+| --------------------------------------- | ------------- | ------------------------------------------------------ | --- | ---------------------------------------------------------------------------------------------- |
+| `dispatch.preview`                      | typed-command | `farmslot dispatch`                                    |     |                                                                                                |
+| `dispatch.pressureAdmission.get`        | typed-command | `farmslot dispatch pressure-admission status`          |     |                                                                                                |
+| `dispatch.pressureAdmission.setEnabled` | typed-command | `farmslot dispatch pressure-admission enable\|disable` |     |                                                                                                |
+| `dispatch.matchProject`                 | rpc-only      |                                                        |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `dispatch.candidates`                   | rpc-only      |                                                        |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `dispatch.queue.add`                    | rpc-only      |                                                        |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `dispatch.queue.list`                   | typed-command | `farmslot dispatch queue list`                         |     |                                                                                                |
+| `dispatch.queue.remove`                 | rpc-only      |                                                        |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `dispatch.queue.removeOrphan`           | rpc-only      |                                                        |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `dispatch.queue.update`                 | rpc-only      |                                                        |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `dispatch.queue.reorder`                | rpc-only      |                                                        |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 
 ## eval.\*
 

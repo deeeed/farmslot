@@ -91,6 +91,7 @@ function candidateDetails(candidate: DispatchCandidate): SlotChoiceBadge[] {
       title: 'Risk flag from gateway eligibility check',
       tone: 'warning' as const,
     })),
+    ...pressureCauseDetails(candidate),
   ];
 }
 
