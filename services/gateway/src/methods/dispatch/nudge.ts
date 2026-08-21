@@ -37,6 +37,7 @@ import {
   runnerSupportsTmuxNudges,
   sendRunnerInstructionSafely,
 } from '../../runners/registry.js';
+import { dispatchStartedAtMs } from '../../runners/session-path-resolution.js';
 import {
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
@@ -45,7 +46,11 @@ import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
-import { ensureWorkerRoleTarget, waitForRunnerProcessExit } from './execute.js';
+import {
+  enforceDispatchPressureGate,
+  ensureWorkerRoleTarget,
+  waitForRunnerProcessExit,
+} from './execute.js';
 import { verifyBranchAffinityNudgeStillEligible } from './preview.js';
 import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from './slot-scoring.js';
 
@@ -358,6 +363,25 @@ export async function nudgeDispatch(
   const retainedSession = deliveryOwnerRun
     ? resolveRunRetainedSessionBinding(deliveryOwnerRun, deliveryOwnerContext)
     : { binding: null, reason: null };
+
+  // Delivery-boundary pressure gate (MANUAL-000109): a nudge delivers a new
+  // task without dispatchExecute, so run the gate after all target resolution
+  // and immediately before the irreversible send. Re-read the run so an
+  // earlier gate's durable consumption stamp is visible to this boundary.
+  const latestRequestingRun = getRun(params.runId) ?? requestingRun;
+  await enforceDispatchPressureGate({
+    machine: vars.machine,
+    runId: params.runId,
+    run: latestRequestingRun,
+    attemptKey: `${params.runId}:${dispatchStartedAtMs(latestRequestingRun) ?? 'no-attempt'}`,
+    onInfo: (detail) => step('info', detail),
+    deps: {
+      persistRun: async (runId, patch) => {
+        const { updateRun, persistRunNow } = await import('../../runs/store.js');
+        await persistRunNow(updateRun(runId, patch), 'pressure-override-consumption');
+      },
+    },
+  });
   const sent = await sendRunnerInstructionSafely(
     vars,
     workerTarget,

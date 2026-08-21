@@ -35,6 +35,14 @@ const baseDraft = {
   comparison: {},
 } satisfies Partial<DispatchPayloadDraft>;
 
+test('rejected nudge rows retain cached pressure-cause details', () => {
+  const source = readFileSync(
+    new URL('./dispatch-wizard-candidates-renderer.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /\.\.\.pressureCauseDetails\(candidate\),/u);
+});
+
 test('buildRunCreateParams matches golden fix-bug payload', () => {
   const payload = buildRunCreateParams({
     ...baseDraft,
@@ -177,4 +185,43 @@ test('buildRunCreateParams forwards prepareProfile and suppresses it under skipP
   assert.equal(buildRunCreateParams(skipped).prepareProfile, undefined);
   assert.equal(buildRunCreateParams(skipped).skipPrepare, true);
   assert.equal(buildDispatchQueueAddParams(skipped).prepareProfile, undefined);
+});
+
+test('pressure override keeps the reuse intent: nudge and fresh payloads stay valid', () => {
+  const base: DispatchPayloadDraft = {
+    flowType: 'pr-complete',
+    project: 'demo-farm',
+    ticketOrPr: 'owner/repo#42',
+    slotId: 'macwork-ff-2',
+    mode: 'autonomous',
+    devInteractiveProfile: 'lightweight',
+    pressureOverride: {
+      machine: 'macwork',
+      pressureGeneration: 'macwork|gen-a|3|2026-08-21T09:59:30.000Z',
+      reason: 'one urgent dispatch',
+    },
+    comparison: {},
+  };
+
+  const nudge = buildRunCreateParams({ ...base, nudgeReuse: true });
+  assert.equal(nudge.nudgeReuse, true);
+  assert.equal(nudge.freshReuse, undefined);
+  assert.deepEqual(nudge.pressureOverride, base.pressureOverride);
+
+  const fresh = buildRunCreateParams({ ...base, freshReuse: true });
+  assert.equal(fresh.freshReuse, true);
+  assert.equal(fresh.nudgeReuse, undefined);
+  assert.deepEqual(fresh.pressureOverride, base.pressureOverride);
+
+  // Admitted previews forward the identity instead of an override.
+  const admitted = buildRunCreateParams({
+    ...base,
+    pressureOverride: undefined,
+    pressureAdmissionRef: { machine: 'macwork', pressureGeneration: 'gen-x' },
+  });
+  assert.deepEqual(admitted.pressureAdmissionRef, {
+    machine: 'macwork',
+    pressureGeneration: 'gen-x',
+  });
+  assert.equal(admitted.pressureOverride, undefined);
 });

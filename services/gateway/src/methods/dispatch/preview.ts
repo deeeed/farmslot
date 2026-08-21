@@ -5,7 +5,9 @@ import {
   type DispatchPreviewParams,
   type DispatchPreviewResult,
   type FlowType,
+  isPressureAdmissionRejected,
   PR_BOUND_FLOW_TYPES,
+  type PressureAdmissionDecision,
   primaryRoleForFlow,
   type Run,
   type SlotStatus,
@@ -34,12 +36,17 @@ import {
 } from '../../runners/registry.js';
 import { getRunnerStatusProvider } from '../../runners/status-provider.js';
 import { getAllRuns } from '../../runs/store.js';
+import { currentSessionOriginator } from '../../security/work-originator.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
 } from '../../tasks/execution-template-catalog.js';
 import { normalizeRunCreateMode } from '../run-create-mode.js';
 
+import {
+  capturePressureAdmissionDecisions,
+  formatPressureRejection,
+} from './pressure-admission.js';
 import {
   companionResourceBlocker,
   findBestSlot,
@@ -733,14 +740,45 @@ export async function dispatchCandidates(
     nudgeMetaBySlot = new Map(candidatesList.map((c) => [c.slot.slot, c]));
   }
 
+  // One deduplicated pressure capture for every machine in this request; each
+  // slot row on a machine carries the same backend-owned decision. Rejected
+  // machines disable their free rows the same way FIND_SLOT will refuse them.
+  const pressureDecisions = await capturePressureAdmissionDecisions(
+    [...new Set(projectSlots.map((s) => s.machine))],
+    // Candidate rows stay on the in-memory admission path. Causes come from
+    // the last explicit resource snapshot cache; a miss is shown as degraded
+    // attribution instead of starting tmux/resource work during dispatch.
+    {},
+  );
+
   const candidates = projectSlots
     .map((s) => {
       const nudge = nudgeMetaBySlot.get(s.slot);
-      const ineligibleReason = candidateIneligibilityReason(s, fleet.slots, {
+      const pressureAdmission = pressureDecisions.get(s.machine);
+      const baseIneligibleReason = candidateIneligibilityReason(s, fleet.slots, {
         isNudgeRow: Boolean(nudge),
         targetBranch: resolvedTargetBranch,
         requiredPrepareProfile,
       });
+      // A pressure rejection gates every dispatchable row, fresh AND nudge.
+      // a nudge still delivers a new task to the loaded machine. The wizard
+      // renders its override affordance from ineligibilitySource +
+      // pressureAdmission.overridable on the disabled row (preserving the
+      // nudge intent); the reason text is display-only.
+      const pressureBlocksDispatch =
+        !baseIneligibleReason &&
+        (Boolean(nudge) || isFreeSlot(s)) &&
+        pressureAdmission?.outcome === 'rejected';
+      const ineligibleReason =
+        baseIneligibleReason ??
+        (pressureBlocksDispatch && pressureAdmission?.outcome === 'rejected'
+          ? formatPressureRejection(pressureAdmission)
+          : null);
+      const ineligibilitySource: 'slot' | 'pressure' | null = baseIneligibleReason
+        ? 'slot'
+        : pressureBlocksDispatch
+          ? 'pressure'
+          : null;
       return {
         slotId: s.slot,
         score: isFreeSlot(s)
@@ -759,6 +797,8 @@ export async function dispatchCandidates(
           familyContext.familyId && s.currentFamilyId === familyContext.familyId,
         ),
         ...(ineligibleReason ? { ineligibleReason } : {}),
+        ...(ineligibilitySource ? { ineligibilitySource } : {}),
+        ...(pressureAdmission ? { pressureAdmission } : {}),
         ...(nudge
           ? {
               nudgeEligible: true,
@@ -790,6 +830,14 @@ export async function dispatchCandidates(
 
 export async function dispatchPreview(
   params: DispatchPreviewParams,
+  internalOptions: {
+    /**
+     * Gateway-internal only (never a wire param): principal persisted in a
+     * run's override audit, for delayed run-engine previews. Direct RPC calls
+     * must leave this unset so the session originator is the only authority.
+     */
+    overridePrincipalId?: string;
+  } = {},
 ): Promise<DispatchPreviewResult> {
   await normalizeRunCreateMode(params, await loadProjectConfig(params.project));
   const fleet = await loadFleetStatus(true);
@@ -832,11 +880,47 @@ export async function dispatchPreview(
   }
   // Explicit prepare only for resource eligibility; profileFit is attached later as non-binding advisory.
   const requiredPrepareProfile = params.prepareProfile || null;
+  // One deduplicated pressure capture for every machine this preview can
+  // touch; the same captured evidence drives auto-selection exclusion and the
+  // explicit-slot decision. Override principal: run-engine passes the audit
+  // recorded at run.create; direct RPC callers resolve the session originator.
+  const explicitSlotMachine = params.slotId
+    ? fleet.slots.find((s) => s.slot === params.slotId)?.machine
+    : undefined;
+  const pressureDecisions = await capturePressureAdmissionDecisions(
+    [
+      ...new Set([
+        ...projectSlots.map((s) => s.machine),
+        ...(explicitSlotMachine ? [explicitSlotMachine] : []),
+      ]),
+    ],
+    {
+      ...(params.pressureOverride
+        ? {
+            // Wire params never carry the audit principal. Extra JSON fields
+            // must not be able to spoof it. Only the internal run-engine path
+            // may supply a persisted audit principal.
+            override: {
+              machine: params.pressureOverride.machine,
+              pressureGeneration: params.pressureOverride.pressureGeneration,
+              reason: params.pressureOverride.reason,
+            },
+            principalId: internalOptions.overridePrincipalId ?? sessionPrincipalId(),
+          }
+        : {}),
+    },
+  );
   const result = resolveDispatchPreviewFromFleet(
     { ...enriched, ...resolveDispatchFamilyContext(enriched) },
     fleet.slots,
     projectConfigs,
-    { requiredPrepareProfile },
+    {
+      requiredPrepareProfile,
+      pressureDecisions,
+      ...(params.pressureOverride
+        ? { pressureOverrideMachine: params.pressureOverride.machine }
+        : {}),
+    },
   );
   const slotInfo = fleet.slots.find((s) => s.slot === result.preview.slotId);
   const configuredProject = projectConfigList.find(
@@ -880,10 +964,51 @@ export function resolveDispatchPreviewFromFleet(
   params: DispatchPreviewParams,
   slots: SlotStatus[],
   projectConfigs?: ReturnType<typeof projectConfigsFromProjects>,
-  options?: { requiredPrepareProfile?: string | null },
+  options?: {
+    requiredPrepareProfile?: string | null;
+    /** One captured pressure decision per machine (same evidence for every
+     * slot on the machine). Automatic selection excludes rejected machines;
+     * an explicit slot returns the same rejection on the result. */
+    pressureDecisions?: ReadonlyMap<string, PressureAdmissionDecision>;
+    /** Machine the caller's override names, if any. A rejected SELECTED
+     * machine that differs from it reports PRESSURE_OVERRIDE_MISMATCH; other
+     * machines keep their own base decision. */
+    pressureOverrideMachine?: string;
+  },
 ): DispatchPreviewResult {
   let slotInfo: SlotStatus;
   const requiredPrepareProfile = options?.requiredPrepareProfile ?? params.prepareProfile ?? null;
+  const pressureDecisions = options?.pressureDecisions;
+  const pressureRejectedMachines = new Set(
+    [...(pressureDecisions ?? [])]
+      .filter(([, decision]) => isPressureAdmissionRejected(decision))
+      .map(([machine]) => machine),
+  );
+  const withPressure = (result: DispatchPreviewResult, machine: string): DispatchPreviewResult => {
+    let decision = pressureDecisions?.get(machine);
+    // An override naming a DIFFERENT machine than the selected one is a
+    // misdirected operator intent: reject at the boundary regardless of the
+    // selected machine's own state (green included). Only the disabled kill
+    // switch, the deliberate global bypass, ignores it.
+    if (
+      decision &&
+      options?.pressureOverrideMachine &&
+      options.pressureOverrideMachine !== machine &&
+      !(decision.outcome === 'admitted' && decision.state === 'disabled')
+    ) {
+      decision = {
+        outcome: 'rejected',
+        machine,
+        state: isPressureAdmissionRejected(decision) ? decision.state : 'stale',
+        code: 'PRESSURE_OVERRIDE_MISMATCH',
+        reason: `Override is bound to machine ${options.pressureOverrideMachine} but the dispatch selected ${machine}; drop the override or submit one for this machine.`,
+        causes: isPressureAdmissionRejected(decision) ? decision.causes : [],
+        evidence: decision.evidence,
+        overridable: isPressureAdmissionRejected(decision) ? decision.overridable : false,
+      };
+    }
+    return decision ? { ...result, pressureAdmission: decision } : result;
+  };
 
   if (params.slotId) {
     const found = slots.find((s) => s.slot === params.slotId);
@@ -905,6 +1030,7 @@ export function resolveDispatchPreviewFromFleet(
       });
       if (
         affinitySlot &&
+        !pressureRejectedMachines.has(affinitySlot.machine) &&
         !validateSlotForDispatch(affinitySlot, slots, {
           targetBranch: params.targetBranch,
           requiredPrepareProfile,
@@ -914,18 +1040,21 @@ export function resolveDispatchPreviewFromFleet(
           `[dispatch] ${params.flowType} affinity: reusing slot ${affinitySlot.slot} (lifecycle=${affinitySlot.lifecycle}, branch=${affinitySlot.branch})`,
         );
         slotInfo = affinitySlot;
-        return {
-          preview: {
-            slotId: slotInfo.slot,
-            project: params.project,
-            flowType: params.flowType as FlowType,
-            branch: slotInfo.branch || null,
-            runner: resolvePreviewRunner(slotInfo),
-            model: resolvePreviewModel(slotInfo),
-            taskId: params.ticketOrPr,
-            ...(params.domain ? { domain: params.domain } : {}),
+        return withPressure(
+          {
+            preview: {
+              slotId: slotInfo.slot,
+              project: params.project,
+              flowType: params.flowType as FlowType,
+              branch: slotInfo.branch || null,
+              runner: resolvePreviewRunner(slotInfo),
+              model: resolvePreviewModel(slotInfo),
+              taskId: params.ticketOrPr,
+              ...(params.domain ? { domain: params.domain } : {}),
+            },
           },
-        };
+          slotInfo.machine,
+        );
       }
     }
 
@@ -937,6 +1066,7 @@ export function resolveDispatchPreviewFromFleet(
       variant: params.variant,
       requiredPrepareProfile,
       projectConfigs,
+      pressureRejectedMachines,
     });
     if (!best) {
       const allow =
@@ -971,11 +1101,14 @@ export function resolveDispatchPreviewFromFleet(
         }
       }
       const reasons = projectSlots.map((s) => {
+        const pressureDecision = pressureDecisions?.get(s.machine);
         const blocker =
-          validateSlotForDispatch(s, slots, {
-            targetBranch: params.targetBranch,
-            requiredPrepareProfile,
-          }) ?? 'unknown blocker';
+          pressureDecision && isPressureAdmissionRejected(pressureDecision)
+            ? formatPressureRejection(pressureDecision)
+            : (validateSlotForDispatch(s, slots, {
+                targetBranch: params.targetBranch,
+                requiredPrepareProfile,
+              }) ?? 'unknown blocker');
         return `${s.slot}: ${blocker} (lifecycle=${s.lifecycle}, phase=${s.phase}, agent=${s.agent})`;
       });
       throw new Error(
@@ -985,18 +1118,28 @@ export function resolveDispatchPreviewFromFleet(
     slotInfo = best;
   }
 
-  return {
-    preview: {
-      slotId: slotInfo.slot,
-      project: params.project,
-      flowType: params.flowType as FlowType,
-      branch: null,
-      runner: resolvePreviewRunner(slotInfo),
-      model: resolvePreviewModel(slotInfo),
-      taskId: params.ticketOrPr,
-      ...(params.domain ? { domain: params.domain } : {}),
+  return withPressure(
+    {
+      preview: {
+        slotId: slotInfo.slot,
+        project: params.project,
+        flowType: params.flowType as FlowType,
+        branch: null,
+        runner: resolvePreviewRunner(slotInfo),
+        model: resolvePreviewModel(slotInfo),
+        taskId: params.ticketOrPr,
+        ...(params.domain ? { domain: params.domain } : {}),
+      },
     },
-  };
+    slotInfo.machine,
+  );
+}
+
+/** Authenticated origin for a direct RPC override; 'system' only for trusted
+ * in-process callers that never enter through an ingress. */
+function sessionPrincipalId(): string {
+  const originator = currentSessionOriginator();
+  return originator.kind === 'principal' ? originator.principalId : 'system';
 }
 
 export function resolvePreviewRunner(slotInfo: Pick<SlotStatus, 'runner'>): string {

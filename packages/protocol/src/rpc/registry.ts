@@ -44,6 +44,8 @@ export const Methods = {
 
   // Dispatch
   DISPATCH_PREVIEW: 'dispatch.preview',
+  DISPATCH_PRESSURE_ADMISSION_GET: 'dispatch.pressureAdmission.get',
+  DISPATCH_PRESSURE_ADMISSION_SET_ENABLED: 'dispatch.pressureAdmission.setEnabled',
   DISPATCH_MATCH_PROJECT: 'dispatch.matchProject',
   DISPATCH_CANDIDATES: 'dispatch.candidates',
   DISPATCH_QUEUE_ADD: 'dispatch.queue.add',
@@ -229,6 +231,7 @@ export const Methods = {
   RESOURCE_CLEANUP: 'resource.cleanup',
   RESOURCE_WATCH_SET_ENABLED: 'resource.watch.setEnabled',
   RESOURCE_PRESSURE_SNAPSHOT: 'resource.pressure.snapshot',
+  RESOURCE_PRESSURE_HISTORY: 'resource.pressure.history',
   SLOT_ACTION_LIST: 'slot.action.list',
   SLOT_ACTION_RUN: 'slot.action.run',
 

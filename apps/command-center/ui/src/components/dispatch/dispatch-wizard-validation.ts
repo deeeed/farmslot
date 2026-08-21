@@ -1,7 +1,7 @@
 import type { FlowType } from '@farmslot/protocol';
 
 import type { DispatchCandidate } from './dispatch-wizard-selectors.js';
-import { candidateDispatchable } from './dispatch-wizard-selectors.js';
+import { candidateDispatchable, pressureOverrideAvailable } from './dispatch-wizard-selectors.js';
 
 export function canDispatch(input: {
   flowType: FlowType | null;
@@ -36,8 +36,15 @@ export function dispatchBlockedReason(input: {
   slotOverride: string;
   selectedCandidate: DispatchCandidate | null;
   dispatchableCandidateCount: number;
+  /** Operator confirmed the deliberate pressure override and gave a reason. */
+  pressureOverrideReady?: boolean;
 }): string | null {
   if (input.selectedCandidate && !candidateDispatchable(input.selectedCandidate)) {
+    if (pressureOverrideAvailable(input.selectedCandidate)) {
+      return input.pressureOverrideReady
+        ? null
+        : `Machine for ${input.selectedCandidate.slotId} is pressure-rejected. Confirm the deliberate override with a reason, or pick another slot.`;
+    }
     return `Selected slot ${input.selectedCandidate.slotId} is not free — choose a free slot or use Queue.`;
   }
   if (input.machineFilterActive && !input.slotOverride && input.dispatchableCandidateCount === 0) {

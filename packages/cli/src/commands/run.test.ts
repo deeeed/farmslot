@@ -392,3 +392,48 @@ test('run create rejects ambiguous scripted config', () => {
     /either --scripted-scenario or --scripted-command-ref/,
   );
 });
+
+test('run create forwards the preview identity when pressure flags are given', () => {
+  const params = buildRunCreateParams({
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticket: 'PROJ-1',
+    pressureMachine: 'macwork',
+    pressureGeneration: 'macwork|gen-a|3|2026-08-21T09:59:30.000Z',
+  });
+  assert.deepEqual(params.pressureAdmissionRef, {
+    machine: 'macwork',
+    pressureGeneration: 'macwork|gen-a|3|2026-08-21T09:59:30.000Z',
+  });
+  assert.equal(params.pressureOverride, undefined);
+});
+
+test('run create builds a one-dispatch override when a reason is supplied', () => {
+  const params = buildRunCreateParams({
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticket: 'PROJ-1',
+    pressureMachine: 'macwork',
+    pressureGeneration: 'gen-x',
+    pressureOverrideReason: 'urgent hotfix',
+  });
+  assert.deepEqual(params.pressureOverride, {
+    machine: 'macwork',
+    pressureGeneration: 'gen-x',
+    reason: 'urgent hotfix',
+  });
+  assert.equal(params.pressureAdmissionRef, undefined);
+});
+
+test('run create refuses partial pressure flags', () => {
+  assert.throws(
+    () =>
+      buildRunCreateParams({
+        project: 'farmslot-farm',
+        flowType: 'fix-bug',
+        ticket: 'PROJ-1',
+        pressureOverrideReason: 'urgent hotfix',
+      }),
+    /--pressure-machine and --pressure-generation/,
+  );
+});

@@ -9,6 +9,10 @@ import {
   type AgentRole,
   DEFAULT_CLAUDE_MODEL,
   type DispatchExecuteParams,
+  type PressureAdmissionDecision,
+  type PressureAdmissionReference,
+  type PressureAdmissionRejected,
+  type PressureOverrideAudit,
   primaryRoleForFlow,
   reviewSessionIntentForContext,
   type ReviewSessionTrace,
@@ -88,6 +92,10 @@ import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
 
 import { recreationOwnershipViolation, runLaunchPreludeAndSend } from './launch-clear.js';
+import {
+  capturePressureAdmissionDecisionsLightweight,
+  PressureAdmissionRejectedError,
+} from './pressure-admission.js';
 import { buildDispatchRoleShellCommand, parseCapturedAgentPaneTarget } from './role-target.js';
 import { resolveDispatchSafetyTier } from './safety-tier.js';
 import {
@@ -740,6 +748,257 @@ async function optionalFirstWindowTarget(
   return firstIdx ? `${session}:${firstIdx}` : null;
 }
 
+export interface ExecutePressureOutcome {
+  /** Set when the dispatch must fail with this backend-owned decision. */
+  rejection: PressureAdmissionRejected | null;
+  /** Set when a valid current one-shot override admits exactly this dispatch. */
+  acceptedOverride: PressureOverrideAudit | null;
+}
+
+/**
+ * Pure execute-boundary composition of the freshly recomputed admission
+ * decision with the run's stored override audit and preview identity:
+ *  - a rejected decision fails the dispatch (an override bound to a different
+ *    machine reports PRESSURE_OVERRIDE_MISMATCH);
+ *  - an admitted non-override decision whose machine/generation no longer
+ *    matches the client-forwarded preview identity fails with
+ *    PRESSURE_PREVIEW_STALE, embedding the FRESH evidence to refresh against;
+ *  - an accepted override (already validated against the current generation
+ *    by the policy) is surfaced for audit persistence.
+ */
+export function resolveExecutePressureOutcome(input: {
+  machine: string;
+  decision: PressureAdmissionDecision | undefined;
+  storedOverride?: PressureOverrideAudit;
+  admissionRef?: PressureAdmissionReference;
+  /**
+   * Identity of the current DISPATCH engine attempt. A stored override that
+   * was already consumed by a DIFFERENT attempt rejects with
+   * PRESSURE_OVERRIDE_CONSUMED; the same attempt stays idempotent so a
+   * provider retry inside one attempt does not double-spend the override.
+   * Callers without an attempt context (engine pre-claim binds) omit it, so a
+   * consumed override always rejects there.
+   */
+  attemptKey?: string;
+}): ExecutePressureOutcome {
+  const { machine, storedOverride, admissionRef } = input;
+  let decision = input.decision;
+  // Last guard before launch: a missing decision is never an admission. The
+  // capture helper always returns an entry per requested machine, but this
+  // pure boundary must fail closed on its own.
+  if (!decision) {
+    return {
+      rejection: {
+        outcome: 'rejected',
+        machine,
+        state: 'unavailable',
+        code: 'PRESSURE_EVIDENCE_UNAVAILABLE',
+        reason: `No pressure admission decision was produced for machine ${machine}; dispatch fails closed.`,
+        causes: [],
+        evidence: {
+          machine,
+          generation: null,
+          evaluatedAt: new Date().toISOString(),
+          samples: [],
+          consecutiveCriticalSamples: 0,
+          requiredConsecutiveCriticalSamples: 0,
+          staleAfterMs: 0,
+          latestSampleAt: null,
+        },
+        overridable: false,
+      },
+      acceptedOverride: null,
+    };
+  }
+  if (
+    decision?.outcome === 'rejected' &&
+    decision.overridable &&
+    storedOverride &&
+    storedOverride.machine !== machine
+  ) {
+    decision = {
+      ...decision,
+      code: 'PRESSURE_OVERRIDE_MISMATCH',
+      reason: `Override is bound to machine ${storedOverride.machine} but the dispatch targets ${machine}; submit a fresh override for this machine. ${decision.reason}`,
+    };
+  }
+  if (decision?.outcome === 'rejected') {
+    return { rejection: decision, acceptedOverride: null };
+  }
+  // Guard enabled: an override bound to a DIFFERENT machine rejects even when
+  // the selected machine's own decision is green. A misdirected override is
+  // operator intent that must not silently evaporate. The disabled kill
+  // switch (the deliberate global bypass) ignores it.
+  if (
+    decision?.outcome === 'admitted' &&
+    decision.state !== 'disabled' &&
+    storedOverride &&
+    storedOverride.machine !== machine
+  ) {
+    return {
+      rejection: {
+        outcome: 'rejected',
+        machine,
+        state: 'stale',
+        code: 'PRESSURE_OVERRIDE_MISMATCH',
+        reason: `Override is bound to machine ${storedOverride.machine} but the dispatch targets ${machine}; drop the override or submit one for this machine.`,
+        causes: [],
+        evidence: decision.evidence,
+        overridable: false,
+      },
+      acceptedOverride: null,
+    };
+  }
+  // One-shot consumption: while the pressure guard is enabled, an override
+  // spent by another DISPATCH attempt can never admit again, even if pressure
+  // has receded or the generation happens to still match. Keep this before the
+  // decision-state branch so replay cannot become green and silently bypass
+  // the authorization record. The global disabled state remains the explicit
+  // bypass for every pressure-only rejection.
+  if (
+    decision?.outcome === 'admitted' &&
+    decision.state !== 'disabled' &&
+    storedOverride?.consumed &&
+    storedOverride.consumed.attemptKey !== input.attemptKey
+  ) {
+    return {
+      rejection: {
+        outcome: 'rejected',
+        machine,
+        state: 'sustained-critical',
+        code: 'PRESSURE_OVERRIDE_CONSUMED',
+        reason: `Override for ${machine} was already consumed at ${storedOverride.consumed.consumedAt} by dispatch attempt ${storedOverride.consumed.attemptKey}; submit a fresh override for this dispatch.`,
+        causes: [],
+        evidence: decision.evidence,
+        overridable: true,
+      },
+      acceptedOverride: null,
+    };
+  }
+  if (
+    decision?.outcome === 'admitted' &&
+    decision.state !== 'override' &&
+    // Kill switch off: no preview identity to enforce. A ref recorded while
+    // admission was enabled must not turn into a stale rejection.
+    decision.state !== 'disabled' &&
+    admissionRef &&
+    // FIND_SLOT validated and consumed the ref before claiming the slot; a
+    // long PREPARE afterwards must not fail green-to-green here. Only an
+    // UNconsumed ref (a path that skipped FIND_SLOT validation) is enforced
+    // The fresh recompute above still rejects genuinely unsafe pressure.
+    !admissionRef.consumedAt &&
+    (admissionRef.machine !== machine ||
+      admissionRef.pressureGeneration !== decision.evidence.generation)
+  ) {
+    return {
+      rejection: {
+        outcome: 'rejected',
+        machine,
+        state: 'stale',
+        code: 'PRESSURE_PREVIEW_STALE',
+        reason: `Dispatch was previewed against pressure generation ${admissionRef.pressureGeneration} on ${admissionRef.machine}, but ${machine} is now at ${decision.evidence.generation ?? 'none'}; refresh the preview and dispatch against the fresh decision.`,
+        causes: [],
+        evidence: decision.evidence,
+        overridable: false,
+      },
+      acceptedOverride: null,
+    };
+  }
+  if (decision?.outcome === 'admitted' && decision.state === 'override' && decision.override) {
+    return { rejection: null, acceptedOverride: decision.override };
+  }
+  return { rejection: null, acceptedOverride: null };
+}
+
+/** Gateway-side consumption stamp for a validated preview identity. FIND_SLOT
+ * applies this after its pre-claim admission passes; already-consumed refs
+ * pass through unchanged so a retry cannot re-stamp a newer time. */
+export function consumedPressureAdmissionRef(
+  ref: PressureAdmissionReference,
+): PressureAdmissionReference {
+  return ref.consumedAt ? ref : { ...ref, consumedAt: new Date().toISOString() };
+}
+
+export interface DispatchPressureGateDeps {
+  /** In-memory lightweight capture; injectable so integration tests can prove
+   * the gate reads current evidence per call and never a settled cache. */
+  capture?: typeof capturePressureAdmissionDecisionsLightweight;
+  /** DURABLE run persistence for the override consumption stamp. Must resolve
+   * only after the stamp is on disk. Background-scheduled persistence does
+   * not satisfy intent-before-launch. */
+  persistRun?: (runId: string, patch: { pressureOverride: PressureOverrideAudit }) => Promise<void>;
+}
+
+/**
+ * The launch-boundary pressure gate shared by dispatchExecute and nudge
+ * delivery. Reads current in-memory evidence (fresher than any snapshot
+ * cache), composes it with the run's stored override/preview identity, and on
+ * an accepted override persists the attempt-bound consumption BEFORE
+ * returning. Intent lands durably before any launch effect.
+ */
+export async function enforceDispatchPressureGate(input: {
+  machine: string;
+  runId?: string;
+  run: Pick<import('@farmslot/protocol').Run, 'pressureOverride' | 'pressureAdmissionRef'> | null;
+  attemptKey: string;
+  onInfo?: (detail: string) => void;
+  deps?: DispatchPressureGateDeps;
+}): Promise<void> {
+  const capture = input.deps?.capture ?? capturePressureAdmissionDecisionsLightweight;
+  const storedOverride = input.run?.pressureOverride;
+  const decision = capture(
+    [input.machine],
+    storedOverride
+      ? {
+          override: {
+            machine: storedOverride.machine,
+            pressureGeneration: storedOverride.pressureGeneration,
+            reason: storedOverride.reason,
+          },
+          principalId: storedOverride.principalId,
+        }
+      : {},
+  ).get(input.machine);
+  const outcome = resolveExecutePressureOutcome({
+    machine: input.machine,
+    decision,
+    storedOverride,
+    admissionRef: input.run?.pressureAdmissionRef,
+    attemptKey: input.attemptKey,
+  });
+  if (outcome.rejection) throw new PressureAdmissionRejectedError(outcome.rejection);
+  // A submitted one-shot authorization bound to this machine is consumed for
+  // the current attempt whenever the dispatch proceeds, even when current
+  // pressure no longer needs it (machine went green, or the global guard is
+  // off). A spendable override must never survive the launch it authorized,
+  // nor revive after the guard is re-enabled. Intent before effect: the
+  // consumption stamp is DURABLE before the gate returns; same-attempt
+  // re-entry is idempotent.
+  const boundOverride =
+    storedOverride && storedOverride.machine === input.machine ? storedOverride : undefined;
+  if (boundOverride) {
+    if (!boundOverride.consumed && input.runId && input.deps?.persistRun) {
+      // Preserve the run-create audit exactly (requestedAt/principal/reason);
+      // the policy rebuilds requestedAt per evaluation, so persisting a
+      // freshly accepted copy would erase the original request time. Only the
+      // consumption stamp is added here.
+      await input.deps.persistRun(input.runId, {
+        pressureOverride: {
+          ...boundOverride,
+          consumed: { attemptKey: input.attemptKey, consumedAt: new Date().toISOString() },
+        },
+      });
+    }
+    input.onInfo?.(
+      `Pressure override for ${input.machine} by principal ${boundOverride.principalId} ${
+        outcome.acceptedOverride
+          ? `accepted against generation ${boundOverride.pressureGeneration}`
+          : 'not required by current pressure'
+      }; consumed for dispatch attempt ${input.attemptKey}.`,
+    );
+  }
+}
+
 export async function dispatchExecute(
   params: DispatchExecuteParams,
   emit: EventEmitter,
@@ -780,6 +1039,36 @@ export async function dispatchExecute(
   const flowSubdir = path.basename(path.dirname(taskDir));
   const { getRun, updateRun: updateRunStore } = await import('../../runs/store.js');
   const currentRun = params.runId ? getRun(params.runId) : null;
+
+  // Sustained-pressure admission recompute (MANUAL-000109). Execution never
+  // trusts a preview-time decision. The gate is run once early for a cheap
+  // fail-fast and again immediately before each irreversible runner effect,
+  // because pressure can change during task preparation and target setup.
+  // Re-reading the run at each boundary also observes a durable one-shot
+  // consumption stamp written by an earlier boundary.
+  const pressureAttemptKey = `${params.runId ?? 'no-run'}:${
+    currentRun ? (dispatchStartedAtMs(currentRun) ?? 'no-attempt') : 'no-attempt'
+  }`;
+  const runPressureGate = async (): Promise<void> => {
+    const latestRun = params.runId ? getRun(params.runId) : currentRun;
+    await enforceDispatchPressureGate({
+      machine: vars.machine,
+      runId: params.runId,
+      run: latestRun ?? null,
+      attemptKey: pressureAttemptKey,
+      onInfo: (detail) => step('info', detail),
+      deps: {
+        // Durable intent-before-launch: update in memory, then await the
+        // explicit on-disk persist. Background scheduling is not enough here.
+        persistRun: async (runId, patch) => {
+          const updated = updateRunStore(runId, patch);
+          const { persistRunNow } = await import('../../runs/store.js');
+          await persistRunNow(updated, 'pressure-override-consumption');
+        },
+      },
+    });
+  };
+  await runPressureGate();
 
   const branch =
     extractField(taskContent, /^\*\*Branch:\*\*\s*`?([^`\n]+)/m) ||
@@ -1043,7 +1332,10 @@ export async function dispatchExecute(
   invalidateArtifactTextCache(path.join(workerTaskAbs, 'artifacts'), vars.slotId);
   if (currentRun?.id) invalidateLiveRecipeContextMemo(currentRun.id);
 
-  // 4. Clean pane (kill any existing agent)
+  // 4. Clean pane (kill any existing agent). This is the first irreversible
+  // effect of a fresh dispatch, so re-evaluate immediately before it. Later
+  // path-specific gates still protect the actual resume/launch/prompt send.
+  await runPressureGate();
   step('clean', 'Cleaning pane...');
   const slotMod = await import('../slot.js');
   const session = await resolveTmuxSession(vars.slotId, vars, { strict: true });
@@ -1185,6 +1477,7 @@ export async function dispatchExecute(
       await new Promise((resolve) => setTimeout(resolve, ROLE_WINDOW_STARTUP_SETTLE_MS));
     };
     if (repeatReviewResumePlan.kind === 'resume') {
+      await runPressureGate();
       const binding = repeatReviewResumePlan.binding;
       step(
         'launch',
@@ -1243,6 +1536,7 @@ export async function dispatchExecute(
     }
     if (!resumedReviewSession && usesRoleWindow) {
       workerTarget = await ensureWorkerRoleTarget(vars, session, runner, workerRole);
+      await runPressureGate();
       await respawnRoleWindowWithCommand(vars, workerTarget, agentLaunch);
       await settleFreshRoleWindow();
     } else if (!resumedReviewSession) {
@@ -1267,6 +1561,7 @@ export async function dispatchExecute(
       // still owns the slot — a cancel/recycle marks the run terminal BEFORE
       // killing tmux, and resurrecting the session then would revive a worker
       // on a deliberately torn-down slot.
+      await runPressureGate();
       const launched = await runLaunchPreludeAndSend({
         runner,
         target: workerTarget,
@@ -1364,6 +1659,7 @@ export async function dispatchExecute(
         runner,
         handoffAckSinceMs,
       );
+      await runPressureGate();
       await sendRunnerPostLaunchPrompt(
         vars,
         workerTarget,

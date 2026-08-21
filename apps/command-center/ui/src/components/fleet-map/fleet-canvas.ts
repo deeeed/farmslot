@@ -18,9 +18,13 @@ import type {
   NodeHealthUpdatedPayload,
   NodeInfo,
   NodesListResult,
+  PressureAdmissionControlState,
+  PressureAdmissionGetResult,
+  PressureAdmissionSetEnabledResult,
   ResourceCleanupResult,
   ResourceListResult,
   ResourcePressureCleanupCandidate,
+  ResourcePressureHistoryResult,
   ResourcePressureSnapshotParams,
   ResourcePressureSnapshotResult,
   ResourceStatus,
@@ -118,6 +122,8 @@ export class FleetCanvas extends LitElement {
   @state() private resourceActionFlash = '';
   @state() private resourceWatchesEnabled = true;
   @state() private resourcePressure?: ResourcePressureSnapshotResult;
+  @state() private resourcePressureHistory?: ResourcePressureHistoryResult;
+  @state() private pressureAdmissionControl?: PressureAdmissionControlState;
   @state() private resourceCleanupPreview?: ResourcePressureSnapshotResult;
   @state() private machinePauseMachine = '';
   @state() private machinePauseMode: MachinePauseMode = 'orchestration';
@@ -135,6 +141,8 @@ export class FleetCanvas extends LitElement {
   private _machinePauseSelector: MachinePauseSelector = { kind: 'all' };
   private _machinePauseRestoreSelector: MachinePauseSelector = { kind: 'all' };
   private _machinePauseEventTimer?: ReturnType<typeof setTimeout>;
+  private _pressureHistoryRefreshTimer?: ReturnType<typeof setTimeout>;
+  private _resourcePressureRecoveryTimer?: ReturnType<typeof setTimeout>;
   private unsub?: () => void;
   private _unsubConnected?: () => void;
   private _unsubDisconnected?: () => void;
@@ -305,6 +313,7 @@ export class FleetCanvas extends LitElement {
     this._unsubConnState = gateway.onConnectionChange((s) => {
       if (s === 'connected') {
         this._fetchAgents();
+        this.scheduleResourcePressureRecoveryRefresh();
         if (this.machinePauseMachine) {
           this.machinePauseConnectionStale = true;
           void this.fetchMachinePauseState(false);
@@ -331,6 +340,10 @@ export class FleetCanvas extends LitElement {
         versionMatch: p.versionMatch ?? p.protocolVersion === this.gatewayProtocolVersion,
       });
       this.nodeInfo = nextInfo;
+      // A reconnect is rare and can recover an initial snapshot/control fetch
+      // that raced node startup. Coalesce a burst of node registrations into
+      // one explicit full refresh while the resource view is open.
+      this.scheduleResourcePressureRecoveryRefresh();
     });
     this._unsubDisconnected = gateway.subscribe<NodeDisconnectedPayload>(
       Events.NODE_DISCONNECTED,
@@ -371,6 +384,10 @@ export class FleetCanvas extends LitElement {
         const next = new Map(this.machineHealthMap);
         next.set(p.machine, p.health);
         this.machineHealthMap = next;
+        // Keep pressure charts current on health beats with the LIGHTWEIGHT
+        // history read only (debounced). The full snapshot (resources +
+        // attribution) refreshes solely through explicit operator actions.
+        this.schedulePressureHistoryRefresh();
       },
     );
 
@@ -455,7 +472,23 @@ export class FleetCanvas extends LitElement {
     }
   }
 
+  private clearPressureHistoryRefresh() {
+    if (this._pressureHistoryRefreshTimer) {
+      clearTimeout(this._pressureHistoryRefreshTimer);
+      this._pressureHistoryRefreshTimer = undefined;
+    }
+  }
+
+  private clearResourcePressureRecoveryRefresh() {
+    if (this._resourcePressureRecoveryTimer) {
+      clearTimeout(this._resourcePressureRecoveryTimer);
+      this._resourcePressureRecoveryTimer = undefined;
+    }
+  }
+
   disconnectedCallback() {
+    this.clearPressureHistoryRefresh();
+    this.clearResourcePressureRecoveryRefresh();
     this._providerAccountsUnsub?.();
     this._providerAccountsUnsub = null;
     super.disconnectedCallback();
@@ -604,12 +637,16 @@ export class FleetCanvas extends LitElement {
   }
 
   private async fetchResourceData() {
+    // Pressure paints first: start the pressure fetch (fast history read,
+    // then the full snapshot) immediately, in parallel with the slower
+    // per-slot resource-list batches below.
+    const pressureFetch = this.fetchResourcePressure();
     const resourceSlots = this.resourceScopedSlots;
     if (resourceSlots.length === 0) {
       this.slotResourceDefs = new Map();
       this.slotResourceStatus = new Map();
       this._resourceFetched = true;
-      await this.fetchResourcePressure();
+      await pressureFetch;
       return;
     }
 
@@ -644,11 +681,38 @@ export class FleetCanvas extends LitElement {
     this.slotResourceDefs = nextDefs;
     this.slotResourceStatus = nextStatus;
     this._resourceFetched = true;
-    await this.fetchResourcePressure();
+    await pressureFetch;
   }
 
   private async fetchResourcePressure() {
     const epoch = ++this._resourcePressureFetchEpoch;
+    // Ride every pressure refresh (initial load, the Refresh-pressure button,
+    // post-toggle refetch): a boot-time fetch can race the gateway connect,
+    // so the kill-switch control must recover on the same retry paths the
+    // pressure cards use.
+    void this.fetchPressureAdmissionControl();
+    // Charts-first: the history-only read returns immediately (rehydrated
+    // rings + freshness), so pressure charts paint right after a gateway
+    // restart while the full snapshot resolves attribution in the background.
+    if (!this.resourcePressure) {
+      void gateway
+        .request<ResourcePressureHistoryResult>(
+          Methods.RESOURCE_PRESSURE_HISTORY,
+          this.pressureRequestParams(),
+        )
+        .then((history) => {
+          if (epoch !== this._resourcePressureFetchEpoch || this.resourcePressure) return;
+          this.resourcePressureHistory = history;
+        })
+        .catch((err: unknown) => {
+          // First-paint acceleration only. The full snapshot below is the
+          // authoritative fetch and reports its own failure.
+          console.warn(
+            '[fleet-canvas] resource pressure history fetch failed:',
+            err instanceof Error ? err.message : String(err),
+          );
+        });
+    }
     try {
       const snapshot = await gateway.request<ResourcePressureSnapshotResult>(
         Methods.RESOURCE_PRESSURE_SNAPSHOT,
@@ -1087,6 +1151,85 @@ export class FleetCanvas extends LitElement {
     };
   }
 
+  /** Durable gateway-owned kill switch for pressure-based dispatch prevention.
+   * Backend-driven: this control only renders and forwards the state. The
+   * gateway persists it (with updatedAt/updatedBy) and the policy returns
+   * admitted state='disabled' when off. */
+  private async setPressureAdmission(enabled: boolean) {
+    if (
+      !enabled &&
+      !window.confirm(
+        'Disable pressure-based dispatch prevention? New dispatches will no longer be rejected on sustained pressure until re-enabled. Sampling, history, and charts continue; no other safety check changes.',
+      )
+    ) {
+      return;
+    }
+    this.resourceActionBusy = true;
+    try {
+      const state = await gateway.request<PressureAdmissionSetEnabledResult>(
+        Methods.DISPATCH_PRESSURE_ADMISSION_SET_ENABLED,
+        { enabled },
+      );
+      this.pressureAdmissionControl = state;
+      this.showResourceFlash(`pressure admission ${state.enabled ? 'enabled' : 'disabled'}`, true);
+      // Fresh decisions immediately: refetch the pressure cards. The dispatch
+      // wizard mounts per-route and fetches candidates on entry, and its
+      // rejection panel has an explicit "Refresh decision" action, so a
+      // previously rendered blocker never outlives a re-fetch after the toggle.
+      void this.fetchResourcePressure();
+    } catch (err) {
+      this.showResourceFlash(err instanceof Error ? err.message : String(err), false);
+    } finally {
+      this.resourceActionBusy = false;
+    }
+  }
+
+  /** Debounced LIGHTWEIGHT history refetch for node health/reconnect events.
+   * Never triggers the full snapshot; only relevant while the resource view
+   * is showing pressure data. */
+  private schedulePressureHistoryRefresh(): void {
+    if (this.groupBy !== 'resource' || this._pressureHistoryRefreshTimer) return;
+    this._pressureHistoryRefreshTimer = setTimeout(() => {
+      this._pressureHistoryRefreshTimer = undefined;
+      gateway
+        .request<ResourcePressureHistoryResult>(
+          Methods.RESOURCE_PRESSURE_HISTORY,
+          this.pressureRequestParams(),
+        )
+        .then((history) => {
+          this.resourcePressureHistory = history;
+        })
+        .catch((err: unknown) => {
+          console.warn(
+            '[fleet-canvas] pressure history event refresh failed:',
+            err instanceof Error ? err.message : String(err),
+          );
+        });
+    }, 2_000);
+  }
+
+  private scheduleResourcePressureRecoveryRefresh(): void {
+    if (this.groupBy !== 'resource' || this._resourcePressureRecoveryTimer) return;
+    this._resourcePressureRecoveryTimer = setTimeout(() => {
+      this._resourcePressureRecoveryTimer = undefined;
+      void this.fetchResourcePressure();
+    }, 2_000);
+  }
+
+  private async fetchPressureAdmissionControl() {
+    try {
+      this.pressureAdmissionControl = await gateway.request<PressureAdmissionGetResult>(
+        Methods.DISPATCH_PRESSURE_ADMISSION_GET,
+        {},
+      );
+    } catch (err) {
+      console.warn(
+        '[fleet-canvas] pressure admission control fetch failed:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   private async setResourceWatches(enabled: boolean) {
     if (
       !enabled &&
@@ -1268,10 +1411,10 @@ export class FleetCanvas extends LitElement {
     if (this.hydrating && this.slots.length === 0) {
       return html`<farm-hydrating message="Loading fleet data…"></farm-hydrating>`;
     }
+    // Never block the pressure section on the slower per-slot resource
+    // batches. machine-pressure-overview paints from the fast history read
+    // first; the resource groups get their own loading placeholder below.
     const groups = this.resourceGroups;
-    if (!this._resourceFetched) {
-      return html`<div class="empty">Loading resources...</div>`;
-    }
     return html`
       <div class="resource-controls">
         <span>Resource pressure</span>
@@ -1307,6 +1450,30 @@ export class FleetCanvas extends LitElement {
         >
           Resume watches
         </button>
+        ${this.pressureAdmissionControl
+          ? html`<button
+                class=${this.pressureAdmissionControl.enabled ? '' : 'danger'}
+                data-testid="pressure-admission-toggle"
+                title=${this.pressureAdmissionControl.updatedAt
+                  ? `Last change ${this.pressureAdmissionControl.updatedAt} by ${this.pressureAdmissionControl.updatedBy ?? 'unknown'}. Only pressure rejection/override prompts pause; sampling and charts continue.`
+                  : 'Gateway default (enabled). Only pressure rejection/override prompts pause; sampling and charts continue.'}
+                ?disabled=${this.resourceActionBusy}
+                @click=${() => this.setPressureAdmission(!this.pressureAdmissionControl!.enabled)}
+              >
+                ${this.pressureAdmissionControl.enabled
+                  ? 'Disable pressure dispatch gate'
+                  : 'Enable pressure dispatch gate'}
+              </button>
+              ${this.pressureAdmissionControl.enabled
+                ? ''
+                : html`<span
+                    class="resource-watch-note"
+                    style="color:${colors.statusWarn}"
+                    data-testid="pressure-admission-disabled-note"
+                  >
+                    Pressure dispatch prevention is OFF; new dispatches are not pressure-gated.
+                  </span>`}`
+          : ''}
         ${this.resourceActionFlash
           ? html`<span
               class="${this.resourceActionFlash.startsWith('ok:')
@@ -1324,6 +1491,7 @@ export class FleetCanvas extends LitElement {
       </div>
       <machine-pressure-overview
         .snapshot=${this.resourcePressure}
+        .historyPreview=${this.resourcePressureHistory}
         .visibleMachines=${this.pressureVisibleMachines}
         @machine-pressure-open=${(event: CustomEvent<{ machine: string }>) =>
           this.openMachinePause(event.detail.machine)}
@@ -1368,19 +1536,21 @@ export class FleetCanvas extends LitElement {
             ) => this.confirmResourceCleanup(event.detail.targets)}
           ></resource-cleanup-preview>`
         : ''}
-      ${groups.length === 0
-        ? html`<div class="empty">No resources found</div>`
-        : groups.map(
-            (g) => html`
-              <resource-overview
-                .resourceId=${g.key}
-                .label=${g.label}
-                .entries=${g.entries}
-                .onlineMachines=${this.onlineMachines}
-                @refresh-resources=${() => this.fetchResourceData()}
-              ></resource-overview>
-            `,
-          )}
+      ${!this._resourceFetched
+        ? html`<div class="empty">Resource details loading…</div>`
+        : groups.length === 0
+          ? html`<div class="empty">No resources found</div>`
+          : groups.map(
+              (g) => html`
+                <resource-overview
+                  .resourceId=${g.key}
+                  .label=${g.label}
+                  .entries=${g.entries}
+                  .onlineMachines=${this.onlineMachines}
+                  @refresh-resources=${() => this.fetchResourceData()}
+                ></resource-overview>
+              `,
+            )}
     `;
   }
 }

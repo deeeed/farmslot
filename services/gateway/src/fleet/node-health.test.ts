@@ -92,10 +92,10 @@ test('a first failed process attempt publishes sampler health without creating a
 
 test('pressure history is bounded and rejects duplicate or out-of-order samples', () => {
   const machine = `history-node-${Date.now()}`;
-  const base = Date.now();
+  const base = Date.now() - NODE_PRESSURE_HISTORY_LIMIT * 1_000;
   for (let index = 0; index <= NODE_PRESSURE_HISTORY_LIMIT; index += 1) {
     updateMachineMetrics(machine, {
-      cpuPercent: index,
+      cpuPercent: 10 + (index % 80),
       memoryPercent: 20,
       memoryUsedGb: 3,
       memoryTotalGb: 16,
@@ -108,8 +108,8 @@ test('pressure history is bounded and rejects duplicate or out-of-order samples'
   }
   const history = getMachinePressureHistory(machine);
   assert.equal(history.length, NODE_PRESSURE_HISTORY_LIMIT);
-  assert.equal(history[0].cpuPercent, 1);
-  assert.equal(history.at(-1)?.cpuPercent, NODE_PRESSURE_HISTORY_LIMIT);
+  assert.equal(history[0].cpuPercent, 11);
+  assert.equal(history.at(-1)?.cpuPercent, 50);
 
   updateMachineMetrics(machine, {
     cpuPercent: 99,
@@ -121,7 +121,38 @@ test('pressure history is bounded and rejects duplicate or out-of-order samples'
     loadAvg5: 99,
     collectedAt: new Date(base).toISOString(),
   });
-  assert.equal(getMachinePressureHistory(machine).at(-1)?.cpuPercent, NODE_PRESSURE_HISTORY_LIMIT);
+  assert.equal(getMachinePressureHistory(machine).at(-1)?.cpuPercent, 50);
+});
+
+test('malformed first live sample does not authorize a restored ring', () => {
+  const machine = `malformed-live-node-${Date.now()}`;
+  const collectedAt = new Date().toISOString();
+  updateMachineMetrics(machine, {
+    cpuPercent: 10,
+    memoryPercent: 20,
+    memoryUsedGb: 3,
+    memoryTotalGb: 16,
+    diskPercent: 30,
+    loadAvg1: 1,
+    loadAvg5: 1,
+    pressure: { cpu: 2, memory: 0.2, disk: 0.3, load1: 0.1 },
+    collectedAt,
+  });
+  assert.equal(getMachinePressureHistory(machine).length, 0);
+
+  updateMachineMetrics(machine, {
+    cpuPercent: 10,
+    memoryPercent: 20,
+    memoryUsedGb: 3,
+    memoryTotalGb: 16,
+    diskPercent: 30,
+    loadAvg1: 25,
+    loadAvg5: 20,
+    pressure: { cpu: 0.1, memory: 0.2, disk: 0.3, load1: 2.5, load5: 2 },
+    collectedAt: new Date(Date.now() + 1_000).toISOString(),
+  });
+  assert.equal(getMachinePressureHistory(machine).length, 1);
+  assert.equal(getMachinePressureHistory(machine)[0].pressure.load1, 2.5);
 });
 
 test('node restart replaces process generation and stale same-generation samples cannot regress it', () => {

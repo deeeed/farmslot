@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat(dispatch): add `farmslot dispatch pressure-admission status|enable|disable` for the durable pressure-prevention kill switch (MANUAL-000109).
+- feat(dispatch): `dispatch preview` prints the backend pressure admission decision (sustained samples, attributed causes, rejection code, refresh hint, exact override syntax); `run create` gains `--pressure-machine`/`--pressure-generation` to forward the previewed identity and `--pressure-override-reason` for a deliberate one-dispatch override (MANUAL-000109).
 - feat(machine): add machine pause and restore previews, review-pinned execution with exact targets, durable status, selection controls, and partial-failure envelopes.
 - feat(resources): add `farmslot resource pressure` for compact read-only machine trends, sampler health, and attributed process groups.
 - feat(backlog): let `backlog update --project` repair an item's owning farm; the gateway clears project-owned slots, templates, app, prepare, scripted-runner, and launch-plan configuration.

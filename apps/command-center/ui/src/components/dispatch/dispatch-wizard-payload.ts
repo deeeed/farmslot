@@ -2,6 +2,8 @@ import type {
   DevInteractiveProfile,
   DispatchQueueAddParams,
   FlowType,
+  PressureAdmissionReference,
+  PressureDispatchOverride,
   ReviewDepthPolicy,
   ReviewLoopRequest,
   ReviewScope,
@@ -40,6 +42,11 @@ export interface DispatchPayloadDraft {
   freshReuse?: boolean;
   reviewDepth?: ReviewDepthPolicy;
   pendingReviewPlan?: ReviewLoopRequest[];
+  /** Backend-rendered preview identity forwarded so execution can reject a
+   * stale generation. Never computed client-side. */
+  pressureAdmissionRef?: PressureAdmissionReference;
+  /** Deliberate one-dispatch override bound to the rendered decision. */
+  pressureOverride?: PressureDispatchOverride;
   comparison: Partial<ComparisonRunParams>;
 }
 
@@ -81,6 +88,8 @@ export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreatePara
     reviewValidationDepth: input.reviewValidationDepth,
     reviewDepth: input.reviewDepth,
     pendingReviewPlan: input.pendingReviewPlan,
+    pressureAdmissionRef: input.pressureAdmissionRef,
+    pressureOverride: input.pressureOverride,
     ...input.comparison,
   };
 }

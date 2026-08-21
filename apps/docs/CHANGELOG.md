@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document the sustained-pressure admission, history-only pressure read, and gateway-owned pressure dispatch-gate methods (MANUAL-000109).
 - Document the machine-scoped pause, release, status, and restore Gateway methods.
 - Refresh the generated Gateway API reference with backlog refinement methods.
 - Document that pool dispatch templates must expose a runner-path placeholder for runtime-owned arguments.

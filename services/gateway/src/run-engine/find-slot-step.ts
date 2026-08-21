@@ -20,11 +20,15 @@ import {
 } from '../core/index.js';
 import { loadFleetStatus, loadProjectConfig, loadProjectConfigs } from '../fleet/state.js';
 import {
+  capturePressureAdmissionDecisionsLightweight,
   collectBranchAffinityNudgeCandidates,
+  consumedPressureAdmissionRef,
   dispatchPreview,
   findAffinitySlot,
   prepareSlotForFreshReuse,
+  PressureAdmissionRejectedError,
   refreshBranches,
+  resolveExecutePressureOutcome,
   selectBranchAffinityRefreshSlots,
   verifyBranchAffinityNudgeStillEligible,
 } from '../methods/dispatch.js';
@@ -48,7 +52,7 @@ import {
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
-import { getRun, updateRun } from '../runs/store.js';
+import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
@@ -201,6 +205,61 @@ async function claimSelectedSlot(
   }
 }
 
+/**
+ * Sustained-pressure gate for engine decision-path slot bindings (operator
+ * "Use Selected Slot" picks and held-slot affinity reuse). These paths claim
+ * a slot without going through dispatchPreview, so a generic human pick must
+ * not bypass a pressure rejection: run the same explicit-slot admission with
+ * the run's persisted override principal and reject stale/ref/mismatch
+ * exactly like execution does, before any updateRun/claim/reset.
+ */
+async function assertEngineBoundSlotPressureAdmitted(
+  runId: string,
+  run: Pick<Run, 'pressureOverride' | 'pressureAdmissionRef'>,
+  machine: string,
+): Promise<void> {
+  const storedOverride = run.pressureOverride;
+  // Lightweight in-memory capture: pre-mutation guards always read CURRENT
+  // ring/health state directly, never a settled snapshot cache, and never pay
+  // resource resolution or tmux attribution.
+  const decision = capturePressureAdmissionDecisionsLightweight(
+    [machine],
+    storedOverride
+      ? {
+          override: {
+            machine: storedOverride.machine,
+            pressureGeneration: storedOverride.pressureGeneration,
+            reason: storedOverride.reason,
+          },
+          principalId: storedOverride.principalId,
+        }
+      : {},
+  ).get(machine);
+  const outcome = resolveExecutePressureOutcome({
+    machine,
+    decision,
+    storedOverride,
+    admissionRef: run.pressureAdmissionRef,
+  });
+  if (outcome.rejection) throw new PressureAdmissionRejectedError(outcome.rejection);
+  await consumeRunPressureAdmissionRef(runId, run);
+}
+
+/** Consume a validated client preview identity: audit-stamp `consumedAt` on
+ * the persisted ref so a long PREPARE cannot fail green-to-green at the
+ * execute recompute, while an unconsumed ref remains enforced there. */
+async function consumeRunPressureAdmissionRef(
+  runId: string,
+  run: Pick<Run, 'pressureAdmissionRef'>,
+): Promise<void> {
+  const ref = run.pressureAdmissionRef;
+  if (!ref || ref.consumedAt) return;
+  const updated = updateRun(runId, {
+    pressureAdmissionRef: consumedPressureAdmissionRef(ref),
+  });
+  await persistRunNow(updated, 'pressure-admission-ref-consumption');
+}
+
 export async function executeFindSlotStep(
   runId: string,
   run: Run,
@@ -261,6 +320,9 @@ export async function executeFindSlotStep(
         `Warm-session reuse slot '${run.slotId}' is ${warmSlot.lifecycle}; cannot hand off`,
       );
     }
+    // Warm reuse still delivers a NEW task into the session. The same admission
+    // gate as every other binding; the kill switch is the deliberate bypass.
+    await assertEngineBoundSlotPressureAdmitted(runId, run, warmSlot.machine);
     // Take over the parent's ownership fence; DISPATCH decides warm vs fresh after liveness.
     await claimSelectedSlot(run.slotId, runId, 'working', 'working', { takeoverLiveOwner: true });
     return {
@@ -307,6 +369,9 @@ export async function executeFindSlotStep(
         `Branch-affinity nudge no longer valid: ${eligibilityFail}. Pick a slot again.`,
       );
     }
+    // A nudge delivers a NEW task into the busy worker. It is gated like every
+    // other binding for spec consistency; the kill switch is the bypass.
+    if (wizardSlot) await assertEngineBoundSlotPressureAdmitted(runId, run, wizardSlot.machine);
     // Reserve the handoff exactly like the decision-card path: without this,
     // two wizard nudges racing the same worker would both deliver.
     await claimSelectedSlot(run.slotId, runId, 'working', 'working', { takeoverLiveOwner: true });
@@ -347,6 +412,9 @@ export async function executeFindSlotStep(
     if (eligibilityFail) {
       throw new Error(`Fresh-reuse no longer valid: ${eligibilityFail}. Pick a slot again.`);
     }
+    // Fresh-reuse launches a NEW worker after killing the prior one. The
+    // pressure gate must pass before any claim or destructive teardown.
+    if (wizardSlot) await assertEngineBoundSlotPressureAdmitted(runId, run, wizardSlot.machine);
     // Atomic fence BEFORE destroying the prior worker: reserve the handoff in
     // the same CAS that refuses foreign reservations. A read-then-teardown
     // check would let a nudge reserve in the gap and have its in-flight
@@ -416,6 +484,8 @@ export async function executeFindSlotStep(
       console.log(
         `[run-engine] ${run.flowType} affinity: reusing slot ${affinitySlot.slot} (branch=${affinitySlot.branch})`,
       );
+      // Held-slot affinity reuse still launches a fresh worker on the machine.
+      await assertEngineBoundSlotPressureAdmitted(runId, run, affinitySlot.machine);
       updateRun(runId, { slotId: affinitySlot.slot });
       await claimSelectedSlot(affinitySlot.slot, runId, 'preparing');
       broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
@@ -538,6 +608,8 @@ export async function executeFindSlotStep(
 
         if (actionId === 'abort') throw new Error('Aborted: branch-affinity nudge declined');
         if (actionId === 'nudge') {
+          // Same nudge gating as the wizard shortcut above.
+          await assertEngineBoundSlotPressureAdmitted(runId, run, top.slot.machine);
           setRunFlags(runId, { nudgeReuse: true, skipPrepare: true });
           updateRun(runId, { slotId: top.slot.slot });
           // Use phase='working', agent='working' (NOT the default agent='idle') because the
@@ -569,6 +641,8 @@ export async function executeFindSlotStep(
           // dependency install would race against a still-writing worker in the same
           // worktree and corrupt slot state. prepareSlotForFreshReuse handles
           // terminalize-prior-run + kill-worker-on-slot in the right order.
+          // Fresh dispatch on the slot: pressure gate before claim/teardown.
+          await assertEngineBoundSlotPressureAdmitted(runId, run, top.slot.machine);
           // Atomic fence BEFORE destroying the prior worker — same rationale
           // as the freshReuse wizard-shortcut above.
           await claimSelectedSlot(top.slot.slot, runId, 'preparing', undefined, {
@@ -628,6 +702,9 @@ export async function executeFindSlotStep(
               requiredPrepareProfile,
             });
             if (err) throw new Error(`Selected slot ${pickedSlotId}: ${err}`);
+            // A human pick is not a pressure override. The same admission gate
+            // as every other fresh binding, before updateRun/claim.
+            await assertEngineBoundSlotPressureAdmitted(runId, run, picked.machine);
             updateRun(runId, { slotId: pickedSlotId });
             await claimSelectedSlot(pickedSlotId, runId, 'preparing');
             broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
@@ -736,6 +813,9 @@ export async function executeFindSlotStep(
         requiredPrepareProfile,
       });
       if (pickedSlotError) throw new Error(`Selected slot ${pickedSlotId}: ${pickedSlotError}`);
+      // "Use Selected Slot" is not a pressure override. The same admission gate
+      // as every other fresh binding, before updateRun/claim/reset.
+      await assertEngineBoundSlotPressureAdmitted(runId, run, picked.machine);
     }
 
     // Claim BEFORE any destructive reset: the claim CAS refuses live-owned,
@@ -780,7 +860,47 @@ export async function executeFindSlotStep(
     };
   }
 
-  const result = await dispatchPreview(buildDispatchPreviewParamsForRun(run));
+  const result = await dispatchPreview(
+    buildDispatchPreviewParamsForRun(run),
+    // Delayed engine preview: the audit principal was resolved and persisted
+    // at run.create; never re-derive it from ambient context here.
+    run.pressureOverride ? { overridePrincipalId: run.pressureOverride.principalId } : {},
+  );
+  // Automatic selection already excluded pressure-rejected machines; a
+  // rejection here means an explicit slot (or a pinned affinity slot) sits on
+  // a rejected machine and no valid current override was supplied. Fail the
+  // run with the backend decision. Never launch on rejected evidence.
+  if (result.pressureAdmission?.outcome === 'rejected') {
+    throw new PressureAdmissionRejectedError(result.pressureAdmission);
+  }
+  // Earliest safe boundary for a client-forwarded preview identity: if the
+  // operator dispatched against a rendered decision whose generation already
+  // moved, fail before claiming a slot. Automatic runs carry no ref because there
+  // was no operator preview to go stale, and execute recomputes regardless.
+  const clientAdmissionRef = run.pressureAdmissionRef;
+  if (
+    clientAdmissionRef &&
+    result.pressureAdmission?.outcome === 'admitted' &&
+    result.pressureAdmission.state !== 'override' &&
+    result.pressureAdmission.state !== 'disabled' &&
+    (clientAdmissionRef.machine !== result.pressureAdmission.machine ||
+      clientAdmissionRef.pressureGeneration !== result.pressureAdmission.evidence.generation)
+  ) {
+    throw new PressureAdmissionRejectedError({
+      outcome: 'rejected',
+      machine: result.pressureAdmission.machine,
+      state: 'stale',
+      code: 'PRESSURE_PREVIEW_STALE',
+      reason: `Dispatch was previewed against pressure generation ${clientAdmissionRef.pressureGeneration} on ${clientAdmissionRef.machine}, but ${result.pressureAdmission.machine} is now at ${result.pressureAdmission.evidence.generation ?? 'none'}; refresh the preview and dispatch against the fresh decision.`,
+      causes: [],
+      evidence: result.pressureAdmission.evidence,
+      overridable: false,
+    });
+  }
+  // Common scored/explicit path: the validated client preview identity is
+  // consumed HERE, before the slot bind/claim, so a long PREPARE cannot turn
+  // a green-to-green generation move into a launch-time failure.
+  await consumeRunPressureAdmissionRef(runId, run);
   const slotId = result.preview.slotId;
   updateRun(runId, { slotId });
   // Mark slot as claimed by this run

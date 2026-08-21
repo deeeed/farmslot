@@ -1,10 +1,28 @@
 import {
+  type ResourcePressureHistoryResult,
   type ResourcePressureSnapshotResult,
   selectResourcePressureGroups,
 } from '@farmslot/protocol';
 
 type PressureGroup =
   ResourcePressureSnapshotResult['machines'][number]['processAttribution']['groups'][number];
+
+export function mergePressureHistoryForRender(
+  machines: ResourcePressureSnapshotResult['machines'],
+  preview: ResourcePressureHistoryResult['machines'] | undefined,
+): ResourcePressureSnapshotResult['machines'] {
+  const byMachine = new Map(preview?.map((machine) => [machine.machine, machine]) ?? []);
+  return machines.map((machine) => {
+    const latest = byMachine.get(machine.machine);
+    if (!latest) return machine;
+    const snapshotAt = Date.parse(machine.history.at(-1)?.collectedAt ?? '');
+    const previewAt = Date.parse(latest.history.at(-1)?.collectedAt ?? '');
+    if (!Number.isFinite(previewAt) || (Number.isFinite(snapshotAt) && previewAt <= snapshotAt)) {
+      return machine;
+    }
+    return { ...machine, history: latest.history, historyFreshness: latest.historyFreshness };
+  });
+}
 
 export function pressureOwnershipLabel(classification: PressureGroup['classification']): string {
   return classification === 'unknown' ? 'system / unmapped' : classification;
@@ -73,4 +91,28 @@ export function pressureSampleAge(sampledAt: string | undefined, now = Date.now(
 
 export function visiblePressureGroups(groups: PressureGroup[], limit: number): PressureGroup[] {
   return selectResourcePressureGroups(groups, limit);
+}
+
+type HistoryFreshness = NonNullable<
+  ResourcePressureSnapshotResult['machines'][number]['historyFreshness']
+>;
+
+/**
+ * Label for the ring's provenance. Restored history renders immediately after
+ * a gateway restart (no waiting for three live 30s samples); the label states
+ * where it came from and whether it is stale. Live fresh history needs no
+ * label at all.
+ */
+export function pressureHistoryFreshnessLabel(freshness: HistoryFreshness | undefined): string {
+  if (!freshness) return '';
+  if (freshness.source === 'live' && !freshness.stale) return '';
+  if (freshness.source === 'none') return 'no samples yet';
+  const age =
+    freshness.ageMs == null
+      ? 'no samples yet'
+      : freshness.ageMs < 60_000
+        ? `${Math.round(freshness.ageMs / 1_000)}s old`
+        : `${Math.floor(freshness.ageMs / 60_000)}m old`;
+  const source = freshness.source === 'restored' ? 'restored from last session' : 'live';
+  return freshness.stale ? `${source} · ${age} · stale` : `${source} · ${age}`;
 }

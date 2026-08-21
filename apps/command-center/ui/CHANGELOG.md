@@ -4,6 +4,9 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(resources): add a pressure dispatch-gate toggle to the resource view with confirm-to-disable, authenticated last-change provenance, and a visible warning while prevention is off (MANUAL-000109).
+- feat(resources): pressure cards label restored-from-last-session history with explicit staleness instead of waiting for three live samples after a gateway restart (MANUAL-000109).
+- feat(dispatch): the dispatch wizard shows backend pressure-rejected machines with attributed causes on their candidate rows, a decision panel with sustained sample evidence and refresh, and a deliberate one-dispatch override confirmation bound to the rendered generation; admitted previews forward their identity so stale evidence is rejected at execution (MANUAL-000109).
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.8.0 - 2026-08-20

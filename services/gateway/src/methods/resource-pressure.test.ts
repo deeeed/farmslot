@@ -88,6 +88,14 @@ mock.module('../fleet/node-health.js', {
         },
       ],
     }),
+    getMachineHealth: () => undefined,
+    getMachinePressureHistoryFreshness: () => ({
+      source: 'live',
+      latestSampleAt: collectedAt,
+      ageMs: 1_000,
+      stale: false,
+    }),
+    listPressureHistoryMachines: () => [],
     getMachinePressureHistory: () => [
       {
         collectedAt,
@@ -216,6 +224,8 @@ const {
   resourcePressureSnapshot,
   resourcePressureSnapshotForModel,
 } = await import('./resource.js');
+const { getCachedMachinePressureAttribution } =
+  await import('../fleet/pressure-attribution-cache.js');
 
 test('resource pressure snapshot exposes bounded trends and active attribution', async () => {
   const exactCleanup = await resourceCleanup({
@@ -296,6 +306,10 @@ test('resource pressure snapshot exposes bounded trends and active attribution',
   assert.equal(result.machines[0].processAttribution.groups[0].runId, 'run-1');
   assert.equal(result.machines[0].processAttribution.sampler?.executions, 1);
   assert.equal(result.machines[0].processAttribution.sampledProcesses, 2);
+  assert.deepEqual(
+    getCachedMachinePressureAttribution('macpro')?.groups,
+    result.machines[0].processAttribution.groups,
+  );
   assert.doesNotMatch(
     JSON.stringify(result.machines[0].processAttribution.groups),
     /run-2|foreign-slot/,

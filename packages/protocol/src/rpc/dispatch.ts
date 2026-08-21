@@ -11,6 +11,8 @@ import { Methods } from './registry.js';
 
 export const DispatchMethods = {
   preview: Methods.DISPATCH_PREVIEW,
+  pressureAdmissionGet: Methods.DISPATCH_PRESSURE_ADMISSION_GET,
+  pressureAdmissionSetEnabled: Methods.DISPATCH_PRESSURE_ADMISSION_SET_ENABLED,
   matchProject: Methods.DISPATCH_MATCH_PROJECT,
   candidates: Methods.DISPATCH_CANDIDATES,
   queueAdd: Methods.DISPATCH_QUEUE_ADD,
@@ -113,6 +115,14 @@ export interface DispatchCandidate {
    * missing companion resources). Present so the wizard can disable the row instead of
    * advertising a selection that fails later at dispatch validation. */
   ineligibleReason?: string;
+  /** What produced `ineligibleReason`: 'slot' for slot/branch/resource
+   * blockers, 'pressure' when the sustained-pressure decision is the
+   * effective blocker. Clients key behavior off this, never off message text. */
+  ineligibilitySource?: 'slot' | 'pressure';
+  /** Backend-owned sustained-pressure admission decision for this slot's machine.
+   * One decision per machine per request. Every slot on a machine carries the
+   * same captured evidence. Clients render it; they never re-derive thresholds. */
+  pressureAdmission?: import('../contracts/index.js').PressureAdmissionDecision;
 }
 
 export interface DispatchCandidatesResult {
@@ -246,6 +256,10 @@ export interface DispatchPreviewParams {
    * that branch, matching `dispatch.candidates`. Unused for main-branch flows.
    */
   targetBranch?: string;
+  /** Explicit one-dispatch pressure override. Validated against the current
+   * pressure generation of the named machine; a stale generation is rejected
+   * with a fresh decision. */
+  pressureOverride?: import('../contracts/index.js').PressureDispatchOverride;
 }
 
 export interface DispatchExecuteParams {
@@ -275,4 +289,8 @@ export interface DispatchExecuteParams {
 }
 export interface DispatchPreviewResult {
   preview: DispatchPreview;
+  /** Sustained-pressure admission decision for the selected slot's machine.
+   * Callers must treat `outcome: 'rejected'` as not-dispatchable; the preview
+   * fields are informational context for the rejection in that case. */
+  pressureAdmission?: import('../contracts/index.js').PressureAdmissionDecision;
 }

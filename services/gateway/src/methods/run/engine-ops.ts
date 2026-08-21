@@ -25,6 +25,11 @@ import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.
 import { refreshReviewGate } from '../../run-engine/review-gate.js';
 import { getRun, updateRun } from '../../runs/store.js';
 import {
+  capturePressureAdmissionDecisionsLightweight,
+  PressureAdmissionRejectedError,
+  resolveExecutePressureOutcome,
+} from '../dispatch/index.js';
+import {
   SLOT_CLAIM_REFUSED_CODE,
   slotClaimBlockedByHandoff,
   slotClaimBlockedByRelease,
@@ -156,9 +161,34 @@ export async function runActivateOnSlot(
   // Operator-authorized re-bind: claim the slot for this run so the replay re-claim
   // (replaySlotReclaimCheck owner===runId) passes. The prior run is left untouched —
   // its monitor owns its own lifecycle (ADR-024 §7 nudge precedent).
-  // Operator-authorized re-bind: claim the slot for this run so the replay re-claim
-  // (replaySlotReclaimCheck owner===runId) passes. The prior run is left untouched —
-  // its monitor owns its own lifecycle (ADR-024 §7 nudge precedent).
+  // Activation re-drives PREPARE→DISPATCH, i.e. a fresh worker launch: the
+  // same pre-claim pressure admission as every FIND_SLOT binding applies (the
+  // launch-boundary gate inside DISPATCH recomputes again). A consumed or
+  // stale override on the replayed run rejects here; the kill switch is the
+  // deliberate bypass.
+  {
+    const decision = capturePressureAdmissionDecisionsLightweight(
+      [slot.machine],
+      run.pressureOverride
+        ? {
+            override: {
+              machine: run.pressureOverride.machine,
+              pressureGeneration: run.pressureOverride.pressureGeneration,
+              reason: run.pressureOverride.reason,
+            },
+            principalId: run.pressureOverride.principalId,
+          }
+        : {},
+    ).get(slot.machine);
+    const outcome = resolveExecutePressureOutcome({
+      machine: slot.machine,
+      decision,
+      storedOverride: run.pressureOverride,
+      admissionRef: run.pressureAdmissionRef,
+    });
+    if (outcome.rejection) throw new PressureAdmissionRejectedError(outcome.rejection);
+  }
+
   const priorRunId = slot.currentRunId ?? null;
   const priorSlotId = run.slotId;
   console.log(

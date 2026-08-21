@@ -192,6 +192,9 @@ export function findBestSlot(
     variant?: string | null;
     requiredPrepareProfile?: string | null;
     projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
+    /** Machines whose sustained-pressure admission decision is rejected.
+     * Automatic selection never lands a new dispatch on them. */
+    pressureRejectedMachines?: ReadonlySet<string>;
   },
 ): SlotStatus | null {
   const allow =
@@ -199,6 +202,7 @@ export function findBestSlot(
   const candidates = slots
     .filter((s) => {
       if (s.project !== project || !isFreeSlot(s) || (allow && !allow.has(s.slot))) return false;
+      if (options?.pressureRejectedMachines?.has(s.machine)) return false;
       if (slotBranchCheckoutBlocker(s, slots, options?.targetBranch)) return false;
       if (companionResourceBlocker(s, options?.requiredPrepareProfile)) return false;
       if (

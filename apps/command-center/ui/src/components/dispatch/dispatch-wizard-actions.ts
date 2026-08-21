@@ -1,6 +1,8 @@
 import type {
   DevInteractiveProfile,
   FlowType,
+  PressureAdmissionReference,
+  PressureDispatchOverride,
   ReviewDepthPolicy,
   ReviewLoopRequest,
   ReviewValidationDepth,
@@ -42,6 +44,8 @@ export interface DispatchPayloadDraftInput {
   reviewValidationDepth: ReviewValidationDepth;
   reviewDepth?: ReviewDepthPolicy;
   pendingReviewPlan?: ReviewLoopRequest[];
+  pressureAdmissionRef?: PressureAdmissionReference;
+  pressureOverride?: PressureDispatchOverride;
   comparison: Partial<ComparisonRunParams>;
 }
 
@@ -80,6 +84,8 @@ export function buildDispatchWizardPayloadDraft(
     reviewValidationDepth: input.flowType === 'review-pr' ? input.reviewValidationDepth : undefined,
     reviewDepth: input.reviewDepth,
     pendingReviewPlan: input.pendingReviewPlan,
+    pressureAdmissionRef: input.pressureAdmissionRef,
+    pressureOverride: input.pressureOverride,
     comparison: input.comparison,
   };
 }

@@ -53,6 +53,7 @@ function registryMethods() {
 }
 
 function renderMarkdown(matrix, methods) {
+  const escapeCell = (value) => String(value).replaceAll('|', '\\|').replace(/\r?\n/g, ' ');
   const groups = new Map();
   for (const method of methods) {
     const prefix = method.split('.')[0];
@@ -81,8 +82,9 @@ function renderMarkdown(matrix, methods) {
     for (const method of group) {
       const entry = matrix.methods[method];
       const tui = entry.surface === 'tui' || entry.tui ? 'yes' : '';
+      const command = entry.command ? `\`${escapeCell(entry.command)}\`` : '';
       lines.push(
-        `| \`${method}\` | ${entry.surface} | ${entry.command ? `\`${entry.command}\`` : ''} | ${tui} | ${entry.note ?? ''} |`,
+        `| \`${method}\` | ${entry.surface} | ${command} | ${tui} | ${escapeCell(entry.note ?? '')} |`,
       );
     }
     lines.push('');

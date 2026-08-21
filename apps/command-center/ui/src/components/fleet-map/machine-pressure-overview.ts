@@ -1,12 +1,17 @@
 import { css, html, LitElement, svg, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type { ResourcePressureSnapshotResult } from '@farmslot/protocol';
+import type {
+  ResourcePressureHistoryResult,
+  ResourcePressureSnapshotResult,
+} from '@farmslot/protocol';
 
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 
 import {
+  mergePressureHistoryForRender,
   pressureBytes,
+  pressureHistoryFreshnessLabel,
   pressureLoadRatio,
   pressureOwnershipLabel,
   pressureProcessCpu,
@@ -19,6 +24,8 @@ import {
 @customElement('machine-pressure-overview')
 export class MachinePressureOverview extends LitElement {
   @property({ attribute: false }) snapshot?: ResourcePressureSnapshotResult;
+  /** Fast history-only read for first paint; the full snapshot replaces it. */
+  @property({ attribute: false }) historyPreview?: ResourcePressureHistoryResult;
   @property({ attribute: false }) visibleMachines?: string[];
 
   static styles = css`
@@ -284,10 +291,54 @@ export class MachinePressureOverview extends LitElement {
   `;
 
   render() {
+    // Charts-first paint: the lightweight resource.pressure.history read
+    // returns immediately (rehydrated rings + freshness) while the full
+    // snapshot resolves attribution in the background. This is its own
+    // rendering path, never a faked partial snapshot.
+    if (!this.snapshot && this.historyPreview) {
+      const machines = this.visibleMachines
+        ? this.historyPreview.machines.filter((machine) =>
+            this.visibleMachines!.includes(machine.machine),
+          )
+        : this.historyPreview.machines;
+      if (machines.length === 0) return html`<div class="empty">Loading pressure history…</div>`;
+      return html`<div class="grid">
+        ${machines.map((machine) => {
+          const cpuValues = machine.history.map((sample) => sample.pressure.cpu);
+          const freshness = pressureHistoryFreshnessLabel(machine.historyFreshness);
+          return html`<section class="machine ok" data-machine=${machine.machine}>
+            <header>
+              <div>
+                <strong>${machine.machine}</strong>
+                <span class="sample-note" data-testid="pressure-history-samples">
+                  · ${machine.history.length} samples
+                </span>
+                ${freshness
+                  ? html`<span class="sample-note" data-testid="pressure-history-freshness">
+                      · ${freshness}
+                    </span>`
+                  : ''}
+              </div>
+            </header>
+            <svg class="sparkline" viewBox="0 0 100 24" preserveAspectRatio="none">
+              <polyline points=${pressureSparklinePoints(cpuValues, 1)}></polyline>
+            </svg>
+            <div class="sample-note">attribution and details loading…</div>
+          </section>`;
+        })}
+      </div>`;
+    }
     if (!this.snapshot) return html`<div class="empty">Loading pressure history…</div>`;
+    // The full snapshot owns attribution and resource details, while the fast
+    // history read keeps advancing on node-health events. Merge only the ring
+    // and freshness fields so charts do not freeze at snapshot time.
+    const snapshotMachines = mergePressureHistoryForRender(
+      this.snapshot.machines,
+      this.historyPreview?.machines,
+    );
     const machines = this.visibleMachines
-      ? this.snapshot.machines.filter((machine) => this.visibleMachines!.includes(machine.machine))
-      : this.snapshot.machines;
+      ? snapshotMachines.filter((machine) => this.visibleMachines!.includes(machine.machine))
+      : snapshotMachines;
     const omitted = this.snapshot.summary;
     if (machines.length === 0)
       return html`<div class="empty">
@@ -326,6 +377,11 @@ export class MachinePressureOverview extends LitElement {
                 <span class="sample-note" data-testid="pressure-history-samples">
                   · ${machine.history.length} samples
                 </span>
+                ${pressureHistoryFreshnessLabel(machine.historyFreshness)
+                  ? html`<span class="sample-note" data-testid="pressure-history-freshness">
+                      · ${pressureHistoryFreshnessLabel(machine.historyFreshness)}
+                    </span>`
+                  : ''}
               </div>
               <div class="heading-actions">
                 <span

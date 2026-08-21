@@ -299,7 +299,9 @@ import {
   dispatchQueueRemoveOrphan,
   dispatchQueueReorder,
   dispatchQueueUpdate,
+  getPressureAdmissionControl,
   refreshBranches,
+  setPressureAdmissionEnabled,
 } from '../methods/dispatch.js';
 import {
   fileTransferCancel,
@@ -378,6 +380,7 @@ import {
   resourceControl,
   resourceHealth,
   resourceList,
+  resourcePressureHistory,
   resourcePressureSnapshot,
   resourceWatchSetEnabled,
 } from '../methods/resource.js';
@@ -637,6 +640,12 @@ async function routeAuthorizedMethod(
     // Dispatch
     case Methods.DISPATCH_PREVIEW:
       return dispatchPreview(p as DispatchPreviewParams);
+    case Methods.DISPATCH_PRESSURE_ADMISSION_GET:
+      return getPressureAdmissionControl();
+    case Methods.DISPATCH_PRESSURE_ADMISSION_SET_ENABLED:
+      return setPressureAdmissionEnabled(
+        p as import('@farmslot/protocol').PressureAdmissionSetEnabledParams,
+      );
     // dispatch.execute removed from public API — use run.create instead
     // (dispatchExecute is still called internally by run-engine S.DISPATCH)
     case Methods.DISPATCH_MATCH_PROJECT:
@@ -1206,6 +1215,10 @@ async function routeAuthorizedMethod(
       return resourceWatchSetEnabled(p as ResourceWatchSetEnabledParams);
     case Methods.RESOURCE_PRESSURE_SNAPSHOT:
       return resourcePressureSnapshot(p as ResourcePressureSnapshotParams);
+    case Methods.RESOURCE_PRESSURE_HISTORY:
+      return resourcePressureHistory(
+        p as import('@farmslot/protocol').ResourcePressureHistoryParams,
+      );
     case Methods.MACHINE_PAUSE_PREVIEW:
       return machinePausePreview(p as MachinePausePreviewParams);
     case Methods.MACHINE_PAUSE_EXECUTE:

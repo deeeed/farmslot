@@ -49,7 +49,11 @@ import { initCopilotRuntime } from './copilot-runtime/controller.js';
 import { loadGatewayTlsMaterial } from './core/gateway-tls.js';
 import { getGatewayListenSnapshot, setGatewayListenAddress } from './core/listen-address.js';
 import { loadEvalSuiteCaps } from './evals/suite-cap-store.js';
-import { getMachineHealth, startLocalCollection } from './fleet/node-health.js';
+import {
+  getMachineHealth,
+  rehydratePressureHistory,
+  startLocalCollection,
+} from './fleet/node-health.js';
 import {
   farmslotRoot,
   getCachedFleet,
@@ -307,6 +311,11 @@ async function main(): Promise<void> {
   // may fire a gh call during startup (run-engine recovery, pr-linkage, etc.).
   initGitHubClient(observedBroadcast);
   loadBindingsCache();
+
+  // Rehydrate the persisted normalized pressure ring BEFORE ordinary
+  // fleet/resource recovery so pressure charts and dispatch admission
+  // warm-start instead of waiting for three live 30s samples.
+  rehydratePressureHistory();
 
   // Load initial fleet state
   const missingFile = !existsSync(statusFile);

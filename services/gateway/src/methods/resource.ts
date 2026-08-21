@@ -13,6 +13,8 @@ import {
   ResourceListResult,
   ResourcePressureCleanupCandidate,
   ResourcePressureConcern,
+  ResourcePressureHistoryParams,
+  ResourcePressureHistoryResult,
   ResourcePressureMachine,
   ResourcePressureSeverity,
   ResourcePressureSnapshotParams,
@@ -27,10 +29,14 @@ import {
 import { isMissingProjectConfigError, SlotConfigError } from '../core/config.js';
 import { getNode } from '../fleet/machine-registry.js';
 import {
+  getMachineHealth,
   getMachinePressureHistory,
+  getMachinePressureHistoryFreshness,
   getMachineProcessInventory,
   getMachineProcessSamplerHealth,
+  listPressureHistoryMachines,
 } from '../fleet/node-health.js';
+import { cacheMachinePressureAttribution } from '../fleet/pressure-attribution-cache.js';
 import {
   attributeProcessInventory,
   type ProcessAttributionResource,
@@ -104,6 +110,31 @@ export async function resourceHostPressure(machine: string, project?: string) {
     online: health?.online ?? null,
     severity: pressureSeverity(concerns),
     concerns,
+  };
+}
+
+/**
+ * Lightweight history-only read (MANUAL-000109): in-memory (possibly
+ * rehydrated) rings plus freshness, returned immediately. No slot resource
+ * resolution and no tmux/process attribution. Clients render charts from this
+ * first and load the full snapshot in the background for details.
+ */
+export async function resourcePressureHistory(
+  params: ResourcePressureHistoryParams = {},
+): Promise<ResourcePressureHistoryResult> {
+  const filter = combinedFilter(params.machine, params.machines);
+  const filterPresent = params.machine !== undefined || params.machines !== undefined;
+  const machines = listPressureHistoryMachines().filter(
+    (machine) => !filterPresent || filter.has(machine),
+  );
+  return {
+    checkedAt: new Date().toISOString(),
+    machines: machines.map((machine) => ({
+      machine,
+      online: getMachineHealth(machine)?.online ?? null,
+      history: getMachinePressureHistory(machine),
+      historyFreshness: getMachinePressureHistoryFreshness(machine),
+    })),
   };
 }
 
@@ -463,7 +494,7 @@ export async function resourcePressureSnapshot(
       { ...EMPTY_PROCESS_CLASS_COUNTS },
     );
     allAttributionGroups.set(machine, attribution.groups);
-    machines.push({
+    const machineResult: ResourcePressureMachine = {
       machine,
       online: health?.online ?? null,
       headroom: health?.headroom ?? 'unknown',
@@ -472,6 +503,9 @@ export async function resourcePressureSnapshot(
       ...(health?.system ? { system: health.system } : {}),
       ...(health?.capacity ? { capacity: health.capacity } : {}),
       history: historyByMachine.get(machine) ?? [],
+      // Rehydrated-vs-live provenance so consumers can use restored history
+      // immediately after a gateway restart with staleness stated explicitly.
+      historyFreshness: getMachinePressureHistoryFreshness(machine),
       processAttribution: {
         ...(tmuxAttributionError
           ? { degradedReason: `Tmux attribution unavailable: ${tmuxAttributionError}` }
@@ -520,7 +554,9 @@ export async function resourcePressureSnapshot(
         byStatus,
         cleanupCandidates: machineCleanupCandidates,
       },
-    });
+    };
+    machines.push(machineResult);
+    cacheMachinePressureAttribution(machine, machineResult.processAttribution);
   }
 
   const boundedCleanupCandidates = cleanupCandidates.slice(0, MAX_PRESSURE_CLEANUP_CANDIDATES);

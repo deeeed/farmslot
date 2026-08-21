@@ -130,6 +130,27 @@ test('createRun rejects domain names outside the slug contract and drops blank o
   assert.equal('domain' in blank, false);
 });
 
+test('createRun rejects ambiguous pressure override and preview identity inputs', () => {
+  assert.throws(
+    () =>
+      createRun({
+        flowType: 'fix-bug',
+        project: 'example-mobile-farm',
+        ticketOrPr: `PROJ-${Date.now()}`,
+        pressureOverride: {
+          machine: 'macwork',
+          pressureGeneration: 'generation-a',
+          reason: 'urgent fix',
+        },
+        pressureAdmissionRef: {
+          machine: 'macwork',
+          pressureGeneration: 'generation-a',
+        },
+      }),
+    /either pressureOverride or pressureAdmissionRef/u,
+  );
+});
+
 test('createRun preserves explicit lineage for follow-up runs', async (t) => {
   const root = createRun({
     flowType: 'dev',
@@ -794,9 +815,15 @@ test('getAllRunsWithArchived dedupes a run present in both the live map and the 
   const archiveDir = path.join(os.tmpdir(), `farmslot-test-runs-${process.pid}`, 'archive');
   const staleArchivePath = path.join(archiveDir, `${live.id}.json`);
   const throwawayPath = path.join(archiveDir, `${throwaway.id}.json`);
-  t.after(() => Promise.all([staleArchivePath, throwawayPath].map((file) => unlink(file).catch(() => {
-    // Best-effort cleanup; absence just means the file was already removed.
-  }))));
+  t.after(() =>
+    Promise.all(
+      [staleArchivePath, throwawayPath].map((file) =>
+        unlink(file).catch(() => {
+          // Best-effort cleanup; absence just means the file was already removed.
+        }),
+      ),
+    ),
+  );
 
   // The stale duplicate carries a different status so "live record wins" is provable.
   await writeFile(

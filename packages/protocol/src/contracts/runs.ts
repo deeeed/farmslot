@@ -1677,6 +1677,15 @@ export interface Run {
   branch: string | null;
   /** Completion side-effect policy; artifact-only suppresses publication/PR mutation paths. */
   completionPolicy?: RunCompletionPolicy;
+  /** Principal-stamped one-dispatch pressure override requested for this run.
+   * Bound to one machine + pressure generation; dispatch execution recomputes
+   * the admission decision and rejects the override when the generation moved. */
+  pressureOverride?: import('./pressure-admission.js').PressureOverrideAudit;
+  /** Preview identity of the admitted pressure decision this run was created
+   * against (client-rendered preview, or FIND_SLOT's selected decision for
+   * automatic runs). Execution rejects with PRESSURE_PREVIEW_STALE when it no
+   * longer matches freshly recomputed evidence. */
+  pressureAdmissionRef?: import('./pressure-admission.js').PressureAdmissionReference;
   /** Requested/resolved base ref for artifact-only comparison replay runs. */
   startRef?: RunStartRefProvenance | null;
   /** Gateway-captured template provenance for the rendered worker task. */

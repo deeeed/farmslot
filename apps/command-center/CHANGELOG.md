@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- feat(dispatch): add reusable live proof and browser probes for sustained-pressure rejection, audited override, warm history, and the pressure dispatch-gate control (MANUAL-000109).
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.8.0 - 2026-08-20

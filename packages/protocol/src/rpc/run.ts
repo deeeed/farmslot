@@ -150,6 +150,14 @@ export interface RunCreateParams {
   pendingReviewPlan?: import('../contracts/index.js').ReviewLoopRequest[];
   /** Runner execution safety tier (ADR-023). Overrides runner/project defaults. */
   safetyTier?: import('../contracts/index.js').SafetyTier;
+  /** Deliberate one-dispatch pressure override. The gateway stamps the
+   * authenticated principal into the audit record; execution recomputes the
+   * decision and rejects the override when the pressure generation moved. */
+  pressureOverride?: import('../contracts/index.js').PressureDispatchOverride;
+  /** Preview identity from the admitted decision the client rendered.
+   * Execution recomputes and rejects with PRESSURE_PREVIEW_STALE when the
+   * machine/generation no longer matches current evidence. */
+  pressureAdmissionRef?: import('../contracts/index.js').PressureAdmissionReference;
   /**
    * Restrict FIND_SLOT (and any affinity reuse) to this set of slot IDs. The UI
    * resolves its filters against the live fleet before dispatch so the server
