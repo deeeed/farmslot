@@ -1,8 +1,9 @@
 {
-  "version": "0.8.0",
-  "date": "2026-08-20",
+  "version": "0.9.0",
+  "date": "2026-08-21",
   "items": [
-    "Machine relief operations survive restarts and restore only the reviewed resources and exact runner session.",
-    "Runner shutdown and recovery now fail closed on ambiguous sessions, changed panes, or stale state."
+    "New dispatches are held during sustained critical pressure; existing work is never touched.",
+    "One-shot overrides are authenticated, generation-bound, and durably consumed.",
+    "History persists across restarts; admission stays in memory and uses cached attribution only."
   ]
 }

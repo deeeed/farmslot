@@ -1,9 +1,9 @@
 {
-  "version": "0.8.0",
-  "date": "2026-08-20",
+  "version": "0.9.0",
+  "date": "2026-08-21",
   "items": [
-    "Pause orchestration or release reviewed machine resources directly from each pressure card.",
-    "Preview exact runs and processes before acting, then selectively restore them with durable progress and clear residual errors.",
-    "Inspect per-core load, sampler health, and detailed process ownership without duplicating charts or adding UI polling."
+    "See sustained pressure and attributed causes directly in dispatch candidates.",
+    "Override one dispatch with an audited reason, or disable pressure prevention from Resources.",
+    "Pressure charts now warm-start from persisted history and recover after reconnect."
   ]
 }
