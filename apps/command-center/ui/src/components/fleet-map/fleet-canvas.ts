@@ -142,7 +142,7 @@ export class FleetCanvas extends LitElement {
   private _machinePauseRestoreSelector: MachinePauseSelector = { kind: 'all' };
   private _machinePauseEventTimer?: ReturnType<typeof setTimeout>;
   private _pressureHistoryRefreshTimer?: ReturnType<typeof setTimeout>;
-  private _resourcePressureReconnectTimer?: ReturnType<typeof setTimeout>;
+  private _resourcePressureRecoveryTimer?: ReturnType<typeof setTimeout>;
   private unsub?: () => void;
   private _unsubConnected?: () => void;
   private _unsubDisconnected?: () => void;
@@ -313,6 +313,7 @@ export class FleetCanvas extends LitElement {
     this._unsubConnState = gateway.onConnectionChange((s) => {
       if (s === 'connected') {
         this._fetchAgents();
+        this.scheduleResourcePressureRecoveryRefresh();
         if (this.machinePauseMachine) {
           this.machinePauseConnectionStale = true;
           void this.fetchMachinePauseState(false);
@@ -342,7 +343,7 @@ export class FleetCanvas extends LitElement {
       // A reconnect is rare and can recover an initial snapshot/control fetch
       // that raced node startup. Coalesce a burst of node registrations into
       // one explicit full refresh while the resource view is open.
-      this.scheduleResourcePressureReconnectRefresh();
+      this.scheduleResourcePressureRecoveryRefresh();
     });
     this._unsubDisconnected = gateway.subscribe<NodeDisconnectedPayload>(
       Events.NODE_DISCONNECTED,
@@ -478,16 +479,16 @@ export class FleetCanvas extends LitElement {
     }
   }
 
-  private clearResourcePressureReconnectRefresh() {
-    if (this._resourcePressureReconnectTimer) {
-      clearTimeout(this._resourcePressureReconnectTimer);
-      this._resourcePressureReconnectTimer = undefined;
+  private clearResourcePressureRecoveryRefresh() {
+    if (this._resourcePressureRecoveryTimer) {
+      clearTimeout(this._resourcePressureRecoveryTimer);
+      this._resourcePressureRecoveryTimer = undefined;
     }
   }
 
   disconnectedCallback() {
     this.clearPressureHistoryRefresh();
-    this.clearResourcePressureReconnectRefresh();
+    this.clearResourcePressureRecoveryRefresh();
     this._providerAccountsUnsub?.();
     this._providerAccountsUnsub = null;
     super.disconnectedCallback();
@@ -1207,10 +1208,10 @@ export class FleetCanvas extends LitElement {
     }, 2_000);
   }
 
-  private scheduleResourcePressureReconnectRefresh(): void {
-    if (this.groupBy !== 'resource' || this._resourcePressureReconnectTimer) return;
-    this._resourcePressureReconnectTimer = setTimeout(() => {
-      this._resourcePressureReconnectTimer = undefined;
+  private scheduleResourcePressureRecoveryRefresh(): void {
+    if (this.groupBy !== 'resource' || this._resourcePressureRecoveryTimer) return;
+    this._resourcePressureRecoveryTimer = setTimeout(() => {
+      this._resourcePressureRecoveryTimer = undefined;
       void this.fetchResourcePressure();
     }, 2_000);
   }
