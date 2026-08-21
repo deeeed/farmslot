@@ -4,10 +4,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.24.0 - 2026-08-21
+
 - feat(pressure): add the gateway-owned pressure-admission kill switch contract: `PressureAdmissionControlState`, `dispatch.pressureAdmission.get/setEnabled`, and the admitted `state: 'disabled'` decision variant (MANUAL-000109).
 - feat(pressure): add `historyFreshness` (live/restored + explicit staleness) to `resource.pressure.snapshot` machines so rehydrated history is usable immediately after a gateway restart (MANUAL-000109).
 - feat(pressure): add the sustained-pressure dispatch admission contract with admission states, stable rejection codes, normalized sample evidence, attributed causes, preview identity (`PressureAdmissionReference`), and the principal-audited one-dispatch override; add `pressureAdmission` on dispatch preview/candidate results and `pressureOverride`/`pressureAdmissionRef` on run creation (MANUAL-000109).
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.23.0 - 2026-08-20
 
