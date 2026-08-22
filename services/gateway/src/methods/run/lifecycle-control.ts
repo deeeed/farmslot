@@ -229,6 +229,11 @@ async function publishForceCompletedRun(run: Run): Promise<Run> {
   try {
     const { broadcastEvent } = await import('../../server.js');
     broadcastEvent(Events.RUN_UPDATED, { run });
+    // Raw broadcastEvent is the WebSocket fan-out only. Auto-recovery's
+    // terminal observer lives on the index.ts wrapper; invoke it so a
+    // force-completed failed run closes in-flight recovery attempts.
+    const { routeEventToAutoRecovery } = await import('../../auto-recovery/watcher.js');
+    routeEventToAutoRecovery(Events.RUN_UPDATED, { run });
   } catch (err) {
     // Advisory: the store already holds `done`. Other clients may be stale until
     // the next refetch; do not fail the RPC or the operator cannot retry.

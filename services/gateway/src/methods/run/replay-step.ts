@@ -314,6 +314,9 @@ export async function runReplayStep(
       `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be replayed`,
     );
   }
+  if (existing.status === 'done') {
+    throw new Error(`Run ${params.runId} is already done and cannot be replayed`);
+  }
   // Replaying a cancelled run is supported (e.g. resuming ci-watch on an
   // update-branch run). Cancelling released the node, so the graph may have
   // re-queued its work. Claim-aware reclaim (below) revokes any exclusive queue
@@ -837,6 +840,11 @@ export async function runReplayStep(
           );
         }
       }
+    }
+    const live = getRun(params.runId);
+    if (!live) throw new Error(`Run not found: ${params.runId}`);
+    if (live.status === 'done') {
+      throw new Error(`Run ${params.runId} is already done and cannot be replayed`);
     }
     updateRun(params.runId, {
       status: activeStatusForReplayStep(replayStepName),
