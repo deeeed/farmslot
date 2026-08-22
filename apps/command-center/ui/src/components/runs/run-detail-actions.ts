@@ -141,7 +141,9 @@ export function confirmForceComplete(
     context.setPendingConfirm(null);
     const params: { runId: string; prNumber?: number } = { runId: run.id };
     if (run.status === 'failed') {
-      const raw = window.prompt('PR number (optional, blank to skip)')?.trim();
+      const entered = window.prompt('PR number (optional, blank to skip)');
+      if (entered == null) return;
+      const raw = entered.trim();
       if (raw) {
         const prNumber = Number(raw);
         if (!Number.isInteger(prNumber) || prNumber <= 0) {

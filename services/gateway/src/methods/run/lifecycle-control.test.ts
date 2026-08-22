@@ -219,7 +219,7 @@ test('runForceComplete persists a PR on ci-watching without flipping status', as
   assert.equal(result.run.prNumber, 35145);
 });
 
-test('runForceComplete attaches the PR before aborting or rewriting steps', async (t) => {
+test('runForceComplete fences a failed run before attaching the PR', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',
@@ -234,13 +234,51 @@ test('runForceComplete attaches the PR before aborting or rewriting steps', asyn
   });
 
   let cancelled = false;
+  let attachSawDone = false;
+  const result = await runForceCompleteTransitionLocked(
+    { runId: run.id, prNumber: 35145 },
+    () => {},
+    {
+      cancelEngine: () => {
+        cancelled = true;
+      },
+      bumpGeneration: (runId) => {
+        const current = getRun(runId)!;
+        const generation = (current.engineState?.generation ?? 0) + 1;
+        updateRun(runId, { engineState: { ...(current.engineState ?? {}), generation } });
+        return generation;
+      },
+      attachPrNumber: async (runId) => {
+        attachSawDone = getRun(runId)?.status === 'done' && cancelled;
+        throw new Error('refresh failed');
+      },
+      publish: async (published) => published,
+    },
+  );
+  assert.equal(cancelled, true);
+  assert.equal(attachSawDone, true);
+  assert.equal(result.run.status, 'done');
+  assert.equal(result.run.prNumber, 35145);
+  assert.equal(result.run.engineState?.generation, 3);
+});
+
+test('runForceComplete does not abort ci-watching when PR attach throws', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-ci-attach`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'ci-watching' });
+
+  let cancelled = false;
   await assert.rejects(
     () =>
       runForceCompleteTransitionLocked({ runId: run.id, prNumber: 35145 }, () => {}, {
         cancelEngine: () => {
           cancelled = true;
         },
-        bumpGeneration: () => 3,
+        bumpGeneration: () => 1,
         attachPrNumber: async () => {
           throw new Error('refresh failed');
         },
@@ -249,10 +287,7 @@ test('runForceComplete attaches the PR before aborting or rewriting steps', asyn
     /refresh failed/,
   );
   assert.equal(cancelled, false);
-  const stored = getRun(run.id)!;
-  assert.equal(stored.status, 'failed');
-  assert.equal(stored.steps.find((step) => step.name === 'self-review')?.status, 'failed');
-  assert.equal(stored.engineState?.generation, 2);
+  assert.equal(getRun(run.id)?.status, 'ci-watching');
 });
 
 test('runForceComplete still returns done when publication after-effects throw', async (t) => {

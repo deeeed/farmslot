@@ -134,60 +134,75 @@ export async function runForceCompleteTransitionLocked(
   }
   if (params.prNumber != null) assertPositivePrNumber(params.prNumber);
 
-  // Persist the PR before aborting or rewriting steps. A refresh failure must
-  // leave the original failed/ci-watching record intact so the operator can retry.
-  if (params.prNumber != null) {
-    await deps.attachPrNumber(params.runId, params.prNumber);
+  if (existing.status === 'ci-watching') {
+    // Persist the PR before aborting the watch. A refresh failure must leave
+    // the ci-watching record intact so the operator can retry.
+    if (params.prNumber != null) {
+      await deps.attachPrNumber(params.runId, params.prNumber);
+    }
+    deps.cancelEngine(params.runId);
+    // Abort the CI monitor's AbortController — the run-engine pipeline then
+    // completes naturally: CI_WATCH returns outcome='aborted' → no chaining →
+    // retrospective + slot release → FINALIZE → done
+    const run = getRun(params.runId)!;
+    emit(Events.RUN_UPDATED, { run });
+    console.log(`[run] force-completing run ${params.runId.slice(0, 8)} (was ${existing.status})`);
+    return { run };
   }
 
+  // Failed path: fence recovery synchronously before any await. Replay and
+  // auto-recovery key off `failed` + generation; yielding for link refresh
+  // first lets them revive the run after this transition has committed done.
   deps.cancelEngine(params.runId);
-
-  if (existing.status === 'failed') {
-    // Failed self-review has already exited the engine; bump anyway so a
-    // lingering loop cannot overwrite the operator-owned done write.
-    deps.bumpGeneration(params.runId);
-    const reason = 'operator force-completed a failed run';
-    for (const step of existing.steps) {
-      if (step.status === 'done' || step.status === 'skipped') continue;
-      // Rewrite failed (and any other unfinished) steps: the operator is
-      // declaring the run done despite the recorded failure.
-      updateRunStep(params.runId, step.name, {
-        status: 'skipped',
-        completedAt: new Date().toISOString(),
-        detail: `Skipped: ${reason}`,
-        outputs: { ...(step.outputs ?? {}), skipped: true, reason, source: 'operator' },
-      });
-    }
-    const current = getRun(params.runId)!;
-    const run = updateRun(params.runId, {
-      status: 'done',
+  deps.bumpGeneration(params.runId);
+  const reason = 'operator force-completed a failed run';
+  for (const step of existing.steps) {
+    if (step.status === 'done' || step.status === 'skipped') continue;
+    // Rewrite failed (and any other unfinished) steps: the operator is
+    // declaring the run done despite the recorded failure.
+    updateRunStep(params.runId, step.name, {
+      status: 'skipped',
       completedAt: new Date().toISOString(),
-      error: undefined,
-      metrics: { ...current.metrics, outcome: 'success' },
-      backlogReconcilePending: true,
+      detail: `Skipped: ${reason}`,
+      outputs: { ...(step.outputs ?? {}), skipped: true, reason, source: 'operator' },
     });
-    let settled = run;
-    try {
-      settled = await deps.publish(run);
-    } catch (err) {
-      // Advisory after-effects: the operator-owned done write already landed.
-      // Failing the RPC would block retry because status is already `done`.
-      console.warn(
-        `[run] force-complete publication failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
-      );
-      settled = getRun(params.runId) ?? run;
-    }
-    console.log(`[run] force-completed failed run ${params.runId.slice(0, 8)}`);
-    return { run: settled };
   }
-
-  // Abort the CI monitor's AbortController — the run-engine pipeline then
-  // completes naturally: CI_WATCH returns outcome='aborted' → no chaining →
-  // retrospective + slot release → FINALIZE → done
-  const run = getRun(params.runId)!;
-  emit(Events.RUN_UPDATED, { run });
-  console.log(`[run] force-completing run ${params.runId.slice(0, 8)} (was ${existing.status})`);
-  return { run };
+  const current = getRun(params.runId)!;
+  const run = updateRun(params.runId, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    error: undefined,
+    metrics: { ...current.metrics, outcome: 'success' },
+    backlogReconcilePending: true,
+    ...(params.prNumber != null ? { prNumber: params.prNumber } : {}),
+    // Failed runs already emitted a failure row. Clear the marker so the
+    // append-only sink records this override; query last-record-wins.
+    analyticsEmittedAt: undefined,
+  });
+  if (params.prNumber != null) {
+    try {
+      await deps.attachPrNumber(params.runId, params.prNumber);
+    } catch (err) {
+      // Advisory: the PR number is already on the done write. Stale links
+      // refresh on the next ticketData change.
+      console.warn(
+        `[run] force-complete PR attach failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+      );
+    }
+  }
+  let settled = getRun(params.runId) ?? run;
+  try {
+    settled = await deps.publish(settled);
+  } catch (err) {
+    // Advisory after-effects: the operator-owned done write already landed.
+    // Failing the RPC would block retry because status is already `done`.
+    console.warn(
+      `[run] force-complete publication failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+    );
+    settled = getRun(params.runId) ?? settled;
+  }
+  console.log(`[run] force-completed failed run ${params.runId.slice(0, 8)}`);
+  return { run: settled };
 }
 
 function assertPositivePrNumber(prNumber: number): void {
