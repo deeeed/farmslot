@@ -119,7 +119,7 @@ test('fresh dispatch rechecks pressure before every runner effect path', () => {
 
 test('the common scored path durably consumes the client preview identity before slot bind', () => {
   const refresh = SOURCE.indexOf(
-    'const refreshedPreviewRef = refreshedAdmissionRefForAdmittedPreview(\n    run.pressureAdmissionRef,\n    result.pressureAdmission,\n  );',
+    'const refreshedPreviewRef = refreshedAdmissionRefForAdmittedPreview(\n    clientAdmissionRef,\n    result.pressureAdmission,\n  );',
   );
   const persist = SOURCE.indexOf(
     'updateRun(runId, { pressureAdmissionRef: refreshedPreviewRef });',
@@ -136,6 +136,10 @@ test('the common scored path durably consumes the client preview identity before
   assert.ok(
     consume > persist,
     'scored path must consume the validated ref immediately before updateRun(slotId)/claim',
+  );
+  assert.ok(
+    SOURCE.includes("code: 'PRESSURE_PREVIEW_STALE'"),
+    'scored path must still reject a machine-changed preview as PRESSURE_PREVIEW_STALE',
   );
   assert.ok(
     SOURCE.includes("await persistRunNow(updated, 'pressure-admission-ref-consumption')"),

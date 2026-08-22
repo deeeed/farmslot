@@ -26,6 +26,19 @@ test('does not refresh when preview generation still matches', () => {
   assert.equal(next, null);
 });
 
+test('does not refresh when the admitted machine changed', () => {
+  const next = refreshedAdmissionRefForAdmittedPreview(
+    { machine: 'mini', pressureGeneration: 'mini|gauge|-|old' },
+    {
+      outcome: 'admitted',
+      state: 'green',
+      machine: 'macwork',
+      evidence: { generation: 'macwork|gauge|-|new' },
+    },
+  );
+  assert.equal(next, null);
+});
+
 test('does not refresh a rejected machine into a launch', () => {
   const next = refreshedAdmissionRefForAdmittedPreview(
     { machine: 'mini', pressureGeneration: 'mini|gauge|-|old' },
