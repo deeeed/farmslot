@@ -118,15 +118,46 @@ test('fresh dispatch rechecks pressure before every runner effect path', () => {
 });
 
 test('the common scored path durably consumes the client preview identity before slot bind', () => {
+  const refresh = SOURCE.indexOf(
+    'const refreshedPreviewRef = refreshedAdmissionRefForAdmittedPreview(\n    run.pressureAdmissionRef,\n    result.pressureAdmission,\n  );',
+  );
+  const persist = SOURCE.indexOf(
+    'updateRun(runId, { pressureAdmissionRef: refreshedPreviewRef });',
+    refresh,
+  );
   const consume = SOURCE.indexOf(
-    'await consumeRunPressureAdmissionRef(runId, run);\n  const slotId = result.preview.slotId;',
+    'await consumeRunPressureAdmissionRef(runId, getRun(runId) ?? run);\n  const slotId = result.preview.slotId;',
+  );
+  assert.ok(refresh > 0, 'scored path must refresh an admitted generation rotate');
+  assert.ok(
+    persist > refresh,
+    'scored path must persist the refreshed preview identity after computing it',
   );
   assert.ok(
-    consume > 0,
+    consume > persist,
     'scored path must consume the validated ref immediately before updateRun(slotId)/claim',
   );
   assert.ok(
     SOURCE.includes("await persistRunNow(updated, 'pressure-admission-ref-consumption')"),
     'preview identity consumption must be durable before a slot claim',
+  );
+});
+
+test('engine-bound slot binds refresh an admitted generation rotate before consume', () => {
+  const start = SOURCE.indexOf('async function assertEngineBoundSlotPressureAdmitted');
+  const end = SOURCE.indexOf('\nexport function refreshedAdmissionRefForAdmittedPreview');
+  assert.ok(start > 0 && end > start, 'engine-bound pressure gate helper missing');
+  const body = SOURCE.slice(start, end);
+  assert.ok(
+    body.includes('refreshedAdmissionRefForAdmittedPreview('),
+    'engine-bound binds must reuse the admitted-preview refresh helper',
+  );
+  assert.ok(
+    body.includes('updateRun(runId, { pressureAdmissionRef: refreshedPreviewRef })'),
+    'engine-bound binds must persist the refreshed preview identity',
+  );
+  assert.ok(
+    body.includes('await consumeRunPressureAdmissionRef(runId, getRun(runId) ?? run)'),
+    'engine-bound binds must consume the refreshed identity',
   );
 });

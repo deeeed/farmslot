@@ -235,14 +235,54 @@ async function assertEngineBoundSlotPressureAdmitted(
         }
       : {},
   ).get(machine);
+  const refreshedPreviewRef = refreshedAdmissionRefForAdmittedPreview(
+    run.pressureAdmissionRef,
+    decision,
+  );
+  if (refreshedPreviewRef) {
+    console.warn(
+      `[run-engine] pressure preview generation moved (${run.pressureAdmissionRef?.pressureGeneration} -> ${refreshedPreviewRef.pressureGeneration}) on ${refreshedPreviewRef.machine}; still admitted, launching`,
+    );
+    updateRun(runId, { pressureAdmissionRef: refreshedPreviewRef });
+  }
   const outcome = resolveExecutePressureOutcome({
     machine,
     decision,
     storedOverride,
-    admissionRef: run.pressureAdmissionRef,
+    admissionRef: getRun(runId)?.pressureAdmissionRef ?? run.pressureAdmissionRef,
   });
   if (outcome.rejection) throw new PressureAdmissionRejectedError(outcome.rejection);
-  await consumeRunPressureAdmissionRef(runId, run);
+  await consumeRunPressureAdmissionRef(runId, getRun(runId) ?? run);
+}
+
+/** Fresh preview identity when generation rotated but the machine is still
+ * admitted; otherwise null. */
+export function refreshedAdmissionRefForAdmittedPreview(
+  clientAdmissionRef: Run['pressureAdmissionRef'],
+  pressureAdmission:
+    | {
+        outcome: string;
+        state?: string;
+        machine: string;
+        evidence: { generation: string | null };
+      }
+    | null
+    | undefined,
+): { machine: string; pressureGeneration: string } | null {
+  if (!clientAdmissionRef) return null;
+  if (pressureAdmission?.outcome !== 'admitted') return null;
+  if (pressureAdmission.state === 'override' || pressureAdmission.state === 'disabled') {
+    return null;
+  }
+  const generation = pressureAdmission.evidence.generation;
+  if (!generation) return null;
+  if (
+    clientAdmissionRef.machine === pressureAdmission.machine &&
+    clientAdmissionRef.pressureGeneration === generation
+  ) {
+    return null;
+  }
+  return { machine: pressureAdmission.machine, pressureGeneration: generation };
 }
 
 /** Consume a validated client preview identity: audit-stamp `consumedAt` on
@@ -873,34 +913,22 @@ export async function executeFindSlotStep(
   if (result.pressureAdmission?.outcome === 'rejected') {
     throw new PressureAdmissionRejectedError(result.pressureAdmission);
   }
-  // Earliest safe boundary for a client-forwarded preview identity: if the
-  // operator dispatched against a rendered decision whose generation already
-  // moved, fail before claiming a slot. Automatic runs carry no ref because there
-  // was no operator preview to go stale, and execute recomputes regardless.
-  const clientAdmissionRef = run.pressureAdmissionRef;
-  if (
-    clientAdmissionRef &&
-    result.pressureAdmission?.outcome === 'admitted' &&
-    result.pressureAdmission.state !== 'override' &&
-    result.pressureAdmission.state !== 'disabled' &&
-    (clientAdmissionRef.machine !== result.pressureAdmission.machine ||
-      clientAdmissionRef.pressureGeneration !== result.pressureAdmission.evidence.generation)
-  ) {
-    throw new PressureAdmissionRejectedError({
-      outcome: 'rejected',
-      machine: result.pressureAdmission.machine,
-      state: 'stale',
-      code: 'PRESSURE_PREVIEW_STALE',
-      reason: `Dispatch was previewed against pressure generation ${clientAdmissionRef.pressureGeneration} on ${clientAdmissionRef.machine}, but ${result.pressureAdmission.machine} is now at ${result.pressureAdmission.evidence.generation ?? 'none'}; refresh the preview and dispatch against the fresh decision.`,
-      causes: [],
-      evidence: result.pressureAdmission.evidence,
-      overridable: false,
-    });
+  // Generation can rotate while still admitted; refresh the stored identity.
+  // DISPATCH still rejects an unconsumed stale ref when FIND_SLOT was skipped.
+  const refreshedPreviewRef = refreshedAdmissionRefForAdmittedPreview(
+    run.pressureAdmissionRef,
+    result.pressureAdmission,
+  );
+  if (refreshedPreviewRef) {
+    console.warn(
+      `[run-engine] pressure preview generation moved (${run.pressureAdmissionRef?.pressureGeneration} -> ${refreshedPreviewRef.pressureGeneration}) on ${refreshedPreviewRef.machine}; still admitted, launching`,
+    );
+    updateRun(runId, { pressureAdmissionRef: refreshedPreviewRef });
   }
   // Common scored/explicit path: the validated client preview identity is
   // consumed HERE, before the slot bind/claim, so a long PREPARE cannot turn
   // a green-to-green generation move into a launch-time failure.
-  await consumeRunPressureAdmissionRef(runId, run);
+  await consumeRunPressureAdmissionRef(runId, getRun(runId) ?? run);
   const slotId = result.preview.slotId;
   updateRun(runId, { slotId });
   // Mark slot as claimed by this run

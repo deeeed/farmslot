@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- fix(dispatch): do not fail a run with PRESSURE_PREVIEW_STALE when FIND_SLOT recomputes and the machine is still admitted. The 30s pressure ring rotating generation is not a resource rejection; refresh the stored preview identity and launch on the scored path and on engine-bound slot picks. Unsafe pressure still fails closed. DISPATCH still rejects an unconsumed stale ref when FIND_SLOT was skipped.
 
 ## 0.9.0 - 2026-08-21
 
