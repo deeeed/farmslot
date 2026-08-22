@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- fix(run): `farmslot run force-complete` accepts `--pr <n>` so an operator can attach an already-opened PR when marking a failed run done.
+
 - feat(dispatch): add `farmslot dispatch pressure-admission status|enable|disable` for the durable pressure-prevention kill switch (MANUAL-000109).
 - feat(dispatch): `dispatch preview` prints the backend pressure admission decision (sustained samples, attributed causes, rejection code, refresh hint, exact override syntax); `run create` gains `--pressure-machine`/`--pressure-generation` to forward the previewed identity and `--pressure-override-reason` for a deliberate one-dispatch override (MANUAL-000109).
 - feat(machine): add machine pause and restore previews, review-pinned execution with exact targets, durable status, selection controls, and partial-failure envelopes.

@@ -11,6 +11,7 @@ import {
   buildReviewChainResult,
   buildRunCreateParams,
   formatReviewChainLine,
+  parseOptionalPrNumber,
   parseTaskPath,
 } from './run.js';
 
@@ -70,6 +71,14 @@ test('run review-chain exposes stable JSON and human output shapes', () => {
     formatReviewChainLine(result.chain[0]!),
     'G2 review-r  1111111 -> 2222222  incremental/static-code  pending  unresolved pending  resumed',
   );
+});
+
+test('parseOptionalPrNumber accepts a positive integer and rejects the rest', () => {
+  assert.equal(parseOptionalPrNumber(undefined), undefined);
+  assert.equal(parseOptionalPrNumber(''), undefined);
+  assert.equal(parseOptionalPrNumber('35145'), 35145);
+  assert.throws(() => parseOptionalPrNumber('0'), /--pr must be a positive integer/);
+  assert.throws(() => parseOptionalPrNumber('1.5'), /--pr must be a positive integer/);
 });
 
 test('run gate rejects actions that the pending decision does not offer', () => {

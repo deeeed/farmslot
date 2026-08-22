@@ -281,6 +281,8 @@ export function failedRunCancelEffects(effects?: RunCancelEffect[]): RunCancelEf
 
 export interface RunForceCompleteParams {
   runId: string;
+  /** Optional PR number to persist when force-completing a failed run. */
+  prNumber?: number;
 }
 
 export interface RunForceCompleteResult {

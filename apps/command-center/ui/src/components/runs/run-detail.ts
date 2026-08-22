@@ -736,7 +736,7 @@ export class RunDetail extends RunDetailState {
       _showTerminal: this._showTerminal,
       _actionsBlocked: () => this._actionsBlocked(),
       _rescueLinkage: (runId) => this._rescueLinkage(runId),
-      _confirmForceComplete: (runId) => this._confirmForceComplete(runId),
+      _confirmForceComplete: (run) => this._confirmForceComplete(run),
       _confirmLifecycleAction: (run, action) =>
         confirmRunLifecycleAction(run, action, {
           actionsBlocked: () => this._actionsBlocked(),
@@ -878,8 +878,8 @@ export class RunDetail extends RunDetailState {
     });
   }
 
-  private _confirmForceComplete(runId: string) {
-    confirmForceComplete(runId, this._confirmTimerContext());
+  private _confirmForceComplete(run: Run) {
+    confirmForceComplete(run, this._confirmTimerContext());
   }
 
   private _confirmResolve(runId: string, decision: RunDecision, actionId: string) {

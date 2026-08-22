@@ -9,6 +9,7 @@ import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 import {
   runCancel,
   runForceComplete,
+  runForceCompleteTransitionLocked,
   runPause,
   runResume,
   runResumeTransitionLocked,
@@ -16,7 +17,11 @@ import {
 
 async function cleanupRun(runId: string): Promise<void> {
   if (!getRun(runId)) return;
-  updateRun(runId, { status: 'done', completedAt: new Date().toISOString() });
+  updateRun(runId, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    backlogReconcilePending: undefined,
+  });
   await deleteRun(runId);
 }
 
@@ -144,7 +149,7 @@ test('runPause pauses monitoring runs and rejects non-pausable statuses', async 
   await assert.rejects(() => runPause({ runId: run.id }, () => {}), /cannot be paused/);
 });
 
-test('runForceComplete only accepts ci-watching runs', async (t) => {
+test('runForceComplete only accepts ci-watching or failed runs', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',
@@ -157,10 +162,139 @@ test('runForceComplete only accepts ci-watching runs', async (t) => {
     /cannot be force-completed/,
   );
 
+  updateRun(run.id, { status: 'blocked' });
+  await assert.rejects(
+    () => runForceComplete({ runId: run.id }, () => {}),
+    /cannot be force-completed in status: blocked/,
+  );
+
   updateRun(run.id, { status: 'ci-watching' });
   const result = await runForceComplete({ runId: run.id }, () => {});
   assert.equal(result.run.id, run.id);
   assert.equal(result.run.status, 'ci-watching');
+});
+
+test('runForceComplete marks a failed run done and can persist a PR number', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-failed`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'self-review exhausted',
+    engineState: { generation: 2 },
+    steps: [
+      { name: 'self-review', status: 'failed' },
+      { name: 'complete', status: 'skipped' },
+      { name: 'human-gate', status: 'skipped' },
+    ],
+  });
+
+  const result = await runForceComplete({ runId: run.id, prNumber: 35145 }, () => {});
+  assert.equal(result.run.status, 'done');
+  assert.equal(result.run.error, undefined);
+  assert.equal(result.run.prNumber, 35145);
+  assert.equal(result.run.metrics.outcome, 'success');
+  assert.ok(result.run.completedAt);
+  assert.equal(result.run.engineState?.generation, 3);
+  assert.equal(result.run.backlogReconcilePending, undefined);
+  const selfReview = result.run.steps.find((step) => step.name === 'self-review');
+  assert.equal(selfReview?.status, 'skipped');
+  assert.equal(selfReview?.outputs?.source, 'operator');
+});
+
+test('runForceComplete persists a PR on ci-watching without flipping status', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-ci-pr`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'ci-watching' });
+
+  const result = await runForceComplete({ runId: run.id, prNumber: 35145 }, () => {});
+  assert.equal(result.run.status, 'ci-watching');
+  assert.equal(result.run.prNumber, 35145);
+});
+
+test('runForceComplete attaches the PR before aborting or rewriting steps', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-attach-order`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'self-review exhausted',
+    engineState: { generation: 2 },
+    steps: [{ name: 'self-review', status: 'failed' }],
+  });
+
+  let cancelled = false;
+  await assert.rejects(
+    () =>
+      runForceCompleteTransitionLocked({ runId: run.id, prNumber: 35145 }, () => {}, {
+        cancelEngine: () => {
+          cancelled = true;
+        },
+        bumpGeneration: () => 3,
+        attachPrNumber: async () => {
+          throw new Error('refresh failed');
+        },
+        publish: async (published) => published,
+      }),
+    /refresh failed/,
+  );
+  assert.equal(cancelled, false);
+  const stored = getRun(run.id)!;
+  assert.equal(stored.status, 'failed');
+  assert.equal(stored.steps.find((step) => step.name === 'self-review')?.status, 'failed');
+  assert.equal(stored.engineState?.generation, 2);
+});
+
+test('runForceComplete still returns done when publication after-effects throw', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-publish`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'failed', error: 'self-review exhausted' });
+
+  const result = await runForceCompleteTransitionLocked({ runId: run.id }, () => {}, {
+    cancelEngine: () => {},
+    bumpGeneration: () => 1,
+    attachPrNumber: async () => {},
+    publish: async () => {
+      throw new Error('settle failed');
+    },
+  });
+  assert.equal(result.run.status, 'done');
+  assert.equal(result.run.metrics.outcome, 'success');
+  assert.equal(result.run.backlogReconcilePending, true);
+});
+
+test('runForceComplete rejects a non-positive prNumber', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-pr`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'failed' });
+
+  await assert.rejects(
+    () => runForceComplete({ runId: run.id, prNumber: 0 }, () => {}),
+    /prNumber must be a positive integer/,
+  );
+  await assert.rejects(
+    () => runForceComplete({ runId: run.id, prNumber: 1.5 }, () => {}),
+    /prNumber must be a positive integer/,
+  );
+  assert.equal(getRun(run.id)?.status, 'failed');
 });
 
 function pausedMonitorRun(ticket: string) {

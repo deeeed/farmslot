@@ -29,6 +29,15 @@ import { collectRunCreatePlan } from '../wizard/run-create-wizard.js';
 
 import { dispatchBacklogItem, resolveItem } from './backlog.js';
 
+export function parseOptionalPrNumber(raw: string | undefined): number | undefined {
+  if (raw == null || raw.trim() === '') return undefined;
+  const prNumber = Number(raw);
+  if (!Number.isInteger(prNumber) || prNumber <= 0) {
+    throw new Error('--pr must be a positive integer');
+  }
+  return prNumber;
+}
+
 export function assertRunGateActionAvailable(
   decision: NonNullable<Run['decisions']>[number],
   actionId: string,
@@ -577,17 +586,26 @@ export function registerRunCommand(program: Command): void {
   run
     .command('force-complete <runId>')
     .description('Force-complete a run (operator escape hatch)')
-    .action(async (runId: string, _opts: unknown, cmd: Command) => {
+    .option('--pr <n>', 'PR number to attach when force-completing a failed run')
+    .action(async (runId: string, opts: { pr?: string }, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
+        const prNumber = parseOptionalPrNumber(opts.pr);
         const result = await withProgress(
           `Force-completing ${runId.slice(0, 8)}`,
-          () => client.call<RunForceCompleteResult>('run.forceComplete', { runId }),
+          () =>
+            client.call<RunForceCompleteResult>('run.forceComplete', {
+              runId,
+              ...(prNumber != null ? { prNumber } : {}),
+            }),
           !emit.machine,
         );
         if (emit.machine) emit.ok(result);
-        else output.write(`${green('Force-completed')} ${cyan(runId.slice(0, 8))}\n`);
+        else {
+          const prLabel = result.run.prNumber != null ? ` (#${result.run.prNumber})` : '';
+          output.write(`${green('Force-completed')} ${cyan(runId.slice(0, 8))}${prLabel}\n`);
+        }
       } catch (err) {
         emit.fail(err);
       }

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(runs): Complete Manually is available on failed runs and can prompt for an optional PR number.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.9.0 - 2026-08-21

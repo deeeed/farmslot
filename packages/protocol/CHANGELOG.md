@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- fix(run): `run.forceComplete` accepts optional `prNumber` so an operator can attach an already-opened PR when marking a failed run done.
 
 ## 0.24.0 - 2026-08-21
 

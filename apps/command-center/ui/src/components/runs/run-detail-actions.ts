@@ -131,14 +131,28 @@ export async function resolveInteractiveDevAction(
   }
 }
 
-export function confirmForceComplete(runId: string, context: ConfirmTimerContext): void {
+export function confirmForceComplete(
+  run: Pick<Run, 'id' | 'status'>,
+  context: ConfirmTimerContext,
+): void {
   if (context.actionsBlocked()) return;
   if (context.pendingConfirm() === 'force-complete') {
     clearTimeout(context.confirmTimer());
     context.setPendingConfirm(null);
-    gateway.request(Methods.RUN_FORCE_COMPLETE, { runId }).catch((err) => {
-      // Keep the still-pending decision visible; the operator can retry from the same gate.
-      console.error('Failed to force-complete run:', err);
+    const params: { runId: string; prNumber?: number } = { runId: run.id };
+    if (run.status === 'failed') {
+      const raw = window.prompt('PR number (optional, blank to skip)')?.trim();
+      if (raw) {
+        const prNumber = Number(raw);
+        if (!Number.isInteger(prNumber) || prNumber <= 0) {
+          alert('PR number must be a positive integer');
+          return;
+        }
+        params.prNumber = prNumber;
+      }
+    }
+    gateway.request(Methods.RUN_FORCE_COMPLETE, params).catch((err) => {
+      alert(`Failed to force-complete run: ${(err as Error).message}`);
     });
   } else {
     clearTimeout(context.confirmTimer());
