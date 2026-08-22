@@ -74,22 +74,6 @@ test('replaySlotReclaimCheck allows reclaim when slot owner run record is missin
   );
 });
 
-test('runReplayStep rejects a done run', async (t) => {
-  const run = createRun({
-    flowType: 'dev',
-    project: 'farmslot-farm',
-    ticketOrPr: `DONE-${Date.now()}`,
-  });
-  updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
-  t.after(async () => {
-    if (getRun(run.id)) await deleteRun(run.id);
-  });
-  await assert.rejects(
-    () => runReplayStep({ runId: run.id, stepName: 'prepare' }, () => {}),
-    /already done and cannot be replayed/,
-  );
-});
-
 test('runReplayStep rejects read-only imported reference runs', async (t) => {
   const run = createRun({
     flowType: 'dev',

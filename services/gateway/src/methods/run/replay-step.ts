@@ -314,9 +314,6 @@ export async function runReplayStep(
       `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be replayed`,
     );
   }
-  if (existing.status === 'done') {
-    throw new Error(`Run ${params.runId} is already done and cannot be replayed`);
-  }
   // Replaying a cancelled run is supported (e.g. resuming ci-watch on an
   // update-branch run). Cancelling released the node, so the graph may have
   // re-queued its work. Claim-aware reclaim (below) revokes any exclusive queue
@@ -843,8 +840,10 @@ export async function runReplayStep(
     }
     const live = getRun(params.runId);
     if (!live) throw new Error(`Run not found: ${params.runId}`);
-    if (live.status === 'done') {
-      throw new Error(`Run ${params.runId} is already done and cannot be replayed`);
+    // Ordinary done runs are replayable. A generation mismatch here means
+    // another transition (operator force-complete) won during our awaits.
+    if (live.status === 'done' && (live.engineState?.generation ?? 0) !== replayGeneration) {
+      throw new Error(`Run ${params.runId} was force-completed and cannot be replayed`);
     }
     updateRun(params.runId, {
       status: activeStatusForReplayStep(replayStepName),

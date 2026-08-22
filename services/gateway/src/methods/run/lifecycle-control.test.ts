@@ -262,7 +262,7 @@ test('runForceComplete fences a failed run before attaching the PR', async (t) =
   assert.equal(result.run.engineState?.generation, 3);
 });
 
-test('runForceComplete does not abort ci-watching when PR attach throws', async (t) => {
+test('runForceComplete still aborts ci-watching when PR attach throws', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',
@@ -272,22 +272,22 @@ test('runForceComplete does not abort ci-watching when PR attach throws', async 
   updateRun(run.id, { status: 'ci-watching' });
 
   let cancelled = false;
-  await assert.rejects(
-    () =>
-      runForceCompleteTransitionLocked({ runId: run.id, prNumber: 35145 }, () => {}, {
-        cancelEngine: () => {
-          cancelled = true;
-        },
-        bumpGeneration: () => 1,
-        attachPrNumber: async () => {
-          throw new Error('refresh failed');
-        },
-        publish: async (published) => published,
-      }),
-    /refresh failed/,
+  const result = await runForceCompleteTransitionLocked(
+    { runId: run.id, prNumber: 35145 },
+    () => {},
+    {
+      cancelEngine: () => {
+        cancelled = true;
+      },
+      bumpGeneration: () => 1,
+      attachPrNumber: async () => {
+        throw new Error('refresh failed');
+      },
+      publish: async (published) => published,
+    },
   );
-  assert.equal(cancelled, false);
-  assert.equal(getRun(run.id)?.status, 'ci-watching');
+  assert.equal(cancelled, true);
+  assert.equal(result.run.status, 'ci-watching');
 });
 
 test('runForceComplete still returns done when publication after-effects throw', async (t) => {

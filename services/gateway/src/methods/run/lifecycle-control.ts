@@ -135,12 +135,20 @@ export async function runForceCompleteTransitionLocked(
   if (params.prNumber != null) assertPositivePrNumber(params.prNumber);
 
   if (existing.status === 'ci-watching') {
-    // Persist the PR before aborting the watch. A refresh failure must leave
-    // the ci-watching record intact so the operator can retry.
-    if (params.prNumber != null) {
-      await deps.attachPrNumber(params.runId, params.prNumber);
-    }
+    // Abort first so an await on PR attach cannot race the watch into a new
+    // status while this transition still reports ci-watching.
     deps.cancelEngine(params.runId);
+    if (params.prNumber != null) {
+      try {
+        await deps.attachPrNumber(params.runId, params.prNumber);
+      } catch (err) {
+        // Advisory: the watch is already aborting. The PR number can be
+        // retried via rehydrate if refresh failed.
+        console.warn(
+          `[run] force-complete PR attach failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+        );
+      }
+    }
     // Abort the CI monitor's AbortController — the run-engine pipeline then
     // completes naturally: CI_WATCH returns outcome='aborted' → no chaining →
     // retrospective + slot release → FINALIZE → done
