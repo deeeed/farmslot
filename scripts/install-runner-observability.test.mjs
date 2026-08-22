@@ -662,6 +662,46 @@ test('codex-home config does not copy a model_provider with no matching table', 
   assert.doesNotMatch(isolated, /\[model_providers\.missing-lb\]/);
 });
 
+test('codex-home config copies nested provider tables and commented headers', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-nested-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-nested-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'model_provider = "home-lb"',
+      '',
+      '[model_providers.home-lb] # local router',
+      'base_url = "http://127.0.0.1:9/codex"',
+      '',
+      '[model_providers.home-lb.env_http_headers]',
+      'Authorization = "NESTED_PROVIDER_TOKEN"',
+      '',
+    ].join('\n'),
+  );
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-nested');
+  assert.match(isolated, /^model_provider = "home-lb"$/m);
+  assert.match(isolated, /\[model_providers\.home-lb\]/);
+  assert.match(isolated, /\[model_providers\.home-lb\.env_http_headers\]/);
+  assert.match(isolated, /Authorization = "NESTED_PROVIDER_TOKEN"/);
+  assert.equal(fs.statSync(isolatedPath).mode & 0o777, 0o600);
+});
+
+test('codex-home re-install keeps model_provider keys outside the root table', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-profile-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-profile-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
+  );
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  installCodexHome(repo, fakeHome, 'install-test-profile');
+  fs.appendFileSync(isolatedPath, '\n[profiles.keep]\nmodel_provider = "keep-me"\n');
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-profile');
+  assert.match(isolated, /\[profiles\.keep\]/);
+  assert.match(isolated, /model_provider = "keep-me"/);
+});
+
 test('codex-home config refreshes operator routing on re-install and drops it when gone', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-refresh-'));
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-refresh-'));
