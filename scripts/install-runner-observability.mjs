@@ -2,6 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { resolveProviderAccountForSlot } from './lib/provider-accounts.mjs';
@@ -428,14 +429,72 @@ function stripTomlSections(content, shouldStrip) {
   return kept.join('\n').trimEnd();
 }
 
+function tomlBareStringValue(line, key) {
+  const match = line.match(new RegExp(`^\\s*${key}\\s*=\\s*(.*)$`));
+  if (!match) return null;
+  const raw = match[1].trim();
+  if (raw.startsWith('"')) {
+    const end = raw.indexOf('"', 1);
+    return end > 0 ? raw.slice(1, end) : null;
+  }
+  if (raw.startsWith("'")) {
+    const end = raw.indexOf("'", 1);
+    return end > 0 ? raw.slice(1, end) : null;
+  }
+  return raw.replace(/\s+#.*$/, '').trim() || null;
+}
+
 function stripCodexHomeInstallerSections(content, repoPath) {
   const canonicalRepoPath = canonicalCodexPath(repoPath);
   const projectSection = `projects."${escapeTomlBasicString(canonicalRepoPath)}"`;
-  return stripTomlSections(content, (section) => {
+  const withoutSections = stripTomlSections(content, (section) => {
     if (section === projectSection) return true;
+    if (section.startsWith('model_providers.')) return true;
     if (section.startsWith('hooks.state.')) return true;
     return false;
   });
+  const lines = withoutSections.split('\n');
+  const headers = tomlSectionHeaderIndexes(lines);
+  const kept = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!headers.has(index) && /^\s*model_provider\s*=/.test(lines[index])) continue;
+    kept.push(lines[index]);
+  }
+  return kept.join('\n').trimEnd();
+}
+
+function operatorCodexRoutingToml() {
+  const globalPath = path.join(os.homedir(), '.codex', 'config.toml');
+  let content = '';
+  try {
+    content = fs.readFileSync(globalPath, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return '';
+    throw error;
+  }
+  const lines = content.split('\n');
+  const headers = tomlSectionHeaderIndexes(lines);
+  let providerLine = null;
+  let providerId = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (headers.has(index)) break;
+    if (!/^\s*model_provider\s*=/.test(lines[index])) continue;
+    providerLine = lines[index];
+    providerId = tomlBareStringValue(lines[index], 'model_provider');
+  }
+  if (!providerLine || !providerId) return '';
+  const tableName = `model_providers.${providerId}`;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!headers.has(index)) continue;
+    const section = lines[index].trim().match(/^\[([^\]]+)\]\s*$/)?.[1];
+    if (section !== tableName) continue;
+    const table = [providerLine, '', lines[index]];
+    for (index += 1; index < lines.length && !headers.has(index); index += 1) {
+      table.push(lines[index]);
+    }
+    return table.join('\n').trimEnd();
+  }
+  return '';
 }
 
 function coalesceCodexFeaturesSections(content) {
@@ -692,6 +751,10 @@ async function bootstrapCodexHome({
     content = fs.readFileSync(configPath, 'utf8');
   }
   content = upsertCodexHooksFeature(stripCodexHomeInstallerSections(content, repoPath));
+  const routing = operatorCodexRoutingToml();
+  if (routing) {
+    content = content.trimEnd() ? `${routing}\n\n${content}` : routing;
+  }
   const canonicalRepoPath = canonicalCodexPath(repoPath);
   const projectBlock = `[projects."${escapeTomlBasicString(canonicalRepoPath)}"]\ntrust_level = "trusted"\n`;
   const merged = [content, trustToml, projectBlock].filter(Boolean).join('\n').trimEnd() + '\n';

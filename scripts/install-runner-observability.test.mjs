@@ -571,6 +571,124 @@ test('codex install never writes through a stale codex-home config.toml symlink 
   );
 });
 
+function writeOperatorCodexConfig(home, body) {
+  const globalConfig = path.join(home, '.codex', 'config.toml');
+  fs.mkdirSync(path.dirname(globalConfig), { recursive: true });
+  fs.writeFileSync(globalConfig, body);
+  return globalConfig;
+}
+
+function installCodexHome(repo, home, slotId = 'install-test-codex-lb') {
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'codex',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      '.agent',
+      '--slot-id',
+      slotId,
+    ],
+    { stdio: 'pipe', env: { ...process.env, HOME: home } },
+  );
+  return fs.readFileSync(path.join(repo, '.agent', 'codex-home', 'config.toml'), 'utf8');
+}
+
+const CODEX_LB_TABLE = [
+  '[model_providers.codex-lb]',
+  'name = "openai"',
+  'base_url = "http://127.0.0.1:2455/backend-api/codex"',
+  'wire_api = "responses"',
+  'env_key = "CODEX_LB_API_KEY"',
+].join('\n');
+
+test('codex-home config copies operator model_provider routing without writing through to global', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-lb-routing-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-'));
+  const globalConfig = writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'model = "gpt-5.6-sol"',
+      'model_provider = "codex-lb"',
+      '',
+      CODEX_LB_TABLE,
+      '',
+      '[notice]',
+      'hide_rate_limit_model_nudge = true',
+      '',
+    ].join('\n'),
+  );
+
+  const isolated = installCodexHome(repo, fakeHome);
+  assert.match(isolated, /^model_provider = "codex-lb"$/m);
+  assert.match(isolated, /^\[model_providers\.codex-lb\]$/m);
+  assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:2455\/backend-api\/codex"/);
+  assert.doesNotMatch(isolated, /hide_rate_limit_model_nudge/);
+  assert.equal(
+    fs.readFileSync(globalConfig, 'utf8').includes('hide_rate_limit_model_nudge'),
+    true,
+    'global config must stay untouched',
+  );
+});
+
+test('codex-home config copies a custom provider table that matches model_provider', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-custom-lb-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-custom-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'model_provider = "home-lb"',
+      '',
+      '[model_providers.home-lb]',
+      'base_url = "http://127.0.0.1:9/codex"',
+      '',
+    ].join('\n'),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-custom-lb');
+  assert.match(isolated, /^model_provider = "home-lb"$/m);
+  assert.match(isolated, /^\[model_providers\.home-lb\]$/m);
+  assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:9\/codex"/);
+});
+
+test('codex-home config does not copy a model_provider with no matching table', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-dangling-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-dangling-'));
+  writeOperatorCodexConfig(fakeHome, 'model_provider = "missing-lb"\n');
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-dangling');
+  assert.doesNotMatch(isolated, /model_provider = "missing-lb"/);
+  assert.doesNotMatch(isolated, /\[model_providers\.missing-lb\]/);
+});
+
+test('codex-home config refreshes operator routing on re-install and drops it when gone', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-refresh-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-refresh-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
+  );
+  installCodexHome(repo, fakeHome, 'install-test-refresh');
+  writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'model_provider = "codex-lb"',
+      '',
+      '[model_providers.codex-lb]',
+      'base_url = "http://127.0.0.1:2455/v2"',
+      '',
+    ].join('\n'),
+  );
+  let isolated = installCodexHome(repo, fakeHome, 'install-test-refresh');
+  assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:2455\/v2"/);
+  assert.doesNotMatch(isolated, /2455\/backend-api\/codex/);
+  writeOperatorCodexConfig(fakeHome, 'model = "gpt-5.6-sol"\n');
+  isolated = installCodexHome(repo, fakeHome, 'install-test-refresh');
+  assert.doesNotMatch(isolated, /model_provider = "codex-lb"/);
+  assert.doesNotMatch(isolated, /\[model_providers\.codex-lb\]/);
+});
+
 test('codex install is idempotent for isolated codex-home config.toml', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-idempotent-'));
   fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
