@@ -446,9 +446,15 @@ function tomlSectionName(line) {
   return line.trim().match(/^\[([^\]]+)\]/)?.[1] ?? null;
 }
 
+function normalizeTomlDottedKeys(section) {
+  return section.replace(/"([^"]*)"/g, '$1').replace(/'([^']*)'/g, '$1');
+}
+
 function sectionBelongsToProvider(section, providerId) {
+  if (!section) return false;
+  const normalized = normalizeTomlDottedKeys(section);
   const tableName = `model_providers.${providerId}`;
-  return section === tableName || Boolean(section?.startsWith(`${tableName}.`));
+  return normalized === tableName || normalized.startsWith(`${tableName}.`);
 }
 
 function stripCodexHomeInstallerSections(content, repoPath) {
