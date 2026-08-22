@@ -52,6 +52,26 @@ import {
 
 type Emit = (event: string, payload: unknown) => void;
 
+export interface RunReplayStepHooks {
+  /** Test-only: pause after the replay-owned generation bump. */
+  afterGenerationBump?(): Promise<void>;
+}
+
+function assertReplayOwnsRun(
+  runId: string,
+  ownedGeneration: number,
+  startedFromDone: boolean,
+): void {
+  const live = getRun(runId);
+  if (!live) throw new Error(`Run not found: ${runId}`);
+  if (live.status !== 'done') return;
+  // Ordinary done replay: this call started on `done` and still owns its bump.
+  // Any other `done` means force-complete won while this replay was in flight.
+  if (!startedFromDone || (live.engineState?.generation ?? 0) !== ownedGeneration) {
+    throw new Error(`Run ${runId} was force-completed and cannot be replayed`);
+  }
+}
+
 const REPLAY_STEP_TO_ACTIVE_STATUS: Partial<Record<string, RunStatus>> = {
   [PS.GRADE]: 'grading',
   [PS.WRITE_TASK]: 'writing-task',
@@ -299,6 +319,7 @@ function decisionOwningStepIndex(type: string, flowSteps: readonly string[] | un
 export async function runReplayStep(
   params: RunReplayStepParams,
   emit: Emit,
+  hooks: RunReplayStepHooks = {},
 ): Promise<RunReplayStepResult> {
   if (
     params.triggeredBy !== undefined &&
@@ -309,6 +330,7 @@ export async function runReplayStep(
   }
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  const startedFromDone = existing.status === 'done';
   if (existing.readOnly) {
     throw new Error(
       `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be replayed`,
@@ -435,7 +457,11 @@ export async function runReplayStep(
     // Do this only after replay entry validation so rejected replays do not leave a
     // synthetic in-progress recovery lane behind.
     cancelRunEngine(params.runId);
-    bumpRunGeneration(params.runId);
+    // Capture immediately: sampling generation after later awaits reads a
+    // force-complete bump and makes the fence compare equal to itself.
+    const ownedGeneration = bumpRunGeneration(params.runId);
+    await hooks.afterGenerationBump?.();
+    assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
 
     const replaysCompletionOrGate =
       targetIdx >= 0 &&
@@ -713,6 +739,8 @@ export async function runReplayStep(
       }
     }
 
+    assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+
     // Reset this step and all subsequent steps to pending
     const stepIdx = existing.steps.indexOf(step);
     for (let i = stepIdx; i < existing.steps.length; i++) {
@@ -802,8 +830,7 @@ export async function runReplayStep(
       triggeredBy === 'auto-recovery'
         ? ('auto-in-progress' as const)
         : ('manual-in-progress' as const);
-    const replayGeneration =
-      getRun(params.runId)?.engineState?.generation ?? existing.engineState?.generation ?? 0;
+    const replayGeneration = ownedGeneration;
     const currentBeforeReplayUpdate = getRun(params.runId) ?? existing;
     const activeFixTaskFile =
       targetIdx >= 0 && selfReviewIdx >= 0 && targetIdx >= selfReviewIdx
@@ -838,13 +865,7 @@ export async function runReplayStep(
         }
       }
     }
-    const live = getRun(params.runId);
-    if (!live) throw new Error(`Run not found: ${params.runId}`);
-    // Ordinary done runs are replayable. A generation mismatch here means
-    // another transition (operator force-complete) won during our awaits.
-    if (live.status === 'done' && (live.engineState?.generation ?? 0) !== replayGeneration) {
-      throw new Error(`Run ${params.runId} was force-completed and cannot be replayed`);
-    }
+    assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     updateRun(params.runId, {
       status: activeStatusForReplayStep(replayStepName),
       error: undefined,

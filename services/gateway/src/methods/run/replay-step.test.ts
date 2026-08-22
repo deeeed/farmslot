@@ -16,6 +16,7 @@ import { statusFile } from '../../core/state.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
+import { runForceComplete } from './lifecycle-control.js';
 import { replaySlotReclaimCheck, runReplayStep } from './replay-step.js';
 
 test('replaySlotReclaimCheck rejects slots owned by another active run', () => {
@@ -72,6 +73,68 @@ test('replaySlotReclaimCheck allows reclaim when slot owner run record is missin
     }),
     { ok: true },
   );
+});
+
+test('in-flight replay refuses revive after operator force-complete', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-2585',
+  });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    updateRun(run.id, {
+      status: 'done',
+      completedAt: new Date().toISOString(),
+      backlogReconcilePending: undefined,
+    });
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'self-review exhausted',
+    engineState: { generation: 2 },
+    steps: run.steps.map((step) =>
+      step.name === 'self-review'
+        ? { ...step, status: 'failed' }
+        : step.name === 'complete' ||
+            step.name === 'human-gate' ||
+            step.name === 'finalize' ||
+            step.name === 'ci-watch'
+          ? { ...step, status: 'skipped' }
+          : { ...step, status: 'done' },
+    ),
+  });
+
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let replayEntered = false;
+  const replay = runReplayStep({ runId: run.id, stepName: 'self-review' }, () => {}, {
+    afterGenerationBump: async () => {
+      replayEntered = true;
+      await held;
+    },
+  });
+  while (!replayEntered) {
+    await Promise.race([
+      new Promise<void>((resolve) => setImmediate(resolve)),
+      replay.then(() => {
+        throw new Error('replay finished before generation-bump hook');
+      }),
+    ]);
+  }
+
+  const completed = await runForceComplete({ runId: run.id, prNumber: 35145 }, () => {});
+  assert.equal(completed.run.status, 'done');
+  const forceGen = completed.run.engineState?.generation;
+  release();
+  await assert.rejects(replay, /force-completed and cannot be replayed/);
+  const stored = getRun(run.id)!;
+  assert.equal(stored.status, 'done');
+  assert.equal(stored.engineState?.generation, forceGen);
+  assert.equal(stored.steps.find((step) => step.name === 'self-review')?.status, 'skipped');
 });
 
 test('runReplayStep rejects read-only imported reference runs', async (t) => {
