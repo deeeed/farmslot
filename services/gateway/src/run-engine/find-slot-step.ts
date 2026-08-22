@@ -235,14 +235,49 @@ async function assertEngineBoundSlotPressureAdmitted(
         }
       : {},
   ).get(machine);
+  const refreshedPreviewRef = refreshedAdmissionRefForAdmittedPreview(
+    run.pressureAdmissionRef,
+    decision,
+  );
+  if (refreshedPreviewRef) {
+    console.warn(
+      `[run-engine] pressure preview generation moved (${run.pressureAdmissionRef?.pressureGeneration} -> ${refreshedPreviewRef.pressureGeneration}) on ${refreshedPreviewRef.machine}; still admitted, launching`,
+    );
+    updateRun(runId, { pressureAdmissionRef: refreshedPreviewRef });
+  }
   const outcome = resolveExecutePressureOutcome({
     machine,
     decision,
     storedOverride,
-    admissionRef: run.pressureAdmissionRef,
+    admissionRef: getRun(runId)?.pressureAdmissionRef ?? run.pressureAdmissionRef,
   });
   if (outcome.rejection) throw new PressureAdmissionRejectedError(outcome.rejection);
-  await consumeRunPressureAdmissionRef(runId, run);
+  await consumeRunPressureAdmissionRef(runId, getRun(runId) ?? run);
+}
+
+/** Fresh preview identity when the same machine's generation rotated but it
+ * is still admitted; otherwise null. A machine change is not a refresh. */
+export function refreshedAdmissionRefForAdmittedPreview(
+  clientAdmissionRef: Run['pressureAdmissionRef'],
+  pressureAdmission:
+    | {
+        outcome: string;
+        state?: string;
+        machine: string;
+        evidence: { generation: string | null };
+      }
+    | null
+    | undefined,
+): { machine: string; pressureGeneration: string } | null {
+  if (!clientAdmissionRef) return null;
+  if (pressureAdmission?.outcome !== 'admitted') return null;
+  if (pressureAdmission.state === 'override' || pressureAdmission.state === 'disabled') {
+    return null;
+  }
+  if (clientAdmissionRef.machine !== pressureAdmission.machine) return null;
+  const generation = pressureAdmission.evidence.generation;
+  if (!generation || clientAdmissionRef.pressureGeneration === generation) return null;
+  return { machine: pressureAdmission.machine, pressureGeneration: generation };
 }
 
 /** Consume a validated client preview identity: audit-stamp `consumedAt` on
@@ -873,12 +908,20 @@ export async function executeFindSlotStep(
   if (result.pressureAdmission?.outcome === 'rejected') {
     throw new PressureAdmissionRejectedError(result.pressureAdmission);
   }
-  // Earliest safe boundary for a client-forwarded preview identity: if the
-  // operator dispatched against a rendered decision whose generation already
-  // moved, fail before claiming a slot. Automatic runs carry no ref because there
-  // was no operator preview to go stale, and execute recomputes regardless.
+  // Same-machine generation can rotate while still admitted; refresh the
+  // stored identity. A machine change is still PRESSURE_PREVIEW_STALE.
+  // DISPATCH still rejects an unconsumed stale ref when FIND_SLOT was skipped.
   const clientAdmissionRef = run.pressureAdmissionRef;
-  if (
+  const refreshedPreviewRef = refreshedAdmissionRefForAdmittedPreview(
+    clientAdmissionRef,
+    result.pressureAdmission,
+  );
+  if (refreshedPreviewRef) {
+    console.warn(
+      `[run-engine] pressure preview generation moved (${clientAdmissionRef?.pressureGeneration} -> ${refreshedPreviewRef.pressureGeneration}) on ${refreshedPreviewRef.machine}; still admitted, launching`,
+    );
+    updateRun(runId, { pressureAdmissionRef: refreshedPreviewRef });
+  } else if (
     clientAdmissionRef &&
     result.pressureAdmission?.outcome === 'admitted' &&
     result.pressureAdmission.state !== 'override' &&
@@ -900,7 +943,7 @@ export async function executeFindSlotStep(
   // Common scored/explicit path: the validated client preview identity is
   // consumed HERE, before the slot bind/claim, so a long PREPARE cannot turn
   // a green-to-green generation move into a launch-time failure.
-  await consumeRunPressureAdmissionRef(runId, run);
+  await consumeRunPressureAdmissionRef(runId, getRun(runId) ?? run);
   const slotId = result.preview.slotId;
   updateRun(runId, { slotId });
   // Mark slot as claimed by this run
