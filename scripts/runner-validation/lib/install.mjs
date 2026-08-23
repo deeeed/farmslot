@@ -3,7 +3,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { scanTomlLine, tomlSectionHeaderIndexes } from '../../lib/toml-scan.mjs';
+import {
+  scanTomlLine,
+  tomlBareStringValue,
+  tomlDottedParts,
+  tomlSectionHeaderIndexes,
+} from '../../lib/toml-scan.mjs';
 
 import { ROOT } from './common.mjs';
 
@@ -38,26 +43,7 @@ function rootTomlModelProviderId(content) {
       state.quote === null &&
       /^\s*model_provider\s*=/.test(lines[index])
     ) {
-      const raw = lines[index].replace(/^[^=]*=\s*/, '').trim();
-      if (raw.startsWith('"') || raw.startsWith("'")) {
-        const quote = raw[0];
-        let value = '';
-        for (let i = 1; i < raw.length; i += 1) {
-          const char = raw[i];
-          if (char === '\\' && i + 1 < raw.length) {
-            value += raw[i + 1];
-            i += 1;
-            continue;
-          }
-          if (char === quote) {
-            providerId = value;
-            break;
-          }
-          value += char;
-        }
-      } else {
-        providerId = raw.replace(/\s+#.*$/, '').trim() || null;
-      }
+      providerId = tomlBareStringValue(lines[index], 'model_provider');
     }
     scanTomlLine(lines[index], state);
   }
@@ -72,31 +58,7 @@ function hasModelProviderTable(content, providerId) {
     if (trimmed.startsWith('#') || !trimmed.startsWith('[')) continue;
     const name = trimmed.match(/^\[([^\]]+)\]/)?.[1];
     if (!name) continue;
-    const parts = [];
-    let current = '';
-    let quote = null;
-    for (let index = 0; index < name.length; index += 1) {
-      const char = name[index];
-      if (quote) {
-        if (char === quote) {
-          quote = null;
-          continue;
-        }
-        current += char;
-        continue;
-      }
-      if (char === '"' || char === "'") {
-        quote = char;
-        continue;
-      }
-      if (char === '.') {
-        parts.push(current.trim());
-        current = '';
-        continue;
-      }
-      current += char;
-    }
-    parts.push(current.trim());
+    const parts = tomlDottedParts(name);
     if (parts[0] === 'model_providers' && parts[1] === providerId && parts.length === 2) {
       return true;
     }

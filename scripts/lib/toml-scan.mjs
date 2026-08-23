@@ -62,3 +62,59 @@ export function tomlSectionHeaderIndexes(lines) {
   }
   return headers;
 }
+
+export function tomlBareStringValue(line, key) {
+  const match = line.match(new RegExp(`^\\s*${key}\\s*=\\s*(.*)$`));
+  if (!match) return null;
+  const raw = match[1].trim();
+  if (raw.startsWith('"') || raw.startsWith("'")) {
+    const quote = raw[0];
+    let value = '';
+    for (let index = 1; index < raw.length; index += 1) {
+      const char = raw[index];
+      if (char === '\\' && index + 1 < raw.length) {
+        value += raw[index + 1];
+        index += 1;
+        continue;
+      }
+      if (char === quote) return value;
+      value += char;
+    }
+    return null;
+  }
+  return raw.replace(/\s+#.*$/, '').trim() || null;
+}
+
+export function tomlDottedParts(section) {
+  const parts = [];
+  let current = '';
+  let quote = null;
+  for (let index = 0; index < section.length; index += 1) {
+    const char = section[index];
+    if (quote) {
+      if (char === '\\' && index + 1 < section.length) {
+        current += section[index + 1];
+        index += 1;
+        continue;
+      }
+      if (char === quote) {
+        quote = null;
+        continue;
+      }
+      current += char;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '.') {
+      parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  parts.push(current.trim());
+  return parts;
+}

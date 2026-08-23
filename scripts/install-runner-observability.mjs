@@ -6,7 +6,12 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { resolveProviderAccountForSlot } from './lib/provider-accounts.mjs';
-import { scanTomlLine, tomlSectionHeaderIndexes } from './lib/toml-scan.mjs';
+import {
+  scanTomlLine,
+  tomlBareStringValue,
+  tomlDottedParts,
+  tomlSectionHeaderIndexes,
+} from './lib/toml-scan.mjs';
 
 const HOOK_SCRIPT = `import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -361,64 +366,8 @@ function stripTomlSections(content, shouldStrip) {
   return kept.join('\n').trimEnd();
 }
 
-function tomlBareStringValue(line, key) {
-  const match = line.match(new RegExp(`^\\s*${key}\\s*=\\s*(.*)$`));
-  if (!match) return null;
-  const raw = match[1].trim();
-  if (raw.startsWith('"') || raw.startsWith("'")) {
-    const quote = raw[0];
-    let value = '';
-    for (let index = 1; index < raw.length; index += 1) {
-      const char = raw[index];
-      if (char === '\\' && index + 1 < raw.length) {
-        value += raw[index + 1];
-        index += 1;
-        continue;
-      }
-      if (char === quote) return value;
-      value += char;
-    }
-    return null;
-  }
-  return raw.replace(/\s+#.*$/, '').trim() || null;
-}
-
 function tomlSectionName(line) {
   return line.trim().match(/^\[([^\]]+)\]/)?.[1] ?? null;
-}
-
-function tomlDottedParts(section) {
-  const parts = [];
-  let current = '';
-  let quote = null;
-  for (let index = 0; index < section.length; index += 1) {
-    const char = section[index];
-    if (quote) {
-      if (char === '\\' && index + 1 < section.length) {
-        current += section[index + 1];
-        index += 1;
-        continue;
-      }
-      if (char === quote) {
-        quote = null;
-        continue;
-      }
-      current += char;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-    if (char === '.') {
-      parts.push(current.trim());
-      current = '';
-      continue;
-    }
-    current += char;
-  }
-  parts.push(current.trim());
-  return parts;
 }
 
 function sectionBelongsToProvider(section, providerId) {

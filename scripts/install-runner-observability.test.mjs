@@ -700,6 +700,7 @@ test('codex-home config copies a quoted provider table name', () => {
   );
   const isolated = installCodexHome(repo, fakeHome, 'install-test-quoted');
   assert.match(isolated, /^model_provider = "home-lb"$/m);
+  assert.match(isolated, /^\[model_providers\."home-lb"\]$/m);
   assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:9\/codex"/);
 });
 
@@ -857,6 +858,38 @@ test('codex-home re-install keeps unmarked isolated routing when operator has no
   const isolated = installCodexHome(repo, fakeHome, 'install-test-unmarked');
   assert.match(isolated, /model_provider = "mine"/);
   assert.match(isolated, /\[model_providers\.mine\]/);
+});
+
+test('codex-home ignores a farmslot ownership stamp inside a root multiline string', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-stamp-multiline-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-stamp-multiline-'));
+  writeOperatorCodexConfig(fakeHome, 'model = "gpt-5.6-sol"\n');
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  fs.mkdirSync(path.dirname(isolatedPath), { recursive: true });
+  fs.writeFileSync(
+    isolatedPath,
+    [
+      'developer_instructions = """',
+      '# farmslot-managed-model-provider = "mine"',
+      '"""',
+      'model_provider = "mine"',
+      '',
+      '[model_providers.mine]',
+      'base_url = "http://mine"',
+      '',
+    ].join('\n'),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-stamp-multiline');
+  assert.match(isolated, /^model_provider = "mine"$/m);
+  assert.match(isolated, /^\[model_providers\.mine\]$/m);
+  assert.match(
+    isolated,
+    /developer_instructions = """\n# farmslot-managed-model-provider = "mine"\n"""/,
+  );
+  assert.doesNotMatch(
+    isolated,
+    /^model_provider = "mine"\n# farmslot-managed-model-provider = "mine"$/m,
+  );
 });
 
 test('codex-home config refreshes operator routing on re-install and drops it when gone', () => {
