@@ -120,9 +120,14 @@ test('in-flight replay refuses revive after operator force-complete', async (t) 
   while (!replayEntered) {
     await Promise.race([
       new Promise<void>((resolve) => setImmediate(resolve)),
-      replay.then(() => {
-        throw new Error('replay finished before generation-bump hook');
-      }),
+      replay.then(
+        () => {
+          throw new Error('replay finished before generation-bump hook');
+        },
+        (err: unknown) => {
+          throw err;
+        },
+      ),
     ]);
   }
 

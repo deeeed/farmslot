@@ -182,6 +182,10 @@ export async function runForceCompleteTransitionLocked(
     error: undefined,
     metrics: { ...current.metrics, outcome: 'success' },
     backlogReconcilePending: true,
+    recoveryProposal: {
+      status: 'idle',
+      generation: current.engineState?.generation ?? 0,
+    },
     ...(params.prNumber != null ? { prNumber: params.prNumber } : {}),
     // Failed runs already emitted a failure row. Clear the marker so the
     // append-only sink records this override; query last-record-wins.
@@ -198,6 +202,7 @@ export async function runForceCompleteTransitionLocked(
       );
     }
   }
+  await releaseForceCompletedSlot(getRun(params.runId) ?? run);
   let settled = getRun(params.runId) ?? run;
   try {
     settled = await deps.publish(settled);
@@ -233,15 +238,31 @@ async function attachForceCompletePrNumber(runId: string, prNumber: number): Pro
   }
 }
 
+async function releaseForceCompletedSlot(run: Run): Promise<void> {
+  if (!run.slotId) return;
+  try {
+    const { slotRelease } = await import('../slot.js');
+    await slotRelease({ slotId: run.slotId, keepWork: true, expectedRunId: run.id }, () => {});
+  } catch (err) {
+    // Advisory: the operator-owned done write already landed. A missing or
+    // already-released slot must not fail the hatch.
+    console.warn(
+      `[run] force-complete slot release failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
+    );
+  }
+}
+
 async function publishForceCompletedRun(run: Run): Promise<Run> {
   try {
     const { broadcastEvent } = await import('../../server.js');
     broadcastEvent(Events.RUN_UPDATED, { run });
-    // Raw broadcastEvent is the WebSocket fan-out only. Auto-recovery's
-    // terminal observer lives on the index.ts wrapper; invoke it so a
-    // force-completed failed run closes in-flight recovery attempts.
+    broadcastEvent(Events.RUN_COMPLETED, { run });
+    // Raw broadcastEvent is the WebSocket fan-out only. Terminal observers live
+    // on the index.ts wrapper; invoke them so recovery and Co-Pilot close out.
     const { routeEventToAutoRecovery } = await import('../../auto-recovery/watcher.js');
+    const { routeEventToObserver } = await import('../../chat/copilot-observer.js');
     routeEventToAutoRecovery(Events.RUN_UPDATED, { run });
+    routeEventToObserver(Events.RUN_COMPLETED, { run });
   } catch (err) {
     // Advisory: the store already holds `done`. Other clients may be stale until
     // the next refetch; do not fail the RPC or the operator cannot retry.

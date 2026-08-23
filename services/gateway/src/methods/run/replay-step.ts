@@ -460,7 +460,6 @@ export async function runReplayStep(
     // Capture immediately: sampling generation after later awaits reads a
     // force-complete bump and makes the fence compare equal to itself.
     const ownedGeneration = bumpRunGeneration(params.runId);
-    await hooks.afterGenerationBump?.();
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
 
     const replaysCompletionOrGate =
@@ -492,6 +491,11 @@ export async function runReplayStep(
     if (supersedeStaleHumanGateDecisions(supersededGateAudit) > 0) {
       updateRun(params.runId, { decisions: existing.decisions });
     }
+
+    // Test-only pause after sync supersession. Do not `await` a missing hook:
+    // that still yields and reopens the decision-resolver race this block closes.
+    if (hooks.afterGenerationBump) await hooks.afterGenerationBump();
+    assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
 
     let replayTaskFile = existing.taskFile ?? null;
     let effectiveSlotId = existing.slotId;

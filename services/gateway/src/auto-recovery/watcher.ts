@@ -317,10 +317,15 @@ async function writeMonitorViolationRecommendation(violation: MonitorViolation):
 }
 
 function markDeadLetter(run: Run, message: string): void {
+  const current = getRun(run.id) ?? run;
   const updated = updateRun(run.id, {
-    engineState: { ...(run.engineState ?? {}), autoRecoveryDeadLetter: message },
+    engineState: { ...(current.engineState ?? {}), autoRecoveryDeadLetter: message },
   });
   emitFn(Events.RUN_UPDATED, { run: updated });
+}
+
+function isForceCompleteReplayRefuse(message: string): boolean {
+  return message.includes('was force-completed and cannot be replayed');
 }
 
 function autoDispatchRaceReason(
@@ -638,10 +643,14 @@ async function maybeRecoverRun(run: Run, timestamp?: string): Promise<void> {
     await writeAuditRecord(action, { runId: run.id, emit: emitFn });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    action.outcome = 'errored';
-    action.outcomeReason = 'dead_letter';
     action.latencyMs = Date.now() - startedAt;
     if (!replayAccepted) clearAutoInProgress(run.id, action.id);
+    if (isForceCompleteReplayRefuse(message)) {
+      await writeSkippedAction(action, 'manual_in_progress', startedAt);
+      return;
+    }
+    action.outcome = 'errored';
+    action.outcomeReason = 'dead_letter';
     markDeadLetter(run, message);
     await writeAuditRecord(action, { runId: run.id, emit: emitFn });
   }
