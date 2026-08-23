@@ -504,13 +504,20 @@ function managedInstallerProviderId(content) {
 function rootTomlModelProvider(content) {
   const lines = content.split('\n');
   const headers = tomlSectionHeaderIndexes(lines);
+  const state = { arrayDepth: 0, quote: null };
   let providerLine = null;
   let providerId = null;
   for (let index = 0; index < lines.length; index += 1) {
     if (headers.has(index)) break;
-    if (!/^\s*model_provider\s*=/.test(lines[index])) continue;
-    providerLine = lines[index];
-    providerId = tomlBareStringValue(lines[index], 'model_provider');
+    if (
+      state.arrayDepth === 0 &&
+      state.quote === null &&
+      /^\s*model_provider\s*=/.test(lines[index])
+    ) {
+      providerLine = lines[index];
+      providerId = tomlBareStringValue(lines[index], 'model_provider');
+    }
+    scanTomlLine(lines[index], state);
   }
   return { providerLine, providerId };
 }
@@ -532,18 +539,27 @@ function stripCodexHomeInstallerSections(
   });
   const lines = withoutSections.split('\n');
   const headers = tomlSectionHeaderIndexes(lines);
+  const state = { arrayDepth: 0, quote: null };
   const kept = [];
   for (let index = 0; index < lines.length; index += 1) {
     if (headers.has(index)) {
       kept.push(...lines.slice(index));
       break;
     }
-    if (/^\s*#\s*farmslot-managed-model-provider\s*=/.test(lines[index])) continue;
-    if (/^\s*model_provider\s*=/.test(lines[index])) {
+    const atRoot = state.arrayDepth === 0 && state.quote === null;
+    if (atRoot && /^\s*#\s*farmslot-managed-model-provider\s*=/.test(lines[index])) {
+      scanTomlLine(lines[index], state);
+      continue;
+    }
+    if (atRoot && /^\s*model_provider\s*=/.test(lines[index])) {
       const id = tomlBareStringValue(lines[index], 'model_provider');
-      if (replaceRootProvider || !id || managedIds.includes(id)) continue;
+      if (replaceRootProvider || !id || managedIds.includes(id)) {
+        scanTomlLine(lines[index], state);
+        continue;
+      }
     }
     kept.push(lines[index]);
+    scanTomlLine(lines[index], state);
   }
   return kept.join('\n').trimEnd();
 }
