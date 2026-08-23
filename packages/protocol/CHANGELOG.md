@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - fix(run): `run.forceComplete` accepts optional `prNumber` so an operator can attach an already-opened PR when marking a failed run done.
+- fix(run): `RunEngineState.operatorForceCompleted` marks an operator hatch so replay cannot treat it as ordinary done.
 
 ## 0.24.0 - 2026-08-21
 

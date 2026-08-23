@@ -64,6 +64,9 @@ function assertReplayOwnsRun(
 ): void {
   const live = getRun(runId);
   if (!live) throw new Error(`Run not found: ${runId}`);
+  if (live.engineState?.operatorForceCompleted) {
+    throw new Error(`Run ${runId} was force-completed and cannot be replayed`);
+  }
   if (live.status !== 'done') return;
   // Ordinary done replay: this call started on `done` and still owns its bump.
   // Any other `done` means force-complete won while this replay was in flight.

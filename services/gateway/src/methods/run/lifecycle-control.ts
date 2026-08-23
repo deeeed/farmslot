@@ -170,7 +170,11 @@ export async function runForceCompleteTransitionLocked(
     // declaring the run done despite the recorded failure.
     updateRunStep(params.runId, step.name, {
       status: 'skipped',
-      completedAt: new Date().toISOString(),
+      completedAt:
+        step.status === 'failed'
+          ? (step.completedAt ?? existing.completedAt ?? new Date().toISOString())
+          : new Date().toISOString(),
+      ...(step.durationMs != null ? { durationMs: step.durationMs } : {}),
       detail: `Skipped: ${reason}`,
       outputs: { ...(step.outputs ?? {}), skipped: true, reason, source: 'operator' },
     });
@@ -186,6 +190,7 @@ export async function runForceCompleteTransitionLocked(
       status: 'idle',
       generation: current.engineState?.generation ?? 0,
     },
+    engineState: { ...(current.engineState ?? {}), operatorForceCompleted: true },
     ...(params.prNumber != null ? { prNumber: params.prNumber } : {}),
     // Failed runs already emitted a failure row. Clear the marker so the
     // append-only sink records this override; query last-record-wins.

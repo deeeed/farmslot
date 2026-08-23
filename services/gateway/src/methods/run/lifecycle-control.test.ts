@@ -199,6 +199,8 @@ test('runForceComplete marks a failed run done and can persist a PR number', asy
   assert.equal(result.run.metrics.outcome, 'success');
   assert.ok(result.run.completedAt);
   assert.equal(result.run.engineState?.generation, 3);
+  assert.equal(result.run.engineState?.operatorForceCompleted, true);
+  assert.equal(result.run.recoveryProposal?.status, 'idle');
   assert.equal(result.run.backlogReconcilePending, undefined);
   const selfReview = result.run.steps.find((step) => step.name === 'self-review');
   assert.equal(selfReview?.status, 'skipped');
