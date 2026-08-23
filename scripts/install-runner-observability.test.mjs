@@ -714,10 +714,41 @@ test('codex-home re-install keeps model_provider keys outside the root table', (
   );
   const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
   installCodexHome(repo, fakeHome, 'install-test-profile');
-  fs.appendFileSync(isolatedPath, '\n[profiles.keep]\nmodel_provider = "keep-me"\n');
+  fs.appendFileSync(
+    isolatedPath,
+    [
+      '',
+      '[model_providers.profile-only]',
+      'base_url = "http://127.0.0.1:9/profile"',
+      '',
+      '[profiles.keep]',
+      'model_provider = "keep-me"',
+      '',
+    ].join('\n'),
+  );
   const isolated = installCodexHome(repo, fakeHome, 'install-test-profile');
   assert.match(isolated, /\[profiles\.keep\]/);
   assert.match(isolated, /model_provider = "keep-me"/);
+  assert.match(isolated, /\[model_providers\.profile-only\]/);
+  assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:9\/profile"/);
+});
+
+test('codex-home routing keeps leftover isolated root keys out of the provider table', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-root-keys-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-root-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
+  );
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  installCodexHome(repo, fakeHome, 'install-test-root-keys');
+  fs.writeFileSync(isolatedPath, `model = "keep-root"\n${fs.readFileSync(isolatedPath, 'utf8')}`);
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-root-keys');
+  const providerTable = isolated.search(/^\[model_providers\.codex-lb\]/m);
+  const keepRoot = isolated.search(/^model = "keep-root"$/m);
+  assert.ok(keepRoot >= 0);
+  assert.ok(providerTable >= 0);
+  assert.ok(keepRoot < providerTable);
 });
 
 test('codex-home config refreshes operator routing on re-install and drops it when gone', () => {
