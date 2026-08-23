@@ -3,11 +3,12 @@ import type {
   Run,
   RunCancelResult,
   RunDecision,
+  RunForceCompleteResult,
   RunInteractiveDevResolveResult,
   RunProbeWorkerSignalResult,
   RunRehydratePrNumberResult,
 } from '@farmslot/protocol';
-import { buildRunResolveDecisionParams, Methods } from '@farmslot/protocol';
+import { buildRunResolveDecisionParams, failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { navigateToPreparedSlot, runSlotPrepareForRun } from '../shared/slot-prepare-client.js';
@@ -131,15 +132,43 @@ export async function resolveInteractiveDevAction(
   }
 }
 
-export function confirmForceComplete(runId: string, context: ConfirmTimerContext): void {
+export function confirmForceComplete(
+  run: Pick<Run, 'id' | 'status'>,
+  context: ConfirmTimerContext,
+): void {
   if (context.actionsBlocked()) return;
   if (context.pendingConfirm() === 'force-complete') {
     clearTimeout(context.confirmTimer());
     context.setPendingConfirm(null);
-    gateway.request(Methods.RUN_FORCE_COMPLETE, { runId }).catch((err) => {
-      // Keep the still-pending decision visible; the operator can retry from the same gate.
-      console.error('Failed to force-complete run:', err);
-    });
+    const params: { runId: string; prNumber?: number } = { runId: run.id };
+    if (run.status === 'failed') {
+      const entered = window.prompt('PR number (optional, blank to skip)');
+      if (entered == null) return;
+      const raw = entered.trim();
+      if (raw) {
+        const prNumber = Number(raw);
+        if (!Number.isInteger(prNumber) || prNumber <= 0) {
+          alert('PR number must be a positive integer');
+          return;
+        }
+        params.prNumber = prNumber;
+      }
+    }
+    gateway
+      .request<RunForceCompleteResult>(Methods.RUN_FORCE_COMPLETE, params)
+      .then((result) => {
+        const failed = failedRunCancelEffects(result.effects);
+        if (failed.length) {
+          alert(
+            `Run marked done, but part of the teardown failed:\n${failed
+              .map((effect) => `${effect.name}: ${effect.detail ?? 'failed'}`)
+              .join('\n')}`,
+          );
+        }
+      })
+      .catch((err) => {
+        alert(`Failed to force-complete run: ${(err as Error).message}`);
+      });
   } else {
     clearTimeout(context.confirmTimer());
     context.setPendingConfirm('force-complete');

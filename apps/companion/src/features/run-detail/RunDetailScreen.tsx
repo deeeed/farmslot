@@ -418,6 +418,7 @@ export default function RunDetailScreen() {
   const statusColor = STATUS_COLORS[run.status] ?? colors.textMuted;
   const replayAllowed =
     ['failed', 'done', 'cancelled'].includes(run.status) &&
+    !run.engineState?.operatorForceCompleted &&
     Boolean(client) &&
     connectionStatus === 'connected';
   const focusedArtifactPath = requestedArtifactPath.trim() || null;

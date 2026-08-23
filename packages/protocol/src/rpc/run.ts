@@ -281,10 +281,14 @@ export function failedRunCancelEffects(effects?: RunCancelEffect[]): RunCancelEf
 
 export interface RunForceCompleteParams {
   runId: string;
+  /** Optional PR number to persist when force-completing a failed run. */
+  prNumber?: number;
 }
 
 export interface RunForceCompleteResult {
   run: Run;
+  /** Additive: omitted by older gateways. Non-`ok` entries mean partial application after the run is already `done`. */
+  effects?: RunCancelEffect[];
 }
 
 export interface RunPauseParams {

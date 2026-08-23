@@ -1833,6 +1833,8 @@ export interface RunEngineState {
   };
   /** Monotonic replay generation counter; startRun bails if the run has been superseded. */
   generation?: number;
+  /** Operator `run.forceComplete` on a failed run. Replay must not treat this as ordinary done. */
+  operatorForceCompleted?: true;
   /** Multi-surface validation matrix suggested at dispatch (farmslot profile-fit). */
   validationPlan?: ValidationPlanStep[];
   profileFitSuggestion?: ProfileFitSuggestion;

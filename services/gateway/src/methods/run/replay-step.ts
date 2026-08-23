@@ -52,6 +52,33 @@ import {
 
 type Emit = (event: string, payload: unknown) => void;
 
+export interface RunReplayStepHooks {
+  /** Test-only: pause after the replay-owned generation bump. */
+  afterGenerationBump?(): Promise<void>;
+}
+
+function assertReplayOwnsRun(
+  runId: string,
+  ownedGeneration: number,
+  startedFromDone: boolean,
+): void {
+  const live = getRun(runId);
+  if (!live) throw new Error(`Run not found: ${runId}`);
+  if (live.engineState?.operatorForceCompleted) {
+    throw new Error(`Run ${runId} was force-completed and cannot be replayed`);
+  }
+  if (live.status !== 'done') return;
+  // Ordinary done replay: this call started on `done` and still owns its bump.
+  // Any other `done` means force-complete won while this replay was in flight.
+  if (!startedFromDone || (live.engineState?.generation ?? 0) !== ownedGeneration) {
+    throw new Error(`Run ${runId} was force-completed and cannot be replayed`);
+  }
+}
+
+function isForceCompleteOwnershipError(err: unknown): boolean {
+  return err instanceof Error && err.message.includes('was force-completed and cannot be replayed');
+}
+
 const REPLAY_STEP_TO_ACTIVE_STATUS: Partial<Record<string, RunStatus>> = {
   [PS.GRADE]: 'grading',
   [PS.WRITE_TASK]: 'writing-task',
@@ -299,6 +326,7 @@ function decisionOwningStepIndex(type: string, flowSteps: readonly string[] | un
 export async function runReplayStep(
   params: RunReplayStepParams,
   emit: Emit,
+  hooks: RunReplayStepHooks = {},
 ): Promise<RunReplayStepResult> {
   if (
     params.triggeredBy !== undefined &&
@@ -309,6 +337,10 @@ export async function runReplayStep(
   }
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  const startedFromDone = existing.status === 'done';
+  if (existing.engineState?.operatorForceCompleted) {
+    throw new Error(`Run ${params.runId} was force-completed and cannot be replayed`);
+  }
   if (existing.readOnly) {
     throw new Error(
       `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be replayed`,
@@ -430,12 +462,17 @@ export async function runReplayStep(
     }
   }
 
+  let reclaimedSlotId: string | null = null;
+  let revived = false;
   try {
     // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
     // Do this only after replay entry validation so rejected replays do not leave a
     // synthetic in-progress recovery lane behind.
     cancelRunEngine(params.runId);
-    bumpRunGeneration(params.runId);
+    // Capture immediately: sampling generation after later awaits reads a
+    // force-complete bump and makes the fence compare equal to itself.
+    const ownedGeneration = bumpRunGeneration(params.runId);
+    assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
 
     const replaysCompletionOrGate =
       targetIdx >= 0 &&
@@ -466,6 +503,11 @@ export async function runReplayStep(
     if (supersedeStaleHumanGateDecisions(supersededGateAudit) > 0) {
       updateRun(params.runId, { decisions: existing.decisions });
     }
+
+    // Test-only pause after sync supersession. Do not `await` a missing hook:
+    // that still yields and reopens the decision-resolver race this block closes.
+    if (hooks.afterGenerationBump) await hooks.afterGenerationBump();
+    assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
 
     let replayTaskFile = existing.taskFile ?? null;
     let effectiveSlotId = existing.slotId;
@@ -501,15 +543,19 @@ export async function runReplayStep(
         // can keep stale agentContext.slotId history after its slot is reassigned; blindly
         // writing slot status here would steal that physical worker from the new run.
         try {
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           // Claim-type write: bumps the ownership epoch so a teardown racing this
           // reclaim aborts its remaining writes instead of clobbering it.
           const { claimSlotStatusIf } = await import('../../core/index.js');
           const { claimed } = await claimSlotStatusIf(
             replaySlotId,
-            (slot) =>
-              replaySlotReclaimCheck(slot, params.runId, {
+            (slot) => {
+              const live = getRun(params.runId);
+              if (live?.engineState?.operatorForceCompleted) return false;
+              return replaySlotReclaimCheck(slot, params.runId, {
                 ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
-              }).ok,
+              }).ok;
+            },
             {
               lifecycle: 'busy',
               phase: 'preparing',
@@ -528,6 +574,8 @@ export async function runReplayStep(
               `slot ${replaySlotId} is no longer safely reclaimable; replay from find-slot to select a fresh worker`,
             );
           }
+          reclaimedSlotId = replaySlotId;
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           effectiveSlotId = replaySlotId;
           updateRun(params.runId, { slotId: replaySlotId });
           console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
@@ -548,6 +596,7 @@ export async function runReplayStep(
       replayTaskFile &&
       !hasActiveSelfReviewFix(runBeforeGateReplay)
     ) {
+      assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       const copied = await refreshArtifactMirror(runBeforeGateReplay);
       console.log(
         `[run] replay from ${replayStepName} — refreshed ${copied} worker artifact(s) before rebuilding the gate`,
@@ -574,6 +623,7 @@ export async function runReplayStep(
     const isChainedFollowUp = Boolean(existing.parentRunId) && isFollowUpFlow(existing.flowType);
     const willRerunPrepare = targetIdx >= 0 && prepareIdx >= 0 && targetIdx <= prepareIdx;
     const keepHotSlotSkipPrepare = isChainedFollowUp && Boolean(effectiveSlotId);
+    assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     if (existing.engineState?.flags?.nudgeReuse || existing.engineState?.flags?.skipPrepare) {
       const newFlags = { ...existing.engineState.flags };
       delete newFlags.nudgeReuse;
@@ -605,6 +655,7 @@ export async function runReplayStep(
       selfReviewIdx >= 0 &&
       targetIdx >= selfReviewIdx
     ) {
+      assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       try {
         const {
           loadSlotVars,
@@ -644,11 +695,13 @@ export async function runReplayStep(
             `${workerTaskDir}/${ciFixTarget.checklist}`,
             `${workerTaskDir}/${ciFixTarget.signal}`,
           ];
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           await execOnSlot(
             vars,
             `rm -f ${nestedFiles.map(shellQuote).join(' ')} 2>/dev/null`,
             vars.remoteRepo,
           );
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           if (preserveSelfReviewFix) {
             await syncChecklistTargetForRole(vars, taskDirRel, 'self-review-fix');
           } else {
@@ -662,6 +715,7 @@ export async function runReplayStep(
           );
         }
       } catch (err) {
+        if (isForceCompleteOwnershipError(err)) throw err;
         console.warn(`[run] nested-loop cleanup failed (${(err as Error).message})`);
       }
     }
@@ -674,6 +728,7 @@ export async function runReplayStep(
       targetIdx <= monitorIdx;
 
     if (replaysWorkerLaunch && effectiveSlotId && existing.taskFile) {
+      assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       try {
         const {
           loadSlotVars,
@@ -696,6 +751,7 @@ export async function runReplayStep(
           const selfReviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review'];
           const selfReviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review-fix'];
           const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           await execOnSlot(
             vars,
             `rm -f ${shellQuote(`${workerTaskDir}/${WORKER_SIGNAL_FILE}`)} ` +
@@ -709,9 +765,12 @@ export async function runReplayStep(
           );
         }
       } catch (err) {
+        if (isForceCompleteOwnershipError(err)) throw err;
         console.warn(`[run] worker signal cleanup failed (${(err as Error).message})`);
       }
     }
+
+    assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
 
     // Reset this step and all subsequent steps to pending
     const stepIdx = existing.steps.indexOf(step);
@@ -802,8 +861,7 @@ export async function runReplayStep(
       triggeredBy === 'auto-recovery'
         ? ('auto-in-progress' as const)
         : ('manual-in-progress' as const);
-    const replayGeneration =
-      getRun(params.runId)?.engineState?.generation ?? existing.engineState?.generation ?? 0;
+    const replayGeneration = ownedGeneration;
     const currentBeforeReplayUpdate = getRun(params.runId) ?? existing;
     const activeFixTaskFile =
       targetIdx >= 0 && selfReviewIdx >= 0 && targetIdx >= selfReviewIdx
@@ -838,6 +896,7 @@ export async function runReplayStep(
         }
       }
     }
+    assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     updateRun(params.runId, {
       status: activeStatusForReplayStep(replayStepName),
       error: undefined,
@@ -859,6 +918,7 @@ export async function runReplayStep(
     // leaves a live owner on disk; loadQueue drops any same-candidate row even when
     // launchAttempt differs (N vs N+1 requeue).
     await persistRunNow(getRun(params.runId)!, 'replay-revive');
+    revived = true;
     const lockToDrop = softLock;
     if (lockToDrop) {
       if (getQueueSnapshot().some((item) => item.id === lockToDrop.itemId)) {
@@ -896,6 +956,19 @@ export async function runReplayStep(
     return { run: getRun(params.runId)! };
   } catch (err) {
     await releaseSoftLockIfHeld();
+    if (reclaimedSlotId && !revived) {
+      try {
+        const { slotRelease } = await import('../slot.js');
+        await slotRelease(
+          { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
+          () => {},
+        );
+      } catch (releaseErr) {
+        console.warn(
+          `[run] replay rollback of reclaimed slot ${reclaimedSlotId} failed: ${(releaseErr as Error).message}`,
+        );
+      }
+    }
     throw err;
   }
 }
