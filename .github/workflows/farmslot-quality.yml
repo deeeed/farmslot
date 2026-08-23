@@ -210,6 +210,9 @@ jobs:
       - name: Project hook conformance tests
         run: yarn test:project-hooks
 
+      - name: Runner observability installer tests
+        run: node --test scripts/install-runner-observability.test.mjs
+
       - name: LOC history drift advisory
         run: yarn quality:loc:advisory
 

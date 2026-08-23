@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Isolated Codex `CODEX_HOME` now copies the operator `model_provider` and its matching `[model_providers.<id>]` table from `~/.codex/config.toml`. A provider id with no table is left uncopied so the isolated config cannot dangle. Re-install refreshes or drops the copy and keeps unrelated profile provider tables.
+
 - perf(metrics): attach a bounded, non-overlapping ownership-safe process inventory to the existing node metrics cadence, rate-limited to one minute under pressure and five minutes otherwise, with normalized host pressure and sampler health counters.
 - perf(resources): coalesce all iOS simulator liveness watches into one bounded `simctl` inventory probe per node cycle, fan results out by simulator name or UDID, and discard stale results when watch sets are replaced.
 - perf(resources): stagger and bound external health probes per node, cancel queued probes from replaced watch sets, reduce fallback polling frequency, avoid CDP/lsof repair while a watched PID is healthy, and expose aggregate watch pressure through node health.

@@ -123,9 +123,9 @@ test('remote observability install falls back when an immutable bundle is incomp
     run();
     assert.equal(readFileSync(selectedPath, 'utf8').trim(), fallbackInstaller);
 
-    const importedDependency = path.join(supportRoot, 'scripts/lib/provider-accounts.mjs');
-    mkdirSync(path.dirname(importedDependency), { recursive: true });
-    writeFileSync(importedDependency, 'dependency\n');
+    mkdirSync(path.join(supportRoot, 'scripts/lib'), { recursive: true });
+    writeFileSync(path.join(supportRoot, 'scripts/lib/provider-accounts.mjs'), 'dependency\n');
+    writeFileSync(path.join(supportRoot, 'scripts/lib/toml-scan.mjs'), 'dependency\n');
     run();
     assert.equal(readFileSync(selectedPath, 'utf8').trim(), immutableInstaller);
   } finally {

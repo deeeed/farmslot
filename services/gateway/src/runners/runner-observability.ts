@@ -11,6 +11,7 @@ export const INSTALLER_RELATIVE_PATH = 'scripts/install-runner-observability.mjs
 export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [
   INSTALLER_RELATIVE_PATH,
   'scripts/lib/provider-accounts.mjs',
+  'scripts/lib/toml-scan.mjs',
 ] as const;
 export const NODE_SUPPORT_HASH_FILENAME = 'node-support-hash';
 const localHostname = os.hostname().replace(/\.local$/, '');

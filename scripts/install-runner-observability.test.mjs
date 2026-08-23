@@ -571,6 +571,355 @@ test('codex install never writes through a stale codex-home config.toml symlink 
   );
 });
 
+function writeOperatorCodexConfig(home, body) {
+  const globalConfig = path.join(home, '.codex', 'config.toml');
+  fs.mkdirSync(path.dirname(globalConfig), { recursive: true });
+  fs.writeFileSync(globalConfig, body);
+  return globalConfig;
+}
+
+function installCodexHome(repo, home, slotId = 'install-test-codex-lb') {
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'codex',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      '.agent',
+      '--slot-id',
+      slotId,
+    ],
+    { stdio: 'pipe', env: { ...process.env, HOME: home } },
+  );
+  return fs.readFileSync(path.join(repo, '.agent', 'codex-home', 'config.toml'), 'utf8');
+}
+
+const CODEX_LB_TABLE = [
+  '[model_providers.codex-lb]',
+  'name = "openai"',
+  'base_url = "http://127.0.0.1:2455/backend-api/codex"',
+  'wire_api = "responses"',
+  'env_key = "CODEX_LB_API_KEY"',
+].join('\n');
+
+test('codex-home ignores model_provider lines inside a root multiline string', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-multiline-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-multiline-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'model_provider = "codex-lb"',
+      'developer_instructions = """',
+      'model_provider = "fake-lb"',
+      '[model_providers.fake-lb]',
+      '"""',
+      '',
+      CODEX_LB_TABLE,
+      '',
+    ].join('\n'),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-multiline');
+  assert.match(isolated, /^model_provider = "codex-lb"$/m);
+  assert.doesNotMatch(isolated, /model_provider = "fake-lb"/);
+  assert.match(isolated, /^\[model_providers\.codex-lb\]$/m);
+});
+
+test('codex-home config copies operator model_provider routing without writing through to global', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-lb-routing-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-'));
+  const globalConfig = writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'model = "gpt-5.6-sol"',
+      'model_provider = "codex-lb"',
+      '',
+      CODEX_LB_TABLE,
+      '',
+      '[notice]',
+      'hide_rate_limit_model_nudge = true',
+      '',
+    ].join('\n'),
+  );
+
+  const isolated = installCodexHome(repo, fakeHome);
+  assert.match(isolated, /^model_provider = "codex-lb"$/m);
+  assert.match(isolated, /^# farmslot-managed-model-provider = "codex-lb"$/m);
+  assert.match(isolated, /^\[model_providers\.codex-lb\]$/m);
+  assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:2455\/backend-api\/codex"/);
+  assert.doesNotMatch(isolated, /hide_rate_limit_model_nudge/);
+  assert.equal(
+    fs.readFileSync(globalConfig, 'utf8').includes('hide_rate_limit_model_nudge'),
+    true,
+    'global config must stay untouched',
+  );
+});
+
+test('codex-home config copies a custom provider table that matches model_provider', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-custom-lb-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-custom-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'model_provider = "home-lb"',
+      '',
+      '[model_providers.home-lb]',
+      'base_url = "http://127.0.0.1:9/codex"',
+      '',
+    ].join('\n'),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-custom-lb');
+  assert.match(isolated, /^model_provider = "home-lb"$/m);
+  assert.match(isolated, /^\[model_providers\.home-lb\]$/m);
+  assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:9\/codex"/);
+});
+
+test('codex-home config does not copy a model_provider with no matching table', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-dangling-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-dangling-'));
+  writeOperatorCodexConfig(fakeHome, 'model_provider = "missing-lb"\n');
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-dangling');
+  assert.doesNotMatch(isolated, /model_provider = "missing-lb"/);
+  assert.doesNotMatch(isolated, /\[model_providers\.missing-lb\]/);
+});
+
+test('codex-home config copies a quoted provider table name', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-quoted-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-quoted-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'model_provider = "home-lb"',
+      '',
+      '[model_providers."home-lb"]',
+      'base_url = "http://127.0.0.1:9/codex"',
+      '',
+    ].join('\n'),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-quoted');
+  assert.match(isolated, /^model_provider = "home-lb"$/m);
+  assert.match(isolated, /^\[model_providers\."home-lb"\]$/m);
+  assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:9\/codex"/);
+});
+
+test('codex-home does not copy nested provider tables without the base table', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-nested-only-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-nested-only-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'model_provider = "home-lb"',
+      '',
+      '[model_providers.home-lb.env_http_headers]',
+      'Authorization = "NESTED_PROVIDER_TOKEN"',
+      '',
+    ].join('\n'),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-nested-only');
+  assert.doesNotMatch(isolated, /model_provider = "home-lb"/);
+  assert.doesNotMatch(isolated, /\[model_providers\.home-lb/);
+});
+
+test('codex-home config copies nested provider tables and commented headers', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-nested-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-nested-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'model_provider = "home-lb"',
+      '',
+      '[model_providers.home-lb] # local router',
+      'base_url = "http://127.0.0.1:9/codex"',
+      '',
+      '[model_providers.home-lb.env_http_headers]',
+      'Authorization = "NESTED_PROVIDER_TOKEN"',
+      '',
+    ].join('\n'),
+  );
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-nested');
+  assert.match(isolated, /^model_provider = "home-lb"$/m);
+  assert.match(isolated, /\[model_providers\.home-lb\]/);
+  assert.match(isolated, /\[model_providers\.home-lb\.env_http_headers\]/);
+  assert.match(isolated, /Authorization = "NESTED_PROVIDER_TOKEN"/);
+  assert.equal(fs.statSync(isolatedPath).mode & 0o777, 0o600);
+});
+
+test('codex-home re-install keeps model_provider keys outside the root table', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-profile-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-profile-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
+  );
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  installCodexHome(repo, fakeHome, 'install-test-profile');
+  fs.appendFileSync(
+    isolatedPath,
+    [
+      '',
+      '[model_providers.profile-only]',
+      'base_url = "http://127.0.0.1:9/profile"',
+      '',
+      '[profiles.keep]',
+      'model_provider = "keep-me"',
+      '',
+    ].join('\n'),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-profile');
+  assert.match(isolated, /\[profiles\.keep\]/);
+  assert.match(isolated, /model_provider = "keep-me"/);
+  assert.match(isolated, /\[model_providers\.profile-only\]/);
+  assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:9\/profile"/);
+});
+
+test('codex-home re-install does not strip a quoted provider whose id only shares a prefix', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-prefix-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-prefix-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "foo"', '', '[model_providers.foo]', 'base_url = "http://foo"', ''].join(
+      '\n',
+    ),
+  );
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  installCodexHome(repo, fakeHome, 'install-test-prefix');
+  fs.appendFileSync(
+    isolatedPath,
+    [
+      '',
+      '[model_providers."foo.bar"]',
+      'base_url = "http://foo-bar"',
+      '',
+      '[profiles.keep]',
+      'model_provider = "foo.bar"',
+      '',
+    ].join('\n'),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-prefix');
+  assert.match(isolated, /\[model_providers\."foo\.bar"\]/);
+  assert.match(isolated, /base_url = "http:\/\/foo-bar"/);
+});
+
+test('codex-home routing keeps leftover isolated root keys out of the provider table', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-root-keys-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-root-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
+  );
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  installCodexHome(repo, fakeHome, 'install-test-root-keys');
+  fs.writeFileSync(isolatedPath, `model = "keep-root"\n${fs.readFileSync(isolatedPath, 'utf8')}`);
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-root-keys');
+  const providerTable = isolated.search(/^\[model_providers\.codex-lb\]/m);
+  const keepRoot = isolated.search(/^model = "keep-root"$/m);
+  assert.ok(keepRoot >= 0);
+  assert.ok(providerTable >= 0);
+  assert.ok(keepRoot < providerTable);
+});
+
+test('codex-home inject replaces an unmarked root provider key and keeps its table', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-replace-root-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-replace-root-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
+  );
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  fs.mkdirSync(path.dirname(isolatedPath), { recursive: true });
+  fs.writeFileSync(
+    isolatedPath,
+    ['model_provider = "mine"', '', '[model_providers.mine]', 'base_url = "http://mine"', ''].join(
+      '\n',
+    ),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-replace-root');
+  assert.match(isolated, /^model_provider = "codex-lb"$/m);
+  assert.equal([...isolated.matchAll(/^model_provider\s*=/gm)].length, 1);
+  assert.match(isolated, /\[model_providers\.mine\]/);
+  assert.match(isolated, /\[model_providers\.codex-lb\]/);
+});
+
+test('codex-home re-install keeps unmarked isolated routing when operator has none', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-unmarked-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-unmarked-'));
+  writeOperatorCodexConfig(fakeHome, 'model = "gpt-5.6-sol"\n');
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  fs.mkdirSync(path.dirname(isolatedPath), { recursive: true });
+  fs.writeFileSync(
+    isolatedPath,
+    ['model_provider = "mine"', '', '[model_providers.mine]', 'base_url = "http://mine"', ''].join(
+      '\n',
+    ),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-unmarked');
+  assert.match(isolated, /model_provider = "mine"/);
+  assert.match(isolated, /\[model_providers\.mine\]/);
+});
+
+test('codex-home ignores a farmslot ownership stamp inside a root multiline string', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-stamp-multiline-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-stamp-multiline-'));
+  writeOperatorCodexConfig(fakeHome, 'model = "gpt-5.6-sol"\n');
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  fs.mkdirSync(path.dirname(isolatedPath), { recursive: true });
+  fs.writeFileSync(
+    isolatedPath,
+    [
+      'developer_instructions = """',
+      '# farmslot-managed-model-provider = "mine"',
+      '"""',
+      'model_provider = "mine"',
+      '',
+      '[model_providers.mine]',
+      'base_url = "http://mine"',
+      '',
+    ].join('\n'),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-stamp-multiline');
+  assert.match(isolated, /^model_provider = "mine"$/m);
+  assert.match(isolated, /^\[model_providers\.mine\]$/m);
+  assert.match(
+    isolated,
+    /developer_instructions = """\n# farmslot-managed-model-provider = "mine"\n"""/,
+  );
+  assert.doesNotMatch(
+    isolated,
+    /^model_provider = "mine"\n# farmslot-managed-model-provider = "mine"$/m,
+  );
+});
+
+test('codex-home config refreshes operator routing on re-install and drops it when gone', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-refresh-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-refresh-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
+  );
+  installCodexHome(repo, fakeHome, 'install-test-refresh');
+  writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'model_provider = "codex-lb"',
+      '',
+      '[model_providers.codex-lb]',
+      'base_url = "http://127.0.0.1:2455/v2"',
+      '',
+    ].join('\n'),
+  );
+  let isolated = installCodexHome(repo, fakeHome, 'install-test-refresh');
+  assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:2455\/v2"/);
+  assert.doesNotMatch(isolated, /2455\/backend-api\/codex/);
+  writeOperatorCodexConfig(fakeHome, 'model = "gpt-5.6-sol"\n');
+  isolated = installCodexHome(repo, fakeHome, 'install-test-refresh');
+  assert.doesNotMatch(isolated, /model_provider = "codex-lb"/);
+  assert.doesNotMatch(isolated, /farmslot-managed-model-provider/);
+  assert.doesNotMatch(isolated, /\[model_providers\.codex-lb\]/);
+});
+
 test('codex install is idempotent for isolated codex-home config.toml', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-idempotent-'));
   fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });

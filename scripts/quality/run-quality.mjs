@@ -59,6 +59,10 @@ export const STEPS = [
   ['template variable docs', ['node', 'scripts/quality/check-template-variables-docs.mjs']],
   ['shell script tests', ['bash', 'scripts/tests/run-shell-tests.sh']],
   ['project hook conformance tests', ['yarn', 'test:project-hooks']],
+  [
+    'runner observability installer tests',
+    ['node', '--test', 'scripts/install-runner-observability.test.mjs'],
+  ],
   ['recipe harness tests', ['yarn', 'test:recipe-harness']],
   ['ui tests', ['yarn', 'test:ui']],
   ['recipe operational gates', ['yarn', 'test:recipe-operational-gates']],
