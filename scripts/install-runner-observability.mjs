@@ -477,13 +477,13 @@ function tomlDottedParts(section) {
       continue;
     }
     if (char === '.') {
-      parts.push(current);
+      parts.push(current.trim());
       current = '';
       continue;
     }
     current += char;
   }
-  parts.push(current);
+  parts.push(current.trim());
   return parts;
 }
 
@@ -849,10 +849,12 @@ async function bootstrapCodexHome({
   } else if (existingStat) {
     content = fs.readFileSync(configPath, 'utf8');
   }
-  const previousProviderId =
-    managedInstallerProviderId(content) ?? rootTomlModelProvider(content).providerId;
   const routing = operatorCodexRoutingToml();
   const nextProviderId = routing ? rootTomlModelProvider(routing).providerId : null;
+  const isolatedRootId = rootTomlModelProvider(content).providerId;
+  const previousProviderId =
+    managedInstallerProviderId(content) ??
+    (isolatedRootId && isolatedRootId === nextProviderId ? isolatedRootId : null);
   content = upsertCodexHooksFeature(
     stripCodexHomeInstallerSections(content, repoPath, [previousProviderId, nextProviderId]),
   );

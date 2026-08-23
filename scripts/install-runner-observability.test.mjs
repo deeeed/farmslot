@@ -798,6 +798,23 @@ test('codex-home routing keeps leftover isolated root keys out of the provider t
   assert.ok(keepRoot < providerTable);
 });
 
+test('codex-home re-install keeps unmarked isolated routing when operator has none', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-unmarked-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-unmarked-'));
+  writeOperatorCodexConfig(fakeHome, 'model = "gpt-5.6-sol"\n');
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  fs.mkdirSync(path.dirname(isolatedPath), { recursive: true });
+  fs.writeFileSync(
+    isolatedPath,
+    ['model_provider = "mine"', '', '[model_providers.mine]', 'base_url = "http://mine"', ''].join(
+      '\n',
+    ),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-unmarked');
+  assert.match(isolated, /model_provider = "mine"/);
+  assert.match(isolated, /\[model_providers\.mine\]/);
+});
+
 test('codex-home config refreshes operator routing on re-install and drops it when gone', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-refresh-'));
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-refresh-'));

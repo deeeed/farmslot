@@ -28,7 +28,7 @@ function rootTomlModelProviderId(content) {
   for (const line of content.split('\n')) {
     const trimmed = line.trim();
     if (
-      /^\s*\[\[?[A-Za-z0-9_."'-]+\]\]?\s*(?:#.*)?$/.test(line) &&
+      /^\s*\[\[?[^\]]+\]\]?\s*(?:#.*)?$/.test(line) &&
       !trimmed.startsWith('["') &&
       !trimmed.startsWith("['")
     ) {
@@ -80,13 +80,13 @@ function hasModelProviderTable(content, providerId) {
         continue;
       }
       if (char === '.') {
-        parts.push(current);
+        parts.push(current.trim());
         current = '';
         continue;
       }
       current += char;
     }
-    parts.push(current);
+    parts.push(current.trim());
     if (parts[0] === 'model_providers' && parts[1] === providerId && parts.length === 2) {
       return true;
     }
