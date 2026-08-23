@@ -611,11 +611,11 @@ test('codex-home ignores model_provider lines inside a root multiline string', (
   writeOperatorCodexConfig(
     fakeHome,
     [
+      'model_provider = "codex-lb"',
       'developer_instructions = """',
       'model_provider = "fake-lb"',
       '[model_providers.fake-lb]',
       '"""',
-      'model_provider = "codex-lb"',
       '',
       CODEX_LB_TABLE,
       '',

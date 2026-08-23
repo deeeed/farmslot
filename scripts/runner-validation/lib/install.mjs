@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { scanTomlLine, tomlSectionHeaderIndexes } from '../../lib/toml-scan.mjs';
+
 import { ROOT } from './common.mjs';
 
 export function installHooks(runner, repo, runtimeDir, slotId) {
@@ -25,30 +27,41 @@ export function installHooks(runner, repo, runtimeDir, slotId) {
 }
 
 function rootTomlModelProviderId(content) {
-  for (const line of content.split('\n')) {
-    if (/^\s*\[\[?[^\]]+\]\]?\s*(?:#.*)?$/.test(line)) {
-      return null;
-    }
-    if (!/^\s*model_provider\s*=/.test(line)) continue;
-    const raw = line.replace(/^[^=]*=\s*/, '').trim();
-    if (raw.startsWith('"') || raw.startsWith("'")) {
-      const quote = raw[0];
-      let value = '';
-      for (let index = 1; index < raw.length; index += 1) {
-        const char = raw[index];
-        if (char === '\\' && index + 1 < raw.length) {
-          value += raw[index + 1];
-          index += 1;
-          continue;
+  const lines = content.split('\n');
+  const headers = tomlSectionHeaderIndexes(lines);
+  const state = { arrayDepth: 0, quote: null };
+  let providerId = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (headers.has(index)) break;
+    if (
+      state.arrayDepth === 0 &&
+      state.quote === null &&
+      /^\s*model_provider\s*=/.test(lines[index])
+    ) {
+      const raw = lines[index].replace(/^[^=]*=\s*/, '').trim();
+      if (raw.startsWith('"') || raw.startsWith("'")) {
+        const quote = raw[0];
+        let value = '';
+        for (let i = 1; i < raw.length; i += 1) {
+          const char = raw[i];
+          if (char === '\\' && i + 1 < raw.length) {
+            value += raw[i + 1];
+            i += 1;
+            continue;
+          }
+          if (char === quote) {
+            providerId = value;
+            break;
+          }
+          value += char;
         }
-        if (char === quote) return value;
-        value += char;
+      } else {
+        providerId = raw.replace(/\s+#.*$/, '').trim() || null;
       }
-      return null;
     }
-    return raw.replace(/\s+#.*$/, '').trim() || null;
+    scanTomlLine(lines[index], state);
   }
-  return null;
+  return providerId;
 }
 
 function hasModelProviderTable(content, providerId) {
