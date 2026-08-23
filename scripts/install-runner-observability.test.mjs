@@ -733,6 +733,34 @@ test('codex-home re-install keeps model_provider keys outside the root table', (
   assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:9\/profile"/);
 });
 
+test('codex-home re-install does not strip a quoted provider whose id only shares a prefix', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-prefix-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-prefix-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "foo"', '', '[model_providers.foo]', 'base_url = "http://foo"', ''].join(
+      '\n',
+    ),
+  );
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  installCodexHome(repo, fakeHome, 'install-test-prefix');
+  fs.appendFileSync(
+    isolatedPath,
+    [
+      '',
+      '[model_providers."foo.bar"]',
+      'base_url = "http://foo-bar"',
+      '',
+      '[profiles.keep]',
+      'model_provider = "foo.bar"',
+      '',
+    ].join('\n'),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-prefix');
+  assert.match(isolated, /\[model_providers\."foo\.bar"\]/);
+  assert.match(isolated, /base_url = "http:\/\/foo-bar"/);
+});
+
 test('codex-home routing keeps leftover isolated root keys out of the provider table', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-root-keys-'));
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-root-'));

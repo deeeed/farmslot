@@ -453,15 +453,44 @@ function tomlSectionName(line) {
   return line.trim().match(/^\[([^\]]+)\]/)?.[1] ?? null;
 }
 
-function normalizeTomlDottedKeys(section) {
-  return section.replace(/"([^"]*)"/g, '$1').replace(/'([^']*)'/g, '$1');
+function tomlDottedParts(section) {
+  const parts = [];
+  let current = '';
+  let quote = null;
+  for (let index = 0; index < section.length; index += 1) {
+    const char = section[index];
+    if (quote) {
+      if (char === '\\' && index + 1 < section.length) {
+        current += section[index + 1];
+        index += 1;
+        continue;
+      }
+      if (char === quote) {
+        quote = null;
+        continue;
+      }
+      current += char;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '.') {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  parts.push(current);
+  return parts;
 }
 
 function sectionBelongsToProvider(section, providerId) {
   if (!section) return false;
-  const normalized = normalizeTomlDottedKeys(section);
-  const tableName = `model_providers.${providerId}`;
-  return normalized === tableName || normalized.startsWith(`${tableName}.`);
+  const parts = tomlDottedParts(section);
+  return parts[0] === 'model_providers' && parts[1] === providerId;
 }
 
 function rootTomlModelProvider(content) {
@@ -545,11 +574,11 @@ function injectOperatorCodexRouting(content, routing) {
   }
   const root = contentLines.slice(0, firstHeader);
   const rest = contentLines.slice(firstHeader);
-  return [providerLine, ...root, tables ? `\n${tables}` : '', ...rest]
-    .filter((line, index, lines) => !(line === '' && lines[index - 1] === ''))
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trimEnd();
+  const merged = [providerLine];
+  if (root.some((line) => line.trim() !== '')) merged.push(...root);
+  if (tables) merged.push('', tables);
+  if (rest.length) merged.push(...rest);
+  return merged.join('\n').trimEnd();
 }
 
 function coalesceCodexFeaturesSections(content) {
