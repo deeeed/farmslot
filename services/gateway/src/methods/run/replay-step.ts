@@ -455,6 +455,7 @@ export async function runReplayStep(
     }
   }
 
+  let reclaimedSlotId: string | null = null;
   try {
     // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
     // Do this only after replay entry validation so rejected replays do not leave a
@@ -534,15 +535,19 @@ export async function runReplayStep(
         // can keep stale agentContext.slotId history after its slot is reassigned; blindly
         // writing slot status here would steal that physical worker from the new run.
         try {
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           // Claim-type write: bumps the ownership epoch so a teardown racing this
           // reclaim aborts its remaining writes instead of clobbering it.
           const { claimSlotStatusIf } = await import('../../core/index.js');
           const { claimed } = await claimSlotStatusIf(
             replaySlotId,
-            (slot) =>
-              replaySlotReclaimCheck(slot, params.runId, {
+            (slot) => {
+              const live = getRun(params.runId);
+              if (live?.engineState?.operatorForceCompleted) return false;
+              return replaySlotReclaimCheck(slot, params.runId, {
                 ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
-              }).ok,
+              }).ok;
+            },
             {
               lifecycle: 'busy',
               phase: 'preparing',
@@ -561,6 +566,8 @@ export async function runReplayStep(
               `slot ${replaySlotId} is no longer safely reclaimable; replay from find-slot to select a fresh worker`,
             );
           }
+          reclaimedSlotId = replaySlotId;
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           effectiveSlotId = replaySlotId;
           updateRun(params.runId, { slotId: replaySlotId });
           console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
@@ -931,6 +938,19 @@ export async function runReplayStep(
     return { run: getRun(params.runId)! };
   } catch (err) {
     await releaseSoftLockIfHeld();
+    if (reclaimedSlotId) {
+      try {
+        const { slotRelease } = await import('../slot.js');
+        await slotRelease(
+          { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
+          () => {},
+        );
+      } catch (releaseErr) {
+        console.warn(
+          `[run] replay rollback of reclaimed slot ${reclaimedSlotId} failed: ${(releaseErr as Error).message}`,
+        );
+      }
+    }
     throw err;
   }
 }
