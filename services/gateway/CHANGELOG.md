@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(run): `run.forceComplete` can mark a failed run done (operator hatch). Optional `prNumber` persists the already-opened PR. The hatch broadcasts globally, settles backlog, and ticks the work graph. Slot-release failures return as advisory `effects` after the run is already `done`. CI-watching still aborts the watch and lets the pipeline finish. Blocked runs stay out of this hatch.
+- fix(run): `run.forceComplete` can mark a failed run done (operator hatch). Optional `prNumber` persists the already-opened PR. The hatch broadcasts globally, settles backlog, and ticks the work graph. Slot-release failures return as advisory `effects` after the run is already `done`. Unresolved operational decisions are superseded; retrospectives stay open. CI-watching still aborts the watch and lets the pipeline finish. Blocked runs stay out of this hatch.
 - fix(dispatch): do not fail a run with PRESSURE_PREVIEW_STALE when FIND_SLOT recomputes and the same machine is still admitted. A 30s pressure-ring generation rotate is not a resource rejection; refresh the stored preview identity and launch on the scored path and on engine-bound slot picks. A preview that moved to a different machine still fails stale. Unsafe pressure still fails closed. DISPATCH still rejects an unconsumed stale ref when FIND_SLOT was skipped.
 
 ## 0.9.0 - 2026-08-21

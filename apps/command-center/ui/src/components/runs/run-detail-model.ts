@@ -30,10 +30,14 @@ export function isActiveInteractiveDevRun(run: Run): boolean {
 }
 
 export function canReplayRunSteps(
-  run: Pick<Run, 'status' | 'decisions' | 'slotId' | 'steps' | 'agentContexts'> | null | undefined,
+  run:
+    | Pick<Run, 'status' | 'decisions' | 'slotId' | 'steps' | 'agentContexts' | 'engineState'>
+    | null
+    | undefined,
   actionsBlocked = false,
 ): boolean {
   if (!run || actionsBlocked) return false;
+  if (run.engineState?.operatorForceCompleted) return false;
   if (isTerminalRunStatus(run.status)) return true;
   // A blocked run is still live, so replay must re-enter its own slot. Offering
   // it after the slot was released only surfaces a backend reclaim failure.

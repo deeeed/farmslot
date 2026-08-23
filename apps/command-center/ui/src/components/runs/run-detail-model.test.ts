@@ -256,6 +256,10 @@ test('buildRerunAlongsideHref omits runner/model when baseline engine is unknown
 test('canReplayRunSteps allows terminal runs when actions are not blocked', () => {
   assert.equal(canReplayRunSteps(makeRun({ status: 'failed' })), true);
   assert.equal(canReplayRunSteps(makeRun({ status: 'done' })), true);
+  assert.equal(
+    canReplayRunSteps(makeRun({ status: 'done', engineState: { operatorForceCompleted: true } })),
+    false,
+  );
   assert.equal(canReplayRunSteps(makeRun({ status: 'cancelled' })), true);
   assert.equal(canReplayRunSteps(makeRun({ status: 'blocked', slotId: 'slot-1' })), true);
   // A blocked run must re-enter its own slot; without one, replay would only

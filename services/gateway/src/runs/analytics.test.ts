@@ -223,6 +223,24 @@ test('emit is idempotent via analyticsEmittedAt', async () => {
   assert.equal(emitAnalyticsForTerminalRun(run), null); // already emitted
 });
 
+test('stale failure append does not stamp after completedAt moves', async () => {
+  const failedAt = '2026-06-22T10:00:00.000Z';
+  const doneAt = '2026-06-22T10:00:01.000Z';
+  const run = makeRun({
+    id: 'stale-stamp-1',
+    status: 'failed',
+    error: 'self-review exhausted',
+    completedAt: failedAt,
+    metrics: { nudgeCount: 0, model: 'opus', runner: 'claude', outcome: 'failure' },
+  });
+  const first = emitAnalyticsForTerminalRun(run);
+  assert.ok(first);
+  run.completedAt = doneAt;
+  run.status = 'done';
+  await first;
+  assert.equal(run.analyticsEmittedAt, undefined);
+});
+
 test('queued override appends after the in-flight failure row', async () => {
   const failedAt = '2026-06-22T10:00:00.000Z';
   const doneAt = '2026-06-22T10:00:01.000Z';

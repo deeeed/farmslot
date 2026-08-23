@@ -182,9 +182,19 @@ export async function runForceCompleteTransitionLocked(
     });
   }
   const current = getRun(params.runId)!;
+  const completedAt = new Date().toISOString();
+  const decisions = current.decisions.map((decision) => {
+    if (decision.resolvedAt || decision.type === 'retrospective') return decision;
+    return {
+      ...decision,
+      resolvedAt: completedAt,
+      resolvedAction: 'superseded',
+      context: { ...decision.context, supersededBy: 'operator-force-complete' },
+    };
+  });
   const run = updateRun(params.runId, {
     status: 'done',
-    completedAt: new Date().toISOString(),
+    completedAt,
     error: undefined,
     metrics: { ...current.metrics, outcome: 'success' },
     backlogReconcilePending: true,
@@ -193,6 +203,7 @@ export async function runForceCompleteTransitionLocked(
       generation: current.engineState?.generation ?? 0,
     },
     engineState: { ...(current.engineState ?? {}), operatorForceCompleted: true },
+    decisions,
     ...(params.prNumber != null ? { prNumber: params.prNumber } : {}),
     // Failed runs already emitted a failure row. Clear the marker so the
     // append-only sink records this override; query last-record-wins.

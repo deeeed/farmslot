@@ -208,6 +208,47 @@ test('runForceComplete marks a failed run done and can persist a PR number', asy
   assert.equal(selfReview?.outputs?.source, 'operator');
 });
 
+test('runForceComplete supersedes unresolved operational decisions and keeps retrospectives', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-decisions`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'self-review exhausted',
+    decisions: [
+      {
+        id: 'gate-1',
+        type: 'engine_human_gate',
+        title: 'Publication gate',
+        description: 'Waiting',
+        actions: [],
+        createdAt: '2026-08-23T00:00:00.000Z',
+        context: {},
+      },
+      {
+        id: 'retro-1',
+        type: 'retrospective',
+        title: 'Retrospective',
+        description: 'Grade later',
+        actions: [],
+        createdAt: '2026-08-23T00:00:00.000Z',
+        context: {},
+      },
+    ],
+  });
+
+  const result = await runForceComplete({ runId: run.id }, () => {});
+  const gate = result.run.decisions.find((decision) => decision.id === 'gate-1');
+  const retro = result.run.decisions.find((decision) => decision.id === 'retro-1');
+  assert.equal(gate?.resolvedAction, 'superseded');
+  assert.ok(gate?.resolvedAt);
+  assert.equal(gate?.context?.supersededBy, 'operator-force-complete');
+  assert.equal(retro?.resolvedAt, undefined);
+});
+
 test('runForceComplete persists a PR on ci-watching without flipping status', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

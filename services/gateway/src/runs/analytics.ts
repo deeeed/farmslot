@@ -521,6 +521,10 @@ export function emitAnalyticsForTerminalRun(
     .catch(() => undefined)
     .then(() =>
       appendAnalyticsRecord(record).then(() => {
+        // A later hatch mutates this same object to a new completedAt. Stamping
+        // the old failure timestamp would block a retry if the override append
+        // then failed.
+        if (run.completedAt && run.completedAt !== emittedAt) return;
         run.analyticsEmittedAt = emittedAt;
       }),
     )
