@@ -71,7 +71,7 @@ export interface RunDetailViewContext {
   _showTerminal: boolean;
   _actionsBlocked: () => boolean;
   _rescueLinkage: (runId: string) => void | Promise<void>;
-  _confirmForceComplete: (runId: string) => void;
+  _confirmForceComplete: (run: Run) => void;
   _confirmLifecycleAction: (run: Run, action: 'cancel' | 'delete') => void | Promise<void>;
   _requestCopilotRunDiagnosis: (run: Run) => void;
   _buildRerunAlongsideHref: (run: Run) => string;
@@ -417,7 +417,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           location.hash = `runs?tag=${encodeURIComponent(tag)}`;
         }}
       ></run-tag-editor>
-      ${r.status === 'ci-watching'
+      ${r.status === 'ci-watching' || r.status === 'failed'
         ? html`
             <button
               class="gate-action-btn ${ctx._pendingConfirm === 'force-complete'
@@ -427,7 +427,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                 ? ''
                 : `border-color:${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px`}"
               ?disabled=${actionsBlocked}
-              @click=${() => ctx._confirmForceComplete(r.id)}
+              @click=${() => ctx._confirmForceComplete(r)}
             >
               ${ctx._pendingConfirm === 'force-complete'
                 ? 'Confirm complete?'

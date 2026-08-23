@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { MachineParkRecord } from '@farmslot/protocol';
+import { Events, type MachineParkRecord } from '@farmslot/protocol';
 
 import { withMachineRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import {
+  publishForceCompletedRun,
   runCancel,
   runForceComplete,
+  runForceCompleteTransitionLocked,
   runPause,
   runResume,
   runResumeTransitionLocked,
@@ -16,7 +18,11 @@ import {
 
 async function cleanupRun(runId: string): Promise<void> {
   if (!getRun(runId)) return;
-  updateRun(runId, { status: 'done', completedAt: new Date().toISOString() });
+  updateRun(runId, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    backlogReconcilePending: undefined,
+  });
   await deleteRun(runId);
 }
 
@@ -144,7 +150,7 @@ test('runPause pauses monitoring runs and rejects non-pausable statuses', async 
   await assert.rejects(() => runPause({ runId: run.id }, () => {}), /cannot be paused/);
 });
 
-test('runForceComplete only accepts ci-watching runs', async (t) => {
+test('runForceComplete only accepts ci-watching or failed runs', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',
@@ -157,10 +163,285 @@ test('runForceComplete only accepts ci-watching runs', async (t) => {
     /cannot be force-completed/,
   );
 
+  updateRun(run.id, { status: 'blocked' });
+  await assert.rejects(
+    () => runForceComplete({ runId: run.id }, () => {}),
+    /cannot be force-completed in status: blocked/,
+  );
+
   updateRun(run.id, { status: 'ci-watching' });
   const result = await runForceComplete({ runId: run.id }, () => {});
   assert.equal(result.run.id, run.id);
   assert.equal(result.run.status, 'ci-watching');
+});
+
+test('runForceComplete marks a failed run done and can persist a PR number', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-failed`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'self-review exhausted',
+    engineState: { generation: 2 },
+    steps: [
+      { name: 'self-review', status: 'failed' },
+      { name: 'complete', status: 'skipped' },
+      { name: 'human-gate', status: 'skipped' },
+    ],
+  });
+
+  const result = await runForceComplete({ runId: run.id, prNumber: 35145 }, () => {});
+  assert.equal(result.run.status, 'done');
+  assert.equal(result.run.error, undefined);
+  assert.equal(result.run.prNumber, 35145);
+  assert.equal(result.run.metrics.outcome, 'success');
+  assert.ok(result.run.completedAt);
+  assert.equal(result.run.engineState?.generation, 3);
+  assert.equal(result.run.engineState?.operatorForceCompleted, true);
+  assert.equal(result.run.recoveryProposal?.status, 'idle');
+  assert.equal(result.run.backlogReconcilePending, undefined);
+  const selfReview = result.run.steps.find((step) => step.name === 'self-review');
+  assert.equal(selfReview?.status, 'skipped');
+  assert.equal(selfReview?.outputs?.source, 'operator');
+});
+
+test('runForceComplete supersedes unresolved operational decisions and keeps retrospectives', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-decisions`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'self-review exhausted',
+    decisions: [
+      {
+        id: 'gate-1',
+        type: 'engine_human_gate',
+        title: 'Publication gate',
+        description: 'Waiting',
+        actions: [],
+        createdAt: '2026-08-23T00:00:00.000Z',
+        context: {},
+      },
+      {
+        id: 'retro-1',
+        type: 'retrospective',
+        title: 'Retrospective',
+        description: 'Grade later',
+        actions: [],
+        createdAt: '2026-08-23T00:00:00.000Z',
+        context: {},
+      },
+    ],
+  });
+
+  const result = await runForceComplete({ runId: run.id }, () => {});
+  const gate = result.run.decisions.find((decision) => decision.id === 'gate-1');
+  const retro = result.run.decisions.find((decision) => decision.id === 'retro-1');
+  assert.equal(gate?.resolvedAction, 'superseded');
+  assert.ok(gate?.resolvedAt);
+  assert.equal(gate?.context?.supersededBy, 'operator-force-complete');
+  assert.equal(retro?.resolvedAt, undefined);
+});
+
+test('runForceComplete persists a PR on ci-watching without flipping status', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-ci-pr`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'ci-watching' });
+
+  const result = await runForceComplete({ runId: run.id, prNumber: 35145 }, () => {});
+  assert.equal(result.run.status, 'ci-watching');
+  assert.equal(result.run.prNumber, 35145);
+});
+
+test('runForceComplete fences a failed run before attaching the PR', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-attach-order`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'self-review exhausted',
+    engineState: { generation: 2 },
+    steps: [{ name: 'self-review', status: 'failed' }],
+  });
+
+  let cancelled = false;
+  let attachSawDone = false;
+  const result = await runForceCompleteTransitionLocked(
+    { runId: run.id, prNumber: 35145 },
+    () => {},
+    {
+      cancelEngine: () => {
+        cancelled = true;
+      },
+      bumpGeneration: (runId) => {
+        const current = getRun(runId)!;
+        const generation = (current.engineState?.generation ?? 0) + 1;
+        updateRun(runId, { engineState: { ...(current.engineState ?? {}), generation } });
+        return generation;
+      },
+      attachPrNumber: async (runId) => {
+        attachSawDone = getRun(runId)?.status === 'done' && cancelled;
+        throw new Error('refresh failed');
+      },
+      publish: async (published) => published,
+      releaseSlot: async () => ({ released: false }),
+    },
+  );
+  assert.equal(cancelled, true);
+  assert.equal(attachSawDone, true);
+  assert.equal(result.run.status, 'done');
+  assert.equal(result.run.prNumber, 35145);
+  assert.equal(result.run.engineState?.generation, 3);
+});
+
+test('runForceComplete still aborts ci-watching when PR attach throws', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-ci-attach`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'ci-watching' });
+
+  let cancelled = false;
+  const result = await runForceCompleteTransitionLocked(
+    { runId: run.id, prNumber: 35145 },
+    () => {},
+    {
+      cancelEngine: () => {
+        cancelled = true;
+      },
+      bumpGeneration: () => 1,
+      attachPrNumber: async () => {
+        throw new Error('refresh failed');
+      },
+      publish: async (published) => published,
+      releaseSlot: async () => ({ released: false }),
+    },
+  );
+  assert.equal(cancelled, true);
+  assert.equal(result.run.status, 'ci-watching');
+});
+
+test('runForceComplete still returns done when publication after-effects throw', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-publish`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'failed', error: 'self-review exhausted' });
+
+  const result = await runForceCompleteTransitionLocked({ runId: run.id }, () => {}, {
+    cancelEngine: () => {},
+    bumpGeneration: () => 1,
+    attachPrNumber: async () => {},
+    publish: async () => {
+      throw new Error('settle failed');
+    },
+    releaseSlot: async () => ({ released: false }),
+  });
+  assert.equal(result.run.status, 'done');
+  assert.equal(result.run.metrics.outcome, 'success');
+  assert.equal(result.run.backlogReconcilePending, true);
+});
+
+test('runForceComplete rejects a non-positive prNumber', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-pr`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'failed' });
+
+  await assert.rejects(
+    () => runForceComplete({ runId: run.id, prNumber: 0 }, () => {}),
+    /prNumber must be a positive integer/,
+  );
+  await assert.rejects(
+    () => runForceComplete({ runId: run.id, prNumber: 1.5 }, () => {}),
+    /prNumber must be a positive integer/,
+  );
+  assert.equal(getRun(run.id)?.status, 'failed');
+});
+
+test('runForceComplete publishes terminal state before slot release and reports a failed release', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-slot`,
+    slotId: 'force-complete-slot',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'failed', error: 'self-review exhausted' });
+
+  const order: string[] = [];
+  const result = await runForceCompleteTransitionLocked({ runId: run.id }, () => {}, {
+    cancelEngine: () => {},
+    bumpGeneration: (runId) => {
+      const current = getRun(runId)!;
+      const generation = (current.engineState?.generation ?? 0) + 1;
+      updateRun(runId, { engineState: { ...(current.engineState ?? {}), generation } });
+      return generation;
+    },
+    attachPrNumber: async () => {},
+    publish: async (published) => {
+      order.push('publish');
+      assert.equal(published.status, 'done');
+      return published;
+    },
+    releaseSlot: async (released) => {
+      order.push('release');
+      assert.equal(released.slotId, 'force-complete-slot');
+      assert.equal(released.id, run.id);
+      throw new Error('ssh teardown failed');
+    },
+  });
+
+  assert.deepEqual(order, ['publish', 'release']);
+  assert.equal(result.run.status, 'done');
+  assert.equal(
+    result.effects?.some((effect) => effect.name === 'slot-release' && effect.status === 'failed'),
+    true,
+  );
+  assert.match(
+    result.effects?.find((effect) => effect.name === 'slot-release')?.detail ?? '',
+    /ssh teardown failed/,
+  );
+});
+
+test('publishForceCompletedRun broadcasts RUN_UPDATED then RUN_COMPLETED', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-completed-event`,
+  });
+  t.after(() => cleanupRun(run.id));
+  const done = updateRun(run.id, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    metrics: { ...run.metrics, outcome: 'success' },
+  });
+  const events: string[] = [];
+  await publishForceCompletedRun(done, (event) => {
+    events.push(event);
+  });
+  assert.equal(events[0], Events.RUN_UPDATED);
+  assert.equal(events[1], Events.RUN_COMPLETED);
 });
 
 function pausedMonitorRun(ticket: string) {

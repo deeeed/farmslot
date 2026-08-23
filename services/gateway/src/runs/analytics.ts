@@ -27,6 +27,7 @@ import { getAllRuns, shouldUseIsolatedRunsDir } from './store.js';
 // See docs/plans/pipeline-ops-analytics-goal.md.
 
 let _analyticsDir: string | null = null;
+const analyticsAppendTails = new Map<string, Promise<void>>();
 
 // Lazy so the store↔analytics import cycle (store emits, we read its test predicate)
 // resolves at runtime rather than module-init time.
@@ -508,14 +509,28 @@ export function emitAnalyticsForTerminalRun(
     );
     return null;
   }
-  // Mark the run emitted ONLY after the append durably succeeds — `analyticsEmittedAt` means
-  // "written", not "attempted". A failed append therefore leaves the run un-flagged, so the
-  // eviction paths re-attempt and `analyticsBackfill` can still recover it. The returned promise
-  // REJECTS on a sink-write failure; callers decide:
-  //  - updateRun fires-and-forgets (the run stays in the store → recoverable),
-  //  - eviction paths (archiveRun/deleteRun) await it and skip eviction on rejection so a run
-  //    is never pruned before its record is durably written.
-  return appendAnalyticsRecord(record).then(() => {
-    run.analyticsEmittedAt = run.completedAt ?? run.updatedAt ?? run.createdAt;
-  });
+  // Snapshot the record at call time, then append behind any in-flight write for
+  // this run. Concurrent appendFile calls are unordered; last-record-wins query
+  // would otherwise keep a stale failure row after a force-complete override.
+  const emittedAt = run.completedAt ?? run.updatedAt ?? run.createdAt;
+  const previous = analyticsAppendTails.get(run.id) ?? Promise.resolve();
+  // Store and return the same tail. A separate `finally` promise would reject
+  // unobserved and could terminate the gateway; the map would also retain it
+  // because cleanup compared against `next` instead of that wrapper.
+  const tail = previous
+    .catch(() => undefined)
+    .then(() =>
+      appendAnalyticsRecord(record).then(() => {
+        // A later hatch mutates this same object to a new completedAt. Stamping
+        // the old failure timestamp would block a retry if the override append
+        // then failed.
+        if (run.completedAt && run.completedAt !== emittedAt) return;
+        run.analyticsEmittedAt = emittedAt;
+      }),
+    )
+    .finally(() => {
+      if (analyticsAppendTails.get(run.id) === tail) analyticsAppendTails.delete(run.id);
+    });
+  analyticsAppendTails.set(run.id, tail);
+  return tail;
 }

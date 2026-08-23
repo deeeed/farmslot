@@ -197,6 +197,50 @@ test('watcher observes manual-in-progress state and skips auto dispatch', async 
   assert.equal(audit.at(-1).outcomeReason, 'manual_in_progress');
 });
 
+test('watcher skips force-complete reclaim refuse instead of dead-lettering', async (t) => {
+  withTempAuditDir(t);
+  const project = await makeProject(t, {
+    auto_recovery: {
+      enabled: true,
+      maxAttempts: 2,
+      allowedSteps: ['prepare'],
+      allowedCategories: ['infra'],
+    },
+  });
+  const run = failRun(project);
+  __resetAutoRecoveryForTest();
+  __setAutoRecoveryHandlersForTest({
+    runReplayStep: async (params) => {
+      updateRun(params.runId, {
+        status: 'done',
+        completedAt: new Date().toISOString(),
+        metrics: { ...getRun(params.runId)!.metrics, outcome: 'success' },
+        engineState: {
+          ...(getRun(params.runId)?.engineState ?? {}),
+          operatorForceCompleted: true,
+        },
+      });
+      throw new Error(
+        `slot force-complete-slot is no longer safely reclaimable; replay from find-slot to select a fresh worker`,
+      );
+    },
+  });
+  initAutoRecovery(() => undefined);
+  t.after(async () => {
+    __resetAutoRecoveryForTest();
+    await cleanupRun(run.id);
+  });
+
+  routeEventToAutoRecovery(Events.RUN_UPDATED, { run });
+  await __drainAutoRecoveryForTest();
+
+  const stored = getRun(run.id)!;
+  assert.equal(stored.engineState?.autoRecoveryDeadLetter, undefined);
+  const audit = await readAuditLines();
+  assert.equal(audit.at(-1).outcome, 'skipped');
+  assert.equal(audit.at(-1).outcomeReason, 'manual_in_progress');
+});
+
 test('watcher replays monitor when monitor terminal failure leaves later steps skipped', async (t) => {
   withTempAuditDir(t);
   const project = await makeProject(t, {

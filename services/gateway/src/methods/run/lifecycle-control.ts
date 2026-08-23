@@ -12,6 +12,7 @@ import {
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../../agents/contexts.js';
+import { markBacklogRunObserved } from '../../backlog/store.js';
 import { execOnSlot } from '../../core/exec.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import {
@@ -37,7 +38,8 @@ import {
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
 } from '../../runners/session-process.js';
-import { getRun, updateRun } from '../../runs/store.js';
+import { getRun, updateRun, updateRunStep } from '../../runs/store.js';
+import { schedulerTick } from '../../work-graph/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
@@ -96,6 +98,22 @@ export async function runCancelTransitionLocked(params: RunCancelParams): Promis
   return { run: settled, effects };
 }
 
+export interface RunForceCompleteTransitionDependencies {
+  cancelEngine(runId: string): void;
+  bumpGeneration(runId: string): number;
+  attachPrNumber(runId: string, prNumber: number): Promise<void>;
+  publish(run: Run): Promise<Run>;
+  releaseSlot(run: Run): Promise<{ released: boolean }>;
+}
+
+const DEFAULT_RUN_FORCE_COMPLETE_DEPS: RunForceCompleteTransitionDependencies = {
+  cancelEngine: cancelRunEngine,
+  bumpGeneration: bumpRunGeneration,
+  attachPrNumber: attachForceCompletePrNumber,
+  publish: publishForceCompletedRun,
+  releaseSlot: releaseForceCompletedSlot,
+};
+
 export async function runForceComplete(
   params: RunForceCompleteParams,
   emit: Emit,
@@ -106,25 +124,213 @@ export async function runForceComplete(
 export async function runForceCompleteTransitionLocked(
   params: RunForceCompleteParams,
   emit: Emit,
+  deps: RunForceCompleteTransitionDependencies = DEFAULT_RUN_FORCE_COMPLETE_DEPS,
 ): Promise<RunForceCompleteResult> {
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
   assertNotMachineParkManaged(existing);
 
-  const completableStatuses = new Set(['ci-watching']);
+  const completableStatuses = new Set(['ci-watching', 'failed']);
   if (!completableStatuses.has(existing.status)) {
     throw new Error(`Run ${params.runId} cannot be force-completed in status: ${existing.status}`);
   }
+  if (params.prNumber != null) assertPositivePrNumber(params.prNumber);
 
-  // Abort the CI monitor's AbortController — the run-engine pipeline then
-  // completes naturally: CI_WATCH returns outcome='aborted' → no chaining →
-  // retrospective + slot release → FINALIZE → done
-  cancelRunEngine(params.runId);
+  if (existing.status === 'ci-watching') {
+    // Abort first so an await on PR attach cannot race the watch into a new
+    // status while this transition still reports ci-watching.
+    deps.cancelEngine(params.runId);
+    if (params.prNumber != null) {
+      try {
+        await deps.attachPrNumber(params.runId, params.prNumber);
+      } catch (err) {
+        // Advisory: the watch is already aborting. The PR number can be
+        // retried via rehydrate if refresh failed.
+        console.warn(
+          `[run] force-complete PR attach failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+        );
+      }
+    }
+    // Abort the CI monitor's AbortController — the run-engine pipeline then
+    // completes naturally: CI_WATCH returns outcome='aborted' → no chaining →
+    // retrospective + slot release → FINALIZE → done
+    const run = getRun(params.runId)!;
+    emit(Events.RUN_UPDATED, { run });
+    console.log(`[run] force-completing run ${params.runId.slice(0, 8)} (was ${existing.status})`);
+    return { run };
+  }
 
-  const run = getRun(params.runId)!;
-  emit(Events.RUN_UPDATED, { run });
-  console.log(`[run] force-completing run ${params.runId.slice(0, 8)} (was ${existing.status})`);
-  return { run };
+  // Failed path: fence recovery synchronously before any await. Replay and
+  // auto-recovery key off `failed` + generation; yielding for link refresh
+  // first lets them revive the run after this transition has committed done.
+  deps.cancelEngine(params.runId);
+  deps.bumpGeneration(params.runId);
+  const reason = 'operator force-completed a failed run';
+  for (const step of existing.steps) {
+    if (step.status === 'done' || step.status === 'skipped') continue;
+    // Rewrite failed (and any other unfinished) steps: the operator is
+    // declaring the run done despite the recorded failure.
+    updateRunStep(params.runId, step.name, {
+      status: 'skipped',
+      completedAt:
+        step.status === 'failed'
+          ? (step.completedAt ?? existing.completedAt ?? new Date().toISOString())
+          : new Date().toISOString(),
+      ...(step.durationMs != null ? { durationMs: step.durationMs } : {}),
+      detail: `Skipped: ${reason}`,
+      outputs: { ...(step.outputs ?? {}), skipped: true, reason, source: 'operator' },
+    });
+  }
+  const current = getRun(params.runId)!;
+  const completedAt = new Date().toISOString();
+  const decisions = current.decisions.map((decision) => {
+    if (decision.resolvedAt || decision.type === 'retrospective') return decision;
+    return {
+      ...decision,
+      resolvedAt: completedAt,
+      resolvedAction: 'superseded',
+      context: { ...decision.context, supersededBy: 'operator-force-complete' },
+    };
+  });
+  const run = updateRun(params.runId, {
+    status: 'done',
+    completedAt,
+    error: undefined,
+    metrics: { ...current.metrics, outcome: 'success' },
+    backlogReconcilePending: true,
+    recoveryProposal: {
+      status: 'idle',
+      generation: current.engineState?.generation ?? 0,
+    },
+    engineState: { ...(current.engineState ?? {}), operatorForceCompleted: true },
+    decisions,
+    ...(params.prNumber != null ? { prNumber: params.prNumber } : {}),
+    // Failed runs already emitted a failure row. Clear the marker so the
+    // append-only sink records this override; query last-record-wins.
+    analyticsEmittedAt: undefined,
+  });
+  if (params.prNumber != null) {
+    try {
+      await deps.attachPrNumber(params.runId, params.prNumber);
+    } catch (err) {
+      // Advisory: the PR number is already on the done write. Stale links
+      // refresh on the next ticketData change.
+      console.warn(
+        `[run] force-complete PR attach failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+      );
+    }
+  }
+  // Publish terminal state first (ADR-053 cancel order): UI and observers must
+  // see `done` before slow slot teardown. Slot-release failures stay advisory
+  // effects because the operator-owned done write already landed and cannot be
+  // retried.
+  let settled = getRun(params.runId) ?? run;
+  try {
+    settled = await deps.publish(settled);
+  } catch (err) {
+    // Advisory after-effects: the operator-owned done write already landed.
+    // Failing the RPC would block retry because status is already `done`.
+    console.warn(
+      `[run] force-complete publication failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+    );
+    settled = getRun(params.runId) ?? settled;
+  }
+  const effects = await collectForceCompleteSlotReleaseEffect(settled, deps);
+  console.log(`[run] force-completed failed run ${params.runId.slice(0, 8)}`);
+  return { run: getRun(params.runId) ?? settled, effects };
+}
+
+async function collectForceCompleteSlotReleaseEffect(
+  run: Run,
+  deps: RunForceCompleteTransitionDependencies,
+): Promise<RunForceCompleteResult['effects']> {
+  if (!run.slotId) return [{ name: 'slot-release', status: 'skipped', detail: 'no slot bound' }];
+  try {
+    const { released } = await deps.releaseSlot(run);
+    return released
+      ? [{ name: 'slot-release', status: 'ok' }]
+      : [{ name: 'slot-release', status: 'skipped', detail: 'already released or not owned' }];
+  } catch (err) {
+    const detail = (err as Error).message;
+    console.warn(`[run] force-complete slot release failed for ${run.id.slice(0, 8)}: ${detail}`);
+    return [{ name: 'slot-release', status: 'failed', detail }];
+  }
+}
+
+function assertPositivePrNumber(prNumber: number): void {
+  if (!Number.isInteger(prNumber) || prNumber <= 0) {
+    throw new Error(`prNumber must be a positive integer (got ${String(prNumber)})`);
+  }
+}
+
+async function attachForceCompletePrNumber(runId: string, prNumber: number): Promise<void> {
+  updateRun(runId, { prNumber });
+  try {
+    const { refreshRunLinks } = await import('../../run-engine/run-links.js');
+    await refreshRunLinks(runId);
+  } catch (err) {
+    // Advisory: the PR number is stored. Stale links refresh on the next
+    // ticketData change; do not fail the hatch after the number has landed.
+    console.warn(
+      `[run] force-complete could not refresh PR links for ${runId.slice(0, 8)}: ${(err as Error).message}`,
+    );
+  }
+}
+
+async function releaseForceCompletedSlot(run: Run): Promise<{ released: boolean }> {
+  if (!run.slotId) return { released: false };
+  const { slotRelease } = await import('../slot.js');
+  const { broadcastEvent } = await import('../../server.js');
+  const result = await slotRelease(
+    { slotId: run.slotId, keepWork: true, expectedRunId: run.id },
+    broadcastEvent,
+  );
+  if (result.released) {
+    const { loadFleetStatus } = await import('../../fleet/state.js');
+    broadcastEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+  }
+  return result;
+}
+
+export async function publishForceCompletedRun(run: Run, broadcast?: Emit): Promise<Run> {
+  try {
+    const emit = broadcast ?? (await import('../../server.js')).broadcastEvent;
+    emit(Events.RUN_UPDATED, { run });
+    emit(Events.RUN_COMPLETED, { run });
+    // Raw broadcastEvent is the WebSocket fan-out only. Terminal observers live
+    // on the index.ts wrapper; invoke them so recovery and Co-Pilot close out.
+    const { routeEventToAutoRecovery } = await import('../../auto-recovery/watcher.js');
+    const { routeEventToObserver } = await import('../../chat/copilot-observer.js');
+    routeEventToAutoRecovery(Events.RUN_UPDATED, { run });
+    routeEventToObserver(Events.RUN_COMPLETED, { run });
+  } catch (err) {
+    // Advisory: the store already holds `done`. Other clients may be stale until
+    // the next refetch; do not fail the RPC or the operator cannot retry.
+    console.warn(
+      `[run] force-complete broadcast failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
+    );
+  }
+  try {
+    await markBacklogRunObserved(run);
+  } catch (err) {
+    // Advisory: leave backlogReconcilePending so restart repair can finish.
+    // Skip the work-graph tick; it would schedule against unsettled backlog.
+    console.warn(
+      `[run] force-complete backlog settle failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
+    );
+    return getRun(run.id) ?? run;
+  }
+  const settled = getRun(run.id) ?? run;
+  if (!settled.workGraphId) return settled;
+  try {
+    await schedulerTick({ graphId: settled.workGraphId });
+  } catch (err) {
+    // Advisory: scheduler tick is recovery, not the operator-owned terminal write.
+    console.warn(
+      `[run] force-complete work-graph tick failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
+    );
+  }
+  return getRun(run.id) ?? settled;
 }
 
 export async function runPause(params: RunPauseParams, emit: Emit): Promise<RunPauseResult> {
