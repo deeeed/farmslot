@@ -512,20 +512,21 @@ export function emitAnalyticsForTerminalRun(
   // Snapshot the record at call time, then append behind any in-flight write for
   // this run. Concurrent appendFile calls are unordered; last-record-wins query
   // would otherwise keep a stale failure row after a force-complete override.
+  const emittedAt = run.completedAt ?? run.updatedAt ?? run.createdAt;
   const previous = analyticsAppendTails.get(run.id) ?? Promise.resolve();
-  // A failed prior append must not block a later override (force-complete).
-  const next = previous
+  // Store and return the same tail. A separate `finally` promise would reject
+  // unobserved and could terminate the gateway; the map would also retain it
+  // because cleanup compared against `next` instead of that wrapper.
+  const tail = previous
     .catch(() => undefined)
     .then(() =>
       appendAnalyticsRecord(record).then(() => {
-        run.analyticsEmittedAt = run.completedAt ?? run.updatedAt ?? run.createdAt;
+        run.analyticsEmittedAt = emittedAt;
       }),
-    );
-  analyticsAppendTails.set(
-    run.id,
-    next.finally(() => {
-      if (analyticsAppendTails.get(run.id) === next) analyticsAppendTails.delete(run.id);
-    }),
-  );
-  return next;
+    )
+    .finally(() => {
+      if (analyticsAppendTails.get(run.id) === tail) analyticsAppendTails.delete(run.id);
+    });
+  analyticsAppendTails.set(run.id, tail);
+  return tail;
 }

@@ -281,11 +281,11 @@ async function releaseForceCompletedSlot(run: Run): Promise<{ released: boolean 
   return result;
 }
 
-async function publishForceCompletedRun(run: Run): Promise<Run> {
+export async function publishForceCompletedRun(run: Run, broadcast?: Emit): Promise<Run> {
   try {
-    const { broadcastEvent } = await import('../../server.js');
-    broadcastEvent(Events.RUN_UPDATED, { run });
-    broadcastEvent(Events.RUN_COMPLETED, { run });
+    const emit = broadcast ?? (await import('../../server.js')).broadcastEvent;
+    emit(Events.RUN_UPDATED, { run });
+    emit(Events.RUN_COMPLETED, { run });
     // Raw broadcastEvent is the WebSocket fan-out only. Terminal observers live
     // on the index.ts wrapper; invoke them so recovery and Co-Pilot close out.
     const { routeEventToAutoRecovery } = await import('../../auto-recovery/watcher.js');

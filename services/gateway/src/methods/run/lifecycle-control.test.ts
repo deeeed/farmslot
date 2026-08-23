@@ -7,6 +7,7 @@ import { withMachineRunTransition } from '../../run-lifecycle/transition-coordin
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import {
+  publishForceCompletedRun,
   runCancel,
   runForceComplete,
   runForceCompleteTransitionLocked,
@@ -382,27 +383,24 @@ test('runForceComplete publishes terminal state before slot release and reports 
   );
 });
 
-test('runForceComplete emits RUN_COMPLETED through the injected publisher', async (t) => {
+test('publishForceCompletedRun broadcasts RUN_UPDATED then RUN_COMPLETED', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',
     ticketOrPr: `PROJ-${Date.now()}-force-completed-event`,
   });
   t.after(() => cleanupRun(run.id));
-  updateRun(run.id, { status: 'failed', error: 'self-review exhausted' });
-
-  const events: string[] = [];
-  await runForceCompleteTransitionLocked({ runId: run.id }, () => {}, {
-    cancelEngine: () => {},
-    bumpGeneration: () => 1,
-    attachPrNumber: async () => {},
-    publish: async (published) => {
-      events.push(Events.RUN_UPDATED, Events.RUN_COMPLETED);
-      return published;
-    },
-    releaseSlot: async () => ({ released: false }),
+  const done = updateRun(run.id, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    metrics: { ...run.metrics, outcome: 'success' },
   });
-  assert.deepEqual(events, [Events.RUN_UPDATED, Events.RUN_COMPLETED]);
+  const events: string[] = [];
+  await publishForceCompletedRun(done, (event) => {
+    events.push(event);
+  });
+  assert.equal(events[0], Events.RUN_UPDATED);
+  assert.equal(events[1], Events.RUN_COMPLETED);
 });
 
 function pausedMonitorRun(ticket: string) {

@@ -223,6 +223,33 @@ test('emit is idempotent via analyticsEmittedAt', async () => {
   assert.equal(emitAnalyticsForTerminalRun(run), null); // already emitted
 });
 
+test('queued override appends after the in-flight failure row', async () => {
+  const failedAt = '2026-06-22T10:00:00.000Z';
+  const doneAt = '2026-06-22T10:00:01.000Z';
+  const run = makeRun({
+    id: 'override-1',
+    status: 'failed',
+    error: 'self-review exhausted',
+    completedAt: failedAt,
+    metrics: { nudgeCount: 0, model: 'opus', runner: 'claude', outcome: 'failure' },
+  });
+  const first = emitAnalyticsForTerminalRun(run);
+  assert.ok(first);
+  run.status = 'done';
+  run.error = undefined;
+  run.metrics = { ...run.metrics, outcome: 'success' };
+  run.completedAt = doneAt;
+  run.analyticsEmittedAt = undefined;
+  const second = emitAnalyticsForTerminalRun(run);
+  assert.ok(second);
+  await first;
+  await second;
+  const { records } = await readAllAnalyticsRecords();
+  const rows = records.filter((record) => record.runId === 'override-1');
+  assert.equal(rows.at(-1)?.status, 'done');
+  assert.equal(run.analyticsEmittedAt, doneAt);
+});
+
 test('non-terminal run is not emitted', () => {
   const run = makeRun({ id: 'active-1', status: 'monitoring', completedAt: undefined });
   assert.equal(emitAnalyticsForTerminalRun(run), null);

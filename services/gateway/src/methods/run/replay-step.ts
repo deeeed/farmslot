@@ -75,6 +75,10 @@ function assertReplayOwnsRun(
   }
 }
 
+function isForceCompleteOwnershipError(err: unknown): boolean {
+  return err instanceof Error && err.message.includes('was force-completed and cannot be replayed');
+}
+
 const REPLAY_STEP_TO_ACTIVE_STATUS: Partial<Record<string, RunStatus>> = {
   [PS.GRADE]: 'grading',
   [PS.WRITE_TASK]: 'writing-task',
@@ -691,11 +695,13 @@ export async function runReplayStep(
             `${workerTaskDir}/${ciFixTarget.checklist}`,
             `${workerTaskDir}/${ciFixTarget.signal}`,
           ];
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           await execOnSlot(
             vars,
             `rm -f ${nestedFiles.map(shellQuote).join(' ')} 2>/dev/null`,
             vars.remoteRepo,
           );
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           if (preserveSelfReviewFix) {
             await syncChecklistTargetForRole(vars, taskDirRel, 'self-review-fix');
           } else {
@@ -709,6 +715,7 @@ export async function runReplayStep(
           );
         }
       } catch (err) {
+        if (isForceCompleteOwnershipError(err)) throw err;
         console.warn(`[run] nested-loop cleanup failed (${(err as Error).message})`);
       }
     }
@@ -744,6 +751,7 @@ export async function runReplayStep(
           const selfReviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review'];
           const selfReviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review-fix'];
           const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
+          assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           await execOnSlot(
             vars,
             `rm -f ${shellQuote(`${workerTaskDir}/${WORKER_SIGNAL_FILE}`)} ` +
@@ -757,6 +765,7 @@ export async function runReplayStep(
           );
         }
       } catch (err) {
+        if (isForceCompleteOwnershipError(err)) throw err;
         console.warn(`[run] worker signal cleanup failed (${(err as Error).message})`);
       }
     }

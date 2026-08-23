@@ -204,13 +204,9 @@ test('runReplayStep still allows an ordinary done run', async (t) => {
         : { ...step, status: 'done' },
     ),
   });
-  try {
-    await runReplayStep({ runId: run.id, stepName: 'finalize' }, () => {});
-  } catch (err) {
-    assert.doesNotMatch((err as Error).message, /force-completed and cannot be replayed/);
-    return;
-  }
-  assert.notEqual(getRun(run.id)?.status, 'done');
+  const result = await runReplayStep({ runId: run.id, stepName: 'finalize' }, () => {});
+  assert.notEqual(result.run.status, 'done');
+  assert.equal(result.run.engineState?.operatorForceCompleted, undefined);
 });
 
 test('runReplayStep rejects read-only imported reference runs', async (t) => {
