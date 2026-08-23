@@ -680,6 +680,24 @@ test('codex-home config copies a quoted provider table name', () => {
   assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:9\/codex"/);
 });
 
+test('codex-home does not copy nested provider tables without the base table', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-nested-only-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-nested-only-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'model_provider = "home-lb"',
+      '',
+      '[model_providers.home-lb.env_http_headers]',
+      'Authorization = "NESTED_PROVIDER_TOKEN"',
+      '',
+    ].join('\n'),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-nested-only');
+  assert.doesNotMatch(isolated, /model_provider = "home-lb"/);
+  assert.doesNotMatch(isolated, /\[model_providers\.home-lb/);
+});
+
 test('codex-home config copies nested provider tables and commented headers', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-nested-'));
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-nested-'));

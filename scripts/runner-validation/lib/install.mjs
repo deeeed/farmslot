@@ -26,7 +26,14 @@ export function installHooks(runner, repo, runtimeDir, slotId) {
 
 function rootTomlModelProviderId(content) {
   for (const line of content.split('\n')) {
-    if (line.trim().startsWith('[')) return null;
+    const trimmed = line.trim();
+    if (
+      /^\s*\[\[?[A-Za-z0-9_."'-]+\]\]?\s*(?:#.*)?$/.test(line) &&
+      !trimmed.startsWith('["') &&
+      !trimmed.startsWith("['")
+    ) {
+      return null;
+    }
     if (!/^\s*model_provider\s*=/.test(line)) continue;
     const raw = line.replace(/^[^=]*=\s*/, '').trim();
     if (raw.startsWith('"') || raw.startsWith("'")) {

@@ -493,6 +493,14 @@ function sectionBelongsToProvider(section, providerId) {
   return parts[0] === 'model_providers' && parts[1] === providerId;
 }
 
+function managedInstallerProviderId(content) {
+  for (const line of content.split('\n')) {
+    const match = line.trim().match(/^#\s*farmslot-managed-model-provider\s*=\s*"([^"]+)"\s*$/);
+    if (match) return match[1];
+  }
+  return null;
+}
+
 function rootTomlModelProvider(content) {
   const lines = content.split('\n');
   const headers = tomlSectionHeaderIndexes(lines);
@@ -525,7 +533,11 @@ function stripCodexHomeInstallerSections(content, repoPath, providerIds = []) {
       kept.push(...lines.slice(index));
       break;
     }
-    if (/^\s*model_provider\s*=/.test(lines[index])) continue;
+    if (/^\s*#\s*farmslot-managed-model-provider\s*=/.test(lines[index])) continue;
+    if (/^\s*model_provider\s*=/.test(lines[index])) {
+      const id = tomlBareStringValue(lines[index], 'model_provider');
+      if (!id || managedIds.includes(id)) continue;
+    }
     kept.push(lines[index]);
   }
   return kept.join('\n').trimEnd();
@@ -549,8 +561,10 @@ function operatorCodexRoutingToml() {
   let sawProviderTable = false;
   for (let index = 0; index < lines.length; index += 1) {
     if (headers.has(index)) {
-      copying = sectionBelongsToProvider(tomlSectionName(lines[index]), providerId);
-      if (copying) sawProviderTable = true;
+      const name = tomlSectionName(lines[index]);
+      const parts = tomlDottedParts(name ?? '');
+      copying = sectionBelongsToProvider(name, providerId);
+      if (copying && parts.length === 2) sawProviderTable = true;
     }
     if (copying) table.push(lines[index]);
   }
@@ -559,7 +573,7 @@ function operatorCodexRoutingToml() {
 }
 
 function injectOperatorCodexRouting(content, routing) {
-  const { providerLine } = rootTomlModelProvider(routing);
+  const { providerLine, providerId } = rootTomlModelProvider(routing);
   if (!providerLine) return content;
   const routingLines = routing.split('\n');
   const firstTable = routingLines.findIndex((line) => tomlSectionName(line));
@@ -575,6 +589,7 @@ function injectOperatorCodexRouting(content, routing) {
   const root = contentLines.slice(0, firstHeader);
   const rest = contentLines.slice(firstHeader);
   const merged = [providerLine];
+  if (providerId) merged.push(`# farmslot-managed-model-provider = "${providerId}"`);
   if (root.some((line) => line.trim() !== '')) merged.push(...root);
   if (tables) merged.push('', tables);
   if (rest.length) merged.push(...rest);
@@ -834,7 +849,8 @@ async function bootstrapCodexHome({
   } else if (existingStat) {
     content = fs.readFileSync(configPath, 'utf8');
   }
-  const previousProviderId = rootTomlModelProvider(content).providerId;
+  const previousProviderId =
+    managedInstallerProviderId(content) ?? rootTomlModelProvider(content).providerId;
   const routing = operatorCodexRoutingToml();
   const nextProviderId = routing ? rootTomlModelProvider(routing).providerId : null;
   content = upsertCodexHooksFeature(
