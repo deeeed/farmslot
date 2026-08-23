@@ -798,6 +798,28 @@ test('codex-home routing keeps leftover isolated root keys out of the provider t
   assert.ok(keepRoot < providerTable);
 });
 
+test('codex-home inject replaces an unmarked root provider key and keeps its table', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-replace-root-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-replace-root-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    ['model_provider = "codex-lb"', '', CODEX_LB_TABLE, ''].join('\n'),
+  );
+  const isolatedPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  fs.mkdirSync(path.dirname(isolatedPath), { recursive: true });
+  fs.writeFileSync(
+    isolatedPath,
+    ['model_provider = "mine"', '', '[model_providers.mine]', 'base_url = "http://mine"', ''].join(
+      '\n',
+    ),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-replace-root');
+  assert.match(isolated, /^model_provider = "codex-lb"$/m);
+  assert.equal([...isolated.matchAll(/^model_provider\s*=/gm)].length, 1);
+  assert.match(isolated, /\[model_providers\.mine\]/);
+  assert.match(isolated, /\[model_providers\.codex-lb\]/);
+});
+
 test('codex-home re-install keeps unmarked isolated routing when operator has none', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-unmarked-'));
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-unmarked-'));

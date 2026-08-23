@@ -515,7 +515,12 @@ function rootTomlModelProvider(content) {
   return { providerLine, providerId };
 }
 
-function stripCodexHomeInstallerSections(content, repoPath, providerIds = []) {
+function stripCodexHomeInstallerSections(
+  content,
+  repoPath,
+  providerIds = [],
+  { replaceRootProvider = false } = {},
+) {
   const canonicalRepoPath = canonicalCodexPath(repoPath);
   const projectSection = `projects."${escapeTomlBasicString(canonicalRepoPath)}"`;
   const managedIds = [...new Set(providerIds.filter(Boolean))];
@@ -536,7 +541,7 @@ function stripCodexHomeInstallerSections(content, repoPath, providerIds = []) {
     if (/^\s*#\s*farmslot-managed-model-provider\s*=/.test(lines[index])) continue;
     if (/^\s*model_provider\s*=/.test(lines[index])) {
       const id = tomlBareStringValue(lines[index], 'model_provider');
-      if (!id || managedIds.includes(id)) continue;
+      if (replaceRootProvider || !id || managedIds.includes(id)) continue;
     }
     kept.push(lines[index]);
   }
@@ -856,7 +861,9 @@ async function bootstrapCodexHome({
     managedInstallerProviderId(content) ??
     (isolatedRootId && isolatedRootId === nextProviderId ? isolatedRootId : null);
   content = upsertCodexHooksFeature(
-    stripCodexHomeInstallerSections(content, repoPath, [previousProviderId, nextProviderId]),
+    stripCodexHomeInstallerSections(content, repoPath, [previousProviderId, nextProviderId], {
+      replaceRootProvider: Boolean(nextProviderId),
+    }),
   );
   if (routing) {
     content = injectOperatorCodexRouting(content, routing);
