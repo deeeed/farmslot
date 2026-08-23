@@ -605,6 +605,28 @@ const CODEX_LB_TABLE = [
   'env_key = "CODEX_LB_API_KEY"',
 ].join('\n');
 
+test('codex-home ignores model_provider lines inside a root multiline string', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-multiline-'));
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-multiline-'));
+  writeOperatorCodexConfig(
+    fakeHome,
+    [
+      'developer_instructions = """',
+      'model_provider = "fake-lb"',
+      '[model_providers.fake-lb]',
+      '"""',
+      'model_provider = "codex-lb"',
+      '',
+      CODEX_LB_TABLE,
+      '',
+    ].join('\n'),
+  );
+  const isolated = installCodexHome(repo, fakeHome, 'install-test-multiline');
+  assert.match(isolated, /^model_provider = "codex-lb"$/m);
+  assert.doesNotMatch(isolated, /model_provider = "fake-lb"/);
+  assert.match(isolated, /^\[model_providers\.codex-lb\]$/m);
+});
+
 test('codex-home config copies operator model_provider routing without writing through to global', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-lb-routing-'));
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-home-'));
