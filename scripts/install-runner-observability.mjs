@@ -428,9 +428,18 @@ function sectionBelongsToProvider(section, providerId) {
 }
 
 function managedInstallerProviderId(content) {
-  for (const line of content.split('\n')) {
-    const match = line.trim().match(/^#\s*farmslot-managed-model-provider\s*=\s*"([^"]+)"\s*$/);
-    if (match) return match[1];
+  const lines = content.split('\n');
+  const headers = tomlSectionHeaderIndexes(lines);
+  const state = { arrayDepth: 0, quote: null };
+  for (let index = 0; index < lines.length; index += 1) {
+    if (headers.has(index)) break;
+    if (state.arrayDepth === 0 && state.quote === null) {
+      const match = lines[index]
+        .trim()
+        .match(/^#\s*farmslot-managed-model-provider\s*=\s*"([^"]+)"\s*$/);
+      if (match) return match[1];
+    }
+    scanTomlLine(lines[index], state);
   }
   return null;
 }
