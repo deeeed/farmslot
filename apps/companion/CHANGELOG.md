@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- fix(runs): hide Replay on a force-completed run; the gateway rejects those replays.
 - fix(recipes): keep the native recipe HUD visible without hiding the app's accessibility tree from live UI actions.
 - fix(review): use one swipeable Before/After evidence component across review, run, family, gate, diff, and artifact surfaces.
 - fix(recipes): expose a named native-input recipe command for repeatable keyboard and navigation validation.

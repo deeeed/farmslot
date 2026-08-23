@@ -20,6 +20,7 @@ import {
   renderFamilyRunSummaryGrid,
   renderFamilySummarySteps,
 } from './family-observability-run-detail-renderers.js';
+import { canReplayRunSteps } from './run-detail-model.js';
 
 interface FamilySelectedRunDetailRenderOptions {
   run: FamilyObservabilityRunSummary;
@@ -124,7 +125,7 @@ function renderFamilyRunPipelineDetail(options: FamilySelectedRunDetailRenderOpt
 }
 
 function isFamilyStepReplayAllowed(run: Run, replayingStep: boolean): boolean {
-  return ['failed', 'done', 'cancelled'].includes(run.status) && !replayingStep;
+  return canReplayRunSteps(run, replayingStep);
 }
 
 function renderFamilyRecipeQualityDetail(run: FamilyObservabilityRunSummary) {
