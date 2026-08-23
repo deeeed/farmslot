@@ -624,6 +624,7 @@ test('codex-home config copies operator model_provider routing without writing t
 
   const isolated = installCodexHome(repo, fakeHome);
   assert.match(isolated, /^model_provider = "codex-lb"$/m);
+  assert.match(isolated, /^# farmslot-managed-model-provider = "codex-lb"$/m);
   assert.match(isolated, /^\[model_providers\.codex-lb\]$/m);
   assert.match(isolated, /base_url = "http:\/\/127\.0\.0\.1:2455\/backend-api\/codex"/);
   assert.doesNotMatch(isolated, /hide_rate_limit_model_nudge/);
@@ -821,6 +822,7 @@ test('codex-home config refreshes operator routing on re-install and drops it wh
   writeOperatorCodexConfig(fakeHome, 'model = "gpt-5.6-sol"\n');
   isolated = installCodexHome(repo, fakeHome, 'install-test-refresh');
   assert.doesNotMatch(isolated, /model_provider = "codex-lb"/);
+  assert.doesNotMatch(isolated, /farmslot-managed-model-provider/);
   assert.doesNotMatch(isolated, /\[model_providers\.codex-lb\]/);
 });
 

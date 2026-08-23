@@ -87,7 +87,9 @@ function hasModelProviderTable(content, providerId) {
       current += char;
     }
     parts.push(current);
-    if (parts[0] === 'model_providers' && parts[1] === providerId) return true;
+    if (parts[0] === 'model_providers' && parts[1] === providerId && parts.length === 2) {
+      return true;
+    }
   }
   return false;
 }
