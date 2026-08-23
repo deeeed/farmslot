@@ -65,8 +65,10 @@ function rootTomlModelProviderId(content) {
 }
 
 function hasModelProviderTable(content, providerId) {
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
+  const lines = content.split('\n');
+  const headers = tomlSectionHeaderIndexes(lines);
+  for (const index of headers) {
+    const trimmed = lines[index].trim();
     if (trimmed.startsWith('#') || !trimmed.startsWith('[')) continue;
     const name = trimmed.match(/^\[([^\]]+)\]/)?.[1];
     if (!name) continue;

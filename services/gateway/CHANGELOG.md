@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Isolated Codex observability install now ships `scripts/lib/toml-scan.mjs` with the installer support bundle.
 - fix(dispatch): do not fail a run with PRESSURE_PREVIEW_STALE when FIND_SLOT recomputes and the same machine is still admitted. A 30s pressure-ring generation rotate is not a resource rejection; refresh the stored preview identity and launch on the scored path and on engine-bound slot picks. A preview that moved to a different machine still fails stale. Unsafe pressure still fails closed. DISPATCH still rejects an unconsumed stale ref when FIND_SLOT was skipped.
 
 ## 0.9.0 - 2026-08-21
