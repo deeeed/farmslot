@@ -103,6 +103,7 @@ export interface RunForceCompleteTransitionDependencies {
   bumpGeneration(runId: string): number;
   attachPrNumber(runId: string, prNumber: number): Promise<void>;
   publish(run: Run): Promise<Run>;
+  releaseSlot(run: Run): Promise<{ released: boolean }>;
 }
 
 const DEFAULT_RUN_FORCE_COMPLETE_DEPS: RunForceCompleteTransitionDependencies = {
@@ -110,6 +111,7 @@ const DEFAULT_RUN_FORCE_COMPLETE_DEPS: RunForceCompleteTransitionDependencies = 
   bumpGeneration: bumpRunGeneration,
   attachPrNumber: attachForceCompletePrNumber,
   publish: publishForceCompletedRun,
+  releaseSlot: releaseForceCompletedSlot,
 };
 
 export async function runForceComplete(
@@ -207,7 +209,10 @@ export async function runForceCompleteTransitionLocked(
       );
     }
   }
-  await releaseForceCompletedSlot(getRun(params.runId) ?? run);
+  // Publish terminal state first (ADR-053 cancel order): UI and observers must
+  // see `done` before slow slot teardown. Slot-release failures stay advisory
+  // effects because the operator-owned done write already landed and cannot be
+  // retried.
   let settled = getRun(params.runId) ?? run;
   try {
     settled = await deps.publish(settled);
@@ -219,8 +224,26 @@ export async function runForceCompleteTransitionLocked(
     );
     settled = getRun(params.runId) ?? settled;
   }
+  const effects = await collectForceCompleteSlotReleaseEffect(settled, deps);
   console.log(`[run] force-completed failed run ${params.runId.slice(0, 8)}`);
-  return { run: settled };
+  return { run: getRun(params.runId) ?? settled, effects };
+}
+
+async function collectForceCompleteSlotReleaseEffect(
+  run: Run,
+  deps: RunForceCompleteTransitionDependencies,
+): Promise<RunForceCompleteResult['effects']> {
+  if (!run.slotId) return [{ name: 'slot-release', status: 'skipped', detail: 'no slot bound' }];
+  try {
+    const { released } = await deps.releaseSlot(run);
+    return released
+      ? [{ name: 'slot-release', status: 'ok' }]
+      : [{ name: 'slot-release', status: 'skipped', detail: 'already released or not owned' }];
+  } catch (err) {
+    const detail = (err as Error).message;
+    console.warn(`[run] force-complete slot release failed for ${run.id.slice(0, 8)}: ${detail}`);
+    return [{ name: 'slot-release', status: 'failed', detail }];
+  }
 }
 
 function assertPositivePrNumber(prNumber: number): void {
@@ -243,18 +266,19 @@ async function attachForceCompletePrNumber(runId: string, prNumber: number): Pro
   }
 }
 
-async function releaseForceCompletedSlot(run: Run): Promise<void> {
-  if (!run.slotId) return;
-  try {
-    const { slotRelease } = await import('../slot.js');
-    await slotRelease({ slotId: run.slotId, keepWork: true, expectedRunId: run.id }, () => {});
-  } catch (err) {
-    // Advisory: the operator-owned done write already landed. A missing or
-    // already-released slot must not fail the hatch.
-    console.warn(
-      `[run] force-complete slot release failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
-    );
+async function releaseForceCompletedSlot(run: Run): Promise<{ released: boolean }> {
+  if (!run.slotId) return { released: false };
+  const { slotRelease } = await import('../slot.js');
+  const { broadcastEvent } = await import('../../server.js');
+  const result = await slotRelease(
+    { slotId: run.slotId, keepWork: true, expectedRunId: run.id },
+    broadcastEvent,
+  );
+  if (result.released) {
+    const { loadFleetStatus } = await import('../../fleet/state.js');
+    broadcastEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
   }
+  return result;
 }
 
 async function publishForceCompletedRun(run: Run): Promise<Run> {

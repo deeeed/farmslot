@@ -334,6 +334,9 @@ export async function runReplayStep(
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
   const startedFromDone = existing.status === 'done';
+  if (existing.engineState?.operatorForceCompleted) {
+    throw new Error(`Run ${params.runId} was force-completed and cannot be replayed`);
+  }
   if (existing.readOnly) {
     throw new Error(
       `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be replayed`,
@@ -589,6 +592,7 @@ export async function runReplayStep(
       replayTaskFile &&
       !hasActiveSelfReviewFix(runBeforeGateReplay)
     ) {
+      assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       const copied = await refreshArtifactMirror(runBeforeGateReplay);
       console.log(
         `[run] replay from ${replayStepName} — refreshed ${copied} worker artifact(s) before rebuilding the gate`,
@@ -615,6 +619,7 @@ export async function runReplayStep(
     const isChainedFollowUp = Boolean(existing.parentRunId) && isFollowUpFlow(existing.flowType);
     const willRerunPrepare = targetIdx >= 0 && prepareIdx >= 0 && targetIdx <= prepareIdx;
     const keepHotSlotSkipPrepare = isChainedFollowUp && Boolean(effectiveSlotId);
+    assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     if (existing.engineState?.flags?.nudgeReuse || existing.engineState?.flags?.skipPrepare) {
       const newFlags = { ...existing.engineState.flags };
       delete newFlags.nudgeReuse;
@@ -646,6 +651,7 @@ export async function runReplayStep(
       selfReviewIdx >= 0 &&
       targetIdx >= selfReviewIdx
     ) {
+      assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       try {
         const {
           loadSlotVars,
@@ -715,6 +721,7 @@ export async function runReplayStep(
       targetIdx <= monitorIdx;
 
     if (replaysWorkerLaunch && effectiveSlotId && existing.taskFile) {
+      assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
       try {
         const {
           loadSlotVars,

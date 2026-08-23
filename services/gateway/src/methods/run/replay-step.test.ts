@@ -142,6 +142,77 @@ test('in-flight replay refuses revive after operator force-complete', async (t) 
   assert.equal(stored.steps.find((step) => step.name === 'self-review')?.status, 'skipped');
 });
 
+test('runReplayStep refuses a force-completed run before mutating', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-2586',
+  });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    updateRun(run.id, {
+      status: 'done',
+      completedAt: new Date().toISOString(),
+      backlogReconcilePending: undefined,
+    });
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'self-review exhausted',
+    engineState: { generation: 2 },
+  });
+  await runForceComplete({ runId: run.id, prNumber: 35145 }, () => {});
+  const generation = getRun(run.id)!.engineState?.generation;
+  let bumpHook = false;
+  await assert.rejects(
+    () =>
+      runReplayStep({ runId: run.id, stepName: 'self-review' }, () => {}, {
+        afterGenerationBump: async () => {
+          bumpHook = true;
+        },
+      }),
+    /force-completed and cannot be replayed/,
+  );
+  assert.equal(bumpHook, false);
+  assert.equal(getRun(run.id)?.engineState?.generation, generation);
+});
+
+test('runReplayStep still allows an ordinary done run', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-2587',
+  });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    updateRun(run.id, {
+      status: 'done',
+      completedAt: new Date().toISOString(),
+      backlogReconcilePending: undefined,
+    });
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    metrics: { ...run.metrics, outcome: 'success' },
+    engineState: { generation: 4 },
+    steps: run.steps.map((step) =>
+      step.name === 'finalize' || step.name === 'ci-watch'
+        ? { ...step, status: 'pending' }
+        : { ...step, status: 'done' },
+    ),
+  });
+  try {
+    await runReplayStep({ runId: run.id, stepName: 'finalize' }, () => {});
+  } catch (err) {
+    assert.doesNotMatch((err as Error).message, /force-completed and cannot be replayed/);
+    return;
+  }
+  assert.notEqual(getRun(run.id)?.status, 'done');
+});
+
 test('runReplayStep rejects read-only imported reference runs', async (t) => {
   const run = createRun({
     flowType: 'dev',

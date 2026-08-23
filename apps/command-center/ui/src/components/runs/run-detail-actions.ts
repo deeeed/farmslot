@@ -3,11 +3,12 @@ import type {
   Run,
   RunCancelResult,
   RunDecision,
+  RunForceCompleteResult,
   RunInteractiveDevResolveResult,
   RunProbeWorkerSignalResult,
   RunRehydratePrNumberResult,
 } from '@farmslot/protocol';
-import { buildRunResolveDecisionParams, Methods } from '@farmslot/protocol';
+import { buildRunResolveDecisionParams, failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { navigateToPreparedSlot, runSlotPrepareForRun } from '../shared/slot-prepare-client.js';
@@ -153,9 +154,21 @@ export function confirmForceComplete(
         params.prNumber = prNumber;
       }
     }
-    gateway.request(Methods.RUN_FORCE_COMPLETE, params).catch((err) => {
-      alert(`Failed to force-complete run: ${(err as Error).message}`);
-    });
+    gateway
+      .request<RunForceCompleteResult>(Methods.RUN_FORCE_COMPLETE, params)
+      .then((result) => {
+        const failed = failedRunCancelEffects(result.effects);
+        if (failed.length) {
+          alert(
+            `Run marked done, but part of the teardown failed:\n${failed
+              .map((effect) => `${effect.name}: ${effect.detail ?? 'failed'}`)
+              .join('\n')}`,
+          );
+        }
+      })
+      .catch((err) => {
+        alert(`Failed to force-complete run: ${(err as Error).message}`);
+      });
   } else {
     clearTimeout(context.confirmTimer());
     context.setPendingConfirm('force-complete');

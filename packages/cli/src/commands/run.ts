@@ -605,6 +605,9 @@ export function registerRunCommand(program: Command): void {
         else {
           const prLabel = result.run.prNumber != null ? ` (#${result.run.prNumber})` : '';
           output.write(`${green('Force-completed')} ${cyan(runId.slice(0, 8))}${prLabel}\n`);
+          for (const effect of failedRunCancelEffects(result.effects)) {
+            output.write(`  warning: ${effect.name} failed — ${effect.detail ?? 'no detail'}\n`);
+          }
         }
       } catch (err) {
         emit.fail(err);

@@ -324,7 +324,11 @@ function markDeadLetter(run: Run, message: string): void {
   emitFn(Events.RUN_UPDATED, { run: updated });
 }
 
-function isForceCompleteReplayRefuse(message: string): boolean {
+function isForceCompleteReplayRefuse(runId: string, message: string): boolean {
+  // Inspect the live flag, not the error text. A hatch that wins inside
+  // `claimSlotStatusIf` throws "no longer safely reclaimable" and must not
+  // dead-letter a run the operator already completed.
+  if (getRun(runId)?.engineState?.operatorForceCompleted) return true;
   return message.includes('was force-completed and cannot be replayed');
 }
 
@@ -645,7 +649,7 @@ async function maybeRecoverRun(run: Run, timestamp?: string): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
     action.latencyMs = Date.now() - startedAt;
     if (!replayAccepted) clearAutoInProgress(run.id, action.id);
-    if (isForceCompleteReplayRefuse(message)) {
+    if (isForceCompleteReplayRefuse(run.id, message)) {
       await writeSkippedAction(action, 'manual_in_progress', startedAt);
       return;
     }

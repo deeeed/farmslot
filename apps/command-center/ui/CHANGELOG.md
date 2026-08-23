@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- fix(runs): Complete Manually is available on failed runs and can prompt for an optional PR number.
+- fix(runs): Complete Manually is available on failed runs and can prompt for an optional PR number. A failed slot release after the run is already `done` is shown in an alert.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { MachineParkRecord } from '@farmslot/protocol';
+import { Events, type MachineParkRecord } from '@farmslot/protocol';
 
 import { withMachineRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
@@ -255,6 +255,7 @@ test('runForceComplete fences a failed run before attaching the PR', async (t) =
         throw new Error('refresh failed');
       },
       publish: async (published) => published,
+      releaseSlot: async () => ({ released: false }),
     },
   );
   assert.equal(cancelled, true);
@@ -286,6 +287,7 @@ test('runForceComplete still aborts ci-watching when PR attach throws', async (t
         throw new Error('refresh failed');
       },
       publish: async (published) => published,
+      releaseSlot: async () => ({ released: false }),
     },
   );
   assert.equal(cancelled, true);
@@ -308,6 +310,7 @@ test('runForceComplete still returns done when publication after-effects throw',
     publish: async () => {
       throw new Error('settle failed');
     },
+    releaseSlot: async () => ({ released: false }),
   });
   assert.equal(result.run.status, 'done');
   assert.equal(result.run.metrics.outcome, 'success');
@@ -332,6 +335,74 @@ test('runForceComplete rejects a non-positive prNumber', async (t) => {
     /prNumber must be a positive integer/,
   );
   assert.equal(getRun(run.id)?.status, 'failed');
+});
+
+test('runForceComplete publishes terminal state before slot release and reports a failed release', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-slot`,
+    slotId: 'force-complete-slot',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'failed', error: 'self-review exhausted' });
+
+  const order: string[] = [];
+  const result = await runForceCompleteTransitionLocked({ runId: run.id }, () => {}, {
+    cancelEngine: () => {},
+    bumpGeneration: (runId) => {
+      const current = getRun(runId)!;
+      const generation = (current.engineState?.generation ?? 0) + 1;
+      updateRun(runId, { engineState: { ...(current.engineState ?? {}), generation } });
+      return generation;
+    },
+    attachPrNumber: async () => {},
+    publish: async (published) => {
+      order.push('publish');
+      assert.equal(published.status, 'done');
+      return published;
+    },
+    releaseSlot: async (released) => {
+      order.push('release');
+      assert.equal(released.slotId, 'force-complete-slot');
+      assert.equal(released.id, run.id);
+      throw new Error('ssh teardown failed');
+    },
+  });
+
+  assert.deepEqual(order, ['publish', 'release']);
+  assert.equal(result.run.status, 'done');
+  assert.equal(
+    result.effects?.some((effect) => effect.name === 'slot-release' && effect.status === 'failed'),
+    true,
+  );
+  assert.match(
+    result.effects?.find((effect) => effect.name === 'slot-release')?.detail ?? '',
+    /ssh teardown failed/,
+  );
+});
+
+test('runForceComplete emits RUN_COMPLETED through the injected publisher', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-completed-event`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'failed', error: 'self-review exhausted' });
+
+  const events: string[] = [];
+  await runForceCompleteTransitionLocked({ runId: run.id }, () => {}, {
+    cancelEngine: () => {},
+    bumpGeneration: () => 1,
+    attachPrNumber: async () => {},
+    publish: async (published) => {
+      events.push(Events.RUN_UPDATED, Events.RUN_COMPLETED);
+      return published;
+    },
+    releaseSlot: async () => ({ released: false }),
+  });
+  assert.deepEqual(events, [Events.RUN_UPDATED, Events.RUN_COMPLETED]);
 });
 
 function pausedMonitorRun(ticket: string) {

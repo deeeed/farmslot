@@ -287,6 +287,8 @@ export interface RunForceCompleteParams {
 
 export interface RunForceCompleteResult {
   run: Run;
+  /** Additive: omitted by older gateways. Non-`ok` entries mean partial application after the run is already `done`. */
+  effects?: RunCancelEffect[];
 }
 
 export interface RunPauseParams {
