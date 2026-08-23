@@ -456,6 +456,7 @@ export async function runReplayStep(
   }
 
   let reclaimedSlotId: string | null = null;
+  let revived = false;
   try {
     // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
     // Do this only after replay entry validation so rejected replays do not leave a
@@ -901,6 +902,7 @@ export async function runReplayStep(
     // leaves a live owner on disk; loadQueue drops any same-candidate row even when
     // launchAttempt differs (N vs N+1 requeue).
     await persistRunNow(getRun(params.runId)!, 'replay-revive');
+    revived = true;
     const lockToDrop = softLock;
     if (lockToDrop) {
       if (getQueueSnapshot().some((item) => item.id === lockToDrop.itemId)) {
@@ -938,7 +940,7 @@ export async function runReplayStep(
     return { run: getRun(params.runId)! };
   } catch (err) {
     await releaseSoftLockIfHeld();
-    if (reclaimedSlotId) {
+    if (reclaimedSlotId && !revived) {
       try {
         const { slotRelease } = await import('../slot.js');
         await slotRelease(
