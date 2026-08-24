@@ -44,6 +44,21 @@ test('runner-validation catalog includes four runners and twenty-one scenarios',
   assert.ok(listScenarios().includes('monitor-stuck-smoke'));
 });
 
+test('self-review sends post-launch prompts to interactive argv-first runners', () => {
+  const source = fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../services/gateway/src/self-review/review-agent.ts',
+    ),
+    'utf8',
+  );
+  assert.match(source, /runnerSupportsInteractivePrompt\(runner\)/);
+  assert.doesNotMatch(
+    source,
+    /if \(!target \|\| !taskMdPath \|\| !runner \|\| !runnerNeedsPostLaunchPrompt\(runner\)\)/,
+  );
+});
+
 test('run-monitor stuck path calls production observability evaluator, not pane progress scrape', () => {
   const source = fs.readFileSync(
     path.resolve(

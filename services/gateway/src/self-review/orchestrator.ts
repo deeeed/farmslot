@@ -50,6 +50,7 @@ import {
   runnerDefaultModel,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
+  runnerSupportsInteractivePrompt,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
 import { deliverPromptToLiveRunner } from '../runners/session-reactivation.js';
@@ -1129,7 +1130,13 @@ export async function resumeSelfReviewFixPromptDelivery(
   const session = context.target?.session;
   const taskFile = context.taskFile;
   const runner = normalizeRunner(context.runner);
-  if (!storedTarget || !session || !taskFile || !runner || !runnerNeedsPostLaunchPrompt(runner)) {
+  if (
+    !storedTarget ||
+    !session ||
+    !taskFile ||
+    !runner ||
+    !runnerSupportsInteractivePrompt(runner)
+  ) {
     return { status: 'unsupported' };
   }
 

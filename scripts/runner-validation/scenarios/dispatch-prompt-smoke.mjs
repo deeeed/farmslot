@@ -92,6 +92,11 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       report.hookEvents = hookRows.map((row) => row.hook_event_name || row.event).filter(Boolean);
       report.responseCompleted = report.hookEvents.includes('Stop');
       pane = capturePane(paneId, 80);
+    } else if (runnerAdapter.OBSERVABILITY_SCOPE === 'pane-only') {
+      // sendRunnerPostLaunchPrompt already verified delivery. Pane-only Cursor
+      // has no launch-ack signal, which is the production self-review miss.
+      report.responseCompleted = report.promptDelivered;
+      pane = capturePane(paneId, 80);
     } else {
       const deadline = Date.now() + 30_000;
       while (Date.now() < deadline) {

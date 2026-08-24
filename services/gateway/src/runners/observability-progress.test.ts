@@ -56,6 +56,12 @@ test('classifyMonitorProgress distinguishes idle from awaiting-input', () => {
   assert.equal(classifyMonitorProgress({ activity: activity('awaiting-input') }), 'awaiting-input');
 });
 
+test('classifyMonitorProgress treats durable turn idle as idle after activity expires', () => {
+  assert.equal(classifyMonitorProgress({ activity: null, turnState: turn('idle') }), 'idle');
+  assert.equal(shouldDeliverStuckNudge('awaiting-input'), false);
+  assert.equal(shouldDeliverStuckNudge('idle'), true);
+});
+
 test('resolveMonitorStuckState does not flag a live tool call after the stuck timeout', () => {
   const state = resolveMonitorStuckState({
     now: start + twentyMin + 1,

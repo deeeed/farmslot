@@ -169,8 +169,10 @@ if runner_available cursor; then
   fi
   echo "-- harness: cursor monitor-stuck-smoke --"
   run_harness cursor monitor-stuck-smoke false true "$OPTIONAL_EVIDENCE_DIR"
+  echo "-- harness: cursor dispatch-prompt-smoke --"
+  run_harness cursor dispatch-prompt-smoke false true "$OPTIONAL_EVIDENCE_DIR"
 else
-  skip "cursor pane-smoke / monitor-stuck-smoke (binary missing)"
+  skip "cursor pane-smoke / monitor-stuck-smoke / dispatch-prompt-smoke (binary missing)"
 fi
 
 if ! $HOOK_RAN; then

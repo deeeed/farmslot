@@ -1240,8 +1240,9 @@ export async function monitorRun(
             )
           ) {
             const nudgeContext = currentMonitorContext();
-            await sendNudge(runId, slotId, v, nudgeContext?.role, nudgeContext?.id);
-            snapshots.push({ timestamp: new Date().toISOString(), trigger: 'nudge' });
+            if (await sendNudge(runId, slotId, v, nudgeContext?.role, nudgeContext?.id)) {
+              snapshots.push({ timestamp: new Date().toISOString(), trigger: 'nudge' });
+            }
           } else {
             const description = runnerTmuxNudgeUnsupportedDescription(
               latestRun.metrics.runner,
@@ -1394,7 +1395,12 @@ async function detectViolations(
       .filter(Boolean);
     const tailLines = strippedLines.slice(-5);
     const promptLine = tailLines.find((line) => runnerLineLooksWaiting(line, runner));
-    if (promptLine && sincePaneChange > 3 * 60_000 && stuckState.kind !== 'making-progress') {
+    if (
+      promptLine &&
+      sincePaneChange > 3 * 60_000 &&
+      stuckState.kind !== 'making-progress' &&
+      stuckState.kind !== 'unproven'
+    ) {
       violations.push({
         slotId,
         role,
@@ -1483,10 +1489,12 @@ async function sendNudge(
   violation: MonitorViolation,
   role?: AgentRole,
   contextId?: string,
-): Promise<void> {
+): Promise<boolean> {
   const run = getRun(runId);
-  if (!run) return;
-  if (!runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))) return;
+  if (!run) return false;
+  if (!runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))) {
+    return false;
+  }
 
   const nudgeMsg = buildNudgeMessage(violation);
 
@@ -1503,7 +1511,7 @@ async function sendNudge(
         console.log(
           `[run-monitor] run ${runId.slice(0, 8)} — skipping ${violation.type} nudge (${kind} runner activity)`,
         );
-        return;
+        return false;
       }
     }
     const retainedSession = resolveRunRetainedSessionBinding(run, context);
@@ -1521,7 +1529,7 @@ async function sendNudge(
         ...retainedSessionSendOption(retainedSession),
       },
     );
-    if (!sent) return;
+    if (!sent) return false;
 
     // Update nudge count
     const nudgeCount = run.metrics.nudgeCount + 1;
@@ -1532,10 +1540,12 @@ async function sendNudge(
       `[run-monitor] nudge #${nudgeCount} sent to run ${runId.slice(0, 8)}: ${violation.type}`,
     );
     broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+    return true;
   } catch (err) {
     console.error(
       `[run-monitor] nudge failed for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
     );
+    return false;
   }
 }
 

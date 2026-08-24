@@ -27,14 +27,20 @@ export function classifyMonitorProgress(opts: {
   }
 
   const activity = opts.activity;
-  if (!isObservabilityReadingAuthoritative(activity) || activity.value === 'unknown') {
-    return 'unproven';
+  if (isObservabilityReadingAuthoritative(activity) && activity.value !== 'unknown') {
+    if (activity.value === 'composing' || activity.value === 'tool-running') {
+      return 'making-progress';
+    }
+    if (activity.value === 'awaiting-input') return 'awaiting-input';
+    if (activity.value === 'idle') return 'idle';
   }
-  if (activity.value === 'composing' || activity.value === 'tool-running') {
-    return 'making-progress';
+
+  // Durable turn idle still counts after the activity heartbeat expires
+  // (Codex/Claude at a prompt with stale statusline). Unknown turn+activity
+  // stays unproven (Cursor pane-only).
+  if (isObservabilityReadingAuthoritative(turn) && turn.value === 'idle') {
+    return 'idle';
   }
-  if (activity.value === 'awaiting-input') return 'awaiting-input';
-  if (activity.value === 'idle') return 'idle';
   return 'unproven';
 }
 
@@ -61,9 +67,9 @@ export function resolveMonitorStuckState(opts: {
   };
 }
 
-/** Stuck/idle nudges only when the runner contract proved the turn is idle. */
+/** Stuck nudges only when the runner contract proved the turn is idle. */
 export function shouldDeliverStuckNudge(kind: MonitorProgressKind): boolean {
-  return kind === 'idle' || kind === 'awaiting-input';
+  return kind === 'idle';
 }
 
 /**

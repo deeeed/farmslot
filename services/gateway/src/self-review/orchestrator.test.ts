@@ -283,6 +283,58 @@ test('canRecoverSelfReviewFixPass requires a working context for the current fix
   );
 });
 
+test('restart recovery re-delivers a Cursor worker fix instead of returning unsupported', async () => {
+  let delivered = false;
+  const run = {
+    id: 'run-1',
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    effort: 'high',
+    safetyTier: 'dangerous',
+    metrics: { runner: 'cursor', model: 'cursor-grok-4.6-high-fast' },
+    agentContexts: [
+      {
+        id: 'fix-bug',
+        role: 'fix-bug',
+        runnerSessionId: null,
+        runnerSessionPath: null,
+      },
+    ],
+  };
+  const result = await resumeSelfReviewFixPromptDelivery(
+    { remoteRepo: '/repo', projectName: 'farmslot-farm' } as never,
+    'run-1',
+    {
+      id: 'self-review-fix',
+      runner: 'cursor',
+      model: 'cursor-grok-4.6-high-fast',
+      taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+      signalFile: 'tasks/run-1/SELF-REVIEW-FIX-SIGNAL.json',
+      target: { session: 'mm-4', window: 'bugfix', target: 'mm-4:bugfix' },
+      startedAt: '2026-08-24T02:25:44.906Z',
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      getRun: (() => run) as never,
+      resolvePrompt: async (_project, input) => `read ${input.taskFile}`,
+      resolveRuntimeDir: async () => '.sandbox/farmslot-farm/agent',
+      readLaunchAck: async () => null,
+      syncChecklistTarget: async () => {},
+      ensureTarget: async () => 'mm-4:bugfix',
+      persistTarget: async () => {},
+      deliver: async (options) => {
+        delivered = true;
+        assert.equal(options.runnerId, 'cursor');
+        assert.match(options.prompt, /SELF-REVIEW-FIX\.md/);
+        return { delivered: true, acknowledgement: 'safe-send' };
+      },
+    },
+  );
+
+  assert.deepEqual(result, { status: 'delivered' });
+  assert.equal(delivered, true);
+});
+
 test('restart recovery re-delivers the existing fix task without rewriting it', async () => {
   let delivered = false;
   let restored = false;

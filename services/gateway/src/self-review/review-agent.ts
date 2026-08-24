@@ -43,6 +43,7 @@ import {
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
   runnerPaneShowsCurrentInteractiveProgress,
+  runnerSupportsInteractivePrompt,
   sendRunnerPostLaunchPrompt,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
@@ -321,7 +322,10 @@ export async function resumeReviewAgentPromptDelivery(
   const target = context.target?.target;
   const taskMdPath = context.taskFile;
   const runner = context.runner;
-  if (!target || !taskMdPath || !runner || !runnerNeedsPostLaunchPrompt(runner)) {
+  // Argv-first runners (Cursor) still need a live send: recovery is looking at
+  // an already-spawned pane, not a cold launch line. Skipping here left
+  // rev-cursor idle at the composer after `unsupported recovered reviewer cleanup`.
+  if (!target || !taskMdPath || !runner || !runnerSupportsInteractivePrompt(runner)) {
     return 'unsupported';
   }
   const pane = await dependencies.resolveExactTmuxWindowPane(vars, target);
@@ -1103,10 +1107,10 @@ export async function runReviewAgent(
           runnerSessionPath: sessionMeta.runnerSessionPath,
         })) ?? reviewContext;
 
-      // For interactive runners, send the task with verify-and-retry.
-      // Use the same runner-neutral post-launch protocol as dispatch: wait for a
-      // stable runner prompt, send, then verify that the pane echoes our marker.
-      if (runnerNeedsPostLaunchPrompt(runner)) {
+      // Interactive runners get a verified send even when argv already carried
+      // the task. Cursor's pool dispatch_cmd often omits `{task_prompt}`, so the
+      // respawned TUI sits at an idle composer unless we deliver here.
+      if (runnerSupportsInteractivePrompt(runner)) {
         const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
           vars,
           reviewTarget,

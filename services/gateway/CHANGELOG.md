@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Isolated Codex observability install now ships `scripts/lib/toml-scan.mjs` with the installer support bundle.
+- fix(gateway): self-review delivers the checklist prompt to interactive argv-first runners (Cursor). Recovery used to return `unsupported` and cold launch skipped `sendRunnerPostLaunchPrompt`, so rev-cursor sat idle after a replay.
 - fix(gateway): argv-prompt launches still receive the task when pool `dispatch_cmd` omits `{task_prompt}`. Cursor self-review was respawning an idle TUI because macpro's runner-aware template never expanded the prompt.
 - fix(gateway): run-monitor stuck nudges use runner activity/turn state instead of TUI scraping. Unknown activity (Cursor pane-only) fails closed so a live tool call cannot queue "you appear stuck" follow-ups.
 - fix(gateway): tmux discovery probes treat node RPC timeouts as a miss and fall back to the configured session instead of failing the pipeline. Self-review on a loaded remote was aborting a completed worker run with `timeout after 3000ms` before a reviewer launched. Same path for every runner.
