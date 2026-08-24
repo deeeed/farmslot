@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-24T04:07:39.112Z",
+  "host": "macwork",
+  "scenario": "dispatch-prompt-smoke",
+  "runner": "cursor",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-dispatch-DyEF1b",
+  "session": "runner-validate-cursor-dispatch-prompt-smoke-70601",
+  "launchMode": "cursor-interactive",
+  "gatewayPath": "sendRunnerPostLaunchPrompt",
+  "promptDelivered": true,
+  "responseCompleted": true,
+  "hookEvents": [],
+  "blockerSnapshotPath": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-dispatch-DyEF1b/.artifacts/runner-blockers/dispatch-launch.txt",
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.CV8Ypz/launch-c94d6f5bb94621da.sh\n\n\n  Cursor Agent\n  v2026.08.11-e8db854\n  Tip: Use /skills to give Cursor specialized knowledge for tasks.\n\n\n  Reply with exactly TMUX_HOOK_OK and nothing else.\n\n\n ⠰⠳ Working\n    Tip: Use /plan to iterate on an implementation plan before code changes.\n\n\n  → Add a follow-up                                             ctrl+c to stop\n\n\n  Cursor Grok 4.6 High Fast                                     Run Everything\n  /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-curs\n  or-dispatch-DyEF1b"
+}

@@ -43,6 +43,7 @@ import {
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
   runnerPaneShowsCurrentInteractiveProgress,
+  runnerSupportsInteractivePrompt,
   sendRunnerPostLaunchPrompt,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
@@ -321,7 +322,10 @@ export async function resumeReviewAgentPromptDelivery(
   const target = context.target?.target;
   const taskMdPath = context.taskFile;
   const runner = context.runner;
-  if (!target || !taskMdPath || !runner || !runnerNeedsPostLaunchPrompt(runner)) {
+  // Argv-first runners (Cursor) still need a live send: recovery is looking at
+  // an already-spawned pane, not a cold launch line. Skipping here left
+  // rev-cursor idle at the composer after `unsupported recovered reviewer cleanup`.
+  if (!target || !taskMdPath || !runner || !runnerSupportsInteractivePrompt(runner)) {
     return 'unsupported';
   }
   const pane = await dependencies.resolveExactTmuxWindowPane(vars, target);
@@ -595,7 +599,7 @@ async function recoverRunningReviewAgent(params: {
       console.warn(
         `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} is ${delivery}; starting a fresh review`,
       );
-      return abandonRecoveredReviewer('unsupported recovered reviewer cleanup');
+      return abandonRecoveredReviewer(`${delivery} recovered reviewer cleanup`);
     }
   } catch (error) {
     console.warn(
@@ -1103,9 +1107,10 @@ export async function runReviewAgent(
           runnerSessionPath: sessionMeta.runnerSessionPath,
         })) ?? reviewContext;
 
-      // For interactive runners, send the task with verify-and-retry.
-      // Use the same runner-neutral post-launch protocol as dispatch: wait for a
-      // stable runner prompt, send, then verify that the pane echoes our marker.
+      // Cold launch: argv-first runners already carry the task on the respawn
+      // line (`withArgvTaskPromptPlaceholder`). A second tmux send races that
+      // turn and can fail closed because pane-only Cursor has no prompt digest.
+      // Recovery of a live idle pane still sends via resumeReviewAgentPromptDelivery.
       if (runnerNeedsPostLaunchPrompt(runner)) {
         const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
           vars,

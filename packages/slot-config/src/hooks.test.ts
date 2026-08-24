@@ -224,6 +224,40 @@ test('expandDispatchCmd supports Cursor Agent runner path placeholders', () => {
   );
 });
 
+test('expandDispatchCmd keeps $ sequences in task_prompt as literals', () => {
+  const slotVars: SlotVars = {
+    slotId: 'runner-browser-1',
+    machine: 'runner-local',
+    platform: 'chrome-extension',
+    host: 'localhost',
+    sshUser: 'example',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '/usr/local/bin/agent',
+    grokPath: '',
+    dispatchCmd: 'cd {repo} && {cursor_path} {task_prompt}; printf TRAIL',
+    recycleCmd: '',
+    repo: '/repo',
+    session: 'browser-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/repo',
+    projectName: 'example-browser-farm',
+    resourceVars: {},
+  };
+
+  assert.equal(
+    expandDispatchCmd(slotVars, {
+      runner: 'cursor',
+      taskPrompt: "Check Bash $'x' quoting.",
+    }),
+    "cd /repo && /usr/local/bin/agent Check Bash $'x' quoting.; printf TRAIL",
+  );
+});
+
 test('expandDispatchCmd leaves Cursor Agent path placeholders empty when cursor_path is not configured', () => {
   const slotVars: SlotVars = {
     slotId: 'runner-browser-1',

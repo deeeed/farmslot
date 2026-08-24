@@ -9,6 +9,7 @@ import * as hookSmoke from './hook-smoke.mjs';
 import * as interactionSmoke from './interaction-smoke.mjs';
 import * as machinePauseRestoreSmoke from './machine-pause-restore-smoke.mjs';
 import * as modeSwitch from './mode-switch.mjs';
+import * as monitorStuckSmoke from './monitor-stuck-smoke.mjs';
 import * as paneSmoke from './pane-smoke.mjs';
 import * as promptAccepted from './prompt-accepted.mjs';
 import * as retainedHandoffSmoke from './retained-handoff-smoke.mjs';
@@ -38,6 +39,7 @@ export const SCENARIOS = {
   'copilot-runtime-smoke': copilotRuntimeSmoke,
   'budget-guard-smoke': budgetGuardSmoke,
   'mode-switch': modeSwitch,
+  'monitor-stuck-smoke': monitorStuckSmoke,
   'session-attribution-smoke': sessionAttributionSmoke,
   'token-usage-smoke': tokenUsageSmoke,
 };

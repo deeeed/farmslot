@@ -1683,6 +1683,48 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /--trust/);
     });
 
+    it('appends the argv prompt when runner-aware dispatch_cmd omits {task_prompt}', () => {
+      const vars = makeVars({
+        dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}',
+      });
+      const cmd = buildLaunchCommand(vars, 'cursor', DEFAULT_CURSOR_MODEL, PROMPT, {
+        safetyTier: 'dangerous',
+      });
+      assert.match(cmd, /cursor-agent/);
+      assert.match(cmd, /'Read TASK\.md and execute\.'/);
+      assert.doesNotMatch(cmd, /\{task_prompt\}/);
+    });
+
+    it('injects a quoted argv prompt for {runner} templates, not after a trailing shell command', () => {
+      const vars = makeVars({
+        dispatchCmd: 'cd {repo} && {runner} {safety_flags}; printf launched',
+        cursorPath: '',
+      });
+      const cmd = buildLaunchCommand(vars, 'cursor', DEFAULT_CURSOR_MODEL, PROMPT, {
+        safetyTier: 'dangerous',
+      });
+      assert.match(cmd, /cursor --force --sandbox disabled 'Read TASK\.md and execute\.'/);
+      const promptAt = cmd.indexOf("'Read TASK.md and execute.'");
+      const printfAt = cmd.indexOf('printf launched');
+      assert.ok(promptAt >= 0 && printfAt > promptAt);
+    });
+
+    it('injects a quoted argv prompt next to the runner, not after a trailing shell command', () => {
+      const vars = makeVars({
+        dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}; printf launched',
+      });
+      const prompt = "Read TASK.md (bootstrap with mark start). Don't split.";
+      const cmd = buildLaunchCommand(vars, 'cursor', DEFAULT_CURSOR_MODEL, prompt, {
+        safetyTier: 'dangerous',
+      });
+      assert.match(cmd, /'Read TASK\.md \(bootstrap with mark start\)\. Don'\\''t split\.'/);
+      const promptAt = cmd.indexOf('Read TASK.md (bootstrap with mark start)');
+      const printfAt = cmd.indexOf('printf launched');
+      assert.notEqual(promptAt, -1);
+      assert.notEqual(printfAt, -1);
+      assert.ok(promptAt < printfAt);
+    });
+
     it('routes through expandDispatchCmd when dispatch_cmd uses {cursor_path}', () => {
       const vars = makeVars({
         dispatchCmd: 'cd {repo} && {cursor_path} {safety_flags} --model {model} {task_prompt}',

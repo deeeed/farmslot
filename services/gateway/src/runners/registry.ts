@@ -1418,7 +1418,7 @@ export function runnerPaneShouldSubmitExistingInstruction(
   return true;
 }
 
-async function readRunnerActivityFromObservability(
+export async function readRunnerActivityFromObservability(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,

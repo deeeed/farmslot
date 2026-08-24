@@ -430,7 +430,9 @@ export function expandDispatchCmd(
   cmd = cmd.replaceAll('{runner_path}', runnerPath);
   cmd = cmd.replaceAll('{model}', context.model ?? '');
   cmd = cmd.replaceAll('{task_file}', context.taskFile ?? '');
-  cmd = cmd.replaceAll('{task_prompt}', context.taskPrompt ?? '');
+  // Replacement callbacks keep `$`, `$'`, and `$&` in the prompt as literals.
+  // String replacement patterns would treat them as JS insert tokens.
+  cmd = cmd.replaceAll('{task_prompt}', () => context.taskPrompt ?? '');
   // An unset effort (operator `auto`, or a runner without a default) must drop
   // the whole flag, not leave a bare `--effort` pointing at the next argument.
   if (!context.effort) {

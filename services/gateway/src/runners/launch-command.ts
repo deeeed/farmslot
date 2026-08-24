@@ -20,6 +20,7 @@ import {
   runnerFlagsForTier,
   runnerNeedsPostLaunchPrompt,
   runnerSessionReloadCapability,
+  runnerSupportsInteractivePrompt,
 } from './registry.js';
 import {
   buildClaudeObservabilityFallbackCommand,
@@ -351,6 +352,24 @@ export function resolveCodexBinary(preferred?: string | null): string {
 }
 
 /**
+ * Argv-prompt runners (Cursor) put the task on the launch line via `{task_prompt}`.
+ * Pool templates that only expand `{runner_path} {safety_flags}` drop it, so
+ * self-review respawns an idle TUI. Insert the placeholder next to the runner
+ * invocation — not after a trailing `printf` / `;` command.
+ */
+export function withArgvTaskPromptPlaceholder(dispatchCmd: string): string {
+  if (dispatchCmd.includes('{task_prompt}')) return dispatchCmd;
+  if (dispatchCmd.includes('{safety_flags}')) {
+    return dispatchCmd.replace('{safety_flags}', '{safety_flags} {task_prompt}');
+  }
+  const runnerPlaceholder = dispatchCmd.match(/\{(?:runner_path|cursor_path|runner)\}/);
+  if (runnerPlaceholder?.[0]) {
+    return dispatchCmd.replace(runnerPlaceholder[0], `${runnerPlaceholder[0]} {task_prompt}`);
+  }
+  return `${dispatchCmd} {task_prompt}`;
+}
+
+/**
  * Detect whether the pool's dispatch_cmd is runner-aware — i.e. it already
  * references the runner binary via {runner_path}, {runner}, or a
  * runner-specific placeholder such as {codex_path}/{opencode_path}/{cursor_path}/{grok_path}.
@@ -506,15 +525,27 @@ export function buildLaunchCommand(
   // Resolve defaults before template expansion so `{effort}` placeholders get xhigh
   // for codex/grok when the operator left effort unset.
   const resolvedEffort = resolveRunnerEffort(runner, opts.effort);
+  const injectQuotedArgvPrompt =
+    hasDispatchCmd &&
+    Boolean(launchPrompt.trim()) &&
+    !runnerNeedsPostLaunchPrompt(runner) &&
+    runnerSupportsInteractivePrompt(runner) &&
+    !vars.dispatchCmd.includes('{task_prompt}');
+  const dispatchCmdForExpand = injectQuotedArgvPrompt
+    ? withArgvTaskPromptPlaceholder(vars.dispatchCmd)
+    : vars.dispatchCmd;
   const expanded = hasDispatchCmd
-    ? expandDispatchCmd(vars, {
-        runner,
-        model: model ?? undefined,
-        taskFile: opts.taskFile,
-        taskPrompt: launchPrompt,
-        effort: resolvedEffort,
-        safetyFlags: safetyFlagsString,
-      })
+    ? expandDispatchCmd(
+        { ...vars, dispatchCmd: dispatchCmdForExpand },
+        {
+          runner,
+          model: model ?? undefined,
+          taskFile: opts.taskFile,
+          taskPrompt: injectQuotedArgvPrompt ? shellQuote(launchPrompt) : launchPrompt,
+          effort: resolvedEffort,
+          safetyFlags: safetyFlagsString,
+        },
+      )
     : '';
 
   // Claude: either route through dispatch_cmd (production dispatch) or launch
@@ -614,9 +645,9 @@ export function buildLaunchCommand(
     );
   }
 
-  // Cursor Agent: route through runner-aware dispatch templates when configured,
-  // otherwise use the inline TUI-first launcher. The task prompt is delivered
-  // after the interactive composer is ready.
+  // Cursor Agent: argv carries the task (`needsPostLaunchPrompt: false`). A
+  // runner-aware dispatch_cmd that omits `{task_prompt}` still has to receive
+  // the prompt or self-review respawns an idle composer.
   if (runner === 'cursor') {
     if (cmdIsRunnerAware) {
       return withRecipeTrust(expanded);

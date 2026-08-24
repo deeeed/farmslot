@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import {
@@ -8,7 +9,10 @@ import {
   selectExactTmuxWindowPane,
   selectResolvedTmuxSession,
   shellQuote,
+  throwIfTmuxQueryTimedOut,
+  tmuxDiscoveryFailedResult,
   tmuxSendTextCommand,
+  tmuxSessionProbeShouldKeepConfigured,
   tmuxShellSnippet,
 } from './tmux.js';
 
@@ -86,6 +90,66 @@ describe('tmuxSendTextCommand', () => {
       () => tmuxSendTextCommand('ff-1:dev', '/exit', { enter: true, submitDelayMs: 1_001 }),
       /integer between 0 and 1000/,
     );
+  });
+});
+
+describe('tmuxDiscoveryFailedResult', () => {
+  it('maps node RPC timeouts to a failed probe instead of throwing', () => {
+    const mapped = tmuxDiscoveryFailedResult(new Error('Node macpro timeout after 3000ms'));
+    assert.deepEqual(mapped, {
+      stdout: '',
+      stderr: 'Node macpro timeout after 3000ms',
+      exitCode: 124,
+    });
+  });
+
+  it('maps disconnects the same way so discovery can fall back to the configured session', () => {
+    assert.equal(
+      tmuxDiscoveryFailedResult(new Error('Node macpro WebSocket not open'))?.exitCode,
+      124,
+    );
+    assert.equal(
+      tmuxDiscoveryFailedResult(new Error('No node connected for machine macpro after 15000ms'))
+        ?.exitCode,
+      124,
+    );
+  });
+
+  it('does not swallow unrelated exec failures', () => {
+    assert.equal(tmuxDiscoveryFailedResult(new Error('tmux not found')), null);
+  });
+});
+
+describe('throwIfTmuxQueryTimedOut', () => {
+  it('throws on exit 124 so pane helpers cannot look like a missing window', () => {
+    assert.throws(
+      () =>
+        throwIfTmuxQueryTimedOut(
+          { stdout: '', stderr: 'command timed out after 15000ms', exitCode: 124 },
+          'listExactTmuxWindows mm-4:rev-cursor',
+        ),
+      /listExactTmuxWindows mm-4:rev-cursor timed out/,
+    );
+    assert.doesNotThrow(() =>
+      throwIfTmuxQueryTimedOut({ stdout: '', stderr: '', exitCode: 1 }, 'missing window'),
+    );
+  });
+});
+
+describe('tmuxSessionProbeShouldKeepConfigured', () => {
+  it('aborts the candidate walk on transport 124 and keeps walking a real miss', () => {
+    assert.equal(tmuxSessionProbeShouldKeepConfigured(124), true);
+    assert.equal(tmuxSessionProbeShouldKeepConfigured(0), false);
+    assert.equal(tmuxSessionProbeShouldKeepConfigured(1), false);
+  });
+
+  it('is the has-session timeout gate inside resolveTmuxSession', () => {
+    const source = readFileSync(new URL('./tmux.ts', import.meta.url), 'utf8');
+    assert.match(
+      source,
+      /if \(tmuxSessionProbeShouldKeepConfigured\(result\.exitCode\)\) return configured;/,
+    );
+    assert.doesNotMatch(source, /if \(result\.exitCode === 124\) return configured;/);
   });
 });
 
