@@ -358,6 +358,22 @@ export function resolveCodexBinary(preferred?: string | null): string {
  * Consumers never branch on this directly — it's absorbed into
  * {@link buildLaunchCommand} so every call site gets identical semantics.
  */
+/**
+ * Argv-prompt runners (Cursor) put the task on the launch line via `{task_prompt}`.
+ * Pool templates that only expand `{runner_path} {safety_flags}` drop it, so
+ * self-review respawns an idle TUI. Append the quoted prompt when the template
+ * omitted the placeholder. Post-launch runners keep `launchPrompt` empty.
+ */
+export function withArgvTaskPrompt(
+  command: string,
+  dispatchCmd: string | undefined | null,
+  launchPrompt: string,
+): string {
+  if (!launchPrompt.trim()) return command;
+  if (dispatchCmd?.includes('{task_prompt}')) return command;
+  return `${command} ${shellQuote(launchPrompt)}`;
+}
+
 function dispatchCmdIsRunnerAware(dispatchCmd: string | undefined | null, runner: string): boolean {
   if (!dispatchCmd) return false;
   if (dispatchCmd.includes('{runner_path}') || dispatchCmd.includes('{runner}')) {
@@ -614,12 +630,12 @@ export function buildLaunchCommand(
     );
   }
 
-  // Cursor Agent: route through runner-aware dispatch templates when configured,
-  // otherwise use the inline TUI-first launcher. The task prompt is delivered
-  // after the interactive composer is ready.
+  // Cursor Agent: argv carries the task (`needsPostLaunchPrompt: false`). A
+  // runner-aware dispatch_cmd that omits `{task_prompt}` still has to receive
+  // the prompt or self-review respawns an idle composer.
   if (runner === 'cursor') {
     if (cmdIsRunnerAware) {
-      return withRecipeTrust(expanded);
+      return withRecipeTrust(withArgvTaskPrompt(expanded, vars.dispatchCmd, launchPrompt));
     }
     return withRecipeTrust(
       buildCursorAgentLaunch({

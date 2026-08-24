@@ -1683,6 +1683,18 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /--trust/);
     });
 
+    it('appends the argv prompt when runner-aware dispatch_cmd omits {task_prompt}', () => {
+      const vars = makeVars({
+        dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}',
+      });
+      const cmd = buildLaunchCommand(vars, 'cursor', DEFAULT_CURSOR_MODEL, PROMPT, {
+        safetyTier: 'dangerous',
+      });
+      assert.match(cmd, /cursor-agent/);
+      assert.match(cmd, /Read TASK\.md and execute\./);
+      assert.doesNotMatch(cmd, /\{task_prompt\}/);
+    });
+
     it('routes through expandDispatchCmd when dispatch_cmd uses {cursor_path}', () => {
       const vars = makeVars({
         dispatchCmd: 'cd {repo} && {cursor_path} {safety_flags} --model {model} {task_prompt}',
