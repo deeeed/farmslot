@@ -342,6 +342,14 @@ interface MonitorState {
   budgetUsage: BudgetUsageSampleState;
 }
 
+/** Restart must keep the structured idle clock, not reset it to lastPollAt. */
+export function restoreStructuredProgressAtMs(persisted: {
+  lastStructuredProgressAt?: string | null;
+  lastPollAt: string;
+}): number {
+  return new Date(persisted.lastStructuredProgressAt ?? persisted.lastPollAt).getTime();
+}
+
 // ADR-027 Phase 3: monitor state lives on Run.monitorState (already persisted).
 // No module-level Map — persisted state is the only state.
 
@@ -779,9 +787,7 @@ export async function monitorRun(
     ? {
         lastPaneHash: persisted.lastPaneHash ?? '',
         lastPaneChangeAt: new Date(persisted.lastPollAt).getTime(),
-        lastStructuredProgressAt: new Date(
-          persisted.lastStructuredProgressAt ?? persisted.lastPollAt,
-        ).getTime(),
+        lastStructuredProgressAt: restoreStructuredProgressAtMs(persisted),
         lastStepCount: 0,
         startedAt: new Date(persisted.startedAt).getTime(),
         budgetWarned: persisted.budgetWarned === true,

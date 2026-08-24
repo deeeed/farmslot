@@ -1691,18 +1691,20 @@ describe('buildLaunchCommand', () => {
         safetyTier: 'dangerous',
       });
       assert.match(cmd, /cursor-agent/);
-      assert.match(cmd, /Read TASK\.md and execute\./);
+      assert.match(cmd, /'Read TASK\.md and execute\.'/);
       assert.doesNotMatch(cmd, /\{task_prompt\}/);
     });
 
-    it('injects the argv prompt next to the runner, not after a trailing shell command', () => {
+    it('injects a quoted argv prompt next to the runner, not after a trailing shell command', () => {
       const vars = makeVars({
         dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}; printf launched',
       });
-      const cmd = buildLaunchCommand(vars, 'cursor', DEFAULT_CURSOR_MODEL, PROMPT, {
+      const prompt = "Read TASK.md (bootstrap with mark start). Don't split.";
+      const cmd = buildLaunchCommand(vars, 'cursor', DEFAULT_CURSOR_MODEL, prompt, {
         safetyTier: 'dangerous',
       });
-      const promptAt = cmd.indexOf('Read TASK.md and execute.');
+      assert.match(cmd, /'Read TASK\.md \(bootstrap with mark start\)\. Don'\\''t split\.'/);
+      const promptAt = cmd.indexOf('Read TASK.md (bootstrap with mark start)');
       const printfAt = cmd.indexOf('printf launched');
       assert.notEqual(promptAt, -1);
       assert.notEqual(printfAt, -1);

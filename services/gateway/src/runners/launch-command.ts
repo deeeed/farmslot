@@ -20,6 +20,7 @@ import {
   runnerFlagsForTier,
   runnerNeedsPostLaunchPrompt,
   runnerSessionReloadCapability,
+  runnerSupportsInteractivePrompt,
 } from './registry.js';
 import {
   buildClaudeObservabilityFallbackCommand,
@@ -361,7 +362,7 @@ export function withArgvTaskPromptPlaceholder(dispatchCmd: string): string {
   if (dispatchCmd.includes('{safety_flags}')) {
     return dispatchCmd.replace('{safety_flags}', '{safety_flags} {task_prompt}');
   }
-  const runnerPlaceholder = dispatchCmd.match(/\{(?:runner_path|cursor_path)\}/);
+  const runnerPlaceholder = dispatchCmd.match(/\{(?:runner_path|cursor_path|runner)\}/);
   if (runnerPlaceholder?.[0]) {
     return dispatchCmd.replace(runnerPlaceholder[0], `${runnerPlaceholder[0]} {task_prompt}`);
   }
@@ -524,10 +525,15 @@ export function buildLaunchCommand(
   // Resolve defaults before template expansion so `{effort}` placeholders get xhigh
   // for codex/grok when the operator left effort unset.
   const resolvedEffort = resolveRunnerEffort(runner, opts.effort);
-  const dispatchCmdForExpand =
-    hasDispatchCmd && launchPrompt.trim()
-      ? withArgvTaskPromptPlaceholder(vars.dispatchCmd)
-      : vars.dispatchCmd;
+  const injectQuotedArgvPrompt =
+    hasDispatchCmd &&
+    Boolean(launchPrompt.trim()) &&
+    !runnerNeedsPostLaunchPrompt(runner) &&
+    runnerSupportsInteractivePrompt(runner) &&
+    !vars.dispatchCmd.includes('{task_prompt}');
+  const dispatchCmdForExpand = injectQuotedArgvPrompt
+    ? withArgvTaskPromptPlaceholder(vars.dispatchCmd)
+    : vars.dispatchCmd;
   const expanded = hasDispatchCmd
     ? expandDispatchCmd(
         { ...vars, dispatchCmd: dispatchCmdForExpand },
@@ -535,7 +541,7 @@ export function buildLaunchCommand(
           runner,
           model: model ?? undefined,
           taskFile: opts.taskFile,
-          taskPrompt: launchPrompt,
+          taskPrompt: injectQuotedArgvPrompt ? shellQuote(launchPrompt) : launchPrompt,
           effort: resolvedEffort,
           safetyFlags: safetyFlagsString,
         },

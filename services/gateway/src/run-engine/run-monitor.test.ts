@@ -22,6 +22,7 @@ import {
   pollBudgetGuardStep,
   rearmInteractiveHandoffAutoRecovery,
   resolveMonitorConfig,
+  restoreStructuredProgressAtMs,
   runHasOpenHumanGate,
   shouldHoldForInteractivePrComplete,
   shouldHoldForMissingTerminalSignal,
@@ -442,6 +443,20 @@ test('applyBudgetWarnOnce emits once then stays quiet (warn-once)', () => {
   });
   assert.equal(second.emit, false);
   assert.equal(second.budgetWarned, true);
+});
+
+test('restoreStructuredProgressAtMs keeps the persisted idle clock across restart', () => {
+  assert.equal(
+    restoreStructuredProgressAtMs({
+      lastStructuredProgressAt: '2026-08-24T03:00:00.000Z',
+      lastPollAt: '2026-08-24T03:20:00.000Z',
+    }),
+    Date.parse('2026-08-24T03:00:00.000Z'),
+  );
+  assert.equal(
+    restoreStructuredProgressAtMs({ lastPollAt: '2026-08-24T03:20:00.000Z' }),
+    Date.parse('2026-08-24T03:20:00.000Z'),
+  );
 });
 
 test('pollBudgetGuardStep emits a fail-closed violation for unsupported accounting', async () => {
