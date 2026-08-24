@@ -8,6 +8,7 @@ import {
   selectExactTmuxWindowPane,
   selectResolvedTmuxSession,
   shellQuote,
+  tmuxDiscoveryFailedResult,
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from './tmux.js';
@@ -86,6 +87,33 @@ describe('tmuxSendTextCommand', () => {
       () => tmuxSendTextCommand('ff-1:dev', '/exit', { enter: true, submitDelayMs: 1_001 }),
       /integer between 0 and 1000/,
     );
+  });
+});
+
+describe('tmuxDiscoveryFailedResult', () => {
+  it('maps node RPC timeouts to a failed probe instead of throwing', () => {
+    const mapped = tmuxDiscoveryFailedResult(new Error('Node macpro timeout after 3000ms'));
+    assert.deepEqual(mapped, {
+      stdout: '',
+      stderr: 'Node macpro timeout after 3000ms',
+      exitCode: 124,
+    });
+  });
+
+  it('maps disconnects the same way so discovery can fall back to the configured session', () => {
+    assert.equal(
+      tmuxDiscoveryFailedResult(new Error('Node macpro WebSocket not open'))?.exitCode,
+      124,
+    );
+    assert.equal(
+      tmuxDiscoveryFailedResult(new Error('No node connected for machine macpro after 15000ms'))
+        ?.exitCode,
+      124,
+    );
+  });
+
+  it('does not swallow unrelated exec failures', () => {
+    assert.equal(tmuxDiscoveryFailedResult(new Error('tmux not found')), null);
   });
 });
 

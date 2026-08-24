@@ -1,11 +1,41 @@
 import path from 'node:path';
 
+import type { ExecResult } from '@farmslot/protocol';
+
 import { loadPoolConfigs } from '../fleet/state.js';
 
 import { loadSlotVars } from './config.js';
 import { execOnSlot } from './exec.js';
 
-const TMUX_DISCOVERY_TIMEOUT_MS = 3000;
+// Remote node RPC under load often exceeds 3s. Discovery is runner-agnostic
+// (Claude/Codex/Grok/Cursor all call resolveTmuxSession). A timeout must miss
+// and fall back to the configured session, not fail the pipeline.
+const TMUX_DISCOVERY_TIMEOUT_MS = 15_000;
+
+export function tmuxDiscoveryFailedResult(err: unknown): ExecResult | null {
+  const message = err instanceof Error ? err.message : String(err);
+  if (
+    /timeout after \d+ms/i.test(message) ||
+    /WebSocket not open/i.test(message) ||
+    /No node connected for machine /i.test(message)
+  ) {
+    return { stdout: '', stderr: message, exitCode: 124 };
+  }
+  return null;
+}
+
+async function execTmuxDiscovery(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  cmd: string,
+): Promise<ExecResult> {
+  try {
+    return await execOnSlot(vars, cmd, { timeout: TMUX_DISCOVERY_TIMEOUT_MS });
+  } catch (err) {
+    const mapped = tmuxDiscoveryFailedResult(err);
+    if (mapped) return mapped;
+    throw err;
+  }
+}
 
 export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -103,22 +133,20 @@ export async function resolveTmuxSession(
   ) as string[];
 
   for (const candidate of candidates) {
-    const result = await execOnSlot(
+    const result = await execTmuxDiscovery(
       vars,
       // Tmux otherwise prefix-matches `ff-1` to `ff-1-orch`, returning the
       // configured alias instead of the session that actually owns the pane.
       tmuxShellSnippet(`has-session -t ${shellQuote(`=${candidate}`)} 2>/dev/null`),
-      { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
     );
     if (result.exitCode === 0) return candidate;
   }
 
   if (!opts?.strict) {
     try {
-      const { stdout } = await execOnSlot(
+      const { stdout } = await execTmuxDiscovery(
         vars,
         tmuxShellSnippet(`list-panes -a -F '#{session_name}|#{pane_current_path}' 2>/dev/null`),
-        { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
       );
       const matchingSessions: string[] = [];
       for (const line of stdout
@@ -252,12 +280,11 @@ export async function listExactTmuxWindows(
   session: string,
   windowName: string,
 ): Promise<TmuxWindowRef[]> {
-  const result = await execOnSlot(
+  const result = await execTmuxDiscovery(
     vars,
     tmuxShellSnippet(
       `list-panes -a -F '#{session_name}\t#{window_name}\t#{window_id}\t#{window_index}\t#{window_activity}\t#{pane_id}\t#{pane_pid}' 2>/dev/null`,
     ),
-    { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
   );
   if (result.exitCode !== 0) return [];
 
@@ -356,12 +383,11 @@ export async function resolveExactTmuxWindowPane(
   target: string,
 ): Promise<{ paneId: string; panePid: string } | null> {
   if (/^%\d+$/.test(target)) {
-    const result = await execOnSlot(
+    const result = await execTmuxDiscovery(
       vars,
       tmuxShellSnippet(
         `display-message -p -t ${shellQuote(target)} '#{pane_id}\t#{pane_pid}' 2>/dev/null`,
       ),
-      { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
     );
     const [paneId, panePid] = result.stdout.trim().split('\t');
     return result.exitCode === 0 && /^%\d+$/.test(paneId ?? '') && /^\d+$/.test(panePid ?? '')
@@ -369,12 +395,11 @@ export async function resolveExactTmuxWindowPane(
       : null;
   }
   if (/^@\d+$/.test(target)) {
-    const result = await execOnSlot(
+    const result = await execTmuxDiscovery(
       vars,
       tmuxShellSnippet(
         `list-panes -t ${shellQuote(target)} -F '#{pane_id}\t#{pane_pid}' 2>/dev/null | head -1`,
       ),
-      { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
     );
     const [paneId, panePid] = result.stdout.trim().split('\t');
     return result.exitCode === 0 && /^%\d+$/.test(paneId ?? '') && /^\d+$/.test(panePid ?? '')
@@ -385,12 +410,11 @@ export async function resolveExactTmuxWindowPane(
   if (separator <= 0 || separator === target.length - 1) return null;
   const session = target.slice(0, separator);
   const windowName = target.slice(separator + 1);
-  const result = await execOnSlot(
+  const result = await execTmuxDiscovery(
     vars,
     tmuxShellSnippet(
       `list-panes -a -F '#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_pid}' 2>/dev/null`,
     ),
-    { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
   );
   if (result.exitCode !== 0) return null;
   return selectExactTmuxWindowPane(result.stdout, session, windowName);
@@ -400,10 +424,9 @@ export async function firstWindowTarget(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
 ): Promise<string> {
-  const result = await execOnSlot(
+  const result = await execTmuxDiscovery(
     vars,
     tmuxShellSnippet(`list-windows -t ${shellQuote(session)} -F '#I' 2>/dev/null | head -1`),
-    { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
   );
   const firstIdx = result.stdout.trim();
   if (!firstIdx) {
