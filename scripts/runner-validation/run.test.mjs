@@ -44,7 +44,7 @@ test('runner-validation catalog includes four runners and twenty-one scenarios',
   assert.ok(listScenarios().includes('monitor-stuck-smoke'));
 });
 
-test('self-review sends post-launch prompts to interactive argv-first runners', () => {
+test('self-review recovers argv-first runners by sending, not by marking them unsupported', () => {
   const source = fs.readFileSync(
     path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),

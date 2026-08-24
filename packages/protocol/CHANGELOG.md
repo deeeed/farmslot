@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- fix(run): persist `RunMonitorState.lastStructuredProgressAt` so a gateway restart does not reset an idle runner's stuck clock.
 - fix(run): `run.forceComplete` accepts optional `prNumber` so an operator can attach an already-opened PR when marking a failed run done.
 - fix(run): `RunEngineState.operatorForceCompleted` marks an operator hatch so replay cannot treat it as ordinary done.
 - fix(run): `run.forceComplete` returns advisory `effects` (same envelope as cancel) so a failed slot release is visible after the run is already `done`.

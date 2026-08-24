@@ -1695,6 +1695,20 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /\{task_prompt\}/);
     });
 
+    it('injects the argv prompt next to the runner, not after a trailing shell command', () => {
+      const vars = makeVars({
+        dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}; printf launched',
+      });
+      const cmd = buildLaunchCommand(vars, 'cursor', DEFAULT_CURSOR_MODEL, PROMPT, {
+        safetyTier: 'dangerous',
+      });
+      const promptAt = cmd.indexOf('Read TASK.md and execute.');
+      const printfAt = cmd.indexOf('printf launched');
+      assert.notEqual(promptAt, -1);
+      assert.notEqual(printfAt, -1);
+      assert.ok(promptAt < printfAt);
+    });
+
     it('routes through expandDispatchCmd when dispatch_cmd uses {cursor_path}', () => {
       const vars = makeVars({
         dispatchCmd: 'cd {repo} && {cursor_path} {safety_flags} --model {model} {task_prompt}',

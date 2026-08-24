@@ -1326,6 +1326,8 @@ export interface RunMonitorState {
   lastPollAt: string;
   startedAt: string;
   lastPaneHash?: string;
+  /** ISO time of last structured runner progress; used to restore stuck clocks. */
+  lastStructuredProgressAt?: string;
   /** True after a one-shot usage-budget warning was emitted for this monitor session. */
   budgetWarned?: boolean;
   /** True after a budget nudge was confirmed delivered (may retry while false). */

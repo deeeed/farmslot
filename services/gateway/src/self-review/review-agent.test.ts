@@ -19,7 +19,7 @@ import {
 } from './review-agent.js';
 import { TerminalReviewArtifactError } from './terminal-result.js';
 
-test('self-review cold launch and recovery send to interactive argv-first runners', () => {
+test('self-review recovers argv-first runners by sending, but cold-launches them via argv', () => {
   const source = fs.readFileSync(
     fileURLToPath(new URL('./review-agent.ts', import.meta.url)),
     'utf8',
@@ -30,12 +30,13 @@ test('self-review cold launch and recovery send to interactive argv-first runner
   );
   assert.match(
     source,
-    /if \(runnerSupportsInteractivePrompt\(runner\)\) \{\s*const promptAcceptanceBaselineMs/,
+    /if \(runnerNeedsPostLaunchPrompt\(runner\)\) \{\s*const promptAcceptanceBaselineMs/,
   );
   assert.doesNotMatch(
     source,
-    /if \(runnerNeedsPostLaunchPrompt\(runner\)\) \{\s*const promptAcceptanceBaselineMs/,
+    /if \(runnerSupportsInteractivePrompt\(runner\)\) \{\s*const promptAcceptanceBaselineMs/,
   );
+  assert.match(source, /abandonRecoveredReviewer\(`\$\{delivery\} recovered reviewer cleanup`\)/);
 });
 
 test('retained reviewer delivery uses native reset or a cold process replacement', () => {

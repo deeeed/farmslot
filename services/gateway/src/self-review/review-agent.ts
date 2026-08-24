@@ -599,7 +599,7 @@ async function recoverRunningReviewAgent(params: {
       console.warn(
         `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} is ${delivery}; starting a fresh review`,
       );
-      return abandonRecoveredReviewer('unsupported recovered reviewer cleanup');
+      return abandonRecoveredReviewer(`${delivery} recovered reviewer cleanup`);
     }
   } catch (error) {
     console.warn(
@@ -1107,10 +1107,11 @@ export async function runReviewAgent(
           runnerSessionPath: sessionMeta.runnerSessionPath,
         })) ?? reviewContext;
 
-      // Interactive runners get a verified send even when argv already carried
-      // the task. Cursor's pool dispatch_cmd often omits `{task_prompt}`, so the
-      // respawned TUI sits at an idle composer unless we deliver here.
-      if (runnerSupportsInteractivePrompt(runner)) {
+      // Cold launch: argv-first runners already carry the task on the respawn
+      // line (`withArgvTaskPromptPlaceholder`). A second tmux send races that
+      // turn and can fail closed because pane-only Cursor has no prompt digest.
+      // Recovery of a live idle pane still sends via resumeReviewAgentPromptDelivery.
+      if (runnerNeedsPostLaunchPrompt(runner)) {
         const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
           vars,
           reviewTarget,

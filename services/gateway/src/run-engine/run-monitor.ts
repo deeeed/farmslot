@@ -305,6 +305,7 @@ export async function prepareWarmBudgetBaselineForHandoff(
         lastPollAt: now,
         startedAt: current.monitorState?.startedAt ?? now,
         lastPaneHash: current.monitorState?.lastPaneHash,
+        lastStructuredProgressAt: current.monitorState?.lastStructuredProgressAt,
         budgetWarned: current.monitorState?.budgetWarned ?? false,
         budgetNudgeSent: current.monitorState?.budgetNudgeSent ?? false,
         budgetUsage: {
@@ -778,7 +779,9 @@ export async function monitorRun(
     ? {
         lastPaneHash: persisted.lastPaneHash ?? '',
         lastPaneChangeAt: new Date(persisted.lastPollAt).getTime(),
-        lastStructuredProgressAt: new Date(persisted.lastPollAt).getTime(),
+        lastStructuredProgressAt: new Date(
+          persisted.lastStructuredProgressAt ?? persisted.lastPollAt,
+        ).getTime(),
         lastStepCount: 0,
         startedAt: new Date(persisted.startedAt).getTime(),
         budgetWarned: persisted.budgetWarned === true,
@@ -1271,6 +1274,7 @@ export async function monitorRun(
             lastPollAt: new Date().toISOString(),
             startedAt: new Date(state.startedAt).toISOString(),
             lastPaneHash: state.lastPaneHash,
+            lastStructuredProgressAt: new Date(state.lastStructuredProgressAt).toISOString(),
             budgetWarned: state.budgetWarned,
             budgetNudgeSent: state.budgetNudgeSent,
             budgetUsage: state.budgetUsage,
@@ -1893,6 +1897,7 @@ export async function pollRunBudgetGuard(params: {
       lastPollAt: now,
       startedAt: params.monitorStartedAt ?? current.monitorState?.startedAt ?? now,
       lastPaneHash: current.monitorState?.lastPaneHash,
+      lastStructuredProgressAt: current.monitorState?.lastStructuredProgressAt,
       budgetWarned: tick.budgetWarned,
       budgetNudgeSent:
         params.budgetNudgeSent === true ||
