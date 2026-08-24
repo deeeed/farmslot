@@ -655,3 +655,90 @@ if (result.kind !== ${JSON.stringify(expectedKind)}) process.exit(1);
     error: result.stderr?.trim() || (!jsonLine ? stdout : null),
   };
 }
+
+/**
+ * Production run-monitor stuck verdict against a live tmux target.
+ * Clock is already past stuckTimeout so a pane-scrape monitor would have nudged.
+ */
+export function runGatewayMonitorStuck({
+  repo,
+  target,
+  runner,
+  panePid,
+  stuckTimeoutMs = 20 * 60_000,
+  elapsedMs = 21 * 60_000,
+  timeoutMs = 30_000,
+}) {
+  const snippet = `
+import os from 'node:os';
+import { evaluateMonitorStuckForRunner } from './services/gateway/src/runners/observability-progress.ts';
+import { isRunnerAliveUnderPane } from './services/gateway/src/runners/session-process.ts';
+
+const vars = {
+  slotId: 'runner-validate-local',
+  machine: os.hostname(),
+  platform: 'local',
+  host: 'localhost',
+  sshUser: os.userInfo().username,
+  osType: process.platform === 'darwin' ? 'darwin' : 'linux',
+  claudePath: '',
+  codexPath: '',
+  opencodePath: '',
+  cursorPath: '',
+  grokPath: '',
+  dispatchCmd: '',
+  recycleCmd: '',
+  repo: ${JSON.stringify(repo)},
+  session: ${JSON.stringify(target)},
+  slotMode: 'dispatch',
+  slotEnabled: true,
+  sshTarget: \`\${os.userInfo().username}@localhost\`,
+  remoteRepo: ${JSON.stringify(repo)},
+  projectName: '',
+  resourceVars: {},
+};
+
+const now = Date.now();
+const verdict = await evaluateMonitorStuckForRunner({
+  vars,
+  target: ${JSON.stringify(target)},
+  runner: ${JSON.stringify(runner)},
+  now,
+  lastProgressAt: now - ${elapsedMs},
+  stuckTimeoutMs: ${stuckTimeoutMs},
+});
+const runnerAlive = ${JSON.stringify(panePid)}
+  ? await isRunnerAliveUnderPane(vars, ${JSON.stringify(panePid)}, ${JSON.stringify(runner)})
+  : false;
+process.stdout.write(JSON.stringify({
+  kind: verdict.kind,
+  stuck: verdict.stuck,
+  wouldNudge: verdict.wouldNudge,
+  runnerAlive,
+  activity: verdict.activity,
+  turnState: verdict.turnState,
+}) + '\\n');
+`;
+
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: timeoutMs,
+    env: {
+      ...process.env,
+      FARMSLOT_HOME: process.env.FARMSLOT_HOME ?? `${os.homedir()}/.farmslot-dev`,
+    },
+  });
+  const jsonLine = (result.stdout?.trim() ?? '')
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .pop();
+  if (!jsonLine) {
+    return {
+      ok: false,
+      error: result.stderr?.trim() || result.stdout?.trim() || 'monitor stuck probe failed',
+      exitCode: result.status,
+    };
+  }
+  return { ok: result.status === 0, exitCode: result.status, ...JSON.parse(jsonLine) };
+}

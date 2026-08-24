@@ -35,9 +35,15 @@ import {
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
+  classifyMonitorProgress,
+  evaluateMonitorStuckForRunner,
+  shouldDeliverStuckNudge,
+} from '../runners/observability-progress.js';
+import {
   getRunnerSessionUsageProvider,
+  readRunnerActivityFromObservability,
+  readRunnerTurnState,
   runnerLineLooksWaiting,
-  runnerPaneShowsCurrentInteractiveProgress,
   runnerSupportsTmuxNudgesForLaunch,
   runnerTmuxNudgeUnsupportedDescription,
   sendRunnerInstructionSafely,
@@ -323,6 +329,8 @@ export async function prepareWarmBudgetBaselineForHandoff(
 interface MonitorState {
   lastPaneHash: string;
   lastPaneChangeAt: number;
+  /** Last time runner observability proved the turn was still making progress. */
+  lastStructuredProgressAt: number;
   lastStepCount: number;
   startedAt: number;
   /** One-shot usage-budget warning already emitted for this monitor session. */
@@ -770,6 +778,7 @@ export async function monitorRun(
     ? {
         lastPaneHash: persisted.lastPaneHash ?? '',
         lastPaneChangeAt: new Date(persisted.lastPollAt).getTime(),
+        lastStructuredProgressAt: new Date(persisted.lastPollAt).getTime(),
         lastStepCount: 0,
         startedAt: new Date(persisted.startedAt).getTime(),
         budgetWarned: persisted.budgetWarned === true,
@@ -779,6 +788,7 @@ export async function monitorRun(
     : {
         lastPaneHash: '',
         lastPaneChangeAt: now,
+        lastStructuredProgressAt: now,
         lastStepCount: 0,
         startedAt: now,
         budgetWarned: false,
@@ -1337,31 +1347,41 @@ async function detectViolations(
     const vars = await loadSlotVars(slotId);
     const paneContent = await capturePaneContent(vars, runId, role, contextId);
     const runner = getRun(runId)?.metrics.runner;
-    const strippedContent = stripRunnerNoise(paneContent, runner);
-    const paneHash = simpleHash(strippedContent);
-
-    // Detect pane changes (on content area, not footer animation)
-    if (paneHash !== state.lastPaneHash) {
-      state.lastPaneHash = paneHash;
-      state.lastPaneChangeAt = now;
-    }
-
-    // Stuck: no content-area change for stuckTimeoutMs. Pane-only runners can sit on a
-    // static composer while tools run for a long time — skip escalation only when visible
-    // progress markers are present, not merely because the worker process is still alive.
-    const sincePaneChange = now - state.lastPaneChangeAt;
-    const paneShowsProgress = runnerPaneShowsCurrentInteractiveProgress(paneContent, runner);
-    if (sincePaneChange > config.stuckTimeoutMs && !paneShowsProgress) {
+    const target = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
+    const stuckState = await evaluateMonitorStuckForRunner({
+      vars,
+      target,
+      runner,
+      now,
+      lastProgressAt: state.lastStructuredProgressAt,
+      stuckTimeoutMs: config.stuckTimeoutMs,
+    });
+    state.lastStructuredProgressAt = stuckState.lastProgressAt;
+    if (stuckState.stuck) {
+      const sinceProgress = now - stuckState.lastProgressAt;
       violations.push({
         slotId,
         role,
         contextId,
         type: 'stuck',
-        message: `No terminal output for ${Math.round(sincePaneChange / 60000)} minutes`,
+        message: `No structured runner activity for ${Math.round(sinceProgress / 60000)} minutes`,
         nudgeSent: null,
         timestamp: new Date().toISOString(),
       });
     }
+
+    const strippedContent = stripRunnerNoise(paneContent, runner);
+    const paneHash = simpleHash(strippedContent);
+
+    // Waiting still uses the composer prompt (permission / input gates). Stuck
+    // never does — Cursor queues orchestrator text as a follow-ups overlay while
+    // a tool is running, and that overlay is not idleness.
+    if (paneHash !== state.lastPaneHash) {
+      state.lastPaneHash = paneHash;
+      state.lastPaneChangeAt = now;
+    }
+
+    const sincePaneChange = now - state.lastPaneChangeAt;
 
     // Waiting: input prompt visible in the last few content lines. Scan the
     // last 5 stripped lines rather than just the tail — Claude Code renders
@@ -1374,7 +1394,7 @@ async function detectViolations(
       .filter(Boolean);
     const tailLines = strippedLines.slice(-5);
     const promptLine = tailLines.find((line) => runnerLineLooksWaiting(line, runner));
-    if (promptLine && sincePaneChange > 3 * 60_000) {
+    if (promptLine && sincePaneChange > 3 * 60_000 && stuckState.kind !== 'making-progress') {
       violations.push({
         slotId,
         role,
@@ -1474,6 +1494,18 @@ async function sendNudge(
     const vars = await loadSlotVars(slotId);
     const context = selectAgentContext(run, { role, contextId });
     const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
+    if (violation.type === 'stuck' || violation.type === 'idle') {
+      const runner = run.metrics.runner ?? 'claude';
+      const activity = await readRunnerActivityFromObservability(vars, session, runner);
+      const turnState = await readRunnerTurnState(vars, session, runner);
+      const kind = classifyMonitorProgress({ activity, turnState });
+      if (!shouldDeliverStuckNudge(kind)) {
+        console.log(
+          `[run-monitor] run ${runId.slice(0, 8)} — skipping ${violation.type} nudge (${kind} runner activity)`,
+        );
+        return;
+      }
+    }
     const retainedSession = resolveRunRetainedSessionBinding(run, context);
     const sent = await sendRunnerInstructionSafely(
       vars,

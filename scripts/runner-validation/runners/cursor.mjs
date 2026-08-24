@@ -44,6 +44,13 @@ export function buildArgvLaunchCommand(prompt = DEFAULT_PROMPT) {
   return `${shSingleQuote(bin)} --sandbox enabled --model ${DEFAULT_MODEL} ${shSingleQuote(prompt)}`;
 }
 
+/** Interactive TUI with tools auto-approved — production-like busy turn. */
+export function buildBusyLaunchCommand(prompt) {
+  assertBinary();
+  const bin = resolveBinary();
+  return `${shSingleQuote(bin)} --force --trust --sandbox enabled --model ${DEFAULT_MODEL} ${shSingleQuote(prompt)}`;
+}
+
 export function launchMode() {
   return 'cursor-print';
 }

@@ -26,9 +26,9 @@ import {
 
 const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/panes');
 
-test('runner-validation catalog includes four runners and twenty scenarios', () => {
+test('runner-validation catalog includes four runners and twenty-one scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
-  assert.equal(listScenarios().length, 20);
+  assert.equal(listScenarios().length, 21);
   assert.ok(listScenarios().includes('review-recovery-terminal-contract'));
   assert.ok(listScenarios().includes('self-review-fix-turn-lease'));
   assert.ok(listScenarios().includes('hook-smoke'));
@@ -41,6 +41,19 @@ test('runner-validation catalog includes four runners and twenty scenarios', () 
   assert.ok(listScenarios().includes('retained-safe-send-smoke'));
   assert.ok(listScenarios().includes('session-attribution-smoke'));
   assert.ok(listScenarios().includes('token-usage-smoke'));
+  assert.ok(listScenarios().includes('monitor-stuck-smoke'));
+});
+
+test('run-monitor stuck path calls production observability evaluator, not pane progress scrape', () => {
+  const source = fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../services/gateway/src/run-engine/run-monitor.ts',
+    ),
+    'utf8',
+  );
+  assert.match(source, /evaluateMonitorStuckForRunner/);
+  assert.doesNotMatch(source, /runnerPaneShowsCurrentInteractiveProgress/);
 });
 
 test('machine pause/restore scenario uses production RPCs and structured continuity proof only', () => {

@@ -68,6 +68,7 @@ Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabi
 | `mode-switch`                       | Bypass / permission mode                                              | live         | skip              | skip                   |
 | `session-attribution-smoke`         | Stale session rejected; hook path + model match                       | live tmux    | skip              | live tmux              |
 | `token-usage-smoke`                 | Live `session-usage.sh` on resolved path + model match                | live tmux    | skip              | live tmux              |
+| `monitor-stuck-smoke`               | Live cursor-agent TUI does not stuck-nudge while the process is alive | skip         | **interactive**   | skip                   |
 
 Skipped scenarios record `skipReason` and count as pass so matrices stay honest.
 
