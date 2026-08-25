@@ -10,6 +10,11 @@ import type {
 import { Methods } from '@farmslot/protocol';
 
 import {
+  createIdleRequestTimeout,
+  type GatewayRequestOptions,
+  normalizeGatewayRequestOptions,
+} from './gateway-request-timeout.js';
+import {
   filterConnectableGatewayUrls,
   GATEWAY_CANDIDATES_STORAGE_KEY,
   GATEWAY_PASSWORD_STORAGE_KEY,
@@ -47,7 +52,6 @@ interface BrowserGatewayConnection {
 interface PendingRequest {
   resolve: (payload: unknown) => void;
   reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
 }
 
 export class GatewayRequestError extends Error {
@@ -392,32 +396,61 @@ export class GatewayClient {
   async request<T = unknown>(
     method: string,
     params?: unknown,
-    timeout = DEFAULT_TIMEOUT,
+    timeoutOrOptions: number | GatewayRequestOptions = DEFAULT_TIMEOUT,
   ): Promise<T> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('Not connected');
     }
 
+    const options = normalizeGatewayRequestOptions(timeoutOrOptions, DEFAULT_TIMEOUT);
+    const timeout = options.timeout;
     const id = String(++this.reqId);
     const frame: RequestFrame = { type: 'req', id, method, params };
     const t0 = performance.now();
 
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let settled = false;
+      let unsub: (() => void) | undefined;
+      let idle: ReturnType<typeof createIdleRequestTimeout>;
+      const finish = (next: () => void) => {
+        if (settled) return;
+        settled = true;
+        idle.clear();
+        unsub?.();
         this.pending.delete(id);
-        reject(new Error(`Request ${method} timed out after ${timeout}ms`));
-      }, timeout);
+        next();
+      };
+      idle = createIdleRequestTimeout({
+        timeoutMs: timeout,
+        onTimeout: () => {
+          finish(() => {
+            const suffix = options.extendOnEvent
+              ? ` without a matching ${options.extendOnEvent} event`
+              : '';
+            reject(new Error(`Request ${method} timed out after ${timeout}ms${suffix}`));
+          });
+        },
+      });
 
       this.pending.set(id, {
         resolve: (v: unknown) => {
-          const dt = performance.now() - t0;
-          // Surface slow calls so the source of perceived UI latency is obvious.
-          if (dt > 100) console.log(`[gateway] ${method} ${dt.toFixed(0)}ms`);
-          resolve(v as T);
+          finish(() => {
+            const dt = performance.now() - t0;
+            // Surface slow calls so the source of perceived UI latency is obvious.
+            if (dt > 100) console.log(`[gateway] ${method} ${dt.toFixed(0)}ms`);
+            resolve(v as T);
+          });
         },
-        reject,
-        timer,
+        reject: (err: Error) => finish(() => reject(err)),
       });
+
+      if (options.extendOnEvent) {
+        unsub = this.subscribe(options.extendOnEvent, (payload) => {
+          if (settled) return;
+          if (options.extendWhen && !options.extendWhen(payload)) return;
+          idle.extend();
+        });
+      }
 
       this.ws!.send(JSON.stringify(frame));
     });
@@ -454,8 +487,6 @@ export class GatewayClient {
   private handleResponse(frame: ResponseFrame): void {
     const req = this.pending.get(frame.id);
     if (!req) return;
-    this.pending.delete(frame.id);
-    clearTimeout(req.timer);
 
     if (frame.ok) {
       req.resolve(frame.payload);
@@ -519,11 +550,10 @@ export class GatewayClient {
   }
 
   private rejectAllPending(reason: string): void {
-    for (const req of this.pending.values()) {
-      clearTimeout(req.timer);
+    const pending = [...this.pending.values()];
+    for (const req of pending) {
       req.reject(new Error(reason));
     }
-    this.pending.clear();
   }
 }
 

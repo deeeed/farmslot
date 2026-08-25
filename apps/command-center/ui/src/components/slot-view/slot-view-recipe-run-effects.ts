@@ -2,6 +2,7 @@ import type { RecipeRunArtifactGroup, Run } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { transferBoundRequestOptions } from '../../gateway-request-timeout.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
 
 import {
@@ -61,6 +62,7 @@ export async function refreshSlotViewArtifactMirror(view: SlotViewRecipePresente
     const result = await gateway.request<{ ok: boolean; copied?: number; reason?: string }>(
       Methods.RUN_REFRESH_MIRROR,
       { runId: view._linkedRun.id },
+      transferBoundRequestOptions(view._linkedRun.id),
     );
     if (result.ok) {
       view._mirrorRefreshFeedback = result.copied ? `Synced ${result.copied}` : 'Up to date';
