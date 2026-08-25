@@ -178,6 +178,21 @@ test('configured capability lists domains, sources, selection, and unavailable r
       moneyMovement.options.some((option) => option.id === 'fix-bug/mm'),
       true,
     );
+    assert.deepEqual(
+      moneyMovement.options.find((option) => option.id === 'fix-bug/perps-mobile'),
+      undefined,
+    );
+
+    const unfiltered = configuredExecutionTemplateOptions(projectVars, { unfiltered: true });
+    const unfilteredIds = unfiltered.options.map((option) => option.id).sort();
+    assert.ok(unfilteredIds.includes('fix-bug/perps-mobile'));
+    assert.ok(unfilteredIds.includes('fix-bug/mm'));
+    assert.deepEqual(
+      unfiltered.options.find((option) => option.sourceId === 'team:perps')?.sourceDomains,
+      ['perps'],
+    );
+    assert.deepEqual(unfiltered.filteredSources, []);
+    assert.equal(unfiltered.defaults?.[0]?.templateId, 'fix-bug/perps-mobile');
   });
 });
 
@@ -278,6 +293,25 @@ platforms: [ios]
     });
     assert.equal(snapshot.entry.sourceId, 'package:canonical');
     assert.match(snapshot.markdown, /Validate the canonical journey/);
+
+    const unfiltered = configuredExecutionTemplateOptions(projectVars, {
+      unfiltered: true,
+      flow: 'fix-bug',
+    });
+    assert.ok(
+      unfiltered.options.some(
+        (candidate) =>
+          candidate.id === 'fix-bug/perps-mobile' && candidate.sourceId === 'package:canonical',
+      ),
+    );
+    assert.ok(
+      unfiltered.options.some(
+        (candidate) =>
+          candidate.id === 'fix-bug/perps-mobile' &&
+          candidate.sourceId === 'team:perps' &&
+          !candidate.shadowedBy,
+      ),
+    );
   });
 });
 

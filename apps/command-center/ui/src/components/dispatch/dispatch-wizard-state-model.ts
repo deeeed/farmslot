@@ -129,6 +129,15 @@ interface DispatchScoringKeyInput {
   comparisonFamilyId: string;
 }
 
+export function filterDispatchCandidatesForProject(
+  candidates: DispatchCandidatesResult['candidates'],
+  project: string,
+): DispatchCandidatesResult['candidates'] {
+  if (!project) return [...candidates];
+  if (!candidates.some((candidate) => candidate.project)) return [...candidates];
+  return candidates.filter((candidate) => candidate.project === project);
+}
+
 export function dispatchScoringKey(input: DispatchScoringKeyInput): string {
   return [
     input.flowType ?? '',

@@ -8,6 +8,7 @@ import {
   deriveDispatchFleetViewState,
   deriveIssueTypeFlowState,
   dispatchScoringKey,
+  filterDispatchCandidatesForProject,
   findActiveRunConflict,
 } from './dispatch-wizard-state-model.js';
 
@@ -41,6 +42,39 @@ const candidates: DispatchCandidatesResult['candidates'] = [
     free: true,
   },
 ];
+
+test('filterDispatchCandidatesForProject keeps the selected farm from a full snapshot', () => {
+  const rows: DispatchCandidatesResult['candidates'] = [
+    {
+      slotId: 'core-1',
+      project: 'metamask-core-farm',
+      score: 1,
+      cdpLive: true,
+      branch: 'main',
+      lifecycle: 'ready',
+      onMain: true,
+      free: true,
+    },
+    {
+      slotId: 'ext-1',
+      project: 'metamask-extension-farm',
+      score: 2,
+      cdpLive: true,
+      branch: 'main',
+      lifecycle: 'ready',
+      onMain: true,
+      free: true,
+    },
+  ];
+  assert.deepEqual(
+    filterDispatchCandidatesForProject(rows, 'metamask-core-farm').map((row) => row.slotId),
+    ['core-1'],
+  );
+  assert.deepEqual(
+    filterDispatchCandidatesForProject(candidates, 'metamask-core-farm').map((row) => row.slotId),
+    ['busy-nudge', 'free-slot'],
+  );
+});
 
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {

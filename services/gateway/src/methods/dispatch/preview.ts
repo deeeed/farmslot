@@ -63,6 +63,39 @@ import { normalizeTicketRef } from './ticket-ref.js';
 
 const BRANCH_REFRESH_CONCURRENCY = 4;
 const BRANCH_REFRESH_TIMEOUT_MS = 5_000;
+/** Skip a live git probe when this slot was refreshed this recently. */
+export const BRANCH_REFRESH_TTL_MS = 30_000;
+const branchRefreshAt = new Map<string, number>();
+
+export function resetBranchRefreshTimestampsForTests(): void {
+  branchRefreshAt.clear();
+}
+
+export function slotsNeedingBranchRefresh(
+  slots: readonly SlotStatus[],
+  lastRefreshAt: ReadonlyMap<string, number>,
+  now: number,
+  ttlMs: number,
+): SlotStatus[] {
+  return slots.filter((slot) => {
+    const at = lastRefreshAt.get(slot.slot);
+    return at === undefined || now - at >= ttlMs;
+  });
+}
+
+export function selectDispatchCandidateSlots(
+  slots: readonly SlotStatus[],
+  params: { project?: string; machines?: string[] },
+): SlotStatus[] {
+  const machineFilter =
+    params.machines && params.machines.length > 0 ? new Set(params.machines) : null;
+  return slots.filter(
+    (slot) =>
+      slot.lifecycle !== 'disabled' &&
+      (!params.project || slot.project === params.project) &&
+      (!machineFilter || machineFilter.has(slot.machine)),
+  );
+}
 
 interface DispatchFamilyContext {
   familyId?: string;
@@ -84,7 +117,7 @@ export function resolveDispatchFamilyContext(
   params: {
     flowType?: string | null;
     ticketOrPr?: string | null;
-    project: string;
+    project?: string;
     familyId?: string | null;
     parentRunId?: string | null;
     familyRootTicketOrPr?: string | null;
@@ -99,7 +132,7 @@ export function resolveDispatchFamilyContext(
       familyRootTicketOrPr: params.familyRootTicketOrPr ?? undefined,
     };
   }
-  if (!params.flowType || !params.ticketOrPr) return {};
+  if (!params.flowType || !params.ticketOrPr || !params.project) return {};
   const flowType = params.flowType as FlowType;
   if (!PR_BOUND_FLOW_TYPES.has(flowType)) return {};
   const parent = findFollowUpParentRun(runs, {
@@ -597,9 +630,17 @@ export function classifyRefreshSlotAction(
   return 'refresh';
 }
 
-export async function refreshBranches(slots: SlotStatus[]): Promise<void> {
+export async function refreshBranches(
+  slots: SlotStatus[],
+  options: { force?: boolean; now?: number } = {},
+): Promise<void> {
   const errors: PoolConfigError[] = [];
-  await mapWithConcurrency(slots, BRANCH_REFRESH_CONCURRENCY, async (s) => {
+  const now = options.now ?? Date.now();
+  const pending = options.force
+    ? slots
+    : slotsNeedingBranchRefresh(slots, branchRefreshAt, now, BRANCH_REFRESH_TTL_MS);
+  if (pending.length === 0) return;
+  await mapWithConcurrency(pending, BRANCH_REFRESH_CONCURRENCY, async (s) => {
     try {
       const vars = await loadSlotVars(s.slot);
       const action = classifyRefreshSlotAction(s.slot, vars, getNode);
@@ -614,6 +655,7 @@ export async function refreshBranches(slots: SlotStatus[]): Promise<void> {
         s.branch = live;
         await updateSlotStatus(s.slot, { branch: live });
       }
+      branchRefreshAt.set(s.slot, now);
     } catch (err) {
       if (err instanceof PoolConfigError) {
         // Aggregate so dispatch.candidates surfaces the actionable pool error
@@ -676,38 +718,47 @@ export function candidateIneligibilityReason(
   });
 }
 
+export async function resolveDispatchScoringByProject(
+  params: DispatchCandidatesParams,
+  fleetSlots: SlotStatus[],
+  projectSlots: SlotStatus[],
+): Promise<Map<string, { targetBranch?: string; familyId?: string }>> {
+  const projects = params.project
+    ? [params.project]
+    : [...new Set(projectSlots.map((slot) => slot.project))];
+  const entries = await Promise.all(
+    projects.map(async (project) => {
+      const targetBranch = await resolveDispatchTargetBranch(
+        { ...params, project },
+        {
+          fleetSlots,
+          projectSlots: projectSlots.filter((slot) => slot.project === project),
+          logPrefix: 'dispatch.candidates',
+        },
+      );
+      const family = resolveDispatchFamilyContext({ ...params, project, targetBranch });
+      return [project, { targetBranch, familyId: family.familyId }] as const;
+    }),
+  );
+  return new Map(entries);
+}
+
 export async function dispatchCandidates(
   params: DispatchCandidatesParams,
 ): Promise<DispatchCandidatesResult> {
   const [fleet, projectConfigList] = await Promise.all([loadFleetStatus(), loadProjectConfigs()]);
   const projectConfigs = projectConfigsFromProjects(projectConfigList);
-  const machineFilter =
-    params.machines && params.machines.length > 0 ? new Set(params.machines) : null;
-  const projectSlots = fleet.slots.filter(
-    (s) =>
-      s.project === params.project &&
-      s.lifecycle !== 'disabled' &&
-      (!machineFilter || machineFilter.has(s.machine)),
-  );
-  // Live-check branches for free slots so the UI shows accurate data
+  const projectSlots = selectDispatchCandidateSlots(fleet.slots, params);
+  const refreshOpts = { force: params.forceRefresh === true };
+  // Live-check branches for free slots so the UI shows accurate data.
+  // TTL skips hosts already probed; forceRefresh (UI Refresh) bypasses it.
   const freeSlots = projectSlots.filter(isFreeSlot);
-  if (freeSlots.length > 0) await refreshBranches(freeSlots);
+  if (freeSlots.length > 0) await refreshBranches(freeSlots, refreshOpts);
 
-  // Resolve targetBranch server-side when the wizard lacks PR-list context, then reuse the
-  // same hint for scoring, nudge eligibility, and follow-up family inference.
   const isPrFlow = params.flowType === 'pr-complete' || params.flowType === 'review-pr';
-  const resolvedTargetBranch = await resolveDispatchTargetBranch(params, {
-    fleetSlots: fleet.slots,
-    projectSlots,
-    logPrefix: 'dispatch.candidates',
-  });
+  const scoringByProject = await resolveDispatchScoringByProject(params, fleet.slots, projectSlots);
   // Explicit prepare only — profile-fit is advisory on dispatch.preview, not candidates.
   const requiredPrepareProfile = params.prepareProfile || null;
-
-  const familyContext = resolveDispatchFamilyContext({
-    ...params,
-    targetBranch: resolvedTargetBranch,
-  });
 
   // PR-bound calls ALSO get the busy-slot branch-affinity nudge slice so the wizard can
   // surface "REUSE WORKER" rows. Refresh busy-slot branches first — without this, a slot
@@ -722,21 +773,25 @@ export async function dispatchCandidates(
   // branch to land there. Callers that need a guaranteed-fresh snapshot pass
   // `forceRefresh: true` to `loadFleetStatus`.
   let nudgeMetaBySlot: Map<string, BranchAffinityNudgeCandidate> = new Map();
-  if (isPrFlow && params.ticketOrPr && resolvedTargetBranch) {
+  const nudgeProjects = [...scoringByProject.entries()].filter(
+    ([, scoring]) => scoring.targetBranch,
+  );
+  if (isPrFlow && params.ticketOrPr && nudgeProjects.length > 0) {
     const busyMatching = selectBranchAffinityRefreshSlots(projectSlots);
-    if (busyMatching.length > 0) await refreshBranches(busyMatching);
-    const candidatesList = await collectBranchAffinityNudgeCandidates(
-      fleet.slots,
-      params.project,
-      params.ticketOrPr,
-      {
-        familyId: familyContext.familyId ?? null,
-        lane: params.lane ?? null,
-        variant: params.variant ?? null,
-        targetBranch: resolvedTargetBranch ?? null,
-        requiredPrepareProfile,
-      },
-    );
+    if (busyMatching.length > 0) await refreshBranches(busyMatching, refreshOpts);
+    const candidatesList = (
+      await Promise.all(
+        nudgeProjects.map(([project, scoring]) =>
+          collectBranchAffinityNudgeCandidates(fleet.slots, project, params.ticketOrPr!, {
+            familyId: scoring.familyId ?? null,
+            lane: params.lane ?? null,
+            variant: params.variant ?? null,
+            targetBranch: scoring.targetBranch ?? null,
+            requiredPrepareProfile,
+          }),
+        ),
+      )
+    ).flat();
     nudgeMetaBySlot = new Map(candidatesList.map((c) => [c.slot.slot, c]));
   }
 
@@ -753,11 +808,12 @@ export async function dispatchCandidates(
 
   const candidates = projectSlots
     .map((s) => {
+      const scoring = scoringByProject.get(s.project) ?? {};
       const nudge = nudgeMetaBySlot.get(s.slot);
       const pressureAdmission = pressureDecisions.get(s.machine);
       const baseIneligibleReason = candidateIneligibilityReason(s, fleet.slots, {
         isNudgeRow: Boolean(nudge),
-        targetBranch: resolvedTargetBranch,
+        targetBranch: scoring.targetBranch,
         requiredPrepareProfile,
       });
       // A pressure rejection gates every dispatchable row, fresh AND nudge.
@@ -781,9 +837,10 @@ export async function dispatchCandidates(
           : null;
       return {
         slotId: s.slot,
+        project: s.project,
         score: isFreeSlot(s)
-          ? slotScore(s, resolvedTargetBranch, {
-              familyId: familyContext.familyId,
+          ? slotScore(s, scoring.targetBranch, {
+              familyId: scoring.familyId,
               projectConfigs,
             })
           : 999,
@@ -793,9 +850,7 @@ export async function dispatchCandidates(
         onMain: !isDispatchStaleBranch(s, projectConfigs),
         hostLoad: s.hostLoad,
         free: isFreeSlot(s),
-        familyAffinity: Boolean(
-          familyContext.familyId && s.currentFamilyId === familyContext.familyId,
-        ),
+        familyAffinity: Boolean(scoring.familyId && s.currentFamilyId === scoring.familyId),
         ...(ineligibleReason ? { ineligibleReason } : {}),
         ...(ineligibilitySource ? { ineligibilitySource } : {}),
         ...(pressureAdmission ? { pressureAdmission } : {}),

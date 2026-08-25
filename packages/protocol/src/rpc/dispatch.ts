@@ -42,7 +42,12 @@ export interface DispatchMatchProjectResult {
 // ─── Dispatch Candidates param/result types ───
 
 export interface DispatchCandidatesParams {
-  project: string;
+  /**
+   * Restrict candidates to this farm. Omit to return every enabled slot so a
+   * client can load once and filter locally. Still used for target-branch /
+   * family inference when present.
+   */
+  project?: string;
   flowType?: string;
   /** Restrict candidates to the named machines. Empty/omitted = all machines. */
   machines?: string[];
@@ -71,6 +76,11 @@ export interface DispatchCandidatesParams {
   /** Optional family/variant context to flag soft mismatches as risk flags on nudge candidates. */
   familyId?: string;
   variant?: string | null;
+  /**
+   * Bypass the branch-refresh TTL and live-check every candidate slot again.
+   * Dispatch UI uses this for the explicit Refresh control.
+   */
+  forceRefresh?: boolean;
 }
 
 /** Optional metadata attached to busy candidates whose branch matches the dispatch's `targetBranch`.
@@ -94,6 +104,8 @@ export interface DispatchCandidateNudgeMeta {
 
 export interface DispatchCandidate {
   slotId: string;
+  /** Owning farm. Present so a full-fleet snapshot can be filtered locally. */
+  project?: string;
   score: number;
   cdpLive: boolean;
   branch: string;

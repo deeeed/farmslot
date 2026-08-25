@@ -19,6 +19,7 @@ export interface DispatchCandidateSelectionRenderContext {
   project: string;
   slotOverride: string;
   loadingCandidates: boolean;
+  candidateRefreshFailed: boolean;
   candidates: readonly DispatchCandidate[];
   dispatchableCandidates: readonly DispatchCandidate[];
   nudgeIntents: ReadonlyMap<string, NudgeIntent>;
@@ -29,6 +30,7 @@ export interface DispatchCandidateSelectionRenderContext {
   pressureOverrideAvailable: (candidate: DispatchCandidate) => boolean;
   slotSummaryLabel: (slotId: string) => string;
   selectSlot: (slotId: string) => void;
+  refreshSlots: () => void;
   setNudgeIntent: (slotId: string, intent: NudgeIntent) => void;
   /** Select a pressure-rejected row to collect the deliberate override. The
    * intent keeps a busy nudge candidate on its reuse path (nudge/fresh)
@@ -199,14 +201,24 @@ export function renderDispatchCandidateSelection(ctx: DispatchCandidateSelection
 
   return html`
     <div>
-      <div class="section-label">
-        Slot${ctx.slotOverride ? '' : ' (auto)'}${ctx.loadingCandidates
-          ? html` <span
-              style="color:${colors.textMuted}; text-transform:none; letter-spacing:normal"
-              >loading...</span
-            >`
-          : ''}
+      <div class="section-label slot-section-label">
+        <span>Slot${ctx.slotOverride ? '' : ' (auto)'}</span>
+        ${ctx.loadingCandidates ? html` <span class="slot-loading">loading...</span>` : nothing}
+        <button
+          class="slot-refresh"
+          type="button"
+          ?disabled=${ctx.loadingCandidates}
+          title="Recheck slot availability on each host"
+          @click=${() => ctx.refreshSlots()}
+        >
+          Refresh
+        </button>
       </div>
+      ${ctx.candidateRefreshFailed
+        ? html`<div class="error-inline">
+            Slot list failed to refresh. Use Refresh to retry without changing farm or type.
+          </div>`
+        : nothing}
       ${isWorking
         ? html`
             <div class="same-task-warning">

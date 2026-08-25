@@ -1,14 +1,23 @@
-// Pure view-model for the execution-template catalog picker. The gateway is
-// the filtering/selection authority — this model only shapes what it returned
-// (options, unavailable and domain-filtered sources) into rows, counts, and
-// notices, so the picker can never invent compatibility the gateway didn't grant.
-import type { ExecutionTemplateCatalogOption, ExecutionTemplateOptions } from '@farmslot/protocol';
+// Pure view-model for the execution-template catalog picker. The gateway
+// supplies the catalog (a full snapshot when the client asked for unfiltered).
+// This model filters that snapshot locally so farm/flow/domain/mode switches
+// do not refetch. Dispatch still validates the chosen source and digest.
+import type {
+  DomainRestrictedExecutionTemplateSource,
+  ExecutionTemplateCatalogOption,
+  ExecutionTemplateDefault,
+  ExecutionTemplateOptions,
+} from '@farmslot/protocol';
 import { EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX } from '@farmslot/protocol';
 
 export interface ExecutionTemplatePickerFilters {
   /** Active domain filter; empty string means general (no domain). */
   domain: string;
   runMode: 'autonomous' | 'interactive';
+  /** When set, hide templates for other flows. */
+  flow?: string;
+  /** When set, hide templates that do not list this platform or `*`. */
+  platform?: string;
 }
 
 export interface ExecutionTemplatePickerRow {
@@ -46,12 +55,113 @@ export function activeFilterSummary(filters: ExecutionTemplatePickerFilters): st
   return `domain: ${filters.domain || 'general'} · mode: ${filters.runMode}`;
 }
 
+export function optionMatchesPickerFilters(
+  option: ExecutionTemplateCatalogOption,
+  filters: ExecutionTemplatePickerFilters,
+): boolean {
+  if (filters.flow && option.flow !== filters.flow) return false;
+  if (option.runMode != null && option.runMode !== filters.runMode) return false;
+  if (
+    filters.platform &&
+    !option.platforms.includes('*') &&
+    !option.platforms.includes(filters.platform)
+  ) {
+    return false;
+  }
+  if (option.sourceDomains && option.sourceDomains.length > 0) {
+    if (!filters.domain || !option.sourceDomains.includes(filters.domain)) return false;
+  }
+  const domains = optionDomains(option);
+  if (domains.length > 0) {
+    if (!filters.domain || !domains.includes(filters.domain)) return false;
+  }
+  return true;
+}
+
+function advertisedDomainsForOption(option: ExecutionTemplateCatalogOption): string[] {
+  const entryDomains = optionDomains(option);
+  if (option.sourceDomains && option.sourceDomains.length > 0) {
+    return entryDomains.length > 0
+      ? entryDomains.filter((domain) => option.sourceDomains!.includes(domain))
+      : [...option.sourceDomains];
+  }
+  return entryDomains;
+}
+
+export function localDomainRestrictedSources(
+  options: readonly ExecutionTemplateCatalogOption[],
+  filters: ExecutionTemplatePickerFilters,
+): DomainRestrictedExecutionTemplateSource[] {
+  const bySource = new Map<string, Set<string>>();
+  for (const option of options) {
+    if (filters.flow && option.flow !== filters.flow) continue;
+    if (option.runMode != null && option.runMode !== filters.runMode) continue;
+    if (
+      filters.platform &&
+      !option.platforms.includes('*') &&
+      !option.platforms.includes(filters.platform)
+    ) {
+      continue;
+    }
+    if (optionMatchesPickerFilters(option, filters)) continue;
+    const advertised = advertisedDomainsForOption(option);
+    if (advertised.length === 0) continue;
+    const domains = bySource.get(option.sourceId) ?? new Set<string>();
+    for (const domain of advertised) domains.add(domain);
+    bySource.set(option.sourceId, domains);
+  }
+  return [...bySource.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, domains]) => ({
+      id,
+      reason: 'domain-restricted' as const,
+      domains: [...domains].sort((a, b) => a.localeCompare(b)),
+    }));
+}
+
+export function pickCompatibleExecutionTemplateId(input: {
+  options: readonly ExecutionTemplateCatalogOption[];
+  defaults?: readonly ExecutionTemplateDefault[];
+  flow: string;
+  runMode: 'autonomous' | 'interactive';
+  domain: string;
+  platform?: string;
+  preferredId?: string;
+}): string {
+  if (input.preferredId && input.options.some((option) => option.id === input.preferredId)) {
+    return input.preferredId;
+  }
+  const domain = input.domain || undefined;
+  const matchingDefault = (input.defaults ?? []).find(
+    (rule) =>
+      (rule.when.flow === undefined || rule.when.flow === input.flow) &&
+      (rule.when.runMode === undefined || rule.when.runMode === input.runMode) &&
+      (rule.when.domain === undefined || rule.when.domain === domain) &&
+      (rule.when.platform === undefined || rule.when.platform === input.platform),
+  );
+  if (matchingDefault && input.options.some((option) => option.id === matchingDefault.templateId)) {
+    return matchingDefault.templateId;
+  }
+  const exactDomain = domain
+    ? input.options.filter((option) => optionDomains(option).includes(domain))
+    : [];
+  if (exactDomain.length === 1) return exactDomain[0]?.id ?? '';
+  const general = input.options.filter((option) => optionDomains(option).length === 0);
+  if (general.length === 1) return general[0]?.id ?? '';
+  return input.options.length === 1 ? (input.options[0]?.id ?? '') : '';
+}
+
 export function deriveExecutionTemplatePickerView(
   catalog: ExecutionTemplateOptions,
   selectedId: string,
   filters: ExecutionTemplatePickerFilters,
 ): ExecutionTemplatePickerView {
-  const rows = catalog.options.map((option) => ({
+  const matched = catalog.options.filter((option) => optionMatchesPickerFilters(option, filters));
+  const unshadowedIds = new Set(
+    matched.filter((option) => !option.shadowedBy).map((option) => option.id),
+  );
+  const visible = matched.filter((option) => !option.shadowedBy || !unshadowedIds.has(option.id));
+  const rows = visible.map((option) => ({
     option,
     domains: optionDomains(option),
     selected: selectedId !== '' && option.id === selectedId,
@@ -60,12 +170,13 @@ export function deriveExecutionTemplatePickerView(
   const selectedRow = rows.find((row) => row.selected) ?? null;
   const selectionValid = selectedId === '' || selectedRow !== null;
   const summary = activeFilterSummary(filters);
+  const localRestricted = localDomainRestrictedSources(catalog.options, filters);
+  const restrictedSources =
+    localRestricted.length > 0 ? localRestricted : (catalog.filteredSources ?? []);
 
   const sourceNotices = [
     ...catalog.unavailableSources.map((source) => `${source.id}: ${source.reason}`),
-    // Older gateways omit filteredSources; absence means "nothing reported",
-    // not an error.
-    ...(catalog.filteredSources ?? []).map(
+    ...restrictedSources.map(
       (source) =>
         `${source.id}: ${source.reason} — select domain ${source.domains.join(' or ')} to include it`,
     ),

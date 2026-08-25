@@ -44,12 +44,15 @@ import {
   classifyRefreshSlotAction,
   findAffinitySlot,
   PoolConfigError,
+  resetBranchRefreshTimestampsForTests,
   resolveDispatchFamilyContext,
   resolveDispatchPreviewFromFleet,
   resolveDispatchTargetBranch,
   resolvePreviewModel,
   selectBranchAffinityEligibleSlots,
   selectBranchAffinityRefreshSlots,
+  selectDispatchCandidateSlots,
+  slotsNeedingBranchRefresh,
 } from './dispatch.js';
 
 function makeSlot(overrides: Partial<SlotStatus> = {}): SlotStatus {
@@ -1221,6 +1224,27 @@ test('resolveDispatchFamilyContext leaves standalone PR follow-ups unlinked when
   assert.deepEqual(context, {});
 });
 
+test('resolveDispatchFamilyContext without project skips lineage even when a parent exists', () => {
+  const parent = {
+    id: 'run-root',
+    project: 'metamask-core-farm',
+    flowType: 'dev',
+    ticketOrPr: 'TAT-3182',
+    prNumber: 9009,
+    familyId: 'family-root',
+    createdAt: '2026-06-01T00:00:00Z',
+    updatedAt: '2026-06-02T00:00:00Z',
+  } as unknown as Run;
+  const context = resolveDispatchFamilyContext(
+    {
+      flowType: 'pr-complete',
+      ticketOrPr: 'https://github.com/MetaMask/core/pull/9009',
+    },
+    [parent],
+  );
+  assert.deepEqual(context, {});
+});
+
 test('resolveDispatchFamilyContext infers PR-complete lineage from prior dev PR number', () => {
   const parent = {
     id: 'run-root',
@@ -1882,6 +1906,45 @@ test('classifyRefreshSlotAction refreshes local slot regardless of node connecti
     () => undefined,
   );
   assert.equal(action, 'refresh');
+});
+
+test('selectDispatchCandidateSlots omits project to return every enabled farm', () => {
+  const core = makeSlot({ slot: 'macpro-core-1', project: 'metamask-core-farm' });
+  const ext = makeSlot({ slot: 'macpro-ext-1', project: 'metamask-extension-farm' });
+  const disabled = makeSlot({
+    slot: 'macpro-core-off',
+    project: 'metamask-core-farm',
+    lifecycle: 'disabled',
+  });
+  const all = selectDispatchCandidateSlots([core, ext, disabled], {});
+  assert.deepEqual(
+    all.map((slot) => slot.slot),
+    ['macpro-core-1', 'macpro-ext-1'],
+  );
+  const oneFarm = selectDispatchCandidateSlots([core, ext, disabled], {
+    project: 'metamask-core-farm',
+  });
+  assert.deepEqual(
+    oneFarm.map((slot) => slot.slot),
+    ['macpro-core-1'],
+  );
+});
+
+test('slotsNeedingBranchRefresh skips hosts probed inside the TTL window', () => {
+  resetBranchRefreshTimestampsForTests();
+  const a = makeSlot({ slot: 'macpro-core-1' });
+  const b = makeSlot({ slot: 'macpro-core-2' });
+  const last = new Map<string, number>([['macpro-core-1', 1_000]]);
+  const stale = slotsNeedingBranchRefresh([a, b], last, 1_000 + 30_000 - 1, 30_000);
+  assert.deepEqual(
+    stale.map((slot) => slot.slot),
+    ['macpro-core-2'],
+  );
+  const both = slotsNeedingBranchRefresh([a, b], last, 1_000 + 30_000, 30_000);
+  assert.deepEqual(
+    both.map((slot) => slot.slot),
+    ['macpro-core-1', 'macpro-core-2'],
+  );
 });
 
 test('resolveRunnerLaunchBlockers rejects usage-limit with typed error carrying account label', async () => {

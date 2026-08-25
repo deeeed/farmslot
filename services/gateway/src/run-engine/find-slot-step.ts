@@ -486,7 +486,7 @@ export async function executeFindSlotStep(
     (s) => s.project === run.project && (!allowSet || allowSet.has(s.slot)),
   );
   const freeSlots = projectSlots.filter(isFreeSlot);
-  if (freeSlots.length > 0) await refreshBranches(freeSlots);
+  if (freeSlots.length > 0) await refreshBranches(freeSlots, { force: true });
   const isEligibleFreeSlot = (slot: (typeof freeSlots)[number]) =>
     !validateSlotForDispatch(slot, fleet.slots, {
       targetBranch,
@@ -545,7 +545,7 @@ export async function executeFindSlotStep(
     // comparison lane to preserve ADR-024 §7 scrub-between-siblings.
     if (run.lane !== 'comparison') {
       const busyMatching = selectBranchAffinityRefreshSlots(projectSlots);
-      if (busyMatching.length > 0) await refreshBranches(busyMatching);
+      if (busyMatching.length > 0) await refreshBranches(busyMatching, { force: true });
       const nudgeCandidates = await collectBranchAffinityNudgeCandidates(
         fleet.slots,
         run.project,

@@ -82,6 +82,8 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _publicationReviewLoops: PublicationReviewLoopDraft[] = [];
   _nextPublicationReviewLoopId = 1;
   @state() _candidates: DispatchCandidatesResult['candidates'] = [];
+  /** Full-fleet snapshot from the last dispatch.candidates load. `_candidates` is the farm filter. */
+  _allCandidates: DispatchCandidatesResult['candidates'] = [];
   /** Per-slot intent for nudge-eligible rows. Tracked separately from `_slotOverride` so
    * flipping selection doesn't lose the intent the operator picked on the other row. */
   _nudgeIntents = new Map<string, 'nudge' | 'fresh'>();
@@ -128,6 +130,7 @@ export abstract class DispatchWizardState extends LitElement {
   _unsubState?: () => void;
   _unsubConn?: () => void;
   _matchTimer: ReturnType<typeof setTimeout> | null = null;
+  _scoringFetchTimer: ReturnType<typeof setTimeout> | null = null;
   /** Last machine filter applied to candidate fetch; used to detect filter flips while the project is unchanged. */
   _lastFetchMachines = '';
   /** Last targetBranch passed to dispatch.candidates; re-fetches when pr.list hydrates and flips this from undefined to a branch. */

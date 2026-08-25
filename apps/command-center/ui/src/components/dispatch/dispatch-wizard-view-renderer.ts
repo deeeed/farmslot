@@ -52,6 +52,7 @@ interface DispatchWizardViewContext {
   autoProject: string;
   project: string;
   selectedSlotOverride: string;
+  selectedSlotPlatform: string;
   projectApps: readonly string[];
   selectedDispatchApp: string | undefined;
   templateOptions: readonly WorkerTemplateOption[];
@@ -144,6 +145,7 @@ interface DispatchWizardViewContext {
   refreshPressureDecision: () => void;
   slotSummaryLabel: (slotId: string) => string;
   selectSlot: (slotId: string) => void;
+  refreshSlots: () => void;
   setNudgeIntent: (slotId: string, intent: 'nudge' | 'fresh') => void;
   dispatchBlocked: () => boolean;
   dispatchBlockedReason: () => string | null;
@@ -265,6 +267,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               project: ctx.project,
               slotOverride: ctx.selectedSlotOverride,
               loadingCandidates: ctx.loadingCandidates,
+              candidateRefreshFailed: ctx.candidateRefreshFailed,
               candidates: ctx.candidates,
               dispatchableCandidates: ctx.dispatchableCandidates,
               nudgeIntents: ctx.nudgeIntents,
@@ -274,6 +277,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               pressureOverrideAvailable: ctx.pressureOverrideAvailable,
               slotSummaryLabel: ctx.slotSummaryLabel,
               selectSlot: ctx.selectSlot,
+              refreshSlots: ctx.refreshSlots,
               setNudgeIntent: ctx.setNudgeIntent,
               beginPressureOverride: ctx.beginPressureOverride,
             })}
@@ -338,6 +342,8 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
           .selectedId=${ctx.selectedExecutionTemplateId}
           .domain=${ctx.domain}
           .mode=${ctx.mode}
+          .flow=${ctx.flowType ?? ''}
+          .platform=${ctx.selectedSlotPlatform ?? ''}
           .loading=${ctx.templateOptionsLoading}
           @template-select=${(event: CustomEvent<{ id: string }>) =>
             ctx.setExecutionTemplateId(event.detail.id)}
@@ -415,8 +421,7 @@ function renderActionMessage(ctx: DispatchWizardViewContext) {
       ? html`<span class="error-msg">${ctx.error}</span>`
       : ctx.candidateRefreshFailed
         ? html`<span class="error-msg"
-            >Slot candidates failed to refresh. Select the project again or wait for
-            reconnect.</span
+            >Slot list failed to refresh. Use Refresh on the slot list to retry.</span
           >`
         : !ctx.canDispatch()
           ? html`<span class="validation-hint">${ctx.validationHint()}</span>`
@@ -432,8 +437,7 @@ function renderActionMessage(ctx: DispatchWizardViewContext) {
         ? html`<span class="error-msg">${ctx.error}</span>`
         : ctx.candidateRefreshFailed
           ? html`<span class="error-msg"
-              >Slot candidates failed to refresh. Select the project again or wait for
-              reconnect.</span
+              >Slot list failed to refresh. Use Refresh on the slot list to retry.</span
             >`
           : !ctx.canDispatch()
             ? html`<span class="validation-hint">${ctx.validationHint()}</span>`
