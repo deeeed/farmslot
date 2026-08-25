@@ -19,15 +19,12 @@ import {
 } from './review-agent.js';
 import { TerminalReviewArtifactError } from './terminal-result.js';
 
-test('self-review recovers argv-first runners by sending, but cold-launches them via argv', () => {
+test('self-review recovery rejects in-place handoff for argv-first runners', () => {
   const source = fs.readFileSync(
     fileURLToPath(new URL('./review-agent.ts', import.meta.url)),
     'utf8',
   );
-  assert.match(
-    source,
-    /if \(!target \|\| !taskMdPath \|\| !runner \|\| !runnerSupportsInteractivePrompt\(runner\)\)/,
-  );
+  assert.match(source, /runnerRetainedSessionHandoff\(runner\) === 'argv-relaunch'/);
   assert.match(
     source,
     /if \(runnerNeedsPostLaunchPrompt\(runner\)\) \{\s*const promptAcceptanceBaselineMs/,
@@ -50,6 +47,10 @@ test('retained reviewer delivery uses native reset or a cold process replacement
   });
   assert.deepEqual(retainedReviewerDeliveryPlan('codex', 'resume', 1), {
     kind: 'in-place',
+    resetContext: false,
+  });
+  assert.deepEqual(retainedReviewerDeliveryPlan('cursor', 'resume', 2), {
+    kind: 'cold-relaunch',
     resetContext: false,
   });
 });
@@ -146,14 +147,11 @@ test('review agent does not rewrite a similarly named artifact directory', () =>
   );
 });
 
-test('review prompt recovery sends to an interactive argv-first runner', async () => {
+test('review prompt recovery retires an argv-first reviewer without tmux input', async () => {
   const vars = {
     projectName: 'farmslot-farm',
   } as Parameters<typeof resumeReviewAgentPromptDelivery>[0];
-  let sentPane = '';
-  let sentPrompt = '';
-  let sentRunner = '';
-
+  let retiredWindow = '';
   const outcome = await resumeReviewAgentPromptDelivery(
     vars,
     'missing-run',
@@ -162,27 +160,266 @@ test('review prompt recovery sends to an interactive argv-first runner', async (
       runner: 'cursor',
       taskFile: 'tasks/run-1/SELF-REVIEW.rev-cursor.md',
       signalFile: 'tasks/run-1/SELF-REVIEW.rev-cursor-SIGNAL.json',
-      target: { session: 'mm-4', window: 'rev-cursor', pane: null, target: 'mm-4:rev-cursor' },
+      target: { session: 'mm-4', window: 'rev-cursor', pane: null, target: '@123' },
       attemptStartedAt: '2026-08-24T03:37:05.626Z',
     },
     {
+      listExactTmuxWindows: async () => [
+        {
+          windowId: '@125',
+          windowIndex: 1,
+          windowName: 'rev-cursor',
+          activityAt: 1,
+          paneId: '%151',
+          panePid: '59361',
+        },
+      ],
       resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
-      isRunnerAliveUnderPane: async () => true,
-      resolveWorkerDispatchPrompt: async () => 'Review the prepared package.',
-      resolveProjectRuntimeDir: async () => 'temp/recipe/runtime',
-      sendRunnerPostLaunchPrompt: async (_vars, paneId, runner, prompt) => {
-        sentPane = paneId;
-        sentRunner = runner;
-        sentPrompt = prompt;
+      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '59361' }),
+      resolveTmuxWindowIdentity: async () => ({
+        windowId: '@123',
+        session: 'mm-4',
+        window: 'rev-cursor',
+      }),
+      resolveTmuxWindowPaneCount: async () => 1,
+      killTmuxWindowById: async (_vars, windowId) => {
+        retiredWindow = windowId;
+      },
+      resolveWorkerDispatchPrompt: async () => {
+        throw new Error('unsupported retained handoff must not build an in-place prompt');
+      },
+      resolveProjectRuntimeDir: async () => {
+        throw new Error('unsupported retained handoff must not resolve runtime state');
+      },
+      sendRunnerPostLaunchPrompt: async () => {
+        throw new Error('unsupported retained handoff must not send tmux input');
       },
     },
   );
 
-  assert.equal(outcome, 'delivered');
-  assert.equal(sentPane, '%151');
-  assert.equal(sentRunner, 'cursor');
-  assert.match(sentPrompt, /SELF-REVIEW\.rev-cursor\.md/);
-  assert.match(sentPrompt, /review-feedback\.rev-cursor\.md/);
+  assert.equal(outcome, 'retired');
+  assert.equal(retiredWindow, '@123');
+});
+
+test('review prompt recovery resolves and retires a pane-only reviewer window', async () => {
+  let retiredWindow = '';
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/SELF-REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/SELF-REVIEW.rev-cursor-SIGNAL.json',
+      target: { session: '', window: null, pane: '%151', target: '%151' },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      listExactTmuxWindows: async () => [
+        {
+          windowId: '@125',
+          windowIndex: 1,
+          windowName: 'rev-cursor',
+          activityAt: 1,
+          paneId: '%151',
+          panePid: '59361',
+        },
+      ],
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
+      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '59361' }),
+      resolveTmuxWindowIdentity: async () => ({
+        windowId: '@124',
+        session: 'mm-4',
+        window: 'rev-cursor',
+      }),
+      resolveTmuxWindowPaneCount: async () => 1,
+      killTmuxWindowById: async (_vars, windowId) => {
+        retiredWindow = windowId;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'retired');
+  assert.equal(retiredWindow, '@124');
+});
+
+test('review prompt recovery retires only the exact probed legacy reviewer window', async () => {
+  let resolvedPane = '';
+  let retiredWindow = '';
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/SELF-REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/SELF-REVIEW.rev-cursor-SIGNAL.json',
+      target: {
+        session: 'mm-4',
+        window: null,
+        pane: null,
+        target: 'mm-4:rev-cursor',
+      },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      listExactTmuxWindows: async () => [
+        {
+          windowId: '@125',
+          windowIndex: 1,
+          windowName: 'rev-cursor',
+          activityAt: 1,
+          paneId: '%151',
+          panePid: '59361',
+        },
+      ],
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
+      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '59361' }),
+      resolveTmuxWindowIdentity: async (_vars, paneId) => {
+        resolvedPane = paneId;
+        return { windowId: '@125', session: 'mm-4', window: 'rev-cursor' };
+      },
+      resolveTmuxWindowPaneCount: async () => 1,
+      killTmuxWindowById: async (_vars, windowId) => {
+        retiredWindow = windowId;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'retired');
+  assert.equal(resolvedPane, '%151');
+  assert.equal(retiredWindow, '@125');
+});
+
+test('review prompt recovery preserves ambiguous named reviewer windows', async () => {
+  let inspectedPane = false;
+  const window = (windowId: string) => ({
+    windowId,
+    windowIndex: Number(windowId.slice(1)),
+    windowName: 'rev-cursor',
+    activityAt: 1,
+    paneId: `%${windowId.slice(1)}`,
+    panePid: '59361',
+  });
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/SELF-REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/SELF-REVIEW.rev-cursor-SIGNAL.json',
+      target: {
+        session: 'mm-4',
+        window: null,
+        pane: null,
+        target: 'mm-4:rev-cursor',
+      },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      listExactTmuxWindows: async () => [window('@1'), window('@2')],
+      resolveExactTmuxWindowPane: async () => {
+        inspectedPane = true;
+        return { paneId: '%1', panePid: '59361' };
+      },
+    },
+  );
+
+  assert.equal(outcome, 'indeterminate');
+  assert.equal(inspectedPane, false);
+});
+
+test('review prompt recovery preserves a split argv-first reviewer window', async () => {
+  let retired = false;
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/SELF-REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/SELF-REVIEW.rev-cursor-SIGNAL.json',
+      target: { session: 'mm-4', window: 'rev-cursor', pane: null, target: '@123' },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
+      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '59361' }),
+      resolveTmuxWindowIdentity: async () => ({
+        windowId: '@123',
+        session: 'mm-4',
+        window: 'rev-cursor',
+      }),
+      resolveTmuxWindowPaneCount: async () => 2,
+      killTmuxWindowById: async () => {
+        retired = true;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'indeterminate');
+  assert.equal(retired, false);
+});
+
+test('review prompt recovery preserves a reused reviewer window id', async () => {
+  let retired = false;
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/SELF-REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/SELF-REVIEW.rev-cursor-SIGNAL.json',
+      target: { session: 'mm-4', window: 'rev-cursor', pane: null, target: '@123' },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
+      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '59361' }),
+      resolveTmuxWindowIdentity: async () => ({
+        windowId: '@123',
+        session: 'other-session',
+        window: 'rev-cursor',
+      }),
+      killTmuxWindowById: async () => {
+        retired = true;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'indeterminate');
+  assert.equal(retired, false);
+});
+
+test('review prompt recovery preserves an argv-first reviewer when liveness is unknown', async () => {
+  let retired = false;
+  const outcome = await resumeReviewAgentPromptDelivery(
+    { projectName: 'farmslot-farm' } as Parameters<typeof resumeReviewAgentPromptDelivery>[0],
+    'missing-run',
+    {
+      id: 'rev-cursor',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/SELF-REVIEW.rev-cursor.md',
+      signalFile: 'tasks/run-1/SELF-REVIEW.rev-cursor-SIGNAL.json',
+      target: { session: 'mm-4', window: 'rev-cursor', pane: null, target: '@123' },
+      attemptStartedAt: '2026-08-24T03:37:05.626Z',
+    },
+    {
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
+      probeRunnerDescendantPid: async () => ({
+        state: 'unknown',
+        reason: 'probe timed out',
+      }),
+      killTmuxWindowById: async () => {
+        retired = true;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'indeterminate');
+  assert.equal(retired, false);
 });
 
 test('review prompt recovery stays unsupported for non-interactive runners', async () => {
@@ -201,7 +438,7 @@ test('review prompt recovery stays unsupported for non-interactive runners', asy
       resolveExactTmuxWindowPane: async () => {
         throw new Error('must not inspect tmux for unsupported runners');
       },
-      isRunnerAliveUnderPane: async () => {
+      probeRunnerDescendantPid: async () => {
         throw new Error('must not inspect tmux for unsupported runners');
       },
       resolveWorkerDispatchPrompt: async () => {
@@ -238,8 +475,18 @@ test('review prompt recovery reuses the exact live reviewer pane', async () => {
       attemptStartedAt: '2026-08-03T16:00:00.000Z',
     },
     {
+      listExactTmuxWindows: async () => [
+        {
+          windowId: '@22',
+          windowIndex: 1,
+          windowName: 'rev-claude',
+          activityAt: 1,
+          paneId: '%22',
+          panePid: '2002',
+        },
+      ],
       resolveExactTmuxWindowPane: async () => ({ paneId: '%22', panePid: '2002' }),
-      isRunnerAliveUnderPane: async () => true,
+      probeRunnerDescendantPid: async () => ({ state: 'present', pid: '2002' }),
       resolveWorkerDispatchPrompt: async () => 'Review the prepared package.',
       resolveProjectRuntimeDir: async () => 'temp/recipe/runtime',
       sendRunnerPostLaunchPrompt: async (_vars, paneId, _runner, prompt) => {

@@ -21,6 +21,16 @@ mock.module('../core/exec.js', {
       if (cmdIncludes(cmd, 'has-session')) {
         return { exitCode: 0, stdout: '', stderr: '' };
       }
+      if (cmdIncludes(cmd, "list-panes -a -F '#{session_name}")) {
+        const windows: string[] = [];
+        if (issuedCommands.some((command) => cmdIncludes(command, "-n 'dev'"))) {
+          windows.push('mm-2\tdev\t@201\t2\t100\t%201\t2201');
+        }
+        if (issuedCommands.some((command) => cmdIncludes(command, "-n 'self-review'"))) {
+          windows.push('mm-2\tself-review\t@202\t3\t101\t%202\t2202');
+        }
+        return { exitCode: 0, stdout: windows.join('\n'), stderr: '' };
+      }
       if (cmdIncludes(cmd, 'list-panes') && cmdIncludes(cmd, 'mm-2:1.1')) {
         return { exitCode: 0, stdout: '0', stderr: '' };
       }
@@ -126,6 +136,18 @@ test('ensureTmuxTargetReadyForRelaunch recreates role window when numeric index 
 test('ensureTmuxTargetReadyForRelaunch derives role window from flow when context window is missing', async () => {
   const target = await ensureTmuxTargetReadyForRelaunch(vars, 'mm-2', 'mm-2:1.1', null, 'dev');
   assert.equal(target, 'mm-2:dev');
+});
+
+test('ensureTmuxTargetReadyForRelaunch never promotes a bare session active reviewer', async () => {
+  const createsBefore = issuedCommands.filter((command) =>
+    command.includes("new-window -t '=mm-2' -n 'dev'"),
+  ).length;
+  const target = await ensureTmuxTargetReadyForRelaunch(vars, 'mm-2', 'mm-2', null, 'dev');
+  assert.equal(target, 'mm-2:dev');
+  assert.equal(
+    issuedCommands.filter((command) => command.includes("new-window -t '=mm-2' -n 'dev'")).length,
+    createsBefore,
+  );
 });
 
 test('ensureTmuxTargetReadyForRelaunch keeps named role window when pane is alive', async () => {

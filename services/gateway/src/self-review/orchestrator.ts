@@ -50,6 +50,7 @@ import {
   runnerDefaultModel,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
+  runnerRetainedSessionHandoff,
   runnerSupportsInteractivePrompt,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
@@ -94,6 +95,7 @@ import { getSelfReviewConfig, resolveWorkerTaskDir } from './templates.js';
 import {
   ensureTmuxTargetReadyForRelaunch,
   isWorkerAlive,
+  paneHostsRunnerProcess,
   rediscoverAcceptingWorkerPane,
   runnerTurnLeaseIsActive,
   type WorkerPaneRediscovery,
@@ -1056,6 +1058,7 @@ type FixPromptRecoveryContext = Pick<
   | 'signalFile'
   | 'target'
   | 'attemptStartedAt'
+  | 'promptDeliveryStartedAt'
   | 'startedAt'
 >;
 
@@ -1066,6 +1069,7 @@ interface FixPromptRecoveryDeps {
   readLaunchAck: typeof readLaunchAckSignalSnapshot;
   syncChecklistTarget: typeof syncChecklistTargetForRole;
   ensureTarget: typeof ensureTmuxTargetReadyForRelaunch;
+  targetHostsRunner?: typeof paneHostsRunnerProcess;
   persistTarget: (
     runId: string,
     run: Pick<NonNullable<ReturnType<typeof getRun>>, 'flowType' | 'agentContexts'>,
@@ -1081,6 +1085,7 @@ const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
   readLaunchAck: readLaunchAckSignalSnapshot,
   syncChecklistTarget: syncChecklistTargetForRole,
   ensureTarget: ensureTmuxTargetReadyForRelaunch,
+  targetHostsRunner: paneHostsRunnerProcess,
   persistTarget: async (runId, run, target) => {
     await upsertAgentContext(runId, 'self-review-fix', { target });
     const workerRole = primaryRoleForFlow(run.flowType);
@@ -1165,6 +1170,9 @@ export async function resumeSelfReviewFixPromptDelivery(
     pane: null,
     target,
   });
+  const targetHostsRunner = deps.targetHostsRunner
+    ? await deps.targetHostsRunner(vars, target, runner)
+    : true;
   const attemptStartedAt = context.attemptStartedAt?.trim();
   if (!attemptStartedAt) return { status: 'deferred' };
   const basePrompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
@@ -1188,10 +1196,15 @@ export async function resumeSelfReviewFixPromptDelivery(
     safetyTier: run.safetyTier,
     runtimeDir,
     taskDir,
+    taskFile,
+    replacementReadySignalPath: primaryContext?.signalFile,
+    replacementReadySignalAttemptId: primaryContext?.signalAttemptId,
     launchAckSignalPath: signalPath,
     launchAckBaseline,
     acceptExistingLaunchAck: false,
-    priorPromptSendAttempted: options.priorPromptSendAttempted ?? true,
+    priorPromptSendAttempted: targetHostsRunner
+      ? (options.priorPromptSendAttempted ?? Boolean(context.promptDeliveryStartedAt))
+      : false,
     timeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
     recovery: { runId },
     sendLogPrefix: 'self-review-fix-recovery',
@@ -1202,6 +1215,13 @@ export async function resumeSelfReviewFixPromptDelivery(
       status: 'delivered',
       ...(result.turnToken ? { turnToken: result.turnToken } : {}),
     };
+  }
+  if (
+    runnerRetainedSessionHandoff(runner) === 'argv-relaunch' &&
+    targetHostsRunner &&
+    !result.delivered
+  ) {
+    return { status: 'deferred' };
   }
   return result.disposition === 'hold' && result.retryable === false
     ? { status: 'relaunch-required' }
@@ -1685,6 +1705,14 @@ async function sendFeedbackToWorker(
 
   // Clear any stale fix-pass signal before sending new feedback.
   const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
+  const priorPrimaryContext = run ? selectAgentContext(run, { role: 'primary' }) : null;
+  const priorFixContext = run?.agentContexts?.find(
+    (context) => context.role === 'self-review-fix' && context.signalFile,
+  );
+  const replacementOwner = priorFixContext ?? priorPrimaryContext;
+  const replacementReadySignal = replacementOwner?.signalFile
+    ? await readLaunchAckSignalSnapshot(vars, replacementOwner.signalFile)
+    : null;
   await removeSlotFiles(vars, [fixSignalPath]);
   const fixSignalBaseline = await readOptionalSlotFile(vars, fixSignalPath);
   const fixLaunchAckBaseline = await readLaunchAckSignalSnapshot(vars, fixSignalPath);
@@ -1726,6 +1754,8 @@ async function sendFeedbackToWorker(
       attemptStartedAt: fixAttemptStartedAt,
       artifactScope: findingsArtifactScope,
       signalAttemptId: undefined,
+      promptDeliveryStartedAt: undefined,
+      deliveryBaselineRef: undefined,
       taskFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist),
       signalFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal),
       runner: run?.metrics.runner ?? null,
@@ -1750,6 +1780,12 @@ async function sendFeedbackToWorker(
     const loggedRetainedHoldReasons = new Set<string>();
     const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
       if (terminalRetainedHoldReason) return false;
+      if (!promptSendAttempted) {
+        await upsertAgentContext(runId, 'self-review-fix', {
+          id: fixContext?.id,
+          promptDeliveryStartedAt: new Date().toISOString(),
+        });
+      }
       const latestRun = getRun(runId);
       const latestPrimaryContext = latestRun
         ? selectAgentContext(latestRun, { role: 'primary' })
@@ -1766,6 +1802,10 @@ async function sendFeedbackToWorker(
         safetyTier: latestRun?.safetyTier,
         runtimeDir,
         taskDir,
+        taskFile: fixTaskFile,
+        replacementReadySignalPath: replacementOwner?.signalFile,
+        replacementReadySignalAttemptId: replacementOwner?.signalAttemptId,
+        replacementReadySignal,
         launchAckSignalPath: fixSignalPath,
         launchAckBaseline: fixLaunchAckBaseline,
         priorPromptSendAttempted: promptSendAttempted,
@@ -1777,7 +1817,8 @@ async function sendFeedbackToWorker(
         ...deliveryOptions,
         promptMarker: SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist,
       });
-      promptSendAttempted = true;
+      promptSendAttempted =
+        promptSendAttempted || retained.delivered || retained.sendAttempted === true;
       if (retained.delivered) {
         structuredDeliveryAccepted = retained.acknowledgement === 'structured';
         acceptedTurnToken = retained.turnToken;

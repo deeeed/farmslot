@@ -877,13 +877,45 @@ export async function findRunnerDescendantPid(
   runnerId?: string | null,
   options?: ExecOnSlotOptions,
 ): Promise<string> {
-  if (!panePid) return '';
+  const probe = await probeRunnerDescendantPid(vars, panePid, runnerId, options);
+  if (probe.state === 'present') return probe.pid;
+  if (probe.state === 'absent') return '';
+  throw new Error(
+    `Cannot determine runner liveness under pane PID ${panePid || '(missing)'}${probe.reason ? `: ${probe.reason}` : ''}`,
+  );
+}
+
+export type RunnerDescendantPidProbe =
+  | { state: 'present'; pid: string }
+  | { state: 'absent' | 'unknown'; reason?: string };
+
+/**
+ * Preserve transport/probe failure separately from a confirmed empty process tree.
+ * Destructive callers must hold on `unknown`; boolean liveness callers may keep
+ * using {@link isRunnerAliveUnderPane} when absence and uncertainty are equivalent.
+ */
+export async function probeRunnerDescendantPid(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  panePid: string,
+  runnerId?: string | null,
+  options?: ExecOnSlotOptions,
+): Promise<RunnerDescendantPidProbe> {
+  if (!panePid) return { state: 'unknown', reason: 'pane PID is missing' };
   const pattern = runnerProcessPatternSource(runnerId);
-  if (!pattern) return '';
+  if (!pattern) return { state: 'unknown', reason: 'runner process pattern is missing' };
   const cmd = buildFindRunnerDescendantPidCommand(panePid, pattern);
-  const result = await execOnSlot(vars, cmd, options);
-  if (result.exitCode !== 0) return '';
-  return result.stdout.trim();
+  try {
+    const result = await execOnSlot(vars, cmd, options);
+    const pid = result.stdout.trim();
+    if (result.exitCode === 0 && /^\d+$/.test(pid)) return { state: 'present', pid };
+    if (result.exitCode === 1 && !pid && !result.stderr.trim()) return { state: 'absent' };
+    return {
+      state: 'unknown',
+      reason: result.stderr.trim() || result.stdout.trim() || `probe exited ${result.exitCode}`,
+    };
+  } catch (error) {
+    return { state: 'unknown', reason: (error as Error).message };
+  }
 }
 
 export function buildFindRunnerDescendantPidCommand(panePid: string, pattern: string): string {
@@ -952,5 +984,5 @@ export async function isRunnerAliveUnderPane(
   runnerId?: string | null,
   options?: ExecOnSlotOptions,
 ): Promise<boolean> {
-  return (await findRunnerDescendantPid(vars, panePid, runnerId, options)).length > 0;
+  return (await probeRunnerDescendantPid(vars, panePid, runnerId, options)).state === 'present';
 }

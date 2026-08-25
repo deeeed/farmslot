@@ -115,6 +115,84 @@ try {
   };
 }
 
+/** Exercise the production argv-relaunch handoff and task-signal acknowledgement. */
+export function runGatewayArgvRelaunch({
+  repo,
+  target,
+  runner,
+  runnerPath,
+  model,
+  prompt,
+  replacementReadySignalPath,
+  signalPath,
+  timeoutMs = 120_000,
+}) {
+  const snippet = `
+import os from 'node:os';
+import { deliverPromptToLiveRunner } from './services/gateway/src/runners/session-reactivation.ts';
+
+const vars = {
+  slotId: 'runner-validate-local',
+  machine: os.hostname(),
+  platform: 'local',
+  host: 'localhost',
+  sshUser: os.userInfo().username,
+  osType: process.platform === 'darwin' ? 'darwin' : 'linux',
+  claudePath: '',
+  codexPath: '',
+  opencodePath: '',
+  cursorPath: ${JSON.stringify(runnerPath)},
+  grokPath: '',
+  dispatchCmd: '',
+  recycleCmd: '',
+  repo: ${JSON.stringify(repo)},
+  session: ${JSON.stringify(target)},
+  slotMode: 'dispatch',
+  slotEnabled: true,
+  sshTarget: \`\${os.userInfo().username}@localhost\`,
+  remoteRepo: ${JSON.stringify(repo)},
+  projectName: '',
+  resourceVars: {},
+};
+
+const result = await deliverPromptToLiveRunner({
+  vars,
+  target: ${JSON.stringify(target)},
+  runnerId: ${JSON.stringify(runner)},
+  model: ${JSON.stringify(model)},
+  prompt: ${JSON.stringify(prompt)},
+  promptMarker: 'ARGV-RELAUNCH',
+  replacementReadySignalPath: ${JSON.stringify(replacementReadySignalPath)},
+  launchAckSignalPath: ${JSON.stringify(signalPath)},
+  timeoutMs: ${timeoutMs},
+  safetyTier: 'full-auto',
+});
+console.log(JSON.stringify(result));
+if (!result.delivered) process.exit(1);
+`;
+
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: timeoutMs + 30_000,
+    env: {
+      ...process.env,
+      FARMSLOT_HOME: process.env.FARMSLOT_HOME ?? `${os.homedir()}/.farmslot-dev`,
+    },
+  });
+  const stdout = result.stdout?.trim() ?? '';
+  const jsonLine = stdout
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .pop();
+  return {
+    result: jsonLine ? JSON.parse(jsonLine) : null,
+    stdout,
+    stderr: result.stderr?.trim() || null,
+    exitCode: result.status,
+  };
+}
+
 /** Read the production runner-native turn state for an exact tmux pane. */
 export function runGatewayTurnState({ repo, target, runner, timeoutMs = 30_000 }) {
   const snippet = `

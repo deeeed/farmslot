@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import {
   buildFindRunnerDescendantPidCommand,
   buildRunnerSessionDiscoveryCommand,
+  findRunnerDescendantPid,
   readPaneProcessStartedAtMs,
   recaptureRunnerSessionMetadataIfMissing,
   resolvePersistedRunnerSessionBinding,
@@ -21,6 +22,13 @@ import {
 import { makeVars } from './test-fixtures.js';
 
 const execFile = promisify(execFileCb);
+
+test('runner descendant PID lookup preserves an indeterminate probe', async () => {
+  await assert.rejects(
+    findRunnerDescendantPid(makeVars(), '', 'cursor'),
+    /Cannot determine runner liveness under pane PID/,
+  );
+});
 
 test('runner descendant scan ignores the diagnostic wrapper after child exit', async () => {
   const wrapper = spawn(

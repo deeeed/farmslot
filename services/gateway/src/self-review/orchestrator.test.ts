@@ -413,7 +413,7 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
         assert.match(options.prompt, /Farmslot fix delivery attempt: 2026-08-04T08:15:00\.000Z$/);
         assert.equal(options.sessionId, 'session-1');
         assert.equal(options.sessionPath, '/sessions/session-1.jsonl');
-        assert.equal(options.priorPromptSendAttempted, true);
+        assert.equal(options.priorPromptSendAttempted, false);
         assert.equal(options.forceBusyPoll, true);
         return { delivered: true, acknowledgement: 'safe-send' };
       },
@@ -425,6 +425,50 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
   assert.equal(checklistTargetRestored, true);
   assert.equal(persistedTarget, 'ff-1:bugfix-restored');
   assert.equal(delivered, true);
+});
+
+test('restart recovery preserves a persisted fix prompt delivery boundary', async () => {
+  const run = {
+    id: 'run-1',
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    metrics: { runner: 'cursor', model: 'cursor-grok-4.6-high-fast' },
+    agentContexts: [],
+  };
+  const result = await resumeSelfReviewFixPromptDelivery(
+    { remoteRepo: '/repo', projectName: 'farmslot-farm' } as never,
+    'run-1',
+    {
+      id: 'self-review-fix',
+      runner: 'cursor',
+      model: 'cursor-grok-4.6-high-fast',
+      taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+      signalFile: 'tasks/run-1/SELF-REVIEW-FIX-SIGNAL.json',
+      target: { session: 'mm-4', window: 'bugfix', target: 'mm-4:bugfix' },
+      attemptStartedAt: '2026-08-04T08:15:00.000Z',
+      promptDeliveryStartedAt: '2026-08-04T08:15:01.000Z',
+    },
+    {
+      getRun: (() => run) as never,
+      resolvePrompt: async () => 'read fix task',
+      resolveRuntimeDir: async () => '.agent',
+      readLaunchAck: async () => null,
+      syncChecklistTarget: async () => {},
+      ensureTarget: async () => 'mm-4:bugfix',
+      persistTarget: async () => {},
+      targetHostsRunner: async () => true,
+      deliver: async (options) => {
+        assert.equal(options.priorPromptSendAttempted, true);
+        return {
+          delivered: false,
+          disposition: 'hold',
+          reason: 'unacknowledged prior send',
+          retryable: false,
+        };
+      },
+    },
+  );
+  assert.deepEqual(result, { status: 'deferred' });
 });
 
 test('restart recovery requests a fresh worker after an unacknowledged retained handoff', async () => {

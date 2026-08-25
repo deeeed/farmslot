@@ -11,10 +11,28 @@ import {
   normalizeExhaustedReviewContinuationsForRun,
   recoveredReviewAlreadyIngested,
   recoveredReviewArtifactScope,
+  recoveredReviewerActionForPromptRecovery,
   reviewerContextIsSettled,
   reviewerContextNeedsRecovery,
 } from './recover-inflight-reviews.js';
 import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
+
+test('retired reviewer recovery requests a fresh launch for the same artifact scope', () => {
+  assert.deepEqual(
+    recoveredReviewerActionForPromptRecovery('retired', {
+      id: 'rev-cursor',
+      artifactScope: 'independent-review-2',
+    }),
+    { kind: 'relaunch', id: 'independent-review-2' },
+  );
+  assert.equal(
+    recoveredReviewerActionForPromptRecovery('indeterminate', {
+      id: 'rev-cursor',
+      artifactScope: 'independent-review-2',
+    }),
+    null,
+  );
+});
 
 test('exhausted review continuations are normalized and persisted once per recovery pass', async (t) => {
   const run = createRun({

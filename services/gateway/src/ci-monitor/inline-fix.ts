@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  type AgentContext,
   type BotComment,
   type CIWatchFixProgress,
   primaryRoleForFlow,
@@ -29,6 +30,7 @@ import {
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
 import {
+  resolveExactTmuxWindowPane,
   respawnTmuxWindowWithCommand,
   shellQuote,
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
@@ -38,10 +40,15 @@ import { ghRequest } from '../integrations/github-client.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import {
+  type LaunchAckSignalSnapshot,
+  readLaunchAckSignalSnapshot,
+} from '../runners/prompt-delivery-evidence.js';
+import {
   normalizeRunner,
   readRunnerTurnState,
   resolvePrimaryWorkerTarget,
   runnerProcessPatternSource,
+  runnerRetainedSessionHandoff,
   type RunnerSendRecoveryContext,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
@@ -92,6 +99,56 @@ export function resolveCiFixRetainedSession(run: Run | undefined) {
   return resolveRunRetainedSessionBinding(run, primaryContext);
 }
 
+export function resolveCiFixReplacementOwner(
+  run: Run | undefined,
+  target: string,
+): AgentContext | null {
+  if (!run) return null;
+  const candidates = (run.agentContexts ?? []).filter((context) => {
+    const stored = context.target;
+    if (!stored || !context.signalFile) return false;
+    return (
+      stored.target === target ||
+      stored.pane === target ||
+      (stored.session && stored.window && `${stored.session}:${stored.window}` === target)
+    );
+  });
+  const primaryRole = primaryRoleForFlow(run.flowType);
+  const followups = candidates
+    .filter(
+      (context) =>
+        context.role !== 'ci-fix' && context.role !== primaryRole && context.role !== 'primary',
+    )
+    .sort((left, right) => Date.parse(right.updatedAt ?? '') - Date.parse(left.updatedAt ?? ''));
+  const activeFollowups = followups.filter(
+    (context) => context.status === 'working' || context.status === 'launching',
+  );
+  if (activeFollowups.length > 1) return null;
+  return (
+    activeFollowups[0] ??
+    followups[0] ??
+    candidates.find((context) => context.role === primaryRole) ??
+    null
+  );
+}
+
+export function resolveRecoverableCiFixContext(run: Run | undefined): AgentContext | null {
+  return (
+    run?.agentContexts?.find(
+      (context) =>
+        context.role === 'ci-fix' &&
+        runnerRetainedSessionHandoff(context.runner) === 'argv-relaunch' &&
+        (context.status === 'launching' || context.status === 'working') &&
+        !!context.promptDeliveryStartedAt &&
+        !!context.deliveryBaselineRef &&
+        !!context.deliveryBaselinePanePid &&
+        !!context.taskFile &&
+        !!context.signalFile &&
+        !!context.target?.target,
+    ) ?? null
+  );
+}
+
 export async function sendCiFixNudge(input: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
   target: string;
@@ -102,8 +159,16 @@ export async function sendCiFixNudge(input: {
   forceBusyPoll?: boolean;
   recovery?: RunnerSendRecoveryContext;
   taskDir?: string;
+  taskFile?: string;
+  launchAckSignalPath?: string;
+  launchAckBaseline?: LaunchAckSignalSnapshot | null;
+  replacementReadySignal?: LaunchAckSignalSnapshot | null;
+  replacementOwner?: AgentContext | null;
+  priorPromptSendAttempted?: boolean;
 }): Promise<{
   sent: boolean;
+  sendAttempted: boolean;
+  retryable: boolean;
   turnToken?: string;
   retainedSession: ReturnType<typeof resolveCiFixRetainedSession>;
 }> {
@@ -116,9 +181,13 @@ export async function sendCiFixNudge(input: {
     console.warn(
       `[ci-monitor] run ${input.run?.id.slice(0, 8) ?? 'unknown'} — skipping CI fix delivery: ${retainedSession.reason}`,
     );
-    return { sent: false, retainedSession };
+    return { sent: false, sendAttempted: false, retryable: false, retainedSession };
   }
   const runtimeDir = input.run ? await resolveProjectRuntimeDir(input.run.project) : undefined;
+  const replacementOwner =
+    input.replacementOwner === undefined
+      ? resolveCiFixReplacementOwner(input.run, input.target)
+      : input.replacementOwner;
   const delivery = await deliverPromptToLiveRunner({
     vars: input.vars,
     target: input.target,
@@ -132,6 +201,13 @@ export async function sendCiFixNudge(input: {
     promptMarker: CI_FIX_CHECKLIST_TARGET.checklist,
     runtimeDir,
     taskDir: input.taskDir,
+    taskFile: input.taskFile,
+    replacementReadySignalPath: replacementOwner?.signalFile,
+    replacementReadySignalAttemptId: replacementOwner?.signalAttemptId,
+    replacementReadySignal: input.replacementReadySignal,
+    launchAckSignalPath: input.launchAckSignalPath,
+    launchAckBaseline: input.launchAckBaseline,
+    priorPromptSendAttempted: input.priorPromptSendAttempted,
     timeoutMs: input.timeoutMs,
     recovery: input.recovery,
     sendLogPrefix: 'ci-monitor',
@@ -139,6 +215,8 @@ export async function sendCiFixNudge(input: {
   });
   return {
     sent: delivery.delivered,
+    sendAttempted: delivery.delivered || delivery.sendAttempted === true,
+    retryable: delivery.delivered || delivery.retryable !== false,
     ...(delivery.delivered && delivery.turnToken ? { turnToken: delivery.turnToken } : {}),
     retainedSession,
   };
@@ -467,10 +545,15 @@ async function attemptInlineCIFix(
   const run = getRun(runId);
   const runner = normalizeRunner(run?.metrics.runner);
   const startedAt = Date.now();
-  const { consecutiveAttempts: attempts, totalAttempts } = mutateDedup(runId, (s) => {
-    s.consecutiveAttempts += 1;
-    s.totalAttempts += 1;
-  });
+  const recoveredContext = resolveRecoverableCiFixContext(run);
+  const counters = recoveredContext
+    ? readDedup(runId)
+    : mutateDedup(runId, (s) => {
+        s.consecutiveAttempts += 1;
+        s.totalAttempts += 1;
+      });
+  const attempts = Math.max(1, counters.consecutiveAttempts);
+  const totalAttempts = Math.max(1, counters.totalAttempts);
   const fixTrigger = triggerForInlineFix(comments, failedChecks);
   updateRunStep(runId, 'ci-watch', {
     detail: `Inline fix loop ${attempts}/${MAX_INLINE_CI_FIX_ATTEMPTS} (total ${totalAttempts}/${MAX_INLINE_CI_FIX_TOTAL})`,
@@ -488,7 +571,7 @@ async function attemptInlineCIFix(
   );
 
   // Get current HEAD before nudge
-  const beforeSha = await getSlotHeadSha(slotId);
+  const beforeSha = recoveredContext?.deliveryBaselineRef ?? (await getSlotHeadSha(slotId));
   if (!beforeSha) {
     console.warn(
       `[ci-monitor] run ${runId.slice(0, 8)} — could not get HEAD sha, skipping inline fix`,
@@ -498,7 +581,13 @@ async function attemptInlineCIFix(
   }
 
   // Write CI-FIX.md to slot
-  const writeResult = await writeCIFixTask(slotId, runId, comments, failedChecks, prNumber, ciRepo);
+  const writeResult = recoveredContext
+    ? {
+        taskDir: path.posix.dirname(recoveredContext.taskFile!),
+        taskPath: recoveredContext.taskFile!,
+        progress: undefined,
+      }
+    : await writeCIFixTask(slotId, runId, comments, failedChecks, prNumber, ciRepo);
   if (!writeResult) {
     console.warn(
       `[ci-monitor] run ${runId.slice(0, 8)} — failed to write CI-FIX.md, skipping inline fix`,
@@ -519,20 +608,31 @@ async function attemptInlineCIFix(
   let vars: Awaited<ReturnType<typeof loadSlotVars>> | undefined;
   try {
     vars = await loadSlotVars(slotId);
-    const signalPath = slotTaskRelPath(vars, writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal);
-    await execOnSlot(vars, `rm -f '${signalPath}'`);
+    const signalPath = recoveredContext?.signalFile
+      ? `${vars.remoteRepo}/${recoveredContext.signalFile}`
+      : slotTaskRelPath(vars, writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal);
     const primaryTarget = await resolveAgentTarget(slotId, { runId, role: 'primary' });
     const roleWindowName =
       run?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
         ?.window ?? null;
-    let workerTarget = await ensureTmuxTargetReadyForRelaunch(
-      vars,
-      primaryTarget.session,
-      primaryTarget.target,
-      roleWindowName,
-      run?.flowType,
-    );
+    let workerTarget =
+      recoveredContext?.target?.target ??
+      (await ensureTmuxTargetReadyForRelaunch(
+        vars,
+        primaryTarget.session,
+        primaryTarget.target,
+        roleWindowName,
+        run?.flowType,
+      ));
     const session = primaryTarget.session;
+    const replacementOwner = resolveCiFixReplacementOwner(getRun(runId) ?? run, workerTarget);
+    const replacementReadySignal = replacementOwner?.signalFile
+      ? await readLaunchAckSignalSnapshot(vars, replacementOwner.signalFile)
+      : null;
+    const launchAckBaseline = recoveredContext
+      ? null
+      : await readLaunchAckSignalSnapshot(vars, signalPath);
+    if (!recoveredContext) await execOnSlot(vars, `rm -f '${signalPath}'`);
     // Send one-liner nudge to worker
     const ciFixTaskFile = taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
     const nudgeCmd = await resolveWorkerDispatchPrompt(run?.project ?? vars.projectName, {
@@ -541,63 +641,122 @@ async function attemptInlineCIFix(
     });
     let retainedSession = resolveCiFixRetainedSession(run);
     let acceptedTurnToken: string | undefined;
-    try {
-      const initialDelivery = await sendCiFixNudge({
-        vars,
-        target: workerTarget,
-        runner,
-        prompt: nudgeCmd,
-        run,
-        taskDir: writeResult.taskDir,
-        recovery: { runId },
-      });
-      retainedSession = initialDelivery.retainedSession;
-      if (retainedSession.reason) {
-        console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${retainedSession.reason}`);
+    let ciPromptSendAttempted = Boolean(recoveredContext?.promptDeliveryStartedAt);
+    let deliveryBaselinePanePid = recoveredContext?.deliveryBaselinePanePid;
+    let deliveryMutationObserved = false;
+    if (recoveredContext && runnerRetainedSessionHandoff(runner) === 'argv-relaunch') {
+      const currentPane = await resolveExactTmuxWindowPane(vars, workerTarget);
+      if (!currentPane) {
+        throw new Error(`Cannot resolve recovered CI fix pane ${workerTarget}`);
       }
-      let sent = initialDelivery.sent;
-      acceptedTurnToken = initialDelivery.turnToken;
-      if (!sent) {
-        // A deferred send never retries on its own, and two immediate probes
-        // lose the race against a warm worker that is still booting — the
-        // exact failure that dropped run 62004dac's lint-fix nudge right
-        // after ci-watch relaunched its worker. Reuse the self-review retry
-        // loop: interval retries over a window, re-resolving the worker pane
-        // before each attempt and bailing if the run goes terminal.
-        console.warn(
-          `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge deferred to ${workerTarget}; retrying on interval`,
-        );
-        const retry = await retryDeferredFixDelivery({
-          runId,
+      deliveryMutationObserved = currentPane.panePid !== recoveredContext.deliveryBaselinePanePid;
+      if (!deliveryMutationObserved) ciPromptSendAttempted = false;
+    }
+    let sent = recoveredContext ? deliveryMutationObserved : false;
+    if (!recoveredContext) {
+      const deliveryBaselinePane = await resolveExactTmuxWindowPane(vars, workerTarget);
+      if (!deliveryBaselinePane) {
+        throw new Error(`Cannot capture the CI fix delivery pane for ${workerTarget}`);
+      }
+      deliveryBaselinePanePid = deliveryBaselinePane.panePid;
+      await upsertAgentContext(runId, 'ci-fix', {
+        status: 'launching',
+        taskFile: writeResult.taskPath,
+        signalFile: taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal),
+        runner,
+        model: run?.metrics.model ?? null,
+        target: {
+          session: primaryTarget.session,
+          window: roleWindowName,
+          pane: null,
           target: workerTarget,
-          send: async (retryTarget) => {
-            const retryDelivery = await sendCiFixNudge({
-              vars: vars!,
-              target: retryTarget,
-              runner,
-              prompt: nudgeCmd,
-              run: getRun(runId) ?? run,
-              taskDir: writeResult.taskDir,
-              forceBusyPoll: true,
-              recovery: { runId },
-            });
-            acceptedTurnToken = retryDelivery.turnToken ?? acceptedTurnToken;
-            return retryDelivery.sent;
-          },
-          rediscover: (storedTarget) =>
-            rediscoverAcceptingWorkerPane(vars!, session, runner, storedTarget),
-          persistTarget: async (adopted, window) => {
-            const corrected = { session, window, pane: null, target: adopted };
-            await upsertAgentContext(runId, 'ci-fix', { target: corrected });
-            const workerRole = primaryRoleForFlow(getRun(runId)?.flowType);
-            if (getRun(runId)?.agentContexts?.some((ctx) => ctx.role === workerRole)) {
-              await upsertAgentContext(runId, workerRole, { target: corrected });
-            }
-          },
-          getRun,
+        },
+        runnerSessionId: retainedSession.binding?.runnerSessionId ?? null,
+        runnerSessionPath: retainedSession.binding?.runnerSessionPath ?? null,
+        promptDeliveryStartedAt: new Date().toISOString(),
+        deliveryBaselineRef: beforeSha,
+        deliveryBaselinePanePid,
+      });
+    }
+    try {
+      if (recoveredContext && deliveryMutationObserved) {
+        console.log(
+          `[ci-monitor] run ${runId.slice(0, 8)} — recovering in-flight CI fix delivery on ${workerTarget}`,
+        );
+      } else {
+        const initialDelivery = await sendCiFixNudge({
+          vars,
+          target: workerTarget,
+          runner,
+          prompt: nudgeCmd,
+          run,
+          taskDir: writeResult.taskDir,
+          taskFile: ciFixTaskFile,
+          launchAckSignalPath: signalPath,
+          launchAckBaseline,
+          replacementReadySignal,
+          replacementOwner,
+          recovery: { runId },
         });
-        sent = retry.sent;
-        workerTarget = retry.target;
+        ciPromptSendAttempted = initialDelivery.sendAttempted;
+        retainedSession = initialDelivery.retainedSession;
+        if (retainedSession.reason) {
+          console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${retainedSession.reason}`);
+        }
+        sent = initialDelivery.sent;
+        let ciDeliveryTerminal = !initialDelivery.retryable;
+        acceptedTurnToken = initialDelivery.turnToken;
+        if (!sent && !ciDeliveryTerminal) {
+          // A deferred send never retries on its own, and two immediate probes
+          // lose the race against a warm worker that is still booting — the
+          // exact failure that dropped run 62004dac's lint-fix nudge right
+          // after ci-watch relaunched its worker. Reuse the self-review retry
+          // loop: interval retries over a window, re-resolving the worker pane
+          // before each attempt and bailing if the run goes terminal.
+          console.warn(
+            `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge deferred to ${workerTarget}; retrying on interval`,
+          );
+          const retry = await retryDeferredFixDelivery({
+            runId,
+            target: workerTarget,
+            send: async (retryTarget) => {
+              const retryDelivery = await sendCiFixNudge({
+                vars: vars!,
+                target: retryTarget,
+                runner,
+                prompt: nudgeCmd,
+                run: getRun(runId) ?? run,
+                taskDir: writeResult.taskDir,
+                taskFile: ciFixTaskFile,
+                launchAckSignalPath: signalPath,
+                launchAckBaseline,
+                replacementReadySignal,
+                replacementOwner,
+                priorPromptSendAttempted: ciPromptSendAttempted,
+                forceBusyPoll: true,
+                recovery: { runId },
+              });
+              ciPromptSendAttempted ||= retryDelivery.sendAttempted;
+              ciDeliveryTerminal ||= !retryDelivery.retryable;
+              acceptedTurnToken = retryDelivery.turnToken ?? acceptedTurnToken;
+              return retryDelivery.sent;
+            },
+            rediscover: (storedTarget) =>
+              rediscoverAcceptingWorkerPane(vars!, session, runner, storedTarget),
+            persistTarget: async (adopted, window) => {
+              const corrected = { session, window, pane: null, target: adopted };
+              await upsertAgentContext(runId, 'ci-fix', { target: corrected });
+              const workerRole = primaryRoleForFlow(getRun(runId)?.flowType);
+              if (getRun(runId)?.agentContexts?.some((ctx) => ctx.role === workerRole)) {
+                await upsertAgentContext(runId, workerRole, { target: corrected });
+              }
+            },
+            getRun,
+            shouldAbort: () => ciDeliveryTerminal,
+          });
+          sent = retry.sent;
+          workerTarget = retry.target;
+        }
       }
       console.log(
         `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge ${sent ? 'sent' : 'NOT delivered (retry window exhausted)'} to ${workerTarget}`,
@@ -651,6 +810,10 @@ async function attemptInlineCIFix(
       target: { session, window: null, pane: null, target: workerTarget },
       runnerSessionId: retainedSession.binding?.runnerSessionId ?? null,
       runnerSessionPath: retainedSession.binding?.runnerSessionPath ?? null,
+      promptDeliveryStartedAt:
+        recoveredContext?.promptDeliveryStartedAt ?? new Date().toISOString(),
+      deliveryBaselineRef: beforeSha,
+      deliveryBaselinePanePid,
     });
     if (ciFixContext) await watchContext(slotId, ciFixContext);
     ciFixContextStarted = true;
@@ -960,9 +1123,10 @@ export async function tryInlineCIFix(
   const run = getRun(runId);
   if (!run) return null;
   const runner = normalizeRunner(run.metrics.runner);
+  const recoveringDelivery = resolveRecoverableCiFixContext(run) !== null;
 
   const dedup = readDedup(runId);
-  if (dedup.totalAttempts >= MAX_INLINE_CI_FIX_TOTAL) {
+  if (!recoveringDelivery && dedup.totalAttempts >= MAX_INLINE_CI_FIX_TOTAL) {
     console.log(
       `[ci-monitor] run ${runId.slice(0, 8)} — total inline CI fix cap (${MAX_INLINE_CI_FIX_TOTAL}) reached`,
     );
@@ -970,7 +1134,7 @@ export async function tryInlineCIFix(
   }
 
   const attempts = dedup.consecutiveAttempts;
-  if (attempts >= MAX_INLINE_CI_FIX_ATTEMPTS) {
+  if (!recoveringDelivery && attempts >= MAX_INLINE_CI_FIX_ATTEMPTS) {
     console.log(
       `[ci-monitor] run ${runId.slice(0, 8)} — ${MAX_INLINE_CI_FIX_ATTEMPTS} consecutive inline fix failures, falling through to decision`,
     );

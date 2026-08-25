@@ -3,9 +3,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { DEFAULT_PROMPT, sleepMs } from '../lib/common.mjs';
+import { DEFAULT_PROMPT, ROOT, shSingleQuote, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
-import { runGatewayRepeatReviewResume } from '../lib/gateway-post-launch.mjs';
+import {
+  runGatewayArgvRelaunch,
+  runGatewayRepeatReviewResume,
+} from '../lib/gateway-post-launch.mjs';
 import { eventName, readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { runLaunchInTmux } from '../lib/launch.mjs';
@@ -14,10 +17,124 @@ import {
   runnerSessionIdForPath,
   waitForSessionBinding,
 } from '../lib/session-attribution.mjs';
-import { capturePane, ensureShellSession, hasSession, killSession, tmux } from '../lib/tmux.mjs';
+import {
+  capturePane,
+  ensureShellSession,
+  hasSession,
+  killSession,
+  sendShellScript,
+  tmux,
+} from '../lib/tmux.mjs';
 import { pollHookRows } from '../lib/wait.mjs';
 
 export const SCENARIO_ID = 'retained-handoff-smoke';
+
+async function runCursorArgvRelaunch({ runnerAdapter, timeoutMs, keepSession, outDir }) {
+  const runner = runnerAdapter.RUNNER_ID;
+  const session = `runner-validate-${runner}-${SCENARIO_ID}-${process.pid}`;
+  fs.mkdirSync(path.join(ROOT, 'temp'), { recursive: true });
+  const tempRoot = fs.mkdtempSync(path.join(ROOT, 'temp', 'cursor-argv-relaunch-'));
+  const replacementReadySignalPath = path.join(tempRoot, 'PRIOR-TASK-SIGNAL.json');
+  const signalPath = path.join(tempRoot, 'SELF-REVIEW-SIGNAL.json');
+  const attemptId = `cursor-argv-relaunch-${process.pid}`;
+  const report = {
+    runner,
+    session,
+    target: null,
+    initialSignal: null,
+    priorPanePid: null,
+    replacementPanePid: null,
+    acknowledgement: null,
+    signal: null,
+    paneTail: null,
+    pass: false,
+    error: null,
+  };
+
+  try {
+    fs.writeFileSync(
+      signalPath,
+      `${JSON.stringify({
+        attemptId: 'baseline',
+        status: 'complete',
+        step: 'old-turn',
+        timestamp: new Date(0).toISOString(),
+      })}\n`,
+    );
+    const shell = ensureShellSession(session, ROOT);
+    report.target = shell.paneId;
+    const initialSignal = JSON.stringify({
+      attemptId: `cursor-retained-initial-${process.pid}`,
+      status: 'complete',
+      step: 'initial-turn-complete',
+      timestamp: new Date().toISOString(),
+    });
+    const initialWriteScript = `require('node:fs').writeFileSync(${JSON.stringify(replacementReadySignalPath)}, ${JSON.stringify(`${initialSignal}\n`)})`;
+    const initialWriteScriptPath = path.join(tempRoot, 'write-prior-task-signal.cjs');
+    fs.writeFileSync(initialWriteScriptPath, `${initialWriteScript}\n`);
+    const initialPrompt =
+      `Run this exact command now, then remain available for follow-up work: ` +
+      `node ${shSingleQuote(initialWriteScriptPath)}`;
+    sendShellScript(shell.paneId, ROOT, [runnerAdapter.buildBusyLaunchCommand(initialPrompt)]);
+    const initialDeadline = Date.now() + timeoutMs;
+    while (!fs.existsSync(replacementReadySignalPath) && Date.now() < initialDeadline) sleepMs(500);
+    if (!fs.existsSync(replacementReadySignalPath)) {
+      throw new Error('Initial retained Cursor turn did not write its terminal task signal');
+    }
+    report.initialSignal = JSON.parse(fs.readFileSync(replacementReadySignalPath, 'utf8'));
+    report.priorPanePid = tmux(['display-message', '-p', '-t', shell.paneId, '#{pane_pid}']);
+    const nextSignal = JSON.stringify({
+      attemptId,
+      status: 'running',
+      step: 'argv-relaunch-accepted',
+      timestamp: new Date().toISOString(),
+    });
+    const writeSignalScript = `require('node:fs').writeFileSync(${JSON.stringify(signalPath)}, ${JSON.stringify(`${nextSignal}\n`)})`;
+    const writeSignalScriptPath = path.join(tempRoot, 'write-next-task-signal.cjs');
+    fs.writeFileSync(writeSignalScriptPath, `${writeSignalScript}\n`);
+    const prompt =
+      `Run this exact command now, then report completion: ` +
+      `node ${shSingleQuote(writeSignalScriptPath)}`;
+    const handoff = runGatewayArgvRelaunch({
+      repo: ROOT,
+      target: shell.paneId,
+      runner,
+      runnerPath: runnerAdapter.binaryPath(),
+      model: 'cursor-grok-4.6-high-fast',
+      prompt,
+      replacementReadySignalPath,
+      signalPath,
+      timeoutMs,
+    });
+    report.acknowledgement = handoff.result?.acknowledgement ?? null;
+    report.signal = JSON.parse(fs.readFileSync(signalPath, 'utf8'));
+    report.replacementPanePid = hasSession(session)
+      ? tmux(['display-message', '-p', '-t', session, '#{pane_pid}'])
+      : null;
+    report.paneTail = hasSession(session) ? capturePane(session, 80) : null;
+    report.pass =
+      handoff.exitCode === 0 &&
+      handoff.result?.delivered === true &&
+      handoff.result?.acknowledgement === 'structured' &&
+      report.initialSignal.status === 'complete' &&
+      report.priorPanePid !== report.replacementPanePid &&
+      report.signal.attemptId === attemptId &&
+      report.signal.status === 'running';
+    if (!report.pass) {
+      throw new Error(
+        handoff.stderr || handoff.stdout || 'Cursor argv relaunch did not produce structured proof',
+      );
+    }
+  } catch (error) {
+    report.error = error?.message || String(error);
+  } finally {
+    if (!keepSession) killSession(session);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+
+  const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
+  return { scenario: SCENARIO_ID, runner, outPath, pass: report.pass, report };
+}
 
 function resolveLiveResetPlan(runner) {
   const snippet = `
@@ -33,6 +150,9 @@ console.log(JSON.stringify(retainedReviewerDeliveryPlan(${JSON.stringify(runner)
 
 export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
+  if (runner === 'cursor') {
+    return runCursorArgvRelaunch({ runnerAdapter, timeoutMs, keepSession, outDir });
+  }
   if (runner !== 'claude' && runner !== 'codex') {
     const report = {
       runner,

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(runners): relaunch argv-first Cursor role windows with the exact retained task and require the task-scoped signal to advance, instead of treating tmux composer injection as accepted.
 - feat(dispatch): `dispatch.candidates` may omit `project` to return every enabled slot after one branch refresh. Candidates include `project`. A 30s TTL skips repeat host probes; `forceRefresh` and FIND_SLOT still live-check.
 - feat(config): `config.templateOptions` accepts `unfiltered` to return the full project catalog, including domain-restricted and shadowed sources, so Command Center can filter locally.
 - fix(publication): do not treat markdown headings as task-local paths when sanitizing PR bodies. A heading containing `screenshots/` was deleted, so published descriptions lost a required section title.

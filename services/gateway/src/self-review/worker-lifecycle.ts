@@ -5,7 +5,7 @@ import { agentRoleWindow, isReviewerWindowName, primaryRoleForFlow } from '@farm
 import { resolveAgentTarget } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { firstWindowTarget, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import { ensureTmuxWindow, firstWindowTarget, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
   readRunnerTurnState,
   resolvePrimaryWorkerTarget,
@@ -73,13 +73,20 @@ export async function ensureTmuxTargetReadyForRelaunch(
       ),
     )
   ).stdout.trim();
-  let recreateWindow = windowPart;
+  let recreateWindow = windowPart || recreateRoleWindowName(roleWindowName, flowType);
   if (paneReady) {
+    // A bare session target resolves to whichever window is active. Recovery
+    // must never promote an active reviewer window to the primary worker.
+    if (!windowPart) {
+      console.warn(
+        `[self-review] bare tmux target ${target} has no worker identity; recreating role window ${recreateWindow || '(first window)'}`,
+      );
+    }
     // Legacy dispatches stored numeric targets like mm-2:1.1 while the logical
     // role window was `dev`. Infra windows (metro-*) can take over that index
     // after the worker pane exits, so never treat a live pane at a numeric
     // index as the worker unless the window name still matches.
-    if (/^\d+$/.test(windowPart)) {
+    else if (/^\d+$/.test(windowPart)) {
       const windowName = (
         await execOnSlot(
           vars,
@@ -106,15 +113,10 @@ export async function ensureTmuxTargetReadyForRelaunch(
   // instead of the non-existent `${session}:0` the legacy fallback returned.
   if (!recreateWindow || recreateWindow === '0') return await firstWindowTarget(vars, session);
 
-  const created = await execOnSlot(
-    vars,
-    tmuxShellSnippet(
-      `new-window -t ${shellQuote(session)} -n ${shellQuote(recreateWindow)} -c ${shellQuote(vars.remoteRepo)} -d 2>/dev/null`,
-    ),
-  );
-  if (created.exitCode !== 0) {
+  const ensured = await ensureTmuxWindow(vars, session, recreateWindow);
+  if (ensured.windows.length !== 1) {
     throw new Error(
-      `Cannot relaunch worker because tmux target ${target} is missing: ${created.stderr || created.stdout || `exit ${created.exitCode}`}`,
+      `Cannot relaunch worker because ${session}:${recreateWindow} resolves to ${ensured.windows.length} exact windows`,
     );
   }
   return `${session}:${recreateWindow}`;

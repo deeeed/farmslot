@@ -1024,13 +1024,15 @@ function rearmPublicationReviewRecovery(
         if (settled) return;
         if (
           recoveryResult.recoveredIds.length === 0 &&
+          (recoveryResult.relaunchIds?.length ?? 0) === 0 &&
           recoveryResult.terminalErrors.length === 0
         ) {
           failures = 0;
           schedule(latest);
           return;
         }
-        state.replayPending = recoveryResult.recoveredIds.length > 0;
+        state.replayPending =
+          recoveryResult.recoveredIds.length > 0 || (recoveryResult.relaunchIds?.length ?? 0) > 0;
         if (recoveryResult.terminalErrors.length > 0) {
           const terminalMessage = recoveryResult.terminalErrors
             .map((error) => error.message)
