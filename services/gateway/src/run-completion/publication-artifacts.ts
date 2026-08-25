@@ -542,11 +542,15 @@ export function sanitizePRBody(body: string): string {
   );
   const localArtifactPath = new RegExp(LOCAL_ARTIFACT_PATH_SOURCE, 'i');
   const generatedCaptionLine = /<tr\b[^>]*>.*<strong\b[^>]*>/i;
+  // ATX headings are section titles, not task-local paths. The screenshots/
+  // prefix would otherwise delete a heading that contains that word.
+  const markdownHeadingLine = /^\s{0,3}#{1,6}(?:\s|$)/;
   // Plain local-reference lines have no publishable value. Generated evidence
   // captions and lines containing hosted evidence keep their surrounding text.
   const originalLines = result.split('\n');
   result = originalLines
     .map((line) => {
+      if (markdownHeadingLine.test(line)) return line;
       if (!localArtifactPath.test(line)) return line;
       if (!protectedLinks.hasProtectedLink(line) && !generatedCaptionLine.test(line)) return '';
 

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(publication): do not treat markdown headings as task-local paths when sanitizing PR bodies. A heading containing `screenshots/` was deleted, so published descriptions lost a required section title.
 - Isolated Codex observability install now ships `scripts/lib/toml-scan.mjs` with the installer support bundle.
 - fix(gateway): self-review recovery delivers the checklist prompt to interactive argv-first runners (Cursor). Recovery used to return `unsupported` and kill the live pane. Cold launch stays argv-only so a working Cursor turn is not raced by a second tmux send.
 - fix(gateway): argv task prompts inject a quoted `{task_prompt}` next to the runner invocation instead of after trailing shell.
