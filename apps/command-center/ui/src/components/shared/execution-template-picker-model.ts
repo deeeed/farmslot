@@ -142,6 +142,12 @@ export function pickCompatibleExecutionTemplateId(input: {
   if (matchingDefault && input.options.some((option) => option.id === matchingDefault.templateId)) {
     return matchingDefault.templateId;
   }
+  const exactDomain = domain
+    ? input.options.filter((option) => optionDomains(option).includes(domain))
+    : [];
+  if (exactDomain.length === 1) return exactDomain[0]?.id ?? '';
+  const general = input.options.filter((option) => optionDomains(option).length === 0);
+  if (general.length === 1) return general[0]?.id ?? '';
   return input.options.length === 1 ? (input.options[0]?.id ?? '') : '';
 }
 
@@ -150,7 +156,11 @@ export function deriveExecutionTemplatePickerView(
   selectedId: string,
   filters: ExecutionTemplatePickerFilters,
 ): ExecutionTemplatePickerView {
-  const visible = catalog.options.filter((option) => optionMatchesPickerFilters(option, filters));
+  const matched = catalog.options.filter((option) => optionMatchesPickerFilters(option, filters));
+  const unshadowedIds = new Set(
+    matched.filter((option) => !option.shadowedBy).map((option) => option.id),
+  );
+  const visible = matched.filter((option) => !option.shadowedBy || !unshadowedIds.has(option.id));
   const rows = visible.map((option) => ({
     option,
     domains: optionDomains(option),

@@ -293,6 +293,25 @@ platforms: [ios]
     });
     assert.equal(snapshot.entry.sourceId, 'package:canonical');
     assert.match(snapshot.markdown, /Validate the canonical journey/);
+
+    const unfiltered = configuredExecutionTemplateOptions(projectVars, {
+      unfiltered: true,
+      flow: 'fix-bug',
+    });
+    assert.ok(
+      unfiltered.options.some(
+        (candidate) =>
+          candidate.id === 'fix-bug/perps-mobile' && candidate.sourceId === 'package:canonical',
+      ),
+    );
+    assert.ok(
+      unfiltered.options.some(
+        (candidate) =>
+          candidate.id === 'fix-bug/perps-mobile' &&
+          candidate.sourceId === 'team:perps' &&
+          !candidate.shadowedBy,
+      ),
+    );
   });
 });
 

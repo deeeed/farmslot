@@ -137,6 +137,7 @@ function catalogOption(
     ...(entry.description ? { description: entry.description } : {}),
     sourceKind: entry.sourceKind,
     ...(source?.domains && source.domains.length > 0 ? { sourceDomains: [...source.domains] } : {}),
+    ...(entry.shadowedBy ? { shadowedBy: entry.shadowedBy } : {}),
   };
 }
 
@@ -175,7 +176,7 @@ export function configuredExecutionTemplateOptions(
   if (query.unfiltered) {
     const listed = listExecutionTemplates({
       sources,
-      includeShadowed: false,
+      includeShadowed: true,
       ...(query.flow ? { flow: query.flow } : {}),
     });
     return {

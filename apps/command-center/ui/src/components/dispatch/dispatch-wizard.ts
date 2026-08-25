@@ -129,7 +129,11 @@ export class DispatchWizard extends DispatchWizardState {
     // current snapshot on screen and rescore in the background.
     const scoringTickers = ['_ticketId', '_normalizedTicket'];
     if (scoringTickers.some((k) => changed.has(k))) {
-      void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
+      if (this._scoringFetchTimer) clearTimeout(this._scoringFetchTimer);
+      this._scoringFetchTimer = setTimeout(() => {
+        this._scoringFetchTimer = null;
+        void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
+      }, 250);
     }
     if (changed.has('_comparePickerOpen') && this._comparePickerOpen) {
       void this.updateComplete.then(() => {
@@ -171,6 +175,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._unsubConn?.();
     this._unsubState?.();
     if (this._matchTimer) clearTimeout(this._matchTimer);
+    if (this._scoringFetchTimer) clearTimeout(this._scoringFetchTimer);
   }
 
   private _syncFleet(s: AppState) {
@@ -474,7 +479,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._syncFleet(getState());
     this._applyVisibleCandidates('');
     void this._fetchTemplateOptions();
-    if (this._allCandidates.length === 0) void this._fetchCandidates();
+    void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
     this._checkActiveRunConflict();
     if (this._projectConfigs.length === 0) {
       void this._loadProjectConfigs();
@@ -1149,9 +1154,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._assignFlowType(flowType);
     this._autoFlowType = false;
     this._applyVisibleCatalog();
-    if (this._ticketId.trim()) {
-      void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
-    }
+    void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
   }
 
   private _assignFlowType(flowType: FlowType): void {

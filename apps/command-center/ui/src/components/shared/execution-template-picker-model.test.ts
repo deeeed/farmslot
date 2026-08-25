@@ -199,4 +199,46 @@ test('a full catalog filters locally by domain, mode, and flow', () => {
     }),
     'fix-bug/default',
   );
+  assert.equal(
+    pickCompatibleExecutionTemplateId({
+      options: [generalOption, perpsSourced],
+      flow: 'fix-bug',
+      runMode: 'autonomous',
+      domain: 'perps',
+    }),
+    'fix-bug/perps-mobile',
+  );
+});
+
+test('a full catalog resurrects a shadowed domain source after local domain filter', () => {
+  const workspace = option({
+    id: 'fix-bug/perps-mobile',
+    sourceId: 'team:perps',
+    labels: ['domain:perps'],
+    sourceDomains: ['perps'],
+  });
+  const shadowedPackage = option({
+    id: 'fix-bug/perps-mobile',
+    sourceId: 'package:canonical',
+    shadowedBy: 'team:perps',
+  });
+  const full = catalog({ options: [workspace, shadowedPackage], availableDomains: ['perps'] });
+  const general = deriveExecutionTemplatePickerView(full, '', {
+    domain: '',
+    runMode: 'autonomous',
+    flow: 'fix-bug',
+  });
+  assert.deepEqual(
+    general.rows.map((row) => row.option.sourceId),
+    ['package:canonical'],
+  );
+  const perps = deriveExecutionTemplatePickerView(full, '', {
+    domain: 'perps',
+    runMode: 'autonomous',
+    flow: 'fix-bug',
+  });
+  assert.deepEqual(
+    perps.rows.map((row) => row.option.sourceId),
+    ['team:perps'],
+  );
 });

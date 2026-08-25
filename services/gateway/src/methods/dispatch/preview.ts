@@ -718,6 +718,30 @@ export function candidateIneligibilityReason(
   });
 }
 
+export async function resolveDispatchScoringByProject(
+  params: DispatchCandidatesParams,
+  fleetSlots: SlotStatus[],
+  projectSlots: SlotStatus[],
+): Promise<Map<string, { targetBranch?: string; familyId?: string }>> {
+  const projects = params.project
+    ? [params.project]
+    : [...new Set(projectSlots.map((slot) => slot.project))];
+  const table = new Map<string, { targetBranch?: string; familyId?: string }>();
+  for (const project of projects) {
+    const targetBranch = await resolveDispatchTargetBranch(
+      { ...params, project },
+      {
+        fleetSlots,
+        projectSlots: projectSlots.filter((slot) => slot.project === project),
+        logPrefix: 'dispatch.candidates',
+      },
+    );
+    const family = resolveDispatchFamilyContext({ ...params, project, targetBranch });
+    table.set(project, { targetBranch, familyId: family.familyId });
+  }
+  return table;
+}
+
 export async function dispatchCandidates(
   params: DispatchCandidatesParams,
 ): Promise<DispatchCandidatesResult> {
@@ -730,21 +754,10 @@ export async function dispatchCandidates(
   const freeSlots = projectSlots.filter(isFreeSlot);
   if (freeSlots.length > 0) await refreshBranches(freeSlots, refreshOpts);
 
-  // Resolve targetBranch server-side when the wizard lacks PR-list context, then reuse the
-  // same hint for scoring, nudge eligibility, and follow-up family inference.
   const isPrFlow = params.flowType === 'pr-complete' || params.flowType === 'review-pr';
-  const resolvedTargetBranch = await resolveDispatchTargetBranch(params, {
-    fleetSlots: fleet.slots,
-    projectSlots,
-    logPrefix: 'dispatch.candidates',
-  });
+  const scoringByProject = await resolveDispatchScoringByProject(params, fleet.slots, projectSlots);
   // Explicit prepare only — profile-fit is advisory on dispatch.preview, not candidates.
   const requiredPrepareProfile = params.prepareProfile || null;
-
-  const familyContext = resolveDispatchFamilyContext({
-    ...params,
-    targetBranch: resolvedTargetBranch,
-  });
 
   // PR-bound calls ALSO get the busy-slot branch-affinity nudge slice so the wizard can
   // surface "REUSE WORKER" rows. Refresh busy-slot branches first — without this, a slot
@@ -759,20 +772,20 @@ export async function dispatchCandidates(
   // branch to land there. Callers that need a guaranteed-fresh snapshot pass
   // `forceRefresh: true` to `loadFleetStatus`.
   let nudgeMetaBySlot: Map<string, BranchAffinityNudgeCandidate> = new Map();
-  if (isPrFlow && params.ticketOrPr && resolvedTargetBranch) {
+  const nudgeProjects = [...scoringByProject.entries()].filter(
+    ([, scoring]) => scoring.targetBranch,
+  );
+  if (isPrFlow && params.ticketOrPr && nudgeProjects.length > 0) {
     const busyMatching = selectBranchAffinityRefreshSlots(projectSlots);
     if (busyMatching.length > 0) await refreshBranches(busyMatching, refreshOpts);
-    const nudgeProjects = params.project
-      ? [params.project]
-      : [...new Set(projectSlots.map((slot) => slot.project))];
     const candidatesList = (
       await Promise.all(
-        nudgeProjects.map((project) =>
+        nudgeProjects.map(([project, scoring]) =>
           collectBranchAffinityNudgeCandidates(fleet.slots, project, params.ticketOrPr!, {
-            familyId: familyContext.familyId ?? null,
+            familyId: scoring.familyId ?? null,
             lane: params.lane ?? null,
             variant: params.variant ?? null,
-            targetBranch: resolvedTargetBranch ?? null,
+            targetBranch: scoring.targetBranch ?? null,
             requiredPrepareProfile,
           }),
         ),
@@ -794,11 +807,12 @@ export async function dispatchCandidates(
 
   const candidates = projectSlots
     .map((s) => {
+      const scoring = scoringByProject.get(s.project) ?? {};
       const nudge = nudgeMetaBySlot.get(s.slot);
       const pressureAdmission = pressureDecisions.get(s.machine);
       const baseIneligibleReason = candidateIneligibilityReason(s, fleet.slots, {
         isNudgeRow: Boolean(nudge),
-        targetBranch: resolvedTargetBranch,
+        targetBranch: scoring.targetBranch,
         requiredPrepareProfile,
       });
       // A pressure rejection gates every dispatchable row, fresh AND nudge.
@@ -824,8 +838,8 @@ export async function dispatchCandidates(
         slotId: s.slot,
         project: s.project,
         score: isFreeSlot(s)
-          ? slotScore(s, resolvedTargetBranch, {
-              familyId: familyContext.familyId,
+          ? slotScore(s, scoring.targetBranch, {
+              familyId: scoring.familyId,
               projectConfigs,
             })
           : 999,
@@ -835,9 +849,7 @@ export async function dispatchCandidates(
         onMain: !isDispatchStaleBranch(s, projectConfigs),
         hostLoad: s.hostLoad,
         free: isFreeSlot(s),
-        familyAffinity: Boolean(
-          familyContext.familyId && s.currentFamilyId === familyContext.familyId,
-        ),
+        familyAffinity: Boolean(scoring.familyId && s.currentFamilyId === scoring.familyId),
         ...(ineligibleReason ? { ineligibleReason } : {}),
         ...(ineligibilitySource ? { ineligibilitySource } : {}),
         ...(pressureAdmission ? { pressureAdmission } : {}),

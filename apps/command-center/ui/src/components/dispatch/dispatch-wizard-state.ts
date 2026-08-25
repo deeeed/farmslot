@@ -130,6 +130,7 @@ export abstract class DispatchWizardState extends LitElement {
   _unsubState?: () => void;
   _unsubConn?: () => void;
   _matchTimer: ReturnType<typeof setTimeout> | null = null;
+  _scoringFetchTimer: ReturnType<typeof setTimeout> | null = null;
   /** Last machine filter applied to candidate fetch; used to detect filter flips while the project is unchanged. */
   _lastFetchMachines = '';
   /** Last targetBranch passed to dispatch.candidates; re-fetches when pr.list hydrates and flips this from undefined to a branch. */

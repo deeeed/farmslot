@@ -44,6 +44,7 @@ import {
   classifyRefreshSlotAction,
   findAffinitySlot,
   PoolConfigError,
+  resetBranchRefreshTimestampsForTests,
   resolveDispatchFamilyContext,
   resolveDispatchPreviewFromFleet,
   resolveDispatchTargetBranch,
@@ -1223,6 +1224,27 @@ test('resolveDispatchFamilyContext leaves standalone PR follow-ups unlinked when
   assert.deepEqual(context, {});
 });
 
+test('resolveDispatchFamilyContext without project skips lineage even when a parent exists', () => {
+  const parent = {
+    id: 'run-root',
+    project: 'metamask-core-farm',
+    flowType: 'dev',
+    ticketOrPr: 'TAT-3182',
+    prNumber: 9009,
+    familyId: 'family-root',
+    createdAt: '2026-06-01T00:00:00Z',
+    updatedAt: '2026-06-02T00:00:00Z',
+  } as unknown as Run;
+  const context = resolveDispatchFamilyContext(
+    {
+      flowType: 'pr-complete',
+      ticketOrPr: 'https://github.com/MetaMask/core/pull/9009',
+    },
+    [parent],
+  );
+  assert.deepEqual(context, {});
+});
+
 test('resolveDispatchFamilyContext infers PR-complete lineage from prior dev PR number', () => {
   const parent = {
     id: 'run-root',
@@ -1909,6 +1931,7 @@ test('selectDispatchCandidateSlots omits project to return every enabled farm', 
 });
 
 test('slotsNeedingBranchRefresh skips hosts probed inside the TTL window', () => {
+  resetBranchRefreshTimestampsForTests();
   const a = makeSlot({ slot: 'macpro-core-1' });
   const b = makeSlot({ slot: 'macpro-core-2' });
   const last = new Map<string, number>([['macpro-core-1', 1_000]]);

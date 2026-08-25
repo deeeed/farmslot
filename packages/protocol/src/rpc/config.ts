@@ -86,11 +86,10 @@ export interface ConfigTemplateOptionsParams {
   domain?: string;
   executionTemplateId?: string;
   /**
-   * Return the full project catalog (every flow, domain, and mode, including
-   * domain-restricted sources). Clients filter locally. `flowType` may be
-   * omitted; when set it still limits worker-template options to that flow
-   * while the execution-template catalog stays unfiltered unless `flowType`
-   * is also used as a catalog flow hint.
+   * Return the full project catalog (every domain and mode, including
+   * domain-restricted and shadowed sources). Clients filter locally.
+   * `flowType` may be omitted. When set, worker-template options and the
+   * execution-template catalog are both limited to that flow.
    */
   unfiltered?: boolean;
 }

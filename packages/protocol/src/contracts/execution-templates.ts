@@ -77,6 +77,8 @@ export interface ExecutionTemplateCatalogOption extends ExecutionTemplateReferen
    * full catalog locally use this together with `labels`.
    */
   sourceDomains?: string[];
+  /** Present on unfiltered catalogs when a higher-precedence source claimed this id. */
+  shadowedBy?: string;
 }
 
 export interface UnavailableExecutionTemplateSource {
@@ -106,6 +108,6 @@ export interface ExecutionTemplateOptions {
   unavailableSources: UnavailableExecutionTemplateSource[];
   /** Sources dropped by the domain gate for this query — never silently hidden. */
   filteredSources: DomainRestrictedExecutionTemplateSource[];
-  /** Configured selection defaults from the project pack. Present on full catalogs. */
+  /** Configured selection defaults from the project pack, when any exist. */
   defaults?: ExecutionTemplateDefault[];
 }
