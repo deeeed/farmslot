@@ -60,7 +60,11 @@ export function transferProgressExtendsRequest(runId: string, payload: unknown):
   return progress.runId === runId && progress.state === 'running';
 }
 
-/** Idle RPC window for methods that copy slot artifacts while `file.transfer.progress` is live. */
+/**
+ * Idle RPC window for methods that copy slot artifacts while `file.transfer.progress` is live.
+ * The UI uses the fixed base window because each matching progress event restarts it; the gateway
+ * separately scales its transport timeout from the known transfer size.
+ */
 export function transferBoundRequestOptions(runId: string): GatewayRequestOptions {
   return {
     timeout: FILE_TRANSFER_IDLE_TIMEOUT_MS,

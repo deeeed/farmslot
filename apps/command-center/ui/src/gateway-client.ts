@@ -424,7 +424,9 @@ export class GatewayClient {
         timeoutMs: timeout,
         onTimeout: () => {
           finish(() => {
-            const suffix = options.extendOnEvent ? ' without progress' : '';
+            const suffix = options.extendOnEvent
+              ? ` without a matching ${options.extendOnEvent} event`
+              : '';
             reject(new Error(`Request ${method} timed out after ${timeout}ms${suffix}`));
           });
         },

@@ -85,15 +85,30 @@ test('extend restarts the idle window so in-flight transfers do not time out', (
 });
 
 test('clear prevents a later timeout', () => {
+  let now = 0;
+  const timers: FakeTimer[] = [];
   let fired = 0;
   const handle = createIdleRequestTimeout({
     timeoutMs: 5,
     onTimeout: () => {
       fired += 1;
     },
+    setTimer: (fn, ms) => {
+      const timer: FakeTimer = { due: now + ms, fn, cleared: false };
+      timers.push(timer);
+      return timer as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimer: (id) => {
+      (id as unknown as FakeTimer).cleared = true;
+    },
   });
   handle.clear();
   handle.extend();
+
+  now = 5;
+  for (const timer of timers) {
+    if (!timer.cleared && timer.due <= now) timer.fn();
+  }
   assert.equal(fired, 0);
 });
 
