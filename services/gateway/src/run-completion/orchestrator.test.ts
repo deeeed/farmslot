@@ -237,6 +237,13 @@ test('sanitizePRBody keeps markdown headings that contain screenshots/', () => {
   assert.match(sanitized, /^## \*\*Description\*\*$/m);
   assert.match(sanitized, /^## \*\*Pre-merge author checklist\*\*$/m);
   assert.doesNotMatch(sanitized, /artifacts\/screenshots\/after\.png/);
+  assert.deepEqual(localPrBodyPathResidues(sanitized), []);
+
+  const headingWithPath = sanitizePRBody('## Evidence artifacts/screenshots/after.png\nKeep this.');
+  assert.match(headingWithPath, /^## Evidence\s*$/m);
+  assert.match(headingWithPath, /^Keep this\.$/m);
+  assert.doesNotMatch(headingWithPath, /artifacts\/screenshots\/after\.png/);
+  assert.deepEqual(localPrBodyPathResidues(headingWithPath), []);
 });
 
 test('sanitizePRBody preserves uploaded evidence links with local-looking labels', () => {
