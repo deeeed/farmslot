@@ -217,6 +217,35 @@ test('localPrBodyPathResidues flags local media paths before approved publicatio
   );
 });
 
+test('sanitizePRBody keeps markdown headings that contain screenshots/', () => {
+  const body = [
+    '## **Description**',
+    '',
+    'Fix the toggle.',
+    '',
+    '## **Screenshots/Recordings**',
+    '',
+    'See artifacts/screenshots/after.png',
+    '',
+    '## **Pre-merge author checklist**',
+    '',
+    '- [x] I completed the template',
+  ].join('\n');
+
+  const sanitized = sanitizePRBody(body);
+  assert.match(sanitized, /^## \*\*Screenshots\/Recordings\*\*$/m);
+  assert.match(sanitized, /^## \*\*Description\*\*$/m);
+  assert.match(sanitized, /^## \*\*Pre-merge author checklist\*\*$/m);
+  assert.doesNotMatch(sanitized, /artifacts\/screenshots\/after\.png/);
+  assert.deepEqual(localPrBodyPathResidues(sanitized), []);
+
+  const headingWithPath = sanitizePRBody('## Evidence artifacts/screenshots/after.png\nKeep this.');
+  assert.match(headingWithPath, /^## Evidence\s*$/m);
+  assert.match(headingWithPath, /^Keep this\.$/m);
+  assert.doesNotMatch(headingWithPath, /artifacts\/screenshots\/after\.png/);
+  assert.deepEqual(localPrBodyPathResidues(headingWithPath), []);
+});
+
 test('sanitizePRBody preserves uploaded evidence links with local-looking labels', () => {
   const hostedAnchor =
     '<a href="https://cdn.example/reviews/1/before.mp4">recipe-runs/inherited/before.mp4</a>';

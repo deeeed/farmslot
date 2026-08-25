@@ -542,13 +542,25 @@ export function sanitizePRBody(body: string): string {
   );
   const localArtifactPath = new RegExp(LOCAL_ARTIFACT_PATH_SOURCE, 'i');
   const generatedCaptionLine = /<tr\b[^>]*>.*<strong\b[^>]*>/i;
+  // ATX headings are section titles, not disposable local-path lines. Keep the
+  // heading and still run in-place path cleanup so an embedded artifact path
+  // cannot leak. `## **Screenshots/Recordings**` stays intact because `**` is
+  // outside the cleaner boundary class.
+  const markdownHeadingLine = /^\s{0,3}#{1,6}(?:\s|$)/;
   // Plain local-reference lines have no publishable value. Generated evidence
   // captions and lines containing hosted evidence keep their surrounding text.
   const originalLines = result.split('\n');
   result = originalLines
     .map((line) => {
       if (!localArtifactPath.test(line)) return line;
-      if (!protectedLinks.hasProtectedLink(line) && !generatedCaptionLine.test(line)) return '';
+      const isHeading = markdownHeadingLine.test(line);
+      if (
+        !isHeading &&
+        !protectedLinks.hasProtectedLink(line) &&
+        !generatedCaptionLine.test(line)
+      ) {
+        return '';
+      }
 
       let cleaned = line;
       cleaned = cleaned.replace(
