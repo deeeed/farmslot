@@ -200,7 +200,7 @@ export class DispatchWizard extends DispatchWizardState {
       this._syncSelectedAppForProject(this._project);
       this._applyVisibleCandidates();
       void this._fetchTemplateOptions();
-      if (this._allCandidates.length === 0) void this._fetchCandidates();
+      void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
     }
     // Clear project if it's no longer in the filtered list. Skip when the
     // fleet hasn't produced any projects yet (initial mount before fleet

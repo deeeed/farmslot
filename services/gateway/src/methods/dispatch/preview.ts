@@ -726,20 +726,21 @@ export async function resolveDispatchScoringByProject(
   const projects = params.project
     ? [params.project]
     : [...new Set(projectSlots.map((slot) => slot.project))];
-  const table = new Map<string, { targetBranch?: string; familyId?: string }>();
-  for (const project of projects) {
-    const targetBranch = await resolveDispatchTargetBranch(
-      { ...params, project },
-      {
-        fleetSlots,
-        projectSlots: projectSlots.filter((slot) => slot.project === project),
-        logPrefix: 'dispatch.candidates',
-      },
-    );
-    const family = resolveDispatchFamilyContext({ ...params, project, targetBranch });
-    table.set(project, { targetBranch, familyId: family.familyId });
-  }
-  return table;
+  const entries = await Promise.all(
+    projects.map(async (project) => {
+      const targetBranch = await resolveDispatchTargetBranch(
+        { ...params, project },
+        {
+          fleetSlots,
+          projectSlots: projectSlots.filter((slot) => slot.project === project),
+          logPrefix: 'dispatch.candidates',
+        },
+      );
+      const family = resolveDispatchFamilyContext({ ...params, project, targetBranch });
+      return [project, { targetBranch, familyId: family.familyId }] as const;
+    }),
+  );
+  return new Map(entries);
 }
 
 export async function dispatchCandidates(

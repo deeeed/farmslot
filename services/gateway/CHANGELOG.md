@@ -5,7 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - feat(dispatch): `dispatch.candidates` may omit `project` to return every enabled slot after one branch refresh. Candidates include `project`. A 30s TTL skips repeat host probes; `forceRefresh` and FIND_SLOT still live-check.
-- feat(config): `config.templateOptions` accepts `unfiltered` to return the full project catalog, including domain-restricted sources, so Command Center can filter locally.
+- feat(config): `config.templateOptions` accepts `unfiltered` to return the full project catalog, including domain-restricted and shadowed sources, so Command Center can filter locally.
 - fix(publication): do not treat markdown headings as task-local paths when sanitizing PR bodies. A heading containing `screenshots/` was deleted, so published descriptions lost a required section title.
 - Isolated Codex observability install now ships `scripts/lib/toml-scan.mjs` with the installer support bundle.
 - fix(gateway): self-review recovery delivers the checklist prompt to interactive argv-first runners (Cursor). Recovery used to return `unsupported` and kill the live pane. Cold launch stays argv-only so a working Cursor turn is not raced by a second tmux send.
