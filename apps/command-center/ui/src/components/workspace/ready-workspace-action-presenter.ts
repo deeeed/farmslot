@@ -11,6 +11,7 @@ import type {
 import { buildRunResolveDecisionParams, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { transferBoundRequestOptions } from '../../gateway-request-timeout.js';
 import {
   buildArtifactUrlResolver,
   rewriteMarkdownArtifactUrls,
@@ -716,12 +717,16 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._actionMessage = 'Refreshing publish package…';
     this._actionTone = '';
     try {
-      const result = (await gateway.request(Methods.RUN_REFRESH_PUBLISH_PACKAGE, {
-        runId: this.runId,
-        decisionId: this.decision.id,
-        selectedEvidenceKeys: this._selectedEvidenceKeysForSubmit(payload),
-        publicationTarget: this._publicationTarget,
-      })) as ReadyRefreshPublishPackageResult;
+      const result = (await gateway.request(
+        Methods.RUN_REFRESH_PUBLISH_PACKAGE,
+        {
+          runId: this.runId,
+          decisionId: this.decision.id,
+          selectedEvidenceKeys: this._selectedEvidenceKeysForSubmit(payload),
+          publicationTarget: this._publicationTarget,
+        },
+        transferBoundRequestOptions(this.runId),
+      )) as ReadyRefreshPublishPackageResult;
       const nextSelection = refreshedReadyEvidenceSelection(result);
       if (nextSelection) this._selectedEvidenceKeys = nextSelection;
       const feedback = readyRefreshPublishPackageFeedback(result);
