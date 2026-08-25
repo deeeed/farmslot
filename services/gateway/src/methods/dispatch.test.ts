@@ -50,6 +50,8 @@ import {
   resolvePreviewModel,
   selectBranchAffinityEligibleSlots,
   selectBranchAffinityRefreshSlots,
+  selectDispatchCandidateSlots,
+  slotsNeedingBranchRefresh,
 } from './dispatch.js';
 
 function makeSlot(overrides: Partial<SlotStatus> = {}): SlotStatus {
@@ -1882,6 +1884,44 @@ test('classifyRefreshSlotAction refreshes local slot regardless of node connecti
     () => undefined,
   );
   assert.equal(action, 'refresh');
+});
+
+test('selectDispatchCandidateSlots omits project to return every enabled farm', () => {
+  const core = makeSlot({ slot: 'macpro-core-1', project: 'metamask-core-farm' });
+  const ext = makeSlot({ slot: 'macpro-ext-1', project: 'metamask-extension-farm' });
+  const disabled = makeSlot({
+    slot: 'macpro-core-off',
+    project: 'metamask-core-farm',
+    lifecycle: 'disabled',
+  });
+  const all = selectDispatchCandidateSlots([core, ext, disabled], {});
+  assert.deepEqual(
+    all.map((slot) => slot.slot),
+    ['macpro-core-1', 'macpro-ext-1'],
+  );
+  const oneFarm = selectDispatchCandidateSlots([core, ext, disabled], {
+    project: 'metamask-core-farm',
+  });
+  assert.deepEqual(
+    oneFarm.map((slot) => slot.slot),
+    ['macpro-core-1'],
+  );
+});
+
+test('slotsNeedingBranchRefresh skips hosts probed inside the TTL window', () => {
+  const a = makeSlot({ slot: 'macpro-core-1' });
+  const b = makeSlot({ slot: 'macpro-core-2' });
+  const last = new Map<string, number>([['macpro-core-1', 1_000]]);
+  const stale = slotsNeedingBranchRefresh([a, b], last, 1_000 + 30_000 - 1, 30_000);
+  assert.deepEqual(
+    stale.map((slot) => slot.slot),
+    ['macpro-core-2'],
+  );
+  const both = slotsNeedingBranchRefresh([a, b], last, 1_000 + 30_000, 30_000);
+  assert.deepEqual(
+    both.map((slot) => slot.slot),
+    ['macpro-core-1', 'macpro-core-2'],
+  );
 });
 
 test('resolveRunnerLaunchBlockers rejects usage-limit with typed error carrying account label', async () => {

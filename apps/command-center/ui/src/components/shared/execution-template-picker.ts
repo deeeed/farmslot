@@ -1,8 +1,7 @@
 // Reusable execution-template catalog picker (MANUAL-000076 UX addendum).
-// Renders the gateway-provided catalog as a filterable table with the Domain
-// and Run-mode filters inside the picker, visible result counts, and per-row
-// provenance. Selection/filter changes are emitted as events — the host owns
-// state and refetching; the gateway stays the selection/validation authority.
+// Renders a catalog snapshot as a filterable table. Domain, run-mode, flow,
+// and platform filters run locally. Selection changes are emitted as events;
+// the host owns state. The gateway still validates source and digest at claim.
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
@@ -35,6 +34,8 @@ export class ExecutionTemplatePicker extends LitElement {
   @property() selectedId = '';
   @property() domain = '';
   @property() mode: 'autonomous' | 'interactive' = 'autonomous';
+  @property() flow = '';
+  @property() platform = '';
   @property({ type: Boolean }) loading = false;
 
   static styles = css`
@@ -233,6 +234,8 @@ export class ExecutionTemplatePicker extends LitElement {
     const view = deriveExecutionTemplatePickerView(this.catalog, this.selectedId, {
       domain: this.domain,
       runMode: this.mode,
+      ...(this.flow ? { flow: this.flow } : {}),
+      ...(this.platform ? { platform: this.platform } : {}),
     });
     const domains = this.catalog.availableDomains;
     return html`

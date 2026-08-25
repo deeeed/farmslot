@@ -43,6 +43,15 @@ export async function requestTemplateOptions(
   });
 }
 
+export async function requestUnfilteredTemplateOptions(
+  project: string,
+): Promise<ConfigTemplateOptionsResult> {
+  return gateway.request<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
+    project,
+    unfiltered: true,
+  });
+}
+
 export async function requestExecutionTemplatePreview(
   project: string,
   flowType: FlowType,
@@ -58,7 +67,7 @@ export async function requestExecutionTemplatePreview(
 }
 
 export interface DispatchWizardCandidatesRequest {
-  project: string;
+  project?: string;
   flowType: FlowType | undefined;
   machines: readonly string[];
   targetBranch: string | undefined;
@@ -72,6 +81,7 @@ export interface DispatchWizardCandidatesRequest {
       }
     | undefined;
   candidatesEverLoaded: boolean;
+  forceRefresh?: boolean;
   mockMode: boolean;
   mockCandidates: DispatchCandidatesResult['candidates'] | null;
 }
@@ -85,7 +95,7 @@ export async function requestDispatchWizardCandidates(
   return gateway.request<DispatchCandidatesResult>(
     Methods.DISPATCH_CANDIDATES,
     {
-      project: input.project,
+      ...(input.project ? { project: input.project } : {}),
       flowType: input.flowType,
       machines: input.machines.length > 0 ? [...input.machines] : undefined,
       targetBranch: input.targetBranch,
@@ -98,6 +108,7 @@ export async function requestDispatchWizardCandidates(
       // otherwise a resource-ineligible busy slot advertises reuse that FIND_SLOT rejects.
       app: input.app,
       prepareProfile: input.prepareProfile,
+      ...(input.forceRefresh ? { forceRefresh: true } : {}),
       ...(input.comparison
         ? {
             lane: 'comparison' as const,
@@ -106,7 +117,7 @@ export async function requestDispatchWizardCandidates(
           }
         : {}),
     },
-    input.candidatesEverLoaded ? undefined : 60_000,
+    input.candidatesEverLoaded && !input.forceRefresh ? undefined : 60_000,
   );
 }
 

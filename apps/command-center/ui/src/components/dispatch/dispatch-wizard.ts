@@ -23,6 +23,10 @@ import {
   DEFAULT_MODEL,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
+import {
+  deriveExecutionTemplatePickerView,
+  pickCompatibleExecutionTemplateId,
+} from '../shared/execution-template-picker-model.js';
 
 import {
   addDispatchQueueItemFromDraft,
@@ -63,7 +67,7 @@ import {
   requestDispatchWizardCandidates,
   requestExecutionTemplatePreview,
   requestProjectConfigs,
-  requestTemplateOptions,
+  requestUnfilteredTemplateOptions,
 } from './dispatch-wizard-loaders.js';
 import {
   parseDispatchWizardHash,
@@ -85,13 +89,13 @@ import {
   deriveCandidateResultState,
   deriveDispatchFleetViewState,
   deriveIssueTypeFlowState,
+  filterDispatchCandidatesForProject,
   findActiveRunConflict,
 } from './dispatch-wizard-state-model.js';
 import { dispatchWizardStyles } from './dispatch-wizard-styles.js';
 import {
   clearTemplateOptionsState,
   deriveTemplateOptionsState,
-  templateOptionsRequestKey,
 } from './dispatch-wizard-template-options.js';
 import {
   loadDispatchTemplatePreference,
@@ -103,7 +107,6 @@ import { renderDispatchWizardView } from './dispatch-wizard-view-renderer.js';
 @customElement('dispatch-wizard')
 export class DispatchWizard extends DispatchWizardState {
   private readonly _templateOptionsCache = new Map<string, ConfigTemplateOptionsResult>();
-  private _templateOptionsPrefetchGeneration = 0;
 
   updated(changed: Map<string, unknown>) {
     super.updated(changed);
@@ -116,22 +119,17 @@ export class DispatchWizard extends DispatchWizardState {
       this._syncSelectedAppForProject(this._project);
     }
     if (this.mockMode && changed.has('mockCandidates') && this._project) {
-      void this._fetchCandidates(this._project);
+      void this._fetchCandidates();
       void this._fetchTemplateOptions();
     }
-    // Any change that might flip `_resolveTargetBranch`'s output must re-score
-    // candidates — otherwise the wizard keeps the stale ranking (and the
-    // pinned _slotOverride) until some unrelated state change triggers
-    // _syncFleet's re-fetch path. Covers:
-    //   - flow flip (pr-complete ↔ fix-bug, etc.) — targetBranch toggles on/off
-    //   - ticket edit — PR number change swaps the target branch
-    //   - normalized ticket landing — `123` → `owner/repo#123` resolves a new PR
-    const tickers = ['_flowType', '_ticketId', '_normalizedTicket'];
-    if (tickers.some((k) => changed.has(k)) && this._project) {
-      void this._fetchCandidates(this._project);
+    if (changed.has('_flowType') && this._project && this._flowType) {
+      this._applyVisibleCatalog();
     }
-    if ((changed.has('_flowType') || changed.has('_project')) && this._project && this._flowType) {
-      void this._fetchTemplateOptions();
+    // Ticket identity can change target-branch scoring and nudge rows. Keep the
+    // current snapshot on screen and rescore in the background.
+    const scoringTickers = ['_ticketId', '_normalizedTicket'];
+    if (scoringTickers.some((k) => changed.has(k))) {
+      void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
     }
     if (changed.has('_comparePickerOpen') && this._comparePickerOpen) {
       void this.updateComplete.then(() => {
@@ -156,13 +154,12 @@ export class DispatchWizard extends DispatchWizardState {
       if (this.mockMode) return;
       if (st === 'connected') {
         this._templateOptionsCache.clear();
-        this._templateOptionsPrefetchGeneration += 1;
+        this._allCandidates = [];
         if (this._projectConfigs.length === 0) {
           void this._loadProjectConfigs();
         }
-        if (this._project && this._flowType) {
-          void this._fetchTemplateOptions();
-        }
+        void this._fetchTemplateOptions();
+        void this._fetchCandidates();
       }
     });
     this._unsubState = subscribe((s) => this._syncFleet(s));
@@ -196,7 +193,9 @@ export class DispatchWizard extends DispatchWizardState {
       this._slotOverride = '';
       this._restoreTemplatePreference();
       this._syncSelectedAppForProject(this._project);
-      void this._fetchCandidates(this._project);
+      this._applyVisibleCandidates();
+      void this._fetchTemplateOptions();
+      if (this._allCandidates.length === 0) void this._fetchCandidates();
     }
     // Clear project if it's no longer in the filtered list. Skip when the
     // fleet hasn't produced any projects yet (initial mount before fleet
@@ -218,8 +217,11 @@ export class DispatchWizard extends DispatchWizardState {
     const machineFilterChanged = machineSig !== this._lastFetchMachines;
     const targetBranchNow = this._resolveTargetBranch(s.prs);
     const targetBranchChanged = targetBranchNow !== this._lastFetchTargetBranch;
-    if (this._project && (hydrationJustFinished || machineFilterChanged || targetBranchChanged)) {
-      void this._fetchCandidates(this._project);
+    this._prefetchMissingCatalogs(fleetView.availableProjects);
+    if (hydrationJustFinished || machineFilterChanged || targetBranchChanged) {
+      void this._fetchCandidates({
+        silent: this._allCandidates.length > 0 && !machineFilterChanged && !hydrationJustFinished,
+      });
     }
 
     const comparisonFilterKey = `${[...fp].sort().join(',')}|${machineSig}`;
@@ -282,8 +284,12 @@ export class DispatchWizard extends DispatchWizardState {
     );
   }
 
-  private async _fetchTemplateOptions(): Promise<void> {
-    if (!this._project || !this._flowType || this.mockMode) {
+  private _selectedSlotPlatform(): string | undefined {
+    return this._allProjectSlots.find((slot) => slot.slot === this._slotOverride)?.platform;
+  }
+
+  private _applyVisibleCatalog(): void {
+    if (!this._project || !this._flowType) {
       const cleared = clearTemplateOptionsState();
       this._templateOptions = cleared.options;
       this._templateOptionsError = cleared.error;
@@ -292,66 +298,98 @@ export class DispatchWizard extends DispatchWizardState {
       this._selectedExecutionTemplateId = '';
       return;
     }
-    const platform = this._allProjectSlots.find(
-      (slot) => slot.slot === this._slotOverride,
-    )?.platform;
-    const filters = {
-      ...(platform ? { platform } : {}),
-      runMode: this._catalogMode,
-      ...(this._domain ? { domain: this._domain } : {}),
-    };
-    const key = templateOptionsRequestKey(this._project, this._flowType, filters);
-    this._templateOptionsKey = key;
+    const cached = this._templateOptionsCache.get(this._project);
+    if (!cached) return;
+    const workerOptions = cached.options.filter((option) => option.flowType === this._flowType);
+    const previousSelectionStillValid = workerOptions.some(
+      (option) => option.fileName === this._selectedTaskTemplateFileName,
+    );
+    const next = deriveTemplateOptionsState(workerOptions, this._selectedTaskTemplateFileName);
+    if (
+      !cached.executionTemplates &&
+      !previousSelectionStillValid &&
+      modeForFlow(this._flowType) === 'interactive'
+    ) {
+      next.selectedFileName =
+        interactiveTemplateOption(next.options)?.fileName ?? next.selectedFileName;
+    }
+    this._templateOptions = next.options;
+    this._templateOptionsError = next.error;
+    this._selectedTaskTemplateFileName = next.selectedFileName;
+    this._executionTemplates = cached.executionTemplates ?? null;
+    if (!cached.executionTemplates) {
+      this._selectedExecutionTemplateId = '';
+      this._domain = '';
+      return;
+    }
+    if (this._domain && !cached.executionTemplates.availableDomains.includes(this._domain)) {
+      this._domain = '';
+    }
+    const platform = this._selectedSlotPlatform();
+    const view = deriveExecutionTemplatePickerView(
+      cached.executionTemplates,
+      this._selectedExecutionTemplateId,
+      {
+        domain: this._domain,
+        runMode: this._catalogMode,
+        flow: this._flowType,
+        ...(platform ? { platform } : {}),
+      },
+    );
+    if (!view.selectionValid || !this._selectedExecutionTemplateId) {
+      this._selectedExecutionTemplateId = pickCompatibleExecutionTemplateId({
+        options: view.rows.map((row) => row.option),
+        defaults: cached.executionTemplates.defaults,
+        flow: this._flowType,
+        runMode: this._catalogMode,
+        domain: this._domain,
+        platform,
+        preferredId: this._preferredExecutionTemplateId(),
+      });
+    }
+    this._persistTemplatePreference();
+  }
+
+  private _prefetchMissingCatalogs(projects: readonly string[]): void {
+    if (this.mockMode) return;
+    for (const project of projects) {
+      if (!project || this._templateOptionsCache.has(project)) continue;
+      void requestUnfilteredTemplateOptions(project)
+        .then((result) => {
+          this._templateOptionsCache.set(project, result);
+          if (this._project === project) this._applyVisibleCatalog();
+        })
+        .catch((err: unknown) => {
+          // Prefetch is optional; the next explicit load for this farm retries.
+          console.warn(`[dispatch-wizard] template catalog prefetch failed for ${project}:`, err);
+        });
+    }
+  }
+
+  private async _fetchTemplateOptions(): Promise<void> {
+    if (!this._project || this.mockMode) {
+      this._applyVisibleCatalog();
+      return;
+    }
+    const project = this._project;
+    const cached = this._templateOptionsCache.get(project);
+    if (cached) {
+      this._templateOptionsLoading = false;
+      this._applyVisibleCatalog();
+      this._prefetchMissingCatalogs(this._availableProjects);
+      return;
+    }
+    this._templateOptionsKey = project;
     this._templateOptionsError = '';
+    this._templateOptionsLoading = true;
     try {
-      const cached = this._templateOptionsCache.get(key);
-      this._templateOptionsLoading = !cached;
-      const result =
-        cached ?? (await requestTemplateOptions(this._project, this._flowType, filters));
-      if (this._templateOptionsKey !== key) return;
-      this._templateOptionsCache.set(key, result);
-      const options = result.options;
-      const previousSelectionStillValid = options.some(
-        (option) => option.fileName === this._selectedTaskTemplateFileName,
-      );
-      const next = deriveTemplateOptionsState(options, this._selectedTaskTemplateFileName);
-      if (
-        !result.executionTemplates &&
-        !previousSelectionStillValid &&
-        this._flowType &&
-        modeForFlow(this._flowType) === 'interactive'
-      ) {
-        next.selectedFileName =
-          interactiveTemplateOption(next.options)?.fileName ?? next.selectedFileName;
-      }
-      this._templateOptions = next.options;
-      this._templateOptionsError = next.error;
-      this._selectedTaskTemplateFileName = next.selectedFileName;
-      this._executionTemplates = result.executionTemplates ?? null;
-      if (result.executionTemplates) {
-        if (this._domain && !result.executionTemplates.availableDomains.includes(this._domain)) {
-          this._domain = '';
-          this._selectedExecutionTemplateId = this._preferredExecutionTemplateId();
-          void this._fetchTemplateOptions();
-          return;
-        }
-        const selectedStillValid = result.executionTemplates.options.some(
-          (option) => option.id === this._selectedExecutionTemplateId,
-        );
-        this._selectedExecutionTemplateId = selectedStillValid
-          ? this._selectedExecutionTemplateId
-          : (result.executionTemplates.selectedId ??
-            (result.executionTemplates.options.length === 1
-              ? result.executionTemplates.options[0]!.id
-              : ''));
-        this._persistTemplatePreference();
-        void this._prefetchTemplateOptions(result, platform);
-      } else {
-        this._selectedExecutionTemplateId = '';
-        this._domain = '';
-      }
+      const result = await requestUnfilteredTemplateOptions(project);
+      this._templateOptionsCache.set(project, result);
+      if (this._project !== project) return;
+      this._applyVisibleCatalog();
+      this._prefetchMissingCatalogs(this._availableProjects);
     } catch (err: unknown) {
-      if (this._templateOptionsKey !== key) return;
+      if (this._project !== project) return;
       this._templateOptions = [];
       this._templateOptionsError =
         err instanceof Error ? err.message : 'Template options failed to load';
@@ -359,36 +397,8 @@ export class DispatchWizard extends DispatchWizardState {
       this._executionTemplates = null;
       this._selectedExecutionTemplateId = '';
     } finally {
-      if (this._templateOptionsKey === key) this._templateOptionsLoading = false;
+      if (this._project === project) this._templateOptionsLoading = false;
     }
-  }
-
-  private async _prefetchTemplateOptions(
-    current: ConfigTemplateOptionsResult,
-    platform: string | undefined,
-  ): Promise<void> {
-    if (!this._project || !this._flowType || !current.executionTemplates) return;
-    const project = this._project;
-    const flowType = this._flowType;
-    const generation = ++this._templateOptionsPrefetchGeneration;
-    const domains = ['', ...current.executionTemplates.availableDomains];
-    const modes = ['autonomous', 'interactive'] as const;
-    await Promise.allSettled(
-      modes.flatMap((runMode) =>
-        domains.map(async (domain) => {
-          const filters = {
-            ...(platform ? { platform } : {}),
-            runMode,
-            ...(domain ? { domain } : {}),
-          };
-          const key = templateOptionsRequestKey(project, flowType, filters);
-          if (this._templateOptionsCache.has(key)) return;
-          const result = await requestTemplateOptions(project, flowType, filters);
-          if (generation !== this._templateOptionsPrefetchGeneration) return;
-          this._templateOptionsCache.set(key, result);
-        }),
-      ),
-    );
   }
 
   private async _previewExecutionTemplate(
@@ -462,8 +472,9 @@ export class DispatchWizard extends DispatchWizardState {
     this._prepareProfile = '';
     this._syncSelectedAppForProject(project);
     this._syncFleet(getState());
-    void this._fetchCandidates(project);
+    this._applyVisibleCandidates('');
     void this._fetchTemplateOptions();
+    if (this._allCandidates.length === 0) void this._fetchCandidates();
     this._checkActiveRunConflict();
     if (this._projectConfigs.length === 0) {
       void this._loadProjectConfigs();
@@ -482,7 +493,7 @@ export class DispatchWizard extends DispatchWizardState {
       this._project = this.mockInitial.project;
       this._restoreTemplatePreference();
       this._syncSelectedAppForProject(this._project);
-      void this._fetchCandidates(this._project);
+      void this._fetchCandidates();
     }
   }
 
@@ -504,14 +515,14 @@ export class DispatchWizard extends DispatchWizardState {
     });
   }
 
-  private async _fetchCandidates(project: string): Promise<void> {
-    if (!project) {
-      this._candidates = [];
-      this._slotOverride = '';
-      this._lastFetchMachines = '';
-      this._fetchGen++;
-      return;
-    }
+  private _applyVisibleCandidates(previousOverride?: string): void {
+    const visible = filterDispatchCandidatesForProject(this._allCandidates, this._project);
+    this._applyCandidateResult({ candidates: visible }, previousOverride ?? this._slotOverride);
+  }
+
+  private async _fetchCandidates(
+    options: { silent?: boolean; force?: boolean } = {},
+  ): Promise<void> {
     const st = getState();
     const machines = [...st.globalFilters.machines].sort();
     this._lastFetchMachines = machines.join(',');
@@ -522,12 +533,15 @@ export class DispatchWizard extends DispatchWizardState {
     const targetBranch = this._resolveTargetBranch(st.prs);
     this._lastFetchTargetBranch = targetBranch;
     const gen = ++this._fetchGen;
-    this._loadingCandidates = true;
-    this._candidateRefreshFailed = false;
+    const hasCache = this._allCandidates.length > 0;
+    const silent = options.silent === true && hasCache && options.force !== true;
+    if (!silent) {
+      this._loadingCandidates = true;
+      this._candidateRefreshFailed = false;
+    }
     const prevOverride = this._slotOverride;
     try {
       const res = await requestDispatchWizardCandidates({
-        project,
         flowType: this._flowType || undefined,
         machines,
         targetBranch,
@@ -542,25 +556,38 @@ export class DispatchWizard extends DispatchWizardState {
               }
             : undefined,
         candidatesEverLoaded: this._candidatesEverLoaded,
+        forceRefresh: options.force === true,
         mockMode: this.mockMode,
         mockCandidates: this.mockCandidates,
       });
       if (!this.mockMode) this._candidatesEverLoaded = true;
       if (gen !== this._fetchGen) return; // superseded by newer filter/project change
+      this._allCandidates = res.candidates;
+      this._candidateRefreshFailed = false;
       // Prefer the CURRENT selection over the fetch-start snapshot: a row the
       // operator clicked while this fetch was in flight (e.g. a pressure
       // Override pick) must survive the apply instead of being auto-replaced.
-      this._applyCandidateResult(res, this._slotOverride || prevOverride);
-      void this._fetchProfileFitSuggestion(project, gen);
+      this._applyVisibleCandidates(this._slotOverride || prevOverride);
+      void this._fetchProfileFitSuggestion(this._project, gen);
     } catch (err) {
       if (gen !== this._fetchGen) return;
       console.warn('[dispatch-wizard] dispatch.candidates failed:', err);
-      this._candidates = [];
-      this._slotOverride = '';
       this._candidateRefreshFailed = true;
+      if (!silent) {
+        this._allCandidates = [];
+        this._candidates = [];
+        this._slotOverride = '';
+      }
     } finally {
       if (gen === this._fetchGen) this._loadingCandidates = false;
     }
+  }
+
+  private _refreshDispatchSnapshot(): void {
+    this._templateOptionsCache.clear();
+    this._allCandidates = [];
+    void this._fetchTemplateOptions();
+    void this._fetchCandidates({ force: true });
   }
 
   private async _fetchProfileFitSuggestion(project: string, gen: number): Promise<void> {
@@ -614,7 +641,7 @@ export class DispatchWizard extends DispatchWizardState {
     // Fresh candidates carry fresh pressure evidence. A half-completed
     // override confirmation must not survive onto a decision it never saw.
     this._resetPressureOverrideDraft();
-    if (next.slotOverride !== prevOverride) void this._fetchTemplateOptions();
+    if (next.slotOverride !== prevOverride) this._applyVisibleCatalog();
   }
 
   // Debounced server-side project resolution
@@ -892,7 +919,8 @@ export class DispatchWizard extends DispatchWizardState {
       if (shouldUsePrefillSlot(prefill.slot, machinesActive)) {
         this._slotOverride = prefill.slot ?? '';
       }
-      void this._fetchCandidates(prefill.project);
+      void this._fetchCandidates();
+      void this._fetchTemplateOptions();
       this._syncSelectedAppForProject(prefill.project);
     }
   }
@@ -928,7 +956,7 @@ export class DispatchWizard extends DispatchWizardState {
       this._nudgeIntents.set(slotId, intent);
       this._nudgeIntentVersion++;
     }
-    void this._fetchTemplateOptions();
+    this._applyVisibleCatalog();
   }
 
   private _setNudgeIntent(slotId: string, intent: 'nudge' | 'fresh'): void {
@@ -944,7 +972,7 @@ export class DispatchWizard extends DispatchWizardState {
     // also their pick of the slot. Without this, the intent flips on a row that's not the
     // active one and the next Dispatch click ignores it.
     this._slotOverride = slotId;
-    void this._fetchTemplateOptions();
+    this._applyVisibleCatalog();
   }
 
   private _blockingState() {
@@ -970,12 +998,25 @@ export class DispatchWizard extends DispatchWizardState {
       comparisonParentRunId: this._comparisonParentRunId,
       pressureOverrideReady: this._pressureOverrideReady(),
     });
+    const catalogView =
+      this._executionTemplates && this._flowType
+        ? deriveExecutionTemplatePickerView(
+            this._executionTemplates,
+            this._selectedExecutionTemplateId,
+            {
+              domain: this._domain,
+              runMode: this._catalogMode,
+              flow: this._flowType,
+              ...(this._selectedSlotPlatform() ? { platform: this._selectedSlotPlatform() } : {}),
+            },
+          )
+        : null;
     const templateReason = this._templateOptionsError
       ? 'Execution-template options are unavailable.'
       : this._templateOptionsLoading
         ? 'Loading execution-template options.'
-        : this._executionTemplates && !this._selectedExecutionTemplateId
-          ? this._executionTemplates.options.length === 0
+        : catalogView && !this._selectedExecutionTemplateId
+          ? catalogView.rows.length === 0
             ? 'No compatible execution template is available.'
             : 'Select one exact execution template.'
           : null;
@@ -1107,7 +1148,10 @@ export class DispatchWizard extends DispatchWizardState {
   private _selectFlowType(flowType: FlowType): void {
     this._assignFlowType(flowType);
     this._autoFlowType = false;
-    void this._fetchTemplateOptions();
+    this._applyVisibleCatalog();
+    if (this._ticketId.trim()) {
+      void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
+    }
   }
 
   private _assignFlowType(flowType: FlowType): void {
@@ -1225,6 +1269,8 @@ export class DispatchWizard extends DispatchWizardState {
       autoProject: this._autoProject,
       project: this._project,
       selectedSlotOverride: this._slotOverride,
+      selectedSlotPlatform: this._selectedSlotPlatform() ?? '',
+      refreshSlots: () => this._refreshDispatchSnapshot(),
       projectApps: projectApps(this._projectConfigs, this._project),
       selectedDispatchApp: selectedDispatchApp(
         projectApps(this._projectConfigs, this._project),
@@ -1293,8 +1339,7 @@ export class DispatchWizard extends DispatchWizardState {
       selectProject: (project) => this._selectProject(project),
       setApp: (app) => {
         this._app = app;
-        // App drives companion-resource eligibility on candidate rows.
-        void this._fetchCandidates(this._project);
+        void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
       },
       setTaskTemplateFileName: (fileName) => {
         this._selectedTaskTemplateFileName = fileName;
@@ -1310,15 +1355,13 @@ export class DispatchWizard extends DispatchWizardState {
         this._closeExecutionTemplatePreview(false);
         this._domain = domain;
         this._selectedExecutionTemplateId = this._preferredExecutionTemplateId();
-        this._persistTemplatePreference();
-        void this._fetchTemplateOptions();
+        this._applyVisibleCatalog();
       },
       setMode: (mode) => {
         this._closeExecutionTemplatePreview(false);
         this._catalogMode = mode;
         this._selectedExecutionTemplateId = this._preferredExecutionTemplateId();
-        this._persistTemplatePreference();
-        void this._fetchTemplateOptions();
+        this._applyVisibleCatalog();
       },
       setRunner: (runner) => this._setRunner(runner),
       setModel: (model) => this._setModel(model),
@@ -1337,12 +1380,12 @@ export class DispatchWizard extends DispatchWizardState {
       setPrepareProfile: (prepareProfile) => {
         this._prepareProfile = prepareProfile;
         this._profileFitSuggestion = null;
-        void this._fetchCandidates(this._project);
+        void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
       },
       applySuggestedPrepareProfile: (prepareProfile) => {
         this._prepareProfile = prepareProfile;
         this._profileFitSuggestion = null;
-        void this._fetchCandidates(this._project);
+        void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
       },
       setDevInteractiveProfile: (profile) => {
         this._devInteractiveProfile = profile;
@@ -1384,7 +1427,7 @@ export class DispatchWizard extends DispatchWizardState {
         this._closeExecutionTemplatePreview(false);
         if (this._slotOverride !== slotId) this._resetPressureOverrideDraft();
         this._slotOverride = slotId;
-        void this._fetchTemplateOptions();
+        this._applyVisibleCatalog();
       },
       setNudgeIntent: (slotId, intent) => this._setNudgeIntent(slotId, intent),
       pressureOverrideAvailable,
@@ -1399,7 +1442,7 @@ export class DispatchWizard extends DispatchWizardState {
         this._pressureOverrideReason = reason;
       },
       refreshPressureDecision: () => {
-        if (this._project) void this._fetchCandidates(this._project);
+        void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
       },
       dispatchBlocked: () => blockers.dispatchBlocked,
       dispatchBlockedReason: () => blockers.dispatchBlockedReason,

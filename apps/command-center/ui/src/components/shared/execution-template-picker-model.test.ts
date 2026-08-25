@@ -7,6 +7,8 @@ import {
   activeFilterSummary,
   deriveExecutionTemplatePickerView,
   optionDomains,
+  optionMatchesPickerFilters,
+  pickCompatibleExecutionTemplateId,
 } from './execution-template-picker-model.js';
 
 function option(
@@ -135,4 +137,66 @@ test('a catalog from an older gateway without filteredSources yields no notices'
     runMode: 'autonomous',
   });
   assert.deepEqual(view.sourceNotices, []);
+});
+
+test('a full catalog filters locally by domain, mode, and flow', () => {
+  const interactive = option({
+    id: 'dev/interactive',
+    flow: 'dev',
+    runMode: 'interactive',
+  });
+  const perpsSourced = option({
+    id: 'fix-bug/perps-mobile',
+    sourceId: 'team:perps',
+    labels: ['domain:perps'],
+    sourceDomains: ['perps'],
+  });
+  const full = catalog({
+    options: [generalOption, perpsOption, perpsSourced, interactive],
+    availableDomains: ['perps'],
+  });
+  const perpsView = deriveExecutionTemplatePickerView(full, '', {
+    domain: 'perps',
+    runMode: 'autonomous',
+    flow: 'fix-bug',
+  });
+  assert.deepEqual(perpsView.rows.map((row) => row.option.id).sort(), [
+    'fix-bug/default',
+    'fix-bug/perps-mobile',
+    'fix-bug/sentry-cuf-autonomous.mobile',
+  ]);
+  assert.ok(perpsView.sourceNotices.length === 0);
+
+  const generalView = deriveExecutionTemplatePickerView(full, perpsSourced.id, {
+    domain: '',
+    runMode: 'autonomous',
+    flow: 'fix-bug',
+  });
+  assert.deepEqual(
+    generalView.rows.map((row) => row.option.id),
+    ['fix-bug/default'],
+  );
+  assert.equal(generalView.selectionValid, false);
+  assert.ok(
+    generalView.sourceNotices.some((notice) => notice.includes('team:perps: domain-restricted')),
+  );
+
+  assert.equal(
+    optionMatchesPickerFilters(interactive, {
+      domain: '',
+      runMode: 'interactive',
+      flow: 'dev',
+    }),
+    true,
+  );
+  assert.equal(
+    pickCompatibleExecutionTemplateId({
+      options: [generalOption],
+      flow: 'fix-bug',
+      runMode: 'autonomous',
+      domain: '',
+      preferredId: 'missing',
+    }),
+    'fix-bug/default',
+  );
 });

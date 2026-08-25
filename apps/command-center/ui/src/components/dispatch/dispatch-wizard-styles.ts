@@ -50,6 +50,43 @@ export const dispatchWizardStyles = css`
     margin-bottom: ${unsafeCSS(spacing.sm)};
   }
 
+  .slot-section-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .slot-loading {
+    color: ${unsafeCSS(colors.textMuted)};
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+  }
+
+  .slot-refresh {
+    margin-left: auto;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid #2a2a44;
+    background: ${unsafeCSS(colors.bgCard)};
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-family: ${unsafeCSS(fonts.mono)};
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .slot-refresh:hover:not(:disabled) {
+    border-color: ${unsafeCSS(colors.accent)}66;
+    color: ${unsafeCSS(colors.textPrimary)};
+  }
+
+  .slot-refresh:disabled {
+    opacity: 0.45;
+    cursor: wait;
+  }
+
   .section-help {
     margin-top: 6px;
     font-size: 11px;
@@ -947,7 +984,8 @@ export const dispatchWizardStyles = css`
     cursor: not-allowed;
   }
 
-  .error-msg {
+  .error-msg,
+  .error-inline {
     color: ${unsafeCSS(colors.statusFail)};
     font-size: 12px;
   }

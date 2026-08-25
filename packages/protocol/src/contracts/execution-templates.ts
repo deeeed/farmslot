@@ -71,6 +71,12 @@ export interface ExecutionTemplateCatalogOption extends ExecutionTemplateReferen
   /** Short guidance explaining when an operator should select this template. */
   description?: string;
   sourceKind: ExecutionTemplateSourceKind;
+  /**
+   * Source-level domain gate copied from the catalog source. Absent or empty
+   * means the source participates for every domain. Clients that filter a
+   * full catalog locally use this together with `labels`.
+   */
+  sourceDomains?: string[];
 }
 
 export interface UnavailableExecutionTemplateSource {
@@ -100,4 +106,6 @@ export interface ExecutionTemplateOptions {
   unavailableSources: UnavailableExecutionTemplateSource[];
   /** Sources dropped by the domain gate for this query — never silently hidden. */
   filteredSources: DomainRestrictedExecutionTemplateSource[];
+  /** Configured selection defaults from the project pack. Present on full catalogs. */
+  defaults?: ExecutionTemplateDefault[];
 }

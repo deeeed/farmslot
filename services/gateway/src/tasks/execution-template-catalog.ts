@@ -28,11 +28,13 @@ import { resolveEffectiveDomain } from '@farmslot/slot-config';
 import type { ProjectVars } from '../core/config.js';
 
 export interface ExecutionTemplateCatalogQuery {
-  flow: string;
+  flow?: string;
   platform?: string;
   runMode?: ExecutionTemplateRunMode;
   domain?: string;
   explicitId?: string;
+  /** Include domain-restricted sources and skip flow/mode/platform/domain filters. */
+  unfiltered?: boolean;
 }
 
 export interface ResolvedConfiguredExecutionTemplate extends SelectedExecutionTemplate {
@@ -125,12 +127,16 @@ function domainFilteredSources(
     }));
 }
 
-function catalogOption(entry: ExecutionTemplateEntry): ExecutionTemplateCatalogOption {
+function catalogOption(
+  entry: ExecutionTemplateEntry,
+  source?: ExecutionTemplateSource,
+): ExecutionTemplateCatalogOption {
   return {
     ...executionTemplateReference(entry),
     title: entry.title,
     ...(entry.description ? { description: entry.description } : {}),
     sourceKind: entry.sourceKind,
+    ...(source?.domains && source.domains.length > 0 ? { sourceDomains: [...source.domains] } : {}),
   };
 }
 
@@ -161,11 +167,37 @@ export function configuredExecutionTemplateOptions(
   }
 
   const { sources, unavailable } = configuredCatalog(projectVars);
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+  const defaults = projectVars.projectJson.execution_templates?.defaults;
+  const toOptions = (entries: ExecutionTemplateEntry[]): ExecutionTemplateCatalogOption[] =>
+    entries.map((entry) => catalogOption(entry, sourceById.get(entry.sourceId)));
+
+  if (query.unfiltered) {
+    const listed = listExecutionTemplates({
+      sources,
+      includeShadowed: false,
+      ...(query.flow ? { flow: query.flow } : {}),
+    });
+    return {
+      configured: true,
+      options: toOptions(listed),
+      availableDomains: availableExecutionTemplateDomains(projectVars),
+      unavailableSources: unavailable,
+      filteredSources: [],
+      ...(defaults && defaults.length > 0 ? { defaults } : {}),
+    };
+  }
+
+  if (!query.flow) {
+    throw new Error('Execution-template catalog queries require flow unless unfiltered.');
+  }
+
+  const flow = query.flow;
   const options =
     query.platform && query.runMode
       ? listCompatibleExecutionTemplates({
           sources,
-          flow: query.flow,
+          flow,
           platform: query.platform,
           runMode: query.runMode,
           ...(query.domain ? { domain: query.domain } : {}),
@@ -174,7 +206,7 @@ export function configuredExecutionTemplateOptions(
           sources: sources.filter((source) =>
             executionTemplateSourceParticipates(source, query.domain),
           ),
-          flow: query.flow,
+          flow,
           includeShadowed: false,
           ...(query.platform ? { platform: query.platform } : {}),
           ...(query.runMode ? { runMode: query.runMode } : {}),
@@ -185,12 +217,12 @@ export function configuredExecutionTemplateOptions(
     try {
       selected = selectExecutionTemplate({
         sources,
-        flow: query.flow,
+        flow,
         platform: query.platform,
         runMode: query.runMode,
         ...(query.domain ? { domain: query.domain } : {}),
         ...(query.explicitId ? { explicitId: query.explicitId } : {}),
-        defaults: projectVars.projectJson.execution_templates?.defaults,
+        defaults,
       });
     } catch (error) {
       if (
@@ -206,7 +238,7 @@ export function configuredExecutionTemplateOptions(
 
   return {
     configured: true,
-    options: options.map(catalogOption),
+    options: toOptions(options),
     availableDomains: availableExecutionTemplateDomains(projectVars),
     ...(selected
       ? {
@@ -215,7 +247,8 @@ export function configuredExecutionTemplateOptions(
         }
       : {}),
     unavailableSources: unavailable,
-    filteredSources: domainFilteredSources(sources, query),
+    filteredSources: domainFilteredSources(sources, { ...query, flow }),
+    ...(defaults && defaults.length > 0 ? { defaults } : {}),
   };
 }
 

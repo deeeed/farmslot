@@ -178,6 +178,21 @@ test('configured capability lists domains, sources, selection, and unavailable r
       moneyMovement.options.some((option) => option.id === 'fix-bug/mm'),
       true,
     );
+    assert.deepEqual(
+      moneyMovement.options.find((option) => option.id === 'fix-bug/perps-mobile'),
+      undefined,
+    );
+
+    const unfiltered = configuredExecutionTemplateOptions(projectVars, { unfiltered: true });
+    const unfilteredIds = unfiltered.options.map((option) => option.id).sort();
+    assert.ok(unfilteredIds.includes('fix-bug/perps-mobile'));
+    assert.ok(unfilteredIds.includes('fix-bug/mm'));
+    assert.deepEqual(
+      unfiltered.options.find((option) => option.sourceId === 'team:perps')?.sourceDomains,
+      ['perps'],
+    );
+    assert.deepEqual(unfiltered.filteredSources, []);
+    assert.equal(unfiltered.defaults?.[0]?.templateId, 'fix-bug/perps-mobile');
   });
 });
 

@@ -27,6 +27,7 @@ import type {
   ConfigTemplatePreviewResult,
   ConfigTemplatesParams,
   ConfigTemplatesResult,
+  FlowType,
   TemplatePreview,
 } from '@farmslot/protocol';
 
@@ -249,17 +250,32 @@ export async function configTemplates(
 export async function configTemplateOptions(
   params: ConfigTemplateOptionsParams,
 ): Promise<ConfigTemplateOptionsResult> {
+  if (!params.unfiltered && !params.flowType) {
+    throw new Error('config.templateOptions requires flowType unless unfiltered is true');
+  }
   const projectVars = await loadProjectVars(params.project);
-  const options = await listWorkerTemplateOptions(projectVars, params.flowType);
+  const options = params.flowType
+    ? await listWorkerTemplateOptions(projectVars, params.flowType)
+    : (
+        await Promise.all(
+          Object.keys(FLOW_TO_TEMPLATE).map((flow) =>
+            listWorkerTemplateOptions(projectVars, flow as FlowType),
+          ),
+        )
+      ).flat();
   if (!projectUsesExecutionTemplateCatalog(projectVars)) return { options };
   return {
     options,
     executionTemplates: configuredExecutionTemplateOptions(projectVars, {
-      flow: params.flowType,
-      ...(params.platform ? { platform: params.platform } : {}),
-      ...(params.runMode ? { runMode: params.runMode } : {}),
-      ...(params.domain ? { domain: params.domain } : {}),
-      ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
+      ...(params.flowType ? { flow: params.flowType } : {}),
+      ...(params.unfiltered
+        ? { unfiltered: true }
+        : {
+            ...(params.platform ? { platform: params.platform } : {}),
+            ...(params.runMode ? { runMode: params.runMode } : {}),
+            ...(params.domain ? { domain: params.domain } : {}),
+            ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
+          }),
     }),
   };
 }

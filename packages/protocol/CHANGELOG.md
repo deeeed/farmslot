@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(dispatch): `dispatch.candidates` may omit `project` to return every enabled slot, each tagged with `project`, and accepts `forceRefresh` to bypass the branch-refresh TTL.
+- feat(execution-templates): catalog options may carry `sourceDomains` and `defaults`; `config.templateOptions` accepts `unfiltered` so a client can load one full project catalog and filter locally.
 - fix(run): persist `RunMonitorState.lastStructuredProgressAt` so a gateway restart does not reset an idle runner's stuck clock.
 - fix(run): `run.forceComplete` accepts optional `prNumber` so an operator can attach an already-opened PR when marking a failed run done.
 - fix(run): `RunEngineState.operatorForceCompleted` marks an operator hatch so replay cannot treat it as ordinary done.

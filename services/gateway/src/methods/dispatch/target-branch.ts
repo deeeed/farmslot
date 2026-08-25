@@ -13,7 +13,7 @@ import { normalizeTicketRef } from './ticket-ref.js';
 export interface ResolveDispatchTargetBranchParams {
   flowType?: string | null;
   ticketOrPr?: string | null;
-  project: string;
+  project?: string;
   targetBranch?: string | null;
 }
 
@@ -30,7 +30,12 @@ export async function resolveDispatchTargetBranch(
 
   const projectConfigs = projectConfigsFromProjects(await loadProjectConfigs());
 
-  if (!resolvedTargetBranch && params.flowType === 'fix-bug' && params.ticketOrPr) {
+  if (
+    !resolvedTargetBranch &&
+    params.flowType === 'fix-bug' &&
+    params.ticketOrPr &&
+    params.project
+  ) {
     resolvedTargetBranch = resolveJiraTargetBranchFromFleet(
       options.projectSlots ?? options.fleetSlots ?? [],
       params.project,
@@ -63,7 +68,7 @@ export async function resolveDispatchTargetBranch(
 
   const matchingSlot = options.fleetSlots?.find(
     (s) =>
-      s.project === params.project &&
+      (!params.project || s.project === params.project) &&
       (s.currentTicketOrPr === params.ticketOrPr || s.currentTicketOrPr === canonicalTicketOrPr) &&
       s.branch &&
       s.branch !== '-' &&
@@ -77,7 +82,9 @@ export async function resolveDispatchTargetBranch(
   }
 
   const { runs } = listRuns({ prNumber: prNum, limit: 5 });
-  const runWithBranch = runs.find((r) => r.branch && r.project === params.project);
+  const runWithBranch = runs.find(
+    (r) => r.branch && (!params.project || r.project === params.project),
+  );
   if (runWithBranch?.branch) {
     console.log(
       `[${logPrefix}] resolved targetBranch=${runWithBranch.branch} for ${params.ticketOrPr} via run-store (run ${runWithBranch.id.slice(0, 8)})`,

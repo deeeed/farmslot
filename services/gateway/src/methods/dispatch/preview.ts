@@ -63,6 +63,39 @@ import { normalizeTicketRef } from './ticket-ref.js';
 
 const BRANCH_REFRESH_CONCURRENCY = 4;
 const BRANCH_REFRESH_TIMEOUT_MS = 5_000;
+/** Skip a live git probe when this slot was refreshed this recently. */
+export const BRANCH_REFRESH_TTL_MS = 30_000;
+const branchRefreshAt = new Map<string, number>();
+
+export function resetBranchRefreshTimestampsForTests(): void {
+  branchRefreshAt.clear();
+}
+
+export function slotsNeedingBranchRefresh(
+  slots: readonly SlotStatus[],
+  lastRefreshAt: ReadonlyMap<string, number>,
+  now: number,
+  ttlMs: number,
+): SlotStatus[] {
+  return slots.filter((slot) => {
+    const at = lastRefreshAt.get(slot.slot);
+    return at === undefined || now - at >= ttlMs;
+  });
+}
+
+export function selectDispatchCandidateSlots(
+  slots: readonly SlotStatus[],
+  params: { project?: string; machines?: string[] },
+): SlotStatus[] {
+  const machineFilter =
+    params.machines && params.machines.length > 0 ? new Set(params.machines) : null;
+  return slots.filter(
+    (slot) =>
+      slot.lifecycle !== 'disabled' &&
+      (!params.project || slot.project === params.project) &&
+      (!machineFilter || machineFilter.has(slot.machine)),
+  );
+}
 
 interface DispatchFamilyContext {
   familyId?: string;
@@ -84,7 +117,7 @@ export function resolveDispatchFamilyContext(
   params: {
     flowType?: string | null;
     ticketOrPr?: string | null;
-    project: string;
+    project?: string;
     familyId?: string | null;
     parentRunId?: string | null;
     familyRootTicketOrPr?: string | null;
@@ -99,7 +132,7 @@ export function resolveDispatchFamilyContext(
       familyRootTicketOrPr: params.familyRootTicketOrPr ?? undefined,
     };
   }
-  if (!params.flowType || !params.ticketOrPr) return {};
+  if (!params.flowType || !params.ticketOrPr || !params.project) return {};
   const flowType = params.flowType as FlowType;
   if (!PR_BOUND_FLOW_TYPES.has(flowType)) return {};
   const parent = findFollowUpParentRun(runs, {
@@ -597,9 +630,17 @@ export function classifyRefreshSlotAction(
   return 'refresh';
 }
 
-export async function refreshBranches(slots: SlotStatus[]): Promise<void> {
+export async function refreshBranches(
+  slots: SlotStatus[],
+  options: { force?: boolean; now?: number } = {},
+): Promise<void> {
   const errors: PoolConfigError[] = [];
-  await mapWithConcurrency(slots, BRANCH_REFRESH_CONCURRENCY, async (s) => {
+  const now = options.now ?? Date.now();
+  const pending = options.force
+    ? slots
+    : slotsNeedingBranchRefresh(slots, branchRefreshAt, now, BRANCH_REFRESH_TTL_MS);
+  if (pending.length === 0) return;
+  await mapWithConcurrency(pending, BRANCH_REFRESH_CONCURRENCY, async (s) => {
     try {
       const vars = await loadSlotVars(s.slot);
       const action = classifyRefreshSlotAction(s.slot, vars, getNode);
@@ -614,6 +655,7 @@ export async function refreshBranches(slots: SlotStatus[]): Promise<void> {
         s.branch = live;
         await updateSlotStatus(s.slot, { branch: live });
       }
+      branchRefreshAt.set(s.slot, now);
     } catch (err) {
       if (err instanceof PoolConfigError) {
         // Aggregate so dispatch.candidates surfaces the actionable pool error
@@ -681,17 +723,12 @@ export async function dispatchCandidates(
 ): Promise<DispatchCandidatesResult> {
   const [fleet, projectConfigList] = await Promise.all([loadFleetStatus(), loadProjectConfigs()]);
   const projectConfigs = projectConfigsFromProjects(projectConfigList);
-  const machineFilter =
-    params.machines && params.machines.length > 0 ? new Set(params.machines) : null;
-  const projectSlots = fleet.slots.filter(
-    (s) =>
-      s.project === params.project &&
-      s.lifecycle !== 'disabled' &&
-      (!machineFilter || machineFilter.has(s.machine)),
-  );
-  // Live-check branches for free slots so the UI shows accurate data
+  const projectSlots = selectDispatchCandidateSlots(fleet.slots, params);
+  const refreshOpts = { force: params.forceRefresh === true };
+  // Live-check branches for free slots so the UI shows accurate data.
+  // TTL skips hosts already probed; forceRefresh (UI Refresh) bypasses it.
   const freeSlots = projectSlots.filter(isFreeSlot);
-  if (freeSlots.length > 0) await refreshBranches(freeSlots);
+  if (freeSlots.length > 0) await refreshBranches(freeSlots, refreshOpts);
 
   // Resolve targetBranch server-side when the wizard lacks PR-list context, then reuse the
   // same hint for scoring, nudge eligibility, and follow-up family inference.
@@ -724,19 +761,23 @@ export async function dispatchCandidates(
   let nudgeMetaBySlot: Map<string, BranchAffinityNudgeCandidate> = new Map();
   if (isPrFlow && params.ticketOrPr && resolvedTargetBranch) {
     const busyMatching = selectBranchAffinityRefreshSlots(projectSlots);
-    if (busyMatching.length > 0) await refreshBranches(busyMatching);
-    const candidatesList = await collectBranchAffinityNudgeCandidates(
-      fleet.slots,
-      params.project,
-      params.ticketOrPr,
-      {
-        familyId: familyContext.familyId ?? null,
-        lane: params.lane ?? null,
-        variant: params.variant ?? null,
-        targetBranch: resolvedTargetBranch ?? null,
-        requiredPrepareProfile,
-      },
-    );
+    if (busyMatching.length > 0) await refreshBranches(busyMatching, refreshOpts);
+    const nudgeProjects = params.project
+      ? [params.project]
+      : [...new Set(projectSlots.map((slot) => slot.project))];
+    const candidatesList = (
+      await Promise.all(
+        nudgeProjects.map((project) =>
+          collectBranchAffinityNudgeCandidates(fleet.slots, project, params.ticketOrPr!, {
+            familyId: familyContext.familyId ?? null,
+            lane: params.lane ?? null,
+            variant: params.variant ?? null,
+            targetBranch: resolvedTargetBranch ?? null,
+            requiredPrepareProfile,
+          }),
+        ),
+      )
+    ).flat();
     nudgeMetaBySlot = new Map(candidatesList.map((c) => [c.slot.slot, c]));
   }
 
@@ -781,6 +822,7 @@ export async function dispatchCandidates(
           : null;
       return {
         slotId: s.slot,
+        project: s.project,
         score: isFreeSlot(s)
           ? slotScore(s, resolvedTargetBranch, {
               familyId: familyContext.familyId,

@@ -3221,12 +3221,8 @@ All checks passed.`;
     `;
   }
 
-  // Simulates the gateway's domain/run-mode catalog query so the picker's
-  // refiltering, empty, and partially-unavailable states are demoable offline.
-  private _pickerCatalog(
-    domain: string,
-    mode: 'autonomous' | 'interactive',
-  ): ExecutionTemplateOptions {
+  // Full catalog snapshot. The picker filters locally by domain and mode.
+  private _pickerCatalog(): ExecutionTemplateOptions {
     const all: ExecutionTemplateCatalogOption[] = [
       {
         id: 'fix-bug/default',
@@ -3248,6 +3244,7 @@ All checks passed.`;
         runMode: 'interactive',
         platforms: ['mobile'],
         labels: ['domain:money-movement'],
+        sourceDomains: ['money-movement'],
         relativePath: 'fix-bug/settlement-interactive.mobile.md',
         sha256: 'b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1',
         title: 'Money-movement settlement walkthrough',
@@ -3273,6 +3270,7 @@ All checks passed.`;
         runMode: 'autonomous',
         platforms: ['mobile'],
         labels: ['domain:perps'],
+        sourceDomains: ['perps'],
         relativePath: 'fix-bug/sentry-cuf-autonomous.mobile.md',
         sha256: 'd4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3',
         title: 'Perps Sentry CUF proof',
@@ -3286,43 +3284,25 @@ All checks passed.`;
         runMode: 'autonomous',
         platforms: ['mobile'],
         labels: ['domain:money-movement'],
+        sourceDomains: ['money-movement'],
         relativePath: 'fix-bug/settlement-autonomous.mobile.md',
         sha256: 'e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
         title: 'Money-movement settlement proof',
       },
     ];
-    const domainSources: Record<string, string> = {
-      'team:perps': 'perps',
-      'team:money-movement': 'money-movement',
-    };
-    const options = all.filter((option) => {
-      if (option.runMode !== mode) return false;
-      const optionDomain = option.labels
-        .find((label) => label.startsWith('domain:'))
-        ?.slice('domain:'.length);
-      return optionDomain === undefined || optionDomain === domain;
-    });
-    const filteredSources = Object.entries(domainSources)
-      .filter(([, sourceDomain]) => sourceDomain !== domain)
-      .map(([id, sourceDomain]) => ({
-        id,
-        reason: 'domain-restricted' as const,
-        domains: [sourceDomain],
-      }));
     return {
       configured: true,
-      options,
+      options: all,
       availableDomains: ['money-movement', 'perps'],
-      ...(options.length > 0
-        ? { selectedId: options[0]!.id, selectionReason: 'configured-default' }
-        : {}),
+      selectedId: 'fix-bug/default',
+      selectionReason: 'configured-default',
       unavailableSources: [{ id: 'team:optional', reason: 'missing-environment' }],
-      filteredSources,
+      filteredSources: [],
     };
   }
 
   private renderExecutionTemplatePicker() {
-    const catalog = this._pickerCatalog(this._pickerDomain, this._pickerMode);
+    const catalog = this._pickerCatalog();
     return html`
       <div class="dev-section">
         <h2>Execution Template Picker — multi-domain, multi-mode catalog</h2>
