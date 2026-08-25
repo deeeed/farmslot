@@ -57,7 +57,22 @@ export { isTerminalReviewArtifactError, TerminalReviewArtifactError };
 
 export interface PublicationReviewRecoveryResult {
   recoveredIds: string[];
+  relaunchIds?: string[];
   terminalErrors: Array<{ contextId: string; message: string }>;
+}
+
+type RecoveredReviewerAction =
+  | { kind: 'recovered'; id: string }
+  | { kind: 'relaunch'; id: string }
+  | null;
+
+export function recoveredReviewerActionForPromptRecovery(
+  promptRecovery: Awaited<ReturnType<typeof resumeReviewAgentPromptDelivery>>,
+  ctx: Pick<AgentContext, 'id' | 'artifactScope'>,
+): RecoveredReviewerAction {
+  return promptRecovery === 'retired'
+    ? { kind: 'relaunch', id: ctx.artifactScope?.trim() || ctx.id }
+    : null;
 }
 
 interface PublicationReviewRecoveryOptions {
@@ -515,11 +530,12 @@ export async function recoverInflightPublicationReviews(
       : undefined;
 
   const recoveredIds: string[] = [];
+  const relaunchIds: string[] = [];
   const terminalErrors: PublicationReviewRecoveryResult['terminalErrors'] = [];
   for (const ctx of candidates) {
     if (options.shouldAbort?.()) break;
     try {
-      const recovered = await ingestRecoveredReviewer(
+      const action = await ingestRecoveredReviewer(
         runId,
         vars,
         ctx,
@@ -527,7 +543,8 @@ export async function recoverInflightPublicationReviews(
         recoveryContinuationPending,
         options,
       );
-      if (recovered) recoveredIds.push(recovered);
+      if (action?.kind === 'recovered') recoveredIds.push(action.id);
+      if (action?.kind === 'relaunch') relaunchIds.push(action.id);
     } catch (err) {
       if (isTerminalReviewArtifactError(err)) {
         terminalErrors.push({ contextId: ctx.id, message: err.message });
@@ -542,7 +559,7 @@ export async function recoverInflightPublicationReviews(
       );
     }
   }
-  return { recoveredIds, terminalErrors };
+  return { recoveredIds, relaunchIds, terminalErrors };
 }
 
 /**
@@ -557,18 +574,28 @@ async function ingestRecoveredReviewer(
   stampablePackage: ReadyGatePrPackage | undefined,
   recoveryContinuationPending: boolean,
   options: PublicationReviewRecoveryOptions,
-): Promise<string | null> {
+): Promise<RecoveredReviewerAction> {
   const signal = await readReviewerTerminalSignal(vars, ctx);
   if (options.shouldAbort?.()) return null;
   const freshSignal = signal && signalMatchesReviewerAttempt(signal, ctx) ? signal : undefined;
   if (freshSignal && !isSuccessfulTerminalReviewSignal(freshSignal)) {
-    return persistRecoveredFailedReviewer(runId, ctx, freshSignal, stampablePackage, options);
+    const persistedId = await persistRecoveredFailedReviewer(
+      runId,
+      ctx,
+      freshSignal,
+      stampablePackage,
+      options,
+    );
+    return persistedId ? { kind: 'recovered', id: persistedId } : null;
   }
   if (!freshSignal && (ctx.status === 'working' || ctx.status === 'launching')) {
     const promptRecovery = await resumeReviewAgentPromptDelivery(vars, runId, ctx);
     if (options.shouldAbort?.()) return null;
-    if (promptRecovery === 'inactive') {
-      await markRecoveredReviewerContext(runId, ctx, 'failed', {});
+    if (promptRecovery === 'inactive' || promptRecovery === 'retired') {
+      const contextSettled = await markRecoveredReviewerContext(runId, ctx, 'failed', {});
+      if (!contextSettled) return null;
+      const action = recoveredReviewerActionForPromptRecovery(promptRecovery, ctx);
+      if (action) return action;
     } else if (promptRecovery === 'unsupported') {
       console.warn(
         `[run-engine] run ${runId.slice(0, 8)} — reviewer ${ctx.id} cannot resume prompt delivery; marking it failed`,
@@ -677,7 +704,7 @@ async function ingestRecoveredReviewer(
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — recovered in-flight publication review ${persisted.id} (verdict ${persisted.verdict}) from reviewer context ${ctx.id}`,
   );
-  return persisted.id;
+  return { kind: 'recovered', id: persisted.id };
 }
 
 async function persistRecoveredFailedReviewer(

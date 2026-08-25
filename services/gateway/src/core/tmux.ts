@@ -365,6 +365,53 @@ export async function killTmuxWindowById(
   }
 }
 
+export async function resolveTmuxWindowId(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+): Promise<string | null> {
+  const result = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`display-message -p -t ${shellQuote(target)} '#{window_id}' 2>/dev/null`),
+    { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
+  );
+  throwIfTmuxQueryTimedOut(result, `resolveTmuxWindowId ${target}`);
+  const windowId = result.stdout.trim();
+  return result.exitCode === 0 && /^@\d+$/.test(windowId) ? windowId : null;
+}
+
+export async function resolveTmuxWindowIdentity(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+): Promise<{ windowId: string; session: string; window: string } | null> {
+  const result = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `display-message -p -t ${shellQuote(target)} '#{window_id}\t#{session_name}\t#{window_name}' 2>/dev/null`,
+    ),
+    { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
+  );
+  throwIfTmuxQueryTimedOut(result, `resolveTmuxWindowIdentity ${target}`);
+  const [windowId, session, window] = result.stdout.trim().split('\t');
+  return result.exitCode === 0 && /^@\d+$/.test(windowId ?? '') && session && window
+    ? { windowId: windowId!, session, window }
+    : null;
+}
+
+export async function resolveTmuxWindowPaneCount(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  windowId: string,
+): Promise<number | null> {
+  if (!/^@\d+$/.test(windowId)) return null;
+  const result = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`list-panes -t ${shellQuote(windowId)} -F '#{pane_id}' 2>/dev/null`),
+    { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
+  );
+  throwIfTmuxQueryTimedOut(result, `resolveTmuxWindowPaneCount ${windowId}`);
+  if (result.exitCode !== 0) return null;
+  return result.stdout.split('\n').filter((line) => /^%\d+$/.test(line.trim())).length;
+}
+
 export async function resolveTmuxPaneId(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,

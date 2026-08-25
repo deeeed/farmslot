@@ -44,7 +44,7 @@ test('runner-validation catalog includes four runners and twenty-one scenarios',
   assert.ok(listScenarios().includes('monitor-stuck-smoke'));
 });
 
-test('self-review recovers argv-first runners by sending, not by marking them unsupported', () => {
+test('self-review routes argv-relaunch handoffs to cold process replacement', () => {
   const source = fs.readFileSync(
     path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
@@ -52,11 +52,7 @@ test('self-review recovers argv-first runners by sending, not by marking them un
     ),
     'utf8',
   );
-  assert.match(source, /runnerSupportsInteractivePrompt\(runner\)/);
-  assert.doesNotMatch(
-    source,
-    /if \(!target \|\| !taskMdPath \|\| !runner \|\| !runnerNeedsPostLaunchPrompt\(runner\)\)/,
-  );
+  assert.match(source, /runnerRetainedSessionHandoff\(runner\) === 'argv-relaunch'/);
 });
 
 test('run-monitor stuck path calls production observability evaluator, not pane progress scrape', () => {

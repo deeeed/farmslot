@@ -59,6 +59,12 @@ export interface AgentContext {
    * current attempt", which restart recovery needs.
    */
   attemptStartedAt?: string;
+  /** Durable boundary recorded immediately before a task prompt may mutate the runner. */
+  promptDeliveryStartedAt?: string;
+  /** Optional source ref captured with the delivery boundary, such as the pre-fix HEAD. */
+  deliveryBaselineRef?: string;
+  /** Tmux pane PID captured before a destructive delivery, used to prove whether respawn occurred. */
+  deliveryBaselinePanePid?: string;
   /** Attempt identity last observed from the worker signal contract. */
   signalAttemptId?: string;
   updatedAt?: string;

@@ -90,7 +90,11 @@ import {
 export const WORKER_ENV_PREFIX =
   'export DISABLE_OMC=1 DISABLE_OMX=1; ASDF_SHIMS="${ASDF_DATA_DIR:-$HOME/.asdf}/shims"; if [ -d "$ASDF_SHIMS" ]; then export PATH="$ASDF_SHIMS:$PATH"; fi';
 
-export type RetainedSessionHandoff = 'resume-with-prompt' | 'in-place' | 'unsupported';
+export type RetainedSessionHandoff =
+  | 'resume-with-prompt'
+  | 'in-place'
+  | 'argv-relaunch'
+  | 'unsupported';
 export type SessionReloadCapability = 'with-prompt' | 'none';
 
 export interface RunnerGracefulExitCapability {
@@ -296,7 +300,10 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: false,
     sessionReload: 'none',
     gracefulExit: null,
-    retainedSessionHandoff: 'in-place',
+    // Cursor collapses injected multiline prompts into opaque composer entries,
+    // so pane inspection cannot prove that the submit key started this task.
+    // Replace the role window and carry each retained task through argv instead.
+    retainedSessionHandoff: 'argv-relaunch',
     supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
     promptSubmitKey: 'C-m',
@@ -672,6 +679,9 @@ export function retainedReviewerDeliveryPlan(
   loopNumber: number,
 ): RetainedReviewerDeliveryPlan {
   const resetContext = sessionIntent === 'reset' && loopNumber === 1;
+  if (runnerRetainedSessionHandoff(runnerId) === 'argv-relaunch') {
+    return { kind: 'cold-relaunch', resetContext: false };
+  }
   if (!resetContext) return { kind: 'in-place', resetContext: false };
   return runnerContextResetCommand(runnerId)
     ? { kind: 'in-place', resetContext: true }

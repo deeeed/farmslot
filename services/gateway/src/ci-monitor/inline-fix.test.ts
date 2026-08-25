@@ -6,14 +6,95 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { Run } from '@farmslot/protocol';
+
 import { farmslotRoot } from '../core/config.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 
 import {
+  resolveCiFixReplacementOwner,
   resolveCiFixRetainedSession,
   resolveCiFixTemplatePath,
+  resolveRecoverableCiFixContext,
   sendCiFixNudge,
 } from './inline-fix.js';
+
+test('CI fix recovery requires a durable prompt boundary and HEAD baseline', () => {
+  const context = {
+    id: 'ci-fix',
+    label: 'CI fix',
+    role: 'ci-fix' as const,
+    status: 'launching' as const,
+    runner: 'cursor',
+    slotId: 'macpro-mm-5',
+    runId: 'run-1',
+    taskFile: 'tasks/run-1/CI-FIX.md',
+    signalFile: 'tasks/run-1/CI-FIX-SIGNAL.json',
+    promptDeliveryStartedAt: '2026-08-25T09:00:00.000Z',
+    deliveryBaselineRef: 'abc1234',
+    deliveryBaselinePanePid: '1234',
+    target: { session: 'mm-5', window: 'dev', pane: null, target: 'mm-5:dev' },
+  };
+  const run = { ...makeRun({ flowType: 'dev' }), agentContexts: [context] };
+
+  assert.equal(resolveRecoverableCiFixContext(run)?.id, 'ci-fix');
+  assert.equal(
+    resolveRecoverableCiFixContext({
+      ...run,
+      agentContexts: [{ ...context, promptDeliveryStartedAt: undefined }],
+    }),
+    null,
+  );
+});
+
+test('CI fix replacement readiness excludes the pending CI context', () => {
+  const run: Run = {
+    ...makeRun({ flowType: 'dev' }),
+    agentContexts: [
+      {
+        id: 'dev',
+        label: 'Dev',
+        role: 'dev',
+        status: 'working',
+        slotId: 'macpro-mm-5',
+        runId: 'run-1',
+        signalFile: 'tasks/run-1/SIGNAL.json',
+        target: { session: 'mm-5', window: 'dev', pane: '%10', target: 'mm-5:dev' },
+      },
+      {
+        id: 'ci-fix',
+        label: 'CI fix',
+        role: 'ci-fix',
+        status: 'working',
+        slotId: 'macpro-mm-5',
+        runId: 'run-1',
+        signalFile: 'tasks/run-1/CI-FIX-SIGNAL.json',
+        signalAttemptId: 'ci-attempt-2',
+        target: { session: 'mm-5', window: 'dev', pane: '%10', target: 'mm-5:dev' },
+      },
+    ],
+  };
+
+  assert.equal(resolveCiFixReplacementOwner(run, 'mm-5:dev')?.id, 'dev');
+});
+
+test('CI fix replacement readiness fails closed for ambiguous follow-up ownership', () => {
+  const run: Run = {
+    ...makeRun({ flowType: 'dev' }),
+    agentContexts: ['review', 'self-review-fix'].map((role) => ({
+      id: role,
+      label: role,
+      role: role as 'review' | 'self-review-fix',
+      status: 'working' as const,
+      slotId: 'macpro-mm-5',
+      runId: 'run-1',
+      signalFile: `tasks/run-1/${role}-SIGNAL.json`,
+      target: { session: 'mm-5', window: 'dev', pane: '%10', target: 'mm-5:dev' },
+    })),
+  };
+
+  assert.equal(resolveCiFixReplacementOwner(run, 'mm-5:dev'), null);
+});
 
 test('CI fix delivery resolves the primary worker retained session', () => {
   const retained = resolveCiFixRetainedSession(

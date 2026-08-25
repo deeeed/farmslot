@@ -3,18 +3,26 @@ import type { SafetyTier } from '@farmslot/protocol';
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
+  listExactTmuxWindows,
+  resolveExactTmuxWindowPane,
   resolveTmuxPaneId,
+  resolveTmuxWindowId,
   respawnTmuxWindowWithCommand,
   shellQuote,
+  TMUX_WINDOW_RESPAWN_SETTLE_MS,
   tmuxShellSnippet,
 } from '../core/tmux.js';
 
 import {
+  buildLaunchCommand,
   buildRunnerSessionReloadCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from './launch-command.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
-import type { LaunchAckSignalSnapshot } from './prompt-delivery-evidence.js';
+import {
+  type LaunchAckSignalSnapshot,
+  readLaunchAckSignalSnapshot,
+} from './prompt-delivery-evidence.js';
 import {
   captureRunnerPromptAcceptanceBaseline,
   getRunnerObservability,
@@ -31,7 +39,12 @@ import {
   WORKER_ENV_PREFIX,
 } from './registry.js';
 import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
-import { resolveRunnerSessionBinding, resumableSessionProbeCommand } from './session-process.js';
+import {
+  isRunnerAliveUnderPane,
+  probeRunnerDescendantPid,
+  resolveRunnerSessionBinding,
+  resumableSessionProbeCommand,
+} from './session-process.js';
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 const RUNNER_SESSION_ACCEPTANCE_POLL_MS = 2_000;
@@ -49,6 +62,10 @@ export interface RunnerSessionReactivationOptions {
   safetyTier?: SafetyTier;
   runtimeDir?: string;
   taskDir?: string;
+  taskFile?: string;
+  replacementReadySignalPath?: string | null;
+  replacementReadySignalAttemptId?: string | null;
+  replacementReadySignal?: LaunchAckSignalSnapshot | null;
   launchAckSignalPath?: string | null;
   launchAckBaseline?: LaunchAckSignalSnapshot | null;
   acceptExistingLaunchAck?: boolean;
@@ -66,7 +83,249 @@ export type RetainedSessionDeliveryResult =
       disposition: 'safe-send' | 'hold';
       reason: string;
       retryable?: boolean;
+      sendAttempted?: boolean;
     };
+
+function taskSignalIsTerminal(status: string | null): boolean {
+  return status === 'complete' || status === 'done' || status === 'failed' || status === 'blocked';
+}
+
+function taskSignalMatchesAttempt(
+  raw: string | null,
+  attemptId: string | null | undefined,
+): boolean {
+  if (!attemptId) return true;
+  if (!raw) return false;
+  try {
+    return (JSON.parse(raw) as { attemptId?: unknown }).attemptId === attemptId;
+  } catch {
+    return false;
+  }
+}
+
+async function relaunchRunnerWithArgvPrompt(
+  options: RunnerSessionReactivationOptions,
+): Promise<RetainedSessionDeliveryResult> {
+  const runner = normalizeRunner(options.runnerId);
+  let exactTarget = options.target;
+  if (!/^[@%]\d+$/.test(exactTarget)) {
+    const separator = exactTarget.indexOf(':');
+    const windowSelector = separator > 0 ? exactTarget.slice(separator + 1).split('.', 1)[0] : '';
+    if (windowSelector && !/^\d+$/.test(windowSelector)) {
+      const matches = await listExactTmuxWindows(
+        options.vars,
+        exactTarget.slice(0, separator),
+        windowSelector,
+      );
+      if (matches.length !== 1) {
+        return {
+          delivered: false,
+          disposition: 'hold',
+          reason: `${runner} argv relaunch target ${options.target} resolves to ${matches.length} exact named windows`,
+          retryable: false,
+          sendAttempted: false,
+        };
+      }
+      exactTarget = matches[0]!.windowId;
+    }
+  }
+  const owningPane = await resolveExactTmuxWindowPane(options.vars, exactTarget);
+  if (!owningPane) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `${runner} argv relaunch requires an exact pane or named role window target`,
+      retryable: false,
+    };
+  }
+  const panes = await execOnSlot(
+    options.vars,
+    tmuxShellSnippet(`list-panes -t ${shellQuote(owningPane.paneId)} -F '#{pane_id}'`),
+  );
+  if (panes.exitCode !== 0) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `Cannot inspect ${runner} argv relaunch window ${options.target}: ${panes.stderr || panes.stdout || `exit ${panes.exitCode}`}`,
+      retryable: false,
+    };
+  }
+  const paneCount = panes.stdout.split('\n').filter((line) => line.trim()).length;
+  if (paneCount !== 1) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `${runner} argv relaunch window ${options.target} has ${paneCount} panes; refusing window-wide replacement`,
+      retryable: false,
+    };
+  }
+  const owningWindowId = await resolveTmuxWindowId(options.vars, owningPane.paneId);
+  if (!owningWindowId) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `Cannot resolve the exact tmux window that owns ${owningPane.paneId}`,
+      retryable: true,
+      sendAttempted: false,
+    };
+  }
+  if (!options.launchAckSignalPath) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `${runner} argv relaunch requires a task-scoped acknowledgement signal`,
+      retryable: false,
+      sendAttempted: false,
+    };
+  }
+  const existingRunner = await probeRunnerDescendantPid(options.vars, owningPane.panePid, runner, {
+    timeout: 10_000,
+  });
+  if (existingRunner.state === 'unknown') {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `Cannot establish whether ${runner} still owns ${options.target}: ${existingRunner.reason ?? 'process probe unavailable'}`,
+      retryable: true,
+      sendAttempted: false,
+    };
+  }
+  if (existingRunner.state === 'present') {
+    const replacementReadySignalPath = options.replacementReadySignalPath?.trim();
+    if (!replacementReadySignalPath) {
+      return {
+        delivered: false,
+        disposition: 'hold',
+        reason: `Live ${runner} replacement requires a prior task signal`,
+        retryable: true,
+        sendAttempted: false,
+      };
+    }
+    const preservedReplacementReady = options.replacementReadySignal;
+    const replacementReady = taskSignalIsTerminal(preservedReplacementReady?.status ?? null)
+      ? preservedReplacementReady
+      : await readLaunchAckSignalSnapshot(options.vars, replacementReadySignalPath);
+    if (
+      !replacementReady ||
+      !taskSignalIsTerminal(replacementReady.status) ||
+      !taskSignalMatchesAttempt(replacementReady.raw, options.replacementReadySignalAttemptId)
+    ) {
+      return {
+        delivered: false,
+        disposition: 'hold',
+        reason: `Live ${runner} prior task is not terminal at ${replacementReadySignalPath}; refusing process replacement`,
+        retryable: true,
+        sendAttempted: false,
+      };
+    }
+  }
+  // Capture this at the mutation boundary. A caller baseline may predate other
+  // work and could let an unrelated pre-relaunch write acknowledge this task.
+  const acknowledgementBaseline = await readLaunchAckSignalSnapshot(
+    options.vars,
+    options.launchAckSignalPath,
+  );
+  if (acknowledgementBaseline === null) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `Cannot capture the task-signal baseline before ${runner} argv relaunch`,
+      retryable: true,
+      sendAttempted: false,
+    };
+  }
+
+  const launchedAt = Date.now();
+  const deadline = launchedAt + (options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
+  const launchCommand = buildLaunchCommand(
+    options.vars,
+    runner,
+    options.model ?? undefined,
+    options.prompt,
+    {
+      effort: options.effort ?? undefined,
+      safetyTier: options.safetyTier,
+      runtimeDir: options.runtimeDir,
+      taskDir: options.taskDir,
+      taskFile: options.taskFile,
+    },
+  );
+  try {
+    await respawnTmuxWindowWithCommand(
+      options.vars,
+      owningWindowId,
+      `${WORKER_ENV_PREFIX} && ${launchCommand}`,
+      { preserveWindowAfterExit: true },
+    );
+  } catch (error) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `${runner} argv relaunch may have started but tmux did not confirm completion: ${(error as Error).message}`,
+      retryable: false,
+      sendAttempted: true,
+    };
+  }
+  let replacementRunnerAlive = false;
+  while (Date.now() < deadline) {
+    const pane = await resolveExactTmuxWindowPane(options.vars, owningWindowId);
+    if (
+      pane &&
+      (await isRunnerAliveUnderPane(options.vars, pane.panePid, runner, { timeout: 10_000 }))
+    ) {
+      replacementRunnerAlive = true;
+      break;
+    }
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.max(0, Math.min(TMUX_WINDOW_RESPAWN_SETTLE_MS, deadline - Date.now())),
+      ),
+    );
+  }
+  if (!replacementRunnerAlive) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `${runner} argv relaunch did not leave a live runner in ${options.target}`,
+      retryable: true,
+      sendAttempted: true,
+    };
+  }
+
+  while (Date.now() < deadline) {
+    const acknowledgement = await runnerHasDurablePromptHandoff(
+      options.vars,
+      owningWindowId,
+      runner,
+      options.prompt,
+      launchedAt,
+      {
+        launchAckSignalPath: options.launchAckSignalPath,
+        launchAckBaseline: acknowledgementBaseline,
+        requirePromptDigest: true,
+        acceptExistingLaunchAck: false,
+      },
+    );
+    if (acknowledgement.accepted) {
+      return { delivered: true, acknowledgement: 'structured' };
+    }
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.max(0, Math.min(RUNNER_SESSION_ACCEPTANCE_POLL_MS, deadline - Date.now())),
+      ),
+    );
+  }
+
+  return {
+    delivered: false,
+    disposition: 'hold',
+    reason: `${runner} argv relaunch did not advance ${options.launchAckSignalPath}`,
+    retryable: false,
+    sendAttempted: true,
+  };
+}
 
 type LiveRunnerDeliveryOptions = RunnerSessionReactivationOptions & {
   promptMarker: string;
@@ -540,6 +799,9 @@ export async function deliverPromptWithRetainedFallback(
   }
 
   const runner = normalizeRunner(options.runnerId);
+  if (runnerRetainedSessionHandoff(runner) === 'argv-relaunch') {
+    return relaunchRunnerWithArgvPrompt(options);
+  }
   if (
     runnerRetainedSessionHandoff(runner) === 'resume-with-prompt' &&
     (!options.sessionId?.trim() || !options.sessionPath?.trim())
@@ -585,6 +847,11 @@ export async function deliverPromptWithRetainedFallback(
 export async function deliverPromptToLiveRunner(
   options: LiveRunnerDeliveryOptions,
 ): Promise<RetainedSessionDeliveryResult> {
+  const runner = normalizeRunner(options.runnerId);
+  if (runnerRetainedSessionHandoff(runner) === 'argv-relaunch') {
+    return deliverPromptWithRetainedFallback(options);
+  }
+
   const sessionId = options.sessionId?.trim() ?? '';
   const sessionPath = options.sessionPath?.trim() ?? '';
   if (sessionId && sessionPath) return deliverPromptWithRetainedFallback(options);
@@ -597,7 +864,6 @@ export async function deliverPromptToLiveRunner(
     };
   }
 
-  const runner = normalizeRunner(options.runnerId);
   if (!runnerNeedsPostLaunchPrompt(runner)) return deliverPromptInPlace(options);
 
   // `forceBusyPoll` and `recovery` are options of safe-send's busy-composer

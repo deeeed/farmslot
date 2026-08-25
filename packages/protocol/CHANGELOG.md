@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- fix(agents): persist prompt-delivery boundaries and their source ref so restart recovery never guesses whether a destructive runner handoff began.
 - feat(dispatch): `dispatch.candidates` may omit `project` to return every enabled slot, each tagged with `project`, and accepts `forceRefresh` to bypass the branch-refresh TTL.
 - feat(execution-templates): catalog options may carry `sourceDomains`, `shadowedBy`, and `defaults`; `config.templateOptions` accepts `unfiltered` so a client can load one full project catalog and filter locally.
 - fix(run): persist `RunMonitorState.lastStructuredProgressAt` so a gateway restart does not reset an idle runner's stuck clock.

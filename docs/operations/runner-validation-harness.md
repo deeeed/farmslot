@@ -50,25 +50,26 @@ Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabi
 
 ## Scenarios
 
-| Scenario                            | Proves                                                                | Claude/Codex | Cursor            | Grok                   |
-| ----------------------------------- | --------------------------------------------------------------------- | ------------ | ----------------- | ---------------------- |
-| `hook-smoke`                        | SessionStart + UserPromptSubmit + Stop + `tmuxPane`                   | live tmux    | skip              | skip                   |
-| `pane-smoke`                        | Launch + response marker in pane                                      | skip         | `--print --trust` | skip                   |
-| `interaction-smoke`                 | Post-launch TUI flow (blockers + compose)                             | skip         | skip              | **interactive** launch |
-| `dispatch-prompt-smoke`             | Gateway `sendRunnerPostLaunchPrompt` (dispatch parity)                | skip         | **interactive**   | **interactive** launch |
-| `dispatch-prompt-dropped-enter`     | Buffered prompt recovery after a deterministically omitted submit key | Codex live   | skip              | skip                   |
-| `dispatch-prompt-mcp-race`          | MCP init race: fixture repro + live force-fail + fix pass             | skip         | skip              | **interactive** launch |
-| `dispatch-prompt-trust`             | Directory-trust / project-directory + classifier send_yes             | skip         | skip              | **fixture**            |
-| `prompt-accepted`                   | Sentinel digest ↔ UserPromptSubmit                                    | live         | skip              | skip                   |
-| `review-recovery-terminal-contract` | Runner-agnostic recovery, wait, replay, and slot cleanup (once)       | gateway E2E  | not repeated      | not repeated           |
-| `retained-safe-send-smoke`          | Exact retained-session follow-up after activity expiry                | live         | skip              | live                   |
-| `turn-boundary`                     | Stop after UserPromptSubmit                                           | live         | skip              | skip                   |
-| `self-review-fix-turn-lease`        | Long tool call renews the self-review fix idle lease                  | live         | skip              | skip                   |
-| `busy-composer`                     | Busy pane regex fixtures                                              | fixtures     | skip              | skip                   |
-| `mode-switch`                       | Bypass / permission mode                                              | live         | skip              | skip                   |
-| `session-attribution-smoke`         | Stale session rejected; hook path + model match                       | live tmux    | skip              | live tmux              |
-| `token-usage-smoke`                 | Live `session-usage.sh` on resolved path + model match                | live tmux    | skip              | live tmux              |
-| `monitor-stuck-smoke`               | Live cursor-agent TUI does not stuck-nudge while the process is alive | skip         | **interactive**   | skip                   |
+| Scenario                            | Proves                                                                 | Claude/Codex | Cursor            | Grok                   |
+| ----------------------------------- | ---------------------------------------------------------------------- | ------------ | ----------------- | ---------------------- |
+| `hook-smoke`                        | SessionStart + UserPromptSubmit + Stop + `tmuxPane`                    | live tmux    | skip              | skip                   |
+| `pane-smoke`                        | Launch + response marker in pane                                       | skip         | `--print --trust` | skip                   |
+| `interaction-smoke`                 | Post-launch TUI flow (blockers + compose)                              | skip         | skip              | **interactive** launch |
+| `dispatch-prompt-smoke`             | Gateway `sendRunnerPostLaunchPrompt` (dispatch parity)                 | skip         | **interactive**   | **interactive** launch |
+| `dispatch-prompt-dropped-enter`     | Buffered prompt recovery after a deterministically omitted submit key  | Codex live   | skip              | skip                   |
+| `dispatch-prompt-mcp-race`          | MCP init race: fixture repro + live force-fail + fix pass              | skip         | skip              | **interactive** launch |
+| `dispatch-prompt-trust`             | Directory-trust / project-directory + classifier send_yes              | skip         | skip              | **fixture**            |
+| `prompt-accepted`                   | Sentinel digest ↔ UserPromptSubmit                                     | live         | skip              | skip                   |
+| `review-recovery-terminal-contract` | Runner-agnostic recovery, wait, replay, and slot cleanup (once)        | gateway E2E  | not repeated      | not repeated           |
+| `retained-handoff-smoke`            | Retained review delivery: native resume or argv relaunch + task signal | live         | **live argv**     | skip                   |
+| `retained-safe-send-smoke`          | Exact retained-session follow-up after activity expiry                 | live         | skip              | live                   |
+| `turn-boundary`                     | Stop after UserPromptSubmit                                            | live         | skip              | skip                   |
+| `self-review-fix-turn-lease`        | Long tool call renews the self-review fix idle lease                   | live         | skip              | skip                   |
+| `busy-composer`                     | Busy pane regex fixtures                                               | fixtures     | skip              | skip                   |
+| `mode-switch`                       | Bypass / permission mode                                               | live         | skip              | skip                   |
+| `session-attribution-smoke`         | Stale session rejected; hook path + model match                        | live tmux    | skip              | live tmux              |
+| `token-usage-smoke`                 | Live `session-usage.sh` on resolved path + model match                 | live tmux    | skip              | live tmux              |
+| `monitor-stuck-smoke`               | Live cursor-agent TUI does not stuck-nudge while the process is alive  | skip         | **interactive**   | skip                   |
 
 Skipped scenarios record `skipReason` and count as pass so matrices stay honest.
 

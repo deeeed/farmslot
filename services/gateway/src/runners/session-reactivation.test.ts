@@ -14,6 +14,16 @@ let promptAcceptedAt: number | null = null;
 let promptAcceptanceBaselineMs: number | null = 1_000;
 let capturedPane = '';
 let trustSendCount = 0;
+let advanceTaskSignalOnRespawn = false;
+let runnerAlive = true;
+let runnerDiesOnRespawn = false;
+let runnerRevivesAfterProbes = 0;
+let runnerLivenessProbes = 0;
+let runnerProbeFails = false;
+let respawnFails = false;
+let namedWindowCount = 1;
+let replacementSignalOutput =
+  '1000000000\n{"status":"complete","timestamp":"2026-08-01T00:00:00.000Z"}\n';
 let taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
 let sessionState: ObservabilityReading<RunnerSessionDeliveryState> | null = {
   value: 'idle',
@@ -29,6 +39,34 @@ mock.module('../core/exec.js', {
     execLocal: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execOnSlot: async (_vars: SlotVars, command: string) => {
       commands.push(command);
+      if (command.includes('respawn-window') && respawnFails) {
+        throw new Error('transport lost after respawn');
+      }
+      if (command.includes('respawn-window') && advanceTaskSignalOnRespawn) {
+        taskSignalOutput =
+          '3000000000\n{"status":"running","timestamp":"2026-08-02T00:00:01.000Z"}\n';
+      }
+      if (command.includes('respawn-window') && runnerDiesOnRespawn) runnerAlive = false;
+      if (command.includes('respawn-window') && runnerRevivesAfterProbes > 0) {
+        runnerAlive = false;
+        runnerLivenessProbes = 0;
+      }
+      if (command.includes("'#{window_id}'")) {
+        return { exitCode: 0, stdout: '@1\n', stderr: '' };
+      }
+      if (command.includes('display-message -p -t')) {
+        return { exitCode: 0, stdout: '%1\t123\n', stderr: '' };
+      }
+      if (command.includes("list-panes -a -F '#{session_name}")) {
+        const rows = Array.from(
+          { length: namedWindowCount },
+          (_, index) => `test-1\tdev\t@${index + 1}\t${index + 1}\t100\t%${index + 1}\t123`,
+        );
+        return { exitCode: 0, stdout: rows.join('\n'), stderr: '' };
+      }
+      if (command.includes('#{pane_pid}')) {
+        return { exitCode: 0, stdout: '%1\t123\n', stderr: '' };
+      }
       if (command.includes('list-panes')) {
         const panes = Array.from({ length: paneCount }, (_, index) => `%${index + 1}`).join('\n');
         return { exitCode: 0, stdout: panes ? `${panes}\n` : '', stderr: '' };
@@ -41,12 +79,25 @@ mock.module('../core/exec.js', {
         promptAccepted = true;
         return { exitCode: 0, stdout: '', stderr: '' };
       }
+      if (command.includes('PRIOR-TASK-SIGNAL.json')) {
+        return { exitCode: 0, stdout: replacementSignalOutput, stderr: '' };
+      }
       if (command.includes('SELF-REVIEW-FIX-SIGNAL.json')) {
         return {
           exitCode: 0,
           stdout: taskSignalOutput,
           stderr: '',
         };
+      }
+      if (command.includes('command=$(ps -o command=')) {
+        if (runnerProbeFails) {
+          return { exitCode: 124, stdout: '', stderr: 'command timed out after 10000ms' };
+        }
+        runnerLivenessProbes += 1;
+        if (runnerRevivesAfterProbes > 0 && runnerLivenessProbes > runnerRevivesAfterProbes) {
+          runnerAlive = true;
+        }
+        return { exitCode: runnerAlive ? 0 : 1, stdout: runnerAlive ? '456\n' : '', stderr: '' };
       }
       if (command.includes('expected_prompt =') && command.includes('session_path = Path(')) {
         return {
@@ -129,8 +180,11 @@ mock.module('./claude-observability.js', {
   },
 });
 
-const { deliverPromptToRetainedRunnerSession, deliverPromptWithRetainedFallback } =
-  await import('./session-reactivation.js');
+const {
+  deliverPromptToLiveRunner,
+  deliverPromptToRetainedRunnerSession,
+  deliverPromptWithRetainedFallback,
+} = await import('./session-reactivation.js');
 
 const vars = {
   slotId: 'runner-local-test-1',
@@ -155,6 +209,434 @@ const vars = {
   projectName: 'test-project',
   resourceVars: { platform: 'ios', slot_id: 'runner-local-test-1' },
 } as SlotVars;
+
+test('Cursor retained handoff relaunches with argv and waits for the scoped task signal', async (t) => {
+  commands.length = 0;
+  paneCount = 1;
+  advanceTaskSignalOnRespawn = true;
+  taskSignalOutput = '2000000000\n{"status":"complete","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+  t.after(() => {
+    advanceTaskSignalOnRespawn = false;
+    taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+  });
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'cursor',
+    model: 'cursor-grok-4.6-high-fast',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    timeoutMs: 1_000,
+  });
+
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  const command = commands.find((candidate) => candidate.includes('respawn-window')) ?? '';
+  assert.match(command, /cursor-agent/);
+  assert.match(command, /Read and execute SELF-REVIEW-FIX[.]md/);
+  assert.equal(
+    commands.some((candidate) => candidate.includes('send-keys')),
+    false,
+  );
+});
+
+test('Cursor argv relaunch preserves dispatch templates that require task_file', async (t) => {
+  commands.length = 0;
+  advanceTaskSignalOnRespawn = true;
+  taskSignalOutput = '2000000000\n{"status":"complete","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+  t.after(() => {
+    advanceTaskSignalOnRespawn = false;
+    taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+  });
+
+  const result = await deliverPromptToLiveRunner({
+    vars: {
+      ...vars,
+      dispatchCmd:
+        'cd {repo} && {cursor_path} {safety_flags} --model {model} {task_file} {task_prompt}',
+    },
+    target: '%1',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+  });
+
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  const command = commands.find((candidate) => candidate.includes('respawn-window')) ?? '';
+  assert.match(command, /tasks\/run-1\/SELF-REVIEW-FIX[.]md/);
+});
+
+test('Cursor recovery accepts only prior structured evidence and never relaunches', async (t) => {
+  commands.length = 0;
+  paneCount = 1;
+  advanceTaskSignalOnRespawn = false;
+  const existingSignal = {
+    raw: '{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}',
+    status: 'running' as const,
+    mtimeNs: '2000000000',
+  };
+  taskSignalOutput = `${existingSignal.mtimeNs}\n${existingSignal.raw}\n`;
+  t.after(() => {
+    taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+  });
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckBaseline: existingSignal,
+    priorPromptSendAttempted: true,
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.disposition, 'hold');
+    assert.equal(result.retryable, false);
+    assert.match(result.reason, /refusing duplicate delivery/);
+  }
+  assert.equal(
+    commands.some((candidate) => candidate.includes('respawn-window')),
+    false,
+  );
+});
+
+test('Cursor argv handoff refuses delivery without a task signal contract', async () => {
+  commands.length = 0;
+  paneCount = 1;
+  advanceTaskSignalOnRespawn = false;
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'cursor',
+    model: 'cursor-grok-4.6-high-fast',
+    prompt: 'Read and execute CI-FIX.md',
+    promptMarker: 'CI-FIX.md',
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) assert.match(result.reason, /task-scoped acknowledgement signal/);
+  assert.equal(
+    commands.some((candidate) => candidate.includes('respawn-window')),
+    false,
+  );
+});
+
+test('Cursor argv handoff waits for a terminal prior task before replacement', async (t) => {
+  commands.length = 0;
+  paneCount = 1;
+  replacementSignalOutput =
+    '1000000000\n{"status":"running","timestamp":"2026-08-01T00:00:00.000Z"}\n';
+  t.after(() => {
+    replacementSignalOutput =
+      '1000000000\n{"status":"complete","timestamp":"2026-08-01T00:00:00.000Z"}\n';
+  });
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    timeoutMs: 1_000,
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.retryable, true);
+    assert.equal(result.sendAttempted, false);
+    assert.match(result.reason, /prior task is not terminal/);
+  }
+  assert.equal(
+    commands.some((candidate) => candidate.includes('respawn-window')),
+    false,
+  );
+});
+
+test('Cursor argv handoff holds before mutation when process liveness is unknown', async (t) => {
+  commands.length = 0;
+  runnerProbeFails = true;
+  t.after(() => {
+    runnerProbeFails = false;
+  });
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.retryable, true);
+    assert.equal(result.sendAttempted, false);
+    assert.match(result.reason, /Cannot establish whether cursor still owns/);
+  }
+  assert.equal(
+    commands.some((candidate) => candidate.includes('respawn-window')),
+    false,
+  );
+});
+
+test('Cursor argv handoff records a possible send when respawn confirmation fails', async (t) => {
+  commands.length = 0;
+  respawnFails = true;
+  t.after(() => {
+    respawnFails = false;
+  });
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.retryable, false);
+    assert.equal(result.sendAttempted, true);
+  }
+});
+
+test('Cursor argv handoff refreshes a nonterminal prior-task snapshot on retry', async (t) => {
+  commands.length = 0;
+  advanceTaskSignalOnRespawn = true;
+  replacementSignalOutput =
+    '2000000000\n{"status":"complete","timestamp":"2026-08-01T00:00:01.000Z"}\n';
+  const staleSnapshot = {
+    raw: '{"status":"running","timestamp":"2026-08-01T00:00:00.000Z"}',
+    status: 'running' as const,
+    mtimeNs: '1000000000',
+  };
+  t.after(() => {
+    advanceTaskSignalOnRespawn = false;
+    replacementSignalOutput =
+      '1000000000\n{"status":"complete","timestamp":"2026-08-01T00:00:00.000Z"}\n';
+    taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+  });
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    replacementReadySignal: staleSnapshot,
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    timeoutMs: 2_000,
+  });
+
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.equal(
+    commands.some((candidate) => candidate.includes('PRIOR-TASK-SIGNAL.json')),
+    true,
+  );
+  assert.equal(
+    commands.some((candidate) => candidate.includes('respawn-window')),
+    true,
+  );
+});
+
+test('Cursor argv handoff rejects a terminal signal from another attempt', async () => {
+  commands.length = 0;
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    replacementReadySignalAttemptId: 'expected-attempt',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) assert.equal(result.sendAttempted, false);
+  assert.equal(
+    commands.some((candidate) => candidate.includes('respawn-window')),
+    false,
+  );
+});
+
+test('Cursor argv handoff retries a transient baseline read before mutation', async (t) => {
+  commands.length = 0;
+  taskSignalOutput = '__FARMSLOT_SIGNAL_UNREADABLE__\n';
+  t.after(() => {
+    taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+  });
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.retryable, true);
+    assert.equal(result.sendAttempted, false);
+  }
+  assert.equal(
+    commands.some((candidate) => candidate.includes('respawn-window')),
+    false,
+  );
+});
+
+test('Cursor argv handoff permits a delayed acknowledgement after liveness races', async (t) => {
+  commands.length = 0;
+  runnerAlive = true;
+  runnerDiesOnRespawn = true;
+  t.after(() => {
+    runnerAlive = true;
+    runnerDiesOnRespawn = false;
+  });
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    timeoutMs: 1_000,
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.retryable, true);
+    assert.equal(result.sendAttempted, true);
+  }
+  assert.equal(
+    commands.some((candidate) => candidate.includes('respawn-window')),
+    true,
+  );
+});
+
+test('Cursor argv handoff waits for a delayed replacement process', async (t) => {
+  commands.length = 0;
+  advanceTaskSignalOnRespawn = true;
+  runnerAlive = true;
+  runnerRevivesAfterProbes = 2;
+  t.after(() => {
+    advanceTaskSignalOnRespawn = false;
+    runnerAlive = true;
+    runnerRevivesAfterProbes = 0;
+    runnerLivenessProbes = 0;
+    taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+  });
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    timeoutMs: 3_000,
+  });
+
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.ok(runnerLivenessProbes >= 3);
+});
+
+test('Cursor argv handoff refuses a bare session before replacing any window', async () => {
+  commands.length = 0;
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: 'test-1',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.disposition, 'hold');
+    assert.match(result.reason, /exact pane or named role window/);
+  }
+  assert.equal(
+    commands.some((candidate) => candidate.includes('respawn-window')),
+    false,
+  );
+});
+
+test('Cursor argv handoff refuses an ambiguous named window', async (t) => {
+  commands.length = 0;
+  namedWindowCount = 2;
+  t.after(() => {
+    namedWindowCount = 1;
+  });
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) assert.match(result.reason, /2 exact named windows/);
+  assert.equal(
+    commands.some((candidate) => candidate.includes('respawn-window')),
+    false,
+  );
+});
+
+test('Cursor argv handoff refuses a split window before replacing any pane', async (t) => {
+  commands.length = 0;
+  paneCount = 2;
+  t.after(() => {
+    paneCount = 1;
+  });
+
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.disposition, 'hold');
+    assert.match(result.reason, /has 2 panes/);
+  }
+  assert.equal(
+    commands.some((candidate) => candidate.includes('respawn-window')),
+    false,
+  );
+});
 
 test('retained resume accepts a slot-clock prompt hook emitted before respawn-window returns', async (t) => {
   commands.length = 0;
@@ -551,25 +1033,34 @@ test('retained fallback uses an exact runner hook when the task signal baseline 
   });
 });
 
-test('pane-only retained handoff falls back to safe-send after probing the task signal', async () => {
+test('warm Cursor retained handoff uses argv relaunch and requires a fresh task signal', async (t) => {
   commands.length = 0;
   paneCount = 1;
+  advanceTaskSignalOnRespawn = true;
   taskSignalOutput = '0\n\n';
+  t.after(() => {
+    advanceTaskSignalOnRespawn = false;
+    taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+  });
   const result = await deliverPromptWithRetainedFallback({
     vars,
-    target: 'test-1:dev',
+    target: '%1',
     runnerId: 'cursor',
     prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
     launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
     launchAckBaseline: { raw: null, status: null, mtimeNs: '0' },
     timeoutMs: 5,
   });
-  taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
 
-  assert.deepEqual(result, { delivered: true, acknowledgement: 'safe-send' });
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
   assert.equal(
-    commands.some((command) => command.includes('SELF-REVIEW-FIX-SIGNAL.json')),
+    commands.some((command) => command.includes('respawn-window')),
     true,
+  );
+  assert.equal(
+    commands.some((command) => command.includes('send-keys')),
+    false,
   );
 });
 

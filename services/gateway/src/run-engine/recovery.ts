@@ -365,7 +365,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         continue;
       }
 
-      if (recoveryResult.recoveredIds.length > 0) {
+      if (recoveryResult.recoveredIds.length > 0 || (recoveryResult.relaunchIds?.length ?? 0) > 0) {
         try {
           await deps.replayHumanGate(run.id);
         } catch (err) {
@@ -494,9 +494,10 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
             );
           }
           const recoveredReviews = recoveryResult.recoveredIds.length;
-          if (recoveredReviews > 0 || gateDecisions.length > 1) {
+          const relaunchedReviews = recoveryResult.relaunchIds?.length ?? 0;
+          if (recoveredReviews > 0 || relaunchedReviews > 0 || gateDecisions.length > 1) {
             console.log(
-              `[run-engine] run ${run.id.slice(0, 8)} — re-entering human gate after restart (${recoveredReviews} recovered review(s), ${gateDecisions.length} pending gate decision(s))`,
+              `[run-engine] run ${run.id.slice(0, 8)} — re-entering human gate after restart (${recoveredReviews} recovered review(s), ${relaunchedReviews} review(s) needing relaunch, ${gateDecisions.length} pending gate decision(s))`,
             );
             try {
               // Awaited: skip the stale rebroadcast only once the replay has

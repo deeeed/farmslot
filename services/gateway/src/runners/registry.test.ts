@@ -1933,7 +1933,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.equal(getRunnerDefinition('claude').sessionReload, 'with-prompt');
     assert.equal(getRunnerDefinition('codex').retainedSessionHandoff, 'resume-with-prompt');
     assert.equal(getRunnerDefinition('codex').sessionReload, 'with-prompt');
-    assert.equal(getRunnerDefinition('cursor').retainedSessionHandoff, 'in-place');
+    assert.equal(getRunnerDefinition('cursor').retainedSessionHandoff, 'argv-relaunch');
     assert.equal(getRunnerDefinition('cursor').sessionReload, 'none');
   });
 

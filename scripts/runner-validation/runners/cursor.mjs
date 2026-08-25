@@ -18,6 +18,10 @@ function resolveBinary() {
   return 'cursor-agent';
 }
 
+export function binaryPath() {
+  return resolveBinary();
+}
+
 export function assertBinary() {
   try {
     execFileSync(resolveBinary(), ['--version'], { stdio: 'pipe' });

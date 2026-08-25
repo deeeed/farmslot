@@ -21,8 +21,12 @@ import { execOnSlot } from '../core/exec.js';
 import {
   ensureTmuxWindow,
   killTmuxWindowById,
+  listExactTmuxWindows,
   resolveExactTmuxWindowPane,
   resolveTmuxSession,
+  resolveTmuxWindowId,
+  resolveTmuxWindowIdentity,
+  resolveTmuxWindowPaneCount,
   respawnTmuxWindowWithCommand,
   shellQuote,
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
@@ -36,6 +40,7 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
   runnerSupportsSessionReload,
 } from '../runners/launch-command.js';
+import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
   captureRunnerPromptAcceptanceBaseline,
   retainedReviewerDeliveryPlan,
@@ -43,6 +48,7 @@ import {
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
   runnerPaneShowsCurrentInteractiveProgress,
+  runnerRetainedSessionHandoff,
   runnerSupportsInteractivePrompt,
   sendRunnerPostLaunchPrompt,
   WORKER_ENV_PREFIX,
@@ -50,6 +56,7 @@ import {
 import {
   captureRunnerSessionMetadata,
   isRunnerAliveUnderPane,
+  probeRunnerDescendantPid,
   resumableSessionProbeCommand,
 } from '../runners/session-process.js';
 import {
@@ -90,7 +97,6 @@ import {
   captureReviewSnapshot,
   debugSelfReviewLog,
   durationBetween,
-  killSelfReviewWindow,
   readPersistedReviewSnapshot,
   removeSlotFiles,
   reviewArtifactDir,
@@ -121,12 +127,20 @@ async function reconcileReviewerWindow(
   // clients without strengthening the runner contract.
   const ensured = await ensureTmuxWindow(vars, session, windowName);
   const candidates = await Promise.all(
-    ensured.windows.map(async (window) => ({
-      ...window,
-      runnerAlive: await isRunnerAliveUnderPane(vars, window.panePid, runner, { timeout: 10_000 }),
-    })),
+    ensured.windows.map(async (window) => {
+      const runnerProbe = await probeRunnerDescendantPid(vars, window.panePid, runner, {
+        timeout: 10_000,
+      });
+      return { ...window, runnerProbe };
+    }),
   );
-  const live = candidates.filter((window) => window.runnerAlive);
+  const indeterminate = candidates.find((window) => window.runnerProbe.state === 'unknown');
+  if (indeterminate?.runnerProbe.state === 'unknown') {
+    throw new Error(
+      `Cannot reconcile ${session}:${windowName}: runner liveness is unknown for ${indeterminate.windowId}${indeterminate.runnerProbe.reason ? ` (${indeterminate.runnerProbe.reason})` : ''}`,
+    );
+  }
+  const live = candidates.filter((window) => window.runnerProbe.state === 'present');
   const newestFirst = (a: TmuxWindowRef, b: TmuxWindowRef) =>
     (Number.isFinite(b.activityAt) ? b.activityAt : 0) -
       (Number.isFinite(a.activityAt) ? a.activityAt : 0) || b.windowIndex - a.windowIndex;
@@ -142,7 +156,11 @@ async function reconcileReviewerWindow(
       `[self-review] reconciled ${candidates.length} ${session}:${windowName} windows to ${canonical.windowId}`,
     );
   }
-  return { ...canonical, disposition: ensured.disposition };
+  return {
+    ...canonical,
+    disposition: ensured.disposition,
+    runnerAlive: canonical.runnerProbe.state === 'present',
+  };
 }
 
 /** Progress mark writes status "running"; only terminal worker signals count as done. */
@@ -278,19 +296,27 @@ export function selectRecoverableReviewContext(
 }
 
 interface ReviewPromptRecoveryDependencies {
+  listExactTmuxWindows: typeof listExactTmuxWindows;
   resolveExactTmuxWindowPane: typeof resolveExactTmuxWindowPane;
-  isRunnerAliveUnderPane: typeof isRunnerAliveUnderPane;
+  probeRunnerDescendantPid: typeof probeRunnerDescendantPid;
   resolveWorkerDispatchPrompt: typeof resolveWorkerDispatchPrompt;
   resolveProjectRuntimeDir: typeof resolveProjectRuntimeDir;
   sendRunnerPostLaunchPrompt: typeof sendRunnerPostLaunchPrompt;
+  killTmuxWindowById: typeof killTmuxWindowById;
+  resolveTmuxWindowIdentity: typeof resolveTmuxWindowIdentity;
+  resolveTmuxWindowPaneCount: typeof resolveTmuxWindowPaneCount;
 }
 
 const defaultReviewPromptRecoveryDependencies: ReviewPromptRecoveryDependencies = {
+  listExactTmuxWindows,
   resolveExactTmuxWindowPane,
-  isRunnerAliveUnderPane,
+  probeRunnerDescendantPid,
   resolveWorkerDispatchPrompt,
   resolveProjectRuntimeDir,
   sendRunnerPostLaunchPrompt,
+  killTmuxWindowById,
+  resolveTmuxWindowIdentity,
+  resolveTmuxWindowPaneCount,
 };
 
 /**
@@ -314,7 +340,7 @@ export async function resumeReviewAgentPromptDelivery(
     | 'startedAt'
   >,
   dependencyOverrides: Partial<ReviewPromptRecoveryDependencies> = {},
-): Promise<'delivered' | 'inactive' | 'unsupported'> {
+): Promise<'delivered' | 'inactive' | 'indeterminate' | 'retired' | 'unsupported'> {
   const dependencies = {
     ...defaultReviewPromptRecoveryDependencies,
     ...dependencyOverrides,
@@ -322,18 +348,49 @@ export async function resumeReviewAgentPromptDelivery(
   const target = context.target?.target;
   const taskMdPath = context.taskFile;
   const runner = context.runner;
-  // Argv-first runners (Cursor) still need a live send: recovery is looking at
-  // an already-spawned pane, not a cold launch line. Skipping here left
-  // rev-cursor idle at the composer after `unsupported recovered reviewer cleanup`.
   if (!target || !taskMdPath || !runner || !runnerSupportsInteractivePrompt(runner)) {
     return 'unsupported';
   }
-  const pane = await dependencies.resolveExactTmuxWindowPane(vars, target);
+  let expectedSession = context.target?.session?.trim() || null;
+  let expectedWindow = context.target?.window?.trim() || null;
+  if (!/^[@%]\d+$/.test(target)) {
+    const separator = target.indexOf(':');
+    if (separator <= 0 || separator === target.length - 1) return 'indeterminate';
+    expectedSession ??= target.slice(0, separator);
+    expectedWindow ??= target.slice(separator + 1).split('.', 1)[0] || null;
+  }
+  let exactTarget = target;
+  if (!/^[@%]\d+$/.test(target) && expectedSession && expectedWindow) {
+    const matches = await dependencies.listExactTmuxWindows(vars, expectedSession, expectedWindow);
+    if (matches.length !== 1) return 'indeterminate';
+    exactTarget = matches[0]!.windowId;
+  }
+  const pane = await dependencies.resolveExactTmuxWindowPane(vars, exactTarget);
   if (!pane) return 'inactive';
-  if (
-    !(await dependencies.isRunnerAliveUnderPane(vars, pane.panePid, runner, { timeout: 10_000 }))
-  ) {
-    return 'inactive';
+  const runnerProbe = await dependencies.probeRunnerDescendantPid(vars, pane.panePid, runner, {
+    timeout: 10_000,
+  });
+  if (runnerProbe.state === 'unknown') return 'indeterminate';
+  if (runnerProbe.state === 'absent') return 'inactive';
+  // Pane-only argv runners cannot prove a recovered in-place prompt. Retire
+  // the exact reviewer window here so every recovery caller gets the same
+  // cleanup and can launch a fresh scoped review without a stale writer.
+  if (runnerRetainedSessionHandoff(runner) === 'argv-relaunch') {
+    const identity = await dependencies.resolveTmuxWindowIdentity(vars, pane.paneId);
+    if (!identity) return 'indeterminate';
+    if (
+      expectedSession &&
+      expectedWindow &&
+      (identity.session !== expectedSession || identity.window !== expectedWindow)
+    ) {
+      return 'indeterminate';
+    }
+    const windowId = identity.windowId;
+    if ((await dependencies.resolveTmuxWindowPaneCount(vars, windowId)) !== 1) {
+      return 'indeterminate';
+    }
+    await dependencies.killTmuxWindowById(vars, windowId);
+    return 'retired';
   }
 
   const taskDir = path.posix.dirname(taskMdPath);
@@ -555,11 +612,26 @@ async function recoverRunningReviewAgent(params: {
   ): Promise<null> => {
     await markAgentContextStatus(params.runId, 'self-review', status, { id: context.id });
     try {
-      if (context.target?.target?.startsWith('@')) {
-        await killTmuxWindowById(params.vars, context.target.target);
-      } else {
-        await killSelfReviewWindow(params.vars, params.session, reason, context.target?.window);
+      const storedTarget = context.target?.target;
+      let windowId = storedTarget?.startsWith('@') ? storedTarget : null;
+      if (!windowId && storedTarget?.startsWith('%')) {
+        windowId = await resolveTmuxWindowId(params.vars, storedTarget);
       }
+      if (!windowId && context.target?.window) {
+        const matches = await listExactTmuxWindows(
+          params.vars,
+          context.target.session || params.session,
+          context.target.window,
+        );
+        if (matches.length > 1) {
+          console.warn(
+            `[self-review] ${reason}: preserving ${matches.length} ambiguous ${context.target.window} windows`,
+          );
+          return null;
+        }
+        windowId = matches[0]?.windowId ?? null;
+      }
+      if (windowId) await killTmuxWindowById(params.vars, windowId);
     } catch (error) {
       console.warn(
         `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} cleanup failed: ${(error as Error).message}`,
@@ -569,10 +641,18 @@ async function recoverRunningReviewAgent(params: {
   };
 
   const pane = await resolveExactTmuxWindowPane(params.vars, context.target.target);
-  if (
-    !pane ||
-    !(await isRunnerAliveUnderPane(params.vars, pane.panePid, params.runner, { timeout: 10_000 }))
-  ) {
+  if (!pane) {
+    return abandonRecoveredReviewer('inactive recovered reviewer cleanup');
+  }
+  const runnerProbe = await probeRunnerDescendantPid(params.vars, pane.panePid, params.runner, {
+    timeout: 10_000,
+  });
+  if (runnerProbe.state === 'unknown') {
+    throw new Error(
+      `Cannot recover reviewer ${context.id}: runner liveness is unknown${runnerProbe.reason ? ` (${runnerProbe.reason})` : ''}`,
+    );
+  }
+  if (runnerProbe.state === 'absent') {
     return abandonRecoveredReviewer('inactive recovered reviewer cleanup');
   }
 
@@ -595,6 +675,16 @@ async function recoverRunningReviewAgent(params: {
   }
   try {
     const delivery = await resumeReviewAgentPromptDelivery(params.vars, params.runId, context);
+    if (delivery === 'retired') {
+      await markAgentContextStatus(params.runId, 'self-review', 'failed', { id: context.id });
+      return null;
+    }
+    if (delivery === 'indeterminate') {
+      console.warn(
+        `[self-review] run ${params.runId.slice(0, 8)} — reviewer ${context.id} liveness is unknown; preserving its window`,
+      );
+      return null;
+    }
     if (delivery !== 'delivered') {
       console.warn(
         `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} is ${delivery}; starting a fresh review`,
@@ -788,6 +878,15 @@ export async function runReviewAgent(
     model,
   });
   const reviewWindow = allocated.windowName;
+  const priorReviewerContext = [...(parentRunForAlloc?.agentContexts ?? [])]
+    .reverse()
+    .find(
+      (context) =>
+        context.role === 'self-review' &&
+        context.runner === runner &&
+        context.target?.window === reviewWindow &&
+        context.signalFile,
+    );
   const reviewChecklistTarget = targetForChecklistBasename(reviewerChecklistBasename(allocated.id));
   const feedbackRelPath = reviewerFeedbackRelPath(allocated.id);
   const resultRelPath = reviewerResultRelPath(allocated.id);
@@ -816,6 +915,9 @@ export async function runReviewAgent(
     // reuses the live process or replaces it through native resume/cold launch.
     const reviewerWindow = await reconcileReviewerWindow(vars, session, reviewWindow, runner);
     const reviewTarget = reviewerWindow.windowId;
+    const priorReviewerSignal = priorReviewerContext?.signalFile
+      ? await readLaunchAckSignalSnapshot(vars, priorReviewerContext.signalFile)
+      : null;
 
     // 1b. Clear prior-pass artifacts so waitForReviewCompletion / readReviewFeedback
     // can't short-circuit on stale files (caused retry verdict to mirror pass 1).
@@ -1035,6 +1137,10 @@ export async function runReviewAgent(
         safetyTier: parentSafetyTier,
         runtimeDir,
         taskDir,
+        taskFile: taskMdPath,
+        replacementReadySignalPath: priorReviewerContext?.signalFile,
+        replacementReadySignalAttemptId: priorReviewerContext?.signalAttemptId,
+        replacementReadySignal: priorReviewerSignal,
         launchAckSignalPath: signalPath,
         recovery: { runId: _runId },
         forceBusyPoll: true,
@@ -1110,7 +1216,7 @@ export async function runReviewAgent(
       // Cold launch: argv-first runners already carry the task on the respawn
       // line (`withArgvTaskPromptPlaceholder`). A second tmux send races that
       // turn and can fail closed because pane-only Cursor has no prompt digest.
-      // Recovery of a live idle pane still sends via resumeReviewAgentPromptDelivery.
+      // Recovery retires the exact stale argv-reviewer window before relaunch.
       if (runnerNeedsPostLaunchPrompt(runner)) {
         const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
           vars,
@@ -1184,7 +1290,19 @@ export async function runReviewAgent(
       if (deliveryPlan.kind === 'cold-relaunch') {
         warmSession = null;
         taskPrompt = basePrompt;
-        await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
+        if (runnerRetainedSessionHandoff(runner) === 'argv-relaunch') {
+          await deliverToLiveReviewer(taskPrompt, false);
+          reviewContext =
+            (await upsertAgentContext(_runId, 'self-review', {
+              id: allocated.id,
+              label: allocated.label,
+              status: 'working',
+              runnerSessionId: null,
+              runnerSessionPath: null,
+            })) ?? reviewContext;
+        } else {
+          await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
+        }
       } else {
         try {
           await deliverToLiveReviewer(taskPrompt, deliveryPlan.resetContext);
