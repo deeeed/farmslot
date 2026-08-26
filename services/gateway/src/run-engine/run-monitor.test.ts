@@ -571,6 +571,56 @@ test('pollBudgetGuardStep emits a fail-closed violation for unsupported accounti
   assert.doesNotMatch(tick.violation?.message ?? '', /Stop expanding scope/);
 });
 
+test('a lost-accounting breach is reported to the operator, not blamed on the worker', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: `BUDGET-INTEGRITY-${Date.now()}`,
+    slotId: 'slot-1',
+    runner: 'claude',
+    branch: 'budget-integrity-test',
+  });
+  updateRun(run.id, { status: 'monitoring' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  let attempts = 0;
+  const tick = await pollBudgetGuardStep({
+    runId: run.id,
+    slotId: 'slot-1',
+    flowType: 'update-branch',
+    runner: 'claude',
+    runnerSessionPath: '/tmp/does-not-matter.jsonl',
+    maxTurns: 1,
+    maxTotalTokens: 1,
+    budgetWarned: false,
+    budgetNudgeSent: false,
+    budgetUsage: {
+      ...emptyBudgetUsageSampleState(),
+      path: '/tmp/other.jsonl',
+      integrityFailureReason: 'session transcript changed after budget accounting began',
+    },
+    agentStatus: 'working',
+    sendNudge: true,
+    localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
+    deliverNudge: async () => {
+      attempts += 1;
+      return 'confirmed' as const;
+    },
+  });
+  // The gateway losing track of which file it was reading is a bookkeeping failure. The
+  // worker did nothing wrong and must not be told to stop expanding scope.
+  assert.equal(tick.violation?.type, 'budget');
+  assert.match(tick.violation?.message ?? '', /accounting lost/);
+  assert.doesNotMatch(tick.violation?.message ?? '', /Stop expanding scope/);
+  assert.equal(tick.nudgeSent, false);
+  assert.equal(attempts, 0);
+});
+
 test('pollBudgetGuardStep never nudges a worker whose runner exposes no usage', async (t) => {
   const run = createRun({
     flowType: 'update-branch',

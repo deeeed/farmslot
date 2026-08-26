@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendFile, mkdtemp, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -366,6 +366,41 @@ test('trailing whitespace at the pin does not discard the child first record', a
     prior: baseline,
   });
   assert.equal(sampled.totalTokens, 7);
+});
+
+test('a widened rescan pins on the widened window, not the narrow one', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-widen-'));
+  const file = path.join(dir, 'session.jsonl');
+  // The last reading, then a tool record big enough to push it out of the 1MiB window —
+  // exactly the case the widen exists for. Pinning with the narrow window's boundary
+  // index against the widened start lands mid-record and leaves parent history unpinned.
+  const bigToolRecord = JSON.stringify({
+    type: 'response_item',
+    payload: { type: 'function_call_output', output: 'x'.repeat(1_400_000) },
+  });
+  await writeFile(file, `${codexTotal(9_000_000)}\n${bigToolRecord}\n`, 'utf8');
+  const { size } = await stat(file);
+
+  const baseline = await captureBudgetUsageBaselinePin({
+    vars: localVars,
+    runner: 'codex',
+    runnerSessionPath: file,
+  });
+  assert.ok(baseline, 'the widen must recover the reading that fell outside the window');
+  assert.equal(baseline.lastCumulative?.total, 9_000_000);
+  assert.equal(baseline.offset, size, 'the pin must cover the whole parent transcript');
+
+  // The child then does 100k of its own work, and must be charged only that.
+  await appendFile(file, `${codexTotal(9_100_000)}\n`, 'utf8');
+  const sampled = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'codex',
+    runnerSessionPath: file,
+    prior: baseline,
+  });
+  assert.equal(sampled.nextState.integrityFailureReason, undefined, 'no mid-record pin');
+  assert.equal(sampled.totalTokens, 100_000);
 });
 
 test('captureBudgetUsageBaselinePin returns null for a directory transcript', async () => {
