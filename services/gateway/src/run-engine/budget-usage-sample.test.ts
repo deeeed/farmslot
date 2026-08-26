@@ -314,6 +314,35 @@ test('a cumulative parent record in flight at the pin is not charged to the chil
   assert.equal(sampled.totalTokens, 100_000);
 });
 
+test('one corrupt parent line does not tear down a warm handoff for an additive runner', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-corrupt-'));
+  const file = path.join(dir, 'session.jsonl');
+  // claude needs only the byte offset — there is no reference to recover, so failing the
+  // capture here would kill a healthy retained session for no accounting benefit.
+  await writeFile(file, `${claudeLine(10, 2)}\n{not json at all\n${claudeLine(5, 1)}\n`, 'utf8');
+  const baseline = await captureBudgetUsageBaselinePin({
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: file,
+  });
+  assert.ok(baseline, 'the pin only needs the offset for a runner that reports increments');
+  assert.equal(baseline.offset, baseline.size);
+});
+
+test('one corrupt parent line fails the pin closed for a runner that restates totals', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-corrupt-codex-'));
+  const file = path.join(dir, 'session.jsonl');
+  // Here the corrupt line may be the reading that moved the session forward. Keeping the
+  // older one would charge the child the gap.
+  await writeFile(file, `${codexTotal(4000)}\n{not json at all\n`, 'utf8');
+  const baseline = await captureBudgetUsageBaselinePin({
+    vars: localVars,
+    runner: 'codex',
+    runnerSessionPath: file,
+  });
+  assert.equal(baseline, null);
+});
+
 test('captureBudgetUsageBaselinePin returns null for a directory transcript', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-baseline-dir-'));
   const baseline = await captureBudgetUsageBaselinePin({

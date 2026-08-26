@@ -28,6 +28,7 @@ import {
   pollBudgetGuardStep,
   rearmInteractiveHandoffAutoRecovery,
   resolveMonitorConfig,
+  restoreBudgetUsageState,
   restoreStructuredProgressAtMs,
   runHasOpenHumanGate,
   shouldHoldForInteractivePrComplete,
@@ -449,6 +450,40 @@ test('applyBudgetWarnOnce emits once then stays quiet (warn-once)', () => {
   });
   assert.equal(second.emit, false);
   assert.equal(second.budgetWarned, true);
+});
+
+test('restoring a pre-increment run carries the derived reference into sampler state', () => {
+  // The migration was once computed here and dropped: the restore kept an older
+  // expression, so the derived reference never reached production state and only a
+  // unit test of the migration in isolation passed.
+  const restored = restoreBudgetUsageState({
+    path: '/tmp/session.jsonl',
+    size: 4096,
+    mtimeMs: 1,
+    offset: 4096,
+    turns: 42,
+    totalTokens: 9_000_000,
+    inputTokens: 9_000_000,
+    outputTokens: 0,
+    cacheCreation: 0,
+    cacheRead: 0,
+    baselineTurns: 40,
+    baselineTotalTokens: 8_900_000,
+    baselineCaptured: true,
+  });
+  assert.equal(restored.totalTokens, 100_000);
+  assert.equal(restored.turns, 2);
+  assert.equal(
+    restored.lastCumulative?.total,
+    9_000_000,
+    "the run's persisted counters were the session position, so they are the reference",
+  );
+});
+
+test('restoring a never-sampled run counts from the start', () => {
+  const restored = restoreBudgetUsageState(undefined);
+  assert.equal(restored.offset, 0);
+  assert.equal(restored.lastCumulative?.total, 0, 'zeros mean count the first reading in full');
 });
 
 test('a pre-increment run restores with its legacy baseline folded out', () => {

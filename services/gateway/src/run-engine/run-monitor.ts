@@ -773,6 +773,46 @@ export function shouldSkipMonitorNudge(
   return false;
 }
 
+/**
+ * Rebuild sampler state from what a previous monitor persisted.
+ *
+ * Exported so the restore is testable end to end: the legacy migration below was once
+ * computed here and then dropped on the floor, which no unit test of the migration alone
+ * could have caught.
+ */
+export function restoreBudgetUsageState(
+  persisted?: RunMonitorState['budgetUsage'],
+): BudgetUsageSampleState {
+  const legacy = migrateLegacyBudgetUsage(persisted);
+  return persisted
+    ? {
+        path: persisted.path ?? null,
+        size: persisted.size ?? 0,
+        mtimeMs: persisted.mtimeMs ?? 0,
+        offset: persisted.offset ?? 0,
+        turns: legacy.turns,
+        totalTokens: legacy.totalTokens,
+        inputTokens: persisted.inputTokens ?? 0,
+        outputTokens: persisted.outputTokens ?? 0,
+        cacheCreation: persisted.cacheCreation ?? 0,
+        cacheRead: persisted.cacheRead ?? 0,
+        sampledAt: persisted.sampledAt,
+        unavailableReason: persisted.unavailableReason,
+        integrityFailureReason: persisted.integrityFailureReason,
+        skippingOversizedRecord: persisted.skippingOversizedRecord,
+        skippedOversizedRecords: persisted.skippedOversizedRecords,
+        discardNextRecord: persisted.discardNextRecord,
+        // A pin records its reference explicitly. State written before this field
+        // existed has none, and `baselineCaptured` cannot tell a legacy cold run from a
+        // legacy warm one — the old cold path set it too. Its persisted counters were
+        // the session's position either way, so the migration derives the reference from
+        // them. Inert for a runner whose records never restate totals.
+        lastCumulative: persisted.lastCumulative ?? legacy.lastCumulative,
+        baselineCaptured: persisted.baselineCaptured,
+      }
+    : emptyBudgetUsageSampleState();
+}
+
 export async function monitorRun(
   runId: string,
   slotId: string,
@@ -806,38 +846,8 @@ export async function monitorRun(
 
   // Restore from persisted state if available (gateway restart recovery)
   const persisted = run.monitorState;
-  const legacy = migrateLegacyBudgetUsage(persisted?.budgetUsage);
-  const restoredBudgetUsage: BudgetUsageSampleState = persisted?.budgetUsage
-    ? {
-        path: persisted.budgetUsage.path ?? null,
-        size: persisted.budgetUsage.size ?? 0,
-        mtimeMs: persisted.budgetUsage.mtimeMs ?? 0,
-        offset: persisted.budgetUsage.offset ?? 0,
-        turns: legacy.turns,
-        totalTokens: legacy.totalTokens,
-        inputTokens: persisted.budgetUsage.inputTokens ?? 0,
-        outputTokens: persisted.budgetUsage.outputTokens ?? 0,
-        cacheCreation: persisted.budgetUsage.cacheCreation ?? 0,
-        cacheRead: persisted.budgetUsage.cacheRead ?? 0,
-        sampledAt: persisted.budgetUsage.sampledAt,
-        unavailableReason: persisted.budgetUsage.unavailableReason,
-        integrityFailureReason: persisted.budgetUsage.integrityFailureReason,
-        skippingOversizedRecord: persisted.budgetUsage.skippingOversizedRecord,
-        skippedOversizedRecords: persisted.budgetUsage.skippedOversizedRecords,
-        // A pin always records a reference (or deliberately leaves it absent for a
-        // transcript with no readings). State persisted before this field existed has
-        // neither, and reading that absence as a pin would discard the next reading and
-        // under-charge the run — so anything without a captured baseline restores as
-        // counting from the start, which is what those states were doing.
-        discardNextRecord: persisted.budgetUsage.discardNextRecord,
-        lastCumulative:
-          persisted.budgetUsage.lastCumulative ??
-          (persisted.budgetUsage.baselineCaptured
-            ? undefined
-            : emptyBudgetUsageSampleState().lastCumulative),
-        baselineCaptured: persisted.budgetUsage.baselineCaptured,
-      }
-    : emptyBudgetUsageSampleState();
+  const restoredBudgetUsage = restoreBudgetUsageState(persisted?.budgetUsage);
+
   const state: MonitorState = persisted
     ? {
         lastPaneHash: persisted.lastPaneHash ?? '',

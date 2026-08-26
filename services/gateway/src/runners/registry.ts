@@ -1953,7 +1953,15 @@ type SubmitInstructionOutcome = 'ok' | 'not-buffered' | 'stuck';
  *
  * This is AsyncLocalStorage rather than a module-level flag because the gateway sends to
  * many slots concurrently: a shared variable would let a touch on one slot mark another
- * slot's send as delivered, and the misattribution runs both ways.
+ * slot's send as delivered, and the misattribution runs both ways. Callers that do not
+ * go through sendRunnerInstructionWithOutcome have no store, so marking is a no-op for
+ * them rather than corrupting someone else's record.
+ *
+ * Scope: this reports typing done by submitRunnerInstruction in 'send' mode, which is
+ * every typing path reachable from sendRunnerInstructionSafely. It is not a general
+ * "composer was touched" signal — sendRunnerPostLaunchPrompt types directly and does not
+ * report here, and 'submit-existing' deliberately does not mark, since pressing submit on
+ * already-buffered text adds no copy.
  */
 const composerTouchStore = new AsyncLocalStorage<{ touched: boolean }>();
 

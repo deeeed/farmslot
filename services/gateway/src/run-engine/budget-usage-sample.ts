@@ -228,10 +228,14 @@ export async function captureBudgetUsageBaselinePin(params: {
     try {
       replay = provider.applyRecord(replay, JSON.parse(trimmed) as Record<string, unknown>);
     } catch {
-      // The window can open mid-record, so the first fragment is expected to be
-      // unparseable. A malformed record after that is real corruption: continuing would
-      // silently keep an older reading as the reference and charge the child the gap.
-      if (scanned === 1) continue;
+      // When the window opens mid-transcript its first line is a record fragment, so it
+      // is expected to be unparseable. A full-transcript window has no such excuse.
+      if (tailStart > 0 && scanned === 1) continue;
+      // Past that, corruption matters only to a runner whose reference this replay is
+      // recovering: continuing would keep an older reading and charge the child the gap.
+      // For every other runner the pin needs nothing but the byte offset, and failing
+      // here would tear down a healthy warm handoff over one bad line.
+      if (!provider.restatesSessionTotals) continue;
       return null;
     }
   }
