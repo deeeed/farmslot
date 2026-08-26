@@ -157,6 +157,39 @@ test('captureBudgetUsageBaselineAtEof baselines a cumulative runner against the 
   assert.equal((sampled.totalTokens ?? 0) - (baseline.baselineTotalTokens ?? 0), 100_000);
 });
 
+test('captureBudgetUsageBaselineAtEof ignores a per-turn total trailing the cumulative one', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-lasttoken-'));
+  const file = path.join(dir, 'session.jsonl');
+  const cumulative = JSON.stringify({
+    type: 'event_msg',
+    payload: {
+      type: 'token_count',
+      info: {
+        total_token_usage: { input_tokens: 7_950_000, output_tokens: 0, total_tokens: 7_950_000 },
+      },
+    },
+  });
+  // codexApplyRecord falls back to `last_token_usage` when the cumulative field is
+  // absent, which would drop a last-wins baseline to this per-turn figure.
+  const perTurn = JSON.stringify({
+    type: 'event_msg',
+    payload: {
+      type: 'token_count',
+      info: { last_token_usage: { input_tokens: 900, output_tokens: 100, total_tokens: 1000 } },
+    },
+  });
+  await writeFile(file, `${cumulative}\n${perTurn}\n`, 'utf8');
+
+  const baseline = await captureBudgetUsageBaselineAtEof({
+    vars: localVars,
+    runner: 'codex',
+    runnerSessionPath: file,
+  });
+  assert.ok(baseline);
+  // A baseline of 1000 here would hand the parent's 7.95M straight back to the child.
+  assert.equal(baseline.baselineTotalTokens, 7_950_000);
+});
+
 test('captureBudgetUsageBaselineAtEof pins to a record boundary when the parent was mid-write', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-partial-'));
   const file = path.join(dir, 'session.jsonl');

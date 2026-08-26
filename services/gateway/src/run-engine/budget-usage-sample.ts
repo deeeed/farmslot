@@ -195,6 +195,11 @@ export async function captureBudgetUsageBaselineAtEof(params: {
   // assignment semantics mean the last such record wins regardless of where the
   // window starts.
   let replay: BudgetUsageSampleState = emptyBudgetUsageSampleState();
+  // Keep the highest total seen, not the last. Cumulative totals only grow, while a
+  // record carrying just a per-turn figure (codex falls back to `last_token_usage`
+  // when `total_token_usage` is absent) would otherwise drop the baseline to that
+  // small number and hand the parent's history straight back to the child.
+  let peak: BudgetUsageSampleState = replay;
   for (const line of tail
     .subarray(0, lastNewline + 1)
     .toString('utf8')
@@ -203,13 +208,14 @@ export async function captureBudgetUsageBaselineAtEof(params: {
     if (!trimmed) continue;
     try {
       replay = provider.applyRecord(replay, JSON.parse(trimmed) as Record<string, unknown>);
+      if (replay.totalTokens > peak.totalTokens) peak = replay;
     } catch {
       // A malformed record inside the parent's history cannot invalidate the child's
       // baseline: later records still carry the cumulative total we are looking for.
       continue;
     }
   }
-  if (replay.totalTokens <= 0) {
+  if (peak.totalTokens <= 0) {
     // No cumulative total in the scan window, so the parent's usage is unknown and a
     // baseline of 0 would charge the child for it. Fail closed to a fresh session.
     return null;
@@ -217,12 +223,12 @@ export async function captureBudgetUsageBaselineAtEof(params: {
   return {
     ...base,
     offset: pinnedOffset,
-    totalTokens: replay.totalTokens,
-    inputTokens: replay.inputTokens,
-    outputTokens: replay.outputTokens,
-    cacheRead: replay.cacheRead,
-    cacheCreation: replay.cacheCreation,
-    baselineTotalTokens: replay.totalTokens,
+    totalTokens: peak.totalTokens,
+    inputTokens: peak.inputTokens,
+    outputTokens: peak.outputTokens,
+    cacheRead: peak.cacheRead,
+    cacheCreation: peak.cacheCreation,
+    baselineTotalTokens: peak.totalTokens,
   };
 }
 
