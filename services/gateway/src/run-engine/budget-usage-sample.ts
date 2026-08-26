@@ -103,18 +103,24 @@ async function remoteReadBytes(
 }
 
 /**
- * Seed budget accounting at the transcript's current end-of-file.
+ * Seed budget accounting at the end of a retained transcript.
  *
- * A warm handoff inherits the parent's transcript, so the child run must be charged
- * only for what is appended after the handoff. Parsing the parent's history to build
- * a totals baseline is bounded to one window per sample, so on a long retained session
- * the baseline lands far below the real parent totals and the monitor then charges the
- * parent's remaining bytes to the child (retro 2026-08-26: run 2164728b on mini-mm-2
- * breached 8M "within minutes" on inherited codex history). Recording the byte offset
- * is exact and costs one stat.
+ * A warm handoff inherits the parent's transcript, so the child must be charged only
+ * for what it appends. Replaying the parent's whole history to total it is bounded to
+ * one window per sample, so on a long retained session the baseline lands far below
+ * the real totals and the monitor then charges the parent's remaining bytes to the
+ * child (retro 2026-08-26: run 2164728b on mini-mm-2 breached 8M "within minutes" on
+ * inherited codex history). Instead this pins the last record boundary — never raw
+ * EOF, which can sit inside a half-written record — after one bounded tail read.
  *
- * Returns null when the transcript cannot be stat'd — callers fail the warm baseline
- * closed rather than start a run with unenforceable accounting.
+ * Cumulative runners need more than the offset: their next record restates the whole
+ * session's totals, so the tail is replayed to recover the total already reached at
+ * the pin. Assignment semantics make that exact from any window containing at least
+ * one total-bearing record.
+ *
+ * Returns null when the transcript cannot be read, has no record boundary in the scan
+ * window, or (for a cumulative runner) no recoverable total — callers fail the warm
+ * baseline closed rather than start a run with unenforceable accounting.
  */
 export async function captureBudgetUsageBaselineAtEof(params: {
   vars: SlotVars;
