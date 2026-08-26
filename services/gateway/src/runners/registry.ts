@@ -1973,10 +1973,6 @@ async function submitRunnerInstruction(
   logPrefix: string,
   mode: 'send' | 'submit-existing',
 ): Promise<SubmitInstructionOutcome> {
-  if (mode === 'send') {
-    const touchRecord = composerTouchStore.getStore();
-    if (touchRecord) touchRecord.touched = true;
-  }
   let sentAtMs: number | null = null;
   if (mode === 'send') {
     try {
@@ -1992,6 +1988,11 @@ async function submitRunnerInstruction(
         submitKey: getRunnerDefinition(runner).promptSubmitKey,
       }),
     );
+    // Only after the write returns. Marking before it would report a touch for a send
+    // that never reached the pane — a failed SSH round-trip, a vanished window — and a
+    // caller bounding its retries would spend them on deliveries the worker never saw.
+    const touchRecord = composerTouchStore.getStore();
+    if (touchRecord) touchRecord.touched = true;
   } else {
     const pane = await captureTmuxPane(vars, target);
     if (!runnerPaneHasBufferedInstruction(pane, message, runner)) {

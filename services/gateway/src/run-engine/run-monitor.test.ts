@@ -837,6 +837,85 @@ test('pollBudgetGuardStep delivers under the agentStatus the monitor actually pr
   assert.equal(attempts, 1);
 });
 
+test('only a mid-turn hold runs the deferral clock, and only delivery clears it', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: `BUDGET-CLOCK-${Date.now()}`,
+    slotId: 'slot-1',
+    runner: 'claude',
+    branch: 'budget-clock-test',
+  });
+  updateRun(run.id, { status: 'monitoring' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  const common = {
+    runId: run.id,
+    slotId: 'slot-1',
+    flowType: 'update-branch' as const,
+    runner: 'claude',
+    runnerSessionPath: await breachingTranscript('run-monitor-budget-clock-'),
+    maxTurns: 1,
+    maxTotalTokens: 1,
+    agentStatus: 'working' as const,
+    sendNudge: true,
+    localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
+  };
+
+  // A hook lapse or foreign composer draft declines to type, but the runner is not
+  // working — counting it would spend the deferral budget before the turn even starts.
+  const held = await pollBudgetGuardStep({
+    ...common,
+    budgetWarned: false,
+    budgetNudgeSent: false,
+    budgetUsage: emptyBudgetUsageSampleState(),
+    deliverNudge: async () => 'not-attempted' as const,
+  });
+  assert.equal(held.budgetFirstDeferredAt, undefined, 'a delivery hold is not a deferral');
+
+  const deferred = await pollBudgetGuardStep({
+    ...common,
+    budgetWarned: held.budgetWarned,
+    budgetNudgeSent: false,
+    budgetUsage: held.budgetUsage,
+    deliverNudge: async () => 'deferred-mid-turn' as const,
+  });
+  assert.ok(deferred.budgetFirstDeferredAt, 'a mid-turn hold starts the clock');
+
+  // An unconfirmed send is a spent attempt, not a delivery. Clearing the clock here let
+  // three attempts stretch the 15-minute bound to 45.
+  const unconfirmed = await pollBudgetGuardStep({
+    ...common,
+    budgetWarned: deferred.budgetWarned,
+    budgetNudgeSent: false,
+    budgetNudgeAttempts: deferred.budgetNudgeAttempts,
+    budgetFirstDeferredAt: deferred.budgetFirstDeferredAt,
+    budgetUsage: deferred.budgetUsage,
+    deliverNudge: async () => 'attempted' as const,
+  });
+  assert.equal(
+    unconfirmed.budgetFirstDeferredAt,
+    deferred.budgetFirstDeferredAt,
+    'an unconfirmed attempt must not restart the clock',
+  );
+
+  const delivered = await pollBudgetGuardStep({
+    ...common,
+    budgetWarned: unconfirmed.budgetWarned,
+    budgetNudgeSent: false,
+    budgetNudgeAttempts: unconfirmed.budgetNudgeAttempts,
+    budgetFirstDeferredAt: unconfirmed.budgetFirstDeferredAt,
+    budgetUsage: unconfirmed.budgetUsage,
+    deliverNudge: async () => 'confirmed' as const,
+  });
+  assert.equal(delivered.budgetFirstDeferredAt, undefined, 'delivery clears the clock');
+});
+
 test('pollBudgetGuardStep stops retrying an unconfirmable nudge at the attempt cap', async (t) => {
   const run = createRun({
     flowType: 'update-branch',

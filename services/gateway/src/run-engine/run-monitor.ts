@@ -1282,6 +1282,16 @@ export async function monitorRun(
         state.budgetNudgeAttempts = tick.budgetNudgeAttempts;
         state.budgetFirstDeferredAt = tick.budgetFirstDeferredAt;
         if (tick.nudgeSent) state.budgetNudgeSent = true;
+        // A skipped record is real usage nobody counted. It cannot fail the run closed —
+        // large tool output is routine — but it must not stay invisible either.
+        if (
+          (tick.budgetUsage.skippedOversizedRecords ?? 0) >
+          (state.budgetUsage.skippedOversizedRecords ?? 0)
+        ) {
+          console.warn(
+            `[run-monitor] run ${runId.slice(0, 8)} — ${tick.budgetUsage.skippedOversizedRecords} transcript record(s) too large to parse; their usage is uncounted`,
+          );
+        }
         if (tick.unavailableReason && tick.unavailableReasonChanged) {
           console.warn(
             `[run-monitor] run ${runId.slice(0, 8)} — budget usage unavailable: ${tick.unavailableReason}`,
@@ -1709,7 +1719,13 @@ function buildNudgeMessage(violation: MonitorViolation): string {
  * against MAX_BUDGET_NUDGE_ATTEMPTS — otherwise a few transient holds would burn the
  * cap and the worker would never hear about a real breach.
  */
-export type BudgetNudgeDelivery = 'confirmed' | 'attempted' | 'not-attempted';
+export type BudgetNudgeDelivery =
+  | 'confirmed'
+  | 'attempted'
+  /** Bailed before the composer for a reason unrelated to the runner's turn. */
+  | 'not-attempted'
+  /** Held because the runner is mid-turn — the only outcome that runs the deferral clock. */
+  | 'deferred-mid-turn';
 
 /**
  * One-shot budget warning into the worker pane. Does not increment metrics.nudgeCount
@@ -1755,7 +1771,7 @@ export async function sendBudgetNudge(
     console.log(
       `[run-monitor] budget nudge deferred for run ${runId.slice(0, 8)}: runner mid-turn`,
     );
-    return 'not-attempted';
+    return 'deferred-mid-turn';
   }
   if (progress === 'making-progress') {
     console.warn(
@@ -2049,12 +2065,11 @@ export async function pollBudgetGuardStep(params: {
         // Only a delivery that reached the composer spends an attempt. Bailing out
         // before touching the pane must stay free, or a few transient holds would
         // silently exhaust the cap and the worker would never hear about the breach.
-        if (delivery !== 'not-attempted') budgetNudgeAttempts += 1;
-        // `not-attempted` also covers a missing run and a runner that cannot take tmux
-        // nudges. Neither reaches here — both are checked above before delivery — so the
-        // only cause left is a mid-turn deferral. If that outer guard is ever relaxed, a
-        // non-nudgeable runner would start a deferral clock it can never finish.
-        else deliveryDeferred = true;
+        if (delivery === 'confirmed' || delivery === 'attempted') budgetNudgeAttempts += 1;
+        // Only a mid-turn hold runs the clock. A hook lapse or a foreign composer draft
+        // also declines to type, but those are not the runner working — counting them
+        // would spend the deferral budget before the runner is even busy.
+        if (delivery === 'deferred-mid-turn') deliveryDeferred = true;
         nudgeSent = delivery === 'confirmed';
         if (nudgeSent && violation) violation.nudgeSent = new Date().toISOString();
       } catch (err) {
@@ -2086,10 +2101,12 @@ export async function pollBudgetGuardStep(params: {
     nudgeSent,
     budgetNudgeAttempts,
     unsupportedRunner: sample.unsupportedRunner === true,
-    budgetFirstDeferredAt:
-      nudgeSent || budgetNudgeAttempts > (params.budgetNudgeAttempts ?? 0)
-        ? undefined
-        : (params.budgetFirstDeferredAt ?? (deliveryDeferred ? Date.now() : undefined)),
+    // Cleared on confirmed delivery only. Clearing on any spent attempt let an
+    // unconfirmed send restart the clock, so three attempts could stretch a 15-minute
+    // bound to 45.
+    budgetFirstDeferredAt: nudgeSent
+      ? undefined
+      : (params.budgetFirstDeferredAt ?? (deliveryDeferred ? Date.now() : undefined)),
   };
 }
 

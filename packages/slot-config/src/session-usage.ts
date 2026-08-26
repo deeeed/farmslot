@@ -779,6 +779,9 @@ export function advanceIncrementalFromBytes(
       // The oversized record IS the one marked for discard, and skipping it satisfies
       // that. Leaving the flag set would discard the next record too.
       state.discardNextRecord = false;
+      console.warn(
+        `[session-usage] skipping a record larger than ${meta.maxWindow} bytes in ${meta.filePath}; its usage is not counted`,
+      );
       state.unavailableReason = 'session transcript record exceeds bounded sample window';
       state.sampledAt = new Date().toISOString();
       return state;
