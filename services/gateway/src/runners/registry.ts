@@ -2295,9 +2295,22 @@ export async function sendRunnerInstructionWithOutcome(
 ): Promise<RunnerInstructionOutcome> {
   const touchRecord = { touched: false };
   return composerTouchStore.run(touchRecord, async () => {
-    const sent = await sendRunnerInstructionSafely(...args);
-    if (sent) return 'sent';
-    return touchRecord.touched ? 'typed-unconfirmed' : 'held-untouched';
+    try {
+      const sent = await sendRunnerInstructionSafely(...args);
+      if (sent) return 'sent';
+      return touchRecord.touched ? 'typed-unconfirmed' : 'held-untouched';
+    } catch (error) {
+      // The text may already be in the composer when a later step throws — pane
+      // verification, an SSH round-trip. Reporting the outcome rather than rethrowing
+      // is deliberate: a caller that bounds its retries must charge for a send that
+      // mutated the pane, or an endlessly failing verify stacks copies. A throw with
+      // nothing typed stays a throw.
+      if (!touchRecord.touched) throw error;
+      console.warn(
+        `[runner-send] instruction reached the composer but the send threw: ${(error as Error).message}`,
+      );
+      return 'typed-unconfirmed';
+    }
   });
 }
 

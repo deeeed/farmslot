@@ -22,6 +22,7 @@ import type { SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { getRunnerSessionUsageProvider } from '../runners/registry.js';
+import type { RunnerSessionUsageProvider } from '../runners/session-usage-provider.js';
 
 /** Durable monitor sample state (also persisted on Run.monitorState). */
 export type BudgetUsageSampleState = IncrementalSessionUsageState;
@@ -85,8 +86,15 @@ function unavailable(
   };
 }
 
-/** Tail read for a warm baseline: enough to find the last record boundary. */
-const BASELINE_TAIL_SCAN_BYTES = 1024 * 1024;
+/**
+ * Tail read for a warm baseline: enough to find the last record boundary, and for a
+ * runner that restates session totals, the last reading. Widened once to the sampler's
+ * oversized-record allowance before failing closed, because a single large tool record
+ * after the last reading would otherwise push it out of the window and cost a healthy
+ * retained session.
+ */
+const BASELINE_TAIL_SCAN_BYTES = INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE;
+const BASELINE_TAIL_SCAN_WIDENED_BYTES = INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES;
 
 async function remoteFileStat(
   vars: SlotVars,
@@ -135,6 +143,45 @@ async function remoteReadBytes(
   } catch {
     return null;
   }
+}
+
+/**
+ * Replay a transcript tail purely to recover the reference reading in force at its end.
+ *
+ * Counters accumulated here are partial sums over an arbitrary window and are discarded;
+ * only `lastCumulative` is meaningful. Returns null when the tail is corrupt in a way
+ * that matters to the caller.
+ */
+function replayTailReference(
+  tail: Buffer,
+  lastNewline: number,
+  tailStart: number,
+  provider: RunnerSessionUsageProvider,
+): BudgetUsageSampleState | null {
+  let replay = pinnedIncrementalSessionUsageState();
+  let scanned = 0;
+  for (const line of tail
+    .subarray(0, lastNewline + 1)
+    .toString('utf8')
+    .split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    scanned += 1;
+    try {
+      replay = provider.applyRecord(replay, JSON.parse(trimmed) as Record<string, unknown>);
+    } catch {
+      // When the window opens mid-transcript its first line is a record fragment, so it
+      // is expected to be unparseable. A full-transcript window has no such excuse.
+      if (tailStart > 0 && scanned === 1) continue;
+      // Past that, corruption matters only to a runner whose reference this replay is
+      // recovering: continuing would keep an older reading and charge the child the gap.
+      // For every other runner the pin needs nothing but the byte offset, and failing
+      // here would tear down a healthy warm handoff over one bad line.
+      if (!provider.restatesSessionTotals) continue;
+      return null;
+    }
+  }
+  return replay;
 }
 
 /**
@@ -203,8 +250,8 @@ export async function captureBudgetUsageBaselinePin(params: {
     return { ...base, lastCumulative: emptyBudgetUsageSampleState().lastCumulative };
   }
 
-  const tailStart = Math.max(0, size - BASELINE_TAIL_SCAN_BYTES);
-  const tail = await readTail(tailStart, size - tailStart);
+  let tailStart = Math.max(0, size - BASELINE_TAIL_SCAN_BYTES);
+  let tail = await readTail(tailStart, size - tailStart);
   if (!tail) return null;
   const lastNewline = tail.lastIndexOf(0x0a);
   // No record boundary within the scan window — refuse rather than guess.
@@ -216,42 +263,36 @@ export async function captureBudgetUsageBaselinePin(params: {
   // are partial sums and are discarded. Without this the child's first reading would be
   // spent establishing the reference, and a child whose whole turn is one record — a
   // `turn.completed` carrying 50K — would be charged nothing at all.
-  let replay = pinnedIncrementalSessionUsageState();
-  let scanned = 0;
-  for (const line of tail
-    .subarray(0, lastNewline + 1)
-    .toString('utf8')
-    .split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    scanned += 1;
-    try {
-      replay = provider.applyRecord(replay, JSON.parse(trimmed) as Record<string, unknown>);
-    } catch {
-      // When the window opens mid-transcript its first line is a record fragment, so it
-      // is expected to be unparseable. A full-transcript window has no such excuse.
-      if (tailStart > 0 && scanned === 1) continue;
-      // Past that, corruption matters only to a runner whose reference this replay is
-      // recovering: continuing would keep an older reading and charge the child the gap.
-      // For every other runner the pin needs nothing but the byte offset, and failing
-      // here would tear down a healthy warm handoff over one bad line.
-      if (!provider.restatesSessionTotals) continue;
-      return null;
-    }
-  }
+  let replay = replayTailReference(tail, lastNewline, tailStart, provider);
+  if (replay === null) return null;
+
   // A defined reference is authoritative even at zero — a parent that genuinely burned
   // nothing still fixes where the session stands. Absent means the window held no
   // reading at all, which only a runner that restates totals needs to care about.
-  if (replay.lastCumulative === undefined && provider.restatesSessionTotals) return null;
+  if (replay.lastCumulative === undefined && provider.restatesSessionTotals) {
+    // One large tool record can sit between the last reading and EOF. Widen once before
+    // giving up, since failing here tears down a healthy retained session.
+    const widenedStart = Math.max(0, size - BASELINE_TAIL_SCAN_WIDENED_BYTES);
+    if (widenedStart >= tailStart) return null;
+    tailStart = widenedStart;
+    tail = await readTail(tailStart, size - tailStart);
+    if (!tail) return null;
+    replay = replayTailReference(tail, tail.lastIndexOf(0x0a), tailStart, provider);
+    if (replay === null || replay.lastCumulative === undefined) return null;
+  }
 
   // Bytes after the last boundary are the previous writer's in-flight record. It
   // completes after the pin, so drop it rather than charge their turn to this run.
+  // Whitespace is not a record: discarding on a stray trailing space or newline would
+  // throw away the child's genuine first record instead.
   const pinnedOffset = tailStart + lastNewline + 1;
+  const trailing = tail.subarray(lastNewline + 1).toString('utf8');
+  const trailingIsPartialRecord = trailing.trim().length > 0;
   return {
     ...base,
     offset: pinnedOffset,
     lastCumulative: replay.lastCumulative,
-    discardNextRecord: pinnedOffset < size,
+    discardNextRecord: trailingIsPartialRecord,
   };
 }
 
@@ -306,7 +347,10 @@ export async function sampleBudgetUsage(params: {
 
     const continuityLost =
       prior.path !== null && (prior.path !== runnerSessionPath || prior.offset > remoteStat.size);
-    if (continuityLost && prior.baselineCaptured) {
+    // Accounting has started once bytes have been consumed, pin or not. Gating this on
+    // `baselineCaptured` alone left cold runs unprotected once only pins set it, so a
+    // rotation mid-run silently reset their counters instead of failing closed.
+    if (continuityLost && (prior.baselineCaptured || prior.offset > 0)) {
       const integrityFailureReason = 'session transcript changed after budget accounting began';
       return unavailable(
         prior,

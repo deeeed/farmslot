@@ -343,6 +343,31 @@ test('one corrupt parent line fails the pin closed for a runner that restates to
   assert.equal(baseline, null);
 });
 
+test('trailing whitespace at the pin does not discard the child first record', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-trailingws-'));
+  const file = path.join(dir, 'session.jsonl');
+  // A stray space is not an in-flight record; discarding on it costs the child a real
+  // record of its own usage.
+  await writeFile(file, `${claudeLine(1000, 200)}\n `, 'utf8');
+  const baseline = await captureBudgetUsageBaselinePin({
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: file,
+  });
+  assert.ok(baseline);
+  assert.equal(baseline.discardNextRecord, false);
+
+  await appendFile(file, `\n${claudeLine(3, 4)}\n`, 'utf8');
+  const sampled = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: file,
+    prior: baseline,
+  });
+  assert.equal(sampled.totalTokens, 7);
+});
+
 test('captureBudgetUsageBaselinePin returns null for a directory transcript', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-baseline-dir-'));
   const baseline = await captureBudgetUsageBaselinePin({

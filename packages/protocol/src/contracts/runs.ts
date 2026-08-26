@@ -1350,6 +1350,8 @@ export interface RunMonitorState {
    * of the warning in the runner composer.
    */
   budgetNudgeAttempts?: number;
+  /** Epoch ms of the first mid-turn deferral of a pending budget warning. */
+  budgetFirstDeferredAt?: number;
   /** Append-only transcript sample cache for the soft budget guard. */
   budgetUsage?: RunMonitorBudgetUsageState;
 }

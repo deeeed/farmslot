@@ -776,6 +776,9 @@ export function advanceIncrementalFromBytes(
       }
       state.offset = meta.startOffset + buf.length;
       state.skippingOversizedRecord = true;
+      // The oversized record IS the one marked for discard, and skipping it satisfies
+      // that. Leaving the flag set would discard the next record too.
+      state.discardNextRecord = false;
       state.unavailableReason = 'session transcript record exceeds bounded sample window';
       state.sampledAt = new Date().toISOString();
       return state;
@@ -858,7 +861,8 @@ export async function sampleSessionUsageIncremental(params: {
 
     const continuityLost =
       prior.path !== null && (prior.path !== filePath || prior.offset > st.size);
-    if (continuityLost && prior.baselineCaptured) {
+    // Consumed bytes mean accounting started, pin or not — see the gateway sampler.
+    if (continuityLost && (prior.baselineCaptured || prior.offset > 0)) {
       const integrityFailureReason = 'session transcript changed after budget accounting began';
       return {
         turns: null,

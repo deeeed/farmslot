@@ -23,6 +23,7 @@ import {
   isFreshTerminalHandoffSignal,
   isWorkerSignalFreshForRun,
   MAX_BUDGET_NUDGE_ATTEMPTS,
+  MAX_BUDGET_NUDGE_DEFERRAL_MS,
   migrateLegacyBudgetUsage,
   type MonitorNudgeRunView,
   pollBudgetGuardStep,
@@ -31,6 +32,7 @@ import {
   restoreBudgetUsageState,
   restoreStructuredProgressAtMs,
   runHasOpenHumanGate,
+  shouldDeferBudgetNudge,
   shouldHoldForInteractivePrComplete,
   shouldHoldForMissingTerminalSignal,
   shouldSkipMonitorNudge,
@@ -478,6 +480,23 @@ test('restoring a pre-increment run carries the derived reference into sampler s
     9_000_000,
     "the run's persisted counters were the session position, so they are the reference",
   );
+});
+
+test('a mid-turn budget warning is deferred, but not past the bound', () => {
+  // The elapsed time reaches this decision through several hops. A dropped hop reads as
+  // zero, which defers forever while looking correct — that is how the bound was dead
+  // once already.
+  assert.equal(shouldDeferBudgetNudge('making-progress', 0), true);
+  assert.equal(shouldDeferBudgetNudge('making-progress', MAX_BUDGET_NUDGE_DEFERRAL_MS - 1), true);
+  assert.equal(
+    shouldDeferBudgetNudge('making-progress', MAX_BUDGET_NUDGE_DEFERRAL_MS),
+    false,
+    'a runaway that never yields a turn boundary must still hear about the breach',
+  );
+  // A runner that is not mid-turn is never deferred, whatever the clock says.
+  for (const progress of ['idle', 'awaiting-input', 'unproven'] as const) {
+    assert.equal(shouldDeferBudgetNudge(progress, 0), false);
+  }
 });
 
 test('restoring a never-sampled run counts from the start', () => {

@@ -37,6 +37,7 @@ import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
   classifyMonitorProgress,
   evaluateMonitorStuckForRunner,
+  type MonitorProgressKind,
   shouldDeliverStuckNudge,
 } from '../runners/observability-progress.js';
 import {
@@ -360,6 +361,7 @@ export function migrateLegacyBudgetUsage(persisted?: {
   totalTokens?: number;
   inputTokens?: number;
   outputTokens?: number;
+  cacheCreation?: number;
   cacheRead?: number;
   baselineTurns?: number;
   baselineTotalTokens?: number;
@@ -367,12 +369,30 @@ export function migrateLegacyBudgetUsage(persisted?: {
 }): {
   turns: number;
   totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreation: number;
+  cacheRead: number;
   lastCumulative: { input: number; output: number; cacheRead: number; total: number };
 } {
   const persistedTotal = persisted?.totalTokens ?? 0;
+  const baselineTotal = persisted?.baselineTotalTokens ?? 0;
+  const migratedTotal = Math.max(0, persistedTotal - baselineTotal);
+  // Only a state carrying a baseline needs rewriting; anything else is already in the
+  // increment form and keeps its exact component split.
+  const rewriteComponents = baselineTotal > 0;
   return {
     turns: Math.max(0, (persisted?.turns ?? 0) - (persisted?.baselineTurns ?? 0)),
-    totalTokens: Math.max(0, persistedTotal - (persisted?.baselineTotalTokens ?? 0)),
+    totalTokens: migratedTotal,
+    // A runner that recomputes its total from the component counters (claude) would
+    // otherwise rebuild the parent-inclusive figure on its very next record and breach
+    // immediately. The old state has no component breakdown of the baseline, so the
+    // migrated total is carried on `inputTokens` and the rest zeroed: the enforced
+    // quantity stays exact and only the per-component split is approximate.
+    inputTokens: rewriteComponents ? migratedTotal : (persisted?.inputTokens ?? 0),
+    outputTokens: rewriteComponents ? 0 : (persisted?.outputTokens ?? 0),
+    cacheCreation: rewriteComponents ? 0 : (persisted?.cacheCreation ?? 0),
+    cacheRead: rewriteComponents ? 0 : (persisted?.cacheRead ?? 0),
     // The counters a pre-increment run persisted WERE the session's position, so they are
     // exactly the reference its next reading must be measured against. Deriving it this
     // way needs no state version and is right for every legacy shape: a cold run, a warm
@@ -792,10 +812,10 @@ export function restoreBudgetUsageState(
         offset: persisted.offset ?? 0,
         turns: legacy.turns,
         totalTokens: legacy.totalTokens,
-        inputTokens: persisted.inputTokens ?? 0,
-        outputTokens: persisted.outputTokens ?? 0,
-        cacheCreation: persisted.cacheCreation ?? 0,
-        cacheRead: persisted.cacheRead ?? 0,
+        inputTokens: legacy.inputTokens,
+        outputTokens: legacy.outputTokens,
+        cacheCreation: legacy.cacheCreation,
+        cacheRead: legacy.cacheRead,
         sampledAt: persisted.sampledAt,
         unavailableReason: persisted.unavailableReason,
         integrityFailureReason: persisted.integrityFailureReason,
@@ -858,6 +878,8 @@ export async function monitorRun(
         budgetWarned: persisted.budgetWarned === true,
         budgetNudgeSent: persisted.budgetNudgeSent === true,
         budgetNudgeAttempts: persisted.budgetNudgeAttempts ?? 0,
+        // Restored so a gateway restart cannot reset the clock and defer indefinitely.
+        budgetFirstDeferredAt: persisted.budgetFirstDeferredAt,
         budgetGuardUnsupportedFor: null,
         budgetUsage: restoredBudgetUsage,
       }
@@ -1388,6 +1410,7 @@ export async function monitorRun(
             budgetWarned: state.budgetWarned,
             budgetNudgeSent: state.budgetNudgeSent,
             budgetNudgeAttempts: state.budgetNudgeAttempts,
+            budgetFirstDeferredAt: state.budgetFirstDeferredAt,
             budgetUsage: state.budgetUsage,
           },
         });
@@ -1728,7 +1751,7 @@ export async function sendBudgetNudge(
     turnState: await readRunnerTurnState(vars, session, budgetRunner),
   });
   const deferredForMs = firstDeferredAt ? Date.now() - firstDeferredAt : 0;
-  if (progress === 'making-progress' && deferredForMs < MAX_BUDGET_NUDGE_DEFERRAL_MS) {
+  if (shouldDeferBudgetNudge(progress, deferredForMs)) {
     console.log(
       `[run-monitor] budget nudge deferred for run ${runId.slice(0, 8)}: runner mid-turn`,
     );
@@ -1840,6 +1863,19 @@ export const MAX_BUDGET_NUDGE_ATTEMPTS = 3;
  * owns the outcome, bounded by MAX_BUDGET_NUDGE_ATTEMPTS.
  */
 export const MAX_BUDGET_NUDGE_DEFERRAL_MS = 15 * 60_000;
+
+/**
+ * Whether a pending budget warning waits for the current turn to end.
+ *
+ * Pure so the bound is provable on its own: `deferredForMs` reaches here through several
+ * hops, and a dropped hop reads as zero — which defers forever while looking correct.
+ */
+export function shouldDeferBudgetNudge(
+  progress: MonitorProgressKind,
+  deferredForMs: number,
+): boolean {
+  return progress === 'making-progress' && deferredForMs < MAX_BUDGET_NUDGE_DEFERRAL_MS;
+}
 
 /**
  * One monitor poll of the soft usage budget. Runner resolution and persistence
@@ -2085,6 +2121,7 @@ export async function pollRunBudgetGuard(params: {
     budgetWarned: params.budgetWarned ?? run.monitorState?.budgetWarned === true,
     budgetNudgeSent: params.budgetNudgeSent ?? run.monitorState?.budgetNudgeSent === true,
     budgetNudgeAttempts: params.budgetNudgeAttempts ?? run.monitorState?.budgetNudgeAttempts ?? 0,
+    budgetFirstDeferredAt: params.budgetFirstDeferredAt ?? run.monitorState?.budgetFirstDeferredAt,
     budgetUsage:
       params.budgetUsage ?? run.monitorState?.budgetUsage ?? emptyBudgetUsageSampleState(),
     agentStatus: params.agentStatus,
@@ -2113,6 +2150,7 @@ export async function pollRunBudgetGuard(params: {
         tick.budgetNudgeAttempts,
         current.monitorState?.budgetNudgeAttempts ?? 0,
       ),
+      budgetFirstDeferredAt: tick.budgetFirstDeferredAt,
       budgetUsage: tick.budgetUsage,
     },
   });
