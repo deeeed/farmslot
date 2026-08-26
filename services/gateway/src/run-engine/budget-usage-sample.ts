@@ -5,12 +5,14 @@
 // helper). Remote reads only new bytes from the durable offset via a short
 // Python seek/read on the slot (no full-transcript reparse on each poll).
 
-import { stat } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
 
 import {
   advanceIncrementalFromBytes,
+  bufferHasNoRecordBoundary,
   emptyIncrementalSessionUsageState,
   INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
+  INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES,
   type IncrementalSessionUsageState,
   sampleSessionUsageIncremental,
 } from '@farmslot/slot-config';
@@ -42,6 +44,14 @@ export type BudgetUsageSampleResult = {
 export function emptyBudgetUsageSampleState(): BudgetUsageSampleState {
   return emptyIncrementalSessionUsageState();
 }
+
+/**
+ * Tail read for a warm baseline: enough to find the last record boundary and, for
+ * cumulative runners, the last record carrying session totals. Codex emits a
+ * `token_count` event every turn, so this window holds one except in pathological
+ * transcripts — where the capture fails closed instead of guessing.
+ */
+const BASELINE_TAIL_SCAN_BYTES = 4 * 1024 * 1024;
 
 async function remoteFileStat(
   vars: SlotVars,
@@ -108,34 +118,105 @@ async function remoteReadBytes(
  */
 export async function captureBudgetUsageBaselineAtEof(params: {
   vars: SlotVars;
+  runner?: string | null;
   runnerSessionPath: string;
 }): Promise<BudgetUsageSampleState | null> {
-  const { vars, runnerSessionPath } = params;
+  const { vars, runner, runnerSessionPath } = params;
+  const provider = getRunnerSessionUsageProvider(runner);
+  if (!provider) return null;
+
   let size: number;
   let mtimeMs: number;
+  let readTail: (offset: number, length: number) => Promise<Buffer | null>;
   if (isLocal(vars.host, vars.machine)) {
     const st = await stat(runnerSessionPath);
     // Directory transcripts are not incrementally sampled, so there is no offset to pin.
     if (st.isDirectory()) return null;
     size = st.size;
     mtimeMs = st.mtimeMs;
+    readTail = async (offset, length) => {
+      const buf = Buffer.alloc(length);
+      const fh = await open(runnerSessionPath, 'r');
+      try {
+        await fh.read(buf, 0, length, offset);
+      } finally {
+        await fh.close();
+      }
+      return buf;
+    };
   } else {
     const remote = await remoteFileStat(vars, runnerSessionPath);
     if (!remote) return null;
     size = remote.size;
     mtimeMs = remote.mtimeMs;
+    readTail = (offset, length) => remoteReadBytes(vars, runnerSessionPath, offset, length);
   }
-  return {
+
+  const base: BudgetUsageSampleState = {
     ...emptyBudgetUsageSampleState(),
     path: runnerSessionPath,
     size,
     mtimeMs,
-    // Everything already written belongs to the parent — start reading from EOF.
-    offset: size,
     sampledAt: new Date().toISOString(),
     baselineCaptured: true,
     baselineTurns: 0,
     baselineTotalTokens: 0,
+  };
+  // An empty transcript needs no tail scan; offset 0 is already a record boundary.
+  if (size === 0) return base;
+
+  const tailStart = Math.max(0, size - BASELINE_TAIL_SCAN_BYTES);
+  const tail = await readTail(tailStart, size - tailStart);
+  if (!tail) return null;
+
+  // Pin to the last complete record, never raw EOF: a byte offset inside a
+  // half-written record makes the next sample parse the record's suffix and fail
+  // accounting closed as malformed JSONL for the rest of the run.
+  const lastNewline = tail.lastIndexOf(0x0a);
+  if (lastNewline < 0) {
+    // No record boundary within the scan window — refuse rather than guess.
+    return null;
+  }
+  const pinnedOffset = tailStart + lastNewline + 1;
+
+  if (provider.tokenAccumulation === 'incremental') {
+    return { ...base, offset: pinnedOffset };
+  }
+
+  // Cumulative runners (codex) report the whole session's totals on every record, so
+  // the child's first record jumps straight back to the parent's total. Replay the
+  // complete records in the tail to recover the total already reached at the pin;
+  // assignment semantics mean the last such record wins regardless of where the
+  // window starts.
+  let replay: BudgetUsageSampleState = emptyBudgetUsageSampleState();
+  for (const line of tail
+    .subarray(0, lastNewline + 1)
+    .toString('utf8')
+    .split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      replay = provider.applyRecord(replay, JSON.parse(trimmed) as Record<string, unknown>);
+    } catch {
+      // A malformed record inside the parent's history cannot invalidate the child's
+      // baseline: later records still carry the cumulative total we are looking for.
+      continue;
+    }
+  }
+  if (replay.totalTokens <= 0) {
+    // No cumulative total in the scan window, so the parent's usage is unknown and a
+    // baseline of 0 would charge the child for it. Fail closed to a fresh session.
+    return null;
+  }
+  return {
+    ...base,
+    offset: pinnedOffset,
+    totalTokens: replay.totalTokens,
+    inputTokens: replay.inputTokens,
+    outputTokens: replay.outputTokens,
+    cacheRead: replay.cacheRead,
+    cacheCreation: replay.cacheCreation,
+    baselineTotalTokens: replay.totalTokens,
   };
 }
 
@@ -287,11 +368,21 @@ export async function sampleBudgetUsage(params: {
       };
     }
 
-    const toRead = Math.min(
-      remoteStat.size - start,
-      INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
-    );
-    const buf = await remoteReadBytes(vars, runnerSessionPath, start, toRead);
+    const unread = remoteStat.size - start;
+    // windowCap is the cap, not the bytes read — see the local path.
+    let windowCap = INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE;
+    let toRead = Math.min(unread, windowCap);
+    let buf = await remoteReadBytes(vars, runnerSessionPath, start, toRead);
+    // Same widen-once rule as the local path: one record larger than the window would
+    // otherwise be skipped with its usage uncounted.
+    if (buf != null && bufferHasNoRecordBoundary(buf) && toRead === windowCap) {
+      const widened = Math.min(unread, INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES);
+      if (widened > toRead) {
+        windowCap = INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES;
+        toRead = widened;
+        buf = await remoteReadBytes(vars, runnerSessionPath, start, toRead);
+      }
+    }
     if (buf == null) {
       const next = {
         ...state,
@@ -312,7 +403,7 @@ export async function sampleBudgetUsage(params: {
       fileSize: remoteStat.size,
       mtimeMs: remoteStat.mtimeMs,
       filePath: runnerSessionPath,
-      maxWindow: INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
+      maxWindow: windowCap,
     });
     if (advanced.integrityFailureReason) {
       return {

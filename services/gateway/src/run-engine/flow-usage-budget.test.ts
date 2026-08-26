@@ -23,7 +23,10 @@ test('hasUsageBudget is true when either ceiling is positive', () => {
 
 test('evaluateFlowUsageBudget fails open when usage sample is missing', () => {
   assert.deepEqual(
-    evaluateFlowUsageBudget({ turns: null, totalTokens: null }, { maxTurns: 10, maxTotalTokens: 100 }),
+    evaluateFlowUsageBudget(
+      { turns: null, totalTokens: null },
+      { maxTurns: 10, maxTotalTokens: 100 },
+    ),
     { exceeded: false },
   );
 });
@@ -79,10 +82,7 @@ test('update-branch ships a built-in soft budget', () => {
 });
 
 test('formatUsageBudgetMessage names the flow and reasons', () => {
-  const evaluation = evaluateFlowUsageBudget(
-    { turns: 100, totalTokens: null },
-    { maxTurns: 80 },
-  );
+  const evaluation = evaluateFlowUsageBudget({ turns: 100, totalTokens: null }, { maxTurns: 80 });
   assert.equal(evaluation.exceeded, true);
   if (!evaluation.exceeded) throw new Error('expected exceeded');
   const msg = formatUsageBudgetMessage('update-branch', evaluation);
@@ -120,6 +120,22 @@ test('applyBudgetUsageBaseline captures warm parent totals without charging', ()
   assert.equal(later.establishingBaseline, false);
   assert.equal(later.chargeTurns, 60);
   assert.equal(later.chargeTotalTokens, 1_000_000);
+});
+
+test('applyBudgetUsageBaseline honors a captured baseline even without the warm flag', () => {
+  // A pinned warm baseline can outlive the flag (restart recovery, or a handoff path
+  // that never set it). Charging absolute totals there re-creates the false breach.
+  const charged = applyBudgetUsageBaseline({
+    turns: 12,
+    totalTokens: 8_050_000,
+    warmSession: false,
+    baselineCaptured: true,
+    baselineTurns: 0,
+    baselineTotalTokens: 7_950_000,
+  });
+  assert.equal(charged.chargeTotalTokens, 100_000);
+  assert.equal(charged.chargeTurns, 12);
+  assert.equal(charged.establishingBaseline, false);
 });
 
 test('applyBudgetUsageBaseline charges cold-start absolute totals on first sample', () => {

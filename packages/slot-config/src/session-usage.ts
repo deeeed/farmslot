@@ -641,6 +641,21 @@ function formatTotals(totals: SessionTotals): string[] {
 /** Max new transcript bytes processed per incremental sample (bounds memory). */
 export const INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE = 1024 * 1024;
 
+/**
+ * Widened one-shot read for a record that does not fit the normal window.
+ *
+ * A skipped record's usage goes uncounted, and a long assistant message carrying the
+ * turn that crosses a ceiling can exceed 1MiB. Retry once at this size before giving
+ * up, so only genuinely pathological records (huge tool output, which carries no
+ * usage) are skipped.
+ */
+export const INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES = 16 * 1024 * 1024;
+
+/** True when the buffer holds no complete record boundary. */
+export function bufferHasNoRecordBoundary(buf: Buffer): boolean {
+  return buf.lastIndexOf(0x0a) < 0;
+}
+
 export type IncrementalSessionUsageState = {
   path: string | null;
   size: number;
@@ -878,13 +893,30 @@ export async function sampleSessionUsageIncremental(params: {
     // Bound memory: process at most MAX bytes of new data per sample. Further
     // growth is consumed on later polls (offset advances).
     const unread = st.size - start;
-    const length = Math.min(unread, INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE);
-    const buf = Buffer.alloc(length);
-    const fh = await open(filePath, 'r');
-    try {
-      await fh.read(buf, 0, length, start);
-    } finally {
-      await fh.close();
+    const readAt = async (length: number): Promise<Buffer> => {
+      const target = Buffer.alloc(length);
+      const fh = await open(filePath, 'r');
+      try {
+        await fh.read(target, 0, length, start);
+      } finally {
+        await fh.close();
+      }
+      return target;
+    };
+    // maxWindow is the cap we were willing to read, never the bytes actually read: a
+    // short read is a partial trailing write to wait on, not an oversized record.
+    let windowCap = INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE;
+    let length = Math.min(unread, windowCap);
+    let buf = await readAt(length);
+    // A full window with no boundary means one record is larger than it. Widen once
+    // before skipping so a large usage-bearing record still gets counted.
+    if (bufferHasNoRecordBoundary(buf) && length === windowCap) {
+      const widened = Math.min(unread, INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES);
+      if (widened > length) {
+        windowCap = INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES;
+        length = widened;
+        buf = await readAt(length);
+      }
     }
 
     const advanced = advanceIncrementalFromBytes(state, buf, applyRecord, {
@@ -892,7 +924,7 @@ export async function sampleSessionUsageIncremental(params: {
       fileSize: st.size,
       mtimeMs: st.mtimeMs,
       filePath,
-      maxWindow: INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
+      maxWindow: windowCap,
     });
     if (advanced.integrityFailureReason) {
       return {

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- fix(run): add `RunMonitorState.budgetNudgeAttempts` and `RunMonitorBudgetUsageState.skippedOversizedRecords` so capped budget-nudge delivery and skipped transcript records survive a gateway restart.
+- fix(run): add `RunMonitorState.budgetNudgeAttempts` and `RunMonitorBudgetUsageState.skippedOversizedRecords` so capped budget-nudge delivery and skipped transcript records survive a gateway restart. Both are restored on monitor recovery.
 - fix(agents): persist prompt-delivery boundaries and their source ref so restart recovery never guesses whether a destructive runner handoff began.
 - feat(dispatch): `dispatch.candidates` may omit `project` to return every enabled slot, each tagged with `project`, and accepts `forceRefresh` to bypass the branch-refresh TTL.
 - feat(execution-templates): catalog options may carry `sourceDomains`, `shadowedBy`, and `defaults`; `config.templateOptions` accepts `unfiltered` so a client can load one full project catalog and filter locally.

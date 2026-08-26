@@ -55,7 +55,7 @@ import {
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
 } from '../runners/session-process.js';
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import { onWorkerSignal, resolveContextFilePath } from '../tasks/watcher.js';
 import {
   isTerminalWorkerSignal,
@@ -279,11 +279,12 @@ export async function prepareWarmBudgetBaselineForHandoff(
 
     const baselineUsage = await captureBudgetUsageBaselineAtEof({
       vars: await loadSlotVars(slotId),
+      runner: run.metrics.runner,
       runnerSessionPath,
     });
     if (!baselineUsage) {
       console.warn(
-        `[run-monitor] run ${runId.slice(0, 8)} — warm budget baseline unavailable: cannot stat retained transcript ${runnerSessionPath}`,
+        `[run-monitor] run ${runId.slice(0, 8)} — warm budget baseline unavailable for retained transcript ${runnerSessionPath}`,
       );
       return 'unavailable';
     }
@@ -303,6 +304,11 @@ export async function prepareWarmBudgetBaselineForHandoff(
         budgetUsage: baselineUsage,
       },
     });
+    // Flush before the caller delivers the warm prompt. Run writes are normally
+    // persisted in the background; a crash in that window would lose the baseline and
+    // the recovered run would charge the parent's history to this run.
+    const persisted = getRun(runId);
+    if (persisted) await persistRunNow(persisted, 'warm-budget-baseline');
     return 'captured';
   } catch (err) {
     console.warn(
@@ -769,6 +775,7 @@ export async function monitorRun(
         unavailableReason: persisted.budgetUsage.unavailableReason,
         integrityFailureReason: persisted.budgetUsage.integrityFailureReason,
         skippingOversizedRecord: persisted.budgetUsage.skippingOversizedRecord,
+        skippedOversizedRecords: persisted.budgetUsage.skippedOversizedRecords,
         baselineCaptured: persisted.budgetUsage.baselineCaptured,
         baselineTurns: persisted.budgetUsage.baselineTurns,
         baselineTotalTokens: persisted.budgetUsage.baselineTotalTokens,
@@ -1595,12 +1602,22 @@ function buildNudgeMessage(violation: MonitorViolation): string {
 }
 
 /**
+ * Outcome of one budget-nudge delivery.
+ *
+ * `not-attempted` means the pane was never touched, so the attempt must not count
+ * against MAX_BUDGET_NUDGE_ATTEMPTS — otherwise a few transient holds would burn the
+ * cap and the worker would never hear about a real breach.
+ */
+export type BudgetNudgeDelivery = 'confirmed' | 'attempted' | 'not-attempted';
+
+/**
  * One-shot budget warning into the worker pane. Does not increment metrics.nudgeCount
  * (stuck/idle max_nudges is a separate escalation budget).
  *
- * Returns true only when the instruction was confirmed sent. Expected unavailability
- * (missing run, non-tmux-nudgeable runner) returns false without throwing. Unexpected
- * delivery failures propagate so callers do not stamp a false nudgeSent.
+ * Returns `confirmed` only when the instruction was accepted and submitted. Expected
+ * unavailability (missing run, non-tmux-nudgeable runner) returns `not-attempted`
+ * without throwing. Unexpected delivery failures propagate so callers do not stamp a
+ * false nudgeSent.
  */
 export async function sendBudgetNudge(
   runId: string,
@@ -1608,11 +1625,11 @@ export async function sendBudgetNudge(
   message: string,
   role?: AgentRole,
   contextId?: string,
-): Promise<boolean> {
+): Promise<BudgetNudgeDelivery> {
   const run = getRun(runId);
-  if (!run) return false;
+  if (!run) return 'not-attempted';
   if (!runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))) {
-    return false;
+    return 'not-attempted';
   }
 
   const vars = await loadSlotVars(slotId);
@@ -1631,12 +1648,14 @@ export async function sendBudgetNudge(
       ...retainedSessionSendOption(retainedSession),
     },
   );
-  if (!sent) return false;
+  // A false return means the text reached the composer but submission was never
+  // verified — the pane was touched, so this counts as a spent attempt.
+  if (!sent) return 'attempted';
   console.log(
     `[run-monitor] budget nudge sent to run ${runId.slice(0, 8)}: ${message.slice(0, 120)}`,
   );
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-  return true;
+  return 'confirmed';
 }
 
 /**
@@ -1861,19 +1880,24 @@ export async function pollBudgetGuardStep(params: {
       !shouldSkipMonitorNudge(run, deliveryViolation, params.agentStatus) &&
       runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))
     ) {
-      // Count the attempt before delivery: a throwing or unconfirmed send is exactly
-      // the case the cap exists for, so it must not buy an extra free retry.
-      budgetNudgeAttempts += 1;
       try {
-        nudgeSent = await (params.deliverNudge ?? sendBudgetNudge)(
+        const delivery = await (params.deliverNudge ?? sendBudgetNudge)(
           params.runId,
           params.slotId,
           warningMessage,
           context?.role,
           context?.id,
         );
+        // Only a delivery that reached the composer spends an attempt. Bailing out
+        // before touching the pane must stay free, or a few transient holds would
+        // silently exhaust the cap and the worker would never hear about the breach.
+        if (delivery !== 'not-attempted') budgetNudgeAttempts += 1;
+        nudgeSent = delivery === 'confirmed';
         if (nudgeSent && violation) violation.nudgeSent = new Date().toISOString();
       } catch (err) {
+        // The send helper returns false for delivery problems; a throw here is an
+        // unexpected fault before/around it, so the pane state is unknown. Do not
+        // charge an attempt — the cap still bounds anything that does reach the pane.
         console.warn(
           `[run-monitor] budget nudge delivery failed for run ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
         );

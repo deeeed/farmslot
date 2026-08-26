@@ -2,6 +2,19 @@ import type { IncrementalSessionUsageState } from '@farmslot/slot-config';
 
 export interface RunnerSessionUsageProvider {
   readonly id: string;
+  /**
+   * How the runner reports token totals in its transcript.
+   *
+   * `incremental` — each record carries only its own tokens, which applyRecord adds
+   * (claude). Counters restarted at a byte offset measure exactly the work after it.
+   *
+   * `cumulative` — each record carries the session total so far, which applyRecord
+   * assigns (codex). Counters restarted at a byte offset still jump to the whole
+   * session's total on the next record, so a baseline must record the total already
+   * reached at that offset. Getting this wrong charges a retained session's entire
+   * history to whichever run reads it next.
+   */
+  readonly tokenAccumulation: 'incremental' | 'cumulative';
   applyRecord(
     state: IncrementalSessionUsageState,
     record: Record<string, unknown>,
@@ -72,10 +85,14 @@ function codexApplyRecord(
 
 export const claudeSessionUsageProvider: RunnerSessionUsageProvider = {
   id: 'claude-jsonl',
+  // claudeApplyRecord adds each record's usage to the running counters.
+  tokenAccumulation: 'incremental',
   applyRecord: claudeApplyRecord,
 };
 
 export const codexSessionUsageProvider: RunnerSessionUsageProvider = {
   id: 'codex-jsonl',
+  // codexApplyRecord assigns `total_token_usage` / `turn.completed` session totals.
+  tokenAccumulation: 'cumulative',
   applyRecord: codexApplyRecord,
 };

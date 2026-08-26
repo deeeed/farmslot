@@ -113,9 +113,12 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       // Warm handoff pins accounting at the transcript's EOF: the child inherits no
       // counted usage, so even ceilings of 1 do not breach on parent history.
       result.warmBaseline?.status === 'captured' &&
-      result.warmBaseline?.pinnedAtEof === true &&
+      result.warmBaseline?.pinnedAtRecordBoundary === true &&
       result.warmBaseline?.baselineTurns === 0 &&
-      result.warmBaseline?.baselineTotalTokens === 0 &&
+      // Codex restates session totals on every record, so the baseline must carry the
+      // parent's real cumulative total. A zero here is the false-breach bug.
+      result.warmBaseline?.baselineTotalTokens > 0 &&
+      result.warmBaseline?.baselineTotalTokens === result.first?.sampleTotalTokens &&
       result.warmBaseline?.breachedOnInheritedHistory === false &&
       // An unmeasurable runner is recorded for the operator, never typed at the worker.
       result.unmeasuredRunner?.unsupportedRunner === true &&

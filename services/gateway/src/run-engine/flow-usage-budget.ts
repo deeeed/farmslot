@@ -57,7 +57,8 @@ export function evaluateFlowUsageBudget(
 ): UsageBudgetEvaluation {
   if (!hasUsageBudget(budget)) return { exceeded: false };
 
-  const turns = typeof sample.turns === 'number' && Number.isFinite(sample.turns) ? sample.turns : null;
+  const turns =
+    typeof sample.turns === 'number' && Number.isFinite(sample.turns) ? sample.turns : null;
   const totalTokens =
     typeof sample.totalTokens === 'number' && Number.isFinite(sample.totalTokens)
       ? sample.totalTokens
@@ -109,10 +110,11 @@ export function buildUsageBudgetNudgeMessage(message: string): string {
 }
 
 /**
- * Soft ceilings apply to per-run growth on **warm retained sessions** only.
- * Cold starts charge absolute sample totals (work before the first poll is not free).
- * Warm handoffs capture a first-poll baseline so parent transcript totals do not
- * false-trigger the child flow budget.
+ * Soft ceilings apply to per-run growth once a baseline exists.
+ * Cold starts with no baseline charge absolute sample totals (work before the first
+ * poll is not free). Warm handoffs capture a baseline — at the retained transcript's
+ * pinned offset, or at first poll — so parent transcript totals do not false-trigger
+ * the child flow budget.
  */
 export function applyBudgetUsageBaseline(input: {
   turns: number | null;
@@ -143,8 +145,11 @@ export function applyBudgetUsageBaseline(input: {
     };
   }
 
-  // Cold start: charge absolute totals from the first sample onward.
-  if (!input.warmSession) {
+  // A captured baseline always wins, warm flag or not. The baseline exists precisely
+  // because someone measured what the transcript already held; ignoring it charges
+  // that history to this run — the false breach this guard is supposed to prevent.
+  // The warm flag only decides whether a baseline gets established at first poll.
+  if (!input.warmSession && input.baselineCaptured !== true) {
     return {
       chargeTurns: input.turns,
       chargeTotalTokens: input.totalTokens,

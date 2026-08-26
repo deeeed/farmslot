@@ -533,7 +533,7 @@ test('pollBudgetGuardStep never nudges a worker whose runner exposes no usage', 
     localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
     deliverNudge: async () => {
       attempts += 1;
-      return true;
+      return 'confirmed' as const;
     },
   });
   assert.equal(tick.unsupportedRunner, true);
@@ -577,7 +577,7 @@ test('pollBudgetGuardStep retries an unconfirmed nudge without re-emitting the v
   let attempts = 0;
   const deliverNudge = async () => {
     attempts += 1;
-    return attempts > 1;
+    return attempts > 1 ? ('confirmed' as const) : ('attempted' as const);
   };
   const common = {
     runId: run.id,
@@ -612,6 +612,64 @@ test('pollBudgetGuardStep retries an unconfirmed nudge without re-emitting the v
   assert.equal(attempts, 2);
 });
 
+test('pollBudgetGuardStep does not spend attempts when the pane is never touched', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: `BUDGET-HOLD-${Date.now()}`,
+    slotId: 'slot-1',
+    runner: 'claude',
+    branch: 'budget-hold-test',
+  });
+  updateRun(run.id, { status: 'monitoring' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  // Transient holds that bail before the composer must stay free, or a real breach
+  // would go unreported after three of them.
+  let calls = 0;
+  const common = {
+    runId: run.id,
+    slotId: 'slot-1',
+    flowType: 'update-branch' as const,
+    runner: 'claude',
+    runnerSessionPath: await breachingTranscript('run-monitor-budget-hold-'),
+    maxTurns: 1,
+    maxTotalTokens: 1,
+    agentStatus: 'working' as const,
+    sendNudge: true,
+    localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
+    deliverNudge: async () => {
+      calls += 1;
+      return calls <= 3 ? ('not-attempted' as const) : ('confirmed' as const);
+    },
+  };
+  let budgetWarned = false;
+  let budgetNudgeAttempts = 0;
+  let budgetUsage = emptyBudgetUsageSampleState();
+  let nudgeSent = false;
+  for (let poll = 0; poll < 4; poll++) {
+    const tick = await pollBudgetGuardStep({
+      ...common,
+      budgetWarned,
+      budgetNudgeSent: false,
+      budgetNudgeAttempts,
+      budgetUsage,
+    });
+    budgetWarned = tick.budgetWarned;
+    budgetNudgeAttempts = tick.budgetNudgeAttempts;
+    budgetUsage = tick.budgetUsage;
+    nudgeSent = tick.nudgeSent;
+  }
+  assert.equal(calls, 4);
+  assert.equal(nudgeSent, true, 'the warning still lands after three untouched holds');
+  assert.equal(budgetNudgeAttempts, 1, 'only the delivery that reached the pane counts');
+});
+
 test('pollBudgetGuardStep stops retrying an unconfirmable nudge at the attempt cap', async (t) => {
   const run = createRun({
     flowType: 'update-branch',
@@ -633,7 +691,7 @@ test('pollBudgetGuardStep stops retrying an unconfirmable nudge at the attempt c
   let attempts = 0;
   const deliverNudge = async () => {
     attempts += 1;
-    return false;
+    return 'attempted' as const;
   };
   const common = {
     runId: run.id,

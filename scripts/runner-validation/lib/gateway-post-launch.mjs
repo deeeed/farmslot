@@ -639,7 +639,13 @@ process.stdout.write(JSON.stringify({
   unsupportedWarmBaseline,
   warmBaseline: {
     status: warmBaseline,
-    pinnedAtEof: warmUsage ? warmUsage.offset === warmUsage.size && warmUsage.size > 0 : false,
+    // The pin must sit on a record boundary at or before EOF, never inside a
+    // half-written record (which would fail accounting closed as malformed JSONL).
+    pinnedAtRecordBoundary: warmUsage
+      ? warmUsage.offset > 0 && warmUsage.offset <= warmUsage.size
+      : false,
+    pinnedOffset: warmUsage?.offset ?? null,
+    transcriptSize: warmUsage?.size ?? null,
     baselineTurns: warmUsage?.baselineTurns ?? null,
     baselineTotalTokens: warmUsage?.baselineTotalTokens ?? null,
     breachedOnInheritedHistory: warmTick.budgetWarned === true,
