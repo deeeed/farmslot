@@ -1931,14 +1931,23 @@ export async function pollBudgetGuardStep(params: {
 
   let warningMessage: string | null = null;
   if (sample.enforcementFailure) {
-    // A runner with no session-usage provider (cursor, grok, …) can never be measured.
-    // Telling that worker to stop expanding scope is a false accusation on every run —
-    // record the capability gap for the operator and leave the pane alone.
-    warningMessage = sample.unsupportedRunner
-      ? `usage budget enforcement unsupported (${sample.unavailableReason ?? 'runner exposes no session usage'}). ` +
-        'Budget ceilings are not enforced for this runner; no worker action is implied.'
-      : `usage budget enforcement unavailable (${sample.unavailableReason ?? 'unknown accounting failure'}). ` +
+    // Neither a runner without a session-usage provider (cursor, grok, …) nor a
+    // transcript that moved under us is something the worker did. Telling it to stop
+    // expanding scope is a false accusation in both cases — record the gap for the
+    // operator and leave the pane alone.
+    if (sample.unsupportedRunner) {
+      warningMessage =
+        `usage budget enforcement unsupported (${sample.unavailableReason ?? 'runner exposes no session usage'}). ` +
+        'Budget ceilings are not enforced for this runner; no worker action is implied.';
+    } else if (sample.accountingIntegrityLost) {
+      warningMessage =
+        `usage budget accounting lost (${sample.unavailableReason ?? 'transcript continuity broken'}). ` +
+        'Ceilings are no longer enforced for this run; no worker action is implied.';
+    } else {
+      warningMessage =
+        `usage budget enforcement unavailable (${sample.unavailableReason ?? 'unknown accounting failure'}). ` +
         'Stop expanding scope and finish or block the current checklist item.';
+    }
     if (!budgetWarned) {
       budgetWarned = true;
       const run = getRun(params.runId);
@@ -2005,6 +2014,7 @@ export async function pollBudgetGuardStep(params: {
     !priorNudgeSent &&
     warningMessage &&
     !sample.unsupportedRunner &&
+    !sample.accountingIntegrityLost &&
     budgetNudgeAttempts < MAX_BUDGET_NUDGE_ATTEMPTS
   ) {
     const run = getRun(params.runId);

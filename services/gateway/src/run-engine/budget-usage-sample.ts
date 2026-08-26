@@ -40,6 +40,12 @@ export type BudgetUsageSampleResult = {
    * guard records it without instructing the worker to stop expanding scope.
    */
   unsupportedRunner?: boolean;
+  /**
+   * True when accounting integrity was lost — a transcript swapped, truncated, or turned
+   * unparseable under us. Like an unsupported runner this is the gateway's bookkeeping
+   * problem, not something the worker did, so it must not become a scope accusation.
+   */
+  accountingIntegrityLost?: boolean;
   nextState: BudgetUsageSampleState;
 };
 
@@ -61,7 +67,11 @@ function unavailable(
   prior: BudgetUsageSampleState,
   unavailableReason: string,
   overrides: Omit<Partial<BudgetUsageSampleState>, 'path'> = {},
-  flags: { enforcementFailure?: boolean; unsupportedRunner?: boolean } = {},
+  flags: {
+    enforcementFailure?: boolean;
+    unsupportedRunner?: boolean;
+    accountingIntegrityLost?: boolean;
+  } = {},
 ): BudgetUsageSampleResult {
   // `path` is deliberately not settable here. Stamping a new transcript onto state that
   // counts a different one leaves the new path beside the old offset and reference, and
@@ -76,6 +86,8 @@ function unavailable(
     // enforcement failure over a state that already lost integrity would let the guard
     // treat accounting as merely unavailable and quietly resume retrying.
     enforcementFailure: prior.integrityFailureReason !== undefined,
+    accountingIntegrityLost:
+      prior.integrityFailureReason !== undefined || overrides.integrityFailureReason !== undefined,
     ...flags,
     nextState: {
       ...prior,
@@ -250,48 +262,60 @@ export async function captureBudgetUsageBaselinePin(params: {
     return { ...base, lastCumulative: emptyBudgetUsageSampleState().lastCumulative };
   }
 
-  let tailStart = Math.max(0, size - BASELINE_TAIL_SCAN_BYTES);
-  let tail = await readTail(tailStart, size - tailStart);
-  if (!tail) return null;
-  const lastNewline = tail.lastIndexOf(0x0a);
-  // No record boundary within the scan window — refuse rather than guess.
-  if (lastNewline < 0) return null;
+  // Scan a tail window as one unit: the boundary index and the reference recovered from
+  // it must come from the same buffer. Returning them separately let a widened rescan
+  // pin with the narrow window's index, which lands mid-record and fails accounting
+  // closed while leaving the parent's remaining history on the child's bill.
+  const scanTail = async (
+    start: number,
+  ): Promise<{
+    tail: Buffer;
+    tailStart: number;
+    lastNewline: number;
+    replay: BudgetUsageSampleState;
+  } | null> => {
+    const buf = await readTail(start, size - start);
+    if (!buf) return null;
+    const lastNewline = buf.lastIndexOf(0x0a);
+    // No record boundary within the scan window — refuse rather than guess.
+    if (lastNewline < 0) return null;
+    // Seed the reference from the parent's own last reading. Providers that restate
+    // session totals set `lastCumulative` on every fold, so replaying the tail from a
+    // reference-less state leaves exactly the reading in force at the pin; its counters
+    // are partial sums and are discarded. Without this the child's first reading would
+    // be spent establishing the reference, and a child whose whole turn is one record —
+    // a `turn.completed` carrying 50K — would be charged nothing at all.
+    const replay = replayTailReference(buf, lastNewline, start, provider);
+    if (replay === null) return null;
+    return { tail: buf, tailStart: start, lastNewline, replay };
+  };
 
-  // Seed the reference from the parent's own last reading. Providers that restate
-  // session totals set `lastCumulative` on every fold, so replaying the tail from a
-  // reference-less state leaves exactly the reading in force at the pin; its counters
-  // are partial sums and are discarded. Without this the child's first reading would be
-  // spent establishing the reference, and a child whose whole turn is one record — a
-  // `turn.completed` carrying 50K — would be charged nothing at all.
-  let replay = replayTailReference(tail, lastNewline, tailStart, provider);
-  if (replay === null) return null;
+  let scan = await scanTail(Math.max(0, size - BASELINE_TAIL_SCAN_BYTES));
+  if (!scan) return null;
 
   // A defined reference is authoritative even at zero — a parent that genuinely burned
   // nothing still fixes where the session stands. Absent means the window held no
   // reading at all, which only a runner that restates totals needs to care about.
-  if (replay.lastCumulative === undefined && provider.restatesSessionTotals) {
+  if (scan.replay.lastCumulative === undefined && provider.restatesSessionTotals) {
     // One large tool record can sit between the last reading and EOF. Widen once before
     // giving up, since failing here tears down a healthy retained session.
     const widenedStart = Math.max(0, size - BASELINE_TAIL_SCAN_WIDENED_BYTES);
-    if (widenedStart >= tailStart) return null;
-    tailStart = widenedStart;
-    tail = await readTail(tailStart, size - tailStart);
-    if (!tail) return null;
-    replay = replayTailReference(tail, tail.lastIndexOf(0x0a), tailStart, provider);
-    if (replay === null || replay.lastCumulative === undefined) return null;
+    if (widenedStart >= scan.tailStart) return null;
+    scan = await scanTail(widenedStart);
+    if (!scan || scan.replay.lastCumulative === undefined) return null;
   }
 
   // Bytes after the last boundary are the previous writer's in-flight record. It
   // completes after the pin, so drop it rather than charge their turn to this run.
   // Whitespace is not a record: discarding on a stray trailing space or newline would
   // throw away the child's genuine first record instead.
-  const pinnedOffset = tailStart + lastNewline + 1;
-  const trailing = tail.subarray(lastNewline + 1).toString('utf8');
+  const pinnedOffset = scan.tailStart + scan.lastNewline + 1;
+  const trailing = scan.tail.subarray(scan.lastNewline + 1).toString('utf8');
   const trailingIsPartialRecord = trailing.trim().length > 0;
   return {
     ...base,
     offset: pinnedOffset,
-    lastCumulative: replay.lastCumulative,
+    lastCumulative: scan.replay.lastCumulative,
     discardNextRecord: trailingIsPartialRecord,
   };
 }
@@ -335,6 +359,7 @@ export async function sampleBudgetUsage(params: {
     return {
       ...result,
       enforcementFailure: result.nextState.integrityFailureReason !== undefined,
+      accountingIntegrityLost: result.nextState.integrityFailureReason !== undefined,
     };
   }
 
@@ -362,7 +387,7 @@ export async function sampleBudgetUsage(params: {
           mtimeMs: remoteStat.mtimeMs,
           integrityFailureReason,
         },
-        { enforcementFailure: true },
+        { enforcementFailure: true, accountingIntegrityLost: true },
       );
     }
 
@@ -438,7 +463,7 @@ export async function sampleBudgetUsage(params: {
         advanced,
         advanced.integrityFailureReason,
         {},
-        { enforcementFailure: true },
+        { enforcementFailure: true, accountingIntegrityLost: true },
       );
     }
     return {
