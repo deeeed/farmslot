@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-26T03:28:55.398Z",
+  "recordedAt": "2026-08-26T03:34:26.125Z",
   "host": "macwork",
   "scenario": "budget-guard-smoke",
   "runner": "codex",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-F8NCK4",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-1SEMGc",
   "slotId": "runner-validate-macwork-codex-budget",
-  "session": "runner-validate-codex-budget-guard-smoke-36437",
+  "session": "runner-validate-codex-budget-guard-smoke-9878",
   "initialCompleted": true,
   "sessionBinding": {
-    "runnerSessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-F8NCK4/.agent/codex-home/sessions/2026/08/26/rollout-2026-08-26T11-28-39-01a03c1c-dae2-78b1-8327-7de720a0b58a.jsonl",
-    "runnerSessionId": "01a03c1c-dae2-78b1-8327-7de720a0b58a",
+    "runnerSessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-1SEMGc/.agent/codex-home/sessions/2026/08/26/rollout-2026-08-26T11-34-10-01a03c21-e8a2-7892-aac3-09737a4a9c09.jsonl",
+    "runnerSessionId": "01a03c21-e8a2-7892-aac3-09737a4a9c09",
     "source": "native"
   },
   "guard": {
@@ -41,8 +41,8 @@
       "warmBaseline": {
         "status": "captured",
         "pinnedAtRecordBoundary": true,
-        "pinnedOffset": 99950,
-        "transcriptSize": 99950,
+        "pinnedOffset": 99953,
+        "transcriptSize": 99953,
         "baselineTurns": 0,
         "baselineTotalTokens": 13571,
         "breachedOnInheritedHistory": false
@@ -59,7 +59,7 @@
     "exitCode": 0,
     "error": null,
     "stderr": "[run-monitor] failed to load monitor config for runner-validation: Project config not found: /Users/deeeed/dev/farmslot/projects/runner-validation/project.json\n[run-monitor] failed to load monitor config for runner-validation: Project config not found: /Users/deeeed/dev/farmslot/projects/runner-validation/project.json",
-    "gatewayLog": "[pty] set tmux escape-time=10 status-left-length=30\n[runner-observability] {\"kind\":\"runner-observability-agreement\",\"slotId\":\"runner-validate-macwork-codex-budget\",\"runner\":\"codex\",\"target\":\"%51\",\"logPrefix\":\"run-monitor-budget\",\"paneBusy\":false,\"hookBusy\":false,\"hookActivity\":\"idle\",\"hookSource\":\"hook\",\"hookConfidence\":\"high\",\"hookObservedAt\":1787714926772,\"agreed\":true,\"timestamp\":1787714932943}\n[run-monitor] budget nudge sent to run a4c966c9: update-branch usage budget exceeded (total_tokens 13571 > max_total_tokens 1). This flow should stay near-mechanical — f"
+    "gatewayLog": "[pty] set tmux escape-time=10 status-left-length=30\n[runner-observability] {\"kind\":\"runner-observability-agreement\",\"slotId\":\"runner-validate-macwork-codex-budget\",\"runner\":\"codex\",\"target\":\"%52\",\"logPrefix\":\"run-monitor-budget\",\"paneBusy\":false,\"hookBusy\":false,\"hookActivity\":\"idle\",\"hookSource\":\"hook\",\"hookConfidence\":\"high\",\"hookObservedAt\":1787715257901,\"agreed\":true,\"timestamp\":1787715263701}\n[run-monitor] budget nudge sent to run 8d58c219: update-branch usage budget exceeded (total_tokens 13571 > max_total_tokens 1). This flow should stay near-mechanical — f"
   },
   "nudgeAccepted": true,
   "pass": true,
