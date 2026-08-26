@@ -298,9 +298,12 @@ export async function prepareWarmBudgetBaselineForHandoff(
         startedAt: current.monitorState?.startedAt ?? now,
         lastPaneHash: current.monitorState?.lastPaneHash,
         lastStructuredProgressAt: current.monitorState?.lastStructuredProgressAt,
-        budgetWarned: current.monitorState?.budgetWarned ?? false,
-        budgetNudgeSent: current.monitorState?.budgetNudgeSent ?? false,
-        budgetNudgeAttempts: current.monitorState?.budgetNudgeAttempts ?? 0,
+        // A fresh baseline opens a new accounting window, so the warn-once latch and
+        // spent delivery attempts reset with it. Carrying them over from a previous
+        // handoff on the same run would make the new window unable to warn at all.
+        budgetWarned: false,
+        budgetNudgeSent: false,
+        budgetNudgeAttempts: 0,
         budgetUsage: baselineUsage,
       },
     });
@@ -333,8 +336,12 @@ interface MonitorState {
   budgetNudgeSent: boolean;
   /** Delivery attempts spent on the budget nudge (capped by MAX_BUDGET_NUDGE_ATTEMPTS). */
   budgetNudgeAttempts: number;
-  /** Runner exposes no session usage — stop sampling instead of re-checking every poll. */
-  budgetGuardUnsupported: boolean;
+  /**
+   * Runner id the guard was disabled for, or null while the guard is live. Dispatch
+   * rewrites `metrics.runner` to the slot's real runner, so the latch is keyed to the
+   * runner it was decided on and clears if that changes.
+   */
+  budgetGuardUnsupportedFor: string | null;
   /** Incremental transcript sample for soft turn/token budgets. */
   budgetUsage: BudgetUsageSampleState;
 }
@@ -791,7 +798,7 @@ export async function monitorRun(
         budgetWarned: persisted.budgetWarned === true,
         budgetNudgeSent: persisted.budgetNudgeSent === true,
         budgetNudgeAttempts: persisted.budgetNudgeAttempts ?? 0,
-        budgetGuardUnsupported: false,
+        budgetGuardUnsupportedFor: null,
         budgetUsage: restoredBudgetUsage,
       }
     : {
@@ -803,7 +810,7 @@ export async function monitorRun(
         budgetWarned: false,
         budgetNudgeSent: false,
         budgetNudgeAttempts: 0,
-        budgetGuardUnsupported: false,
+        budgetGuardUnsupportedFor: null,
         budgetUsage: emptyBudgetUsageSampleState(),
       };
   // Also restore nudge count from persisted state
@@ -1144,9 +1151,18 @@ export async function monitorRun(
       // delivery while unconfirmed, but only up to MAX_BUDGET_NUDGE_ATTEMPTS — each
       // unconfirmed attempt types the warning into the runner composer, so an
       // indefinitely busy pane would otherwise stack copies of it.
+      // Dispatch can correct metrics.runner after monitoring starts, so read it live
+      // and clear a latch taken on the old id rather than silencing the real runner.
+      const budgetRunner = getRun(runId)?.metrics.runner ?? null;
+      if (
+        state.budgetGuardUnsupportedFor !== null &&
+        state.budgetGuardUnsupportedFor !== budgetRunner
+      ) {
+        state.budgetGuardUnsupportedFor = null;
+      }
       if (
         hasUsageBudget(config) &&
-        !state.budgetGuardUnsupported &&
+        state.budgetGuardUnsupportedFor === null &&
         (!state.budgetWarned ||
           (!state.budgetNudgeSent && state.budgetNudgeAttempts < MAX_BUDGET_NUDGE_ATTEMPTS))
       ) {
@@ -1166,9 +1182,9 @@ export async function monitorRun(
         state.budgetUsage = tick.budgetUsage;
         state.budgetWarned = tick.budgetWarned;
         if (tick.unsupportedRunner) {
-          state.budgetGuardUnsupported = true;
+          state.budgetGuardUnsupportedFor = budgetRunner ?? 'unknown';
           console.warn(
-            `[run-monitor] run ${runId.slice(0, 8)} — usage budget not enforceable for runner ${run.metrics.runner ?? 'unknown'}; guard disabled for this run`,
+            `[run-monitor] run ${runId.slice(0, 8)} — usage budget not enforceable for runner ${budgetRunner ?? 'unknown'}; guard disabled unless the runner changes`,
           );
         }
         if (
@@ -1993,6 +2009,12 @@ export async function pollRunBudgetGuard(params: {
       budgetUsage: tick.budgetUsage,
     },
   });
+  // Flush when an attempt was actually spent. Run writes persist in the background, so
+  // a crash in that window would forget the attempt and buy the pane more typed copies.
+  if (tick.budgetNudgeAttempts !== (params.budgetNudgeAttempts ?? 0)) {
+    const flushed = getRun(params.runId);
+    if (flushed) await persistRunNow(flushed, 'budget-nudge-attempt');
+  }
   if (tick.violation) {
     broadcastFn(Events.MONITOR_VIOLATION, { violation: tick.violation });
   }

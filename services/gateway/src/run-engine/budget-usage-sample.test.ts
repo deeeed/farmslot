@@ -244,6 +244,53 @@ test('captureBudgetUsageBaselineAtEof returns null for a directory transcript', 
   assert.equal(baseline, null);
 });
 
+test('sampleBudgetUsage keeps the pin when the session path blips out for one poll', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-blip-'));
+  const file = path.join(dir, 'session.jsonl');
+  const parent = Array.from({ length: 60 }, () => claudeLine(1000, 200)).join('\n');
+  await writeFile(file, `${parent}\n`, 'utf8');
+
+  const baseline = await captureBudgetUsageBaselineAtEof({
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: file,
+  });
+  assert.ok(baseline);
+  await appendFile(file, `${claudeLine(5, 5)}\n${claudeLine(5, 5)}\n`, 'utf8');
+
+  const healthy = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: file,
+    prior: baseline,
+  });
+  assert.equal(healthy.turns, 2);
+
+  // One poll where live session discovery comes back empty.
+  const blip = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: null,
+    prior: healthy.nextState,
+  });
+  assert.equal(blip.availability, 'unavailable');
+  assert.equal(blip.nextState.path, file, 'a transient blip must not forget the transcript');
+  assert.equal(blip.nextState.offset, healthy.nextState.offset, 'nor rewind the pin');
+
+  const recovered = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: file,
+    prior: blip.nextState,
+  });
+  // Rewinding would re-read all 60 parent turns and charge them to this run.
+  assert.equal(recovered.turns, 2);
+  assert.equal(recovered.totalTokens, 20);
+});
+
 test('sampleBudgetUsage is unavailable without a transcript path', async () => {
   const result = await sampleBudgetUsage({
     slotId: 's1',

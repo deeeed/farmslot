@@ -265,8 +265,13 @@ export async function sampleBudgetUsage(params: {
     };
   }
   if (!runnerSessionPath) {
+    // Keep prior state. The path is re-resolved every poll and live discovery can come
+    // back empty for one tick; resetting to empty state would null `path` and zero
+    // `offset`, and since continuity detection needs a non-null prior path nothing
+    // would fail closed — the next healthy poll would re-read the transcript from byte
+    // 0 and charge the retained parent's whole history to this run.
     const next = {
-      ...emptyBudgetUsageSampleState(),
+      ...prior,
       unavailableReason: 'runner did not expose a session transcript path',
       sampledAt: new Date().toISOString(),
     };
