@@ -1335,6 +1335,15 @@ export interface RunMonitorBudgetUsageState {
   baselineTotalTokens?: number;
 }
 
+/** Persisted form of the budget guard's delivery state machine. */
+export interface RunBudgetDeliveryState {
+  phase: 'ok' | 'breach-pending' | 'delivered' | 'abandoned' | 'unenforceable';
+  pendingMessage: string | null;
+  operatorMessage: string | null;
+  attempts: number;
+  firstHeldAt?: number;
+}
+
 export interface RunMonitorState {
   nudgeCount: number;
   lastPollAt: string;
@@ -1354,6 +1363,8 @@ export interface RunMonitorState {
   budgetNudgeAttempts?: number;
   /** Epoch ms of the first mid-turn deferral of a pending budget warning. */
   budgetFirstDeferredAt?: number;
+  /** The budget guard's delivery state. Supersedes the flags below. */
+  budgetDelivery?: RunBudgetDeliveryState;
   /** Append-only transcript sample cache for the soft budget guard. */
   budgetUsage?: RunMonitorBudgetUsageState;
 }

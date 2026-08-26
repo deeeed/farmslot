@@ -1,50 +1,48 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-26T06:14:44.045Z",
+  "recordedAt": "2026-08-26T06:47:54.298Z",
   "host": "macwork",
   "scenario": "budget-guard-smoke",
   "runner": "codex",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-BgSvqr",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-742t4c",
   "slotId": "runner-validate-macwork-codex-budget",
-  "session": "runner-validate-codex-budget-guard-smoke-87985",
+  "session": "runner-validate-codex-budget-guard-smoke-84508",
   "initialCompleted": true,
   "sessionBinding": {
-    "runnerSessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-BgSvqr/.agent/codex-home/sessions/2026/08/26/rollout-2026-08-26T14-14-08-01a03cb4-5e1e-72d1-b15e-c98987482d01.jsonl",
-    "runnerSessionId": "01a03cb4-5e1e-72d1-b15e-c98987482d01",
+    "runnerSessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-742t4c/.agent/codex-home/sessions/2026/08/26/rollout-2026-08-26T14-47-26-01a03cd2-d939-74a2-a905-7cab6af6caa5.jsonl",
+    "runnerSessionId": "01a03cd2-d939-74a2-a905-7cab6af6caa5",
     "source": "native"
   },
   "guard": {
     "result": {
       "first": {
-        "budgetWarned": true,
+        "phase": "delivered",
         "violationType": "budget",
         "nudgeSent": true,
         "sampleTurns": 1,
-        "sampleTotalTokens": 13564
+        "sampleTotalTokens": 13571
       },
       "second": {
-        "budgetWarned": true,
+        "phase": "delivered",
         "violationType": null,
         "nudgeSent": false
       },
       "persistedAfterFirst": {
-        "budgetWarned": true,
-        "budgetNudgeSent": true,
-        "budgetNudgeAttempts": 1
+        "phase": "delivered",
+        "attempts": 0
       },
       "persistedAfterSecond": {
-        "budgetWarned": true,
-        "budgetNudgeSent": true,
-        "budgetNudgeAttempts": 1
+        "phase": "delivered",
+        "attempts": 0
       },
       "unsupportedWarmBaseline": "not-required",
-      "warmRunId": "24b38201-7cec-4c38-a51f-6537e80f594e",
+      "warmRunId": "c68a512e-fa90-4ffd-b171-675e86f8a20f",
       "warmBaseline": {
         "status": "captured",
         "pinnedAtRecordBoundary": true,
-        "pinnedOffset": 99953,
-        "transcriptSize": 99953,
-        "referenceTotal": 13564,
+        "pinnedOffset": 99960,
+        "transcriptSize": 99960,
+        "referenceTotal": 13571,
         "breachedOnInheritedHistory": false
       },
       "unmeasuredRunner": {
@@ -52,28 +50,28 @@
         "violationType": "budget",
         "violationMessage": "usage budget enforcement unsupported (runner 'cursor' has no bounded session-usage provider). Budget ceilings are not enforced for this runner; no worker action is implied.",
         "nudgeSent": false,
-        "budgetNudgeAttempts": 0
+        "attempts": 0
       },
       "violationEvents": 2
     },
     "exitCode": 0,
     "error": null,
     "stderr": "[run-monitor] failed to load monitor config for runner-validation: Project config not found: /Users/deeeed/dev/farmslot/projects/runner-validation/project.json\n[run-monitor] failed to load monitor config for runner-validation: Project config not found: /Users/deeeed/dev/farmslot/projects/runner-validation/project.json",
-    "gatewayLog": "[pty] set tmux escape-time=10 status-left-length=30\n[runner-observability] {\"kind\":\"runner-observability-agreement\",\"slotId\":\"runner-validate-macwork-codex-budget\",\"runner\":\"codex\",\"target\":\"%69\",\"logPrefix\":\"run-monitor-budget\",\"paneBusy\":false,\"hookBusy\":false,\"hookActivity\":\"idle\",\"hookSource\":\"hook\",\"hookConfidence\":\"high\",\"hookObservedAt\":1787724858379,\"agreed\":true,\"timestamp\":1787724863462}\n[run-monitor] budget nudge sent to run 1fddf71e: update-branch usage budget exceeded (total_tokens 13564 > max_total_tokens 1). This flow should stay near-mechanical — f",
-    "harnessRoot": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-budget-TB78rF"
+    "gatewayLog": "[pty] set tmux escape-time=10 status-left-length=30\n[runner-observability] {\"kind\":\"runner-observability-agreement\",\"slotId\":\"runner-validate-macwork-codex-budget\",\"runner\":\"codex\",\"target\":\"%82\",\"logPrefix\":\"run-monitor-budget\",\"paneBusy\":false,\"hookBusy\":false,\"hookActivity\":\"idle\",\"hookSource\":\"hook\",\"hookConfidence\":\"high\",\"hookObservedAt\":1787726853102,\"agreed\":true,\"timestamp\":1787726858680}\n[run-monitor] budget nudge sent to run 8c338c1a: update-branch usage budget exceeded (total_tokens 13571 > max_total_tokens 1). This flow should stay near-mechanical — f",
+    "harnessRoot": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-budget-pOcIjc"
   },
   "nudgeAccepted": true,
   "nudgeTurnSettled": true,
   "childTurnCompleted": true,
   "warmCharge": {
     "result": {
-      "fullScanTotalTokens": 59043,
+      "fullScanTotalTokens": 59076,
       "fullScanTurns": 4,
       "sampleTurns": 3,
-      "sampleTotalTokens": 45479,
+      "sampleTotalTokens": 45505,
       "chargeTurns": 3,
-      "chargeTotalTokens": 45479,
-      "referenceTotal": 59043,
+      "chargeTotalTokens": 45505,
+      "referenceTotal": 59076,
       "availability": "available",
       "budgetWarned": false
     },

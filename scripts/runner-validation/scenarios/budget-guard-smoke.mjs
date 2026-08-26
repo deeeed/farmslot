@@ -135,18 +135,18 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     }
     const charge = report.warmCharge.result;
     report.pass =
-      result.first?.budgetWarned === true &&
+      result.first?.phase === 'delivered' &&
       result.first?.violationType === 'budget' &&
       result.first?.nudgeSent === true &&
-      result.persistedAfterFirst?.budgetWarned === true &&
-      result.persistedAfterFirst?.budgetNudgeSent === true &&
-      result.second?.budgetWarned === true &&
+      result.persistedAfterFirst?.phase === 'delivered' &&
+      result.second?.phase === 'delivered' &&
       result.second?.violationType === null &&
       result.second?.nudgeSent === false &&
-      result.persistedAfterSecond?.budgetNudgeSent === true &&
-      // A confirmed delivery spends exactly one of the capped attempts.
-      result.persistedAfterFirst?.budgetNudgeAttempts === 1 &&
-      result.persistedAfterSecond?.budgetNudgeAttempts === 1 &&
+      result.persistedAfterSecond?.phase === 'delivered' &&
+      // A confirmed delivery spends none of the capped attempts — those count only
+      // deliveries that reached the composer without confirmation.
+      result.persistedAfterFirst?.attempts === 0 &&
+      result.persistedAfterSecond?.attempts === 0 &&
       result.unsupportedWarmBaseline === 'not-required' &&
       // Warm handoff pins accounting at the transcript's EOF: the child inherits no
       // counted usage, so even ceilings of 1 do not breach on parent history.
@@ -173,7 +173,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       result.unmeasuredRunner?.violationType === 'budget' &&
       /enforcement unsupported/.test(result.unmeasuredRunner?.violationMessage ?? '') &&
       result.unmeasuredRunner?.nudgeSent === false &&
-      result.unmeasuredRunner?.budgetNudgeAttempts === 0 &&
+      result.unmeasuredRunner?.attempts === 0 &&
       result.violationEvents === 2 &&
       report.nudgeAccepted;
   } catch (error) {

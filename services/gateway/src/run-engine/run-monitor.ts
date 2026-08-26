@@ -37,7 +37,6 @@ import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
   classifyMonitorProgress,
   evaluateMonitorStuckForRunner,
-  type MonitorProgressKind,
   shouldDeliverStuckNudge,
 } from '../runners/observability-progress.js';
 import {
@@ -72,6 +71,16 @@ import {
   validateTerminalSignalArtifacts,
 } from '../tasks/worker-terminal-contract.js';
 
+import {
+  advanceBudgetDelivery,
+  budgetDeliveryDecision,
+  type BudgetDeliveryEvent,
+  type BudgetDeliveryState,
+  budgetGuardSettled,
+  initialBudgetDeliveryState,
+  MAX_BUDGET_NUDGE_ATTEMPTS,
+  MAX_BUDGET_NUDGE_DEFERRAL_MS,
+} from './budget-delivery-state.js';
 import {
   type BudgetUsageSampleState,
   captureBudgetUsageBaselinePin,
@@ -331,20 +340,14 @@ interface MonitorState {
   lastStructuredProgressAt: number;
   lastStepCount: number;
   startedAt: number;
-  /** One-shot usage-budget warning already emitted for this monitor session. */
-  budgetWarned: boolean;
-  /** Confirmed budget-nudge delivery (may retry while false after a warn). */
-  budgetNudgeSent: boolean;
-  /** Delivery attempts spent on the budget nudge (capped by MAX_BUDGET_NUDGE_ATTEMPTS). */
-  budgetNudgeAttempts: number;
+  /** The soft-budget guard's delivery state — see budget-delivery-state.ts. */
+  delivery: BudgetDeliveryState;
   /**
    * Runner id the guard was disabled for, or null while the guard is live. Dispatch
    * rewrites `metrics.runner` to the slot's real runner, so the latch is keyed to the
    * runner it was decided on and clears if that changes.
    */
   budgetGuardUnsupportedFor: string | null;
-  /** Epoch ms of the first mid-turn deferral of a pending warning. */
-  budgetFirstDeferredAt?: number;
   /** Incremental transcript sample for soft turn/token budgets. */
   budgetUsage: BudgetUsageSampleState;
 }
@@ -403,6 +406,39 @@ export function migrateLegacyBudgetUsage(persisted?: {
       cacheRead: persisted?.cacheRead ?? 0,
       total: persistedTotal,
     },
+  };
+}
+
+/**
+ * Rebuild the guard's delivery state from what a previous monitor persisted.
+ *
+ * Runs written before the state machine carried four separate flags. They map cleanly:
+ * a confirmed delivery is `delivered`, a warning still owed is `breach-pending`, and a
+ * warning that ran out of attempts is `abandoned`. The message itself was never
+ * persisted, so an owed warning is re-derived from the next sample rather than invented.
+ */
+export function restoreBudgetDeliveryState(persisted?: {
+  budgetDelivery?: BudgetDeliveryState;
+  budgetWarned?: boolean;
+  budgetNudgeSent?: boolean;
+  budgetNudgeAttempts?: number;
+  budgetFirstDeferredAt?: number;
+}): BudgetDeliveryState {
+  if (persisted?.budgetDelivery) return persisted.budgetDelivery;
+  if (!persisted?.budgetWarned) return initialBudgetDeliveryState();
+  const attempts = persisted.budgetNudgeAttempts ?? 0;
+  const phase = persisted.budgetNudgeSent
+    ? 'delivered'
+    : attempts >= MAX_BUDGET_NUDGE_ATTEMPTS
+      ? 'abandoned'
+      : 'breach-pending';
+  return {
+    phase,
+    // Not persisted before; the next sample re-derives it if the breach still holds.
+    pendingMessage: null,
+    operatorMessage: null,
+    attempts,
+    firstHeldAt: persisted.budgetFirstDeferredAt,
   };
 }
 
@@ -876,11 +912,7 @@ export async function monitorRun(
         lastStructuredProgressAt: restoreStructuredProgressAtMs(persisted),
         lastStepCount: 0,
         startedAt: new Date(persisted.startedAt).getTime(),
-        budgetWarned: persisted.budgetWarned === true,
-        budgetNudgeSent: persisted.budgetNudgeSent === true,
-        budgetNudgeAttempts: persisted.budgetNudgeAttempts ?? 0,
-        // Restored so a gateway restart cannot reset the clock and defer indefinitely.
-        budgetFirstDeferredAt: persisted.budgetFirstDeferredAt,
+        delivery: restoreBudgetDeliveryState(persisted),
         budgetGuardUnsupportedFor: null,
         budgetUsage: restoredBudgetUsage,
       }
@@ -890,9 +922,7 @@ export async function monitorRun(
         lastStructuredProgressAt: now,
         lastStepCount: 0,
         startedAt: now,
-        budgetWarned: false,
-        budgetNudgeSent: false,
-        budgetNudgeAttempts: 0,
+        delivery: initialBudgetDeliveryState(),
         budgetGuardUnsupportedFor: null,
         budgetUsage: emptyBudgetUsageSampleState(),
       };
@@ -1243,46 +1273,38 @@ export async function monitorRun(
       ) {
         state.budgetGuardUnsupportedFor = null;
       }
+      // The guard runs until it has nothing left to learn or say — `budgetGuardSettled`
+      // is the single answer to that, rather than a conjunction of latches.
       if (
         hasUsageBudget(config) &&
         state.budgetGuardUnsupportedFor === null &&
-        (!state.budgetWarned ||
-          (!state.budgetNudgeSent && state.budgetNudgeAttempts < MAX_BUDGET_NUDGE_ATTEMPTS))
+        !budgetGuardSettled(state.delivery)
       ) {
+        const priorPhase = state.delivery.phase;
         const tick = await pollRunBudgetGuard({
           runId,
           slotId,
           maxTurns: config.maxTurns,
           maxTotalTokens: config.maxTotalTokens,
-          budgetWarned: state.budgetWarned,
-          budgetNudgeSent: state.budgetNudgeSent,
-          budgetNudgeAttempts: state.budgetNudgeAttempts,
-          budgetFirstDeferredAt: state.budgetFirstDeferredAt,
+          delivery: state.delivery,
           budgetUsage: state.budgetUsage,
           monitorStartedAt: new Date(state.startedAt).toISOString(),
           agentStatus,
           sendNudge: true,
         });
         state.budgetUsage = tick.budgetUsage;
-        state.budgetWarned = tick.budgetWarned;
+        state.delivery = tick.delivery;
         if (tick.unsupportedRunner) {
           state.budgetGuardUnsupportedFor = budgetRunner ?? 'unknown';
           console.warn(
             `[run-monitor] run ${runId.slice(0, 8)} — usage budget not enforceable for runner ${budgetRunner ?? 'unknown'}; guard disabled unless the runner changes`,
           );
         }
-        if (
-          tick.budgetNudgeAttempts >= MAX_BUDGET_NUDGE_ATTEMPTS &&
-          state.budgetNudgeAttempts < MAX_BUDGET_NUDGE_ATTEMPTS &&
-          !tick.nudgeSent
-        ) {
+        if (priorPhase !== 'abandoned' && state.delivery.phase === 'abandoned') {
           console.warn(
-            `[run-monitor] run ${runId.slice(0, 8)} — budget nudge unconfirmed after ${tick.budgetNudgeAttempts} attempts; giving up on pane delivery`,
+            `[run-monitor] run ${runId.slice(0, 8)} — budget warning unconfirmed after ${state.delivery.attempts} attempts; giving up on pane delivery`,
           );
         }
-        state.budgetNudgeAttempts = tick.budgetNudgeAttempts;
-        state.budgetFirstDeferredAt = tick.budgetFirstDeferredAt;
-        if (tick.nudgeSent) state.budgetNudgeSent = true;
         // A skipped record is real usage nobody counted. It cannot fail the run closed —
         // large tool output is routine — but it must not stay invisible either.
         if (
@@ -1418,10 +1440,7 @@ export async function monitorRun(
             startedAt: new Date(state.startedAt).toISOString(),
             lastPaneHash: state.lastPaneHash,
             lastStructuredProgressAt: new Date(state.lastStructuredProgressAt).toISOString(),
-            budgetWarned: state.budgetWarned,
-            budgetNudgeSent: state.budgetNudgeSent,
-            budgetNudgeAttempts: state.budgetNudgeAttempts,
-            budgetFirstDeferredAt: state.budgetFirstDeferredAt,
+            budgetDelivery: state.delivery,
             budgetUsage: state.budgetUsage,
           },
         });
@@ -1720,13 +1739,7 @@ function buildNudgeMessage(violation: MonitorViolation): string {
  * against MAX_BUDGET_NUDGE_ATTEMPTS — otherwise a few transient holds would burn the
  * cap and the worker would never hear about a real breach.
  */
-export type BudgetNudgeDelivery =
-  | 'confirmed'
-  | 'attempted'
-  /** Bailed before the composer for a reason unrelated to the runner's turn. */
-  | 'not-attempted'
-  /** Held because the runner is mid-turn — the only outcome that runs the deferral clock. */
-  | 'deferred-mid-turn';
+export type BudgetNudgeDelivery = 'confirmed' | 'attempted' | 'not-attempted';
 
 /**
  * One-shot budget warning into the worker pane. Does not increment metrics.nudgeCount
@@ -1743,8 +1756,6 @@ export async function sendBudgetNudge(
   message: string,
   role?: AgentRole,
   contextId?: string,
-  /** Epoch ms of the first deferral, so a mid-turn hold cannot last forever. */
-  firstDeferredAt?: number,
 ): Promise<BudgetNudgeDelivery> {
   const run = getRun(runId);
   if (!run) return 'not-attempted';
@@ -1755,30 +1766,6 @@ export async function sendBudgetNudge(
   const vars = await loadSlotVars(slotId);
   const context = selectAgentContext(run, { role, contextId });
   const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
-
-  // A runner mid-turn never submits what is typed at it, so the text sits in the
-  // composer and the next poll adds another copy (retro 2026-08-26: 20 insertions on
-  // mini-mm-2, none submitted). Defer on the same structured progress verdict the
-  // stuck/idle nudges use, and spend no attempt — the warning lands once the turn ends.
-  // 'unproven' (hook lapse, pane-only runner) still sends: the send helper owns its
-  // degraded window and MAX_BUDGET_NUDGE_ATTEMPTS bounds the result.
-  const budgetRunner = run.metrics.runner ?? 'claude';
-  const progress = classifyMonitorProgress({
-    activity: await readRunnerActivityFromObservability(vars, session, budgetRunner),
-    turnState: await readRunnerTurnState(vars, session, budgetRunner),
-  });
-  const deferredForMs = firstDeferredAt ? Date.now() - firstDeferredAt : 0;
-  if (shouldDeferBudgetNudge(progress, deferredForMs)) {
-    console.log(
-      `[run-monitor] budget nudge deferred for run ${runId.slice(0, 8)}: runner mid-turn`,
-    );
-    return 'deferred-mid-turn';
-  }
-  if (progress === 'making-progress') {
-    console.warn(
-      `[run-monitor] run ${runId.slice(0, 8)} — budget warning deferred ${Math.round(deferredForMs / 60_000)}min while the runner stayed mid-turn; sending anyway`,
-    );
-  }
 
   const retainedSession = resolveRunRetainedSessionBinding(run, context);
   const outcome = await sendRunnerInstructionWithOutcome(
@@ -1840,7 +1827,8 @@ export function applyBudgetWarnOnce(input: {
 }
 
 export type PollBudgetGuardStepResult = {
-  budgetWarned: boolean;
+  /** The guard's state after this poll. The only carrier of delivery progress. */
+  delivery: BudgetDeliveryState;
   budgetUsage: BudgetUsageSampleState;
   sampleTurns: number | null;
   sampleTotalTokens: number | null;
@@ -1852,46 +1840,45 @@ export type PollBudgetGuardStepResult = {
   unavailableReasonChanged: boolean;
   violation: MonitorViolation | null;
   nudgeSent: boolean;
-  /** Delivery attempts spent so far, including this poll's. */
-  budgetNudgeAttempts: number;
   /** The runner exposes no session usage, so ceilings can never be enforced for it. */
   unsupportedRunner: boolean;
-  /** Epoch ms of the first mid-turn deferral for this warning, if one is pending. */
-  budgetFirstDeferredAt?: number;
 };
 
-/**
- * Backstop on unconfirmed budget-nudge deliveries.
- *
- * Delivery is gated on the runner being idle, which is what stops the warning stacking
- * up in a busy composer (retro 2026-08-26: 5 attempts / 20 typed insertions on
- * mini-mm-2, none submitted). This cap only bounds the residual case of an idle runner
- * that still never confirms; it is not the mechanism. The violation is recorded and
- * broadcast either way.
- */
-export const MAX_BUDGET_NUDGE_ATTEMPTS = 3;
+export { MAX_BUDGET_NUDGE_ATTEMPTS, MAX_BUDGET_NUDGE_DEFERRAL_MS };
 
 /**
- * How long a breach warning may sit undelivered while the runner stays mid-turn.
+ * Whether the runner is mid-turn, from its structured progress verdict.
  *
- * Deferring is right — a runner mid-turn never submits what is typed at it — but a long
- * tool loop can hold `making-progress` indefinitely, which is exactly the runaway the
- * budget guard exists to catch. Past this the warning is sent anyway and the send helper
- * owns the outcome, bounded by MAX_BUDGET_NUDGE_ATTEMPTS.
+ * Read here rather than inside the send so the guard has exactly one place that decides
+ * whether it may deliver. Splitting that decision across the policy layer and the sender
+ * is how two busy detectors came to disagree about which holds counted.
  */
-export const MAX_BUDGET_NUDGE_DEFERRAL_MS = 15 * 60_000;
-
-/**
- * Whether a pending budget warning waits for the current turn to end.
- *
- * Pure so the bound is provable on its own: `deferredForMs` reaches here through several
- * hops, and a dropped hop reads as zero — which defers forever while looking correct.
- */
-export function shouldDeferBudgetNudge(
-  progress: MonitorProgressKind,
-  deferredForMs: number,
-): boolean {
-  return progress === 'making-progress' && deferredForMs < MAX_BUDGET_NUDGE_DEFERRAL_MS;
+async function isRunnerMidTurn(
+  runId: string,
+  slotId: string,
+  role?: AgentRole,
+  contextId?: string,
+): Promise<boolean> {
+  const run = getRun(runId);
+  if (!run) return false;
+  try {
+    const vars = await loadSlotVars(slotId);
+    const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
+    const runner = run.metrics.runner ?? 'claude';
+    const progress = classifyMonitorProgress({
+      activity: await readRunnerActivityFromObservability(vars, session, runner),
+      turnState: await readRunnerTurnState(vars, session, runner),
+    });
+    return progress === 'making-progress';
+  } catch (error) {
+    // An unreadable progress signal is not evidence the runner is busy. Treating it as
+    // busy would hold the warning behind a hook lapse; the send helper owns its own
+    // degraded window and the attempt cap bounds the result.
+    console.warn(
+      `[run-monitor] run ${runId.slice(0, 8)} — runner progress unreadable: ${(error as Error).message}`,
+    );
+    return false;
+  }
 }
 
 /**
@@ -1906,12 +1893,8 @@ export async function pollBudgetGuardStep(params: {
   runnerSessionPath?: string | null;
   maxTurns: number | null;
   maxTotalTokens: number | null;
-  budgetWarned: boolean;
-  budgetNudgeSent?: boolean;
-  /** Attempts already spent; delivery is skipped once at MAX_BUDGET_NUDGE_ATTEMPTS. */
-  budgetNudgeAttempts?: number;
-  /** Epoch ms of the first mid-turn deferral for this warning, if any. */
-  budgetFirstDeferredAt?: number;
+  /** Guard state carried from the previous poll. */
+  delivery: BudgetDeliveryState;
   budgetUsage: BudgetUsageSampleState;
   agentStatus: AgentLiveStatus;
   /** When false, skip tmux nudge (CLI/local proof without a live pane). */
@@ -1923,6 +1906,8 @@ export async function pollBudgetGuardStep(params: {
   localVarsStub?: { host: string; machine: string; slotId: string; remoteRepo?: string };
   /** Test seam for confirmed-delivery retry behavior; production uses sendBudgetNudge. */
   deliverNudge?: typeof sendBudgetNudge;
+  /** Test seam for the runner's turn state; production reads runner observability. */
+  runnerMidTurnStub?: boolean;
 }): Promise<PollBudgetGuardStepResult> {
   const vars = params.localVarsStub
     ? (params.localVarsStub as Awaited<ReturnType<typeof loadSlotVars>>)
@@ -1935,157 +1920,113 @@ export async function pollBudgetGuardStep(params: {
     runnerSessionPath: params.runnerSessionPath,
     prior: params.budgetUsage,
   });
-  let budgetWarned = params.budgetWarned;
   let violation: MonitorViolation | null = null;
   let nudgeSent = false;
-  const priorNudgeSent = params.budgetNudgeSent === true;
-  let budgetNudgeAttempts = params.budgetNudgeAttempts ?? 0;
-  let deliveryDeferred = false;
 
   // Counters already measure only this run: providers report increments and a warm
   // handoff starts them at the pin. There is nothing left to subtract.
   const budgetUsage: BudgetUsageSampleState = sample.nextState;
 
-  let warningMessage: string | null = null;
+  // What this poll observed, as one event. Nothing else in here may change the guard's
+  // mind — the transition function owns that, so a later observation cannot silently
+  // overwrite an earlier conclusion the way a shared message variable could.
+  let event: BudgetDeliveryEvent;
   if (sample.enforcementFailure) {
     // Neither a runner without a session-usage provider (cursor, grok, …) nor a
-    // transcript that moved under us is something the worker did. Telling it to stop
-    // expanding scope is a false accusation in both cases — record the gap for the
-    // operator and leave the pane alone.
-    if (sample.unsupportedRunner) {
-      warningMessage =
-        `usage budget enforcement unsupported (${sample.unavailableReason ?? 'runner exposes no session usage'}). ` +
-        'Budget ceilings are not enforced for this runner; no worker action is implied.';
-    } else if (sample.accountingIntegrityLost) {
-      warningMessage =
-        `usage budget accounting lost (${sample.unavailableReason ?? 'transcript continuity broken'}). ` +
+    // transcript that moved under us is something the worker did, so both are recorded
+    // for the operator rather than turned into a scope accusation.
+    const reason = sample.unsupportedRunner
+      ? `usage budget enforcement unsupported (${sample.unavailableReason ?? 'runner exposes no session usage'}). ` +
+        'Budget ceilings are not enforced for this runner; no worker action is implied.'
+      : `usage budget accounting lost (${sample.unavailableReason ?? 'transcript continuity broken'}). ` +
         'Ceilings are no longer enforced for this run; no worker action is implied.';
-    } else {
-      warningMessage =
-        `usage budget enforcement unavailable (${sample.unavailableReason ?? 'unknown accounting failure'}). ` +
-        'Stop expanding scope and finish or block the current checklist item.';
-    }
-    if (!budgetWarned) {
-      budgetWarned = true;
-      const run = getRun(params.runId);
-      const context = run
-        ? selectAgentContext(run, { role: primaryRoleForFlow(params.flowType) })
-        : undefined;
-      violation = {
-        slotId: params.slotId,
-        role: context?.role,
-        contextId: context?.id,
-        type: 'budget',
-        message: warningMessage,
-        nudgeSent: null,
-        timestamp: new Date().toISOString(),
-      };
-    }
+    event = { kind: 'accounting-unenforceable', message: reason };
   } else if (sample.availability !== 'unavailable') {
-    const decision = applyBudgetWarnOnce({
-      turns: sample.turns,
-      totalTokens: sample.totalTokens,
-      maxTurns: params.maxTurns,
-      maxTotalTokens: params.maxTotalTokens,
-      budgetWarned,
-      flowType: params.flowType,
-    });
-
-    if (decision.emit) {
-      budgetWarned = true;
-      warningMessage = decision.message;
-      const run = getRun(params.runId);
-      const context = run
-        ? selectAgentContext(run, { role: primaryRoleForFlow(params.flowType) })
-        : undefined;
-      violation = {
-        slotId: params.slotId,
-        role: context?.role,
-        contextId: context?.id,
-        type: 'budget',
-        message: decision.message,
-        nudgeSent: null,
-        timestamp: new Date().toISOString(),
-      };
-    } else if (budgetWarned && !priorNudgeSent) {
-      const evaluation = evaluateFlowUsageBudget(
-        { turns: sample.turns, totalTokens: sample.totalTokens },
-        { maxTurns: params.maxTurns, maxTotalTokens: params.maxTotalTokens },
-      );
-      if (evaluation.exceeded) {
-        warningMessage = formatUsageBudgetMessage(params.flowType, evaluation);
-      }
-    }
+    const evaluation = evaluateFlowUsageBudget(
+      { turns: sample.turns, totalTokens: sample.totalTokens },
+      { maxTurns: params.maxTurns, maxTotalTokens: params.maxTotalTokens },
+    );
+    event = evaluation.exceeded
+      ? { kind: 'usage-breached', message: formatUsageBudgetMessage(params.flowType, evaluation) }
+      : { kind: 'usage-within-budget' };
+  } else {
+    // Unavailable without an enforcement failure is a transient read; nothing learned.
+    event = { kind: 'usage-within-budget' };
   }
 
-  // Warning emission and delivery confirmation are separate. A false/throwing
-  // safe-send keeps budgetNudgeSent false so later polls retry without emitting
-  // another violation.
-  // Whether the runner can receive the instruction is a runner concern, decided in
-  // sendBudgetNudge from its structured activity signal. `agentStatus` cannot answer it:
-  // every path that reaches this function has it as 'working', because monitorRun treats
-  // anything else as the worker being done.
-  if (
-    params.sendNudge &&
-    budgetWarned &&
-    !priorNudgeSent &&
-    warningMessage &&
-    !sample.unsupportedRunner &&
-    !sample.accountingIntegrityLost &&
-    budgetNudgeAttempts < MAX_BUDGET_NUDGE_ATTEMPTS
-  ) {
-    const run = getRun(params.runId);
-    const context = run
-      ? selectAgentContext(run, { role: primaryRoleForFlow(params.flowType) })
-      : undefined;
-    const deliveryViolation =
-      violation ??
-      ({
-        slotId: params.slotId,
-        role: context?.role,
-        contextId: context?.id,
-        type: 'budget',
-        message: warningMessage,
-        nudgeSent: null,
-        timestamp: new Date().toISOString(),
-      } satisfies MonitorViolation);
-    if (
-      run &&
-      !shouldSkipMonitorNudge(run, deliveryViolation, params.agentStatus) &&
-      runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))
-    ) {
-      try {
-        const delivery = await (params.deliverNudge ?? sendBudgetNudge)(
-          params.runId,
-          params.slotId,
-          warningMessage,
-          context?.role,
-          context?.id,
-          params.budgetFirstDeferredAt,
-        );
-        // Only a delivery that reached the composer spends an attempt. Bailing out
-        // before touching the pane must stay free, or a few transient holds would
-        // silently exhaust the cap and the worker would never hear about the breach.
-        if (delivery === 'confirmed' || delivery === 'attempted') budgetNudgeAttempts += 1;
-        // Only a mid-turn hold runs the clock. A hook lapse or a foreign composer draft
-        // also declines to type, but those are not the runner working — counting them
-        // would spend the deferral budget before the runner is even busy.
-        if (delivery === 'deferred-mid-turn') deliveryDeferred = true;
-        nudgeSent = delivery === 'confirmed';
-        if (nudgeSent && violation) violation.nudgeSent = new Date().toISOString();
-      } catch (err) {
-        // The send helper returns false for delivery problems; a throw here is an
-        // unexpected fault before/around it, so the pane state is unknown. Do not
-        // charge an attempt — the cap still bounds anything that does reach the pane.
-        console.warn(
-          `[run-monitor] budget nudge delivery failed for run ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
-        );
+  const priorDelivery = params.delivery;
+  let delivery = advanceBudgetDelivery(priorDelivery, event);
+
+  const runForContext = getRun(params.runId);
+  const context = runForContext
+    ? selectAgentContext(runForContext, { role: primaryRoleForFlow(params.flowType) })
+    : undefined;
+  const raiseViolation = (message: string): MonitorViolation => ({
+    slotId: params.slotId,
+    role: context?.role,
+    contextId: context?.id,
+    type: 'budget',
+    message,
+    nudgeSent: null,
+    timestamp: new Date().toISOString(),
+  });
+
+  // A phase leaving `ok` is the one-shot: it is what the operator is told about.
+  if (priorDelivery.phase === 'ok' && delivery.phase !== 'ok') {
+    violation = raiseViolation(
+      delivery.pendingMessage ?? delivery.operatorMessage ?? 'usage budget',
+    );
+  }
+
+  if (params.sendNudge) {
+    const runnerMidTurn =
+      params.runnerMidTurnStub ??
+      (await isRunnerMidTurn(params.runId, params.slotId, context?.role, context?.id));
+    const decision = budgetDeliveryDecision(delivery, { runnerMidTurn, now: Date.now() });
+    if (decision.deliver) {
+      const run = getRun(params.runId);
+      const deliveryViolation = violation ?? raiseViolation(decision.message);
+      if (
+        run &&
+        !shouldSkipMonitorNudge(run, deliveryViolation, params.agentStatus) &&
+        runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))
+      ) {
+        try {
+          const outcome = await (params.deliverNudge ?? sendBudgetNudge)(
+            params.runId,
+            params.slotId,
+            decision.message,
+            context?.role,
+            context?.id,
+          );
+          nudgeSent = outcome === 'confirmed';
+          delivery = advanceBudgetDelivery(
+            delivery,
+            outcome === 'confirmed'
+              ? { kind: 'delivery-confirmed' }
+              : outcome === 'attempted'
+                ? { kind: 'delivery-typed' }
+                : { kind: 'delivery-held', now: Date.now() },
+          );
+          if (nudgeSent && violation) violation.nudgeSent = new Date().toISOString();
+        } catch (err) {
+          // The send helper reports a mutated pane as `attempted` rather than throwing,
+          // so a throw here is a fault around it and the pane state is unknown. Treat it
+          // as a hold: it starts the bound without spending an attempt.
+          console.warn(
+            `[run-monitor] budget nudge delivery failed for run ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+          );
+          delivery = advanceBudgetDelivery(delivery, { kind: 'delivery-held', now: Date.now() });
+        }
       }
+    } else if (delivery.phase === 'breach-pending') {
+      // Owed but not now — the runner is mid-turn. Recording the hold is what bounds it.
+      delivery = advanceBudgetDelivery(delivery, { kind: 'delivery-held', now: Date.now() });
     }
   }
 
   return {
-    budgetWarned,
+    delivery,
     budgetUsage,
     sampleTurns: sample.turns,
     sampleTotalTokens: sample.totalTokens,
@@ -2100,14 +2041,7 @@ export async function pollBudgetGuardStep(params: {
     ),
     violation,
     nudgeSent,
-    budgetNudgeAttempts,
     unsupportedRunner: sample.unsupportedRunner === true,
-    // Cleared on confirmed delivery only. Clearing on any spent attempt let an
-    // unconfirmed send restart the clock, so three attempts could stretch a 15-minute
-    // bound to 45.
-    budgetFirstDeferredAt: nudgeSent
-      ? undefined
-      : (params.budgetFirstDeferredAt ?? (deliveryDeferred ? Date.now() : undefined)),
   };
 }
 
@@ -2121,10 +2055,8 @@ export async function pollRunBudgetGuard(params: {
   slotId: string;
   maxTurns: number | null;
   maxTotalTokens: number | null;
-  budgetWarned?: boolean;
-  budgetNudgeSent?: boolean;
-  budgetNudgeAttempts?: number;
-  budgetFirstDeferredAt?: number;
+  /** Guard state to continue from; falls back to whatever the run persisted. */
+  delivery?: BudgetDeliveryState;
   budgetUsage?: BudgetUsageSampleState;
   monitorStartedAt?: string;
   agentStatus: 'working' | 'idle' | 'no-tmux';
@@ -2150,10 +2082,7 @@ export async function pollRunBudgetGuard(params: {
       null,
     maxTurns: params.maxTurns,
     maxTotalTokens: params.maxTotalTokens,
-    budgetWarned: params.budgetWarned ?? run.monitorState?.budgetWarned === true,
-    budgetNudgeSent: params.budgetNudgeSent ?? run.monitorState?.budgetNudgeSent === true,
-    budgetNudgeAttempts: params.budgetNudgeAttempts ?? run.monitorState?.budgetNudgeAttempts ?? 0,
-    budgetFirstDeferredAt: params.budgetFirstDeferredAt ?? run.monitorState?.budgetFirstDeferredAt,
+    delivery: params.delivery ?? restoreBudgetDeliveryState(run.monitorState),
     budgetUsage:
       params.budgetUsage ?? run.monitorState?.budgetUsage ?? emptyBudgetUsageSampleState(),
     agentStatus: params.agentStatus,
@@ -2170,25 +2099,21 @@ export async function pollRunBudgetGuard(params: {
       startedAt: params.monitorStartedAt ?? current.monitorState?.startedAt ?? now,
       lastPaneHash: current.monitorState?.lastPaneHash,
       lastStructuredProgressAt: current.monitorState?.lastStructuredProgressAt,
-      budgetWarned: tick.budgetWarned,
-      budgetNudgeSent:
-        params.budgetNudgeSent === true ||
-        current.monitorState?.budgetNudgeSent === true ||
-        tick.nudgeSent,
-      // Monotonic like budgetNudgeSent above: a second caller polling the same run
-      // (runner-validation drives this entry point directly) starts from 0 and must not
-      // write back a lower count than a concurrent monitor already persisted.
-      budgetNudgeAttempts: Math.max(
-        tick.budgetNudgeAttempts,
-        current.monitorState?.budgetNudgeAttempts ?? 0,
-      ),
-      budgetFirstDeferredAt: tick.budgetFirstDeferredAt,
+      // Attempts stay monotonic against whatever another poll of the same run may have
+      // persisted meanwhile — runner-validation drives this entry point directly.
+      budgetDelivery: {
+        ...tick.delivery,
+        attempts: Math.max(
+          tick.delivery.attempts,
+          current.monitorState?.budgetDelivery?.attempts ?? 0,
+        ),
+      },
       budgetUsage: tick.budgetUsage,
     },
   });
   // Flush when an attempt was actually spent. Run writes persist in the background, so
   // a crash in that window would forget the attempt and buy the pane more typed copies.
-  if (tick.budgetNudgeAttempts !== (params.budgetNudgeAttempts ?? 0)) {
+  if (tick.delivery.attempts !== (params.delivery?.attempts ?? 0)) {
     const flushed = getRun(params.runId);
     if (flushed) await persistRunNow(flushed, 'budget-nudge-attempt');
   }

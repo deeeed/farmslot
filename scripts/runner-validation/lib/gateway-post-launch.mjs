@@ -619,26 +619,24 @@ const unmeasuredTick = await pollRunBudgetGuard({
 });
 process.stdout.write(JSON.stringify({
   first: {
-    budgetWarned: first.budgetWarned,
+    phase: first.delivery.phase,
     violationType: first.violation?.type ?? null,
     nudgeSent: first.nudgeSent,
     sampleTurns: first.sampleTurns,
     sampleTotalTokens: first.sampleTotalTokens,
   },
   second: {
-    budgetWarned: second.budgetWarned,
+    phase: second.delivery.phase,
     violationType: second.violation?.type ?? null,
     nudgeSent: second.nudgeSent,
   },
   persistedAfterFirst: {
-    budgetWarned: afterFirst?.monitorState?.budgetWarned === true,
-    budgetNudgeSent: afterFirst?.monitorState?.budgetNudgeSent === true,
-    budgetNudgeAttempts: afterFirst?.monitorState?.budgetNudgeAttempts ?? null,
+    phase: afterFirst?.monitorState?.budgetDelivery?.phase ?? null,
+    attempts: afterFirst?.monitorState?.budgetDelivery?.attempts ?? null,
   },
   persistedAfterSecond: {
-    budgetWarned: afterSecond?.monitorState?.budgetWarned === true,
-    budgetNudgeSent: afterSecond?.monitorState?.budgetNudgeSent === true,
-    budgetNudgeAttempts: afterSecond?.monitorState?.budgetNudgeAttempts ?? null,
+    phase: afterSecond?.monitorState?.budgetDelivery?.phase ?? null,
+    attempts: afterSecond?.monitorState?.budgetDelivery?.attempts ?? null,
   },
   unsupportedWarmBaseline,
   warmRunId: warmRun.id,
@@ -654,14 +652,14 @@ process.stdout.write(JSON.stringify({
     // Providers report increments, so a pin carries a reference reading rather than a
     // total to subtract. For codex that reference must be the parent's session position.
     referenceTotal: warmUsage?.lastCumulative?.total ?? null,
-    breachedOnInheritedHistory: warmTick.budgetWarned === true,
+    breachedOnInheritedHistory: warmTick.delivery.phase === 'breach-pending',
   },
   unmeasuredRunner: {
     unsupportedRunner: unmeasuredTick.unsupportedRunner,
     violationType: unmeasuredTick.violation?.type ?? null,
     violationMessage: unmeasuredTick.violation?.message ?? null,
     nudgeSent: unmeasuredTick.nudgeSent,
-    budgetNudgeAttempts: unmeasuredTick.budgetNudgeAttempts,
+    attempts: unmeasuredTick.delivery.attempts,
   },
   violationEvents: events.filter((entry) => entry.event === Events.MONITOR_VIOLATION).length,
 }) + '\\n');
@@ -755,7 +753,7 @@ process.stdout.write(JSON.stringify({
   chargeTotalTokens: tick.chargeTotalTokens,
   referenceTotal: usage?.lastCumulative?.total ?? null,
   availability: tick.availability,
-  budgetWarned: tick.budgetWarned,
+  budgetWarned: tick.delivery.phase === 'breach-pending',
 }) + '\\n');
 `;
 
