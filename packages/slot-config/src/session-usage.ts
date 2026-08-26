@@ -680,6 +680,13 @@ export type IncrementalSessionUsageState = {
   skippingOversizedRecord?: boolean;
   /** Count of records skipped for exceeding the window (their usage is uncounted). */
   skippedOversizedRecords?: number;
+  /**
+   * Last session-total reading, for runners that restate totals instead of reporting
+   * per-record usage (codex). Zeros mean "counting from the start of the transcript";
+   * absent means the counters were started at a byte offset mid-transcript, so the next
+   * reading establishes the reference instead of being counted.
+   */
+  lastCumulative?: { input: number; output: number; cacheRead: number; total: number };
 };
 
 export type IncrementalSessionUsageResult = {
@@ -702,7 +709,18 @@ export function emptyIncrementalSessionUsageState(): IncrementalSessionUsageStat
     outputTokens: 0,
     cacheCreation: 0,
     cacheRead: 0,
+    // Reading from byte 0: the first session-total reading is counted in full.
+    lastCumulative: { input: 0, output: 0, cacheRead: 0, total: 0 },
   };
+}
+
+/**
+ * State for counters started at a byte offset mid-transcript. Everything already
+ * written belongs to whoever wrote it, so the first session-total reading after the
+ * offset only establishes the reference.
+ */
+export function pinnedIncrementalSessionUsageState(): IncrementalSessionUsageState {
+  return { ...emptyIncrementalSessionUsageState(), lastCumulative: undefined };
 }
 
 /**

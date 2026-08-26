@@ -715,6 +715,11 @@ process.stdout.write(JSON.stringify({
 export function runGatewayWarmBudgetCharge({ harnessRoot, runId, slotId, timeoutMs = 60_000 }) {
   const snippet = `
 import { pollRunBudgetGuard } from './services/gateway/src/run-engine/run-monitor.ts';
+import {
+  emptyBudgetUsageSampleState,
+  sampleBudgetUsage,
+} from './services/gateway/src/run-engine/budget-usage-sample.ts';
+import { loadSlotVars } from './services/gateway/src/core/config.ts';
 import { getRun, loadAllRuns } from './services/gateway/src/runs/store.ts';
 
 // Fresh process: hydrate the store from the harness runs dir phase one wrote.
@@ -729,8 +734,19 @@ const tick = await pollRunBudgetGuard({
   agentStatus: 'idle',
   sendNudge: false,
 });
-const usage = getRun(${JSON.stringify(runId)})?.monitorState?.budgetUsage ?? null;
+const run = getRun(${JSON.stringify(runId)});
+const usage = run?.monitorState?.budgetUsage ?? null;
+// Cold full scan of the same transcript: what this run would be charged with no pin.
+const fullScan = await sampleBudgetUsage({
+  slotId: ${JSON.stringify(slotId)},
+  vars: await loadSlotVars(${JSON.stringify(slotId)}),
+  runner: run?.metrics?.runner,
+  runnerSessionPath: usage?.path ?? run?.metrics?.runnerSessionPath ?? null,
+  prior: emptyBudgetUsageSampleState(),
+});
 process.stdout.write(JSON.stringify({
+  fullScanTotalTokens: fullScan.totalTokens,
+  fullScanTurns: fullScan.turns,
   sampleTurns: tick.sampleTurns,
   sampleTotalTokens: tick.sampleTotalTokens,
   chargeTurns: tick.chargeTurns,

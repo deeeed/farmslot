@@ -5,12 +5,22 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import {
-  captureBudgetUsageBaselineAtEof,
+  captureBudgetUsageBaselinePin,
   emptyBudgetUsageSampleState,
   sampleBudgetUsage,
 } from './budget-usage-sample.js';
 
 const localVars = { host: 'localhost', machine: 'local', slotId: 's1' } as never;
+
+function codexTotal(total: number): string {
+  return JSON.stringify({
+    type: 'event_msg',
+    payload: {
+      type: 'token_count',
+      info: { total_token_usage: { input_tokens: total, output_tokens: 0, total_tokens: total } },
+    },
+  });
+}
 
 function claudeLine(input: number, output: number): string {
   return JSON.stringify({
@@ -91,7 +101,7 @@ test('sampleBudgetUsage preserves incomplete trailing JSONL until the record com
   assert.equal(second.totalTokens, 18);
 });
 
-test('captureBudgetUsageBaselineAtEof charges the child only for bytes appended after handoff', async () => {
+test('captureBudgetUsageBaselinePin charges the child only for bytes appended after handoff', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-baseline-'));
   const file = path.join(dir, 'session.jsonl');
   // Parent history far larger than one bounded sample window: parsing it to build a
@@ -99,7 +109,7 @@ test('captureBudgetUsageBaselineAtEof charges the child only for bytes appended 
   const parentLines = Array.from({ length: 4000 }, () => claudeLine(1000, 200)).join('\n');
   await writeFile(file, `${parentLines}\n`, 'utf8');
 
-  const baseline = await captureBudgetUsageBaselineAtEof({
+  const baseline = await captureBudgetUsageBaselinePin({
     vars: localVars,
     runner: 'claude',
     runnerSessionPath: file,
@@ -122,30 +132,22 @@ test('captureBudgetUsageBaselineAtEof charges the child only for bytes appended 
   assert.equal(sampled.totalTokens, 7);
 });
 
-test('captureBudgetUsageBaselineAtEof baselines a cumulative runner against the parent total', async () => {
+test('a cumulative runner charges only post-pin growth, not the session total', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-cumulative-'));
   const file = path.join(dir, 'session.jsonl');
-  const tokenCount = (total: number) =>
-    JSON.stringify({
-      type: 'event_msg',
-      payload: {
-        type: 'token_count',
-        info: { total_token_usage: { input_tokens: total, output_tokens: 0, total_tokens: total } },
-      },
-    });
-  // Codex reports session-cumulative totals: the parent already burned 7.95M.
-  await writeFile(file, `${tokenCount(7_950_000)}\n`, 'utf8');
+  // Codex restates the whole session's totals on every record: the parent burned 7.95M.
+  await writeFile(file, `${codexTotal(7_950_000)}\n`, 'utf8');
 
-  const baseline = await captureBudgetUsageBaselineAtEof({
+  const baseline = await captureBudgetUsageBaselinePin({
     vars: localVars,
     runner: 'codex',
     runnerSessionPath: file,
   });
   assert.ok(baseline);
-  assert.equal(baseline.baselineTotalTokens, 7_950_000);
 
-  // The child adds 100k of its own work; codex restates the whole session total.
-  await appendFile(file, `${tokenCount(8_050_000)}\n`, 'utf8');
+  // The child's first reading establishes the reference (its own work up to that point
+  // is not charged); growth from there is counted.
+  await appendFile(file, `${codexTotal(8_000_000)}\n${codexTotal(8_050_000)}\n`, 'utf8');
   const sampled = await sampleBudgetUsage({
     slotId: 's1',
     vars: localVars,
@@ -153,24 +155,32 @@ test('captureBudgetUsageBaselineAtEof baselines a cumulative runner against the 
     runnerSessionPath: file,
     prior: baseline,
   });
-  // Charged against an 8M ceiling this must be 100k, not 8.05M.
-  assert.equal((sampled.totalTokens ?? 0) - (baseline.baselineTotalTokens ?? 0), 100_000);
+  // Against an 8M ceiling this must be the child's growth, never the session total.
+  assert.equal(sampled.totalTokens, 50_000);
+  assert.ok((sampled.totalTokens ?? 0) < 7_950_000, 'parent history must never be charged');
 });
 
-test('captureBudgetUsageBaselineAtEof ignores a per-turn total trailing the cumulative one', async () => {
+test('a cumulative runner still counts a full transcript from byte 0', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-cold-'));
+  const file = path.join(dir, 'session.jsonl');
+  await writeFile(file, `${codexTotal(4000)}\n${codexTotal(9000)}\n`, 'utf8');
+  // A cold run owns everything in its transcript, so nothing is skipped as a reference.
+  const sampled = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'codex',
+    runnerSessionPath: file,
+    prior: emptyBudgetUsageSampleState(),
+  });
+  assert.equal(sampled.totalTokens, 9000);
+});
+
+test('a per-turn total reading cannot subtract from a cumulative runner total', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-lasttoken-'));
   const file = path.join(dir, 'session.jsonl');
-  const cumulative = JSON.stringify({
-    type: 'event_msg',
-    payload: {
-      type: 'token_count',
-      info: {
-        total_token_usage: { input_tokens: 7_950_000, output_tokens: 0, total_tokens: 7_950_000 },
-      },
-    },
-  });
   // codexApplyRecord falls back to `last_token_usage` when the cumulative field is
-  // absent, which would drop a last-wins baseline to this per-turn figure.
+  // absent. That reading covers one turn, not the session, so it is lower than the
+  // running reference and must contribute nothing rather than go negative.
   const perTurn = JSON.stringify({
     type: 'event_msg',
     payload: {
@@ -178,26 +188,25 @@ test('captureBudgetUsageBaselineAtEof ignores a per-turn total trailing the cumu
       info: { last_token_usage: { input_tokens: 900, output_tokens: 100, total_tokens: 1000 } },
     },
   });
-  await writeFile(file, `${cumulative}\n${perTurn}\n`, 'utf8');
-
-  const baseline = await captureBudgetUsageBaselineAtEof({
+  await writeFile(file, `${codexTotal(4000)}\n${codexTotal(9000)}\n${perTurn}\n`, 'utf8');
+  const sampled = await sampleBudgetUsage({
+    slotId: 's1',
     vars: localVars,
     runner: 'codex',
     runnerSessionPath: file,
+    prior: emptyBudgetUsageSampleState(),
   });
-  assert.ok(baseline);
-  // A baseline of 1000 here would hand the parent's 7.95M straight back to the child.
-  assert.equal(baseline.baselineTotalTokens, 7_950_000);
+  assert.equal(sampled.totalTokens, 9000);
 });
 
-test('captureBudgetUsageBaselineAtEof pins to a record boundary when the parent was mid-write', async () => {
+test('captureBudgetUsageBaselinePin pins to a record boundary when the parent was mid-write', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-partial-'));
   const file = path.join(dir, 'session.jsonl');
   const partial = claudeLine(999, 999).slice(0, 40);
   // Parent history plus a half-flushed trailing record.
   await writeFile(file, `${claudeLine(1000, 200)}\n${partial}`, 'utf8');
 
-  const baseline = await captureBudgetUsageBaselineAtEof({
+  const baseline = await captureBudgetUsageBaselinePin({
     vars: localVars,
     runner: 'claude',
     runnerSessionPath: file,
@@ -221,22 +230,9 @@ test('captureBudgetUsageBaselineAtEof pins to a record boundary when the parent 
   assert.equal(sampled.turns, 2);
 });
 
-test('captureBudgetUsageBaselineAtEof fails closed when a cumulative total is unavailable', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-no-total-'));
-  const file = path.join(dir, 'session.jsonl');
-  // Records with no usage at all: the parent's total cannot be recovered.
-  await writeFile(file, `${JSON.stringify({ type: 'response_item', payload: {} })}\n`, 'utf8');
-  const baseline = await captureBudgetUsageBaselineAtEof({
-    vars: localVars,
-    runner: 'codex',
-    runnerSessionPath: file,
-  });
-  assert.equal(baseline, null);
-});
-
-test('captureBudgetUsageBaselineAtEof returns null for a directory transcript', async () => {
+test('captureBudgetUsageBaselinePin returns null for a directory transcript', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-baseline-dir-'));
-  const baseline = await captureBudgetUsageBaselineAtEof({
+  const baseline = await captureBudgetUsageBaselinePin({
     vars: localVars,
     runner: 'claude',
     runnerSessionPath: dir,
@@ -250,7 +246,7 @@ test('sampleBudgetUsage keeps the pin when the session path blips out for one po
   const parent = Array.from({ length: 60 }, () => claudeLine(1000, 200)).join('\n');
   await writeFile(file, `${parent}\n`, 'utf8');
 
-  const baseline = await captureBudgetUsageBaselineAtEof({
+  const baseline = await captureBudgetUsageBaselinePin({
     vars: localVars,
     runner: 'claude',
     runnerSessionPath: file,

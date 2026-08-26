@@ -528,7 +528,7 @@ test('pollBudgetGuardStep never nudges a worker whose runner exposes no usage', 
     budgetWarned: false,
     budgetNudgeSent: false,
     budgetUsage: emptyBudgetUsageSampleState(),
-    agentStatus: 'working',
+    agentStatus: 'idle',
     sendNudge: true,
     localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
     deliverNudge: async () => {
@@ -587,7 +587,7 @@ test('pollBudgetGuardStep retries an unconfirmed nudge without re-emitting the v
     runnerSessionPath: await breachingTranscript('run-monitor-budget-retry-'),
     maxTurns: 1,
     maxTotalTokens: 1,
-    agentStatus: 'working' as const,
+    agentStatus: 'idle' as const,
     sendNudge: true,
     localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
     deliverNudge,
@@ -640,7 +640,7 @@ test('pollBudgetGuardStep does not spend attempts when the pane is never touched
     runnerSessionPath: await breachingTranscript('run-monitor-budget-hold-'),
     maxTurns: 1,
     maxTotalTokens: 1,
-    agentStatus: 'working' as const,
+    agentStatus: 'idle' as const,
     sendNudge: true,
     localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
     deliverNudge: async () => {
@@ -668,6 +668,68 @@ test('pollBudgetGuardStep does not spend attempts when the pane is never touched
   assert.equal(calls, 4);
   assert.equal(nudgeSent, true, 'the warning still lands after three untouched holds');
   assert.equal(budgetNudgeAttempts, 1, 'only the delivery that reached the pane counts');
+});
+
+test('pollBudgetGuardStep waits for an idle runner before typing the warning', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: `BUDGET-BUSY-${Date.now()}`,
+    slotId: 'slot-1',
+    runner: 'claude',
+    branch: 'budget-busy-test',
+  });
+  updateRun(run.id, { status: 'monitoring' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  let attempts = 0;
+  const common = {
+    runId: run.id,
+    slotId: 'slot-1',
+    flowType: 'update-branch' as const,
+    runner: 'claude',
+    runnerSessionPath: await breachingTranscript('run-monitor-budget-busy-'),
+    maxTurns: 1,
+    maxTotalTokens: 1,
+    sendNudge: true,
+    localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
+    deliverNudge: async () => {
+      attempts += 1;
+      return 'confirmed' as const;
+    },
+  };
+
+  // A busy composer never submits what is typed at it, so nothing is sent and no
+  // attempt is spent — otherwise the cap would be exhausted before the worker could
+  // ever receive the warning.
+  let tick = await pollBudgetGuardStep({
+    ...common,
+    agentStatus: 'working',
+    budgetWarned: false,
+    budgetNudgeSent: false,
+    budgetUsage: emptyBudgetUsageSampleState(),
+  });
+  assert.equal(tick.violation?.type, 'budget', 'the breach is still recorded');
+  assert.equal(tick.nudgeSent, false);
+  assert.equal(tick.budgetNudgeAttempts, 0);
+  assert.equal(attempts, 0);
+
+  // The turn ends; the warning lands on the next poll.
+  tick = await pollBudgetGuardStep({
+    ...common,
+    agentStatus: 'idle',
+    budgetWarned: tick.budgetWarned,
+    budgetNudgeSent: false,
+    budgetNudgeAttempts: tick.budgetNudgeAttempts,
+    budgetUsage: tick.budgetUsage,
+  });
+  assert.equal(tick.nudgeSent, true);
+  assert.equal(attempts, 1);
 });
 
 test('pollBudgetGuardStep stops retrying an unconfirmable nudge at the attempt cap', async (t) => {
@@ -701,7 +763,7 @@ test('pollBudgetGuardStep stops retrying an unconfirmable nudge at the attempt c
     runnerSessionPath: await breachingTranscript('run-monitor-budget-cap-'),
     maxTurns: 1,
     maxTotalTokens: 1,
-    agentStatus: 'working' as const,
+    agentStatus: 'idle' as const,
     sendNudge: true,
     localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
     deliverNudge,

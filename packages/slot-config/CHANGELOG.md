@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- feat(session-usage): `pinnedIncrementalSessionUsageState()` starts counting at a byte offset mid-transcript. An absent `lastCumulative` marks that the next session-total reading only establishes the reference, so runners that restate totals are counted as increments from the pin instead of restating someone else's history.
 - fix(session-usage): a record larger than the bounded read window widens the read once (up to 16MiB) so its usage is still counted; only records beyond that are skipped, counted in `skippedOversizedRecords`, and no longer raise a permanent integrity failure that disabled accounting for the rest of a run.
 - fix(dispatch): expand `{task_prompt}` with a replacement callback so `$`, `$'`, and `$&` in the prompt stay literal.
 - feat(ci): allow projects to opt in to worker-report comments and internal metrics in formal review comments; both remain disabled by default.

@@ -72,7 +72,7 @@ import {
 
 import {
   type BudgetUsageSampleState,
-  captureBudgetUsageBaselineAtEof,
+  captureBudgetUsageBaselinePin,
   emptyBudgetUsageSampleState,
   sampleBudgetUsage,
 } from './budget-usage-sample.js';
@@ -277,7 +277,7 @@ export async function prepareWarmBudgetBaselineForHandoff(
       null;
     if (!runnerSessionPath) return 'unavailable';
 
-    const baselineUsage = await captureBudgetUsageBaselineAtEof({
+    const baselineUsage = await captureBudgetUsageBaselinePin({
       vars: await loadSlotVars(slotId),
       runner: run.metrics.runner,
       runnerSessionPath,
@@ -783,6 +783,7 @@ export async function monitorRun(
         integrityFailureReason: persisted.budgetUsage.integrityFailureReason,
         skippingOversizedRecord: persisted.budgetUsage.skippingOversizedRecord,
         skippedOversizedRecords: persisted.budgetUsage.skippedOversizedRecords,
+        lastCumulative: persisted.budgetUsage.lastCumulative,
         baselineCaptured: persisted.budgetUsage.baselineCaptured,
         baselineTurns: persisted.budgetUsage.baselineTurns,
         baselineTotalTokens: persisted.budgetUsage.baselineTotalTokens,
@@ -1724,12 +1725,13 @@ export type PollBudgetGuardStepResult = {
 };
 
 /**
- * Unconfirmed budget-nudge deliveries stop after this many attempts.
+ * Backstop on unconfirmed budget-nudge deliveries.
  *
- * Delivery is only "confirmed" when the runner accepts and submits the instruction.
- * A runner that stays busy leaves the text sitting in its composer, so retrying every
- * poll stacks copies of the warning in the worker prompt (retro 2026-08-26: 5 attempts
- * / 20 typed insertions on mini-mm-2). The violation is still recorded and broadcast.
+ * Delivery is gated on the runner being idle, which is what stops the warning stacking
+ * up in a busy composer (retro 2026-08-26: 5 attempts / 20 typed insertions on
+ * mini-mm-2, none submitted). This cap only bounds the residual case of an idle runner
+ * that still never confirms; it is not the mechanism. The violation is recorded and
+ * broadcast either way.
  */
 export const MAX_BUDGET_NUDGE_ATTEMPTS = 3;
 
@@ -1868,12 +1870,17 @@ export async function pollBudgetGuardStep(params: {
   // Warning emission and delivery confirmation are separate. A false/throwing
   // safe-send keeps budgetNudgeSent false so later polls retry without emitting
   // another violation.
+  // Only deliver into an idle runner. Text typed at a busy composer is never submitted,
+  // so it just accumulates there — and burning the retry budget while the worker cannot
+  // receive the warning means it never hears about the breach at all. Waiting costs a
+  // poll: turns end, and the next idle poll delivers.
   if (
     params.sendNudge &&
     budgetWarned &&
     !priorNudgeSent &&
     warningMessage &&
     !sample.unsupportedRunner &&
+    params.agentStatus === 'idle' &&
     budgetNudgeAttempts < MAX_BUDGET_NUDGE_ATTEMPTS
   ) {
     const run = getRun(params.runId);

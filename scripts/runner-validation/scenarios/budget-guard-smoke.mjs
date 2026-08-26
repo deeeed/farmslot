@@ -145,20 +145,17 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       result.warmBaseline?.status === 'captured' &&
       result.warmBaseline?.pinnedAtRecordBoundary === true &&
       result.warmBaseline?.baselineTurns === 0 &&
-      // Codex restates session totals on every record, so the baseline must carry the
-      // parent's real cumulative total. A zero here is the false-breach bug.
-      result.warmBaseline?.baselineTotalTokens > 0 &&
-      result.warmBaseline?.baselineTotalTokens === result.first?.sampleTotalTokens &&
+      // Counters start at zero at the pin for every runner: codex converts its session
+      // totals to increments in its provider, so no runner-specific baseline is needed.
+      result.warmBaseline?.baselineTotalTokens === 0 &&
       result.warmBaseline?.breachedOnInheritedHistory === false &&
       // The discriminating check: after a real post-pin turn the child is charged only
       // its own growth. With a zeroed cumulative baseline this equals the whole session
       // total instead, which is the false breach.
       charge.chargeTotalTokens > 0 &&
-      charge.baselineTotalTokens > 0 &&
-      charge.chargeTotalTokens === charge.sampleTotalTokens - charge.baselineTotalTokens &&
-      // The parent's history is excluded. With a zeroed cumulative baseline the charge
-      // would equal the full session total instead — the false breach.
-      charge.chargeTotalTokens < charge.sampleTotalTokens &&
+      // The parent's history is excluded. A cold full scan of the same transcript shows
+      // what this run would have been charged without the pin — the false breach.
+      charge.fullScanTotalTokens > charge.chargeTotalTokens &&
       charge.budgetWarned === false &&
       // An unmeasurable runner is recorded for the operator, never typed at the worker.
       result.unmeasuredRunner?.unsupportedRunner === true &&

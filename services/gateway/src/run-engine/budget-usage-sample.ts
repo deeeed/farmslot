@@ -14,6 +14,7 @@ import {
   INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
   INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES,
   type IncrementalSessionUsageState,
+  pinnedIncrementalSessionUsageState,
   sampleSessionUsageIncremental,
 } from '@farmslot/slot-config';
 
@@ -46,12 +47,38 @@ export function emptyBudgetUsageSampleState(): BudgetUsageSampleState {
 }
 
 /**
- * Tail read for a warm baseline: enough to find the last record boundary and, for
- * cumulative runners, the last record carrying session totals. Codex emits a
- * `token_count` event every turn, so this window holds one except in pathological
- * transcripts — where the capture fails closed instead of guessing.
+ * Build an unavailable result that always carries `prior` forward.
+ *
+ * Sampling state is durable: it holds the transcript path and the byte offset counting
+ * started from. A branch that returns fresh state instead nulls the path and rewinds the
+ * offset to zero, and continuity detection needs a non-null prior path to fail closed —
+ * so the next healthy poll silently re-reads the transcript from the beginning and
+ * charges a retained parent's whole history to this run. Every unavailable path goes
+ * through here so that cannot be reintroduced one branch at a time.
  */
-const BASELINE_TAIL_SCAN_BYTES = 4 * 1024 * 1024;
+function unavailable(
+  prior: BudgetUsageSampleState,
+  unavailableReason: string,
+  overrides: Partial<BudgetUsageSampleState> = {},
+  flags: { enforcementFailure?: boolean; unsupportedRunner?: boolean } = {},
+): BudgetUsageSampleResult {
+  return {
+    turns: null,
+    totalTokens: null,
+    availability: 'unavailable',
+    unavailableReason,
+    ...flags,
+    nextState: {
+      ...prior,
+      ...overrides,
+      unavailableReason,
+      sampledAt: new Date().toISOString(),
+    },
+  };
+}
+
+/** Tail read for a warm baseline: enough to find the last record boundary. */
+const BASELINE_TAIL_SCAN_BYTES = 1024 * 1024;
 
 async function remoteFileStat(
   vars: SlotVars,
@@ -103,35 +130,28 @@ async function remoteReadBytes(
 }
 
 /**
- * Seed budget accounting at the end of a retained transcript.
+ * Pin budget accounting at the end of a retained transcript.
  *
  * A warm handoff inherits the parent's transcript, so the child must be charged only
- * for what it appends. Replaying the parent's whole history to total it is bounded to
- * one window per sample, so on a long retained session the baseline lands far below
- * the real totals and the monitor then charges the parent's remaining bytes to the
- * child (retro 2026-08-26: run 2164728b on mini-mm-2 breached 8M "within minutes" on
- * inherited codex history). Instead this pins the last record boundary — never raw
- * EOF, which can sit inside a half-written record — after one bounded tail read.
+ * for what it appends. That is entirely a matter of where counting starts: providers
+ * report increments (codex converts its session totals in `foldCodexSessionTotals`),
+ * so counters started at this offset measure exactly the work after it.
  *
- * Cumulative runners need more than the offset: their next record restates the whole
- * session's totals, so the tail is replayed to recover the total already reached at
- * the pin. Assignment semantics make that exact from any window containing at least
- * one total-bearing record. This assumes those totals are monotonic — true for codex,
- * whose `total_token_usage` only grows — which is what lets the replay take the peak
- * and so ignore a record carrying only a per-turn `last_token_usage`.
+ * The pin lands on the last record boundary, never raw EOF — a byte offset inside a
+ * half-written record makes the next sample parse the record's suffix and fail
+ * accounting closed as malformed JSONL for the rest of the run.
  *
- * Returns null when the transcript cannot be read, has no record boundary in the scan
- * window, or (for a cumulative runner) no recoverable total — callers fail the warm
- * baseline closed rather than start a run with unenforceable accounting.
+ * Returns null when the transcript cannot be read or has no record boundary within the
+ * scan window; callers fail the warm baseline closed rather than start a run with
+ * unenforceable accounting.
  */
-export async function captureBudgetUsageBaselineAtEof(params: {
+export async function captureBudgetUsageBaselinePin(params: {
   vars: SlotVars;
   runner?: string | null;
   runnerSessionPath: string;
 }): Promise<BudgetUsageSampleState | null> {
   const { vars, runner, runnerSessionPath } = params;
-  const provider = getRunnerSessionUsageProvider(runner);
-  if (!provider) return null;
+  if (!getRunnerSessionUsageProvider(runner)) return null;
 
   let size: number;
   let mtimeMs: number;
@@ -161,7 +181,7 @@ export async function captureBudgetUsageBaselineAtEof(params: {
   }
 
   const base: BudgetUsageSampleState = {
-    ...emptyBudgetUsageSampleState(),
+    ...pinnedIncrementalSessionUsageState(),
     path: runnerSessionPath,
     size,
     mtimeMs,
@@ -170,68 +190,19 @@ export async function captureBudgetUsageBaselineAtEof(params: {
     baselineTurns: 0,
     baselineTotalTokens: 0,
   };
-  // An empty transcript needs no tail scan; offset 0 is already a record boundary.
-  if (size === 0) return base;
+  // An empty transcript has nothing to inherit, so count it from byte 0 — that is what
+  // a zeroed `lastCumulative` means, as opposed to the pinned state's absent one.
+  if (size === 0) {
+    return { ...base, lastCumulative: emptyBudgetUsageSampleState().lastCumulative };
+  }
 
   const tailStart = Math.max(0, size - BASELINE_TAIL_SCAN_BYTES);
   const tail = await readTail(tailStart, size - tailStart);
   if (!tail) return null;
-
-  // Pin to the last complete record, never raw EOF: a byte offset inside a
-  // half-written record makes the next sample parse the record's suffix and fail
-  // accounting closed as malformed JSONL for the rest of the run.
   const lastNewline = tail.lastIndexOf(0x0a);
-  if (lastNewline < 0) {
-    // No record boundary within the scan window — refuse rather than guess.
-    return null;
-  }
-  const pinnedOffset = tailStart + lastNewline + 1;
-
-  if (provider.tokenAccumulation === 'incremental') {
-    return { ...base, offset: pinnedOffset };
-  }
-
-  // Cumulative runners (codex) report the whole session's totals on every record, so
-  // the child's first record jumps straight back to the parent's total. Replay the
-  // complete records in the tail to recover the total already reached at the pin;
-  // assignment semantics mean the last such record wins regardless of where the
-  // window starts.
-  let replay: BudgetUsageSampleState = emptyBudgetUsageSampleState();
-  // Keep the highest total seen, not the last. Cumulative totals only grow, while a
-  // record carrying just a per-turn figure (codex falls back to `last_token_usage`
-  // when `total_token_usage` is absent) would otherwise drop the baseline to that
-  // small number and hand the parent's history straight back to the child.
-  let peak: BudgetUsageSampleState = replay;
-  for (const line of tail
-    .subarray(0, lastNewline + 1)
-    .toString('utf8')
-    .split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      replay = provider.applyRecord(replay, JSON.parse(trimmed) as Record<string, unknown>);
-      if (replay.totalTokens > peak.totalTokens) peak = replay;
-    } catch {
-      // A malformed record inside the parent's history cannot invalidate the child's
-      // baseline: later records still carry the cumulative total we are looking for.
-      continue;
-    }
-  }
-  if (peak.totalTokens <= 0) {
-    // No cumulative total in the scan window, so the parent's usage is unknown and a
-    // baseline of 0 would charge the child for it. Fail closed to a fresh session.
-    return null;
-  }
-  return {
-    ...base,
-    offset: pinnedOffset,
-    totalTokens: peak.totalTokens,
-    inputTokens: peak.inputTokens,
-    outputTokens: peak.outputTokens,
-    cacheRead: peak.cacheRead,
-    cacheCreation: peak.cacheCreation,
-    baselineTotalTokens: peak.totalTokens,
-  };
+  // No record boundary within the scan window — refuse rather than guess.
+  if (lastNewline < 0) return null;
+  return { ...base, offset: tailStart + lastNewline + 1 };
 }
 
 /**
@@ -251,39 +222,17 @@ export async function sampleBudgetUsage(params: {
   const { vars, runner, runnerSessionPath, prior } = params;
   const provider = getRunnerSessionUsageProvider(runner);
   if (!provider) {
-    const unavailableReason = `runner '${runner ?? 'unknown'}' has no bounded session-usage provider`;
-    return {
-      turns: null,
-      totalTokens: null,
-      availability: 'unavailable',
-      unavailableReason,
-      enforcementFailure: true,
-      unsupportedRunner: true,
-      nextState: {
-        ...prior,
-        unavailableReason,
-        sampledAt: new Date().toISOString(),
-      },
-    };
+    return unavailable(
+      prior,
+      `runner '${runner ?? 'unknown'}' has no bounded session-usage provider`,
+      {},
+      { enforcementFailure: true, unsupportedRunner: true },
+    );
   }
   if (!runnerSessionPath) {
-    // Keep prior state. The path is re-resolved every poll and live discovery can come
-    // back empty for one tick; resetting to empty state would null `path` and zero
-    // `offset`, and since continuity detection needs a non-null prior path nothing
-    // would fail closed — the next healthy poll would re-read the transcript from byte
-    // 0 and charge the retained parent's whole history to this run.
-    const next = {
-      ...prior,
-      unavailableReason: 'runner did not expose a session transcript path',
-      sampledAt: new Date().toISOString(),
-    };
-    return {
-      turns: null,
-      totalTokens: null,
-      availability: 'unavailable',
-      unavailableReason: next.unavailableReason,
-      nextState: next,
-    };
+    // The path is re-resolved every poll and live discovery can come back empty for one
+    // tick, so this must not disturb where counting is up to.
+    return unavailable(prior, 'runner did not expose a session transcript path');
   }
 
   if (isLocal(vars.host, vars.machine)) {
@@ -302,41 +251,24 @@ export async function sampleBudgetUsage(params: {
   try {
     const remoteStat = await remoteFileStat(vars, runnerSessionPath);
     if (!remoteStat) {
-      const next = {
-        ...prior,
-        path: runnerSessionPath,
-        unavailableReason: 'remote transcript stat failed',
-        sampledAt: new Date().toISOString(),
-      };
-      return {
-        turns: null,
-        totalTokens: null,
-        availability: 'unavailable',
-        unavailableReason: next.unavailableReason,
-        nextState: next,
-      };
+      return unavailable(prior, 'remote transcript stat failed', { path: runnerSessionPath });
     }
 
     const continuityLost =
       prior.path !== null && (prior.path !== runnerSessionPath || prior.offset > remoteStat.size);
     if (continuityLost && prior.baselineCaptured) {
       const integrityFailureReason = 'session transcript changed after budget accounting began';
-      return {
-        turns: null,
-        totalTokens: null,
-        availability: 'unavailable',
-        unavailableReason: integrityFailureReason,
-        enforcementFailure: true,
-        nextState: {
-          ...prior,
+      return unavailable(
+        prior,
+        integrityFailureReason,
+        {
           path: runnerSessionPath,
           size: remoteStat.size,
           mtimeMs: remoteStat.mtimeMs,
           integrityFailureReason,
-          unavailableReason: integrityFailureReason,
-          sampledAt: new Date().toISOString(),
         },
-      };
+        { enforcementFailure: true },
+      );
     }
 
     if (
@@ -346,14 +278,7 @@ export async function sampleBudgetUsage(params: {
       prior.offset >= remoteStat.size
     ) {
       if (prior.integrityFailureReason) {
-        return {
-          turns: null,
-          totalTokens: null,
-          availability: 'unavailable',
-          unavailableReason: prior.integrityFailureReason,
-          enforcementFailure: true,
-          nextState: { ...prior, sampledAt: new Date().toISOString() },
-        };
+        return unavailable(prior, prior.integrityFailureReason, {}, { enforcementFailure: true });
       }
       return {
         turns: prior.turns,
@@ -403,18 +328,7 @@ export async function sampleBudgetUsage(params: {
       }
     }
     if (buf == null) {
-      const next = {
-        ...state,
-        unavailableReason: 'remote transcript byte read failed',
-        sampledAt: new Date().toISOString(),
-      };
-      return {
-        turns: null,
-        totalTokens: null,
-        availability: 'unavailable',
-        unavailableReason: next.unavailableReason,
-        nextState: next,
-      };
+      return unavailable(state, 'remote transcript byte read failed');
     }
 
     const advanced = advanceIncrementalFromBytes(state, buf, provider.applyRecord, {
@@ -425,14 +339,12 @@ export async function sampleBudgetUsage(params: {
       maxWindow: windowCap,
     });
     if (advanced.integrityFailureReason) {
-      return {
-        turns: null,
-        totalTokens: null,
-        availability: 'unavailable',
-        unavailableReason: advanced.integrityFailureReason,
-        enforcementFailure: true,
-        nextState: advanced,
-      };
+      return unavailable(
+        advanced,
+        advanced.integrityFailureReason,
+        {},
+        { enforcementFailure: true },
+      );
     }
     return {
       turns: advanced.turns,
@@ -441,18 +353,6 @@ export async function sampleBudgetUsage(params: {
       nextState: advanced,
     };
   } catch (err) {
-    const next = {
-      ...prior,
-      path: runnerSessionPath,
-      unavailableReason: (err as Error).message,
-      sampledAt: new Date().toISOString(),
-    };
-    return {
-      turns: null,
-      totalTokens: null,
-      availability: 'unavailable',
-      unavailableReason: next.unavailableReason,
-      nextState: next,
-    };
+    return unavailable(prior, (err as Error).message, { path: runnerSessionPath });
   }
 }

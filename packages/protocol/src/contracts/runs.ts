@@ -1315,6 +1315,13 @@ export interface RunMonitorBudgetUsageState {
   /** Count of records skipped for exceeding the window (their usage is uncounted). */
   skippedOversizedRecords?: number;
   /**
+   * Last session-total reading for runners that restate totals rather than reporting
+   * per-record usage (codex). Zeros mean counting from the start of the transcript;
+   * absent means counting started at a byte offset, so the next reading only sets the
+   * reference.
+   */
+  lastCumulative?: { input: number; output: number; cacheRead: number; total: number };
+  /**
    * First successful sample for this monitor session (warm-handoff parent totals
    * or cold-start initial point). Soft ceilings apply to (turns - baselineTurns).
    */
