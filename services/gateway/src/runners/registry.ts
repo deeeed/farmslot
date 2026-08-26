@@ -1,6 +1,7 @@
 // runners.ts — Runner definitions and helpers (ADR-023 capability model)
 // Capability-based registry: RunnerDefinition exposes runner capabilities; launch-command.ts owns shell command construction.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 
 import {
@@ -1943,13 +1944,18 @@ async function warnIfObservabilityDegraded(
 type SubmitInstructionOutcome = 'ok' | 'not-buffered' | 'stuck';
 
 /**
- * Set while a send is in flight so the typing primitive can report that the composer was
- * actually touched. Callers cannot infer this from a `false` return: the sender also
- * returns false when it holds the whole window without typing (hook lapse, foreign
- * composer draft, runner busy), and a caller that counts those as delivery attempts
- * exhausts its retry budget without the worker ever seeing the message.
+ * Per-send record of whether the composer was actually touched.
+ *
+ * Callers cannot infer this from a `false` return: the sender also returns false when it
+ * holds the whole window without typing (hook lapse, foreign composer draft, runner
+ * busy), and a caller that counts those as delivery attempts exhausts its retry budget
+ * without the worker ever seeing the message.
+ *
+ * This is AsyncLocalStorage rather than a module-level flag because the gateway sends to
+ * many slots concurrently: a shared variable would let a touch on one slot mark another
+ * slot's send as delivered, and the misattribution runs both ways.
  */
-let composerTouchedNotifier: (() => void) | null = null;
+const composerTouchStore = new AsyncLocalStorage<{ touched: boolean }>();
 
 async function submitRunnerInstruction(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -1959,7 +1965,10 @@ async function submitRunnerInstruction(
   logPrefix: string,
   mode: 'send' | 'submit-existing',
 ): Promise<SubmitInstructionOutcome> {
-  if (mode === 'send') composerTouchedNotifier?.();
+  if (mode === 'send') {
+    const touchRecord = composerTouchStore.getStore();
+    if (touchRecord) touchRecord.touched = true;
+  }
   let sentAtMs: number | null = null;
   if (mode === 'send') {
     try {
@@ -2276,18 +2285,12 @@ export type RunnerInstructionOutcome = 'sent' | 'typed-unconfirmed' | 'held-unto
 export async function sendRunnerInstructionWithOutcome(
   ...args: Parameters<typeof sendRunnerInstructionSafely>
 ): Promise<RunnerInstructionOutcome> {
-  let touched = false;
-  const previous = composerTouchedNotifier;
-  composerTouchedNotifier = () => {
-    touched = true;
-  };
-  try {
+  const touchRecord = { touched: false };
+  return composerTouchStore.run(touchRecord, async () => {
     const sent = await sendRunnerInstructionSafely(...args);
     if (sent) return 'sent';
-    return touched ? 'typed-unconfirmed' : 'held-untouched';
-  } finally {
-    composerTouchedNotifier = previous;
-  }
+    return touchRecord.touched ? 'typed-unconfirmed' : 'held-untouched';
+  });
 }
 
 export async function sendRunnerInstructionSafely(
