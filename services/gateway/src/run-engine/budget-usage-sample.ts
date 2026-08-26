@@ -233,12 +233,16 @@ export async function captureBudgetUsageBaselinePin(params: {
     readTail = async (offset, length) => {
       const buf = Buffer.alloc(length);
       const fh = await open(runnerSessionPath, 'r');
+      let bytesRead = 0;
       try {
-        await fh.read(buf, 0, length, offset);
+        ({ bytesRead } = await fh.read(buf, 0, length, offset));
       } finally {
         await fh.close();
       }
-      return buf;
+      // Truncate to what was actually read. A file that shrank between the stat and the
+      // read would otherwise leave NUL padding, which `trim()` does not strip, so the
+      // trailing bytes would look like an in-flight record and cost the child one.
+      return buf.subarray(0, bytesRead);
     };
   } else {
     const remote = await remoteFileStat(vars, runnerSessionPath);

@@ -1981,18 +1981,25 @@ async function submitRunnerInstruction(
     } catch (error) {
       console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
     }
-    await execOnSlot(
+    const write = await execOnSlot(
       vars,
       tmuxSendTextCommand(target, message, {
         enter: true,
         submitKey: getRunnerDefinition(runner).promptSubmitKey,
       }),
     );
-    // Only after the write returns. Marking before it would report a touch for a send
-    // that never reached the pane — a failed SSH round-trip, a vanished window — and a
+    // Only once the write actually succeeded. `execOnSlot` resolves on a non-zero exit
+    // rather than throwing, so awaiting it proves nothing on its own: send-keys against
+    // a dead tmux server or a vanished window comes back here having typed nothing. A
     // caller bounding its retries would spend them on deliveries the worker never saw.
-    const touchRecord = composerTouchStore.getStore();
-    if (touchRecord) touchRecord.touched = true;
+    if (write.exitCode === 0) {
+      const touchRecord = composerTouchStore.getStore();
+      if (touchRecord) touchRecord.touched = true;
+    } else {
+      console.warn(
+        `[${logPrefix}] send-keys to ${target} exited ${write.exitCode}; nothing reached the composer`,
+      );
+    }
   } else {
     const pane = await captureTmuxPane(vars, target);
     if (!runnerPaneHasBufferedInstruction(pane, message, runner)) {
