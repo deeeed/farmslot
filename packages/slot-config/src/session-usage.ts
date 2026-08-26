@@ -687,6 +687,12 @@ export type IncrementalSessionUsageState = {
    * reading establishes the reference instead of being counted.
    */
   lastCumulative?: { input: number; output: number; cacheRead: number; total: number };
+  /**
+   * Discard the next complete record. Set when counting starts at a pin that had
+   * trailing partial bytes: those bytes are the previous writer's record, and it
+   * completes after the pin, so parsing it would charge that writer's work here.
+   */
+  discardNextRecord?: boolean;
 };
 
 export type IncrementalSessionUsageResult = {
@@ -791,6 +797,20 @@ export function advanceIncrementalFromBytes(
     if (!trimmed) continue;
     try {
       const obj = JSON.parse(trimmed) as Record<string, unknown>;
+      if (state.discardNextRecord) {
+        // The previous writer's in-flight record, completed after the pin. Its usage is
+        // theirs, so the counters must not move — but for a runner that restates session
+        // totals the reading is still the session's position, and leaving the reference
+        // behind would charge this run the gap on the very next record.
+        const before = state;
+        const applied = applyRecord(state, obj);
+        state = {
+          ...before,
+          lastCumulative: applied.lastCumulative,
+          discardNextRecord: false,
+        };
+        continue;
+      }
       state = applyRecord(state, obj);
     } catch {
       state.integrityFailureReason = 'session transcript contains malformed JSONL record';

@@ -788,6 +788,7 @@ export async function monitorRun(
         // neither, and reading that absence as a pin would discard the next reading and
         // under-charge the run — so anything without a captured baseline restores as
         // counting from the start, which is what those states were doing.
+        discardNextRecord: persisted.budgetUsage.discardNextRecord,
         lastCumulative:
           persisted.budgetUsage.lastCumulative ??
           (persisted.budgetUsage.baselineCaptured

@@ -254,7 +254,39 @@ test('captureBudgetUsageBaselinePin pins to a record boundary when the parent wa
   // as malformed JSONL for the rest of the run.
   assert.equal(sampled.nextState.integrityFailureReason, undefined);
   assert.equal(sampled.enforcementFailure, false);
-  assert.equal(sampled.turns, 2);
+  // The parent's half-flushed record completes after the pin; only the child's own
+  // record is counted.
+  assert.equal(sampled.turns, 1);
+  assert.equal(sampled.totalTokens, 7);
+});
+
+test('a cumulative parent record in flight at the pin is not charged to the child', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-inflight-'));
+  const file = path.join(dir, 'session.jsonl');
+  const inflight = codexTotal(6_000_000);
+  // Parent history, then a partially flushed parent record worth 2M more.
+  await writeFile(file, `${codexTotal(4_000_000)}\n${inflight.slice(0, 30)}`, 'utf8');
+
+  const baseline = await captureBudgetUsageBaselinePin({
+    vars: localVars,
+    runner: 'codex',
+    runnerSessionPath: file,
+  });
+  assert.ok(baseline);
+  assert.equal(baseline.discardNextRecord, true);
+
+  // The parent finishes its record, then the child does 100k of its own work.
+  await appendFile(file, `${inflight.slice(30)}\n${codexTotal(6_100_000)}\n`, 'utf8');
+  const sampled = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'codex',
+    runnerSessionPath: file,
+    prior: baseline,
+  });
+  // Charging the parent's in-flight 2M here is the same class of bug as charging its
+  // whole history.
+  assert.equal(sampled.totalTokens, 100_000);
 });
 
 test('captureBudgetUsageBaselinePin returns null for a directory transcript', async () => {
@@ -339,6 +371,25 @@ test('sampleBudgetUsage keeps the pin when the session path blips out for one po
   // Rewinding would re-read all 60 parent turns and charge them to this run.
   assert.equal(recovered.turns, 2);
   assert.equal(recovered.totalTokens, 20);
+});
+
+test('a lost integrity flag survives a transient unavailable poll', async () => {
+  const poisoned = {
+    ...emptyBudgetUsageSampleState(),
+    path: '/tmp/gone.jsonl',
+    integrityFailureReason: 'session transcript changed after budget accounting began',
+  };
+  const blip = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: null,
+    prior: poisoned,
+  });
+  // Reporting a clean unavailable here would let the guard resume as if accounting were
+  // merely paused rather than permanently untrustworthy.
+  assert.equal(blip.enforcementFailure, true);
+  assert.equal(blip.nextState.integrityFailureReason, poisoned.integrityFailureReason);
 });
 
 test('sampleBudgetUsage is unavailable without a transcript path', async () => {

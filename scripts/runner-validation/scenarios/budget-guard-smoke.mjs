@@ -43,6 +43,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     sessionBinding: null,
     guard: null,
     nudgeAccepted: false,
+    nudgeTurnSettled: false,
     childTurnCompleted: false,
     warmCharge: null,
     pass: false,
@@ -109,6 +110,13 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     if (!harnessRoot || !result.warmRunId) {
       throw new Error('budget guard did not expose a warm run to re-poll');
     }
+    // Let the nudge's own turn finish first. Otherwise the Stop that ends it satisfies
+    // the wait below and the "post-pin turn" is never actually driven.
+    const nudgeTurnRows = pollHookRows(logPath, beforeBudgetNudge, ['Stop'], timeoutMs);
+    report.nudgeTurnSettled = nudgeTurnRows.some((row) => eventName(row) === 'Stop');
+    if (!report.nudgeTurnSettled) throw new Error('budget nudge turn did not settle');
+    sleepMs(1000);
+
     const beforeChildTurn = readHookLines(logPath).length;
     sendTmuxLine(paneId, DEFAULT_PROMPT);
     const childRows = pollHookRows(logPath, beforeChildTurn, ['Stop'], timeoutMs);
@@ -152,6 +160,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       // The discriminating check: after a real post-pin turn the child is charged only
       // its own growth. With a zeroed cumulative baseline this equals the whole session
       // total instead, which is the false breach.
+      report.nudgeTurnSettled &&
       charge.chargeTotalTokens > 0 &&
       // The parent's history is excluded. A cold full scan of the same transcript shows
       // what this run would have been charged without the pin — the false breach.

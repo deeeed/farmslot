@@ -1321,6 +1321,8 @@ export interface RunMonitorBudgetUsageState {
    * reference.
    */
   lastCumulative?: { input: number; output: number; cacheRead: number; total: number };
+  /** Discard the next complete record: it is the previous writer's in-flight record. */
+  discardNextRecord?: boolean;
   /**
    * First successful sample for this monitor session (warm-handoff parent totals
    * or cold-start initial point). Soft ceilings apply to (turns - baselineTurns).

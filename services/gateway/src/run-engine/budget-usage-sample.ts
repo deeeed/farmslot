@@ -71,6 +71,10 @@ function unavailable(
     totalTokens: null,
     availability: 'unavailable',
     unavailableReason,
+    // Integrity loss is permanent for the run. A transient branch reporting no
+    // enforcement failure over a state that already lost integrity would let the guard
+    // treat accounting as merely unavailable and quietly resume retrying.
+    enforcementFailure: prior.integrityFailureReason !== undefined,
     ...flags,
     nextState: {
       ...prior,
@@ -235,7 +239,15 @@ export async function captureBudgetUsageBaselinePin(params: {
   // establishes it — lossy, but it can only under-charge.
   if (replay.lastCumulative && replay.lastCumulative.total > 0) reference = replay.lastCumulative;
 
-  return { ...base, offset: tailStart + lastNewline + 1, lastCumulative: reference };
+  // Bytes after the last boundary are the previous writer's in-flight record. It
+  // completes after the pin, so drop it rather than charge their turn to this run.
+  const pinnedOffset = tailStart + lastNewline + 1;
+  return {
+    ...base,
+    offset: pinnedOffset,
+    lastCumulative: reference,
+    discardNextRecord: pinnedOffset < size,
+  };
 }
 
 /**
