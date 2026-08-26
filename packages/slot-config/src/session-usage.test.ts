@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -517,4 +524,38 @@ test('sampleSessionUsageIncremental preserves incomplete trailing JSONL across p
     applyRecord: applyClaudeRecord,
   });
   assert.equal(second.turns, 2);
+});
+
+test('a transcript replaced in place is caught even when it regrows past the old offset', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'incr-replace-'));
+  const file = path.join(dir, 'session.jsonl');
+  const line = (i: number, o: number) =>
+    JSON.stringify({
+      type: 'assistant',
+      message: { usage: { input_tokens: i, output_tokens: o } },
+    });
+  writeFileSync(file, `${line(10, 2)}\n`, 'utf8');
+  const first = await sampleSessionUsageIncremental({
+    filePath: file,
+    prior: emptyIncrementalSessionUsageState(),
+    applyRecord: applyClaudeRecord,
+  });
+  assert.equal(first.turns, 1);
+
+  // Replaced, not appended: same path, and it grows past where counting had reached, so
+  // every check but identity passes while the counters belong to a different session.
+  const replacement = path.join(dir, 'other.jsonl');
+  writeFileSync(replacement, `${line(1, 1)}\n${line(2, 2)}\n${line(3, 3)}\n`, 'utf8');
+  renameSync(replacement, file);
+
+  const after = await sampleSessionUsageIncremental({
+    filePath: file,
+    prior: { ...first.nextState, baselineCaptured: true },
+    applyRecord: applyClaudeRecord,
+  });
+  assert.equal(after.availability, 'unavailable');
+  assert.match(
+    after.nextState.integrityFailureReason ?? '',
+    /changed after budget accounting began/,
+  );
 });

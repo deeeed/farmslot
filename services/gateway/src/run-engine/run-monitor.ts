@@ -822,6 +822,7 @@ export function restoreBudgetUsageState(
         skippingOversizedRecord: persisted.skippingOversizedRecord,
         skippedOversizedRecords: persisted.skippedOversizedRecords,
         discardNextRecord: persisted.discardNextRecord,
+        fileId: persisted.fileId,
         // A pin records its reference explicitly. State written before this field
         // existed has none, and `baselineCaptured` cannot tell a legacy cold run from a
         // legacy warm one — the old cold path set it too. Its persisted counters were

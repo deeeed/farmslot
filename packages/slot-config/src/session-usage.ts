@@ -691,6 +691,14 @@ export type IncrementalSessionUsageState = {
    * completes after the pin, so parsing it would charge that writer's work here.
    */
   discardNextRecord?: boolean;
+  /**
+   * Filesystem identity of the transcript being counted.
+   *
+   * Path equality is not identity: a transcript replaced in place keeps its path, and if
+   * the replacement grows past the old offset every other continuity check passes while
+   * sampling resumes mid-file against another session's counters.
+   */
+  fileId?: string;
 };
 
 export type IncrementalSessionUsageResult = {
@@ -845,11 +853,12 @@ export async function sampleSessionUsageIncremental(params: {
   try {
     const st = await stat(filePath);
     if (st.isDirectory()) {
+      // Keep prior accounting. Returning fresh state here let a transient
+      // file-to-directory resolution forget where counting had reached, so when the file
+      // came back sampling restarted from zero — silently charging a retained parent's
+      // history or forgetting this run's own usage.
       const next = {
-        ...emptyIncrementalSessionUsageState(),
-        path: filePath,
-        size: st.size,
-        mtimeMs: st.mtimeMs,
+        ...prior,
         unavailableReason: 'directory session transcripts are not incrementally sampled',
         sampledAt: new Date().toISOString(),
       };
@@ -862,8 +871,12 @@ export async function sampleSessionUsageIncremental(params: {
       };
     }
 
+    const fileId = `${st.dev}:${st.ino}`;
     const continuityLost =
-      prior.path !== null && (prior.path !== filePath || prior.offset > st.size);
+      prior.path !== null &&
+      (prior.path !== filePath ||
+        prior.offset > st.size ||
+        (prior.fileId !== undefined && prior.fileId !== fileId));
     // Consumed bytes mean accounting started, pin or not — see the gateway sampler.
     if (continuityLost && (prior.baselineCaptured || prior.offset > 0)) {
       const integrityFailureReason = 'session transcript changed after budget accounting began';
@@ -912,12 +925,13 @@ export async function sampleSessionUsageIncremental(params: {
     // Truncation / rotate — restart from byte 0.
     let state: IncrementalSessionUsageState =
       prior.path === filePath && prior.offset <= st.size
-        ? { ...prior, path: filePath, size: st.size, mtimeMs: st.mtimeMs }
+        ? { ...prior, path: filePath, size: st.size, mtimeMs: st.mtimeMs, fileId }
         : {
             ...emptyIncrementalSessionUsageState(),
             path: filePath,
             size: st.size,
             mtimeMs: st.mtimeMs,
+            fileId,
           };
 
     const start = state.offset;

@@ -1323,6 +1323,8 @@ export interface RunMonitorBudgetUsageState {
   lastCumulative?: { input: number; output: number; cacheRead: number; total: number };
   /** Discard the next complete record: it is the previous writer's in-flight record. */
   discardNextRecord?: boolean;
+  /** Filesystem identity of the counted transcript; path equality is not identity. */
+  fileId?: string;
   /**
    * True once counting has been deliberately anchored at a byte offset (a warm-handoff
    * pin). Providers report increments, so there is no total to subtract.
