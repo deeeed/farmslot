@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-26T05:23:32.738Z",
+  "recordedAt": "2026-08-26T05:32:31.968Z",
   "host": "macwork",
   "scenario": "budget-guard-smoke",
   "runner": "codex",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-xID3BM",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-OhWCXJ",
   "slotId": "runner-validate-macwork-codex-budget",
-  "session": "runner-validate-codex-budget-guard-smoke-70165",
+  "session": "runner-validate-codex-budget-guard-smoke-99086",
   "initialCompleted": true,
   "sessionBinding": {
-    "runnerSessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-xID3BM/.agent/codex-home/sessions/2026/08/26/rollout-2026-08-26T13-23-05-01a03c85-9ee2-7ee2-b396-38646a1a445b.jsonl",
-    "runnerSessionId": "01a03c85-9ee2-7ee2-b396-38646a1a445b",
+    "runnerSessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-OhWCXJ/.agent/codex-home/sessions/2026/08/26/rollout-2026-08-26T13-32-04-01a03c8d-d831-7c93-8f20-5fff4a07967c.jsonl",
+    "runnerSessionId": "01a03c8d-d831-7c93-8f20-5fff4a07967c",
     "source": "native"
   },
   "guard": {
@@ -20,7 +20,7 @@
         "violationType": "budget",
         "nudgeSent": true,
         "sampleTurns": 1,
-        "sampleTotalTokens": 13564
+        "sampleTotalTokens": 13571
       },
       "second": {
         "budgetWarned": true,
@@ -38,12 +38,12 @@
         "budgetNudgeAttempts": 1
       },
       "unsupportedWarmBaseline": "not-required",
-      "warmRunId": "24edc7d1-b8ca-4237-8304-b7deeb2315f5",
+      "warmRunId": "4353b7bf-72d0-4546-a2f2-7e64d2828202",
       "warmBaseline": {
         "status": "captured",
         "pinnedAtRecordBoundary": true,
-        "pinnedOffset": 99961,
-        "transcriptSize": 99961,
+        "pinnedOffset": 99950,
+        "transcriptSize": 99950,
         "baselineTurns": 0,
         "baselineTotalTokens": 0,
         "breachedOnInheritedHistory": false
@@ -60,19 +60,19 @@
     "exitCode": 0,
     "error": null,
     "stderr": "[run-monitor] failed to load monitor config for runner-validation: Project config not found: /Users/deeeed/dev/farmslot/projects/runner-validation/project.json\n[run-monitor] failed to load monitor config for runner-validation: Project config not found: /Users/deeeed/dev/farmslot/projects/runner-validation/project.json",
-    "gatewayLog": "[pty] set tmux escape-time=10 status-left-length=30\n[runner-observability] {\"kind\":\"runner-observability-agreement\",\"slotId\":\"runner-validate-macwork-codex-budget\",\"runner\":\"codex\",\"target\":\"%62\",\"logPrefix\":\"run-monitor-budget\",\"paneBusy\":false,\"hookBusy\":false,\"hookActivity\":\"idle\",\"hookSource\":\"hook\",\"hookConfidence\":\"high\",\"hookObservedAt\":1787721794576,\"agreed\":true,\"timestamp\":1787721801804}\n[run-monitor] budget nudge sent to run ad73a7bf: update-branch usage budget exceeded (total_tokens 13564 > max_total_tokens 1). This flow should stay near-mechanical — f",
-    "harnessRoot": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-budget-14EWha"
+    "gatewayLog": "[pty] set tmux escape-time=10 status-left-length=30\n[runner-observability] {\"kind\":\"runner-observability-agreement\",\"slotId\":\"runner-validate-macwork-codex-budget\",\"runner\":\"codex\",\"target\":\"%63\",\"logPrefix\":\"run-monitor-budget\",\"paneBusy\":false,\"hookBusy\":false,\"hookActivity\":\"idle\",\"hookSource\":\"hook\",\"hookConfidence\":\"high\",\"hookObservedAt\":1787722331993,\"agreed\":true,\"timestamp\":1787722338194}\n[run-monitor] budget nudge sent to run 8aa2385a: update-branch usage budget exceeded (total_tokens 13571 > max_total_tokens 1). This flow should stay near-mechanical — f",
+    "harnessRoot": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-budget-9RLK6e"
   },
   "nudgeAccepted": true,
   "childTurnCompleted": true,
   "warmCharge": {
     "result": {
-      "fullScanTotalTokens": 45194,
-      "fullScanTurns": 3,
-      "sampleTurns": 2,
-      "sampleTotalTokens": 13787,
-      "chargeTurns": 2,
-      "chargeTotalTokens": 13787,
+      "fullScanTotalTokens": 59157,
+      "fullScanTurns": 4,
+      "sampleTurns": 3,
+      "sampleTotalTokens": 45586,
+      "chargeTurns": 3,
+      "chargeTotalTokens": 45586,
       "baselineTotalTokens": 0,
       "availability": "available",
       "budgetWarned": false

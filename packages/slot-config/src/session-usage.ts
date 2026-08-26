@@ -960,9 +960,11 @@ export async function sampleSessionUsageIncremental(params: {
       nextState: advanced,
     };
   } catch (err) {
+    // Keep the transcript identity the state is actually counting. Stamping the
+    // requested path onto the prior offset makes a later continuity check look intact,
+    // so sampling would resume mid-file against a different session's accounting.
     const next = {
       ...prior,
-      path: filePath,
       unavailableReason: (err as Error).message,
       sampledAt: new Date().toISOString(),
     };

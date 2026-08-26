@@ -59,9 +59,13 @@ export function emptyBudgetUsageSampleState(): BudgetUsageSampleState {
 function unavailable(
   prior: BudgetUsageSampleState,
   unavailableReason: string,
-  overrides: Partial<BudgetUsageSampleState> = {},
+  overrides: Omit<Partial<BudgetUsageSampleState>, 'path'> = {},
   flags: { enforcementFailure?: boolean; unsupportedRunner?: boolean } = {},
 ): BudgetUsageSampleResult {
+  // `path` is deliberately not settable here. Stamping a new transcript onto state that
+  // counts a different one leaves the new path beside the old offset and reference, and
+  // continuity then looks intact — so the next readable poll samples mid-file against
+  // the wrong session instead of failing closed.
   return {
     turns: null,
     totalTokens: null,
@@ -151,7 +155,8 @@ export async function captureBudgetUsageBaselinePin(params: {
   runnerSessionPath: string;
 }): Promise<BudgetUsageSampleState | null> {
   const { vars, runner, runnerSessionPath } = params;
-  if (!getRunnerSessionUsageProvider(runner)) return null;
+  const provider = getRunnerSessionUsageProvider(runner);
+  if (!provider) return null;
 
   let size: number;
   let mtimeMs: number;
@@ -202,7 +207,35 @@ export async function captureBudgetUsageBaselinePin(params: {
   const lastNewline = tail.lastIndexOf(0x0a);
   // No record boundary within the scan window — refuse rather than guess.
   if (lastNewline < 0) return null;
-  return { ...base, offset: tailStart + lastNewline + 1 };
+
+  // Seed the reference from the parent's own last reading. Providers that restate
+  // session totals set `lastCumulative` on every fold, so replaying the tail from a
+  // zeroed state leaves exactly the reading in force at the pin; its counters are
+  // partial sums and are discarded. Without this the child's first reading would be
+  // spent establishing the reference, and a child whose whole turn is one record —
+  // a `turn.completed` carrying 50K — would be charged nothing at all.
+  let reference = base.lastCumulative;
+  let replay = emptyBudgetUsageSampleState();
+  for (const line of tail
+    .subarray(0, lastNewline + 1)
+    .toString('utf8')
+    .split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      replay = provider.applyRecord(replay, JSON.parse(trimmed) as Record<string, unknown>);
+    } catch {
+      // A malformed record in the parent's history says nothing about the reference;
+      // later records still carry it.
+      continue;
+    }
+  }
+  // A zero total means no reading was found (the window held none, or the runner has no
+  // cumulative concept at all). Leave the reference absent so the first post-pin reading
+  // establishes it — lossy, but it can only under-charge.
+  if (replay.lastCumulative && replay.lastCumulative.total > 0) reference = replay.lastCumulative;
+
+  return { ...base, offset: tailStart + lastNewline + 1, lastCumulative: reference };
 }
 
 /**
@@ -251,7 +284,7 @@ export async function sampleBudgetUsage(params: {
   try {
     const remoteStat = await remoteFileStat(vars, runnerSessionPath);
     if (!remoteStat) {
-      return unavailable(prior, 'remote transcript stat failed', { path: runnerSessionPath });
+      return unavailable(prior, 'remote transcript stat failed');
     }
 
     const continuityLost =
@@ -261,8 +294,9 @@ export async function sampleBudgetUsage(params: {
       return unavailable(
         prior,
         integrityFailureReason,
+        // Accounting is dead for this run once integrity is lost; the state keeps the
+        // path it was actually counting so the failure stays attributable.
         {
-          path: runnerSessionPath,
           size: remoteStat.size,
           mtimeMs: remoteStat.mtimeMs,
           integrityFailureReason,
@@ -353,6 +387,6 @@ export async function sampleBudgetUsage(params: {
       nextState: advanced,
     };
   } catch (err) {
-    return unavailable(prior, (err as Error).message, { path: runnerSessionPath });
+    return unavailable(prior, (err as Error).message);
   }
 }

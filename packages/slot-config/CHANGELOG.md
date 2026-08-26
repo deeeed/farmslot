@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- fix(session-usage): the local sampler's failure path keeps the transcript identity it is counting instead of stamping the requested path onto a prior offset.
 - fix(session-usage): a codex `token_count` record carrying only `last_token_usage` is skipped instead of folded. It reports one turn rather than the session, so folding it overwrote the reference and charged the next record the whole way back up to the session total.
 - feat(session-usage): `pinnedIncrementalSessionUsageState()` starts counting at a byte offset mid-transcript. An absent `lastCumulative` marks that the next session-total reading only establishes the reference, so runners that restate totals are counted as increments from the pin instead of restating someone else's history.
 - fix(session-usage): a record larger than the bounded read window widens the read once (up to 16MiB) so its usage is still counted; only records beyond that are skipped, counted in `skippedOversizedRecords`, and no longer raise a permanent integrity failure that disabled accounting for the rest of a run.

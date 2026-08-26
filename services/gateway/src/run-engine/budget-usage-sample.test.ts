@@ -132,6 +132,30 @@ test('captureBudgetUsageBaselinePin charges the child only for bytes appended af
   assert.equal(sampled.totalTokens, 7);
 });
 
+test('a warm pin seeds the reference so the child loses no reading', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-seed-'));
+  const file = path.join(dir, 'session.jsonl');
+  await writeFile(file, `${codexTotal(7_950_000)}\n`, 'utf8');
+  const baseline = await captureBudgetUsageBaselinePin({
+    vars: localVars,
+    runner: 'codex',
+    runnerSessionPath: file,
+  });
+  assert.ok(baseline);
+  assert.equal(baseline.lastCumulative?.total, 7_950_000, 'reference comes from the parent');
+
+  // A child whose entire work is ONE reading must still be charged for it.
+  await appendFile(file, `${codexTotal(8_000_000)}\n`, 'utf8');
+  const sampled = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'codex',
+    runnerSessionPath: file,
+    prior: baseline,
+  });
+  assert.equal(sampled.totalTokens, 50_000);
+});
+
 test('a cumulative runner charges only post-pin growth, not the session total', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-cumulative-'));
   const file = path.join(dir, 'session.jsonl');
@@ -145,8 +169,6 @@ test('a cumulative runner charges only post-pin growth, not the session total', 
   });
   assert.ok(baseline);
 
-  // The child's first reading establishes the reference (its own work up to that point
-  // is not charged); growth from there is counted.
   await appendFile(file, `${codexTotal(8_000_000)}\n${codexTotal(8_050_000)}\n`, 'utf8');
   const sampled = await sampleBudgetUsage({
     slotId: 's1',
@@ -156,7 +178,7 @@ test('a cumulative runner charges only post-pin growth, not the session total', 
     prior: baseline,
   });
   // Against an 8M ceiling this must be the child's growth, never the session total.
-  assert.equal(sampled.totalTokens, 50_000);
+  assert.equal(sampled.totalTokens, 100_000);
   assert.ok((sampled.totalTokens ?? 0) < 7_950_000, 'parent history must never be charged');
 });
 
@@ -243,6 +265,33 @@ test('captureBudgetUsageBaselinePin returns null for a directory transcript', as
     runnerSessionPath: dir,
   });
   assert.equal(baseline, null);
+});
+
+test('a failed stat never stamps a new transcript identity onto old accounting', async () => {
+  const dirA = await mkdtemp(path.join(tmpdir(), 'budget-usage-idA-'));
+  const fileA = path.join(dirA, 'a.jsonl');
+  await writeFile(fileA, `${claudeLine(1000, 200)}\n`, 'utf8');
+  const first = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: fileA,
+    prior: emptyBudgetUsageSampleState(),
+  });
+  assert.equal(first.nextState.path, fileA);
+
+  // Discovery swings to a path that cannot be read yet.
+  const missingB = path.join(dirA, 'b.jsonl');
+  const blip = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: missingB,
+    prior: first.nextState,
+  });
+  // Recording B's identity beside A's offset would make continuity look intact and the
+  // next readable poll would sample B mid-file against A's accounting.
+  assert.equal(blip.nextState.path, fileA, 'identity must stay with the counted transcript');
 });
 
 test('sampleBudgetUsage keeps the pin when the session path blips out for one poll', async () => {

@@ -783,7 +783,16 @@ export async function monitorRun(
         integrityFailureReason: persisted.budgetUsage.integrityFailureReason,
         skippingOversizedRecord: persisted.budgetUsage.skippingOversizedRecord,
         skippedOversizedRecords: persisted.budgetUsage.skippedOversizedRecords,
-        lastCumulative: persisted.budgetUsage.lastCumulative,
+        // A pin always records a reference (or deliberately leaves it absent for a
+        // transcript with no readings). State persisted before this field existed has
+        // neither, and reading that absence as a pin would discard the next reading and
+        // under-charge the run — so anything without a captured baseline restores as
+        // counting from the start, which is what those states were doing.
+        lastCumulative:
+          persisted.budgetUsage.lastCumulative ??
+          (persisted.budgetUsage.baselineCaptured
+            ? undefined
+            : emptyBudgetUsageSampleState().lastCumulative),
         baselineCaptured: persisted.budgetUsage.baselineCaptured,
         baselineTurns: persisted.budgetUsage.baselineTurns,
         baselineTotalTokens: persisted.budgetUsage.baselineTotalTokens,
