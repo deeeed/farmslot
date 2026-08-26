@@ -152,10 +152,12 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       // counted usage, so even ceilings of 1 do not breach on parent history.
       result.warmBaseline?.status === 'captured' &&
       result.warmBaseline?.pinnedAtRecordBoundary === true &&
-      result.warmBaseline?.baselineTurns === 0 &&
-      // Counters start at zero at the pin for every runner: codex converts its session
-      // totals to increments in its provider, so no runner-specific baseline is needed.
-      result.warmBaseline?.baselineTotalTokens === 0 &&
+      // Counting starts at the pin for every runner: providers report increments, so
+      // there is no baseline total to subtract and none is carried.
+      result.warmBaseline?.pinnedOffset > 0 &&
+      // A cumulative runner's pin must carry the parent's session position, or the
+      // child's first reading is charged the whole session.
+      result.warmBaseline?.referenceTotal > 0 &&
       result.warmBaseline?.breachedOnInheritedHistory === false &&
       // The discriminating check: after a real post-pin turn the child is charged only
       // its own growth. With a zeroed cumulative baseline this equals the whole session

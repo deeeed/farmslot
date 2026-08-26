@@ -196,8 +196,6 @@ export async function captureBudgetUsageBaselinePin(params: {
     mtimeMs,
     sampledAt: new Date().toISOString(),
     baselineCaptured: true,
-    baselineTurns: 0,
-    baselineTotalTokens: 0,
   };
   // An empty transcript has nothing to inherit, so count it from byte 0 — that is what
   // a zeroed `lastCumulative` means, as opposed to the pinned state's absent one.
@@ -214,30 +212,33 @@ export async function captureBudgetUsageBaselinePin(params: {
 
   // Seed the reference from the parent's own last reading. Providers that restate
   // session totals set `lastCumulative` on every fold, so replaying the tail from a
-  // zeroed state leaves exactly the reading in force at the pin; its counters are
-  // partial sums and are discarded. Without this the child's first reading would be
-  // spent establishing the reference, and a child whose whole turn is one record —
-  // a `turn.completed` carrying 50K — would be charged nothing at all.
-  let reference = base.lastCumulative;
-  let replay = emptyBudgetUsageSampleState();
+  // reference-less state leaves exactly the reading in force at the pin; its counters
+  // are partial sums and are discarded. Without this the child's first reading would be
+  // spent establishing the reference, and a child whose whole turn is one record — a
+  // `turn.completed` carrying 50K — would be charged nothing at all.
+  let replay = pinnedIncrementalSessionUsageState();
+  let scanned = 0;
   for (const line of tail
     .subarray(0, lastNewline + 1)
     .toString('utf8')
     .split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
+    scanned += 1;
     try {
       replay = provider.applyRecord(replay, JSON.parse(trimmed) as Record<string, unknown>);
     } catch {
-      // A malformed record in the parent's history says nothing about the reference;
-      // later records still carry it.
-      continue;
+      // The window can open mid-record, so the first fragment is expected to be
+      // unparseable. A malformed record after that is real corruption: continuing would
+      // silently keep an older reading as the reference and charge the child the gap.
+      if (scanned === 1) continue;
+      return null;
     }
   }
-  // A zero total means no reading was found (the window held none, or the runner has no
-  // cumulative concept at all). Leave the reference absent so the first post-pin reading
-  // establishes it — lossy, but it can only under-charge.
-  if (replay.lastCumulative && replay.lastCumulative.total > 0) reference = replay.lastCumulative;
+  // A defined reference is authoritative even at zero — a parent that genuinely burned
+  // nothing still fixes where the session stands. Absent means the window held no
+  // reading at all, which only a runner that restates totals needs to care about.
+  if (replay.lastCumulative === undefined && provider.restatesSessionTotals) return null;
 
   // Bytes after the last boundary are the previous writer's in-flight record. It
   // completes after the pin, so drop it rather than charge their turn to this run.
@@ -245,7 +246,7 @@ export async function captureBudgetUsageBaselinePin(params: {
   return {
     ...base,
     offset: pinnedOffset,
-    lastCumulative: reference,
+    lastCumulative: replay.lastCumulative,
     discardNextRecord: pinnedOffset < size,
   };
 }

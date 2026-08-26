@@ -10,6 +10,16 @@ import type { IncrementalSessionUsageState } from '@farmslot/slot-config';
  */
 export interface RunnerSessionUsageProvider {
   readonly id: string;
+  /**
+   * True when the runner's records restate the session's running totals rather than
+   * reporting their own usage (codex). Such a runner needs a reference reading before
+   * counting can start mid-transcript, so a warm pin that cannot recover one must fail
+   * closed instead of counting the next reading as if it were growth.
+   *
+   * This is a declaration, not a behaviour switch: the conversion to increments still
+   * happens inside the provider.
+   */
+  readonly restatesSessionTotals: boolean;
   applyRecord(
     state: IncrementalSessionUsageState,
     record: Record<string, unknown>,
@@ -96,8 +106,17 @@ function codexApplyRecord(
     return { ...state, turns: state.turns + 1 };
   }
   if (record.type === 'turn.completed' && record.usage) {
-    const folded = foldCodexSessionTotals(state, record.usage as Record<string, unknown>);
-    return { ...folded, turns: folded.turns + 1 };
+    // `codex exec --json` puts this turn's usage at the top level. It is already an
+    // increment, so it is added directly and must never reach foldCodexSessionTotals:
+    // doing so both charges a bogus delta and re-seats the session reference to a
+    // per-turn figure, which double-charges the whole session on the next reading.
+    const usage = record.usage as Record<string, unknown>;
+    const next = { ...state, turns: state.turns + 1 };
+    next.inputTokens += finiteNumber(usage.input_tokens) ?? 0;
+    next.outputTokens += finiteNumber(usage.output_tokens) ?? 0;
+    next.cacheRead += finiteNumber(usage.cached_input_tokens) ?? 0;
+    next.totalTokens += codexUsageTotal(usage);
+    return next;
   }
   if (record.type === 'event_msg' && payload.type === 'token_count') {
     const info = (payload.info as Record<string, unknown> | undefined) ?? {};
@@ -111,10 +130,12 @@ function codexApplyRecord(
 
 export const claudeSessionUsageProvider: RunnerSessionUsageProvider = {
   id: 'claude-jsonl',
+  restatesSessionTotals: false,
   applyRecord: claudeApplyRecord,
 };
 
 export const codexSessionUsageProvider: RunnerSessionUsageProvider = {
   id: 'codex-jsonl',
+  restatesSessionTotals: true,
   applyRecord: codexApplyRecord,
 };

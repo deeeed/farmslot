@@ -672,10 +672,8 @@ export type IncrementalSessionUsageState = {
   unavailableReason?: string;
   /** Persistent fail-closed reason when transcript accounting lost integrity. */
   integrityFailureReason?: string;
-  /** Soft-budget baseline for warm-handoff / first-poll delta accounting. */
+  /** True once counting has been deliberately anchored (a warm-handoff pin). */
   baselineCaptured?: boolean;
-  baselineTurns?: number;
-  baselineTotalTokens?: number;
   /** True while advancing past a record larger than the bounded read window. */
   skippingOversizedRecord?: boolean;
   /** Count of records skipped for exceeding the window (their usage is uncounted). */

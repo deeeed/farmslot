@@ -23,6 +23,7 @@ import {
   isFreshTerminalHandoffSignal,
   isWorkerSignalFreshForRun,
   MAX_BUDGET_NUDGE_ATTEMPTS,
+  migrateLegacyBudgetUsage,
   type MonitorNudgeRunView,
   pollBudgetGuardStep,
   rearmInteractiveHandoffAutoRecovery,
@@ -448,6 +449,23 @@ test('applyBudgetWarnOnce emits once then stays quiet (warn-once)', () => {
   });
   assert.equal(second.emit, false);
   assert.equal(second.budgetWarned, true);
+});
+
+test('a pre-increment run restores with its legacy baseline folded out', () => {
+  // Such a run carries an absolute session total plus the parent total the old guard
+  // subtracted. Restoring the raw total would charge it the parent's history at once.
+  const migrated = migrateLegacyBudgetUsage({
+    turns: 42,
+    totalTokens: 9_000_000,
+    baselineTurns: 40,
+    baselineTotalTokens: 8_900_000,
+  });
+  assert.equal(migrated.totalTokens, 100_000);
+  assert.equal(migrated.turns, 2);
+  // Its persisted counters were the session's position, so they are the reference the
+  // next reading is measured against — `baselineCaptured` cannot tell a legacy cold run
+  // from a legacy warm one, and this needs no state version.
+  assert.equal(migrated.lastCumulative.total, 9_000_000);
 });
 
 test('restoreStructuredProgressAtMs keeps the persisted idle clock across restart', () => {

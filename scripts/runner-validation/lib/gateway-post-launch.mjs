@@ -651,8 +651,9 @@ process.stdout.write(JSON.stringify({
       : false,
     pinnedOffset: warmUsage?.offset ?? null,
     transcriptSize: warmUsage?.size ?? null,
-    baselineTurns: warmUsage?.baselineTurns ?? null,
-    baselineTotalTokens: warmUsage?.baselineTotalTokens ?? null,
+    // Providers report increments, so a pin carries a reference reading rather than a
+    // total to subtract. For codex that reference must be the parent's session position.
+    referenceTotal: warmUsage?.lastCumulative?.total ?? null,
     breachedOnInheritedHistory: warmTick.budgetWarned === true,
   },
   unmeasuredRunner: {
@@ -752,7 +753,7 @@ process.stdout.write(JSON.stringify({
   sampleTotalTokens: tick.sampleTotalTokens,
   chargeTurns: tick.chargeTurns,
   chargeTotalTokens: tick.chargeTotalTokens,
-  baselineTotalTokens: usage?.baselineTotalTokens ?? null,
+  referenceTotal: usage?.lastCumulative?.total ?? null,
   availability: tick.availability,
   budgetWarned: tick.budgetWarned,
 }) + '\\n');

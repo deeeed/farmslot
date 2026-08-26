@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  applyBudgetUsageBaseline,
   buildUsageBudgetNudgeMessage,
   evaluateFlowUsageBudget,
   FLOW_USAGE_BUDGET_DEFAULTS,
@@ -96,77 +95,4 @@ test('buildUsageBudgetNudgeMessage prefixes orchestrator budget warning', () => 
     buildUsageBudgetNudgeMessage('update-branch usage budget exceeded'),
     /^\[Orchestrator\] USAGE BUDGET WARNING:/,
   );
-});
-
-test('applyBudgetUsageBaseline captures warm parent totals without charging', () => {
-  const first = applyBudgetUsageBaseline({
-    turns: 500,
-    totalTokens: 50_000_000,
-    warmSession: true,
-    baselineCaptured: false,
-  });
-  assert.equal(first.establishingBaseline, true);
-  assert.equal(first.chargeTurns, 0);
-  assert.equal(first.baselineTurns, 500);
-
-  const later = applyBudgetUsageBaseline({
-    turns: 560,
-    totalTokens: 51_000_000,
-    warmSession: true,
-    baselineCaptured: true,
-    baselineTurns: 500,
-    baselineTotalTokens: 50_000_000,
-  });
-  assert.equal(later.establishingBaseline, false);
-  assert.equal(later.chargeTurns, 60);
-  assert.equal(later.chargeTotalTokens, 1_000_000);
-});
-
-test('applyBudgetUsageBaseline honors a captured baseline even without the warm flag', () => {
-  // A pinned warm baseline can outlive the flag (restart recovery, or a handoff path
-  // that never set it). Charging absolute totals there re-creates the false breach.
-  const charged = applyBudgetUsageBaseline({
-    turns: 12,
-    totalTokens: 8_050_000,
-    warmSession: false,
-    baselineCaptured: true,
-    baselineTurns: 0,
-    baselineTotalTokens: 7_950_000,
-  });
-  assert.equal(charged.chargeTotalTokens, 100_000);
-  assert.equal(charged.chargeTurns, 12);
-  assert.equal(charged.establishingBaseline, false);
-});
-
-test('applyBudgetUsageBaseline charges cold-start absolute totals on first sample', () => {
-  const cold = applyBudgetUsageBaseline({
-    turns: 500,
-    totalTokens: 117_000_000,
-    warmSession: false,
-    baselineCaptured: false,
-  });
-  assert.equal(cold.establishingBaseline, false);
-  assert.equal(cold.chargeTurns, 500);
-  assert.equal(cold.chargeTotalTokens, 117_000_000);
-  const evaluation = evaluateFlowUsageBudget(
-    { turns: cold.chargeTurns, totalTokens: cold.chargeTotalTokens },
-    FLOW_USAGE_BUDGET_DEFAULTS['update-branch']!,
-  );
-  assert.equal(evaluation.exceeded, true);
-});
-
-test('applyBudgetUsageBaseline only warns after warm child delta exceeds ceiling', () => {
-  const delta = applyBudgetUsageBaseline({
-    turns: 590,
-    totalTokens: 52_000_000,
-    warmSession: true,
-    baselineCaptured: true,
-    baselineTurns: 500,
-    baselineTotalTokens: 50_000_000,
-  });
-  const evaluation = evaluateFlowUsageBudget(
-    { turns: delta.chargeTurns, totalTokens: delta.chargeTotalTokens },
-    FLOW_USAGE_BUDGET_DEFAULTS['update-branch']!,
-  );
-  assert.equal(evaluation.exceeded, true);
 });

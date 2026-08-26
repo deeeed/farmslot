@@ -1324,10 +1324,11 @@ export interface RunMonitorBudgetUsageState {
   /** Discard the next complete record: it is the previous writer's in-flight record. */
   discardNextRecord?: boolean;
   /**
-   * First successful sample for this monitor session (warm-handoff parent totals
-   * or cold-start initial point). Soft ceilings apply to (turns - baselineTurns).
+   * True once counting has been deliberately anchored at a byte offset (a warm-handoff
+   * pin). Providers report increments, so there is no total to subtract.
    */
   baselineCaptured?: boolean;
+  /** Legacy: parent totals the pre-increment guard subtracted. Migrated on restore. */
   baselineTurns?: number;
   baselineTotalTokens?: number;
 }

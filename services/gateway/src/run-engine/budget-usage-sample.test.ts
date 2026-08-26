@@ -119,6 +119,7 @@ test('captureBudgetUsageBaselinePin charges the child only for bytes appended af
   assert.equal(baseline.offset, baseline.size);
   assert.equal(baseline.turns, 0);
   assert.equal(baseline.totalTokens, 0);
+  assert.equal('baselineTotalTokens' in baseline, false, 'no subtraction left to carry');
 
   await appendFile(file, `${claudeLine(3, 4)}\n`, 'utf8');
   const sampled = await sampleBudgetUsage({
@@ -195,6 +196,30 @@ test('a cumulative runner still counts a full transcript from byte 0', async () 
     prior: emptyBudgetUsageSampleState(),
   });
   assert.equal(sampled.totalTokens, 9000);
+});
+
+test('turn.completed usage is added as an increment, not folded as a session total', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-turncomplete-'));
+  const file = path.join(dir, 'session.jsonl');
+  const turnCompleted = (total: number) =>
+    JSON.stringify({ type: 'turn.completed', usage: { input_tokens: total, output_tokens: 0 } });
+  // `codex exec --json` reports this turn's usage at the top level, not the session's.
+  // Folding it would charge a bogus delta and re-seat the reference to a per-turn figure,
+  // so the next cumulative reading would charge the whole session again.
+  await writeFile(
+    file,
+    `${codexTotal(9_000_000)}\n${turnCompleted(1000)}\n${codexTotal(9_001_000)}\n`,
+    'utf8',
+  );
+  const sampled = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'codex',
+    runnerSessionPath: file,
+    prior: emptyBudgetUsageSampleState(),
+  });
+  // 9,000,000 session + 1,000 turn + 1,000 growth. Not 18,000,000.
+  assert.equal(sampled.totalTokens, 9_002_000);
 });
 
 test('a per-turn reading is skipped and cannot poison the cumulative reference', async () => {

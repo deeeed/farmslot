@@ -1942,6 +1942,15 @@ async function warnIfObservabilityDegraded(
 
 type SubmitInstructionOutcome = 'ok' | 'not-buffered' | 'stuck';
 
+/**
+ * Set while a send is in flight so the typing primitive can report that the composer was
+ * actually touched. Callers cannot infer this from a `false` return: the sender also
+ * returns false when it holds the whole window without typing (hook lapse, foreign
+ * composer draft, runner busy), and a caller that counts those as delivery attempts
+ * exhausts its retry budget without the worker ever seeing the message.
+ */
+let composerTouchedNotifier: (() => void) | null = null;
+
 async function submitRunnerInstruction(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -1950,6 +1959,7 @@ async function submitRunnerInstruction(
   logPrefix: string,
   mode: 'send' | 'submit-existing',
 ): Promise<SubmitInstructionOutcome> {
+  if (mode === 'send') composerTouchedNotifier?.();
   let sentAtMs: number | null = null;
   if (mode === 'send') {
     try {
@@ -2251,6 +2261,33 @@ async function sendRunnerInstructionHookOnly(
     );
   }
   return false;
+}
+
+/**
+ * Outcome of one instruction send, distinguishing a hold that never reached the composer
+ * from text that landed but was never confirmed submitted.
+ */
+export type RunnerInstructionOutcome = 'sent' | 'typed-unconfirmed' | 'held-untouched';
+
+/**
+ * `sendRunnerInstructionSafely` with the outcome the boolean return cannot express.
+ * Prefer this wherever a caller bounds its own retries.
+ */
+export async function sendRunnerInstructionWithOutcome(
+  ...args: Parameters<typeof sendRunnerInstructionSafely>
+): Promise<RunnerInstructionOutcome> {
+  let touched = false;
+  const previous = composerTouchedNotifier;
+  composerTouchedNotifier = () => {
+    touched = true;
+  };
+  try {
+    const sent = await sendRunnerInstructionSafely(...args);
+    if (sent) return 'sent';
+    return touched ? 'typed-unconfirmed' : 'held-untouched';
+  } finally {
+    composerTouchedNotifier = previous;
+  }
 }
 
 export async function sendRunnerInstructionSafely(
