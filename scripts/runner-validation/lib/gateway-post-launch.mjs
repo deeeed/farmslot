@@ -519,7 +519,8 @@ const first = await pollRunBudgetGuard({
   slotId: ${JSON.stringify(slotId)},
   maxTurns: 1,
   maxTotalTokens: 1,
-  agentStatus: 'idle',
+  // The value monitorRun actually produces at this call site.
+  agentStatus: 'working',
   sendNudge: true,
 });
 const afterFirst = getRun(run.id);
@@ -573,7 +574,7 @@ const warmTick = await pollRunBudgetGuard({
   slotId: ${JSON.stringify(slotId)},
   maxTurns: 1,
   maxTotalTokens: 1,
-  agentStatus: 'idle',
+  agentStatus: 'working',
   sendNudge: false,
 });
 
@@ -731,7 +732,7 @@ const tick = await pollRunBudgetGuard({
   slotId: ${JSON.stringify(slotId)},
   maxTurns: 100000,
   maxTotalTokens: 1000000000000,
-  agentStatus: 'idle',
+  agentStatus: 'working',
   sendNudge: false,
 });
 const run = getRun(${JSON.stringify(runId)});

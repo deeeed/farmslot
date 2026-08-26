@@ -175,12 +175,12 @@ test('a cumulative runner still counts a full transcript from byte 0', async () 
   assert.equal(sampled.totalTokens, 9000);
 });
 
-test('a per-turn total reading cannot subtract from a cumulative runner total', async () => {
+test('a per-turn reading is skipped and cannot poison the cumulative reference', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-lasttoken-'));
   const file = path.join(dir, 'session.jsonl');
-  // codexApplyRecord falls back to `last_token_usage` when the cumulative field is
-  // absent. That reading covers one turn, not the session, so it is lower than the
-  // running reference and must contribute nothing rather than go negative.
+  // A record carrying only `last_token_usage` reports one turn, not the session. Folding
+  // it would overwrite the reference with that small number, so the next session total
+  // would be charged the whole way back up.
   const perTurn = JSON.stringify({
     type: 'event_msg',
     payload: {
@@ -188,7 +188,11 @@ test('a per-turn total reading cannot subtract from a cumulative runner total', 
       info: { last_token_usage: { input_tokens: 900, output_tokens: 100, total_tokens: 1000 } },
     },
   });
-  await writeFile(file, `${codexTotal(4000)}\n${codexTotal(9000)}\n${perTurn}\n`, 'utf8');
+  await writeFile(
+    file,
+    `${codexTotal(4000)}\n${codexTotal(9000)}\n${perTurn}\n${codexTotal(9500)}\n`,
+    'utf8',
+  );
   const sampled = await sampleBudgetUsage({
     slotId: 's1',
     vars: localVars,
@@ -196,7 +200,8 @@ test('a per-turn total reading cannot subtract from a cumulative runner total', 
     runnerSessionPath: file,
     prior: emptyBudgetUsageSampleState(),
   });
-  assert.equal(sampled.totalTokens, 9000);
+  // 9500 total, not 9500 + 8500 re-charged after a poisoned 1000 reference.
+  assert.equal(sampled.totalTokens, 9500);
 });
 
 test('captureBudgetUsageBaselinePin pins to a record boundary when the parent was mid-write', async () => {

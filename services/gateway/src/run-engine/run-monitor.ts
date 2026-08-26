@@ -1652,6 +1652,25 @@ export async function sendBudgetNudge(
   const vars = await loadSlotVars(slotId);
   const context = selectAgentContext(run, { role, contextId });
   const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
+
+  // A runner mid-turn never submits what is typed at it, so the text sits in the
+  // composer and the next poll adds another copy (retro 2026-08-26: 20 insertions on
+  // mini-mm-2, none submitted). Defer on the same structured progress verdict the
+  // stuck/idle nudges use, and spend no attempt — the warning lands once the turn ends.
+  // 'unproven' (hook lapse, pane-only runner) still sends: the send helper owns its
+  // degraded window and MAX_BUDGET_NUDGE_ATTEMPTS bounds the result.
+  const budgetRunner = run.metrics.runner ?? 'claude';
+  const progress = classifyMonitorProgress({
+    activity: await readRunnerActivityFromObservability(vars, session, budgetRunner),
+    turnState: await readRunnerTurnState(vars, session, budgetRunner),
+  });
+  if (progress === 'making-progress') {
+    console.log(
+      `[run-monitor] budget nudge deferred for run ${runId.slice(0, 8)}: runner mid-turn`,
+    );
+    return 'not-attempted';
+  }
+
   const retainedSession = resolveRunRetainedSessionBinding(run, context);
   const sent = await sendRunnerInstructionSafely(
     vars,
@@ -1870,17 +1889,16 @@ export async function pollBudgetGuardStep(params: {
   // Warning emission and delivery confirmation are separate. A false/throwing
   // safe-send keeps budgetNudgeSent false so later polls retry without emitting
   // another violation.
-  // Only deliver into an idle runner. Text typed at a busy composer is never submitted,
-  // so it just accumulates there — and burning the retry budget while the worker cannot
-  // receive the warning means it never hears about the breach at all. Waiting costs a
-  // poll: turns end, and the next idle poll delivers.
+  // Whether the runner can receive the instruction is a runner concern, decided in
+  // sendBudgetNudge from its structured activity signal. `agentStatus` cannot answer it:
+  // every path that reaches this function has it as 'working', because monitorRun treats
+  // anything else as the worker being done.
   if (
     params.sendNudge &&
     budgetWarned &&
     !priorNudgeSent &&
     warningMessage &&
     !sample.unsupportedRunner &&
-    params.agentStatus === 'idle' &&
     budgetNudgeAttempts < MAX_BUDGET_NUDGE_ATTEMPTS
   ) {
     const run = getRun(params.runId);

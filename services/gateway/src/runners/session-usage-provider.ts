@@ -54,8 +54,13 @@ function codexUsageTotal(usage: Record<string, unknown>): number {
  * times per turn, so the loss is a fraction of one turn and always in the safe
  * direction: it can under-charge a run, never charge it for someone else's history.
  *
- * Readings are clamped at zero so a `last_token_usage` fallback, which reports one turn
- * rather than the session, cannot subtract from the totals.
+ * Only session totals may be folded. `last_token_usage` is a per-turn quantity, not a
+ * session total: feeding it here would overwrite the reference with a small number and
+ * charge the next record the whole difference back up to the session total. Clamping
+ * alone does not save it — the reference is already poisoned by then.
+ *
+ * Readings are still clamped at zero so a context-compaction reset costs one reading
+ * rather than going negative.
  */
 function foldCodexSessionTotals(
   state: IncrementalSessionUsageState,
@@ -96,10 +101,10 @@ function codexApplyRecord(
   }
   if (record.type === 'event_msg' && payload.type === 'token_count') {
     const info = (payload.info as Record<string, unknown> | undefined) ?? {};
-    const usage = (info.total_token_usage ?? info.last_token_usage) as
-      | Record<string, unknown>
-      | undefined;
-    if (usage) return foldCodexSessionTotals(state, usage);
+    const total = info.total_token_usage as Record<string, unknown> | undefined;
+    // A record with only `last_token_usage` carries no session total, so it says nothing
+    // about where the session stands and is skipped rather than folded.
+    if (total) return foldCodexSessionTotals(state, total);
   }
   return state;
 }

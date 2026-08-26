@@ -670,14 +670,14 @@ test('pollBudgetGuardStep does not spend attempts when the pane is never touched
   assert.equal(budgetNudgeAttempts, 1, 'only the delivery that reached the pane counts');
 });
 
-test('pollBudgetGuardStep waits for an idle runner before typing the warning', async (t) => {
+test('pollBudgetGuardStep delivers under the agentStatus the monitor actually produces', async (t) => {
   const run = createRun({
     flowType: 'update-branch',
     project: 'farmslot-farm',
-    ticketOrPr: `BUDGET-BUSY-${Date.now()}`,
+    ticketOrPr: `BUDGET-WORKING-${Date.now()}`,
     slotId: 'slot-1',
     runner: 'claude',
-    branch: 'budget-busy-test',
+    branch: 'budget-working-test',
   });
   updateRun(run.id, { status: 'monitoring' });
   t.after(async () => {
@@ -687,48 +687,31 @@ test('pollBudgetGuardStep waits for an idle runner before typing the warning', a
     }
   });
 
+  // monitorRun only reaches the budget block with agentStatus 'working' — anything else
+  // means the worker is done and the monitor has already returned. A delivery gate keyed
+  // to this value is dead code, so the guard must not have one.
   let attempts = 0;
-  const common = {
+  const tick = await pollBudgetGuardStep({
     runId: run.id,
     slotId: 'slot-1',
-    flowType: 'update-branch' as const,
+    flowType: 'update-branch',
     runner: 'claude',
-    runnerSessionPath: await breachingTranscript('run-monitor-budget-busy-'),
+    runnerSessionPath: await breachingTranscript('run-monitor-budget-working-'),
     maxTurns: 1,
     maxTotalTokens: 1,
+    budgetWarned: false,
+    budgetNudgeSent: false,
+    budgetUsage: emptyBudgetUsageSampleState(),
+    agentStatus: 'working',
     sendNudge: true,
     localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
     deliverNudge: async () => {
       attempts += 1;
       return 'confirmed' as const;
     },
-  };
-
-  // A busy composer never submits what is typed at it, so nothing is sent and no
-  // attempt is spent — otherwise the cap would be exhausted before the worker could
-  // ever receive the warning.
-  let tick = await pollBudgetGuardStep({
-    ...common,
-    agentStatus: 'working',
-    budgetWarned: false,
-    budgetNudgeSent: false,
-    budgetUsage: emptyBudgetUsageSampleState(),
   });
-  assert.equal(tick.violation?.type, 'budget', 'the breach is still recorded');
-  assert.equal(tick.nudgeSent, false);
-  assert.equal(tick.budgetNudgeAttempts, 0);
-  assert.equal(attempts, 0);
-
-  // The turn ends; the warning lands on the next poll.
-  tick = await pollBudgetGuardStep({
-    ...common,
-    agentStatus: 'idle',
-    budgetWarned: tick.budgetWarned,
-    budgetNudgeSent: false,
-    budgetNudgeAttempts: tick.budgetNudgeAttempts,
-    budgetUsage: tick.budgetUsage,
-  });
-  assert.equal(tick.nudgeSent, true);
+  assert.equal(tick.violation?.type, 'budget');
+  assert.equal(tick.nudgeSent, true, 'the worker must actually be told about the breach');
   assert.equal(attempts, 1);
 });
 
