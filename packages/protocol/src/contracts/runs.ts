@@ -1312,6 +1312,8 @@ export interface RunMonitorBudgetUsageState {
   integrityFailureReason?: string;
   /** True while advancing past a record larger than the bounded read window. */
   skippingOversizedRecord?: boolean;
+  /** Count of records skipped for exceeding the window (their usage is uncounted). */
+  skippedOversizedRecords?: number;
   /**
    * First successful sample for this monitor session (warm-handoff parent totals
    * or cold-start initial point). Soft ceilings apply to (turns - baselineTurns).
@@ -1332,6 +1334,12 @@ export interface RunMonitorState {
   budgetWarned?: boolean;
   /** True after a budget nudge was confirmed delivered (may retry while false). */
   budgetNudgeSent?: boolean;
+  /**
+   * Delivery attempts made for the budget nudge. Retries stop at
+   * MAX_BUDGET_NUDGE_ATTEMPTS so an unconfirmable pane cannot accumulate copies
+   * of the warning in the runner composer.
+   */
+  budgetNudgeAttempts?: number;
   /** Append-only transcript sample cache for the soft budget guard. */
   budgetUsage?: RunMonitorBudgetUsageState;
 }

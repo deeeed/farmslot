@@ -404,11 +404,10 @@ test('sampleSessionUsageIncremental skips oversized record without a newline to 
     prior: state,
     applyRecord: applyClaudeRecord,
   });
-  // First window advances while explicitly failing closed; it never invents usage.
+  // First window advances past the record it cannot hold; it never invents usage.
   assert.ok(first.nextState.offset > 0, 'offset must advance past oversized window');
-  assert.equal(first.availability, 'unavailable');
-  assert.match(first.unavailableReason ?? '', /exceeds bounded sample window/);
   assert.equal(first.nextState.turns, 0);
+  assert.match(first.nextState.unavailableReason ?? '', /exceeds bounded sample window/);
   // Continue until the good record is counted after the oversized record's newline.
   state = first.nextState;
   for (let i = 0; i < 5 && state.turns < 1; i++) {
@@ -421,7 +420,9 @@ test('sampleSessionUsageIncremental skips oversized record without a newline to 
   }
   assert.equal(state.turns, 1);
   assert.equal(state.totalTokens, 12);
-  assert.match(state.integrityFailureReason ?? '', /exceeds bounded sample window/);
+  // Skipping one record must not disable accounting for the rest of the run.
+  assert.equal(state.integrityFailureReason, undefined);
+  assert.equal(state.skippedOversizedRecords, 1);
 });
 
 test('sampleSessionUsageIncremental bounds bytes read per sample', async () => {

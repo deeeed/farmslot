@@ -106,8 +106,24 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       result.second?.violationType === null &&
       result.second?.nudgeSent === false &&
       result.persistedAfterSecond?.budgetNudgeSent === true &&
+      // A confirmed delivery spends exactly one of the capped attempts.
+      result.persistedAfterFirst?.budgetNudgeAttempts === 1 &&
+      result.persistedAfterSecond?.budgetNudgeAttempts === 1 &&
       result.unsupportedWarmBaseline === 'not-required' &&
-      result.violationEvents === 1 &&
+      // Warm handoff pins accounting at the transcript's EOF: the child inherits no
+      // counted usage, so even ceilings of 1 do not breach on parent history.
+      result.warmBaseline?.status === 'captured' &&
+      result.warmBaseline?.pinnedAtEof === true &&
+      result.warmBaseline?.baselineTurns === 0 &&
+      result.warmBaseline?.baselineTotalTokens === 0 &&
+      result.warmBaseline?.breachedOnInheritedHistory === false &&
+      // An unmeasurable runner is recorded for the operator, never typed at the worker.
+      result.unmeasuredRunner?.unsupportedRunner === true &&
+      result.unmeasuredRunner?.violationType === 'budget' &&
+      /enforcement unsupported/.test(result.unmeasuredRunner?.violationMessage ?? '') &&
+      result.unmeasuredRunner?.nudgeSent === false &&
+      result.unmeasuredRunner?.budgetNudgeAttempts === 0 &&
+      result.violationEvents === 2 &&
       report.nudgeAccepted;
   } catch (error) {
     report.error = error?.message || String(error);

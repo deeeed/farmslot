@@ -5,6 +5,8 @@
 // helper). Remote reads only new bytes from the durable offset via a short
 // Python seek/read on the slot (no full-transcript reparse on each poll).
 
+import { stat } from 'node:fs/promises';
+
 import {
   advanceIncrementalFromBytes,
   emptyIncrementalSessionUsageState,
@@ -28,6 +30,12 @@ export type BudgetUsageSampleResult = {
   unavailableReason?: string;
   /** True when accounting integrity/capability is unavailable and the guard must warn. */
   enforcementFailure?: boolean;
+  /**
+   * True when the runner has no session-usage provider at all (cursor, grok, …).
+   * A missing capability is an operator-facing gap, not worker misbehavior, so the
+   * guard records it without instructing the worker to stop expanding scope.
+   */
+  unsupportedRunner?: boolean;
   nextState: BudgetUsageSampleState;
 };
 
@@ -85,6 +93,53 @@ async function remoteReadBytes(
 }
 
 /**
+ * Seed budget accounting at the transcript's current end-of-file.
+ *
+ * A warm handoff inherits the parent's transcript, so the child run must be charged
+ * only for what is appended after the handoff. Parsing the parent's history to build
+ * a totals baseline is bounded to one window per sample, so on a long retained session
+ * the baseline lands far below the real parent totals and the monitor then charges the
+ * parent's remaining bytes to the child (retro 2026-08-26: run 2164728b on mini-mm-2
+ * breached 8M "within minutes" on inherited codex history). Recording the byte offset
+ * is exact and costs one stat.
+ *
+ * Returns null when the transcript cannot be stat'd — callers fail the warm baseline
+ * closed rather than start a run with unenforceable accounting.
+ */
+export async function captureBudgetUsageBaselineAtEof(params: {
+  vars: SlotVars;
+  runnerSessionPath: string;
+}): Promise<BudgetUsageSampleState | null> {
+  const { vars, runnerSessionPath } = params;
+  let size: number;
+  let mtimeMs: number;
+  if (isLocal(vars.host, vars.machine)) {
+    const st = await stat(runnerSessionPath);
+    // Directory transcripts are not incrementally sampled, so there is no offset to pin.
+    if (st.isDirectory()) return null;
+    size = st.size;
+    mtimeMs = st.mtimeMs;
+  } else {
+    const remote = await remoteFileStat(vars, runnerSessionPath);
+    if (!remote) return null;
+    size = remote.size;
+    mtimeMs = remote.mtimeMs;
+  }
+  return {
+    ...emptyBudgetUsageSampleState(),
+    path: runnerSessionPath,
+    size,
+    mtimeMs,
+    // Everything already written belongs to the parent — start reading from EOF.
+    offset: size,
+    sampledAt: new Date().toISOString(),
+    baselineCaptured: true,
+    baselineTurns: 0,
+    baselineTotalTokens: 0,
+  };
+}
+
+/**
  * Sample session turns/tokens for the soft budget guard.
  *
  * - Supported runners use their typed session-usage provider.
@@ -108,6 +163,7 @@ export async function sampleBudgetUsage(params: {
       availability: 'unavailable',
       unavailableReason,
       enforcementFailure: true,
+      unsupportedRunner: true,
       nextState: {
         ...prior,
         unavailableReason,

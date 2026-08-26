@@ -663,6 +663,8 @@ export type IncrementalSessionUsageState = {
   baselineTotalTokens?: number;
   /** True while advancing past a record larger than the bounded read window. */
   skippingOversizedRecord?: boolean;
+  /** Count of records skipped for exceeding the window (their usage is uncounted). */
+  skippedOversizedRecords?: number;
 };
 
 export type IncrementalSessionUsageResult = {
@@ -728,12 +730,16 @@ export function advanceIncrementalFromBytes(
   if (lastNl < 0) {
     // No complete line in this window.
     if (state.skippingOversizedRecord || buf.length >= meta.maxWindow) {
-      // A complete record cannot fit in the bounded window. Advance without
-      // parsing and surface an integrity failure instead of fabricating usage.
+      // A complete record cannot fit in the bounded window (large tool output is
+      // routine in codex/claude transcripts). Advance past it and keep counting the
+      // rest of the transcript: the skipped record is undercounted, which is a far
+      // smaller failure than permanently disabling budget accounting for the run.
+      if (!state.skippingOversizedRecord) {
+        state.skippedOversizedRecords = (state.skippedOversizedRecords ?? 0) + 1;
+      }
       state.offset = meta.startOffset + buf.length;
       state.skippingOversizedRecord = true;
-      state.integrityFailureReason = 'session transcript record exceeds bounded sample window';
-      state.unavailableReason = state.integrityFailureReason;
+      state.unavailableReason = 'session transcript record exceeds bounded sample window';
       state.sampledAt = new Date().toISOString();
       return state;
     }

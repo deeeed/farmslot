@@ -541,6 +541,78 @@ const unsupportedWarmBaseline = await prepareWarmBudgetBaselineForHandoff(
   unsupportedRun.id,
   ${JSON.stringify(slotId)},
 );
+
+// Warm handoff onto the live transcript: the child must inherit a byte pin, not the
+// parent's counted usage, so its ceiling applies only to what it appends.
+const warmRun = createRun({
+  flowType: 'update-branch',
+  project: 'runner-validation',
+  ticketOrPr: 'runner-validation-warm-budget-baseline',
+  slotId: ${JSON.stringify(slotId)},
+  runner: ${JSON.stringify(runner)},
+  branch: 'runner-validation',
+});
+updateRun(warmRun.id, {
+  metrics: {
+    ...warmRun.metrics,
+    runner: ${JSON.stringify(runner)},
+    runnerSessionPath: ${JSON.stringify(sessionPath)},
+  },
+});
+const warmBaseline = await prepareWarmBudgetBaselineForHandoff(
+  warmRun.id,
+  ${JSON.stringify(slotId)},
+);
+const warmUsage = getRun(warmRun.id)?.monitorState?.budgetUsage ?? null;
+// Ceilings of 1 would breach instantly on any inherited history.
+const warmTick = await pollRunBudgetGuard({
+  runId: warmRun.id,
+  slotId: ${JSON.stringify(slotId)},
+  maxTurns: 1,
+  maxTotalTokens: 1,
+  agentStatus: 'idle',
+  sendNudge: false,
+});
+
+// A runner with no session-usage provider can never be measured. The guard must
+// record the gap without typing an accusation into the live worker pane.
+const unmeasuredRun = createRun({
+  flowType: 'update-branch',
+  project: 'runner-validation',
+  ticketOrPr: 'runner-validation-unmeasured-runner-budget',
+  slotId: ${JSON.stringify(slotId)},
+  runner: 'cursor',
+  branch: 'runner-validation',
+});
+const unmeasuredRole = primaryRoleForFlow(unmeasuredRun.flowType);
+updateRun(unmeasuredRun.id, {
+  status: 'monitoring',
+  metrics: { ...unmeasuredRun.metrics, runner: 'cursor' },
+  agentContexts: [{
+    id: contextIdFor(unmeasuredRole),
+    role: unmeasuredRole,
+    label: agentRoleLabel(unmeasuredRole),
+    status: 'idle',
+    slotId: ${JSON.stringify(slotId)},
+    runId: unmeasuredRun.id,
+    runner: 'cursor',
+    target: {
+      session: ${JSON.stringify(session)},
+      pane: ${JSON.stringify(target)},
+      target: ${JSON.stringify(target)},
+    },
+    startedAt: now,
+    updatedAt: now,
+  }],
+});
+const unmeasuredTick = await pollRunBudgetGuard({
+  runId: unmeasuredRun.id,
+  slotId: ${JSON.stringify(slotId)},
+  maxTurns: 1,
+  maxTotalTokens: 1,
+  agentStatus: 'working',
+  sendNudge: true,
+});
 process.stdout.write(JSON.stringify({
   first: {
     budgetWarned: first.budgetWarned,
@@ -557,12 +629,28 @@ process.stdout.write(JSON.stringify({
   persistedAfterFirst: {
     budgetWarned: afterFirst?.monitorState?.budgetWarned === true,
     budgetNudgeSent: afterFirst?.monitorState?.budgetNudgeSent === true,
+    budgetNudgeAttempts: afterFirst?.monitorState?.budgetNudgeAttempts ?? null,
   },
   persistedAfterSecond: {
     budgetWarned: afterSecond?.monitorState?.budgetWarned === true,
     budgetNudgeSent: afterSecond?.monitorState?.budgetNudgeSent === true,
+    budgetNudgeAttempts: afterSecond?.monitorState?.budgetNudgeAttempts ?? null,
   },
   unsupportedWarmBaseline,
+  warmBaseline: {
+    status: warmBaseline,
+    pinnedAtEof: warmUsage ? warmUsage.offset === warmUsage.size && warmUsage.size > 0 : false,
+    baselineTurns: warmUsage?.baselineTurns ?? null,
+    baselineTotalTokens: warmUsage?.baselineTotalTokens ?? null,
+    breachedOnInheritedHistory: warmTick.budgetWarned === true,
+  },
+  unmeasuredRunner: {
+    unsupportedRunner: unmeasuredTick.unsupportedRunner,
+    violationType: unmeasuredTick.violation?.type ?? null,
+    violationMessage: unmeasuredTick.violation?.message ?? null,
+    nudgeSent: unmeasuredTick.nudgeSent,
+    budgetNudgeAttempts: unmeasuredTick.budgetNudgeAttempts,
+  },
   violationEvents: events.filter((entry) => entry.event === Events.MONITOR_VIOLATION).length,
 }) + '\\n');
 `;

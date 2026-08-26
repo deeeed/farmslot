@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import type { Run, RunDecision, WorkerSignal } from '@farmslot/protocol';
@@ -11,6 +14,7 @@ import {
   terminalContractFailureKind,
 } from '../tasks/worker-terminal-contract.js';
 
+import { emptyBudgetUsageSampleState } from './budget-usage-sample.js';
 import {
   applyBudgetWarnOnce,
   applyHandoffAutoResolution,
@@ -18,6 +22,7 @@ import {
   handoffDecisionStillPending,
   isFreshTerminalHandoffSignal,
   isWorkerSignalFreshForRun,
+  MAX_BUDGET_NUDGE_ATTEMPTS,
   type MonitorNudgeRunView,
   pollBudgetGuardStep,
   rearmInteractiveHandoffAutoRecovery,
@@ -488,8 +493,69 @@ test('pollBudgetGuardStep emits a fail-closed violation for unsupported accounti
   });
   assert.equal(tick.budgetWarned, true);
   assert.equal(tick.violation?.type, 'budget');
-  assert.match(tick.violation?.message ?? '', /enforcement unavailable/);
+  // A runner with no usage provider is a capability gap, not worker misbehavior.
+  assert.equal(tick.unsupportedRunner, true);
+  assert.match(tick.violation?.message ?? '', /enforcement unsupported/);
+  assert.doesNotMatch(tick.violation?.message ?? '', /Stop expanding scope/);
 });
+
+test('pollBudgetGuardStep never nudges a worker whose runner exposes no usage', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: `BUDGET-UNSUPPORTED-${Date.now()}`,
+    slotId: 'slot-1',
+    runner: 'cursor',
+    branch: 'budget-unsupported-test',
+  });
+  updateRun(run.id, { status: 'monitoring' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  let attempts = 0;
+  const tick = await pollBudgetGuardStep({
+    runId: run.id,
+    slotId: 'slot-1',
+    flowType: 'update-branch',
+    runner: 'cursor',
+    runnerSessionPath: '/tmp/unread.jsonl',
+    maxTurns: 80,
+    maxTotalTokens: 8_000_000,
+    budgetWarned: false,
+    budgetNudgeSent: false,
+    budgetUsage: emptyBudgetUsageSampleState(),
+    agentStatus: 'working',
+    sendNudge: true,
+    localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
+    deliverNudge: async () => {
+      attempts += 1;
+      return true;
+    },
+  });
+  assert.equal(tick.unsupportedRunner, true);
+  assert.equal(tick.nudgeSent, false);
+  assert.equal(tick.budgetNudgeAttempts, 0);
+  assert.equal(attempts, 0);
+});
+
+/** One counted claude turn (12 tokens) — enough to breach a ceiling of 1. */
+async function breachingTranscript(prefix: string): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), prefix));
+  const file = path.join(dir, 'session.jsonl');
+  await writeFile(
+    file,
+    `${JSON.stringify({
+      type: 'assistant',
+      message: { usage: { input_tokens: 10, output_tokens: 2 } },
+    })}\n`,
+    'utf8',
+  );
+  return file;
+}
 
 test('pollBudgetGuardStep retries an unconfirmed nudge without re-emitting the violation', async (t) => {
   const run = createRun({
@@ -497,7 +563,7 @@ test('pollBudgetGuardStep retries an unconfirmed nudge without re-emitting the v
     project: 'farmslot-farm',
     ticketOrPr: `BUDGET-RETRY-${Date.now()}`,
     slotId: 'slot-1',
-    runner: 'grok',
+    runner: 'claude',
     branch: 'budget-retry-test',
   });
   updateRun(run.id, { status: 'monitoring' });
@@ -517,10 +583,10 @@ test('pollBudgetGuardStep retries an unconfirmed nudge without re-emitting the v
     runId: run.id,
     slotId: 'slot-1',
     flowType: 'update-branch' as const,
-    runner: 'grok',
-    runnerSessionPath: '/tmp/unread.jsonl',
-    maxTurns: 80,
-    maxTotalTokens: 8_000_000,
+    runner: 'claude',
+    runnerSessionPath: await breachingTranscript('run-monitor-budget-retry-'),
+    maxTurns: 1,
+    maxTotalTokens: 1,
     agentStatus: 'working' as const,
     sendNudge: true,
     localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
@@ -530,18 +596,7 @@ test('pollBudgetGuardStep retries an unconfirmed nudge without re-emitting the v
     ...common,
     budgetWarned: false,
     budgetNudgeSent: false,
-    budgetUsage: {
-      path: null,
-      size: 0,
-      mtimeMs: 0,
-      offset: 0,
-      turns: 0,
-      totalTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheCreation: 0,
-      cacheRead: 0,
-    },
+    budgetUsage: emptyBudgetUsageSampleState(),
   });
   assert.equal(first.violation?.type, 'budget');
   assert.equal(first.nudgeSent, false);
@@ -555,6 +610,62 @@ test('pollBudgetGuardStep retries an unconfirmed nudge without re-emitting the v
   assert.equal(second.violation, null);
   assert.equal(second.nudgeSent, true);
   assert.equal(attempts, 2);
+});
+
+test('pollBudgetGuardStep stops retrying an unconfirmable nudge at the attempt cap', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: `BUDGET-CAP-${Date.now()}`,
+    slotId: 'slot-1',
+    runner: 'claude',
+    branch: 'budget-cap-test',
+  });
+  updateRun(run.id, { status: 'monitoring' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  // A busy pane never confirms: every attempt leaves the warning in the composer.
+  let attempts = 0;
+  const deliverNudge = async () => {
+    attempts += 1;
+    return false;
+  };
+  const common = {
+    runId: run.id,
+    slotId: 'slot-1',
+    flowType: 'update-branch' as const,
+    runner: 'claude',
+    runnerSessionPath: await breachingTranscript('run-monitor-budget-cap-'),
+    maxTurns: 1,
+    maxTotalTokens: 1,
+    agentStatus: 'working' as const,
+    sendNudge: true,
+    localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
+    deliverNudge,
+  };
+  let budgetWarned = false;
+  let budgetNudgeAttempts = 0;
+  let budgetUsage = emptyBudgetUsageSampleState();
+  for (let poll = 0; poll < MAX_BUDGET_NUDGE_ATTEMPTS + 3; poll++) {
+    const tick = await pollBudgetGuardStep({
+      ...common,
+      budgetWarned,
+      budgetNudgeSent: false,
+      budgetNudgeAttempts,
+      budgetUsage,
+    });
+    budgetWarned = tick.budgetWarned;
+    budgetNudgeAttempts = tick.budgetNudgeAttempts;
+    budgetUsage = tick.budgetUsage;
+    assert.equal(tick.nudgeSent, false);
+  }
+  assert.equal(attempts, MAX_BUDGET_NUDGE_ATTEMPTS);
+  assert.equal(budgetNudgeAttempts, MAX_BUDGET_NUDGE_ATTEMPTS);
 });
 
 // ─── Terminal-signal auto-recovery (deliverable 2) ───

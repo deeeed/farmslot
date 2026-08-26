@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { emptyBudgetUsageSampleState, sampleBudgetUsage } from './budget-usage-sample.js';
+import {
+  captureBudgetUsageBaselineAtEof,
+  emptyBudgetUsageSampleState,
+  sampleBudgetUsage,
+} from './budget-usage-sample.js';
 
 const localVars = { host: 'localhost', machine: 'local', slotId: 's1' } as never;
 
@@ -87,6 +91,45 @@ test('sampleBudgetUsage preserves incomplete trailing JSONL until the record com
   assert.equal(second.totalTokens, 18);
 });
 
+test('captureBudgetUsageBaselineAtEof charges the child only for bytes appended after handoff', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-baseline-'));
+  const file = path.join(dir, 'session.jsonl');
+  // Parent history far larger than one bounded sample window: parsing it to build a
+  // totals baseline is exactly what mis-charged the child before this fix.
+  const parentLines = Array.from({ length: 4000 }, () => claudeLine(1000, 200)).join('\n');
+  await writeFile(file, `${parentLines}\n`, 'utf8');
+
+  const baseline = await captureBudgetUsageBaselineAtEof({
+    vars: localVars,
+    runnerSessionPath: file,
+  });
+  assert.ok(baseline, 'baseline must be captured for a readable transcript');
+  assert.equal(baseline.baselineCaptured, true);
+  assert.equal(baseline.offset, baseline.size);
+  assert.equal(baseline.turns, 0);
+  assert.equal(baseline.totalTokens, 0);
+
+  await appendFile(file, `${claudeLine(3, 4)}\n`, 'utf8');
+  const sampled = await sampleBudgetUsage({
+    slotId: 's1',
+    vars: localVars,
+    runner: 'claude',
+    runnerSessionPath: file,
+    prior: baseline,
+  });
+  assert.equal(sampled.turns, 1);
+  assert.equal(sampled.totalTokens, 7);
+});
+
+test('captureBudgetUsageBaselineAtEof returns null for a directory transcript', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-baseline-dir-'));
+  const baseline = await captureBudgetUsageBaselineAtEof({
+    vars: localVars,
+    runnerSessionPath: dir,
+  });
+  assert.equal(baseline, null);
+});
+
 test('sampleBudgetUsage is unavailable without a transcript path', async () => {
   const result = await sampleBudgetUsage({
     slotId: 's1',
@@ -99,7 +142,7 @@ test('sampleBudgetUsage is unavailable without a transcript path', async () => {
   assert.equal(result.turns, null);
 });
 
-test('sampleBudgetUsage fails closed without fabricating usage for oversized records', async () => {
+test('sampleBudgetUsage skips oversized records and keeps enforcing afterwards', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'budget-usage-oversized-'));
   const file = path.join(dir, 'session.jsonl');
   const oversized = `{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1},"pad":"${'x'.repeat(1024 * 1024)}"}}`;
@@ -112,11 +155,12 @@ test('sampleBudgetUsage fails closed without fabricating usage for oversized rec
     runnerSessionPath: file,
     prior: emptyBudgetUsageSampleState(),
   });
-  assert.equal(first.availability, 'unavailable');
-  assert.equal(first.enforcementFailure, true);
+  // The skipped record is uncounted, but accounting stays live for the rest of the run.
+  assert.equal(first.enforcementFailure, false);
   assert.equal(first.nextState.turns, 0);
   assert.equal(first.nextState.totalTokens, 0);
-  assert.match(first.unavailableReason ?? '', /exceeds bounded sample window/);
+  assert.equal(first.nextState.skippedOversizedRecords, 1);
+  assert.match(first.nextState.unavailableReason ?? '', /exceeds bounded sample window/);
 
   const second = await sampleBudgetUsage({
     slotId: 's1',
@@ -125,7 +169,8 @@ test('sampleBudgetUsage fails closed without fabricating usage for oversized rec
     runnerSessionPath: file,
     prior: first.nextState,
   });
-  assert.equal(second.enforcementFailure, true);
+  assert.equal(second.enforcementFailure, false);
+  assert.equal(second.availability, 'available');
   assert.equal(second.nextState.turns, 1);
   assert.equal(second.nextState.totalTokens, 7);
 });

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- fix(session-usage): a record larger than the bounded read window is skipped and counted in `skippedOversizedRecords` instead of raising a permanent integrity failure, so one large tool output no longer disables usage accounting for the rest of a run.
 - fix(dispatch): expand `{task_prompt}` with a replacement callback so `$`, `$'`, and `$&` in the prompt stay literal.
 - feat(ci): allow projects to opt in to worker-report comments and internal metrics in formal review comments; both remain disabled by default.
 - perf(resources): allow project resource watches to declare a typed shared-poll provider and provider lookup target while retaining the legacy command fallback.

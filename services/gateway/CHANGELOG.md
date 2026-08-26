@@ -4,6 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(gateway): pin the warm-handoff usage budget baseline to the retained transcript's byte offset instead of parsing its history in bounded windows. A long retained session under-counted the baseline and charged the parent's tokens to the child, so update-branch runs breached their ceiling minutes after starting.
+- fix(gateway): a runner with no session-usage provider (cursor, grok, …) records an operator-facing "enforcement unsupported" violation and disables its budget guard, instead of telling the worker to stop expanding scope on a run nobody can measure.
+- fix(gateway): stop retrying an unconfirmed budget nudge after `MAX_BUDGET_NUDGE_ATTEMPTS` (3). A runner that stays busy never confirms delivery, and every retry left another copy of the warning sitting in its composer.
 - fix(runners): relaunch argv-first Cursor role windows with the exact retained task and require the task-scoped signal to advance, instead of treating tmux composer injection as accepted.
 - feat(dispatch): `dispatch.candidates` may omit `project` to return every enabled slot after one branch refresh. Candidates include `project`. A 30s TTL skips repeat host probes; `forceRefresh` and FIND_SLOT still live-check.
 - feat(config): `config.templateOptions` accepts `unfiltered` to return the full project catalog, including domain-restricted and shadowed sources, so Command Center can filter locally.
