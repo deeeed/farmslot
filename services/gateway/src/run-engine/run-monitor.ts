@@ -2040,6 +2040,10 @@ export async function pollBudgetGuardStep(params: {
         // before touching the pane must stay free, or a few transient holds would
         // silently exhaust the cap and the worker would never hear about the breach.
         if (delivery !== 'not-attempted') budgetNudgeAttempts += 1;
+        // `not-attempted` also covers a missing run and a runner that cannot take tmux
+        // nudges. Neither reaches here — both are checked above before delivery — so the
+        // only cause left is a mid-turn deferral. If that outer guard is ever relaxed, a
+        // non-nudgeable runner would start a deferral clock it can never finish.
         else deliveryDeferred = true;
         nudgeSent = delivery === 'confirmed';
         if (nudgeSent && violation) violation.nudgeSent = new Date().toISOString();
