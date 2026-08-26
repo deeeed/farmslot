@@ -433,6 +433,9 @@ export function runGatewayBudgetGuard({
   sessionId,
   sessionPath,
   timeoutMs = 60_000,
+  // Keep the harness so a second phase can re-poll the same warm run after the live
+  // runner has actually appended a turn. Caller owns cleanup when set.
+  keepHarness = false,
 }) {
   const harnessRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-validate-budget-'));
   const poolDir = path.join(harnessRoot, 'pool');
@@ -516,7 +519,8 @@ const first = await pollRunBudgetGuard({
   slotId: ${JSON.stringify(slotId)},
   maxTurns: 1,
   maxTotalTokens: 1,
-  agentStatus: 'idle',
+  // The value monitorRun actually produces at this call site.
+  agentStatus: 'working',
   sendNudge: true,
 });
 const afterFirst = getRun(run.id);
@@ -541,28 +545,122 @@ const unsupportedWarmBaseline = await prepareWarmBudgetBaselineForHandoff(
   unsupportedRun.id,
   ${JSON.stringify(slotId)},
 );
+
+// Warm handoff onto the live transcript: the child must inherit a byte pin, not the
+// parent's counted usage, so its ceiling applies only to what it appends.
+const warmRun = createRun({
+  flowType: 'update-branch',
+  project: 'runner-validation',
+  ticketOrPr: 'runner-validation-warm-budget-baseline',
+  slotId: ${JSON.stringify(slotId)},
+  runner: ${JSON.stringify(runner)},
+  branch: 'runner-validation',
+});
+updateRun(warmRun.id, {
+  metrics: {
+    ...warmRun.metrics,
+    runner: ${JSON.stringify(runner)},
+    runnerSessionPath: ${JSON.stringify(sessionPath)},
+  },
+});
+const warmBaseline = await prepareWarmBudgetBaselineForHandoff(
+  warmRun.id,
+  ${JSON.stringify(slotId)},
+);
+const warmUsage = getRun(warmRun.id)?.monitorState?.budgetUsage ?? null;
+// Ceilings of 1 would breach instantly on any inherited history.
+const warmTick = await pollRunBudgetGuard({
+  runId: warmRun.id,
+  slotId: ${JSON.stringify(slotId)},
+  maxTurns: 1,
+  maxTotalTokens: 1,
+  agentStatus: 'working',
+  sendNudge: false,
+});
+
+// A runner with no session-usage provider can never be measured. The guard must
+// record the gap without typing an accusation into the live worker pane.
+const unmeasuredRun = createRun({
+  flowType: 'update-branch',
+  project: 'runner-validation',
+  ticketOrPr: 'runner-validation-unmeasured-runner-budget',
+  slotId: ${JSON.stringify(slotId)},
+  runner: 'cursor',
+  branch: 'runner-validation',
+});
+const unmeasuredRole = primaryRoleForFlow(unmeasuredRun.flowType);
+updateRun(unmeasuredRun.id, {
+  status: 'monitoring',
+  metrics: { ...unmeasuredRun.metrics, runner: 'cursor' },
+  agentContexts: [{
+    id: contextIdFor(unmeasuredRole),
+    role: unmeasuredRole,
+    label: agentRoleLabel(unmeasuredRole),
+    status: 'idle',
+    slotId: ${JSON.stringify(slotId)},
+    runId: unmeasuredRun.id,
+    runner: 'cursor',
+    target: {
+      session: ${JSON.stringify(session)},
+      pane: ${JSON.stringify(target)},
+      target: ${JSON.stringify(target)},
+    },
+    startedAt: now,
+    updatedAt: now,
+  }],
+});
+const unmeasuredTick = await pollRunBudgetGuard({
+  runId: unmeasuredRun.id,
+  slotId: ${JSON.stringify(slotId)},
+  maxTurns: 1,
+  maxTotalTokens: 1,
+  agentStatus: 'working',
+  sendNudge: true,
+});
 process.stdout.write(JSON.stringify({
   first: {
-    budgetWarned: first.budgetWarned,
+    phase: first.delivery.phase,
     violationType: first.violation?.type ?? null,
     nudgeSent: first.nudgeSent,
     sampleTurns: first.sampleTurns,
     sampleTotalTokens: first.sampleTotalTokens,
   },
   second: {
-    budgetWarned: second.budgetWarned,
+    phase: second.delivery.phase,
     violationType: second.violation?.type ?? null,
     nudgeSent: second.nudgeSent,
   },
   persistedAfterFirst: {
-    budgetWarned: afterFirst?.monitorState?.budgetWarned === true,
-    budgetNudgeSent: afterFirst?.monitorState?.budgetNudgeSent === true,
+    phase: afterFirst?.monitorState?.budgetDelivery?.phase ?? null,
+    attempts: afterFirst?.monitorState?.budgetDelivery?.attempts ?? null,
   },
   persistedAfterSecond: {
-    budgetWarned: afterSecond?.monitorState?.budgetWarned === true,
-    budgetNudgeSent: afterSecond?.monitorState?.budgetNudgeSent === true,
+    phase: afterSecond?.monitorState?.budgetDelivery?.phase ?? null,
+    attempts: afterSecond?.monitorState?.budgetDelivery?.attempts ?? null,
   },
   unsupportedWarmBaseline,
+  warmRunId: warmRun.id,
+  warmBaseline: {
+    status: warmBaseline,
+    // The pin must sit on a record boundary at or before EOF, never inside a
+    // half-written record (which would fail accounting closed as malformed JSONL).
+    pinnedAtRecordBoundary: warmUsage
+      ? warmUsage.offset > 0 && warmUsage.offset <= warmUsage.size
+      : false,
+    pinnedOffset: warmUsage?.offset ?? null,
+    transcriptSize: warmUsage?.size ?? null,
+    // Providers report increments, so a pin carries a reference reading rather than a
+    // total to subtract. For codex that reference must be the parent's session position.
+    referenceTotal: warmUsage?.lastCumulative?.total ?? null,
+    breachedOnInheritedHistory: warmTick.delivery.phase === 'breach-pending',
+  },
+  unmeasuredRunner: {
+    unsupportedRunner: unmeasuredTick.unsupportedRunner,
+    violationType: unmeasuredTick.violation?.type ?? null,
+    violationMessage: unmeasuredTick.violation?.message ?? null,
+    nudgeSent: unmeasuredTick.nudgeSent,
+    attempts: unmeasuredTick.delivery.attempts,
+  },
   violationEvents: events.filter((entry) => entry.event === Events.MONITOR_VIOLATION).length,
 }) + '\\n');
 `;
@@ -599,10 +697,92 @@ process.stdout.write(JSON.stringify({
           .split('\n')
           .filter((line) => line && line !== jsonLine)
           .join('\n') || null,
+      harnessRoot,
     };
   } finally {
-    fs.rmSync(harnessRoot, { recursive: true, force: true });
+    if (!keepHarness) fs.rmSync(harnessRoot, { recursive: true, force: true });
   }
+}
+
+/**
+ * Second phase of the warm-baseline proof: re-poll a warm run whose baseline was pinned
+ * by runGatewayBudgetGuard, after the live runner has appended a real turn.
+ *
+ * Phase one alone cannot fail from the bug it guards — with nothing appended, the charge
+ * is `total - baseline` with both sides equal, so it reads zero whether the baseline is
+ * the parent's real cumulative total or zero. Only post-pin growth separates the two.
+ */
+export function runGatewayWarmBudgetCharge({ harnessRoot, runId, slotId, timeoutMs = 60_000 }) {
+  const snippet = `
+import { pollRunBudgetGuard } from './services/gateway/src/run-engine/run-monitor.ts';
+import {
+  emptyBudgetUsageSampleState,
+  sampleBudgetUsage,
+} from './services/gateway/src/run-engine/budget-usage-sample.ts';
+import { loadSlotVars } from './services/gateway/src/core/config.ts';
+import { getRun, loadAllRuns } from './services/gateway/src/runs/store.ts';
+
+// Fresh process: hydrate the store from the harness runs dir phase one wrote.
+await loadAllRuns();
+
+// Ceilings high enough that this poll only measures; it must not warn.
+const tick = await pollRunBudgetGuard({
+  runId: ${JSON.stringify(runId)},
+  slotId: ${JSON.stringify(slotId)},
+  maxTurns: 100000,
+  maxTotalTokens: 1000000000000,
+  agentStatus: 'working',
+  sendNudge: false,
+});
+const run = getRun(${JSON.stringify(runId)});
+const usage = run?.monitorState?.budgetUsage ?? null;
+// Cold full scan of the same transcript: what this run would be charged with no pin.
+const fullScan = await sampleBudgetUsage({
+  slotId: ${JSON.stringify(slotId)},
+  vars: await loadSlotVars(${JSON.stringify(slotId)}),
+  runner: run?.metrics?.runner,
+  runnerSessionPath: usage?.path ?? run?.metrics?.runnerSessionPath ?? null,
+  prior: emptyBudgetUsageSampleState(),
+});
+process.stdout.write(JSON.stringify({
+  fullScanTotalTokens: fullScan.totalTokens,
+  fullScanTurns: fullScan.turns,
+  sampleTurns: tick.sampleTurns,
+  sampleTotalTokens: tick.sampleTotalTokens,
+  chargeTurns: tick.chargeTurns,
+  chargeTotalTokens: tick.chargeTotalTokens,
+  referenceTotal: usage?.lastCumulative?.total ?? null,
+  availability: tick.availability,
+  budgetWarned: tick.delivery.phase === 'breach-pending',
+}) + '\\n');
+`;
+
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: timeoutMs,
+    env: {
+      ...process.env,
+      FARMSLOT_HOME: path.join(harnessRoot, 'home'),
+      FARMSLOT_POOL_DIR: path.join(harnessRoot, 'pool'),
+      FARMSLOT_RUNS_DIR: path.join(harnessRoot, 'runs'),
+    },
+  });
+  const stdout = result.stdout?.trim() ?? '';
+  const jsonLine = stdout
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .pop();
+  return {
+    result: jsonLine ? JSON.parse(jsonLine) : null,
+    exitCode: result.status,
+    error:
+      result.status !== 0
+        ? result.stderr?.trim() || stdout || 'warm-budget-charge wrapper failed'
+        : !jsonLine
+          ? stdout || 'warm-budget-charge wrapper returned no result'
+          : null,
+  };
 }
 
 /** Execute the production repeat-review resume path against a local runner session. */

@@ -641,6 +641,21 @@ function formatTotals(totals: SessionTotals): string[] {
 /** Max new transcript bytes processed per incremental sample (bounds memory). */
 export const INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE = 1024 * 1024;
 
+/**
+ * Widened one-shot read for a record that does not fit the normal window.
+ *
+ * A skipped record's usage goes uncounted, and a long assistant message carrying the
+ * turn that crosses a ceiling can exceed 1MiB. Retry once at this size before giving
+ * up, so only genuinely pathological records (huge tool output, which carries no
+ * usage) are skipped.
+ */
+export const INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES = 16 * 1024 * 1024;
+
+/** True when the buffer holds no complete record boundary. */
+export function bufferHasNoRecordBoundary(buf: Buffer): boolean {
+  return buf.lastIndexOf(0x0a) < 0;
+}
+
 export type IncrementalSessionUsageState = {
   path: string | null;
   size: number;
@@ -657,12 +672,33 @@ export type IncrementalSessionUsageState = {
   unavailableReason?: string;
   /** Persistent fail-closed reason when transcript accounting lost integrity. */
   integrityFailureReason?: string;
-  /** Soft-budget baseline for warm-handoff / first-poll delta accounting. */
+  /** True once counting has been deliberately anchored (a warm-handoff pin). */
   baselineCaptured?: boolean;
-  baselineTurns?: number;
-  baselineTotalTokens?: number;
   /** True while advancing past a record larger than the bounded read window. */
   skippingOversizedRecord?: boolean;
+  /** Count of records skipped for exceeding the window (their usage is uncounted). */
+  skippedOversizedRecords?: number;
+  /**
+   * Last session-total reading, for runners that restate totals instead of reporting
+   * per-record usage (codex). Zeros mean "counting from the start of the transcript";
+   * absent means the counters were started at a byte offset mid-transcript, so the next
+   * reading establishes the reference instead of being counted.
+   */
+  lastCumulative?: { input: number; output: number; cacheRead: number; total: number };
+  /**
+   * Discard the next complete record. Set when counting starts at a pin that had
+   * trailing partial bytes: those bytes are the previous writer's record, and it
+   * completes after the pin, so parsing it would charge that writer's work here.
+   */
+  discardNextRecord?: boolean;
+  /**
+   * Filesystem identity of the transcript being counted.
+   *
+   * Path equality is not identity: a transcript replaced in place keeps its path, and if
+   * the replacement grows past the old offset every other continuity check passes while
+   * sampling resumes mid-file against another session's counters.
+   */
+  fileId?: string;
 };
 
 export type IncrementalSessionUsageResult = {
@@ -685,7 +721,18 @@ export function emptyIncrementalSessionUsageState(): IncrementalSessionUsageStat
     outputTokens: 0,
     cacheCreation: 0,
     cacheRead: 0,
+    // Reading from byte 0: the first session-total reading is counted in full.
+    lastCumulative: { input: 0, output: 0, cacheRead: 0, total: 0 },
   };
+}
+
+/**
+ * State for counters started at a byte offset mid-transcript. Everything already
+ * written belongs to whoever wrote it, so the first session-total reading after the
+ * offset only establishes the reference.
+ */
+export function pinnedIncrementalSessionUsageState(): IncrementalSessionUsageState {
+  return { ...emptyIncrementalSessionUsageState(), lastCumulative: undefined };
 }
 
 /**
@@ -728,12 +775,22 @@ export function advanceIncrementalFromBytes(
   if (lastNl < 0) {
     // No complete line in this window.
     if (state.skippingOversizedRecord || buf.length >= meta.maxWindow) {
-      // A complete record cannot fit in the bounded window. Advance without
-      // parsing and surface an integrity failure instead of fabricating usage.
+      // A complete record cannot fit in the bounded window (large tool output is
+      // routine in codex/claude transcripts). Advance past it and keep counting the
+      // rest of the transcript: the skipped record is undercounted, which is a far
+      // smaller failure than permanently disabling budget accounting for the run.
+      if (!state.skippingOversizedRecord) {
+        state.skippedOversizedRecords = (state.skippedOversizedRecords ?? 0) + 1;
+      }
       state.offset = meta.startOffset + buf.length;
       state.skippingOversizedRecord = true;
-      state.integrityFailureReason = 'session transcript record exceeds bounded sample window';
-      state.unavailableReason = state.integrityFailureReason;
+      // The oversized record IS the one marked for discard, and skipping it satisfies
+      // that. Leaving the flag set would discard the next record too.
+      state.discardNextRecord = false;
+      console.warn(
+        `[session-usage] skipping a record larger than ${meta.maxWindow} bytes in ${meta.filePath}; its usage is not counted`,
+      );
+      state.unavailableReason = 'session transcript record exceeds bounded sample window';
       state.sampledAt = new Date().toISOString();
       return state;
     }
@@ -752,6 +809,20 @@ export function advanceIncrementalFromBytes(
     if (!trimmed) continue;
     try {
       const obj = JSON.parse(trimmed) as Record<string, unknown>;
+      if (state.discardNextRecord) {
+        // The previous writer's in-flight record, completed after the pin. Its usage is
+        // theirs, so the counters must not move — but for a runner that restates session
+        // totals the reading is still the session's position, and leaving the reference
+        // behind would charge this run the gap on the very next record.
+        const before = state;
+        const applied = applyRecord(state, obj);
+        state = {
+          ...before,
+          lastCumulative: applied.lastCumulative,
+          discardNextRecord: false,
+        };
+        continue;
+      }
       state = applyRecord(state, obj);
     } catch {
       state.integrityFailureReason = 'session transcript contains malformed JSONL record';
@@ -782,11 +853,12 @@ export async function sampleSessionUsageIncremental(params: {
   try {
     const st = await stat(filePath);
     if (st.isDirectory()) {
+      // Keep prior accounting. Returning fresh state here let a transient
+      // file-to-directory resolution forget where counting had reached, so when the file
+      // came back sampling restarted from zero — silently charging a retained parent's
+      // history or forgetting this run's own usage.
       const next = {
-        ...emptyIncrementalSessionUsageState(),
-        path: filePath,
-        size: st.size,
-        mtimeMs: st.mtimeMs,
+        ...prior,
         unavailableReason: 'directory session transcripts are not incrementally sampled',
         sampledAt: new Date().toISOString(),
       };
@@ -799,9 +871,14 @@ export async function sampleSessionUsageIncremental(params: {
       };
     }
 
+    const fileId = `${st.dev}:${st.ino}`;
     const continuityLost =
-      prior.path !== null && (prior.path !== filePath || prior.offset > st.size);
-    if (continuityLost && prior.baselineCaptured) {
+      prior.path !== null &&
+      (prior.path !== filePath ||
+        prior.offset > st.size ||
+        (prior.fileId !== undefined && prior.fileId !== fileId));
+    // Consumed bytes mean accounting started, pin or not — see the gateway sampler.
+    if (continuityLost && (prior.baselineCaptured || prior.offset > 0)) {
       const integrityFailureReason = 'session transcript changed after budget accounting began';
       return {
         turns: null,
@@ -848,12 +925,13 @@ export async function sampleSessionUsageIncremental(params: {
     // Truncation / rotate — restart from byte 0.
     let state: IncrementalSessionUsageState =
       prior.path === filePath && prior.offset <= st.size
-        ? { ...prior, path: filePath, size: st.size, mtimeMs: st.mtimeMs }
+        ? { ...prior, path: filePath, size: st.size, mtimeMs: st.mtimeMs, fileId }
         : {
             ...emptyIncrementalSessionUsageState(),
             path: filePath,
             size: st.size,
             mtimeMs: st.mtimeMs,
+            fileId,
           };
 
     const start = state.offset;
@@ -872,13 +950,30 @@ export async function sampleSessionUsageIncremental(params: {
     // Bound memory: process at most MAX bytes of new data per sample. Further
     // growth is consumed on later polls (offset advances).
     const unread = st.size - start;
-    const length = Math.min(unread, INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE);
-    const buf = Buffer.alloc(length);
-    const fh = await open(filePath, 'r');
-    try {
-      await fh.read(buf, 0, length, start);
-    } finally {
-      await fh.close();
+    const readAt = async (length: number): Promise<Buffer> => {
+      const target = Buffer.alloc(length);
+      const fh = await open(filePath, 'r');
+      try {
+        await fh.read(target, 0, length, start);
+      } finally {
+        await fh.close();
+      }
+      return target;
+    };
+    // maxWindow is the cap we were willing to read, never the bytes actually read: a
+    // short read is a partial trailing write to wait on, not an oversized record.
+    let windowCap = INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE;
+    let length = Math.min(unread, windowCap);
+    let buf = await readAt(length);
+    // A full window with no boundary means one record is larger than it. Widen once
+    // before skipping so a large usage-bearing record still gets counted.
+    if (bufferHasNoRecordBoundary(buf) && length === windowCap) {
+      const widened = Math.min(unread, INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES);
+      if (widened > length) {
+        windowCap = INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES;
+        length = widened;
+        buf = await readAt(length);
+      }
     }
 
     const advanced = advanceIncrementalFromBytes(state, buf, applyRecord, {
@@ -886,7 +981,7 @@ export async function sampleSessionUsageIncremental(params: {
       fileSize: st.size,
       mtimeMs: st.mtimeMs,
       filePath,
-      maxWindow: INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
+      maxWindow: windowCap,
     });
     if (advanced.integrityFailureReason) {
       return {
@@ -904,9 +999,11 @@ export async function sampleSessionUsageIncremental(params: {
       nextState: advanced,
     };
   } catch (err) {
+    // Keep the transcript identity the state is actually counting. Stamping the
+    // requested path onto the prior offset makes a later continuity check look intact,
+    // so sampling would resume mid-file against a different session's accounting.
     const next = {
       ...prior,
-      path: filePath,
       unavailableReason: (err as Error).message,
       sampledAt: new Date().toISOString(),
     };

@@ -1,6 +1,7 @@
 // runners.ts — Runner definitions and helpers (ADR-023 capability model)
 // Capability-based registry: RunnerDefinition exposes runner capabilities; launch-command.ts owns shell command construction.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 
 import {
@@ -1942,6 +1943,28 @@ async function warnIfObservabilityDegraded(
 
 type SubmitInstructionOutcome = 'ok' | 'not-buffered' | 'stuck';
 
+/**
+ * Per-send record of whether the composer was actually touched.
+ *
+ * Callers cannot infer this from a `false` return: the sender also returns false when it
+ * holds the whole window without typing (hook lapse, foreign composer draft, runner
+ * busy), and a caller that counts those as delivery attempts exhausts its retry budget
+ * without the worker ever seeing the message.
+ *
+ * This is AsyncLocalStorage rather than a module-level flag because the gateway sends to
+ * many slots concurrently: a shared variable would let a touch on one slot mark another
+ * slot's send as delivered, and the misattribution runs both ways. Callers that do not
+ * go through sendRunnerInstructionWithOutcome have no store, so marking is a no-op for
+ * them rather than corrupting someone else's record.
+ *
+ * Scope: this reports typing done by submitRunnerInstruction in 'send' mode, which is
+ * every typing path reachable from sendRunnerInstructionSafely. It is not a general
+ * "composer was touched" signal — sendRunnerPostLaunchPrompt types directly and does not
+ * report here, and 'submit-existing' deliberately does not mark, since pressing submit on
+ * already-buffered text adds no copy.
+ */
+const composerTouchStore = new AsyncLocalStorage<{ touched: boolean }>();
+
 async function submitRunnerInstruction(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -1958,13 +1981,25 @@ async function submitRunnerInstruction(
     } catch (error) {
       console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
     }
-    await execOnSlot(
+    const write = await execOnSlot(
       vars,
       tmuxSendTextCommand(target, message, {
         enter: true,
         submitKey: getRunnerDefinition(runner).promptSubmitKey,
       }),
     );
+    // Only once the write actually succeeded. `execOnSlot` resolves on a non-zero exit
+    // rather than throwing, so awaiting it proves nothing on its own: send-keys against
+    // a dead tmux server or a vanished window comes back here having typed nothing. A
+    // caller bounding its retries would spend them on deliveries the worker never saw.
+    if (write.exitCode === 0) {
+      const touchRecord = composerTouchStore.getStore();
+      if (touchRecord) touchRecord.touched = true;
+    } else {
+      console.warn(
+        `[${logPrefix}] send-keys to ${target} exited ${write.exitCode}; nothing reached the composer`,
+      );
+    }
   } else {
     const pane = await captureTmuxPane(vars, target);
     if (!runnerPaneHasBufferedInstruction(pane, message, runner)) {
@@ -2251,6 +2286,40 @@ async function sendRunnerInstructionHookOnly(
     );
   }
   return false;
+}
+
+/**
+ * Outcome of one instruction send, distinguishing a hold that never reached the composer
+ * from text that landed but was never confirmed submitted.
+ */
+export type RunnerInstructionOutcome = 'sent' | 'typed-unconfirmed' | 'held-untouched';
+
+/**
+ * `sendRunnerInstructionSafely` with the outcome the boolean return cannot express.
+ * Prefer this wherever a caller bounds its own retries.
+ */
+export async function sendRunnerInstructionWithOutcome(
+  ...args: Parameters<typeof sendRunnerInstructionSafely>
+): Promise<RunnerInstructionOutcome> {
+  const touchRecord = { touched: false };
+  return composerTouchStore.run(touchRecord, async () => {
+    try {
+      const sent = await sendRunnerInstructionSafely(...args);
+      if (sent) return 'sent';
+      return touchRecord.touched ? 'typed-unconfirmed' : 'held-untouched';
+    } catch (error) {
+      // The text may already be in the composer when a later step throws — pane
+      // verification, an SSH round-trip. Reporting the outcome rather than rethrowing
+      // is deliberate: a caller that bounds its retries must charge for a send that
+      // mutated the pane, or an endlessly failing verify stacks copies. A throw with
+      // nothing typed stays a throw.
+      if (!touchRecord.touched) throw error;
+      console.warn(
+        `[runner-send] instruction reached the composer but the send threw: ${(error as Error).message}`,
+      );
+      return 'typed-unconfirmed';
+    }
+  });
 }
 
 export async function sendRunnerInstructionSafely(

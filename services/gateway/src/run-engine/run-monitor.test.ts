@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import type { Run, RunDecision, WorkerSignal } from '@farmslot/protocol';
@@ -11,17 +14,20 @@ import {
   terminalContractFailureKind,
 } from '../tasks/worker-terminal-contract.js';
 
+import { initialBudgetDeliveryState } from './budget-delivery-state.js';
+import { emptyBudgetUsageSampleState } from './budget-usage-sample.js';
 import {
-  applyBudgetWarnOnce,
   applyHandoffAutoResolution,
   bindSignalToMonitorContext,
   handoffDecisionStillPending,
   isFreshTerminalHandoffSignal,
   isWorkerSignalFreshForRun,
+  migrateLegacyBudgetUsage,
   type MonitorNudgeRunView,
   pollBudgetGuardStep,
   rearmInteractiveHandoffAutoRecovery,
   resolveMonitorConfig,
+  restoreBudgetUsageState,
   restoreStructuredProgressAtMs,
   runHasOpenHumanGate,
   shouldHoldForInteractivePrComplete,
@@ -420,29 +426,55 @@ test('resolveMonitorConfig(undefined) still applies update-branch budget default
   assert.equal(cfg.maxTotalTokens, 8_000_000);
 });
 
-test('applyBudgetWarnOnce emits once then stays quiet (warn-once)', () => {
-  const first = applyBudgetWarnOnce({
-    turns: 100,
-    totalTokens: 1_000,
-    maxTurns: 80,
-    maxTotalTokens: 8_000_000,
-    budgetWarned: false,
-    flowType: 'update-branch',
+test('restoring a pre-increment run carries the derived reference into sampler state', () => {
+  // The migration was once computed here and dropped: the restore kept an older
+  // expression, so the derived reference never reached production state and only a
+  // unit test of the migration in isolation passed.
+  const restored = restoreBudgetUsageState({
+    path: '/tmp/session.jsonl',
+    size: 4096,
+    mtimeMs: 1,
+    offset: 4096,
+    turns: 42,
+    totalTokens: 9_000_000,
+    inputTokens: 9_000_000,
+    outputTokens: 0,
+    cacheCreation: 0,
+    cacheRead: 0,
+    baselineTurns: 40,
+    baselineTotalTokens: 8_900_000,
+    baselineCaptured: true,
   });
-  assert.equal(first.emit, true);
-  if (!first.emit) throw new Error('expected emit');
-  assert.match(first.message, /update-branch usage budget exceeded/);
+  assert.equal(restored.totalTokens, 100_000);
+  assert.equal(restored.turns, 2);
+  assert.equal(
+    restored.lastCumulative?.total,
+    9_000_000,
+    "the run's persisted counters were the session position, so they are the reference",
+  );
+});
 
-  const second = applyBudgetWarnOnce({
-    turns: 200,
-    totalTokens: 2_000,
-    maxTurns: 80,
-    maxTotalTokens: 8_000_000,
-    budgetWarned: true,
-    flowType: 'update-branch',
+test('restoring a never-sampled run counts from the start', () => {
+  const restored = restoreBudgetUsageState(undefined);
+  assert.equal(restored.offset, 0);
+  assert.equal(restored.lastCumulative?.total, 0, 'zeros mean count the first reading in full');
+});
+
+test('a pre-increment run restores with its legacy baseline folded out', () => {
+  // Such a run carries an absolute session total plus the parent total the old guard
+  // subtracted. Restoring the raw total would charge it the parent's history at once.
+  const migrated = migrateLegacyBudgetUsage({
+    turns: 42,
+    totalTokens: 9_000_000,
+    baselineTurns: 40,
+    baselineTotalTokens: 8_900_000,
   });
-  assert.equal(second.emit, false);
-  assert.equal(second.budgetWarned, true);
+  assert.equal(migrated.totalTokens, 100_000);
+  assert.equal(migrated.turns, 2);
+  // Its persisted counters were the session's position, so they are the reference the
+  // next reading is measured against — `baselineCaptured` cannot tell a legacy cold run
+  // from a legacy warm one, and this needs no state version.
+  assert.equal(migrated.lastCumulative.total, 9_000_000);
 });
 
 test('restoreStructuredProgressAtMs keeps the persisted idle clock across restart', () => {
@@ -468,8 +500,7 @@ test('pollBudgetGuardStep emits a fail-closed violation for unsupported accounti
     runnerSessionPath: '/tmp/unread.jsonl',
     maxTurns: 80,
     maxTotalTokens: 8_000_000,
-    budgetWarned: false,
-    budgetNudgeSent: false,
+    delivery: initialBudgetDeliveryState(),
     budgetUsage: {
       path: null,
       size: 0,
@@ -484,21 +515,25 @@ test('pollBudgetGuardStep emits a fail-closed violation for unsupported accounti
     },
     agentStatus: 'working',
     sendNudge: false,
+    runnerMidTurnStub: false,
     localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
   });
-  assert.equal(tick.budgetWarned, true);
+  assert.equal(tick.delivery.phase, 'unenforceable');
   assert.equal(tick.violation?.type, 'budget');
-  assert.match(tick.violation?.message ?? '', /enforcement unavailable/);
+  // A runner with no usage provider is a capability gap, not worker misbehavior.
+  assert.equal(tick.unsupportedRunner, true);
+  assert.match(tick.violation?.message ?? '', /enforcement unsupported/);
+  assert.doesNotMatch(tick.violation?.message ?? '', /Stop expanding scope/);
 });
 
-test('pollBudgetGuardStep retries an unconfirmed nudge without re-emitting the violation', async (t) => {
+test('a lost-accounting breach is reported to the operator, not blamed on the worker', async (t) => {
   const run = createRun({
     flowType: 'update-branch',
     project: 'farmslot-farm',
-    ticketOrPr: `BUDGET-RETRY-${Date.now()}`,
+    ticketOrPr: `BUDGET-INTEGRITY-${Date.now()}`,
     slotId: 'slot-1',
-    runner: 'grok',
-    branch: 'budget-retry-test',
+    runner: 'claude',
+    branch: 'budget-integrity-test',
   });
   updateRun(run.id, { status: 'monitoring' });
   t.after(async () => {
@@ -509,55 +544,140 @@ test('pollBudgetGuardStep retries an unconfirmed nudge without re-emitting the v
   });
 
   let attempts = 0;
-  const deliverNudge = async () => {
-    attempts += 1;
-    return attempts > 1;
-  };
-  const common = {
+  const tick = await pollBudgetGuardStep({
     runId: run.id,
     slotId: 'slot-1',
-    flowType: 'update-branch' as const,
-    runner: 'grok',
+    flowType: 'update-branch',
+    runner: 'claude',
+    runnerSessionPath: '/tmp/does-not-matter.jsonl',
+    maxTurns: 1,
+    maxTotalTokens: 1,
+    delivery: initialBudgetDeliveryState(),
+    budgetUsage: {
+      ...emptyBudgetUsageSampleState(),
+      path: '/tmp/other.jsonl',
+      integrityFailureReason: 'session transcript changed after budget accounting began',
+    },
+    agentStatus: 'working',
+    sendNudge: true,
+    runnerMidTurnStub: false,
+    localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
+    deliverNudge: async () => {
+      attempts += 1;
+      return 'confirmed' as const;
+    },
+  });
+  // The gateway losing track of which file it was reading is a bookkeeping failure. The
+  // worker did nothing wrong and must not be told to stop expanding scope.
+  assert.equal(tick.violation?.type, 'budget');
+  assert.match(tick.violation?.message ?? '', /accounting lost/);
+  assert.doesNotMatch(tick.violation?.message ?? '', /Stop expanding scope/);
+  assert.equal(tick.nudgeSent, false);
+  assert.equal(attempts, 0);
+});
+
+test('pollBudgetGuardStep never nudges a worker whose runner exposes no usage', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: `BUDGET-UNSUPPORTED-${Date.now()}`,
+    slotId: 'slot-1',
+    runner: 'cursor',
+    branch: 'budget-unsupported-test',
+  });
+  updateRun(run.id, { status: 'monitoring' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  let attempts = 0;
+  const tick = await pollBudgetGuardStep({
+    runId: run.id,
+    slotId: 'slot-1',
+    flowType: 'update-branch',
+    runner: 'cursor',
     runnerSessionPath: '/tmp/unread.jsonl',
     maxTurns: 80,
     maxTotalTokens: 8_000_000,
-    agentStatus: 'working' as const,
+    delivery: initialBudgetDeliveryState(),
+    budgetUsage: emptyBudgetUsageSampleState(),
+    agentStatus: 'idle',
     sendNudge: true,
+    runnerMidTurnStub: false,
     localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
-    deliverNudge,
-  };
-  const first = await pollBudgetGuardStep({
-    ...common,
-    budgetWarned: false,
-    budgetNudgeSent: false,
-    budgetUsage: {
-      path: null,
-      size: 0,
-      mtimeMs: 0,
-      offset: 0,
-      turns: 0,
-      totalTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheCreation: 0,
-      cacheRead: 0,
+    deliverNudge: async () => {
+      attempts += 1;
+      return 'confirmed' as const;
     },
   });
-  assert.equal(first.violation?.type, 'budget');
-  assert.equal(first.nudgeSent, false);
-
-  const second = await pollBudgetGuardStep({
-    ...common,
-    budgetWarned: first.budgetWarned,
-    budgetNudgeSent: false,
-    budgetUsage: first.budgetUsage,
-  });
-  assert.equal(second.violation, null);
-  assert.equal(second.nudgeSent, true);
-  assert.equal(attempts, 2);
+  assert.equal(tick.unsupportedRunner, true);
+  assert.equal(tick.nudgeSent, false);
+  assert.equal(tick.delivery.attempts, 0);
+  assert.equal(attempts, 0);
 });
 
-// ─── Terminal-signal auto-recovery (deliverable 2) ───
+/** One counted claude turn (12 tokens) — enough to breach a ceiling of 1. */
+async function breachingTranscript(prefix: string): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), prefix));
+  const file = path.join(dir, 'session.jsonl');
+  await writeFile(
+    file,
+    `${JSON.stringify({
+      type: 'assistant',
+      message: { usage: { input_tokens: 10, output_tokens: 2 } },
+    })}\n`,
+    'utf8',
+  );
+  return file;
+}
+
+test('pollBudgetGuardStep delivers under the agentStatus the monitor actually produces', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: `BUDGET-WORKING-${Date.now()}`,
+    slotId: 'slot-1',
+    runner: 'claude',
+    branch: 'budget-working-test',
+  });
+  updateRun(run.id, { status: 'monitoring' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  // monitorRun only reaches the budget block with agentStatus 'working' — anything else
+  // means the worker is done and the monitor has already returned. A delivery gate keyed
+  // to this value is dead code, so the guard must not have one.
+  let attempts = 0;
+  const tick = await pollBudgetGuardStep({
+    runId: run.id,
+    slotId: 'slot-1',
+    flowType: 'update-branch',
+    runner: 'claude',
+    runnerSessionPath: await breachingTranscript('run-monitor-budget-working-'),
+    maxTurns: 1,
+    maxTotalTokens: 1,
+    delivery: initialBudgetDeliveryState(),
+    budgetUsage: emptyBudgetUsageSampleState(),
+    agentStatus: 'working',
+    sendNudge: true,
+    runnerMidTurnStub: false,
+    localVarsStub: { host: 'localhost', machine: 'local', slotId: 'slot-1' },
+    deliverNudge: async () => {
+      attempts += 1;
+      return 'confirmed' as const;
+    },
+  });
+  assert.equal(tick.violation?.type, 'budget');
+  assert.equal(tick.nudgeSent, true, 'the worker must actually be told about the breach');
+  assert.equal(attempts, 1);
+});
 
 const handoffRun = {
   steps: [

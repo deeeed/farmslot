@@ -1312,13 +1312,36 @@ export interface RunMonitorBudgetUsageState {
   integrityFailureReason?: string;
   /** True while advancing past a record larger than the bounded read window. */
   skippingOversizedRecord?: boolean;
+  /** Count of records skipped for exceeding the window (their usage is uncounted). */
+  skippedOversizedRecords?: number;
   /**
-   * First successful sample for this monitor session (warm-handoff parent totals
-   * or cold-start initial point). Soft ceilings apply to (turns - baselineTurns).
+   * Last session-total reading for runners that restate totals rather than reporting
+   * per-record usage (codex). Zeros mean counting from the start of the transcript;
+   * absent means counting started at a byte offset, so the next reading only sets the
+   * reference.
+   */
+  lastCumulative?: { input: number; output: number; cacheRead: number; total: number };
+  /** Discard the next complete record: it is the previous writer's in-flight record. */
+  discardNextRecord?: boolean;
+  /** Filesystem identity of the counted transcript; path equality is not identity. */
+  fileId?: string;
+  /**
+   * True once counting has been deliberately anchored at a byte offset (a warm-handoff
+   * pin). Providers report increments, so there is no total to subtract.
    */
   baselineCaptured?: boolean;
+  /** Legacy: parent totals the pre-increment guard subtracted. Migrated on restore. */
   baselineTurns?: number;
   baselineTotalTokens?: number;
+}
+
+/** Persisted form of the budget guard's delivery state machine. */
+export interface RunBudgetDeliveryState {
+  phase: 'ok' | 'breach-pending' | 'delivered' | 'abandoned' | 'unenforceable';
+  pendingMessage: string | null;
+  operatorMessage: string | null;
+  attempts: number;
+  firstHeldAt?: number;
 }
 
 export interface RunMonitorState {
@@ -1332,6 +1355,16 @@ export interface RunMonitorState {
   budgetWarned?: boolean;
   /** True after a budget nudge was confirmed delivered (may retry while false). */
   budgetNudgeSent?: boolean;
+  /**
+   * Delivery attempts made for the budget nudge. Retries stop at
+   * MAX_BUDGET_NUDGE_ATTEMPTS so an unconfirmable pane cannot accumulate copies
+   * of the warning in the runner composer.
+   */
+  budgetNudgeAttempts?: number;
+  /** Epoch ms of the first mid-turn deferral of a pending budget warning. */
+  budgetFirstDeferredAt?: number;
+  /** The budget guard's delivery state. Supersedes the flags below. */
+  budgetDelivery?: RunBudgetDeliveryState;
   /** Append-only transcript sample cache for the soft budget guard. */
   budgetUsage?: RunMonitorBudgetUsageState;
 }

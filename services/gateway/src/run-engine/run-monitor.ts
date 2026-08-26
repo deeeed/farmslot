@@ -47,6 +47,7 @@ import {
   runnerSupportsTmuxNudgesForLaunch,
   runnerTmuxNudgeUnsupportedDescription,
   sendRunnerInstructionSafely,
+  sendRunnerInstructionWithOutcome,
   stripRunnerNoise,
 } from '../runners/registry.js';
 import {
@@ -55,7 +56,7 @@ import {
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
 } from '../runners/session-process.js';
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import { onWorkerSignal, resolveContextFilePath } from '../tasks/watcher.js';
 import {
   isTerminalWorkerSignal,
@@ -71,13 +72,23 @@ import {
 } from '../tasks/worker-terminal-contract.js';
 
 import {
+  advanceBudgetDelivery,
+  budgetDeliveryDecision,
+  type BudgetDeliveryEvent,
+  type BudgetDeliveryState,
+  budgetGuardSettled,
+  initialBudgetDeliveryState,
+  MAX_BUDGET_NUDGE_ATTEMPTS,
+  MAX_BUDGET_NUDGE_DEFERRAL_MS,
+} from './budget-delivery-state.js';
+import {
   type BudgetUsageSampleState,
+  captureBudgetUsageBaselinePin,
   emptyBudgetUsageSampleState,
   sampleBudgetUsage,
 } from './budget-usage-sample.js';
 import { pendingDecisionForRun } from './decision-projection.js';
 import {
-  applyBudgetUsageBaseline,
   buildUsageBudgetNudgeMessage,
   evaluateFlowUsageBudget,
   FLOW_USAGE_BUDGET_DEFAULTS,
@@ -249,9 +260,10 @@ async function loadMonitorConfig(project: string, flowType?: FlowType): Promise<
 }
 
 /**
- * Capture the retained parent transcript totals before a warm task is delivered.
- * A configured budget fails the warm handoff closed when its parent usage cannot
- * be sampled; the caller may safely fall back to a fresh, absolute-count session.
+ * Pin budget accounting to the retained transcript's EOF before a warm task is
+ * delivered, so the child run is charged only for bytes it appends. A configured
+ * budget fails the warm handoff closed when that pin cannot be taken; the caller may
+ * safely fall back to a fresh, absolute-count session.
  */
 export async function prepareWarmBudgetBaselineForHandoff(
   runId: string,
@@ -275,27 +287,17 @@ export async function prepareWarmBudgetBaselineForHandoff(
       null;
     if (!runnerSessionPath) return 'unavailable';
 
-    const prior = run.monitorState?.budgetUsage ?? emptyBudgetUsageSampleState();
-    const sample = await sampleBudgetUsage({
-      slotId,
+    const baselineUsage = await captureBudgetUsageBaselinePin({
       vars: await loadSlotVars(slotId),
       runner: run.metrics.runner,
       runnerSessionPath,
-      prior,
     });
-    if (sample.availability === 'unavailable') {
+    if (!baselineUsage) {
       console.warn(
-        `[run-monitor] run ${runId.slice(0, 8)} — warm budget baseline unavailable: ${sample.unavailableReason ?? 'unknown reason'}`,
+        `[run-monitor] run ${runId.slice(0, 8)} — warm budget baseline unavailable for retained transcript ${runnerSessionPath}`,
       );
       return 'unavailable';
     }
-
-    const baseline = applyBudgetUsageBaseline({
-      turns: sample.turns,
-      totalTokens: sample.totalTokens,
-      warmSession: true,
-      baselineCaptured: false,
-    });
     const now = new Date().toISOString();
     const current = getRun(runId);
     if (!current) return 'unavailable';
@@ -306,16 +308,20 @@ export async function prepareWarmBudgetBaselineForHandoff(
         startedAt: current.monitorState?.startedAt ?? now,
         lastPaneHash: current.monitorState?.lastPaneHash,
         lastStructuredProgressAt: current.monitorState?.lastStructuredProgressAt,
-        budgetWarned: current.monitorState?.budgetWarned ?? false,
-        budgetNudgeSent: current.monitorState?.budgetNudgeSent ?? false,
-        budgetUsage: {
-          ...sample.nextState,
-          baselineCaptured: baseline.baselineCaptured,
-          baselineTurns: baseline.baselineTurns,
-          baselineTotalTokens: baseline.baselineTotalTokens,
-        },
+        // A fresh baseline opens a new accounting window, so the warn-once latch and
+        // spent delivery attempts reset with it. Carrying them over from a previous
+        // handoff on the same run would make the new window unable to warn at all.
+        budgetWarned: false,
+        budgetNudgeSent: false,
+        budgetNudgeAttempts: 0,
+        budgetUsage: baselineUsage,
       },
     });
+    // Flush before the caller delivers the warm prompt. Run writes are normally
+    // persisted in the background; a crash in that window would lose the baseline and
+    // the recovered run would charge the parent's history to this run.
+    const persisted = getRun(runId);
+    if (persisted) await persistRunNow(persisted, 'warm-budget-baseline');
     return 'captured';
   } catch (err) {
     console.warn(
@@ -334,12 +340,102 @@ interface MonitorState {
   lastStructuredProgressAt: number;
   lastStepCount: number;
   startedAt: number;
-  /** One-shot usage-budget warning already emitted for this monitor session. */
-  budgetWarned: boolean;
-  /** Confirmed budget-nudge delivery (may retry while false after a warn). */
-  budgetNudgeSent: boolean;
+  /** The soft-budget guard's delivery state — see budget-delivery-state.ts. */
+  delivery: BudgetDeliveryState;
+  /** Runner id the guard's current verdict was reached about. */
+  budgetRunnerId?: string | null;
   /** Incremental transcript sample for soft turn/token budgets. */
   budgetUsage: BudgetUsageSampleState;
+}
+
+/**
+ * Fold a pre-increment run's baseline subtraction into its counters.
+ *
+ * Those runs persisted an absolute session total alongside the parent total the old
+ * guard subtracted from it. Restoring the raw total would charge the parent's history
+ * on the first poll after restart — the false breach this guard exists to prevent.
+ */
+export function migrateLegacyBudgetUsage(persisted?: {
+  turns?: number;
+  totalTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreation?: number;
+  cacheRead?: number;
+  baselineTurns?: number;
+  baselineTotalTokens?: number;
+  lastCumulative?: { input: number; output: number; cacheRead: number; total: number };
+}): {
+  turns: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreation: number;
+  cacheRead: number;
+  lastCumulative: { input: number; output: number; cacheRead: number; total: number };
+} {
+  const persistedTotal = persisted?.totalTokens ?? 0;
+  const baselineTotal = persisted?.baselineTotalTokens ?? 0;
+  const migratedTotal = Math.max(0, persistedTotal - baselineTotal);
+  // Only a state carrying a baseline needs rewriting; anything else is already in the
+  // increment form and keeps its exact component split.
+  const rewriteComponents = baselineTotal > 0;
+  return {
+    turns: Math.max(0, (persisted?.turns ?? 0) - (persisted?.baselineTurns ?? 0)),
+    totalTokens: migratedTotal,
+    // A runner that recomputes its total from the component counters (claude) would
+    // otherwise rebuild the parent-inclusive figure on its very next record and breach
+    // immediately. The old state has no component breakdown of the baseline, so the
+    // migrated total is carried on `inputTokens` and the rest zeroed: the enforced
+    // quantity stays exact and only the per-component split is approximate.
+    inputTokens: rewriteComponents ? migratedTotal : (persisted?.inputTokens ?? 0),
+    outputTokens: rewriteComponents ? 0 : (persisted?.outputTokens ?? 0),
+    cacheCreation: rewriteComponents ? 0 : (persisted?.cacheCreation ?? 0),
+    cacheRead: rewriteComponents ? 0 : (persisted?.cacheRead ?? 0),
+    // The counters a pre-increment run persisted WERE the session's position, so they are
+    // exactly the reference its next reading must be measured against. Deriving it this
+    // way needs no state version and is right for every legacy shape: a cold run, a warm
+    // run mid-window, and a runner whose records never restate totals (claude ignores it).
+    lastCumulative: {
+      input: persisted?.inputTokens ?? 0,
+      output: persisted?.outputTokens ?? 0,
+      cacheRead: persisted?.cacheRead ?? 0,
+      total: persistedTotal,
+    },
+  };
+}
+
+/**
+ * Rebuild the guard's delivery state from what a previous monitor persisted.
+ *
+ * Runs written before the state machine carried four separate flags. They map cleanly:
+ * a confirmed delivery is `delivered`, a warning still owed is `breach-pending`, and a
+ * warning that ran out of attempts is `abandoned`. The message itself was never
+ * persisted, so an owed warning is re-derived from the next sample rather than invented.
+ */
+export function restoreBudgetDeliveryState(persisted?: {
+  budgetDelivery?: BudgetDeliveryState;
+  budgetWarned?: boolean;
+  budgetNudgeSent?: boolean;
+  budgetNudgeAttempts?: number;
+  budgetFirstDeferredAt?: number;
+}): BudgetDeliveryState {
+  if (persisted?.budgetDelivery) return persisted.budgetDelivery;
+  if (!persisted?.budgetWarned) return initialBudgetDeliveryState();
+  const attempts = persisted.budgetNudgeAttempts ?? 0;
+  const phase = persisted.budgetNudgeSent
+    ? 'delivered'
+    : attempts >= MAX_BUDGET_NUDGE_ATTEMPTS
+      ? 'abandoned'
+      : 'breach-pending';
+  return {
+    phase,
+    // Not persisted before; the next sample re-derives it if the breach still holds.
+    pendingMessage: null,
+    operatorMessage: null,
+    attempts,
+    firstHeldAt: persisted.budgetFirstDeferredAt,
+  };
 }
 
 /** Restart must keep the structured idle clock, not reset it to lastPollAt. */
@@ -729,6 +825,47 @@ export function shouldSkipMonitorNudge(
   return false;
 }
 
+/**
+ * Rebuild sampler state from what a previous monitor persisted.
+ *
+ * Exported so the restore is testable end to end: the legacy migration below was once
+ * computed here and then dropped on the floor, which no unit test of the migration alone
+ * could have caught.
+ */
+export function restoreBudgetUsageState(
+  persisted?: RunMonitorState['budgetUsage'],
+): BudgetUsageSampleState {
+  const legacy = migrateLegacyBudgetUsage(persisted);
+  return persisted
+    ? {
+        path: persisted.path ?? null,
+        size: persisted.size ?? 0,
+        mtimeMs: persisted.mtimeMs ?? 0,
+        offset: persisted.offset ?? 0,
+        turns: legacy.turns,
+        totalTokens: legacy.totalTokens,
+        inputTokens: legacy.inputTokens,
+        outputTokens: legacy.outputTokens,
+        cacheCreation: legacy.cacheCreation,
+        cacheRead: legacy.cacheRead,
+        sampledAt: persisted.sampledAt,
+        unavailableReason: persisted.unavailableReason,
+        integrityFailureReason: persisted.integrityFailureReason,
+        skippingOversizedRecord: persisted.skippingOversizedRecord,
+        skippedOversizedRecords: persisted.skippedOversizedRecords,
+        discardNextRecord: persisted.discardNextRecord,
+        fileId: persisted.fileId,
+        // A pin records its reference explicitly. State written before this field
+        // existed has none, and `baselineCaptured` cannot tell a legacy cold run from a
+        // legacy warm one — the old cold path set it too. Its persisted counters were
+        // the session's position either way, so the migration derives the reference from
+        // them. Inert for a runner whose records never restate totals.
+        lastCumulative: persisted.lastCumulative ?? legacy.lastCumulative,
+        baselineCaptured: persisted.baselineCaptured,
+      }
+    : emptyBudgetUsageSampleState();
+}
+
 export async function monitorRun(
   runId: string,
   slotId: string,
@@ -762,27 +899,8 @@ export async function monitorRun(
 
   // Restore from persisted state if available (gateway restart recovery)
   const persisted = run.monitorState;
-  const restoredBudgetUsage: BudgetUsageSampleState = persisted?.budgetUsage
-    ? {
-        path: persisted.budgetUsage.path ?? null,
-        size: persisted.budgetUsage.size ?? 0,
-        mtimeMs: persisted.budgetUsage.mtimeMs ?? 0,
-        offset: persisted.budgetUsage.offset ?? 0,
-        turns: persisted.budgetUsage.turns ?? 0,
-        totalTokens: persisted.budgetUsage.totalTokens ?? 0,
-        inputTokens: persisted.budgetUsage.inputTokens ?? 0,
-        outputTokens: persisted.budgetUsage.outputTokens ?? 0,
-        cacheCreation: persisted.budgetUsage.cacheCreation ?? 0,
-        cacheRead: persisted.budgetUsage.cacheRead ?? 0,
-        sampledAt: persisted.budgetUsage.sampledAt,
-        unavailableReason: persisted.budgetUsage.unavailableReason,
-        integrityFailureReason: persisted.budgetUsage.integrityFailureReason,
-        skippingOversizedRecord: persisted.budgetUsage.skippingOversizedRecord,
-        baselineCaptured: persisted.budgetUsage.baselineCaptured,
-        baselineTurns: persisted.budgetUsage.baselineTurns,
-        baselineTotalTokens: persisted.budgetUsage.baselineTotalTokens,
-      }
-    : emptyBudgetUsageSampleState();
+  const restoredBudgetUsage = restoreBudgetUsageState(persisted?.budgetUsage);
+
   const state: MonitorState = persisted
     ? {
         lastPaneHash: persisted.lastPaneHash ?? '',
@@ -790,8 +908,7 @@ export async function monitorRun(
         lastStructuredProgressAt: restoreStructuredProgressAtMs(persisted),
         lastStepCount: 0,
         startedAt: new Date(persisted.startedAt).getTime(),
-        budgetWarned: persisted.budgetWarned === true,
-        budgetNudgeSent: persisted.budgetNudgeSent === true,
+        delivery: restoreBudgetDeliveryState(persisted),
         budgetUsage: restoredBudgetUsage,
       }
     : {
@@ -800,8 +917,7 @@ export async function monitorRun(
         lastStructuredProgressAt: now,
         lastStepCount: 0,
         startedAt: now,
-        budgetWarned: false,
-        budgetNudgeSent: false,
+        delivery: initialBudgetDeliveryState(),
         budgetUsage: emptyBudgetUsageSampleState(),
       };
   // Also restore nudge count from persisted state
@@ -1138,24 +1254,55 @@ export async function monitorRun(
         violationContext?.id,
       );
 
-      // 2b. Soft budget: sample every poll until warned; after warn, still retry
-      // nudge delivery if not confirmed (soft guard must not die on nudge errors).
-      if (hasUsageBudget(config) && (!state.budgetWarned || !state.budgetNudgeSent)) {
+      // 2b. Soft budget: sample every poll until warned; after warn, retry nudge
+      // delivery while unconfirmed, but only up to MAX_BUDGET_NUDGE_ATTEMPTS — each
+      // unconfirmed attempt types the warning into the runner composer, so an
+      // indefinitely busy pane would otherwise stack copies of it.
+      // Dispatch can correct metrics.runner after monitoring starts. A verdict reached
+      // about the previous id says nothing about this one, so the guard is told rather
+      // than kept in a second latch beside its own state.
+      const budgetRunner = getRun(runId)?.metrics.runner ?? null;
+      if (state.budgetRunnerId !== undefined && state.budgetRunnerId !== budgetRunner) {
+        state.delivery = advanceBudgetDelivery(state.delivery, { kind: 'runner-changed' });
+      }
+      state.budgetRunnerId = budgetRunner;
+      // The guard runs until it has nothing left to learn or say — `budgetGuardSettled`
+      // is the single answer to that, rather than a conjunction of latches.
+      if (hasUsageBudget(config) && !budgetGuardSettled(state.delivery)) {
+        const priorPhase = state.delivery.phase;
         const tick = await pollRunBudgetGuard({
           runId,
           slotId,
           maxTurns: config.maxTurns,
           maxTotalTokens: config.maxTotalTokens,
-          budgetWarned: state.budgetWarned,
-          budgetNudgeSent: state.budgetNudgeSent,
+          delivery: state.delivery,
           budgetUsage: state.budgetUsage,
           monitorStartedAt: new Date(state.startedAt).toISOString(),
           agentStatus,
           sendNudge: true,
         });
         state.budgetUsage = tick.budgetUsage;
-        state.budgetWarned = tick.budgetWarned;
-        if (tick.nudgeSent) state.budgetNudgeSent = true;
+        state.delivery = tick.delivery;
+        if (priorPhase !== 'unenforceable' && state.delivery.phase === 'unenforceable') {
+          console.warn(
+            `[run-monitor] run ${runId.slice(0, 8)} — usage budget not enforceable for runner ${budgetRunner ?? 'unknown'}: ${state.delivery.operatorMessage}`,
+          );
+        }
+        if (priorPhase !== 'abandoned' && state.delivery.phase === 'abandoned') {
+          console.warn(
+            `[run-monitor] run ${runId.slice(0, 8)} — budget warning unconfirmed after ${state.delivery.attempts} attempts; giving up on pane delivery`,
+          );
+        }
+        // A skipped record is real usage nobody counted. It cannot fail the run closed —
+        // large tool output is routine — but it must not stay invisible either.
+        if (
+          (tick.budgetUsage.skippedOversizedRecords ?? 0) >
+          (state.budgetUsage.skippedOversizedRecords ?? 0)
+        ) {
+          console.warn(
+            `[run-monitor] run ${runId.slice(0, 8)} — ${tick.budgetUsage.skippedOversizedRecords} transcript record(s) too large to parse; their usage is uncounted`,
+          );
+        }
         if (tick.unavailableReason && tick.unavailableReasonChanged) {
           console.warn(
             `[run-monitor] run ${runId.slice(0, 8)} — budget usage unavailable: ${tick.unavailableReason}`,
@@ -1281,8 +1428,10 @@ export async function monitorRun(
             startedAt: new Date(state.startedAt).toISOString(),
             lastPaneHash: state.lastPaneHash,
             lastStructuredProgressAt: new Date(state.lastStructuredProgressAt).toISOString(),
-            budgetWarned: state.budgetWarned,
-            budgetNudgeSent: state.budgetNudgeSent,
+            // Not budgetDelivery: pollRunBudgetGuard is its sole writer. Merging a
+            // second writer's value with Math.max hid a lost update rather than
+            // preventing one — it cannot tell "someone got there first" from "mine is
+            // stale". One writer means there is nothing to merge.
             budgetUsage: state.budgetUsage,
           },
         });
@@ -1575,12 +1724,22 @@ function buildNudgeMessage(violation: MonitorViolation): string {
 }
 
 /**
+ * Outcome of one budget-nudge delivery.
+ *
+ * `not-attempted` means the pane was never touched, so the attempt must not count
+ * against MAX_BUDGET_NUDGE_ATTEMPTS — otherwise a few transient holds would burn the
+ * cap and the worker would never hear about a real breach.
+ */
+export type BudgetNudgeDelivery = 'confirmed' | 'attempted' | 'not-attempted';
+
+/**
  * One-shot budget warning into the worker pane. Does not increment metrics.nudgeCount
  * (stuck/idle max_nudges is a separate escalation budget).
  *
- * Returns true only when the instruction was confirmed sent. Expected unavailability
- * (missing run, non-tmux-nudgeable runner) returns false without throwing. Unexpected
- * delivery failures propagate so callers do not stamp a false nudgeSent.
+ * Returns `confirmed` only when the instruction was accepted and submitted. Expected
+ * unavailability (missing run, non-tmux-nudgeable runner) returns `not-attempted`
+ * without throwing. Unexpected delivery failures propagate so callers do not stamp a
+ * false nudgeSent.
  */
 export async function sendBudgetNudge(
   runId: string,
@@ -1588,18 +1747,19 @@ export async function sendBudgetNudge(
   message: string,
   role?: AgentRole,
   contextId?: string,
-): Promise<boolean> {
+): Promise<BudgetNudgeDelivery> {
   const run = getRun(runId);
-  if (!run) return false;
+  if (!run) return 'not-attempted';
   if (!runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))) {
-    return false;
+    return 'not-attempted';
   }
 
   const vars = await loadSlotVars(slotId);
   const context = selectAgentContext(run, { role, contextId });
   const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
+
   const retainedSession = resolveRunRetainedSessionBinding(run, context);
-  const sent = await sendRunnerInstructionSafely(
+  const outcome = await sendRunnerInstructionWithOutcome(
     vars,
     session,
     run.metrics.runner ?? 'claude',
@@ -1611,12 +1771,21 @@ export async function sendBudgetNudge(
       ...retainedSessionSendOption(retainedSession),
     },
   );
-  if (!sent) return false;
+  // A hold that never reached the composer left nothing behind, so it must not spend an
+  // attempt — three of them would otherwise exhaust the budget during a hook lapse and
+  // the worker would never be told. Text that landed unconfirmed is a spent attempt.
+  if (outcome === 'held-untouched') {
+    console.log(
+      `[run-monitor] budget nudge held without reaching the composer for run ${runId.slice(0, 8)}`,
+    );
+    return 'not-attempted';
+  }
+  if (outcome === 'typed-unconfirmed') return 'attempted';
   console.log(
     `[run-monitor] budget nudge sent to run ${runId.slice(0, 8)}: ${message.slice(0, 120)}`,
   );
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-  return true;
+  return 'confirmed';
 }
 
 /**
@@ -1649,20 +1818,59 @@ export function applyBudgetWarnOnce(input: {
 }
 
 export type PollBudgetGuardStepResult = {
-  budgetWarned: boolean;
+  /** The guard's state after this poll. The only carrier of delivery progress. */
+  delivery: BudgetDeliveryState;
   budgetUsage: BudgetUsageSampleState;
   sampleTurns: number | null;
   sampleTotalTokens: number | null;
-  /** Turns charged toward the soft ceiling after baseline delta. */
+  /** Turns charged toward the soft ceiling. Identical to the sample: see budgetUsage. */
   chargeTurns: number | null;
   chargeTotalTokens: number | null;
-  establishingBaseline: boolean;
   availability: string;
   unavailableReason?: string;
   unavailableReasonChanged: boolean;
   violation: MonitorViolation | null;
   nudgeSent: boolean;
+  /** The runner exposes no session usage, so ceilings can never be enforced for it. */
+  unsupportedRunner: boolean;
 };
+
+export { MAX_BUDGET_NUDGE_ATTEMPTS, MAX_BUDGET_NUDGE_DEFERRAL_MS };
+
+/**
+ * Whether the runner is mid-turn, from its structured progress verdict.
+ *
+ * Read here rather than inside the send so the guard has exactly one place that decides
+ * whether it may deliver. Splitting that decision across the policy layer and the sender
+ * is how two busy detectors came to disagree about which holds counted.
+ */
+async function isRunnerMidTurn(
+  runId: string,
+  slotId: string,
+  role?: AgentRole,
+  contextId?: string,
+): Promise<boolean> {
+  const run = getRun(runId);
+  if (!run) return false;
+  try {
+    const vars = await loadSlotVars(slotId);
+    const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
+    const runner = run.metrics.runner ?? 'claude';
+    const progress = classifyMonitorProgress({
+      activity: await readRunnerActivityFromObservability(vars, session, runner),
+      turnState: await readRunnerTurnState(vars, session, runner),
+    });
+    return progress === 'making-progress';
+  } catch (error) {
+    // An unreadable progress signal is not evidence the runner is busy. Treating it as
+    // busy would hold the warning behind a hook lapse; the send helper owns its own
+    // degraded window and the attempt cap bounds the result.
+    console.warn(
+      `[run-monitor] run ${runId.slice(0, 8)} — runner progress unreadable: ${(error as Error).message}`,
+    );
+    return false;
+  }
+}
 
 /**
  * One monitor poll of the soft usage budget. Runner resolution and persistence
@@ -1676,23 +1884,21 @@ export async function pollBudgetGuardStep(params: {
   runnerSessionPath?: string | null;
   maxTurns: number | null;
   maxTotalTokens: number | null;
-  budgetWarned: boolean;
-  budgetNudgeSent?: boolean;
+  /** Guard state carried from the previous poll. */
+  delivery: BudgetDeliveryState;
   budgetUsage: BudgetUsageSampleState;
   agentStatus: AgentLiveStatus;
   /** When false, skip tmux nudge (CLI/local proof without a live pane). */
   sendNudge: boolean;
-  /**
-   * Force warm-session baseline accounting in focused tests. Production uses
-   * `engineState.flags.warmHandoffSucceeded` when omitted.
-   */
-  warmSession?: boolean;
+
   /**
    * Optional local host stub for focused tests. Production monitor always loads real vars.
    */
   localVarsStub?: { host: string; machine: string; slotId: string; remoteRepo?: string };
   /** Test seam for confirmed-delivery retry behavior; production uses sendBudgetNudge. */
   deliverNudge?: typeof sendBudgetNudge;
+  /** Test seam for the runner's turn state; production reads runner observability. */
+  runnerMidTurnStub?: boolean;
 }): Promise<PollBudgetGuardStepResult> {
   const vars = params.localVarsStub
     ? (params.localVarsStub as Awaited<ReturnType<typeof loadSlotVars>>)
@@ -1705,138 +1911,126 @@ export async function pollBudgetGuardStep(params: {
     runnerSessionPath: params.runnerSessionPath,
     prior: params.budgetUsage,
   });
-  let budgetWarned = params.budgetWarned;
   let violation: MonitorViolation | null = null;
   let nudgeSent = false;
-  const priorNudgeSent = params.budgetNudgeSent === true;
 
-  // Warm baseline only when handoff actually succeeded — not merely requested.
-  const liveRun = getRun(params.runId);
-  const warmSession =
-    params.warmSession === true || liveRun?.engineState?.flags?.warmHandoffSucceeded === true;
-  const baseline = applyBudgetUsageBaseline({
-    turns: sample.turns,
-    totalTokens: sample.totalTokens,
-    warmSession,
-    baselineCaptured: sample.nextState.baselineCaptured ?? params.budgetUsage.baselineCaptured,
-    baselineTurns: sample.nextState.baselineTurns ?? params.budgetUsage.baselineTurns,
-    baselineTotalTokens:
-      sample.nextState.baselineTotalTokens ?? params.budgetUsage.baselineTotalTokens,
-  });
-  const budgetUsage: BudgetUsageSampleState = {
-    ...sample.nextState,
-    baselineCaptured: baseline.baselineCaptured,
-    baselineTurns: baseline.baselineTurns,
-    baselineTotalTokens: baseline.baselineTotalTokens,
-  };
+  // Counters already measure only this run: providers report increments and a warm
+  // handoff starts them at the pin. There is nothing left to subtract.
+  const budgetUsage: BudgetUsageSampleState = sample.nextState;
 
-  let warningMessage: string | null = null;
+  // What this poll observed, as one event. Nothing else in here may change the guard's
+  // mind — the transition function owns that, so a later observation cannot silently
+  // overwrite an earlier conclusion the way a shared message variable could.
+  let event: BudgetDeliveryEvent;
   if (sample.enforcementFailure) {
-    warningMessage =
-      `usage budget enforcement unavailable (${sample.unavailableReason ?? 'unknown accounting failure'}). ` +
-      'Stop expanding scope and finish or block the current checklist item.';
-    if (!budgetWarned) {
-      budgetWarned = true;
-      const run = getRun(params.runId);
-      const context = run
-        ? selectAgentContext(run, { role: primaryRoleForFlow(params.flowType) })
-        : undefined;
-      violation = {
-        slotId: params.slotId,
-        role: context?.role,
-        contextId: context?.id,
-        type: 'budget',
-        message: warningMessage,
-        nudgeSent: null,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  } else if (!baseline.establishingBaseline && sample.availability !== 'unavailable') {
-    const decision = applyBudgetWarnOnce({
-      turns: baseline.chargeTurns,
-      totalTokens: baseline.chargeTotalTokens,
-      maxTurns: params.maxTurns,
-      maxTotalTokens: params.maxTotalTokens,
-      budgetWarned,
-      flowType: params.flowType,
-    });
-
-    if (decision.emit) {
-      budgetWarned = true;
-      warningMessage = decision.message;
-      const run = getRun(params.runId);
-      const context = run
-        ? selectAgentContext(run, { role: primaryRoleForFlow(params.flowType) })
-        : undefined;
-      violation = {
-        slotId: params.slotId,
-        role: context?.role,
-        contextId: context?.id,
-        type: 'budget',
-        message: decision.message,
-        nudgeSent: null,
-        timestamp: new Date().toISOString(),
-      };
-    } else if (budgetWarned && !priorNudgeSent) {
-      const evaluation = evaluateFlowUsageBudget(
-        { turns: baseline.chargeTurns, totalTokens: baseline.chargeTotalTokens },
-        { maxTurns: params.maxTurns, maxTotalTokens: params.maxTotalTokens },
-      );
-      if (evaluation.exceeded) {
-        warningMessage = formatUsageBudgetMessage(params.flowType, evaluation);
-      }
-    }
+    // Neither a runner without a session-usage provider (cursor, grok, …) nor a
+    // transcript that moved under us is something the worker did, so both are recorded
+    // for the operator rather than turned into a scope accusation.
+    const reason = sample.unsupportedRunner
+      ? `usage budget enforcement unsupported (${sample.unavailableReason ?? 'runner exposes no session usage'}). ` +
+        'Budget ceilings are not enforced for this runner; no worker action is implied.'
+      : `usage budget accounting lost (${sample.unavailableReason ?? 'transcript continuity broken'}). ` +
+        'Ceilings are no longer enforced for this run; no worker action is implied.';
+    // A runner with no provider can never gain one, and lost transcript integrity is
+    // latched by the sampler. Anything that can clear must not retire the run.
+    event = {
+      kind: 'accounting-unenforceable',
+      message: reason,
+      permanent: sample.unsupportedRunner === true || sample.accountingIntegrityLost === true,
+    };
+  } else if (sample.availability !== 'unavailable') {
+    const evaluation = evaluateFlowUsageBudget(
+      { turns: sample.turns, totalTokens: sample.totalTokens },
+      { maxTurns: params.maxTurns, maxTotalTokens: params.maxTotalTokens },
+    );
+    event = evaluation.exceeded
+      ? { kind: 'usage-breached', message: formatUsageBudgetMessage(params.flowType, evaluation) }
+      : { kind: 'usage-within-budget' };
+  } else {
+    // Unavailable without an enforcement failure is a transient read; nothing learned.
+    event = { kind: 'usage-within-budget' };
   }
 
-  // Warning emission and delivery confirmation are separate. A false/throwing
-  // safe-send keeps budgetNudgeSent false so later polls retry without emitting
-  // another violation.
-  if (params.sendNudge && budgetWarned && !priorNudgeSent && warningMessage) {
-    const run = getRun(params.runId);
-    const context = run
-      ? selectAgentContext(run, { role: primaryRoleForFlow(params.flowType) })
-      : undefined;
-    const deliveryViolation =
-      violation ??
-      ({
-        slotId: params.slotId,
-        role: context?.role,
-        contextId: context?.id,
-        type: 'budget',
-        message: warningMessage,
-        nudgeSent: null,
-        timestamp: new Date().toISOString(),
-      } satisfies MonitorViolation);
-    if (
-      run &&
-      !shouldSkipMonitorNudge(run, deliveryViolation, params.agentStatus) &&
-      runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))
-    ) {
-      try {
-        nudgeSent = await (params.deliverNudge ?? sendBudgetNudge)(
-          params.runId,
-          params.slotId,
-          warningMessage,
-          context?.role,
-          context?.id,
-        );
-        if (nudgeSent && violation) violation.nudgeSent = new Date().toISOString();
-      } catch (err) {
-        console.warn(
-          `[run-monitor] budget nudge delivery failed for run ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
-        );
+  const priorDelivery = params.delivery;
+  let delivery = advanceBudgetDelivery(priorDelivery, event);
+
+  const runForContext = getRun(params.runId);
+  const context = runForContext
+    ? selectAgentContext(runForContext, { role: primaryRoleForFlow(params.flowType) })
+    : undefined;
+  const raiseViolation = (message: string): MonitorViolation => ({
+    slotId: params.slotId,
+    role: context?.role,
+    contextId: context?.id,
+    type: 'budget',
+    message,
+    nudgeSent: null,
+    timestamp: new Date().toISOString(),
+  });
+
+  // A phase leaving `ok` is the one-shot: it is what the operator is told about.
+  if (priorDelivery.phase === 'ok' && delivery.phase !== 'ok') {
+    violation = raiseViolation(
+      delivery.pendingMessage ?? delivery.operatorMessage ?? 'usage budget',
+    );
+  }
+
+  if (params.sendNudge) {
+    const runnerMidTurn =
+      params.runnerMidTurnStub ??
+      (await isRunnerMidTurn(params.runId, params.slotId, context?.role, context?.id));
+    const decision = budgetDeliveryDecision(delivery, { runnerMidTurn, now: Date.now() });
+    if (decision.deliver) {
+      const run = getRun(params.runId);
+      const deliveryViolation = violation ?? raiseViolation(decision.message);
+      if (run && !runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))) {
+        // Waiting cannot help: this runner will never accept a pane instruction.
+        delivery = advanceBudgetDelivery(delivery, {
+          kind: 'delivery-impossible',
+          message: `runner ${run.metrics.runner ?? 'unknown'} cannot receive pane instructions`,
+        });
+      } else if (run && !shouldSkipMonitorNudge(run, deliveryViolation, params.agentStatus)) {
+        try {
+          const outcome = await (params.deliverNudge ?? sendBudgetNudge)(
+            params.runId,
+            params.slotId,
+            decision.message,
+            context?.role,
+            context?.id,
+          );
+          nudgeSent = outcome === 'confirmed';
+          delivery = advanceBudgetDelivery(
+            delivery,
+            outcome === 'confirmed'
+              ? { kind: 'delivery-confirmed' }
+              : outcome === 'attempted'
+                ? { kind: 'delivery-typed' }
+                : { kind: 'delivery-held', now: Date.now() },
+          );
+          if (nudgeSent && violation) violation.nudgeSent = new Date().toISOString();
+        } catch (err) {
+          // The send helper reports a mutated pane as `attempted` rather than throwing,
+          // so a throw here is a fault around it and the pane state is unknown. Treat it
+          // as a hold: it starts the bound without spending an attempt.
+          console.warn(
+            `[run-monitor] budget nudge delivery failed for run ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
+          );
+          delivery = advanceBudgetDelivery(delivery, { kind: 'delivery-held', now: Date.now() });
+        }
       }
+    } else if (delivery.phase === 'breach-pending') {
+      // Owed but not now — the runner is mid-turn. Recording the hold is what bounds it.
+      delivery = advanceBudgetDelivery(delivery, { kind: 'delivery-held', now: Date.now() });
     }
   }
 
   return {
-    budgetWarned,
+    delivery,
     budgetUsage,
     sampleTurns: sample.turns,
     sampleTotalTokens: sample.totalTokens,
-    chargeTurns: baseline.chargeTurns,
-    chargeTotalTokens: baseline.chargeTotalTokens,
-    establishingBaseline: baseline.establishingBaseline,
+    chargeTurns: sample.turns,
+    chargeTotalTokens: sample.totalTokens,
     availability: sample.availability,
     unavailableReason: sample.unavailableReason,
     unavailableReasonChanged: Boolean(
@@ -1846,6 +2040,7 @@ export async function pollBudgetGuardStep(params: {
     ),
     violation,
     nudgeSent,
+    unsupportedRunner: sample.unsupportedRunner === true,
   };
 }
 
@@ -1859,8 +2054,8 @@ export async function pollRunBudgetGuard(params: {
   slotId: string;
   maxTurns: number | null;
   maxTotalTokens: number | null;
-  budgetWarned?: boolean;
-  budgetNudgeSent?: boolean;
+  /** Guard state to continue from; falls back to whatever the run persisted. */
+  delivery?: BudgetDeliveryState;
   budgetUsage?: BudgetUsageSampleState;
   monitorStartedAt?: string;
   agentStatus: 'working' | 'idle' | 'no-tmux';
@@ -1886,8 +2081,7 @@ export async function pollRunBudgetGuard(params: {
       null,
     maxTurns: params.maxTurns,
     maxTotalTokens: params.maxTotalTokens,
-    budgetWarned: params.budgetWarned ?? run.monitorState?.budgetWarned === true,
-    budgetNudgeSent: params.budgetNudgeSent ?? run.monitorState?.budgetNudgeSent === true,
+    delivery: params.delivery ?? restoreBudgetDeliveryState(run.monitorState),
     budgetUsage:
       params.budgetUsage ?? run.monitorState?.budgetUsage ?? emptyBudgetUsageSampleState(),
     agentStatus: params.agentStatus,
@@ -1904,14 +2098,16 @@ export async function pollRunBudgetGuard(params: {
       startedAt: params.monitorStartedAt ?? current.monitorState?.startedAt ?? now,
       lastPaneHash: current.monitorState?.lastPaneHash,
       lastStructuredProgressAt: current.monitorState?.lastStructuredProgressAt,
-      budgetWarned: tick.budgetWarned,
-      budgetNudgeSent:
-        params.budgetNudgeSent === true ||
-        current.monitorState?.budgetNudgeSent === true ||
-        tick.nudgeSent,
+      budgetDelivery: tick.delivery,
       budgetUsage: tick.budgetUsage,
     },
   });
+  // Flush when an attempt was actually spent. Run writes persist in the background, so
+  // a crash in that window would forget the attempt and buy the pane more typed copies.
+  if (tick.delivery.attempts !== (params.delivery?.attempts ?? 0)) {
+    const flushed = getRun(params.runId);
+    if (flushed) await persistRunNow(flushed, 'budget-nudge-attempt');
+  }
   if (tick.violation) {
     broadcastFn(Events.MONITOR_VIOLATION, { violation: tick.violation });
   }

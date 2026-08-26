@@ -57,7 +57,8 @@ export function evaluateFlowUsageBudget(
 ): UsageBudgetEvaluation {
   if (!hasUsageBudget(budget)) return { exceeded: false };
 
-  const turns = typeof sample.turns === 'number' && Number.isFinite(sample.turns) ? sample.turns : null;
+  const turns =
+    typeof sample.turns === 'number' && Number.isFinite(sample.turns) ? sample.turns : null;
   const totalTokens =
     typeof sample.totalTokens === 'number' && Number.isFinite(sample.totalTokens)
       ? sample.totalTokens
@@ -106,75 +107,4 @@ export function buildUsageBudgetNudgeMessage(message: string): string {
     `[Orchestrator] USAGE BUDGET WARNING: ${message} ` +
     'Do not start new workstreams. Complete or block the current checklist item and run the appropriate mark terminal command.'
   );
-}
-
-/**
- * Soft ceilings apply to per-run growth on **warm retained sessions** only.
- * Cold starts charge absolute sample totals (work before the first poll is not free).
- * Warm handoffs capture a first-poll baseline so parent transcript totals do not
- * false-trigger the child flow budget.
- */
-export function applyBudgetUsageBaseline(input: {
-  turns: number | null;
-  totalTokens: number | null;
-  /** When false, charge absolute sample values (cold start). */
-  warmSession: boolean;
-  baselineCaptured?: boolean;
-  baselineTurns?: number;
-  baselineTotalTokens?: number;
-}): {
-  /** Turns counted toward the soft ceiling (null if unavailable). */
-  chargeTurns: number | null;
-  chargeTotalTokens: number | null;
-  /** True when this sample only established a warm baseline (no charge yet). */
-  establishingBaseline: boolean;
-  baselineCaptured: boolean;
-  baselineTurns: number;
-  baselineTotalTokens: number;
-} {
-  if (input.turns == null && input.totalTokens == null) {
-    return {
-      chargeTurns: null,
-      chargeTotalTokens: null,
-      establishingBaseline: false,
-      baselineCaptured: input.baselineCaptured === true,
-      baselineTurns: input.baselineTurns ?? 0,
-      baselineTotalTokens: input.baselineTotalTokens ?? 0,
-    };
-  }
-
-  // Cold start: charge absolute totals from the first sample onward.
-  if (!input.warmSession) {
-    return {
-      chargeTurns: input.turns,
-      chargeTotalTokens: input.totalTokens,
-      establishingBaseline: false,
-      baselineCaptured: true,
-      baselineTurns: 0,
-      baselineTotalTokens: 0,
-    };
-  }
-
-  if (!input.baselineCaptured) {
-    return {
-      chargeTurns: 0,
-      chargeTotalTokens: 0,
-      establishingBaseline: true,
-      baselineCaptured: true,
-      baselineTurns: input.turns ?? 0,
-      baselineTotalTokens: input.totalTokens ?? 0,
-    };
-  }
-
-  const baseTurns = input.baselineTurns ?? 0;
-  const baseTokens = input.baselineTotalTokens ?? 0;
-  return {
-    chargeTurns: input.turns != null ? Math.max(0, input.turns - baseTurns) : null,
-    chargeTotalTokens:
-      input.totalTokens != null ? Math.max(0, input.totalTokens - baseTokens) : null,
-    establishingBaseline: false,
-    baselineCaptured: true,
-    baselineTurns: baseTurns,
-    baselineTotalTokens: baseTokens,
-  };
 }

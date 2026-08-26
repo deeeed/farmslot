@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import {
+  advanceIncrementalFromBytes,
   emptyIncrementalSessionUsageState,
   type IncrementalSessionUsageState,
   runSessionUsage,
@@ -388,7 +396,46 @@ test('runSessionUsage throws when report is called without a prior snapshot', as
   );
 });
 
-test('sampleSessionUsageIncremental skips oversized record without a newline to keep forward progress', async () => {
+test('advanceIncrementalFromBytes skips a record too large for even the widened window', () => {
+  // Direct-window test so the skip path is exercised without a 16MiB fixture.
+  const giant = Buffer.from(`{"type":"assistant","pad":"${'x'.repeat(200)}"`, 'utf8');
+  const skipped = advanceIncrementalFromBytes(
+    emptyIncrementalSessionUsageState(),
+    giant,
+    applyClaudeRecord,
+    {
+      startOffset: 0,
+      fileSize: giant.length + 50,
+      mtimeMs: 1,
+      filePath: '/tmp/x.jsonl',
+      maxWindow: giant.length,
+    },
+  );
+  assert.equal(skipped.offset, giant.length, 'offset advances so sampling makes progress');
+  assert.equal(skipped.skippingOversizedRecord, true);
+  assert.equal(skipped.skippedOversizedRecords, 1);
+  // Skipping one record must not disable accounting for the rest of the run.
+  assert.equal(skipped.integrityFailureReason, undefined);
+
+  // The next window closes the giant record and carries a countable one.
+  const rest = Buffer.from(
+    `}\n${JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 10, output_tokens: 2 } } })}\n`,
+    'utf8',
+  );
+  const resumed = advanceIncrementalFromBytes(skipped, rest, applyClaudeRecord, {
+    startOffset: giant.length,
+    fileSize: giant.length + rest.length,
+    mtimeMs: 2,
+    filePath: '/tmp/x.jsonl',
+    maxWindow: 1024,
+  });
+  assert.equal(resumed.turns, 1);
+  assert.equal(resumed.totalTokens, 12);
+  assert.equal(resumed.skippedOversizedRecords, 1);
+  assert.equal(resumed.integrityFailureReason, undefined);
+});
+
+test('sampleSessionUsageIncremental widens the read to count a record over one window', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'incr-oversize-'));
   const file = path.join(dir, 'session.jsonl');
   // One giant line > 1MiB with no newline, then a valid record.
@@ -404,24 +451,12 @@ test('sampleSessionUsageIncremental skips oversized record without a newline to 
     prior: state,
     applyRecord: applyClaudeRecord,
   });
-  // First window advances while explicitly failing closed; it never invents usage.
-  assert.ok(first.nextState.offset > 0, 'offset must advance past oversized window');
-  assert.equal(first.availability, 'unavailable');
-  assert.match(first.unavailableReason ?? '', /exceeds bounded sample window/);
-  assert.equal(first.nextState.turns, 0);
-  // Continue until the good record is counted after the oversized record's newline.
+  // The >1MiB record carries usage, so the read widens once instead of skipping it.
   state = first.nextState;
-  for (let i = 0; i < 5 && state.turns < 1; i++) {
-    const next = await sampleSessionUsageIncremental({
-      filePath: file,
-      prior: state,
-      applyRecord: applyClaudeRecord,
-    });
-    state = next.nextState;
-  }
-  assert.equal(state.turns, 1);
-  assert.equal(state.totalTokens, 12);
-  assert.match(state.integrityFailureReason ?? '', /exceeds bounded sample window/);
+  assert.equal(state.turns, 2);
+  assert.equal(state.totalTokens, 2 + 12);
+  assert.equal(state.skippedOversizedRecords, undefined);
+  assert.equal(state.integrityFailureReason, undefined);
 });
 
 test('sampleSessionUsageIncremental bounds bytes read per sample', async () => {
@@ -489,4 +524,38 @@ test('sampleSessionUsageIncremental preserves incomplete trailing JSONL across p
     applyRecord: applyClaudeRecord,
   });
   assert.equal(second.turns, 2);
+});
+
+test('a transcript replaced in place is caught even when it regrows past the old offset', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'incr-replace-'));
+  const file = path.join(dir, 'session.jsonl');
+  const line = (i: number, o: number) =>
+    JSON.stringify({
+      type: 'assistant',
+      message: { usage: { input_tokens: i, output_tokens: o } },
+    });
+  writeFileSync(file, `${line(10, 2)}\n`, 'utf8');
+  const first = await sampleSessionUsageIncremental({
+    filePath: file,
+    prior: emptyIncrementalSessionUsageState(),
+    applyRecord: applyClaudeRecord,
+  });
+  assert.equal(first.turns, 1);
+
+  // Replaced, not appended: same path, and it grows past where counting had reached, so
+  // every check but identity passes while the counters belong to a different session.
+  const replacement = path.join(dir, 'other.jsonl');
+  writeFileSync(replacement, `${line(1, 1)}\n${line(2, 2)}\n${line(3, 3)}\n`, 'utf8');
+  renameSync(replacement, file);
+
+  const after = await sampleSessionUsageIncremental({
+    filePath: file,
+    prior: { ...first.nextState, baselineCaptured: true },
+    applyRecord: applyClaudeRecord,
+  });
+  assert.equal(after.availability, 'unavailable');
+  assert.match(
+    after.nextState.integrityFailureReason ?? '',
+    /changed after budget accounting began/,
+  );
 });

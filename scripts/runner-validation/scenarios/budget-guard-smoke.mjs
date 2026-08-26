@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { DEFAULT_PROMPT, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
-import { runGatewayBudgetGuard } from '../lib/gateway-post-launch.mjs';
+import { runGatewayBudgetGuard, runGatewayWarmBudgetCharge } from '../lib/gateway-post-launch.mjs';
 import { eventName, readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { listSessionCandidates, waitForSessionBinding } from '../lib/session-attribution.mjs';
@@ -33,6 +33,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
   const session = `runner-validate-codex-${SCENARIO_ID}-${process.pid}`;
   const logPath = path.join(obsDirFor(repo, runtimeDir), 'hooks.jsonl');
   let paneId = null;
+  let harnessRoot = null;
   const report = {
     runner,
     repo,
@@ -42,6 +43,9 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     sessionBinding: null,
     guard: null,
     nudgeAccepted: false,
+    nudgeTurnSettled: false,
+    childTurnCompleted: false,
+    warmCharge: null,
     pass: false,
     error: null,
     paneTail: null,
@@ -83,7 +87,10 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       sessionId: binding.runnerSessionId,
       sessionPath: binding.runnerSessionPath,
       timeoutMs: Math.min(timeoutMs, 90_000),
+      // Phase two re-polls the same warm run after a real turn lands.
+      keepHarness: true,
     });
+    harnessRoot = report.guard.harnessRoot ?? null;
     if (report.guard.exitCode !== 0 || !report.guard.result) {
       throw new Error(report.guard.error || 'production budget tick returned no result');
     }
@@ -96,24 +103,85 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     );
     report.nudgeAccepted = nudgeRows.some((row) => eventName(row) === 'UserPromptSubmit');
     const result = report.guard.result;
+
+    // Phase two — the claim "the child is charged only for what it appends" cannot fail
+    // while nothing has been appended: the charge is total minus baseline with both
+    // sides equal. Drive one real turn on the live runner, then re-poll.
+    if (!harnessRoot || !result.warmRunId) {
+      throw new Error('budget guard did not expose a warm run to re-poll');
+    }
+    // Let the nudge's own turn finish first. Otherwise the Stop that ends it satisfies
+    // the wait below and the "post-pin turn" is never actually driven.
+    const nudgeTurnRows = pollHookRows(logPath, beforeBudgetNudge, ['Stop'], timeoutMs);
+    report.nudgeTurnSettled = nudgeTurnRows.some((row) => eventName(row) === 'Stop');
+    if (!report.nudgeTurnSettled) throw new Error('budget nudge turn did not settle');
+    sleepMs(1000);
+
+    const beforeChildTurn = readHookLines(logPath).length;
+    sendTmuxLine(paneId, DEFAULT_PROMPT);
+    const childRows = pollHookRows(logPath, beforeChildTurn, ['Stop'], timeoutMs);
+    report.childTurnCompleted = childRows.some((row) => eventName(row) === 'Stop');
+    if (!report.childTurnCompleted) throw new Error('post-pin Codex turn did not emit Stop');
+    sleepMs(1500);
+
+    report.warmCharge = runGatewayWarmBudgetCharge({
+      harnessRoot,
+      runId: result.warmRunId,
+      slotId,
+      timeoutMs: Math.min(timeoutMs, 90_000),
+    });
+    if (report.warmCharge.exitCode !== 0 || !report.warmCharge.result) {
+      throw new Error(report.warmCharge.error || 'warm budget charge returned no result');
+    }
+    const charge = report.warmCharge.result;
     report.pass =
-      result.first?.budgetWarned === true &&
+      result.first?.phase === 'delivered' &&
       result.first?.violationType === 'budget' &&
       result.first?.nudgeSent === true &&
-      result.persistedAfterFirst?.budgetWarned === true &&
-      result.persistedAfterFirst?.budgetNudgeSent === true &&
-      result.second?.budgetWarned === true &&
+      result.persistedAfterFirst?.phase === 'delivered' &&
+      result.second?.phase === 'delivered' &&
       result.second?.violationType === null &&
       result.second?.nudgeSent === false &&
-      result.persistedAfterSecond?.budgetNudgeSent === true &&
+      result.persistedAfterSecond?.phase === 'delivered' &&
+      // A confirmed delivery spends none of the capped attempts — those count only
+      // deliveries that reached the composer without confirmation.
+      result.persistedAfterFirst?.attempts === 0 &&
+      result.persistedAfterSecond?.attempts === 0 &&
       result.unsupportedWarmBaseline === 'not-required' &&
-      result.violationEvents === 1 &&
+      // Warm handoff pins accounting at the transcript's EOF: the child inherits no
+      // counted usage, so even ceilings of 1 do not breach on parent history.
+      result.warmBaseline?.status === 'captured' &&
+      result.warmBaseline?.pinnedAtRecordBoundary === true &&
+      // Counting starts at the pin for every runner: providers report increments, so
+      // there is no baseline total to subtract and none is carried.
+      result.warmBaseline?.pinnedOffset > 0 &&
+      // A cumulative runner's pin must carry the parent's session position, or the
+      // child's first reading is charged the whole session.
+      result.warmBaseline?.referenceTotal > 0 &&
+      result.warmBaseline?.breachedOnInheritedHistory === false &&
+      // The discriminating check: after a real post-pin turn the child is charged only
+      // its own growth. With a zeroed cumulative baseline this equals the whole session
+      // total instead, which is the false breach.
+      report.nudgeTurnSettled &&
+      charge.chargeTotalTokens > 0 &&
+      // The parent's history is excluded. A cold full scan of the same transcript shows
+      // what this run would have been charged without the pin — the false breach.
+      charge.fullScanTotalTokens > charge.chargeTotalTokens &&
+      charge.budgetWarned === false &&
+      // An unmeasurable runner is recorded for the operator, never typed at the worker.
+      result.unmeasuredRunner?.unsupportedRunner === true &&
+      result.unmeasuredRunner?.violationType === 'budget' &&
+      /enforcement unsupported/.test(result.unmeasuredRunner?.violationMessage ?? '') &&
+      result.unmeasuredRunner?.nudgeSent === false &&
+      result.unmeasuredRunner?.attempts === 0 &&
+      result.violationEvents === 2 &&
       report.nudgeAccepted;
   } catch (error) {
     report.error = error?.message || String(error);
     report.paneTail = paneId ? capturePane(paneId, 100) : null;
   } finally {
     if (!keepSession) killSession(session);
+    if (harnessRoot) fs.rmSync(harnessRoot, { recursive: true, force: true });
   }
 
   const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);

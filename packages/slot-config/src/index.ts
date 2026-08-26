@@ -10,8 +10,11 @@ export type {
 } from './session-usage.js';
 export {
   advanceIncrementalFromBytes,
+  bufferHasNoRecordBoundary,
   emptyIncrementalSessionUsageState,
   INCREMENTAL_SESSION_USAGE_MAX_BYTES_PER_SAMPLE,
+  INCREMENTAL_SESSION_USAGE_MAX_OVERSIZED_BYTES,
+  pinnedIncrementalSessionUsageState,
   runSessionUsage,
   sampleSessionUsageIncremental,
 } from './session-usage.js';
