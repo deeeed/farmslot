@@ -2005,7 +2005,13 @@ export async function pollRunBudgetGuard(params: {
         params.budgetNudgeSent === true ||
         current.monitorState?.budgetNudgeSent === true ||
         tick.nudgeSent,
-      budgetNudgeAttempts: tick.budgetNudgeAttempts,
+      // Monotonic like budgetNudgeSent above: a second caller polling the same run
+      // (runner-validation drives this entry point directly) starts from 0 and must not
+      // write back a lower count than a concurrent monitor already persisted.
+      budgetNudgeAttempts: Math.max(
+        tick.budgetNudgeAttempts,
+        current.monitorState?.budgetNudgeAttempts ?? 0,
+      ),
       budgetUsage: tick.budgetUsage,
     },
   });

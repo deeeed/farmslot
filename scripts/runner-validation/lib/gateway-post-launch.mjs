@@ -433,6 +433,9 @@ export function runGatewayBudgetGuard({
   sessionId,
   sessionPath,
   timeoutMs = 60_000,
+  // Keep the harness so a second phase can re-poll the same warm run after the live
+  // runner has actually appended a turn. Caller owns cleanup when set.
+  keepHarness = false,
 }) {
   const harnessRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-validate-budget-'));
   const poolDir = path.join(harnessRoot, 'pool');
@@ -637,6 +640,7 @@ process.stdout.write(JSON.stringify({
     budgetNudgeAttempts: afterSecond?.monitorState?.budgetNudgeAttempts ?? null,
   },
   unsupportedWarmBaseline,
+  warmRunId: warmRun.id,
   warmBaseline: {
     status: warmBaseline,
     // The pin must sit on a record boundary at or before EOF, never inside a
@@ -693,10 +697,76 @@ process.stdout.write(JSON.stringify({
           .split('\n')
           .filter((line) => line && line !== jsonLine)
           .join('\n') || null,
+      harnessRoot,
     };
   } finally {
-    fs.rmSync(harnessRoot, { recursive: true, force: true });
+    if (!keepHarness) fs.rmSync(harnessRoot, { recursive: true, force: true });
   }
+}
+
+/**
+ * Second phase of the warm-baseline proof: re-poll a warm run whose baseline was pinned
+ * by runGatewayBudgetGuard, after the live runner has appended a real turn.
+ *
+ * Phase one alone cannot fail from the bug it guards — with nothing appended, the charge
+ * is `total - baseline` with both sides equal, so it reads zero whether the baseline is
+ * the parent's real cumulative total or zero. Only post-pin growth separates the two.
+ */
+export function runGatewayWarmBudgetCharge({ harnessRoot, runId, slotId, timeoutMs = 60_000 }) {
+  const snippet = `
+import { pollRunBudgetGuard } from './services/gateway/src/run-engine/run-monitor.ts';
+import { getRun, loadAllRuns } from './services/gateway/src/runs/store.ts';
+
+// Fresh process: hydrate the store from the harness runs dir phase one wrote.
+await loadAllRuns();
+
+// Ceilings high enough that this poll only measures; it must not warn.
+const tick = await pollRunBudgetGuard({
+  runId: ${JSON.stringify(runId)},
+  slotId: ${JSON.stringify(slotId)},
+  maxTurns: 100000,
+  maxTotalTokens: 1000000000000,
+  agentStatus: 'idle',
+  sendNudge: false,
+});
+const usage = getRun(${JSON.stringify(runId)})?.monitorState?.budgetUsage ?? null;
+process.stdout.write(JSON.stringify({
+  sampleTurns: tick.sampleTurns,
+  sampleTotalTokens: tick.sampleTotalTokens,
+  chargeTurns: tick.chargeTurns,
+  chargeTotalTokens: tick.chargeTotalTokens,
+  baselineTotalTokens: usage?.baselineTotalTokens ?? null,
+  availability: tick.availability,
+  budgetWarned: tick.budgetWarned,
+}) + '\\n');
+`;
+
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: timeoutMs,
+    env: {
+      ...process.env,
+      FARMSLOT_HOME: path.join(harnessRoot, 'home'),
+      FARMSLOT_POOL_DIR: path.join(harnessRoot, 'pool'),
+      FARMSLOT_RUNS_DIR: path.join(harnessRoot, 'runs'),
+    },
+  });
+  const stdout = result.stdout?.trim() ?? '';
+  const jsonLine = stdout
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .pop();
+  return {
+    result: jsonLine ? JSON.parse(jsonLine) : null,
+    exitCode: result.status,
+    error:
+      result.status !== 0
+        ? result.stderr?.trim() || stdout || 'warm-budget-charge wrapper failed'
+        : !jsonLine
+          ? stdout || 'warm-budget-charge wrapper returned no result'
+          : null,
+  };
 }
 
 /** Execute the production repeat-review resume path against a local runner session. */

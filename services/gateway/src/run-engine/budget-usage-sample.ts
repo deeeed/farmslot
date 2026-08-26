@@ -116,7 +116,9 @@ async function remoteReadBytes(
  * Cumulative runners need more than the offset: their next record restates the whole
  * session's totals, so the tail is replayed to recover the total already reached at
  * the pin. Assignment semantics make that exact from any window containing at least
- * one total-bearing record.
+ * one total-bearing record. This assumes those totals are monotonic — true for codex,
+ * whose `total_token_usage` only grows — which is what lets the replay take the peak
+ * and so ignore a record carrying only a per-turn `last_token_usage`.
  *
  * Returns null when the transcript cannot be read, has no record boundary in the scan
  * window, or (for a cumulative runner) no recoverable total — callers fail the warm

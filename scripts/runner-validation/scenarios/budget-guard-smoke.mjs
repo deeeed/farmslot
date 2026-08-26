@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { DEFAULT_PROMPT, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
-import { runGatewayBudgetGuard } from '../lib/gateway-post-launch.mjs';
+import { runGatewayBudgetGuard, runGatewayWarmBudgetCharge } from '../lib/gateway-post-launch.mjs';
 import { eventName, readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { listSessionCandidates, waitForSessionBinding } from '../lib/session-attribution.mjs';
@@ -33,6 +33,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
   const session = `runner-validate-codex-${SCENARIO_ID}-${process.pid}`;
   const logPath = path.join(obsDirFor(repo, runtimeDir), 'hooks.jsonl');
   let paneId = null;
+  let harnessRoot = null;
   const report = {
     runner,
     repo,
@@ -42,6 +43,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     sessionBinding: null,
     guard: null,
     nudgeAccepted: false,
+    childTurnCompleted: false,
+    warmCharge: null,
     pass: false,
     error: null,
     paneTail: null,
@@ -83,7 +86,10 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       sessionId: binding.runnerSessionId,
       sessionPath: binding.runnerSessionPath,
       timeoutMs: Math.min(timeoutMs, 90_000),
+      // Phase two re-polls the same warm run after a real turn lands.
+      keepHarness: true,
     });
+    harnessRoot = report.guard.harnessRoot ?? null;
     if (report.guard.exitCode !== 0 || !report.guard.result) {
       throw new Error(report.guard.error || 'production budget tick returned no result');
     }
@@ -96,6 +102,30 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     );
     report.nudgeAccepted = nudgeRows.some((row) => eventName(row) === 'UserPromptSubmit');
     const result = report.guard.result;
+
+    // Phase two — the claim "the child is charged only for what it appends" cannot fail
+    // while nothing has been appended: the charge is total minus baseline with both
+    // sides equal. Drive one real turn on the live runner, then re-poll.
+    if (!harnessRoot || !result.warmRunId) {
+      throw new Error('budget guard did not expose a warm run to re-poll');
+    }
+    const beforeChildTurn = readHookLines(logPath).length;
+    sendTmuxLine(paneId, DEFAULT_PROMPT);
+    const childRows = pollHookRows(logPath, beforeChildTurn, ['Stop'], timeoutMs);
+    report.childTurnCompleted = childRows.some((row) => eventName(row) === 'Stop');
+    if (!report.childTurnCompleted) throw new Error('post-pin Codex turn did not emit Stop');
+    sleepMs(1500);
+
+    report.warmCharge = runGatewayWarmBudgetCharge({
+      harnessRoot,
+      runId: result.warmRunId,
+      slotId,
+      timeoutMs: Math.min(timeoutMs, 90_000),
+    });
+    if (report.warmCharge.exitCode !== 0 || !report.warmCharge.result) {
+      throw new Error(report.warmCharge.error || 'warm budget charge returned no result');
+    }
+    const charge = report.warmCharge.result;
     report.pass =
       result.first?.budgetWarned === true &&
       result.first?.violationType === 'budget' &&
@@ -120,6 +150,16 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       result.warmBaseline?.baselineTotalTokens > 0 &&
       result.warmBaseline?.baselineTotalTokens === result.first?.sampleTotalTokens &&
       result.warmBaseline?.breachedOnInheritedHistory === false &&
+      // The discriminating check: after a real post-pin turn the child is charged only
+      // its own growth. With a zeroed cumulative baseline this equals the whole session
+      // total instead, which is the false breach.
+      charge.chargeTotalTokens > 0 &&
+      charge.baselineTotalTokens > 0 &&
+      charge.chargeTotalTokens === charge.sampleTotalTokens - charge.baselineTotalTokens &&
+      // The parent's history is excluded. With a zeroed cumulative baseline the charge
+      // would equal the full session total instead — the false breach.
+      charge.chargeTotalTokens < charge.sampleTotalTokens &&
+      charge.budgetWarned === false &&
       // An unmeasurable runner is recorded for the operator, never typed at the worker.
       result.unmeasuredRunner?.unsupportedRunner === true &&
       result.unmeasuredRunner?.violationType === 'budget' &&
@@ -133,6 +173,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     report.paneTail = paneId ? capturePane(paneId, 100) : null;
   } finally {
     if (!keepSession) killSession(session);
+    if (harnessRoot) fs.rmSync(harnessRoot, { recursive: true, force: true });
   }
 
   const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
