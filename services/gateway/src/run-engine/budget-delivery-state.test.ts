@@ -17,7 +17,16 @@ function run(events: BudgetDeliveryEvent[]): BudgetDeliveryState {
 }
 
 const BREACH: BudgetDeliveryEvent = { kind: 'usage-breached', message: 'over 8M' };
-const LOST: BudgetDeliveryEvent = { kind: 'accounting-unenforceable', message: 'transcript moved' };
+const LOST: BudgetDeliveryEvent = {
+  kind: 'accounting-unenforceable',
+  message: 'transcript moved',
+  permanent: true,
+};
+const BLIP: BudgetDeliveryEvent = {
+  kind: 'accounting-unenforceable',
+  message: 'stat failed once',
+  permanent: false,
+};
 
 test('losing the ability to measure does not unmeasure an established breach', () => {
   // The defect this machine exists to prevent: a measured, broadcast breach had its
@@ -108,5 +117,68 @@ test('usage within budget leaves every phase untouched', () => {
   for (const events of [[], [BREACH], [LOST], [BREACH, { kind: 'delivery-confirmed' as const }]]) {
     const before = run(events);
     assert.deepEqual(advanceBudgetDelivery(before, { kind: 'usage-within-budget' }), before);
+  }
+});
+
+test('a condition that can clear does not retire the run', () => {
+  // One failed stat used to latch `unenforceable` for the life of the run, so a genuine
+  // breach afterwards was never even sampled — the round-7 defect in mirror image.
+  const state = run([BLIP]);
+  assert.equal(state.phase, 'ok');
+  assert.equal(state.operatorMessage, 'stat failed once');
+  assert.equal(budgetGuardSettled(state), false);
+
+  const breached = advanceBudgetDelivery(state, BREACH);
+  assert.equal(breached.phase, 'breach-pending');
+  assert.equal(budgetDeliveryDecision(breached, { runnerMidTurn: false, now: 0 }).deliver, true);
+});
+
+test('a runner change clears a verdict reached about the previous runner', () => {
+  // Dispatch rewrites metrics.runner mid-run, so a verdict from a stale id must not
+  // disable the ceiling for the rest of the run.
+  const state = run([LOST, { kind: 'runner-changed' }]);
+  assert.equal(state.phase, 'ok');
+  assert.equal(budgetGuardSettled(state), false);
+});
+
+test('a runner change never discards something owed to the worker', () => {
+  const state = run([BREACH, { kind: 'runner-changed' }]);
+  assert.equal(state.phase, 'breach-pending');
+  assert.equal(state.pendingMessage, 'over 8M');
+});
+
+test('a hold that outlasts the bound retires the run', () => {
+  // A hold never types, so `abandoned` was unreachable from the very case it exists to
+  // stop: the guard polled forever and the worker was never told.
+  const state = run([
+    BREACH,
+    { kind: 'delivery-held', now: 1_000 },
+    { kind: 'delivery-held', now: 1_000 + MAX_BUDGET_NUDGE_DEFERRAL_MS },
+  ]);
+  assert.equal(state.phase, 'abandoned');
+  assert.equal(budgetGuardSettled(state), true);
+});
+
+test('a runner that can never take a pane instruction is retired, not waited on', () => {
+  const state = run([BREACH, { kind: 'delivery-impossible', message: 'no tmux nudges' }]);
+  assert.equal(state.phase, 'abandoned');
+  assert.equal(state.operatorMessage, 'no tmux nudges');
+  assert.equal(budgetGuardSettled(state), true);
+});
+
+test('delivery events are refused in phases where nothing is owed', () => {
+  for (const base of [run([]), run([LOST]), run([BREACH, { kind: 'delivery-confirmed' }])]) {
+    for (const event of [
+      { kind: 'delivery-confirmed' as const },
+      { kind: 'delivery-typed' as const },
+      { kind: 'delivery-held' as const, now: 5_000 },
+      { kind: 'delivery-impossible' as const, message: 'x' },
+    ]) {
+      assert.deepEqual(
+        advanceBudgetDelivery(base, event),
+        base,
+        `${event.kind} must not apply in phase ${base.phase}`,
+      );
+    }
   }
 });

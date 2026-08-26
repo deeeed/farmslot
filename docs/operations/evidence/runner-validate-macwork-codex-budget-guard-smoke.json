@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-26T06:47:54.298Z",
+  "recordedAt": "2026-08-26T06:52:55.131Z",
   "host": "macwork",
   "scenario": "budget-guard-smoke",
   "runner": "codex",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-742t4c",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-bTQrsC",
   "slotId": "runner-validate-macwork-codex-budget",
-  "session": "runner-validate-codex-budget-guard-smoke-84508",
+  "session": "runner-validate-codex-budget-guard-smoke-42104",
   "initialCompleted": true,
   "sessionBinding": {
-    "runnerSessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-742t4c/.agent/codex-home/sessions/2026/08/26/rollout-2026-08-26T14-47-26-01a03cd2-d939-74a2-a905-7cab6af6caa5.jsonl",
-    "runnerSessionId": "01a03cd2-d939-74a2-a905-7cab6af6caa5",
+    "runnerSessionPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-budget-bTQrsC/.agent/codex-home/sessions/2026/08/26/rollout-2026-08-26T14-52-26-01a03cd7-6edf-7511-8551-f09e3db185f8.jsonl",
+    "runnerSessionId": "01a03cd7-6edf-7511-8551-f09e3db185f8",
     "source": "native"
   },
   "guard": {
@@ -36,12 +36,12 @@
         "attempts": 0
       },
       "unsupportedWarmBaseline": "not-required",
-      "warmRunId": "c68a512e-fa90-4ffd-b171-675e86f8a20f",
+      "warmRunId": "b7046ba9-97cb-47c0-83ba-5b94a973a53d",
       "warmBaseline": {
         "status": "captured",
         "pinnedAtRecordBoundary": true,
-        "pinnedOffset": 99960,
-        "transcriptSize": 99960,
+        "pinnedOffset": 99955,
+        "transcriptSize": 99955,
         "referenceTotal": 13571,
         "breachedOnInheritedHistory": false
       },
@@ -57,21 +57,21 @@
     "exitCode": 0,
     "error": null,
     "stderr": "[run-monitor] failed to load monitor config for runner-validation: Project config not found: /Users/deeeed/dev/farmslot/projects/runner-validation/project.json\n[run-monitor] failed to load monitor config for runner-validation: Project config not found: /Users/deeeed/dev/farmslot/projects/runner-validation/project.json",
-    "gatewayLog": "[pty] set tmux escape-time=10 status-left-length=30\n[runner-observability] {\"kind\":\"runner-observability-agreement\",\"slotId\":\"runner-validate-macwork-codex-budget\",\"runner\":\"codex\",\"target\":\"%82\",\"logPrefix\":\"run-monitor-budget\",\"paneBusy\":false,\"hookBusy\":false,\"hookActivity\":\"idle\",\"hookSource\":\"hook\",\"hookConfidence\":\"high\",\"hookObservedAt\":1787726853102,\"agreed\":true,\"timestamp\":1787726858680}\n[run-monitor] budget nudge sent to run 8c338c1a: update-branch usage budget exceeded (total_tokens 13571 > max_total_tokens 1). This flow should stay near-mechanical — f",
-    "harnessRoot": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-budget-pOcIjc"
+    "gatewayLog": "[pty] set tmux escape-time=10 status-left-length=30\n[runner-observability] {\"kind\":\"runner-observability-agreement\",\"slotId\":\"runner-validate-macwork-codex-budget\",\"runner\":\"codex\",\"target\":\"%83\",\"logPrefix\":\"run-monitor-budget\",\"paneBusy\":false,\"hookBusy\":false,\"hookActivity\":\"idle\",\"hookSource\":\"hook\",\"hookConfidence\":\"high\",\"hookObservedAt\":1787727153653,\"agreed\":true,\"timestamp\":1787727158927}\n[run-monitor] budget nudge sent to run 57e6f764: update-branch usage budget exceeded (total_tokens 13571 > max_total_tokens 1). This flow should stay near-mechanical — f",
+    "harnessRoot": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-budget-5H2FIV"
   },
   "nudgeAccepted": true,
   "nudgeTurnSettled": true,
   "childTurnCompleted": true,
   "warmCharge": {
     "result": {
-      "fullScanTotalTokens": 59076,
+      "fullScanTotalTokens": 59110,
       "fullScanTurns": 4,
       "sampleTurns": 3,
-      "sampleTotalTokens": 45505,
+      "sampleTotalTokens": 45539,
       "chargeTurns": 3,
-      "chargeTotalTokens": 45505,
-      "referenceTotal": 59076,
+      "chargeTotalTokens": 45539,
+      "referenceTotal": 59110,
       "availability": "available",
       "budgetWarned": false
     },

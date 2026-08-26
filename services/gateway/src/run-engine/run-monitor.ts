@@ -342,12 +342,8 @@ interface MonitorState {
   startedAt: number;
   /** The soft-budget guard's delivery state — see budget-delivery-state.ts. */
   delivery: BudgetDeliveryState;
-  /**
-   * Runner id the guard was disabled for, or null while the guard is live. Dispatch
-   * rewrites `metrics.runner` to the slot's real runner, so the latch is keyed to the
-   * runner it was decided on and clears if that changes.
-   */
-  budgetGuardUnsupportedFor: string | null;
+  /** Runner id the guard's current verdict was reached about. */
+  budgetRunnerId?: string | null;
   /** Incremental transcript sample for soft turn/token budgets. */
   budgetUsage: BudgetUsageSampleState;
 }
@@ -913,7 +909,6 @@ export async function monitorRun(
         lastStepCount: 0,
         startedAt: new Date(persisted.startedAt).getTime(),
         delivery: restoreBudgetDeliveryState(persisted),
-        budgetGuardUnsupportedFor: null,
         budgetUsage: restoredBudgetUsage,
       }
     : {
@@ -923,7 +918,6 @@ export async function monitorRun(
         lastStepCount: 0,
         startedAt: now,
         delivery: initialBudgetDeliveryState(),
-        budgetGuardUnsupportedFor: null,
         budgetUsage: emptyBudgetUsageSampleState(),
       };
   // Also restore nudge count from persisted state
@@ -1264,22 +1258,17 @@ export async function monitorRun(
       // delivery while unconfirmed, but only up to MAX_BUDGET_NUDGE_ATTEMPTS — each
       // unconfirmed attempt types the warning into the runner composer, so an
       // indefinitely busy pane would otherwise stack copies of it.
-      // Dispatch can correct metrics.runner after monitoring starts, so read it live
-      // and clear a latch taken on the old id rather than silencing the real runner.
+      // Dispatch can correct metrics.runner after monitoring starts. A verdict reached
+      // about the previous id says nothing about this one, so the guard is told rather
+      // than kept in a second latch beside its own state.
       const budgetRunner = getRun(runId)?.metrics.runner ?? null;
-      if (
-        state.budgetGuardUnsupportedFor !== null &&
-        state.budgetGuardUnsupportedFor !== budgetRunner
-      ) {
-        state.budgetGuardUnsupportedFor = null;
+      if (state.budgetRunnerId !== undefined && state.budgetRunnerId !== budgetRunner) {
+        state.delivery = advanceBudgetDelivery(state.delivery, { kind: 'runner-changed' });
       }
+      state.budgetRunnerId = budgetRunner;
       // The guard runs until it has nothing left to learn or say — `budgetGuardSettled`
       // is the single answer to that, rather than a conjunction of latches.
-      if (
-        hasUsageBudget(config) &&
-        state.budgetGuardUnsupportedFor === null &&
-        !budgetGuardSettled(state.delivery)
-      ) {
+      if (hasUsageBudget(config) && !budgetGuardSettled(state.delivery)) {
         const priorPhase = state.delivery.phase;
         const tick = await pollRunBudgetGuard({
           runId,
@@ -1294,10 +1283,9 @@ export async function monitorRun(
         });
         state.budgetUsage = tick.budgetUsage;
         state.delivery = tick.delivery;
-        if (tick.unsupportedRunner) {
-          state.budgetGuardUnsupportedFor = budgetRunner ?? 'unknown';
+        if (priorPhase !== 'unenforceable' && state.delivery.phase === 'unenforceable') {
           console.warn(
-            `[run-monitor] run ${runId.slice(0, 8)} — usage budget not enforceable for runner ${budgetRunner ?? 'unknown'}; guard disabled unless the runner changes`,
+            `[run-monitor] run ${runId.slice(0, 8)} — usage budget not enforceable for runner ${budgetRunner ?? 'unknown'}: ${state.delivery.operatorMessage}`,
           );
         }
         if (priorPhase !== 'abandoned' && state.delivery.phase === 'abandoned') {
@@ -1440,7 +1428,10 @@ export async function monitorRun(
             startedAt: new Date(state.startedAt).toISOString(),
             lastPaneHash: state.lastPaneHash,
             lastStructuredProgressAt: new Date(state.lastStructuredProgressAt).toISOString(),
-            budgetDelivery: state.delivery,
+            // Not budgetDelivery: pollRunBudgetGuard is its sole writer. Merging a
+            // second writer's value with Math.max hid a lost update rather than
+            // preventing one — it cannot tell "someone got there first" from "mine is
+            // stale". One writer means there is nothing to merge.
             budgetUsage: state.budgetUsage,
           },
         });
@@ -1940,7 +1931,13 @@ export async function pollBudgetGuardStep(params: {
         'Budget ceilings are not enforced for this runner; no worker action is implied.'
       : `usage budget accounting lost (${sample.unavailableReason ?? 'transcript continuity broken'}). ` +
         'Ceilings are no longer enforced for this run; no worker action is implied.';
-    event = { kind: 'accounting-unenforceable', message: reason };
+    // A runner with no provider can never gain one, and lost transcript integrity is
+    // latched by the sampler. Anything that can clear must not retire the run.
+    event = {
+      kind: 'accounting-unenforceable',
+      message: reason,
+      permanent: sample.unsupportedRunner === true || sample.accountingIntegrityLost === true,
+    };
   } else if (sample.availability !== 'unavailable') {
     const evaluation = evaluateFlowUsageBudget(
       { turns: sample.turns, totalTokens: sample.totalTokens },
@@ -1986,11 +1983,13 @@ export async function pollBudgetGuardStep(params: {
     if (decision.deliver) {
       const run = getRun(params.runId);
       const deliveryViolation = violation ?? raiseViolation(decision.message);
-      if (
-        run &&
-        !shouldSkipMonitorNudge(run, deliveryViolation, params.agentStatus) &&
-        runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))
-      ) {
+      if (run && !runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))) {
+        // Waiting cannot help: this runner will never accept a pane instruction.
+        delivery = advanceBudgetDelivery(delivery, {
+          kind: 'delivery-impossible',
+          message: `runner ${run.metrics.runner ?? 'unknown'} cannot receive pane instructions`,
+        });
+      } else if (run && !shouldSkipMonitorNudge(run, deliveryViolation, params.agentStatus)) {
         try {
           const outcome = await (params.deliverNudge ?? sendBudgetNudge)(
             params.runId,
@@ -2099,15 +2098,7 @@ export async function pollRunBudgetGuard(params: {
       startedAt: params.monitorStartedAt ?? current.monitorState?.startedAt ?? now,
       lastPaneHash: current.monitorState?.lastPaneHash,
       lastStructuredProgressAt: current.monitorState?.lastStructuredProgressAt,
-      // Attempts stay monotonic against whatever another poll of the same run may have
-      // persisted meanwhile — runner-validation drives this entry point directly.
-      budgetDelivery: {
-        ...tick.delivery,
-        attempts: Math.max(
-          tick.delivery.attempts,
-          current.monitorState?.budgetDelivery?.attempts ?? 0,
-        ),
-      },
+      budgetDelivery: tick.delivery,
       budgetUsage: tick.budgetUsage,
     },
   });
