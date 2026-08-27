@@ -148,6 +148,92 @@ test('gitBranchDiff fetches an exact stacked PR base that is missing locally', a
   );
 });
 
+function exactSnapshotDeps(params: { available?: string[]; fetchError?: string }): {
+  deps: Parameters<typeof gitBranchDiff>[1];
+  argvLog: string[][];
+} {
+  const available = new Set(params.available ?? []);
+  const argvLog: string[][] = [];
+  return {
+    argvLog,
+    deps: {
+      resolveRepo: async () => '/repo',
+      loadVars: async () => ({ host: 'localhost', machine: 'local', remoteRepo: '/repo' }) as any,
+      runOnSlot: async (_vars: unknown, argv: string[]) => {
+        argvLog.push(argv);
+        const sub = argv[1];
+        if (sub === 'rev-parse') {
+          const ref = argv.at(-1)?.replace(/\^\{commit\}$/, '') ?? '';
+          return available.has(ref)
+            ? { stdout: `${ref}\n`, stderr: '', exitCode: 0 }
+            : { stdout: '', stderr: `missing ${ref}`, exitCode: 128 };
+        }
+        if (sub === 'fetch') {
+          if (params.fetchError) return { stdout: '', stderr: params.fetchError, exitCode: 128 };
+          available.add(argv.at(-1) ?? '');
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (sub === 'branch') return { stdout: 'unrelated-slot-branch\n', stderr: '', exitCode: 0 };
+        if (argv.includes('--name-status')) {
+          return { stdout: 'M\tsrc/reviewed.ts\n', stderr: '', exitCode: 0 };
+        }
+        if (argv.includes('--numstat')) {
+          return { stdout: '4\t1\tsrc/reviewed.ts\n', stderr: '', exitCode: 0 };
+        }
+        if (sub === 'diff') return { stdout: 'saved review diff', stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    },
+  };
+}
+
+test('gitBranchDiff fetches missing commits for an exact review snapshot', async () => {
+  const base = 'a'.repeat(40);
+  const head = 'b'.repeat(40);
+  const { deps, argvLog } = exactSnapshotDeps({});
+
+  const result = await gitBranchDiff({ slotId: 's', base, head }, deps);
+
+  assert.equal(result.base, base);
+  assert.equal(result.head, head);
+  assert.deepEqual(result.files, [
+    { path: 'src/reviewed.ts', status: 'M', additions: 4, deletions: 1 },
+  ]);
+  assert.deepEqual(
+    argvLog.filter((argv) => argv[1] === 'fetch').map((argv) => argv.at(-1)),
+    [base, head],
+  );
+  assert.ok(argvLog.some((argv) => argv[1] === 'rev-parse' && argv.at(-1) === `${base}^{commit}`));
+  assert.ok(!argvLog.some((argv) => argv[1] === 'checkout'));
+});
+
+test('gitDiff recovers a missing head for an exact review snapshot', async () => {
+  const base = 'a'.repeat(40);
+  const head = 'b'.repeat(40);
+  const { deps, argvLog } = exactSnapshotDeps({ available: [base] });
+
+  const result = await gitDiff({ slotId: 's', base, head, path: 'src/reviewed.ts' }, deps);
+
+  assert.equal(result.diff, 'saved review diff');
+  assert.deepEqual(
+    argvLog.filter((argv) => argv[1] === 'fetch').map((argv) => argv.at(-1)),
+    [head],
+  );
+  assert.ok(argvLog.some((argv) => argv[1] === 'diff' && argv.includes(`${base}...${head}`)));
+});
+
+test('gitBranchDiff reports an unavailable exact review commit after fetch fails', async () => {
+  const base = 'a'.repeat(40);
+  const head = 'b'.repeat(40);
+  const { deps, argvLog } = exactSnapshotDeps({ fetchError: 'origin offline' });
+
+  await assert.rejects(
+    gitBranchDiff({ slotId: 's', base, head }, deps),
+    new RegExp(`Review commit ${base} is unavailable after fetch: origin offline`),
+  );
+  assert.ok(!argvLog.some((argv) => argv[1] === 'diff'));
+});
+
 test('gitDiff refreshes the remote base when called directly', async () => {
   const { deps, argvLog } = branchDiffDeps({ nameStatus: '', numstat: '' });
   await gitDiff({ slotId: 's', base: 'main', path: 'src/a.ts' }, deps);

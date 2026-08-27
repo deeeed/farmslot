@@ -202,7 +202,11 @@ async function resolveRemoteBaseRef(
   options: { refresh: boolean } = { refresh: false },
 ): Promise<string> {
   const base = requestedBase.trim() || 'main';
-  if (base.startsWith('refs/') || /^[0-9a-f]{7,40}$/i.test(base)) {
+  if (/^[0-9a-f]{7,40}$/i.test(base)) {
+    await ensureReviewCommitAvailable(slotId, base, deps);
+    return base;
+  }
+  if (base.startsWith('refs/')) {
     await gitExec(slotId, ['rev-parse', '--verify', base], undefined, deps);
     return base;
   }
@@ -226,6 +230,30 @@ async function resolveRemoteBaseRef(
   }
 }
 
+async function ensureReviewCommitAvailable(
+  slotId: string,
+  commit: string,
+  deps: GitExecDeps,
+): Promise<CommandOutput> {
+  const commitRef = `${commit}^{commit}`;
+  try {
+    return await gitExec(slotId, ['rev-parse', '--verify', commitRef], undefined, deps);
+  } catch (verificationError) {
+    if (!/^[0-9a-f]{40}$/i.test(commit)) throw verificationError;
+  }
+
+  try {
+    // Exact review snapshots can outlive the slot branch that originally fetched
+    // them. Fetching by immutable SHA restores the object without moving a branch
+    // or changing the worktree.
+    await gitExec(slotId, ['fetch', '--no-tags', 'origin', commit], undefined, deps);
+    return await gitExec(slotId, ['rev-parse', '--verify', commitRef], undefined, deps);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Review commit ${commit} is unavailable after fetch: ${message}`);
+  }
+}
+
 export async function gitDiff(
   params: GitDiffParams,
   deps: GitExecDeps = {},
@@ -246,7 +274,7 @@ export async function gitDiff(
       if (params.target === 'worktree') {
         throw new Error('An exact review head cannot be combined with a worktree diff');
       }
-      await gitExec(params.slotId, ['rev-parse', '--verify', params.head], undefined, deps);
+      await ensureReviewCommitAvailable(params.slotId, params.head, deps);
       args.push(`${baseRef}...${params.head}`);
     } else {
       const { stdout: mergeBase } = await gitExec(
@@ -359,7 +387,7 @@ export async function gitBranchDiff(
   }
   const [mergeBaseResult, branchResult] = await Promise.all([
     params.head
-      ? gitExec(params.slotId, ['rev-parse', '--verify', params.head], undefined, deps)
+      ? ensureReviewCommitAvailable(params.slotId, params.head, deps)
       : gitExec(params.slotId, ['merge-base', baseRef, 'HEAD'], undefined, deps),
     gitExec(params.slotId, ['branch', '--show-current'], undefined, deps),
   ]);
