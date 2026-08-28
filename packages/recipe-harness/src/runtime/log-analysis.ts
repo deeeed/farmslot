@@ -31,6 +31,10 @@ export function unresolvedModulesFromLogSlice(lines: string[], startIndex = 0): 
   return [...found];
 }
 
+function isBareModuleSpecifier(moduleName: string): boolean {
+  return !moduleName.startsWith('.') && !path.isAbsolute(moduleName);
+}
+
 export function bundleErrorExcerptHash(excerpt: string): string {
   return crypto.createHash('sha256').update(excerpt).digest('hex').slice(0, 16);
 }
@@ -75,7 +79,13 @@ export interface BundleLogAnalysis {
   status: 'ok' | 'errors' | 'bundling' | 'no-log';
   reason?: 'bundle-error' | 'unresolved-module' | 'stale-bundle-error';
   excerpt?: string;
+  /**
+   * Bare package specifiers cited by the active error. They are missing when
+   * reason is unresolved-module and already installed when it is stale-bundle-error.
+   */
   unresolvedModules?: string[];
+  /** Relative or absolute source paths that require a code or bundler fix. */
+  sourceImports?: string[];
 }
 
 export interface AnalyzeBundleLogOptions {
@@ -93,26 +103,44 @@ export function analyzeBundleLog(options: AnalyzeBundleLogOptions): BundleLogAna
     okPattern: options.okPattern,
   });
   const sliceStart = lastOk >= 0 ? lastOk + 1 : 0;
-  const unresolved = unresolvedModulesFromLogSlice(lines, sliceStart).filter(
-    (name) => !moduleExistsInNodeModules(options.target, name),
-  );
+  const cited = unresolvedModulesFromLogSlice(lines, sliceStart);
+  const sourceImports = cited.filter((name) => !isBareModuleSpecifier(name));
+  const unresolved = cited
+    .filter(isBareModuleSpecifier)
+    .filter((name) => !moduleExistsInNodeModules(options.target, name));
   if (unresolved.length > 0 && lastErr > lastOk) {
     return {
       status: 'errors',
       reason: 'unresolved-module',
       excerpt: `Missing node_modules entries: ${unresolved.slice(0, 3).join(', ')}`,
       unresolvedModules: unresolved,
+      ...(sourceImports.length > 0 ? { sourceImports } : {}),
     };
   }
   if (lastErr > lastOk) {
+    if (sourceImports.length > 0) {
+      return {
+        status: 'errors',
+        reason: 'bundle-error',
+        excerpt: `Unresolved source imports: ${sourceImports.slice(0, 3).join(', ')}`,
+        sourceImports,
+      };
+    }
     const excerpt = lines
       .slice(lastErr, lastErr + 3)
       .join(' | ')
       .slice(0, 400);
-    const cited = unresolvedModulesFromLogSlice(lines, sliceStart);
-    const stillMissing = cited.filter((name) => !moduleExistsInNodeModules(options.target, name));
-    if (cited.length > 0 && stillMissing.length === 0) {
-      return { status: 'errors', reason: 'stale-bundle-error', excerpt, unresolvedModules: cited };
+    const packageSpecifiers = cited.filter(isBareModuleSpecifier);
+    const stillMissing = packageSpecifiers.filter(
+      (name) => !moduleExistsInNodeModules(options.target, name),
+    );
+    if (packageSpecifiers.length > 0 && stillMissing.length === 0) {
+      return {
+        status: 'errors',
+        reason: 'stale-bundle-error',
+        excerpt,
+        unresolvedModules: packageSpecifiers,
+      };
     }
     return { status: 'errors', reason: 'bundle-error', excerpt };
   }
