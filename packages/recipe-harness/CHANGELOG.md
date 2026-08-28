@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- Classify unresolved relative or absolute bundle imports as source errors instead of missing package dependencies, while retaining missing-package precedence for mixed failures.
+
 ## 0.15.0 - 2026-08-14
 
 - Align the packaged Recipe Protocol dependency with 0.21.0 so consumers use one execution-capability and evidence contract runtime.

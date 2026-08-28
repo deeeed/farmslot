@@ -679,6 +679,86 @@ test('analyzeBundleLog scopes unresolved cites after last bundle ok', () => {
   assert.equal(analysis.reason, 'bundle-error');
 });
 
+test('analyzeBundleLog classifies relative imports as source errors', () => {
+  const analysis = analyzeBundleLog({
+    target: '/tmp/stub',
+    logText: [
+      'error: Bundling failed',
+      'Error: Unable to resolve "./PerpsProOrderForm.constants" from "app/form.tsx"',
+    ].join('\n'),
+    errorPattern: /Bundling failed|Unable to resolve /u,
+    okPattern: /Bundled \d+ms|iOS Bundled/u,
+  });
+  assert.deepEqual(analysis, {
+    status: 'errors',
+    reason: 'bundle-error',
+    excerpt: 'Unresolved source imports: ./PerpsProOrderForm.constants',
+    sourceImports: ['./PerpsProOrderForm.constants'],
+  });
+});
+
+test('analyzeBundleLog classifies absolute imports as source errors', () => {
+  const analysis = analyzeBundleLog({
+    target: '/tmp/stub',
+    logText: [
+      'error: Bundling failed',
+      'Error: Unable to resolve "/tmp/generated/module.ts" from "app/form.tsx"',
+    ].join('\n'),
+    errorPattern: /Bundling failed|Unable to resolve /u,
+    okPattern: /Bundled \d+ms|iOS Bundled/u,
+  });
+  assert.deepEqual(analysis, {
+    status: 'errors',
+    reason: 'bundle-error',
+    excerpt: 'Unresolved source imports: /tmp/generated/module.ts',
+    sourceImports: ['/tmp/generated/module.ts'],
+  });
+});
+
+test('analyzeBundleLog keeps missing-package precedence for mixed failures', () => {
+  const analysis = analyzeBundleLog({
+    target: '/tmp/stub',
+    logText: [
+      'error: Bundling failed',
+      'Error: Unable to resolve "missing-package" from "app/form.tsx"',
+      'Error: Unable to resolve "../missing-source" from "app/form.tsx"',
+    ].join('\n'),
+    errorPattern: /Bundling failed|Unable to resolve /u,
+    okPattern: /Bundled \d+ms|iOS Bundled/u,
+  });
+  assert.deepEqual(analysis, {
+    status: 'errors',
+    reason: 'unresolved-module',
+    excerpt: 'Missing node_modules entries: missing-package',
+    unresolvedModules: ['missing-package'],
+    sourceImports: ['../missing-source'],
+  });
+});
+
+test('analyzeBundleLog reports installed package cites as a stale bundle error', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rh-stale-bundle-'));
+  try {
+    await mkdir(path.join(root, 'node_modules/installed-package'), { recursive: true });
+    await writeFile(
+      path.join(root, 'node_modules/installed-package/package.json'),
+      '{"name":"installed-package"}\n',
+    );
+    const analysis = analyzeBundleLog({
+      target: root,
+      logText: [
+        'error: Bundling failed',
+        'Error: Unable to resolve "installed-package" from "app/form.tsx"',
+      ].join('\n'),
+      errorPattern: /Bundling failed|Unable to resolve /u,
+      okPattern: /Bundled \d+ms|iOS Bundled/u,
+    });
+    assert.equal(analysis.reason, 'stale-bundle-error');
+    assert.deepEqual(analysis.unresolvedModules, ['installed-package']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('supersededErrorCapture ignores stale native errors after bundle ok', () => {
   const log = [
     ' ERROR  [runtime not ready]: HybridObject "NitroFetch" - It has not yet been registered',
