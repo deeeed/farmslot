@@ -7,19 +7,9 @@ import {
   safeReferenceRepoProvenance,
 } from './dispatch-lifecycle-steps.js';
 
-test('static PR review skips prepare while explicit full-live review does not', () => {
-  assert.equal(
-    prepareSkipReason({ flowType: 'review-pr', reviewValidationDepth: 'static-code' }, false),
-    'static-review',
-  );
-  assert.equal(
-    prepareSkipReason({ flowType: 'review-pr', reviewValidationDepth: undefined }, false),
-    'static-review',
-  );
-  assert.equal(
-    prepareSkipReason({ flowType: 'review-pr', reviewValidationDepth: 'full-live' }, false),
-    null,
-  );
+test('static PR review runs minimal prepare unless the operator explicitly skips', () => {
+  assert.equal(prepareSkipReason(false), null);
+  assert.equal(prepareSkipReason(true), 'operator-skip');
 });
 
 test('safeRecipeToolingProvenance keeps the version contract without arbitrary doctor data', () => {

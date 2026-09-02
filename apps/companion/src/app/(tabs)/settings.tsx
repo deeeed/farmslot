@@ -65,6 +65,7 @@ import {
   type VoiceAsrModelState,
   type VoiceCopilotRuntimeState,
 } from '../../lib/voice-copilot';
+import { useAttentionPrefsStore } from '../../store/attention-prefs';
 import { useConnectionStore } from '../../store/connection';
 import { type TmuxPrefixOption, useTerminalPrefsStore } from '../../store/terminal-prefs';
 
@@ -109,6 +110,12 @@ export default function SettingsScreen() {
   } = useConnectionStore();
   const tmuxPrefix = useTerminalPrefsStore((s) => s.tmuxPrefix);
   const setTmuxPrefix = useTerminalPrefsStore((s) => s.setTmuxPrefix);
+  const attentionEnabled = useAttentionPrefsStore((s) => s.enabled);
+  const attentionSound = useAttentionPrefsStore((s) => s.sound);
+  const attentionHaptics = useAttentionPrefsStore((s) => s.haptics);
+  const setAttentionEnabled = useAttentionPrefsStore((s) => s.setEnabled);
+  const setAttentionSound = useAttentionPrefsStore((s) => s.setSound);
+  const setAttentionHaptics = useAttentionPrefsStore((s) => s.setHaptics);
   const activeProfile = useMemo(
     () => profiles.find((profile) => profile.id === activeProfileId),
     [activeProfileId, profiles],
@@ -576,6 +583,36 @@ export default function SettingsScreen() {
       ]}
     >
       <AppVersionBanner />
+
+      <View style={styles.infoSection}>
+        <Text style={styles.sectionTitle}>Attention alerts</Text>
+        <Text style={styles.helperText}>
+          Notify this device when a new decision or monitor violation needs operator action.
+        </Text>
+        <View style={styles.modeRow}>
+          {[
+            { label: 'Enabled', active: attentionEnabled, toggle: setAttentionEnabled },
+            { label: 'Sound', active: attentionSound, toggle: setAttentionSound },
+            { label: 'Haptics', active: attentionHaptics, toggle: setAttentionHaptics },
+          ].map((preference) => (
+            <Pressable
+              key={preference.label}
+              style={[styles.modeChip, preference.active && styles.modeChipActive]}
+              onPress={() => preference.toggle(!preference.active)}
+              disabled={preference.label !== 'Enabled' && !attentionEnabled}
+              accessibilityRole="switch"
+              accessibilityState={{
+                checked: preference.active,
+                disabled: preference.label !== 'Enabled' && !attentionEnabled,
+              }}
+            >
+              <Text style={[styles.modeText, preference.active && styles.modeTextActive]}>
+                {preference.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
 
       <Text style={styles.sectionTitle}>Gateway Connection</Text>
 

@@ -491,6 +491,44 @@ test('locked resume awaits matching generation and step acknowledgement', async 
   assert.equal(result.run.engineState?.generation, 4);
 });
 
+test('resume rejects an operator-held interactive completion', async (t) => {
+  const run = pausedMonitorRun(`PROJ-${Date.now()}-resume-operator-hold`);
+  updateRun(run.id, {
+    steps: getRun(run.id)!.steps.map((step) =>
+      step.name === 'monitor'
+        ? {
+            ...step,
+            outputs: {
+              awaitingOperator: true,
+              reason: 'interactive-completion-operator-owned',
+            },
+          }
+        : step,
+    ),
+  });
+  t.after(() => cleanupRun(run.id));
+
+  await assert.rejects(
+    () =>
+      runResumeTransitionLocked(
+        { runId: run.id },
+        () => {},
+        {},
+        {
+          nudgeMonitor: async () => {
+            throw new Error('must not nudge an operator-held worker');
+          },
+          redrive: async () => {
+            throw new Error('must not redrive an operator-held monitor');
+          },
+        },
+      ),
+    /waiting for an interactive completion action, not Resume/,
+  );
+  assert.equal(getRun(run.id)?.status, 'paused');
+  assert.equal(getRun(run.id)?.engineState?.generation, 3);
+});
+
 test('release restore suppresses the ordinary monitor resume nudge', async (t) => {
   const run = pausedMonitorRun(`PROJ-${Date.now()}-resume-no-nudge`);
   t.after(() => cleanupRun(run.id));

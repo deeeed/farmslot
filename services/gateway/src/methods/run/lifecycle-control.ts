@@ -422,6 +422,15 @@ export async function runResumeTransitionLocked(
   if (currentStep.name !== 'monitor' && currentStep.name !== 'ci-watch') {
     throw new Error(`Run ${params.runId} cannot resume non-idempotent step: ${currentStep.name}`);
   }
+  if (
+    currentStep.name === 'monitor' &&
+    currentStep.outputs?.awaitingOperator === true &&
+    currentStep.outputs?.reason === 'interactive-completion-operator-owned'
+  ) {
+    throw new Error(
+      `Run ${params.runId} is waiting for an interactive completion action, not Resume`,
+    );
+  }
   if (currentStep.name === 'monitor' && !options.suppressMonitorNudge) {
     await deps.nudgeMonitor(existing, emit);
   }

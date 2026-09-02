@@ -20,7 +20,12 @@ import {
   subscribeFileTransferStore,
 } from '../shared/file-transfer-progress-store.js';
 
-import { activeTaskProgressStepId, effectiveTaskProgressForRun } from './run-pipeline-model.js';
+import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
+import {
+  activeTaskProgressStepId,
+  effectiveTaskProgressForRun,
+  pipelineDisplayStep,
+} from './run-pipeline-model.js';
 import {
   computePackageRefreshStatus,
   pipelineStepTone,
@@ -139,6 +144,7 @@ export class RunPipelineMini extends LitElement {
 
   render() {
     const isCancelled = this.run?.status === 'cancelled';
+    const awaitingOperator = isInteractiveCompletionAwaitingOperator(this.run);
     const segments = this.buildSegments();
     if (isCancelled) {
       for (const seg of segments) {
@@ -183,13 +189,15 @@ export class RunPipelineMini extends LitElement {
         ? html`<span class="active-label" style="color:${unsafeCSS(colors.statusWarn)}"
             >cancelled</span
           >`
-        : active
-          ? html`<span class="active-label" title=${taskLabel?.title ?? active.title}
-              >${taskLabel?.label ?? this.shortName(active.name)}${remaining
-                ? ` +${remaining}`
-                : ''}</span
-            >`
-          : null}
+        : awaitingOperator
+          ? html`<span class="active-label">awaiting operator action</span>`
+          : active
+            ? html`<span class="active-label" title=${taskLabel?.title ?? active.title}
+                >${taskLabel?.label ?? this.shortName(active.name)}${remaining
+                  ? ` +${remaining}`
+                  : ''}</span
+              >`
+            : null}
     `;
   }
 
@@ -217,7 +225,7 @@ export class RunPipelineMini extends LitElement {
     );
     const segments: MiniSegment[] = [];
     for (const step of sourceSteps) {
-      const displayStep = this.pipelineDisplayStep(step, waitingForPreGateReviews);
+      const displayStep = pipelineDisplayStep(step, waitingForPreGateReviews, run);
       segments.push({
         name: displayStep.name,
         status: displayStep.status,
@@ -272,19 +280,6 @@ export class RunPipelineMini extends LitElement {
       }
     }
     return segments;
-  }
-
-  private pipelineDisplayStep(step: RunStep, waitingForPreGateReviews: boolean): RunStep {
-    if (!waitingForPreGateReviews) return step;
-    if (step.name !== 'complete' && step.name !== 'human-gate') return step;
-    return {
-      ...step,
-      status: 'pending',
-      detail: step.name === 'complete' ? 'waiting for reviews' : 'waiting for package',
-      startedAt: undefined,
-      completedAt: undefined,
-      durationMs: undefined,
-    };
   }
 
   private reviewSegments(source: 'dispatch' | 'human-gate', label: string): MiniSegment[] {

@@ -75,12 +75,35 @@ import {
 } from './review-plan.js';
 import { type MonitorResult, monitorRun, probeWorkerSignalForRun } from './run-monitor.js';
 
+const S = PipelineSteps;
+
 interface StepIO {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
 }
 
-const S = PipelineSteps;
+export function holdInteractiveCompletionForOperator(
+  current: Run,
+  stepOutputs: Record<string, unknown>,
+  workerStatus: 'complete' | 'done',
+): Record<string, unknown> {
+  const monitorStep = current.steps.find((step) => step.name === S.MONITOR);
+  const heldOutputs = {
+    ...stepOutputs,
+    workerTerminalSignalHeld: workerStatus,
+    awaitingOperator: true,
+    reason: 'interactive-completion-operator-owned',
+  };
+  updateRunStep(current.id, S.MONITOR, {
+    detail: 'Worker finished; waiting for operator action',
+    durationMs: monitorStep?.startedAt
+      ? Date.now() - new Date(monitorStep.startedAt).getTime()
+      : undefined,
+    outputs: heldOutputs,
+  });
+  updateRun(current.id, { status: 'paused' });
+  return heldOutputs;
+}
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 type MonitorTerminalErrorArgs = {
@@ -442,7 +465,11 @@ export async function executeMonitorStep(
         `[run-engine] run ${runId.slice(0, 8)} — worker '${workerSignal.status}' signal held; ` +
           'interactive completion is operator-owned',
       );
-      updateRun(runId, { status: 'paused' });
+      const heldOutputs = holdInteractiveCompletionForOperator(
+        after,
+        stepOutputs,
+        workerSignal.status,
+      );
       // Broadcast it: the orchestrator's post-step guard returns before its own
       // RUN_UPDATED, so without this Command Center keeps showing `monitoring`
       // until the next refetch — and offers a Pause button that then errors
@@ -450,12 +477,7 @@ export async function executeMonitorStep(
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
       return {
         inputs,
-        outputs: {
-          ...stepOutputs,
-          workerTerminalSignalHeld: workerSignal.status,
-          awaitingOperator: true,
-          reason: 'interactive-completion-operator-owned',
-        },
+        outputs: heldOutputs,
       };
     }
     if (workerSignal?.status === 'complete' || workerSignal?.status === 'done') {

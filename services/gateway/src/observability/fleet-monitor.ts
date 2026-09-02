@@ -260,7 +260,11 @@ export function detectFleetMonitorViolations(
       notified.delete(violationKey(slot.slot, 'stuck'));
     }
 
-    const idleActive = slot.lifecycle === 'busy' && slot.agent === 'idle';
+    // Preparing and dispatching slots legitimately have no runner process yet;
+    // review gates legitimately have no active worker. Only the working phase
+    // promises that an agent should be running.
+    const idleActive =
+      slot.lifecycle === 'busy' && slot.phase === 'working' && slot.agent === 'idle';
     if (idleActive) {
       maybeRecordViolation(
         notified,

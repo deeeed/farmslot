@@ -82,6 +82,7 @@ import {
   subscribe,
 } from '../state.js';
 import { ALPHA_FEATURES_CHANGED, getAlphaFeaturesEnabled } from '../utils/alpha-features.js';
+import { ATTENTION_ALERT_EVENT, type AttentionAlertDetail } from '../utils/notifications.js';
 import {
   listPinnedSlots as listPinnedSlotPreferences,
   PINNED_SLOTS_CHANGED,
@@ -220,6 +221,7 @@ export class FarmApp extends LitElement {
   @state() private tmuxWorkers: TmuxWorkerSummary[] = [];
   @state() private chatOpen = false;
   @state() private chatUnread = 0;
+  @state() private attentionAlert: AttentionAlertDetail | null = null;
   @state() private _sidebarExpanded = false;
   @state() private _sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
   @state() private _sidebarResizing = false;
@@ -288,6 +290,7 @@ export class FarmApp extends LitElement {
     window.addEventListener('copilot-prompt-request', this.onCopilotPromptRequest as EventListener);
     window.addEventListener(PINNED_SLOTS_CHANGED, this.onPinnedSlotsChanged as EventListener);
     window.addEventListener(ALPHA_FEATURES_CHANGED, this.onAlphaFeaturesChanged as EventListener);
+    window.addEventListener(ATTENTION_ALERT_EVENT, this.onAttentionAlert as EventListener);
     this.pinnedSlots = listPinnedSlotPreferences();
     void this.refreshTmuxWorkers({ force: true });
     this.tmuxWorkerRefreshTimer = setInterval(() => {
@@ -331,6 +334,7 @@ export class FarmApp extends LitElement {
       ALPHA_FEATURES_CHANGED,
       this.onAlphaFeaturesChanged as EventListener,
     );
+    window.removeEventListener(ATTENTION_ALERT_EVENT, this.onAttentionAlert as EventListener);
     if (this.tmuxWorkerRefreshTimer) clearInterval(this.tmuxWorkerRefreshTimer);
     if (this.updatePollTimer) clearInterval(this.updatePollTimer);
     this.unsubTmuxWorkerUpdated?.();
@@ -349,6 +353,34 @@ export class FarmApp extends LitElement {
     // on an alpha route, bounce them to fleet immediately, not on next nav.
     this.parseHash();
   };
+
+  private onAttentionAlert = (event: CustomEvent<AttentionAlertDetail>) => {
+    this.attentionAlert = event.detail;
+  };
+
+  private renderAttentionAlert() {
+    const alert = this.attentionAlert;
+    if (!alert) return nothing;
+    return html`<div class="fa-attention-alert" role="status" aria-live="polite">
+      <div>
+        <strong>${alert.title}</strong>
+        ${alert.body ? html`<span>${alert.body}</span>` : nothing}
+      </div>
+      ${alert.route
+        ? html`<button
+            @click=${() => {
+              location.hash = alert.route!;
+              this.attentionAlert = null;
+            }}
+          >
+            Open
+          </button>`
+        : nothing}
+      <button class="dismiss" title="Dismiss" @click=${() => (this.attentionAlert = null)}>
+        ×
+      </button>
+    </div>`;
+  }
 
   private async refreshTmuxWorkers(opts: { force?: boolean } = {}): Promise<void> {
     if (this.pinnedSlots.length === 0) {
@@ -1904,7 +1936,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           : ''}
       </nav>
       <div class="fa-main">
-        ${this.renderUpdateBanner()}
+        ${this.renderAttentionAlert()} ${this.renderUpdateBanner()}
         <fleet-summary-bar
           .summary=${this.summary}
           .connection=${this.connection}

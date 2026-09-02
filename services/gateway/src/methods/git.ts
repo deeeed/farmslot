@@ -254,6 +254,68 @@ async function ensureReviewCommitAvailable(
   }
 }
 
+function remoteHistoryRef(ref: string): string {
+  if (ref.startsWith('origin/')) return `refs/heads/${ref.slice('origin/'.length)}`;
+  if (ref.startsWith('refs/remotes/origin/')) {
+    return `refs/heads/${ref.slice('refs/remotes/origin/'.length)}`;
+  }
+  return ref;
+}
+
+async function ensureExactReviewRangeAvailable(
+  slotId: string,
+  base: string,
+  head: string,
+  deps: GitExecDeps,
+): Promise<CommandOutput> {
+  const headResult = await ensureReviewCommitAvailable(slotId, head, deps);
+  try {
+    await gitExec(slotId, ['merge-base', base, head], undefined, deps);
+    return headResult;
+  } catch (mergeBaseError) {
+    const { stdout: shallow } = await gitExec(
+      slotId,
+      ['rev-parse', '--is-shallow-repository'],
+      undefined,
+      deps,
+    );
+    if (shallow.trim() !== 'true') throw mergeBaseError;
+  }
+
+  let fetchError: unknown;
+  try {
+    // A shallow repository can contain both snapshot tips while still hiding
+    // their common ancestor. Restore only the histories reachable from the
+    // frozen range, without moving a branch or changing the worktree.
+    await gitExec(
+      slotId,
+      [
+        'fetch',
+        '--no-tags',
+        '--unshallow',
+        'origin',
+        remoteHistoryRef(base),
+        remoteHistoryRef(head),
+      ],
+      undefined,
+      deps,
+    );
+  } catch (error) {
+    // Another exact-diff request may have completed the same unshallow fetch.
+    // The merge-base check below decides whether that race recovered the range.
+    fetchError = error;
+  }
+
+  try {
+    await gitExec(slotId, ['merge-base', base, head], undefined, deps);
+    return headResult;
+  } catch (error) {
+    const cause = fetchError ?? error;
+    const message = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`Review range ${base}...${head} has no merge base after fetch: ${message}`);
+  }
+}
+
 export async function gitDiff(
   params: GitDiffParams,
   deps: GitExecDeps = {},
@@ -274,7 +336,7 @@ export async function gitDiff(
       if (params.target === 'worktree') {
         throw new Error('An exact review head cannot be combined with a worktree diff');
       }
-      await ensureReviewCommitAvailable(params.slotId, params.head, deps);
+      await ensureExactReviewRangeAvailable(params.slotId, baseRef, params.head, deps);
       args.push(`${baseRef}...${params.head}`);
     } else {
       const { stdout: mergeBase } = await gitExec(
@@ -387,7 +449,7 @@ export async function gitBranchDiff(
   }
   const [diffAnchorResult, branchResult] = await Promise.all([
     params.head
-      ? ensureReviewCommitAvailable(params.slotId, params.head, deps)
+      ? ensureExactReviewRangeAvailable(params.slotId, baseRef, params.head, deps)
       : gitExec(params.slotId, ['merge-base', baseRef, 'HEAD'], undefined, deps),
     gitExec(params.slotId, ['branch', '--show-current'], undefined, deps),
   ]);

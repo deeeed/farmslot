@@ -30,6 +30,7 @@ import {
   canReplayRunSteps,
   INTERACTIVE_DEV_ACTIONS,
   isActiveInteractiveDevRun,
+  isInteractiveCompletionAwaitingOperator,
   runEvidenceSummary,
 } from './run-detail-model.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
@@ -139,6 +140,11 @@ export function renderInteractiveDevGate(run: Run, ctx: InteractiveDevGateRender
         <span style="color:${colors.textMuted}"
           >${run.devInteractiveProfile ?? 'lightweight'} profile</span
         >
+        ${isInteractiveCompletionAwaitingOperator(run)
+          ? html`<strong style="color:${colors.statusWarn}"
+              >Worker finished. Choose what happens next.</strong
+            >`
+          : nothing}
         ${INTERACTIVE_DEV_ACTIONS.map(({ action, label, title, tone }) =>
           button(action, label, title, tone),
         )}

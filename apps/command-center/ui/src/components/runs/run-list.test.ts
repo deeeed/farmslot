@@ -80,6 +80,27 @@ test('independent review fix loop stays distinct from publication gate', () => {
   assert.equal(isHumanPublicationGateLabel(label), false);
 });
 
+test('operator-held completion replaces the raw running monitor label', () => {
+  const label = compactRunPipelineLabel(
+    run({
+      flowType: 'dev',
+      mode: 'interactive',
+      status: 'paused',
+      steps: [
+        {
+          name: 'monitor',
+          status: 'running',
+          outputs: {
+            awaitingOperator: true,
+            reason: 'interactive-completion-operator-owned',
+          },
+        },
+      ],
+    }),
+  );
+  assert.equal(label, 'awaiting operator action');
+});
+
 test('run inventory selection uses split detail on wide screens and back on narrow screens', () => {
   const wide = { hasSelection: true, narrowViewport: false, forceList: false };
   assert.equal(inventoryShowsList(wide), true);

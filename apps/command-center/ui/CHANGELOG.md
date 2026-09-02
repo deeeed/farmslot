@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(notifications): add configurable operator-attention alerts with focused-tab sound and optional background desktop notifications for new decisions and monitor violations; apply tag deduplication before sound and banner delivery.
+- fix(runs): show completed interactive workers as awaiting operator action, render monitor as finished, and hide the Resume control that immediately re-paused on the terminal signal.
 - fix(runs): keep publish-package and artifact-mirror refresh waiting while `file.transfer.progress` is still moving; idle-timeout only after a stall, not a 15s wall clock.
 - fix(dispatch): load template catalogs and slot availability once, then filter locally when switching farm, flow, domain, or mode. The slot list has a Refresh control for a forced host recheck or a failed load.
 - fix(runs): Complete Manually is available on failed runs and can prompt for an optional PR number. A failed slot release after the run is already `done` is shown in an alert. Replay is hidden on run detail, slot view, and family inspector once the hatch flag is set.

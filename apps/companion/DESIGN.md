@@ -3,7 +3,7 @@
 ## Source of truth
 
 - Status: Active evidence-first UX simplification
-- Last refreshed: 2026-08-15
+- Last refreshed: 2026-09-02
 - Primary product surfaces: Mobile Companion review flow, evidence viewer, PR/diff context, worker terminal control.
 - Evidence reviewed: `docs/PRD-mobile-companion-canonical.md`, `docs/ROADMAP-next.md`, `docs/adr/052-recipe-derived-visual-review-boards.md`, current Expo Router routes under `src/app`, run/evidence/diff/terminal feature modules, and the full-surface UX catalog recipes.
 
@@ -37,6 +37,7 @@
   - Open the related PR/family/retro package.
   - Connect to the relevant worker terminal/tmux pane to steer or recover.
 - Key contexts of use: one-handed phone use, intermittent attention, remote network via Tailscale/LAN, small-screen review during active PR work.
+- Attention alerts: new decisions and monitor violations may use configurable local notification sound and haptics so the operator does not need to watch the app continuously.
 
 ## Information architecture
 

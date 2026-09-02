@@ -7,6 +7,8 @@ import {
 } from '../../utils/review-gate-display.js';
 import type { WorkInventoryColumnDef } from '../shared/work-inventory-table.js';
 
+import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
+
 export const RUN_INVENTORY_SORT_KEYS = [
   'status',
   'flow',
@@ -64,6 +66,7 @@ export function runInventorySortValue(run: Run, key: RunInventorySortKey): strin
 export function compactRunPipelineLabel(run: Run): string {
   const activeReview = activePublicationReviewLabel(run);
   if (activeReview) return activeReview;
+  if (isInteractiveCompletionAwaitingOperator(run)) return 'awaiting operator action';
   if (run.status === 'human-gating') return compactHumanGateLabel(run);
   const running = run.steps?.find((step) => step.status === 'running');
   if (running) return running.name;
