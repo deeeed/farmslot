@@ -4,6 +4,13 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(dispatch): failed prompt delivery terminates its newly launched runner without typing `/exit` into a possibly buffered task, preventing cleanup from submitting the task and exit command as one turn.
+- fix(runners): recognize Claude's first-run workspace trust prompt and confirm it from fresh deterministic pane evidence so newly relocated checkouts do not stall dispatch.
+- fix(observability): emit agent-idle violations only while a slot is in the working phase; preparing, dispatching, and review-gate slots may legitimately have no active runner.
+- fix(run-engine): static PR reviews run the project minimal prepare instead of skipping checkout binding, preventing user-selected slots from launching reviewers on an unrelated branch while still leaving runtime acquisition to the execution template.
+- fix(run-engine): review gates with no `review.md` never expose “Post to PR”; refreshing the gate adds the action only after non-empty review markdown is present.
+- fix(run-engine): persist lightweight interactive completion as an explicit operator hold so Command Center can distinguish it from a resumable pause, and reject Resume instead of reopening monitor against the same terminal signal.
+- fix(gateway): exact review diffs in shallow slots restore the saved base and head histories when both tip objects exist but their merge base does not, preserving the frozen triple-dot range.
 - fix(gateway): exact review diffs verify their saved base and head as commit objects, fetch either missing SHA without moving the slot branch or worktree, and report a specific unavailable-commit error when the remote cannot restore the snapshot.
 - fix(gateway): a warm handoff pins usage accounting at the retained transcript's last record boundary, so a run is charged only for what it appends. Previously the parent's history was charged to the child and update-branch runs breached their ceiling minutes after starting. Runner session-usage providers now all report increments — codex converts its session totals in its own provider rather than the budget guard compensating for them. The pin is flushed with `persistRunNow` before the warm prompt is delivered.
 - fix(gateway): budget-nudge delivery defers while the runner is mid-turn, using the same structured progress verdict (`classifyMonitorProgress`) as the stuck/idle nudges. Text typed at a busy composer is never submitted, so it accumulated there while the retry budget drained and the worker never heard about the breach. The decision reads runner observability, not `agentStatus`, which is always `working` wherever the guard runs.

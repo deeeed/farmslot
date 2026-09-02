@@ -1,5 +1,6 @@
 import type { FlowType, Run, RunStep, TaskProgressStructured } from '@farmslot/protocol';
 
+import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
 import {
   computePackageRefreshStatus,
   publicationReviewVerdictStatus,
@@ -79,6 +80,7 @@ export function activeTaskProgressStepId(
   run: Run | undefined,
   taskProgress: TaskProgressStructured | undefined,
 ): 'monitor' | 'self-review' | 'ci-watch' | null {
+  if (isInteractiveCompletionAwaitingOperator(run)) return null;
   const progress = effectiveTaskProgressForRun(run, taskProgress);
   if (!progress?.totalSteps) return null;
   if (isSelfReviewProgressActive(run)) return 'self-review';
@@ -284,7 +286,7 @@ export function computeLayout(run: Run): PipelineLayout {
     const pos = adjustedStepPos(step.name, positions[step.name], preGateShift, postGateShift);
     if (!pos) continue;
     const w = pos.width ?? NODE_W;
-    const displayStep = pipelineDisplayStep(step, waitingForPreGateReviews);
+    const displayStep = pipelineDisplayStep(step, waitingForPreGateReviews, run);
     nodes.push({
       id: step.name,
       x: colX(pos.col),
@@ -429,7 +431,18 @@ export function publicationReviewStepForName(run: Run, stepName: string): RunSte
   return node?.step ?? null;
 }
 
-function pipelineDisplayStep(step: RunStep, waitingForPreGateReviews: boolean): RunStep {
+export function pipelineDisplayStep(
+  step: RunStep,
+  waitingForPreGateReviews: boolean,
+  run: Run | undefined,
+): RunStep {
+  if (isInteractiveCompletionAwaitingOperator(run) && step.name === 'monitor') {
+    return {
+      ...step,
+      status: 'done',
+      detail: 'Worker finished; waiting for operator action',
+    };
+  }
   if (!waitingForPreGateReviews) return step;
   if (step.name !== 'complete' && step.name !== 'human-gate') return step;
   return {

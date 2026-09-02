@@ -215,7 +215,7 @@ export async function executePrepareStep(
   // Eval replays must always run prepare because that step installs and
   // verifies the pinned recipe harness; reject before any slot/project lookup
   // so this invariant is hermetic.
-  const skipReason = prepareSkipReason(current, flags?.skipPrepare === true);
+  const skipReason = prepareSkipReason(flags?.skipPrepare === true);
   const skipPrepare = skipReason !== null;
   if (skipPrepare && current.engineState?.evalExperiment) {
     throw new Error(
@@ -408,13 +408,7 @@ export async function executePrepareStep(
   };
 }
 
-export function prepareSkipReason(
-  run: Pick<Run, 'flowType' | 'reviewValidationDepth'>,
-  operatorSkip: boolean,
-): 'static-review' | 'operator-skip' | null {
-  if (run.flowType === 'review-pr' && run.reviewValidationDepth !== 'full-live') {
-    return 'static-review';
-  }
+export function prepareSkipReason(operatorSkip: boolean): 'operator-skip' | null {
   return operatorSkip ? 'operator-skip' : null;
 }
 

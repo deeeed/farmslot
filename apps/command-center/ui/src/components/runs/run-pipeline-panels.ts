@@ -5,6 +5,7 @@ import { nestedLoopProgressLabel } from '@farmslot/protocol/checklist-target';
 
 import { colors } from '../../styles/theme-tokens.js';
 
+import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
 import { formatDuration } from './run-utils.js';
 
 export interface PipelineControlHandlers {
@@ -31,16 +32,19 @@ export function renderPipelineControls(
   const status = run.status;
   const isRunning = ['monitoring', 'ci-watching', 'preparing', 'dispatching'].includes(status);
   const isPaused = status === 'paused';
+  const awaitingOperator = isInteractiveCompletionAwaitingOperator(run);
   const isTerminal = ['done', 'failed', 'cancelled'].includes(status);
 
   return html`
     <div class="controls">
       ${opts.cancelPending ? html`<span class="ctrl-pending">Cancelling run…</span>` : nothing}
-      ${!opts.cancelPending && isPaused
-        ? html` <button class="ctrl-btn ctrl-resume" @click=${handlers.resume}>Resume</button> `
-        : !opts.cancelPending && isRunning
-          ? html` <button class="ctrl-btn ctrl-pause" @click=${handlers.pause}>Pause</button> `
-          : nothing}
+      ${!opts.cancelPending && awaitingOperator
+        ? html`<span class="ctrl-pending">Awaiting operator action</span>`
+        : !opts.cancelPending && isPaused
+          ? html` <button class="ctrl-btn ctrl-resume" @click=${handlers.resume}>Resume</button> `
+          : !opts.cancelPending && isRunning
+            ? html` <button class="ctrl-btn ctrl-pause" @click=${handlers.pause}>Pause</button> `
+            : nothing}
       ${!isTerminal
         ? html`
             <button

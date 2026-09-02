@@ -599,6 +599,7 @@ export async function killAgentInSession(
   vars: SlotVars,
   runner?: string,
   role: AgentRole = 'primary',
+  options: { graceful?: boolean } = {},
 ): Promise<void> {
   const TMUX_CMD_TIMEOUT = 10_000;
   const session = await resolveTmuxSession(vars.slotId, vars);
@@ -680,7 +681,7 @@ export async function killAgentInSession(
   // warm handoff whose child flow retained its parent worker window. Multiple
   // same-runner candidates fail closed instead of interrupting a reviewer.
 
-  if (agentPid) {
+  if (agentPid && options.graceful !== false) {
     await execOnSlot(
       vars,
       tmuxSendTextCommand(target, '/exit', {
@@ -692,7 +693,8 @@ export async function killAgentInSession(
       },
     );
     await new Promise((r) => setTimeout(r, 2000));
-
+  }
+  if (agentPid) {
     const stillAlive =
       (
         await execOnSlot(vars, `kill -0 ${shellQuote(agentPid)} 2>/dev/null`, {

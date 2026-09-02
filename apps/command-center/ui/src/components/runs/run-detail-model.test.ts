@@ -22,6 +22,7 @@ import {
   hasActiveInlineCiFix,
   INTERACTIVE_DEV_ACTIONS,
   isActiveInteractiveDevRun,
+  isInteractiveCompletionAwaitingOperator,
   isLiveTimeoutPrStatusAllGreen,
   isTaskProgressRunActive,
   pendingCITimeoutDecision,
@@ -33,6 +34,32 @@ import {
   shouldAcceptTaskProgressUpdate,
   shouldShowRunCiStatus,
 } from './run-detail-model.js';
+
+test('interactive completion hold is distinct from a resumable pause', () => {
+  const held = makeRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    status: 'paused',
+    steps: [
+      {
+        name: 'monitor',
+        status: 'running',
+        outputs: {
+          awaitingOperator: true,
+          reason: 'interactive-completion-operator-owned',
+        },
+      },
+    ],
+  });
+  assert.equal(isInteractiveCompletionAwaitingOperator(held), true);
+  assert.equal(
+    isInteractiveCompletionAwaitingOperator({
+      ...held,
+      steps: [{ name: 'monitor', status: 'running' }],
+    }),
+    false,
+  );
+});
 
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {

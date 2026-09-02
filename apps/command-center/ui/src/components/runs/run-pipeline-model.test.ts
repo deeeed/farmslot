@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { Run } from '@farmslot/protocol';
 
 import {
+  activeTaskProgressStepId,
   computeLayout,
   effectiveTaskProgressForRun,
   publicationReviewStepForName,
@@ -81,6 +82,31 @@ test('computeLayout inserts publication review plan nodes without mutating host 
   assert.equal(progress?.totalSteps, 3);
   assert.equal(progress?.completedSteps, 1);
   assert.equal(progress?.currentStep, 'Patch');
+});
+
+test('operator-held interactive completion renders monitor done and closes task progress', () => {
+  const run = makeRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    status: 'paused',
+    steps: [
+      {
+        name: 'monitor',
+        status: 'running',
+        durationMs: 12_000,
+        outputs: {
+          awaitingOperator: true,
+          reason: 'interactive-completion-operator-owned',
+        },
+      },
+      { name: 'self-review', status: 'pending' },
+    ],
+  });
+
+  const monitor = computeLayout(run).nodes.find((node) => node.id === 'monitor');
+  assert.equal(monitor?.step.status, 'done');
+  assert.equal(monitor?.step.durationMs, 12_000);
+  assert.equal(activeTaskProgressStepId(run, undefined), null);
 });
 
 test('computeLayout places post-gate review nodes after the worker lane to avoid overlap', () => {

@@ -2,8 +2,8 @@
 
 ## Source of truth
 
-- Status: Draft
-- Last refreshed: 2026-08-10
+- Status: Active
+- Last refreshed: 2026-09-02
 - Primary product surfaces: Command Center operator UI and recipe-derived visual review boards.
 - Evidence reviewed: `CLAUDE.md`, `apps/command-center/CLAUDE.md`, `apps/command-center/ui/src/styles/theme-tokens.ts`, `apps/command-center/ui/src/components/app-shell.ts`, `apps/command-center/ui/src/components/dispatch/dispatch-wizard-view-renderer.ts`, `apps/command-center/ui/src/components/shared/whats-new-modal.ts`, `apps/command-center/ui/src/components/recipe-graph/recipe-graph.ts`, `apps/command-center/ui/src/components/work-graph/work-graph-panel.ts`, `packages/protocol/src/contracts/execution-templates.ts`, `packages/protocol/src/contracts/work-graph.ts`, `apps/companion/DESIGN.md`, and `docs/adr/052-recipe-derived-visual-review-boards.md`.
 
@@ -50,7 +50,7 @@
 ## Components
 
 - Existing components to reuse: app shell route patterns, recipe graph SVG patterns, shared theme tokens, planning controls, and `dispatch-config-editor` for every backlog create/edit dispatch surface.
-- New/changed components: compact inventory tables on Roadmap, Backlog, and Runs; shared Backlog create/edit metadata fields whose owning project scopes both templates and eligible slots; `work-graph-panel` and `work-graph-layout` for dependency visualization; `execution-template-preview-modal` for exact, read-only dispatch template inspection; a lightweight recipe-derived visual review board for screen hierarchy and normalized point/area feedback.
+- New/changed components: compact inventory tables on Roadmap, Backlog, and Runs; shared Backlog create/edit metadata fields whose owning project scopes both templates and eligible slots; `work-graph-panel` and `work-graph-layout` for dependency visualization; `execution-template-preview-modal` for exact, read-only dispatch template inspection; a lightweight recipe-derived visual review board for screen hierarchy and normalized point/area feedback; client-local attention preferences for browser notifications and optional sound when a new operator decision or monitor violation arrives.
 - Variants and states: empty graph list, project filter, graph status badges, selected node, waiting/gated/running/succeeded/failed/skipped nodes, pending/satisfied/failed/waived edges; execution-template preview loading, content, stale-source error, and closed states; visual-review boards default to one remembered capture platform with an explicit Compare mode that groups platform variants under one surface, and navigation maps start at the top level with independently expandable branches.
 - Token/component ownership: Command Center owns UI tokens; protocol owns graph and execution-template data shapes.
 
@@ -60,7 +60,7 @@
 - Keyboard/focus behavior: graph nodes and side-list nodes must be selectable with keyboard/focus-visible states; execution-template preview buttons have explicit labels and the modal closes with Escape.
 - Contrast/readability: dark background with tokenized status colors and text hierarchy.
 - Screen-reader semantics: route titles, project filter labels, diagram labels, and node button labels.
-- Reduced motion and sensory considerations: avoid required animation.
+- Reduced motion and sensory considerations: avoid required animation; sound, desktop notifications, and Companion haptics are independently configurable and never the only indication that action is required.
 
 ## Responsive behavior
 

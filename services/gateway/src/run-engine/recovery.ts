@@ -25,6 +25,7 @@ import {
   type PublicationReviewRecoveryResult,
   reviewerContextNeedsRecovery,
 } from './recover-inflight-reviews.js';
+import { reviewPostingActions } from './review-gate.js';
 import { recoveryReviewPlanForActiveFix } from './review-plan.js';
 
 const S = PipelineSteps;
@@ -445,7 +446,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                 }
 
                 const existingPayload = d.payload as ReviewGatePayload | undefined;
-                d.payload = {
+                const recoveredPayload: ReviewGatePayload = {
                   ...existingPayload,
                   kind: 'review',
                   prNumber: run.prNumber ?? null,
@@ -457,7 +458,16 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                     recoveryArtifactManifest.length > 0 ? recoveryArtifactManifest : undefined,
                   recipeJson: await deps.readTaskArtifactText(run.taskFile, 'recipe.json'),
                 };
-                deps.updateRun(run.id, { decisions: run.decisions });
+                const recoveredDecisions = run.decisions.map((decision) =>
+                  decision.id === d.id
+                    ? {
+                        ...decision,
+                        payload: recoveredPayload,
+                        actions: reviewPostingActions(review.reviewMd),
+                      }
+                    : decision,
+                );
+                deps.updateRun(run.id, { decisions: recoveredDecisions });
                 console.log(`[run-engine] backfilled review payload for ${run.id.slice(0, 8)}`);
               }
             } catch (err) {

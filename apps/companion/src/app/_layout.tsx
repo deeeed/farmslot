@@ -19,6 +19,7 @@ import { initNotifications } from '../lib/notifications';
 import { isStoreScreenshotMode, seedStoreScreenshotMode } from '../lib/store-screenshot-mode';
 import { colors } from '../lib/theme';
 import { buildWorkspaceCopilotDraftForRoute } from '../lib/workspace-copilot';
+import { useAttentionPrefsStore } from '../store/attention-prefs';
 import { useConnectionStore } from '../store/connection';
 import { useTerminalPrefsStore } from '../store/terminal-prefs';
 
@@ -31,6 +32,7 @@ const COPILOT_FAB_POSITION_STORAGE_KEY = '@farmslot:copilotFabPosition';
 export default function RootLayout() {
   const init = useConnectionStore((s) => s.init);
   const initTerminalPrefs = useTerminalPrefsStore((s) => s.init);
+  const initAttentionPrefs = useAttentionPrefsStore((s) => s.init);
 
   useEffect(() => {
     if (isStoreScreenshotMode) {
@@ -43,7 +45,8 @@ export default function RootLayout() {
       init();
     }
     void initTerminalPrefs();
-  }, [init, initTerminalPrefs]);
+    void initAttentionPrefs();
+  }, [init, initAttentionPrefs, initTerminalPrefs]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

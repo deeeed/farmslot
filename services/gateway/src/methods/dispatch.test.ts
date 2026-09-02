@@ -286,15 +286,15 @@ test('dispatch failure cleanup kills launched role runner and verifies exit', as
   const vars = makeSlotVars();
 
   await cleanupLaunchedWorkerAfterDispatchFailure(vars, 'mme-2:dev', 'cursor', 'primary', {
-    killAgentInSession: async (_vars, runner, role) => {
-      calls.push(`kill:${runner}:${role}`);
+    killAgentInSession: async (_vars, runner, role, options) => {
+      calls.push(`kill:${runner}:${role}:graceful=${options?.graceful ?? true}`);
     },
     waitForRunnerProcessExit: async (_vars, target, runner, timeoutMs) => {
       calls.push(`wait:${target}:${runner}:${timeoutMs}`);
     },
   });
 
-  assert.deepEqual(calls, ['kill:cursor:primary', 'wait:mme-2:dev:cursor:5000']);
+  assert.deepEqual(calls, ['kill:cursor:primary:graceful=false', 'wait:mme-2:dev:cursor:5000']);
 });
 
 test('normalizeTicketRef only extracts standalone GitHub and Jira URLs', () => {

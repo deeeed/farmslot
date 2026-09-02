@@ -483,6 +483,7 @@ export function addDecision(decision: PendingDecision): void {
     body: `${decision.title}`,
     tag: `decision-${decision.id}`,
     route: '#decisions',
+    attention: true,
   });
   notify();
 }
@@ -884,6 +885,7 @@ export function initState(): void {
         body: `${p.violation.slotId}: ${p.violation.message}`,
         tag: `violation-${p.violation.slotId}-${p.violation.type}`,
         route: p.violation.slotId ? `#slot/${p.violation.slotId}` : '#fleet',
+        attention: true,
       });
     }
   });

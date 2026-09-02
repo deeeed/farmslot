@@ -29,6 +29,16 @@ export function isActiveInteractiveDevRun(run: Run): boolean {
   return run.flowType === 'dev' && run.mode === 'interactive' && !isTerminalRunStatus(run.status);
 }
 
+export function isInteractiveCompletionAwaitingOperator(run: Run | undefined): boolean {
+  if (!run || run.status !== 'paused' || !isActiveInteractiveDevRun(run)) return false;
+  const monitor = run.steps.find((step) => step.name === 'monitor');
+  return (
+    monitor?.status === 'running' &&
+    monitor.outputs?.awaitingOperator === true &&
+    monitor.outputs?.reason === 'interactive-completion-operator-owned'
+  );
+}
+
 export function canReplayRunSteps(
   run:
     | Pick<Run, 'status' | 'decisions' | 'slotId' | 'steps' | 'agentContexts' | 'engineState'>

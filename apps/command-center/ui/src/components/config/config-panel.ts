@@ -25,6 +25,11 @@ import { providerAccountsStore } from '../../provider-accounts-store.js';
 import { getState, type GlobalFilters, subscribe } from '../../state.js';
 import { getAlphaFeaturesEnabled, setAlphaFeaturesEnabled } from '../../utils/alpha-features.js';
 import { renderMarkdown } from '../../utils/markdown.js';
+import {
+  type AttentionAlertPreferences,
+  getAttentionAlertPreferences,
+  setAttentionAlertPreferences,
+} from '../../utils/notifications.js';
 
 import {
   type AutoRecoveryDraft,
@@ -79,6 +84,7 @@ export class ConfigPanel extends LitElement {
   @state() private _projectLearningsLoading = false;
   @state() private _projectLearningsError = '';
   @state() private _alphaFeaturesEnabled = getAlphaFeaturesEnabled();
+  @state() private _attentionAlerts = getAttentionAlertPreferences();
 
   // Light DOM so Monaco CSS works
   protected override createRenderRoot() {
@@ -977,6 +983,39 @@ export class ConfigPanel extends LitElement {
   private renderSettingsContent() {
     return html`
       <div class="cp-section">
+        <div class="cp-section-title">Attention alerts</div>
+        <div class="cp-auto-card">
+          <div class="cp-auto-card-head">
+            <div>
+              <div class="cp-auto-title">Human action required</div>
+              <div class="cp-auto-subtitle">
+                Alert this browser when a new decision or monitor violation needs operator action.
+              </div>
+            </div>
+            ${this.renderAttentionToggle('attentionEnabled', 'Enabled')}
+          </div>
+          <div class="cp-auto-card-head">
+            <div>
+              <div class="cp-auto-title">Sound</div>
+              <div class="cp-auto-subtitle">
+                Play a short two-tone alert even while this tab is focused.
+              </div>
+            </div>
+            ${this.renderAttentionToggle('sound', 'Sound')}
+          </div>
+          <div class="cp-auto-card-head">
+            <div>
+              <div class="cp-auto-title">Background notifications</div>
+              <div class="cp-auto-subtitle">
+                Show all browser notifications, including dispatch completion, while Command Center
+                is in the background.
+              </div>
+            </div>
+            ${this.renderAttentionToggle('backgroundNotifications', 'Background')}
+          </div>
+        </div>
+      </div>
+      <div class="cp-section">
         <div class="cp-section-title">Alpha Features</div>
         <div class="cp-auto-card">
           <div class="cp-auto-card-head">
@@ -1004,6 +1043,24 @@ export class ConfigPanel extends LitElement {
         </div>
       </div>
     `;
+  }
+
+  private renderAttentionToggle(key: keyof AttentionAlertPreferences, label: string) {
+    return html`<label class="cp-switch-row">
+      <input
+        type="checkbox"
+        .checked=${this._attentionAlerts[key]}
+        ?disabled=${key !== 'attentionEnabled' && !this._attentionAlerts.attentionEnabled}
+        @change=${(event: Event) => {
+          this._attentionAlerts = {
+            ...this._attentionAlerts,
+            [key]: (event.target as HTMLInputElement).checked,
+          };
+          setAttentionAlertPreferences(this._attentionAlerts);
+        }}
+      />
+      ${label}
+    </label>`;
   }
 
   private renderContent() {

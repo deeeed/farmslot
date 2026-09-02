@@ -801,13 +801,24 @@ export function runnerPaneShowsWorkspaceTrustPrompt(
   runnerId?: string | null,
 ): boolean {
   const runner = normalizeRunner(runnerId);
-  if (runner !== 'cursor') return false;
   const value = normalizeInstructionText(pane).toLowerCase();
-  return (
-    value.includes('[a] trust this workspace') &&
-    value.includes('[q] quit') &&
-    value.includes('use arrow keys to navigate')
-  );
+  if (runner === 'cursor') {
+    return (
+      value.includes('[a] trust this workspace') &&
+      value.includes('[q] quit') &&
+      value.includes('use arrow keys to navigate')
+    );
+  }
+  if (runner === 'claude') {
+    return (
+      value.includes('accessing workspace:') &&
+      value.includes('is this a project you created or one you trust?') &&
+      value.includes('no, exit') &&
+      value.includes('yes, i trust this folder') &&
+      value.includes('enter to confirm')
+    );
+  }
+  return false;
 }
 
 function runnerPaneShowsGrokProjectDirectoryPrompt(
@@ -835,6 +846,7 @@ export interface RunnerLaunchBlocker {
   summary: string;
   autoAction:
     | 'cursor-trust-workspace'
+    | 'claude-trust-workspace'
     | 'grok-select-current-project'
     | 'codex-refresh-hooks-and-trust'
     | null;
@@ -847,6 +859,7 @@ export function runnerLaunchBlockerAutoActionKey(
   pane = '',
 ): string | null {
   if (autoAction === 'cursor-trust-workspace') return 'a';
+  if (autoAction === 'claude-trust-workspace') return 'Down';
   if (autoAction === 'grok-select-current-project') return 'Enter';
   if (autoAction === 'codex-refresh-hooks-and-trust') {
     for (const line of pane.split('\n')) {
@@ -883,6 +896,7 @@ export function keyForClassifierTrustAction(
   const fromBlocker = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null, pane);
   if (fromBlocker) return fromBlocker;
   if (runner === 'cursor') return 'a';
+  if (runner === 'claude') return 'Down';
   if (runner === 'grok') return 'Enter';
   return null;
 }
@@ -928,7 +942,8 @@ export async function resolveLaunchBlockerWithFreshEvidence(opts: {
     await opts.refreshCodexHooks();
   }
   const keySequence =
-    blocker?.autoAction === 'codex-refresh-hooks-and-trust'
+    blocker?.autoAction === 'codex-refresh-hooks-and-trust' ||
+    blocker?.autoAction === 'claude-trust-workspace'
       ? `${shellQuote(key)} ${shellQuote('Enter')}`
       : shellQuote(key);
   const sent = await opts.exec(
@@ -957,9 +972,8 @@ export function detectRunnerLaunchBlocker(
     case 'workspace-trust':
       return {
         kind: 'workspace-trust',
-        summary:
-          'Cursor is waiting for workspace trust confirmation before the chat input is available.',
-        autoAction: 'cursor-trust-workspace',
+        summary: `${runner === 'claude' ? 'Claude' : 'Cursor'} is waiting for workspace trust confirmation before the chat input is available.`,
+        autoAction: runner === 'claude' ? 'claude-trust-workspace' : 'cursor-trust-workspace',
       };
     case 'project-directory':
       return {
@@ -1008,9 +1022,8 @@ export function detectRunnerLaunchBlocker(
   if (runnerPaneShowsWorkspaceTrustPrompt(pane, runnerId)) {
     return {
       kind: 'workspace-trust',
-      summary:
-        'Cursor is waiting for workspace trust confirmation before the chat input is available.',
-      autoAction: 'cursor-trust-workspace',
+      summary: `${runner === 'claude' ? 'Claude' : 'Cursor'} is waiting for workspace trust confirmation before the chat input is available.`,
+      autoAction: runner === 'claude' ? 'claude-trust-workspace' : 'cursor-trust-workspace',
     };
   }
   if (runnerPaneShowsGrokProjectDirectoryPrompt(pane, runnerId)) {
@@ -1564,7 +1577,11 @@ async function waitForRunnerPromptSendReady(
   target: string,
   runner: string,
   logPrefix: string,
-  opts: { deadlineMs: number; pollIntervalMs: number },
+  opts: {
+    deadlineMs: number;
+    pollIntervalMs: number;
+    structuredTaskAccepted?: () => Promise<boolean>;
+  },
 ): Promise<string> {
   const startedAt = Date.now();
   let pane = '';
@@ -1583,6 +1600,7 @@ async function waitForRunnerPromptSendReady(
       await new Promise((resolve) => setTimeout(resolve, opts.pollIntervalMs));
       continue;
     }
+    if (await opts.structuredTaskAccepted?.()) return pane;
     if (await runnerLooksIdleObsFirst(vars, target, runner, pane)) {
       return pane;
     }
@@ -2705,26 +2723,29 @@ export async function sendRunnerPostLaunchPrompt(
     }
     const autoActionKey = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null, pane);
     if (
-      blocker?.autoAction === 'cursor-trust-workspace' &&
+      (blocker?.autoAction === 'cursor-trust-workspace' ||
+        blocker?.autoAction === 'claude-trust-workspace') &&
       autoActionKey &&
       workspaceTrustAttempts < maxBlockerAutoAttempts
     ) {
+      const trustKeySequence =
+        blocker.autoAction === 'claude-trust-workspace'
+          ? `${shellQuote(autoActionKey)} ${shellQuote('Enter')}`
+          : shellQuote(autoActionKey);
       const trustResult = await execOnSlot(
         vars,
-        tmuxShellSnippet(
-          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} 2>/dev/null`,
-        ),
+        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${trustKeySequence} 2>/dev/null`),
       );
       if (trustResult.exitCode !== 0) {
         throw new Error(
-          `Failed to accept Cursor workspace trust prompt in ${target}: ${
+          `Failed to accept ${runner} workspace trust prompt in ${target}: ${
             trustResult.stderr || trustResult.stdout || `exit ${trustResult.exitCode}`
           }`,
         );
       }
       workspaceTrustAttempts += 1;
       console.log(
-        `[${logPrefix}] accepted Cursor workspace trust prompt for ${target} (${vars.remoteRepo})`,
+        `[${logPrefix}] accepted ${runner} workspace trust prompt for ${target} (${vars.remoteRepo})`,
       );
       extendDeadlineAfterBlockerResolve('auto-resolving workspace-trust');
       stableCount = 0;
@@ -3115,6 +3136,7 @@ export async function sendRunnerPostLaunchPrompt(
       preSendPane = await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
         deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
         pollIntervalMs,
+        structuredTaskAccepted,
       });
       const preSendHandoff = await runnerHasDurablePromptHandoff(
         vars,

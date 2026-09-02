@@ -17,6 +17,7 @@ import { createRun, getRun, updateRun } from '../runs/store.js';
 import {
   executeHumanGateStep,
   executeSelfReviewStep,
+  holdInteractiveCompletionForOperator,
   persistedUpdateBranchNeedsSelfReview,
   type PostDispatchStepContext,
   readyGateReviewSubjectMatches,
@@ -49,6 +50,41 @@ function restartReplayContext(): PostDispatchStepContext {
     stepPartialIO: new Map(),
   };
 }
+
+test('interactive completion hold persists operator state without completing monitor', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    devInteractiveProfile: 'lightweight',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'DEV-1',
+    runner: 'claude',
+    slotId: 'remote-mobile-1',
+  });
+  updateRun(run.id, {
+    status: 'monitoring',
+    steps: run.steps.map((step) =>
+      step.name === 'monitor'
+        ? { ...step, status: 'running', startedAt: new Date(Date.now() - 1_000).toISOString() }
+        : step,
+    ),
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  holdInteractiveCompletionForOperator(run, { pollCount: 4 }, 'complete');
+
+  const held = getRun(run.id)!;
+  const monitor = held.steps.find((step) => step.name === 'monitor')!;
+  assert.equal(held.status, 'paused');
+  assert.equal(monitor.status, 'running');
+  assert.equal(monitor.detail, 'Worker finished; waiting for operator action');
+  assert.equal(monitor.outputs?.awaitingOperator, true);
+  assert.equal(monitor.outputs?.workerTerminalSignalHeld, 'complete');
+  assert.equal(monitor.outputs?.reason, 'interactive-completion-operator-owned');
+  assert.ok((monitor.durationMs ?? 0) >= 1_000);
+});
 
 test('human-gate review requests warn once at the runaway threshold and never block', () => {
   // Requests stay uncapped — the threshold only fires an observability warning.

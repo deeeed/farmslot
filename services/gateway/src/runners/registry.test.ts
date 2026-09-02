@@ -57,6 +57,7 @@ import {
   runnerBufferedInstructionSubmitKey,
   runnerContinueCommand,
   runnerDefaultModel,
+  runnerLaunchBlockerAutoActionKey,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
   runnerPaneComposerDraftState,
@@ -300,6 +301,31 @@ describe('cursor runner', () => {
     });
   });
 
+  it('detects Claude workspace trust prompts before post-launch prompt delivery', () => {
+    const pane = `
+ Accessing workspace:
+
+ /Volumes/FD/dev/metamask/metamask-extension-1
+
+ Quick safety check: Is this a project you created or one you trust?
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+`;
+
+    assert.equal(runnerPaneShowsWorkspaceTrustPrompt(pane, 'claude'), true);
+    assert.equal(runnerPaneShowsWorkspaceTrustPrompt(pane, 'cursor'), false);
+    assert.deepEqual(detectRunnerLaunchBlocker(pane, 'claude'), {
+      kind: 'workspace-trust',
+      summary:
+        'Claude is waiting for workspace trust confirmation before the chat input is available.',
+      autoAction: 'claude-trust-workspace',
+    });
+    assert.equal(runnerLaunchBlockerAutoActionKey('claude-trust-workspace'), 'Down');
+  });
+
   it('does not keep sending trust input once Cursor is already trusting the workspace', () => {
     const pane = `
   │    [a] Trust this workspace                                              │
@@ -421,6 +447,29 @@ describe('cursor runner', () => {
     });
     assert.deepEqual(result, { outcome: 'sent', key: 'a' });
     assert.match(commands[1], /^send-keys -t 'ff-1:agent\.0' 'a'/);
+  });
+
+  it('resolveLaunchBlockerWithFreshEvidence selects Claude workspace trust and confirms it', async () => {
+    const claudePane = `
+ Accessing workspace:
+ /Volumes/FD/dev/metamask/metamask-extension-1
+ Is this a project you created or one you trust?
+ ❯ No, exit
+   Yes, I trust this folder
+ Enter to confirm
+`;
+    const commands: string[] = [];
+    const result = await resolveLaunchBlockerWithFreshEvidence({
+      runnerId: 'claude',
+      target: 'mme-1:dev.0',
+      logPrefix: 'test',
+      exec: async (tmuxCommand) => {
+        commands.push(tmuxCommand);
+        return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? claudePane : '' };
+      },
+    });
+    assert.deepEqual(result, { outcome: 'sent', key: 'Down' });
+    assert.match(commands[1], /^send-keys -t 'mme-1:dev\.0' 'Down' 'Enter'/);
   });
 
   it('refreshes and trusts changed Codex repository hooks', async () => {

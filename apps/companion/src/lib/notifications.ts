@@ -1,8 +1,11 @@
+import * as Haptics from 'expo-haptics';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import { AppState } from 'react-native';
 
 import type { PendingDecision, Run } from '@farmslot/protocol';
+
+import { useAttentionPrefsStore } from '../store/attention-prefs';
 
 import {
   monitorViolationBody,
@@ -15,6 +18,7 @@ import {
 let initialized = false;
 const MONITOR_NOTIFICATION_DEDUPE_MS = 10 * 60 * 1000;
 const recentMonitorNotificationAt = new Map<string, number>();
+const recentDecisionNotificationAt = new Map<string, number>();
 let currentAppState = AppState.currentState;
 
 function shouldNotifyMonitorViolation(
@@ -59,12 +63,20 @@ export async function initNotifications() {
 }
 
 export async function notifyDecision(decision: PendingDecision) {
+  const preferences = useAttentionPrefsStore.getState();
+  if (!preferences.enabled) return;
+  const previous = recentDecisionNotificationAt.get(decision.id);
+  if (previous && Date.now() - previous < MONITOR_NOTIFICATION_DEDUPE_MS) return;
+  recentDecisionNotificationAt.set(decision.id, Date.now());
+  if (preferences.haptics && currentAppState === 'active') {
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  }
   await Notifications.scheduleNotificationAsync({
     content: {
       title: 'Decision Required',
       body: decision.title,
       data: { route: '/(tabs)/inbox' },
-      sound: true,
+      sound: preferences.sound,
     },
     trigger: null,
   });
@@ -72,21 +84,27 @@ export async function notifyDecision(decision: PendingDecision) {
 
 export async function notifyViolation(payload: MonitorViolationInput) {
   const violation = normalizeMonitorViolation(payload);
-  if (!violation || currentAppState === 'active' || !shouldNotifyMonitorViolation(violation))
-    return;
+  const preferences = useAttentionPrefsStore.getState();
+  if (!preferences.enabled || !violation || !shouldNotifyMonitorViolation(violation)) return;
+  if (preferences.haptics && currentAppState === 'active') {
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  }
+  if (currentAppState === 'active') return;
 
   await Notifications.scheduleNotificationAsync({
     content: {
       title: monitorViolationTitle(violation),
       body: monitorViolationBody(violation),
       data: { route: `/slot/${violation.slotId}` },
-      sound: true,
+      sound: preferences.sound,
     },
     trigger: null,
   });
 }
 
 export async function notifyRunCompleted(run: Run) {
+  // Completion is informational, not an operator-attention alert. It keeps the
+  // existing notification behavior independently of decision/violation prefs.
   await Notifications.scheduleNotificationAsync({
     content: {
       title: 'Run Completed',

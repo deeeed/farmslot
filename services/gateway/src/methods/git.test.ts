@@ -234,6 +234,150 @@ test('gitBranchDiff reports an unavailable exact review commit after fetch fails
   assert.ok(!argvLog.some((argv) => argv[1] === 'diff'));
 });
 
+test('real git: exact review diff restores a shallow merge base without changing triple-dot semantics', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-git-shallow-review-'));
+  const remote = path.join(root, 'origin.git');
+  const source = path.join(root, 'source');
+  const repo = path.join(root, 'repo');
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(source);
+  await execFileAsync('git', ['init', '--bare', remote]);
+  await execFileAsync('git', ['init'], { cwd: source });
+  await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: source });
+  await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: source });
+  await writeFile(path.join(source, 'shared.txt'), 'shared\n');
+  await execFileAsync('git', ['add', 'shared.txt'], { cwd: source });
+  await execFileAsync('git', ['commit', '-m', 'shared ancestor'], { cwd: source });
+  await execFileAsync('git', ['branch', '-M', 'main'], { cwd: source });
+  const { stdout: ancestorOutput } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+    cwd: source,
+  });
+  const ancestor = ancestorOutput.trim();
+  await writeFile(path.join(source, 'base-only.txt'), 'base\n');
+  await execFileAsync('git', ['add', 'base-only.txt'], { cwd: source });
+  await execFileAsync('git', ['commit', '-m', 'base change'], { cwd: source });
+  const { stdout: baseOutput } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: source });
+  const base = baseOutput.trim();
+  await execFileAsync('git', ['checkout', '-b', 'feature', ancestor], { cwd: source });
+  await writeFile(path.join(source, 'feature-only.txt'), 'feature\n');
+  await execFileAsync('git', ['add', 'feature-only.txt'], { cwd: source });
+  await execFileAsync('git', ['commit', '-m', 'feature change'], { cwd: source });
+  const { stdout: headOutput } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: source });
+  const head = headOutput.trim();
+  await execFileAsync('git', ['remote', 'add', 'origin', remote], { cwd: source });
+  await execFileAsync('git', ['push', 'origin', 'main', 'feature'], { cwd: source });
+  await execFileAsync('git', [
+    'clone',
+    '--depth=1',
+    '--branch',
+    'feature',
+    `file://${remote}`,
+    repo,
+  ]);
+  await execFileAsync('git', ['fetch', '--depth=1', '--no-tags', 'origin', base], { cwd: repo });
+
+  await execFileAsync('git', ['rev-parse', '--verify', `${base}^{commit}`], { cwd: repo });
+  await execFileAsync('git', ['rev-parse', '--verify', `${head}^{commit}`], { cwd: repo });
+  assert.equal(
+    (
+      await execFileAsync('git', ['rev-parse', '--is-shallow-repository'], { cwd: repo })
+    ).stdout.trim(),
+    'true',
+  );
+  await assert.rejects(execFileAsync('git', ['merge-base', base, head], { cwd: repo }));
+
+  const deps: Parameters<typeof gitBranchDiff>[1] = {
+    resolveRepo: async () => repo,
+    loadVars: async () => ({ host: 'localhost', machine: 'local', remoteRepo: repo }) as any,
+    runOnSlot: async (_vars, argv, options) => {
+      try {
+        const executed = await execFileAsync(argv[0], argv.slice(1), { cwd: options?.cwd });
+        return { stdout: executed.stdout, stderr: executed.stderr, exitCode: 0 };
+      } catch (error) {
+        const failed = error as Error & { code?: number; stdout?: string; stderr?: string };
+        return {
+          stdout: failed.stdout ?? '',
+          stderr: failed.stderr ?? failed.message,
+          exitCode: typeof failed.code === 'number' ? failed.code : 1,
+        };
+      }
+    },
+  };
+  const result = await gitBranchDiff({ slotId: 'shallow-review-slot', base, head }, deps);
+  const fileResult = await gitDiff(
+    { slotId: 'shallow-review-slot', base, head, path: 'feature-only.txt' },
+    deps,
+  );
+
+  assert.deepEqual(result.files, [
+    { path: 'feature-only.txt', status: 'A', additions: 1, deletions: 0 },
+  ]);
+  assert.match(fileResult.diff, /^\+feature$/m);
+  assert.equal(result.base, base);
+  assert.equal(result.head, head);
+  assert.equal(
+    (await execFileAsync('git', ['merge-base', base, head], { cwd: repo })).stdout.trim(),
+    ancestor,
+  );
+  assert.equal(
+    (
+      await execFileAsync('git', ['rev-parse', '--is-shallow-repository'], { cwd: repo })
+    ).stdout.trim(),
+    'false',
+  );
+});
+
+test('gitDiff accepts a concurrent unshallow through a fetchable remote branch ref', async () => {
+  const head = 'b'.repeat(40);
+  const argvLog: string[][] = [];
+  let concurrentRecovery = false;
+  const result = await gitDiff(
+    { slotId: 'shallow-named-base', base: 'main', head, path: 'feature-only.txt' },
+    {
+      resolveRepo: async () => '/repo',
+      loadVars: async () => ({ host: 'localhost', machine: 'local', remoteRepo: '/repo' }) as any,
+      runOnSlot: async (_vars, argv) => {
+        argvLog.push(argv);
+        if (argv[1] === 'fetch') {
+          if (argv.includes('--unshallow')) {
+            concurrentRecovery = true;
+            return { stdout: '', stderr: 'repository is already complete', exitCode: 128 };
+          }
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (argv[1] === 'rev-parse' && argv.includes('--is-shallow-repository')) {
+          return { stdout: 'true\n', stderr: '', exitCode: 0 };
+        }
+        if (argv[1] === 'rev-parse') {
+          return {
+            stdout: `${argv.at(-1)?.replace(/\^\{commit\}$/, '')}\n`,
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (argv[1] === 'merge-base') {
+          return concurrentRecovery
+            ? { stdout: 'ancestor\n', stderr: '', exitCode: 0 }
+            : { stdout: '', stderr: '', exitCode: 1 };
+        }
+        if (argv[1] === 'diff') return { stdout: 'saved review diff', stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    },
+  );
+
+  assert.equal(result.diff, 'saved review diff');
+  assert.ok(
+    argvLog.some(
+      (argv) =>
+        argv[1] === 'fetch' &&
+        argv.includes('--unshallow') &&
+        argv.includes('refs/heads/main') &&
+        !argv.includes('origin/main'),
+    ),
+  );
+});
+
 test('gitDiff refreshes the remote base when called directly', async () => {
   const { deps, argvLog } = branchDiffDeps({ nameStatus: '', numstat: '' });
   await gitDiff({ slotId: 's', base: 'main', path: 'src/a.ts' }, deps);

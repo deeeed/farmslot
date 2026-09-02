@@ -107,6 +107,16 @@ function detectLaunchBlocker(
     return { kind: 'workspace-trust', autoAction: 'cursor-trust-workspace' };
   }
   if (
+    runner === 'claude' &&
+    lower.includes('accessing workspace:') &&
+    lower.includes('is this a project you created or one you trust?') &&
+    lower.includes('no, exit') &&
+    lower.includes('yes, i trust this folder') &&
+    lower.includes('enter to confirm')
+  ) {
+    return { kind: 'workspace-trust', autoAction: 'claude-trust-workspace' };
+  }
+  if (
     runner === 'grok' &&
     lower.includes('run grok build in a project directory') &&
     lower.includes('(current)') &&

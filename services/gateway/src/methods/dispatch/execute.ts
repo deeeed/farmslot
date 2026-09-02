@@ -367,7 +367,11 @@ export async function cleanupLaunchedWorkerAfterDispatchFailure(
   const killRunner = deps.killAgentInSession ?? killAgentInSession;
   const waitForExit = deps.waitForRunnerProcessExit ?? waitForRunnerProcessExit;
 
-  await killRunner(vars, runner, role);
+  // Prompt delivery can fail with the task still buffered in the composer.
+  // A graceful `/exit` would append to that draft and submit both as one turn.
+  // This runner was launched by the failed dispatch and has no accepted work to
+  // preserve, so terminate it without typing into the TUI.
+  await killRunner(vars, runner, role, { graceful: false });
   await waitForExit(vars, target, runner, 5_000);
 }
 

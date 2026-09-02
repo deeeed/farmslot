@@ -244,10 +244,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
       : '';
   const desc = baseDesc + captionWarning;
 
-  const actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }> = [
-    { id: 'post', label: 'Post to PR', style: 'primary' },
-    { id: 'dismiss', label: 'Dismiss', style: 'secondary' },
-  ];
+  const actions = reviewPostingActions(review.reviewMd);
 
   const reviewPayload: ReviewGatePayload = {
     kind: 'review',
@@ -552,7 +549,12 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
   const nextDescription = review.summary
     ? `**Recommendation:** ${review.recommendation}\n**Line comments:** ${review.lineCommentSummary}\n\n${review.summary}`
     : decision.description;
-  const nextDecision = { ...decision, payload: nextPayload, description: nextDescription };
+  const nextDecision = {
+    ...decision,
+    payload: nextPayload,
+    description: nextDescription,
+    actions: reviewPostingActions(review.reviewMd),
+  };
   const nextDecisions = run.decisions.map((d) => (d.id === decision.id ? nextDecision : d));
 
   updateRun(runId, { decisions: nextDecisions });
@@ -562,4 +564,13 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
   );
 
   return getRun(runId)!;
+}
+
+export function reviewPostingActions(
+  reviewMd: string | null | undefined,
+): Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }> {
+  return [
+    ...(reviewMd?.trim() ? [{ id: 'post', label: 'Post to PR', style: 'primary' as const }] : []),
+    { id: 'dismiss', label: 'Dismiss', style: 'secondary' as const },
+  ];
 }

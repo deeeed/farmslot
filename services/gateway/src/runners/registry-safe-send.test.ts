@@ -510,6 +510,63 @@ test('digest-required delivery waits for a delayed exact acknowledgement without
   assert.ok(handoffProbeCalls >= 3, 'the delayed acknowledgement must be observed');
 });
 
+test('digest-required delivery accepts acknowledgement that arrives during retry ready wait', async (t) => {
+  const reviewMessage = `${message}\nFollow SELF-REVIEW.md`;
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  handoffProbeCalls = 0;
+  paneClearsAfterSubmit = false;
+  paneText = '❯\nctx:12%\n';
+  paneTextByCapture = [
+    '❯\nctx:12%\n',
+    '❯\nctx:12%\n',
+    '❯\nctx:12%\n',
+    '✻ Working…\n',
+    '✻ Working…\n',
+  ];
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    exactPromptMatch: false,
+  };
+  // Miss the pre-send and immediate retry probes, then acknowledge while the
+  // retry waits for an idle pane. The runner is busy because it accepted the task.
+  acceptDigestHandoffAfterCall = 7;
+  t.after(() => {
+    acceptDigestHandoffAfterCall = Number.POSITIVE_INFINITY;
+    handoffProbeCalls = 0;
+    paneTextByCapture = null;
+    paneText = '❯\nctx:12%\n';
+    paneClearsAfterSubmit = true;
+  });
+
+  await sendRunnerPostLaunchPrompt(
+    vars,
+    target,
+    'claude',
+    reviewMessage,
+    'SELF-REVIEW.md',
+    '[test]',
+    {
+      readyTimeoutMs: 100,
+      stabilityPolls: 1,
+      pollIntervalMs: 1,
+      verifyWaitMs: 0,
+      maxAttempts: 2,
+      requirePromptDigest: true,
+    },
+  );
+
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send-literal').length,
+    1,
+    'the delayed acknowledgement must prevent a duplicate prompt send',
+  );
+  assert.ok(handoffProbeCalls >= 7, 'the ready wait must observe the delayed acknowledgement');
+});
+
 test('sendRunnerPostLaunchPrompt honors an explicit null launch-ack baseline', async () => {
   launchAckSnapshotReads = 0;
   promptAcceptedReading = {

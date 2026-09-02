@@ -469,6 +469,43 @@ export function renderAppShellStyles(
         font-size: ${fonts.sizeSm};
         flex-shrink: 0;
       }
+      farm-app .fa-attention-alert {
+        align-items: center;
+        background: ${colors.statusWarn}18;
+        border-bottom: 1px solid ${colors.statusWarn}88;
+        color: ${colors.textPrimary};
+        display: flex;
+        gap: 12px;
+        padding: 8px 14px;
+      }
+      farm-app .fa-attention-alert > div {
+        display: flex;
+        flex: 1;
+        gap: 8px;
+        min-width: 0;
+      }
+      farm-app .fa-attention-alert strong {
+        color: ${colors.statusWarn};
+      }
+      farm-app .fa-attention-alert span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      farm-app .fa-attention-alert button {
+        background: transparent;
+        border: 1px solid ${colors.statusWarn}88;
+        border-radius: 5px;
+        color: ${colors.textPrimary};
+        cursor: pointer;
+        font: 600 ${fonts.sizeXs} ${fonts.mono};
+        padding: 4px 8px;
+      }
+      farm-app .fa-attention-alert button.dismiss {
+        border: 0;
+        font-size: 16px;
+        padding: 2px 4px;
+      }
       farm-app .fa-route-alpha-banner span {
         border: 1px solid ${colors.statusWarn}77;
         border-radius: 999px;
