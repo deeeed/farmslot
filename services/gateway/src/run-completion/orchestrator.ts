@@ -134,6 +134,20 @@ export {
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
+export function assertDedicatedPrDescription(
+  run: Pick<Run, 'flowType'>,
+  reportArtifact: { fileName: string } | null,
+): void {
+  if (
+    (run.flowType === 'dev' || run.flowType === 'fix-bug') &&
+    reportArtifact?.fileName !== 'pr-description.md'
+  ) {
+    throw new Error(
+      `Cannot prepare ${run.flowType} publication package without artifacts/pr-description.md; report.md is not a valid PR-template fallback`,
+    );
+  }
+}
+
 export function initRunCompletion(broadcast: BroadcastFn): void {
   initRunCompletionRetrospective(broadcast);
 }
@@ -525,7 +539,9 @@ export async function prepareCompletionPackage(
     requireArtifactMirror: options?.requireArtifactMirror,
   });
   const run = getRun(runId)!;
-  const report = await readWorkerReport(run);
+  const reportArtifact = await readWorkerReportArtifact(run);
+  assertDedicatedPrDescription(run, reportArtifact);
+  const report = reportArtifact?.text ?? null;
   const artifacts = completion.artifacts;
   const taskDir = run.taskFile ? path.dirname(run.taskFile) : null;
   const runEvidenceManifest = await readEvidenceManifest(run);

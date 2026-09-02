@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(runs): adopt a refreshed publication decision before re-enabling approval, preventing a fast post-refresh click from submitting the previous package identity.
 - fix(dispatch): count the first configured independent publication review toward the required minimum, and reject queuing a replacement against changing slot state.
 - feat(dispatch): show unowned ready runner sessions as selectable `WARM · REPLACE` slots; selecting one sends an explicit fresh-replacement intent instead of treating the slot as disabled.
 - feat(notifications): add configurable operator-attention alerts with focused-tab sound and optional background desktop notifications for new decisions and monitor violations; apply tag deduplication before sound and banner delivery.

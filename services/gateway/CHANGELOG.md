@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(publication): refuse dev and fix-bug publication packages that lack the required `pr-description.md`, instead of publishing `report.md` as an invalid repository-template fallback.
 - fix(observability): suppress legacy slot-level idle alerts while a structured worker or CI-fix context is launching or working.
 - fix(recovery): let an operator abandon an unacknowledged retained handoff and replay Dispatch fresh without risking duplicate prompt delivery.
 - fix(review): when refreshing a legacy publish package, repair drained dispatch review plans that double-counted the configured review as both the minimum and an extra loop.
