@@ -4,6 +4,11 @@ import test from 'node:test';
 import type { IndependentReviewStatus } from '@farmslot/protocol';
 
 import {
+  normalizeReviewDepthForRunCreate,
+  repairLegacyDispatchReviewDepth,
+} from '../quality/review-policy.js';
+
+import {
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   assertPublicationReviewPolicySatisfied,
   assertUnavailableSnapshotOverrideAvailable,
@@ -15,6 +20,68 @@ import {
   validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
+
+test('legacy dispatch review depth counts completed planned reviews once', () => {
+  const policy = {
+    minimumIndependentReviews: 1,
+    requireCrossRunner: true,
+    extraLoopsRequested: 1,
+    requestedBy: 'dispatch' as const,
+  };
+  const passingReview: IndependentReviewStatus = {
+    id: 'independent-review-1',
+    source: 'dispatch',
+    crossRunner: true,
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+  };
+
+  assert.deepEqual(repairLegacyDispatchReviewDepth(policy, [passingReview], 0), {
+    ...policy,
+    extraLoopsRequested: 0,
+    countingVersion: 2,
+  });
+  assert.equal(repairLegacyDispatchReviewDepth(policy, [passingReview], 1), policy);
+  assert.equal(
+    repairLegacyDispatchReviewDepth(policy, [{ ...passingReview, source: 'human-gate' }], 0),
+    policy,
+  );
+
+  const versionedTwoLoopPolicy = { ...policy, extraLoopsRequested: 1, countingVersion: 2 as const };
+  assert.equal(
+    repairLegacyDispatchReviewDepth(
+      versionedTwoLoopPolicy,
+      [
+        passingReview,
+        {
+          ...passingReview,
+          id: 'independent-review-2',
+          verdict: 'issues',
+          unresolvedCount: 1,
+        },
+      ],
+      0,
+    ),
+    versionedTwoLoopPolicy,
+  );
+});
+
+test('legacy queued review plans normalize before run creation', () => {
+  const legacy = {
+    minimumIndependentReviews: 1,
+    requireCrossRunner: true,
+    extraLoopsRequested: 1,
+    requestedBy: 'dispatch' as const,
+  };
+  assert.deepEqual(normalizeReviewDepthForRunCreate(legacy, 1), {
+    ...legacy,
+    extraLoopsRequested: 0,
+    countingVersion: 2,
+  });
+  const versioned = { ...legacy, countingVersion: 2 as const };
+  assert.equal(normalizeReviewDepthForRunCreate(versioned, 1), versioned);
+});
 
 test('validatePackageApprovalSelection rejects package id, hash, and HEAD mismatches', () => {
   const pkg = makeReadyGatePackage();

@@ -156,9 +156,19 @@ export function buildPublicationReviewDepth(
   mode?: 'interactive' | 'autonomous',
 ): ReviewDepthPolicy | undefined {
   if (!publicationReviewsEnabled(flowType, mode) || plan.length === 0) return undefined;
+  return reviewDepthForConfiguredPlan(currentRunner, plan);
+}
+
+export function reviewDepthForConfiguredPlan(
+  currentRunner: string,
+  plan: ReadonlyArray<ReviewLoopRequest>,
+): ReviewDepthPolicy {
   return {
     minimumIndependentReviews: 1,
-    extraLoopsRequested: plan.length,
+    // The first configured loop satisfies the publication minimum. Only
+    // later loops are additional requirements.
+    extraLoopsRequested: Math.max(0, plan.length - 1),
+    countingVersion: 2,
     requireCrossRunner: plan.some((loop) => loop.runner !== currentRunner),
     requestedBy: 'dispatch',
   };

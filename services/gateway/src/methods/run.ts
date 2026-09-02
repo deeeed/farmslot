@@ -44,6 +44,7 @@ import { buildFollowUpLineage, isFollowUpFlow } from '../family-observability/co
 import { findFollowUpParentRun } from '../family-observability/state.js';
 import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
 import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
+import { normalizeReviewDepthForRunCreate } from '../quality/review-policy.js';
 import {
   assertReadyGatePackageInputsCurrent,
   isArtifactOnlyRun,
@@ -477,21 +478,21 @@ export async function runCreate(
       `nudgeReuse only supports PR-bound flows (${PR_FLOWS.join(', ')}); got ${params.flowType}`,
     );
   }
-  // Same guardrails for freshReuse — operator's authorization to claim a busy slot for
-  // kill+prepare requires the explicit slot pin, just like nudge.
+  // Fresh replacement always requires an explicit slot pin. The selected row
+  // may be a PR branch-affinity worker or an unowned warm runner on any flow.
   if (params.freshReuse && !params.slotId) {
     throw new Error(
-      'freshReuse requires slotId — pick the busy branch-matched slot in the wizard before requesting fresh dispatch',
-    );
-  }
-  if (params.freshReuse && !PR_FLOWS.includes(params.flowType)) {
-    throw new Error(
-      `freshReuse only supports PR-bound flows (${PR_FLOWS.join(', ')}); got ${params.flowType}`,
+      'freshReuse requires slotId — pick a replaceable warm or branch-matched slot before requesting fresh dispatch',
     );
   }
   if (params.nudgeReuse && params.freshReuse) {
     throw new Error('nudgeReuse and freshReuse are mutually exclusive — pick one mode');
   }
+
+  params.reviewDepth = normalizeReviewDepthForRunCreate(
+    params.reviewDepth,
+    params.pendingReviewPlan?.length ?? 0,
+  );
 
   const createParams = {
     ...(normalizedTaskTemplate ? { ...params, taskTemplate: normalizedTaskTemplate } : params),

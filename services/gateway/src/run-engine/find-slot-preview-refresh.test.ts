@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { refreshedAdmissionRefForAdmittedPreview } from './find-slot-step.js';
+import {
+  activeWorkerFreshReuseAllowed,
+  refreshedAdmissionRefForAdmittedPreview,
+} from './find-slot-step.js';
 
 const admitted = {
   outcome: 'admitted' as const,
@@ -9,6 +12,14 @@ const admitted = {
   machine: 'mini',
   evidence: { generation: 'mini|gauge|-|new' },
 };
+
+test('fresh reuse takes over active workers only for PR-bound flows', () => {
+  assert.equal(activeWorkerFreshReuseAllowed('review-pr'), true);
+  assert.equal(activeWorkerFreshReuseAllowed('pr-complete'), true);
+  assert.equal(activeWorkerFreshReuseAllowed('update-branch'), true);
+  assert.equal(activeWorkerFreshReuseAllowed('fix-bug'), false);
+  assert.equal(activeWorkerFreshReuseAllowed('dev'), false);
+});
 
 test('refreshes preview identity when generation rotated but machine is still admitted', () => {
   const next = refreshedAdmissionRefForAdmittedPreview(

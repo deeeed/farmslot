@@ -15,6 +15,7 @@ import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from 
 import {
   effectiveRequiredReviewCount,
   independentReviewPolicySatisfied,
+  repairLegacyDispatchReviewDepth,
 } from '../quality/review-policy.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {
@@ -93,8 +94,17 @@ export function reviewDepthForPublishPackageRefresh(
   projectConfig: Parameters<typeof publicationReviewPolicyForRun>[1],
   oldPayload: Pick<ReadyGatePayload, 'reviewDepth'>,
 ): ReadyGatePayload['reviewDepth'] {
-  if (oldPayload.reviewDepth?.requestedBy !== 'human-gate') return oldPayload.reviewDepth;
-  return publicationReviewPolicyForRun(run, projectConfig);
+  const reviewDepth =
+    oldPayload.reviewDepth?.requestedBy === 'human-gate'
+      ? publicationReviewPolicyForRun(run, projectConfig)
+      : oldPayload.reviewDepth;
+  return reviewDepth
+    ? repairLegacyDispatchReviewDepth(
+        reviewDepth,
+        run.engineState?.publishGate?.independentReviews ?? [],
+        run.engineState?.publishGate?.pendingReviewPlan?.length ?? 0,
+      )
+    : reviewDepth;
 }
 
 function reviewWasStampedForPackage(
@@ -190,15 +200,11 @@ export async function refreshPublishPackage(params: {
       if (!(error instanceof SlotConfigError) || error.code !== 'SLOT_NOT_FOUND') throw error;
     }
   }
-  let reviewDepthForRefresh = oldPayload.reviewDepth;
-  if (oldPayload.reviewDepth?.requestedBy === 'human-gate') {
-    const projectVars = await loadProjectVars(run.project);
-    reviewDepthForRefresh = reviewDepthForPublishPackageRefresh(
-      run,
-      projectVars.projectJson,
-      oldPayload,
-    );
-  }
+  const projectConfig =
+    oldPayload.reviewDepth?.requestedBy === 'human-gate'
+      ? (await loadProjectVars(run.project)).projectJson
+      : undefined;
+  const reviewDepthForRefresh = reviewDepthForPublishPackageRefresh(run, projectConfig, oldPayload);
 
   // A refresh must describe the current HEAD, not the durable snapshot captured
   // before later review-fix commits changed the contribution.

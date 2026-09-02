@@ -4,12 +4,15 @@ import test from 'node:test';
 import type { SlotStatus } from '@farmslot/protocol';
 
 import {
+  activeRunIds,
+  activeRunSlotIds,
   branchContainsJiraKey,
   evaluateSlotIdentityPolicy,
   failedRunSlotCleanup,
   findBestSlot,
   isCdpLive,
   isFreeSlot,
+  isReplaceableWarmSlot,
   pickedSlotIneligibility,
   slotClaimBlockedByHandoff,
   slotClaimBlockedByLiveOwner,
@@ -50,6 +53,46 @@ test('isFreeSlot gates on ghost, lifecycle, and working agent', () => {
   assert.equal(isFreeSlot(slot({ slot: 'a', lifecycle: 'busy' })), false);
   assert.equal(isFreeSlot(slot({ slot: 'a', lifecycle: 'held' })), false);
   assert.equal(isFreeSlot(slot({ slot: 'a', agent: 'working' })), false);
+});
+
+test('replaceable warm slots exclude active-run transitions and manual work', () => {
+  const warm = slot({ slot: 'warm', agent: 'working', currentRunId: null });
+  assert.equal(isReplaceableWarmSlot(warm, new Set(), new Set()), true);
+  assert.equal(isReplaceableWarmSlot(warm, new Set(['warm']), new Set()), false);
+  assert.equal(
+    isReplaceableWarmSlot(
+      slot({ slot: 'stale-owner', agent: 'working', currentRunId: 'finished' }),
+      new Set(),
+      new Set(),
+    ),
+    true,
+  );
+  assert.equal(
+    isReplaceableWarmSlot(
+      slot({ slot: 'manual', lifecycle: 'manual', agent: 'working' }),
+      new Set(),
+      new Set(),
+    ),
+    false,
+  );
+  assert.deepEqual(
+    activeRunSlotIds([
+      { id: 'active', slotId: 'warm', status: 'monitoring' },
+      { id: 'done', slotId: 'old', status: 'done' },
+    ]),
+    new Set(['warm']),
+  );
+  assert.deepEqual(
+    activeRunSlotIds([{ id: 'active', slotId: 'warm', status: 'monitoring' }], 'active'),
+    new Set(),
+  );
+  assert.deepEqual(
+    activeRunIds([
+      { id: 'active', status: 'monitoring' },
+      { id: 'done', status: 'done' },
+    ]),
+    new Set(['active']),
+  );
 });
 
 test('isCdpLive matches the shared protocol semantics', () => {

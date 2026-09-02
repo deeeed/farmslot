@@ -57,6 +57,8 @@ import {
   runnerBufferedInstructionSubmitKey,
   runnerContinueCommand,
   runnerDefaultModel,
+  runnerIdsRequiringExplicitTerminationIdentity,
+  runnerIdsSafeForUnattributedTermination,
   runnerLaunchBlockerAutoActionKey,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
@@ -1296,10 +1298,13 @@ describe('custom runner fallback behavior', () => {
   });
 
   it('uses the broad catch-all when no runner is specified', () => {
-    assert.equal(
-      runnerProcessPatternSource(undefined),
-      'claude|codex|opencode|cursor-agent|grok|scripted-runner',
-    );
+    const pattern = runnerProcessPatternSource(undefined);
+    for (const command of ['claude', 'codex', '/opt/cursor-agent', '/opt/agent', '/opt/grok']) {
+      assert.match(command, new RegExp(pattern));
+    }
+    assert.doesNotMatch('/usr/bin/node', new RegExp(pattern));
+    assert.deepEqual(runnerIdsRequiringExplicitTerminationIdentity(), ['cursor']);
+    assert.equal(runnerIdsSafeForUnattributedTermination().includes('cursor'), false);
   });
 });
 

@@ -50,7 +50,11 @@ export function candidateDispatchable(candidate: DispatchCandidate): boolean {
   // A row FIND_SLOT would reject (branch ownership, missing companion resources)
   // must not be selectable, even when the slot itself is free/reuse-eligible.
   if (candidate.ineligibleReason) return false;
-  return candidate.free === true || candidate.nudgeEligible === true;
+  return (
+    candidate.free === true ||
+    candidate.nudgeEligible === true ||
+    candidate.replaceableWarm === true
+  );
 }
 
 /** Backend pressure rejection for this row's machine, when present. */
@@ -94,6 +98,7 @@ export function selectedNudgeIntent(input: {
 }): NudgeIntent | undefined {
   if (!input.slotOverride) return undefined;
   const candidate = input.candidates.find((item) => item.slotId === input.slotOverride);
+  if (candidate?.replaceableWarm && !candidate.nudgeEligible) return 'fresh';
   if (!candidate?.nudgeEligible) return undefined;
   return (
     input.intents.get(input.slotOverride) ?? (candidate.nudgeMeta?.canNudge ? 'nudge' : 'fresh')

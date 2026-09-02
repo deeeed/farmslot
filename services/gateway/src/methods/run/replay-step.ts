@@ -57,6 +57,17 @@ export interface RunReplayStepHooks {
   afterGenerationBump?(): Promise<void>;
 }
 
+export function freshDispatchEngineStateForReplay(
+  engineState: RunEngineState | undefined,
+  freshDispatch: boolean | undefined,
+): RunEngineState | undefined {
+  if (!freshDispatch) return engineState;
+  const flags = { ...engineState?.flags };
+  delete flags.warmSessionReuse;
+  delete flags.warmHandoffSucceeded;
+  return { ...engineState, flags };
+}
+
 function assertReplayOwnsRun(
   runId: string,
   ownedGeneration: number,
@@ -345,6 +356,14 @@ export async function runReplayStep(
     throw new Error(
       `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be replayed`,
     );
+  }
+  if (params.freshDispatch) {
+    if (params.stepName !== PS.DISPATCH) {
+      throw new Error('freshDispatch is valid only when replaying dispatch');
+    }
+    if (!existing.engineState?.flags?.warmSessionReuse) {
+      throw new Error('freshDispatch requires a retained-session handoff run');
+    }
   }
   // Replaying a cancelled run is supported (e.g. resuming ci-watch on an
   // update-branch run). Cancelling released the node, so the graph may have
@@ -867,9 +886,12 @@ export async function runReplayStep(
       targetIdx >= 0 && selfReviewIdx >= 0 && targetIdx >= selfReviewIdx
         ? activeSelfReviewFixTaskFile(currentBeforeReplayUpdate)
         : undefined;
-    const engineStateForReplay = replaysCompletionOrGate
-      ? resetPublishGateApprovalForReplay(currentBeforeReplayUpdate.engineState)
-      : currentBeforeReplayUpdate.engineState;
+    const engineStateForReplay = freshDispatchEngineStateForReplay(
+      replaysCompletionOrGate
+        ? resetPublishGateApprovalForReplay(currentBeforeReplayUpdate.engineState)
+        : currentBeforeReplayUpdate.engineState,
+      params.freshDispatch,
+    );
     // Soft-lock was taken before long awaits. Re-validate holder+epoch and live
     // ownership before revive: expiry reclaim or concurrent replay may have stolen it.
     if (

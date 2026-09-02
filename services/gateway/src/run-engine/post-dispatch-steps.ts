@@ -19,7 +19,10 @@ import {
 } from '../evals/package-store.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { slotRelease } from '../methods/slot.js';
-import { independentReviewPolicySatisfied } from '../quality/review-policy.js';
+import {
+  independentReviewPolicySatisfied,
+  repairLegacyDispatchReviewDepth,
+} from '../quality/review-policy.js';
 import { refreshArtifactMirror } from '../run-completion/artifact-mirror.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import {
@@ -80,6 +83,25 @@ const S = PipelineSteps;
 interface StepIO {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
+}
+
+function repairRunReviewDepthIfNeeded(runId: string): Run {
+  let current = getRun(runId)!;
+  const reviewDepth = current.engineState?.publishGate?.reviewDepth;
+  if (!reviewDepth) return current;
+  const repaired = repairLegacyDispatchReviewDepth(
+    reviewDepth,
+    current.engineState?.publishGate?.independentReviews ?? [],
+    current.engineState?.publishGate?.pendingReviewPlan?.length ?? 0,
+  );
+  if (repaired === reviewDepth) return current;
+  current = updateRun(runId, {
+    engineState: {
+      ...current.engineState,
+      publishGate: { ...current.engineState?.publishGate, reviewDepth: repaired },
+    },
+  });
+  return current;
 }
 
 export function holdInteractiveCompletionForOperator(
@@ -236,6 +258,7 @@ async function reconcilePublishGateReviewPlanResult(
       },
     },
   });
+  repairRunReviewDepthIfNeeded(runId);
   const diffStat = await context.getDiffStat(getRun(runId)!);
   const prepared = await (context.prepareCompletionPackageForRun ?? prepareCompletionPackage)(
     runId,
@@ -827,7 +850,10 @@ export async function executeHumanGateStep(
             context.resumeInterruptedPublicationReviewForRun ?? resumeInterruptedPublicationReview
           )(runId, current.slotId)
         : null;
-      const beforeInitialPlan = getRun(runId)!;
+      // Runs persisted before review counting v2 may re-enter directly at the
+      // human gate after restart. Repair before deriving an automatic plan so
+      // the legacy double-count does not launch a redundant reviewer.
+      const beforeInitialPlan = repairRunReviewDepthIfNeeded(runId);
       const explicitInitialPlan =
         beforeInitialPlan.engineState?.publishGate?.pendingReviewPlan ?? [];
       // Operator may have already resolved request-extra-review (e.g. codex) while
@@ -1089,7 +1115,7 @@ export async function executeCompleteStep(
   context: PostDispatchStepContext,
 ): Promise<StepIO> {
   const { broadcastFn, getDiffStat, refreshRunLinks } = context;
-  const current = getRun(runId)!;
+  const current = repairRunReviewDepthIfNeeded(runId);
   if (!current.slotId) throw new Error('No slot assigned');
   const noCodeDisposition = isNoCodeTerminalDisposition(current.metrics.disposition);
   const artifactOnly = isArtifactOnlyRun(current);

@@ -1,8 +1,13 @@
-import { type AgentContext, type Run } from '@farmslot/protocol';
+import {
+  type AgentContext,
+  agentRoleForWindowName,
+  isReviewerWindowName,
+  type Run,
+} from '@farmslot/protocol';
 
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot, type ExecOnSlotOptions } from '../core/exec.js';
-import { shellQuote } from '../core/tmux.js';
+import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 
 import {
   observedAtFromRecord,
@@ -14,6 +19,8 @@ import type { ObservabilityReading } from './observability-types.js';
 import {
   getRunnerDefinition,
   getRunnerObservability,
+  runnerIdsRequiringExplicitTerminationIdentity,
+  runnerIdsSafeForUnattributedTermination,
   runnerPersistsSessionFiles,
   runnerProcessPatternSource,
 } from './registry.js';
@@ -918,6 +925,214 @@ export async function probeRunnerDescendantPid(
   }
 }
 
+interface TerminateRunnerDescendantsDeps {
+  exec?: typeof execOnSlot;
+  probe?: typeof probeRunnerDescendantPid;
+  sleep?: (ms: number) => Promise<void>;
+  additionalRunnerIds?: string[];
+}
+
+const WARM_REPLACEMENT_COMMAND_TIMEOUT_MS = 10_000;
+
+/**
+ * Stop every known runner process in a slot tmux session without typing into
+ * its composer. Fresh replacement uses this for unowned warm sessions, whose
+ * persisted slot metadata may no longer name the runner or role window.
+ */
+export async function terminateRunnerDescendantsInTmuxSession(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  session: string,
+  deps: TerminateRunnerDescendantsDeps = {},
+): Promise<number> {
+  const exec = deps.exec ?? execOnSlot;
+  const probeRunner = deps.probe ?? probeRunnerDescendantPid;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const explicitRunnerIds = new Set((deps.additionalRunnerIds ?? []).filter(Boolean));
+  const probeRunnerIds = [
+    ...new Set([...explicitRunnerIds, ...runnerIdsSafeForUnattributedTermination()]),
+  ];
+  const ambiguousRunnerIds = runnerIdsRequiringExplicitTerminationIdentity().filter(
+    (runnerId) => !explicitRunnerIds.has(runnerId),
+  );
+  const probeAnyRunner = async (panePid: string): Promise<RunnerDescendantPidProbe> => {
+    for (const runnerId of probeRunnerIds) {
+      const result = await probeRunner(vars, panePid, runnerId, {
+        timeout: WARM_REPLACEMENT_COMMAND_TIMEOUT_MS,
+      });
+      if (result.state !== 'absent') return result;
+    }
+    for (const runnerId of ambiguousRunnerIds) {
+      const result = await probeRunner(vars, panePid, runnerId, {
+        timeout: WARM_REPLACEMENT_COMMAND_TIMEOUT_MS,
+      });
+      if (result.state === 'present') {
+        return {
+          state: 'unknown',
+          reason: `${runnerId} process requires matching recorded runner identity`,
+        };
+      }
+      if (result.state === 'unknown') return result;
+    }
+    return { state: 'absent' };
+  };
+  const listed = await exec(
+    vars,
+    tmuxShellSnippet(`list-panes -s -t ${shellQuote(session)} -F '#{pane_pid}' 2>/dev/null`),
+    { timeout: WARM_REPLACEMENT_COMMAND_TIMEOUT_MS },
+  );
+  if (listed.exitCode !== 0) {
+    const sessionProbe = await exec(
+      vars,
+      tmuxShellSnippet(`has-session -t ${shellQuote(`=${session}`)} 2>/dev/null`),
+      { timeout: WARM_REPLACEMENT_COMMAND_TIMEOUT_MS },
+    );
+    if (sessionProbe.exitCode === 1) return 0;
+    throw new Error(
+      `Cannot replace warm session ${session}: tmux pane inspection failed${listed.stderr || listed.stdout ? ` (${(listed.stderr || listed.stdout).trim()})` : ` (exit ${listed.exitCode})`}`,
+    );
+  }
+
+  const panePids = [
+    ...new Set(
+      listed.stdout
+        .split('\n')
+        .map((pid) => pid.trim())
+        .filter(Boolean),
+    ),
+  ];
+  const stoppedPids = new Set<string>();
+  for (const panePid of panePids) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const probe = await probeAnyRunner(panePid);
+      if (probe.state !== 'present') {
+        if (probe.state === 'absent') break;
+        throw new Error(
+          `Cannot replace warm session ${session}: runner liveness under pane ${panePid} is unknown${probe.reason ? ` (${probe.reason})` : ''}`,
+        );
+      }
+      await exec(vars, `kill -TERM ${shellQuote(probe.pid)} 2>/dev/null || true`, {
+        timeout: WARM_REPLACEMENT_COMMAND_TIMEOUT_MS,
+      });
+      // Fresh replacement is destructive, but give the runner enough time to
+      // flush its own session state before escalating to SIGKILL.
+      await sleep(2_000);
+      const beforeEscalation = await probeAnyRunner(panePid);
+      if (beforeEscalation.state === 'unknown') {
+        throw new Error(
+          `Cannot replace warm session ${session}: runner liveness under pane ${panePid} is unknown${beforeEscalation.reason ? ` (${beforeEscalation.reason})` : ''}`,
+        );
+      }
+      if (beforeEscalation.state === 'present' && beforeEscalation.pid === probe.pid) {
+        await exec(vars, `kill -KILL ${shellQuote(probe.pid)} 2>/dev/null || true`, {
+          timeout: WARM_REPLACEMENT_COMMAND_TIMEOUT_MS,
+        });
+      }
+      stoppedPids.add(probe.pid);
+      await sleep(50);
+    }
+    const remaining = await probeAnyRunner(panePid);
+    if (remaining.state !== 'absent') {
+      throw new Error(
+        `Cannot replace warm session ${session}: runner process remains under pane ${panePid}`,
+      );
+    }
+  }
+  return stoppedPids.size;
+}
+
+interface ResolveRetainedRunnerPaneDeps {
+  exec?: typeof execOnSlot;
+  probe?: typeof probeRunnerDescendantPid;
+}
+
+export interface RetainedRunnerPane {
+  target: string;
+  window: string;
+  pane: string;
+  seenWindows: string[];
+}
+
+/** Resolve an existing runner pane. Nudge callers must never create a shell window. */
+export async function resolveRetainedRunnerPane(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  session: string,
+  runner: string,
+  preferredTarget?: string | null,
+  deps: ResolveRetainedRunnerPaneDeps = {},
+): Promise<RetainedRunnerPane | null> {
+  const exec = deps.exec ?? execOnSlot;
+  const probeRunner = deps.probe ?? probeRunnerDescendantPid;
+  const listed = await exec(
+    vars,
+    tmuxShellSnippet(
+      `list-panes -s -t ${shellQuote(session)} -F '#{window_index}|#{window_name}|#{pane_index}|#{pane_pid}|#{window_activity}' 2>/dev/null`,
+    ),
+    { timeout: 10_000 },
+  );
+  if (listed.exitCode !== 0) {
+    const sessionProbe = await exec(
+      vars,
+      tmuxShellSnippet(`has-session -t ${shellQuote(`=${session}`)} 2>/dev/null`),
+      { timeout: 10_000 },
+    );
+    if (sessionProbe.exitCode === 1) return null;
+    throw new Error(
+      `Cannot inspect retained runner session ${session}: ${listed.stderr || listed.stdout || `exit ${listed.exitCode}`}`,
+    );
+  }
+  const panes = listed.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [windowIndex, windowName, paneIndex, panePid, activityRaw] = line.split('|');
+      return {
+        windowIndex: windowIndex || '',
+        windowName: windowName || '',
+        paneIndex: paneIndex || '',
+        panePid: panePid || '',
+        activity: Number(activityRaw) || 0,
+        window: windowName || windowIndex || '',
+        target: `${session}:${windowIndex}.${paneIndex}`,
+      };
+    })
+    .filter((pane) => pane.window && pane.paneIndex && pane.panePid);
+  const seenWindows = panes.map(
+    (pane) => `${pane.windowIndex}:${pane.windowName || '(unnamed)'} pane ${pane.paneIndex}`,
+  );
+  const preferredRef = preferredTarget?.includes(':')
+    ? preferredTarget.slice(preferredTarget.indexOf(':') + 1).split('.', 1)[0]
+    : null;
+  const ordered = [...panes].sort((a, b) => {
+    const aPreferred = preferredRef === a.window || preferredRef === a.windowIndex;
+    const bPreferred = preferredRef === b.window || preferredRef === b.windowIndex;
+    if (aPreferred !== bPreferred) return aPreferred ? -1 : 1;
+    return b.activity - a.activity;
+  });
+  for (const pane of ordered) {
+    if (
+      isReviewerWindowName(pane.windowName) ||
+      agentRoleForWindowName(pane.windowName) === 'ci-fix'
+    ) {
+      continue;
+    }
+    const runnerProbe = await probeRunner(vars, pane.panePid, runner, { timeout: 10_000 });
+    if (runnerProbe.state === 'unknown') {
+      throw new Error(
+        `Cannot inspect retained runner in ${session}:${pane.windowIndex}.${pane.paneIndex}${runnerProbe.reason ? ` (${runnerProbe.reason})` : ''}`,
+      );
+    }
+    if (runnerProbe.state === 'absent') continue;
+    return {
+      target: pane.target,
+      window: pane.window,
+      pane: pane.paneIndex,
+      seenWindows,
+    };
+  }
+  return null;
+}
+
 export function buildFindRunnerDescendantPidCommand(panePid: string, pattern: string): string {
   return buildFindRunnerDescendantPidCommandWithRoot(shellQuote(panePid), pattern);
 }
@@ -941,10 +1156,13 @@ export function buildFindRunnerDescendantPidFromVariableCommand(
 function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern: string): string {
   const cmd = [
     `root=${quotedRoot}`,
+    `exact_match=''`,
+    `fallback_match=''`,
     `command=$(ps -o command= -p "$root" 2>/dev/null || true)`,
+    `argv0=\${command%% *}`,
     `case "$command" in`,
     `  *'__farmslot_status'*) ;;`,
-    `  *) if printf '%s\\n' "$command" | grep -Eq ${shellQuote(pattern)}; then echo "$root"; exit 0; fi ;;`,
+    `  *) if printf '%s\\n' "$command" | grep -Eq ${shellQuote(pattern)}; then fallback_match="$root"; if printf '%s\\n' "$argv0" | grep -Eq ${shellQuote(pattern)}; then exact_match="$root"; fi; fi ;;`,
     `esac`,
     `set -- "$root"`,
     `while [ "$#" -gt 0 ]; do`,
@@ -952,16 +1170,16 @@ function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern
     `  shift`,
     `  for pid in $(pgrep -P "$parent" 2>/dev/null); do`,
     `    command=$(ps -o command= -p "$pid" 2>/dev/null || true)`,
+    `    argv0=\${command%% *}`,
     `    case "$command" in`,
-    `      *'__farmslot_status'*) continue ;;`,
+    `      *'__farmslot_status'*) ;;`,
+    `      *) if printf '%s\\n' "$command" | grep -Eq ${shellQuote(pattern)}; then fallback_match="$pid"; if [ -z "$exact_match" ] && printf '%s\\n' "$argv0" | grep -Eq ${shellQuote(pattern)}; then exact_match="$pid"; fi; fi ;;`,
     `    esac`,
-    `    if printf '%s\\n' "$command" | grep -Eq ${shellQuote(pattern)}; then`,
-    `      echo "$pid"`,
-    `      exit 0`,
-    `    fi`,
     `    set -- "$@" "$pid"`,
     `  done`,
     `done`,
+    `[ -n "$exact_match" ] && { echo "$exact_match"; exit 0; }`,
+    `[ -n "$fallback_match" ] && { echo "$fallback_match"; exit 0; }`,
     `exit 1`,
   ].join('\n');
   return cmd;

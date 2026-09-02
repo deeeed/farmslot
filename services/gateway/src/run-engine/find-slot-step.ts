@@ -33,9 +33,12 @@ import {
   verifyBranchAffinityNudgeStillEligible,
 } from '../methods/dispatch.js';
 import {
+  activeRunIds,
+  activeRunSlotIds,
   companionResourceBlocker,
   isCdpLive,
   isFreeSlot,
+  isReplaceableWarmSlot,
   pickedSlotIneligibility,
   prepareProfileNeedsCompanionResource,
   projectConfigsFromProjects,
@@ -52,7 +55,7 @@ import {
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
-import { getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
@@ -104,6 +107,11 @@ export interface FindSlotStepContext {
   setRunFlags: (runId: string, flags: RunEngineFlags) => void;
 }
 
+/** Active-worker takeover is reserved for PR-bound follow-ups; other flows may replace only unowned warm slots. */
+export function activeWorkerFreshReuseAllowed(flowType: Run['flowType']): boolean {
+  return flowType === 'review-pr' || flowType === 'pr-complete' || flowType === 'update-branch';
+}
+
 /**
  * Selection-time slot claim. All claim-type writes must refuse a slot whose
  * phase is 'releasing' (an in-flight teardown owns it and will kill/reset
@@ -116,7 +124,7 @@ async function claimSelectedSlot(
   runId: string,
   phase: 'preparing' | 'working',
   agent?: 'working',
-  opts?: { takeoverLiveOwner?: boolean },
+  opts?: { takeoverLiveOwner?: boolean; reserveOnly?: boolean },
 ): Promise<void> {
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found while claiming slot: ${runId}`);
@@ -186,7 +194,7 @@ async function claimSelectedSlot(
       // Takeover reserves the handoff instead of rebinding ownership. An
       // ordinary claim consumes the claimant's own reservation (fresh reuse
       // fences with one before teardown); a foreign one was refused above.
-      ...(opts?.takeoverLiveOwner
+      ...(opts?.takeoverLiveOwner || opts?.reserveOnly
         ? { handoff_run_id: runId }
         : { current_run_id: runId, handoff_run_id: null }),
       ...(agent ? { agent } : {}),
@@ -384,6 +392,7 @@ export async function executeFindSlotStep(
   // pipeline state is mutated.
   if (run.engineState?.flags?.nudgeReuse && run.slotId) {
     const wizardSlot = (await loadFleetStatus()).slots.find((s) => s.slot === run.slotId);
+    const allRuns = getAllRuns();
     const eligibilityFail = await verifyBranchAffinityNudgeStillEligible(
       wizardSlot,
       run.project,
@@ -397,6 +406,7 @@ export async function executeFindSlotStep(
         // of whether prHealth has been populated for the slot yet.
         targetBranch: targetBranch ?? null,
         requiredPrepareProfile,
+        activeRunIds: activeRunIds(allRuns, runId),
       },
     );
     if (eligibilityFail) {
@@ -421,29 +431,56 @@ export async function executeFindSlotStep(
     };
   }
 
-  // freshReuse wizard-shortcut: operator picked "Kill & dispatch fresh" for a busy
-  // branch-matched slot. Run.create already validated slotId + flow type. Re-verify the
-  // slot is still on the expected branch + still has an active worker (TOCTOU between
-  // wizard click and run.create), then hard-kill the prior worker BEFORE PREPARE runs.
+  // freshReuse wizard-shortcut: operator picked an active branch-matched worker or an
+  // unowned warm slot. Re-verify that no other active Run took ownership between the
+  // wizard click and run.create, then hard-kill the prior runner BEFORE PREPARE runs.
   // Without this teardown order, PREPARE's git reset / checkout / dependency install
   // would race the still-writing worker in the same worktree and corrupt slot state.
   // The standard fresh-dispatch pipeline (PREPARE → DISPATCH) takes over after the slot
   // is quiescent.
   if (run.engineState?.flags?.freshReuse && run.slotId) {
-    const wizardSlot = (await loadFleetStatus()).slots.find((s) => s.slot === run.slotId);
-    const eligibilityFail = await verifyBranchAffinityNudgeStillEligible(
-      wizardSlot,
-      run.project,
-      run.ticketOrPr,
-      {
-        familyId: run.familyId ?? null,
-        lane: run.lane ?? null,
-        variant: run.variant ?? null,
-        allowedSlots: run.allowedSlots ?? null,
-        targetBranch: targetBranch ?? null,
-        requiredPrepareProfile,
-      },
+    const liveFleet = await loadFleetStatus();
+    const wizardSlot = liveFleet.slots.find((s) => s.slot === run.slotId);
+    const allRuns = getAllRuns();
+    const otherActiveSlotIds = activeRunSlotIds(allRuns, runId);
+    const replaceableWarm = Boolean(
+      wizardSlot &&
+      isReplaceableWarmSlot(wizardSlot, otherActiveSlotIds, activeRunIds(allRuns, runId)),
     );
+    const becameFree = Boolean(
+      wizardSlot && isFreeSlot(wizardSlot) && !otherActiveSlotIds.has(wizardSlot.slot),
+    );
+    let eligibilityFail: string | null = null;
+    if (!wizardSlot) {
+      eligibilityFail = `slot '${run.slotId}' is no longer in the fleet`;
+    } else if (wizardSlot.project !== run.project) {
+      eligibilityFail = `slot belongs to ${wizardSlot.project}, not ${run.project}`;
+    } else if (run.allowedSlots?.length && !run.allowedSlots.includes(wizardSlot.slot)) {
+      eligibilityFail = 'slot is outside the allowed slot list';
+    } else if (replaceableWarm || becameFree) {
+      eligibilityFail = validateSlotForDispatch(wizardSlot, liveFleet.slots, {
+        targetBranch,
+        requiredPrepareProfile,
+        allowWorking: replaceableWarm,
+      });
+    } else if (activeWorkerFreshReuseAllowed(run.flowType)) {
+      eligibilityFail = await verifyBranchAffinityNudgeStillEligible(
+        wizardSlot,
+        run.project,
+        run.ticketOrPr,
+        {
+          familyId: run.familyId ?? null,
+          lane: run.lane ?? null,
+          variant: run.variant ?? null,
+          allowedSlots: run.allowedSlots ?? null,
+          targetBranch: targetBranch ?? null,
+          requiredPrepareProfile,
+          activeRunIds: activeRunIds(allRuns, runId),
+        },
+      );
+    } else {
+      eligibilityFail = 'slot is busy and not eligible for warm replacement';
+    }
     if (eligibilityFail) {
       throw new Error(`Fresh-reuse no longer valid: ${eligibilityFail}. Pick a slot again.`);
     }
@@ -455,7 +492,7 @@ export async function executeFindSlotStep(
     // check would let a nudge reserve in the gap and have its in-flight
     // delivery killed here. The ordinary claim below consumes the fence.
     await claimSelectedSlot(run.slotId, runId, 'preparing', undefined, {
-      takeoverLiveOwner: true,
+      ...(replaceableWarm || becameFree ? { reserveOnly: true } : { takeoverLiveOwner: true }),
     });
     await prepareSlotForFreshReuse(run.slotId, runId);
     await claimSelectedSlot(run.slotId, runId, 'preparing');
@@ -559,6 +596,7 @@ export async function executeFindSlotStep(
           // head branch, falsy on non-PR flows.
           targetBranch: targetBranch ?? null,
           requiredPrepareProfile,
+          activeRunIds: activeRunIds(getAllRuns(), runId),
         },
       );
       if (nudgeCandidates.length > 0) {

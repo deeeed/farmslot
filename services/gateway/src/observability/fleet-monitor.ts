@@ -23,6 +23,10 @@ export type MonitorEventHandler = {
 
 const FLEET_POLL_MS = readIntervalMs('FARMSLOT_MONITOR_FLEET_POLL_MS', 30_000);
 const DECISION_POLL_MS = readIntervalMs('FARMSLOT_MONITOR_DECISION_POLL_MS', 30_000);
+const ACTIVE_CONTEXT_FRESH_MS = readIntervalMs(
+  'FARMSLOT_MONITOR_ACTIVE_CONTEXT_FRESH_MS',
+  5 * 60_000,
+);
 
 let fleetTimer: ReturnType<typeof setInterval> | null = null;
 let decisionTimer: ReturnType<typeof setInterval> | null = null;
@@ -246,6 +250,8 @@ export function detectFleetMonitorViolations(
 ): MonitorViolation[] {
   const violations: MonitorViolation[] = [];
   for (const slot of fleet.slots) {
+    const observedAt = now();
+    const observedAtMs = Date.parse(observedAt);
     const stuckActive = slot.lifecycle === 'busy' && slot.agent === 'no-tmux';
     if (stuckActive) {
       maybeRecordViolation(
@@ -254,7 +260,7 @@ export function detectFleetMonitorViolations(
         slot,
         'stuck',
         `Slot ${slot.slot} worker finished (tmux gone) — needs review or release`,
-        now(),
+        observedAt,
       );
     } else {
       notified.delete(violationKey(slot.slot, 'stuck'));
@@ -263,8 +269,21 @@ export function detectFleetMonitorViolations(
     // Preparing and dispatching slots legitimately have no runner process yet;
     // review gates legitimately have no active worker. Only the working phase
     // promises that an agent should be running.
+    const structuredAgentWorking = slot.agentContexts?.some((context) => {
+      if (!slot.currentRunId || context.runId !== slot.currentRunId) return false;
+      if (context.status !== 'launching' && context.status !== 'working') return false;
+      const contextActivityAt = Date.parse(context.lastSignalAt ?? context.updatedAt ?? '');
+      return (
+        Number.isFinite(observedAtMs) &&
+        Number.isFinite(contextActivityAt) &&
+        observedAtMs - contextActivityAt <= ACTIVE_CONTEXT_FRESH_MS
+      );
+    });
     const idleActive =
-      slot.lifecycle === 'busy' && slot.phase === 'working' && slot.agent === 'idle';
+      slot.lifecycle === 'busy' &&
+      slot.phase === 'working' &&
+      slot.agent === 'idle' &&
+      !structuredAgentWorking;
     if (idleActive) {
       maybeRecordViolation(
         notified,
@@ -272,7 +291,7 @@ export function detectFleetMonitorViolations(
         slot,
         'idle',
         `Slot ${slot.slot} is "working" but agent is idle — may need attention`,
-        now(),
+        observedAt,
       );
     } else {
       notified.delete(violationKey(slot.slot, 'idle'));

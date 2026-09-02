@@ -7,12 +7,23 @@ import { GATEWAY_TOKEN_STORAGE_KEY } from '../../gateway-url.js';
 
 import {
   extractStepCostInfo,
+  isFreshDispatchRecovery,
   reviewLoopAttempts,
   stepArtifactsForRunStep,
   stepArtifactUrl,
   stepDurationLabel,
   stepHasReviewLoop,
 } from './step-inspector-model.js';
+
+test('retained handoff failure requires an explicit fresh dispatch replay', () => {
+  const run = {
+    error:
+      'Retained session handoff requires operator attention: exact prompt acknowledgement missing',
+  } as Run;
+  assert.equal(isFreshDispatchRecovery(run, 'dispatch'), true);
+  assert.equal(isFreshDispatchRecovery(run, 'monitor'), false);
+  assert.equal(isFreshDispatchRecovery({ ...run, error: 'other failure' }, 'dispatch'), false);
+});
 
 test('stepDurationLabel formats completed and running step durations', () => {
   assert.equal(stepDurationLabel({ durationMs: 90_000 } as RunStep, Date.now()), '1m 30s');

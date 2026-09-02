@@ -354,10 +354,14 @@ function normalizeReviewDepth(value: unknown): ReviewDepthPolicy | undefined {
   ) {
     throw new Error('reviewDepth.requestedBy is invalid');
   }
+  if (value.countingVersion !== undefined && value.countingVersion !== 2) {
+    throw new Error('reviewDepth.countingVersion is invalid');
+  }
   return {
     minimumIndependentReviews,
     requireCrossRunner: value.requireCrossRunner,
     extraLoopsRequested,
+    ...(value.countingVersion === 2 ? { countingVersion: 2 } : {}),
     requestedBy: value.requestedBy,
   };
 }

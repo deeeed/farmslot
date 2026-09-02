@@ -1705,6 +1705,31 @@ test('selectBranchAffinityEligibleSlots surfaces a busy claude slot whose branch
   assert.equal(eligible[0].canNudge, true);
 });
 
+test('branch-affinity nudge candidates require an active run when ownership is supplied', () => {
+  const slot = makeBusyClaudeSlot({ currentRunId: 'owner-run' });
+  assert.equal(
+    selectBranchAffinityEligibleSlots([slot], PROJECT, PR_TICKET, {
+      targetBranch: PR_BRANCH,
+      activeRunIds: new Set(),
+    }).length,
+    0,
+  );
+  assert.equal(
+    selectBranchAffinityEligibleSlots([slot], PROJECT, PR_TICKET, {
+      targetBranch: PR_BRANCH,
+      activeRunIds: new Set(['owner-run']),
+    }).length,
+    1,
+  );
+  assert.equal(
+    selectBranchAffinityEligibleSlots([{ ...slot, currentRunId: null }], PROJECT, PR_TICKET, {
+      targetBranch: PR_BRANCH,
+      activeRunIds: new Set(['owner-run']),
+    }).length,
+    0,
+  );
+});
+
 test('branch-affinity nudge resource filter keeps working simulator slots', () => {
   const slot = makeBusyClaudeSlot({
     resources: { 'ios-sim': { simulator: 'fs-2', headless: true } },

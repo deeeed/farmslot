@@ -115,6 +115,10 @@ export interface DispatchCandidate {
   hostLoad?: { cpuPercent: number; memoryPercent: number; diskPercent: number; headroom: string };
   /** True when direct dispatch can pin this slot immediately. Busy/held rows are informational only. */
   free: boolean;
+  /** A live runner remains warm on a ready slot, but no active Run owns it.
+   * Selecting this row authorizes freshReuse to replace that runner immediately
+   * before prepare. Active-run workers never receive this flag. */
+  replaceableWarm?: boolean;
   /** True when this slot already carries the inferred/explicit run family for the dispatch. */
   familyAffinity?: boolean;
   /** True when this row is a busy slot already on the dispatch's `targetBranch` and the
@@ -260,6 +264,8 @@ export interface DispatchPreviewParams {
   /** Named domain overlay the dispatch will carry — echoed back on the preview. */
   domain?: string;
   prepareProfile?: string;
+  /** Explicit selected warm slot may be inspected for a fresh replacement preview. */
+  freshReuse?: boolean;
   /** Restrict slot resolution to this set. Empty/omitted = all project slots. */
   allowedSlots?: string[];
   /**

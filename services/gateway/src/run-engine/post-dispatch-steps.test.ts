@@ -429,6 +429,61 @@ test('human-gate can approve a prepared local-first package when slot was detach
   assert.equal(typeof io.outputs?.waitDurationMs, 'number');
 });
 
+test('human-gate restart repairs legacy review counts before deriving an automatic plan', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-LEGACY-REVIEW-COUNT',
+    runner: 'claude',
+    engineState: {
+      publishGate: {
+        publicationTarget: 'ready',
+        publicationStatus: 'not_published',
+        reviewDepth: {
+          minimumIndependentReviews: 1,
+          requireCrossRunner: false,
+          extraLoopsRequested: 1,
+          requestedBy: 'dispatch',
+        },
+        independentReviews: [
+          {
+            id: 'legacy-dispatch-review',
+            source: 'dispatch',
+            runner: 'codex',
+            crossRunner: true,
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    },
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  let reviewPlanCalls = 0;
+  await executeHumanGateStep(run.id, {
+    ...restartReplayContext(),
+    executePublishGateReviewPlan: async () => {
+      reviewPlanCalls += 1;
+      return { reviewIds: [] };
+    },
+    executeReadyGate: async () => 'ready',
+  });
+
+  assert.equal(reviewPlanCalls, 0);
+  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewDepth, {
+    minimumIndependentReviews: 1,
+    requireCrossRunner: false,
+    extraLoopsRequested: 0,
+    countingVersion: 2,
+    requestedBy: 'dispatch',
+  });
+});
+
 test('human-gate restart replay restores the operator-requested review policy', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

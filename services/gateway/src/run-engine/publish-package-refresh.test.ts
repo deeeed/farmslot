@@ -118,6 +118,36 @@ test('reviewDepthForPublishPackageRefresh drops ad hoc human-gate review require
     reviewDepthForPublishPackageRefresh(run, undefined, dispatchPayload),
     dispatchPayload.reviewDepth,
   );
+
+  const legacyDispatchRun = makeRun({
+    engineState: {
+      publishGate: {
+        pendingReviewPlan: [],
+        independentReviews: [
+          {
+            id: 'independent-review-1',
+            source: 'dispatch',
+            crossRunner: true,
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    },
+  });
+  const legacyDispatchPayload = {
+    reviewDepth: {
+      minimumIndependentReviews: 1,
+      requireCrossRunner: true,
+      extraLoopsRequested: 1,
+      requestedBy: 'dispatch' as const,
+    },
+  };
+  assert.deepEqual(
+    reviewDepthForPublishPackageRefresh(legacyDispatchRun, undefined, legacyDispatchPayload),
+    { ...legacyDispatchPayload.reviewDepth, extraLoopsRequested: 0, countingVersion: 2 },
+  );
 });
 
 test('refreshPublishPackage rebuilds the pending package and preserves safe operator choices', async (t) => {

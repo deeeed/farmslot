@@ -90,6 +90,7 @@ export interface RunDetailViewContext {
     stepName: string,
     skipPrepare?: boolean,
     prepareProfile?: string,
+    freshDispatch?: boolean,
   ) => void | Promise<void>;
   renderGateSection: (run: Run) => unknown;
   renderGrade: (grade: RunGrade) => unknown;
@@ -851,7 +852,12 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
               .allowReplay=${canReplayRunSteps(r, actionsBlocked)}
               @inspector-close=${() => ctx.onStepInspectorClose()}
               @step-replay=${(e: CustomEvent) =>
-                ctx._onReplayStep(e.detail.stepName, e.detail.skipPrepare, e.detail.prepareProfile)}
+                ctx._onReplayStep(
+                  e.detail.stepName,
+                  e.detail.skipPrepare,
+                  e.detail.prepareProfile,
+                  e.detail.freshDispatch,
+                )}
             >
             </step-inspector>
             ${ctx.selectedStep.name === 'ci-watch' && ctx._currentCiStatus(r)

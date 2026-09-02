@@ -17,7 +17,99 @@ import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import { runForceComplete } from './lifecycle-control.js';
-import { replaySlotReclaimCheck, runReplayStep } from './replay-step.js';
+import {
+  freshDispatchEngineStateForReplay,
+  replaySlotReclaimCheck,
+  runReplayStep,
+} from './replay-step.js';
+
+test('fresh dispatch replay drops only retained-handoff flags', () => {
+  assert.deepEqual(
+    freshDispatchEngineStateForReplay(
+      {
+        flags: {
+          skipPrepare: true,
+          warmSessionReuse: true,
+          warmHandoffSucceeded: false,
+        },
+        generation: 2,
+      },
+      true,
+    ),
+    { flags: { skipPrepare: true }, generation: 2 },
+  );
+});
+
+test('runReplayStep abandons a retained handoff and re-enters normal dispatch', async (t) => {
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const priorDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const taskFile = '/tmp/farmslot-fresh-dispatch/TASK.md';
+  await writeFile(
+    statusFile,
+    `${JSON.stringify({
+      slots: [{ slot: 'macwork-ff-fresh-dispatch', lifecycle: 'busy', current_run_id: run.id }],
+    })}\n`,
+  );
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'Retained runner handoff was not acknowledged',
+    slotId: 'macwork-ff-fresh-dispatch',
+    taskFile,
+    engineState: {
+      generation: 2,
+      flags: {
+        skipPrepare: true,
+        warmSessionReuse: true,
+        warmHandoffSucceeded: false,
+      },
+    },
+    steps: run.steps.map((step) =>
+      step.name === 'find-slot' || step.name === 'write-task' || step.name === 'prepare'
+        ? {
+            ...step,
+            status: 'done',
+            outputs: step.name === 'write-task' ? { taskFile } : step.outputs,
+          }
+        : step.name === 'dispatch'
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+
+  t.after(async () => {
+    if (priorDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = priorDisableStart;
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  const replayed = await runReplayStep(
+    {
+      runId: run.id,
+      stepName: 'dispatch',
+      freshDispatch: true,
+      triggeredBy: 'operator',
+    },
+    () => {},
+  );
+
+  assert.equal(replayed.run.status, 'dispatching');
+  assert.equal(replayed.run.error, undefined);
+  assert.equal(replayed.run.engineState?.flags?.warmSessionReuse, undefined);
+  assert.equal(replayed.run.engineState?.flags?.warmHandoffSucceeded, undefined);
+  assert.equal(replayed.run.engineState?.flags?.skipPrepare, undefined);
+  assert.equal(replayed.run.steps.find((step) => step.name === 'dispatch')?.status, 'pending');
+});
 
 test('replaySlotReclaimCheck rejects slots owned by another active run', () => {
   assert.deepEqual(

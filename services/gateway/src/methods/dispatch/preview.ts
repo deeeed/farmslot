@@ -48,11 +48,14 @@ import {
   formatPressureRejection,
 } from './pressure-admission.js';
 import {
+  activeRunIds,
+  activeRunSlotIds,
   companionResourceBlocker,
   findBestSlot,
   isCdpLive,
   isDispatchStaleBranch,
   isFreeSlot,
+  isReplaceableWarmSlot,
   prepareProfileNeedsCompanionResource,
   projectConfigsFromProjects,
   slotScore,
@@ -394,6 +397,7 @@ export function selectBranchAffinityEligibleSlots(
     allowedSlots?: string[] | null;
     targetBranch?: string | null;
     requiredPrepareProfile?: string | null;
+    activeRunIds?: ReadonlySet<string>;
   },
 ): Array<{ slot: SlotStatus; prMatchKind: 'pr-number' | 'branch-slug'; canNudge: boolean }> {
   if (options?.lane === 'comparison') return [];
@@ -421,6 +425,9 @@ export function selectBranchAffinityEligibleSlots(
     // would claim over an in-flight teardown.
     if (s.phase === SLOT_PHASE_RELEASING) continue;
     if (s.agent !== 'working') continue;
+    if (options?.activeRunIds && (!s.currentRunId || !options.activeRunIds.has(s.currentRunId))) {
+      continue;
+    }
     // Runner capability is per-action, not per-eligibility: codex / opencode slots still
     // surface as branch-matched candidates so the operator sees "this slot is on the PR's
     // branch" — but `canNudge` gates only the Nudge action; Fresh dispatch works for any
@@ -445,6 +452,7 @@ export async function collectBranchAffinityNudgeCandidates(
     allowedSlots?: string[] | null;
     targetBranch?: string | null;
     requiredPrepareProfile?: string | null;
+    activeRunIds?: ReadonlySet<string>;
   },
 ): Promise<BranchAffinityNudgeCandidate[]> {
   const eligibleEntries = selectBranchAffinityEligibleSlots(slots, project, ticketOrPr, options);
@@ -510,6 +518,7 @@ export async function findBranchAffinityNudgeCandidate(
     allowedSlots?: string[] | null;
     targetBranch?: string | null;
     requiredPrepareProfile?: string | null;
+    activeRunIds?: ReadonlySet<string>;
   },
 ): Promise<BranchAffinityNudgeCandidate | null> {
   const all = await collectBranchAffinityNudgeCandidates(slots, project, ticketOrPr, options);
@@ -566,6 +575,7 @@ export async function verifyBranchAffinityNudgeStillEligible(
     allowedSlots?: string[] | null;
     targetBranch?: string | null;
     requiredPrepareProfile?: string | null;
+    activeRunIds?: ReadonlySet<string>;
   },
 ): Promise<string | null> {
   if (!slot) return 'slot not found in fleet';
@@ -707,14 +717,17 @@ export function candidateIneligibilityReason(
   fleetSlots: readonly SlotStatus[],
   options: {
     isNudgeRow: boolean;
+    replaceableWarm?: boolean;
     targetBranch?: string | null;
     requiredPrepareProfile?: string | null;
   },
 ): string | null {
-  if (options.isNudgeRow || !isFreeSlot(slot)) return null;
+  if (options.isNudgeRow) return null;
+  if (!isFreeSlot(slot) && !options.replaceableWarm) return null;
   return validateSlotForDispatch(slot, fleetSlots, {
     targetBranch: options.targetBranch,
     requiredPrepareProfile: options.requiredPrepareProfile,
+    allowWorking: options.replaceableWarm,
   });
 }
 
@@ -759,6 +772,9 @@ export async function dispatchCandidates(
   const scoringByProject = await resolveDispatchScoringByProject(params, fleet.slots, projectSlots);
   // Explicit prepare only — profile-fit is advisory on dispatch.preview, not candidates.
   const requiredPrepareProfile = params.prepareProfile || null;
+  const allRuns = getAllRuns();
+  const activeSlotIds = activeRunSlotIds(allRuns);
+  const activeOwnerIds = activeRunIds(allRuns);
 
   // PR-bound calls ALSO get the busy-slot branch-affinity nudge slice so the wizard can
   // surface "REUSE WORKER" rows. Refresh busy-slot branches first — without this, a slot
@@ -788,6 +804,7 @@ export async function dispatchCandidates(
             variant: params.variant ?? null,
             targetBranch: scoring.targetBranch ?? null,
             requiredPrepareProfile,
+            activeRunIds: activeOwnerIds,
           }),
         ),
       )
@@ -811,8 +828,10 @@ export async function dispatchCandidates(
       const scoring = scoringByProject.get(s.project) ?? {};
       const nudge = nudgeMetaBySlot.get(s.slot);
       const pressureAdmission = pressureDecisions.get(s.machine);
+      const replaceableWarm = isReplaceableWarmSlot(s, activeSlotIds, activeOwnerIds);
       const baseIneligibleReason = candidateIneligibilityReason(s, fleet.slots, {
         isNudgeRow: Boolean(nudge),
+        replaceableWarm,
         targetBranch: scoring.targetBranch,
         requiredPrepareProfile,
       });
@@ -823,7 +842,7 @@ export async function dispatchCandidates(
       // nudge intent); the reason text is display-only.
       const pressureBlocksDispatch =
         !baseIneligibleReason &&
-        (Boolean(nudge) || isFreeSlot(s)) &&
+        (Boolean(nudge) || isFreeSlot(s) || replaceableWarm) &&
         pressureAdmission?.outcome === 'rejected';
       const ineligibleReason =
         baseIneligibleReason ??
@@ -838,18 +857,20 @@ export async function dispatchCandidates(
       return {
         slotId: s.slot,
         project: s.project,
-        score: isFreeSlot(s)
-          ? slotScore(s, scoring.targetBranch, {
-              familyId: scoring.familyId,
-              projectConfigs,
-            })
-          : 999,
+        score:
+          isFreeSlot(s) || replaceableWarm
+            ? slotScore(s, scoring.targetBranch, {
+                familyId: scoring.familyId,
+                projectConfigs,
+              })
+            : 999,
         cdpLive: isCdpLive(s.health.cdp),
         branch: s.branch || '',
         lifecycle: s.lifecycle,
         onMain: !isDispatchStaleBranch(s, projectConfigs),
         hostLoad: s.hostLoad,
         free: isFreeSlot(s),
+        ...(replaceableWarm ? { replaceableWarm: true } : {}),
         familyAffinity: Boolean(scoring.familyId && s.currentFamilyId === scoring.familyId),
         ...(ineligibleReason ? { ineligibleReason } : {}),
         ...(ineligibilitySource ? { ineligibilitySource } : {}),
@@ -876,6 +897,7 @@ export async function dispatchCandidates(
       // non-eligible last.
       if (!!a.nudgeEligible !== !!b.nudgeEligible) return a.nudgeEligible ? -1 : 1;
       if (a.free !== b.free) return a.free ? -1 : 1;
+      if (!!a.replaceableWarm !== !!b.replaceableWarm) return a.replaceableWarm ? -1 : 1;
       return a.score - b.score;
     });
   return { candidates };
@@ -965,6 +987,19 @@ export async function dispatchPreview(
         : {}),
     },
   );
+  const allRuns = getAllRuns();
+  const activeSlotIds = activeRunSlotIds(allRuns);
+  const activeOwnerIds = activeRunIds(allRuns);
+  const replaceableWarmSlotIds = new Set(
+    projectSlots
+      .filter(
+        (slot) =>
+          params.freshReuse &&
+          slot.slot === params.slotId &&
+          isReplaceableWarmSlot(slot, activeSlotIds, activeOwnerIds),
+      )
+      .map((slot) => slot.slot),
+  );
   const result = resolveDispatchPreviewFromFleet(
     { ...enriched, ...resolveDispatchFamilyContext(enriched) },
     fleet.slots,
@@ -972,6 +1007,7 @@ export async function dispatchPreview(
     {
       requiredPrepareProfile,
       pressureDecisions,
+      replaceableWarmSlotIds,
       ...(params.pressureOverride
         ? { pressureOverrideMachine: params.pressureOverride.machine }
         : {}),
@@ -1025,6 +1061,7 @@ export function resolveDispatchPreviewFromFleet(
      * slot on the machine). Automatic selection excludes rejected machines;
      * an explicit slot returns the same rejection on the result. */
     pressureDecisions?: ReadonlyMap<string, PressureAdmissionDecision>;
+    replaceableWarmSlotIds?: ReadonlySet<string>;
     /** Machine the caller's override names, if any. A rejected SELECTED
      * machine that differs from it reports PRESSURE_OVERRIDE_MISMATCH; other
      * machines keep their own base decision. */
@@ -1071,6 +1108,7 @@ export function resolveDispatchPreviewFromFleet(
     const err = validateSlotForDispatch(found, slots, {
       targetBranch: params.targetBranch,
       requiredPrepareProfile,
+      allowWorking: options?.replaceableWarmSlotIds?.has(found.slot),
     });
     if (err) throw new Error(`Slot ${params.slotId}: ${err}`);
     slotInfo = found;

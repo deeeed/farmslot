@@ -1219,6 +1219,38 @@ test('runCreate defaults omitted dev mode to autonomous when interactive templat
   assert.equal(result.run.mode, 'autonomous');
 });
 
+test('runCreate permits explicit fresh replacement for a non-PR flow', async (t) => {
+  const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
+  const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  let runId = '';
+  t.after(async () => {
+    if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
+    if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableStart;
+    if (runId && getRun(runId)) {
+      updateRun(runId, { status: 'done', completedAt: new Date().toISOString() });
+      await deleteRun(runId);
+    }
+  });
+
+  const result = await runCreate(
+    {
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      ticketOrPr: `TAT-${Date.now()}`,
+      slotId: 'replaceable-warm-slot',
+      freshReuse: true,
+    },
+    () => {},
+  );
+  runId = result.run.id;
+
+  assert.equal(result.run.engineState?.flags?.freshReuse, true);
+});
+
 test('runCreate persists implicit dev-interactive template selection for interactive dev', async (t) => {
   const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
   const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;

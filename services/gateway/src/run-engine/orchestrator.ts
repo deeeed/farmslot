@@ -162,7 +162,7 @@ async function cleanupSlotAfterRunFailure(
   reason: string,
   destructiveCleanup?: () => Promise<void>,
 ): Promise<void> {
-  const { readSlotField, resetSlotIf, slotOwnershipReleaseFields, transitionSlotStatus } =
+  const { resetSlotIf, slotOwnershipReleaseFields, transitionSlotStatus } =
     await import('../core/index.js');
   // Object holder rather than a `let`: assignments inside the decide closure
   // are invisible to control-flow narrowing on a plain local.
@@ -200,19 +200,8 @@ async function cleanupSlotAfterRunFailure(
       // leaves the releasing fence up: non-dispatchable and visible to the
       // operator, instead of a dispatchable row hiding a live worker.
       try {
-        const runner = (await readSlotField(slotId, 'runner')) as string | null;
-        if (!runner) {
-          // No recorded runner identity: a worker (if any) cannot be
-          // verifiably killed. Publishing ready would hand the next PREPARE
-          // a possibly-live worker — keep the fence up for the operator.
-          console.warn(
-            `[run-engine] no runner recorded for ${slotId}; leaving the releasing fence up after ${reason}`,
-          );
-          return;
-        }
-        const { killWorkerOnSlot } = await import('../methods/dispatch/nudge.js');
-        const { normalizeRunner } = await import('../runners/registry.js');
-        await killWorkerOnSlot(slotId, normalizeRunner(runner));
+        const { teardownWorkerOnSlot } = await import('../methods/dispatch/nudge.js');
+        await teardownWorkerOnSlot(slotId);
       } catch (err) {
         console.warn(
           `[run-engine] worker kill failed for ${slotId} after ${reason}; leaving the releasing fence up: ${(err as Error).message.slice(0, 200)}`,

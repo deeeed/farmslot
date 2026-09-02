@@ -4,6 +4,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(observability): suppress legacy slot-level idle alerts while a structured worker or CI-fix context is launching or working.
+- fix(recovery): let an operator abandon an unacknowledged retained handoff and replay Dispatch fresh without risking duplicate prompt delivery.
+- fix(review): when refreshing a legacy publish package, repair drained dispatch review plans that double-counted the configured review as both the minimum and an extra loop.
+- fix(dispatch): nudge delivery resolves an existing pane that actually hosts the retained runner, preferring a valid prior role and otherwise the most recently active worker pane; it never creates a shell window and reports a false successful delivery.
+- feat(dispatch): keep unowned runner sessions warm and expose them as replaceable candidates on every node; a selected fresh dispatch reserves the slot against races, terminates all retained runner panes without typing into their composers, then prepares normally.
 - fix(dispatch): failed prompt delivery terminates its newly launched runner without typing `/exit` into a possibly buffered task, preventing cleanup from submitting the task and exit command as one turn.
 - fix(runners): recognize Claude's first-run workspace trust prompt and confirm it from fresh deterministic pane evidence so newly relocated checkouts do not stall dispatch.
 - fix(observability): emit agent-idle violations only while a slot is in the working phase; preparing, dispatching, and review-gate slots may legitimately have no active runner.

@@ -109,6 +109,8 @@ export interface RunnerDefinition {
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
   processMatchers: string[];
+  /** Process name is too generic for destructive discovery without recorded runner identity. */
+  requiresExplicitTerminationIdentity?: boolean;
   supportsInteractivePrompt: boolean;
   needsPostLaunchPrompt: boolean;
   /** Runner starts with the task in argv and must clear safe launch blockers before dispatch can trust task execution. */
@@ -169,6 +171,8 @@ export interface RunnerDefinition {
   /** Bounded transcript accounting for the soft run budget, or explicit unsupported. */
   sessionUsageProvider: RunnerSessionUsageProvider | null;
 }
+
+const UNSAFE_BROAD_PROCESS_MATCHERS = new Set(['.', '.*', 'node', 'bash', 'sh', 'zsh']);
 
 interface PaneClassifierResult {
   state: string;
@@ -288,6 +292,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'cursor',
     defaultLaunchMode: 'interactive',
     processMatchers: ['(^|/)(cursor-)?agent($| )'],
+    requiresExplicitTerminationIdentity: true,
     // Cursor Agent v2026.06.19 leaves tmux-injected prompts buffered/reset at
     // the "Run Everything" composer. Passing the task as argv starts the same
     // steerable TUI turn without the fragile post-launch key path.
@@ -719,14 +724,35 @@ export function runnerProcessPattern(runnerId?: string | null): RegExp {
 
 export function runnerProcessPatternSource(runnerId?: string | null): string {
   const normalized = normalizeRunner(runnerId);
-  if (runnerId == null || runnerId === '' || normalized === DEFAULT_RUNNER) {
+  if (runnerId == null || runnerId === '') {
     // Broad fallback for unknown/legacy slots — callers should prefer an explicit runner
     // whenever available to avoid matching unrelated panes on mixed-runner machines.
-    return 'claude|codex|opencode|cursor-agent|grok|scripted-runner';
+    return [
+      ...new Set(
+        Object.values(KNOWN_RUNNERS)
+          .flatMap((definition) => definition.processMatchers)
+          .filter((matcher) => !UNSAFE_BROAD_PROCESS_MATCHERS.has(matcher.trim())),
+      ),
+    ].join('|');
   }
   if (!isKnownRunner(runnerId)) return normalized;
   const matchers = getRunnerDefinition(runnerId).processMatchers;
   return matchers.length > 0 ? matchers.join('|') : normalized;
+}
+
+export function runnerIdsSafeForUnattributedTermination(): string[] {
+  return Object.values(KNOWN_RUNNERS)
+    .filter(
+      (definition) =>
+        !definition.requiresExplicitTerminationIdentity && definition.processMatchers.length > 0,
+    )
+    .map((definition) => definition.id);
+}
+
+export function runnerIdsRequiringExplicitTerminationIdentity(): string[] {
+  return Object.values(KNOWN_RUNNERS)
+    .filter((definition) => definition.requiresExplicitTerminationIdentity)
+    .map((definition) => definition.id);
 }
 
 export function runnerLineLooksWaiting(line: string, runnerId?: string | null): boolean {
