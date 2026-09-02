@@ -7,6 +7,7 @@ import type {
   RecipeRunArtifactGroup,
   ReviewSessionIntent,
   ReviewValidationDepth,
+  RunRefreshPublishPackageResult,
 } from '@farmslot/protocol';
 import { buildRunResolveDecisionParams, Methods } from '@farmslot/protocol';
 
@@ -30,14 +31,13 @@ import {
 } from '../slot-view/slot-view-branch-model.js';
 
 import {
+  applyReadyPackageRefreshResult,
   isReadyPublicationApproval,
   readyActionRequiresConfirmation,
   readyDecisionActionStateKey,
   readyDecisionSubmittingMessage,
   readyDecisionSuccessMessage,
   readyRefreshPublishPackageFeedback,
-  type ReadyRefreshPublishPackageResult,
-  refreshedReadyEvidenceSelection,
 } from './ready-workspace-action-model.js';
 import {
   readyWorkspaceAllArtifacts,
@@ -726,9 +726,22 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           publicationTarget: this._publicationTarget,
         },
         transferBoundRequestOptions(this.runId),
-      )) as ReadyRefreshPublishPackageResult;
-      const nextSelection = refreshedReadyEvidenceSelection(result);
-      if (nextSelection) this._selectedEvidenceKeys = nextSelection;
+      )) as RunRefreshPublishPackageResult;
+      // The gateway returns the refreshed package atomically with the Run. Adopt
+      // that decision before enabling approval so a fast click cannot submit the
+      // package identity that was visible before refresh.
+      applyReadyPackageRefreshResult(result, this.decision.id, {
+        setRun: (run) => {
+          this.run = run;
+        },
+        setDecision: (decision) => {
+          this.decision = decision;
+        },
+        clearConfirmation: () => this._confirmTimer.clear(),
+        setSelectedEvidenceKeys: (keys) => {
+          this._selectedEvidenceKeys = keys;
+        },
+      });
       const feedback = readyRefreshPublishPackageFeedback(result);
       this._actionMessage = feedback.message;
       this._actionTone = feedback.tone;

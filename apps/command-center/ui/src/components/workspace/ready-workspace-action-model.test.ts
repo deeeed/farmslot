@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { ReadyGatePayload, RunDecision } from '@farmslot/protocol';
 
 import {
+  applyReadyPackageRefreshResult,
   isReadyPublicationApproval,
   readyActionRequiresConfirmation,
   readyDecisionActionStateKey,
@@ -11,6 +12,7 @@ import {
   readyDecisionSuccessMessage,
   readyRefreshPublishPackageFeedback,
   readyResolveSelectionData,
+  refreshedReadyDecision,
   refreshedReadyEvidenceSelection,
 } from './ready-workspace-action-model.js';
 
@@ -97,4 +99,61 @@ test('ready workspace action model summarizes refreshed package results', () => 
     message: 'Package refreshed · 1 new evidence item',
     tone: 'success',
   });
+});
+
+test('ready workspace adopts the refreshed decision before publication approval', () => {
+  const priorDecision = {
+    id: 'decision-1',
+    payload: payload({ prPackage: { id: 'pkg-old', packageHash: 'hash-old' } }),
+  } as RunDecision;
+  const refreshedDecision = {
+    ...priorDecision,
+    payload: payload({ prPackage: { id: 'pkg-new', packageHash: 'hash-new' } }),
+  };
+
+  const refreshedRun = { decisions: [refreshedDecision] };
+  let activeRun = { decisions: [priorDecision] };
+  let activeDecision = priorDecision;
+  let selectedEvidenceKeys = ['old.png'];
+  let confirmationCleared = false;
+  applyReadyPackageRefreshResult(
+    {
+      run: refreshedRun as never,
+      packageId: 'pkg-new',
+      packageHash: 'hash-new',
+      preservedEvidenceKeys: ['new.png'],
+      droppedEvidence: [],
+      droppedEvidenceKeys: [],
+      addedEvidenceKeys: [],
+    },
+    priorDecision.id,
+    {
+      setRun: (run) => {
+        activeRun = run;
+      },
+      setDecision: (decision) => {
+        activeDecision = decision;
+      },
+      clearConfirmation: () => {
+        confirmationCleared = true;
+      },
+      setSelectedEvidenceKeys: (keys) => {
+        selectedEvidenceKeys = keys;
+      },
+    },
+  );
+
+  assert.equal(activeRun, refreshedRun);
+  assert.equal(activeDecision, refreshedDecision);
+  assert.equal(confirmationCleared, true);
+  assert.deepEqual(selectedEvidenceKeys, ['new.png']);
+  assert.equal(
+    readyResolveSelectionData({
+      payload: activeDecision.payload as ReadyGatePayload,
+      publicationTarget: 'ready',
+      selectedEvidenceKeys,
+    })?.packageId,
+    'pkg-new',
+  );
+  assert.equal(refreshedReadyDecision({ decisions: [] }, priorDecision.id), null);
 });

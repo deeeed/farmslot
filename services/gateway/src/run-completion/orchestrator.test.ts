@@ -10,6 +10,7 @@ import type { RawProjectJson } from '../core/config.js';
 import { buildDraftPrBody } from './draft-pr.js';
 import { buildEvidenceSection } from './evidence-manifest.js';
 import {
+  assertDedicatedPrDescription,
   assertReadyGatePackageInputsCurrent,
   assertSelectedEvidencePublished,
   defaultReviewDepthPolicy,
@@ -31,6 +32,29 @@ import {
   selectedEvidenceKeysForPublication,
 } from './orchestrator.js';
 import { makeRun } from './test-fixtures.js';
+
+test('dev and fix-bug publication require their dedicated PR description artifact', () => {
+  assert.doesNotThrow(() =>
+    assertDedicatedPrDescription(makeRun({ flowType: 'dev' }), {
+      fileName: 'pr-description.md',
+    }),
+  );
+  for (const flowType of ['dev', 'fix-bug'] as const) {
+    assert.throws(
+      () => assertDedicatedPrDescription(makeRun({ flowType }), { fileName: 'report.md' }),
+      /without artifacts\/pr-description\.md/,
+    );
+    assert.throws(
+      () => assertDedicatedPrDescription(makeRun({ flowType }), null),
+      /without artifacts\/pr-description\.md/,
+    );
+  }
+  assert.doesNotThrow(() =>
+    assertDedicatedPrDescription(makeRun({ flowType: 'pr-complete' }), {
+      fileName: 'comments-report.md',
+    }),
+  );
+});
 
 test('assertSelectedEvidencePublished fails closed for non-empty approved evidence selection', () => {
   assert.doesNotThrow(() => assertSelectedEvidencePublished([], new Map()));
