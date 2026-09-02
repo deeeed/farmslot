@@ -19,6 +19,7 @@ import * as selfReviewFixTurnLease from './self-review-fix-turn-lease.mjs';
 import * as sessionAttributionSmoke from './session-attribution-smoke.mjs';
 import * as tokenUsageSmoke from './token-usage-smoke.mjs';
 import * as turnBoundary from './turn-boundary.mjs';
+import * as warmReplacementSmoke from './warm-replacement-smoke.mjs';
 
 export const SCENARIOS = {
   'hook-smoke': hookSmoke,
@@ -42,6 +43,7 @@ export const SCENARIOS = {
   'monitor-stuck-smoke': monitorStuckSmoke,
   'session-attribution-smoke': sessionAttributionSmoke,
   'token-usage-smoke': tokenUsageSmoke,
+  'warm-replacement-smoke': warmReplacementSmoke,
 };
 
 export function listScenarios() {

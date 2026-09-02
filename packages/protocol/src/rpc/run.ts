@@ -131,11 +131,11 @@ export interface RunCreateParams {
    * DISPATCH through `nudgeDispatch` (send-keys into the existing tmux session) instead of
    * relaunching. Requires `slotId` to be set in the same request. */
   nudgeReuse?: boolean;
-  /** Branch-affinity fresh-reuse — operator picked "Kill & dispatch fresh" for a busy slot
-   * already on this PR's branch. Engine binds `slotId`, hard-kills the prior worker BEFORE
-   * PREPARE so git reset / checkout / dependency install don't race the worker writing in
-   * the same worktree, then proceeds with normal PREPARE + DISPATCH. Requires `slotId` to
-   * be set in the same request. Mutually exclusive with `nudgeReuse`. */
+  /** Fresh replacement — operator picked a busy branch-affinity worker or an unowned warm
+   * slot. Engine binds `slotId`, hard-kills the prior worker BEFORE PREPARE so git reset /
+   * checkout / dependency install don't race the worker writing in the same worktree, then
+   * proceeds with normal PREPARE + DISPATCH. Requires `slotId`; mutually exclusive with
+   * `nudgeReuse`. */
   freshReuse?: boolean;
   /** Force a review tier for review-pr flow. '' or omitted = auto (LLM picks strategy).
    * light → smoke; standard → smoke|targeted; full → targeted|full-qa. */
@@ -314,6 +314,8 @@ export interface RunReplayStepParams {
   skipPrepare?: boolean;
   /** Replay PREPARE with this named profile; persisted on the run before the engine restarts. */
   prepareProfile?: string;
+  /** Explicitly abandon an ambiguous retained-session handoff and relaunch fresh. Dispatch only. */
+  freshDispatch?: boolean;
   triggeredBy?: 'operator' | 'auto-recovery';
   intelligenceActionId?: string;
 }

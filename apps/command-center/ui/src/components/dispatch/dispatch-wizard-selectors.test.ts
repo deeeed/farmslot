@@ -57,6 +57,16 @@ const candidates: DispatchCandidatesResult['candidates'] = [
     onMain: true,
     free: true,
   },
+  {
+    slotId: 'd',
+    score: 20,
+    cdpLive: false,
+    branch: 'fix/old-work',
+    lifecycle: 'ready',
+    onMain: false,
+    free: false,
+    replaceableWarm: true,
+  },
 ];
 
 test('resolveTargetBranch handles canonical PR refs and unique bare numbers', () => {
@@ -98,12 +108,12 @@ test('candidate rows with an ineligibleReason are never dispatchable', () => {
   assert.equal(candidateDispatchable({ ...base, nudgeEligible: true }), false);
 });
 
-test('candidate selectors include nudge-eligible rows as dispatchable', () => {
+test('candidate selectors include nudge and replaceable warm rows as dispatchable', () => {
   assert.equal(candidateDispatchable(candidates[0]!), false);
   assert.equal(candidateDispatchable(candidates[1]!), true);
   assert.deepEqual(
     dispatchableCandidates(candidates).map((candidate) => candidate.slotId),
-    ['b', 'c'],
+    ['b', 'c', 'd'],
   );
   assert.equal(selectedCandidate(candidates, 'b')?.slotId, 'b');
   assert.equal(selectedNudgeIntent({ candidates, slotOverride: 'b', intents: new Map() }), 'fresh');
@@ -111,6 +121,7 @@ test('candidate selectors include nudge-eligible rows as dispatchable', () => {
     selectedNudgeIntent({ candidates, slotOverride: 'b', intents: new Map([['b', 'nudge']]) }),
     'nudge',
   );
+  assert.equal(selectedNudgeIntent({ candidates, slotOverride: 'd', intents: new Map() }), 'fresh');
 });
 
 test('resolveAllowedSlots resolves active machine filter against fleet-wide slots', () => {

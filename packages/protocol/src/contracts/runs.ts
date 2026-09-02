@@ -203,7 +203,10 @@ export type PublicationStatus =
 export interface ReviewDepthPolicy {
   minimumIndependentReviews: number;
   requireCrossRunner: boolean;
+  /** Independent review loops required beyond `minimumIndependentReviews`. */
   extraLoopsRequested: number;
+  /** V2 counts the first configured loop in the minimum, not again as an extra. */
+  countingVersion?: 2;
   requestedBy: 'dispatch' | 'human-gate' | 'agent-gate';
 }
 
@@ -1840,9 +1843,9 @@ export interface RunEngineState {
    * `nudgeReuse` is set when the operator picks "Nudge worker" in the dispatch wizard or the
    * branch-affinity decision card; FIND_SLOT honors it to bind the busy slot, and DISPATCH
    * routes through `nudgeDispatch` (skip PREPARE, send-keys to existing tmux session) instead
-   * of `dispatchExecute` (kill + relaunch). `freshReuse` is the "Kill & dispatch fresh"
-   * sibling — FIND_SLOT hard-kills the prior worker BEFORE PREPARE so git reset / checkout /
-   * dependency install don't race a still-writing worker in the same worktree.
+   * of `dispatchExecute` (kill + relaunch). `freshReuse` replaces either that busy
+   * branch-affinity worker or an unowned warm runner. FIND_SLOT hard-kills it BEFORE PREPARE
+   * so git reset / checkout / dependency install don't race a still-writing worker.
    * `warmSessionReuse` is set on CI-watch chained follow-ups (pr-complete / update-branch)
    * when the parent kept its worker warm through finalize; DISPATCH tries handoff into that
    * session and falls back to fresh `dispatchExecute` when the process is dead or not nudgeable. */

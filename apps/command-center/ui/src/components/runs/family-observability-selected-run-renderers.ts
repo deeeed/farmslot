@@ -44,7 +44,12 @@ interface FamilySelectedRunDetailRenderOptions {
   ) => void;
   onSelectStep: (step: RunStep) => void;
   onCloseStepInspector: () => void;
-  onReplayStep: (stepName: string, skipPrepare?: boolean, prepareProfile?: string) => void;
+  onReplayStep: (
+    stepName: string,
+    skipPrepare?: boolean,
+    prepareProfile?: string,
+    freshDispatch?: boolean,
+  ) => void;
   renderLedgerDiffDetail: (run: FamilyObservabilityRunSummary) => unknown;
 }
 
@@ -106,12 +111,14 @@ function renderFamilyRunPipelineDetail(options: FamilySelectedRunDetailRenderOpt
                   stepName: string;
                   skipPrepare?: boolean;
                   prepareProfile?: string;
+                  freshDispatch?: boolean;
                 }>,
               ) =>
                 options.onReplayStep(
                   event.detail.stepName,
                   event.detail.skipPrepare,
                   event.detail.prepareProfile,
+                  event.detail.freshDispatch,
                 )}
             >
             </step-inspector>

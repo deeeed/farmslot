@@ -23,6 +23,7 @@ import {
   DURATION_KEYS,
   extractStepCostInfo,
   HIDDEN_KEYS,
+  isFreshDispatchRecovery,
   LIST_KEYS,
   LOG_KEYS,
   OUTPUT_KEYS,
@@ -84,6 +85,7 @@ export class StepInspector extends StepInspectorState {
 
     // Extract cost info for prominent display
     const costInfo = this._extractCostInfo(s);
+    const freshDispatchRecovery = isFreshDispatchRecovery(this.run, s.name);
 
     return html`
       <div class="inspector">
@@ -93,7 +95,9 @@ export class StepInspector extends StepInspectorState {
           ${duration ? html`<span class="duration">${duration}</span>` : nothing}
           ${this.allowReplay
             ? html`
-                <button class="retry-btn" @click=${this._onReplay}>Retry from here</button>
+                <button class="retry-btn" @click=${this._onReplay}>
+                  ${freshDispatchRecovery ? 'Abandon handoff + launch fresh' : 'Retry from here'}
+                </button>
                 ${s.name === 'prepare'
                   ? html`
                       <slot-prepare-options
@@ -653,7 +657,10 @@ export class StepInspector extends StepInspectorState {
       new CustomEvent('step-replay', {
         bubbles: true,
         composed: true,
-        detail: { stepName: this.step.name },
+        detail: {
+          stepName: this.step.name,
+          freshDispatch: isFreshDispatchRecovery(this.run, this.step.name),
+        },
       }),
     );
   }

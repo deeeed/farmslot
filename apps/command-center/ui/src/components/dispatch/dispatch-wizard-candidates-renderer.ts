@@ -42,16 +42,23 @@ function candidateBadges(
   candidate: DispatchCandidate,
   hadTask: boolean,
 ): SlotChoiceOption['badges'] {
+  const badges: SlotChoiceBadge[] = [];
   if (candidate.ineligibleReason) {
-    return [
-      {
-        label: candidate.ineligibilitySource === 'pressure' ? 'PRESSURE REJECTED' : 'NOT ELIGIBLE',
-        tone: 'danger',
-        title: candidate.ineligibleReason,
-      },
-    ];
+    badges.push({
+      label: candidate.ineligibilitySource === 'pressure' ? 'PRESSURE REJECTED' : 'NOT ELIGIBLE',
+      tone: 'danger',
+      title: candidate.ineligibleReason,
+    });
   }
-  if (candidate.nudgeEligible) return [{ label: 'REUSE WORKER', tone: 'warning' }];
+  if (candidate.nudgeEligible) badges.push({ label: 'REUSE WORKER', tone: 'warning' });
+  if (candidate.replaceableWarm) {
+    badges.push({
+      label: 'WARM · REPLACE',
+      tone: 'warning',
+      title: 'No active run owns this warm runner. A new dispatch replaces it before prepare.',
+    });
+  }
+  if (badges.length > 0) return badges;
   if (candidate.familyAffinity) return [{ label: 'same family', tone: 'positive' }];
   if (hadTask) return [{ label: 'same task', tone: 'accent' }];
   return [];
@@ -115,7 +122,9 @@ function candidateOption(
     ? canNudge
       ? " — busy worker on this PR's branch; pick Nudge to reuse session or Fresh to relaunch"
       : " — busy worker on this PR's branch (runner doesn't support live nudge — Fresh dispatch only)"
-    : '';
+    : candidate.replaceableWarm
+      ? ' — unowned warm runner; dispatch replaces it before prepare'
+      : '';
   return {
     slotId: candidate.slotId,
     rank: selected ? '#1' : dispatchable ? `#${index + 1}` : '--',
@@ -126,7 +135,7 @@ function candidateOption(
     stateSortValue: candidate.score,
     disabled: !dispatchable,
     stale: !candidate.onMain,
-    warning: candidate.nudgeEligible,
+    warning: candidate.nudgeEligible || candidate.replaceableWarm,
     title: dispatchable
       ? `Select ${candidate.slotId}${titleSuffix}`
       : candidate.ineligibleReason
@@ -154,35 +163,45 @@ function candidateOption(
             },
           ]
         : ctx.pressureOverrideAvailable(candidate)
-          ? candidate.nudgeEligible
-            ? canNudge
-              ? [
-                  {
-                    id: 'pressure-override-nudge',
-                    label: 'Override + Nudge',
-                    active: candidate.slotId === selectedSlot,
-                    title:
-                      'Machine is pressure-rejected. Review the decision, confirm a one-dispatch override, and reuse the existing worker session.',
-                  },
-                ]
-              : [
-                  {
-                    id: 'pressure-override-fresh',
-                    label: 'Override + Fresh',
-                    active: candidate.slotId === selectedSlot,
-                    title:
-                      'Machine is pressure-rejected and this runner cannot be nudged. Review the decision, confirm a one-dispatch override, and relaunch fresh.',
-                  },
-                ]
-            : [
+          ? candidate.replaceableWarm
+            ? [
                 {
-                  id: 'pressure-override',
-                  label: 'Override',
+                  id: 'pressure-override-fresh',
+                  label: 'Override + Fresh',
                   active: candidate.slotId === selectedSlot,
                   title:
-                    'Machine is pressure-rejected. Select to review the decision and confirm a one-dispatch override.',
+                    'Machine is pressure-rejected. Review the decision, confirm a one-dispatch override, and replace the unowned warm runner.',
                 },
               ]
+            : candidate.nudgeEligible
+              ? canNudge
+                ? [
+                    {
+                      id: 'pressure-override-nudge',
+                      label: 'Override + Nudge',
+                      active: candidate.slotId === selectedSlot,
+                      title:
+                        'Machine is pressure-rejected. Review the decision, confirm a one-dispatch override, and reuse the existing worker session.',
+                    },
+                  ]
+                : [
+                    {
+                      id: 'pressure-override-fresh',
+                      label: 'Override + Fresh',
+                      active: candidate.slotId === selectedSlot,
+                      title:
+                        'Machine is pressure-rejected and this runner cannot be nudged. Review the decision, confirm a one-dispatch override, and relaunch fresh.',
+                    },
+                  ]
+              : [
+                  {
+                    id: 'pressure-override',
+                    label: 'Override',
+                    active: candidate.slotId === selectedSlot,
+                    title:
+                      'Machine is pressure-rejected. Select to review the decision and confirm a one-dispatch override.',
+                  },
+                ]
           : [],
   };
 }

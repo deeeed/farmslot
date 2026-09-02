@@ -57,7 +57,8 @@ test('buildRunCreateParams matches golden fix-bug payload', () => {
     devInteractiveProfile: 'lightweight',
     reviewDepth: {
       minimumIndependentReviews: 1,
-      extraLoopsRequested: 1,
+      extraLoopsRequested: 0,
+      countingVersion: 2,
       requireCrossRunner: true,
       requestedBy: 'dispatch',
     },

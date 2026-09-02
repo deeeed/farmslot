@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(dispatch): count the first configured independent publication review toward the required minimum, and reject queuing a replacement against changing slot state.
+- feat(dispatch): show unowned ready runner sessions as selectable `WARM · REPLACE` slots; selecting one sends an explicit fresh-replacement intent instead of treating the slot as disabled.
 - feat(notifications): add configurable operator-attention alerts with focused-tab sound and optional background desktop notifications for new decisions and monitor violations; apply tag deduplication before sound and banner delivery.
 - fix(runs): show completed interactive workers as awaiting operator action, render monitor as finished, and hide the Resume control that immediately re-paused on the terminal signal.
 - fix(runs): keep publish-package and artifact-mirror refresh waiting while `file.transfer.progress` is still moving; idle-timeout only after a stall, not a 15s wall clock.

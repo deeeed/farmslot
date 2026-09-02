@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import {
   type AgentContextTarget,
-  agentRoleWindow,
+  agentDispatchWindow,
   type FlowType,
   primaryRoleForFlow,
 } from '@farmslot/protocol';
@@ -24,12 +24,7 @@ import {
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
-import {
-  firstWindowTarget,
-  resolveTmuxSession,
-  shellQuote,
-  tmuxShellSnippet,
-} from '../../core/tmux.js';
+import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import {
   normalizeRunner,
@@ -39,20 +34,22 @@ import {
 } from '../../runners/registry.js';
 import { dispatchStartedAtMs } from '../../runners/session-path-resolution.js';
 import {
+  resolveRetainedRunnerPane,
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
+  terminateRunnerDescendantsInTmuxSession,
 } from '../../runners/session-process.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
-import {
-  enforceDispatchPressureGate,
-  ensureWorkerRoleTarget,
-  waitForRunnerProcessExit,
-} from './execute.js';
+import { enforceDispatchPressureGate } from './execute.js';
 import { verifyBranchAffinityNudgeStillEligible } from './preview.js';
-import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from './slot-scoring.js';
+import {
+  activeRunIds,
+  SLOT_CLAIM_REFUSED_CODE,
+  slotClaimBlockedByRelease,
+} from './slot-scoring.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
 
@@ -137,57 +134,26 @@ export async function terminalizePriorRunOnSlot(
 }
 
 /**
- * Hard-kill any agent process running on a slot. Used by the fresh-reuse path before
- * PREPARE can run safely — without this, PREPARE's git reset / checkout / dependency
- * install would race against a prior worker still writing in the same worktree, corrupting
- * slot state. Sequential: kill role windows -> kill the runner in the session ->
- * wait for the runner pid to exit. Mirrors what `dispatchExecute`'s "Clean pane" step does
- * before launch but pulled out so it can run BEFORE the engine's PREPARE step.
- */
-export async function killWorkerOnSlot(
-  slotId: string,
-  runner: string,
-  flowType?: FlowType | null,
-): Promise<void> {
-  const vars = await loadSlotVars(slotId);
-  const slotMod = await import('../slot.js');
-  const session = await resolveTmuxSession(vars.slotId, vars, { strict: true });
-  const hasSession =
-    (await execOnSlot(vars, tmuxShellSnippet(`has-session -t ${shellQuote(session)} 2>/dev/null`)))
-      .exitCode === 0;
-  if (!hasSession) return;
-  await slotMod.killAgentInSession(vars, runner, primaryRoleForFlow(flowType));
-  await slotMod.killAllAgentWindows(vars, session);
-  // Re-check session after the kills. When the only window in the session was a role window,
-  // killAllAgentWindows uses `kill-session` (slot.ts:1625-1627) and the session itself is
-  // gone — the runner process exited as a side effect of the session dying, so there's no
-  // exit pane left to wait on. firstWindowTarget on a missing session throws "has no
-  // windows", which would crash this helper before PREPARE even runs. Returning early is
-  // correct here: the caller (prepareSlotForFreshReuse) only needs the worker dead before
-  // PREPARE; missing session means the worker is already dead.
-  const stillHasSession =
-    (await execOnSlot(vars, tmuxShellSnippet(`has-session -t ${shellQuote(session)} 2>/dev/null`)))
-      .exitCode === 0;
-  if (!stillHasSession) return;
-  const exitTarget = await firstWindowTarget(vars, session);
-  await waitForRunnerProcessExit(vars, exitTarget, runner);
-}
-
-/**
  * Combined teardown for fresh-reuse: terminalize prior Run + hard-kill worker on slot.
  * Engine call sites (decision-card 'fresh' branch, FIND_SLOT freshReuse wizard-shortcut)
  * must call this BEFORE the ordinary 'preparing' claim / before PREPARE runs, so that PREPARE
  * doesn't race the prior worker mutating the same git worktree.
  */
 export async function prepareSlotForFreshReuse(slotId: string, newRunId: string): Promise<void> {
-  const priorRunId = (await readSlotField(slotId, 'current_run_id')) as string | null;
-  const { getRun: getRunForCleanup } = await import('../../runs/store.js');
-  const priorFlowType = priorRunId ? getRunForCleanup(priorRunId)?.flowType : null;
   await terminalizePriorRunOnSlot(slotId, newRunId, 'fresh-reuse');
-  const slotRunner = (await readSlotField(slotId, 'runner')) as string | null;
-  if (slotRunner) {
-    await killWorkerOnSlot(slotId, normalizeRunner(slotRunner), priorFlowType);
-  }
+  await teardownWorkerOnSlot(slotId);
+}
+
+/** Stop every retained runner and role window before a slot is made reusable. */
+export async function teardownWorkerOnSlot(slotId: string): Promise<void> {
+  const vars = await loadSlotVars(slotId);
+  const session = await resolveTmuxSession(vars.slotId, vars, { strict: true });
+  const recordedRunner = (await readSlotField(slotId, 'runner')) as string | null;
+  await terminateRunnerDescendantsInTmuxSession(vars, session, {
+    additionalRunnerIds: recordedRunner ? [recordedRunner] : [],
+  });
+  const slotMod = await import('../slot.js');
+  await slotMod.killAllAgentWindows(vars, session);
 }
 
 export interface NudgeDispatchParams {
@@ -226,7 +192,7 @@ export async function nudgeDispatch(
   // same branch (e.g. another fix-bug run on the same family that hasn't terminated yet).
   const fleet = await loadFleetStatus();
   const liveSlot = fleet.slots.find((s) => s.slot === params.slotId);
-  const { getRun: getRunForVerify } = await import('../../runs/store.js');
+  const { getAllRuns, getRun: getRunForVerify } = await import('../../runs/store.js');
   const requestingRun = getRunForVerify(params.runId);
   if (!requestingRun) throw new Error(`Run ${params.runId} not found in store`);
   // Explicit prepare only — profile-fit must not change nudge resource eligibility.
@@ -247,6 +213,7 @@ export async function nudgeDispatch(
       // didn't thread params.targetBranch through.
       targetBranch: params.targetBranch ?? requestingRun.branch ?? liveSlot?.branch ?? null,
       requiredPrepareProfile,
+      activeRunIds: activeRunIds(getAllRuns(), params.runId),
     },
   );
   if (eligibilityFail) throw new Error(`Branch-affinity nudge no longer valid: ${eligibilityFail}`);
@@ -329,11 +296,23 @@ export async function nudgeDispatch(
   const priorRole = priorFlowTypeRaw ? primaryRoleForFlow(priorFlowTypeRaw as FlowType) : null;
   const newRole = primaryRoleForFlow(flowType);
   const workerRole = priorRole ?? newRole;
-  const workerTarget = await ensureWorkerRoleTarget(vars, session, runner, workerRole);
+  const preferredWindow = agentDispatchWindow(workerRole);
+  const acceptingPane = await resolveRetainedRunnerPane(
+    vars,
+    session,
+    runner,
+    preferredWindow ? `${session}:${preferredWindow}` : null,
+  );
+  if (!acceptingPane) {
+    throw new Error(
+      `No ${runner} runner pane accepts a nudge in ${session}; inspected existing panes only`,
+    );
+  }
+  const workerTarget = acceptingPane.target;
   const primaryTarget: AgentContextTarget = {
     session,
-    window: agentRoleWindow(workerRole),
-    pane: null,
+    window: acceptingPane.window,
+    pane: acceptingPane.pane,
     target: workerTarget,
   };
 

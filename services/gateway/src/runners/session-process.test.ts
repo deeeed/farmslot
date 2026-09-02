@@ -15,8 +15,10 @@ import {
   recaptureRunnerSessionMetadataIfMissing,
   resolvePersistedRunnerSessionBinding,
   resolvePromptBoundRunnerSession,
+  resolveRetainedRunnerPane,
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
+  terminateRunnerDescendantsInTmuxSession,
   verifyExactLiveRunnerSessionBinding,
 } from './session-process.js';
 import { makeVars } from './test-fixtures.js';
@@ -54,6 +56,226 @@ test('runner descendant scan ignores the diagnostic wrapper after child exit', a
   } finally {
     wrapper.kill('SIGKILL');
   }
+});
+
+test('runner descendant scan returns the leaf runner instead of a matching shell wrapper', async () => {
+  const wrapper = spawn('bash', ['-c', `bash -lc 'exec -a claude sleep 3' & wait`], {
+    stdio: 'ignore',
+  });
+
+  try {
+    await sleep(100);
+    const command = buildFindRunnerDescendantPidCommand(String(wrapper.pid), 'claude');
+    const { stdout } = await execFile('bash', ['-lc', command]);
+    assert.match(stdout.trim(), /^\d+$/);
+    assert.notEqual(stdout.trim(), String(wrapper.pid));
+  } finally {
+    wrapper.kill('SIGKILL');
+  }
+});
+
+test('runner descendant scan prefers the runner executable over matching child arguments', async () => {
+  const runner = spawn(
+    'bash',
+    ['-c', `exec -a claude bash -c 'node -e "setTimeout(() => {}, 3000)" claude & wait'`],
+    { stdio: 'ignore' },
+  );
+
+  try {
+    await sleep(100);
+    const command = buildFindRunnerDescendantPidCommand(String(runner.pid), 'claude');
+    const { stdout } = await execFile('bash', ['-lc', command]);
+    assert.equal(stdout.trim(), String(runner.pid));
+  } finally {
+    runner.kill('SIGKILL');
+  }
+});
+
+test('warm replacement terminates every pane runner without typing into composers', async () => {
+  const commands: string[] = [];
+  const probes = new Map<string, number>();
+  const stopped = await terminateRunnerDescendantsInTmuxSession(makeVars(), 'mm-1', {
+    exec: async (_vars, command) => {
+      commands.push(command);
+      if (command.includes('list-panes')) {
+        return { exitCode: 0, stdout: '101\n202\n', stderr: '' };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    },
+    probe: async (_vars, panePid) => {
+      const count = probes.get(panePid) ?? 0;
+      probes.set(panePid, count + 1);
+      return count === 0
+        ? { state: 'present', pid: panePid === '101' ? '110' : '220' }
+        : { state: 'absent' };
+    },
+    sleep: async () => {},
+  });
+
+  assert.equal(stopped, 2);
+  assert.ok(commands.some((command) => command.includes("kill -TERM '110'")));
+  assert.ok(commands.some((command) => command.includes("kill -TERM '220'")));
+  assert.equal(
+    commands.some((command) => command.includes('send-keys')),
+    false,
+  );
+});
+
+test('warm replacement fails closed when tmux panes cannot be inspected', async () => {
+  await assert.rejects(
+    terminateRunnerDescendantsInTmuxSession(makeVars(), 'mm-1', {
+      exec: async (_vars, command) =>
+        command.includes('has-session')
+          ? { exitCode: 0, stdout: '', stderr: '' }
+          : { exitCode: 1, stdout: '', stderr: 'lost connection' },
+    }),
+    /tmux pane inspection failed.*lost connection/,
+  );
+});
+
+test('warm replacement accepts a session confirmed absent after reservation', async () => {
+  const stopped = await terminateRunnerDescendantsInTmuxSession(makeVars(), 'mm-1', {
+    exec: async (_vars, command) =>
+      command.includes('has-session')
+        ? { exitCode: 1, stdout: '', stderr: '' }
+        : { exitCode: 1, stdout: '', stderr: 'no session' },
+  });
+  assert.equal(stopped, 0);
+});
+
+test('warm replacement counts a retried runner PID once', async () => {
+  let probes = 0;
+  const stopped = await terminateRunnerDescendantsInTmuxSession(makeVars(), 'mm-1', {
+    exec: async (_vars, command) =>
+      command.includes('list-panes')
+        ? { exitCode: 0, stdout: '101\n', stderr: '' }
+        : { exitCode: 0, stdout: '', stderr: '' },
+    probe: async () => {
+      probes += 1;
+      return probes <= 2 ? { state: 'present', pid: '110' } : { state: 'absent' };
+    },
+    sleep: async () => {},
+  });
+
+  assert.equal(stopped, 1);
+});
+
+test('warm replacement rechecks runner identity before SIGKILL escalation', async () => {
+  const commands: string[] = [];
+  let runnerProbes = 0;
+  const stopped = await terminateRunnerDescendantsInTmuxSession(makeVars(), 'mm-1', {
+    exec: async (_vars, command) => {
+      commands.push(command);
+      return command.includes('list-panes')
+        ? { exitCode: 0, stdout: '101\n', stderr: '' }
+        : { exitCode: 0, stdout: '', stderr: '' };
+    },
+    probe: async (_vars, _panePid, runnerId) => {
+      if (runnerId === 'cursor') return { state: 'absent' };
+      runnerProbes += 1;
+      return runnerProbes === 1 ? { state: 'present', pid: '110' } : { state: 'absent' };
+    },
+    sleep: async () => {},
+  });
+
+  assert.equal(stopped, 1);
+  assert.ok(commands.some((command) => command.includes("kill -TERM '110'")));
+  assert.equal(
+    commands.some((command) => command.includes("kill -KILL '110'")),
+    false,
+  );
+});
+
+test('warm replacement refuses an unattributed runner with a generic process name', async () => {
+  const commands: string[] = [];
+  await assert.rejects(
+    terminateRunnerDescendantsInTmuxSession(makeVars(), 'mm-1', {
+      exec: async (_vars, command) => {
+        commands.push(command);
+        return command.includes('list-panes')
+          ? { exitCode: 0, stdout: '101\n', stderr: '' }
+          : { exitCode: 0, stdout: '', stderr: '' };
+      },
+      probe: async (_vars, _panePid, runnerId) =>
+        runnerId === 'cursor' ? { state: 'present', pid: '110' } : { state: 'absent' },
+    }),
+    /cursor process requires matching recorded runner identity/,
+  );
+
+  assert.equal(
+    commands.some((command) => command.includes('kill -TERM')),
+    false,
+  );
+});
+
+test('warm replacement probes a declared custom runner before safe registered fallbacks', async () => {
+  const runnerIds: Array<string | null | undefined> = [];
+  let customSeen = false;
+  const stopped = await terminateRunnerDescendantsInTmuxSession(makeVars(), 'mm-1', {
+    exec: async (_vars, command) =>
+      command.includes('list-panes')
+        ? { exitCode: 0, stdout: '101\n', stderr: '' }
+        : { exitCode: 0, stdout: '', stderr: '' },
+    probe: async (_vars, _panePid, runnerId) => {
+      runnerIds.push(runnerId);
+      if (runnerId !== 'aider') return { state: 'absent' };
+      if (!customSeen) {
+        customSeen = true;
+        return { state: 'present', pid: '110' };
+      }
+      return { state: 'absent' };
+    },
+    sleep: async () => {},
+    additionalRunnerIds: ['aider'],
+  });
+
+  assert.equal(stopped, 1);
+  assert.deepEqual(runnerIds.slice(0, 3), ['aider', 'aider', 'claude']);
+});
+
+test('nudge target resolution skips shells and reviewer panes, then picks the newest runner', async () => {
+  const probes: string[] = [];
+  const result = await resolveRetainedRunnerPane(makeVars(), 'mm-4', 'codex', 'mm-4:review', {
+    exec: async (_vars, command) => {
+      if (command.includes('list-panes')) {
+        return {
+          exitCode: 0,
+          stdout: [
+            '1|dev|0|300|100',
+            '2|rev-codex|0|200|500',
+            '3||0|400|400',
+            '4|review|0|100|600',
+            '5|ci-fix|0|500|700',
+          ].join('\n'),
+          stderr: '',
+        };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    },
+    probe: async (_vars, panePid) => {
+      probes.push(panePid);
+      return panePid === '100' ? { state: 'absent' } : { state: 'present', pid: panePid };
+    },
+  });
+
+  assert.equal(result?.target, 'mm-4:3.0');
+  assert.equal(result?.window, '3');
+  assert.equal(probes.includes('200'), false, 'dedicated reviewer panes must not receive nudges');
+  assert.equal(probes.includes('500'), false, 'CI fix panes must not receive nudges');
+});
+
+test('nudge target resolution fails closed when runner liveness is unknown', async () => {
+  await assert.rejects(
+    resolveRetainedRunnerPane(makeVars(), 'mm-4', 'codex', null, {
+      exec: async () => ({
+        exitCode: 0,
+        stdout: '1|dev|0|300|100\n2|bugfix|0|400|200',
+        stderr: '',
+      }),
+      probe: async () => ({ state: 'unknown', reason: 'ssh timeout' }),
+    }),
+    /Cannot inspect retained runner.*ssh timeout/,
+  );
 });
 
 test('persisted runner session binding selects id and path from one source', () => {

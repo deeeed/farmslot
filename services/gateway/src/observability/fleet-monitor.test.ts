@@ -101,6 +101,69 @@ test('detectFleetMonitorViolations does not flag expected idle lifecycle phases'
   }
 });
 
+test('detectFleetMonitorViolations trusts an active structured agent context', () => {
+  const busyIdle = slot({
+    lifecycle: 'busy',
+    phase: 'working',
+    agent: 'idle',
+    currentRunId: 'run-1',
+    agentContexts: [
+      {
+        id: 'ci-fix',
+        role: 'ci-fix',
+        label: 'CI fix',
+        status: 'working',
+        runId: 'run-1',
+        lastSignalAt: '2026-04-25T00:00:00Z',
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    detectFleetMonitorViolations(
+      fleet([busyIdle]),
+      new Set<string>(),
+      () => '2026-04-25T00:01:00Z',
+    ),
+    [],
+  );
+});
+
+test('detectFleetMonitorViolations rejects stale or foreign structured contexts', () => {
+  const activeContext = {
+    id: 'ci-fix',
+    role: 'ci-fix' as const,
+    label: 'CI fix',
+    status: 'working' as const,
+    runId: 'run-1',
+    lastSignalAt: '2026-04-25T00:00:00Z',
+  };
+  const base = {
+    lifecycle: 'busy' as const,
+    phase: 'working' as const,
+    agent: 'idle' as const,
+    currentRunId: 'run-1',
+  };
+
+  for (const { candidate, observedAt } of [
+    {
+      candidate: slot({ ...base, currentRunId: 'run-2', agentContexts: [activeContext] }),
+      observedAt: '2026-04-25T00:01:00Z',
+    },
+    {
+      candidate: slot({ ...base, agentContexts: [activeContext] }),
+      observedAt: '2026-04-25T00:06:00Z',
+    },
+  ]) {
+    assert.deepEqual(
+      detectFleetMonitorViolations(fleet([candidate]), new Set<string>(), () => observedAt).map(
+        (violation) => violation.type,
+      ),
+      ['idle'],
+    );
+  }
+});
+
 test('detectFleetMonitorViolations dedupes stuck and idle independently', () => {
   const notified = new Set<string>();
   const noTmux = fleet([slot({ lifecycle: 'busy', agent: 'no-tmux' })]);

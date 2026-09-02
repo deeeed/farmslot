@@ -787,8 +787,8 @@ export class RunDetail extends RunDetailState {
         }),
       _renderRunEvidence: (run) => this._renderRunEvidence(run),
       _renderInteractivePackets: (run) => this._renderInteractivePackets(run),
-      _onReplayStep: (stepName, skipPrepare, prepareProfile) =>
-        this._onReplayStep(stepName, skipPrepare, prepareProfile),
+      _onReplayStep: (stepName, skipPrepare, prepareProfile, freshDispatch) =>
+        this._onReplayStep(stepName, skipPrepare, prepareProfile, freshDispatch),
       renderGateSection: (run) => this.renderGateSection(run),
       renderGrade: renderRunGrade,
       onStepSelect: (step) => {
@@ -956,15 +956,27 @@ export class RunDetail extends RunDetailState {
     };
   }
 
-  private async _onReplayStep(stepName: string, skipPrepare?: boolean, prepareProfile?: string) {
+  private async _onReplayStep(
+    stepName: string,
+    skipPrepare?: boolean,
+    prepareProfile?: string,
+    freshDispatch?: boolean,
+  ) {
     if (this._actionsBlocked()) return;
     if (!this.run) return;
+    if (
+      freshDispatch &&
+      !window.confirm('Abandon the ambiguous retained handoff, stop its runner, and launch fresh?')
+    ) {
+      return;
+    }
     try {
       await gateway.request(Methods.RUN_REPLAY_STEP, {
         runId: this.run.id,
         stepName,
         skipPrepare: skipPrepare || undefined,
         prepareProfile: prepareProfile || undefined,
+        freshDispatch: freshDispatch || undefined,
       });
       this.selectedStep = null;
     } catch (err) {

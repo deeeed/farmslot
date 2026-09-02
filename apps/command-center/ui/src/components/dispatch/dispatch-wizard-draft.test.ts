@@ -5,6 +5,7 @@ import type { PreparePhase } from '@farmslot/protocol';
 
 import {
   appLabel,
+  buildPublicationReviewDepth,
   buildPublicationReviewGateParams,
   buildPublicationReviewPlan,
   defaultExtraReviewRunner,
@@ -59,7 +60,8 @@ test('publication review draft builds gate params for fix-bug and autonomous dev
   assert.deepEqual(buildPublicationReviewGateParams('fix-bug', 'claude', loops, runners), {
     reviewDepth: {
       minimumIndependentReviews: 1,
-      extraLoopsRequested: 1,
+      extraLoopsRequested: 0,
+      countingVersion: 2,
       requireCrossRunner: true,
       requestedBy: 'dispatch',
     },
@@ -70,11 +72,28 @@ test('publication review draft builds gate params for fix-bug and autonomous dev
     {
       reviewDepth: {
         minimumIndependentReviews: 1,
-        extraLoopsRequested: 1,
+        extraLoopsRequested: 0,
+        countingVersion: 2,
         requireCrossRunner: true,
         requestedBy: 'dispatch',
       },
       pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
+    },
+  );
+});
+
+test('publication review depth counts configured loops once', () => {
+  assert.deepEqual(
+    buildPublicationReviewDepth('fix-bug', 'claude', [
+      { order: 1, runner: 'codex' },
+      { order: 2, runner: 'cursor' },
+    ]),
+    {
+      minimumIndependentReviews: 1,
+      extraLoopsRequested: 1,
+      countingVersion: 2,
+      requireCrossRunner: true,
+      requestedBy: 'dispatch',
     },
   );
 });

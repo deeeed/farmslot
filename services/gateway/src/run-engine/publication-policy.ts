@@ -60,6 +60,7 @@ function clampReviewPolicy(policy: ReviewDepthPolicy): ReviewDepthPolicy {
     ),
     requireCrossRunner,
     extraLoopsRequested: Math.max(0, policy.extraLoopsRequested),
+    ...(policy.countingVersion === 2 ? { countingVersion: 2 as const } : {}),
     requestedBy: policy.requestedBy,
   };
 }

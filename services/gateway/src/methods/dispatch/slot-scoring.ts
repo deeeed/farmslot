@@ -3,6 +3,7 @@ import {
   isCdpLiveValue,
   isDispatchScoreStale,
   isSlotRefreshStaleBranch,
+  type Run,
   type RunStatus,
   SLOT_LIFECYCLE,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
@@ -40,6 +41,51 @@ export function isFreeSlot(slot: SlotStatus): boolean {
   if (slot.missingFromPool) return false;
   if (slot.lifecycle !== 'ready') return false;
   return slot.agent !== 'working';
+}
+
+export function activeRunSlotIds(
+  runs: ReadonlyArray<Pick<Run, 'id' | 'slotId' | 'status'>>,
+  excludeRunId?: string,
+): Set<string> {
+  return new Set(
+    runs
+      .filter(
+        (run) =>
+          run.id !== excludeRunId &&
+          run.slotId &&
+          !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus),
+      )
+      .map((run) => run.slotId as string),
+  );
+}
+
+export function activeRunIds(
+  runs: ReadonlyArray<Pick<Run, 'id' | 'status'>>,
+  excludeRunId?: string,
+): Set<string> {
+  return new Set(
+    runs
+      .filter(
+        (run) =>
+          run.id !== excludeRunId && !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus),
+      )
+      .map((run) => run.id),
+  );
+}
+
+/** A retained runner with no active Run owner. Manual slots remain protected. */
+export function isReplaceableWarmSlot(
+  slot: SlotStatus,
+  activeSlotIds: ReadonlySet<string>,
+  activeOwnerIds: ReadonlySet<string>,
+): boolean {
+  return (
+    !slot.missingFromPool &&
+    slot.lifecycle === 'ready' &&
+    slot.agent === 'working' &&
+    (!slot.currentRunId || !activeOwnerIds.has(slot.currentRunId)) &&
+    !activeSlotIds.has(slot.slot)
+  );
 }
 
 export function isCdpLive(cdp: string): boolean {
@@ -268,8 +314,9 @@ export function validateSlotForTargetBranch(
   slot: SlotStatus,
   slots: readonly SlotStatus[],
   targetBranch?: string | null,
+  options?: { allowWorking?: boolean },
 ): string | null {
-  const baseError = validateSlot(slot);
+  const baseError = validateSlot(slot, options);
   if (baseError) return baseError;
   const blocker = slotBranchCheckoutBlocker(slot, slots, targetBranch);
   if (!blocker) return null;
@@ -279,18 +326,26 @@ export function validateSlotForTargetBranch(
 export function validateSlotForDispatch(
   slot: SlotStatus,
   slots: readonly SlotStatus[],
-  options?: { targetBranch?: string | null; requiredPrepareProfile?: string | null },
+  options?: {
+    targetBranch?: string | null;
+    requiredPrepareProfile?: string | null;
+    allowWorking?: boolean;
+  },
 ): string | null {
   return (
-    validateSlotForTargetBranch(slot, slots, options?.targetBranch) ??
-    companionResourceBlocker(slot, options?.requiredPrepareProfile)
+    validateSlotForTargetBranch(slot, slots, options?.targetBranch, {
+      allowWorking: options?.allowWorking,
+    }) ?? companionResourceBlocker(slot, options?.requiredPrepareProfile)
   );
 }
 
-export function validateSlot(slot: SlotStatus): string | null {
+export function validateSlot(
+  slot: SlotStatus,
+  options?: { allowWorking?: boolean },
+): string | null {
   if (slot.lifecycle === 'disabled') return 'Slot is disabled';
   if (slot.lifecycle === 'manual') return 'Slot is in manual mode';
-  if (slot.agent === 'working') return 'Agent is working';
+  if (slot.agent === 'working' && !options?.allowWorking) return 'Agent is working';
   if (slot.lifecycle === 'busy') return `Slot is busy (${slot.phase ?? 'unknown'})`;
   return null;
 }

@@ -39,6 +39,13 @@ export const OUTPUT_KEYS = new Set(['lastOutput']);
 // Keys to hide (too verbose, not useful in inspector)
 export const HIDDEN_KEYS = new Set<string>(['attempts', 'timeline']);
 
+export function isFreshDispatchRecovery(run: Run | null | undefined, stepName: string): boolean {
+  return (
+    stepName === 'dispatch' &&
+    run?.error?.startsWith('Retained session handoff requires operator attention:') === true
+  );
+}
+
 export interface StepCostInfo {
   cost: string;
   tokens?: string;

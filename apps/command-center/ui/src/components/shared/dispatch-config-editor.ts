@@ -19,6 +19,7 @@ import './slot-prepare-options.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import type { EffortLevel } from '../../utils/runner-options.js';
 import { RUNNER_OPTIONS } from '../../utils/runner-options.js';
+import { reviewDepthForConfiguredPlan } from '../dispatch/dispatch-wizard-draft.js';
 
 import type { RunnerModelEffortChangeDetail } from './runner-model-effort-picker.js';
 import type { SlotPrepareOptionsChangeDetail } from './slot-prepare-options.js';
@@ -229,12 +230,7 @@ export class DispatchConfigEditor extends LitElement {
   } {
     if (next.length === 0) return { reviewDepth: null, pendingReviewPlan: null };
     return {
-      reviewDepth: {
-        minimumIndependentReviews: 1,
-        requireCrossRunner: next.some((loop) => loop.runner !== this.runner),
-        extraLoopsRequested: next.length,
-        requestedBy: 'dispatch',
-      },
+      reviewDepth: reviewDepthForConfiguredPlan(this.runner, next),
       pendingReviewPlan: [...next],
     };
   }

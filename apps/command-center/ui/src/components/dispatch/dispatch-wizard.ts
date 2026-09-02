@@ -616,6 +616,9 @@ export class DispatchWizard extends DispatchWizardState {
         domain: this._domain || undefined,
         executionTemplateId: this._selectedExecutionTemplateId || undefined,
         app: this._app || undefined,
+        freshReuse:
+          this._candidates.find((candidate) => candidate.slotId === this._slotOverride)
+            ?.replaceableWarm === true || undefined,
       });
       if (gen !== this._fetchGen) return;
       this._profileFitSuggestion = suggestion;
@@ -1027,6 +1030,13 @@ export class DispatchWizard extends DispatchWizardState {
           : null;
     const queueTemplateReason =
       templateReason ??
+      (selectedNudgeIntent({
+        candidates: this._candidates,
+        slotOverride: this._slotOverride,
+        intents: this._nudgeIntents,
+      })
+        ? 'The selected worker action must dispatch now; it cannot be queued against changing slot state.'
+        : null) ??
       (this._executionTemplates && !this._slotOverride
         ? 'Select a slot before queuing a configured execution template.'
         : null);

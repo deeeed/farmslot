@@ -132,9 +132,16 @@ export class FamilyObservability extends FamilyObservabilityState {
     stepName: string,
     skipPrepare?: boolean,
     prepareProfile?: string,
+    freshDispatch?: boolean,
   ): Promise<void> {
     const runId = this.selectedRunId;
     if (!runId) return;
+    if (
+      freshDispatch &&
+      !window.confirm('Abandon the ambiguous retained handoff, stop its runner, and launch fresh?')
+    ) {
+      return;
+    }
     // Re-entry guard: a fast double-click would otherwise fire two parallel
     // RUN_REPLAY_STEP requests, racing the snapshot reload that follows.
     if (this._replayingStep) return;
@@ -146,6 +153,7 @@ export class FamilyObservability extends FamilyObservabilityState {
         stepName,
         skipPrepare: skipPrepare || undefined,
         prepareProfile: prepareProfile || undefined,
+        freshDispatch: freshDispatch || undefined,
       });
       this._selectedStep = null;
       // Drop the cached Run so the next selection re-fetches the post-replay
@@ -958,8 +966,8 @@ export class FamilyObservability extends FamilyObservabilityState {
       onCloseStepInspector: () => {
         this._selectedStep = null;
       },
-      onReplayStep: (stepName, skipPrepare, prepareProfile) =>
-        this._onReplayStep(stepName, skipPrepare, prepareProfile),
+      onReplayStep: (stepName, skipPrepare, prepareProfile, freshDispatch) =>
+        this._onReplayStep(stepName, skipPrepare, prepareProfile, freshDispatch),
       renderLedgerDiffDetail: (targetRun) => this._renderLedgerDiffDetail(targetRun),
     });
   }
