@@ -221,7 +221,7 @@ latest_tool_start = None
 latest_tool_end = None
 for event in read_jsonl_tail(events_path):
     event_ms = parse_aware_timestamp_ms(event.get('ts'))
-    if event_ms is None or event_ms < candidate['opened_at_ms']:
+    if event_ms is None:
         continue
     event_type = event.get('type')
     if event_type == 'turn_started' and isinstance(event.get('turn_number'), int):
@@ -275,7 +275,10 @@ if (
     and latest_start['turn_number'] == latest_user['prompt_index']
     and expected_prompt is not None
     and since_ms is not None
-    and latest_start['at'] >= max(candidate['opened_at_ms'], since_ms)
+    # Grok can persist the first turn event just before active_sessions.json
+    # records opened_at. The caller's provider-clock baseline rejects stale
+    # turns; opened_at is only process-binding metadata, not an event cutoff.
+    and latest_start['at'] >= since_ms
     and latest_user['text'] == expected_prompt
 ):
     accepted_at = latest_start['at']

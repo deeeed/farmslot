@@ -56,6 +56,8 @@ function detectAuthRequired(pane: string): boolean {
 const USAGE_LIMIT_BANNER_PATTERNS = [
   /^[│┃║\s]*(usage|rate|weekly|session|5-hour|five-hour) limits? (reached|hit|exceeded)\b/,
   /^[│┃║\s]*you'?ve (reached|hit|exceeded) your (usage|rate|weekly|session|5-hour|five-hour) limits?\b/,
+  /^[│┃║\s]*you (reached|hit|exceeded) your (usage|rate|weekly|session|5-hour|five-hour) limits?\b/,
+  /^[│┃║\s]*turn failed: request failed \([0-9]+\): .*usage balance exhausted\b/,
   /^[│┃║\s]*(?:your )?limits? (resets?|will reset) (at|in) \d/,
 ];
 
@@ -72,6 +74,24 @@ function detectUsageLimit(pane: string): boolean {
     if (USAGE_LIMIT_BANNER_PATTERNS.some((pattern) => pattern.test(normalized))) return true;
   }
   return false;
+}
+
+function detectCodexUpdatePrompt(pane: string): boolean {
+  const lower = pane.toLowerCase();
+  const menuStart = lower.lastIndexOf('1. update now');
+  const confirm = lower.lastIndexOf('press enter to continue');
+  if (
+    menuStart < 0 ||
+    confirm < menuStart ||
+    !lower.slice(menuStart, confirm).includes('2. skip') ||
+    !lower.slice(menuStart, confirm).includes('3. skip until next version')
+  ) {
+    return false;
+  }
+
+  // The menu remains in tmux scrollback after Codex starts. Only classify it
+  // while no real composer has appeared below the menu's confirmation line.
+  return !/[\n\r]\s*›\s+ask codex to do anything\b/i.test(pane.slice(confirm));
 }
 
 export function lineHasAuthBlockerPhrase(line: string): boolean {
@@ -133,6 +153,9 @@ function detectLaunchBlocker(
     lower.includes('press enter to confirm')
   ) {
     return { kind: 'hooks-review', autoAction: 'codex-refresh-hooks-and-trust' };
+  }
+  if (runner === 'codex' && detectCodexUpdatePrompt(pane)) {
+    return { kind: 'update-available', autoAction: 'codex-skip-update' };
   }
   if (runner === 'grok') {
     const liveStatus = grokLiveStatusText(pane);

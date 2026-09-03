@@ -508,6 +508,47 @@ describe('cursor runner', () => {
     assert.match(commands[1], /^send-keys -t 'core-2:review\.0' '2' 'Enter'/);
   });
 
+  it('detects and skips a live Codex update prompt', async () => {
+    const codexPane = `
+  Update available! 0.152.0 -> 0.152.1
+  1. Update now (runs npm install)
+  2. Skip
+  3. Skip until next version
+  Press enter to continue
+`;
+    assert.deepEqual(detectRunnerLaunchBlocker(codexPane, 'codex'), {
+      kind: 'update-available',
+      summary: 'Codex is waiting for an update choice before the chat input is available.',
+      autoAction: 'codex-skip-update',
+    });
+    assert.equal(runnerLaunchBlockerAutoActionKey('codex-skip-update'), '2');
+
+    const commands: string[] = [];
+    const result = await resolveLaunchBlockerWithFreshEvidence({
+      runnerId: 'codex',
+      target: 'mm-3:agent.0',
+      logPrefix: 'test',
+      exec: async (tmuxCommand) => {
+        commands.push(tmuxCommand);
+        return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? codexPane : '' };
+      },
+    });
+    assert.deepEqual(result, { outcome: 'sent', key: '2' });
+    assert.match(commands[1], /^send-keys -t 'mm-3:agent\.0' '2' 'Enter'/);
+  });
+
+  it('ignores a Codex update menu left above the live composer', () => {
+    const pane = `
+  1. Update now
+  2. Skip
+  3. Skip until next version
+  Press enter to continue
+
+  › Ask Codex to do anything
+`;
+    assert.equal(detectRunnerLaunchBlocker(pane, 'codex'), null);
+  });
+
   it('resolveLaunchBlockerWithFreshEvidence never sends without fresh deterministic evidence', async () => {
     const commands: string[] = [];
     const result = await resolveLaunchBlockerWithFreshEvidence({
@@ -593,6 +634,15 @@ describe('cursor runner', () => {
   it('classifies weekly-limit-reached banners as usage-limit blockers', () => {
     const pane = 'Weekly limit reached. Upgrade or wait for the limit to reset.';
     assert.equal(detectRunnerLaunchBlocker(pane, 'claude')?.kind, 'usage-limit');
+  });
+
+  it('classifies Grok exhausted-balance and weekly-limit banners as usage-limit blockers', () => {
+    const pane = [
+      'Turn failed: Request failed (402): Grok Build usage balance exhausted',
+      'You hit your weekly limit.',
+      '3 (○) Try Again',
+    ].join('\n');
+    assert.equal(detectRunnerLaunchBlocker(pane, 'grok')?.kind, 'usage-limit');
   });
 
   it('does not classify ordinary limit prose as a usage-limit blocker', () => {

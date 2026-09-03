@@ -7,7 +7,7 @@ import json
 import os
 import sys
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from glob import glob
 from pathlib import Path
 
@@ -69,17 +69,33 @@ def real_review_items(excerpt):
     if not isinstance(excerpt, str):
         return []
     rows = []
+    headers = None
     for line in excerpt.splitlines():
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
-        if len(cells) < 5:
+        normalized = [c.lower().rstrip("?") for c in cells]
+        if "triage" in normalized:
+            headers = normalized
             continue
-        if cells[0] in ("#", "---"):
+        if headers is None or all(set(c) <= {"-", ":"} for c in cells):
             continue
-        triage = cells[3].upper()
+        triage_idx = headers.index("triage")
+        if triage_idx >= len(cells):
+            continue
+        triage = cells[triage_idx].upper()
         if "REAL" in triage and "OUT" not in triage:
-            rows.append({"author": cells[1], "file": cells[2], "triage": cells[3], "action": cells[4]})
+            author_idx = headers.index("author") if "author" in headers else None
+            file_idx = next((headers.index(name) for name in ("file", "where") if name in headers), None)
+            action_idx = headers.index("action") if "action" in headers else None
+            rows.append(
+                {
+                    "author": cells[author_idx] if author_idx is not None and author_idx < len(cells) else "?",
+                    "file": cells[file_idx] if file_idx is not None and file_idx < len(cells) else "(report)",
+                    "triage": cells[triage_idx],
+                    "action": cells[action_idx] if action_idx is not None and action_idx < len(cells) else "See report excerpt",
+                }
+            )
     return rows
 
 
@@ -123,6 +139,11 @@ def write_digest(project, items, today):
             links = fmt_links(run.get("links"))
             ciwatch = fmt_ciwatch(payload.get("ciWatch"))
             real_items = real_review_items(payload.get("reportExcerpt"))
+            triage_summary = payload.get("commentsTriageSummary") or {}
+            structured_real = triage_summary.get("real", 0)
+            if not isinstance(structured_real, int):
+                structured_real = 0
+            real_count = max(len(real_items), structured_real)
             failures = step_failures(run.get("steps"))
             created = (dec.get("createdAt") or "")[:10]
 
@@ -140,11 +161,17 @@ def write_digest(project, items, today):
                 lines.append(f"- step failures:")
                 for fail in failures:
                     lines.append(f"  - {fail}")
-            if real_items:
-                lines.append(f"- review items flagged REAL ({len(real_items)}):")
+            if real_count:
+                lines.append(f"- review items flagged REAL ({real_count}):")
                 for it in real_items:
                     file_short = it["file"].split("/")[-1] if it["file"] else "(conv)"
                     lines.append(f"  - **{file_short}** — {it['action']} _(by {it['author']})_")
+                missing_details = real_count - len(real_items)
+                if missing_details:
+                    lines.append(
+                        f"  - {missing_details} additional REAL item(s) recorded in structured triage; "
+                        "the report excerpt has no parseable table row"
+                    )
             else:
                 lines.append("- review items: none REAL (all out-of-scope/clean)")
             lines.append("")
@@ -172,7 +199,7 @@ def write_digest(project, items, today):
 
 
 def main():
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     pending = load_pending()
     by_project = defaultdict(list)
     for run, dec in pending:

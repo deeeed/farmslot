@@ -310,6 +310,10 @@ export interface RunResumeResult {
 export interface RunReplayStepParams {
   runId: string;
   stepName: string;
+  /** Replace the run's runner before replaying this step, preserving task and worktree state. */
+  runner?: string;
+  /** Model paired with `runner`; defaults to that runner's configured default when omitted. */
+  model?: string;
   /** Skip slot prepare on replay entirely — operator owns slot state (ADR-037 §5). */
   skipPrepare?: boolean;
   /** Replay PREPARE with this named profile; persisted on the run before the engine restarts. */

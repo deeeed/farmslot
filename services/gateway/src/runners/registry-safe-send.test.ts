@@ -248,6 +248,7 @@ mock.module('./prompt-delivery-evidence.js', {
 });
 
 const {
+  PromptDeliveryUncertainError,
   resolvePrimaryWorkerTarget,
   runnerHasDurablePromptHandoff,
   sendRunnerInstructionSafely,
@@ -370,7 +371,7 @@ test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', 
       maxAttempts: 2,
       requirePromptDigest: true,
     }),
-    /Prompt delivery failed/,
+    PromptDeliveryUncertainError,
   );
 
   assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);

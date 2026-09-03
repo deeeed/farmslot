@@ -169,6 +169,33 @@ test('createRetrospective broadcasts root supersession before follow-up new (ato
   );
 });
 
+test('createRetrospective is idempotent for concurrent calls on the same run', async (t) => {
+  t.after(() => initRunCompletion(() => {}));
+  const base = await mkdtemp(path.join(os.tmpdir(), 'run-retro-idempotency-'));
+  const taskDir = path.join(base, 'task');
+  await writeArtifact(taskDir, 'TASK.md', '# task');
+  await writeArtifact(taskDir, 'artifacts/learnings.md', 'One durable lesson.');
+
+  const run = createRun({
+    flowType: 'pr-complete',
+    mode: 'autonomous',
+    project: 'example-browser-farm',
+    ticketOrPr: 'owner/repo#2',
+  });
+  updateRun(run.id, {
+    status: 'done',
+    taskFile: path.join(taskDir, 'TASK.md'),
+  });
+  t.after(async () => deleteRun(run.id));
+
+  await Promise.all([createRetrospective(run, null), createRetrospective(run, null)]);
+
+  const retrospectives = getRun(run.id)!.decisions.filter(
+    (decision) => decision.type === 'retrospective' && !decision.resolvedAt,
+  );
+  assert.equal(retrospectives.length, 1);
+});
+
 test('createRetrospective emits terminal update-branch family retro with review-comment triage', async (t) => {
   t.after(() => initRunCompletion(() => {}));
   const base = await mkdtemp(path.join(os.tmpdir(), 'family-retro-merge-terminal-'));

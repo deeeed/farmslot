@@ -40,6 +40,7 @@ import {
   shouldDeliverStuckNudge,
 } from '../runners/observability-progress.js';
 import {
+  detectRunnerLaunchBlocker,
   getRunnerSessionUsageProvider,
   readRunnerActivityFromObservability,
   readRunnerTurnState,
@@ -784,6 +785,27 @@ export function shouldHoldForInteractivePrComplete(run: Pick<Run, 'flowType' | '
 
 type AgentLiveStatus = 'working' | 'idle' | 'no-tmux';
 
+export function monitorRunnerBlockerViolation(options: {
+  paneContent: string;
+  runner?: string | null;
+  slotId: string;
+  role?: AgentRole;
+  contextId?: string;
+  timestamp?: string;
+}): MonitorViolation | null {
+  const blocker = detectRunnerLaunchBlocker(options.paneContent, options.runner);
+  if (blocker?.kind !== 'usage-limit' && blocker?.kind !== 'auth-required') return null;
+  return {
+    slotId: options.slotId,
+    role: options.role,
+    contextId: options.contextId,
+    type: 'error',
+    message: blocker.summary,
+    nudgeSent: null,
+    timestamp: options.timestamp ?? new Date().toISOString(),
+  };
+}
+
 /** Minimal run fields the monitor nudge helpers read — accepts partial test fixtures. */
 export type MonitorNudgeRunView = {
   flowType: Run['flowType'];
@@ -1336,6 +1358,23 @@ export async function monitorRun(
           violation: { type: v.type, message: v.message },
         });
 
+        if (v.type === 'error') {
+          console.log(
+            `[run-monitor] run ${runId.slice(0, 8)} — runner unavailable; blocking instead of nudging: ${v.message}`,
+          );
+          snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
+          const actionId = await createBlockedDecision(
+            runId,
+            'runner_unavailable',
+            `${v.message} Restore the provider account or authentication in the retained runner pane, then choose Continue. The worktree and current task state are preserved.`,
+          );
+          if (actionId === 'abort') {
+            exitReason = 'aborted';
+            return { pollCount, exitReason, violations: allViolations, snapshots };
+          }
+          continue;
+        }
+
         if (v.type === 'stuck' || v.type === 'idle' || v.type === 'waiting') {
           const latestRun = getRun(runId);
           if (!latestRun) {
@@ -1507,6 +1546,15 @@ async function detectViolations(
     const vars = await loadSlotVars(slotId);
     const paneContent = await capturePaneContent(vars, runId, role, contextId);
     const runner = getRun(runId)?.metrics.runner;
+    const runnerBlocker = monitorRunnerBlockerViolation({
+      paneContent,
+      runner,
+      slotId,
+      role,
+      contextId,
+      timestamp: new Date(now).toISOString(),
+    });
+    if (runnerBlocker) return [runnerBlocker];
     const target = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
     const stuckState = await evaluateMonitorStuckForRunner({
       vars,

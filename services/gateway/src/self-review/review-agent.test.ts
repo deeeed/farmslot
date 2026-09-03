@@ -9,6 +9,7 @@ import { retainedReviewerDeliveryPlan } from '../runners/registry.js';
 import { targetForChecklistBasename } from '../tasks/checklist-target.js';
 
 import {
+  prependReviewerExecutionContract,
   resumeReviewAgentPromptDelivery,
   reviewerChecklistBasename,
   reviewerFeedbackRelPath,
@@ -112,6 +113,11 @@ test('review agent instructions use context-scoped checklist, signal, and feedba
   assert.match(prompt, /--checklist SELF-REVIEW\.rev-codex-2\.md/);
   assert.match(prompt, /--signal SELF-REVIEW\.rev-codex-2-SIGNAL\.json/);
   assert.match(prompt, /tasks\/run-1\/artifacts\/review-feedback\.rev-codex-2\.md/);
+
+  const checklistWithContract = prependReviewerExecutionContract('Review the diff.', prompt);
+  assert.match(checklistWithContract, /^## Reviewer-specific execution contract/);
+  assert.match(checklistWithContract, /--signal SELF-REVIEW\.rev-codex-2-SIGNAL\.json/);
+  assert.match(checklistWithContract, /\n\nReview the diff\.$/);
 });
 
 test('review agent scopes legacy template feedback paths to the reviewer context', () => {
@@ -487,7 +493,8 @@ test('review prompt recovery reuses the exact live reviewer pane', async () => {
       ],
       resolveExactTmuxWindowPane: async () => ({ paneId: '%22', panePid: '2002' }),
       probeRunnerDescendantPid: async () => ({ state: 'present', pid: '2002' }),
-      resolveWorkerDispatchPrompt: async () => 'Review the prepared package.',
+      resolveWorkerDispatchPrompt: async () =>
+        'Follow the checklist in tasks/run-1/SELF-REVIEW.rev-claude.md.',
       resolveProjectRuntimeDir: async () => 'temp/recipe/runtime',
       sendRunnerPostLaunchPrompt: async (_vars, paneId, _runner, prompt) => {
         sentPane = paneId;
@@ -499,7 +506,8 @@ test('review prompt recovery reuses the exact live reviewer pane', async () => {
   assert.equal(outcome, 'delivered');
   assert.equal(sentPane, '%22');
   assert.match(sentPrompt, /SELF-REVIEW\.rev-claude\.md/);
-  assert.match(sentPrompt, /review-feedback\.rev-claude\.md/);
+  assert.doesNotMatch(sentPrompt, /review-feedback\.rev-claude\.md/);
+  assert.doesNotMatch(sentPrompt, /SIGNAL\.json complete/);
 });
 
 test('review recovery timeout performs cleanup before allowing a fresh reviewer', async () => {

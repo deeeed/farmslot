@@ -22,7 +22,7 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from glob import glob
 from pathlib import Path
 
@@ -150,11 +150,12 @@ def main():
         return 0
 
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
     log_path = DIGEST_DIR / f"{today}-resolved.log"
 
     with open(log_path, "a") as log:
-        ts_run = datetime.utcnow().isoformat() + "Z"
+        ts_run = now.isoformat().replace("+00:00", "Z")
         log.write(f"\n# bulk-resolve pass {ts_run} — reason: {args.reason}\n")
         ok = 0
         skipped = 0

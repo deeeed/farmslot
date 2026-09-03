@@ -414,6 +414,16 @@ export async function createRetrospective(run: Run, report: string | null): Prom
   const current = getRun(run.id);
   if (!current) return;
 
+  // Completion can retry the same terminal step before the first caller's
+  // broadcasts settle. Keep one unresolved retrospective per run just as the
+  // family-level guard below keeps one unresolved retrospective per family.
+  if (current.decisions.some((d) => d.type === 'retrospective' && !d.resolvedAt)) {
+    console.log(
+      `[run-completion] retrospective already pending for run ${run.id.slice(0, 8)}; skipping duplicate`,
+    );
+    return;
+  }
+
   // Atomic swap — must stay synchronous through the broadcast pair below.
   // No `await` allowed here: an interleaved microtask lets a concurrent
   // createRetrospective observe partial state and the race-loser bail can't

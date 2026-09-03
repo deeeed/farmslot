@@ -17,6 +17,21 @@ shell_json="$(
 printf '%s\n' "$shell_json" | grep -q '"state": "shell"'
 printf '%s\n' "$shell_json" | grep -q '"confidence": "high"'
 
+wrapped_claude_json="$(
+  TMUX_PANE_STATE_CURRENT_COMMAND="bash" \
+  TMUX_PANE_STATE_CURRENT_PATH="/tmp" \
+  TMUX_PANE_STATE_SESSION_NAME="demo" \
+  TMUX_PANE_STATE_PANE_TITLE="claude" \
+  TMUX_PANE_STATE_PANE_PID="123" \
+  TMUX_PANE_STATE_FOREGROUND_COMMANDS=$'bash\n/usr/local/bin/claude\n/usr/local/bin/node' \
+  TMUX_PANE_STATE_TAIL_CAPTURE=$'Baked for 1m\n❯ rerun the lint job' \
+  TMUX_PANE_STATE_LAST_LINE='❯ rerun the lint job' \
+  "$SCRIPT" "%1a"
+)"
+printf '%s\n' "$wrapped_claude_json" | grep -q '"state": "claude"'
+printf '%s\n' "$wrapped_claude_json" | grep -q '"confidence": "high"'
+printf '%s\n' "$wrapped_claude_json" | grep -q 'foreground process group contains Claude'
+
 claude_json="$(
   TMUX_PANE_STATE_CURRENT_COMMAND="claude" \
   TMUX_PANE_STATE_CURRENT_PATH="/tmp" \
@@ -43,6 +58,19 @@ claude_exe_json="$(
 printf '%s\n' "$claude_exe_json" | grep -q '"state": "claude"'
 printf '%s\n' "$claude_exe_json" | grep -q '"confidence": "high"'
 printf '%s\n' "$claude_exe_json" | grep -q '"phase": "busy"'
+
+claude_dot_exe_json="$(
+  TMUX_PANE_STATE_CURRENT_COMMAND="claude.exe" \
+  TMUX_PANE_STATE_CURRENT_PATH="/tmp" \
+  TMUX_PANE_STATE_SESSION_NAME="demo" \
+  TMUX_PANE_STATE_PANE_TITLE="claude" \
+  TMUX_PANE_STATE_PANE_PID="124" \
+  TMUX_PANE_STATE_TAIL_CAPTURE=$'❯ ' \
+  TMUX_PANE_STATE_LAST_LINE='❯ ' \
+  "$SCRIPT" "%2aa"
+)"
+printf '%s\n' "$claude_dot_exe_json" | grep -q '"state": "claude"'
+printf '%s\n' "$claude_dot_exe_json" | grep -q '"confidence": "high"'
 
 codex_node_json="$(
   TMUX_PANE_STATE_CURRENT_COMMAND="node" \

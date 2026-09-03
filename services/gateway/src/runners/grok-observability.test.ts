@@ -191,7 +191,11 @@ describe('Grok structured prompt observability', () => {
     const repo = path.join(root, 'repo');
     const sessionId = 'session-1';
     const prompt = 'Read TASK.md';
-    const openedAt = '2026-08-01T12:00:00+00:00';
+    // Real Grok launches can write turn_started before active_sessions.json
+    // records opened_at. Prompt acceptance must use the captured provider
+    // baseline instead of discarding that first event.
+    const openedAt = '2026-08-01T12:00:02+00:00';
+    const baselineAt = '2026-08-01T12:00:00+00:00';
     const acceptedAt = '2026-08-01T12:00:01+00:00';
     const sessionDir = path.join(home, '.grok', 'sessions', encodeURIComponent(repo), sessionId);
     const activePath = path.join(home, '.grok', 'active_sessions.json');
@@ -248,7 +252,7 @@ describe('Grok structured prompt observability', () => {
         const command = buildGrokPromptSignalProbeCommand(
           vars,
           'core-3:bugfix',
-          Date.parse(openedAt),
+          Date.parse(baselineAt),
           prompt,
         );
         return execLocal(
