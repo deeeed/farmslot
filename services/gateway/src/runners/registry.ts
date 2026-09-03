@@ -865,6 +865,7 @@ export interface RunnerLaunchBlocker {
     | 'workspace-trust'
     | 'project-directory'
     | 'hooks-review'
+    | 'update-available'
     | 'auth-required'
     | 'mcp-init'
     | 'cold-start'
@@ -875,9 +876,15 @@ export interface RunnerLaunchBlocker {
     | 'claude-trust-workspace'
     | 'grok-select-current-project'
     | 'codex-refresh-hooks-and-trust'
+    | 'codex-skip-update'
     | null;
   /** Wait for the blocker to clear instead of failing prompt delivery. */
   defer?: boolean;
+}
+
+/** The prompt was sent, but Farmslot could not prove whether the runner accepted it. */
+export class PromptDeliveryUncertainError extends Error {
+  override name = 'PromptDeliveryUncertainError';
 }
 
 export function runnerLaunchBlockerAutoActionKey(
@@ -887,6 +894,7 @@ export function runnerLaunchBlockerAutoActionKey(
   if (autoAction === 'cursor-trust-workspace') return 'a';
   if (autoAction === 'claude-trust-workspace') return 'Down';
   if (autoAction === 'grok-select-current-project') return 'Enter';
+  if (autoAction === 'codex-skip-update') return '2';
   if (autoAction === 'codex-refresh-hooks-and-trust') {
     for (const line of pane.split('\n')) {
       const match = normalizeInstructionText(line).match(/\b(\d+)\.\s*Trust all and continue\b/i);
@@ -969,6 +977,7 @@ export async function resolveLaunchBlockerWithFreshEvidence(opts: {
   }
   const keySequence =
     blocker?.autoAction === 'codex-refresh-hooks-and-trust' ||
+    blocker?.autoAction === 'codex-skip-update' ||
     blocker?.autoAction === 'claude-trust-workspace'
       ? `${shellQuote(key)} ${shellQuote('Enter')}`
       : shellQuote(key);
@@ -1013,6 +1022,12 @@ export function detectRunnerLaunchBlocker(
         kind: 'hooks-review',
         summary: 'Codex is waiting for repository hook review before the chat input is available.',
         autoAction: 'codex-refresh-hooks-and-trust',
+      };
+    case 'update-available':
+      return {
+        kind: 'update-available',
+        summary: 'Codex is waiting for an update choice before the chat input is available.',
+        autoAction: 'codex-skip-update',
       };
     case 'mcp-init':
       return {
@@ -2701,6 +2716,7 @@ export async function sendRunnerPostLaunchPrompt(
   let workspaceTrustAttempts = 0;
   let grokProjectAttempts = 0;
   let codexHooksReviewAttempts = 0;
+  let codexUpdatePromptAttempts = 0;
   const maxBlockerAutoAttempts = 2;
   const snapshottedBlockers = new Set<string>();
   while (Date.now() < readyDeadline) {
@@ -2774,6 +2790,33 @@ export async function sendRunnerPostLaunchPrompt(
         `[${logPrefix}] accepted ${runner} workspace trust prompt for ${target} (${vars.remoteRepo})`,
       );
       extendDeadlineAfterBlockerResolve('auto-resolving workspace-trust');
+      stableCount = 0;
+      lastPane = '';
+      continue;
+    }
+    if (
+      blocker?.autoAction === 'codex-skip-update' &&
+      autoActionKey &&
+      codexUpdatePromptAttempts < maxBlockerAutoAttempts
+    ) {
+      const skipResult = await execOnSlot(
+        vars,
+        tmuxShellSnippet(
+          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} ${shellQuote(
+            'Enter',
+          )} 2>/dev/null`,
+        ),
+      );
+      if (skipResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to skip the Codex update prompt in ${target}: ${
+            skipResult.stderr || skipResult.stdout || `exit ${skipResult.exitCode}`
+          }`,
+        );
+      }
+      codexUpdatePromptAttempts += 1;
+      console.log(`[${logPrefix}] skipped Codex update prompt for ${target}`);
+      extendDeadlineAfterBlockerResolve('auto-resolving update-available');
       stableCount = 0;
       lastPane = '';
       continue;
@@ -3363,11 +3406,12 @@ export async function sendRunnerPostLaunchPrompt(
   const verificationDetail = requirePromptDigest
     ? 'Exact prompt acknowledgement did not arrive. Pane output cannot replace the required runner acknowledgement.'
     : `The pane did not change, echo "${marker}", or show runner progress, meaning the runner input handler was not live.`;
-  throw new Error(
+  const failureMessage =
     `Prompt delivery failed after ${sentAttempts} send attempt(s) in tmux target ${target}. ` +
-      `${verificationDetail}${snapshotNote}\n` +
-      `Last pane content:\n${failurePane}`,
-  );
+    `${verificationDetail}${snapshotNote}\n` +
+    `Last pane content:\n${failurePane}`;
+  if (sentAttempts > 0) throw new PromptDeliveryUncertainError(failureMessage);
+  throw new Error(failureMessage);
 }
 
 export function runnerSignalShowsCompletion(signalText: string): boolean {

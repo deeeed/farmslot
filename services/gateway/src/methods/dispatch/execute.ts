@@ -64,6 +64,7 @@ import {
   captureRunnerPromptAcceptanceBaseline,
   detectRunnerLaunchBlocker,
   normalizeRunner,
+  PromptDeliveryUncertainError,
   runnerDefaultModel,
   runnerLaunchBlockerAutoActionKey,
   runnerNeedsPostLaunchPrompt,
@@ -473,7 +474,8 @@ export async function resolveRunnerLaunchBlockers(
           }
         }
         const keySequence =
-          blocker.autoAction === 'codex-refresh-hooks-and-trust'
+          blocker.autoAction === 'codex-refresh-hooks-and-trust' ||
+          blocker.autoAction === 'codex-skip-update'
             ? `${shellQuote(key)} ${shellQuote('Enter')}`
             : shellQuote(key);
         const result = await exec(
@@ -1717,13 +1719,19 @@ export async function dispatchExecute(
       }
     }
   } catch (err) {
+    const promptDeliveryUncertain = err instanceof PromptDeliveryUncertainError;
     if (params.runId && currentRun) {
-      await markAgentContextStatus(params.runId, workerRole, 'failed', {
-        lastSignalAt: new Date().toISOString(),
-        target: primaryTarget,
-      });
+      await markAgentContextStatus(
+        params.runId,
+        workerRole,
+        promptDeliveryUncertain ? 'waiting' : 'failed',
+        {
+          lastSignalAt: new Date().toISOString(),
+          target: primaryTarget,
+        },
+      );
     }
-    if (runnerProcessStarted) {
+    if (runnerProcessStarted && !promptDeliveryUncertain) {
       try {
         step('cleanup', `Stopping launched ${runner} after dispatch failure...`);
         await cleanupLaunchedWorkerAfterDispatchFailure(vars, workerTarget, runner, workerRole);
@@ -1734,6 +1742,11 @@ export async function dispatchExecute(
           { cause: err },
         );
       }
+    } else if (runnerProcessStarted) {
+      step(
+        'cleanup',
+        `Preserving launched ${runner}: prompt submission occurred but acknowledgement is uncertain`,
+      );
     }
     throw err;
   }

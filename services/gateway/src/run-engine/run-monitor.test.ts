@@ -24,6 +24,7 @@ import {
   isWorkerSignalFreshForRun,
   migrateLegacyBudgetUsage,
   type MonitorNudgeRunView,
+  monitorRunnerBlockerViolation,
   pollBudgetGuardStep,
   rearmInteractiveHandoffAutoRecovery,
   resolveMonitorConfig,
@@ -35,6 +36,34 @@ import {
   shouldSkipMonitorNudge,
   signalMatchesMonitorContext,
 } from './run-monitor.js';
+
+test('monitor turns terminal runner quota and auth blockers into error violations', () => {
+  for (const [runner, pane] of [
+    ['grok', 'Turn failed: Request failed (402): Grok Build usage balance exhausted'],
+    ['claude', 'Authentication is required to continue.'],
+  ] as const) {
+    const violation = monitorRunnerBlockerViolation({
+      paneContent: pane,
+      runner,
+      slotId: 'slot-1',
+      timestamp: '2026-09-03T00:00:00.000Z',
+    });
+    assert.equal(violation?.type, 'error');
+    assert.equal(violation?.slotId, 'slot-1');
+    assert.equal(violation?.timestamp, '2026-09-03T00:00:00.000Z');
+  }
+});
+
+test('monitor ignores non-terminal runner launch states', () => {
+  assert.equal(
+    monitorRunnerBlockerViolation({
+      paneContent: 'Runner is still initializing MCP integrations',
+      runner: 'codex',
+      slotId: 'slot-1',
+    }),
+    null,
+  );
+});
 
 test('artifact contract revalidation preserves an explicit learnings waiver', () => {
   assert.deepEqual(artifactContractWaiverArgs({ artifactWaivers: { learnings: true } }), [

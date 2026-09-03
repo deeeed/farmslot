@@ -27,6 +27,7 @@ import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
 import { buildPrepareIdentityReapCommand, clearStalePrepareProcess } from '../methods/slot.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
+import { PromptDeliveryUncertainError } from '../runners/registry.js';
 import {
   createRun,
   getRun,
@@ -590,6 +591,35 @@ export async function startRun(runId: string, options: StartRunOptions = {}): Pr
         });
         updateRun(runId, { status: 'blocked', error: msg });
         await finalizeNonThrownTerminalRun(runId, i + 1, steps);
+        return;
+      }
+
+      if (err instanceof PromptDeliveryUncertainError) {
+        console.warn(
+          `[run-engine] run ${runId.slice(0, 8)} step ${stepName} has uncertain prompt delivery; preserving the claimed slot and runner`,
+        );
+        const partialIO = stepPartialIO.get(runId);
+        stepPartialIO.delete(runId);
+        updateRunStep(runId, stepName, {
+          status: 'failed',
+          detail: msg,
+          inputs: partialIO?.inputs,
+          outputs: partialIO?.outputs,
+        });
+        for (let j = i + 1; j < steps.length; j++) {
+          updateRunStep(runId, steps[j], { status: 'skipped' });
+        }
+        const blockedRun = getRun(runId)!;
+        updateRun(runId, {
+          status: 'blocked',
+          error: `${msg}\n\nThe runner and claimed slot were preserved because the prompt may already be executing.`,
+          metrics: {
+            ...blockedRun.metrics,
+            outcome: 'partial',
+            durationMs: Date.now() - new Date(blockedRun.createdAt).getTime(),
+          },
+        });
+        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
         return;
       }
 

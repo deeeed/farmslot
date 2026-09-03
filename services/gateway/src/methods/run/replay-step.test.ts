@@ -1094,6 +1094,118 @@ test('runReplayStep normalizes stale earlier steps when replaying from a later s
   assert.equal(emittedStatuses[0], 'self-reviewing');
 });
 
+test('runReplayStep can replace an exhausted runner before self-review', async (t) => {
+  const priorDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  const taskFile = '/tmp/farmslot-runner-replacement/TASK.md';
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    runner: 'grok',
+    model: 'grok-4.6',
+  });
+  updateRun(run.id, {
+    status: 'blocked',
+    taskFile,
+    metrics: {
+      ...run.metrics,
+      runner: 'grok',
+      model: 'grok-4.6',
+      runnerSessionId: 'old-grok-session',
+      runnerSessionPath: '/tmp/old-grok-session',
+    },
+    agentContexts: [
+      {
+        id: 'fix-bug',
+        role: 'fix-bug',
+        label: 'Bugfix',
+        status: 'blocked',
+        slotId: 'mini-mm-2',
+        runId: run.id,
+        runner: 'grok',
+        model: 'grok-4.6',
+        runnerSessionId: 'old-grok-session',
+        runnerSessionPath: '/tmp/old-grok-session',
+      },
+    ],
+    steps: run.steps.map((step) =>
+      step.name === 'find-slot' ||
+      step.name === 'write-task' ||
+      step.name === 'prepare' ||
+      step.name === 'dispatch' ||
+      step.name === 'monitor'
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'self-review'
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+
+  t.after(async () => {
+    if (priorDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = priorDisableStart;
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+
+  await runReplayStep(
+    {
+      runId: run.id,
+      stepName: 'self-review',
+      runner: 'claude',
+      model: 'opus',
+      triggeredBy: 'operator',
+    },
+    () => {},
+  );
+
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.equal(replayed.metrics.runner, 'claude');
+  assert.equal(replayed.metrics.model, 'opus');
+  assert.equal(replayed.metrics.runnerSessionId, null);
+  assert.equal(replayed.metrics.runnerSessionPath, null);
+  const workerContext = replayed.agentContexts?.find((context) => context.role === 'fix-bug');
+  assert.equal(workerContext?.runner, 'claude');
+  assert.equal(workerContext?.model, 'opus');
+  assert.equal(workerContext?.runnerSessionId, null);
+  assert.equal(workerContext?.runnerSessionPath, null);
+  assert.equal(replayed.status, 'self-reviewing');
+  assert.equal(replayed.steps.find((step) => step.name === 'self-review')?.status, 'pending');
+});
+
+test('runReplayStep rejects an incompatible runner/model override before mutation', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    runner: 'grok',
+    model: 'grok-4.6',
+  });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const before = structuredClone(getRun(run.id));
+
+  await assert.rejects(
+    runReplayStep(
+      {
+        runId: run.id,
+        stepName: 'self-review',
+        runner: 'codex',
+        model: 'opus',
+      },
+      () => {},
+    ),
+    /does not support model 'opus'/,
+  );
+  assert.deepEqual(getRun(run.id), before);
+});
+
 test('runReplayStep clears stale decisions when replaying task generation', async (t) => {
   const taskFile = '/tmp/farmslot-stale-task/TASK.md';
   const run = createRun({
@@ -1113,6 +1225,26 @@ test('runReplayStep clears stale decisions when replaying task generation', asyn
   updateRun(run.id, {
     status: 'blocked',
     taskFile,
+    executionTemplate: {
+      id: 'fix-bug/default',
+      sourceId: 'project:farmslot-farm',
+      flow: 'fix-bug',
+      platforms: ['*'],
+      labels: [],
+      relativePath: 'fix-bug.md',
+      sha256: 'a'.repeat(64),
+    },
+    templateProvenance: {
+      kind: 'task-template',
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      role: 'worker',
+      templatePath: '/tmp/fix-bug.md',
+      templateName: 'fix-bug.md',
+      contentHash: 'a'.repeat(64),
+      source: 'current-project',
+      renderedAt: '2026-09-02T00:00:00.000Z',
+    },
     decisions: [staleDecision],
     steps: run.steps.map((step) =>
       step.name === 'write-task' ? { ...step, status: 'failed', outputs: { taskFile } } : step,
@@ -1131,6 +1263,8 @@ test('runReplayStep clears stale decisions when replaying task generation', asyn
   const replayed = getRun(run.id);
   assert.ok(replayed);
   assert.equal(replayed.taskFile, null);
+  assert.equal(replayed.executionTemplate, undefined);
+  assert.equal(replayed.templateProvenance, undefined);
   assert.deepEqual(replayed.decisions, []);
 });
 

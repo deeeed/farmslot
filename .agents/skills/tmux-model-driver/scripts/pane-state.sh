@@ -24,6 +24,12 @@ current_path="$(resolve_override TMUX_PANE_STATE_CURRENT_PATH "$(tmux display-me
 session_name="$(resolve_override TMUX_PANE_STATE_SESSION_NAME "$(tmux display-message -p -t "$pane_id" '#{session_name}' 2>/dev/null || true)")"
 pane_title="$(resolve_override TMUX_PANE_STATE_PANE_TITLE "$(tmux display-message -p -t "$pane_id" '#{pane_title}' 2>/dev/null || true)")"
 pane_pid="$(resolve_override TMUX_PANE_STATE_PANE_PID "$(tmux display-message -p -t "$pane_id" '#{pane_pid}' 2>/dev/null || true)")"
+foreground_commands="$(resolve_override TMUX_PANE_STATE_FOREGROUND_COMMANDS "$({
+  foreground_pgid="$(ps -o tpgid= -p "$pane_pid" 2>/dev/null | tr -d ' ' || true)"
+  if [ -n "$foreground_pgid" ]; then
+    ps -o comm= -g "$foreground_pgid" 2>/dev/null || true
+  fi
+})")"
 tail_capture="$(resolve_override TMUX_PANE_STATE_TAIL_CAPTURE "$(tmux capture-pane -pt "$pane_id" -S -12 2>/dev/null || true)")"
 if [ -n "${TMUX_PANE_STATE_LAST_LINE+x}" ]; then
   last_line="$TMUX_PANE_STATE_LAST_LINE"
@@ -36,15 +42,28 @@ phase="idle"
 confidence="low"
 reasons=""
 
-python3 - <<'PY' "$pane_id" "$session_name" "$current_command" "$current_path" "$pane_title" "$pane_pid" "$tail_capture" "$last_line" "$runner_id"
+python3 - <<'PY' "$pane_id" "$session_name" "$current_command" "$current_path" "$pane_title" "$pane_pid" "$foreground_commands" "$tail_capture" "$last_line" "$runner_id"
 import json, re, sys
 
-pane_id, session_name, current_command, current_path, pane_title, pane_pid, tail_capture, last_line, runner_id = sys.argv[1:]
+pane_id, session_name, current_command, current_path, pane_title, pane_pid, foreground_commands, tail_capture, last_line, runner_id = sys.argv[1:]
 
-def classify_state(current_command: str, tail: str, last_line: str):
+def command_basenames(commands: str):
+    return {command.rsplit('/', 1)[-1] for command in commands.splitlines() if command.strip()}
+
+def classify_state(current_command: str, foreground_commands: str, tail: str, last_line: str):
     state = "unknown"
     confidence = "low"
     reasons = []
+
+    foreground = command_basenames(foreground_commands)
+    if foreground & {"claude", "claude.exe", "claude_exe"}:
+        return "claude", "high", ["foreground process group contains Claude"]
+    if "codex" in foreground:
+        return "codex", "high", ["foreground process group contains Codex"]
+    if "grok" in foreground:
+        return "grok", "high", ["foreground process group contains Grok"]
+    if foreground & {"cursor-agent", "agent"}:
+        return "cursor", "high", ["foreground process group contains Cursor"]
 
     shell_cmds = {"zsh", "bash", "sh", "fish"}
     if current_command in shell_cmds:
@@ -53,7 +72,7 @@ def classify_state(current_command: str, tail: str, last_line: str):
         reasons.append("exact pane_current_command indicates shell")
         return state, confidence, reasons
 
-    if current_command in {"claude", "claude_exe"}:
+    if current_command in {"claude", "claude.exe", "claude_exe"}:
         return "claude", "high", [f"exact pane_current_command={current_command}"]
 
     if current_command == "codex":
@@ -174,7 +193,7 @@ def classify_phase(tail: str, launch_blocker):
         return "busy", ["busy phrase present in pane tail"]
     return "idle", []
 
-state, confidence, reasons = classify_state(current_command, tail_capture, last_line)
+state, confidence, reasons = classify_state(current_command, foreground_commands, tail_capture, last_line)
 runner = effective_runner(state, runner_id)
 launch_blocker, auto_action = detect_launch_blocker(tail_capture, runner)
 if runner:
@@ -189,6 +208,7 @@ print(json.dumps({
     "current_path": current_path,
     "pane_title": pane_title,
     "pane_pid": pane_pid,
+    "foreground_commands": foreground_commands.splitlines(),
     "state": state,
     "phase": phase,
     "confidence": confidence,

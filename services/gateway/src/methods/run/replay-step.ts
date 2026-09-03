@@ -9,6 +9,7 @@ import {
   isTerminalRunStatus,
   PipelineSteps as PS,
   PR_BOUND_FLOW_TYPES,
+  primaryRoleForFlow,
   type QueueClaim,
   resolveRunSlotId,
   type Run,
@@ -41,6 +42,12 @@ import {
   setRunFlags,
   startRun,
 } from '../../run-engine/orchestrator.js';
+import {
+  assertSupportedRunnerSpelling,
+  normalizeRunner,
+  runnerDefaultModel,
+  runnerSupportsModel,
+} from '../../runners/registry.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../../runs/store.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
 
@@ -348,6 +355,28 @@ export async function runReplayStep(
   }
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  const hasRunnerOverride = params.runner !== undefined || params.model !== undefined;
+  if (
+    hasRunnerOverride &&
+    params.stepName !== PS.DISPATCH &&
+    params.stepName !== PS.MONITOR &&
+    params.stepName !== PS.SELF_REVIEW
+  ) {
+    throw new Error(
+      'runner/model override is valid only when replaying dispatch, monitor, or self-review',
+    );
+  }
+  assertSupportedRunnerSpelling(params.runner);
+  const replayRunner = params.runner
+    ? normalizeRunner(params.runner)
+    : normalizeRunner(existing.metrics.runner);
+  const replayModel =
+    params.model ?? (params.runner ? runnerDefaultModel(replayRunner) : existing.metrics.model);
+  if (hasRunnerOverride && replayModel && !runnerSupportsModel(replayRunner, replayModel)) {
+    throw new Error(
+      `runner '${replayRunner}' does not support model '${replayModel}' — pick a compatible replay override`,
+    );
+  }
   const startedFromDone = existing.status === 'done';
   if (existing.engineState?.operatorForceCompleted) {
     throw new Error(`Run ${params.runId} was force-completed and cannot be replayed`);
@@ -847,15 +876,18 @@ export async function runReplayStep(
       ...metricsWithoutTerminalOutcome
     } = existing.metrics;
     const resetTerminalOutcome = targetIdx >= 0 && monitorIdx >= 0 && targetIdx <= monitorIdx;
-    const replayMetrics = replaysWorkerLaunch
-      ? {
-          ...metricsWithoutTerminalOutcome,
-          nudgeCount: 0,
-          runnerSessionId: null,
-          runnerSessionPath: null,
-        }
-      : { ...metricsWithoutTerminalOutcome };
-    const resetMetrics = resetTerminalOutcome
+    const runnerChanged =
+      hasRunnerOverride && replayRunner !== normalizeRunner(existing.metrics.runner);
+    const replayMetrics =
+      replaysWorkerLaunch || runnerChanged
+        ? {
+            ...metricsWithoutTerminalOutcome,
+            nudgeCount: 0,
+            runnerSessionId: null,
+            runnerSessionPath: null,
+          }
+        : { ...metricsWithoutTerminalOutcome };
+    const resetOutcomeMetrics = resetTerminalOutcome
       ? replayMetrics
       : {
           ...replayMetrics,
@@ -863,6 +895,26 @@ export async function runReplayStep(
           ...(_disposition !== undefined ? { disposition: _disposition } : {}),
           ...(_terminalEvidence !== undefined ? { terminalEvidence: _terminalEvidence } : {}),
         };
+    const resetMetrics = hasRunnerOverride
+      ? {
+          ...resetOutcomeMetrics,
+          runner: replayRunner,
+          model: replayModel ?? runnerDefaultModel(replayRunner),
+        }
+      : resetOutcomeMetrics;
+    const resetAgentContexts = hasRunnerOverride
+      ? existing.agentContexts?.map((context) =>
+          context.role === primaryRoleForFlow(existing.flowType)
+            ? {
+                ...context,
+                runner: replayRunner,
+                model: replayModel ?? runnerDefaultModel(replayRunner),
+                runnerSessionId: null,
+                runnerSessionPath: null,
+              }
+            : context,
+        )
+      : existing.agentContexts;
     const attemptCount =
       (existing.recoveryAttempts ?? []).filter(
         (attempt) => attempt.stepName === replayStepName && attempt.triggeredBy === triggeredBy,
@@ -924,9 +976,17 @@ export async function runReplayStep(
       error: undefined,
       completedAt: undefined,
       taskFile: replayTaskFile,
+      // An explicit replay of task generation is the operator's request to
+      // render the currently configured template. Keeping the old selection
+      // makes writeTask reject the very template change the replay is meant to
+      // recover. Other replay entry points preserve the frozen selection.
+      ...(replaysTaskGeneration
+        ? { executionTemplate: undefined, templateProvenance: undefined }
+        : {}),
       decisions: clearedDecisions,
       engineState: engineStateForReplay,
       metrics: resetMetrics,
+      agentContexts: resetAgentContexts,
       monitorState: undefined,
       activeTaskFile: activeFixTaskFile,
       recoveryProposal: {

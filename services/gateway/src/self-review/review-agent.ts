@@ -217,6 +217,13 @@ export function selfReviewChecklistMarkPrompt(
   );
 }
 
+export function prependReviewerExecutionContract(
+  checklist: string,
+  executionContract: string,
+): string {
+  return `## Reviewer-specific execution contract\n\n${executionContract}\n\n${checklist}`;
+}
+
 export function reviewerChecklistBasename(contextId: string): string {
   return `SELF-REVIEW.${contextId}.md`;
 }
@@ -395,22 +402,14 @@ export async function resumeReviewAgentPromptDelivery(
 
   const taskDir = path.posix.dirname(taskMdPath);
   const reviewTarget = targetForChecklistBasename(path.posix.basename(taskMdPath));
-  const feedbackRelPath = reviewerFeedbackRelPath(context.id);
-  const resultRelPath = context.reviewResultFile ?? null;
   const parentRun = getRun(runId);
-  const prompt = `${await dependencies.resolveWorkerDispatchPrompt(
+  const prompt = await dependencies.resolveWorkerDispatchPrompt(
     parentRun?.project ?? vars.projectName,
     {
       taskFile: taskMdPath,
       taskDir,
     },
-  )}\n\n${selfReviewChecklistMarkPrompt(
-    taskDir,
-    taskMdPath,
-    reviewTarget,
-    feedbackRelPath,
-    resultRelPath,
-  )}`;
+  );
   const attemptStartedAtMs = Date.parse(context.attemptStartedAt ?? context.startedAt ?? '');
   const baselineMs = Number.isFinite(attemptStartedAtMs) ? attemptStartedAtMs : Date.now();
   const runtimeDir = await dependencies.resolveProjectRuntimeDir(parentRun?.project);
@@ -955,6 +954,13 @@ export async function runReviewAgent(
     // non-interactive runners (e.g. Codex) can read it immediately.
     // The template is in projects/<project>/templates/worker/self-review.md with {{VAR}} placeholders.
     // Long multiline prompts get bracketed-pasted by tmux — so we write to a file.
+    const markPrompt = selfReviewChecklistMarkPrompt(
+      taskDir,
+      taskMdPath,
+      reviewChecklistTarget,
+      feedbackRelPath,
+      resultRelPath,
+    );
     let expandedTemplate = scopeReviewFeedbackPath(
       await expandSelfReviewTemplate(vars, taskDir, _runId, validationDepth),
       feedbackRelPath,
@@ -970,6 +976,7 @@ export async function runReviewAgent(
         )}`,
       })}\n${expandedTemplate}`;
     }
+    expandedTemplate = prependReviewerExecutionContract(expandedTemplate, markPrompt);
     await writeTextFileOnSlot(vars, taskMdPath, expandedTemplate);
     await syncChecklistTargetForRole(vars, taskDir, 'self-review', {
       reportPath: feedbackRelPath,
@@ -986,13 +993,6 @@ export async function runReviewAgent(
     // detailed instructions live in the reviewer checklist. Exec runners bake a
     // self-contained prompt into their launch command.
     const parentRun = getRun(_runId);
-    const markPrompt = selfReviewChecklistMarkPrompt(
-      taskDir,
-      taskMdPath,
-      reviewChecklistTarget,
-      feedbackRelPath,
-      resultRelPath,
-    );
     // Pre-flight: a claim whose persisted session file is gone (or was never
     // recorded) cannot resume — downgrade to a fresh cold launch up front
     // instead of burning the 120s ready-timeout on a dead `resume`.
@@ -1010,11 +1010,11 @@ export async function runReviewAgent(
       }
     }
     const basePrompt = runnerNeedsPostLaunchPrompt(runner)
-      ? `${await resolveWorkerDispatchPrompt(parentRun?.project ?? vars.projectName, {
+      ? await resolveWorkerDispatchPrompt(parentRun?.project ?? vars.projectName, {
           taskFile: taskMdPath,
           taskDir,
-        })}\n\n${markPrompt}`
-      : `Read ${taskMdPath} and execute all steps exactly as written. Do NOT run /review. ${markPrompt}`;
+        })
+      : `Read ${taskMdPath} and execute all steps exactly as written. Do NOT run /review.`;
     // A warm re-review resumes the reviewer that produced the previous loop's
     // findings, so its prompt narrows the scope to the worker's fixes since then.
     // The cold-fallback path must NOT use this preamble — a fresh reviewer is not

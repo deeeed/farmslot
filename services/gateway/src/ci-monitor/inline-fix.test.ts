@@ -45,6 +45,24 @@ test('CI fix recovery requires a durable prompt boundary and HEAD baseline', () 
     }),
     null,
   );
+
+  const codexContext = {
+    ...context,
+    runner: 'codex',
+    status: 'working' as const,
+  };
+  assert.equal(
+    resolveRecoverableCiFixContext({ ...run, agentContexts: [codexContext] })?.id,
+    'ci-fix',
+  );
+  assert.equal(
+    resolveRecoverableCiFixContext({
+      ...run,
+      agentContexts: [{ ...codexContext, status: 'launching' }],
+    }),
+    null,
+    'an in-place runner is recoverable only after its prompt was accepted',
+  );
 });
 
 test('CI fix replacement readiness excludes the pending CI context', () => {

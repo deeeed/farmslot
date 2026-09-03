@@ -134,18 +134,24 @@ export function resolveCiFixReplacementOwner(
 
 export function resolveRecoverableCiFixContext(run: Run | undefined): AgentContext | null {
   return (
-    run?.agentContexts?.find(
-      (context) =>
+    run?.agentContexts?.find((context) => {
+      const handoff = runnerRetainedSessionHandoff(context.runner);
+      const recoverableStatus =
+        handoff === 'argv-relaunch'
+          ? context.status === 'launching' || context.status === 'working'
+          : context.status === 'working';
+      return (
         context.role === 'ci-fix' &&
-        runnerRetainedSessionHandoff(context.runner) === 'argv-relaunch' &&
-        (context.status === 'launching' || context.status === 'working') &&
+        handoff !== 'unsupported' &&
+        recoverableStatus &&
         !!context.promptDeliveryStartedAt &&
         !!context.deliveryBaselineRef &&
         !!context.deliveryBaselinePanePid &&
         !!context.taskFile &&
         !!context.signalFile &&
-        !!context.target?.target,
-    ) ?? null
+        !!context.target?.target
+      );
+    }) ?? null
   );
 }
 
@@ -644,7 +650,13 @@ async function attemptInlineCIFix(
     let ciPromptSendAttempted = Boolean(recoveredContext?.promptDeliveryStartedAt);
     let deliveryBaselinePanePid = recoveredContext?.deliveryBaselinePanePid;
     let deliveryMutationObserved = false;
-    if (recoveredContext && runnerRetainedSessionHandoff(runner) === 'argv-relaunch') {
+    const retainedHandoff = runnerRetainedSessionHandoff(runner);
+    const recoveredAcceptedInPlace = Boolean(
+      recoveredContext &&
+      retainedHandoff !== 'argv-relaunch' &&
+      recoveredContext.status === 'working',
+    );
+    if (recoveredContext && retainedHandoff === 'argv-relaunch') {
       const currentPane = await resolveExactTmuxWindowPane(vars, workerTarget);
       if (!currentPane) {
         throw new Error(`Cannot resolve recovered CI fix pane ${workerTarget}`);
@@ -652,7 +664,7 @@ async function attemptInlineCIFix(
       deliveryMutationObserved = currentPane.panePid !== recoveredContext.deliveryBaselinePanePid;
       if (!deliveryMutationObserved) ciPromptSendAttempted = false;
     }
-    let sent = recoveredContext ? deliveryMutationObserved : false;
+    let sent = recoveredContext ? deliveryMutationObserved || recoveredAcceptedInPlace : false;
     if (!recoveredContext) {
       const deliveryBaselinePane = await resolveExactTmuxWindowPane(vars, workerTarget);
       if (!deliveryBaselinePane) {
@@ -679,7 +691,7 @@ async function attemptInlineCIFix(
       });
     }
     try {
-      if (recoveredContext && deliveryMutationObserved) {
+      if (recoveredContext && (deliveryMutationObserved || recoveredAcceptedInPlace)) {
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — recovering in-flight CI fix delivery on ${workerTarget}`,
         );

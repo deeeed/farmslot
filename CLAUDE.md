@@ -86,6 +86,7 @@ check; it cannot see a contract you failed to update or a second consumer of a c
 Before saying a farmslot PR is ready (or suggesting merge):
 
 1. **Changelog** — if the diff touches a publishable workspace package (`apps/command-center/ui`, `services/gateway`, `packages/*`, etc.), add an **Unreleased** bullet to that package's `CHANGELOG.md` in the same PR. Hygiene CI runs `check-workspace-changelogs.mjs --pr-diff` and **fails** when the changelog is missing.
+   Keep Unreleased concise. Consolidate related work into one user-facing bullet per behavior area, and update that bullet as follow-up fixes land. Do not list each internal race, test, code path, or review finding as a separate release note.
 2. **CI green** — wait for `gh pr checks` on the PR (hygiene + quality gates for the touched area). Do not claim ready while checks are pending, failed, or skipped-only for the relevant packages.
 3. **Independent review** — run at least one independent code-reviewer agent against the **same HEAD SHA** that is on the PR.
 4. **Cross-model review** — run at least one review with a **different** model family against that same SHA (see rule above).
