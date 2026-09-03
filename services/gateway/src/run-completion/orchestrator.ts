@@ -1083,6 +1083,8 @@ export async function publishCompletionPackage(
     flags.ciRepo = ciRepo;
     if (!ciRepo) throw new Error('no ci.repo configured');
     const baseBranch = (pv && getProjectField(pv.projectJson, 'default_branch')) || DEFAULT_BRANCH;
+    // Package preparation catches bad bodies early from the slot; publication
+    // rechecks GitHub's current base template before any PR mutation.
     const prTemplate = await readGitHubPrTemplate(ciRepo, baseBranch);
     if (prTemplate) assertPrBodyMatchesTemplate(approvedPackage.draftBody, prTemplate);
 

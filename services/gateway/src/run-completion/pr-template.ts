@@ -103,10 +103,11 @@ export async function readRepositoryPrTemplate(
   const vars = await loadSlotVars(run.slotId);
   const baseRef = `origin/${baseBranch}`;
   const command = [
+    `base_ref=${shellQuote(baseRef)}`,
     `for p in ${PR_TEMPLATE_CANDIDATES.map(shellQuote).join(' ')}; do`,
-    `  if git cat-file -e ${shellQuote(baseRef)}:"$p" 2>/dev/null; then`,
+    '  if git cat-file -e "$base_ref:$p" 2>/dev/null; then',
     '    printf "%s\\n" "$p"',
-    `    git show ${shellQuote(baseRef)}:"$p"`,
+    '    git show "$base_ref:$p"',
     '    exit $?',
     '  fi',
     '  if [ -f "$p" ]; then',
