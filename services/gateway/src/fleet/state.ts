@@ -30,7 +30,7 @@ import {
   normalizeRawProjectPrepare,
   normalizeRawProjectRoadmap,
 } from '../core/config.js';
-import { farmslotRoot } from '../projects/repo-root.js';
+import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
 
 import { enrichSlotHostLoad, getAllMachineHealth } from './node-health.js';
 import { getActiveResources, getCachedSlotResources } from './resource-manager.js';
@@ -42,7 +42,7 @@ export function isValidSafetyTier(value: unknown): value is SafetyTier {
 
 export type StateChangeHandler = (fleet: FleetStatus) => void;
 
-const statusFile = path.join(farmslotRoot, '.farm-status.json');
+const statusFile = resolveStatusFilePath(farmslotRoot);
 const poolDir = path.join(farmslotRoot, 'pool');
 const projectsDir = path.join(farmslotRoot, 'projects');
 

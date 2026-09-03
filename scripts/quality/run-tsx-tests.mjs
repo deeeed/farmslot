@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, relative, resolve } from 'node:path';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join, relative, resolve } from 'node:path';
 
 import {
   finish,
@@ -22,6 +23,7 @@ export { finish };
 export const SERIAL_PRAGMA = '@farmslot:serial';
 
 export const WORKERS_ENV = 'FARMSLOT_TSX_TEST_WORKERS';
+export const TEST_STATUS_ENV = 'FARMSLOT_TEST_STATUS_FILE';
 
 // Git exports GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (etc.) into hook
 // environments (pre-commit, pre-push). A test that spawns `git` to build a
@@ -278,11 +280,20 @@ export function testCommand(file, { cwd, tsconfig, moduleMock = false }) {
 
 async function runOne(file, context) {
   const started = performance.now();
-  const { status, output } = await runYarn(testCommand(file, context), {
-    cwd: context.cwd,
-    env: context.env,
-    buffered: context.buffered,
-  });
+  const stateDir = mkdtempSync(join(tmpdir(), 'farmslot-test-status-'));
+  const testStatusFile = join(stateDir, '.farm-status.json');
+  writeFileSync(testStatusFile, '{"slots":[]}\n');
+  let result;
+  try {
+    result = await runYarn(testCommand(file, context), {
+      cwd: context.cwd,
+      env: { ...context.env, [TEST_STATUS_ENV]: testStatusFile },
+      buffered: context.buffered,
+    });
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+  const { status, output } = result;
   const ms = performance.now() - started;
   if (context.buffered) {
     process.stdout.write(

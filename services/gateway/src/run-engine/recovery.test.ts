@@ -275,6 +275,48 @@ function minimalActiveRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
+test('recovery defers slot-bound runs when the whole fleet snapshot is empty', async () => {
+  const run = minimalActiveRun({
+    status: 'monitoring',
+    slotId: 'slot-1',
+    ticketOrPr: 'RECOVERY-EMPTY-FLEET',
+    familyRootTicketOrPr: 'RECOVERY-EMPTY-FLEET',
+    taskFile: '/tmp/recovery-empty-fleet/TASK.md',
+  });
+  const updates: Array<Partial<Run>> = [];
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({ slots: [] }),
+    updateRun: (_runId: string, fields: Partial<Run>) => updates.push(fields),
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(updates, []);
+});
+
+test('empty-fleet deferral still quarantines leaked test runs', async () => {
+  const realRun = minimalActiveRun({
+    id: 'real-run',
+    status: 'monitoring',
+    slotId: 'slot-1',
+    ticketOrPr: 'RECOVERY-EMPTY-FLEET',
+    familyRootTicketOrPr: 'RECOVERY-EMPTY-FLEET',
+    taskFile: '/tmp/recovery-empty-fleet/TASK.md',
+  });
+  const leakedRun = minimalActiveRun({ id: 'leaked-run' });
+  const quarantined: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [realRun, leakedRun] }),
+    loadFleetStatus: async () => ({ slots: [] }),
+    quarantineLeakedRun: async (run: Run) => quarantined.push(run.id),
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(quarantined, ['leaked-run']);
+});
+
 test('recoverActiveRuns quarantines leaked gateway test runs before orchestration', async () => {
   let quarantined = false;
   const deps = {
@@ -1100,7 +1142,7 @@ test('prepare recovery re-runs prepare when sub-steps show incomplete phases', a
   );
 });
 
-test('recovery holds an interactive dev run instead of completing it for the operator', async () => {
+test('recovery re-enters monitor for an idle-looking interactive worker', async () => {
   // Run 6e092aa9: a gateway restart found the run `monitoring` with the slot no
   // longer reporting `working`, so recovery inferred the worker was finished,
   // marked MONITOR done with no outputs and advanced to COMPLETE. The worker was
@@ -1143,14 +1185,16 @@ test('recovery holds an interactive dev run instead of completing it for the ope
 
   await recoverActiveRuns(deps);
 
-  assert.ok(statuses.includes('paused'), 'interactive run should be held, not advanced');
-  assert.ok(!statuses.includes('completing'), 'recovery must not advance it to complete');
+  assert.deepEqual(
+    statuses,
+    [],
+    'recovery must not infer a run status from slot-level agent state',
+  );
   assert.ok(!advancedSteps.includes('complete'), 'complete must not be started by recovery');
-  assert.equal(started, false, 'the pipeline must not be re-driven past the hold');
+  assert.equal(started, true, 'monitor must validate the durable worker signal and operator hold');
 });
 
-test('recovery still advances an autonomous dev run whose worker finished', async () => {
-  // The hold is scoped to interactive runs; autonomous recovery is unchanged.
+test('recovery re-enters monitor for an idle-looking autonomous worker', async () => {
   const run = minimalActiveRun({
     flowType: 'dev',
     mode: 'autonomous',
@@ -1161,6 +1205,7 @@ test('recovery still advances an autonomous dev run whose worker finished', asyn
     steps: [{ name: 'monitor', status: 'running' }],
   });
   const statuses: string[] = [];
+  let started = false;
   const deps = {
     listRuns: () => ({ runs: [run] }),
     loadFleetStatus: async () => ({
@@ -1170,7 +1215,9 @@ test('recovery still advances an autonomous dev run whose worker finished', asyn
       if (patch.status) statuses.push(patch.status);
     },
     updateRunStep: () => {},
-    startRun: async () => {},
+    startRun: async () => {
+      started = true;
+    },
     broadcast: () => {},
     setPrHealthOverlay: () => {},
     quarantineLeakedRun: async () => {},
@@ -1180,6 +1227,6 @@ test('recovery still advances an autonomous dev run whose worker finished', asyn
 
   await recoverActiveRuns(deps);
 
-  assert.ok(statuses.includes('completing'), 'autonomous behaviour must be unchanged');
-  assert.ok(!statuses.includes('paused'));
+  assert.deepEqual(statuses, [], 'recovery must not bypass monitor signal validation');
+  assert.equal(started, true);
 });

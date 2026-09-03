@@ -7,7 +7,6 @@ import {
   Events,
   FLOW_STEPS,
   type FlowType,
-  isLightweightInteractiveDevRun,
   PipelineSteps,
   type ReviewGatePayload,
   type Run,
@@ -250,10 +249,30 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
   const { runs: active } = deps.listRuns({ active: true });
   if (active.length === 0) return;
 
-  const fleet = await deps.loadFleetStatus();
-  console.log(`[run-engine] recovering ${active.length} active run(s)`);
-
+  const recoverable: Run[] = [];
   for (const run of active) {
+    if (isLeakedGatewayTestRun(run)) {
+      console.warn(
+        `[run-engine] skipping recovery for leaked gateway test run ${run.id.slice(0, 8)}`,
+      );
+      await deps.quarantineLeakedRun(run);
+    } else {
+      recoverable.push(run);
+    }
+  }
+  if (recoverable.length === 0) return;
+
+  const fleet = await deps.loadFleetStatus();
+  const slotBoundActive = recoverable.filter((run) => run.slotId);
+  if (fleet.slots.length === 0 && slotBoundActive.length > 0) {
+    console.warn(
+      `[run-engine] deferring recovery for ${slotBoundActive.length} slot-bound run(s): fleet snapshot is empty`,
+    );
+    return;
+  }
+  console.log(`[run-engine] recovering ${recoverable.length} active run(s)`);
+
+  for (const run of recoverable) {
     if (
       run.engineState?.publishGate?.reviewRecovery?.status === 'watching' &&
       !isPublicationReviewRecoveryHeld(run)
@@ -267,14 +286,6 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       };
       deps.updateRun(run.id, { engineState: run.engineState });
     }
-    if (isLeakedGatewayTestRun(run)) {
-      console.warn(
-        `[run-engine] skipping recovery for leaked gateway test run ${run.id.slice(0, 8)}`,
-      );
-      await deps.quarantineLeakedRun(run);
-      continue;
-    }
-
     const expectedSteps = FLOW_STEPS[run.flowType];
     if (expectedSteps) {
       const existingNames = new Set(run.steps.map((s) => s.name));
@@ -747,44 +758,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       }
 
       if (run.status === 'monitoring') {
-        if (slot.agent === 'working') {
-          console.log(
-            `[run-engine] run ${run.id.slice(0, 8)} — worker still active, resuming monitor`,
-          );
-          deps.startRun(run.id).catch((err) => {
-            console.error(
-              `[run-engine] recovery failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
-            );
-          });
-          continue;
-        }
-        // Completion on an interactive dev run belongs to its operator. This
-        // branch decides from slot state alone that the worker is finished and
-        // advances the pipeline, skipping the monitor step entirely — so the
-        // hold that lives there never runs. Run 6e092aa9 finished this way after
-        // a gateway restart: monitor marked done with no outputs, no operator
-        // action recorded, run `success`, 26 files and a PR nobody approved.
-        // Park it instead; `paused` is skipped by the top of this same loop, so
-        // later restarts leave it alone until the operator resolves it.
-        if (isLightweightInteractiveDevRun(run)) {
-          console.log(
-            `[run-engine] run ${run.id.slice(0, 8)} — worker finished (agent=${slot.agent}), holding for operator`,
-          );
-          deps.updateRun(run.id, { status: 'paused' });
-          continue;
-        }
         console.log(
-          `[run-engine] run ${run.id.slice(0, 8)} — worker finished (agent=${slot.agent}), advancing to complete`,
+          `[run-engine] run ${run.id.slice(0, 8)} — resuming monitor (slot agent=${slot.agent ?? 'unknown'})`,
         );
-        deps.updateRunStep(run.id, S.MONITOR, {
-          status: 'done',
-          completedAt: new Date().toISOString(),
-        });
-        deps.updateRun(run.id, { status: 'completing' });
-        deps.updateRunStep(run.id, S.COMPLETE, {
-          status: 'running',
-          startedAt: new Date().toISOString(),
-        });
         deps.startRun(run.id).catch((err) => {
           console.error(
             `[run-engine] recovery failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
