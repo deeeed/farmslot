@@ -744,6 +744,7 @@ export async function postProcessPRBody(
     failOnError?: boolean;
     baseBody?: string;
     evidenceManifest?: EvidenceManifest | null;
+    validateBody?: (body: string) => void | Promise<void>;
   } = {},
 ): Promise<void> {
   try {
@@ -827,6 +828,7 @@ export async function postProcessPRBody(
         body = body.replace(/- \[ \]/g, '- [x]');
       }
     }
+    await options.validateBody?.(body);
 
     const tmpFile = `/tmp/farmslot-pr-body-${prNumber}.md`;
     const { writeFile: writeF } = await import('node:fs/promises');
