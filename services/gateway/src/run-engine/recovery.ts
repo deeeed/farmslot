@@ -263,16 +263,14 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
   if (recoverable.length === 0) return;
 
   const fleet = await deps.loadFleetStatus();
-  const slotBoundActive = recoverable.filter((run) => run.slotId);
-  if (fleet.slots.length === 0 && slotBoundActive.length > 0) {
-    console.warn(
-      `[run-engine] deferring recovery for ${slotBoundActive.length} slot-bound run(s): fleet snapshot is empty`,
-    );
-    return;
+  const deferSlotBoundRecovery = fleet.slots.length === 0 && recoverable.some((run) => run.slotId);
+  if (deferSlotBoundRecovery) {
+    console.warn('[run-engine] deferring slot-bound recovery: fleet snapshot is empty');
   }
   console.log(`[run-engine] recovering ${recoverable.length} active run(s)`);
 
   for (const run of recoverable) {
+    if (deferSlotBoundRecovery && run.slotId) continue;
     if (
       run.engineState?.publishGate?.reviewRecovery?.status === 'watching' &&
       !isPublicationReviewRecoveryHeld(run)

@@ -317,6 +317,38 @@ test('empty-fleet deferral still quarantines leaked test runs', async () => {
   assert.deepEqual(quarantined, ['leaked-run']);
 });
 
+test('empty fleet does not defer runs that have not selected a slot', async () => {
+  const preSlotRun = minimalActiveRun({
+    id: 'pre-slot-run',
+    status: 'writing-task',
+    slotId: null,
+    ticketOrPr: 'RECOVERY-PRE-SLOT',
+    familyRootTicketOrPr: 'RECOVERY-PRE-SLOT',
+    taskFile: null,
+  });
+  const slotRun = minimalActiveRun({
+    id: 'slot-run',
+    status: 'monitoring',
+    slotId: 'slot-1',
+    ticketOrPr: 'RECOVERY-SLOT',
+    familyRootTicketOrPr: 'RECOVERY-SLOT',
+    taskFile: '/tmp/recovery-slot/TASK.md',
+  });
+  const started: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [preSlotRun, slotRun] }),
+    loadFleetStatus: async () => ({ slots: [] }),
+    updateRun: () => {},
+    updateRunStep: () => {},
+    startRun: async (runId: string) => started.push(runId),
+    quarantineLeakedRun: async () => {},
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(started, ['pre-slot-run']);
+});
+
 test('recoverActiveRuns quarantines leaked gateway test runs before orchestration', async () => {
   let quarantined = false;
   const deps = {
