@@ -62,6 +62,11 @@ import {
   updatePRTitle,
 } from './pr-publication.js';
 import {
+  assertPrBodyMatchesTemplate,
+  assertRunPrBodyMatchesTemplate,
+  readGitHubPrTemplate,
+} from './pr-template.js';
+import {
   assertSelectedEvidencePublished,
   expandEvidenceSelectionForManifest,
   postProcessPRBody,
@@ -552,6 +557,7 @@ export async function prepareCompletionPackage(
   );
   const validation = await readValidationSummary(run);
   const projectVars = await loadProjectVars(run.project);
+  const baseBranch = getProjectField(projectVars.projectJson, 'default_branch') || DEFAULT_BRANCH;
   const reviewDepth = publicationReviewPolicyForRun(
     run,
     projectVars.projectJson,
@@ -636,6 +642,16 @@ export async function prepareCompletionPackage(
   const draftBodyArtifacts = evidenceManifest.length
     ? evidenceManifest
     : mergeEvidenceManifestArtifactRefs(artifacts, runEvidenceManifest);
+  const draftBody = await buildDraftPrBody(run, report, draftBodyArtifacts);
+  try {
+    await assertRunPrBodyMatchesTemplate(run, draftBody, baseBranch);
+  } catch (error) {
+    if (
+      !(options?.headSha && error instanceof SlotConfigError && error.code === 'SLOT_NOT_FOUND')
+    ) {
+      throw error;
+    }
+  }
   const basePackage: Omit<ReadyGatePrPackage, 'packageHash'> = {
     id: packageId,
     artifactPath,
@@ -645,7 +661,7 @@ export async function prepareCompletionPackage(
     diffStat: options?.diffStat ?? { files: 0, additions: 0, deletions: 0 },
     reviewSnapshot,
     draftTitle: buildDraftPrTitle(run),
-    draftBody: await buildDraftPrBody(run, report, draftBodyArtifacts),
+    draftBody,
     evidenceManifest,
     selectedEvidenceKeys:
       validSelectedEvidenceKeys ??
@@ -1066,6 +1082,11 @@ export async function publishCompletionPackage(
     const ciRepo: string | null = (pv?.projectJson as any)?.ci?.repo ?? null;
     flags.ciRepo = ciRepo;
     if (!ciRepo) throw new Error('no ci.repo configured');
+    const baseBranch = (pv && getProjectField(pv.projectJson, 'default_branch')) || DEFAULT_BRANCH;
+    // Package preparation catches bad bodies early from the slot; publication
+    // rechecks GitHub's current base template before any PR mutation.
+    const prTemplate = await readGitHubPrTemplate(ciRepo, baseBranch);
+    if (prTemplate) assertPrBodyMatchesTemplate(approvedPackage.draftBody, prTemplate);
 
     emit('substep', { name: 'resolve-pr-number', detail: `Resolving PR number against ${ciRepo}` });
     let prNumber = run.prNumber ?? (await findPRNumber(run, ciRepo, { noRetry: true }));
@@ -1139,6 +1160,9 @@ export async function publishCompletionPackage(
       failOnError: true,
       baseBody: approvedPackage.draftBody,
       evidenceManifest,
+      validateBody: prTemplate
+        ? (body) => assertPrBodyMatchesTemplate(body, prTemplate)
+        : undefined,
     });
     flags.bodyPostProcessed = true;
 
