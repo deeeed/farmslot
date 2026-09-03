@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- fix(run): allow recovery replays to replace a runner and compatible model without replacing the task or worktree.
 - fix(run): version publication-review counting and let an operator replay an ambiguous retained handoff as an explicit fresh dispatch.
 - feat(dispatch): identify ready slots with unowned live runners as `replaceableWarm`, allowing an explicit fresh dispatch while active-run workers remain protected.
 - fix(run): add `RunMonitorState.budgetNudgeAttempts`, `RunMonitorBudgetUsageState.skippedOversizedRecords`, `RunMonitorBudgetUsageState.lastCumulative` (the reference reading for runners that restate session totals), `RunMonitorBudgetUsageState.discardNextRecord`, and `RunBudgetDeliveryState` on `RunMonitorState.budgetDelivery`, which supersedes the `budgetWarned` / `budgetNudgeSent` / `budgetNudgeAttempts` / `budgetFirstDeferredAt` flags (still read for migration). `baselineTurns`/`baselineTotalTokens` remain only as legacy fields migrated on restore. All are restored on monitor recovery.
