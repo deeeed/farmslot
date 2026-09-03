@@ -4,11 +4,12 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile, rename, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+
+import { resolveStatusFilePath } from '../projects/repo-root.js';
 
 import { farmslotRoot } from './config.js';
 
-const statusFile = path.join(farmslotRoot, '.farm-status.json');
+const statusFile = resolveStatusFilePath(farmslotRoot);
 
 /** Called with the slotId whenever resetSlot runs (higher layers register cleanups). */
 const slotResetListeners: Array<(slotId: string) => void> = [];

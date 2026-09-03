@@ -442,6 +442,7 @@ export async function runReplayStep(
   let targetIdx = replayTargetIdx;
   const findSlotIdx = flowSteps ? flowSteps.indexOf(PS.FIND_SLOT) : -1;
   const prepareIdx = flowSteps ? flowSteps.indexOf(PS.PREPARE) : -1;
+  const dispatchIdx = flowSteps ? flowSteps.indexOf(PS.DISPATCH) : -1;
   const monitorIdx = flowSteps ? flowSteps.indexOf(PS.MONITOR) : -1;
   const selfReviewIdx = flowSteps ? flowSteps.indexOf(PS.SELF_REVIEW) : -1;
   const completeIdx = flowSteps ? flowSteps.indexOf(PS.COMPLETE) : -1;
@@ -771,9 +772,9 @@ export async function runReplayStep(
     const replaysWorkerLaunch =
       targetIdx >= 0 &&
       prepareIdx >= 0 &&
-      monitorIdx >= 0 &&
+      dispatchIdx >= 0 &&
       targetIdx >= prepareIdx &&
-      targetIdx <= monitorIdx;
+      targetIdx <= dispatchIdx;
 
     if (replaysWorkerLaunch && effectiveSlotId && existing.taskFile) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);

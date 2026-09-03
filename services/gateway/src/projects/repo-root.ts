@@ -8,6 +8,18 @@ import { farmslotRoot, resolveFarmslotRoot } from '@farmslot/slot-config';
 // this module re-exports it and keeps only the gateway workspace logic.
 export { farmslotRoot, resolveFarmslotRoot };
 
+export function resolveStatusFilePath(
+  root = farmslotRoot,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const testPath = env.FARMSLOT_TEST_STATUS_FILE?.trim();
+  if (!testPath) return path.join(root, '.farm-status.json');
+  if (env.NODE_TEST_CONTEXT !== '1') {
+    throw new Error('FARMSLOT_TEST_STATUS_FILE is restricted to NODE_TEST_CONTEXT=1');
+  }
+  return path.resolve(testPath);
+}
+
 export const farmslotRuntimeLogDir = path.join(farmslotRoot, '.omx', 'logs');
 
 function expandTilde(p: string): string {

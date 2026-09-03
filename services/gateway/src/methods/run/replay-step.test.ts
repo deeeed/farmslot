@@ -1892,6 +1892,65 @@ test('runReplayStep rejects monitor replay when dispatch is still pending', asyn
   assert.equal(getRun(run.id)?.slotId, 'macwork-ff-4');
 });
 
+test('runReplayStep preserves worker session state when replaying monitor only', async (t) => {
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const priorDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  await writeFile(
+    statusFile,
+    JSON.stringify(
+      { slots: [{ slot: 'macwork-ff-4', lifecycle: 'ready', current_run_id: null }] },
+      null,
+      2,
+    ) + '\n',
+  );
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    runner: 'grok',
+    model: 'grok-4.6',
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    slotId: 'macwork-ff-4',
+    taskFile: '/tmp/TASK.md',
+    metrics: {
+      ...run.metrics,
+      runnerSessionId: 'preserved-session',
+      runnerSessionPath: '/tmp/preserved-session',
+    },
+    steps: run.steps.map((step) =>
+      step.name === 'find-slot' ||
+      step.name === 'write-task' ||
+      step.name === 'prepare' ||
+      step.name === 'dispatch'
+        ? { ...step, status: 'done' as const }
+        : step.name === 'monitor'
+          ? { ...step, status: 'failed' as const }
+          : step,
+    ),
+  });
+
+  t.after(async () => {
+    if (priorDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = priorDisableStart;
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+
+  await runReplayStep({ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }, () => {});
+
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.equal(replayed.status, 'monitoring');
+  assert.equal(replayed.metrics.runnerSessionId, 'preserved-session');
+  assert.equal(replayed.metrics.runnerSessionPath, '/tmp/preserved-session');
+});
+
 test('runReplayStep recovers slotId from find-slot outputs on dispatch replay', async (t) => {
   const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
   await writeFile(

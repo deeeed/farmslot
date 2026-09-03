@@ -18,6 +18,7 @@ import {
   resolveWorkers,
   SERIAL_PRAGMA,
   summaryLines,
+  TEST_STATUS_ENV,
   testCommand,
   verifyAssignment,
   WORKERS_ENV,
@@ -256,6 +257,7 @@ const GATEWAY_SERIAL_INVENTORY = [
   'src/roadmap/store.test.ts', //                     real dirs under repo projects/
   'src/run-completion/artifact-mirror.test.ts', //    real JSON under repo pool/
   'src/run-engine/publish-package-refresh.test.ts', // real JSON under repo pool/
+  'src/security/principal-core.test.ts', //           fixed credential-store fixtures
   'src/tasks/writer.test.ts', //                      fixed-name file in templates/worker/
 ];
 
@@ -288,6 +290,12 @@ export function reachesSharedState(source) {
 // accessors above must be serial, which is why the guard matches the accessor
 // rather than the write.
 const SHARED_STATE_READ_ONLY = {
+  'src/backlog/store.test.ts':
+    'writes only process-unique .sandbox and project fixture paths, so concurrent lanes cannot collide',
+  'src/intelligence/improvement-apply.test.ts':
+    'uses a process-unique project fixture and restores every touched file',
+  'src/intelligence/learnings-router.test.ts':
+    'uses a process-unique project fixture and restores every touched file',
   'src/projects/repo-root.test.ts': 'asserts resolved paths only; never writes',
   'src/runtime/session-usage-script.test.ts': 'declares its own temp poolDir under a mkdtemp root',
   'src/methods/run.test.ts':
@@ -295,6 +303,36 @@ const SHARED_STATE_READ_ONLY = {
     'per call and cannot collide with another lane; it must move to the serial lane if it ever ' +
     'writes a fixed name there',
 };
+
+test('each executed test receives an isolated fleet status file', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'farmslot-status-env-'));
+  const probe = path.join(dir, 'status-env.test.ts');
+  writeFileSync(
+    probe,
+    `
+      import assert from 'node:assert/strict';
+      import { readFileSync } from 'node:fs';
+      const statusFile = process.env.${TEST_STATUS_ENV};
+      assert.ok(statusFile);
+      assert.notEqual(statusFile, process.env.LIVE_STATUS_FILE);
+      assert.equal(readFileSync(statusFile, 'utf8'), '{"slots":[]}\\n');
+    `,
+  );
+  try {
+    const result = spawnSync(process.execPath, [RUNNER_PATH, '--cwd', REPO_ROOT, probe], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        LIVE_STATUS_FILE: path.join(REPO_ROOT, '.farm-status.json'),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.equal(result.status, 0, `${result.stdout ?? ''}${result.stderr ?? ''}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('the gateway serial lane matches its reviewed inventory', () => {
   const gatewaySrc = path.resolve(
