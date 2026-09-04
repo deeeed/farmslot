@@ -11,7 +11,7 @@ should be able to see and change that without shell commands. Concretely:
 
 | #   | Operator want                                                            | What it needs                                                                               |
 | --- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| 1   | Metro, Webpack, Chrome, simulators stop when a run ends                  | Run-owned processes released at terminal, in dependency order                               |
+| 1   | Metro, Webpack, Chrome, simulators stop when a run ends                  | Run-owned processes stopped at terminal, in dependency order, bypassing keep-warm           |
 | 2   | A run at a human step stops hogging resources so other work can proceed  | Shed unneeded processes at durable waits; optionally free the slot itself and restore later |
 | 3   | Re-run validation on another device, simulator, or platform              | Re-target the validation step to a different device identity                                |
 | 4   | Several runs share one scarce device: wait, get notified, claim, release | Fleet-scoped exclusive claim with a wait queue and an availability signal                   |
