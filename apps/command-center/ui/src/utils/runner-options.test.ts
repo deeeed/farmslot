@@ -22,14 +22,14 @@ test('eval candidates expose Cursor and Grok through the shared comparison runne
     DEFAULT_CURSOR_MODEL,
     'composer-2.5-fast',
     'cursor-grok-4.6-high',
-    'cursor-grok-4.5-high-fast',
-    'cursor-grok-4.5-high',
+    'gpt-5.6-sol-max',
   ]);
   assert.deepEqual(MODELS_BY_RUNNER.grok, [DEFAULT_GROK_MODEL]);
   assert.equal(DEFAULT_GROK_MODEL, 'grok-4.6');
   assert.equal(DEFAULT_MODEL.cursor, DEFAULT_CURSOR_MODEL);
-  assert.equal(MODELS_BY_RUNNER.cursor.includes('grok-4.5-fast-xhigh'), false);
-  assert.equal(MODELS_BY_RUNNER.cursor.includes('cursor-grok-4.5-high-fast'), true);
+  assert.equal(MODELS_BY_RUNNER.cursor.includes('gpt-5.6-sol-max'), true);
+  assert.equal(MODELS_BY_RUNNER.cursor.includes('cursor-grok-4.5-high-fast'), false);
+  assert.equal(MODELS_BY_RUNNER.cursor.includes('cursor-grok-4.5-high'), false);
   assert.equal(DEFAULT_MODEL.grok, DEFAULT_GROK_MODEL);
 });
 

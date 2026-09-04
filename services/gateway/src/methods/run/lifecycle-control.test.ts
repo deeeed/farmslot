@@ -4,7 +4,7 @@ import test from 'node:test';
 import { Events, type MachineParkRecord } from '@farmslot/protocol';
 
 import { withMachineRunTransition } from '../../run-lifecycle/transition-coordinator.js';
-import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
+import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../../runs/store.js';
 
 import {
   publishForceCompletedRun,
@@ -150,7 +150,7 @@ test('runPause pauses monitoring runs and rejects non-pausable statuses', async 
   await assert.rejects(() => runPause({ runId: run.id }, () => {}), /cannot be paused/);
 });
 
-test('runForceComplete only accepts ci-watching or failed runs', async (t) => {
+test('runForceComplete requires a PR number when completing a blocked run', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',
@@ -166,13 +166,114 @@ test('runForceComplete only accepts ci-watching or failed runs', async (t) => {
   updateRun(run.id, { status: 'blocked' });
   await assert.rejects(
     () => runForceComplete({ runId: run.id }, () => {}),
-    /cannot be force-completed in status: blocked/,
+    /force-complete requires a published PR number/,
   );
 
   updateRun(run.id, { status: 'ci-watching' });
   const result = await runForceComplete({ runId: run.id }, () => {});
   assert.equal(result.run.id, run.id);
   assert.equal(result.run.status, 'ci-watching');
+});
+
+test('runForceComplete marks a blocked run done when its PR is already published', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-force-blocked`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    error: 'review finding requires an external dependency',
+    steps: [{ name: 'human-gate', status: 'running' }],
+  });
+
+  const result = await runForceComplete({ runId: run.id, prNumber: 35670 }, () => {});
+
+  assert.equal(result.run.status, 'done');
+  assert.equal(result.run.error, undefined);
+  assert.equal(result.run.prNumber, 35670);
+  assert.equal(result.run.steps[0]?.status, 'skipped');
+  assert.match(result.run.steps[0]?.detail ?? '', /blocked run/);
+
+  updateRun(run.id, { status: 'human-gating' });
+  updateRunStep(run.id, 'human-gate', { status: 'running' });
+  assert.equal(getRun(run.id)?.status, 'done');
+  assert.equal(getRun(run.id)?.steps[0]?.status, 'skipped');
+});
+
+test('runForceComplete ignores a stored 0 PR sentinel outside the blocked path', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-ci-watch-zero-pr`,
+  });
+  t.after(() => cleanupRun(run.id));
+  // `0` is the invalid-PR sentinel, not a linked PR. It must never be promoted
+  // into a fallback that then fails positive-number validation.
+  updateRun(run.id, { status: 'ci-watching', prNumber: 0 });
+
+  const result = await runForceComplete({ runId: run.id }, () => {});
+
+  assert.equal(result.run.status, 'ci-watching');
+});
+
+test('runForceComplete rejects a blocked run whose stored PR is the 0 sentinel', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-blocked-zero-pr`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'blocked', prNumber: 0 });
+
+  await assert.rejects(
+    () => runForceComplete({ runId: run.id }, () => {}),
+    /force-complete requires a published PR number/,
+  );
+});
+
+test('runForceComplete uses the run own PR number when completing a blocked run', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-blocked-linked-pr`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    prNumber: 34865,
+    error: 'review finding requires an external dependency',
+    steps: [{ name: 'human-gate', status: 'running' }],
+  });
+
+  // No prNumber in the params: the run is already linked to a published PR, so
+  // the caller must not have to resend the number it already owns.
+  const result = await runForceComplete({ runId: run.id }, () => {});
+
+  assert.equal(result.run.status, 'done');
+  assert.equal(result.run.prNumber, 34865);
+  assert.equal(result.run.steps[0]?.status, 'skipped');
+});
+
+test('runForceComplete repairs a stale active status after an earlier force completion', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-repair-force-complete`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'human-gating',
+    prNumber: 35670,
+    engineState: { operatorForceCompleted: true },
+    steps: [{ name: 'human-gate', status: 'running' }],
+  });
+
+  const result = await runForceComplete({ runId: run.id, prNumber: 35670 }, () => {});
+
+  assert.equal(result.run.status, 'done');
+  assert.equal(result.run.steps[0]?.status, 'skipped');
 });
 
 test('runForceComplete marks a failed run done and can persist a PR number', async (t) => {

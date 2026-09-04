@@ -6,6 +6,7 @@ import type { SelfReviewIssue, WorkerSignal } from '@farmslot/protocol';
 import { parseSelfReviewIssueBullets } from './issues.js';
 import {
   canRecoverSelfReviewFixPass,
+  resolveRecoveredFixBaseSha,
   resolveSelfReviewRunnerModel,
   resumeSelfReviewFixPromptDelivery,
   retryDeferredFixDelivery,
@@ -280,6 +281,48 @@ test('canRecoverSelfReviewFixPass requires a working context for the current fix
     canRecoverSelfReviewFixPass({ ...current, signalFile: null }, 'tasks/foo'),
     false,
     'legacy contexts without the scoped signal path are not valid recovery state',
+  );
+});
+
+test('resolveRecoveredFixBaseSha prefers the persisted delivery baseline', () => {
+  assert.equal(
+    resolveRecoveredFixBaseSha(
+      {
+        engineState: {
+          publishGate: {
+            independentReviews: [
+              {
+                id: 'independent-review-4',
+                reviewSnapshot: { source: 'local-git', capturedAt: '', headSha: 'review-head' },
+              },
+            ],
+          },
+        },
+      } as never,
+      { artifactScope: 'independent-review-4', deliveryBaselineRef: 'delivery-head' },
+    ),
+    'delivery-head',
+  );
+});
+
+test('resolveRecoveredFixBaseSha reconstructs legacy contexts from their review generation', () => {
+  assert.equal(
+    resolveRecoveredFixBaseSha(
+      {
+        engineState: {
+          publishGate: {
+            independentReviews: [
+              {
+                id: 'independent-review-4',
+                reviewSnapshot: { source: 'local-git', capturedAt: '', headSha: 'review-head' },
+              },
+            ],
+          },
+        },
+      } as never,
+      { artifactScope: 'independent-review-4' },
+    ),
+    'review-head',
   );
 });
 
@@ -566,6 +609,8 @@ interface ScriptedDepsOptions {
   contextPct?: number | null; // omitted = dep not wired (legacy behavior)
   feedbackError?: string;
   feedbackErrors?: Array<Error | undefined>;
+  fixDeltaFiles?: number;
+  fixDeltaUnavailable?: boolean;
 }
 
 interface CallLog {
@@ -574,6 +619,7 @@ interface CallLog {
   relaunches: number;
   markStatus: string[];
   feedbackBaselines: string[]; // baseline returned to the loop on each sendFeedbackToWorker call
+  fixBaseShas: Array<string | null>;
   waitBaselines: string[]; // baseline forwarded into waitForWorkerSignal on each iteration
   artifactScopes: Array<string | null | undefined>;
   sessionPolicies: Array<string | undefined>; // 11th runReviewAgent arg per re-review
@@ -587,6 +633,7 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
     relaunches: 0,
     markStatus: [],
     feedbackBaselines: [],
+    fixBaseShas: [],
     waitBaselines: [],
     artifactScopes: [],
     sessionPolicies: [],
@@ -604,8 +651,9 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
     ...(opts.contextPct !== undefined
       ? { getWorkerContextPct: async () => opts.contextPct ?? null }
       : {}),
-    sendFeedbackToWorker: async () => {
+    sendFeedbackToWorker: async (_vars, _issues, _taskDir, _runId, fixBaseSha) => {
       calls.sendFeedback += 1;
+      calls.fixBaseShas.push(fixBaseSha);
       const scriptedError = opts.feedbackErrors?.[calls.sendFeedback - 1];
       if (scriptedError) throw scriptedError;
       if (opts.feedbackError) throw new Error(opts.feedbackError);
@@ -628,6 +676,18 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
     unwatchContext: async () => {},
     captureFixDelta: async (_vars, _taskDir, loopNumber, fixBaseSha, artifactScope) => {
       calls.artifactScopes.push(artifactScope);
+      if (opts.fixDeltaUnavailable) {
+        return {
+          snapshot: {
+            source: 'unavailable',
+            capturedAt: new Date().toISOString(),
+            missingReason: 'git-numstat-failed',
+            fixBaseSha,
+            fixHeadSha: null,
+          },
+          artifactPaths: [`artifacts/review-loop-${loopNumber}/fix-delta-stat.json`],
+        };
+      }
       return {
         snapshot: {
           source: 'local-git',
@@ -636,7 +696,11 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
           fixHeadSha: `head-${loopNumber}`,
           diffPath: `artifacts/review-loop-${loopNumber}/fix-delta.diff`,
           diffHash: `hash-${loopNumber}`,
-          diffStat: { files: 1, additions: 2, deletions: 1 },
+          diffStat: {
+            files: opts.fixDeltaFiles ?? 1,
+            additions: opts.fixDeltaFiles === 0 ? 0 : 2,
+            deletions: opts.fixDeltaFiles === 0 ? 0 : 1,
+          },
         },
         artifactPaths: [
           `artifacts/review-loop-${loopNumber}/fix-delta.diff`,
@@ -844,6 +908,7 @@ test('runSelfReviewRetryLoop: stops as soon as a re-review verdict is pass', asy
   assert.equal(result.retryCount, 1);
   assert.equal(result.feedbackSent, true);
   assert.equal(calls.sendFeedback, 1);
+  assert.deepEqual(calls.fixBaseShas, ['base-head']);
   assert.match(calls.progressDetails[0] ?? '', /worker applying fixes/);
   assert.match(calls.progressDetails[1] ?? '', /running claude re-review/);
   assert.equal(result.attempts?.length, 2);
@@ -968,9 +1033,10 @@ test('runSelfReviewRetryLoop: continues after a fix-signal timeout when budget r
   assert.deepEqual(calls.markStatus, ['failed', 'complete']);
 });
 
-test('runSelfReviewRetryLoop: returns blocked when fix signal reports blocked', async () => {
+test('runSelfReviewRetryLoop: returns blocked without re-review when a blocked fix changed nothing', async () => {
   const { deps, calls } = buildDeps({
     reviewVerdicts: [],
+    fixDeltaFiles: 0,
     fixSignals: [
       { status: 'blocked', reason: 'pre-flight blocker', timestamp: new Date().toISOString() },
     ],
@@ -992,6 +1058,60 @@ test('runSelfReviewRetryLoop: returns blocked when fix signal reports blocked', 
   assert.equal(result.attempts?.length, 2);
   assert.equal(result.attempts?.[1]?.verdict, 'failed');
   assert.equal(result.attempts?.[1]?.fixDelta?.diffHash, 'hash-2');
+  assert.equal(calls.reviewAgent, 0);
+});
+
+test('runSelfReviewRetryLoop: re-reviews partial changes before preserving a worker blocker', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['pass'],
+    fixSignals: [
+      { status: 'blocked', reason: 'live recipe unavailable', timestamp: new Date().toISOString() },
+    ],
+  });
+
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 3,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    deps,
+  });
+
+  assert.equal(result.verdict, 'blocked');
+  assert.equal(result.reason, 'live recipe unavailable');
+  assert.deepEqual(result.issues, []);
+  assert.equal(calls.reviewAgent, 1);
+  // The publication gate reads the FINAL attempt, so a passing re-review must
+  // not leave a `pass` attempt behind a blocked verdict.
+  assert.equal(result.attempts?.[1]?.verdict, 'failed');
+  assert.equal(result.attempts?.[1]?.reason, 'live recipe unavailable');
+  assert.deepEqual(
+    result.attempts?.[1]?.timeline?.map((segment) => segment.kind),
+    ['worker-fix', 're-review'],
+  );
+});
+
+test('runSelfReviewRetryLoop: an unreadable fix delta still forces the re-review', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['pass'],
+    fixDeltaUnavailable: true,
+    fixSignals: [
+      { status: 'blocked', reason: 'slot lost its git index', timestamp: new Date().toISOString() },
+    ],
+  });
+
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 3,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    deps,
+  });
+
+  // `unavailable` means unknown, not empty: the worker may have changed files.
+  assert.equal(calls.reviewAgent, 1);
+  assert.equal(result.verdict, 'blocked');
+  assert.equal(result.attempts?.[1]?.verdict, 'failed');
 });
 
 test('runSelfReviewRetryLoop: bails when worker is dead and relaunch fails', async () => {

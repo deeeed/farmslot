@@ -10,11 +10,12 @@ import {
 } from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
-import { expandDispatchCmd } from '../core/hooks.js';
+import { expandDispatchCmd, quoteRunnerArgValue } from '../core/hooks.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
 
 import {
+  assertSafeRunnerArgumentValue,
   normalizeRunner,
   runnerDefaultSafetyTier,
   runnerFlagsForTier,
@@ -39,6 +40,22 @@ const CODEX_PLUGIN_HOOK_ARGS =
  * - `auto` → leave unset so the CLI/config default applies
  * - any other non-empty value → pass through
  */
+/**
+ * Single construction point for `--model`. Asserting here covers every launch
+ * path (fresh, retained reload, interactive refinement) instead of trusting
+ * each call site to validate first.
+ */
+function runnerModelFlag(model?: string | null): string {
+  if (!model || model === 'unknown') return '';
+  assertSafeRunnerArgumentValue('model', model);
+  return ` --model ${quoteRunnerArgValue(model)}`;
+}
+
+function assertedModel(model: string): string {
+  assertSafeRunnerArgumentValue('model', model);
+  return model;
+}
+
 export function resolveRunnerEffort(runnerId: string, effort?: string | null): string | undefined {
   const runner = normalizeRunner(runnerId);
   const trimmed = effort?.trim();
@@ -100,7 +117,7 @@ export function buildCursorAgentLaunch(options: {
   const flagList = runnerFlagsForTier('cursor', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
   const prompt = options.prompt.trim() ? ` ${shellQuote(options.prompt)}` : '';
-  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment} --model ${effectiveModel}${prompt}`;
+  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment} --model ${quoteRunnerArgValue(assertedModel(effectiveModel))}${prompt}`;
 }
 
 export function resolveCursorAgentBinary(preferred?: string | null): string {
@@ -121,7 +138,7 @@ export function buildGrokLaunch(options: {
   const flagList = runnerFlagsForTier('grok', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
   const effortFlag = grokEffortFlag(options.effort);
-  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment}${effortFlag} --model ${effectiveModel}`;
+  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment}${effortFlag} --model ${quoteRunnerArgValue(assertedModel(effectiveModel))}`;
 }
 
 export function resolveGrokBinary(preferred?: string | null): string {
@@ -206,7 +223,7 @@ export function buildRunnerSessionReloadCommand(
       repo,
       opts.runtimeDir,
     );
-    const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
+    const modelFlag = runnerModelFlag(model);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const claudePath = vars.claudePath || 'claude';
@@ -235,7 +252,7 @@ export function buildRunnerSessionReloadCommand(
       opts.runtimeDir,
       { accountLabel: opts.codexAccountLabel, authSource: opts.codexAuthSource },
     );
-    const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
+    const modelFlag = runnerModelFlag(model);
     const effortFlag = codexReasoningEffortFlag(opts.effort);
     const workerConfigFlags = codexWorkerConfigFlags();
     const flagList = runnerFlagsForTier(runner, tier);
@@ -254,7 +271,7 @@ export function buildRunnerSessionReloadCommand(
   }
 
   if (runner === 'grok') {
-    const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
+    const modelFlag = runnerModelFlag(model);
     const effortFlag = grokEffortFlag(opts.effort);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
@@ -310,7 +327,7 @@ export function buildCodexExecLaunch(options: {
   /** Safety tier (ADR-023). Omit to let `runnerFlagsForTier` apply the codex default (`sandboxed`). */
   safetyTier?: SafetyTier;
 }): string {
-  const modelFlag = options.model && options.model !== 'unknown' ? ` --model ${options.model}` : '';
+  const modelFlag = runnerModelFlag(options.model);
   const effortFlag = codexReasoningEffortFlag(options.effort);
   const workerConfigFlags = codexWorkerConfigFlags();
   const flagList = runnerFlagsForTier('codex', options.safetyTier);
@@ -336,7 +353,8 @@ function grokEffortFlag(effort?: string | null): string {
   // Explicit `auto` leaves Grok config untouched.
   if (normalized?.toLowerCase() === 'auto') return '';
   const effective = normalized || DEFAULT_GROK_EFFORT;
-  return ` --effort ${effective}`;
+  assertSafeRunnerArgumentValue('effort', effective);
+  return ` --effort ${quoteRunnerArgValue(effective)}`;
 }
 
 function codexWorkerConfigFlags(): string {
@@ -488,7 +506,7 @@ export function buildLaunchCommand(
   const hasDispatchCmd = Boolean(vars.dispatchCmd);
   const cmdIsRunnerAware = dispatchCmdIsRunnerAware(vars.dispatchCmd, runner);
   const cmdHasModelPlaceholder = hasDispatchCmd && vars.dispatchCmd.includes('{model}');
-  const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
+  const modelFlag = runnerModelFlag(model);
   const tier = opts.safetyTier ?? runnerDefaultSafetyTier(runner);
   const launchPrompt = runnerNeedsPostLaunchPrompt(runner) ? '' : prompt;
 
@@ -525,6 +543,12 @@ export function buildLaunchCommand(
   // Resolve defaults before template expansion so `{effort}` placeholders get xhigh
   // for codex/grok when the operator left effort unset.
   const resolvedEffort = resolveRunnerEffort(runner, opts.effort);
+  // Assert once, before any expansion, for every runner path. A dispatch_cmd
+  // carrying `{model}` or `{effort}` is filled in by expandDispatchCmd and never
+  // reaches the per-flag helpers that validate, so `--effort --help` would
+  // otherwise be emitted verbatim.
+  assertSafeRunnerArgumentValue('model', model);
+  assertSafeRunnerArgumentValue('effort', resolvedEffort);
   const injectQuotedArgvPrompt =
     hasDispatchCmd &&
     Boolean(launchPrompt.trim()) &&
@@ -534,6 +558,20 @@ export function buildLaunchCommand(
   const dispatchCmdForExpand = injectQuotedArgvPrompt
     ? withArgvTaskPromptPlaceholder(vars.dispatchCmd)
     : vars.dispatchCmd;
+  // A runner-aware dispatch_cmd is free to omit `{model}` (and `{effort}`), but
+  // the operator's selection must still reach the CLI or the runner silently
+  // starts on its own default. `runnerArgs` is appended right after the runner
+  // binary during `{runner_path}` expansion, which is where every runner expects
+  // its flags. Placeholders present in the template win, so nothing duplicates.
+  const cmdHasEffortPlaceholder = hasDispatchCmd && vars.dispatchCmd.includes('{effort}');
+  const dispatchRunnerArgs = [
+    // Grok only: codex injects its own reasoning-effort config flag after
+    // expansion, and cursor has no effort flag at all.
+    runner === 'grok' && !cmdHasEffortPlaceholder ? grokEffortFlag(resolvedEffort).trim() : '',
+    cmdHasModelPlaceholder ? '' : modelFlag.trim(),
+  ]
+    .filter(Boolean)
+    .join(' ');
   const expanded = hasDispatchCmd
     ? expandDispatchCmd(
         { ...vars, dispatchCmd: dispatchCmdForExpand },
@@ -544,6 +582,7 @@ export function buildLaunchCommand(
           taskPrompt: injectQuotedArgvPrompt ? shellQuote(launchPrompt) : launchPrompt,
           effort: resolvedEffort,
           safetyFlags: safetyFlagsString,
+          ...(runner === 'claude' ? {} : { runnerArgs: dispatchRunnerArgs }),
         },
       )
     : '';

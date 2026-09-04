@@ -1515,6 +1515,16 @@ describe('buildLaunchCommand', () => {
       );
     });
 
+    it('keeps a single --model when the Claude dispatch_cmd omits the placeholder', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {claude_path} {safety_flags}' });
+      const cmd = buildLaunchCommand(vars, 'claude', 'opus', PROMPT, {
+        taskFile: TASK_FILE,
+        claudeUsesDispatchCmd: true,
+      });
+      assert.match(cmd, /--model opus/);
+      assert.equal(cmd.match(/--model/g)?.length, 1);
+    });
+
     it('attaches runtime arguments to Claude before trailing shell commands', () => {
       const vars = makeVars({
         dispatchCmd: 'cd {repo} && {claude_path} --model {model}; echo ready',
@@ -1658,6 +1668,9 @@ describe('buildLaunchCommand', () => {
         /then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2"/,
       );
       assert.match(cmd, /model_reasoning_effort="xhigh"/);
+      // A template without {model} must still carry the operator's selection.
+      assert.match(cmd, /--model gpt-5/);
+      assert.equal(cmd.match(/--model/g)?.length, 1);
     });
 
     it('falls back to inline launcher when dispatch_cmd exists but is claude-shaped', () => {
@@ -1807,7 +1820,12 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'cursor', DEFAULT_CURSOR_MODEL, PROMPT, {
         safetyTier: 'dangerous',
       });
-      assert.match(cmd, /cursor --force --sandbox disabled 'Read TASK\.md and execute\.'/);
+      assert.match(
+        cmd,
+        new RegExp(
+          `cursor --model ${DEFAULT_CURSOR_MODEL} --force --sandbox disabled 'Read TASK\\.md and execute\\.'`,
+        ),
+      );
       const promptAt = cmd.indexOf("'Read TASK.md and execute.'");
       const printfAt = cmd.indexOf('printf launched');
       assert.ok(promptAt >= 0 && printfAt > promptAt);
@@ -1844,6 +1862,67 @@ describe('buildLaunchCommand', () => {
       );
       assert.match(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);
+    });
+
+    it('carries the selected model when a runner-aware dispatch_cmd omits {model}', () => {
+      // Real macpro pool template: runner-aware, no {model} placeholder.
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}' });
+      const cmd = buildLaunchCommand(vars, 'cursor', 'gpt-5.6-sol-max', PROMPT, {
+        safetyTier: 'dangerous',
+      });
+      assert.match(
+        cmd,
+        /\/usr\/local\/bin\/cursor-agent --model gpt-5\.6-sol-max --force --sandbox disabled /,
+      );
+      assert.equal(cmd.match(/--model/g)?.length, 1);
+    });
+
+    it('carries the selected model when the dispatch_cmd invokes a bare {runner}', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {runner} {safety_flags}' });
+      const cmd = buildLaunchCommand(vars, 'cursor', 'gpt-5.6-sol-max', PROMPT, {
+        safetyTier: 'dangerous',
+      });
+      assert.match(cmd, /cursor --model gpt-5\.6-sol-max --force --sandbox disabled /);
+      assert.equal(cmd.match(/--model/g)?.length, 1);
+    });
+
+    it('refuses a model value the runner CLI would parse as a flag', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}' });
+      // Quoting stops the shell, not argv parsing: `--help` still reaches the
+      // CLI as an option. It must be refused before any command is built.
+      assert.throws(
+        () => buildLaunchCommand(vars, 'cursor', '--help', PROMPT, { safetyTier: 'dangerous' }),
+        /model "--help" cannot be passed to a runner CLI/,
+      );
+      assert.throws(
+        () => buildLaunchCommand(vars, 'cursor', '   ', PROMPT, { safetyTier: 'dangerous' }),
+        /cannot be passed to a runner CLI/,
+      );
+      assert.equal(runnerSupportsModel('cursor', '--help'), false);
+      assert.equal(runnerSupportsModel('grok', '-m'), false);
+      assert.equal(runnerSupportsModel('cursor', 'gpt-5.6-sol-max'), true);
+    });
+
+    it('quotes a model value that could otherwise alter the command', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}' });
+      const cmd = buildLaunchCommand(vars, 'cursor', 'evil; touch /tmp/pwned', PROMPT, {
+        safetyTier: 'dangerous',
+      });
+      assert.match(cmd, /--model 'evil; touch \/tmp\/pwned'/);
+      // The metacharacter is inside the quoted argument, so it is never a
+      // second command: nothing follows an unquoted `;` before the flags.
+      assert.doesNotMatch(cmd, /--model evil; touch/);
+    });
+
+    it('does not duplicate --model when the dispatch_cmd already has the placeholder', () => {
+      const vars = makeVars({
+        dispatchCmd: 'cd {repo} && {runner_path} {safety_flags} --model {model} {task_prompt}',
+      });
+      const cmd = buildLaunchCommand(vars, 'cursor', 'gpt-5.6-sol-max', PROMPT, {
+        safetyTier: 'dangerous',
+      });
+      assert.equal(cmd.match(/--model/g)?.length, 1);
+      assert.match(cmd, /--model gpt-5\.6-sol-max/);
     });
   });
 
@@ -1896,6 +1975,36 @@ describe('buildLaunchCommand', () => {
       );
       assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);
+    });
+
+    it('refuses an effort value the runner CLI would parse as a flag', () => {
+      // A `{effort}` placeholder is filled by the template expander, which never
+      // reaches the per-flag helper, so the assertion has to run before it.
+      const vars = makeVars({
+        dispatchCmd: 'cd {repo} && {runner_path} {safety_flags} --effort {effort}',
+      });
+      assert.throws(
+        () =>
+          buildLaunchCommand(vars, 'grok', DEFAULT_GROK_MODEL, PROMPT, {
+            effort: '--help',
+            safetyTier: 'dangerous',
+          }),
+        /effort "--help" cannot be passed to a runner CLI/,
+      );
+    });
+
+    it('carries model and effort when a runner-aware dispatch_cmd omits both', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}' });
+      const cmd = buildLaunchCommand(vars, 'grok', 'grok-composer-2.5-fast', PROMPT, {
+        effort: 'high',
+        safetyTier: 'dangerous',
+      });
+      assert.match(
+        cmd,
+        /\/usr\/local\/bin\/grok --effort high --model grok-composer-2\.5-fast --permission-mode bypassPermissions$/,
+      );
+      assert.equal(cmd.match(/--model/g)?.length, 1);
+      assert.equal(cmd.match(/--effort/g)?.length, 1);
     });
   });
 

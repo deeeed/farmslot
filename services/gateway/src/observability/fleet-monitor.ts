@@ -252,7 +252,10 @@ export function detectFleetMonitorViolations(
   for (const slot of fleet.slots) {
     const observedAt = now();
     const observedAtMs = Date.parse(observedAt);
-    const stuckActive = slot.lifecycle === 'busy' && slot.agent === 'no-tmux';
+    // Preparing/dispatching recreate tmux; review-gate and releasing may have
+    // none. "tmux gone" only means a worker vanished after we expected one.
+    const stuckActive =
+      slot.lifecycle === 'busy' && slot.phase === 'working' && slot.agent === 'no-tmux';
     if (stuckActive) {
       maybeRecordViolation(
         notified,

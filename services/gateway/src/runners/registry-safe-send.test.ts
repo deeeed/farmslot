@@ -621,6 +621,72 @@ test('sendRunnerPostLaunchPrompt rechecks delayed Grok acceptance before retryin
   grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
 });
 
+test('sendRunnerPostLaunchPrompt keeps post-send tolerance for Grok native acceptance', async (t) => {
+  const now = Date.now();
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = true;
+  paneText = '❯\nctx:12%\n';
+  paneTextByCapture = null;
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = 1;
+  grokPromptAcceptanceBaselineMs = now + 100;
+  grokPromptAcceptedAtMs = now;
+  t.after(() => {
+    grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+    grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+    grokPromptAcceptanceBaselineMs = Date.now();
+  });
+
+  await sendRunnerPostLaunchPrompt(vars, target, 'grok', message, 'TASK.md', '[test]', {
+    readyTimeoutMs: 100,
+    stabilityPolls: 1,
+    pollIntervalMs: 0,
+    verifyWaitMs: 0,
+    maxAttempts: 1,
+    requirePromptDigest: true,
+  });
+
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send-literal').length,
+    1,
+    `the exact turn inside the post-send tolerance must acknowledge the send; order=${callOrder.join(',')}`,
+  );
+});
+
+test('sendRunnerPostLaunchPrompt keeps the provider clock when the slot clock is skewed', async (t) => {
+  const slotClockNow = Date.now() + 3_600_000; // slot runs an hour ahead of the gateway
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = true;
+  paneText = '❯\nctx:12%\n';
+  paneTextByCapture = null;
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = 1;
+  grokPromptAcceptanceBaselineMs = slotClockNow;
+  // An identical earlier prompt, recorded a minute before this send on the SAME
+  // provider clock. Lowering the cutoff with a gateway timestamp would let this
+  // stale turn prove delivery of the new prompt.
+  grokPromptAcceptedAtMs = slotClockNow - 60_000;
+  t.after(() => {
+    grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+    grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+    grokPromptAcceptanceBaselineMs = Date.now();
+  });
+
+  await assert.rejects(
+    sendRunnerPostLaunchPrompt(vars, target, 'grok', message, 'TASK.md', '[test]', {
+      readyTimeoutMs: 100,
+      stabilityPolls: 1,
+      pollIntervalMs: 0,
+      verifyWaitMs: 0,
+      maxAttempts: 1,
+      requirePromptDigest: true,
+    }),
+    PromptDeliveryUncertainError,
+  );
+});
+
 test('sendRunnerPostLaunchPrompt does not treat native idle state as exact delivery', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;

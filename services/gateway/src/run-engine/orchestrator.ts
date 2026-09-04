@@ -604,7 +604,9 @@ export async function startRun(runId: string, options: StartRunOptions = {}): Pr
           status: 'failed',
           detail: msg,
           inputs: partialIO?.inputs,
-          outputs: partialIO?.outputs,
+          // Structured marker for recovery: replay must not have to read the
+          // runner layer's failure prose to know the prompt may be executing.
+          outputs: { ...(partialIO?.outputs ?? {}), promptDeliveryUncertain: true },
         });
         for (let j = i + 1; j < steps.length; j++) {
           updateRunStep(runId, steps[j], { status: 'skipped' });

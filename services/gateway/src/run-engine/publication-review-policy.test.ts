@@ -1029,3 +1029,60 @@ test('stampPublishGateReviewStatusForPackage only certifies the selected review'
   assert.equal(stamped.reviewedReviewSubjectHash, 'new-subject');
   assert.equal(staleReview.reviewedReviewSubjectHash, 'old-subject');
 });
+
+test('buildPublishGateReviewStatus does not publish a pass for a blocked review loop', () => {
+  const pkg = makeReadyGatePackage({
+    headSha: 'blocked-head',
+    reviewSubjectHash: 'subject-blocked',
+    reviewDepth: {
+      minimumIndependentReviews: 1,
+      requireCrossRunner: false,
+      extraLoopsRequested: 0,
+      requestedBy: 'human-gate',
+    },
+  });
+  const status = buildPublishGateReviewStatus({
+    source: 'human-gate',
+    priorReviewCount: 0,
+    requestedRunner: 'claude',
+    workerRunner: 'codex',
+    reviewedPackage: pkg,
+    reviewResult: {
+      verdict: 'blocked',
+      reason: 'external dependency unavailable',
+      runner: 'claude',
+      crossRunner: true,
+      retryCount: 1,
+      attempts: [
+        { loopNumber: 1, verdict: 'issues', unresolvedCount: 2 },
+        // The worker blocked mid-fix and the re-review of its partial changes
+        // passed. The final attempt carries the block, so the aggregate verdict
+        // stays authoritative and this review cannot satisfy publication.
+        {
+          loopNumber: 2,
+          verdict: 'failed',
+          reason: 'external dependency unavailable',
+          unresolvedCount: 0,
+          reviewSnapshot: {
+            headSha: 'blocked-head',
+            capturedAt: '2026-09-03T00:00:00.000Z',
+            source: 'local-git',
+          },
+        },
+      ],
+    },
+  });
+
+  assert.equal(status.verdict, 'failed');
+  assert.equal(status.reason, 'external dependency unavailable');
+
+  const run = makeRun({
+    engineState: {
+      publishGate: { reviewDepth: pkg.reviewDepth, independentReviews: [status] },
+    },
+  });
+  assert.throws(
+    () => assertPublicationReviewPolicySatisfied(run, pkg),
+    /requires passing independent reviews/,
+  );
+});

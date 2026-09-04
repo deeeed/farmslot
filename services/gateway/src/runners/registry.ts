@@ -561,7 +561,38 @@ export function runnerSupportsModel(
   model: string | null | undefined,
 ): boolean {
   if (!model) return true;
+  // A leading `-` or whitespace-only value is never a usable CLI argument, no
+  // matter how permissive the runner's own `acceptsModel` is.
+  if (!runnerArgumentValueIsSafe(model)) return false;
   return getRunnerDefinition(runnerId).acceptsModel(model);
+}
+
+/**
+ * A model or effort value reaches the runner CLI as its own argv entry. Every
+ * runner CLI parses a leading `-` as an option, so such a value silently
+ * becomes a different flag, and an empty value makes the CLI consume whatever
+ * follows as the model. Shell quoting stops the shell, not argv parsing, so
+ * these have to be refused at the acceptance boundary instead.
+ */
+export class UnsafeRunnerArgumentError extends Error {
+  override name = 'UnsafeRunnerArgumentError';
+}
+
+export function runnerArgumentValueIsSafe(value: string | null | undefined): boolean {
+  if (value == null) return true;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && !trimmed.startsWith('-');
+}
+
+export function assertSafeRunnerArgumentValue(
+  kind: 'model' | 'effort',
+  value: string | null | undefined,
+): void {
+  if (runnerArgumentValueIsSafe(value)) return;
+  throw new UnsafeRunnerArgumentError(
+    `runner ${kind} ${JSON.stringify(value)} cannot be passed to a runner CLI: ` +
+      `it must be non-empty and must not start with '-'`,
+  );
 }
 
 export function isKnownRunner(runnerId?: string | null): boolean {
@@ -1776,6 +1807,16 @@ export async function runnerHasDurablePromptHandoff(
   }
 }
 
+/**
+ * Slack applied to a delivery-acceptance cutoff so evidence a runner recorded a
+ * moment before we sampled the clock still counts for that send. Applied within
+ * one timebase at a time: the gateway clock for `sentAtMs`, the provider clock
+ * for a native `promptAcceptanceBaselineMs`. Never mix the two — the provider
+ * baseline can come from the slot's clock, and lowering it with a gateway
+ * timestamp lets cross-node skew admit an older identical prompt as proof.
+ */
+const PROMPT_ACCEPTANCE_CLOCK_TOLERANCE_MS = 500;
+
 async function runnerShowsPromptDeliveryAccepted(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -1793,7 +1834,17 @@ async function runnerShowsPromptDeliveryAccepted(
     promptAcceptanceBaselineMs?: number | null;
   } = {},
 ): Promise<boolean> {
-  const handoff = await runnerHasDurablePromptHandoff(vars, target, runner, message, sinceMs, opts);
+  // The provider baseline is sampled just before the send, so a runner that
+  // records turn start a few ms earlier would have its exact native evidence
+  // rejected as "too old". Relax the cutoff inside the provider's own timebase.
+  const promptAcceptanceBaselineMs =
+    opts.promptAcceptanceBaselineMs == null
+      ? opts.promptAcceptanceBaselineMs
+      : opts.promptAcceptanceBaselineMs - PROMPT_ACCEPTANCE_CLOCK_TOLERANCE_MS;
+  const handoff = await runnerHasDurablePromptHandoff(vars, target, runner, message, sinceMs, {
+    ...opts,
+    promptAcceptanceBaselineMs,
+  });
   if (handoff.accepted) {
     return true;
   }
@@ -3290,7 +3341,7 @@ export async function sendRunnerPostLaunchPrompt(
         tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
       )
     ).stdout;
-    const promptAcceptedSinceMs = sentAtMs - 500;
+    const promptAcceptedSinceMs = sentAtMs - PROMPT_ACCEPTANCE_CLOCK_TOLERANCE_MS;
     if (
       await runnerShowsPromptDeliveryAccepted(
         vars,
