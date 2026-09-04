@@ -18,6 +18,7 @@ import {
   type RunSessionLiveness,
 } from '@farmslot/protocol';
 
+import { upsertAgentContext } from '../../agents/contexts.js';
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../../core/config.js';
 import {
   resolveExactTmuxWindowPane,
@@ -28,12 +29,13 @@ import {
   buildRunnerSessionReloadCommand,
   runnerSupportsSessionReload,
 } from '../../runners/launch-command.js';
-import { isKnownRunner, normalizeRunner } from '../../runners/registry.js';
+import { getRunnerDefinition, isKnownRunner, normalizeRunner } from '../../runners/registry.js';
 import {
   probeRunnerDescendantPid,
   resolvePersistedRunnerSessionBinding,
   verifyExactLiveRunnerSessionBinding,
 } from '../../runners/session-process.js';
+import { rediscoverRunnerSessionPane } from '../../runners/session-rediscovery.js';
 import { getRun } from '../../runs/store.js';
 import { resolveDispatchSafetyTier } from '../dispatch/safety-tier.js';
 
@@ -49,6 +51,8 @@ export interface RunSessionCommandDeps {
   resolveSession: typeof resolveTmuxSession;
   probeRunnerPid: typeof probeRunnerDescendantPid;
   verifyBinding: typeof verifyExactLiveRunnerSessionBinding;
+  rediscoverPane: typeof rediscoverRunnerSessionPane;
+  upsert: typeof upsertAgentContext;
 }
 
 const DEFAULT_DEPS: RunSessionCommandDeps = {
@@ -61,6 +65,8 @@ const DEFAULT_DEPS: RunSessionCommandDeps = {
   resolveSession: resolveTmuxSession,
   probeRunnerPid: probeRunnerDescendantPid,
   verifyBinding: verifyExactLiveRunnerSessionBinding,
+  rediscoverPane: rediscoverRunnerSessionPane,
+  upsert: upsertAgentContext,
 };
 
 function unsupported(
@@ -267,7 +273,42 @@ export async function runSessionCommand(
   // Non-strict resolution always yields the configured name, so this narrows to
   // null only for a slot whose config carries no session at all.
   const tmuxSession = context.target?.session ?? (await deps.resolveSession(slotId, vars)) ?? null;
-  const liveness = await probeSessionLiveness(vars, runner, tmuxTarget, binding.binding, deps);
+  const recorded = await probeSessionLiveness(vars, runner, tmuxTarget, binding.binding, deps);
+
+  // The recorded window is not where the session must be. Dispatch removes a
+  // role window when its runner exits, so a reopen — pasted by an operator or
+  // replayed by validation — usually lands in a different window. Search the
+  // slot's tmux session before reporting the conversation gone.
+  let effectiveTarget = tmuxTarget;
+  let liveness = recorded;
+  let rediscovered: Awaited<ReturnType<typeof rediscoverRunnerSessionPane>> | null = null;
+  if (recorded.liveness !== 'live' && tmuxSession) {
+    rediscovered = await deps.rediscoverPane({
+      vars,
+      session: tmuxSession,
+      runner,
+      expectedSessionId: binding.binding.runnerSessionId,
+      expectedSessionPath: binding.binding.runnerSessionPath,
+    });
+    if (rediscovered.pane) {
+      effectiveTarget = rediscovered.pane.target;
+      liveness = { liveness: 'live' };
+      // Rebind so Command Center, the CLI, and the terminal all follow the
+      // session to its new window instead of pointing at a destroyed one.
+      await deps.upsert(run.id, context.role, {
+        id: context.id,
+        target: {
+          session: tmuxSession,
+          window: rediscovered.pane.windowName || null,
+          pane: null,
+          paneId: rediscovered.pane.paneId,
+          target: rediscovered.pane.target,
+        },
+      });
+    } else if (recorded.liveness === 'dead' && rediscovered.reason) {
+      liveness = { liveness: 'dead', livenessReason: rediscovered.reason };
+    }
+  }
 
   return {
     supported: true,
@@ -281,9 +322,13 @@ export async function runSessionCommand(
     capturedAt: context.runnerSessionCapturedAt ?? null,
     slotId,
     machine: vars.machine,
-    tmuxTarget,
+    tmuxTarget: effectiveTarget,
+    ...(rediscovered?.pane ? { rediscoveredTarget: true } : {}),
+    // Runner-specific stop syntax stays declared in the runner registry; no
+    // caller should carry a literal like `/exit`.
+    interrupt: getRunnerDefinition(runner).gracefulExit ?? null,
     reopenCommand,
-    attachCommand: tmuxSession ? tmuxAttachCommandForTarget(tmuxSession, tmuxTarget) : null,
+    attachCommand: tmuxSession ? tmuxAttachCommandForTarget(tmuxSession, effectiveTarget) : null,
     ...liveness,
   };
 }

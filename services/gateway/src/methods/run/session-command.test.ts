@@ -60,6 +60,8 @@ function deps(
     resolvePane: async () => ({ paneId: '%12', panePid: '4242' }),
     resolveSession: async () => 'mm-1',
     verifyBinding: async () => OWNED_BINDING,
+    rediscoverPane: async () => ({ pane: null, scannedPanes: 0 }),
+    upsert: async () => null,
     probeRunnerPid: async () => ({ state: 'present', pid: '4243' }),
     ...overrides,
   } as RunSessionCommandDeps;
@@ -351,4 +353,135 @@ test('a pane with no runner process stays dead without consulting the binding', 
 
   assert.equal(result.supported && result.liveness, 'dead');
   assert.equal(verified, false);
+});
+
+test('a session reopened in another window is reported live at its new target', async () => {
+  const upserts: Array<{ contextId?: string; target?: unknown }> = [];
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      // The recorded role window is gone: dispatch destroys it when the runner exits.
+      resolvePane: async () => null,
+      rediscoverPane: async () => ({
+        pane: {
+          paneId: '%42',
+          panePid: '5150',
+          windowName: 'dev-reopen',
+          target: 'mm-1:dev-reopen',
+        },
+        scannedPanes: 3,
+      }),
+      upsert: async (_runId, _role, patch) => {
+        upserts.push({ contextId: patch.id, target: patch.target });
+        return null;
+      },
+    }),
+  );
+
+  assert.equal(result.supported, true);
+  if (!result.supported) return;
+  assert.equal(result.liveness, 'live');
+  assert.equal(result.tmuxTarget, 'mm-1:dev-reopen');
+  assert.equal(result.rediscoveredTarget, true);
+  // The attach line must follow the session to the window it actually lives in.
+  assert.equal(
+    result.attachCommand,
+    "tmux select-window -t 'mm-1:dev-reopen' \\; attach -t '=mm-1'",
+  );
+  // The context is rebound so Command Center and the CLI stop pointing at a
+  // window that no longer exists.
+  assert.equal(upserts.length, 1);
+  assert.equal(upserts[0]?.contextId, 'fix-bug');
+  assert.deepEqual(upserts[0]?.target, {
+    session: 'mm-1',
+    window: 'dev-reopen',
+    pane: null,
+    paneId: '%42',
+    target: 'mm-1:dev-reopen',
+  });
+});
+
+test('a session found nowhere in the slot stays dead and never rebinds the context', async () => {
+  let upserted = 0;
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      resolvePane: async () => null,
+      rediscoverPane: async () => ({
+        pane: null,
+        scannedPanes: 2,
+        reason: 'no pane in tmux session mm-1 runs codex session codex-session-123',
+      }),
+      upsert: async () => {
+        upserted += 1;
+        return null;
+      },
+    }),
+  );
+
+  assert.equal(result.supported && result.liveness, 'dead');
+  assert.match(
+    (result.supported && result.livenessReason) || '',
+    /no pane in tmux session mm-1 runs codex session/,
+  );
+  assert.equal(upserted, 0);
+});
+
+test('a live recorded pane never triggers a session-wide scan', async () => {
+  let scans = 0;
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      rediscoverPane: async () => {
+        scans += 1;
+        return { pane: null, scannedPanes: 0 };
+      },
+    }),
+  );
+
+  assert.equal(result.supported && result.liveness, 'live');
+  assert.equal(result.supported && result.tmuxTarget, 'mm-1:dev');
+  assert.equal(scans, 0);
+});
+
+test("the result carries the runner's declared graceful exit, not a client literal", async () => {
+  const codex = await runSessionCommand({ runId: 'run-1' }, deps(codexWorkerRun()));
+  assert.equal(codex.supported, true);
+  if (!codex.supported) return;
+  // Sourced from the runner capability registry so no caller hardcodes `/exit`.
+  assert.equal(codex.interrupt?.command, '/exit');
+  assert.equal(codex.interrupt?.submitDelayMs, 50);
+});
+
+test('each reload-capable runner carries its own registry-declared exit', async () => {
+  // Every runner the RPC supports declares a graceful exit today, so the field
+  // is always present; it is read from the registry rather than assumed.
+  for (const [runner, model, sessionId, sessionPath] of [
+    ['claude', 'opus', 'claude-session-1', '/repo/.claude/sessions/claude-session-1.jsonl'],
+    [
+      'grok',
+      'grok-code-fast-1',
+      'grok-session-1',
+      '/repo/.agent/grok/sessions/grok-session-1.json',
+    ],
+  ] as const) {
+    const run = codexWorkerRun({
+      metrics: {
+        nudgeCount: 0,
+        model,
+        runner,
+        runnerSessionId: sessionId,
+        runnerSessionPath: sessionPath,
+      },
+      agentContexts: [
+        agentContext({ runner, model, runnerSessionId: sessionId, runnerSessionPath: sessionPath }),
+      ],
+    });
+
+    const result = await runSessionCommand({ runId: 'run-1' }, deps(run));
+    assert.equal(result.supported, true, `${runner} must be supported`);
+    if (!result.supported) continue;
+    assert.equal(result.runner, runner);
+    assert.equal(result.interrupt?.command, '/exit', `${runner} exit command`);
+  }
 });

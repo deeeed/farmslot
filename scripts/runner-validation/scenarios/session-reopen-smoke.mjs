@@ -22,6 +22,14 @@ export const RUNNER_AGNOSTIC = true;
  * `verifyExactLiveRunnerSessionBinding`, `live` proves the pane's runner owns
  * exactly the persisted session — that is the conversation-continuity proof.
  * Pane text is never consulted.
+ *
+ * Scope: this proves the launch capture and the reopen handle for one dev
+ * dispatch. The branch-affinity nudge path is unit-covered
+ * (services/gateway/src/runners/session-record.test.ts) rather than exercised
+ * here, because reaching it live needs a second dispatch of the same family
+ * onto the same slot while the first worker is still warm — a multi-run
+ * sequence whose slot contention would make this scenario flaky without
+ * proving anything the reopen handle does not already prove.
  */
 function rpc(method, params = {}, timeoutMs = 120_000) {
   const script = path.join(ROOT, 'apps/command-center/scripts/cdp.mjs');
@@ -59,11 +67,38 @@ async function poll(read, accept, timeoutMs) {
  * `enter: false` keeps it usable after the runner exits, when the pane is a
  * plain shell with no runner context to validate against.
  */
-function sendLine(slotId, runId, contextId, target, text) {
+function sendLine(slotId, runId, contextId, target, text, submitDelayMs = 300) {
   rpc('terminal.send', { slotId, runId, contextId, target, text, enter: false });
-  sleepMs(300);
+  sleepMs(Math.max(submitDelayMs, 300));
   rpc('tmux.sendKeys', { slotId, target, keys: 'Enter' });
   sleepMs(300);
+}
+
+/**
+ * Deliver one literal line to the slot session's CURRENT window.
+ *
+ * After the interrupt the recorded role window is gone: dispatch sets
+ * `remain-on-exit off` and a `pane-died -> kill-pane` hook on role windows, so
+ * a runner that exits takes its single-pane window with it. `bareSession`
+ * routes to the session itself, which tmux resolves to the window that
+ * `tmux.newWindow` just made current.
+ */
+function sendLineToCurrentWindow(slotId, text) {
+  rpc('terminal.send', { slotId, bareSession: true, text, enter: false });
+  sleepMs(300);
+  rpc('tmux.sendKeys', { slotId, bareSession: true, keys: 'Enter' });
+  sleepMs(300);
+}
+
+/** Last lines of a pane, for failure diagnosis only — never pass evidence. */
+function diagnosticPaneTail(slotId, target, lines = 40) {
+  try {
+    const snapshot = rpc('terminal.snapshot', { slotId, bareSession: true, lines });
+    const text = typeof snapshot === 'string' ? snapshot : (snapshot?.data ?? snapshot?.text ?? '');
+    return String(text).split('\n').slice(-lines).join('\n');
+  } catch (error) {
+    return `pane tail unavailable: ${error?.message || String(error)}`;
+  }
 }
 
 function capturedWorkerSession(run) {
@@ -115,11 +150,16 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     reopenCommand: null,
     attachCommand: null,
     tmuxTarget: null,
+    interruptCommand: null,
     liveness: null,
     livenessAfterInterrupt: null,
     livenessReasonAfterInterrupt: null,
     livenessAfterReopen: null,
     reopenedSessionId: null,
+    reopenedTmuxTarget: null,
+    reopenedInNewWindow: false,
+    targetWasRediscovered: false,
+    diagnosticPaneTail: null,
     conversationContinued: false,
     pass: false,
     error: null,
@@ -215,14 +255,30 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     }
 
     // ---- interrupt --------------------------------------------------------
-    // Codex declares `/exit` as its graceful exit in the runner registry. Using
-    // the runner's own declared capability keeps the interrupt out of TUI
-    // guesswork.
-    sendLine(slotId, runId, context.id, session.tmuxTarget, '/exit');
+    // The stop input comes from the runner capability registry via
+    // `run.sessionCommand`. A literal here would hardcode runner-specific
+    // syntax outside the runner layer.
+    if (!session.interrupt?.command) {
+      throw new Error(
+        `runner ${session.runner} declares no graceful exit; this scenario cannot interrupt it`,
+      );
+    }
+    report.interruptCommand = session.interrupt.command;
+    sendLine(
+      slotId,
+      runId,
+      context.id,
+      session.tmuxTarget,
+      session.interrupt.command,
+      session.interrupt.submitDelayMs,
+    );
 
+    // Only structured absence counts. `unknown` means the probe could not
+    // decide, and accepting it would let the reopen "succeed" against a session
+    // that was never actually interrupted.
     const interrupted = await poll(
       () => rpc('run.sessionCommand', { runId, contextId: context.id }),
-      (state) => state.supported && state.liveness !== 'live',
+      (state) => state.supported && state.liveness === 'dead',
       120_000,
     );
     report.livenessAfterInterrupt = interrupted.liveness;
@@ -234,17 +290,34 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     }
 
     // ---- reopen -----------------------------------------------------------
-    // Run the gateway-built command in the pane the worker vacated. Nothing is
-    // reassembled here: this is the exact string an operator would paste.
-    sendLine(slotId, runId, context.id, session.tmuxTarget, session.reopenCommand);
+    // The interrupt destroyed the role window, so open a fresh one and paste
+    // there — exactly what an operator does. Nothing is reassembled here: this
+    // is the gateway's own command string.
+    rpc('tmux.newWindow', { slotId, bareSession: true });
+    sleepMs(500);
+    report.reopenedInNewWindow = true;
+    sendLineToCurrentWindow(slotId, session.reopenCommand);
 
-    const reopened = await poll(
-      () => rpc('run.sessionCommand', { runId, contextId: context.id }),
-      (state) => state.supported && state.liveness === 'live',
-      180_000,
-    );
+    let reopened;
+    try {
+      reopened = await poll(
+        () => rpc('run.sessionCommand', { runId, contextId: context.id }),
+        (state) => state.supported && state.liveness === 'live',
+        180_000,
+      );
+    } catch (pollError) {
+      // Diagnostic only: the pane text explains WHY the reopen did not take,
+      // and is never used as evidence that it did.
+      report.diagnosticPaneTail = diagnosticPaneTail(slotId, session.tmuxTarget);
+      throw pollError;
+    }
     report.livenessAfterReopen = reopened.liveness;
     report.reopenedSessionId = reopened.sessionId;
+    report.reopenedTmuxTarget = reopened.tmuxTarget;
+    report.targetWasRediscovered = reopened.rediscoveredTarget === true;
+    if (!reopened.tmuxTarget) {
+      throw new Error('reopened session reports no tmux target; Command Center cannot follow it');
+    }
     // `live` here is not "a codex process exists": the gateway proved the pane's
     // active runner session is exactly this id and path.
     if (reopened.sessionId !== context.runnerSessionId) {

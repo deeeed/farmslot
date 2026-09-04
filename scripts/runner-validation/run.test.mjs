@@ -48,6 +48,47 @@ test('dispatch-model-flag fails when named explicitly without its required argum
   assert.equal(matrix.pass, true);
 });
 
+test('session-reopen-smoke reopens in a fresh window and keeps pane text out of its evidence', () => {
+  const source = fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      'scenarios/session-reopen-smoke.mjs',
+    ),
+    'utf8',
+  );
+
+  // The interrupt destroys the role window (dispatch sets remain-on-exit off
+  // plus a pane-died kill-pane hook), so the reopen must open its own window
+  // instead of typing into whatever tmux resolves the stale target to.
+  assert.match(source, /rpc\('tmux\.newWindow', \{ slotId, bareSession: true \}\)/);
+  assert.match(source, /sendLineToCurrentWindow\(slotId, session\.reopenCommand\)/);
+  // Liveness and the session id are the pass evidence; the pane tail is only
+  // captured on failure and is labelled as diagnostic.
+  assert.match(source, /report\.diagnosticPaneTail = diagnosticPaneTail\(/);
+  assert.match(source, /never pass evidence/);
+  assert.match(source, /report\.targetWasRediscovered = reopened\.rediscoveredTarget === true/);
+});
+
+test('session-reopen-smoke interrupts through the runner capability and demands structured death', () => {
+  const source = fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      'scenarios/session-reopen-smoke.mjs',
+    ),
+    'utf8',
+  );
+
+  // The stop input comes from the runner registry via run.sessionCommand.
+  assert.match(source, /session\.interrupt\.command/);
+  assert.doesNotMatch(source, /sendLine\([^)]*'\/exit'/);
+  // `unknown` means the probe could not decide; accepting it would let the
+  // reopen pass without a confirmed interruption.
+  assert.match(source, /state\.liveness === 'dead'/);
+  assert.doesNotMatch(source, /state\.liveness !== 'live'/);
+  // AC1 scope is stated rather than silently skipped.
+  assert.match(source, /nudge path is unit-covered/);
+});
+
 test('runner-validation catalog includes four runners and twenty-four scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
   assert.equal(listScenarios().length, 24);

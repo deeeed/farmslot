@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import type { AgentContext, Run, RunSessionCommandResult } from '@farmslot/protocol';
@@ -47,6 +49,7 @@ const supported: RunSessionCommandResult = {
   slotId: 'macpro-mm-1',
   machine: 'macpro',
   tmuxTarget: 'mm-1:dev',
+  interrupt: { command: '/exit', submitDelayMs: 50 },
   reopenCommand: "CODEX_HOME=/repo/.agent/codex codex resume 'codex-session-123'",
   attachCommand: "tmux select-window -t 'mm-1:dev' \\; attach -t '=mm-1'",
   liveness: 'dead',
@@ -155,4 +158,14 @@ test('two same-role reviewer rows stay distinct so each copies its own session',
   assert.notEqual(rows[0]?.contextId, rows[1]?.contextId);
   assert.equal(rows[0]?.sessionIdShort, 'reviewer');
   assert.equal(rows[0]?.role, rows[1]?.role);
+});
+
+test('the request guard is keyed per context so one row cannot strand another', () => {
+  // A single global counter meant clicking a second row invalidated the first
+  // row's in-flight request, leaving it on "Loading…" with no way back.
+  const source = readFileSync(path.resolve(import.meta.dirname, 'run-detail.ts'), 'utf8');
+
+  assert.match(source, /this\._sessionRequestSeq\[row\.contextId\]/);
+  assert.match(source, /requestSeq === this\._sessionRequestSeq\[row\.contextId\]/);
+  assert.doesNotMatch(source, /\+\+this\._sessionRequestSeq;/);
 });

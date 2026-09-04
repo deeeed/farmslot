@@ -147,5 +147,16 @@ export async function sendKeys(
   runner?: string,
 ): Promise<void> {
   const vars = await loadSlotVars(slotId);
-  await execOnSlot(vars, buildSendKeysCommand(session, text, enter, runner), { timeout: 5000 });
+  const result = await execOnSlot(vars, buildSendKeysCommand(session, text, enter, runner), {
+    timeout: 5000,
+  });
+  // A discarded exit code is how a send into a window that no longer exists
+  // reported success: tmux answers `can't find window: dev` on stderr and exits
+  // non-zero, but the caller was told the keystrokes landed. Never report a
+  // delivery that tmux refused.
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `tmux send-keys to ${session} failed: ${result.stderr?.trim() || result.stdout?.trim() || `exit ${result.exitCode}`}`,
+    );
+  }
 }

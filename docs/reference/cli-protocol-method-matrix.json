@@ -844,6 +844,10 @@
       "surface": "typed-command",
       "command": "farmslot run resume"
     },
+    "run.sessionCommand": {
+      "surface": "typed-command",
+      "command": "farmslot run session"
+    },
     "run.slotHistory": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."

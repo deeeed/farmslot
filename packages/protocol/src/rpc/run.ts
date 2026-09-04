@@ -527,6 +527,18 @@ export interface RunSessionCommandSupportedResult {
   slotId: string;
   machine: string;
   tmuxTarget: string | null;
+  /**
+   * True when `tmuxTarget` came from scanning the slot's tmux session rather
+   * than the agent context. A reopened session usually lives in a new window,
+   * because dispatch destroys a role window when its runner exits.
+   */
+  rediscoveredTarget?: true;
+  /**
+   * The runner's own declared graceful-exit input, from the runner capability
+   * registry. Null when the runner declares none. Callers that need to stop the
+   * session use this instead of hardcoding runner-specific text.
+   */
+  interrupt: { command: string; submitDelayMs?: number } | null;
   /** Built by the gateway runner layer. Clients never assemble runner CLI syntax. */
   reopenCommand: string;
   attachCommand: string | null;

@@ -68,6 +68,55 @@ return (async () => {
     section.querySelector(`[data-testid="run-agent-session-reopen-${role}"]`)?.textContent.trim() ??
     null;
 
+  // A run with several contexts must resolve each row independently: role-only
+  // selection used to hand every same-role reviewer the newest one's session.
+  const otherRow = rows.find((candidate) => candidate.contextId !== role);
+  let secondRow = null;
+  if (otherRow) {
+    const otherButton = section.querySelector(
+      `[data-testid="run-agent-session-reopen-${otherRow.contextId}"]`,
+    );
+    if (otherButton) {
+      otherButton.click();
+      const otherDeadline = Date.now() + 20000;
+      while (Date.now() < otherDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const label = section
+          .querySelector(`[data-testid="run-agent-session-reopen-${otherRow.contextId}"]`)
+          ?.textContent.trim();
+        const otherLiveness = section.querySelector(
+          `[data-testid="run-agent-session-liveness-${otherRow.contextId}"]`,
+        );
+        const otherError = section.querySelector(
+          `[data-testid="run-agent-session-error-${otherRow.contextId}"]`,
+        );
+        if (label !== 'Loading…' && (label === 'Copied' || otherLiveness || otherError)) break;
+      }
+      secondRow = {
+        contextId: otherRow.contextId,
+        sessionIdShort:
+          section
+            .querySelector(`[data-testid="run-agent-session-id-${otherRow.contextId}"]`)
+            ?.textContent.trim() ?? null,
+        liveness:
+          section
+            .querySelector(`[data-testid="run-agent-session-liveness-${otherRow.contextId}"]`)
+            ?.textContent.trim() ?? null,
+        settled:
+          section
+            .querySelector(`[data-testid="run-agent-session-reopen-${otherRow.contextId}"]`)
+            ?.textContent.trim() !== 'Loading…',
+      };
+    }
+  }
+
+  // The first row must not have been stranded by the second row's click: the
+  // request sequence is keyed per context.
+  const firstRowStillSettled =
+    section
+      .querySelector(`[data-testid="run-agent-session-reopen-${role}"]`)
+      ?.textContent.trim() !== 'Loading…';
+
   const attach = section.querySelector(`[data-testid="run-agent-session-attach-${role}"]`);
   let attachLabelAfter = null;
   if (attach) {
@@ -96,7 +145,10 @@ return (async () => {
       !duplicateContextIds &&
       Boolean(liveness) &&
       Boolean(sessionId?.textContent.trim()) &&
-      (labelAfter === 'Copied' || copyBlocked),
+      (labelAfter === 'Copied' || copyBlocked) &&
+      firstRowStillSettled &&
+      (secondRow === null ||
+        (secondRow.settled && secondRow.sessionIdShort !== sessionId?.textContent.trim())),
     runId: detail.run?.id ?? null,
     contextId: role,
     rowCount: rows.length,
@@ -106,6 +158,8 @@ return (async () => {
     labelAfter,
     attachLabelAfter,
     copyBlocked,
+    secondRow,
+    firstRowStillSettled,
     sessionIdShort: sessionId?.textContent.trim() ?? null,
     liveness: liveness?.textContent.trim() ?? null,
     error: errorText,

@@ -186,7 +186,7 @@ export class RunDetail extends RunDetailState {
       // Carrying it across would label the next run's contexts with the
       // previous run's liveness.
       this._sessionStates = {};
-      this._sessionRequestSeq += 1;
+      this._sessionRequestSeq = {};
       this._ciPoke.reset();
       this._missingRunFetchAttempted = false;
       this._directRunRefreshFailed = false;
@@ -835,11 +835,15 @@ export class RunDetail extends RunDetailState {
     row: RunSessionRow,
     kind: RunSessionCopyKind,
   ): Promise<void> {
-    const requestSeq = ++this._sessionRequestSeq;
+    // Sequenced per context: one global counter meant a click on a second row
+    // invalidated the first row's in-flight request, leaving it stuck on
+    // "Loading…" forever.
+    const requestSeq = (this._sessionRequestSeq[row.contextId] ?? 0) + 1;
+    this._sessionRequestSeq = { ...this._sessionRequestSeq, [row.contextId]: requestSeq };
     // A response that lands after the operator moved to another run, or after a
     // newer click on this row, must not overwrite what is on screen now.
     const requestStillCurrent = () =>
-      requestSeq === this._sessionRequestSeq && this.runId === run.id;
+      requestSeq === this._sessionRequestSeq[row.contextId] && this.runId === run.id;
     this._sessionStates = { ...this._sessionStates, [row.contextId]: { status: 'loading' } };
     try {
       const result = await gateway.request<RunSessionCommandResult>(Methods.RUN_SESSION_COMMAND, {

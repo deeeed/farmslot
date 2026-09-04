@@ -122,17 +122,32 @@ async function isInteractiveTargetReady(
 ): Promise<boolean> {
   if (target === session) return true;
   const vars = await loadSlotVars(slotId);
-  return (
-    (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(
-          `display-message -p -t ${shellQuote(target)} '#{session_name}' >/dev/null 2>&1`,
-        ),
-        { timeout: 5000 },
-      )
-    ).exitCode === 0
+  // tmux resolves `session:missing-window` to the session's CURRENT window and
+  // exits 0, so a bare probe cannot tell a live role window from a destroyed
+  // one — that is how a reopen command got typed into the `worker` window after
+  // dispatch's pane-died hook removed `dev`. Compare the window tmux actually
+  // resolved against the one that was asked for.
+  const result = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`display-message -p -t ${shellQuote(target)} '#{window_name}' 2>/dev/null`),
+    { timeout: 5000 },
   );
+  if (result.exitCode !== 0) return false;
+  const requestedWindow = requestedWindowName(target);
+  if (!requestedWindow) return true;
+  return result.stdout.trim() === requestedWindow;
+}
+
+/** The window name in a `session:window[.pane]` target, or null for a bare session/id target. */
+export function requestedWindowName(target: string): string | null {
+  if (/^[%@]\d+$/.test(target)) return null;
+  const separator = target.indexOf(':');
+  if (separator <= 0 || separator === target.length - 1) return null;
+  const window = target.slice(separator + 1).split('.', 1)[0] ?? '';
+  // A numeric window index is positional, not a name; tmux reports the name for
+  // `#{window_name}`, so an index cannot be compared this way.
+  if (!window || /^\d+$/.test(window)) return null;
+  return window;
 }
 
 async function assertInteractiveTargetReady(

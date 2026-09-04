@@ -39,8 +39,11 @@ export abstract class RunDetailState extends LitElement {
   @state() _pendingConfirm: string | null = null;
   /** Per-agent-context state for the runner-session copy buttons, keyed by context id. */
   @state() _sessionStates: Record<string, RunSessionRowState | undefined> = {};
-  /** Guards late `run.sessionCommand` responses against a newer click or run. */
-  _sessionRequestSeq = 0;
+  /**
+   * Guards late `run.sessionCommand` responses against a newer click or run,
+   * per agent context so one row's click cannot strand another row's request.
+   */
+  _sessionRequestSeq: Record<string, number> = {};
   @state() _rescueInProgress = false;
   @state() _interactiveDevActionInProgress: string | null = null;
   @state() _handoffSignalCheckBusy = false;

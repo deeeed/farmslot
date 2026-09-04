@@ -210,7 +210,17 @@ async function listTmuxWindows(
 export async function tmuxSendKeys(params: TmuxSendKeysParams): Promise<OkResult> {
   const { vars, target } = await resolveTmuxControlTarget(params);
   const keyArgs = parseTmuxKeys(params.keys).map(shellQuote).join(' ');
-  await execOnSlot(vars, tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${keyArgs}`));
+  const result = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${keyArgs}`),
+  );
+  // `{ ok: true }` regardless of the tmux exit code hid every send into a
+  // window that had already been destroyed.
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `tmux send-keys to ${target} failed: ${result.stderr?.trim() || result.stdout?.trim() || `exit ${result.exitCode}`}`,
+    );
+  }
   return { ok: true };
 }
 

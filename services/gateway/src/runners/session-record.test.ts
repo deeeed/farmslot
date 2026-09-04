@@ -218,7 +218,23 @@ test('reviewer session binding goes through the hook with its allocated context 
 
   assert.match(source, /recordRunnerSessionForRole\(\{/);
   assert.match(source, /contextId: allocated\.id/);
+  // Both reviewer binding paths: the live rebind and the cold launch. The cold
+  // launch used to write the fields directly and never stamp capturedAt.
   assert.match(source, /'reviewer live session bind'/);
+  assert.match(source, /'reviewer cold launch'/);
+  assert.doesNotMatch(source, /status: 'working',\n\s+runnerSessionId: sessionMeta\./);
+});
+
+test('a failed reviewer rebind clears the capture stamp with the id and path', () => {
+  const source = gatewaySource('self-review/review-agent.ts');
+
+  assert.match(source, /clearedRunnerSessionContextPatch\(\)/);
+  // The old shape nulled id/path under the allocated context and left the
+  // capture timestamp dating a binding that had just been rejected.
+  assert.doesNotMatch(
+    source,
+    /label: allocated\.label,\n\s+runnerSessionId: null,\n\s+runnerSessionPath: null,/,
+  );
 });
 
 test('every runner-respawn site clears the session identity as one unit', () => {
