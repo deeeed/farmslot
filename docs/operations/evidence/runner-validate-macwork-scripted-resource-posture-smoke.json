@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-04T16:46:48.406Z",
+  "recordedAt": "2026-09-04T18:34:18.475Z",
   "host": "macwork",
   "scenario": "resource-posture-smoke",
   "runner": "scripted",
   "slotId": "macpro-ff-1",
   "capabilityId": "sandbox-gateway-ui",
-  "runId": "308380eb-d5a0-4e30-bbdf-242755146f83",
+  "runId": "660d2046-7854-4d0c-aec7-57960fec79fa",
   "project": "farmslot-farm",
   "acquire": {
     "ok": true,
@@ -31,11 +31,11 @@
     "observedState": "running",
     "policySource": "framework-default",
     "reason": "kept so the next operator action stays usable",
-    "leaseId": "cap-92323a51-5a63-4062-84ce-0fcdd9e3b76c",
+    "leaseId": "cap-93f24a57-af6e-4442-825a-9234044699fc",
     "owner": {
-      "runId": "308380eb-d5a0-4e30-bbdf-242755146f83"
+      "runId": "660d2046-7854-4d0c-aec7-57960fec79fa"
     },
-    "lastTransitionAt": "2026-09-04T16:46:08.633Z",
+    "lastTransitionAt": "2026-09-04T18:34:02.625Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -56,11 +56,11 @@
     "observedState": "stopped",
     "policySource": "framework-default",
     "reason": "terminal cleanup stops every run- and family-owned provider",
-    "leaseId": "cap-92323a51-5a63-4062-84ce-0fcdd9e3b76c",
+    "leaseId": "cap-93f24a57-af6e-4442-825a-9234044699fc",
     "owner": {
-      "runId": "308380eb-d5a0-4e30-bbdf-242755146f83"
+      "runId": "660d2046-7854-4d0c-aec7-57960fec79fa"
     },
-    "lastTransitionAt": "2026-09-04T16:46:25.651Z",
+    "lastTransitionAt": "2026-09-04T18:34:13.073Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -71,6 +71,65 @@
     "policySource": "framework-default",
     "lastTransition": "idempotent"
   },
+  "dependencyProof": {
+    "attempted": true,
+    "pass": true,
+    "reason": null,
+    "error": null,
+    "dependent": "ios-simulator",
+    "dependency": "companion-metro",
+    "pairReason": "depth-1 pair with the lowest total cost class (high + high); rejected 2 deeper or unavailable candidate(s)",
+    "candidates": [
+      {
+        "id": "android-device",
+        "dependencies": ["companion-metro"],
+        "cost": "high",
+        "availability": "unavailable"
+      },
+      {
+        "id": "companion-native-client-ios",
+        "dependencies": ["ios-simulator"],
+        "cost": "high",
+        "availability": "available"
+      },
+      {
+        "id": "ios-simulator",
+        "dependencies": ["companion-metro"],
+        "cost": "high",
+        "availability": "available"
+      }
+    ],
+    "dependencyLeaseAcquired": true,
+    "waitStates": [
+      {
+        "capabilityId": "ios-simulator",
+        "desiredDisposition": "stopped",
+        "observedState": "stopped",
+        "policySource": "framework-default"
+      },
+      {
+        "capabilityId": "companion-metro",
+        "desiredDisposition": "stopped",
+        "observedState": "stopped",
+        "policySource": "framework-default"
+      }
+    ],
+    "preparedAt": "2026-09-04T18:34:12.861Z",
+    "terminalStates": [
+      {
+        "capabilityId": "ios-simulator",
+        "desiredDisposition": "stopped",
+        "observedState": "stopped"
+      },
+      {
+        "capabilityId": "companion-metro",
+        "desiredDisposition": "stopped",
+        "observedState": "stopped"
+      }
+    ],
+    "releaseOrder": ["ios-simulator", "companion-metro"]
+  },
+  "leftoverLeases": [],
   "pass": true,
   "error": null,
   "terminalRepeatOutcome": "idempotent",
