@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-04T15:49:09.197Z",
+  "host": "macwork",
+  "scenario": "resource-posture-smoke",
+  "runner": "scripted",
+  "slotId": "macpro-ff-1",
+  "capabilityId": "sandbox-gateway-ui",
+  "runId": "76c0c753-dede-4e0d-a8ec-48b535520d36",
+  "project": "farmslot-farm",
+  "acquire": {
+    "ok": true,
+    "leaseState": "acquired"
+  },
+  "waitPreview": {
+    "posture": "operator-wait",
+    "policySource": "framework-default",
+    "retain": ["sandbox-gateway-ui"],
+    "warm": [],
+    "stop": [],
+    "effects": []
+  },
+  "waitApply": {
+    "ok": true,
+    "outcome": "applied",
+    "policySource": "framework-default"
+  },
+  "waitStatus": {
+    "capabilityId": "sandbox-gateway-ui",
+    "desiredDisposition": "acquired",
+    "observedState": "running",
+    "policySource": "framework-default",
+    "reason": "kept so the next operator action stays usable",
+    "leaseId": "cap-3410763b-1b04-4bed-adbf-c131c663b5cb",
+    "owner": {
+      "runId": "76c0c753-dede-4e0d-a8ec-48b535520d36"
+    },
+    "lastTransitionAt": "2026-09-04T15:49:02.483Z",
+    "releaseEffects": [
+      "Gateway/UI capability ownership is removed",
+      "The slot lifecycle retains the control-plane process until slot teardown"
+    ]
+  },
+  "terminalApply": {
+    "ok": true,
+    "outcome": "applied",
+    "effects": [
+      "Gateway/UI capability ownership is removed",
+      "The slot lifecycle retains the control-plane process until slot teardown"
+    ],
+    "failures": []
+  },
+  "terminalStatus": {
+    "capabilityId": "sandbox-gateway-ui",
+    "desiredDisposition": "stopped",
+    "observedState": "stopped",
+    "policySource": "framework-default",
+    "reason": "terminal cleanup stops every run- and family-owned provider",
+    "leaseId": "cap-3410763b-1b04-4bed-adbf-c131c663b5cb",
+    "owner": {
+      "runId": "76c0c753-dede-4e0d-a8ec-48b535520d36"
+    },
+    "lastTransitionAt": "2026-09-04T15:49:04.395Z",
+    "releaseEffects": [
+      "Gateway/UI capability ownership is removed",
+      "The slot lifecycle retains the control-plane process until slot teardown"
+    ]
+  },
+  "persistedPosture": {
+    "posture": "terminal",
+    "policySource": "framework-default",
+    "lastTransition": "idempotent"
+  },
+  "pass": true,
+  "error": null,
+  "terminalRepeatOutcome": "idempotent",
+  "cancelEffects": [
+    {
+      "name": "engine-cancel",
+      "status": "ok"
+    },
+    {
+      "name": "warm-sessions",
+      "status": "ok"
+    },
+    {
+      "name": "backlog-settle",
+      "status": "ok"
+    },
+    {
+      "name": "work-graph-tick",
+      "status": "skipped"
+    },
+    {
+      "name": "runtime-capabilities",
+      "status": "ok"
+    },
+    {
+      "name": "slot-release",
+      "status": "ok"
+    }
+  ],
+  "finalStatus": "cancelled",
+  "slotReleased": true,
+  "cancelled": true
+}

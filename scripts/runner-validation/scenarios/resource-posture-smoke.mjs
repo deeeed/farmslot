@@ -16,7 +16,7 @@ export const RUNNER_AGNOSTIC = true;
  * provider state.
  *
  * It asserts on gateway RPC results and the persisted run record, never on pane
- * text. The run is a scripted `mode: validation` dispatch so no LLM turn is
+ * text. The run is a scripted interactive-start dispatch so no LLM turn is
  * spent, and it is cancelled at the end with the same slot-release proof the
  * other dispatch scenarios use.
  *
@@ -109,7 +109,9 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     const created = rpc('run.create', {
       project: slot.project,
       flowType: 'dev',
-      mode: 'validation',
+      // Free-text tickets are accepted only by flexible interactive starts;
+      // the scripted runner still makes no changes.
+      mode: 'interactive',
       ticketOrPr: 'resource posture validation',
       initialContext: 'Resource posture validation run. Makes no changes.',
       runner: 'scripted',
