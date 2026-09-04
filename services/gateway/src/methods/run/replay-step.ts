@@ -316,7 +316,7 @@ export class ReplayTaskSignalProbeError extends Error {
   override name = 'ReplayTaskSignalProbeError';
 }
 
-async function readAdoptableTaskSignal(
+export async function readAdoptableTaskSignal(
   run: Run,
   opts: { freshDispatch: boolean },
 ): Promise<WorkerSignal | null> {
@@ -325,6 +325,10 @@ async function readAdoptableTaskSignal(
     run.agentContexts?.find((candidate) => candidate.role === primaryRoleForFlow(run.flowType)) ??
     run.agentContexts?.[0];
   if (!slotId || !context?.signalFile) return null;
+  // An explicit fresh dispatch is the operator abandoning the old worker: a
+  // readable signal must not be adopted either, or the request is silently
+  // ignored and the run resumes the session it was told to leave behind.
+  if (opts.freshDispatch) return null;
 
   try {
     const { loadSlotVars } = await import('../../core/config.js');
@@ -356,14 +360,6 @@ async function readAdoptableTaskSignal(
     return normalizeWorkerSignal(signal).ok ? (signal as WorkerSignal) : null;
   } catch (error) {
     const message = (error as Error).message;
-    if (opts.freshDispatch) {
-      // The operator has already decided to abandon the old worker and start a
-      // new session, so an unreadable signal changes nothing about the outcome.
-      console.warn(
-        `[run] replay could not probe the task signal for ${run.id.slice(0, 8)} on ${slotId}; fresh dispatch was requested: ${message}`,
-      );
-      return null;
-    }
     // Fail closed. The dispatch it would replay had uncertain delivery, so a
     // worker may be executing the prompt right now. Redispatching on a guess
     // would send it a second time.

@@ -21,6 +21,7 @@ import {
   canAdoptTaskSignalAfterUncertainDispatch,
   freshDispatchEngineStateForReplay,
   normalizeReplayPrerequisites,
+  readAdoptableTaskSignal,
   replaySlotReclaimCheck,
   ReplayTaskSignalProbeError,
   resetPublishGateApprovalForReplay,
@@ -247,6 +248,48 @@ test('an adopted live worker keeps an eval replay at monitor instead of prepare'
     shouldRerouteEvalReplayToPrepare({ ...base, evalExperiment: false, adoptedLiveWorker: false }),
     false,
   );
+});
+
+test('a requested fresh dispatch never adopts a signal, readable or not', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now() + 3}`,
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    slotId: 'no-such-slot-for-probe',
+    agentContexts: [
+      {
+        id: 'fix-bug',
+        role: 'fix-bug',
+        label: 'Worker',
+        slotId: 'no-such-slot-for-probe',
+        runId: run.id,
+        status: 'working',
+        signalFile: '.task/SIGNAL.json',
+      },
+    ],
+    steps: [
+      { name: 'dispatch', status: 'failed', outputs: { promptDeliveryUncertain: true } },
+      { name: 'monitor', status: 'pending' },
+    ],
+  });
+  const current = getRun(run.id)!;
+  // Without fresh dispatch the probe runs and fails closed on the dead slot.
+  await assert.rejects(
+    () => readAdoptableTaskSignal(current, { freshDispatch: false }),
+    ReplayTaskSignalProbeError,
+  );
+  // With fresh dispatch the probe is never attempted: the operator asked to
+  // abandon the old worker, so even a readable signal must not be adopted.
+  assert.equal(await readAdoptableTaskSignal(current, { freshDispatch: true }), null);
 });
 
 test('human-gate replay drops a consumed reviewer plan', () => {
