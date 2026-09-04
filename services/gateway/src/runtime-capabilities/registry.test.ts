@@ -1288,3 +1288,62 @@ test('a caller-supplied family that contradicts the run record is rejected', asy
   });
   assert.equal(matched.ok, true);
 });
+
+test('stopWarmProviders reports the provider it stopped', async (t) => {
+  const warm = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warm]);
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+  actions.length = 0;
+
+  const summary = await registry.stopWarmProviders(SLOT, ['metro']);
+  assert.deepEqual(actions, ['metro.release']);
+  assert.deepEqual(
+    summary.released.map((lease) => lease.capabilityId),
+    ['metro'],
+  );
+  assert.deepEqual(summary.deferred, []);
+  assert.deepEqual(summary.failures, []);
+  assert.deepEqual(summary.effects, ['release metro']);
+});
+
+test('stopWarmProviders defers a warm provider a warm dependent still needs', async (t) => {
+  let clock = new Date('2026-08-11T00:00:00.000Z');
+  const warmApp = { ...entry('app', 'exclusive', ['metro']), keepWarmMs: 600_000 };
+  const warmMetro = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warmApp, warmMetro], { now: () => clock });
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  actions.length = 0;
+  clock = new Date('2026-08-11T00:01:00.000Z');
+
+  // Asking for the dependency alone must not pull the floor out from under the
+  // dependent that is still warm.
+  const summary = await registry.stopWarmProviders(SLOT, ['metro']);
+  assert.deepEqual([...actions], []);
+  assert.deepEqual(summary.released, []);
+  assert.deepEqual(
+    summary.deferred.map((lease) => lease.capabilityId),
+    ['metro'],
+  );
+});
+
+test('stopWarmProviders reports a cleanup failure instead of claiming stopped', async (t) => {
+  const warm = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry } = await fixture(t, [warm], {
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'metro.release'
+        ? { ok: false, detail: 'metro shutdown exited 1' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+
+  const summary = await registry.stopWarmProviders(SLOT, ['metro']);
+  assert.deepEqual(summary.released, []);
+  assert.deepEqual(summary.failures, [
+    { leaseId: 'lease-1', capabilityId: 'metro', reason: 'metro shutdown exited 1' },
+  ]);
+  const status = await registry.status({ slotId: SLOT });
+  assert.equal(status.leases[0]?.cleanupFailure, 'metro shutdown exited 1');
+});

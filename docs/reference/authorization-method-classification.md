@@ -220,6 +220,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `runtime.capability.list`               | admin          |                                                          |
 | `runtime.capability.release`            | admin          |                                                          |
 | `runtime.capability.status`             | admin          |                                                          |
+| `runtime.capability.stopWarm`           | admin          |                                                          |
 | `runtime.posture.apply`                 | admin          |                                                          |
 | `runtime.posture.preview`               | admin          |                                                          |
 | `runtime.posture.status`                | admin          |                                                          |

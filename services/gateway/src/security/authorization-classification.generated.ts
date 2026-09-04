@@ -236,6 +236,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'runtime.capability.list': { classification: 'admin' },
   'runtime.capability.release': { classification: 'admin' },
   'runtime.capability.status': { classification: 'admin' },
+  'runtime.capability.stopWarm': { classification: 'admin' },
   'runtime.posture.apply': { classification: 'admin' },
   'runtime.posture.preview': { classification: 'admin' },
   'runtime.posture.status': { classification: 'admin' },

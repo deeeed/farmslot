@@ -182,7 +182,9 @@ async function harness(t: TestContext, options: HarnessOptions) {
     acquireCapability: (params) => registry.acquire(params),
     releaseForPosture: async (slotId, dispositions) =>
       withForcedRetention(await registry.releaseForPosture(slotId, dispositions)),
-    stopWarmProviders: (slotId, capabilityIds) => registry.stopWarmProviders(slotId, capabilityIds),
+    stopWarmProviders: async (slotId, capabilityIds) => {
+      await registry.stopWarmProviders(slotId, capabilityIds);
+    },
     releaseRunTerminal: async (slotId, ownerRunId, familyId) =>
       withForcedRetention(await registry.releaseRunTerminal(slotId, ownerRunId, familyId)),
     machineForSlot: async () => MACHINE,
