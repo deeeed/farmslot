@@ -104,6 +104,100 @@ test('capability validation rejects unstable ids, missing actions, and dependenc
   );
 });
 
+test('posture retention config validates, normalizes, and leaves keep_warm_ms-only projects valid', () => {
+  const slotActions = {
+    'browser-start': { label: 'start', command: 'start' },
+    'browser-health': { label: 'health', command: 'health' },
+    'browser-stop': { label: 'stop', command: 'stop' },
+  };
+  const provider = {
+    label: 'Browser',
+    version: '1',
+    share_policy: 'exclusive' as const,
+    cost: { class: 'high', resources: [{ id: 'cdp-port', access: 'exclusive' as const }] },
+    actions: {
+      acquire: { kind: 'slot-action' as const, action_id: 'browser-start' },
+      health: { kind: 'slot-action' as const, action_id: 'browser-health' },
+      release: { kind: 'slot-action' as const, action_id: 'browser-stop' },
+    },
+    release_effects: ['stop browser'],
+  };
+  const project = (runtime: NonNullable<RawProjectJson['runtime_capabilities']>) =>
+    ({ slot_actions: slotActions, runtime_capabilities: runtime }) as RawProjectJson;
+
+  // keep_warm_ms alone stays valid and normalizes without a posture block.
+  const warmOnly = project({
+    providers: { 'browser-cdp': { ...provider, keep_warm_ms: 600_000 } },
+  });
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(warmOnly, 'project.json'));
+  const warmOnlyNormalized = normalizeRawRuntimeCapabilities(warmOnly.runtime_capabilities);
+  assert.equal(warmOnlyNormalized?.providers['browser-cdp']?.keepWarmMs, 600_000);
+  assert.equal(warmOnlyNormalized?.providers['browser-cdp']?.retention, undefined);
+  assert.equal(warmOnlyNormalized?.posture, undefined);
+
+  const configured = project({
+    providers: {
+      'browser-cdp': { ...provider, retention: { 'operator-wait': 'warm', terminal: 'stop' } },
+    },
+    posture: { defaults: { 'operator-wait': 'stop' } },
+  });
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(configured, 'project.json'));
+  const normalized = normalizeRawRuntimeCapabilities(configured.runtime_capabilities);
+  assert.deepEqual(normalized?.providers['browser-cdp']?.retention, {
+    'operator-wait': 'warm',
+    terminal: 'stop',
+  });
+  assert.deepEqual(normalized?.posture, { defaults: { 'operator-wait': 'stop' } });
+
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project({
+          providers: { 'browser-cdp': provider },
+          posture: { defaults: { parked: 'stop' } },
+        }),
+        'project.json',
+      ),
+    /is not a configurable posture/,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project({
+          providers: { 'browser-cdp': { ...provider, retention: { 'operator-wait': 'keep' } } },
+        }),
+        'project.json',
+      ),
+    /must be retain, warm, stop/,
+  );
+  // Terminal always stops every run- and family-owned provider, bypassing
+  // keep-warm, so neither retain nor warm is configurable there.
+  for (const rejected of ['retain', 'warm']) {
+    assert.throws(
+      () =>
+        validateRuntimeCapabilitiesConfig(
+          project({
+            providers: { 'browser-cdp': { ...provider, retention: { terminal: rejected } } },
+          }),
+          'project.json',
+        ),
+      /"terminal" must be stop/,
+      `terminal: ${rejected} must be rejected`,
+    );
+  }
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project({
+          providers: { 'browser-cdp': provider },
+          posture: { defaults: { terminal: 'warm' } },
+        }),
+        'project.json',
+      ),
+    /"terminal" must be stop/,
+  );
+});
+
 test('isMockModeProject detects external mock_mode flag', () => {
   assert.equal(isMockModeProject({ external: { mock_mode: true } } as any), true);
   assert.equal(isMockModeProject({} as any), false);

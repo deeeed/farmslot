@@ -1,6 +1,7 @@
 import type { ScriptedRunnerConfig } from './agents.js';
 import type { QueueItem } from './dispatch.js';
 import type { TaskTemplateSelection } from './evals.js';
+import type { ResourcePostureWaitPolicy } from './resource-posture.js';
 import type {
   DevInteractiveProfile,
   FlowType,
@@ -232,6 +233,11 @@ export interface BacklogItem {
   mode?: 'interactive' | 'autonomous';
   devInteractiveProfile?: DevInteractiveProfile;
   reviewDepth?: ReviewDepthPolicy;
+  /**
+   * Dispatch-time resource posture preset copied onto every run created from
+   * this item; presets the gate choice for each durable wait (ADR-054).
+   */
+  waitPolicy?: ResourcePostureWaitPolicy;
   pendingReviewPlan?: ReviewLoopRequest[];
   launchPlan?: BacklogLaunchPlan;
   launchPlanState?: BacklogLaunchPlanState;
@@ -276,6 +282,7 @@ export interface BacklogCreateInput {
   mode?: 'interactive' | 'autonomous';
   devInteractiveProfile?: DevInteractiveProfile;
   reviewDepth?: ReviewDepthPolicy;
+  waitPolicy?: ResourcePostureWaitPolicy;
   pendingReviewPlan?: ReviewLoopRequest[];
   launchPlan?: BacklogLaunchPlan;
   status?: Extract<BacklogStatus, 'candidate' | 'ready'>;
@@ -306,6 +313,7 @@ export interface BacklogUpdateInput {
   mode?: 'interactive' | 'autonomous' | null;
   devInteractiveProfile?: DevInteractiveProfile | null;
   reviewDepth?: ReviewDepthPolicy | null;
+  waitPolicy?: ResourcePostureWaitPolicy | null;
   pendingReviewPlan?: ReviewLoopRequest[] | null;
   launchPlan?: BacklogLaunchPlan | null;
 }

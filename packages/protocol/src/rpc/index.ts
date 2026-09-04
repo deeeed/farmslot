@@ -21,6 +21,7 @@ export * from './pr.js';
 export * from './principal.js';
 export * from './provider-accounts.js';
 export * from './registry.js';
+export * from './resource-posture.js';
 export * from './resource-pressure-selection.js';
 export * from './resources.js';
 export * from './roadmap.js';

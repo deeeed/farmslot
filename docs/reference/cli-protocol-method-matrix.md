@@ -386,12 +386,15 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## runtime.\*
 
-| Method                       | Surface  | CLI command | TUI | Note                                                                                                                                                       |
-| ---------------------------- | -------- | ----------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runtime.capability.list`    | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                             |
-| `runtime.capability.acquire` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                             |
-| `runtime.capability.release` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel. |
-| `runtime.capability.status`  | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel. |
+| Method                       | Surface  | CLI command | TUI | Note                                                                                                                                                                                  |
+| ---------------------------- | -------- | ----------- | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runtime.capability.list`    | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                                                        |
+| `runtime.capability.acquire` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                                                        |
+| `runtime.capability.release` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel.                            |
+| `runtime.capability.status`  | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel.                            |
+| `runtime.posture.status`     | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]`. ADR-054 slice 3 promotes this to `farmslot resource posture` in the existing resource command family. |
+| `runtime.posture.preview`    | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]`. ADR-054 slice 3 promotes this to `farmslot resource posture` in the existing resource command family. |
+| `runtime.posture.apply`      | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]`. ADR-054 slice 3 promotes this to `farmslot resource posture` in the existing resource command family. |
 
 ## screen.\*
 

@@ -39,7 +39,11 @@ function isSnapshot(value: unknown): value is RuntimeCapabilityStoreSnapshot {
 function leaseNeedsRetention(lease: RuntimeCapabilityLease): boolean {
   return (
     ['acquiring', 'acquired', 'releasing'].includes(lease.state) ||
-    (lease.state === 'error' && Boolean(lease.cleanupFailure))
+    (lease.state === 'error' && Boolean(lease.cleanupFailure)) ||
+    // ADR-054: a released lease with a keep-warm deadline still describes a
+    // running provider. Evicting it under churn would lose both the deadline
+    // and the only record of the process that must still be cleaned up.
+    Boolean(lease.keepWarmUntil)
   );
 }
 

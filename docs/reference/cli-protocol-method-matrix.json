@@ -876,6 +876,18 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel."
     },
+    "runtime.posture.apply": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]`. ADR-054 slice 3 promotes this to `farmslot resource posture` in the existing resource command family."
+    },
+    "runtime.posture.preview": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]`. ADR-054 slice 3 promotes this to `farmslot resource posture` in the existing resource command family."
+    },
+    "runtime.posture.status": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]`. ADR-054 slice 3 promotes this to `farmslot resource posture` in the existing resource command family."
+    },
     "screen.subscribe": {
       "surface": "na",
       "note": "Binary screen-capture relay for the web UI."

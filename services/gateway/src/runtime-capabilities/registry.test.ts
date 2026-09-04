@@ -15,6 +15,10 @@ import { RuntimeCapabilityStore } from './store.js';
 
 const SLOT = 'slot-a';
 
+function holdsProviderForTest(lease: { state: string }): boolean {
+  return ['acquiring', 'acquired', 'releasing'].includes(lease.state);
+}
+
 function entry(
   id: string,
   sharePolicy: RuntimeCapabilityCatalogEntry['sharePolicy'] = 'exclusive',
@@ -53,6 +57,7 @@ async function fixture(
   capabilities: RuntimeCapabilityCatalogEntry[],
   options: {
     pressureFor?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['pressureFor'];
+    familyForRun?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['familyForRun'];
     runAction?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['runAction'];
     onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
     storeFactory?: (storePath: string) => RuntimeCapabilityStore;
@@ -74,6 +79,7 @@ async function fixture(
       return options.runAction ? options.runAction(_slotId, action) : { ok: true };
     },
     ...(options.pressureFor ? { pressureFor: options.pressureFor } : {}),
+    ...(options.familyForRun ? { familyForRun: options.familyForRun } : {}),
     ...(options.onEvent ? { onEvent: options.onEvent } : {}),
     leaseId: () => `lease-${++nextLease}`,
     now: options.now ?? (() => new Date('2026-08-11T00:00:00.000Z')),
@@ -719,4 +725,566 @@ test('a queued sibling does not suppress expired keep-warm provider cleanup', as
   nowMs += 1_001;
   await registry.cleanupExpiredWarmProviders();
   assert.equal(actions.filter((action) => action === 'browser.release').length, 1);
+});
+
+test('revalidateHealth cleans up a dead retained provider and reacquires it', async (t) => {
+  let healthy = true;
+  const { registry, actions } = await fixture(t, [entry('browser')], {
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'browser.health' && !healthy
+        ? { ok: false, detail: 'browser is not responding' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
+
+  // The provider dies while the run waits, then validation prepares.
+  healthy = false;
+  actions.length = 0;
+  const stale = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'browser', reason: 'validation', mode: 'visual' },
+    revalidateHealth: true,
+  });
+  // Health failed, so the retained provider was released before anything reused it.
+  assert.ok(actions.includes('browser.release'), actions.join(', '));
+  assert.equal(stale.ok, false);
+
+  // Once the provider is healthy again the same request acquires it fresh.
+  healthy = true;
+  actions.length = 0;
+  const fresh = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'browser', reason: 'validation', mode: 'visual' },
+    revalidateHealth: true,
+  });
+  assert.equal(fresh.ok, true);
+  if (!fresh.ok) return;
+  assert.equal(fresh.idempotent, false, 'a cleaned-up lease must not be reused as idempotent');
+  assert.ok(actions.includes('browser.acquire'));
+});
+
+test('revalidateHealth reuses a retained provider that is still healthy', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('browser')]);
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
+  actions.length = 0;
+  const again = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'browser', reason: 'validation', mode: 'visual' },
+    revalidateHealth: true,
+  });
+  assert.equal(again.ok, true);
+  if (!again.ok) return;
+  assert.equal(again.idempotent, true);
+  // Proof that health really ran, and that nothing was torn down.
+  assert.deepEqual(actions, ['browser.health']);
+});
+
+test('acquire without revalidateHealth keeps the cheap idempotent path', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('browser')]);
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
+  actions.length = 0;
+  const again = await acquire(registry, 'browser', 'run-a');
+  assert.equal(again.ok, true);
+  assert.deepEqual(actions, [], 'worker acquires must not pay for an extra health check');
+});
+
+test('stopWarmProviders ends a keep-warm window before its deadline', async (t) => {
+  const warm = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warm]);
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+  // Released but still warm: no release action ran.
+  assert.ok(!actions.includes('metro.release'));
+
+  actions.length = 0;
+  await registry.stopWarmProviders(SLOT, ['metro']);
+  assert.deepEqual(actions, ['metro.release']);
+  const status = await registry.status({ slotId: SLOT });
+  assert.equal(
+    status.leases.every((lease) => lease.keepWarmUntil === undefined),
+    true,
+  );
+});
+
+test('stopWarmProviders ends warm windows in dependency order', async (t) => {
+  const warmApp = { ...entry('app', 'exclusive', ['metro']), keepWarmMs: 600_000 };
+  const warmMetro = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warmApp, warmMetro]);
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+
+  actions.length = 0;
+  await registry.stopWarmProviders(SLOT);
+  const releases = actions.filter((action) => action.endsWith('.release'));
+  // The dependency was created first, so insertion order would stop metro out
+  // from under app.
+  assert.deepEqual(releases, ['app.release', 'metro.release']);
+});
+
+test('revalidateHealth on a healthy parent still proves its dependencies', async (t) => {
+  let metroHealthy = true;
+  const { registry, actions } = await fixture(
+    t,
+    [entry('app', 'exclusive', ['metro']), entry('metro')],
+    {
+      runAction: async (_slotId, action) =>
+        action.kind === 'slot-action' && action.actionId === 'metro.health' && !metroHealthy
+          ? { ok: false, detail: 'metro is not responding' }
+          : { ok: true },
+    },
+  );
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+
+  // The parent is still fine; the thing it runs on died.
+  metroHealthy = false;
+  actions.length = 0;
+  const blocked = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'app',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'app', reason: 'validation', mode: 'state' },
+    revalidateHealth: true,
+  });
+  assert.equal(blocked.ok, false, 'a dead dependency must not pass preparation');
+  assert.ok(actions.includes('metro.health'), actions.join(', '));
+  assert.ok(actions.includes('metro.release'), actions.join(', '));
+
+  metroHealthy = true;
+  const recovered = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'app',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'app', reason: 'validation', mode: 'state' },
+    revalidateHealth: true,
+  });
+  assert.equal(recovered.ok, true);
+  if (!recovered.ok) return;
+  assert.ok(
+    recovered.dependencyLeases.some((lease) => lease.capabilityId === 'metro'),
+    'the revalidated dependency is reported back to the caller',
+  );
+});
+
+test('releaseForPosture honors each lease disposition and leaves a retained dependency alone', async (t) => {
+  const { registry, actions } = await fixture(t, [
+    entry('app', 'exclusive', ['metro']),
+    entry('metro'),
+  ]);
+  const acquired = await acquire(registry, 'app', 'run-a');
+  assert.equal(acquired.ok, true);
+  if (!acquired.ok) return;
+  const metroLease = acquired.dependencyLeases.find((lease) => lease.capabilityId === 'metro')!;
+  assert.ok(metroLease);
+  actions.length = 0;
+
+  // Policy: stop the parent, keep the dependency acquired.
+  const result = await registry.releaseForPosture(SLOT, [
+    { leaseId: acquired.lease.id, keepWarm: false },
+  ]);
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['app.release'],
+    'the dependency must not be released because its parent was',
+  );
+  const status = await registry.status({ slotId: SLOT });
+  const metro = status.leases.find((lease) => lease.id === metroLease.id);
+  assert.equal(metro?.state, 'acquired', 'a dependency the policy retains stays acquired');
+});
+
+test('a revalidated replacement dependency is relinked so a parent release cannot leak it', async (t) => {
+  let metroHealthy = true;
+  const { registry, actions } = await fixture(
+    t,
+    [entry('app', 'exclusive', ['metro']), entry('metro')],
+    {
+      runAction: async (_slotId, action) =>
+        action.kind === 'slot-action' && action.actionId === 'metro.health' && !metroHealthy
+          ? { ok: false, detail: 'metro is not responding' }
+          : { ok: true },
+    },
+  );
+  const first = await acquire(registry, 'app', 'run-a');
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  const originalMetro = first.dependencyLeases.find((lease) => lease.capabilityId === 'metro')!;
+
+  // The dependency dies and is replaced under a still-healthy parent.
+  metroHealthy = false;
+  const blocked = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'app',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'app', reason: 'validation', mode: 'state' },
+    revalidateHealth: true,
+  });
+  assert.equal(blocked.ok, false);
+  metroHealthy = true;
+  const recovered = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'app',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'app', reason: 'validation', mode: 'state' },
+    revalidateHealth: true,
+  });
+  assert.equal(recovered.ok, true);
+  if (!recovered.ok) return;
+  const replacement = recovered.dependencyLeases.find((lease) => lease.capabilityId === 'metro')!;
+  assert.notEqual(replacement.id, originalMetro.id, 'the dependency really was replaced');
+
+  actions.length = 0;
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'app' });
+  const status = await registry.status({ slotId: SLOT });
+  const leaked = status.leases.filter(
+    (lease) => lease.capabilityId === 'metro' && holdsProviderForTest(lease),
+  );
+  assert.deepEqual(leaked, [], 'the replacement dependency must not survive the parent release');
+  assert.ok(actions.includes('metro.release'), actions.join(', '));
+});
+
+test('a warm sweep defers a dependency while its dependent is still warm', async (t) => {
+  let clock = new Date('2026-08-11T00:00:00.000Z');
+  const warmApp = { ...entry('app', 'exclusive', ['metro']), keepWarmMs: 600_000 };
+  const warmMetro = { ...entry('metro'), keepWarmMs: 60_000 };
+  const { registry, actions } = await fixture(t, [warmApp, warmMetro], { now: () => clock });
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+
+  // The dependency's shorter window expires first.
+  clock = new Date('2026-08-11T00:05:00.000Z');
+  actions.length = 0;
+  await registry.cleanupExpiredWarmProviders([SLOT]);
+  assert.deepEqual([...actions], [], 'metro is still holding up a warm app');
+
+  // Once the dependent's window ends, both go, dependent first.
+  clock = new Date('2026-08-11T00:20:00.000Z');
+  actions.length = 0;
+  await registry.cleanupExpiredWarmProviders([SLOT]);
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['app.release', 'metro.release'],
+  );
+});
+
+test('terminal cleanup releases a lease that only reaches acquired after it started', async (t) => {
+  // Reproduces the live incident: an acquire was in flight when a cancelled run
+  // ran terminal cleanup, and the leases that completed afterwards stayed
+  // acquired, holding a simulator and Metro for a run that no longer existed.
+  let releaseSlowAcquire = (): void => {};
+  const slowAcquire = new Promise<void>((resolve) => {
+    releaseSlowAcquire = resolve;
+  });
+  let gateArmed = true;
+  const { registry, actions } = await fixture(
+    t,
+    [entry('ios-simulator', 'exclusive', ['companion-metro']), entry('companion-metro')],
+    {
+      runAction: async (_slotId, action) => {
+        if (
+          gateArmed &&
+          action.kind === 'slot-action' &&
+          action.actionId === 'ios-simulator.acquire'
+        ) {
+          gateArmed = false;
+          await slowAcquire;
+        }
+        return { ok: true };
+      },
+    },
+  );
+
+  const acquiring = acquire(registry, 'ios-simulator', 'run-a', 'fam-a');
+  // Let the acquire reach its slow provider action.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  // Terminal cleanup starts while the acquire is still running.
+  const terminal = registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  releaseSlowAcquire();
+  const [acquired, result] = await Promise.all([acquiring, terminal]);
+  assert.equal(acquired.ok, true);
+  assert.equal(result.ok, true);
+
+  const status = await registry.status({ slotId: SLOT });
+  const stillHeld = status.leases.filter((lease) => holdsProviderForTest(lease));
+  assert.deepEqual(stillHeld, [], 'no lease may survive its run terminal cleanup');
+  assert.ok(actions.includes('ios-simulator.release'), actions.join(', '));
+  assert.ok(actions.includes('companion-metro.release'), actions.join(', '));
+});
+
+test('a run that already had terminal cleanup cannot acquire again', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('browser')]);
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
+  await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  actions.length = 0;
+
+  const late = await acquire(registry, 'browser', 'run-a');
+  assert.equal(late.ok, false, 'a terminal run must not be handed a provider');
+  if (late.ok) return;
+  assert.match(late.conflict.reason, /terminal capability cleanup/);
+  assert.deepEqual(actions, [], 'nothing may be booted for a terminal run');
+  const status = await registry.status({ slotId: SLOT });
+  assert.deepEqual(
+    status.leases.filter((lease) => holdsProviderForTest(lease)),
+    [],
+  );
+
+  // Another run is unaffected by the fence.
+  const other = await acquire(registry, 'browser', 'run-b');
+  assert.equal(other.ok, true);
+});
+
+test('terminal cleanup bypasses keep-warm for every lease the run owns', async (t) => {
+  const warm = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warm]);
+  assert.equal((await acquire(registry, 'metro', 'run-a', 'fam-a')).ok, true);
+  actions.length = 0;
+  await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['metro.release'],
+  );
+  const status = await registry.status({ slotId: SLOT });
+  assert.equal(
+    status.leases.every((lease) => lease.keepWarmUntil === undefined),
+    true,
+  );
+});
+
+test('a dependency is retained when its parent failed to release', async (t) => {
+  const { registry, actions } = await fixture(
+    t,
+    [entry('app', 'exclusive', ['metro']), entry('metro')],
+    {
+      runAction: async (_slotId, action) =>
+        action.kind === 'slot-action' && action.actionId === 'app.release'
+          ? { ok: false, detail: 'app shutdown exited 1' }
+          : { ok: true },
+    },
+  );
+  assert.equal((await acquire(registry, 'app', 'run-a', 'fam-a')).ok, true);
+  actions.length = 0;
+
+  const result = await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  assert.equal(result.ok, false);
+  assert.equal(result.failures[0]?.capabilityId, 'app');
+  // The parent is demonstrably still up, so its dependency must stay up too.
+  assert.ok(
+    !actions.includes('metro.release'),
+    `metro was stopped under a parent that failed to release: ${actions.join(', ')}`,
+  );
+  assert.deepEqual(
+    result.retained.map((lease) => lease.capabilityId),
+    ['metro'],
+  );
+  const status = await registry.status({ slotId: SLOT });
+  const metro = status.leases.find((lease) => lease.capabilityId === 'metro');
+  assert.equal(metro?.state, 'acquired');
+});
+
+test('a failed parent protects its whole dependency chain', async (t) => {
+  // A -> B -> C, with B acquired on its own first. The idempotent reuse of B
+  // reports no dependency leases, so A records only B and the chain has to be
+  // walked link by link: a failed A retains B, and a retained B must retain C.
+  const { registry, actions } = await fixture(
+    t,
+    [entry('a', 'exclusive', ['b']), entry('b', 'exclusive', ['c']), entry('c')],
+    {
+      runAction: async (_slotId, action) =>
+        action.kind === 'slot-action' && action.actionId === 'a.release'
+          ? { ok: false, detail: 'a shutdown exited 1' }
+          : { ok: true },
+    },
+  );
+  assert.equal((await acquire(registry, 'b', 'run-a', 'fam-a')).ok, true);
+  assert.equal((await acquire(registry, 'a', 'run-a', 'fam-a')).ok, true);
+  const graph = await registry.status({ slotId: SLOT });
+  const parent = graph.leases.find((lease) => lease.capabilityId === 'a')!;
+  const grandchild = graph.leases.find((lease) => lease.capabilityId === 'c')!;
+  assert.ok(
+    !parent.dependencyLeaseIds.includes(grandchild.id),
+    'this test is only meaningful when the parent does not list the grandchild',
+  );
+  actions.length = 0;
+
+  const result = await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  assert.equal(result.ok, false);
+  const releases = actions.filter((action) => action.endsWith('.release'));
+  assert.deepEqual(releases, ['a.release'], `chain was broken: ${actions.join(', ')}`);
+  assert.deepEqual(result.retained.map((lease) => lease.capabilityId).sort(), ['b', 'c']);
+  const status = await registry.status({ slotId: SLOT });
+  for (const capabilityId of ['b', 'c']) {
+    const lease = status.leases.find((candidate) => candidate.capabilityId === capabilityId);
+    assert.equal(lease?.state, 'acquired', `${capabilityId} must stay acquired`);
+  }
+});
+
+test('family terminal cleanup fences the siblings it cleaned', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('browser', 'shared')]);
+  assert.equal((await acquire(registry, 'browser', 'run-a', 'fam-a')).ok, true);
+  assert.equal((await acquire(registry, 'browser', 'sibling-run', 'fam-a')).ok, true);
+
+  await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  actions.length = 0;
+
+  // The family is done with the slot; a sibling must not pick a provider back up.
+  const sibling = await acquire(registry, 'browser', 'sibling-run', 'fam-a');
+  assert.equal(sibling.ok, false, 'a fenced family member must not reacquire');
+  if (sibling.ok) return;
+  assert.match(sibling.conflict.reason, /terminal capability cleanup/);
+  // A member that never held a lease is fenced by family too.
+  const untouched = await acquire(registry, 'browser', 'late-sibling', 'fam-a');
+  assert.equal(untouched.ok, false);
+  assert.deepEqual(actions, [], 'nothing may be booted for a terminal family');
+
+  // An unrelated family is unaffected.
+  const other = await acquire(registry, 'browser', 'run-b', 'fam-b');
+  assert.equal(other.ok, true);
+});
+
+test('a sibling whose cleanup failed is still fenced', async (t) => {
+  // The initiating run is fenced up front, so the gap is a *sibling*: its lease
+  // appears in neither `released` nor `retained` when cleanup fails, and with no
+  // run record to derive a family from, the run-id fence is the only guard left.
+  const { registry } = await fixture(t, [entry('browser', 'shared')], {
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'browser.release'
+        ? { ok: false, detail: 'browser shutdown exited 1' }
+        : { ok: true },
+    familyForRun: () => undefined,
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-a', 'fam-a')).ok, true);
+  assert.equal((await acquire(registry, 'browser', 'sibling-run', 'fam-a')).ok, true);
+
+  const result = await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  assert.equal(result.ok, false);
+  const accounted = [...result.released, ...result.retained].map((lease) => lease.owner.runId);
+  assert.ok(
+    !accounted.includes('sibling-run'),
+    'this test is only meaningful when the failed sibling is absent from the result',
+  );
+
+  const again = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'sibling-run',
+    proofRequirement: { capabilityId: 'browser', reason: 'retry', mode: 'state' },
+  });
+  assert.equal(again.ok, false, 'a sibling whose cleanup failed must not reacquire');
+  if (again.ok) return;
+  assert.match(again.conflict.reason, /terminal capability cleanup/);
+});
+
+test('the family fence cannot be dodged by omitting ownerFamilyId', async (t) => {
+  const families = new Map([
+    ['run-a', 'fam-a'],
+    ['sibling-run', 'fam-a'],
+    ['run-b', 'fam-b'],
+  ]);
+  const { registry } = await fixture(t, [entry('browser', 'shared')], {
+    familyForRun: (ownerRunId) => families.get(ownerRunId),
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-a', 'fam-a')).ok, true);
+  await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+
+  // The wire param is optional; the registry falls back to the run record.
+  const dodged = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'sibling-run',
+    proofRequirement: { capabilityId: 'browser', reason: 'sneak', mode: 'state' },
+  });
+  assert.equal(dodged.ok, false, 'omitting ownerFamilyId must not bypass the fence');
+  if (dodged.ok) return;
+  assert.match(dodged.conflict.reason, /terminal capability cleanup/);
+
+  // A run in another family is still free to acquire without the param.
+  const other = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-b',
+    proofRequirement: { capabilityId: 'browser', reason: 'unrelated', mode: 'state' },
+  });
+  assert.equal(other.ok, true);
+});
+
+test('a lease carries the run record family even when the caller omits it', async (t) => {
+  const families = new Map([
+    ['run-a', 'fam-a'],
+    ['sibling-run', 'fam-a'],
+  ]);
+  const { registry, actions } = await fixture(t, [entry('browser', 'shared')], {
+    familyForRun: (ownerRunId) => families.get(ownerRunId),
+  });
+  // Neither acquire names a family on the wire.
+  const first = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'browser', reason: 'work', mode: 'state' },
+  });
+  assert.equal(first.ok, true);
+  const sibling = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'sibling-run',
+    proofRequirement: { capabilityId: 'browser', reason: 'work', mode: 'state' },
+  });
+  assert.equal(sibling.ok, true);
+
+  const before = await registry.status({ slotId: SLOT });
+  for (const lease of before.leases) {
+    assert.equal(lease.owner.familyId, 'fam-a', `${lease.owner.runId} lost its family`);
+  }
+
+  // Family cleanup must therefore find both.
+  actions.length = 0;
+  const result = await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.released.map((lease) => lease.owner.runId).sort(), [
+    'run-a',
+    'sibling-run',
+  ]);
+  const after = await registry.status({ slotId: SLOT });
+  assert.deepEqual(
+    after.leases.filter((lease) => holdsProviderForTest(lease)),
+    [],
+  );
+  assert.ok(actions.includes('browser.release'));
+});
+
+test('a caller-supplied family that contradicts the run record is rejected', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('browser')], {
+    familyForRun: (ownerRunId) => (ownerRunId === 'run-a' ? 'fam-a' : undefined),
+  });
+  const mismatched = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    ownerFamilyId: 'fam-someone-else',
+    proofRequirement: { capabilityId: 'browser', reason: 'work', mode: 'state' },
+  });
+  assert.equal(mismatched.ok, false);
+  if (mismatched.ok) return;
+  assert.equal(mismatched.conflict.kind, 'invalid-request');
+  assert.match(mismatched.conflict.reason, /does not match the family of run 'run-a'/);
+  // Nothing was created and no provider was booted.
+  const status = await registry.status({ slotId: SLOT });
+  assert.deepEqual(status.leases, []);
+  assert.deepEqual(actions, []);
+
+  // The matching family is accepted.
+  const matched = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    ownerFamilyId: 'fam-a',
+    proofRequirement: { capabilityId: 'browser', reason: 'work', mode: 'state' },
+  });
+  assert.equal(matched.ok, true);
 });

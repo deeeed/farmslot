@@ -185,16 +185,19 @@ export function defaultCancelCollaborators(): CancelCollaborators {
     settleBacklog: (run) => markBacklogRunObserved(run),
     tickWorkGraph: (graphId) => schedulerTick({ graphId }),
     releaseCapabilities: async (run) => {
-      const { releaseRuntimeCapabilitiesForRunAndFamily } =
-        await import('../methods/runtime-capabilities.js');
-      const result = await releaseRuntimeCapabilitiesForRunAndFamily(
-        run.slotId!,
-        run.id,
-        run.familyId,
-      );
-      if (!result.ok) {
+      // ADR-054: cancel is a terminal boundary. The reconciler stops every run-
+      // and family-owned provider in dependency order, bypassing keep-warm, and
+      // records the effective posture on the run.
+      const { reconcileRunPosture } = await import('../run-engine/resource-posture.js');
+      const outcome = await reconcileRunPosture({ runId: run.id, boundary: 'cancel' });
+      if (outcome.error !== undefined) throw new Error(outcome.error);
+      const { transition } = outcome.result;
+      if (transition.rejection) throw new Error(transition.rejection.reason);
+      if (transition.failures.length > 0) {
         throw new Error(
-          result.failures.map((failure) => `${failure.capabilityId}: ${failure.reason}`).join('; '),
+          transition.failures
+            .map((failure) => `${failure.capabilityId}: ${failure.reason}`)
+            .join('; '),
         );
       }
     },

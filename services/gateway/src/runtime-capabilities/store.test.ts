@@ -100,3 +100,28 @@ test('store compaction bounds queued admission history that owns no provider', (
   assert(compacted.leases.every((candidate) => candidate.state === 'queued'));
   assert(!compacted.leases.some((candidate) => candidate.id === 'lease-0'));
 });
+
+test('a warm provider and a cleanup failure survive compaction so reconnects still see them', () => {
+  const warm: RuntimeCapabilityLease = {
+    ...lease(0, 'released'),
+    id: 'lease-warm',
+    keepWarmUntil: '2026-01-01T01:00:00.000Z',
+  };
+  const failed: RuntimeCapabilityLease = {
+    ...lease(1, 'error'),
+    id: 'lease-failed',
+    cleanupFailure: 'shutdown exited 1',
+  };
+  const churn = Array.from({ length: RUNTIME_CAPABILITY_TERMINAL_LEASE_LIMIT + 50 }, (_, index) =>
+    lease(index + 100, 'released'),
+  );
+  const compacted = compactRuntimeCapabilitySnapshot({
+    version: 1,
+    leases: [warm, failed, ...churn],
+    proofPlans: {},
+    events: [],
+  });
+  const byId = new Map(compacted.leases.map((candidate) => [candidate.id, candidate]));
+  assert.equal(byId.get('lease-warm')?.keepWarmUntil, '2026-01-01T01:00:00.000Z');
+  assert.equal(byId.get('lease-failed')?.cleanupFailure, 'shutdown exited 1');
+});

@@ -16,6 +16,7 @@ import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { ciRequiresPublishedPr } from './publication-policy.js';
+import { reconcileRunPosture } from './resource-posture.js';
 
 interface StepIO {
   inputs?: Record<string, unknown>;
@@ -73,6 +74,9 @@ export async function executeCIWatchStep(
   } = context;
   const current = getRun(runId)!;
   if (!current.slotId) throw new Error('No slot assigned');
+  // ADR-054: waiting on CI is a durable operator wait; the gate choice the
+  // operator made for this wait still governs it.
+  await reconcileRunPosture({ runId, boundary: 'operator-wait' });
   const artifactOnly = isArtifactOnlyRun(current);
   if (isNoCodeTerminalDisposition(current.metrics.disposition)) {
     console.log(

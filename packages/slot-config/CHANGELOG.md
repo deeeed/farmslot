@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- feat(posture): accept `runtime_capabilities.posture.defaults` and per-provider `retention` for the `operator-wait` and `terminal` postures (ADR-054), rejecting unknown postures, unknown retention values, and anything but `stop` at `terminal` — terminal always stops every run- and family-owned provider, bypassing keep-warm. Projects that declare only `keep_warm_ms` stay valid and normalize unchanged.
 - fix(dispatch): `expandDispatchCmd` attaches runtime runner args exactly once to whichever binary placeholder the template invokes and actually resolves (`{runner_path}`, `{<runner>_path}`, then a bare `{runner}`), so a pool with no configured path for the runner still gets them, and quotes `{model}` and `{effort}` values unless they are bare shell-inert tokens; templates must not add their own quotes around those placeholders.
 - fix(session-usage): the local sampler's failure path keeps the transcript identity it is counting instead of stamping the requested path onto a prior offset.
 - fix(session-usage): a codex `token_count` record carrying only `last_token_usage` is skipped instead of folded. It reports one turn rather than the session, so folding it overwrote the reference and charged the next record the whole way back up to the session total.

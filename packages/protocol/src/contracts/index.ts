@@ -15,6 +15,7 @@ export * from './pr-recommendation.js';
 export * from './pressure-admission.js';
 export * from './provider-accounts.js';
 export * from './recipes.js';
+export * from './resource-posture.js';
 export * from './resources.js';
 export * from './reviews.js';
 export * from './roadmap.js';

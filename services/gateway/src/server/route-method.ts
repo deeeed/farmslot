@@ -146,6 +146,9 @@ import {
   type RuntimeCapabilityListParams,
   type RuntimeCapabilityReleaseParams,
   type RuntimeCapabilityStatusParams,
+  type RuntimePostureApplyParams,
+  type RuntimePosturePreviewParams,
+  type RuntimePostureStatusParams,
   type SearchQueryParams,
   type SlotActionListParams,
   type SlotActionRunParams,
@@ -404,6 +407,11 @@ import {
   runtimeCapabilityRelease,
   runtimeCapabilityStatus,
 } from '../methods/runtime-capabilities.js';
+import {
+  runtimePostureApply,
+  runtimePosturePreview,
+  runtimePostureStatus,
+} from '../methods/runtime-posture.js';
 import { searchQuery } from '../methods/search.js';
 import {
   slotAutoRefresh,
@@ -1239,6 +1247,12 @@ async function routeAuthorizedMethod(
       return runtimeCapabilityRelease(p as RuntimeCapabilityReleaseParams);
     case Methods.RUNTIME_CAPABILITY_STATUS:
       return runtimeCapabilityStatus(p as RuntimeCapabilityStatusParams);
+    case Methods.RUNTIME_POSTURE_STATUS:
+      return runtimePostureStatus(p as RuntimePostureStatusParams);
+    case Methods.RUNTIME_POSTURE_PREVIEW:
+      return runtimePosturePreview(p as RuntimePosturePreviewParams);
+    case Methods.RUNTIME_POSTURE_APPLY:
+      return runtimePostureApply(p as RuntimePostureApplyParams);
 
     // Fine-tuning data export
     case Methods.FINETUNE_INDEX:

@@ -1,3 +1,4 @@
+import type { ProjectResourcePostureConfig } from '../contracts/resource-posture.js';
 import type {
   RuntimeCapabilityAcquireConflict,
   RuntimeCapabilityCatalogEntry,
@@ -35,6 +36,12 @@ export interface RuntimeCapabilityAcquireParams {
   proofRequirement: RuntimeCapabilityProofRequirement;
   parameters?: Record<string, unknown>;
   queueOnPressure?: boolean;
+  /**
+   * Re-run the provider health check before reusing a lease this owner already
+   * holds, and clean up the provider when it fails (ADR-054). Validation and
+   * recipe reruns set this so a dead retained provider cannot pass preparation.
+   */
+  revalidateHealth?: boolean;
 }
 
 export type RuntimeCapabilityAcquireResult =
@@ -51,8 +58,14 @@ export interface RuntimeCapabilityReleaseParams {
   ownerRunId: string;
   capabilityId?: string;
   leaseId?: string;
-  /** Bypass keep-warm and explicitly retry cleanup with the current provider after provenance changed. */
+  /** Explicitly retry cleanup with the current provider after provenance changed. */
   force?: boolean;
+  /**
+   * Whether the provider may stay warm past this release (ADR-054). Defaults to
+   * the historical behaviour: warm unless `force` is set. `false` stops the
+   * provider without bypassing the provenance guard that `force` bypasses.
+   */
+  keepWarm?: boolean;
 }
 
 export interface RuntimeCapabilityReleaseResult {
@@ -76,4 +89,6 @@ export interface RuntimeCapabilityStatusResult {
   proofPlans: Record<string, RuntimeCapabilityProofPlan>;
   pressure?: RuntimeCapabilityPressureConflict;
   events: RuntimeCapabilityLifecycleEvent[];
+  /** Project posture defaults for this slot's project (ADR-054). */
+  posture?: ProjectResourcePostureConfig;
 }

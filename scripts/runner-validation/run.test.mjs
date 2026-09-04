@@ -23,6 +23,7 @@ import {
   runBinding as machinePauseRunBinding,
   runScenario as runMachinePauseScenario,
 } from './scenarios/machine-pause-restore-smoke.mjs';
+import { evaluateDependencyTerminal } from './scenarios/resource-posture-smoke.mjs';
 
 const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/panes');
 
@@ -147,7 +148,7 @@ test('session-reopen-smoke reads the pane tail from the snapshot lines array', (
 
 test('runner-validation catalog includes four runners and twenty-four scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
-  assert.equal(listScenarios().length, 24);
+  assert.equal(listScenarios().length, 25);
   assert.ok(listScenarios().includes('review-recovery-terminal-contract'));
   assert.ok(listScenarios().includes('self-review-fix-turn-lease'));
   assert.ok(listScenarios().includes('hook-smoke'));
@@ -164,6 +165,7 @@ test('runner-validation catalog includes four runners and twenty-four scenarios'
   assert.ok(listScenarios().includes('monitor-stuck-smoke'));
   assert.ok(listScenarios().includes('dispatch-model-flag'));
   assert.ok(listScenarios().includes('session-reopen-smoke'));
+  assert.ok(listScenarios().includes('resource-posture-smoke'));
 });
 
 test('session-reopen-smoke fails when named explicitly without a slot and never stubs real evidence', async (t) => {
@@ -386,4 +388,52 @@ test('session-attribution modelsMatch aligns with protocol aliases', () => {
 test('session-usage harness usageExtractedOk requires turns and total tokens', () => {
   assert.equal(usageExtractedOk({ turns: 1, total_tokens: 42 }), true);
   assert.equal(usageExtractedOk({ turns: 0, total_tokens: 0 }), false);
+});
+
+test('resource-posture dependency terminal verdict rejects bad state and bad order', () => {
+  const stopped = (id) => ({
+    capabilityId: id,
+    desiredDisposition: 'stopped',
+    observedState: 'stopped',
+  });
+  const pair = { dependent: 'ios-simulator', dependency: 'companion-metro' };
+
+  assert.deepEqual(
+    evaluateDependencyTerminal({
+      ...pair,
+      terminalStates: [stopped(pair.dependent), stopped(pair.dependency)],
+      releaseOrder: [pair.dependent, pair.dependency],
+    }),
+    { pass: true, error: null },
+  );
+
+  // The deliberate break: dependency released before its dependent.
+  const inverted = evaluateDependencyTerminal({
+    ...pair,
+    terminalStates: [stopped(pair.dependent), stopped(pair.dependency)],
+    releaseOrder: [pair.dependency, pair.dependent],
+  });
+  assert.equal(inverted.pass, false);
+  assert.match(inverted.error, /companion-metro was released before ios-simulator/);
+
+  // A capability left running is not a pass either.
+  const running = evaluateDependencyTerminal({
+    ...pair,
+    terminalStates: [
+      { capabilityId: pair.dependent, desiredDisposition: 'stopped', observedState: 'running' },
+      stopped(pair.dependency),
+    ],
+    releaseOrder: [pair.dependent, pair.dependency],
+  });
+  assert.equal(running.pass, false);
+  assert.match(running.error, /ended stopped\/running/);
+
+  // Missing events cannot be read as ordered.
+  const missing = evaluateDependencyTerminal({
+    ...pair,
+    terminalStates: [stopped(pair.dependent), stopped(pair.dependency)],
+    releaseOrder: [pair.dependent],
+  });
+  assert.equal(missing.pass, false);
+  assert.match(missing.error, /missing release events/);
 });

@@ -69,6 +69,7 @@ import {
   recoverInflightPublicationReviews,
   TerminalReviewArtifactError,
 } from './recover-inflight-reviews.js';
+import { reconcileRunPosture } from './resource-posture.js';
 import {
   automaticPublicationReviewPlan,
   humanGateReviewDepth,
@@ -498,6 +499,9 @@ export async function executeMonitorStep(
       // until the next refetch — and offers a Pause button that then errors
       // because the backend is already paused.
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+      // ADR-054: the run is now waiting on its operator, so shed what that wait
+      // does not need. Never throws; a failure is recorded on the run's posture.
+      await reconcileRunPosture({ runId, boundary: 'operator-wait' });
       return {
         inputs,
         outputs: heldOutputs,

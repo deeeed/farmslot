@@ -167,6 +167,8 @@ export interface DispatchQueueAddParams {
   app?: string;
   /** Named prepare profile from the project's prepare.profiles (ADR-037). */
   prepareProfile?: string;
+  /** ADR-054 resource posture preset carried onto the run at creation. */
+  waitPolicy?: import('../contracts/index.js').ResourcePostureWaitPolicy;
   model?: string;
   runner?: string;
   /** Worker scripted-runner config when runner='scripted'. */

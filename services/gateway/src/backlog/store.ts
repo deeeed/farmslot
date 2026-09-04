@@ -35,6 +35,7 @@ import {
   type DevInteractiveProfile,
   EDITABLE_BACKLOG_STATUSES,
   Events,
+  isResourcePostureWaitPolicy,
   isReviewValidationDepth,
   isTerminalRunStatus,
   normalizeRunTags,
@@ -42,6 +43,8 @@ import {
   parseGitHubRef,
   PR_BOUND_FLOW_TYPES,
   type QueueItem,
+  RESOURCE_POSTURE_WAIT_POLICIES,
+  type ResourcePostureWaitPolicy,
   type ReviewDepthPolicy,
   type ReviewLoopRequest,
   type ReviewRunnerId,
@@ -146,6 +149,7 @@ const BACKLOG_UPDATE_KEYS = new Set([
   'mode',
   'devInteractiveProfile',
   'reviewDepth',
+  'waitPolicy',
   'pendingReviewPlan',
   'launchPlan',
 ]);
@@ -287,6 +291,20 @@ function normalizeStringArray(value: unknown): string[] | undefined {
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+/** ADR-054 dispatch preset. `project-default` is not a policy — omit it instead. */
+function normalizeWaitPolicy(value: unknown): ResourcePostureWaitPolicy | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') throw new Error('waitPolicy must be a string');
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  if (!isResourcePostureWaitPolicy(normalized)) {
+    throw new Error(
+      `waitPolicy must be one of ${RESOURCE_POSTURE_WAIT_POLICIES.join(', ')} (got "${normalized}")`,
+    );
+  }
+  return normalized;
 }
 
 function normalizeExecutionHint(value: unknown, field: string): string | undefined {
@@ -511,6 +529,7 @@ function normalizeStoredItem(raw: unknown): BacklogRecord | null {
   const mode = normalizeDispatchMode(raw.mode);
   const devInteractiveProfile = normalizeDevInteractiveProfile(raw.devInteractiveProfile);
   const reviewDepth = normalizeReviewDepth(raw.reviewDepth);
+  const waitPolicy = normalizeWaitPolicy(raw.waitPolicy);
   const pendingReviewPlan = normalizePendingReviewPlan(raw.pendingReviewPlan);
   const launchPlan = normalizeLaunchPlan(raw.launchPlan);
   const launchPlanState = isRecord(raw.launchPlanState)
@@ -589,6 +608,7 @@ function normalizeStoredItem(raw: unknown): BacklogRecord | null {
     ...(mode ? { mode } : {}),
     ...(devInteractiveProfile ? { devInteractiveProfile } : {}),
     ...(reviewDepth ? { reviewDepth } : {}),
+    ...(waitPolicy ? { waitPolicy } : {}),
     ...(pendingReviewPlan ? { pendingReviewPlan } : {}),
     ...(launchPlan ? { launchPlan } : {}),
     ...(launchPlanState?.launchGroupId ? { launchPlanState } : {}),
@@ -1221,6 +1241,7 @@ export async function createBacklogItem(
     const mode = normalizeDispatchMode(params.mode);
     const devInteractiveProfile = normalizeDevInteractiveProfile(params.devInteractiveProfile);
     const reviewDepth = normalizeReviewDepth(params.reviewDepth);
+    const waitPolicy = normalizeWaitPolicy(params.waitPolicy);
     const pendingReviewPlan = normalizePendingReviewPlan(params.pendingReviewPlan);
     const launchPlan = normalizeLaunchPlan(params.launchPlan);
     const now = new Date().toISOString();
@@ -1251,6 +1272,7 @@ export async function createBacklogItem(
       ...(mode ? { mode } : {}),
       ...(devInteractiveProfile ? { devInteractiveProfile } : {}),
       ...(reviewDepth ? { reviewDepth } : {}),
+      ...(waitPolicy ? { waitPolicy } : {}),
       ...(pendingReviewPlan ? { pendingReviewPlan } : {}),
       ...(launchPlan ? { launchPlan } : {}),
       createdAt: now,
@@ -1534,6 +1556,12 @@ export async function updateBacklogItem(
             : normalizeDevInteractiveProfile(params.devInteractiveProfile);
         if (devInteractiveProfile) item.devInteractiveProfile = devInteractiveProfile;
         else delete item.devInteractiveProfile;
+      }
+      if (params.waitPolicy !== undefined) {
+        const waitPolicy =
+          params.waitPolicy === null ? undefined : normalizeWaitPolicy(params.waitPolicy);
+        if (waitPolicy) item.waitPolicy = waitPolicy;
+        else delete item.waitPolicy;
       }
       if (params.reviewDepth !== undefined) {
         const reviewDepth =
@@ -1910,6 +1938,7 @@ async function buildBacklogQueueParams(
     mode: item.mode,
     devInteractiveProfile: item.devInteractiveProfile,
     reviewDepth: item.reviewDepth,
+    waitPolicy: item.waitPolicy,
     pendingReviewPlan: item.pendingReviewPlan,
     // Backlog handoff persists queue+backlog links before dispatch can consume the queue item.
     autoDispatch: false,

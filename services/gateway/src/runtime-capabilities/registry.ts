@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020.js';
 
 import type {
+  ProjectResourcePostureConfig,
   RuntimeCapabilityAcquireConflict,
   RuntimeCapabilityAcquireParams,
   RuntimeCapabilityAcquireResult,
@@ -27,6 +28,8 @@ export interface RuntimeCapabilityCatalogContext {
   slotId: string;
   project: string;
   capabilities: RuntimeCapabilityCatalogEntry[];
+  /** Project posture defaults (ADR-054); provider `retention` wins over these. */
+  posture?: ProjectResourcePostureConfig;
 }
 
 export interface RuntimeCapabilityActionResult {
@@ -46,6 +49,8 @@ export interface RuntimeCapabilityRegistryOptions {
     capability: RuntimeCapabilityCatalogEntry,
     queueOnPressure: boolean,
   ) => Promise<RuntimeCapabilityAcquireConflict | null>;
+  /** Family of a run, used when a caller omits the optional `ownerFamilyId`. */
+  familyForRun?: (ownerRunId: string) => string | undefined;
   onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
   now?: () => Date;
   leaseId?: () => string;
@@ -106,6 +111,13 @@ export class RuntimeCapabilityRegistry {
   private readonly now: () => Date;
   private readonly leaseId: () => string;
   private pendingEvents: RuntimeCapabilityLifecycleEvent[] = [];
+  /**
+   * Runs whose terminal cleanup has already run. A lease must never be handed to
+   * one of them: the run is gone, so nothing would ever release it again.
+   */
+  private terminatedOwners = new Set<string>();
+  /** Families whose terminal cleanup has run; siblings must not reacquire. */
+  private terminatedFamilies = new Set<string>();
   private loaded = false;
   private loadPromise: Promise<void> | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
@@ -218,6 +230,7 @@ export class RuntimeCapabilityRegistry {
           (!params.ownerRunId || event.owner?.runId === params.ownerRunId),
       ),
       ...(pressure ? { pressure: structuredClone(pressure) } : {}),
+      ...(catalog.posture ? { posture: structuredClone(catalog.posture) } : {}),
     };
   }
 
@@ -245,6 +258,48 @@ export class RuntimeCapabilityRegistry {
           kind: 'unavailable',
           capabilityId: params.capabilityId,
           reason: `Capability '${params.capabilityId}' is not in the ${catalog.project} catalog`,
+        },
+      };
+    }
+    // The run record is the authority on family membership. `ownerFamilyId` is
+    // optional on the wire, so a caller could omit it and get a family-less lease
+    // that family cleanup then misses, or pass someone else's family and be
+    // cleaned by the wrong one. Derive it here, reject a mismatch, and stamp the
+    // derived value on everything below so the lease itself carries the truth.
+    const authoritativeFamilyId = this.options.familyForRun?.(params.ownerRunId);
+    if (
+      authoritativeFamilyId !== undefined &&
+      params.ownerFamilyId !== undefined &&
+      params.ownerFamilyId !== authoritativeFamilyId
+    ) {
+      return {
+        ok: false,
+        conflict: {
+          kind: 'invalid-request',
+          capabilityId: entry.id,
+          reason: `ownerFamilyId '${params.ownerFamilyId}' does not match the family of run '${params.ownerRunId}' ('${authoritativeFamilyId}')`,
+        },
+      };
+    }
+    const acquiringFamilyId = params.ownerFamilyId ?? authoritativeFamilyId;
+    // Everything downstream — lease owner, events, dependency acquisitions —
+    // uses the resolved family, never the caller's optional field.
+    const ownedParams: RuntimeCapabilityAcquireParams =
+      acquiringFamilyId === params.ownerFamilyId
+        ? params
+        : { ...params, ...(acquiringFamilyId ? { ownerFamilyId: acquiringFamilyId } : {}) };
+    if (
+      this.terminatedOwners.has(params.ownerRunId) ||
+      (acquiringFamilyId !== undefined && this.terminatedFamilies.has(acquiringFamilyId))
+    ) {
+      // Fail closed. Handing a provider to a run that has already been torn down
+      // leaks it: nothing will release it again.
+      return {
+        ok: false,
+        conflict: {
+          kind: 'invalid-request',
+          capabilityId: entry.id,
+          reason: `Run '${params.ownerRunId}' has already had its terminal capability cleanup; it cannot acquire '${entry.id}'`,
         },
       };
     }
@@ -305,6 +360,7 @@ export class RuntimeCapabilityRegistry {
         lease.owner.runId === params.ownerRunId &&
         ACTIVE_STATES.has(lease.state),
     );
+    let staleOwnerLease = false;
     if (sameOwner?.state === 'acquired') {
       if (!sameParameters(sameOwner.parameters, parameters)) {
         return {
@@ -316,12 +372,136 @@ export class RuntimeCapabilityRegistry {
           },
         };
       }
-      return {
-        ok: true,
-        lease: structuredClone(sameOwner),
-        dependencyLeases: [],
-        idempotent: true,
-      };
+      // ADR-054: a validation or recipe rerun must prove the retained provider is
+      // actually alive before it reuses the lease. Without this a provider that
+      // died while the run waited would pass preparation and the action would run
+      // against nothing.
+      if (params.revalidateHealth) {
+        const health = await this.runAction(params.slotId, entry.actions.health);
+        sameOwner.updatedAt = this.timestamp();
+        if (health.ok) {
+          sameOwner.health = {
+            state: 'healthy',
+            checkedAt: sameOwner.updatedAt,
+            ...(health.detail ? { detail: health.detail } : {}),
+          };
+          this.recordEvent(snapshot, {
+            kind: 'health-changed',
+            slotId: params.slotId,
+            capabilityId: entry.id,
+            leaseId: sameOwner.id,
+            owner: sameOwner.owner,
+            detail: 'retained provider revalidated healthy',
+          });
+          // A healthy parent proves nothing about what it runs on. Walk the
+          // dependencies under the same revalidation so a dead one is cleaned up
+          // and reacquired instead of silently passing preparation.
+          const revalidatedDependencies: RuntimeCapabilityLease[] = [];
+          for (const dependencyId of entry.dependencies ?? []) {
+            const dependency = await this.acquireInternal(
+              snapshot,
+              catalog,
+              {
+                ...ownedParams,
+                capabilityId: dependencyId,
+                proofRequirement: {
+                  capabilityId: dependencyId,
+                  reason: `Required by ${entry.id}: ${params.proofRequirement.reason}`,
+                  mode: params.proofRequirement.mode,
+                },
+                parameters: {},
+                queueOnPressure: false,
+                revalidateHealth: true,
+              },
+              false,
+            );
+            if (!dependency.ok) return dependency;
+            revalidatedDependencies.push(dependency.lease, ...dependency.dependencyLeases);
+          }
+          // Revalidation can replace a dependency lease (the dead one was
+          // released and a fresh one acquired). Relink the parent, dropping ids
+          // that no longer hold a provider: otherwise a parent-scoped release
+          // walks a stale id and the replacement leaks.
+          const replacementIds = new Set(revalidatedDependencies.map((lease) => lease.id));
+          sameOwner.dependencyLeaseIds = [
+            ...new Set([
+              ...sameOwner.dependencyLeaseIds.filter((id) => {
+                if (replacementIds.has(id)) return true;
+                const existing = snapshot.leases.find((lease) => lease.id === id);
+                return Boolean(existing && blocksAcquisition(existing));
+              }),
+              ...replacementIds,
+            ]),
+          ];
+          sameOwner.updatedAt = this.timestamp();
+          return {
+            ok: true,
+            lease: structuredClone(sameOwner),
+            dependencyLeases: revalidatedDependencies,
+            idempotent: true,
+          };
+        }
+        // Unhealthy: clean the provider up before anything reuses it. A failed
+        // cleanup is durable as an error lease and blocks the action.
+        sameOwner.health = {
+          state: 'unhealthy',
+          checkedAt: sameOwner.updatedAt,
+          ...(health.detail ? { detail: health.detail } : {}),
+        };
+        const otherHolders = snapshot.leases.some(
+          (candidate) =>
+            candidate.id !== sameOwner.id &&
+            candidate.slotId === sameOwner.slotId &&
+            candidate.capabilityId === sameOwner.capabilityId &&
+            holdsProvider(candidate),
+        );
+        const cleanup = otherHolders
+          ? { ok: true }
+          : await this.runAction(params.slotId, entry.actions.release);
+        sameOwner.updatedAt = this.timestamp();
+        if (!cleanup.ok) {
+          sameOwner.state = 'error';
+          sameOwner.cleanupFailure = cleanup.detail ?? 'unhealthy provider cleanup failed';
+          this.recordEvent(snapshot, {
+            kind: 'cleanup-failed',
+            slotId: params.slotId,
+            capabilityId: entry.id,
+            leaseId: sameOwner.id,
+            owner: sameOwner.owner,
+            detail: sameOwner.cleanupFailure,
+          });
+          return {
+            ok: false,
+            conflict: {
+              kind: 'unavailable',
+              capabilityId: entry.id,
+              reason: sameOwner.cleanupFailure,
+            },
+          };
+        }
+        sameOwner.state = 'released';
+        sameOwner.releasedAt = sameOwner.updatedAt;
+        sameOwner.referenceCount = 0;
+        sameOwner.keepWarmUntil = undefined;
+        staleOwnerLease = true;
+        this.recordEvent(snapshot, {
+          kind: 'released',
+          slotId: params.slotId,
+          capabilityId: entry.id,
+          leaseId: sameOwner.id,
+          owner: sameOwner.owner,
+          detail: `unhealthy retained provider cleaned up before reacquire: ${
+            health.detail ?? 'health check failed'
+          }`,
+        });
+      } else {
+        return {
+          ok: true,
+          lease: structuredClone(sameOwner),
+          dependencyLeases: [],
+          idempotent: true,
+        };
+      }
     }
 
     if (recordPlan) {
@@ -343,7 +523,7 @@ export class RuntimeCapabilityRegistry {
         capabilityId: entry.id,
         owner: {
           runId: params.ownerRunId,
-          ...(params.ownerFamilyId ? { familyId: params.ownerFamilyId } : {}),
+          ...(acquiringFamilyId ? { familyId: acquiringFamilyId } : {}),
         },
         detail: params.proofRequirement.reason,
       });
@@ -357,7 +537,15 @@ export class RuntimeCapabilityRegistry {
     if (pressure) {
       if (pressure.kind === 'host-pressure' && pressure.queued && !sameOwner) {
         const now = this.timestamp();
-        const queuedLease = this.createLease(catalog, entry, params, parameters, [], now, 'queued');
+        const queuedLease = this.createLease(
+          catalog,
+          entry,
+          ownedParams,
+          parameters,
+          [],
+          now,
+          'queued',
+        );
         queuedLease.pressure = structuredClone(pressure);
         snapshot.leases.push(queuedLease);
         this.recordEvent(snapshot, {
@@ -462,7 +650,7 @@ export class RuntimeCapabilityRegistry {
         snapshot,
         catalog,
         {
-          ...params,
+          ...ownedParams,
           capabilityId: dependencyId,
           proofRequirement: requirement,
           parameters: {},
@@ -525,19 +713,20 @@ export class RuntimeCapabilityRegistry {
     }
 
     const now = this.timestamp();
+    const reusableOwnerLease = staleOwnerLease ? undefined : sameOwner;
     const lease =
-      sameOwner ??
+      reusableOwnerLease ??
       this.createLease(
         catalog,
         entry,
-        params,
+        ownedParams,
         parameters,
         dependencyLeases.map((dependency) => dependency.id),
         now,
         'acquiring',
       );
-    if (!sameOwner) snapshot.leases.push(lease);
-    if (sameOwner) {
+    if (!reusableOwnerLease) snapshot.leases.push(lease);
+    if (reusableOwnerLease) {
       lease.parameters = structuredClone(parameters);
       lease.dependencyLeaseIds = [
         ...new Set([
@@ -648,6 +837,7 @@ export class RuntimeCapabilityRegistry {
   private createLease(
     catalog: RuntimeCapabilityCatalogContext,
     entry: RuntimeCapabilityCatalogEntry,
+    /** Callers pass the family-resolved params, never the raw request. */
     params: RuntimeCapabilityAcquireParams,
     parameters: Record<string, unknown>,
     dependencyLeaseIds: string[],
@@ -777,18 +967,25 @@ export class RuntimeCapabilityRegistry {
   }
 
   async release(params: RuntimeCapabilityReleaseParams): Promise<RuntimeCapabilityReleaseResult> {
+    const force = params.force === true;
+    // `force` historically meant both "bypass provenance" and "bypass keep-warm".
+    // ADR-054 splits the second half into `keepWarm`; unset keeps the old behaviour.
+    const keepWarm = params.keepWarm ?? !force;
     return this.releaseSelected(
       params.slotId,
       (lease) =>
         lease.owner.runId === params.ownerRunId &&
         (!params.capabilityId || lease.capabilityId === params.capabilityId) &&
         (!params.leaseId || lease.id === params.leaseId),
-      params.force === true,
+      { force, keepWarmFor: () => keepWarm },
     );
   }
 
   async releaseFamily(slotId: string, familyId: string): Promise<RuntimeCapabilityReleaseResult> {
-    return this.releaseSelected(slotId, (lease) => lease.owner.familyId === familyId, false);
+    return this.releaseSelected(slotId, (lease) => lease.owner.familyId === familyId, {
+      force: false,
+      keepWarmFor: () => true,
+    });
   }
 
   async releaseRunAndFamily(
@@ -799,30 +996,129 @@ export class RuntimeCapabilityRegistry {
     return this.releaseSelected(
       slotId,
       (lease) => lease.owner.runId === ownerRunId || lease.owner.familyId === familyId,
-      false,
+      { force: false, keepWarmFor: () => true },
     );
   }
 
   async releaseSlot(slotId: string): Promise<RuntimeCapabilityReleaseResult> {
-    return this.releaseSelected(slotId, () => true, false);
+    return this.releaseSelected(slotId, () => true, { force: false, keepWarmFor: () => true });
+  }
+
+  /**
+   * One dependency-ordered release pass with a per-lease keep-warm decision, so
+   * a posture that warms one provider and stops another cannot reorder them
+   * across two calls (ADR-054). Leases pulled in as dependencies but not named
+   * by the caller keep the project's own keep-warm policy.
+   */
+  /**
+   * Terminal cleanup for one run and its family.
+   *
+   * Selection is by owner and is evaluated INSIDE the mutation lock, not from a
+   * lease list the caller read earlier. That matters: `status` does not take the
+   * lock, so a caller that snapshots lease ids while an acquire is in flight
+   * misses every lease that reaches `acquired` afterwards, and those leases then
+   * outlive the run — a cancelled run was observed holding a simulator and Metro
+   * this way. Queuing on the lock means any in-flight acquire finishes first and
+   * this sees its result.
+   *
+   * The owner is also fenced, so a later acquire cannot hand a provider to a run
+   * that is already terminal.
+   */
+  async releaseRunTerminal(
+    slotId: string,
+    ownerRunId: string,
+    familyId?: string,
+  ): Promise<RuntimeCapabilityReleaseResult> {
+    // Fence before releasing, not after: an acquire queued behind this release
+    // would otherwise slip in the moment it finishes. The family is fenced as a
+    // whole because the whole family is what this cleans, so a sibling cannot
+    // reacquire on the way out.
+    this.fenceOwner(ownerRunId);
+    if (familyId !== undefined) this.terminatedFamilies.add(familyId);
+    while (this.terminatedFamilies.size > 1_000) {
+      this.terminatedFamilies.delete(this.terminatedFamilies.values().next().value!);
+    }
+    const result = await this.releaseSelected(
+      slotId,
+      (lease) =>
+        lease.owner.runId === ownerRunId ||
+        (familyId !== undefined && lease.owner.familyId === familyId),
+      // Terminal bypasses keep-warm by definition (ADR-054).
+      { force: false, keepWarmFor: () => false },
+    );
+    // Fence every owner this cleanup covered, read back from the store rather
+    // than from the result: a lease whose cleanup FAILED appears in neither
+    // `released` nor `retained`, and that owner is exactly the one that must not
+    // be allowed to acquire again.
+    for (const lease of this.options.store.snapshot().leases) {
+      if (lease.slotId !== slotId) continue;
+      if (
+        lease.owner.runId === ownerRunId ||
+        (familyId !== undefined && lease.owner.familyId === familyId)
+      ) {
+        this.fenceOwner(lease.owner.runId);
+      }
+    }
+    return result;
+  }
+
+  private fenceOwner(ownerRunId: string): void {
+    this.terminatedOwners.add(ownerRunId);
+    while (this.terminatedOwners.size > 1_000) {
+      this.terminatedOwners.delete(this.terminatedOwners.values().next().value!);
+    }
+  }
+
+  async releaseForPosture(
+    slotId: string,
+    dispositions: Array<{ leaseId: string; keepWarm: boolean }>,
+  ): Promise<RuntimeCapabilityReleaseResult> {
+    const wanted = new Map(dispositions.map((entry) => [entry.leaseId, entry.keepWarm]));
+    return this.releaseSelected(slotId, (lease) => wanted.has(lease.id), {
+      force: false,
+      keepWarmFor: (lease) => wanted.get(lease.id) ?? true,
+      // The posture already decided every lease individually. Pulling a
+      // dependency in because its parent is going would override a policy that
+      // says the dependency stays acquired.
+      expandDependencies: false,
+    });
   }
 
   private async releaseSelected(
     slotId: string,
     select: (lease: RuntimeCapabilityLease) => boolean,
-    force: boolean,
+    options: {
+      force: boolean;
+      keepWarmFor: (lease: RuntimeCapabilityLease) => boolean;
+      /**
+       * Whether releasing a lease also releases the dependencies it pulled in.
+       * True for ownership-shaped releases ("this run is done with X"), false
+       * when the caller has already resolved a disposition per lease: a
+       * dependency the policy says stays acquired must survive its parent
+       * being released (ADR-054).
+       */
+      expandDependencies?: boolean;
+    },
   ): Promise<RuntimeCapabilityReleaseResult> {
+    const { force, keepWarmFor } = options;
+    const expandDependencies = options.expandDependencies !== false;
     return this.mutate(async () => {
       const snapshot = this.options.store.snapshot();
       const catalog = await this.options.catalogForSlot(slotId);
       const roots = snapshot.leases.filter(
         (lease) => lease.slotId === slotId && blocksAcquisition(lease) && select(lease),
       );
-      const order = this.releaseOrder(snapshot, roots);
+      const rootIds = new Set(roots.map((lease) => lease.id));
+      const ordered = this.releaseOrder(snapshot, roots);
+      const order = expandDependencies ? ordered : ordered.filter((lease) => rootIds.has(lease.id));
       const released: RuntimeCapabilityLease[] = [];
       const retained: RuntimeCapabilityLease[] = [];
       const effects = new Set<string>();
       const failures: RuntimeCapabilityReleaseResult['failures'] = [];
+      // Leases that did not actually go away: they failed to release, or they
+      // were retained because something that failed still needs them. Either way
+      // they still hold their own dependencies, so the chain must propagate.
+      const stillHolding = new Set<string>();
       const selectedIds = new Set(order.map((lease) => lease.id));
 
       for (const lease of order) {
@@ -838,6 +1134,7 @@ export class RuntimeCapabilityRegistry {
             capabilityId: lease.capabilityId,
             reason: lease.cleanupFailure,
           });
+          stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'cleanup-failed',
             slotId: lease.slotId,
@@ -857,6 +1154,7 @@ export class RuntimeCapabilityRegistry {
             capabilityId: lease.capabilityId,
             reason: lease.cleanupFailure,
           });
+          stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'recovery-rejected',
             slotId: lease.slotId,
@@ -870,12 +1168,19 @@ export class RuntimeCapabilityRegistry {
         const stillRequired = snapshot.leases.some(
           (candidate) =>
             candidate.id !== lease.id &&
-            !selectedIds.has(candidate.id) &&
+            // A selected lease that failed to release did not go away: it still
+            // holds whatever it depends on. Treating it as gone would stop a
+            // dependency out from under a provider that is demonstrably still up.
+            (!selectedIds.has(candidate.id) || stillHolding.has(candidate.id)) &&
             blocksAcquisition(candidate) &&
             candidate.dependencyLeaseIds.includes(lease.id),
         );
         if (stillRequired) {
           retained.push(structuredClone(lease));
+          // Retained means still up. Anything it depends on is still in use, so
+          // the whole chain below it has to be protected too (A -> B -> C: a
+          // failed A retains B, and B must then retain C).
+          stillHolding.add(lease.id);
           continue;
         }
         const otherHolders = snapshot.leases.filter(
@@ -904,11 +1209,13 @@ export class RuntimeCapabilityRegistry {
           previousState !== 'error' &&
           previousState !== 'queued' &&
           entry.keepWarmMs &&
-          !force
+          keepWarmFor(lease)
         ) {
           lease.keepWarmUntil = new Date(this.now().getTime() + entry.keepWarmMs).toISOString();
         } else if (otherHolders.length === 0 && previousState !== 'queued') {
           releaseActionRan = true;
+          // The provider is going away, so any earlier warm deadline is void.
+          lease.keepWarmUntil = undefined;
           actionResult = await this.runAction(slotId, entry.actions.release);
         }
         if (!actionResult.ok) {
@@ -920,6 +1227,7 @@ export class RuntimeCapabilityRegistry {
             capabilityId: lease.capabilityId,
             reason: lease.cleanupFailure,
           });
+          stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'cleanup-failed',
             slotId: lease.slotId,
@@ -957,16 +1265,62 @@ export class RuntimeCapabilityRegistry {
     });
   }
 
+  /**
+   * Stop providers that a released lease is still keeping warm, whatever their
+   * deadline. A `terminal` posture must bypass keep-warm (ADR-054), and by then
+   * the lease is already released, so the normal release path cannot see it.
+   */
+  async stopWarmProviders(slotId: string, capabilityIds?: string[]): Promise<void> {
+    const wanted = capabilityIds ? new Set(capabilityIds) : null;
+    await this.sweepWarmProviders(
+      (lease) =>
+        lease.slotId === slotId &&
+        lease.keepWarmUntil !== undefined &&
+        (!wanted || wanted.has(lease.capabilityId)),
+    );
+  }
+
   async cleanupExpiredWarmProviders(slotIds?: string[]): Promise<void> {
+    const nowMs = this.now().getTime();
+    await this.sweepWarmProviders(
+      (lease) =>
+        lease.keepWarmUntil !== undefined &&
+        Date.parse(lease.keepWarmUntil) <= nowMs &&
+        (!slotIds || slotIds.includes(lease.slotId)),
+    );
+  }
+
+  private async sweepWarmProviders(
+    select: (lease: RuntimeCapabilityLease) => boolean,
+  ): Promise<void> {
     await this.mutate(async () => {
       const snapshot = this.options.store.snapshot();
-      const nowMs = this.now().getTime();
-      const expired = snapshot.leases.filter(
-        (lease) =>
-          lease.state === 'released' &&
-          lease.keepWarmUntil !== undefined &&
-          Date.parse(lease.keepWarmUntil) <= nowMs &&
-          (!slotIds || slotIds.includes(lease.slotId)),
+      const selected = snapshot.leases.filter(
+        (lease) => lease.state === 'released' && select(lease),
+      );
+      // Warm providers are still real processes with real dependencies, so they
+      // stop in the same dependency order as an ordinary release. Lease
+      // insertion order is the opposite: `acquireInternal` creates dependencies
+      // before their dependent, so iterating the array would stop a dependency
+      // out from under something still using it.
+      const selectedIds = new Set(selected.map((lease) => lease.id));
+      // A dependency must outlive whatever still depends on it. With staggered
+      // keep-warm windows the dependency can expire first, so defer it until the
+      // dependent's own window ends rather than pulling the floor out from under
+      // a provider that is still warm and reusable.
+      const heldByWarmDependent = (lease: RuntimeCapabilityLease): boolean =>
+        snapshot.leases.some(
+          (candidate) =>
+            candidate.id !== lease.id &&
+            !selectedIds.has(candidate.id) &&
+            candidate.dependencyLeaseIds.includes(lease.id) &&
+            (blocksAcquisition(candidate) ||
+              (candidate.state === 'released' && candidate.keepWarmUntil !== undefined)),
+        );
+      const eligible = selected.filter((lease) => !heldByWarmDependent(lease));
+      const eligibleIds = new Set(eligible.map((lease) => lease.id));
+      const expired = this.releaseOrder(snapshot, eligible).filter((lease) =>
+        eligibleIds.has(lease.id),
       );
       for (const lease of expired) {
         const hasHolder = snapshot.leases.some(
@@ -1039,7 +1393,7 @@ export class RuntimeCapabilityRegistry {
           capabilityId: lease.capabilityId,
           leaseId: lease.id,
           owner: lease.owner,
-          detail: 'keep-warm deadline elapsed; provider released',
+          detail: 'keep-warm window ended; provider released',
         });
       }
       await this.persist(snapshot);

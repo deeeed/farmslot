@@ -138,6 +138,53 @@ test('backlog store creates manual items and enqueues with manual ticketData', a
   assert.match(enqueued.queueItem.initialContext ?? '', /Backlog notes/);
 });
 
+test('waitPolicy is validated, persisted, clearable, and carried onto the queue item', async () => {
+  const { backlog } = await freshStores();
+
+  await assert.rejects(
+    backlog.createBacklogItem(
+      {
+        project: 'farmslot-farm',
+        title: 'Bad wait policy',
+        sourceKind: 'manual',
+        flowType: 'dev',
+        // `project-default` defers instead of deciding, so it is not a preset.
+        waitPolicy: 'project-default' as never,
+      },
+      { kind: 'system' },
+    ),
+    /waitPolicy must be one of/,
+  );
+
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Overnight batch slice',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      waitPolicy: 'minimize',
+    },
+    { kind: 'system' },
+  );
+  assert.equal(created.item.waitPolicy, 'minimize');
+
+  const updated = await backlog.updateBacklogItem({
+    itemId: created.item.id,
+    waitPolicy: 'keep-for-validation',
+  });
+  assert.equal(updated.item.waitPolicy, 'keep-for-validation');
+
+  await backlog.markBacklogItemReady({ itemId: created.item.id });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.equal(enqueued.queueItem.waitPolicy, 'keep-for-validation');
+
+  const cleared = await backlog.updateBacklogItem({
+    itemId: created.item.id,
+    waitPolicy: null,
+  });
+  assert.equal(cleared.item.waitPolicy, undefined);
+});
+
 test('markdown-backed backlog specs require acceptance criteria before ready', async () => {
   const { backlog } = await freshStores();
   const specPath = await writeSpec(

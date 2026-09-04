@@ -86,6 +86,11 @@ import {
   requiresPublicationApproval,
 } from './publication-policy.js';
 import {
+  gateChoiceFromSelectionData,
+  reconcileRunPosture,
+  resolveGateChoiceOutcome,
+} from './resource-posture.js';
+import {
   assertIndependentReviewLaunchStateForSlot,
   publicationReviewLaunchRejectionFromError,
 } from './review-launch-gate.js';
@@ -977,6 +982,9 @@ export async function executeReadyGate(runId: string): Promise<string> {
   );
 
   updateRunStep(runId, S.HUMAN_GATE, { detail: 'Waiting for operator decision' });
+  // ADR-054: entering a durable operator wait. The effective retention policy
+  // applies before the operator chooses; their choice then governs what follows.
+  await reconcileRunPosture({ runId, boundary: 'operator-wait' });
   const actionId = await createEngineDecision(runId, 'human_gate', desc, actions, readyPayload);
 
   const afterDecisionRun = getRun(runId)!;
@@ -994,6 +1002,26 @@ export async function executeReadyGate(runId: string): Promise<string> {
       .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))[0] ??
     latestResolvedHumanGateDecision(afterDecisionRun.decisions);
   const selectionData = decision?.selectionData;
+  // The operator's posture choice for the wait they just ended.
+  const postureChoice = gateChoiceFromSelectionData(selectionData);
+  const postureOutcome = await reconcileRunPosture({
+    runId,
+    boundary: 'gate-resolved',
+    ...(postureChoice ? { gateChoice: postureChoice } : {}),
+  });
+  const postureResult = resolveGateChoiceOutcome(postureOutcome);
+  if (postureResult.kind !== 'applied') {
+    // ADR-054 defines `free-slot` as a typed rejection until the run is
+    // park-eligible. The rejection and the posture actually in force are already
+    // durable on the run; reconciling again to "restore" operator-wait would
+    // overwrite that transition and erase the only record of the refusal. So
+    // this surfaces it and leaves the persisted state alone.
+    console.warn(
+      `[run-engine] run ${runId.slice(0, 8)} — posture choice '${postureChoice ?? 'default'}' ` +
+        `${postureResult.kind}${'code' in postureResult && postureResult.code ? ` (${postureResult.code})` : ''}: ` +
+        postureResult.reason,
+    );
+  }
   if (publicationApprovalGate) {
     const decisionPayload = decision?.payload as ReadyGatePayload | undefined;
     const approvedPackage = decisionPayload?.prPackage ?? preparedPackage;

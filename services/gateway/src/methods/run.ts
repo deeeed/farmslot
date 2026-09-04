@@ -1254,9 +1254,14 @@ export async function runResolveDecision(
     }
   }
 
-  // Store selectionData on decision so engine steps can use it
-  if (params.selectionData) {
-    decision.selectionData = params.selectionData;
+  // Store selectionData on decision so engine steps can use it. The ADR-054
+  // resource posture choice arrives as a typed param so a client cannot invent a
+  // policy; it is copied here into the same channel the engine already reads.
+  if (params.selectionData || params.resourcePosture) {
+    decision.selectionData = {
+      ...(params.selectionData ?? {}),
+      ...(params.resourcePosture ? { resourcePosture: params.resourcePosture } : {}),
+    };
   }
 
   // Mark decision as resolved
