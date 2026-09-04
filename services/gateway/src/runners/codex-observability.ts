@@ -330,19 +330,45 @@ export function buildRunnerProcessArgvCommand(pid: string): string {
   return `ps -p ${shellQuote(pid)} -o args= 2>/dev/null`;
 }
 
+/** Codex options that consume the following argument, so it is never a positional. */
+const CODEX_VALUE_FLAGS = new Set([
+  '--model',
+  '-m',
+  '--config',
+  '-c',
+  '--cd',
+  '--profile',
+  '--sandbox',
+  '--ask-for-approval',
+]);
+
 /**
  * True when this argv shows codex resuming exactly {@link expectedSessionId}.
  *
- * Codex spells a reopen as `codex … resume … <sessionId>`, so both the resume
- * subcommand and the id must be present as whole arguments. A substring match
- * would let an unrelated id that merely contains this one pass.
+ * Codex spells a reopen as `codex … resume [options] <SESSION_ID>`, so the id
+ * is the FIRST POSITIONAL argument after `resume` — options and their values
+ * come between. Requiring `resume` and the id to merely both appear somewhere
+ * accepted `codex resume OTHER_ID --model x EXPECTED_ID`, where the expected id
+ * rides along in a prompt or option value and certifies the wrong pane. Only
+ * the first positional decides.
  */
 export function codexArgvResumesSession(argv: string, expectedSessionId: string): boolean {
   const trimmedId = expectedSessionId.trim();
   if (!trimmedId) return false;
   const args = argv.trim().split(/\s+/).filter(Boolean);
-  if (!args.includes('resume')) return false;
-  return args.includes(trimmedId);
+  const resumeAt = args.indexOf('resume');
+  if (resumeAt === -1) return false;
+  for (let i = resumeAt + 1; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg.startsWith('-')) {
+      // `--flag=value` carries its value inline; a bare value flag eats the next token.
+      if (!arg.includes('=') && CODEX_VALUE_FLAGS.has(arg)) i += 1;
+      continue;
+    }
+    // First positional after `resume` is the session argument, and nothing later counts.
+    return arg === trimmedId;
+  }
+  return false;
 }
 
 export function buildCodexNativeBindingProbeCommand(options: {

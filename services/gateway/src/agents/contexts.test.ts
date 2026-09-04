@@ -15,7 +15,7 @@ import {
 } from '@farmslot/protocol';
 
 import { poolDir } from '../core/config.js';
-import { createRun, deleteRun, updateRun } from '../runs/store.js';
+import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
   getAgentContexts,
@@ -619,4 +619,69 @@ test('upsertAgentContext keeps multiple reviewer contexts independently selectab
       runner: 'claude',
     },
   );
+});
+
+test('a guard runs inside the mutation queue and can abort the write', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-browser-farm',
+    ticketOrPr: `PROJ-${Date.now()}-guard`,
+    slotId: 'runner-browser-1',
+  });
+  t.after(() => cleanupRun(run.id));
+
+  await upsertAgentContext(run.id, 'fix-bug', { status: 'working', model: 'before-guard' });
+
+  // A precondition checked by the caller is only checked before QUEUEING; the
+  // wait for earlier mutations is unbounded, so the guard has to run here.
+  const blocked = await upsertAgentContext(
+    run.id,
+    'fix-bug',
+    { model: 'must-not-land' },
+    { guard: async () => false },
+  );
+  assert.equal(blocked, null);
+  assert.equal(
+    getRun(run.id)?.agentContexts?.find((ctx) => ctx.role === 'fix-bug')?.model,
+    'before-guard',
+    'an aborted guard must leave the context untouched',
+  );
+
+  const allowed = await upsertAgentContext(
+    run.id,
+    'fix-bug',
+    { model: 'after-guard' },
+    { guard: async () => true },
+  );
+  assert.equal(allowed?.model, 'after-guard');
+});
+
+test('the guard observes state written by earlier queued mutations', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-browser-farm',
+    ticketOrPr: `PROJ-${Date.now()}-guard-order`,
+    slotId: 'runner-browser-1',
+  });
+  t.after(() => cleanupRun(run.id));
+
+  let observedByGuard: string | null | undefined;
+  const first = upsertAgentContext(run.id, 'fix-bug', { status: 'working', model: 'first' });
+  const second = upsertAgentContext(
+    run.id,
+    'fix-bug',
+    { model: 'second' },
+    {
+      guard: async () => {
+        // Queued behind the first mutation, so its write is already visible.
+        observedByGuard = getRun(run.id)?.agentContexts?.find(
+          (ctx) => ctx.role === 'fix-bug',
+        )?.model;
+        return true;
+      },
+    },
+  );
+
+  await Promise.all([first, second]);
+  assert.equal(observedByGuard, 'first');
 });

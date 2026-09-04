@@ -332,13 +332,13 @@ export async function runSessionCommand(
       effectivePaneId = rediscovered.pane.paneId;
       liveness = { liveness: 'live' };
       // Ownership was sampled before the scan, which takes seconds against a
-      // live machine — long enough for a handoff to land. Re-read it against
-      // the state as it is NOW, immediately before the only mutation.
-      owned = await resolveSlotOwnership(run.id, slotId, deps);
-      if (owned.kind === 'owned') {
-        // Rebind so Command Center, the CLI, and the terminal all follow the
-        // session to the exact pane it now lives in.
-        await deps.upsert(run.id, context.role, {
+      // live machine — long enough for a handoff to land. Re-check it INSIDE
+      // the context mutation queue: checking here and writing later would still
+      // leave a window, because the upsert waits on earlier queued mutations.
+      await deps.upsert(
+        run.id,
+        context.role,
+        {
           id: context.id,
           target: {
             session: tmuxSession,
@@ -347,8 +347,14 @@ export async function runSessionCommand(
             paneId: rediscovered.pane.paneId,
             target: rediscovered.pane.target,
           },
-        });
-      }
+        },
+        {
+          guard: async () => {
+            owned = await resolveSlotOwnership(run.id, slotId, deps);
+            return owned.kind === 'owned';
+          },
+        },
+      );
     } else if (rediscovered.indeterminate) {
       // Part of the session could not be probed, so absence is unproven.
       liveness = {

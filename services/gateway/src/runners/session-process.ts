@@ -704,6 +704,18 @@ interface ExactLiveRunnerSessionBindingDeps {
   resolveBinding: typeof resolveRunnerSessionBinding;
   canonicalizePath: typeof canonicalizeRunnerSessionPath;
   verifyResumed: typeof verifyResumedRunnerSessionBinding;
+  resolveSessionIdForPath: typeof resolveRunnerSessionIdForPath;
+}
+
+/** The session id a persisted session file carries, per the runner's own reader. */
+export async function resolveRunnerSessionIdForPath(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  sessionPath: string,
+): Promise<string | null> {
+  const provider = getRunnerObservability(runner);
+  if (!provider?.resolveSessionId) return null;
+  return provider.resolveSessionId(vars, sessionPath);
 }
 
 /** Runner-owned check that a live process is resuming one exact session. */
@@ -725,6 +737,7 @@ const EXACT_LIVE_BINDING_DEPS: ExactLiveRunnerSessionBindingDeps = {
   resolveBinding: resolveRunnerSessionBinding,
   verifyResumed: verifyResumedRunnerSessionBinding,
   canonicalizePath: canonicalizeRunnerSessionPath,
+  resolveSessionIdForPath: resolveRunnerSessionIdForPath,
 };
 
 /** Prove the live runner in one exact pane still owns the persisted session id and path. */
@@ -758,13 +771,34 @@ export async function verifyExactLiveRunnerSessionBinding(
         options.expectedSessionId,
       );
       if (resumed?.ok) {
+        // The process proves WHICH session it resumed; the path still has to be
+        // proven the same way a fresh binding's is. Canonicalize it and confirm
+        // the file really carries that session id, so a stale or relocated path
+        // cannot ride in on the process check alone.
+        const canonicalExpectedPath = await deps.canonicalizePath(
+          vars,
+          options.expectedSessionPath,
+        );
+        if (!canonicalExpectedPath) {
+          return {
+            ok: false,
+            reason: `runner session path canonicalization failed for ${options.paneId}`,
+          };
+        }
+        const embeddedId = await deps.resolveSessionIdForPath(vars, runner, canonicalExpectedPath);
+        if (embeddedId !== options.expectedSessionId) {
+          return {
+            ok: false,
+            reason: `persisted session file '${canonicalExpectedPath}' carries session id '${embeddedId ?? 'unknown'}', not '${options.expectedSessionId}'`,
+          };
+        }
         return {
           ok: true,
           binding: {
             runnerSessionId: options.expectedSessionId,
             runnerSessionPath: options.expectedSessionPath,
             source: 'native',
-            canonicalSessionPath: options.expectedSessionPath,
+            canonicalSessionPath: canonicalExpectedPath,
           },
         };
       }

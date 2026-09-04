@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-04T12:02:44.737Z",
+  "probe": "run-session-command",
+  "ok": true,
+  "runId": "f34d98e8-06d4-4278-9fd7-6afe3bb7cb41",
+  "contextId": "rev-claude",
+  "rowCount": 4,
+  "duplicateContextIds": false,
+  "rows": [
+    {
+      "contextId": "fix-bug",
+      "role": "fix-bug",
+      "text": "Bugfix claude/opus 76456e4e Reopen session Attach tmux"
+    },
+    {
+      "contextId": "rev-claude",
+      "role": "self-review",
+      "text": "rev-claude (opus) claude/opus 89a50f9b Reopen session Attach tmux"
+    },
+    {
+      "contextId": "self-review-fix",
+      "role": "self-review-fix",
+      "text": "Self-review fix claude/opus no session captured Reopen session Attach tmux"
+    },
+    {
+      "contextId": "rev-codex",
+      "role": "self-review",
+      "text": "rev-codex (gpt-5.6-sol) codex/gpt-5.6-sol 01a0668c Reopen session Attach tmux"
+    }
+  ],
+  "labelBefore": "Reopen session",
+  "labelAfter": "Reopen session",
+  "attachLabelAfter": "Attach tmux",
+  "copyBlocked": true,
+  "secondRow": {
+    "contextId": "rev-codex",
+    "role": "self-review",
+    "sameRoleAsFirst": true,
+    "sessionIdShort": "01a0668c",
+    "liveness": "liveness unknown",
+    "settled": true
+  },
+  "duplicateRoleCount": 2,
+  "firstRowStillSettled": true,
+  "sessionIdShort": "89a50f9b",
+  "liveness": "liveness unknown",
+  "error": "Clipboard copy failed: Failed to execute 'writeText' on 'Clipboard': Write permission denied."
+}

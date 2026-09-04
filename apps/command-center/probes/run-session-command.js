@@ -1,6 +1,7 @@
 /**
  * CDP probe: Run Detail runner-session rows and the copy actions on them.
- * Usage: node apps/command-center/scripts/cdp.mjs eval run/<runId> --file probes/run-session-command.js
+ * Usage: node apps/command-center/scripts/cdp.mjs eval run/<runId> --file probes/run-session-command.js \
+ *          --out docs/operations/evidence/cc-probe-run-session-command.json
  *
  * Clicks the real "Reopen session" button, which drives the same
  * `run.sessionCommand` round trip an operator triggers. Nothing is injected
@@ -170,10 +171,16 @@ return (async () => {
   }
 
   const errorText = errorNode?.textContent.trim() ?? null;
+  const envelope = {
+    schemaVersion: 1,
+    recordedAt: new Date().toISOString(),
+    probe: 'run-session-command',
+  };
   // Structural flag from the component, not a match on the human-readable
   // message: rendered text is never the signal.
   const copyBlocked = errorNode?.getAttribute('data-copy-blocked') === 'true';
   return {
+    ...envelope,
     // The gateway answered through the real button, the row shows its proved
     // liveness, and a blocked clipboard never masquerades as a copy.
     ok:

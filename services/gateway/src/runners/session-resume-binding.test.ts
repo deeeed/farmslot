@@ -35,6 +35,37 @@ test('argv for a different session, or a fresh launch, proves nothing', () => {
   assert.equal(codexArgvResumesSession(RESUMED_ARGV, '   '), false);
 });
 
+test('an id appearing after the session argument cannot certify the process', () => {
+  // The shape that used to pass: a different conversation is being resumed and
+  // the expected id merely rides along in a later option or prompt.
+  assert.equal(
+    codexArgvResumesSession(`codex resume OTHER_ID --model gpt-5.6-sol ${SESSION_ID}`, SESSION_ID),
+    false,
+  );
+  assert.equal(
+    codexArgvResumesSession(`codex resume OTHER_ID --config prompt="${SESSION_ID}"`, SESSION_ID),
+    false,
+  );
+});
+
+test('options and their values are skipped when finding the session argument', () => {
+  // The exact live shape: flags sit between `resume` and the positional id.
+  assert.equal(
+    codexArgvResumesSession(
+      `codex --config features.hooks=true resume --dangerously-bypass-approvals-and-sandbox --config model_reasoning_effort="xhigh" --model gpt-5.6-sol ${SESSION_ID}`,
+      SESSION_ID,
+    ),
+    true,
+  );
+  // A value flag must not have its value mistaken for the positional.
+  assert.equal(codexArgvResumesSession(`codex resume --model ${SESSION_ID}`, SESSION_ID), false);
+  // Inline `--flag=value` consumes no following token.
+  assert.equal(
+    codexArgvResumesSession(`codex resume --model=gpt-5.6-sol ${SESSION_ID}`, SESSION_ID),
+    true,
+  );
+});
+
 test('a session id that merely contains another is not a match', () => {
   // Substring matching would bind the wrong conversation.
   assert.equal(codexArgvResumesSession(`codex resume ${SESSION_ID}abc`, SESSION_ID), false);
@@ -63,6 +94,7 @@ test('exact-binding verification falls back to the resumed check when attributio
       readPaneStartedAt: async () => 1_788_519_132_869,
       resolveBinding: async () => null,
       canonicalizePath: async (_vars, sessionPath) => sessionPath,
+      resolveSessionIdForPath: async () => SESSION_ID,
       verifyResumed: async (_vars, _runner, runnerPid, expectedSessionId) => ({
         ok: runnerPid === '6892' && expectedSessionId === SESSION_ID,
       }),
@@ -90,6 +122,7 @@ test('without a proven runner pid the resumed fallback is never consulted', asyn
       readPaneStartedAt: async () => 1_788_519_132_869,
       resolveBinding: async () => null,
       canonicalizePath: async (_vars, sessionPath) => sessionPath,
+      resolveSessionIdForPath: async () => SESSION_ID,
       verifyResumed: async () => {
         consulted += 1;
         return { ok: true };
@@ -116,6 +149,7 @@ test('a live process resuming a different session does not satisfy the check', a
       readPaneStartedAt: async () => 1_788_519_132_869,
       resolveBinding: async () => null,
       canonicalizePath: async (_vars, sessionPath) => sessionPath,
+      resolveSessionIdForPath: async () => SESSION_ID,
       verifyResumed: async () => ({
         ok: false,
         reason: 'runner process 6892 is not resuming session ' + SESSION_ID,
@@ -160,10 +194,90 @@ test('resumed-session ownership reads the process table, not runner output', () 
   // argv is an explicitly allowed structural signal (process tree and argv).
   // The tokens compared are ones the gateway itself emits in the reload
   // command, never text the runner printed.
+  // Tokenised into whole arguments, then compared by equality.
   assert.match(body, /split\(/);
-  assert.match(body, /includes\('resume'\)/);
+  assert.match(body, /args\.indexOf\('resume'\)/);
+  assert.match(body, /arg === trimmedId/);
   assert.doesNotMatch(body, /stdout/);
   assert.doesNotMatch(body, /capture-pane/);
-  // Whole-argument comparison only: no substring or regex scan of the argv.
-  assert.doesNotMatch(body, /\.match\(|indexOf\(|\.test\(/);
+  // No substring or regex scan of the argv text itself. Array indexOf finds a
+  // whole element, which is exactly the comparison the rule asks for.
+  assert.doesNotMatch(body, /argv\.(match|includes|indexOf|search)\(/);
+  assert.doesNotMatch(body, /\.test\(argv/);
+});
+
+test('a resumed binding is rejected when the session file carries a different id', async () => {
+  const result = await verifyExactLiveRunnerSessionBinding(
+    makeVars(),
+    'codex',
+    {
+      paneId: '%32',
+      slotId: 'macpro-ff-1',
+      expectedSessionId: SESSION_ID,
+      expectedSessionPath: SESSION_PATH,
+      runnerPid: '6892',
+    },
+    {
+      readPaneStartedAt: async () => 1_788_519_132_869,
+      resolveBinding: async () => null,
+      canonicalizePath: async (_vars, sessionPath) => sessionPath,
+      verifyResumed: async () => ({ ok: true }),
+      // The process claims this session, but the file on disk is another one.
+      resolveSessionIdForPath: async () => 'some-other-session',
+    },
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.reason, /carries session id 'some-other-session'/);
+});
+
+test('a resumed binding is rejected when its path cannot be canonicalized', async () => {
+  const result = await verifyExactLiveRunnerSessionBinding(
+    makeVars(),
+    'codex',
+    {
+      paneId: '%32',
+      slotId: 'macpro-ff-1',
+      expectedSessionId: SESSION_ID,
+      expectedSessionPath: SESSION_PATH,
+      runnerPid: '6892',
+    },
+    {
+      readPaneStartedAt: async () => 1_788_519_132_869,
+      resolveBinding: async () => null,
+      canonicalizePath: async () => null,
+      verifyResumed: async () => ({ ok: true }),
+      resolveSessionIdForPath: async () => SESSION_ID,
+    },
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.reason, /canonicalization failed/);
+});
+
+test('a proven resumed binding reports the canonical path', async () => {
+  const result = await verifyExactLiveRunnerSessionBinding(
+    makeVars(),
+    'codex',
+    {
+      paneId: '%32',
+      slotId: 'macpro-ff-1',
+      expectedSessionId: SESSION_ID,
+      expectedSessionPath: '/repo/./.agent/codex-home/sessions/rollout-01a06c09.jsonl',
+      runnerPid: '6892',
+    },
+    {
+      readPaneStartedAt: async () => 1_788_519_132_869,
+      resolveBinding: async () => null,
+      canonicalizePath: async () => SESSION_PATH,
+      verifyResumed: async () => ({ ok: true }),
+      resolveSessionIdForPath: async () => SESSION_ID,
+    },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.binding.canonicalSessionPath, SESSION_PATH);
 });

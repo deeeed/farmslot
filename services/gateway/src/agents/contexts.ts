@@ -320,10 +320,18 @@ export async function upsertAgentContext(
   patch: Partial<AgentContext>,
   options?: {
     resolvePatch?: (existing: AgentContext | undefined) => Partial<AgentContext> | null;
+    /**
+     * Precondition evaluated INSIDE the mutation queue, immediately before the
+     * write. A caller that checks a precondition before calling has only
+     * checked it before queueing: the wait for earlier mutations is unbounded,
+     * so state can change underneath. Return false to abort without writing.
+     */
+    guard?: () => Promise<boolean>;
   },
 ): Promise<AgentContext | null> {
   const previous = agentContextChains.get(runId) ?? Promise.resolve();
   const applyMutation = async () => {
+    if (options?.guard && !(await options.guard())) return null;
     const run = getRun(runId);
     if (!run || !run.slotId) return null;
     const slotId = run.slotId;

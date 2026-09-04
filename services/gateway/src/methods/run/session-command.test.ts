@@ -64,7 +64,12 @@ function deps(
     resolveSession: async () => 'mm-1',
     verifyBinding: async () => OWNED_BINDING,
     rediscoverPane: async () => ({ pane: null, scannedPanes: 0 }),
-    upsert: async () => null,
+    // Mirror upsertAgentContext: the guard runs inside the mutation and a
+    // false result aborts before any write.
+    upsert: async (_runId, _role, _patch, options) => {
+      if (options?.guard && !(await options.guard())) return null;
+      return null;
+    },
     readSlot: async () => ({ current_run_id: 'run-1' }),
     probeRunnerPid: async () => ({ state: 'present', pid: '4243' }),
     ...overrides,
@@ -419,7 +424,8 @@ test('a session found nowhere in the slot stays dead and never rebinds the conte
         scannedPanes: 2,
         reason: 'no pane in tmux session mm-1 runs codex session codex-session-123',
       }),
-      upsert: async () => {
+      upsert: async (_runId, _role, _patch, options) => {
+        if (options?.guard && !(await options.guard())) return null;
         upserted += 1;
         return null;
       },
@@ -582,7 +588,8 @@ test("a historical run gets the command but never rebinds a successor run's pane
       rediscoverPane: async () => REDISCOVERED_PANE,
       // A warm handoff moved this slot to a successor run.
       readSlot: async () => ({ current_run_id: 'run-successor' }),
-      upsert: async () => {
+      upsert: async (_runId, _role, _patch, options) => {
+        if (options?.guard && !(await options.guard())) return null;
         upserted += 1;
         return null;
       },
@@ -641,6 +648,56 @@ test('the attach line selects the exact pane, not just its window', async () => 
   );
 });
 
+test('a transfer landing between the ownership check and the write aborts the rebind', async () => {
+  // The upsert queue can make a caller wait after its check, so the guard runs
+  // INSIDE the mutation. Ownership flips exactly at that moment here.
+  let owner = 'run-1';
+  let written = 0;
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      resolvePane: async () => null,
+      rediscoverPane: async () => REDISCOVERED_PANE,
+      readSlot: async () => ({ current_run_id: owner }),
+      upsert: async (_runId, _role, _patch, options) => {
+        // A handoff completes while this mutation waits its turn in the queue.
+        owner = 'run-successor';
+        if (options?.guard && !(await options.guard())) return null;
+        written += 1;
+        return null;
+      },
+    }),
+  );
+
+  assert.equal(written, 0, 'a transferred slot must not be written');
+  assert.equal(result.supported && result.ownership, 'transferred');
+  assert.equal(result.supported && result.ownerRunId, 'run-successor');
+});
+
+test('the rebind runs through the guard and writes when ownership holds', async () => {
+  let guarded = 0;
+  let written = 0;
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      resolvePane: async () => null,
+      rediscoverPane: async () => REDISCOVERED_PANE,
+      readSlot: async () => ({ current_run_id: 'run-1' }),
+      upsert: async (_runId, _role, _patch, options) => {
+        assert.ok(options?.guard, 'the rebind must supply an in-queue guard');
+        guarded += 1;
+        if (options?.guard && !(await options.guard())) return null;
+        written += 1;
+        return null;
+      },
+    }),
+  );
+
+  assert.equal(guarded, 1);
+  assert.equal(written, 1);
+  assert.equal(result.supported && result.ownership, 'owned');
+});
+
 test('ownership is re-read immediately before the rebind, not only before the scan', async () => {
   const reads: string[] = [];
   let upserted = 0;
@@ -654,14 +711,15 @@ test('ownership is re-read immediately before the rebind, not only before the sc
         reads.push('read');
         return { current_run_id: reads.length === 1 ? 'run-1' : 'run-successor' };
       },
-      upsert: async () => {
+      upsert: async (_runId, _role, _patch, options) => {
+        if (options?.guard && !(await options.guard())) return null;
         upserted += 1;
         return null;
       },
     }),
   );
 
-  assert.equal(reads.length, 2, 'ownership must be re-read before mutating');
+  assert.equal(reads.length, 2, 'ownership must be re-read inside the mutation');
   assert.equal(result.supported && result.ownership, 'transferred');
   assert.equal(result.supported && result.ownerRunId, 'run-successor');
   assert.equal(upserted, 0);
@@ -675,7 +733,8 @@ test('an unreadable slot row blocks the rebind instead of failing open', async (
       resolvePane: async () => null,
       rediscoverPane: async () => REDISCOVERED_PANE,
       readSlot: async () => null,
-      upsert: async () => {
+      upsert: async (_runId, _role, _patch, options) => {
+        if (options?.guard && !(await options.guard())) return null;
         upserted += 1;
         return null;
       },
