@@ -207,6 +207,9 @@ async function focusTab(hash) {
   await call('Page.bringToFront');
   close();
   const origin = new URL(tab.url).origin;
+  // `about:blank` and similar yield the literal string "null", which would make
+  // the permission grant a silent no-op.
+  if (origin === 'null') die(`tab ${tab.url} has no origin to grant clipboard access to`, 2);
   const versionRes = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/version`);
   if (!versionRes.ok) die(`CDP not reachable on :${CDP_PORT}`, 2);
   const { webSocketDebuggerUrl } = await versionRes.json();

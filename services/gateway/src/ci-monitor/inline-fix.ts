@@ -59,6 +59,7 @@ import {
 import { deliverPromptToLiveRunner } from '../runners/session-reactivation.js';
 import {
   captureAndRecordRunnerSession,
+  clearedRunnerSessionContextPatch,
   recordRunnerSessionForRole,
   runnerSessionContextPatch,
 } from '../runners/session-record.js';
@@ -346,8 +347,7 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
     status: 'working',
     runner,
     model,
-    runnerSessionId: null,
-    runnerSessionPath: null,
+    ...clearedRunnerSessionContextPatch(),
     target: {
       session: primaryTarget.session,
       window,
@@ -831,7 +831,7 @@ async function attemptInlineCIFix(
           runnerSessionPath: retainedSession.binding?.runnerSessionPath ?? null,
         },
         'retained CI fix worker session',
-      ) ?? { runnerSessionId: null, runnerSessionPath: null }),
+      ) ?? clearedRunnerSessionContextPatch()),
       promptDeliveryStartedAt:
         recoveredContext?.promptDeliveryStartedAt ?? new Date().toISOString(),
       deliveryBaselineRef: beforeSha,
@@ -849,17 +849,18 @@ async function attemptInlineCIFix(
         runner,
         runId,
         role: 'ci-fix',
-        label: 'ci fix relaunch',
+        captureLabel: 'ci fix relaunch',
         capture: { paneId: deliveryPane?.paneId ?? null, slotId },
       });
-      const relaunchWorkerRole = primaryRoleForFlow(getRun(runId)?.flowType);
+      const relaunchedRun = getRun(runId);
+      const relaunchWorkerRole = primaryRoleForFlow(relaunchedRun?.flowType);
       // Never fabricate a worker context the dispatch did not create.
-      if (getRun(runId)?.agentContexts?.some((ctx) => ctx.role === relaunchWorkerRole)) {
+      if (relaunchedRun?.agentContexts?.some((ctx) => ctx.role === relaunchWorkerRole)) {
         await recordRunnerSessionForRole({
           runId,
           role: relaunchWorkerRole,
           session: relaunched,
-          label: 'ci fix relaunch',
+          captureLabel: 'ci fix relaunch',
         });
       }
     }

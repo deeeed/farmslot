@@ -490,6 +490,12 @@ export type RunProbeWorkerSignalResult = import('../transport/signal.js').Worker
 
 export interface RunSessionCommandParams {
   runId: string;
+  /**
+   * Exact agent context to reopen. Preferred over `role`: several contexts can
+   * share one role (reviewer loops), and only the id identifies which session
+   * the caller means.
+   */
+  contextId?: string;
   /** Agent context role to reopen. Defaults to the run's primary worker role. */
   role?: import('../contracts/index.js').AgentRole;
 }

@@ -63,6 +63,7 @@ import {
   deliverPromptToLiveRunner,
   resetLiveRunnerContext,
 } from '../runners/session-reactivation.js';
+import { recordRunnerSessionForRole } from '../runners/session-record.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { clearRunActiveTaskFile, getRun, updateRun } from '../runs/store.js';
 import {
@@ -1050,13 +1051,22 @@ export async function runReviewAgent(
         runnerSessionId: binding.runnerSessionId,
         runnerSessionPath: binding.runnerSessionPath,
       };
+      // Reviewer loops allocate a non-canonical context id (`rev2-codex`), so
+      // the hook is given that exact target instead of collapsing every
+      // reviewer generation onto the canonical `self-review` context.
+      await upsertAgentContext(_runId, 'self-review', {
+        id: allocated.id,
+        label: allocated.label,
+        status: 'working',
+      });
       reviewContext =
-        (await upsertAgentContext(_runId, 'self-review', {
-          id: allocated.id,
+        (await recordRunnerSessionForRole({
+          runId: _runId,
+          role: 'self-review',
+          contextId: allocated.id,
           label: allocated.label,
-          status: 'working',
-          runnerSessionId: binding.runnerSessionId,
-          runnerSessionPath: binding.runnerSessionPath,
+          session: binding,
+          captureLabel: 'reviewer live session bind',
         })) ?? reviewContext;
       return true;
     };

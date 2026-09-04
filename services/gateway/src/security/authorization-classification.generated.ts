@@ -228,6 +228,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'run.replayStep': { classification: 'admin' },
   'run.resolveDecision': { classification: 'admin' },
   'run.resume': { classification: 'admin' },
+  'run.sessionCommand': { classification: 'admin' },
   'run.slotHistory': { classification: 'admin' },
   'run.tags.list': { classification: 'admin' },
   'run.tags.set': { classification: 'admin' },

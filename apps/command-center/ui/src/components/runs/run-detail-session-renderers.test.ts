@@ -128,3 +128,31 @@ test('a refused clipboard keeps the proved liveness and never reports Copied', (
   assert.equal(state.copied, undefined);
   assert.match(state.message ?? '', /Clipboard copy failed/);
 });
+
+test('two same-role reviewer rows stay distinct so each copies its own session', () => {
+  const rows = runAgentSessionRows(
+    run([
+      context({
+        id: 'rev-codex',
+        role: 'self-review',
+        label: 'Reviewer 1',
+        runnerSessionId: 'reviewer-session-1',
+      }),
+      context({
+        id: 'rev2-codex',
+        role: 'self-review',
+        label: 'Reviewer 2',
+        runnerSessionId: 'reviewer-session-2',
+      }),
+    ]),
+  );
+
+  assert.equal(rows.length, 2);
+  // Rows are addressed by contextId: role-keyed identity made both reviewers
+  // resolve to whichever context was newest.
+  assert.equal(rows[0]?.contextId, 'rev-codex');
+  assert.equal(rows[1]?.contextId, 'rev2-codex');
+  assert.notEqual(rows[0]?.contextId, rows[1]?.contextId);
+  assert.equal(rows[0]?.sessionIdShort, 'reviewer');
+  assert.equal(rows[0]?.role, rows[1]?.role);
+});

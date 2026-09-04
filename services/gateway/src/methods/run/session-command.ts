@@ -32,6 +32,7 @@ import { isKnownRunner, normalizeRunner } from '../../runners/registry.js';
 import {
   probeRunnerDescendantPid,
   resolvePersistedRunnerSessionBinding,
+  verifyExactLiveRunnerSessionBinding,
 } from '../../runners/session-process.js';
 import { getRun } from '../../runs/store.js';
 import { resolveDispatchSafetyTier } from '../dispatch/safety-tier.js';
@@ -47,6 +48,7 @@ export interface RunSessionCommandDeps {
   resolvePane: typeof resolveExactTmuxWindowPane;
   resolveSession: typeof resolveTmuxSession;
   probeRunnerPid: typeof probeRunnerDescendantPid;
+  verifyBinding: typeof verifyExactLiveRunnerSessionBinding;
 }
 
 const DEFAULT_DEPS: RunSessionCommandDeps = {
@@ -58,6 +60,7 @@ const DEFAULT_DEPS: RunSessionCommandDeps = {
   resolvePane: resolveExactTmuxWindowPane,
   resolveSession: resolveTmuxSession,
   probeRunnerPid: probeRunnerDescendantPid,
+  verifyBinding: verifyExactLiveRunnerSessionBinding,
 };
 
 function unsupported(
@@ -69,13 +72,25 @@ function unsupported(
   return { supported: false, runId, role, reason, detail };
 }
 
-/** Role selection: explicit request, else the flow's primary worker role. */
+/**
+ * Context selection. An exact `contextId` wins: reviewer loops put several
+ * contexts on one role, and role alone would hand back the newest reviewer's
+ * session no matter which row the operator clicked.
+ */
 export function selectSessionContext(
   run: Pick<Run, 'flowType' | 'agentContexts'>,
-  role?: AgentRole,
+  selector: { contextId?: string; role?: AgentRole } = {},
 ): { role: AgentRole; context: AgentContext | null } {
-  const requested = role ?? primaryRoleForFlow(run.flowType);
   const contexts = run.agentContexts ?? [];
+  const wantedId = selector.contextId?.trim();
+  if (wantedId) {
+    const exact = contexts.find((candidate) => candidate.id === wantedId) ?? null;
+    return {
+      role: exact?.role ?? selector.role ?? primaryRoleForFlow(run.flowType),
+      context: exact,
+    };
+  }
+  const requested = selector.role ?? primaryRoleForFlow(run.flowType);
   const matching = contexts.filter((candidate) => candidate.role === requested);
   // Several attempts can share a role (reviewer loops); prefer the one that
   // actually carries a session, then the most recently updated.
@@ -83,6 +98,8 @@ export function selectSessionContext(
     (candidate) => candidate.runnerSessionId && candidate.runnerSessionPath,
   );
   const pool = withSession.length > 0 ? withSession : matching;
+  // `updatedAt` is an ISO-8601 timestamp, so lexicographic order is
+  // chronological order. Do not store a non-ISO value here.
   const selected = [...pool].sort((a, b) =>
     (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''),
   )[0];
@@ -90,16 +107,25 @@ export function selectSessionContext(
 }
 
 /**
- * Structured runner liveness for the pane that owns the session. Pane text is
- * never consulted. A pane that no longer exists is a confirmed `dead`; a probe
- * that cannot decide (unreachable machine, tmux query failure) stays `unknown`
- * with its reason, because refusing to answer would also withhold the reopen
- * command the operator came for.
+ * Structured runner liveness for the pane that owns THIS session. Pane text is
+ * never consulted.
+ *
+ * A same-type runner process in the pane is not enough: panes get reused, so a
+ * newer Codex process would otherwise label an older session live and send the
+ * operator to the wrong conversation. `live` therefore requires the pane's
+ * active runner session to be the exact id/path we are handing back; anything
+ * the check cannot confirm degrades to `unknown` with its reason.
+ *
+ * A pane that no longer exists is a confirmed `dead`; a probe that cannot
+ * decide (unreachable machine, tmux query failure) stays `unknown`, because
+ * refusing to answer would also withhold the reopen command the operator came
+ * for.
  */
 async function probeSessionLiveness(
   vars: SlotVars,
   runner: string,
   tmuxTarget: string | null,
+  session: { runnerSessionId: string; runnerSessionPath: string },
   deps: RunSessionCommandDeps,
 ): Promise<{ liveness: RunSessionLiveness; livenessReason?: string }> {
   if (!tmuxTarget) {
@@ -114,7 +140,21 @@ async function probeSessionLiveness(
   if (!pane)
     return { liveness: 'dead', livenessReason: `tmux target ${tmuxTarget} no longer exists` };
   const probe = await deps.probeRunnerPid(vars, pane.panePid, runner);
-  if (probe.state === 'present') return { liveness: 'live' };
+  if (probe.state === 'present') {
+    const owned = await deps.verifyBinding(vars, runner, {
+      paneId: pane.paneId,
+      slotId: vars.slotId,
+      expectedSessionId: session.runnerSessionId,
+      expectedSessionPath: session.runnerSessionPath,
+    });
+    if (owned.ok) return { liveness: 'live' };
+    // A live runner that owns a different session means this session is not the
+    // one running here. That is not proof it is gone, so it stays `unknown`.
+    return {
+      liveness: 'unknown',
+      livenessReason: owned.reason ?? 'the live runner process does not own this persisted session',
+    };
+  }
   if (probe.state === 'absent') return { liveness: 'dead' };
   return {
     liveness: 'unknown',
@@ -129,13 +169,18 @@ export async function runSessionCommand(
   const run = deps.getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
 
-  const { role, context } = selectSessionContext(run, params.role);
+  const { role, context } = selectSessionContext(run, {
+    ...(params.contextId ? { contextId: params.contextId } : {}),
+    ...(params.role ? { role: params.role } : {}),
+  });
   if (!context) {
     return unsupported(
       run.id,
       role,
       'no-agent-context',
-      `Run ${run.id} has no '${role}' agent context.`,
+      params.contextId
+        ? `Run ${run.id} has no agent context '${params.contextId}'.`
+        : `Run ${run.id} has no '${role}' agent context.`,
     );
   }
 
@@ -222,7 +267,7 @@ export async function runSessionCommand(
   // Non-strict resolution always yields the configured name, so this narrows to
   // null only for a slot whose config carries no session at all.
   const tmuxSession = context.target?.session ?? (await deps.resolveSession(slotId, vars)) ?? null;
-  const liveness = await probeSessionLiveness(vars, runner, tmuxTarget, deps);
+  const liveness = await probeSessionLiveness(vars, runner, tmuxTarget, binding.binding, deps);
 
   return {
     supported: true,

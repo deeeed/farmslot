@@ -182,6 +182,11 @@ export class RunDetail extends RunDetailState {
     const wasHydrating = this._hydrating;
     if (this.runId !== this._lastRequestedRunId) {
       this._lastRequestedRunId = this.runId;
+      // Copied/error/liveness state belongs to the run it was fetched for.
+      // Carrying it across would label the next run's contexts with the
+      // previous run's liveness.
+      this._sessionStates = {};
+      this._sessionRequestSeq += 1;
       this._ciPoke.reset();
       this._missingRunFetchAttempted = false;
       this._directRunRefreshFailed = false;
@@ -830,10 +835,18 @@ export class RunDetail extends RunDetailState {
     row: RunSessionRow,
     kind: RunSessionCopyKind,
   ): Promise<void> {
+    const requestSeq = ++this._sessionRequestSeq;
+    // A response that lands after the operator moved to another run, or after a
+    // newer click on this row, must not overwrite what is on screen now.
+    const requestStillCurrent = () =>
+      requestSeq === this._sessionRequestSeq && this.runId === run.id;
     this._sessionStates = { ...this._sessionStates, [row.contextId]: { status: 'loading' } };
     try {
       const result = await gateway.request<RunSessionCommandResult>(Methods.RUN_SESSION_COMMAND, {
         runId: run.id,
+        // The exact context this row renders. Role alone would resolve to the
+        // newest context sharing that role, which is the wrong reviewer.
+        contextId: row.contextId,
         role: row.role,
       });
       const command = runSessionCommandTextForKind(result, kind);
@@ -847,11 +860,13 @@ export class RunDetail extends RunDetailState {
           copyError = (err as Error).message;
         }
       }
+      if (!requestStillCurrent()) return;
       this._sessionStates = {
         ...this._sessionStates,
         [row.contextId]: runSessionRowStateFromResult(result, kind, copyError),
       };
     } catch (err) {
+      if (!requestStillCurrent()) return;
       this._sessionStates = {
         ...this._sessionStates,
         [row.contextId]: { status: 'error', message: (err as Error).message },

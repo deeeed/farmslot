@@ -375,7 +375,7 @@ export function formatRunSessionLines(result: RunSessionCommandResult): string[]
     ];
   }
   return [
-    `${result.runner}/${result.model ?? 'unknown'}  role=${result.role}  slot=${result.slotId}  session=${result.sessionId}  liveness=${result.liveness}`,
+    `${result.runner}/${result.model ?? 'unknown'}  role=${result.role}  context=${result.contextId}  slot=${result.slotId}  session=${result.sessionId}  liveness=${result.liveness}`,
     result.reopenCommand,
     ...(result.attachCommand ? [result.attachCommand] : []),
   ];
@@ -440,8 +440,9 @@ export function registerRunCommand(program: Command): void {
   run
     .command('session <runId>')
     .description("Show the command that reopens a run agent's runner session")
+    .option('--context <id>', 'Exact agent context id (preferred when a role has several)')
     .option('--role <role>', "Agent context role (default: the run's primary worker role)")
-    .action(async (runId: string, opts: { role?: string }, cmd: Command) => {
+    .action(async (runId: string, opts: { context?: string; role?: string }, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
@@ -451,6 +452,7 @@ export function registerRunCommand(program: Command): void {
           () =>
             client.call<RunSessionCommandResult>('run.sessionCommand', {
               runId,
+              ...(opts.context?.trim() ? { contextId: opts.context.trim() } : {}),
               ...(role ? { role } : {}),
             }),
           !emit.machine,

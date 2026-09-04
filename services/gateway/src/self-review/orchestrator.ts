@@ -60,6 +60,7 @@ import { resolvePersistedRunnerSessionBinding } from '../runners/session-process
 import { deliverPromptToLiveRunner } from '../runners/session-reactivation.js';
 import {
   captureAndRecordRunnerSession,
+  clearedRunnerSessionContextPatch,
   recordRunnerSessionForRole,
 } from '../runners/session-record.js';
 import { getRunnerStatusProvider } from '../runners/status-provider.js';
@@ -2154,7 +2155,7 @@ async function recordSelfReviewFixRunnerSession(
       runId,
       role: 'self-review-fix',
       session: retained.binding,
-      label: 'retained self-review worker session',
+      captureLabel: 'retained self-review worker session',
     });
     return;
   }
@@ -2164,7 +2165,7 @@ async function recordSelfReviewFixRunnerSession(
     runner,
     runId,
     role: 'self-review-fix',
-    label: 'self-review fix relaunch',
+    captureLabel: 'self-review fix relaunch',
     capture: { paneId: deliveryPane?.paneId ?? null, slotId: vars.slotId },
   });
   if (workerContext) {
@@ -2172,7 +2173,7 @@ async function recordSelfReviewFixRunnerSession(
       runId,
       role: workerRole,
       session: relaunched,
-      label: 'self-review fix relaunch',
+      captureLabel: 'self-review fix relaunch',
     });
   }
 }
@@ -2239,8 +2240,7 @@ async function relaunchWorkerForFix(
     status: 'working',
     runner,
     model: effectiveModel,
-    runnerSessionId: null,
-    runnerSessionPath: null,
+    ...clearedRunnerSessionContextPatch(),
     target: {
       session: resolved.session,
       window,

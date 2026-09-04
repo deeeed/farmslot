@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+import { WebSocketServer } from 'ws';
 
 import type { Run } from '@farmslot/protocol';
 
@@ -470,6 +475,7 @@ test('run session prints the reopen and attach commands on their own lines', () 
 
   assert.equal(lines.length, 3);
   assert.match(lines[0]!, /codex\/gpt-5\.6/);
+  assert.match(lines[0]!, /context=fix-bug/);
   assert.match(lines[0]!, /liveness=dead/);
   assert.equal(
     lines[1],
@@ -497,4 +503,120 @@ test('parseAgentRole accepts a known role and rejects the rest', () => {
   assert.equal(parseAgentRole(''), undefined);
   assert.equal(parseAgentRole('self-review'), 'self-review');
   assert.throws(() => parseAgentRole('reviewer'), /Invalid --role 'reviewer'/);
+});
+
+const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const repoRoot = path.resolve(packageDir, '../..');
+const tsxBin = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
+const cliEntry = path.join(packageDir, 'src', 'entry.ts');
+
+function spawnRunCli(
+  args: string[],
+  home: string,
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(tsxBin, [cliEntry, ...args], {
+      cwd: packageDir,
+      env: { ...process.env, FARMSLOT_HOME: home },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('CLI fixture timed out'));
+    }, 30_000);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => (stdout += chunk));
+    child.stderr.on('data', (chunk: string) => (stderr += chunk));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on('close', (status) => {
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr });
+    });
+  });
+}
+
+test('run session --json forwards the exact context and returns the RPC result verbatim', async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const payload = {
+    supported: true,
+    runId: 'run-1',
+    role: 'self-review',
+    contextId: 'rev2-codex',
+    runner: 'codex',
+    model: 'gpt-5.6',
+    sessionId: 'reviewer-session-2',
+    sessionPath: '/repo/.agent/codex/sessions/reviewer-session-2.jsonl',
+    capturedAt: '2026-09-04T09:20:00.000Z',
+    slotId: 'macpro-mm-1',
+    machine: 'macpro',
+    tmuxTarget: 'mm-1:rev2-codex',
+    reopenCommand: "CODEX_HOME=/repo/.agent/codex codex resume 'reviewer-session-2'",
+    attachCommand: "tmux select-window -t 'mm-1:rev2-codex' \; attach -t '=mm-1'",
+    liveness: 'live',
+  };
+
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(server, 'listening');
+  server.on('connection', (socket) => {
+    socket.on('message', (data) => {
+      const request = JSON.parse(String(data)) as {
+        id: string;
+        method: string;
+        params: Record<string, unknown>;
+      };
+      if (request.method === 'auth.connect') {
+        socket.send(JSON.stringify({ type: 'res', id: request.id, ok: true, payload: {} }));
+        return;
+      }
+      calls.push({ method: request.method, params: request.params });
+      socket.send(JSON.stringify({ type: 'res', id: request.id, ok: true, payload }));
+    });
+  });
+
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const url = `ws://127.0.0.1:${address.port}`;
+  const home = mkdtempSync(path.join(tmpdir(), 'farmslot-run-session-'));
+  try {
+    const result = await spawnRunCli(
+      [
+        '--url',
+        url,
+        '--timeout',
+        '3000',
+        '--json',
+        'run',
+        'session',
+        'run-1',
+        '--context',
+        'rev2-codex',
+        '--role',
+        'self-review',
+      ],
+      home,
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const envelope = JSON.parse(result.stdout) as { status: string; data: typeof payload };
+    assert.equal(envelope.status, 'ok');
+    assert.deepEqual(envelope.data, payload);
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ['run.sessionCommand'],
+    );
+    // The exact context must reach the gateway; role alone would resolve to
+    // whichever reviewer is newest.
+    assert.equal(calls[0]!.params.contextId, 'rev2-codex');
+    assert.equal(calls[0]!.params.role, 'self-review');
+    assert.equal(calls[0]!.params.runId, 'run-1');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    server.close();
+  }
 });

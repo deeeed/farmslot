@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- feat(probes): `cdp.mjs focus <hash>` fronts a tab and grants clipboard access so probes can exercise real copy buttons; add the `run-session-command` probe for the Run Detail runner-session panel.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.9.0 - 2026-08-21

@@ -33,9 +33,12 @@ return (async () => {
   const rows = [...section.querySelectorAll('[data-testid^="run-agent-session-"]')]
     .filter((node) => node.classList.contains('agent-session-row'))
     .map((node) => ({
-      role: node.dataset.testid.replace('run-agent-session-', ''),
+      contextId: node.dataset.testid.replace('run-agent-session-', ''),
       text: node.textContent.replace(/\s+/g, ' ').trim(),
     }));
+  // Rows are addressed by contextId: several contexts can share a role, and a
+  // role-keyed id would make two reviewers indistinguishable in the DOM.
+  const duplicateContextIds = new Set(rows.map((row) => row.contextId)).size !== rows.length;
 
   const reopen = section.querySelector('[data-testid^="run-agent-session-reopen-"]');
   if (!reopen) return { ok: false, error: 'no reopen button rendered', rows };
@@ -90,12 +93,14 @@ return (async () => {
     // liveness, and a blocked clipboard never masquerades as a copy.
     ok:
       settled &&
+      !duplicateContextIds &&
       Boolean(liveness) &&
       Boolean(sessionId?.textContent.trim()) &&
       (labelAfter === 'Copied' || copyBlocked),
     runId: detail.run?.id ?? null,
-    role,
+    contextId: role,
     rowCount: rows.length,
+    duplicateContextIds,
     rows,
     labelBefore,
     labelAfter,

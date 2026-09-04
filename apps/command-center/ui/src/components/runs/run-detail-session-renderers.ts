@@ -172,23 +172,23 @@ export function renderRunAgentSessions(
         const state = ctx.states[row.contextId];
         const busy = state?.status === 'loading';
         return html`
-          <div class="agent-session-row" data-testid="run-agent-session-${row.role}">
+          <div class="agent-session-row" data-testid="run-agent-session-${row.contextId}">
             <span class="agent-session-role">${row.label}</span>
             <span class="agent-session-engine">${row.runner}/${row.model}</span>
-            <span class="agent-session-id" data-testid="run-agent-session-id-${row.role}"
+            <span class="agent-session-id" data-testid="run-agent-session-id-${row.contextId}"
               >${row.sessionIdShort ?? 'no session captured'}</span
             >
             ${state?.liveness
               ? html`<span
                   class="agent-session-liveness"
                   style="color:${livenessColor(state.liveness)}"
-                  data-testid="run-agent-session-liveness-${row.role}"
+                  data-testid="run-agent-session-liveness-${row.contextId}"
                   >${livenessLabel(state.liveness)}</span
                 >`
               : nothing}
             <button
               class="agent-session-btn"
-              data-testid="run-agent-session-reopen-${row.role}"
+              data-testid="run-agent-session-reopen-${row.contextId}"
               ?disabled=${busy}
               @click=${() => ctx.onCopy(row, 'reopen')}
             >
@@ -196,7 +196,7 @@ export function renderRunAgentSessions(
             </button>
             <button
               class="agent-session-btn"
-              data-testid="run-agent-session-attach-${row.role}"
+              data-testid="run-agent-session-attach-${row.contextId}"
               ?disabled=${busy}
               @click=${() => ctx.onCopy(row, 'attach')}
             >
@@ -206,7 +206,7 @@ export function renderRunAgentSessions(
               ? html`<span
                   class="agent-session-error"
                   role="alert"
-                  data-testid="run-agent-session-error-${row.role}"
+                  data-testid="run-agent-session-error-${row.contextId}"
                   >${state.message}</span
                 >`
               : nothing}

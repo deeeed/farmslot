@@ -14,10 +14,14 @@ export const RUNNER_AGNOSTIC = true;
  * in a plain shell cannot find its session — the operator needs the exact
  * command the gateway builds.
  *
- * This asserts on the persisted capture and the gateway-built command:
- * `run.sessionCommand` must name the session id that dispatch recorded on the
- * worker's agent context, and must carry the isolated CODEX_HOME setup. Pane
- * text is never consulted.
+ * Spec AC6: this does not stop at the command text. It interrupts the worker
+ * with the runner's own declared graceful-exit command, waits for structured
+ * liveness to report the session gone, runs the gateway-built reopen command in
+ * that same pane, and then requires `run.sessionCommand` to report `live` for
+ * the SAME session id. Because liveness is backed by
+ * `verifyExactLiveRunnerSessionBinding`, `live` proves the pane's runner owns
+ * exactly the persisted session — that is the conversation-continuity proof.
+ * Pane text is never consulted.
  */
 function rpc(method, params = {}, timeoutMs = 120_000) {
   const script = path.join(ROOT, 'apps/command-center/scripts/cdp.mjs');
@@ -30,7 +34,9 @@ function rpc(method, params = {}, timeoutMs = 120_000) {
   if (result.status !== 0) {
     throw new Error(result.stderr?.trim() || result.stdout?.trim() || `${method} failed`);
   }
-  return JSON.parse(result.stdout);
+  // Void RPCs (terminal.send) answer with an empty body.
+  const body = result.stdout?.trim();
+  return body ? JSON.parse(body) : {};
 }
 
 async function poll(read, accept, timeoutMs) {
@@ -42,6 +48,22 @@ async function poll(read, accept, timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
   throw new Error(`Timed out; latest=${JSON.stringify(latest)}`);
+}
+
+/**
+ * Deliver one literal line to the worker's pane.
+ *
+ * `tmux.sendKeys` splits on whitespace and tmux concatenates the resulting
+ * arguments, so it cannot carry a shell command verbatim — it is used only for
+ * the single `Enter` token. `terminal.send` carries the exact text, and
+ * `enter: false` keeps it usable after the runner exits, when the pane is a
+ * plain shell with no runner context to validate against.
+ */
+function sendLine(slotId, runId, contextId, target, text) {
+  rpc('terminal.send', { slotId, runId, contextId, target, text, enter: false });
+  sleepMs(300);
+  rpc('tmux.sendKeys', { slotId, target, keys: 'Enter' });
+  sleepMs(300);
 }
 
 function capturedWorkerSession(run) {
@@ -92,7 +114,13 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     sessionCommandSupported: null,
     reopenCommand: null,
     attachCommand: null,
+    tmuxTarget: null,
     liveness: null,
+    livenessAfterInterrupt: null,
+    livenessReasonAfterInterrupt: null,
+    livenessAfterReopen: null,
+    reopenedSessionId: null,
+    conversationContinued: false,
     pass: false,
     error: null,
   };
@@ -141,7 +169,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
       throw new Error('agent context recorded a session without a capture timestamp');
     }
 
-    const session = rpc('run.sessionCommand', { runId, role: context.role });
+    const session = rpc('run.sessionCommand', { runId, contextId: context.id });
     report.sessionCommandSupported = session.supported === true;
     if (!session.supported) {
       throw new Error(
@@ -176,6 +204,55 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     if (!session.attachCommand || !session.attachCommand.startsWith('tmux ')) {
       throw new Error(`attach command is not a tmux attach line: ${session.attachCommand}`);
     }
+    if (!session.tmuxTarget) {
+      throw new Error('run.sessionCommand returned no tmux target; cannot interrupt or reopen');
+    }
+    report.tmuxTarget = session.tmuxTarget;
+    if (session.liveness !== 'live') {
+      throw new Error(
+        `worker is ${session.liveness} before the interrupt (${session.livenessReason ?? 'no reason'}); nothing to reopen`,
+      );
+    }
+
+    // ---- interrupt --------------------------------------------------------
+    // Codex declares `/exit` as its graceful exit in the runner registry. Using
+    // the runner's own declared capability keeps the interrupt out of TUI
+    // guesswork.
+    sendLine(slotId, runId, context.id, session.tmuxTarget, '/exit');
+
+    const interrupted = await poll(
+      () => rpc('run.sessionCommand', { runId, contextId: context.id }),
+      (state) => state.supported && state.liveness !== 'live',
+      120_000,
+    );
+    report.livenessAfterInterrupt = interrupted.liveness;
+    report.livenessReasonAfterInterrupt = interrupted.livenessReason ?? null;
+    if (interrupted.sessionId !== context.runnerSessionId) {
+      throw new Error(
+        `interrupt changed the recorded session id to ${interrupted.sessionId}; the handle must survive an interrupt`,
+      );
+    }
+
+    // ---- reopen -----------------------------------------------------------
+    // Run the gateway-built command in the pane the worker vacated. Nothing is
+    // reassembled here: this is the exact string an operator would paste.
+    sendLine(slotId, runId, context.id, session.tmuxTarget, session.reopenCommand);
+
+    const reopened = await poll(
+      () => rpc('run.sessionCommand', { runId, contextId: context.id }),
+      (state) => state.supported && state.liveness === 'live',
+      180_000,
+    );
+    report.livenessAfterReopen = reopened.liveness;
+    report.reopenedSessionId = reopened.sessionId;
+    // `live` here is not "a codex process exists": the gateway proved the pane's
+    // active runner session is exactly this id and path.
+    if (reopened.sessionId !== context.runnerSessionId) {
+      throw new Error(
+        `reopen produced session ${reopened.sessionId}, expected the original ${context.runnerSessionId}; the conversation did not continue`,
+      );
+    }
+    report.conversationContinued = true;
     report.pass = true;
   } catch (error) {
     report.error = error?.message || String(error);

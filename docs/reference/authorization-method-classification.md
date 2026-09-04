@@ -212,6 +212,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `run.replayStep`                        | admin          |                                                          |
 | `run.resolveDecision`                   | admin          |                                                          |
 | `run.resume`                            | admin          |                                                          |
+| `run.sessionCommand`                    | admin          |                                                          |
 | `run.slotHistory`                       | admin          |                                                          |
 | `run.tags.list`                         | admin          |                                                          |
 | `run.tags.set`                          | admin          |                                                          |

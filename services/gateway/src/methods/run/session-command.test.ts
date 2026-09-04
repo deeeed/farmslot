@@ -18,6 +18,16 @@ const SLOT_VARS = makeVars({
   dispatchCmd: '',
 });
 
+const OWNED_BINDING = {
+  ok: true as const,
+  binding: {
+    runnerSessionId: 'codex-session-123',
+    runnerSessionPath: '/Users/example/dev/mm-1/.agent/codex/sessions/codex-session-123.jsonl',
+    source: 'filesystem' as const,
+    canonicalSessionPath: '/Users/example/dev/mm-1/.agent/codex/sessions/codex-session-123.jsonl',
+  },
+};
+
 function agentContext(overrides: Partial<AgentContext> = {}): AgentContext {
   return {
     id: 'fix-bug',
@@ -49,6 +59,7 @@ function deps(
     buildReloadCommand: buildRunnerSessionReloadCommand,
     resolvePane: async () => ({ paneId: '%12', panePid: '4242' }),
     resolveSession: async () => 'mm-1',
+    verifyBinding: async () => OWNED_BINDING,
     probeRunnerPid: async () => ({ state: 'present', pid: '4243' }),
     ...overrides,
   } as RunSessionCommandDeps;
@@ -232,4 +243,112 @@ test('a context without a tmux target still gets the slot attach line', async ()
   assert.equal(result.attachCommand, "tmux attach -t '=mm-1'");
   assert.equal(result.liveness, 'unknown');
   assert.match(result.livenessReason ?? '', /no tmux target/);
+});
+
+function twoReviewerRun(): Run {
+  return codexWorkerRun({
+    agentContexts: [
+      agentContext(),
+      agentContext({
+        id: 'rev-codex',
+        role: 'self-review',
+        label: 'Reviewer 1',
+        runnerSessionId: 'reviewer-session-1',
+        runnerSessionPath: '/repo/.agent/codex/sessions/reviewer-session-1.jsonl',
+        target: { session: 'mm-1', window: 'rev-codex', pane: null, target: 'mm-1:rev-codex' },
+        updatedAt: '2026-09-04T09:10:00.000Z',
+      }),
+      agentContext({
+        id: 'rev2-codex',
+        role: 'self-review',
+        label: 'Reviewer 2',
+        runnerSessionId: 'reviewer-session-2',
+        runnerSessionPath: '/repo/.agent/codex/sessions/reviewer-session-2.jsonl',
+        target: { session: 'mm-1', window: 'rev2-codex', pane: null, target: 'mm-1:rev2-codex' },
+        updatedAt: '2026-09-04T09:20:00.000Z',
+      }),
+    ],
+  });
+}
+
+test('contextId resolves each of two same-role reviewers to its own session', async () => {
+  const run = twoReviewerRun();
+
+  const first = await runSessionCommand({ runId: 'run-1', contextId: 'rev-codex' }, deps(run));
+  const second = await runSessionCommand({ runId: 'run-1', contextId: 'rev2-codex' }, deps(run));
+
+  assert.equal(first.supported, true);
+  assert.equal(second.supported, true);
+  if (!first.supported || !second.supported) return;
+  assert.equal(first.contextId, 'rev-codex');
+  assert.equal(first.sessionId, 'reviewer-session-1');
+  assert.match(first.reopenCommand, /'reviewer-session-1'/);
+  assert.equal(second.contextId, 'rev2-codex');
+  assert.equal(second.sessionId, 'reviewer-session-2');
+  assert.match(second.reopenCommand, /'reviewer-session-2'/);
+  assert.notEqual(first.reopenCommand, second.reopenCommand);
+});
+
+test('role alone still resolves, and contextId overrides a conflicting role', async () => {
+  const run = twoReviewerRun();
+
+  // Role-only picks the newest reviewer — the historical ambiguity.
+  const byRole = await runSessionCommand({ runId: 'run-1', role: 'self-review' }, deps(run));
+  assert.equal(byRole.supported && byRole.contextId, 'rev2-codex');
+
+  // An explicit id wins over a role that would have chosen differently.
+  const byId = await runSessionCommand(
+    { runId: 'run-1', contextId: 'rev-codex', role: 'self-review' },
+    deps(run),
+  );
+  assert.equal(byId.supported && byId.contextId, 'rev-codex');
+  assert.equal(byId.supported && byId.role, 'self-review');
+});
+
+test('an unknown contextId is a typed miss naming the id, not a silent role fallback', async () => {
+  const result = await runSessionCommand(
+    { runId: 'run-1', contextId: 'rev9-codex' },
+    deps(twoReviewerRun()),
+  );
+
+  assert.equal(result.supported, false);
+  if (result.supported) return;
+  assert.equal(result.reason, 'no-agent-context');
+  assert.match(result.detail, /rev9-codex/);
+});
+
+test('liveness is live only when the pane runner owns this exact session', async () => {
+  const owned = await runSessionCommand({ runId: 'run-1' }, deps(codexWorkerRun()));
+  assert.equal(owned.supported && owned.liveness, 'live');
+
+  // Same runner type in the pane, but it is running a different session.
+  const foreign = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      verifyBinding: async () => ({
+        ok: false,
+        reason:
+          "active runner session id 'other-session' does not match persisted 'codex-session-123'",
+      }),
+    }),
+  );
+  assert.equal(foreign.supported && foreign.liveness, 'unknown');
+  assert.match((foreign.supported && foreign.livenessReason) || '', /does not match persisted/);
+});
+
+test('a pane with no runner process stays dead without consulting the binding', async () => {
+  let verified = false;
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      probeRunnerPid: async () => ({ state: 'absent' }),
+      verifyBinding: async () => {
+        verified = true;
+        return OWNED_BINDING;
+      },
+    }),
+  );
+
+  assert.equal(result.supported && result.liveness, 'dead');
+  assert.equal(verified, false);
 });
