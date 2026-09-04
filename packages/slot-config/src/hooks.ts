@@ -373,14 +373,29 @@ export interface DispatchCommandContext {
   safetyFlags?: string;
   /**
    * Runtime-owned arguments that must follow the selected runner executable.
-   * These are attached while expanding `{runner_path}` or the selected
-   * runner-specific path placeholder, so trailing shell commands cannot
-   * accidentally consume them.
+   * They are attached exactly once, to whichever binary placeholder the
+   * template actually uses (`{runner_path}`, the selected runner-specific path,
+   * or a bare `{runner}`), so trailing shell commands cannot consume them.
    */
   runnerArgs?: string;
 }
 
-function resolveRunnerPath(slotVars: SlotVars, runner?: string, runnerArgs?: string): string {
+/**
+ * Quote a value interpolated into a dispatch command when it is not already a
+ * bare, shell-inert token. Model ids and effort levels come from operator input
+ * and runner CLIs accept nearly any string, so an unquoted value could split
+ * into extra argv entries or run a subshell. The allowed set contains no
+ * character the shell treats specially, which keeps ordinary ids such as
+ * `gpt-5.6-sol-max` readable in logs while neutralizing everything else.
+ */
+const SHELL_INERT_ARG = /^[A-Za-z0-9._:@/+-]+$/;
+
+export function quoteRunnerArgValue(value: string): string {
+  if (SHELL_INERT_ARG.test(value)) return value;
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function resolveRunnerPath(slotVars: SlotVars, runner?: string): string {
   const normalized = normalizeRunner(runner);
   let runnerPath = '';
   switch (normalized) {
@@ -402,7 +417,7 @@ function resolveRunnerPath(slotVars: SlotVars, runner?: string, runnerArgs?: str
     default:
       return '';
   }
-  return runnerPath && runnerArgs?.trim() ? `${runnerPath} ${runnerArgs.trim()}` : runnerPath;
+  return runnerPath;
 }
 
 // ─── expandDispatchCmd ───
@@ -424,11 +439,33 @@ export function expandDispatchCmd(
   if (!template) return '';
   let cmd = template;
   const runner = normalizeRunner(context.runner);
-  const runnerPath = resolveRunnerPath(slotVars, runner, context.runnerArgs);
+  const runnerPath = resolveRunnerPath(slotVars, runner);
+  // Runtime args belong to the binary the template actually invokes, and must
+  // land on it exactly once. Resolved path placeholders win over a bare
+  // `{runner}`, which a template may also use as a plain label.
+  const runnerArgsSuffix = context.runnerArgs?.trim() ? ` ${context.runnerArgs.trim()}` : '';
+  const argsPlaceholder =
+    ['{runner_path}', `{${runner}_path}`, '{runner}'].find((candidate) =>
+      template.includes(candidate),
+    ) ?? null;
+  let runnerArgsAttached = false;
+  // Replacement callbacks, not replacement strings: a runner path may contain
+  // `$&` or `$'`, which a string pattern would treat as insert tokens.
+  const replaceBinary = (source: string, placeholder: string, binary: string): string =>
+    source.replaceAll(placeholder, () => {
+      if (placeholder !== argsPlaceholder || !binary || !runnerArgsSuffix || runnerArgsAttached) {
+        return binary;
+      }
+      runnerArgsAttached = true;
+      return `${binary}${runnerArgsSuffix}`;
+    });
   cmd = cmd.replaceAll('{repo}', slotVars.remoteRepo);
-  cmd = cmd.replaceAll('{runner}', runner);
-  cmd = cmd.replaceAll('{runner_path}', runnerPath);
-  cmd = cmd.replaceAll('{model}', context.model ?? '');
+  cmd = replaceBinary(cmd, '{runner}', runner);
+  cmd = replaceBinary(cmd, '{runner_path}', runnerPath);
+  cmd = cmd.replaceAll(
+    '{model}',
+    context.model ? quoteRunnerArgValue(context.model) : (context.model ?? ''),
+  );
   cmd = cmd.replaceAll('{task_file}', context.taskFile ?? '');
   // Replacement callbacks keep `$`, `$'`, and `$&` in the prompt as literals.
   // String replacement patterns would treat them as JS insert tokens.
@@ -438,16 +475,20 @@ export function expandDispatchCmd(
   if (!context.effort) {
     cmd = cmd.replace(/ ?--effort +\{effort\}/g, '');
   }
-  cmd = cmd.replaceAll('{effort}', context.effort ?? '');
-  cmd = cmd.replaceAll('{safety_flags}', context.safetyFlags ?? '');
-  cmd = cmd.replaceAll('{claude_path}', runner === 'claude' ? runnerPath : slotVars.claudePath);
-  cmd = cmd.replaceAll('{codex_path}', runner === 'codex' ? runnerPath : slotVars.codexPath);
   cmd = cmd.replaceAll(
-    '{opencode_path}',
-    runner === 'opencode' ? runnerPath : slotVars.opencodePath,
+    '{effort}',
+    context.effort ? quoteRunnerArgValue(context.effort) : (context.effort ?? ''),
   );
-  cmd = cmd.replaceAll('{cursor_path}', runner === 'cursor' ? runnerPath : slotVars.cursorPath);
-  cmd = cmd.replaceAll('{grok_path}', runner === 'grok' ? runnerPath : slotVars.grokPath);
+  cmd = cmd.replaceAll('{safety_flags}', context.safetyFlags ?? '');
+  for (const [placeholder, owner, fallback] of [
+    ['{claude_path}', 'claude', slotVars.claudePath],
+    ['{codex_path}', 'codex', slotVars.codexPath],
+    ['{opencode_path}', 'opencode', slotVars.opencodePath],
+    ['{cursor_path}', 'cursor', slotVars.cursorPath],
+    ['{grok_path}', 'grok', slotVars.grokPath],
+  ] as const) {
+    cmd = replaceBinary(cmd, placeholder, runner === owner ? runnerPath : fallback);
+  }
   cmd = cmd.replaceAll('{adb_serial}', slotVars.resourceVars.adb_serial ?? '');
 
   // Empty placeholders (e.g. `{safety_flags}` for runners with no extra flags)

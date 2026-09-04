@@ -587,3 +587,88 @@ test('expandTemplateWithReservedLast protects reserved values from collisions an
   // {{repo}} token survives un-expanded.
   assert.equal(rendered, 'in /tmp/r: reviewer text quoting {{repo}} verbatim');
 });
+
+function runnerArgsSlotVars(overrides: Partial<SlotVars> = {}): SlotVars {
+  return {
+    slotId: 'runner-args-1',
+    machine: 'runner-local',
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: 'example',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '/usr/local/bin/cursor-agent',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/repo',
+    session: 'runner-args-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/repo',
+    projectName: 'example-farm',
+    resourceVars: {},
+    ...overrides,
+  };
+}
+
+test('expandDispatchCmd attaches runner args to a bare {runner} template', () => {
+  // `{runner}` counts as runner-aware, so runtime args must follow it too or a
+  // pool using this shape silently loses the selected model.
+  const command = expandDispatchCmd(
+    runnerArgsSlotVars({ dispatchCmd: 'cd {repo} && {runner} {safety_flags}' }),
+    { runner: 'cursor', runnerArgs: '--model gpt-5.6-sol-max', safetyFlags: '--force' },
+  );
+
+  assert.equal(command, 'cd /repo && cursor --model gpt-5.6-sol-max --force');
+});
+
+test('expandDispatchCmd attaches runner args exactly once and prefers the path placeholder', () => {
+  const command = expandDispatchCmd(
+    runnerArgsSlotVars({
+      dispatchCmd: 'echo {runner} && {runner_path} {cursor_path} {safety_flags}',
+    }),
+    { runner: 'cursor', runnerArgs: '--model gpt-5.6-sol-max', safetyFlags: '--force' },
+  );
+
+  // The bare `{runner}` here is a label, not the invocation, and the second
+  // path placeholder must not repeat the flag.
+  assert.equal(
+    command,
+    'echo cursor && /usr/local/bin/cursor-agent --model gpt-5.6-sol-max /usr/local/bin/cursor-agent --force',
+  );
+  assert.equal(command.match(/--model/g)?.length, 1);
+});
+
+test('expandDispatchCmd quotes a model or effort value that is not shell-inert', () => {
+  const command = expandDispatchCmd(
+    runnerArgsSlotVars({
+      dispatchCmd: 'cd {repo} && {runner_path} --model {model} --effort {effort}',
+    }),
+    { runner: 'cursor', model: 'evil; touch /tmp/pwned', effort: 'high probe' },
+  );
+
+  assert.equal(
+    command,
+    "cd /repo && /usr/local/bin/cursor-agent --model 'evil; touch /tmp/pwned' --effort 'high probe'",
+  );
+  // Proof it cannot alter the command: the shell parses one --model argument.
+  const argv = execFileSync(
+    '/bin/bash',
+    ['-c', `printf 'ARG:%s\\n' ${command.split('--model ')[1]}`],
+    { encoding: 'utf8' },
+  );
+  assert.equal(argv, 'ARG:evil; touch /tmp/pwned\nARG:--effort\nARG:high probe\n');
+});
+
+test('expandDispatchCmd leaves an ordinary model id unquoted', () => {
+  const command = expandDispatchCmd(
+    runnerArgsSlotVars({ dispatchCmd: 'cd {repo} && {runner_path} --model {model}' }),
+    { runner: 'cursor', model: 'gpt-5.6-sol-max' },
+  );
+
+  assert.equal(command, 'cd /repo && /usr/local/bin/cursor-agent --model gpt-5.6-sol-max');
+});

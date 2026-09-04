@@ -1820,7 +1820,12 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'cursor', DEFAULT_CURSOR_MODEL, PROMPT, {
         safetyTier: 'dangerous',
       });
-      assert.match(cmd, /cursor --force --sandbox disabled 'Read TASK\.md and execute\.'/);
+      assert.match(
+        cmd,
+        new RegExp(
+          `cursor --model ${DEFAULT_CURSOR_MODEL} --force --sandbox disabled 'Read TASK\\.md and execute\\.'`,
+        ),
+      );
       const promptAt = cmd.indexOf("'Read TASK.md and execute.'");
       const printfAt = cmd.indexOf('printf launched');
       assert.ok(promptAt >= 0 && printfAt > promptAt);
@@ -1870,6 +1875,26 @@ describe('buildLaunchCommand', () => {
         /\/usr\/local\/bin\/cursor-agent --model gpt-5\.6-sol-max --force --sandbox disabled /,
       );
       assert.equal(cmd.match(/--model/g)?.length, 1);
+    });
+
+    it('carries the selected model when the dispatch_cmd invokes a bare {runner}', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {runner} {safety_flags}' });
+      const cmd = buildLaunchCommand(vars, 'cursor', 'gpt-5.6-sol-max', PROMPT, {
+        safetyTier: 'dangerous',
+      });
+      assert.match(cmd, /cursor --model gpt-5\.6-sol-max --force --sandbox disabled /);
+      assert.equal(cmd.match(/--model/g)?.length, 1);
+    });
+
+    it('quotes a model value that could otherwise alter the command', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}' });
+      const cmd = buildLaunchCommand(vars, 'cursor', 'evil; touch /tmp/pwned', PROMPT, {
+        safetyTier: 'dangerous',
+      });
+      assert.match(cmd, /--model 'evil; touch \/tmp\/pwned'/);
+      // The metacharacter is inside the quoted argument, so it is never a
+      // second command: nothing follows an unquoted `;` before the flags.
+      assert.doesNotMatch(cmd, /--model evil; touch/);
     });
 
     it('does not duplicate --model when the dispatch_cmd already has the placeholder', () => {

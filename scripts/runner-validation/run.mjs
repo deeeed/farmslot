@@ -4,6 +4,9 @@
  *
  * usage:
  *   node scripts/runner-validation/run.mjs [--runner claude|codex|both] [--scenario hook-smoke|all] [--out-dir path] [--timeout-ms 180000] [--keep-session]
+ *
+ * Slot-targeted scenarios (dispatch-model-flag) also accept:
+ *   [--slot <slotId>] [--model <model>] [--task <TASK.md path>]
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,6 +22,9 @@ function parseArgs(argv) {
     outDir: EVIDENCE_DIR,
     timeoutMs: 300000,
     keepSession: false,
+    slotId: null,
+    model: null,
+    taskFile: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -27,9 +33,12 @@ function parseArgs(argv) {
     else if (token === '--out-dir') args.outDir = path.resolve(argv[++i]);
     else if (token === '--timeout-ms') args.timeoutMs = Number(argv[++i]);
     else if (token === '--keep-session') args.keepSession = true;
+    else if (token === '--slot') args.slotId = argv[++i];
+    else if (token === '--model') args.model = argv[++i];
+    else if (token === '--task') args.taskFile = argv[++i];
     else if (token === '--help' || token === '-h') {
       console.log(
-        `usage: runner-validation/run.mjs [--runner claude|codex|cursor|grok|both|hooks|pane-only|all] [--scenario ${listScenarios().join('|')}|all] [--out-dir path] [--timeout-ms 300000] [--keep-session]`,
+        `usage: runner-validation/run.mjs [--runner claude|codex|cursor|grok|both|hooks|pane-only|all] [--scenario ${listScenarios().join('|')}|all] [--out-dir path] [--timeout-ms 300000] [--keep-session] [--slot slotId] [--model model] [--task TASK.md]`,
       );
       process.exit(0);
     } else {
@@ -67,9 +76,13 @@ async function main() {
       sleepMs(3000);
       const result = await scenario.runScenario({
         runnerAdapter,
+        runner: runnerId,
         timeoutMs: args.timeoutMs,
         keepSession: args.keepSession,
         outDir: args.outDir,
+        slotId: args.slotId,
+        model: args.model,
+        taskFile: args.taskFile,
       });
       results.push(result);
       const label = result.skipped ? 'SKIP' : result.pass ? 'PASS' : 'FAIL';

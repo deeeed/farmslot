@@ -26,9 +26,9 @@ import {
 
 const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/panes');
 
-test('runner-validation catalog includes four runners and twenty-two scenarios', () => {
+test('runner-validation catalog includes four runners and twenty-three scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
-  assert.equal(listScenarios().length, 22);
+  assert.equal(listScenarios().length, 23);
   assert.ok(listScenarios().includes('review-recovery-terminal-contract'));
   assert.ok(listScenarios().includes('self-review-fix-turn-lease'));
   assert.ok(listScenarios().includes('hook-smoke'));
@@ -43,6 +43,7 @@ test('runner-validation catalog includes four runners and twenty-two scenarios',
   assert.ok(listScenarios().includes('session-attribution-smoke'));
   assert.ok(listScenarios().includes('token-usage-smoke'));
   assert.ok(listScenarios().includes('monitor-stuck-smoke'));
+  assert.ok(listScenarios().includes('dispatch-model-flag'));
 });
 
 test('self-review routes argv-relaunch handoffs to cold process replacement', () => {

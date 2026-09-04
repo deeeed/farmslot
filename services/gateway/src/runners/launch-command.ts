@@ -10,7 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
-import { expandDispatchCmd } from '../core/hooks.js';
+import { expandDispatchCmd, quoteRunnerArgValue } from '../core/hooks.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
 
@@ -100,7 +100,7 @@ export function buildCursorAgentLaunch(options: {
   const flagList = runnerFlagsForTier('cursor', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
   const prompt = options.prompt.trim() ? ` ${shellQuote(options.prompt)}` : '';
-  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment} --model ${effectiveModel}${prompt}`;
+  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment} --model ${quoteRunnerArgValue(effectiveModel)}${prompt}`;
 }
 
 export function resolveCursorAgentBinary(preferred?: string | null): string {
@@ -121,7 +121,7 @@ export function buildGrokLaunch(options: {
   const flagList = runnerFlagsForTier('grok', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
   const effortFlag = grokEffortFlag(options.effort);
-  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment}${effortFlag} --model ${effectiveModel}`;
+  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment}${effortFlag} --model ${quoteRunnerArgValue(effectiveModel)}`;
 }
 
 export function resolveGrokBinary(preferred?: string | null): string {
@@ -206,7 +206,7 @@ export function buildRunnerSessionReloadCommand(
       repo,
       opts.runtimeDir,
     );
-    const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
+    const modelFlag = model && model !== 'unknown' ? ` --model ${quoteRunnerArgValue(model)}` : '';
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const claudePath = vars.claudePath || 'claude';
@@ -235,7 +235,7 @@ export function buildRunnerSessionReloadCommand(
       opts.runtimeDir,
       { accountLabel: opts.codexAccountLabel, authSource: opts.codexAuthSource },
     );
-    const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
+    const modelFlag = model && model !== 'unknown' ? ` --model ${quoteRunnerArgValue(model)}` : '';
     const effortFlag = codexReasoningEffortFlag(opts.effort);
     const workerConfigFlags = codexWorkerConfigFlags();
     const flagList = runnerFlagsForTier(runner, tier);
@@ -254,7 +254,7 @@ export function buildRunnerSessionReloadCommand(
   }
 
   if (runner === 'grok') {
-    const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
+    const modelFlag = model && model !== 'unknown' ? ` --model ${quoteRunnerArgValue(model)}` : '';
     const effortFlag = grokEffortFlag(opts.effort);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
@@ -310,7 +310,10 @@ export function buildCodexExecLaunch(options: {
   /** Safety tier (ADR-023). Omit to let `runnerFlagsForTier` apply the codex default (`sandboxed`). */
   safetyTier?: SafetyTier;
 }): string {
-  const modelFlag = options.model && options.model !== 'unknown' ? ` --model ${options.model}` : '';
+  const modelFlag =
+    options.model && options.model !== 'unknown'
+      ? ` --model ${quoteRunnerArgValue(options.model)}`
+      : '';
   const effortFlag = codexReasoningEffortFlag(options.effort);
   const workerConfigFlags = codexWorkerConfigFlags();
   const flagList = runnerFlagsForTier('codex', options.safetyTier);
@@ -336,7 +339,7 @@ function grokEffortFlag(effort?: string | null): string {
   // Explicit `auto` leaves Grok config untouched.
   if (normalized?.toLowerCase() === 'auto') return '';
   const effective = normalized || DEFAULT_GROK_EFFORT;
-  return ` --effort ${effective}`;
+  return ` --effort ${quoteRunnerArgValue(effective)}`;
 }
 
 function codexWorkerConfigFlags(): string {
@@ -488,7 +491,7 @@ export function buildLaunchCommand(
   const hasDispatchCmd = Boolean(vars.dispatchCmd);
   const cmdIsRunnerAware = dispatchCmdIsRunnerAware(vars.dispatchCmd, runner);
   const cmdHasModelPlaceholder = hasDispatchCmd && vars.dispatchCmd.includes('{model}');
-  const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
+  const modelFlag = model && model !== 'unknown' ? ` --model ${quoteRunnerArgValue(model)}` : '';
   const tier = opts.safetyTier ?? runnerDefaultSafetyTier(runner);
   const launchPrompt = runnerNeedsPostLaunchPrompt(runner) ? '' : prompt;
 
