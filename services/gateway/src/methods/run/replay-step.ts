@@ -266,6 +266,29 @@ export function normalizeReplayPrerequisites(
   }
 }
 
+/**
+ * Eval replays normally restart from prepare so the eval harness is
+ * reinstalled. An adopted task signal proves the original worker is live and
+ * already running on a prepared slot; rerouting it to prepare would reset the
+ * dispatch step and launch a second worker over it. Adoption therefore wins.
+ */
+export function shouldRerouteEvalReplayToPrepare(input: {
+  evalExperiment: boolean;
+  adoptedLiveWorker: boolean;
+  targetIdx: number;
+  prepareIdx: number;
+  monitorIdx: number;
+}): boolean {
+  if (!input.evalExperiment || input.adoptedLiveWorker) return false;
+  return (
+    input.targetIdx >= 0 &&
+    input.prepareIdx >= 0 &&
+    input.monitorIdx >= 0 &&
+    input.targetIdx > input.prepareIdx &&
+    input.targetIdx <= input.monitorIdx
+  );
+}
+
 export function canAdoptTaskSignalAfterUncertainDispatch(
   run: Pick<Run, 'steps'>,
   signal: unknown,
@@ -566,12 +589,13 @@ export async function runReplayStep(
     );
   }
   if (
-    existing.engineState?.evalExperiment &&
-    targetIdx >= 0 &&
-    prepareIdx >= 0 &&
-    monitorIdx >= 0 &&
-    targetIdx > prepareIdx &&
-    targetIdx <= monitorIdx
+    shouldRerouteEvalReplayToPrepare({
+      evalExperiment: Boolean(existing.engineState?.evalExperiment),
+      adoptedLiveWorker: Boolean(adoptedTaskSignal),
+      targetIdx,
+      prepareIdx,
+      monitorIdx,
+    })
   ) {
     replayStepName = PS.PREPARE;
     targetIdx = prepareIdx;

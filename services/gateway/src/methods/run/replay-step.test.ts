@@ -25,6 +25,7 @@ import {
   ReplayTaskSignalProbeError,
   resetPublishGateApprovalForReplay,
   runReplayStep,
+  shouldRerouteEvalReplayToPrepare,
 } from './replay-step.js';
 
 test('fresh dispatch replay drops only retained-handoff flags', () => {
@@ -228,6 +229,24 @@ test('an adopted dispatch stays failed until the replay claims its slot', async 
   // Deferred: the adopted dispatch is only recorded once the slot reclaim wins,
   // so a refused replay never leaves a successful dispatch behind.
   assert.equal(steps.find((step) => step.name === 'dispatch')?.status, 'failed');
+});
+
+test('an adopted live worker keeps an eval replay at monitor instead of prepare', () => {
+  const base = { targetIdx: 2, prepareIdx: 0, monitorIdx: 2 };
+  // Without adoption the eval harness reinstall still routes through prepare.
+  assert.equal(
+    shouldRerouteEvalReplayToPrepare({ ...base, evalExperiment: true, adoptedLiveWorker: false }),
+    true,
+  );
+  // A proven-live worker must not be relaunched over by a prepare restart.
+  assert.equal(
+    shouldRerouteEvalReplayToPrepare({ ...base, evalExperiment: true, adoptedLiveWorker: true }),
+    false,
+  );
+  assert.equal(
+    shouldRerouteEvalReplayToPrepare({ ...base, evalExperiment: false, adoptedLiveWorker: false }),
+    false,
+  );
 });
 
 test('human-gate replay drops a consumed reviewer plan', () => {
