@@ -65,6 +65,8 @@ export interface QueueItem {
   app?: string;
   /** Named prepare profile persisted for queued dispatch parity (ADR-037). */
   prepareProfile?: string;
+  /** ADR-054 resource posture preset carried from backlog dispatch settings to the run. */
+  waitPolicy?: import('./resource-posture.js').ResourcePostureWaitPolicy;
   model?: string;
   runner?: string;
   /** Worker scripted-runner config when runner='scripted'. */

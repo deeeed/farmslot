@@ -229,6 +229,22 @@ async function slotReleaseImpl(
   // provider actions still have their normal slot context. A provider failure
   // remains durable as an error lease and is reported without claiming release.
   try {
+    // ADR-054: when this teardown belongs to a specific run, reconcile that run
+    // to `terminal` first so the family's providers stop in dependency order and
+    // the effective posture is recorded before the slot-wide sweep.
+    if (params.expectedRunId) {
+      const { reconcileRunPosture } = await import('../../run-engine/resource-posture.js');
+      const outcome = await reconcileRunPosture({
+        runId: params.expectedRunId,
+        boundary: 'family-terminal',
+      });
+      step(
+        'posture',
+        outcome.error !== undefined
+          ? `Terminal posture reconcile deferred: ${outcome.error}`
+          : `Terminal posture ${outcome.result.transition.outcome}`,
+      );
+    }
     const capabilityRelease = await releaseRuntimeCapabilitiesForSlot(params.slotId);
     step(
       'capabilities',

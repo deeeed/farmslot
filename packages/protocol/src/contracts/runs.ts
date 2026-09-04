@@ -13,6 +13,7 @@ import type {
 import type { FailureCategory, RunRecoveryProposalConfidence } from './chat.js';
 import type { TaskTemplateSelection, TemplateProvenance } from './evals.js';
 import type { EvidenceQualityReport, RecipeQualityArtifact } from './recipes.js';
+import type { ResourcePostureWaitPolicy, RunResourcePostureState } from './resource-posture.js';
 import type { ResourceType } from './resources.js';
 import type { RunImportProvenance } from './run-bundles.js';
 import type { RuntimeCapabilityProofRequirement } from './runtime-capabilities.js';
@@ -1701,6 +1702,11 @@ export interface Run {
   /** Named prepare profile requested for this run (ADR-037). */
   prepareProfile?: string;
   /**
+   * Dispatch-time resource posture preset (ADR-054). Presets the gate choice for
+   * every durable operator wait of this run; an explicit gate choice still wins.
+   */
+  waitPolicy?: ResourcePostureWaitPolicy;
+  /**
    * Branch-update strategy for `update-branch` runs (rebase | merge |
    * project-default). Ignored for other flows. Rendered into the worker task
    * as the `BRANCH_UPDATE_STRATEGY` template var (see tasks/writer.ts); the
@@ -1819,6 +1825,8 @@ export interface Run {
   importProvenance?: RunImportProvenance;
   /** Durable machine-scoped pause/release/restore state. */
   park?: MachineParkRecord | null;
+  /** Gateway-owned effective resource posture and last transition (ADR-054). */
+  resourcePosture?: RunResourcePostureState;
   /** Imported reference-only runs must not be re-dispatched or activated on slot. */
   readOnly?: boolean;
   /** Slot HEAD SHA captured at dispatch (after prepare) — base for per-run iteration diff. */

@@ -5,9 +5,15 @@ import test from 'node:test';
 import { digestRecipeDocument } from '@farmslot/protocol';
 
 import { getOrchestratorTaskRoot, type RawProjectJson } from '../core/config.js';
+import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+import type {
+  ResourcePostureRequest,
+  RunResourcePostureReconciler,
+} from '../runtime-capabilities/posture.js';
 
 import {
   appendRecipePlaybackOptions,
+  assertRecipeRerunProofCapabilities,
   assertSlotProjectMatchesRequestedProject,
   canRecipeRerunOnSlot,
   expandRecipeProjectHookTemplate,
@@ -867,4 +873,99 @@ test('recipeReplayHealthReady accepts any response when ready indicator is unset
 test('recipeReplayHealthReady matches project ready indicator exactly', () => {
   assert.equal(recipeReplayHealthReady('WalletView', 'WalletView'), true);
   assert.equal(recipeReplayHealthReady('LoginView', 'WalletView'), false);
+});
+
+async function cleanupPostureRun(runId: string): Promise<void> {
+  if (!getRun(runId)) return;
+  updateRun(runId, { status: 'done', completedAt: new Date().toISOString() });
+  await deleteRun(runId);
+}
+
+function postureReconciler(rejection?: { capabilityId: string; reason: string }): {
+  reconciler: RunResourcePostureReconciler;
+  calls: ResourcePostureRequest[];
+} {
+  const calls: ResourcePostureRequest[] = [];
+  const reconciler = {
+    apply: async (request: ResourcePostureRequest) => {
+      calls.push(request);
+      return {
+        ok: !rejection,
+        status: {
+          posture: 'active',
+          policySource: 'framework-default',
+          capabilities: [],
+          workerRetained: true,
+          updatedAt: '2026-09-04T00:00:00.000Z',
+        },
+        transition: {
+          id: 'op-1',
+          posture: 'active',
+          policySource: 'framework-default',
+          requestedAt: '2026-09-04T00:00:00.000Z',
+          completedAt: '2026-09-04T00:00:00.000Z',
+          outcome: rejection ? 'rejected' : 'applied',
+          effects: [],
+          progress: { total: 1, completed: rejection ? 0 : 1 },
+          failures: [],
+          ...(rejection
+            ? {
+                rejection: {
+                  kind: 'capability-unavailable',
+                  capabilityId: rejection.capabilityId,
+                  reason: rejection.reason,
+                  conflict: {
+                    kind: 'lease-conflict',
+                    capabilityId: rejection.capabilityId,
+                    owner: { runId: 'other-run' },
+                    leaseId: 'lease-1',
+                    reason: rejection.reason,
+                  },
+                },
+              }
+            : {}),
+        },
+      };
+    },
+  } as unknown as RunResourcePostureReconciler;
+  return { reconciler, calls };
+}
+
+test('recipe rerun preflight reconciles the run to active with its proof plan', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000111',
+  });
+  try {
+    const { reconciler, calls } = postureReconciler();
+    await assertRecipeRerunProofCapabilities(run.id, reconciler);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].posture, 'active');
+    assert.equal(calls[0].runId, run.id);
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+test('recipe rerun is blocked with a typed reason when a proof capability is unavailable', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000111',
+  });
+  try {
+    const { reconciler } = postureReconciler({
+      capabilityId: 'browser-cdp',
+      reason: "Exclusive capability 'browser-cdp' is owned by other-run",
+    });
+    await assert.rejects(
+      assertRecipeRerunProofCapabilities(run.id, reconciler),
+      /blocked by runtime capability posture.*browser-cdp.*owned by other-run/,
+    );
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
 });

@@ -459,6 +459,7 @@ export function addItem(
     domain: params.domain,
     app: params.app,
     prepareProfile: params.prepareProfile,
+    waitPolicy: params.waitPolicy,
     model: params.model,
     runner: params.runner,
     scripted: params.scripted,

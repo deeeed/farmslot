@@ -55,8 +55,10 @@ import {
   attachLiveRecipeContext,
   listRecipeRunArtifactGroupsForRun,
 } from '../live-recipe/context.js';
+import { prepareRunPostureForValidation } from '../run-engine/resource-posture.js';
 import { withTaskRecipeTrustEnvironment } from '../runners/launch-command.js';
 import { getRun, updateRun } from '../runs/store.js';
+import type { RunResourcePostureReconciler } from '../runtime-capabilities/posture.js';
 
 import { runHealthCheck } from './slot/check.js';
 
@@ -1122,6 +1124,22 @@ function emitRecipeRerunStream(
   emit(Events.SCRIPT_OUTPUT, { requestId, stream, data, timestamp: Date.now() });
 }
 
+/**
+ * ADR-054 validation preparation: reacquire and health-check the run's declared
+ * proof capabilities before a recipe rerun touches the slot. Blocks the action
+ * with a typed reason rather than running against a stopped provider or taking
+ * a capability away from another owner.
+ */
+export async function assertRecipeRerunProofCapabilities(
+  runId: string,
+  reconciler?: RunResourcePostureReconciler,
+): Promise<void> {
+  const posture = await prepareRunPostureForValidation(runId, undefined, reconciler);
+  if (!posture.ok) {
+    throw new Error(`Recipe rerun blocked by runtime capability posture: ${posture.reason}`);
+  }
+}
+
 async function executeRecipeRerunJob(args: {
   emit: EmitFn;
   run: NonNullable<ReturnType<typeof getRun>>;
@@ -1217,6 +1235,25 @@ async function executeRecipeRerunJob(args: {
     );
     await assertSlotHealthForRecipeRerun(slotVars, projectJson, projectVars);
     emitRecipeRerunStream(emit, requestId, 'Preflight: health check passed.\n');
+
+    // ADR-054: validation preparation is `active` with the run's proof plan
+    // re-applied. The Gateway reacquires and health-checks the declared proof
+    // capabilities here so the rerun never starts against a stopped provider,
+    // and blocks with a typed reason rather than touching another owner's
+    // resource.
+    emitRecipeRerunStream(emit, requestId, 'Preflight: reconciling proof capabilities...\n');
+    try {
+      await assertRecipeRerunProofCapabilities(runId);
+    } catch (error) {
+      emitRecipeRerunStream(
+        emit,
+        requestId,
+        `Preflight: ${error instanceof Error ? error.message : String(error)}\n`,
+        'stderr',
+      );
+      throw error;
+    }
+    emitRecipeRerunStream(emit, requestId, 'Preflight: proof capabilities ready.\n');
 
     for (const warning of recipeRunUnsupportedOptionWarnings(projectJson, {
       playbackSlowMs,

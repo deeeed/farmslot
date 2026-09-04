@@ -191,6 +191,36 @@ test('addItem preserves interactive dev policy fields for auto-dispatch', () => 
   }
 });
 
+test('addItem carries waitPolicy through to the run the queue item creates', async () => {
+  const item = addItem(
+    {
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: 'MANUAL-000111',
+      waitPolicy: 'minimize',
+    },
+    { kind: 'system' },
+  );
+  try {
+    assert.equal(item.waitPolicy, 'minimize');
+    // The dispatcher copies the queue item's dispatch settings onto the run.
+    const run = createRun({
+      flowType: item.flowType,
+      mode: 'autonomous',
+      project: item.project,
+      ticketOrPr: item.ticketOrPr,
+      waitPolicy: item.waitPolicy,
+    });
+    try {
+      assert.equal(run.waitPolicy, 'minimize');
+    } finally {
+      await cleanupRun(run.id);
+    }
+  } finally {
+    removeItem(item.id);
+  }
+});
+
 test('addItem preserves eval-cell metadata for queued matrix dispatch', () => {
   const item = addItem(
     {

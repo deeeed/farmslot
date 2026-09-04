@@ -120,6 +120,8 @@ export interface RunCreateParams {
   startRefSkipPrepareVerified?: boolean;
   /** Named prepare profile from the project's prepare.profiles (ADR-037). */
   prepareProfile?: string;
+  /** ADR-054 resource posture preset for every durable operator wait of this run. */
+  waitPolicy?: import('../contracts/index.js').ResourcePostureWaitPolicy;
   /**
    * Branch-update strategy for `update-branch` runs (rebase | merge |
    * project-default). Ignored for other flows. Persisted on the run and
@@ -476,6 +478,12 @@ export interface RunResolveDecisionParams {
   decisionId: string;
   actionId: string;
   selectionData?: Record<string, unknown>;
+  /**
+   * Operator resource-posture choice for the wait this decision ends (ADR-054).
+   * Typed rather than free-form selectionData so clients cannot invent a policy;
+   * copied into `selectionData.resourcePosture` for the run engine to read.
+   */
+  resourcePosture?: import('../contracts/index.js').ResourcePostureGateChoice;
 }
 
 export interface RunResolveDecisionResult {

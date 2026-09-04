@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020.js';
 
 import type {
+  ProjectResourcePostureConfig,
   RuntimeCapabilityAcquireConflict,
   RuntimeCapabilityAcquireParams,
   RuntimeCapabilityAcquireResult,
@@ -27,6 +28,8 @@ export interface RuntimeCapabilityCatalogContext {
   slotId: string;
   project: string;
   capabilities: RuntimeCapabilityCatalogEntry[];
+  /** Project posture defaults (ADR-054); provider `retention` wins over these. */
+  posture?: ProjectResourcePostureConfig;
 }
 
 export interface RuntimeCapabilityActionResult {
@@ -218,6 +221,7 @@ export class RuntimeCapabilityRegistry {
           (!params.ownerRunId || event.owner?.runId === params.ownerRunId),
       ),
       ...(pressure ? { pressure: structuredClone(pressure) } : {}),
+      ...(catalog.posture ? { posture: structuredClone(catalog.posture) } : {}),
     };
   }
 
@@ -777,18 +781,25 @@ export class RuntimeCapabilityRegistry {
   }
 
   async release(params: RuntimeCapabilityReleaseParams): Promise<RuntimeCapabilityReleaseResult> {
+    const force = params.force === true;
+    // `force` historically meant both "bypass provenance" and "bypass keep-warm".
+    // ADR-054 splits the second half into `keepWarm`; unset keeps the old behaviour.
+    const keepWarm = params.keepWarm ?? !force;
     return this.releaseSelected(
       params.slotId,
       (lease) =>
         lease.owner.runId === params.ownerRunId &&
         (!params.capabilityId || lease.capabilityId === params.capabilityId) &&
         (!params.leaseId || lease.id === params.leaseId),
-      params.force === true,
+      { force, keepWarmFor: () => keepWarm },
     );
   }
 
   async releaseFamily(slotId: string, familyId: string): Promise<RuntimeCapabilityReleaseResult> {
-    return this.releaseSelected(slotId, (lease) => lease.owner.familyId === familyId, false);
+    return this.releaseSelected(slotId, (lease) => lease.owner.familyId === familyId, {
+      force: false,
+      keepWarmFor: () => true,
+    });
   }
 
   async releaseRunAndFamily(
@@ -799,19 +810,40 @@ export class RuntimeCapabilityRegistry {
     return this.releaseSelected(
       slotId,
       (lease) => lease.owner.runId === ownerRunId || lease.owner.familyId === familyId,
-      false,
+      { force: false, keepWarmFor: () => true },
     );
   }
 
   async releaseSlot(slotId: string): Promise<RuntimeCapabilityReleaseResult> {
-    return this.releaseSelected(slotId, () => true, false);
+    return this.releaseSelected(slotId, () => true, { force: false, keepWarmFor: () => true });
+  }
+
+  /**
+   * One dependency-ordered release pass with a per-lease keep-warm decision, so
+   * a posture that warms one provider and stops another cannot reorder them
+   * across two calls (ADR-054). Leases pulled in as dependencies but not named
+   * by the caller keep the project's own keep-warm policy.
+   */
+  async releaseForPosture(
+    slotId: string,
+    dispositions: Array<{ leaseId: string; keepWarm: boolean }>,
+  ): Promise<RuntimeCapabilityReleaseResult> {
+    const wanted = new Map(dispositions.map((entry) => [entry.leaseId, entry.keepWarm]));
+    return this.releaseSelected(slotId, (lease) => wanted.has(lease.id), {
+      force: false,
+      keepWarmFor: (lease) => wanted.get(lease.id) ?? true,
+    });
   }
 
   private async releaseSelected(
     slotId: string,
     select: (lease: RuntimeCapabilityLease) => boolean,
-    force: boolean,
+    options: {
+      force: boolean;
+      keepWarmFor: (lease: RuntimeCapabilityLease) => boolean;
+    },
   ): Promise<RuntimeCapabilityReleaseResult> {
+    const { force, keepWarmFor } = options;
     return this.mutate(async () => {
       const snapshot = this.options.store.snapshot();
       const catalog = await this.options.catalogForSlot(slotId);
@@ -904,7 +936,7 @@ export class RuntimeCapabilityRegistry {
           previousState !== 'error' &&
           previousState !== 'queued' &&
           entry.keepWarmMs &&
-          !force
+          keepWarmFor(lease)
         ) {
           lease.keepWarmUntil = new Date(this.now().getTime() + entry.keepWarmMs).toISOString();
         } else if (otherHolders.length === 0 && previousState !== 'queued') {

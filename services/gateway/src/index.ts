@@ -79,6 +79,7 @@ import {
   getRuntimeCapabilityRegistry,
   initRuntimeCapabilities,
 } from './methods/runtime-capabilities.js';
+import { initRuntimePosture } from './methods/runtime-posture.js';
 import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
@@ -321,6 +322,7 @@ async function main(): Promise<void> {
   const missingFile = !existsSync(statusFile);
   await loadFleetStatus();
   await initRuntimeCapabilities(observedBroadcast);
+  initRuntimePosture(observedBroadcast);
   const cached = getCachedFleet();
   // Re-bootstrap when the file is missing, the cache is empty (read failed or
   // file was corrupt), OR the snapshot is stale — a days-old status file must
@@ -474,6 +476,7 @@ async function main(): Promise<void> {
       domain: item.domain,
       app: item.app,
       prepareProfile: item.prepareProfile,
+      waitPolicy: item.waitPolicy,
       slotId: item.slotId,
       allowedSlots:
         item.allowedSlots && item.allowedSlots.length > 0 ? item.allowedSlots : undefined,

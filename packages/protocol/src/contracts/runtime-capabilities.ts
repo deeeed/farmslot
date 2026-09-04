@@ -1,3 +1,9 @@
+import type {
+  ProjectResourcePostureConfig,
+  ResourcePostureRetention,
+  ResourcePostureRetentionBoundary,
+} from './resource-posture.js';
+
 /** Runtime resources acquired after core prepare from a declared proof plan. */
 export type RuntimeCapabilityCostClass = 'low' | 'medium' | 'high';
 export type RuntimeCapabilitySharePolicy = 'exclusive' | 'shared';
@@ -52,10 +58,17 @@ export interface RuntimeCapabilityProviderConfig {
   releaseEffects: string[];
   /** Explicit project policy; zero/absent means release immediately. */
   keepWarmMs?: number;
+  /**
+   * Per-posture retention (ADR-054). Overrides the project posture defaults for
+   * this provider. `retain` is not accepted at `terminal`.
+   */
+  retention?: Partial<Record<ResourcePostureRetentionBoundary, ResourcePostureRetention>>;
 }
 
 export interface ProjectRuntimeCapabilitiesConfig {
   providers: Record<string, RuntimeCapabilityProviderConfig>;
+  /** Project-wide posture defaults (ADR-054); provider `retention` wins over these. */
+  posture?: ProjectResourcePostureConfig;
 }
 
 export interface RuntimeCapabilityProviderProvenance {

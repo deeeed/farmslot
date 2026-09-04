@@ -133,7 +133,12 @@ async function catalogForSlot(slotId: string): Promise<RuntimeCapabilityCatalogC
       };
     })
     .sort((a, b) => a.id.localeCompare(b.id));
-  return { slotId, project: slotVars.projectName, capabilities };
+  return {
+    slotId,
+    project: slotVars.projectName,
+    capabilities,
+    ...(configured?.posture ? { posture: structuredClone(configured.posture) } : {}),
+  };
 }
 
 async function runProviderAction(

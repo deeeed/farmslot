@@ -13,6 +13,7 @@ import * as modeSwitch from './mode-switch.mjs';
 import * as monitorStuckSmoke from './monitor-stuck-smoke.mjs';
 import * as paneSmoke from './pane-smoke.mjs';
 import * as promptAccepted from './prompt-accepted.mjs';
+import * as resourcePostureSmoke from './resource-posture-smoke.mjs';
 import * as retainedHandoffSmoke from './retained-handoff-smoke.mjs';
 import * as retainedSafeSendSmoke from './retained-safe-send-smoke.mjs';
 import * as reviewRecoveryTerminalContract from './review-recovery-terminal-contract.mjs';
@@ -38,6 +39,7 @@ export const SCENARIOS = {
   'self-review-fix-turn-lease': selfReviewFixTurnLease,
   'retained-handoff-smoke': retainedHandoffSmoke,
   'retained-safe-send-smoke': retainedSafeSendSmoke,
+  'resource-posture-smoke': resourcePostureSmoke,
   'turn-boundary': turnBoundary,
   'busy-composer': busyComposer,
   'copilot-runtime-smoke': copilotRuntimeSmoke,

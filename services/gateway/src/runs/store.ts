@@ -710,6 +710,7 @@ export function createRun(
     app: params.app,
     ...(domain ? { domain } : {}),
     ...(params.prepareProfile ? { prepareProfile: params.prepareProfile } : {}),
+    ...(params.waitPolicy ? { waitPolicy: params.waitPolicy } : {}),
     ...(params.branchUpdateStrategy ? { branchUpdateStrategy: params.branchUpdateStrategy } : {}),
     effort: params.effort,
     scripted: params.scripted,

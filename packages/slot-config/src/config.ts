@@ -373,8 +373,12 @@ export interface RawProjectJson {
         };
         release_effects?: string[];
         keep_warm_ms?: number;
+        retention?: Record<string, string>;
       }
     >;
+    posture?: {
+      defaults?: Record<string, string>;
+    };
   };
   recipe_timeout?: number;
   // Project-level safety-tier policy (ADR-023 §3). Applied at run create time
@@ -1316,6 +1320,43 @@ function validateCapabilityActionRef(
   throw new Error(`${projectConfig}: ${field}.kind must be resource or slot-action`);
 }
 
+/** ADR-054 postures a project may configure retention for. */
+const POSTURE_RETENTION_BOUNDARIES = ['operator-wait', 'terminal'] as const;
+const POSTURE_RETENTIONS = ['retain', 'warm', 'stop'] as const;
+
+function validatePostureRetentionMap(
+  raw: Record<string, string> | undefined,
+  field: string,
+  projectConfig: string,
+  present: boolean,
+): void {
+  if (!present) return;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`${projectConfig}: ${field} must be an object`);
+  }
+  for (const [posture, retention] of Object.entries(raw)) {
+    if (
+      !POSTURE_RETENTION_BOUNDARIES.includes(
+        posture as (typeof POSTURE_RETENTION_BOUNDARIES)[number],
+      )
+    ) {
+      throw new Error(
+        `${projectConfig}: ${field}."${posture}" is not a configurable posture (${POSTURE_RETENTION_BOUNDARIES.join(', ')})`,
+      );
+    }
+    if (!POSTURE_RETENTIONS.includes(retention as (typeof POSTURE_RETENTIONS)[number])) {
+      throw new Error(
+        `${projectConfig}: ${field}."${posture}" must be ${POSTURE_RETENTIONS.join(', ')}`,
+      );
+    }
+    // Terminal stops every run-owned provider in dependency order (ADR-054);
+    // a project cannot pin one open past the end of the run.
+    if (posture === 'terminal' && retention === 'retain') {
+      throw new Error(`${projectConfig}: ${field}."terminal" cannot be retain`);
+    }
+  }
+}
+
 export function validateRuntimeCapabilitiesConfig(
   projectJson: RawProjectJson,
   projectConfig: string,
@@ -1329,6 +1370,12 @@ export function validateRuntimeCapabilitiesConfig(
   if (!providers || typeof providers !== 'object' || Array.isArray(providers)) {
     throw new Error(`${projectConfig}: runtime_capabilities.providers must be an object`);
   }
+  validatePostureRetentionMap(
+    cfg.posture?.defaults,
+    'runtime_capabilities.posture.defaults',
+    projectConfig,
+    cfg.posture !== undefined,
+  );
   const ids = Object.keys(providers);
   if (ids.length === 0) {
     throw new Error(`${projectConfig}: runtime_capabilities.providers must not be empty`);
@@ -1425,6 +1472,12 @@ export function validateRuntimeCapabilitiesConfig(
     ) {
       throw new Error(`${projectConfig}: ${field}.keep_warm_ms must be a non-negative integer`);
     }
+    validatePostureRetentionMap(
+      provider.retention,
+      `${field}.retention`,
+      projectConfig,
+      provider.retention !== undefined,
+    );
     if (
       provider.parameters !== undefined &&
       (!provider.parameters ||
@@ -1578,6 +1631,20 @@ export function normalizeRawProjectPrepare(
   };
 }
 
+function normalizePostureRetentionMap(
+  raw: Record<string, string> | undefined,
+): Partial<Record<'operator-wait' | 'terminal', 'retain' | 'warm' | 'stop'>> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const normalized: Partial<Record<'operator-wait' | 'terminal', 'retain' | 'warm' | 'stop'>> = {};
+  for (const boundary of POSTURE_RETENTION_BOUNDARIES) {
+    const value = raw[boundary];
+    if (POSTURE_RETENTIONS.includes(value as (typeof POSTURE_RETENTIONS)[number])) {
+      normalized[boundary] = value as 'retain' | 'warm' | 'stop';
+    }
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
 export function normalizeRawRuntimeCapabilities(
   raw: RawProjectJson['runtime_capabilities'],
 ): ProjectConfig['runtimeCapabilities'] | undefined {
@@ -1623,9 +1690,14 @@ export function normalizeRawRuntimeCapabilities(
       },
       releaseEffects: [...(provider.release_effects ?? [])],
       ...(provider.keep_warm_ms !== undefined ? { keepWarmMs: provider.keep_warm_ms } : {}),
+      ...(normalizePostureRetentionMap(provider.retention)
+        ? { retention: normalizePostureRetentionMap(provider.retention)! }
+        : {}),
     };
   }
-  return Object.keys(providers).length > 0 ? { providers } : undefined;
+  if (Object.keys(providers).length === 0) return undefined;
+  const defaults = normalizePostureRetentionMap(raw?.posture?.defaults);
+  return { providers, ...(defaults ? { posture: { defaults } } : {}) };
 }
 
 export function normalizeRawProjectAutoRecovery(
