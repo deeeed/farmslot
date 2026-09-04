@@ -999,13 +999,24 @@ export async function executeReadyGate(runId: string): Promise<string> {
     latestResolvedHumanGateDecision(afterDecisionRun.decisions);
   const selectionData = decision?.selectionData;
   // The operator's posture choice for the wait they just ended.
-  await reconcileRunPosture({
+  const postureChoice = gateChoiceFromSelectionData(selectionData);
+  const postureOutcome = await reconcileRunPosture({
     runId,
     boundary: 'gate-resolved',
-    ...(gateChoiceFromSelectionData(selectionData)
-      ? { gateChoice: gateChoiceFromSelectionData(selectionData)! }
-      : {}),
+    ...(postureChoice ? { gateChoice: postureChoice } : {}),
   });
+  const postureRejection = postureOutcome.result?.transition.rejection;
+  if (postureRejection) {
+    // ADR-054 defines `free-slot` as a typed rejection until the run is
+    // park-eligible. The gate must not read as if the choice took effect: the
+    // rejection is already durable on the run, and the run stays in the posture
+    // it actually has, so re-state it here rather than continuing silently.
+    console.warn(
+      `[run-engine] run ${runId.slice(0, 8)} — posture choice '${postureChoice ?? 'default'}' ` +
+        `rejected (${postureRejection.kind}): ${postureRejection.reason}`,
+    );
+    await reconcileRunPosture({ runId, boundary: 'operator-wait' });
+  }
   if (publicationApprovalGate) {
     const decisionPayload = decision?.payload as ReadyGatePayload | undefined;
     const approvedPackage = decisionPayload?.prPackage ?? preparedPackage;

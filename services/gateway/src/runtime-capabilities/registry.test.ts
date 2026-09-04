@@ -720,3 +720,88 @@ test('a queued sibling does not suppress expired keep-warm provider cleanup', as
   await registry.cleanupExpiredWarmProviders();
   assert.equal(actions.filter((action) => action === 'browser.release').length, 1);
 });
+
+test('revalidateHealth cleans up a dead retained provider and reacquires it', async (t) => {
+  let healthy = true;
+  const { registry, actions } = await fixture(t, [entry('browser')], {
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'browser.health' && !healthy
+        ? { ok: false, detail: 'browser is not responding' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
+
+  // The provider dies while the run waits, then validation prepares.
+  healthy = false;
+  actions.length = 0;
+  const stale = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'browser', reason: 'validation', mode: 'visual' },
+    revalidateHealth: true,
+  });
+  // Health failed, so the retained provider was released before anything reused it.
+  assert.ok(actions.includes('browser.release'), actions.join(', '));
+  assert.equal(stale.ok, false);
+
+  // Once the provider is healthy again the same request acquires it fresh.
+  healthy = true;
+  actions.length = 0;
+  const fresh = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'browser', reason: 'validation', mode: 'visual' },
+    revalidateHealth: true,
+  });
+  assert.equal(fresh.ok, true);
+  if (!fresh.ok) return;
+  assert.equal(fresh.idempotent, false, 'a cleaned-up lease must not be reused as idempotent');
+  assert.ok(actions.includes('browser.acquire'));
+});
+
+test('revalidateHealth reuses a retained provider that is still healthy', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('browser')]);
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
+  actions.length = 0;
+  const again = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'browser', reason: 'validation', mode: 'visual' },
+    revalidateHealth: true,
+  });
+  assert.equal(again.ok, true);
+  if (!again.ok) return;
+  assert.equal(again.idempotent, true);
+  // Proof that health really ran, and that nothing was torn down.
+  assert.deepEqual(actions, ['browser.health']);
+});
+
+test('acquire without revalidateHealth keeps the cheap idempotent path', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('browser')]);
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
+  actions.length = 0;
+  const again = await acquire(registry, 'browser', 'run-a');
+  assert.equal(again.ok, true);
+  assert.deepEqual(actions, [], 'worker acquires must not pay for an extra health check');
+});
+
+test('stopWarmProviders ends a keep-warm window before its deadline', async (t) => {
+  const warm = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warm]);
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+  // Released but still warm: no release action ran.
+  assert.ok(!actions.includes('metro.release'));
+
+  actions.length = 0;
+  await registry.stopWarmProviders(SLOT, ['metro']);
+  assert.deepEqual(actions, ['metro.release']);
+  const status = await registry.status({ slotId: SLOT });
+  assert.equal(
+    status.leases.every((lease) => lease.keepWarmUntil === undefined),
+    true,
+  );
+});

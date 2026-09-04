@@ -116,6 +116,8 @@ export const RESOURCE_POSTURE_TRANSITION_OUTCOMES = [
   'idempotent',
   'partial',
   'rejected',
+  /** Reconciliation could not run at all (catalog/provider unreachable). */
+  'failed',
 ] as const;
 export type ResourcePostureTransitionOutcome =
   (typeof RESOURCE_POSTURE_TRANSITION_OUTCOMES)[number];

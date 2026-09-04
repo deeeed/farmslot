@@ -1508,11 +1508,11 @@
     },
     "resource_posture_retention_map": {
       "type": "object",
-      "description": "Per-posture retention (ADR-054). 'terminal' cannot be 'retain'.",
+      "description": "Per-posture retention (ADR-054). 'terminal' must be 'stop': terminal always stops every run- and family-owned provider, bypassing keep-warm.",
       "additionalProperties": false,
       "properties": {
         "operator-wait": { "type": "string", "enum": ["retain", "warm", "stop"] },
-        "terminal": { "type": "string", "enum": ["warm", "stop"] }
+        "terminal": { "type": "string", "enum": ["stop"] }
       }
     },
     "worker_terminal_command_spec": {

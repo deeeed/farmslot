@@ -1349,10 +1349,11 @@ function validatePostureRetentionMap(
         `${projectConfig}: ${field}."${posture}" must be ${POSTURE_RETENTIONS.join(', ')}`,
       );
     }
-    // Terminal stops every run-owned provider in dependency order (ADR-054);
-    // a project cannot pin one open past the end of the run.
-    if (posture === 'terminal' && retention === 'retain') {
-      throw new Error(`${projectConfig}: ${field}."terminal" cannot be retain`);
+    // Terminal stops every run- and family-owned provider in dependency order,
+    // bypassing keep-warm (ADR-054). A project cannot pin one open or warm past
+    // the end of the run, so `stop` is the only meaningful value here.
+    if (posture === 'terminal' && retention !== 'stop') {
+      throw new Error(`${projectConfig}: ${field}."terminal" must be stop`);
     }
   }
 }

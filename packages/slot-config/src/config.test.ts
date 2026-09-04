@@ -170,15 +170,31 @@ test('posture retention config validates, normalizes, and leaves keep_warm_ms-on
       ),
     /must be retain, warm, stop/,
   );
+  // Terminal always stops every run- and family-owned provider, bypassing
+  // keep-warm, so neither retain nor warm is configurable there.
+  for (const rejected of ['retain', 'warm']) {
+    assert.throws(
+      () =>
+        validateRuntimeCapabilitiesConfig(
+          project({
+            providers: { 'browser-cdp': { ...provider, retention: { terminal: rejected } } },
+          }),
+          'project.json',
+        ),
+      /"terminal" must be stop/,
+      `terminal: ${rejected} must be rejected`,
+    );
+  }
   assert.throws(
     () =>
       validateRuntimeCapabilitiesConfig(
         project({
-          providers: { 'browser-cdp': { ...provider, retention: { terminal: 'retain' } } },
+          providers: { 'browser-cdp': provider },
+          posture: { defaults: { terminal: 'warm' } },
         }),
         'project.json',
       ),
-    /"terminal" cannot be retain/,
+    /"terminal" must be stop/,
   );
 });
 

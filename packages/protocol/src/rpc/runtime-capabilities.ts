@@ -36,6 +36,12 @@ export interface RuntimeCapabilityAcquireParams {
   proofRequirement: RuntimeCapabilityProofRequirement;
   parameters?: Record<string, unknown>;
   queueOnPressure?: boolean;
+  /**
+   * Re-run the provider health check before reusing a lease this owner already
+   * holds, and clean up the provider when it fails (ADR-054). Validation and
+   * recipe reruns set this so a dead retained provider cannot pass preparation.
+   */
+  revalidateHealth?: boolean;
 }
 
 export type RuntimeCapabilityAcquireResult =

@@ -174,22 +174,16 @@ export function resolveEffectivePosturePolicy(
       continue;
     }
     if (posture === 'terminal') {
+      // Terminal is not negotiable: ADR-054 stops every run- and family-owned
+      // provider in dependency order, bypassing keep-warm. Config validation
+      // rejects `retain` and `warm` here, so there is nothing left to honour.
       const override = retentionOverride(entry, input.projectPosture, 'terminal');
-      if (override) {
-        const { desired, degraded } = retentionToDisposition(override.value, entry);
-        perCapability.set(capabilityId, {
-          desired,
-          source: 'project-default',
-          reason: degraded
-            ? `${override.scope} retention '${override.value}' at terminal has no keep_warm_ms; stopping`
-            : `${override.scope} retention '${override.value}' at terminal`,
-        });
-        continue;
-      }
       perCapability.set(capabilityId, {
         desired: 'stopped',
-        source: 'framework-default',
-        reason: 'terminal cleanup stops every run- and family-owned provider',
+        source: override ? 'project-default' : 'framework-default',
+        reason: override
+          ? `${override.scope} retention 'stop' at terminal`
+          : 'terminal cleanup stops every run- and family-owned provider',
       });
       continue;
     }
@@ -251,6 +245,9 @@ export function observedStateForLease(
     return lease.health.state === 'unhealthy' ? 'unhealthy' : 'running';
   // A released lease is not a stopped provider while keep-warm is still live.
   if (lease.keepWarmUntil && Date.parse(lease.keepWarmUntil) > nowMs) return 'running';
+  // An elapsed warm deadline is a schedule, not an outcome: the sweeper may not
+  // have run yet, so the provider's real state is not known until cleanup does.
+  if (lease.keepWarmUntil) return 'unknown';
   return 'stopped';
 }
 
@@ -286,6 +283,8 @@ export interface RunResourcePostureDeps {
     slotId: string,
     dispositions: Array<{ leaseId: string; keepWarm: boolean }>,
   ) => Promise<RuntimeCapabilityReleaseResult>;
+  /** Stop providers a released lease is still keeping warm (ADR-054 terminal). */
+  stopWarmProviders: (slotId: string, capabilityIds: string[]) => Promise<void>;
   machineForSlot: (slotId: string) => Promise<string | null>;
   parkPreview: (params: MachinePausePreviewParams) => Promise<MachinePausePreviewResult>;
   parkExecute: (params: MachinePauseExecuteParams) => Promise<MachinePauseExecuteResult>;
@@ -306,7 +305,7 @@ interface ResolvedContext {
   status: RuntimeCapabilityStatusResult;
   policy: EffectivePosturePolicy;
   states: ResourcePostureCapabilityState[];
-  leases: Map<string, RuntimeCapabilityLease>;
+  leases: Map<string, RuntimeCapabilityLease[]>;
   proofRequirements: RuntimeCapabilityProofRequirement[];
 }
 
@@ -324,14 +323,19 @@ export class RunResourcePostureReconciler {
   private async serialize<T>(runId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.tails.get(runId) ?? Promise.resolve();
     const next = previous.then(operation, operation);
-    this.tails.set(
-      runId,
-      next.catch(() => undefined),
+    // The map holds a settled-either-way tail so the next caller chains onto it
+    // rather than inheriting a rejection. Track that exact promise so the
+    // cleanup below can recognise and drop it instead of leaking one entry per
+    // run id for the process lifetime.
+    const tail = next.then(
+      () => undefined,
+      () => undefined,
     );
+    this.tails.set(runId, tail);
     try {
       return await next;
     } finally {
-      if (this.tails.get(runId) === next) this.tails.delete(runId);
+      if (this.tails.get(runId) === tail) this.tails.delete(runId);
     }
   }
 
@@ -364,7 +368,7 @@ export class RunResourcePostureReconciler {
       );
     });
     const known = new Set(capabilities.map((state) => state.capabilityId));
-    for (const [capabilityId, lease] of leases) {
+    for (const [capabilityId, group] of leases) {
       if (known.has(capabilityId)) continue;
       capabilities.push(
         this.capabilityState(
@@ -372,7 +376,7 @@ export class RunResourcePostureReconciler {
           'acquired',
           'framework-default',
           'held by this run without a recorded posture decision',
-          lease,
+          group,
           byId.get(capabilityId),
           nowMs,
         ),
@@ -405,7 +409,7 @@ export class RunResourcePostureReconciler {
       const previous = run.resourcePosture?.lastTransition;
       if (previous?.id === request.operationId && previous.outcome !== 'in-progress') {
         return {
-          ok: previous.outcome !== 'rejected',
+          ok: previous.outcome === 'applied' || previous.outcome === 'idempotent',
           status: run.resourcePosture!,
           transition: previous,
         };
@@ -451,6 +455,11 @@ export class RunResourcePostureReconciler {
       park = eligibility;
     }
 
+    // The posture in force before the write-ahead. A park that machine parking
+    // then refuses changed nothing, so status must roll back to this rather than
+    // keep advertising `parked` with the worker reported as stopped.
+    const priorState = context.run.resourcePosture;
+
     // Write-ahead: a crash between here and the provider actions must leave the
     // intent visible rather than a silently half-applied posture.
     const inProgress: ResourcePostureTransition = {
@@ -464,13 +473,54 @@ export class RunResourcePostureReconciler {
       progress: { total: context.states.length, completed: 0 },
       failures: [],
     };
-    this.persist(context, inProgress);
+    this.persist(context, inProgress, park ? (priorState?.posture ?? 'active') : undefined);
 
-    if (park) return this.applyParked(context, inProgress, park);
+    if (park) return this.applyParked(context, inProgress, park, priorState);
 
     const failures: ResourcePostureTransitionFailure[] = [];
     const effects = new Set<string>();
     let completed = 0;
+
+    // Release first, then acquire. Two capabilities can claim the same exclusive
+    // resource, so acquiring the new one while this run still holds the old lease
+    // would conflict the run against itself.
+    // Every sibling lease, not just the representative one: a family terminal
+    // that released only one holder would leave the provider running.
+    const dispositions = context.states
+      .filter((state) => state.desiredDisposition !== 'acquired')
+      .flatMap((state) =>
+        (context.leases.get(state.capabilityId) ?? []).map((lease) => ({
+          leaseId: lease.id,
+          keepWarm: state.desiredDisposition === 'warm',
+        })),
+      );
+    // A provider kept alive by an already-released lease is invisible to the
+    // release path, so a posture that wants it stopped has to end the warm
+    // window explicitly. Terminal bypasses keep-warm by definition.
+    const warmToStop = context.states
+      .filter(
+        (state) =>
+          state.desiredDisposition === 'stopped' &&
+          (context.leases.get(state.capabilityId) ?? []).some(
+            (lease) => lease.state === 'released' && lease.keepWarmUntil !== undefined,
+          ),
+      )
+      .map((state) => state.capabilityId);
+    if (warmToStop.length > 0) {
+      await this.deps.stopWarmProviders(context.slotId, warmToStop);
+    }
+    if (dispositions.length > 0) {
+      const released = await this.deps.releaseForPosture(context.slotId, dispositions);
+      for (const effect of released.effects) effects.add(effect);
+      for (const failure of released.failures) {
+        failures.push({
+          capabilityId: failure.capabilityId,
+          leaseId: failure.leaseId,
+          reason: failure.reason,
+        });
+      }
+      completed += dispositions.length - released.failures.length;
+    }
 
     for (const state of context.states) {
       if (state.desiredDisposition !== 'acquired') continue;
@@ -489,6 +539,8 @@ export class RunResourcePostureReconciler {
         ...(context.run.familyId ? { ownerFamilyId: context.run.familyId } : {}),
         proofRequirement: requirement,
         ...(requirement.parameters ? { parameters: requirement.parameters } : {}),
+        // ADR-054: preparation must prove a retained provider is still alive.
+        revalidateHealth: true,
       });
       if (!result.ok) {
         // Blocking, not partial: the caller's action cannot run, and no other
@@ -513,25 +565,6 @@ export class RunResourcePostureReconciler {
         return { ok: false, status: persisted, transition };
       }
       completed += 1;
-    }
-
-    const dispositions = context.states
-      .filter((state) => state.desiredDisposition !== 'acquired' && state.leaseId)
-      .map((state) => ({
-        leaseId: state.leaseId!,
-        keepWarm: state.desiredDisposition === 'warm',
-      }));
-    if (dispositions.length > 0) {
-      const released = await this.deps.releaseForPosture(context.slotId, dispositions);
-      for (const effect of released.effects) effects.add(effect);
-      for (const failure of released.failures) {
-        failures.push({
-          capabilityId: failure.capabilityId,
-          leaseId: failure.leaseId,
-          reason: failure.reason,
-        });
-      }
-      completed += dispositions.length - released.failures.length;
     }
 
     const refreshed = await this.refresh(context);
@@ -589,6 +622,7 @@ export class RunResourcePostureReconciler {
     context: ResolvedContext,
     inProgress: ResourcePostureTransition,
     park: ParkTarget,
+    priorState: RunResourcePostureState | undefined,
   ): Promise<RuntimePostureApplyResult> {
     const machine = park.machine;
     let execution: MachinePauseExecuteResult;
@@ -612,6 +646,7 @@ export class RunResourcePostureReconciler {
           code: 'PARK_EXECUTE_REFUSED',
           reason: error instanceof Error ? error.message : String(error),
         },
+        priorState,
       );
     }
     const refreshed = await this.refresh(context);
@@ -642,6 +677,8 @@ export class RunResourcePostureReconciler {
     request: Pick<ResourcePostureRequest, 'runId' | 'operationId'>,
     plan: ResourcePosturePlan,
     rejection: ResourcePostureRejection,
+    /** Posture to restore when a write-ahead already advertised the attempt. */
+    rollbackTo?: RunResourcePostureState,
   ): RuntimePostureApplyResult {
     const at = this.now().toISOString();
     const transition: ResourcePostureTransition = {
@@ -657,7 +694,7 @@ export class RunResourcePostureReconciler {
       rejection,
     };
     const run = this.deps.getRun(request.runId);
-    const previous = run?.resourcePosture;
+    const previous = rollbackTo ?? run?.resourcePosture;
     if (!previous) {
       // Nothing was applied and there is no earlier posture to annotate, so
       // inventing one would report a policy the Gateway never resolved. The
@@ -685,6 +722,46 @@ export class RunResourcePostureReconciler {
     return { ok: false, status: state, transition };
   }
 
+  /**
+   * Record that reconciliation could not run at all. Boundary callers must not
+   * lose an unreachable catalog or provider to a log line: the failure lands on
+   * the run's posture as a `failed` transition that status and reconnecting
+   * clients render.
+   */
+  async recordFailure(
+    runId: string,
+    posture: ResourcePosture,
+    reason: string,
+    operationId?: string,
+  ): Promise<RunResourcePostureState | null> {
+    const run = this.deps.getRun(runId);
+    if (!run) return null;
+    const at = this.now().toISOString();
+    const previous = run.resourcePosture;
+    const transition: ResourcePostureTransition = {
+      id: operationId ?? this.newOperationId(),
+      posture,
+      policySource: previous?.policySource ?? 'framework-default',
+      ...(previous?.gateChoice ? { gateChoice: previous.gateChoice } : {}),
+      requestedAt: at,
+      completedAt: at,
+      outcome: 'failed',
+      effects: [],
+      progress: { total: 0, completed: 0 },
+      failures: [{ capabilityId: 'reconciler', reason }],
+    };
+    // The requested posture was never applied, so the run keeps whatever posture
+    // it actually had; only the failed attempt is new information.
+    const state: RunResourcePostureState = {
+      ...(previous ?? this.emptyState(run)),
+      lastTransition: transition,
+      updatedAt: at,
+    };
+    const updated = this.deps.updateRun(runId, { resourcePosture: state });
+    this.deps.onRunUpdated?.(updated);
+    return state;
+  }
+
   private emptyState(run: Run): RunResourcePostureState {
     return {
       posture: 'active',
@@ -699,16 +776,23 @@ export class RunResourcePostureReconciler {
   private persist(
     context: ResolvedContext,
     transition: ResourcePostureTransition,
+    /**
+     * Posture to record on the run instead of the requested one. The `parked`
+     * write-ahead uses this to advertise the attempt through `lastTransition`
+     * without claiming the run is already parked; machine parking may still
+     * refuse it, and a refusal changes nothing.
+     */
+    posture: ResourcePosture = context.policy.posture,
   ): RunResourcePostureState {
     const state: RunResourcePostureState = {
-      posture: context.policy.posture,
+      posture,
       policySource: context.policy.policySource,
       ...(context.policy.gateChoice ? { gateChoice: context.policy.gateChoice } : {}),
       ...(context.run.waitPolicy ? { waitPolicy: context.run.waitPolicy } : {}),
       capabilities: context.states,
       // Nothing in this module can stop a worker; `parked` delegates that to
       // machine parking, which refuses gate-held runs.
-      workerRetained: context.policy.posture !== 'parked',
+      workerRetained: posture !== 'parked',
       lastTransition: transition,
       updatedAt: this.now().toISOString(),
     };
@@ -723,23 +807,30 @@ export class RunResourcePostureReconciler {
     return context.states.every((state) => dispositionSatisfied(state.desiredDisposition, state));
   }
 
+  /**
+   * Every lease this posture owns, grouped by capability and never collapsed:
+   * two sibling family runs can each hold a lease on the same capability, and a
+   * family terminal has to release both. Collapsing them would leave one
+   * acquired while status claimed the capability was stopped.
+   */
   private leasesForRun(
     run: Run,
     status: RuntimeCapabilityStatusResult,
     posture: ResourcePosture,
-  ): Map<string, RuntimeCapabilityLease> {
+  ): Map<string, RuntimeCapabilityLease[]> {
     const includeFamily = posture === 'terminal' && Boolean(run.familyId);
     const owned = status.leases.filter(
       (lease) =>
         lease.owner.runId === run.id || (includeFamily && lease.owner.familyId === run.familyId),
     );
-    const byCapability = new Map<string, RuntimeCapabilityLease>();
+    const byCapability = new Map<string, RuntimeCapabilityLease[]>();
     for (const lease of owned) {
-      const existing = byCapability.get(lease.capabilityId);
-      // Prefer the lease that still holds a provider over a historical one.
-      if (!existing || Date.parse(lease.updatedAt) >= Date.parse(existing.updatedAt)) {
-        byCapability.set(lease.capabilityId, lease);
-      }
+      const group = byCapability.get(lease.capabilityId) ?? [];
+      group.push(lease);
+      byCapability.set(lease.capabilityId, group);
+    }
+    for (const group of byCapability.values()) {
+      group.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     }
     return byCapability;
   }
@@ -749,25 +840,46 @@ export class RunResourcePostureReconciler {
     desired: ResourcePostureDesiredDisposition,
     source: ResourcePosturePolicySource,
     reason: string,
-    lease: RuntimeCapabilityLease | undefined,
+    group: RuntimeCapabilityLease[] | undefined,
     entry: RuntimeCapabilityCatalogEntry | undefined,
     nowMs: number,
   ): ResourcePostureCapabilityState {
-    const observedState = observedStateForLease(lease, nowMs);
+    const leases = group ?? [];
+    const observed = leases.map((lease) => observedStateForLease(lease, nowMs));
+    // A capability is only stopped when no sibling lease still holds it, and a
+    // cleanup failure always outranks a sibling that looks healthy.
+    const failed = leases.find((lease) => lease.cleanupFailure);
+    const observedState: ResourcePostureObservedState = failed
+      ? 'unhealthy'
+      : observed.includes('unhealthy')
+        ? 'unhealthy'
+        : observed.includes('transitioning')
+          ? 'transitioning'
+          : observed.includes('running')
+            ? 'running'
+            : observed.includes('unknown')
+              ? 'unknown'
+              : 'stopped';
+    // Report the lease that still holds the provider, not merely the newest.
+    const holder =
+      leases.find((lease, index) => observed[index] === 'running') ?? failed ?? leases[0];
+    const warmUntil = leases
+      .map((lease) => lease.keepWarmUntil)
+      .filter((value): value is string => Boolean(value && Date.parse(value) > nowMs))
+      .sort()
+      .at(-1);
     return {
       capabilityId,
       desiredDisposition: desired,
       observedState,
       policySource: source,
       reason,
-      ...(lease?.id ? { leaseId: lease.id } : {}),
-      ...(lease?.owner ? { owner: lease.owner } : {}),
-      ...(lease?.keepWarmUntil && Date.parse(lease.keepWarmUntil) > nowMs
-        ? { warmUntil: lease.keepWarmUntil }
-        : {}),
-      ...(lease?.updatedAt ? { lastTransitionAt: lease.updatedAt } : {}),
+      ...(holder?.id ? { leaseId: holder.id } : {}),
+      ...(holder?.owner ? { owner: holder.owner } : {}),
+      ...(warmUntil ? { warmUntil } : {}),
+      ...(holder?.updatedAt ? { lastTransitionAt: holder.updatedAt } : {}),
       releaseEffects: entry ? [...entry.releaseEffects] : [],
-      ...(lease?.cleanupFailure ? { cleanupFailure: lease.cleanupFailure } : {}),
+      ...(failed?.cleanupFailure ? { cleanupFailure: failed.cleanupFailure } : {}),
     };
   }
 

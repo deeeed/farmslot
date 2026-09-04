@@ -13,6 +13,7 @@ import {
   shouldKeepWorkerWarmThroughCiWatch,
   shouldTeardownGateHeldAgents,
 } from './gate-held-lifecycle.js';
+import { postureForBoundary } from './resource-posture.js';
 import { makeRun } from './test-fixtures.js';
 
 async function cleanupRun(runId: string): Promise<void> {
@@ -288,4 +289,28 @@ test('findActiveGateHeldRunForSlot ignores resolved gate-held runs', async (t) =
   });
 
   assert.equal(findActiveGateHeldRunForSlot(slotId), undefined);
+});
+
+test('a gate-held run waits under operator-wait, the one posture that cannot stop a worker', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'test-project',
+    ticketOrPr: 'MANUAL-1',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { ...gateHeldRunPatch(), slotId: 'slot-a' });
+
+  const held = getRun(run.id)!;
+  assert.equal(isGateHeldPublicationRun(held), true);
+  assert.equal(blocksGateHeldSlotRelease(held), true);
+  assert.equal(shouldTeardownGateHeldAgents(held), false);
+
+  // ADR-038 under ADR-054: the durable wait a gate-held run sits in maps to
+  // `operator-wait`. `parked` is the only posture that stops a worker at all,
+  // and it is reachable only through machine-pause eligibility, which excludes
+  // gate-held runs.
+  assert.equal(postureForBoundary('operator-wait'), 'operator-wait');
+  assert.equal(postureForBoundary('gate-resolved'), 'operator-wait');
+  assert.notEqual(postureForBoundary('operator-wait'), 'parked');
 });

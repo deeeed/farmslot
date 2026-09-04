@@ -100,6 +100,20 @@ export async function reconcileRunPosture(
       `[run-engine] posture reconcile for ${request.runId.slice(0, 8)} at boundary ` +
         `'${request.boundary}' failed: ${detail}`,
     );
+    // Not swallowed: the failure becomes a durable `failed` transition on the
+    // run so posture status and reconnecting clients see it. The boundary itself
+    // must still complete — losing an operator hold, a cancel, or a slot
+    // teardown because a provider was unreachable would be the worse outcome.
+    try {
+      await reconciler.recordFailure(request.runId, posture, detail, request.operationId);
+    } catch (recordError) {
+      // The failure recorder itself failing is unrecoverable here; there is no
+      // durable channel left, so log it and let the boundary finish.
+      console.error(
+        `[run-engine] could not persist posture failure for ${request.runId.slice(0, 8)}: ` +
+          `${recordError instanceof Error ? recordError.message : String(recordError)}`,
+      );
+    }
     return { ok: false, error: detail };
   }
 }

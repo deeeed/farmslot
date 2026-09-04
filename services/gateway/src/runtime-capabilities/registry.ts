@@ -309,6 +309,7 @@ export class RuntimeCapabilityRegistry {
         lease.owner.runId === params.ownerRunId &&
         ACTIVE_STATES.has(lease.state),
     );
+    let staleOwnerLease = false;
     if (sameOwner?.state === 'acquired') {
       if (!sameParameters(sameOwner.parameters, parameters)) {
         return {
@@ -320,12 +321,95 @@ export class RuntimeCapabilityRegistry {
           },
         };
       }
-      return {
-        ok: true,
-        lease: structuredClone(sameOwner),
-        dependencyLeases: [],
-        idempotent: true,
-      };
+      // ADR-054: a validation or recipe rerun must prove the retained provider is
+      // actually alive before it reuses the lease. Without this a provider that
+      // died while the run waited would pass preparation and the action would run
+      // against nothing.
+      if (params.revalidateHealth) {
+        const health = await this.runAction(params.slotId, entry.actions.health);
+        sameOwner.updatedAt = this.timestamp();
+        if (health.ok) {
+          sameOwner.health = {
+            state: 'healthy',
+            checkedAt: sameOwner.updatedAt,
+            ...(health.detail ? { detail: health.detail } : {}),
+          };
+          this.recordEvent(snapshot, {
+            kind: 'health-changed',
+            slotId: params.slotId,
+            capabilityId: entry.id,
+            leaseId: sameOwner.id,
+            owner: sameOwner.owner,
+            detail: 'retained provider revalidated healthy',
+          });
+          return {
+            ok: true,
+            lease: structuredClone(sameOwner),
+            dependencyLeases: [],
+            idempotent: true,
+          };
+        }
+        // Unhealthy: clean the provider up before anything reuses it. A failed
+        // cleanup is durable as an error lease and blocks the action.
+        sameOwner.health = {
+          state: 'unhealthy',
+          checkedAt: sameOwner.updatedAt,
+          ...(health.detail ? { detail: health.detail } : {}),
+        };
+        const otherHolders = snapshot.leases.some(
+          (candidate) =>
+            candidate.id !== sameOwner.id &&
+            candidate.slotId === sameOwner.slotId &&
+            candidate.capabilityId === sameOwner.capabilityId &&
+            holdsProvider(candidate),
+        );
+        const cleanup = otherHolders
+          ? { ok: true }
+          : await this.runAction(params.slotId, entry.actions.release);
+        sameOwner.updatedAt = this.timestamp();
+        if (!cleanup.ok) {
+          sameOwner.state = 'error';
+          sameOwner.cleanupFailure = cleanup.detail ?? 'unhealthy provider cleanup failed';
+          this.recordEvent(snapshot, {
+            kind: 'cleanup-failed',
+            slotId: params.slotId,
+            capabilityId: entry.id,
+            leaseId: sameOwner.id,
+            owner: sameOwner.owner,
+            detail: sameOwner.cleanupFailure,
+          });
+          return {
+            ok: false,
+            conflict: {
+              kind: 'unavailable',
+              capabilityId: entry.id,
+              reason: sameOwner.cleanupFailure,
+            },
+          };
+        }
+        sameOwner.state = 'released';
+        sameOwner.releasedAt = sameOwner.updatedAt;
+        sameOwner.referenceCount = 0;
+        sameOwner.keepWarmUntil = undefined;
+        staleOwnerLease = true;
+        this.recordEvent(snapshot, {
+          kind: 'released',
+          slotId: params.slotId,
+          capabilityId: entry.id,
+          leaseId: sameOwner.id,
+          owner: sameOwner.owner,
+          detail: `unhealthy retained provider cleaned up before reacquire: ${
+            health.detail ?? 'health check failed'
+          }`,
+        });
+      } else {
+        return {
+          ok: true,
+          lease: structuredClone(sameOwner),
+          dependencyLeases: [],
+          idempotent: true,
+        };
+      }
     }
 
     if (recordPlan) {
@@ -529,8 +613,9 @@ export class RuntimeCapabilityRegistry {
     }
 
     const now = this.timestamp();
+    const reusableOwnerLease = staleOwnerLease ? undefined : sameOwner;
     const lease =
-      sameOwner ??
+      reusableOwnerLease ??
       this.createLease(
         catalog,
         entry,
@@ -540,8 +625,8 @@ export class RuntimeCapabilityRegistry {
         now,
         'acquiring',
       );
-    if (!sameOwner) snapshot.leases.push(lease);
-    if (sameOwner) {
+    if (!reusableOwnerLease) snapshot.leases.push(lease);
+    if (reusableOwnerLease) {
       lease.parameters = structuredClone(parameters);
       lease.dependencyLeaseIds = [
         ...new Set([
@@ -941,6 +1026,8 @@ export class RuntimeCapabilityRegistry {
           lease.keepWarmUntil = new Date(this.now().getTime() + entry.keepWarmMs).toISOString();
         } else if (otherHolders.length === 0 && previousState !== 'queued') {
           releaseActionRan = true;
+          // The provider is going away, so any earlier warm deadline is void.
+          lease.keepWarmUntil = undefined;
           actionResult = await this.runAction(slotId, entry.actions.release);
         }
         if (!actionResult.ok) {
@@ -989,16 +1076,38 @@ export class RuntimeCapabilityRegistry {
     });
   }
 
+  /**
+   * Stop providers that a released lease is still keeping warm, whatever their
+   * deadline. A `terminal` posture must bypass keep-warm (ADR-054), and by then
+   * the lease is already released, so the normal release path cannot see it.
+   */
+  async stopWarmProviders(slotId: string, capabilityIds?: string[]): Promise<void> {
+    const wanted = capabilityIds ? new Set(capabilityIds) : null;
+    await this.sweepWarmProviders(
+      (lease) =>
+        lease.slotId === slotId &&
+        lease.keepWarmUntil !== undefined &&
+        (!wanted || wanted.has(lease.capabilityId)),
+    );
+  }
+
   async cleanupExpiredWarmProviders(slotIds?: string[]): Promise<void> {
+    const nowMs = this.now().getTime();
+    await this.sweepWarmProviders(
+      (lease) =>
+        lease.keepWarmUntil !== undefined &&
+        Date.parse(lease.keepWarmUntil) <= nowMs &&
+        (!slotIds || slotIds.includes(lease.slotId)),
+    );
+  }
+
+  private async sweepWarmProviders(
+    select: (lease: RuntimeCapabilityLease) => boolean,
+  ): Promise<void> {
     await this.mutate(async () => {
       const snapshot = this.options.store.snapshot();
-      const nowMs = this.now().getTime();
       const expired = snapshot.leases.filter(
-        (lease) =>
-          lease.state === 'released' &&
-          lease.keepWarmUntil !== undefined &&
-          Date.parse(lease.keepWarmUntil) <= nowMs &&
-          (!slotIds || slotIds.includes(lease.slotId)),
+        (lease) => lease.state === 'released' && select(lease),
       );
       for (const lease of expired) {
         const hasHolder = snapshot.leases.some(
@@ -1071,7 +1180,7 @@ export class RuntimeCapabilityRegistry {
           capabilityId: lease.capabilityId,
           leaseId: lease.id,
           owner: lease.owner,
-          detail: 'keep-warm deadline elapsed; provider released',
+          detail: 'keep-warm window ended; provider released',
         });
       }
       await this.persist(snapshot);

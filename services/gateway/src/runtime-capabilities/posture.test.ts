@@ -6,6 +6,7 @@ import test, { type TestContext } from 'node:test';
 
 import type {
   MachinePauseExecuteParams,
+  MachinePauseExecuteResult,
   MachinePausePreviewParams,
   MachinePausePreviewResult,
   ProjectResourcePostureConfig,
@@ -65,6 +66,7 @@ interface HarnessOptions {
     action: RuntimeCapabilityProviderActionRef,
   ) => { ok: boolean; detail?: string };
   parkPreview?: (params: MachinePausePreviewParams) => Promise<MachinePausePreviewResult>;
+  parkExecute?: (params: MachinePauseExecuteParams) => Promise<MachinePauseExecuteResult>;
   now?: () => Date;
   storePath?: string;
 }
@@ -142,6 +144,7 @@ async function harness(t: TestContext, options: HarnessOptions) {
     capabilityStatus: (slotId) => registry.status({ slotId }),
     acquireCapability: (params) => registry.acquire(params),
     releaseForPosture: (slotId, dispositions) => registry.releaseForPosture(slotId, dispositions),
+    stopWarmProviders: (slotId, capabilityIds) => registry.stopWarmProviders(slotId, capabilityIds),
     machineForSlot: async () => MACHINE,
     parkPreview: async (params) => {
       parkCalls.push(params);
@@ -149,6 +152,7 @@ async function harness(t: TestContext, options: HarnessOptions) {
     },
     parkExecute: async (params) => {
       parkCalls.push(params);
+      if (options.parkExecute) return options.parkExecute(params);
       return {
         ok: true,
         outcome: 'complete',
@@ -545,4 +549,217 @@ test('a run with no slot is a typed invalid-request rejection that mutates nothi
   assert.equal(result.ok, false);
   assert.equal(result.transition.rejection?.kind, 'invalid-request');
   assert.equal(runs.get('run-a')?.resourcePosture?.posture, undefined);
+});
+
+test('terminal stops a provider even when project retention asks to keep it warm', async (t) => {
+  // Config validation rejects `terminal: warm`, but a hand-edited or legacy
+  // project must still not be able to keep a provider alive past the run.
+  const { reconciler, registry, actions } = await harness(t, {
+    capabilities: [
+      entry('metro', {
+        cost: { class: 'high', resources: [] },
+        keepWarmMs: 600_000,
+        retention: { terminal: 'warm' },
+      }),
+    ],
+    projectPosture: { defaults: { terminal: 'warm' } },
+  });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  actions.length = 0;
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
+  assert.equal(result.status.capabilities[0].desiredDisposition, 'stopped');
+  assert.ok(actions.includes('metro.release'), 'terminal must bypass keep-warm');
+  assert.equal(result.status.capabilities[0].observedState, 'stopped');
+});
+
+test('an elapsed keep-warm window is not reported as a stopped provider', async (t) => {
+  let clock = new Date('2026-08-11T00:00:00.000Z');
+  const { reconciler, registry, actions } = await harness(t, {
+    capabilities: [CATALOG_METRO],
+    now: () => clock,
+  });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+
+  // Past the deadline, before the keep-warm sweeper has run: the provider may
+  // still be alive and any cleanup failure is still unknown.
+  clock = new Date('2026-08-11T01:00:00.000Z');
+  const status = await reconciler.status('run-a');
+  assert.equal(status.state.capabilities[0].observedState, 'unknown');
+  assert.equal(status.state.capabilities[0].warmUntil, undefined);
+
+  // So a terminal reconcile still runs a real release rather than assuming stopped.
+  actions.length = 0;
+  const terminal = await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
+  assert.ok(actions.includes('metro.release'));
+  assert.equal(terminal.status.capabilities[0].observedState, 'stopped');
+});
+
+test('family terminal releases every sibling lease on a shared capability', async (t) => {
+  const { reconciler, registry, actions } = await harness(t, {
+    capabilities: [entry('shared-db', { sharePolicy: 'shared' })],
+  });
+  // Two runs in the same family both hold the capability.
+  assert.equal((await acquire(registry, 'shared-db', 'run-a')).ok, true);
+  assert.equal((await acquire(registry, 'shared-db', 'sibling-run')).ok, true);
+  actions.length = 0;
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
+  assert.equal(result.ok, true);
+  // Both leases are gone and the provider actually stopped.
+  const after = await registry.status({ slotId: SLOT });
+  assert.deepEqual(
+    after.leases.filter((lease) => lease.state === 'acquired'),
+    [],
+  );
+  assert.ok(actions.includes('shared-db.release'));
+  assert.equal(result.status.capabilities[0].observedState, 'stopped');
+});
+
+test('status reports running while a sibling family lease still holds the capability', async (t) => {
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [entry('shared-db', { sharePolicy: 'shared' })],
+  });
+  assert.equal((await acquire(registry, 'shared-db', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
+  // A sibling in the same family takes the capability after run-a finished with
+  // it. The persisted terminal posture groups both leases together.
+  assert.equal((await acquire(registry, 'shared-db', 'sibling-run')).ok, true);
+
+  const status = await reconciler.status('run-a');
+  const state = status.state.capabilities.find((item) => item.capabilityId === 'shared-db');
+  assert.equal(
+    state?.observedState,
+    'running',
+    'a sibling lease still holds the provider, so it is not stopped',
+  );
+  assert.equal(state?.owner?.runId, 'sibling-run');
+});
+
+test('a refused park keeps the posture the run actually had', async (t) => {
+  const { reconciler, registry, runs, actions } = await harness(t, {
+    capabilities: [CATALOG_LINT],
+    // Preview accepts, then the execute refuses the way a stale preview does.
+    parkExecute: async () => {
+      throw new Error('machine pause preview is stale; preview the batch again');
+    },
+  });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+  // Establish a real prior posture first.
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+  assert.equal(runs.get('run-a')?.resourcePosture?.posture, 'operator-wait');
+  actions.length = 0;
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'parked' });
+  assert.equal(result.ok, false);
+  assert.equal(result.transition.outcome, 'rejected');
+  assert.equal(result.transition.rejection?.kind, 'park-ineligible');
+  // Parking changed nothing, so the run must not advertise itself as parked
+  // with its worker reported stopped.
+  assert.equal(result.status.posture, 'operator-wait');
+  assert.equal(result.status.workerRetained, true);
+  assert.equal(runs.get('run-a')?.resourcePosture?.posture, 'operator-wait');
+  assert.deepEqual(actions, []);
+});
+
+test('replaying an operation that ended partial reports partial, not success', async (t) => {
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [CATALOG_LINT],
+    runAction: (_slot, action) =>
+      action.kind === 'slot-action' && action.actionId === 'lint.release'
+        ? { ok: false, detail: 'shutdown exited 1' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+  const first = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'terminal',
+    operationId: 'op-partial',
+  });
+  assert.equal(first.transition.outcome, 'partial');
+  assert.equal(first.ok, false);
+
+  const replay = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'terminal',
+    operationId: 'op-partial',
+  });
+  assert.equal(replay.transition.outcome, 'partial');
+  assert.equal(replay.ok, false, 'a replayed partial must not report success');
+});
+
+test('active releases an obsolete lease before acquiring one that claims the same resource', async (t) => {
+  const claim = { id: 'cdp-port', access: 'exclusive' as const };
+  const { reconciler, registry, actions } = await harness(t, {
+    capabilities: [
+      entry('browser-old', { cost: { class: 'high', resources: [claim] } }),
+      entry('browser-new', { cost: { class: 'high', resources: [claim] } }),
+    ],
+  });
+  assert.equal((await acquire(registry, 'browser-old', 'run-a')).ok, true);
+  actions.length = 0;
+
+  // The proof plan now needs the other capability, which claims the same
+  // exclusive resource. Acquiring first would conflict the run against itself.
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [{ capabilityId: 'browser-new', reason: 'validation', mode: 'visual' }],
+  });
+  assert.equal(result.transition.rejection, undefined, JSON.stringify(result.transition));
+  assert.equal(result.ok, true);
+  assert.ok(
+    actions.indexOf('browser-old.release') < actions.indexOf('browser-new.acquire'),
+    `expected release before acquire, got ${actions.join(', ')}`,
+  );
+});
+
+test('a cleanup failure survives a restart and is still reported to a reconnecting client', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'run-resource-posture-failure-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const storePath = path.join(directory, 'leases.json');
+  const first = await harness(t, {
+    capabilities: [CATALOG_LINT],
+    storePath,
+    runAction: (_slot, action) =>
+      action.kind === 'slot-action' && action.actionId === 'lint.release'
+        ? { ok: false, detail: 'shutdown exited 1' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(first.registry, 'lint', 'run-a')).ok, true);
+  const applied = await first.reconciler.apply({ runId: 'run-a', posture: 'terminal' });
+  assert.equal(applied.transition.outcome, 'partial');
+  const persistedRun = first.runs.get('run-a')!;
+
+  const second = await harness(t, {
+    capabilities: [CATALOG_LINT],
+    storePath,
+    run: persistedRun,
+  });
+  const status = await second.reconciler.status('run-a');
+  const state = status.state.capabilities[0];
+  assert.equal(state.cleanupFailure, 'shutdown exited 1');
+  assert.notEqual(state.observedState, 'stopped');
+  assert.equal(status.state.lastTransition?.outcome, 'partial');
+  assert.equal(status.state.lastTransition?.failures[0]?.capabilityId, 'lint');
+});
+
+test('recordFailure persists an unreachable reconcile without changing the posture', async (t) => {
+  const { reconciler, registry, runs } = await harness(t, { capabilities: [CATALOG_LINT] });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+
+  const state = await reconciler.recordFailure(
+    'run-a',
+    'terminal',
+    'Project capability catalog unavailable',
+  );
+  assert.equal(state?.posture, 'operator-wait', 'the failed posture was never applied');
+  assert.equal(state?.lastTransition?.outcome, 'failed');
+  assert.equal(state?.lastTransition?.posture, 'terminal');
+  assert.equal(
+    state?.lastTransition?.failures[0]?.reason,
+    'Project capability catalog unavailable',
+  );
+  assert.equal(runs.get('run-a')?.resourcePosture?.lastTransition?.outcome, 'failed');
 });

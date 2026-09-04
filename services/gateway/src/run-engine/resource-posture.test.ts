@@ -132,18 +132,39 @@ test('a resolved gate carries the operator choice into the wait that follows', a
   assert.equal(calls[2].posture, 'terminal');
 });
 
-test('a reconcile failure never breaks the lifecycle boundary it is attached to', async () => {
+test('a reconcile failure never breaks the boundary and is persisted, not swallowed', async () => {
+  const recorded: Array<{ runId: string; posture: ResourcePosture; reason: string }> = [];
   const throwing = {
     apply: async () => {
       throw new Error('capability catalog unavailable');
     },
+    recordFailure: async (runId: string, posture: ResourcePosture, reason: string) => {
+      recorded.push({ runId, posture, reason });
+      return null;
+    },
   } as unknown as RunResourcePostureReconciler;
-  const outcome = await reconcileRunPosture(
-    { runId: newRun(), boundary: 'operator-wait' },
-    throwing,
-  );
+  const runId = newRun();
+  const outcome = await reconcileRunPosture({ runId, boundary: 'operator-wait' }, throwing);
   assert.equal(outcome.ok, false);
   assert.equal(outcome.error, 'capability catalog unavailable');
+  // The failure reaches persisted posture status, not just a log line.
+  assert.deepEqual(recorded, [
+    { runId, posture: 'operator-wait', reason: 'capability catalog unavailable' },
+  ]);
+});
+
+test('a failure while recording a failure still lets the boundary finish', async () => {
+  const throwing = {
+    apply: async () => {
+      throw new Error('catalog unavailable');
+    },
+    recordFailure: async () => {
+      throw new Error('run store unavailable');
+    },
+  } as unknown as RunResourcePostureReconciler;
+  const outcome = await reconcileRunPosture({ runId: newRun(), boundary: 'cancel' }, throwing);
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error, 'catalog unavailable');
 });
 
 test('validation preparation reports a typed blocking reason instead of running', async () => {

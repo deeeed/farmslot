@@ -37,6 +37,8 @@ const reconciler = new RunResourcePostureReconciler({
   acquireCapability: (params) => getRuntimeCapabilityRegistry().acquire(params),
   releaseForPosture: (slotId, dispositions) =>
     getRuntimeCapabilityRegistry().releaseForPosture(slotId, dispositions),
+  stopWarmProviders: (slotId, capabilityIds) =>
+    getRuntimeCapabilityRegistry().stopWarmProviders(slotId, capabilityIds),
   machineForSlot: async (slotId) => {
     const fleet = await loadFleetStatus();
     return fleet.slots.find((candidate) => candidate.slot === slotId)?.machine ?? null;
