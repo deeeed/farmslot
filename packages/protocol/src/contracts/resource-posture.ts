@@ -169,8 +169,18 @@ export interface RunResourcePostureState {
   /** ADR-038: no posture resolved here stops a gate-held worker. */
   workerRetained: boolean;
   lastTransition?: ResourcePostureTransition;
+  /**
+   * Recent transitions, newest first, bounded by
+   * `RESOURCE_POSTURE_TRANSITION_HISTORY`. Replaying an `operationId` returns the
+   * stored outcome for any id still in here, so a retry of an earlier operation
+   * cannot re-execute and undo a later one.
+   */
+  recentTransitions?: ResourcePostureTransition[];
   updatedAt: string;
 }
+
+/** How many transitions a run keeps for operation-id replay. */
+export const RESOURCE_POSTURE_TRANSITION_HISTORY = 20;
 
 /** Gate choice -> posture. The only place this mapping exists. */
 export function postureForGateChoice(

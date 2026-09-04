@@ -16,6 +16,7 @@ import {
   type MachinePausePreviewResult,
   postureForGateChoice,
   type ProjectResourcePostureConfig,
+  RESOURCE_POSTURE_TRANSITION_HISTORY,
   type ResourcePosture,
   type ResourcePostureCapabilityState,
   type ResourcePostureDesiredDisposition,
@@ -288,6 +289,25 @@ export function observedStateForLease(
   return 'stopped';
 }
 
+/** Transitions a run has retained, newest first, including the latest. */
+function historyOf(state: RunResourcePostureState | undefined): ResourcePostureTransition[] {
+  if (!state) return [];
+  const history = state.recentTransitions ?? [];
+  if (state.lastTransition && !history.some((entry) => entry.id === state.lastTransition!.id)) {
+    return [state.lastTransition, ...history];
+  }
+  return history;
+}
+
+/** Newest first, de-duplicated by operation id, bounded. */
+function withTransition(
+  state: RunResourcePostureState | undefined,
+  transition: ResourcePostureTransition,
+): ResourcePostureTransition[] {
+  const previous = historyOf(state).filter((entry) => entry.id !== transition.id);
+  return [transition, ...previous].slice(0, RESOURCE_POSTURE_TRANSITION_HISTORY);
+}
+
 function dispositionSatisfied(
   desired: ResourcePostureDesiredDisposition,
   state: ResourcePostureCapabilityState,
@@ -450,8 +470,14 @@ export class RunResourcePostureReconciler {
   private async applyInternal(request: ResourcePostureRequest): Promise<RuntimePostureApplyResult> {
     const run = this.deps.getRun(request.runId);
     if (run && request.operationId) {
-      const previous = run.resourcePosture?.lastTransition;
-      if (previous?.id === request.operationId && previous.outcome !== 'in-progress') {
+      // Search the whole retained history, not just the last transition: after a
+      // later operation lands, retrying an earlier id must still return that
+      // earlier result rather than executing again and undoing the later one.
+      const previous = historyOf(run.resourcePosture).find(
+        (transition) =>
+          transition.id === request.operationId && transition.outcome !== 'in-progress',
+      );
+      if (previous) {
         return {
           ok: previous.outcome === 'applied' || previous.outcome === 'idempotent',
           status: run.resourcePosture!,
@@ -799,6 +825,7 @@ export class RunResourcePostureReconciler {
           capabilities: [],
           workerRetained: true,
           lastTransition: transition,
+          recentTransitions: withTransition(undefined, transition),
           updatedAt: at,
         },
         transition,
@@ -807,6 +834,7 @@ export class RunResourcePostureReconciler {
     const state: RunResourcePostureState = {
       ...previous,
       lastTransition: transition,
+      recentTransitions: withTransition(previous, transition),
       updatedAt: at,
     };
     const updated = this.deps.updateRun(run!.id, { resourcePosture: state });
@@ -847,6 +875,7 @@ export class RunResourcePostureReconciler {
     const state: RunResourcePostureState = {
       ...(previous ?? this.emptyState(run)),
       lastTransition: transition,
+      recentTransitions: withTransition(previous, transition),
       updatedAt: at,
     };
     const updated = this.deps.updateRun(runId, { resourcePosture: state });
@@ -886,6 +915,7 @@ export class RunResourcePostureReconciler {
       // machine parking, which refuses gate-held runs.
       workerRetained: posture !== 'parked',
       lastTransition: transition,
+      recentTransitions: withTransition(context.run.resourcePosture, transition),
       updatedAt: this.now().toISOString(),
     };
     const updated = this.deps.updateRun(context.run.id, { resourcePosture: state });

@@ -4,16 +4,18 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import type {
-  MachinePauseExecuteParams,
-  MachinePauseExecuteResult,
-  MachinePausePreviewParams,
-  MachinePausePreviewResult,
-  ProjectResourcePostureConfig,
-  Run,
-  RuntimeCapabilityCatalogEntry,
-  RuntimeCapabilityProviderActionRef,
-  RuntimeCapabilityReleaseResult,
+import {
+  type MachinePauseExecuteParams,
+  type MachinePauseExecuteResult,
+  type MachinePausePreviewParams,
+  type MachinePausePreviewResult,
+  type ProjectResourcePostureConfig,
+  RESOURCE_POSTURE_TRANSITION_HISTORY,
+  type ResourcePostureTransition,
+  type Run,
+  type RuntimeCapabilityCatalogEntry,
+  type RuntimeCapabilityProviderActionRef,
+  type RuntimeCapabilityReleaseResult,
 } from '@farmslot/protocol';
 
 import { resolveEffectivePosturePolicy, RunResourcePostureReconciler } from './posture.js';
@@ -21,6 +23,15 @@ import { RuntimeCapabilityRegistry } from './registry.js';
 import { RuntimeCapabilityStore } from './store.js';
 
 const SLOT = 'slot-a';
+
+function runsHistory(
+  reconciler: RunResourcePostureReconciler,
+  runId: string,
+): ResourcePostureTransition[] {
+  const runs = (reconciler as unknown as { deps: { getRun: (id: string) => Run | undefined } })
+    .deps;
+  return runs.getRun(runId)?.resourcePosture?.recentTransitions ?? [];
+}
 const MACHINE = 'macwork';
 
 function entry(
@@ -645,24 +656,27 @@ test('family terminal releases every sibling lease on a shared capability', asyn
   assert.equal(result.status.capabilities[0].observedState, 'stopped');
 });
 
-test('status reports running while a sibling family lease still holds the capability', async (t) => {
+test('status never reports stopped while a sibling family lease still holds the capability', async (t) => {
   const { reconciler, registry } = await harness(t, {
     capabilities: [entry('shared-db', { sharePolicy: 'shared' })],
+    runAction: (_slot, action) =>
+      action.kind === 'slot-action' && action.actionId === 'shared-db.release'
+        ? { ok: false, detail: 'shared-db shutdown exited 1' }
+        : { ok: true },
   });
+  // Two siblings in the same family hold the capability before terminal runs.
   assert.equal((await acquire(registry, 'shared-db', 'run-a')).ok, true);
-  await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
-  // A sibling in the same family takes the capability after run-a finished with
-  // it. The persisted terminal posture groups both leases together.
   assert.equal((await acquire(registry, 'shared-db', 'sibling-run')).ok, true);
 
+  await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
   const status = await reconciler.status('run-a');
   const state = status.state.capabilities.find((item) => item.capabilityId === 'shared-db');
-  assert.equal(
+  assert.notEqual(
     state?.observedState,
-    'running',
-    'a sibling lease still holds the provider, so it is not stopped',
+    'stopped',
+    'the provider did not stop, so status must not say it did',
   );
-  assert.equal(state?.owner?.runId, 'sibling-run');
+  assert.equal(state?.cleanupFailure, 'shared-db shutdown exited 1');
 });
 
 test('a refused park keeps the posture the run actually had', async (t) => {
@@ -1047,4 +1061,70 @@ test('a stopped provider does not satisfy a warm desire', async (t) => {
     'a stopped provider is not a cheaper way to be warm',
   );
   assert.equal(repeat.status.capabilities[0].observedState, 'stopped');
+});
+
+test('replaying an earlier operation id returns its result instead of re-executing', async (t) => {
+  const { reconciler, registry, actions, runs } = await harness(t, {
+    capabilities: [CATALOG_METRO],
+  });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+
+  // A: operator-wait warms the provider.
+  const a = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'operator-wait',
+    operationId: 'op-a',
+  });
+  assert.equal(a.transition.posture, 'operator-wait');
+
+  // B: terminal stops it, overwriting lastTransition.
+  const b = await reconciler.apply({ runId: 'run-a', posture: 'terminal', operationId: 'op-b' });
+  assert.equal(b.transition.posture, 'terminal');
+  assert.equal(runs.get('run-a')?.resourcePosture?.posture, 'terminal');
+
+  // Retrying A must return A's stored result, not re-apply operator-wait and
+  // undo B.
+  actions.length = 0;
+  const replayA = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'operator-wait',
+    operationId: 'op-a',
+  });
+  assert.equal(replayA.transition.id, 'op-a');
+  assert.equal(replayA.transition.posture, 'operator-wait');
+  assert.equal(replayA.transition.outcome, a.transition.outcome);
+  assert.deepEqual(actions, [], 'a known operation id must never execute again');
+  assert.equal(
+    runs.get('run-a')?.resourcePosture?.posture,
+    'terminal',
+    'the later posture must survive the replay',
+  );
+
+  // Replaying B still works too.
+  const replayB = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'terminal',
+    operationId: 'op-b',
+  });
+  assert.equal(replayB.transition.id, 'op-b');
+  assert.deepEqual(actions, []);
+});
+
+test('operation history is bounded and keeps the newest ids', async (t) => {
+  const { reconciler, registry } = await harness(t, { capabilities: [CATALOG_LINT] });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+  for (let index = 0; index < RESOURCE_POSTURE_TRANSITION_HISTORY + 5; index += 1) {
+    await reconciler.apply({
+      runId: 'run-a',
+      posture: index % 2 === 0 ? 'operator-wait' : 'active',
+      operationId: `op-${index}`,
+    });
+  }
+  const history = runsHistory(reconciler, 'run-a');
+  assert.equal(history.length, RESOURCE_POSTURE_TRANSITION_HISTORY);
+  assert.equal(history[0].id, `op-${RESOURCE_POSTURE_TRANSITION_HISTORY + 4}`);
+  assert.ok(
+    !history.some((entry) => entry.id === 'op-0'),
+    'the oldest ids fall out of the bounded window',
+  );
 });

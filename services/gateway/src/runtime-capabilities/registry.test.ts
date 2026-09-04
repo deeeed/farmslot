@@ -1084,3 +1084,63 @@ test('a dependency is retained when its parent failed to release', async (t) => 
   const metro = status.leases.find((lease) => lease.capabilityId === 'metro');
   assert.equal(metro?.state, 'acquired');
 });
+
+test('a failed parent protects its whole dependency chain', async (t) => {
+  // A -> B -> C, with B acquired on its own first. The idempotent reuse of B
+  // reports no dependency leases, so A records only B and the chain has to be
+  // walked link by link: a failed A retains B, and a retained B must retain C.
+  const { registry, actions } = await fixture(
+    t,
+    [entry('a', 'exclusive', ['b']), entry('b', 'exclusive', ['c']), entry('c')],
+    {
+      runAction: async (_slotId, action) =>
+        action.kind === 'slot-action' && action.actionId === 'a.release'
+          ? { ok: false, detail: 'a shutdown exited 1' }
+          : { ok: true },
+    },
+  );
+  assert.equal((await acquire(registry, 'b', 'run-a', 'fam-a')).ok, true);
+  assert.equal((await acquire(registry, 'a', 'run-a', 'fam-a')).ok, true);
+  const graph = await registry.status({ slotId: SLOT });
+  const parent = graph.leases.find((lease) => lease.capabilityId === 'a')!;
+  const grandchild = graph.leases.find((lease) => lease.capabilityId === 'c')!;
+  assert.ok(
+    !parent.dependencyLeaseIds.includes(grandchild.id),
+    'this test is only meaningful when the parent does not list the grandchild',
+  );
+  actions.length = 0;
+
+  const result = await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  assert.equal(result.ok, false);
+  const releases = actions.filter((action) => action.endsWith('.release'));
+  assert.deepEqual(releases, ['a.release'], `chain was broken: ${actions.join(', ')}`);
+  assert.deepEqual(result.retained.map((lease) => lease.capabilityId).sort(), ['b', 'c']);
+  const status = await registry.status({ slotId: SLOT });
+  for (const capabilityId of ['b', 'c']) {
+    const lease = status.leases.find((candidate) => candidate.capabilityId === capabilityId);
+    assert.equal(lease?.state, 'acquired', `${capabilityId} must stay acquired`);
+  }
+});
+
+test('family terminal cleanup fences the siblings it cleaned', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('browser', 'shared')]);
+  assert.equal((await acquire(registry, 'browser', 'run-a', 'fam-a')).ok, true);
+  assert.equal((await acquire(registry, 'browser', 'sibling-run', 'fam-a')).ok, true);
+
+  await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  actions.length = 0;
+
+  // The family is done with the slot; a sibling must not pick a provider back up.
+  const sibling = await acquire(registry, 'browser', 'sibling-run', 'fam-a');
+  assert.equal(sibling.ok, false, 'a fenced family member must not reacquire');
+  if (sibling.ok) return;
+  assert.match(sibling.conflict.reason, /terminal capability cleanup/);
+  // A member that never held a lease is fenced by family too.
+  const untouched = await acquire(registry, 'browser', 'late-sibling', 'fam-a');
+  assert.equal(untouched.ok, false);
+  assert.deepEqual(actions, [], 'nothing may be booted for a terminal family');
+
+  // An unrelated family is unaffected.
+  const other = await acquire(registry, 'browser', 'run-b', 'fam-b');
+  assert.equal(other.ok, true);
+});

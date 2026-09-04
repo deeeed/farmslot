@@ -114,6 +114,8 @@ export class RuntimeCapabilityRegistry {
    * one of them: the run is gone, so nothing would ever release it again.
    */
   private terminatedOwners = new Set<string>();
+  /** Families whose terminal cleanup has run; siblings must not reacquire. */
+  private terminatedFamilies = new Set<string>();
   private loaded = false;
   private loadPromise: Promise<void> | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
@@ -257,7 +259,10 @@ export class RuntimeCapabilityRegistry {
         },
       };
     }
-    if (this.terminatedOwners.has(params.ownerRunId)) {
+    if (
+      this.terminatedOwners.has(params.ownerRunId) ||
+      (params.ownerFamilyId !== undefined && this.terminatedFamilies.has(params.ownerFamilyId))
+    ) {
       // Fail closed. Handing a provider to a run that has already been torn down
       // leaks it: nothing will release it again.
       return {
@@ -986,11 +991,16 @@ export class RuntimeCapabilityRegistry {
     ownerRunId: string,
     familyId?: string,
   ): Promise<RuntimeCapabilityReleaseResult> {
-    this.terminatedOwners.add(ownerRunId);
-    while (this.terminatedOwners.size > 1_000) {
-      this.terminatedOwners.delete(this.terminatedOwners.values().next().value!);
+    // Fence before releasing, not after: an acquire queued behind this release
+    // would otherwise slip in the moment it finishes. The family is fenced as a
+    // whole because the whole family is what this cleans, so a sibling cannot
+    // reacquire on the way out.
+    this.fenceOwner(ownerRunId);
+    if (familyId !== undefined) this.terminatedFamilies.add(familyId);
+    while (this.terminatedFamilies.size > 1_000) {
+      this.terminatedFamilies.delete(this.terminatedFamilies.values().next().value!);
     }
-    return this.releaseSelected(
+    const result = await this.releaseSelected(
       slotId,
       (lease) =>
         lease.owner.runId === ownerRunId ||
@@ -998,6 +1008,19 @@ export class RuntimeCapabilityRegistry {
       // Terminal bypasses keep-warm by definition (ADR-054).
       { force: false, keepWarmFor: () => false },
     );
+    // Also fence every owner whose lease this actually touched, so a run that
+    // shared the slot through the family is covered by run id too.
+    for (const lease of [...result.released, ...result.retained]) {
+      this.fenceOwner(lease.owner.runId);
+    }
+    return result;
+  }
+
+  private fenceOwner(ownerRunId: string): void {
+    this.terminatedOwners.add(ownerRunId);
+    while (this.terminatedOwners.size > 1_000) {
+      this.terminatedOwners.delete(this.terminatedOwners.values().next().value!);
+    }
   }
 
   async releaseForPosture(
@@ -1046,7 +1069,10 @@ export class RuntimeCapabilityRegistry {
       const retained: RuntimeCapabilityLease[] = [];
       const effects = new Set<string>();
       const failures: RuntimeCapabilityReleaseResult['failures'] = [];
-      const failedToRelease = new Set<string>();
+      // Leases that did not actually go away: they failed to release, or they
+      // were retained because something that failed still needs them. Either way
+      // they still hold their own dependencies, so the chain must propagate.
+      const stillHolding = new Set<string>();
       const selectedIds = new Set(order.map((lease) => lease.id));
 
       for (const lease of order) {
@@ -1062,7 +1088,7 @@ export class RuntimeCapabilityRegistry {
             capabilityId: lease.capabilityId,
             reason: lease.cleanupFailure,
           });
-          failedToRelease.add(lease.id);
+          stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'cleanup-failed',
             slotId: lease.slotId,
@@ -1082,7 +1108,7 @@ export class RuntimeCapabilityRegistry {
             capabilityId: lease.capabilityId,
             reason: lease.cleanupFailure,
           });
-          failedToRelease.add(lease.id);
+          stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'recovery-rejected',
             slotId: lease.slotId,
@@ -1099,12 +1125,16 @@ export class RuntimeCapabilityRegistry {
             // A selected lease that failed to release did not go away: it still
             // holds whatever it depends on. Treating it as gone would stop a
             // dependency out from under a provider that is demonstrably still up.
-            (!selectedIds.has(candidate.id) || failedToRelease.has(candidate.id)) &&
+            (!selectedIds.has(candidate.id) || stillHolding.has(candidate.id)) &&
             blocksAcquisition(candidate) &&
             candidate.dependencyLeaseIds.includes(lease.id),
         );
         if (stillRequired) {
           retained.push(structuredClone(lease));
+          // Retained means still up. Anything it depends on is still in use, so
+          // the whole chain below it has to be protected too (A -> B -> C: a
+          // failed A retains B, and B must then retain C).
+          stillHolding.add(lease.id);
           continue;
         }
         const otherHolders = snapshot.leases.filter(
@@ -1151,7 +1181,7 @@ export class RuntimeCapabilityRegistry {
             capabilityId: lease.capabilityId,
             reason: lease.cleanupFailure,
           });
-          failedToRelease.add(lease.id);
+          stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'cleanup-failed',
             slotId: lease.slotId,

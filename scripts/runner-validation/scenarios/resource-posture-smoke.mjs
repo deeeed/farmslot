@@ -231,9 +231,10 @@ async function prepareDependencyPosture({ slotId, runId, report, acquireBudgetMs
       }
     }
 
+    // Setup only. `pass` stays false until the terminal verdict.
     proof.preparedAt = new Date().toISOString();
-    proof.pass = true;
   } catch (error) {
+    proof.pass = false;
     proof.error = error?.message || String(error);
     // Whatever went wrong, anything this proof booted must still come down.
     // Recorded, not swallowed: the outcome lands in the evidence either way.
@@ -252,12 +253,48 @@ async function prepareDependencyPosture({ slotId, runId, report, acquireBudgetMs
 }
 
 /**
+ * Pure verdict for the dependency pair's terminal state and release order.
+ * Exported so the assertions can be exercised without a live gateway.
+ */
+export function evaluateDependencyTerminal({
+  dependent,
+  dependency,
+  terminalStates,
+  releaseOrder,
+}) {
+  for (const state of terminalStates) {
+    if (state.desiredDisposition !== 'stopped' || state.observedState !== 'stopped') {
+      return {
+        pass: false,
+        error: `${state.capabilityId} ended ${state.desiredDisposition}/${state.observedState}, expected stopped/stopped`,
+      };
+    }
+  }
+  const order = releaseOrder ?? [];
+  const dependentAt = order.indexOf(dependent);
+  const dependencyAt = order.lastIndexOf(dependency);
+  if (dependentAt === -1 || dependencyAt === -1) {
+    return { pass: false, error: `missing release events for the pair: ${order.join(', ')}` };
+  }
+  if (dependentAt > dependencyAt) {
+    return {
+      pass: false,
+      error: `${dependency} was released before ${dependent}: ${order.join(', ')}`,
+    };
+  }
+  return { pass: true, error: null };
+}
+
+/**
  * Terminal assertions for the dependency pair. Runs after the single `terminal`
  * apply that covers every capability this run holds, so one teardown proves the
  * whole set rather than each proof stopping its own providers.
  */
 function assertDependencyTerminal({ slotId, runId, proof }) {
   if (!proof.attempted || proof.error) return proof;
+  // `pass` is only ever set by the final verdict below, never earlier: an
+  // assertion that fails here must not inherit a true left over from setup.
+  proof.pass = false;
   try {
     const terminalStatus = rpc('runtime.posture.status', { runId });
     proof.terminalStates = [proof.dependent, proof.dependency].map((id) => {
@@ -268,29 +305,22 @@ function assertDependencyTerminal({ slotId, runId, proof }) {
         observedState: state?.observedState ?? null,
       };
     });
-    for (const state of proof.terminalStates) {
-      if (state.desiredDisposition !== 'stopped' || state.observedState !== 'stopped') {
-        throw new Error(
-          `${state.capabilityId} ended ${state.desiredDisposition}/${state.observedState}, expected stopped/stopped`,
-        );
-      }
-    }
     // The Gateway's own lifecycle events record the order it stopped them in.
     const capabilityStatus = rpc('runtime.capability.status', { slotId, ownerRunId: runId });
-    const order = releaseOrderFromEvents(capabilityStatus, [proof.dependent, proof.dependency]);
-    proof.releaseOrder = order;
-    const dependentAt = order.indexOf(proof.dependent);
-    const dependencyAt = order.lastIndexOf(proof.dependency);
-    if (dependentAt === -1 || dependencyAt === -1) {
-      throw new Error(`missing release events for the pair: ${order.join(', ')}`);
-    }
-    if (dependentAt > dependencyAt) {
-      throw new Error(
-        `${proof.dependency} was released before ${proof.dependent}: ${order.join(', ')}`,
-      );
-    }
-    proof.pass = true;
+    proof.releaseOrder = releaseOrderFromEvents(capabilityStatus, [
+      proof.dependent,
+      proof.dependency,
+    ]);
+    const verdict = evaluateDependencyTerminal({
+      dependent: proof.dependent,
+      dependency: proof.dependency,
+      terminalStates: proof.terminalStates,
+      releaseOrder: proof.releaseOrder,
+    });
+    proof.pass = verdict.pass;
+    proof.error = verdict.error;
   } catch (error) {
+    proof.pass = false;
     proof.error = error?.message || String(error);
   }
   return proof;
