@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
-import { ROOT } from '../lib/common.mjs';
+import { ROOT, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 
 export const SCENARIO_ID = 'dispatch-model-flag';
@@ -186,9 +186,19 @@ export async function runScenario({
         }));
         const after = rpc('run.get', { runId }).run;
         report.finalStatus = after?.status ?? null;
-        const slotOwner = rpc('fleet.status').fleet?.slots?.find(
-          (candidate) => candidate.slot === slotId,
-        )?.currentRunId;
+        // `fleet.status` can serve a cached snapshot for a short window after
+        // the cancel after-effects run, so a single read can report the slot
+        // as still owned. Poll briefly until ownership clears; a slot that
+        // stays owned past the window is a real leak.
+        const releaseDeadline = Date.now() + 10_000;
+        let slotOwner = null;
+        for (;;) {
+          slotOwner = rpc('fleet.status').fleet?.slots?.find(
+            (candidate) => candidate.slot === slotId,
+          )?.currentRunId;
+          if (slotOwner !== runId || Date.now() >= releaseDeadline) break;
+          sleepMs(500);
+        }
         report.slotReleased = slotOwner !== runId;
         report.cancelled =
           after?.status === 'cancelled' && failedEffects.length === 0 && report.slotReleased;
