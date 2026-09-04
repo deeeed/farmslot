@@ -27,10 +27,10 @@ Runtime capability leases already exist (`packages/protocol/src/contracts/runtim
 `keepWarmMs`, health, cleanup-failure tracking, restart recovery, and a Command Center panel. The
 worker acquires capabilities from its proof plan; the Gateway releases them at slot teardown.
 
-Machine pause/restore also exists (`services/gateway/src/machine-parking/service.ts`,
-`MachineParkRecord`): an operator can pause runs on a machine, stop the worker plus its observed
-resources, and later restore the runner session and re-drive the step. Eligibility is limited to
-`monitoring` and `ci-watching`.
+Machine pause/restore also exists (`services/gateway/src/machine-parking/service.ts`, with the
+per-run `MachineParkRecord` in `packages/protocol/src/contracts/runs.ts`): an operator can pause
+runs on a machine in `release` mode, stop the worker plus its observed resources, and later restore
+the runner session and re-drive the step. Eligibility is limited to `monitoring` and `ci-watching`.
 
 What is missing is lifecycle policy between those two ends. A run can wait at a human gate, wait
 for CI, or finish validation while Metro, Webpack, Chrome, and a simulator stay live. Nothing
