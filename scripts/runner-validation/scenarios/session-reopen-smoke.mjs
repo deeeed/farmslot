@@ -106,7 +106,9 @@ async function waitForReopenToRegister(runId, contextId, timeoutMs = 15_000) {
   let latest = null;
   while (Date.now() < deadline) {
     latest = rpc('run.sessionCommand', { runId, contextId });
-    if (latest?.supported && latest.liveness !== 'dead') {
+    // Only a structurally proven `live` counts as registered. `unknown` means
+    // the gateway could not decide, which is not evidence the reopen landed.
+    if (latest?.supported && latest.liveness === 'live') {
       return { registered: true, liveness: latest.liveness, reason: latest.livenessReason ?? null };
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -411,6 +413,13 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     report.targetWasRediscovered = reopened.rediscoveredTarget === true;
     if (!reopened.tmuxTarget) {
       throw new Error('reopened session reports no tmux target; Command Center cannot follow it');
+    }
+    // The rediscovered target must be the pane the command was pasted into,
+    // otherwise liveness came from some other pane in the session.
+    if (reopened.tmuxTarget !== reopenPaneId) {
+      throw new Error(
+        `reopened session was rediscovered in ${reopened.tmuxTarget}, expected the paste pane ${reopenPaneId}`,
+      );
     }
     // `live` here is not "a codex process exists": the gateway proved the pane's
     // active runner session is exactly this id and path.
