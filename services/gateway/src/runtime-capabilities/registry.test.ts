@@ -15,6 +15,10 @@ import { RuntimeCapabilityStore } from './store.js';
 
 const SLOT = 'slot-a';
 
+function holdsProviderForTest(lease: { state: string }): boolean {
+  return ['acquiring', 'acquired', 'releasing'].includes(lease.state);
+}
+
 function entry(
   id: string,
   sharePolicy: RuntimeCapabilityCatalogEntry['sharePolicy'] = 'exclusive',
@@ -862,5 +866,106 @@ test('revalidateHealth on a healthy parent still proves its dependencies', async
   assert.ok(
     recovered.dependencyLeases.some((lease) => lease.capabilityId === 'metro'),
     'the revalidated dependency is reported back to the caller',
+  );
+});
+
+test('releaseForPosture honors each lease disposition and leaves a retained dependency alone', async (t) => {
+  const { registry, actions } = await fixture(t, [
+    entry('app', 'exclusive', ['metro']),
+    entry('metro'),
+  ]);
+  const acquired = await acquire(registry, 'app', 'run-a');
+  assert.equal(acquired.ok, true);
+  if (!acquired.ok) return;
+  const metroLease = acquired.dependencyLeases.find((lease) => lease.capabilityId === 'metro')!;
+  assert.ok(metroLease);
+  actions.length = 0;
+
+  // Policy: stop the parent, keep the dependency acquired.
+  const result = await registry.releaseForPosture(SLOT, [
+    { leaseId: acquired.lease.id, keepWarm: false },
+  ]);
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['app.release'],
+    'the dependency must not be released because its parent was',
+  );
+  const status = await registry.status({ slotId: SLOT });
+  const metro = status.leases.find((lease) => lease.id === metroLease.id);
+  assert.equal(metro?.state, 'acquired', 'a dependency the policy retains stays acquired');
+});
+
+test('a revalidated replacement dependency is relinked so a parent release cannot leak it', async (t) => {
+  let metroHealthy = true;
+  const { registry, actions } = await fixture(
+    t,
+    [entry('app', 'exclusive', ['metro']), entry('metro')],
+    {
+      runAction: async (_slotId, action) =>
+        action.kind === 'slot-action' && action.actionId === 'metro.health' && !metroHealthy
+          ? { ok: false, detail: 'metro is not responding' }
+          : { ok: true },
+    },
+  );
+  const first = await acquire(registry, 'app', 'run-a');
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  const originalMetro = first.dependencyLeases.find((lease) => lease.capabilityId === 'metro')!;
+
+  // The dependency dies and is replaced under a still-healthy parent.
+  metroHealthy = false;
+  const blocked = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'app',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'app', reason: 'validation', mode: 'state' },
+    revalidateHealth: true,
+  });
+  assert.equal(blocked.ok, false);
+  metroHealthy = true;
+  const recovered = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'app',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'app', reason: 'validation', mode: 'state' },
+    revalidateHealth: true,
+  });
+  assert.equal(recovered.ok, true);
+  if (!recovered.ok) return;
+  const replacement = recovered.dependencyLeases.find((lease) => lease.capabilityId === 'metro')!;
+  assert.notEqual(replacement.id, originalMetro.id, 'the dependency really was replaced');
+
+  actions.length = 0;
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'app' });
+  const status = await registry.status({ slotId: SLOT });
+  const leaked = status.leases.filter(
+    (lease) => lease.capabilityId === 'metro' && holdsProviderForTest(lease),
+  );
+  assert.deepEqual(leaked, [], 'the replacement dependency must not survive the parent release');
+  assert.ok(actions.includes('metro.release'), actions.join(', '));
+});
+
+test('a warm sweep defers a dependency while its dependent is still warm', async (t) => {
+  let clock = new Date('2026-08-11T00:00:00.000Z');
+  const warmApp = { ...entry('app', 'exclusive', ['metro']), keepWarmMs: 600_000 };
+  const warmMetro = { ...entry('metro'), keepWarmMs: 60_000 };
+  const { registry, actions } = await fixture(t, [warmApp, warmMetro], { now: () => clock });
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+
+  // The dependency's shorter window expires first.
+  clock = new Date('2026-08-11T00:05:00.000Z');
+  actions.length = 0;
+  await registry.cleanupExpiredWarmProviders([SLOT]);
+  assert.deepEqual([...actions], [], 'metro is still holding up a warm app');
+
+  // Once the dependent's window ends, both go, dependent first.
+  clock = new Date('2026-08-11T00:20:00.000Z');
+  actions.length = 0;
+  await registry.cleanupExpiredWarmProviders([SLOT]);
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['app.release', 'metro.release'],
   );
 });

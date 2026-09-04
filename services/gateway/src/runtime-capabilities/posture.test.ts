@@ -820,3 +820,32 @@ test('a park that runs and reports failed is a rejection, not a parked run', asy
   assert.equal(result.status.workerRetained, true);
   assert.equal(runs.get('run-a')?.resourcePosture?.posture, 'operator-wait');
 });
+
+test('operator-wait stops an expensive parent while its cheap dependency stays acquired', async (t) => {
+  const { reconciler, registry, actions } = await harness(t, {
+    capabilities: [
+      entry('app', {
+        dependencies: ['metro'],
+        cost: { class: 'high', resources: [] },
+      }),
+      entry('metro', { cost: { class: 'low', resources: [] } }),
+    ],
+  });
+  const acquired = await acquire(registry, 'app', 'run-a');
+  assert.equal(acquired.ok, true);
+  actions.length = 0;
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+  const byId = new Map(
+    result.status.capabilities.map((state) => [state.capabilityId, state] as const),
+  );
+  // High cost with no keep-warm window is shed; the low-cost dependency is kept
+  // so the next operator action stays usable.
+  assert.equal(byId.get('app')?.desiredDisposition, 'stopped');
+  assert.equal(byId.get('metro')?.desiredDisposition, 'acquired');
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['app.release'],
+  );
+  assert.equal(byId.get('metro')?.observedState, 'running');
+});

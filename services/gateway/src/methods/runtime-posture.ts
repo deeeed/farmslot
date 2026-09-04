@@ -68,6 +68,29 @@ function requireRunId(runId: unknown): string {
   return runId;
 }
 
+const PROOF_MODES = new Set(['state', 'visual', 'mixed']);
+
+function assertProofRequirements(value: unknown): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) throw new Error('proofRequirements must be an array');
+  value.forEach((requirement, index) => {
+    const field = `proofRequirements[${index}]`;
+    if (!requirement || typeof requirement !== 'object' || Array.isArray(requirement)) {
+      throw new Error(`${field} must be an object`);
+    }
+    const entry = requirement as Record<string, unknown>;
+    if (typeof entry.capabilityId !== 'string' || !entry.capabilityId.trim()) {
+      throw new Error(`${field}.capabilityId must be a non-empty string`);
+    }
+    if (typeof entry.reason !== 'string' || !entry.reason.trim()) {
+      throw new Error(`${field}.reason must be a non-empty string`);
+    }
+    if (typeof entry.mode !== 'string' || !PROOF_MODES.has(entry.mode)) {
+      throw new Error(`${field}.mode must be one of ${[...PROOF_MODES].join(', ')}`);
+    }
+  });
+}
+
 function assertPostureRequest(params: RuntimePosturePreviewParams): void {
   requireRunId(params.runId);
   if (params.posture !== undefined && !isResourcePosture(params.posture)) {
@@ -76,6 +99,7 @@ function assertPostureRequest(params: RuntimePosturePreviewParams): void {
   if (params.gateChoice !== undefined && !isResourcePostureGateChoice(params.gateChoice)) {
     throw new Error(`gateChoice must be one of ${RESOURCE_POSTURE_GATE_CHOICES.join(', ')}`);
   }
+  assertProofRequirements(params.proofRequirements);
 }
 
 export async function runtimePostureStatus(
@@ -95,5 +119,10 @@ export async function runtimePostureApply(
   params: RuntimePostureApplyParams,
 ): Promise<RuntimePostureApplyResult> {
   assertPostureRequest(params);
+  if (params.operationId !== undefined) {
+    if (typeof params.operationId !== 'string' || !params.operationId.trim()) {
+      throw new Error('operationId must be a non-empty string');
+    }
+  }
   return reconciler.apply(params);
 }

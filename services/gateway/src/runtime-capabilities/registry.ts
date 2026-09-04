@@ -367,6 +367,22 @@ export class RuntimeCapabilityRegistry {
             if (!dependency.ok) return dependency;
             revalidatedDependencies.push(dependency.lease, ...dependency.dependencyLeases);
           }
+          // Revalidation can replace a dependency lease (the dead one was
+          // released and a fresh one acquired). Relink the parent, dropping ids
+          // that no longer hold a provider: otherwise a parent-scoped release
+          // walks a stale id and the replacement leaks.
+          const replacementIds = new Set(revalidatedDependencies.map((lease) => lease.id));
+          sameOwner.dependencyLeaseIds = [
+            ...new Set([
+              ...sameOwner.dependencyLeaseIds.filter((id) => {
+                if (replacementIds.has(id)) return true;
+                const existing = snapshot.leases.find((lease) => lease.id === id);
+                return Boolean(existing && blocksAcquisition(existing));
+              }),
+              ...replacementIds,
+            ]),
+          ];
+          sameOwner.updatedAt = this.timestamp();
           return {
             ok: true,
             lease: structuredClone(sameOwner),
@@ -942,6 +958,10 @@ export class RuntimeCapabilityRegistry {
     return this.releaseSelected(slotId, (lease) => wanted.has(lease.id), {
       force: false,
       keepWarmFor: (lease) => wanted.get(lease.id) ?? true,
+      // The posture already decided every lease individually. Pulling a
+      // dependency in because its parent is going would override a policy that
+      // says the dependency stays acquired.
+      expandDependencies: false,
     });
   }
 
@@ -951,16 +971,27 @@ export class RuntimeCapabilityRegistry {
     options: {
       force: boolean;
       keepWarmFor: (lease: RuntimeCapabilityLease) => boolean;
+      /**
+       * Whether releasing a lease also releases the dependencies it pulled in.
+       * True for ownership-shaped releases ("this run is done with X"), false
+       * when the caller has already resolved a disposition per lease: a
+       * dependency the policy says stays acquired must survive its parent
+       * being released (ADR-054).
+       */
+      expandDependencies?: boolean;
     },
   ): Promise<RuntimeCapabilityReleaseResult> {
     const { force, keepWarmFor } = options;
+    const expandDependencies = options.expandDependencies !== false;
     return this.mutate(async () => {
       const snapshot = this.options.store.snapshot();
       const catalog = await this.options.catalogForSlot(slotId);
       const roots = snapshot.leases.filter(
         (lease) => lease.slotId === slotId && blocksAcquisition(lease) && select(lease),
       );
-      const order = this.releaseOrder(snapshot, roots);
+      const rootIds = new Set(roots.map((lease) => lease.id));
+      const ordered = this.releaseOrder(snapshot, roots);
+      const order = expandDependencies ? ordered : ordered.filter((lease) => rootIds.has(lease.id));
       const released: RuntimeCapabilityLease[] = [];
       const retained: RuntimeCapabilityLease[] = [];
       const effects = new Set<string>();
@@ -1140,8 +1171,23 @@ export class RuntimeCapabilityRegistry {
       // before their dependent, so iterating the array would stop a dependency
       // out from under something still using it.
       const selectedIds = new Set(selected.map((lease) => lease.id));
-      const expired = this.releaseOrder(snapshot, selected).filter((lease) =>
-        selectedIds.has(lease.id),
+      // A dependency must outlive whatever still depends on it. With staggered
+      // keep-warm windows the dependency can expire first, so defer it until the
+      // dependent's own window ends rather than pulling the floor out from under
+      // a provider that is still warm and reusable.
+      const heldByWarmDependent = (lease: RuntimeCapabilityLease): boolean =>
+        snapshot.leases.some(
+          (candidate) =>
+            candidate.id !== lease.id &&
+            !selectedIds.has(candidate.id) &&
+            candidate.dependencyLeaseIds.includes(lease.id) &&
+            (blocksAcquisition(candidate) ||
+              (candidate.state === 'released' && candidate.keepWarmUntil !== undefined)),
+        );
+      const eligible = selected.filter((lease) => !heldByWarmDependent(lease));
+      const eligibleIds = new Set(eligible.map((lease) => lease.id));
+      const expired = this.releaseOrder(snapshot, eligible).filter((lease) =>
+        eligibleIds.has(lease.id),
       );
       for (const lease of expired) {
         const hasHolder = snapshot.leases.some(

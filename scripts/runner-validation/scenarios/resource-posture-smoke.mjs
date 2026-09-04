@@ -60,6 +60,171 @@ function capabilityState(status, capabilityId) {
   return status.state.capabilities.find((entry) => entry.capabilityId === capabilityId) ?? null;
 }
 
+/**
+ * The cheapest available provider in this slot's catalog that declares a
+ * dependency, together with that dependency. Chosen from the live catalog rather
+ * than hardcoded so the scenario follows the project's own configuration.
+ */
+function findDependentPair(capabilities) {
+  const byId = new Map(capabilities.map((entry) => [entry.id, entry]));
+  const cost = { low: 0, medium: 1, high: 2 };
+  const pairs = capabilities
+    .filter((entry) => (entry.dependencies ?? []).length > 0)
+    .flatMap((entry) =>
+      (entry.dependencies ?? []).map((dependencyId) => ({
+        dependent: entry,
+        dependency: byId.get(dependencyId),
+      })),
+    )
+    .filter(
+      (pair) =>
+        pair.dependency &&
+        pair.dependent.availability.state === 'available' &&
+        pair.dependency.availability.state === 'available',
+    )
+    .sort(
+      (a, b) =>
+        cost[a.dependent.cost.class] +
+        cost[a.dependency.cost.class] -
+        (cost[b.dependent.cost.class] + cost[b.dependency.cost.class]),
+    );
+  return pairs[0] ?? null;
+}
+
+/** Lifecycle event order is the Gateway's own record of what it stopped when. */
+function releaseOrderFromEvents(status, capabilityIds) {
+  return status.events
+    .filter((event) => event.kind === 'released' && capabilityIds.includes(event.capabilityId))
+    .map((event) => event.capabilityId);
+}
+
+/**
+ * Acquire a capability that declares a dependency, drive the run through
+ * `operator-wait` and `terminal`, and assert from `runtime.posture.status` that
+ * both leases match policy and that the dependent stops before the dependency.
+ *
+ * Every dependent pair this project declares bottoms out at a device provider,
+ * so this boots real resources. Set FARMSLOT_POSTURE_SKIP_DEPENDENCY_PROOF=1 to
+ * record it as skipped instead; the skip is reported, never silently passed.
+ */
+async function proveDependencyPosture({ slotId, runId, report }) {
+  const proof = { attempted: false, pass: false, reason: null, error: null };
+  if (process.env.FARMSLOT_POSTURE_SKIP_DEPENDENCY_PROOF === '1') {
+    proof.reason = 'skipped by FARMSLOT_POSTURE_SKIP_DEPENDENCY_PROOF=1';
+    return proof;
+  }
+  const catalog = rpc('runtime.capability.list', { slotId });
+  const pair = findDependentPair(catalog.capabilities ?? []);
+  if (!pair) {
+    proof.reason = `no available dependent capability pair in the ${report.project} catalog for ${slotId}`;
+    return proof;
+  }
+  proof.attempted = true;
+  proof.dependent = pair.dependent.id;
+  proof.dependency = pair.dependency.id;
+  try {
+    // Acquiring the dependent implicitly acquires its dependency.
+    const acquired = rpc('runtime.capability.acquire', {
+      slotId,
+      capabilityId: pair.dependent.id,
+      ownerRunId: runId,
+      proofRequirement: {
+        capabilityId: pair.dependent.id,
+        reason: 'resource posture dependency validation',
+        mode: 'state',
+      },
+    });
+    if (!acquired.ok) {
+      throw new Error(`acquire failed: ${acquired.conflict?.reason ?? 'unknown'}`);
+    }
+    proof.dependencyLeaseAcquired = (acquired.dependencyLeases ?? []).some(
+      (lease) => lease.capabilityId === pair.dependency.id,
+    );
+    if (!proof.dependencyLeaseAcquired) {
+      throw new Error(`acquiring ${pair.dependent.id} did not acquire ${pair.dependency.id}`);
+    }
+
+    const waitApply = rpc('runtime.posture.apply', {
+      runId,
+      posture: 'operator-wait',
+      operationId: `${SCENARIO_ID}-dep-wait-${process.pid}`,
+    });
+    if (!waitApply.ok) {
+      throw new Error(`operator-wait apply failed: ${JSON.stringify(waitApply.transition)}`);
+    }
+    const waitStatus = rpc('runtime.posture.status', { runId });
+    proof.waitStates = [pair.dependent.id, pair.dependency.id].map((id) => {
+      const state = capabilityState(waitStatus, id);
+      if (!state) throw new Error(`posture status reported no state for ${id}`);
+      return {
+        capabilityId: id,
+        desiredDisposition: state.desiredDisposition,
+        observedState: state.observedState,
+        policySource: state.policySource,
+      };
+    });
+    for (const state of proof.waitStates) {
+      // Desired and observed must agree: acquired/warm means a live provider,
+      // stopped means a stopped one.
+      const live = state.observedState === 'running';
+      if (state.desiredDisposition === 'acquired' && !live) {
+        throw new Error(
+          `${state.capabilityId} is desired acquired but observed ${state.observedState}`,
+        );
+      }
+      if (state.desiredDisposition === 'stopped' && state.observedState !== 'stopped') {
+        throw new Error(
+          `${state.capabilityId} is desired stopped but observed ${state.observedState}`,
+        );
+      }
+    }
+
+    const terminalApply = rpc('runtime.posture.apply', {
+      runId,
+      posture: 'terminal',
+      operationId: `${SCENARIO_ID}-dep-terminal-${process.pid}`,
+    });
+    if (!terminalApply.ok) {
+      throw new Error(`terminal apply failed: ${JSON.stringify(terminalApply.transition)}`);
+    }
+    const terminalStatus = rpc('runtime.posture.status', { runId });
+    proof.terminalStates = [pair.dependent.id, pair.dependency.id].map((id) => {
+      const state = capabilityState(terminalStatus, id);
+      return {
+        capabilityId: id,
+        desiredDisposition: state?.desiredDisposition ?? null,
+        observedState: state?.observedState ?? null,
+      };
+    });
+    for (const state of proof.terminalStates) {
+      if (state.desiredDisposition !== 'stopped' || state.observedState !== 'stopped') {
+        throw new Error(
+          `${state.capabilityId} ended ${state.desiredDisposition}/${state.observedState}, expected stopped/stopped`,
+        );
+      }
+    }
+
+    // The Gateway's own lifecycle events record the order it stopped them in.
+    const capabilityStatus = rpc('runtime.capability.status', { slotId, ownerRunId: runId });
+    const order = releaseOrderFromEvents(capabilityStatus, [pair.dependent.id, pair.dependency.id]);
+    proof.releaseOrder = order;
+    const dependentAt = order.indexOf(pair.dependent.id);
+    const dependencyAt = order.lastIndexOf(pair.dependency.id);
+    if (dependentAt === -1 || dependencyAt === -1) {
+      throw new Error(`missing release events for the pair: ${order.join(', ')}`);
+    }
+    if (dependentAt > dependencyAt) {
+      throw new Error(
+        `${pair.dependency.id} was released before ${pair.dependent.id}: ${order.join(', ')}`,
+      );
+    }
+    proof.pass = true;
+  } catch (error) {
+    proof.error = error?.message || String(error);
+  }
+  return proof;
+}
+
 export async function runScenario({ timeoutMs, outDir, slotId, explicit = false }) {
   const reportRunner = 'scripted';
   if (!slotId || process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS !== '1') {
@@ -92,6 +257,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     terminalApply: null,
     terminalStatus: null,
     persistedPosture: null,
+    dependencyProof: null,
     pass: false,
     error: null,
   };
@@ -241,6 +407,16 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
       throw new Error(
         `run record did not persist the terminal posture: ${JSON.stringify(persisted)}`,
       );
+    }
+
+    // ADR-054 dependency ordering, proved live against the project's own catalog.
+    report.dependencyProof = await proveDependencyPosture({
+      slotId,
+      runId,
+      report,
+    });
+    if (report.dependencyProof.attempted && !report.dependencyProof.pass) {
+      throw new Error(`dependency posture proof failed: ${report.dependencyProof.error}`);
     }
 
     report.pass = true;
