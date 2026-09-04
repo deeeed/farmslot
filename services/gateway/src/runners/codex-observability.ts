@@ -330,45 +330,106 @@ export function buildRunnerProcessArgvCommand(pid: string): string {
   return `ps -p ${shellQuote(pid)} -o args= 2>/dev/null`;
 }
 
-/** Codex options that consume the following argument, so it is never a positional. */
-const CODEX_VALUE_FLAGS = new Set([
-  '--model',
-  '-m',
-  '--config',
+/**
+ * `codex resume` flags, transcribed once from `codex resume --help`. Never
+ * parsed from help text at runtime.
+ *
+ * Positional detection depends on knowing which flags eat the next token, and
+ * that list cannot be guessed: an unknown flag makes the first positional
+ * ambiguous, so the parser refuses to answer rather than certify the wrong id.
+ */
+const CODEX_RESUME_VALUE_FLAGS = new Set([
   '-c',
-  '--cd',
+  '--config',
+  '--enable',
+  '--disable',
+  '--remote',
+  '--remote-auth-token-env',
+  '-m',
+  '--model',
+  '--local-provider',
+  '-p',
   '--profile',
+  '-s',
   '--sandbox',
+  '-C',
+  '--cd',
+  '--add-dir',
+  '-a',
   '--ask-for-approval',
 ]);
 
+const CODEX_RESUME_BOOLEAN_FLAGS = new Set([
+  '--last',
+  '--all',
+  '--include-non-interactive',
+  '--strict-config',
+  '--oss',
+  '--approve-for-me',
+  '--dangerously-bypass-approvals-and-sandbox',
+  '--dangerously-bypass-hook-trust',
+  '--search',
+  '--no-alt-screen',
+  '-h',
+  '--help',
+  '-V',
+  '--version',
+]);
+
+/** `-i, --image <FILE>...` is variadic, so the positional after it is unknowable. */
+const CODEX_RESUME_VARIADIC_FLAGS = new Set(['-i', '--image']);
+
+export type CodexResumeArgvVerdict =
+  | { kind: 'resumes' }
+  | { kind: 'other-session' }
+  | { kind: 'indeterminate'; reason: string };
+
 /**
- * True when this argv shows codex resuming exactly {@link expectedSessionId}.
+ * Decide whether this argv shows codex resuming exactly
+ * {@link expectedSessionId}.
  *
- * Codex spells a reopen as `codex … resume [options] <SESSION_ID>`, so the id
- * is the FIRST POSITIONAL argument after `resume` — options and their values
- * come between. Requiring `resume` and the id to merely both appear somewhere
- * accepted `codex resume OTHER_ID --model x EXPECTED_ID`, where the expected id
- * rides along in a prompt or option value and certifies the wrong pane. Only
- * the first positional decides.
+ * Codex spells a reopen as `codex … resume [OPTIONS] [SESSION_ID] [PROMPT]`, so
+ * the id is the FIRST POSITIONAL after `resume`. Finding it means skipping
+ * options, which means knowing which options consume a value. Anything not in
+ * the transcribed tables — a new flag, an alias, a variadic `--image` — makes
+ * that impossible, and the answer is `indeterminate`, never a certification.
  */
-export function codexArgvResumesSession(argv: string, expectedSessionId: string): boolean {
+export function codexResumeArgvVerdict(
+  argv: string,
+  expectedSessionId: string,
+): CodexResumeArgvVerdict {
   const trimmedId = expectedSessionId.trim();
-  if (!trimmedId) return false;
+  if (!trimmedId) return { kind: 'indeterminate', reason: 'expected session id is empty' };
   const args = argv.trim().split(/\s+/).filter(Boolean);
   const resumeAt = args.indexOf('resume');
-  if (resumeAt === -1) return false;
+  if (resumeAt === -1) return { kind: 'other-session' };
   for (let i = resumeAt + 1; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg.startsWith('-')) {
-      // `--flag=value` carries its value inline; a bare value flag eats the next token.
-      if (!arg.includes('=') && CODEX_VALUE_FLAGS.has(arg)) i += 1;
+    if (!arg.startsWith('-')) {
+      // First positional after `resume` is the session argument; nothing later counts.
+      return arg === trimmedId ? { kind: 'resumes' } : { kind: 'other-session' };
+    }
+    const flag = arg.includes('=') ? arg.slice(0, arg.indexOf('=')) : arg;
+    if (CODEX_RESUME_VARIADIC_FLAGS.has(flag)) {
+      return {
+        kind: 'indeterminate',
+        reason: `variadic codex flag ${flag} makes the session argument ambiguous`,
+      };
+    }
+    if (CODEX_RESUME_BOOLEAN_FLAGS.has(flag)) continue;
+    if (CODEX_RESUME_VALUE_FLAGS.has(flag)) {
+      // `--flag=value` carries its value inline and eats no following token.
+      if (!arg.includes('=')) i += 1;
       continue;
     }
-    // First positional after `resume` is the session argument, and nothing later counts.
-    return arg === trimmedId;
+    return { kind: 'indeterminate', reason: `unrecognized codex flag ${flag}` };
   }
-  return false;
+  return { kind: 'other-session' };
+}
+
+/** Convenience wrapper for callers that only need the positive answer. */
+export function codexArgvResumesSession(argv: string, expectedSessionId: string): boolean {
+  return codexResumeArgvVerdict(argv, expectedSessionId).kind === 'resumes';
 }
 
 export function buildCodexNativeBindingProbeCommand(options: {
@@ -622,7 +683,12 @@ export const codexSessionObservability: RunnerObservability = {
     }
     const argv = result.stdout.trim();
     if (!argv) return { ok: false, reason: `runner process ${runnerPid} reported no argv` };
-    if (!codexArgvResumesSession(argv, expectedSessionId)) {
+    const verdict = codexResumeArgvVerdict(argv, expectedSessionId);
+    if (verdict.kind === 'indeterminate') {
+      // Cannot locate the session argument, so this proves nothing either way.
+      return { ok: false, indeterminate: true, reason: verdict.reason };
+    }
+    if (verdict.kind !== 'resumes') {
       return {
         ok: false,
         reason: `runner process ${runnerPid} is not resuming session ${expectedSessionId}`,

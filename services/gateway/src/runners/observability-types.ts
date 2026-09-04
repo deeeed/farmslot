@@ -112,7 +112,11 @@ export interface RunnerObservability {
     /** PID of the live runner process, already proven to sit under the pane. */
     runnerPid: string,
     expectedSessionId: string,
-  ): Promise<{ ok: boolean; reason?: string }>;
+    /**
+     * `indeterminate` means the provider could not decide — callers must degrade
+     * to unknown liveness rather than treat it as a proven absence.
+     */
+  ): Promise<{ ok: boolean; indeterminate?: true; reason?: string }>;
   /**
    * Upgrade one persisted binding to the runner's current native identity.
    * Providers must reject ids that are neither current nor a format they

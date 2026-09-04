@@ -674,6 +674,28 @@ test('a transfer landing between the ownership check and the write aborts the re
   assert.equal(result.supported && result.ownerRunId, 'run-successor');
 });
 
+test('the rebind gates its slot mirror on the same ownership as the write', async () => {
+  let mirrorIf: ((slot: Record<string, unknown>) => boolean) | undefined;
+  await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      resolvePane: async () => null,
+      rediscoverPane: async () => REDISCOVERED_PANE,
+      upsert: async (_runId, _role, _patch, options) => {
+        mirrorIf = options?.mirrorIf;
+        if (options?.guard && !(await options.guard())) return null;
+        return null;
+      },
+    }),
+  );
+
+  assert.ok(mirrorIf, 'the rebind must supply a mirror predicate');
+  // Mirroring is a second write: it must re-assert ownership in the slot chain.
+  assert.equal(mirrorIf({ current_run_id: 'run-1' }), true);
+  assert.equal(mirrorIf({ current_run_id: 'run-successor' }), false);
+  assert.equal(mirrorIf({}), false);
+});
+
 test('the rebind runs through the guard and writes when ownership holds', async () => {
   let guarded = 0;
   let written = 0;

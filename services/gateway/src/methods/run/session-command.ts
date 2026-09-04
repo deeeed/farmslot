@@ -353,6 +353,11 @@ export async function runSessionCommand(
             owned = await resolveSlotOwnership(run.id, slotId, deps);
             return owned.kind === 'owned';
           },
+          // The run-store write and the slot mirror are separate writes. Gate
+          // the mirror on the same ownership inside the slot write chain, so a
+          // transfer landing between them cannot clobber the successor's
+          // agent_contexts.
+          mirrorIf: (slot) => slot.current_run_id === run.id,
         },
       );
     } else if (rediscovered.indeterminate) {

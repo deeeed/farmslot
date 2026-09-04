@@ -695,6 +695,8 @@ export type ExactLiveRunnerSessionBindingResult =
     }
   | {
       ok: false;
+      /** The check could not decide; callers must report unknown, not dead. */
+      indeterminate?: true;
       reason: string;
       binding?: RunnerSessionBinding & { canonicalSessionPath?: string };
     };
@@ -724,7 +726,7 @@ export async function verifyResumedRunnerSessionBinding(
   runner: string,
   runnerPid: string,
   expectedSessionId: string,
-): Promise<{ ok: boolean; reason?: string }> {
+): Promise<{ ok: boolean; indeterminate?: true; reason?: string }> {
   const provider = getRunnerObservability(runner);
   if (!provider?.verifyResumedSessionBinding) {
     return { ok: false, reason: `runner '${runner}' cannot prove a resumed session binding` };
@@ -804,6 +806,7 @@ export async function verifyExactLiveRunnerSessionBinding(
       }
       return {
         ok: false,
+        ...(resumed?.indeterminate ? { indeterminate: true as const } : {}),
         reason:
           resumed?.reason ?? `active runner session binding is unavailable for ${options.paneId}`,
       };

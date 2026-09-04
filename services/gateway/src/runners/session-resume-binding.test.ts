@@ -3,7 +3,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildRunnerProcessArgvCommand, codexArgvResumesSession } from './codex-observability.js';
+import {
+  buildRunnerProcessArgvCommand,
+  codexArgvResumesSession,
+  codexResumeArgvVerdict,
+} from './codex-observability.js';
 import { verifyExactLiveRunnerSessionBinding } from './session-process.js';
 import { makeVars } from './test-fixtures.js';
 
@@ -188,7 +192,7 @@ test('the session-identity modules never read pane or runner text', () => {
 
 test('resumed-session ownership reads the process table, not runner output', () => {
   const source = readFileSync(path.resolve(import.meta.dirname, 'codex-observability.ts'), 'utf8');
-  const argvFn = source.slice(source.indexOf('export function codexArgvResumesSession'));
+  const argvFn = source.slice(source.indexOf('export function codexResumeArgvVerdict'));
   const body = argvFn.slice(0, argvFn.indexOf('\n}\n') + 3);
 
   // argv is an explicitly allowed structural signal (process tree and argv).
@@ -198,6 +202,8 @@ test('resumed-session ownership reads the process table, not runner output', () 
   assert.match(body, /split\(/);
   assert.match(body, /args\.indexOf\('resume'\)/);
   assert.match(body, /arg === trimmedId/);
+  // Unknown input fails closed rather than guessing the positional.
+  assert.match(body, /unrecognized codex flag/);
   assert.doesNotMatch(body, /stdout/);
   assert.doesNotMatch(body, /capture-pane/);
   // No substring or regex scan of the argv text itself. Array indexOf finds a
@@ -280,4 +286,128 @@ test('a proven resumed binding reports the canonical path', async () => {
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.binding.canonicalSessionPath, SESSION_PATH);
+});
+
+test('an unrecognized flag makes the verdict indeterminate, never a certification', () => {
+  // A codex release adding a value flag we have not transcribed would otherwise
+  // shift the positional and certify the wrong id.
+  const verdict = codexResumeArgvVerdict(
+    `codex resume --brand-new-flag something ${SESSION_ID}`,
+    SESSION_ID,
+  );
+
+  assert.equal(verdict.kind, 'indeterminate');
+  if (verdict.kind !== 'indeterminate') return;
+  assert.match(verdict.reason, /unrecognized codex flag --brand-new-flag/);
+  // The convenience wrapper must never turn indeterminate into a yes.
+  assert.equal(
+    codexArgvResumesSession(`codex resume --brand-new-flag x ${SESSION_ID}`, SESSION_ID),
+    false,
+  );
+});
+
+test('a variadic image flag is indeterminate because the positional is unknowable', () => {
+  const verdict = codexResumeArgvVerdict(
+    `codex resume --image a.png b.png ${SESSION_ID}`,
+    SESSION_ID,
+  );
+
+  assert.equal(verdict.kind, 'indeterminate');
+  if (verdict.kind !== 'indeterminate') return;
+  assert.match(verdict.reason, /variadic codex flag --image/);
+  assert.equal(
+    codexResumeArgvVerdict(`codex resume -i a.png ${SESSION_ID}`, SESSION_ID).kind,
+    'indeterminate',
+  );
+});
+
+test('every transcribed codex resume flag still finds the session argument', () => {
+  // Value flags consume their argument; boolean flags do not.
+  for (const flag of [
+    '--config k=v',
+    '-c k=v',
+    '--enable feat',
+    '--disable feat',
+    '--remote ws://h:1',
+    '--remote-auth-token-env TOKEN',
+    '--model gpt-5.6-sol',
+    '-m gpt-5.6-sol',
+    '--local-provider ollama',
+    '--profile prof',
+    '-p prof',
+    '--sandbox workspace-write',
+    '-s workspace-write',
+    '--cd /repo',
+    '-C /repo',
+    '--add-dir /extra',
+    '--ask-for-approval never',
+    '-a never',
+  ]) {
+    assert.equal(
+      codexResumeArgvVerdict(`codex resume ${flag} ${SESSION_ID}`, SESSION_ID).kind,
+      'resumes',
+      `value flag ${flag}`,
+    );
+  }
+  for (const flag of [
+    '--last',
+    '--all',
+    '--include-non-interactive',
+    '--strict-config',
+    '--oss',
+    '--approve-for-me',
+    '--dangerously-bypass-approvals-and-sandbox',
+    '--dangerously-bypass-hook-trust',
+    '--search',
+    '--no-alt-screen',
+  ]) {
+    assert.equal(
+      codexResumeArgvVerdict(`codex resume ${flag} ${SESSION_ID}`, SESSION_ID).kind,
+      'resumes',
+      `boolean flag ${flag}`,
+    );
+  }
+});
+
+test('a boolean flag never swallows the session argument', () => {
+  // If `--last` were mistaken for a value flag the id would be skipped.
+  assert.equal(
+    codexResumeArgvVerdict(`codex resume --last ${SESSION_ID}`, SESSION_ID).kind,
+    'resumes',
+  );
+  // And a value flag must still consume exactly one token.
+  assert.equal(
+    codexResumeArgvVerdict(`codex resume --model ${SESSION_ID}`, SESSION_ID).kind,
+    'other-session',
+  );
+});
+
+test('an indeterminate argv verdict surfaces as indeterminate, not a proven absence', async () => {
+  const result = await verifyExactLiveRunnerSessionBinding(
+    makeVars(),
+    'codex',
+    {
+      paneId: '%32',
+      slotId: 'macpro-ff-1',
+      expectedSessionId: SESSION_ID,
+      expectedSessionPath: SESSION_PATH,
+      runnerPid: '6892',
+    },
+    {
+      readPaneStartedAt: async () => 1_788_519_132_869,
+      resolveBinding: async () => null,
+      canonicalizePath: async (_vars, sessionPath) => sessionPath,
+      verifyResumed: async () => ({
+        ok: false,
+        indeterminate: true,
+        reason: 'unrecognized codex flag --brand-new-flag',
+      }),
+      resolveSessionIdForPath: async () => SESSION_ID,
+    },
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.indeterminate, true);
+  assert.match(result.reason, /unrecognized codex flag/);
 });

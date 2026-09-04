@@ -129,7 +129,11 @@ export async function rediscoverRunnerSessionPane(
       // attribution alone can never bind it.
       runnerPid: probe.pid,
     });
-    if (!owned.ok) continue;
+    if (!owned.ok) {
+      // A verifier that could not decide has not ruled this pane out.
+      if (owned.indeterminate) indeterminate = true;
+      continue;
+    }
     return {
       pane: {
         paneId: pane.paneId,

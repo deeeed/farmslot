@@ -1,6 +1,6 @@
 // @farmslot:serial — writes slot fixtures into the shared repo `pool/` directory.
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 
@@ -684,4 +684,47 @@ test('the guard observes state written by earlier queued mutations', async (t) =
 
   await Promise.all([first, second]);
   assert.equal(observedByGuard, 'first');
+});
+
+test('the slot mirror is compare-and-set on the same ownership as the write', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-browser-farm',
+    ticketOrPr: `PROJ-${Date.now()}-mirror-cas`,
+    slotId: 'runner-browser-1',
+  });
+  t.after(() => cleanupRun(run.id));
+
+  const seenPredicates: boolean[] = [];
+  await upsertAgentContext(
+    run.id,
+    'fix-bug',
+    { status: 'working' },
+    {
+      // The run-store write and the slot mirror are two separate writes; a
+      // transfer landing between them must not let this run overwrite the
+      // successor's agent_contexts on the slot.
+      mirrorIf: (slot) => {
+        const applies = slot.current_run_id === run.id;
+        seenPredicates.push(applies);
+        return applies;
+      },
+    },
+  );
+
+  // The predicate is consulted inside the slot write chain, on the slot row as
+  // it stands at write time. A slot owned by nobody else must not match.
+  assert.ok(
+    seenPredicates.every((applied) => applied === false),
+    'a slot owned by another run must not be mirrored into',
+  );
+});
+
+test('upsert without mirrorIf keeps the unconditional mirror', () => {
+  const source = readFileSync(path.join(import.meta.dirname, 'contexts.ts'), 'utf8');
+
+  assert.match(source, /options\?\.mirrorIf/);
+  assert.match(source, /updateSlotStatusIf\(updated\.slotId, options\.mirrorIf, mirrorFields\)/);
+  // Callers that pass no predicate keep the previous behaviour.
+  assert.match(source, /await updateSlotStatus\(updated\.slotId, mirrorFields\)/);
 });
