@@ -106,9 +106,25 @@ test('session-reopen-smoke pastes the reopen command atomically and fails fast',
   assert.doesNotMatch(source, /sendLineToCurrentWindow/);
   // A shell that never started the command must fail in seconds, not after the
   // full liveness timeout, and must carry the diagnostic tail.
-  assert.match(source, /waitForPaneChildProcess\(slotId\)/);
-  assert.match(source, /pasted reopen command never started a process/);
-  assert.match(source, /pane_current_command|currentCommand/);
+  assert.match(source, /waitForReopenToRegister\(runId, context\.id\)/);
+  assert.match(source, /pasted reopen command was never recognized in pane/);
+  // The guard names the pane it inspected, so a misfire is diagnosable.
+  // The pane tmux reported creating, not whichever pane happens to be active:
+  // the session's active pane can belong to a different window.
+  assert.match(source, /reopenPaneId = reopenWindow\?\.paneId/);
+  assert.match(source, /paneById\(slotId, reopenPaneId\)/);
+  assert.doesNotMatch(source, /function activePane\(/);
+  // Cleanup addresses the pane by `%N`; a bare window index is not a valid
+  // tmux pane target and the kill silently fails.
+  // Slot-target validation rejects a bare `%N` AND a bare window index; the
+  // killable address is `session:index`.
+  assert.match(source, /rpc\('tmux\.killPane', \{ slotId, target: reopenWindowTarget \}\)/);
+  assert.match(source, /\$\{reopenWindow\.sessionName\}:\$\{reopenWindow\.windowIndex\}/);
+  assert.doesNotMatch(source, /target: `\$\{reopenWindowIndex\}`/);
+  // `pane_current_command` stays the login shell while `bash -lc` runs
+  // children, so it must not be the signal the guard trips on.
+  assert.doesNotMatch(source, /pane command: \$\{/);
+  assert.doesNotMatch(source, /currentCommand &&/);
 });
 
 test('session-reopen-smoke reads the pane tail from the snapshot lines array', () => {

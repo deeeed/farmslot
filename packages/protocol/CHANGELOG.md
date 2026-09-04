@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- feat(tmux): add `tmux.pasteText` (`TmuxPasteTextParams`) for atomic bracketed-paste delivery, and `TmuxPane.currentCommand` carrying tmux's `#{pane_current_command}` so callers can tell an idle shell from a pane that is running something.
+- feat(tmux): add `tmux.pasteText` (`TmuxPasteTextParams`) for atomic bracketed-paste delivery, and `TmuxPane.currentCommand` / `paneId` / `panePid` carrying tmux's `#{pane_current_command}`, `#{pane_id}`, and `#{pane_pid}` so callers can identify a pane and its process tree. `tmux.newWindow` now returns the created `paneId`, `windowIndex`, `windowName`, and `sessionName` instead of a bare ok.
 - feat(run): add `run.sessionCommand` (`RunSessionCommandParams`/`RunSessionCommandResult`) for reopening an agent context's runner session, selected by exact `contextId` (with `role` as a fallback), and `AgentContext.runnerSessionCapturedAt` recording when that session identity was bound. `RunSessionCommandResult.rediscoveredTarget` marks a `tmuxTarget` recovered by scanning the slot's tmux session, `interrupt` carries the runner's registry-declared graceful exit so callers never hardcode runner-specific stop syntax, and `ownership` (`owned` | `transferred` | `unknown`) / `ownerRunId` / `paneId` report whether the requesting run still owns the slot and which exact pane holds the session.
 - fix(run): allow recovery replays to replace a runner and compatible model without replacing the task or worktree.
 - fix(run): version publication-review counting and let an operator replay an ambiguous retained handoff as an explicit fresh dispatch.

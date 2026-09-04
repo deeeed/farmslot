@@ -8,6 +8,7 @@ import type {
   TmuxListParams,
   TmuxListResult,
   TmuxNewWindowParams,
+  TmuxNewWindowResult,
   TmuxPane,
   TmuxPasteTextParams,
   TmuxRenameWindowParams,
@@ -92,11 +93,30 @@ export async function tmuxZoomPane(params: TmuxZoomPaneParams): Promise<OkResult
   return { ok: true };
 }
 
-export async function tmuxNewWindow(params: TmuxNewWindowParams): Promise<OkResult> {
+export async function tmuxNewWindow(params: TmuxNewWindowParams): Promise<TmuxNewWindowResult> {
   const { vars, session } = await resolveTmuxControlTarget(params);
-  await execOnSlot(vars, tmuxShellSnippet(`new-window -t ${shellQuote(session)}`));
+  // `-P -F` makes tmux print the identity of what it just created, so callers
+  // never have to guess which window is theirs.
+  const created = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `new-window -P -F '#{pane_id}|#{window_index}|#{window_name}|#{session_name}' -t ${shellQuote(session)}`,
+    ),
+  );
   clearTmuxListCache(vars, session);
-  return { ok: true };
+  if (created.exitCode !== 0) {
+    throw new Error(
+      `tmux new-window in ${session} failed: ${created.stderr?.trim() || created.stdout?.trim() || `exit ${created.exitCode}`}`,
+    );
+  }
+  const [paneId, windowIndex, windowName, sessionName] = created.stdout.trim().split('|');
+  return {
+    ok: true,
+    ...(paneId && /^%\d+$/.test(paneId) ? { paneId } : {}),
+    ...(windowIndex && /^\d+$/.test(windowIndex) ? { windowIndex: Number(windowIndex) } : {}),
+    ...(windowName ? { windowName } : {}),
+    ...(sessionName ? { sessionName } : {}),
+  };
 }
 
 export async function tmuxSelectWindow(params: TmuxSelectWindowParams): Promise<OkResult> {
@@ -173,14 +193,14 @@ async function listTmuxWindows(
     const { stdout: paneOut } = await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `list-panes -t ${shellQuote(`${session}:${winIndex}`)} -F '#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_title}|#{pane_current_command}'`,
+        `list-panes -t ${shellQuote(`${session}:${winIndex}`)} -F '#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_title}|#{pane_current_command}|#{pane_id}|#{pane_pid}'`,
       ),
       { timeout: TMUX_LIST_TIMEOUT_MS },
     );
 
     const panes: TmuxPane[] = [];
     for (const paneLine of paneOut.trim().split('\n').filter(Boolean)) {
-      const [pi, pa, pw, ph, pt, pc] = paneLine.split('|');
+      const [pi, pa, pw, ph, pt, pc, pid, ppid] = paneLine.split('|');
       panes.push({
         index: parseInt(pi, 10),
         active: pa === '1',
@@ -188,6 +208,8 @@ async function listTmuxWindows(
         height: parseInt(ph, 10),
         title: pt || '',
         ...(pc ? { currentCommand: pc } : {}),
+        ...(pid ? { paneId: pid } : {}),
+        ...(ppid ? { panePid: ppid } : {}),
       });
     }
 

@@ -89,32 +89,33 @@ function pasteCommandToCurrentWindow(slotId, text) {
 }
 
 /**
- * Structural check that the pasted command actually started something: a child
- * process must appear under the pane's shell. A shell stranded at a
- * continuation prompt has no child, so this fails in seconds instead of waiting
- * out the liveness poll. Pane text is never consulted.
+ * Bounded wait for the pasted command to be recognized, so a shell that never
+ * ran it fails in seconds instead of burning the full liveness timeout.
+ *
+ * `pane_current_command` is NOT the signal: it stays the login shell while
+ * `bash -lc` runs its children, which is why the previous guard reported
+ * "pane command: zsh" for a pane that had in fact started codex. The real
+ * check is the descendant walk plus session certification, and
+ * `run.sessionCommand` already performs exactly that across every pane in the
+ * session — including the pasted one — so it is polled here rather than
+ * reimplemented. Descendant pids are not exposed over RPC, so the observed
+ * liveness and reason are what get recorded.
  */
-async function waitForPaneChildProcess(slotId, timeoutMs = 30_000) {
+async function waitForReopenToRegister(runId, contextId, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   let latest = null;
   while (Date.now() < deadline) {
-    const panes = rpc('tmux.list', { slotId, bareSession: true });
-    const active = (panes?.windows ?? [])
-      .flatMap((window) => window.panes ?? [])
-      .find((pane) => pane.active);
-    latest = active ?? null;
-    // `pane_current_command` moving off the login shell is the structural signal
-    // that the pasted line is executing.
-    if (
-      active &&
-      active.currentCommand &&
-      !/^(zsh|bash|sh|-zsh|-bash)$/.test(active.currentCommand)
-    ) {
-      return { started: true, pane: active };
+    latest = rpc('run.sessionCommand', { runId, contextId });
+    if (latest?.supported && latest.liveness !== 'dead') {
+      return { registered: true, liveness: latest.liveness, reason: latest.livenessReason ?? null };
     }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  return { started: false, pane: latest };
+  return {
+    registered: false,
+    liveness: latest?.liveness ?? null,
+    reason: latest?.livenessReason ?? null,
+  };
 }
 
 /**
@@ -136,11 +137,14 @@ function diagnosticPaneTail(slotId, lines = 40) {
   return snapshot.lines.slice(-lines).join('\n');
 }
 
-/** Index of the session's active window, read from structured tmux state. */
-function activeWindowIndex(slotId) {
+/** The pane with this exact `%N`, from structured tmux state. */
+function paneById(slotId, paneId) {
   const listed = rpc('tmux.list', { slotId, bareSession: true });
-  const active = (listed?.windows ?? []).find((window) => window.active);
-  return active ? active.index : null;
+  return (
+    (listed?.windows ?? [])
+      .flatMap((window) => window.panes ?? [])
+      .find((pane) => pane.paneId === paneId) ?? null
+  );
 }
 
 function capturedWorkerSession(run) {
@@ -184,6 +188,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     runner: reportRunner,
     slotId,
     reopenWindowIndex: null,
+    reopenWindowTarget: null,
     runId: null,
     capturedRole: null,
     capturedSessionId: null,
@@ -202,7 +207,10 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     reopenedTmuxTarget: null,
     reopenedInNewWindow: false,
     reopenStartedCommand: false,
-    reopenPaneCommand: null,
+    reopenGuardPaneId: null,
+    reopenGuardPanePid: null,
+    reopenGuardLiveness: null,
+    reopenGuardReason: null,
     targetWasRediscovered: false,
     diagnosticPaneTail: null,
     diagnosticPaneTailError: null,
@@ -211,7 +219,8 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     error: null,
   };
   let runId = null;
-  let reopenWindowIndex = null;
+  let reopenPaneId = null;
+  let reopenWindowTarget = null;
 
   try {
     const fleet = rpc('fleet.status');
@@ -340,24 +349,38 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     // The interrupt destroyed the role window, so open a fresh one and paste
     // there — exactly what an operator does. Nothing is reassembled here: this
     // is the gateway's own command string.
-    rpc('tmux.newWindow', { slotId, bareSession: true });
+    // tmux reports the pane it just created. Addressing that exact `%N` is the
+    // only way to be sure the guard and the cleanup act on this window: the
+    // session's "active pane" can belong to a different window entirely.
+    const reopenWindow = rpc('tmux.newWindow', { slotId, bareSession: true });
     sleepMs(500);
     report.reopenedInNewWindow = true;
-    // Remember the window so the scenario does not leave one behind on every
-    // run; without this the slot accumulates idle reopen windows.
-    reopenWindowIndex = activeWindowIndex(slotId);
-    report.reopenWindowIndex = reopenWindowIndex;
+    reopenPaneId = reopenWindow?.paneId ?? null;
+    report.reopenWindowIndex = reopenWindow?.windowIndex ?? null;
+    // Slot-target validation rejects a bare `%N`, so the killable address is
+    // `session:index`; the pane id is what identifies the window in tmux.list.
+    reopenWindowTarget =
+      reopenWindow?.sessionName && reopenWindow?.windowIndex != null
+        ? `${reopenWindow.sessionName}:${reopenWindow.windowIndex}`
+        : null;
+    report.reopenWindowTarget = reopenWindowTarget;
+    if (!reopenPaneId) {
+      throw new Error('tmux.newWindow returned no pane id; cannot target the reopen window');
+    }
     pasteCommandToCurrentWindow(slotId, session.reopenCommand);
 
-    // Fail fast on a shell that never started the command, rather than burning
-    // the liveness timeout on a pane that is stuck at a continuation prompt.
-    const started = await waitForPaneChildProcess(slotId);
-    report.reopenStartedCommand = started.started;
-    report.reopenPaneCommand = started.pane?.currentCommand ?? null;
-    if (!started.started) {
+    // The pane tmux just handed us, not whichever pane happens to be active.
+    const pastePane = paneById(slotId, reopenPaneId);
+    report.reopenGuardPaneId = reopenPaneId;
+    report.reopenGuardPanePid = pastePane?.panePid ?? null;
+    const started = await waitForReopenToRegister(runId, context.id);
+    report.reopenStartedCommand = started.registered;
+    report.reopenGuardLiveness = started.liveness;
+    report.reopenGuardReason = started.reason;
+    if (!started.registered) {
       report.diagnosticPaneTail = diagnosticPaneTail(slotId);
       throw new Error(
-        `pasted reopen command never started a process (pane command: ${report.reopenPaneCommand ?? 'unknown'})`,
+        `pasted reopen command was never recognized in pane ${report.reopenGuardPaneId ?? 'unknown'} (liveness ${started.liveness ?? 'unreadable'}: ${started.reason ?? 'no reason'})`,
       );
     }
 
@@ -401,11 +424,12 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
   } catch (error) {
     report.error = error?.message || String(error);
   } finally {
-    if (reopenWindowIndex !== null) {
+    if (reopenWindowTarget) {
       // The reopened runner is cancelled with the run; the window it lived in
-      // is this scenario's litter and is its own to clear.
+      // is this scenario's litter and is its own to clear. A bare window index
+      // is not a valid tmux pane target, so address the pane by its `%N`.
       try {
-        rpc('tmux.killPane', { slotId, target: `${reopenWindowIndex}` });
+        rpc('tmux.killPane', { slotId, target: reopenWindowTarget });
         report.reopenWindowClosed = true;
       } catch (closeError) {
         report.reopenWindowClosed = false;

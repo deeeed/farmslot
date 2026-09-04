@@ -444,7 +444,14 @@ test('--last is indeterminate because the positional becomes the prompt', () => 
 });
 
 test('open file handles are read from lsof machine-readable output', () => {
-  assert.match(buildRunnerOpenFileProbeCommand('6892'), /^lsof -p '6892' -F n/);
+  const command = buildRunnerOpenFileProbeCommand('6892');
+  // macOS keeps lsof in /usr/sbin, which is absent from some non-login PATHs.
+  assert.match(command, /command -v lsof/);
+  assert.match(command, /\/usr\/sbin\/lsof/);
+  assert.match(command, /-p '6892' -F n/);
+  // A missing binary exits non-zero, which the caller reports as
+  // indeterminate — never as proof the session is gone.
+  assert.match(command, /exit 127/);
   // `-F n` emits one field per line; only `n` lines are paths.
   assert.deepEqual(
     parseOpenFilePaths(['p6892', 'fcwd', 'n/repo', 'ftxt', `n${SESSION_PATH}`, 'n'].join('\n')),
@@ -453,7 +460,7 @@ test('open file handles are read from lsof machine-readable output', () => {
   assert.deepEqual(parseOpenFilePaths(''), []);
 });
 
-test('a flattened argv cannot certify on its own: the open handle decides', async () => {
+test('argv is recorded but never decides: the open handle certifies', async () => {
   // `ps -o args=` joins argv with spaces, so `--config 'note = <uuid>'` can put
   // the expected id where a positional would be. argv says `resumes` here, and
   // the process does NOT hold the rollout open, so it must not be certified.
@@ -517,4 +524,29 @@ test('the canonical path is what the open-handle check is given', async () => {
 
   // A non-canonical path would never match an lsof entry.
   assert.equal(handedPath, SESSION_PATH);
+});
+
+test('a flattened argv value cannot falsely reject a valid resume', () => {
+  // `-C '/path with spaces'` splits under `ps`, so the real session argument is
+  // hidden and a fragment looks positional. The parser says other-session here,
+  // which is exactly why its verdict must not gate certification.
+  const verdict = codexResumeArgvVerdict(
+    `codex resume -C /Users/example/my dev/repo ${SESSION_ID}`,
+    SESSION_ID,
+  );
+  assert.equal(verdict.kind, 'other-session');
+});
+
+test('the codex provider never lets an argv verdict deny a held handle', () => {
+  const source = readFileSync(path.resolve(import.meta.dirname, 'codex-observability.ts'), 'utf8');
+  const fn = source.slice(source.indexOf('async verifyResumedSessionBinding('));
+  const body = fn.slice(0, fn.indexOf('\n  },\n') + 5);
+
+  // argv is computed for diagnosis only.
+  assert.match(body, /argvVerdict/);
+  // No early return on the argv verdict: the handle decides.
+  assert.doesNotMatch(body, /is not resuming session/);
+  assert.doesNotMatch(body, /verdict\.kind !== 'resumes'/);
+  // Certification is the open handle on the canonical path.
+  assert.match(body, /parseOpenFilePaths\(open\.stdout\)\.includes\(expectedSessionPath\)/);
 });

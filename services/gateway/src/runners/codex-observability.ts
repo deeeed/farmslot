@@ -332,7 +332,15 @@ export function parseCodexNativeBindingProbe(raw: string): CodexNativeBindingPro
  * positional session id — argv can therefore reject, but never certify.
  */
 export function buildRunnerOpenFileProbeCommand(pid: string): string {
-  return `lsof -p ${shellQuote(pid)} -F n 2>/dev/null`;
+  // macOS ships lsof in /usr/sbin, which is not on every non-login PATH. Same
+  // candidate-resolution shape the tmux helper uses; a missing binary yields a
+  // non-zero exit, which the caller reports as indeterminate, never a denial.
+  return [
+    'LSOF_BIN="$(command -v lsof 2>/dev/null || true)"',
+    '[ -n "$LSOF_BIN" ] || [ ! -x /usr/sbin/lsof ] || LSOF_BIN=/usr/sbin/lsof',
+    '[ -n "$LSOF_BIN" ] || { echo "lsof not found" >&2; exit 127; }',
+    `"$LSOF_BIN" -p ${shellQuote(pid)} -F n 2>/dev/null`,
+  ].join('; ');
 }
 
 /** Canonical paths held open by the probed process. */
@@ -704,37 +712,6 @@ export const codexSessionObservability: RunnerObservability = {
       : null;
   },
   async verifyResumedSessionBinding(vars, runnerPid, expectedSessionId, expectedSessionPath) {
-    // argv first, but only to REJECT. `ps -o args=` is a flattened display
-    // string: a value containing spaces can present the expected id as a fake
-    // positional, so a match there is never sufficient on its own.
-    const argvResult = await execOnSlot(vars, buildRunnerProcessArgvCommand(runnerPid), {
-      timeout: 10_000,
-    });
-    if (argvResult.exitCode !== 0) {
-      return {
-        ok: false,
-        indeterminate: true,
-        reason: `runner process ${runnerPid} argv is unreadable`,
-      };
-    }
-    const argv = argvResult.stdout.trim();
-    if (!argv) {
-      return {
-        ok: false,
-        indeterminate: true,
-        reason: `runner process ${runnerPid} reported no argv`,
-      };
-    }
-    const verdict = codexResumeArgvVerdict(argv, expectedSessionId);
-    if (verdict.kind === 'indeterminate') {
-      return { ok: false, indeterminate: true, reason: verdict.reason };
-    }
-    if (verdict.kind !== 'resumes') {
-      return {
-        ok: false,
-        reason: `runner process ${runnerPid} is not resuming session ${expectedSessionId}`,
-      };
-    }
     if (!expectedSessionPath?.trim()) {
       return {
         ok: false,
@@ -743,8 +720,23 @@ export const codexSessionObservability: RunnerObservability = {
       };
     }
 
-    // PRIMARY: the process must hold that exact rollout file open. Codex opens
-    // it on write, so allow a few samples before concluding.
+    // Certification is the open handle alone: this pid, already proven to be a
+    // runner process under the pane, holding that exact rollout file open.
+    //
+    // argv is NOT a gate in either direction. `ps -o args=` flattens argv into
+    // one display string, so a value containing spaces (`--config 'note = x'`,
+    // `-C '/path with spaces'`) both hides the real session argument and can
+    // present a fake one — it can therefore falsely reject a valid resume just
+    // as easily as it can falsely accept. It is recorded for diagnosis only.
+    let argvVerdict;
+    const argvResult = await execOnSlot(vars, buildRunnerProcessArgvCommand(runnerPid), {
+      timeout: 10_000,
+    });
+    if (argvResult.exitCode === 0 && argvResult.stdout.trim()) {
+      argvVerdict = codexResumeArgvVerdict(argvResult.stdout.trim(), expectedSessionId).kind;
+    }
+
+    // Codex opens the rollout on write, so allow a few samples.
     let lastReason = `runner process ${runnerPid} does not hold ${expectedSessionPath} open`;
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -755,11 +747,17 @@ export const codexSessionObservability: RunnerObservability = {
         lastReason = `open-file probe for ${runnerPid} is unavailable`;
         continue;
       }
-      if (parseOpenFilePaths(open.stdout).includes(expectedSessionPath)) return { ok: true };
+      if (parseOpenFilePaths(open.stdout).includes(expectedSessionPath)) {
+        return { ok: true, ...(argvVerdict ? { argvVerdict } : {}) };
+      }
     }
-    // Not proven, and not proven absent either: the handle may simply not be
-    // open yet. Never certify, never claim the session is elsewhere.
-    return { ok: false, indeterminate: true, reason: lastReason };
+    // Not proven, and not proven absent: the handle may simply not be open yet.
+    return {
+      ok: false,
+      indeterminate: true,
+      reason: lastReason,
+      ...(argvVerdict ? { argvVerdict } : {}),
+    };
   },
 
   async normalizeRetainedSessionBinding(vars, binding) {

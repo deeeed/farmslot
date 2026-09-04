@@ -118,7 +118,17 @@ export interface RunnerObservability {
      * `indeterminate` means the provider could not decide — callers must degrade
      * to unknown liveness rather than treat it as a proven absence.
      */
-  ): Promise<{ ok: boolean; indeterminate?: true; reason?: string }>;
+    /**
+     * Diagnostic only. Providers must not let argv decide: `ps` flattens it, so
+     * a value containing spaces can both hide the real session argument and
+     * present a fake one.
+     */
+  ): Promise<{
+    ok: boolean;
+    indeterminate?: true;
+    reason?: string;
+    argvVerdict?: string;
+  }>;
   /**
    * Upgrade one persisted binding to the runner's current native identity.
    * Providers must reject ids that are neither current nor a format they

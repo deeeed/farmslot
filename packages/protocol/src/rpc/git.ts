@@ -48,6 +48,20 @@ export interface TmuxZoomPaneParams extends TmuxTargetParams {}
 
 export interface TmuxNewWindowParams extends TmuxTargetParams {}
 
+export interface TmuxNewWindowResult {
+  ok: true;
+  /**
+   * `%N` of the pane tmux created. Use it to find this window in `tmux.list`;
+   * note the gateway's slot-target validation rejects a bare `%N`, so pane
+   * operations must be addressed as `sessionName:windowIndex`.
+   */
+  paneId?: string;
+  windowIndex?: number;
+  windowName?: string;
+  /** tmux session the window was created in, for building `session:index` targets. */
+  sessionName?: string;
+}
+
 export interface TmuxSelectWindowParams extends TmuxTargetParams {
   index: number;
 }
@@ -85,11 +99,16 @@ export interface TmuxPane {
   height: number;
   title: string;
   /**
-   * tmux `#{pane_current_command}` — the foreground process in the pane. A
-   * structured field, not pane text: it distinguishes an idle login shell from
-   * a pane that is running something.
+   * tmux `#{pane_current_command}` — the FOREGROUND process in the pane. Note
+   * it stays the login shell while `bash -lc` runs children, so it cannot tell
+   * you whether a pasted command is executing; use the pane's process tree for
+   * that.
    */
   currentCommand?: string;
+  /** tmux `#{pane_id}` (`%N`) — stable pane identity. */
+  paneId?: string;
+  /** tmux `#{pane_pid}` — root of the pane's process tree. */
+  panePid?: string;
 }
 
 export interface TmuxWindow {
