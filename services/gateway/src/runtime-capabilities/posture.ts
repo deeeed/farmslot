@@ -460,7 +460,24 @@ export class RunResourcePostureReconciler {
   async preview(request: ResourcePostureRequest): Promise<ResourcePosturePlan> {
     const resolved = await this.resolve(request);
     if ('rejection' in resolved) return resolved.plan;
-    return this.planFrom(resolved.context);
+    const context = resolved.context;
+    const plan = this.planFrom(context);
+    if (context.policy.posture !== 'parked') return plan;
+    // Preview has to ask machine parking the same question apply does. Without
+    // it, `free-slot` on a run parking will refuse previews as a normal plan —
+    // the operator reads "Parked, 1 stopped" for a choice that cannot succeed.
+    // Read-only: this resolves eligibility and touches no lease, process, or run.
+    const eligibility = await this.parkTarget(context);
+    if (!('rejection' in eligibility)) return plan;
+    return {
+      ...plan,
+      acquire: [],
+      retain: [],
+      warm: [],
+      stop: [],
+      effects: [],
+      rejection: eligibility.rejection,
+    };
   }
 
   async apply(request: ResourcePostureRequest): Promise<RuntimePostureApplyResult> {

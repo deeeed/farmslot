@@ -1142,3 +1142,89 @@ test('operation history is bounded and keeps the newest ids', async (t) => {
     'the oldest ids fall out of the bounded window',
   );
 });
+
+test('preview for parked surfaces the park rejection instead of a plan that cannot run', async (t) => {
+  const gateHeld = makeRun({ status: 'human-gating' });
+  const { reconciler, registry, runs, parkCalls, actions } = await harness(t, {
+    capabilities: [CATALOG_LINT],
+    run: gateHeld,
+    parkPreview: async (params) => ({
+      previewId: 'preview-1',
+      machine: params.machine,
+      mode: params.mode,
+      selector: params.selector,
+      createdAt: '2026-09-05T00:00:00.000Z',
+      runs: [
+        {
+          runId: 'run-a',
+          generation: 1,
+          selected: true,
+          slotId: SLOT,
+          status: 'human-gating',
+          currentStep: null,
+          eligibility: {
+            eligible: false,
+            code: 'STATUS_NOT_ELIGIBLE',
+            reason: "status 'human-gating' is not monitoring or ci-watching",
+          },
+          recoveryPolicy: { kind: 'runner-session-reload', supported: false, runnerId: 'claude' },
+          resourceManifest: {
+            capturedAt: '2026-09-05T00:00:00.000Z',
+            resources: [],
+            capabilityLeases: [],
+          },
+        },
+      ],
+      eligibleCount: 0,
+      rejectedCount: 1,
+    }),
+  });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+  // The gate-entry reconcile has already run, which is when an operator sees
+  // the four choices, so the run is at an operator wait.
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+  parkCalls.length = 0;
+  actions.length = 0;
+
+  const plan = await reconciler.preview({ runId: 'run-a', gateChoice: 'free-slot' });
+  assert.equal(plan.posture, 'parked');
+  assert.deepEqual(plan.rejection, {
+    kind: 'park-ineligible',
+    code: 'STATUS_NOT_ELIGIBLE',
+    reason: "status 'human-gating' is not monitoring or ci-watching",
+  });
+  // Nothing to show the operator, because nothing would happen.
+  assert.deepEqual(plan.acquire, []);
+  assert.deepEqual(plan.retain, []);
+  assert.deepEqual(plan.warm, []);
+  assert.deepEqual(plan.stop, []);
+  assert.deepEqual(plan.effects, []);
+  // A preview mutates nothing: eligibility only, no execute, no provider action.
+  assert.equal(parkCalls.length, 1);
+  assert.deepEqual(actions, []);
+  assert.equal(
+    runs.get('run-a')?.resourcePosture?.posture,
+    'operator-wait',
+    'a preview must not move the run',
+  );
+  const status = await registry.status({ slotId: SLOT, ownerRunId: 'run-a' });
+  assert.equal(status.leases[0]?.state, 'acquired');
+});
+
+test('preview for parked on an eligible run returns the plan', async (t) => {
+  const { reconciler, registry, parkCalls } = await harness(t, {
+    capabilities: [CATALOG_LINT],
+  });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+  parkCalls.length = 0;
+
+  const plan = await reconciler.preview({ runId: 'run-a', gateChoice: 'free-slot' });
+  assert.equal(plan.posture, 'parked');
+  assert.equal(plan.rejection, undefined);
+  assert.deepEqual(
+    plan.stop.map((state) => state.capabilityId),
+    ['lint'],
+  );
+  assert.equal(parkCalls.length, 1, 'eligibility is checked, execute is not called');
+});
