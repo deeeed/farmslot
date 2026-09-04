@@ -60,3 +60,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [049](049-agent-execution-template-selection.md)       | Agent Execution Template Selection                                      | Accepted |
 | [052](052-recipe-derived-visual-review-boards.md)      | Recipe-Derived Visual Review Boards                                     | Accepted |
 | [053](053-run-lifecycle-transition-routing.md)         | Run Lifecycle Transition Routing                                        | Accepted |
+| [054](054-run-resource-posture.md)                     | Run Resource Posture at Lifecycle Boundaries                            | Proposed |
