@@ -12,6 +12,7 @@ import type {
   RunDecision,
   RunGetResult,
   RunListResult,
+  RunSessionCommandResult,
   TaskProgressResult,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
@@ -31,6 +32,7 @@ import '../interactive/interactive-operator-packets.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
+import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { togglePinnedSlot } from '../../utils/pinned-slots.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
@@ -72,6 +74,13 @@ import {
   renderRunEvidence,
   renderRunGrade,
 } from './run-detail-renderers.js';
+import {
+  renderRunAgentSessions,
+  runSessionCommandTextForKind,
+  type RunSessionCopyKind,
+  type RunSessionRow,
+  runSessionRowStateFromResult,
+} from './run-detail-session-renderers.js';
 import { RunDetailState } from './run-detail-state.js';
 import { runDetailStyles } from './run-detail-styles.js';
 import {
@@ -173,6 +182,11 @@ export class RunDetail extends RunDetailState {
     const wasHydrating = this._hydrating;
     if (this.runId !== this._lastRequestedRunId) {
       this._lastRequestedRunId = this.runId;
+      // Copied/error/liveness state belongs to the run it was fetched for.
+      // Carrying it across would label the next run's contexts with the
+      // previous run's liveness.
+      this._sessionStates = {};
+      this._sessionRequestSeq = {};
       this._ciPoke.reset();
       this._missingRunFetchAttempted = false;
       this._directRunRefreshFailed = false;
@@ -787,6 +801,11 @@ export class RunDetail extends RunDetailState {
         }),
       _renderRunEvidence: (run) => this._renderRunEvidence(run),
       _renderInteractivePackets: (run) => this._renderInteractivePackets(run),
+      _renderAgentSessions: (run) =>
+        renderRunAgentSessions(run, {
+          states: this._sessionStates,
+          onCopy: (row, kind) => void this._copyRunnerSessionCommand(run, row, kind),
+        }),
       _onReplayStep: (stepName, skipPrepare, prepareProfile, freshDispatch) =>
         this._onReplayStep(stepName, skipPrepare, prepareProfile, freshDispatch),
       renderGateSection: (run) => this.renderGateSection(run),
@@ -804,6 +823,59 @@ export class RunDetail extends RunDetailState {
         this._showTerminal = !this._showTerminal;
       },
     });
+  }
+
+  /**
+   * Copy the gateway-built command for one agent context. The command is never
+   * assembled here — `run.sessionCommand` owns the runner CLI syntax, and its
+   * structured liveness is what labels the row.
+   */
+  private async _copyRunnerSessionCommand(
+    run: Run,
+    row: RunSessionRow,
+    kind: RunSessionCopyKind,
+  ): Promise<void> {
+    // Sequenced per context: one global counter meant a click on a second row
+    // invalidated the first row's in-flight request, leaving it stuck on
+    // "Loading…" forever.
+    const requestSeq = (this._sessionRequestSeq[row.contextId] ?? 0) + 1;
+    this._sessionRequestSeq = { ...this._sessionRequestSeq, [row.contextId]: requestSeq };
+    // A response that lands after the operator moved to another run, or after a
+    // newer click on this row, must not overwrite what is on screen now.
+    const requestStillCurrent = () =>
+      requestSeq === this._sessionRequestSeq[row.contextId] && this.runId === run.id;
+    this._sessionStates = { ...this._sessionStates, [row.contextId]: { status: 'loading' } };
+    try {
+      const result = await gateway.request<RunSessionCommandResult>(Methods.RUN_SESSION_COMMAND, {
+        runId: run.id,
+        // The exact context this row renders. Role alone would resolve to the
+        // newest context sharing that role, which is the wrong reviewer.
+        contextId: row.contextId,
+        role: row.role,
+      });
+      const command = runSessionCommandTextForKind(result, kind);
+      let copyError: string | null = null;
+      if (command) {
+        // A refused clipboard must not hide the liveness the gateway proved,
+        // and must never be reported as a successful copy.
+        try {
+          await copyTextToClipboard(command);
+        } catch (err) {
+          copyError = (err as Error).message;
+        }
+      }
+      if (!requestStillCurrent()) return;
+      this._sessionStates = {
+        ...this._sessionStates,
+        [row.contextId]: runSessionRowStateFromResult(result, kind, copyError),
+      };
+    } catch (err) {
+      if (!requestStillCurrent()) return;
+      this._sessionStates = {
+        ...this._sessionStates,
+        [row.contextId]: { status: 'error', message: (err as Error).message },
+      };
+    }
   }
 
   private async _setRunTags(run: Run, tags: string[]) {

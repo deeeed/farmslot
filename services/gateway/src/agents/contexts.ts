@@ -22,7 +22,7 @@ import {
   SKIP_ACTIVE_RUN_SELECTION,
 } from '../core/active-run-selection.js';
 import { loadSlotVars } from '../core/config.js';
-import { updateSlotStatus } from '../core/state.js';
+import { updateSlotStatus, updateSlotStatusIf } from '../core/state.js';
 import { resolveTmuxSession } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js';
@@ -320,10 +320,25 @@ export async function upsertAgentContext(
   patch: Partial<AgentContext>,
   options?: {
     resolvePatch?: (existing: AgentContext | undefined) => Partial<AgentContext> | null;
+    /**
+     * Precondition evaluated INSIDE the mutation queue, immediately before the
+     * write. A caller that checks a precondition before calling has only
+     * checked it before queueing: the wait for earlier mutations is unbounded,
+     * so state can change underneath. Return false to abort without writing.
+     */
+    guard?: () => Promise<boolean>;
+    /**
+     * Compare-and-set predicate for the slot mirror, evaluated inside the slot
+     * write chain. The guarded run-store write and the mirror are two separate
+     * writes: a transfer landing between them would otherwise let this run
+     * overwrite the successor's `agent_contexts` on the slot.
+     */
+    mirrorIf?: (slot: Readonly<Record<string, unknown>>) => boolean;
   },
 ): Promise<AgentContext | null> {
   const previous = agentContextChains.get(runId) ?? Promise.resolve();
   const applyMutation = async () => {
+    if (options?.guard && !(await options.guard())) return null;
     const run = getRun(runId);
     if (!run || !run.slotId) return null;
     const slotId = run.slotId;
@@ -381,7 +396,12 @@ export async function upsertAgentContext(
     if (!nextContext) return null;
     if (!updated?.slotId) return nextContext;
     try {
-      await updateSlotStatus(updated.slotId, { agent_contexts: summarizeAgentContexts(updated) });
+      const mirrorFields = { agent_contexts: summarizeAgentContexts(updated) };
+      if (options?.mirrorIf) {
+        await updateSlotStatusIf(updated.slotId, options.mirrorIf, mirrorFields);
+      } else {
+        await updateSlotStatus(updated.slotId, mirrorFields);
+      }
     } catch (err) {
       // Slot mirror is best-effort — the farm-status.json write can fail when
       // the slot was just released (no entry in fleet) or during concurrent

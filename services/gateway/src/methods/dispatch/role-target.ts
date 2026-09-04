@@ -25,8 +25,18 @@ export function parseCapturedAgentPaneTarget(session: string, raw: string): Agen
   };
 }
 
-/** Prefer a role-scoped window name over a persisted numeric tmux target. */
+/**
+ * Routing target for an agent context.
+ *
+ * An exact `%N` pane id wins: a window can hold several panes, and routing by
+ * `session:window` alone lets input reach a sibling pane. Rediscovery records
+ * the pane it structurally proved owns the session, so honouring it is what
+ * keeps terminal input on that pane. Otherwise prefer a role-scoped window name
+ * over a persisted numeric tmux target.
+ */
 export function canonicalAgentContextTarget(target: AgentContextTarget): string {
+  const paneId = target.paneId?.trim();
+  if (paneId && /^%\d+$/.test(paneId)) return paneId;
   const session = target.session?.trim();
   const window = target.window?.trim();
   if (session && window && !/^\d+$/.test(window)) {

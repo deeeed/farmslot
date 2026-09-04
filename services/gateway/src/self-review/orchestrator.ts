@@ -38,6 +38,7 @@ import {
 } from '../core/hooks.js';
 import { onSlotReset } from '../core/state.js';
 import {
+  resolveExactTmuxWindowPane,
   respawnTmuxWindowWithCommand,
   shellQuote,
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
@@ -55,7 +56,13 @@ import {
   runnerSupportsInteractivePrompt,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
+import { resolvePersistedRunnerSessionBinding } from '../runners/session-process.js';
 import { deliverPromptToLiveRunner } from '../runners/session-reactivation.js';
+import {
+  captureAndRecordRunnerSession,
+  clearedRunnerSessionContextPatch,
+  recordRunnerSessionForRole,
+} from '../runners/session-record.js';
 import { getRunnerStatusProvider } from '../runners/status-provider.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { clearRunActiveTaskFile, getRun, updateRun, updateRunStep } from '../runs/store.js';
@@ -2003,6 +2010,7 @@ async function sendFeedbackToWorker(
         `${failureSummary} (${fixTaskFile}).${retainedSummary} Pane re-resolution found no accepting runner pane in session ${session} (windows seen: ${seenSummary}). Escape: replay the self-review step after restoring runner observability.`,
       );
     }
+    await recordSelfReviewFixRunnerSession(vars, runId, runner, workerTarget);
     if (structuredDeliveryAccepted) {
       return {
         signalBaseline: fixSignalBaseline,
@@ -2119,6 +2127,57 @@ async function workerShowsDeliveryReaction(
   return signalChanged();
 }
 
+/**
+ * Bind the self-review-fix role to the runner session that just accepted the
+ * fix prompt. A retained worker keeps its own session, so the fix role adopts
+ * it; a fix relaunch respawned the runner, so the new session is captured
+ * against the delivery pane and bound to the worker role as well — that role's
+ * previous binding was cleared by the respawn and would otherwise stay empty.
+ */
+async function recordSelfReviewFixRunnerSession(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runId: string,
+  runner: string,
+  deliveryTarget: string,
+): Promise<void> {
+  const latest = getRun(runId);
+  const workerRole = primaryRoleForFlow(latest?.flowType);
+  const workerContext = latest?.agentContexts?.find((ctx) => ctx.role === workerRole);
+  const retained = resolvePersistedRunnerSessionBinding([
+    {
+      label: 'retained self-review worker context',
+      runnerSessionId: workerContext?.runnerSessionId,
+      runnerSessionPath: workerContext?.runnerSessionPath,
+    },
+  ]);
+  if (retained.binding) {
+    await recordRunnerSessionForRole({
+      runId,
+      role: 'self-review-fix',
+      session: retained.binding,
+      captureLabel: 'retained self-review worker session',
+    });
+    return;
+  }
+  const deliveryPane = await resolveExactTmuxWindowPane(vars, deliveryTarget);
+  const relaunched = await captureAndRecordRunnerSession({
+    vars,
+    runner,
+    runId,
+    role: 'self-review-fix',
+    captureLabel: 'self-review fix relaunch',
+    capture: { paneId: deliveryPane?.paneId ?? null, slotId: vars.slotId },
+  });
+  if (workerContext) {
+    await recordRunnerSessionForRole({
+      runId,
+      role: workerRole,
+      session: relaunched,
+      captureLabel: 'self-review fix relaunch',
+    });
+  }
+}
+
 async function relaunchWorkerForFix(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
@@ -2181,8 +2240,7 @@ async function relaunchWorkerForFix(
     status: 'working',
     runner,
     model: effectiveModel,
-    runnerSessionId: null,
-    runnerSessionPath: null,
+    ...clearedRunnerSessionContextPatch(),
     target: {
       session: resolved.session,
       window,

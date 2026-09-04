@@ -370,6 +370,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `run.forSlot`                | typed-command | `farmslot run for-slot`       |     |                                                                                                |
 | `run.resolveDecision`        | typed-command | `farmslot run`                | yes |                                                                                                |
 | `run.probeWorkerSignal`      | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.sessionCommand`         | typed-command | `farmslot run session`        |     |                                                                                                |
 | `run.grade`                  | typed-command | `farmslot run grade`          |     |                                                                                                |
 | `run.getGrade`               | typed-command | `farmslot run get-grade`      |     |                                                                                                |
 | `run.proposeImprovement`     | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
@@ -476,6 +477,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `tmux.worker.restore`   | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `tmux.renameWindow`     | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `tmux.sendKeys`         | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `tmux.pasteText`        | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `tmux.synchronizePanes` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 
 ## worker.\*

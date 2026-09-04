@@ -39,6 +39,7 @@ import {
   retainedSessionSendOption,
   terminateRunnerDescendantsInTmuxSession,
 } from '../../runners/session-process.js';
+import { runnerSessionContextPatch } from '../../runners/session-record.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
@@ -465,6 +466,16 @@ export async function nudgeDispatch(
     runner,
     target: primaryTarget,
     nudgeCount: priorNudgeCount + 1,
+    // The nudged worker keeps the session it was already running, so the new
+    // run inherits that identity. Without this the run reads back as
+    // `session-not-captured` and the operator cannot reopen a live worker.
+    ...(runnerSessionContextPatch(
+      {
+        runnerSessionId: retainedSession.binding?.runnerSessionId ?? null,
+        runnerSessionPath: retainedSession.binding?.runnerSessionPath ?? null,
+      },
+      'branch-affinity nudge retained session',
+    ) ?? {}),
   });
   step(
     'nudge',

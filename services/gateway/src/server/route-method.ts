@@ -182,6 +182,7 @@ import {
   type TmuxKillPaneParams,
   type TmuxListParams,
   type TmuxNewWindowParams,
+  type TmuxPasteTextParams,
   type TmuxRenameWindowParams,
   type TmuxSelectPaneParams,
   type TmuxSelectWindowParams,
@@ -449,6 +450,7 @@ import {
   tmuxKillPane,
   tmuxList,
   tmuxNewWindow,
+  tmuxPasteText,
   tmuxRenameWindow,
   tmuxSelectPane,
   tmuxSelectWindow,
@@ -1173,6 +1175,8 @@ async function routeAuthorizedMethod(
       return restoreTmuxWorker(p as TmuxWorkerRestoreParams);
     case Methods.TMUX_SEND_KEYS:
       return tmuxSendKeys(p as TmuxSendKeysParams);
+    case Methods.TMUX_PASTE_TEXT:
+      return tmuxPasteText(p as TmuxPasteTextParams);
     case Methods.TMUX_SYNCHRONIZE_PANES:
       return tmuxSynchronizePanes(p as TmuxSynchronizePanesParams);
 

@@ -57,6 +57,12 @@ import {
   resolveRunRetainedSessionBinding,
 } from '../runners/session-process.js';
 import { deliverPromptToLiveRunner } from '../runners/session-reactivation.js';
+import {
+  captureAndRecordRunnerSession,
+  clearedRunnerSessionContextPatch,
+  recordRunnerSessionForRole,
+  runnerSessionContextPatch,
+} from '../runners/session-record.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { retryDeferredFixDelivery } from '../self-review/orchestrator.js';
@@ -341,8 +347,7 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
     status: 'working',
     runner,
     model,
-    runnerSessionId: null,
-    runnerSessionPath: null,
+    ...clearedRunnerSessionContextPatch(),
     target: {
       session: primaryTarget.session,
       window,
@@ -820,14 +825,45 @@ async function attemptInlineCIFix(
       runner,
       model: run?.metrics.model ?? null,
       target: { session, window: null, pane: null, target: workerTarget },
-      runnerSessionId: retainedSession.binding?.runnerSessionId ?? null,
-      runnerSessionPath: retainedSession.binding?.runnerSessionPath ?? null,
+      ...(runnerSessionContextPatch(
+        {
+          runnerSessionId: retainedSession.binding?.runnerSessionId ?? null,
+          runnerSessionPath: retainedSession.binding?.runnerSessionPath ?? null,
+        },
+        'retained CI fix worker session',
+      ) ?? clearedRunnerSessionContextPatch()),
       promptDeliveryStartedAt:
         recoveredContext?.promptDeliveryStartedAt ?? new Date().toISOString(),
       deliveryBaselineRef: beforeSha,
       deliveryBaselinePanePid,
     });
     if (ciFixContext) await watchContext(slotId, ciFixContext);
+    if (!retainedSession.binding) {
+      // No retained binding means `relaunchWorkerSession` respawned the runner,
+      // so this delivery owns a brand-new session that no earlier capture can
+      // supply. Attribute it to the delivery pane and bind both the ci-fix role
+      // and the worker role that now shares the pane.
+      const deliveryPane = await resolveExactTmuxWindowPane(vars, workerTarget);
+      const relaunched = await captureAndRecordRunnerSession({
+        vars,
+        runner,
+        runId,
+        role: 'ci-fix',
+        captureLabel: 'ci fix relaunch',
+        capture: { paneId: deliveryPane?.paneId ?? null, slotId },
+      });
+      const relaunchedRun = getRun(runId);
+      const relaunchWorkerRole = primaryRoleForFlow(relaunchedRun?.flowType);
+      // Never fabricate a worker context the dispatch did not create.
+      if (relaunchedRun?.agentContexts?.some((ctx) => ctx.role === relaunchWorkerRole)) {
+        await recordRunnerSessionForRole({
+          runId,
+          role: relaunchWorkerRole,
+          session: relaunched,
+          captureLabel: 'ci fix relaunch',
+        });
+      }
+    }
     ciFixContextStarted = true;
     mergeCIWatchOutputPatch(runId, {
       phase: 'waiting_for_worker',

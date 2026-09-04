@@ -36,6 +36,7 @@ export const RunMethods = {
   forSlot: Methods.RUN_FOR_SLOT,
   resolveDecision: Methods.RUN_RESOLVE_DECISION,
   probeWorkerSignal: Methods.RUN_PROBE_WORKER_SIGNAL,
+  sessionCommand: Methods.RUN_SESSION_COMMAND,
   grade: Methods.RUN_GRADE,
   getGrade: Methods.RUN_GET_GRADE,
   proposeImprovement: Methods.RUN_PROPOSE_IMPROVEMENT,
@@ -486,6 +487,90 @@ export interface RunProbeWorkerSignalParams {
 }
 
 export type RunProbeWorkerSignalResult = import('../transport/signal.js').WorkerSignalProbeResult;
+
+export interface RunSessionCommandParams {
+  runId: string;
+  /**
+   * Exact agent context to reopen. Preferred over `role`: several contexts can
+   * share one role (reviewer loops), and only the id identifies which session
+   * the caller means.
+   */
+  contextId?: string;
+  /** Agent context role to reopen. Defaults to the run's primary worker role. */
+  role?: import('../contracts/index.js').AgentRole;
+}
+
+/**
+ * Structured runner liveness for the persisted session's pane. `unknown` means
+ * the probe could not decide (unreachable machine, tmux query failure) — it is
+ * never derived from rendered pane text.
+ */
+export type RunSessionLiveness = 'live' | 'dead' | 'unknown';
+
+export type RunSessionCommandUnsupportedReason =
+  | 'no-agent-context'
+  | 'no-slot'
+  | 'unknown-runner'
+  | 'session-reload-unsupported'
+  | 'session-not-captured';
+
+export interface RunSessionCommandSupportedResult {
+  supported: true;
+  runId: string;
+  role: import('../contracts/index.js').AgentRole;
+  contextId: string;
+  runner: string;
+  model: string | null;
+  sessionId: string;
+  sessionPath: string;
+  capturedAt: string | null;
+  slotId: string;
+  machine: string;
+  tmuxTarget: string | null;
+  /**
+   * True when `tmuxTarget` came from scanning the slot's tmux session rather
+   * than the agent context. A reopened session usually lives in a new window,
+   * because dispatch destroys a role window when its runner exits.
+   */
+  rediscoveredTarget?: true;
+  /**
+   * Who owns the slot this session runs on. `owned` means the requesting run
+   * still holds the slot, so a rediscovered target may be written back to its
+   * agent context. `transferred` means a warm handoff moved the session to
+   * `ownerRunId`: the command and liveness are still reported, but nothing is
+   * rebound, because steering a successor run's pane from a historical run is
+   * exactly the accident this guards.
+   */
+  ownership?: 'owned' | 'transferred' | 'unknown';
+  /** The run that now owns the slot, when `ownership` is `transferred`. */
+  ownerRunId?: string;
+  /** Exact tmux pane that owns the session, when rediscovery proved one. */
+  paneId?: string;
+  /**
+   * The runner's own declared graceful-exit input, from the runner capability
+   * registry. Null when the runner declares none. Callers that need to stop the
+   * session use this instead of hardcoding runner-specific text.
+   */
+  interrupt: { command: string; submitDelayMs?: number } | null;
+  /** Built by the gateway runner layer. Clients never assemble runner CLI syntax. */
+  reopenCommand: string;
+  attachCommand: string | null;
+  liveness: RunSessionLiveness;
+  /** Why liveness is `unknown`, when the probe could not decide. */
+  livenessReason?: string;
+}
+
+export interface RunSessionCommandUnsupportedResult {
+  supported: false;
+  runId: string;
+  role: import('../contracts/index.js').AgentRole | null;
+  reason: RunSessionCommandUnsupportedReason;
+  detail: string;
+}
+
+export type RunSessionCommandResult =
+  | RunSessionCommandSupportedResult
+  | RunSessionCommandUnsupportedResult;
 
 export interface RunGradeParams {
   runId: string;

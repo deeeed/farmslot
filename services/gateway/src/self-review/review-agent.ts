@@ -63,6 +63,10 @@ import {
   deliverPromptToLiveRunner,
   resetLiveRunnerContext,
 } from '../runners/session-reactivation.js';
+import {
+  clearedRunnerSessionContextPatch,
+  recordRunnerSessionForRole,
+} from '../runners/session-record.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { clearRunActiveTaskFile, getRun, updateRun } from '../runs/store.js';
 import {
@@ -1050,13 +1054,22 @@ export async function runReviewAgent(
         runnerSessionId: binding.runnerSessionId,
         runnerSessionPath: binding.runnerSessionPath,
       };
+      // Reviewer loops allocate a non-canonical context id (`rev2-codex`), so
+      // the hook is given that exact target instead of collapsing every
+      // reviewer generation onto the canonical `self-review` context.
+      await upsertAgentContext(_runId, 'self-review', {
+        id: allocated.id,
+        label: allocated.label,
+        status: 'working',
+      });
       reviewContext =
-        (await upsertAgentContext(_runId, 'self-review', {
-          id: allocated.id,
+        (await recordRunnerSessionForRole({
+          runId: _runId,
+          role: 'self-review',
+          contextId: allocated.id,
           label: allocated.label,
-          status: 'working',
-          runnerSessionId: binding.runnerSessionId,
-          runnerSessionPath: binding.runnerSessionPath,
+          session: binding,
+          captureLabel: 'reviewer live session bind',
         })) ?? reviewContext;
       return true;
     };
@@ -1173,8 +1186,9 @@ export async function runReviewAgent(
           (await upsertAgentContext(_runId, 'self-review', {
             id: allocated.id,
             label: allocated.label,
-            runnerSessionId: null,
-            runnerSessionPath: null,
+            // Clear as one unit: a lone id/path null leaves the old capture
+            // timestamp dating a session that is no longer bound.
+            ...clearedRunnerSessionContextPatch(),
           })) ?? reviewContext;
       }
     };
@@ -1204,14 +1218,25 @@ export async function runReviewAgent(
           paneId: reviewerWindow.paneId,
         },
       );
+      const launchedContext = await upsertAgentContext(_runId, 'self-review', {
+        id: allocated.id,
+        label: allocated.label,
+        status: 'working',
+      });
+      // One hook owns session identity, including on the cold-launch path. It
+      // records nothing when the capture produced no complete pair, so fall
+      // back to the launch upsert rather than dropping the fresh context.
       reviewContext =
-        (await upsertAgentContext(_runId, 'self-review', {
-          id: allocated.id,
+        (await recordRunnerSessionForRole({
+          runId: _runId,
+          role: 'self-review',
+          contextId: allocated.id,
           label: allocated.label,
-          status: 'working',
-          runnerSessionId: sessionMeta.runnerSessionId,
-          runnerSessionPath: sessionMeta.runnerSessionPath,
-        })) ?? reviewContext;
+          session: sessionMeta,
+          captureLabel: 'reviewer cold launch',
+        })) ??
+        launchedContext ??
+        reviewContext;
 
       // Cold launch: argv-first runners already carry the task on the respawn
       // line (`withArgvTaskPromptPlaceholder`). A second tmux send races that
@@ -1297,8 +1322,9 @@ export async function runReviewAgent(
               id: allocated.id,
               label: allocated.label,
               status: 'working',
-              runnerSessionId: null,
-              runnerSessionPath: null,
+              // Cold relaunch destroys the old session; clear its identity as
+              // one unit so no stale capture timestamp survives the respawn.
+              ...clearedRunnerSessionContextPatch(),
             })) ?? reviewContext;
         } else {
           await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);

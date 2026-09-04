@@ -48,9 +48,106 @@ test('dispatch-model-flag fails when named explicitly without its required argum
   assert.equal(matrix.pass, true);
 });
 
-test('runner-validation catalog includes four runners and twenty-three scenarios', () => {
+test('session-reopen-smoke reopens in a fresh window and keeps pane text out of its evidence', () => {
+  const source = fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      'scenarios/session-reopen-smoke.mjs',
+    ),
+    'utf8',
+  );
+
+  // The interrupt destroys the role window (dispatch sets remain-on-exit off
+  // plus a pane-died kill-pane hook), so the reopen must open its own window
+  // instead of typing into whatever tmux resolves the stale target to.
+  assert.match(source, /rpc\('tmux\.newWindow', \{ slotId, bareSession: true \}\)/);
+  assert.match(source, /pasteCommandToCurrentWindow\(slotId, session\.reopenCommand\)/);
+  // Liveness and the session id are the pass evidence; the pane tail is only
+  // captured on failure and is labelled as diagnostic.
+  assert.match(source, /report\.diagnosticPaneTail = diagnosticPaneTail\(/);
+  assert.match(source, /never pass evidence/);
+  assert.match(source, /report\.targetWasRediscovered = reopened\.rediscoveredTarget === true/);
+});
+
+test('session-reopen-smoke interrupts through the runner capability and demands structured death', () => {
+  const source = fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      'scenarios/session-reopen-smoke.mjs',
+    ),
+    'utf8',
+  );
+
+  // The stop input comes from the runner registry via run.sessionCommand.
+  assert.match(source, /session\.interrupt\.command/);
+  assert.doesNotMatch(source, /sendLine\([^)]*'\/exit'/);
+  // `unknown` means the probe could not decide; accepting it would let the
+  // reopen pass without a confirmed interruption.
+  assert.match(source, /state\.liveness === 'dead'/);
+  assert.doesNotMatch(source, /state\.liveness !== 'live'/);
+  // AC1 scope is stated rather than silently skipped.
+  assert.match(source, /nudge path is unit-covered/);
+});
+
+test('session-reopen-smoke pastes the reopen command atomically and fails fast', () => {
+  const source = fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      'scenarios/session-reopen-smoke.mjs',
+    ),
+    'utf8',
+  );
+
+  // Typed delivery chunks a ~3 KB command and strands zsh at a `quote>` prompt.
+  assert.match(
+    source,
+    /rpc\('tmux\.pasteText', \{ slotId, bareSession: true, text, submit: true \}\)/,
+  );
+  assert.doesNotMatch(source, /sendLineToCurrentWindow/);
+  // A shell that never started the command must fail in seconds, not after the
+  // full liveness timeout, and must carry the diagnostic tail.
+  assert.match(source, /waitForReopenToRegister\(runId, context\.id\)/);
+  assert.match(source, /pasted reopen command was never recognized in pane/);
+  // The guard names the pane it inspected, so a misfire is diagnosable.
+  // The pane tmux reported creating, not whichever pane happens to be active:
+  // the session's active pane can belong to a different window.
+  assert.match(source, /reopenPaneId = reopenWindow\?\.paneId/);
+  assert.match(source, /paneById\(slotId, reopenPaneId\)/);
+  assert.doesNotMatch(source, /function activePane\(/);
+  // Cleanup addresses the pane by `%N`; a bare window index is not a valid
+  // tmux pane target and the kill silently fails.
+  // Slot-target validation rejects a bare `%N` AND a bare window index; the
+  // killable address is `session:index`.
+  assert.match(source, /rpc\('tmux\.killPane', \{ slotId, target: reopenWindowTarget \}\)/);
+  assert.match(source, /\$\{reopenWindow\.sessionName\}:\$\{reopenWindow\.windowIndex\}/);
+  assert.doesNotMatch(source, /target: `\$\{reopenWindowIndex\}`/);
+  // `pane_current_command` stays the login shell while `bash -lc` runs
+  // children, so it must not be the signal the guard trips on.
+  assert.doesNotMatch(source, /pane command: \$\{/);
+  assert.doesNotMatch(source, /currentCommand &&/);
+});
+
+test('session-reopen-smoke reads the pane tail from the snapshot lines array', () => {
+  const source = fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      'scenarios/session-reopen-smoke.mjs',
+    ),
+    'utf8',
+  );
+
+  // terminal.snapshot answers `{ lines: string[] }`. Reading `data`/`text` is
+  // why an earlier failure reported an empty tail for a pane with 40+ lines.
+  assert.match(source, /Array\.isArray\(snapshot\?\.lines\)/);
+  assert.match(source, /snapshot\.lines\.slice\(-lines\)/);
+  assert.doesNotMatch(source, /snapshot\?\.data \?\? snapshot\?\.text/);
+  // A capture that fails must say so instead of yielding an empty tail.
+  assert.match(source, /report\.diagnosticPaneTailError = /);
+});
+
+test('runner-validation catalog includes four runners and twenty-four scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
-  assert.equal(listScenarios().length, 23);
+  assert.equal(listScenarios().length, 24);
   assert.ok(listScenarios().includes('review-recovery-terminal-contract'));
   assert.ok(listScenarios().includes('self-review-fix-turn-lease'));
   assert.ok(listScenarios().includes('hook-smoke'));
@@ -66,6 +163,26 @@ test('runner-validation catalog includes four runners and twenty-three scenarios
   assert.ok(listScenarios().includes('token-usage-smoke'));
   assert.ok(listScenarios().includes('monitor-stuck-smoke'));
   assert.ok(listScenarios().includes('dispatch-model-flag'));
+  assert.ok(listScenarios().includes('session-reopen-smoke'));
+});
+
+test('session-reopen-smoke fails when named explicitly without a slot and never stubs real evidence', async (t) => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'session-reopen-args-'));
+  t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+  const scenario = await import('./scenarios/session-reopen-smoke.mjs');
+
+  const explicit = await scenario.runScenario({ timeoutMs: 1000, outDir, explicit: true });
+  assert.equal(explicit.pass, false);
+  assert.equal(Boolean(explicit.skipped), false);
+  assert.match(explicit.report.error, /needs --slot/);
+
+  // A real run's evidence must survive a later matrix skip on the same host.
+  const evidenceFile = explicit.outPath;
+  fs.writeFileSync(evidenceFile, JSON.stringify({ pass: true, marker: 'real-run' }));
+  const matrix = await scenario.runScenario({ timeoutMs: 1000, outDir });
+  assert.equal(matrix.skipped, true);
+  assert.equal(matrix.pass, true);
+  assert.equal(JSON.parse(fs.readFileSync(evidenceFile, 'utf8')).marker, 'real-run');
 });
 
 test('self-review routes argv-relaunch handoffs to cold process replacement', () => {

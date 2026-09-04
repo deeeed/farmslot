@@ -680,6 +680,12 @@ export interface ExactLiveRunnerSessionBindingOptions {
   slotId: string;
   expectedSessionId: string;
   expectedSessionPath: string;
+  /**
+   * Live runner PID under this pane, when the caller already proved one. Lets a
+   * resumed session be recognized from the process itself; without it only
+   * fresh-launch attribution applies.
+   */
+  runnerPid?: string;
 }
 
 export type ExactLiveRunnerSessionBindingResult =
@@ -689,6 +695,8 @@ export type ExactLiveRunnerSessionBindingResult =
     }
   | {
       ok: false;
+      /** The check could not decide; callers must report unknown, not dead. */
+      indeterminate?: true;
       reason: string;
       binding?: RunnerSessionBinding & { canonicalSessionPath?: string };
     };
@@ -697,12 +705,47 @@ interface ExactLiveRunnerSessionBindingDeps {
   readPaneStartedAt: typeof readPaneProcessStartedAtMs;
   resolveBinding: typeof resolveRunnerSessionBinding;
   canonicalizePath: typeof canonicalizeRunnerSessionPath;
+  verifyResumed: typeof verifyResumedRunnerSessionBinding;
+  resolveSessionIdForPath: typeof resolveRunnerSessionIdForPath;
+}
+
+/** The session id a persisted session file carries, per the runner's own reader. */
+export async function resolveRunnerSessionIdForPath(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  sessionPath: string,
+): Promise<string | null> {
+  const provider = getRunnerObservability(runner);
+  if (!provider?.resolveSessionId) return null;
+  return provider.resolveSessionId(vars, sessionPath);
+}
+
+/** Runner-owned check that a live process is resuming one exact session. */
+export async function verifyResumedRunnerSessionBinding(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  runnerPid: string,
+  expectedSessionId: string,
+  expectedSessionPath: string,
+): Promise<{ ok: boolean; indeterminate?: true; reason?: string }> {
+  const provider = getRunnerObservability(runner);
+  if (!provider?.verifyResumedSessionBinding) {
+    return { ok: false, reason: `runner '${runner}' cannot prove a resumed session binding` };
+  }
+  return provider.verifyResumedSessionBinding(
+    vars,
+    runnerPid,
+    expectedSessionId,
+    expectedSessionPath,
+  );
 }
 
 const EXACT_LIVE_BINDING_DEPS: ExactLiveRunnerSessionBindingDeps = {
   readPaneStartedAt: readPaneProcessStartedAtMs,
   resolveBinding: resolveRunnerSessionBinding,
+  verifyResumed: verifyResumedRunnerSessionBinding,
   canonicalizePath: canonicalizeRunnerSessionPath,
+  resolveSessionIdForPath: resolveRunnerSessionIdForPath,
 };
 
 /** Prove the live runner in one exact pane still owns the persisted session id and path. */
@@ -722,6 +765,55 @@ export async function verifyExactLiveRunnerSessionBinding(
     paneStartedAtMs,
   });
   if (!binding) {
+    // Fresh-launch attribution requires session activity NEWER than the pane
+    // process. A resumed session can never satisfy that: its transcript was
+    // written by the process that has since exited, so it is always older than
+    // the pane that reopened it. Ask the runner whether the live process is
+    // resuming exactly this session instead — a targeted check that needs an
+    // expected id, so it cannot loosen open-ended discovery.
+    if (options.runnerPid) {
+      // Canonicalize FIRST: the open-handle check compares against the real
+      // path, and the embedded-id check reads that same file.
+      const canonicalExpectedPath = await deps.canonicalizePath(vars, options.expectedSessionPath);
+      if (!canonicalExpectedPath) {
+        return {
+          ok: false,
+          indeterminate: true,
+          reason: `runner session path canonicalization failed for ${options.paneId}`,
+        };
+      }
+      const embeddedId = await deps.resolveSessionIdForPath(vars, runner, canonicalExpectedPath);
+      if (embeddedId !== options.expectedSessionId) {
+        return {
+          ok: false,
+          reason: `persisted session file '${canonicalExpectedPath}' carries session id '${embeddedId ?? 'unknown'}', not '${options.expectedSessionId}'`,
+        };
+      }
+      const resumed = await deps.verifyResumed?.(
+        vars,
+        runner,
+        options.runnerPid,
+        options.expectedSessionId,
+        canonicalExpectedPath,
+      );
+      if (resumed?.ok) {
+        return {
+          ok: true,
+          binding: {
+            runnerSessionId: options.expectedSessionId,
+            runnerSessionPath: options.expectedSessionPath,
+            source: 'native',
+            canonicalSessionPath: canonicalExpectedPath,
+          },
+        };
+      }
+      return {
+        ok: false,
+        ...(resumed?.indeterminate ? { indeterminate: true as const } : {}),
+        reason:
+          resumed?.reason ?? `active runner session binding is unavailable for ${options.paneId}`,
+      };
+    }
     return {
       ok: false,
       reason: `active runner session binding is unavailable for ${options.paneId}`,

@@ -48,6 +48,12 @@ export interface AgentContext {
   target?: AgentContextTarget | null;
   runnerSessionId?: string | null;
   runnerSessionPath?: string | null;
+  /**
+   * When the runner-layer session hook last bound this role to the id/path pair
+   * above. Written only alongside a complete binding, so it also dates the
+   * evidence an operator reopens the session from.
+   */
+  runnerSessionCapturedAt?: string;
   nudgeCount?: number;
   /** Runner context-window usage percentage (0-100). See {@link AgentContextSummary.ctxPct}. */
   ctxPct?: number | null;

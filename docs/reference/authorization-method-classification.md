@@ -212,6 +212,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `run.replayStep`                        | admin          |                                                          |
 | `run.resolveDecision`                   | admin          |                                                          |
 | `run.resume`                            | admin          |                                                          |
+| `run.sessionCommand`                    | admin          |                                                          |
 | `run.slotHistory`                       | admin          |                                                          |
 | `run.tags.list`                         | admin          |                                                          |
 | `run.tags.set`                          | admin          |                                                          |
@@ -261,6 +262,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `tmux.killPane`                         | admin          |                                                          |
 | `tmux.list`                             | admin          |                                                          |
 | `tmux.newWindow`                        | admin          |                                                          |
+| `tmux.pasteText`                        | admin          |                                                          |
 | `tmux.renameWindow`                     | admin          |                                                          |
 | `tmux.selectPane`                       | admin          |                                                          |
 | `tmux.selectWindow`                     | admin          |                                                          |

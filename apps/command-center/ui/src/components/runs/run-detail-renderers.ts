@@ -86,6 +86,7 @@ export interface RunDetailViewContext {
   _renderCiStatus: (run: Run) => unknown;
   _renderRunEvidence: (run: Run) => unknown;
   _renderInteractivePackets: (run: Run) => unknown;
+  _renderAgentSessions: (run: Run) => unknown;
   _onReplayStep: (
     stepName: string,
     skipPrepare?: boolean,
@@ -795,7 +796,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           `
         : nothing}
     </div>
-    ${renderReviewChain(r)}
+    ${ctx._renderAgentSessions(r)} ${renderReviewChain(r)}
     ${ctx.siblings.length
       ? html`
           <div class="grade-card">

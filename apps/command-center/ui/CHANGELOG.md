@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(runs): Run Detail lists each agent context's runner session with its runner, model, short session id, structured liveness, addressed by exact context so two same-role reviewers stay distinct, and copy buttons for the gateway-built reopen and tmux attach commands.
 - feat(dispatch): add Cursor `gpt-5.6-sol-max` and drop unused Grok 4.5 model chips.
 - fix(runs): adopt a refreshed publication decision before re-enabling approval, preventing a fast post-refresh click from submitting the previous package identity.
 - fix(dispatch): count the first configured independent publication review toward the required minimum, and reject queuing a replacement against changing slot state.

@@ -18,6 +18,7 @@ import * as retainedSafeSendSmoke from './retained-safe-send-smoke.mjs';
 import * as reviewRecoveryTerminalContract from './review-recovery-terminal-contract.mjs';
 import * as selfReviewFixTurnLease from './self-review-fix-turn-lease.mjs';
 import * as sessionAttributionSmoke from './session-attribution-smoke.mjs';
+import * as sessionReopenSmoke from './session-reopen-smoke.mjs';
 import * as tokenUsageSmoke from './token-usage-smoke.mjs';
 import * as turnBoundary from './turn-boundary.mjs';
 import * as warmReplacementSmoke from './warm-replacement-smoke.mjs';
@@ -44,6 +45,7 @@ export const SCENARIOS = {
   'mode-switch': modeSwitch,
   'monitor-stuck-smoke': monitorStuckSmoke,
   'session-attribution-smoke': sessionAttributionSmoke,
+  'session-reopen-smoke': sessionReopenSmoke,
   'token-usage-smoke': tokenUsageSmoke,
   'warm-replacement-smoke': warmReplacementSmoke,
 };

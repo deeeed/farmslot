@@ -49,6 +49,7 @@ import {
   runnerDefaultModel,
   runnerSupportsModel,
 } from '../../runners/registry.js';
+import { clearedRunnerSessionContextPatch } from '../../runners/session-record.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../../runs/store.js';
 import { resolveContextFilePath } from '../../tasks/watcher.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../../tasks/worker-signals.js';
@@ -1079,8 +1080,9 @@ export async function runReplayStep(
                 ...context,
                 runner: replayRunner,
                 model: replayModel ?? runnerDefaultModel(replayRunner),
-                runnerSessionId: null,
-                runnerSessionPath: null,
+                // Spreading the old context would otherwise carry its capture
+                // timestamp onto a session the runner override discards.
+                ...clearedRunnerSessionContextPatch(),
               }
             : context,
         )

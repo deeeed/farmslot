@@ -544,6 +544,8 @@ test('exact live binding verifier supports Claude, Codex, and Grok pane-native a
   type VerifyDeps = NonNullable<Parameters<typeof verifyExactLiveRunnerSessionBinding>[3]>;
   for (const runner of ['claude', 'codex', 'grok']) {
     const deps: VerifyDeps = {
+      verifyResumed: async () => ({ ok: false, reason: 'not exercised by this fixture' }),
+      resolveSessionIdForPath: async () => null,
       readPaneStartedAt: async () => 1_000,
       resolveBinding: async (_vars, resolvedRunner, _before, options) => {
         assert.equal(resolvedRunner, runner);
@@ -585,6 +587,8 @@ test('exact live binding verifier rejects a new same-runner session in the persi
       expectedSessionPath: '/sessions/parked-session.jsonl',
     },
     {
+      verifyResumed: async () => ({ ok: false, reason: 'not exercised by this fixture' }),
+      resolveSessionIdForPath: async () => null,
       readPaneStartedAt: async () => 2_000,
       resolveBinding: async () => ({
         runnerSessionId: 'new-session',
