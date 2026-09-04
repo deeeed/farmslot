@@ -112,6 +112,8 @@ export interface RunnerObservability {
     /** PID of the live runner process, already proven to sit under the pane. */
     runnerPid: string,
     expectedSessionId: string,
+    /** Canonical rollout path, for confirming the process holds it open. */
+    expectedSessionPath: string,
     /**
      * `indeterminate` means the provider could not decide — callers must degrade
      * to unknown liveness rather than treat it as a proven absence.

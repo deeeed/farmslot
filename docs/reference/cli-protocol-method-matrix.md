@@ -477,6 +477,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `tmux.worker.restore`   | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `tmux.renameWindow`     | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `tmux.sendKeys`         | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `tmux.pasteText`        | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `tmux.synchronizePanes` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 
 ## worker.\*

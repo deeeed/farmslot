@@ -1,5 +1,7 @@
 // methods/tmux-control.ts — tmux split, pane navigation, window management
 
+import { randomUUID } from 'node:crypto';
+
 import type {
   OkResult,
   TmuxKillPaneParams,
@@ -7,6 +9,7 @@ import type {
   TmuxListResult,
   TmuxNewWindowParams,
   TmuxPane,
+  TmuxPasteTextParams,
   TmuxRenameWindowParams,
   TmuxSelectPaneParams,
   TmuxSelectWindowParams,
@@ -170,20 +173,21 @@ async function listTmuxWindows(
     const { stdout: paneOut } = await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `list-panes -t ${shellQuote(`${session}:${winIndex}`)} -F '#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_title}'`,
+        `list-panes -t ${shellQuote(`${session}:${winIndex}`)} -F '#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_title}|#{pane_current_command}'`,
       ),
       { timeout: TMUX_LIST_TIMEOUT_MS },
     );
 
     const panes: TmuxPane[] = [];
     for (const paneLine of paneOut.trim().split('\n').filter(Boolean)) {
-      const [pi, pa, pw, ph, pt] = paneLine.split('|');
+      const [pi, pa, pw, ph, pt, pc] = paneLine.split('|');
       panes.push({
         index: parseInt(pi, 10),
         active: pa === '1',
         width: parseInt(pw, 10),
         height: parseInt(ph, 10),
         title: pt || '',
+        ...(pc ? { currentCommand: pc } : {}),
       });
     }
 
@@ -220,6 +224,56 @@ export async function tmuxSendKeys(params: TmuxSendKeysParams): Promise<OkResult
     throw new Error(
       `tmux send-keys to ${target} failed: ${result.stderr?.trim() || result.stdout?.trim() || `exit ${result.exitCode}`}`,
     );
+  }
+  return { ok: true };
+}
+
+/**
+ * Deliver text to a pane as one bracketed paste.
+ *
+ * `send-keys` types the text, and tmux chunks it: a multi-kilobyte command
+ * arrives in pieces and a shell can be left mid-token at a continuation prompt
+ * with nothing executed. A paste buffer is written once and pasted once, which
+ * is also what an operator's own paste does. `-p` brackets it so the shell does
+ * not execute on an embedded newline; the caller submits explicitly.
+ */
+export async function tmuxPasteText(params: TmuxPasteTextParams): Promise<OkResult> {
+  const { vars, target } = await resolveTmuxControlTarget(params);
+  const bufferName = `farmslot-paste-${randomUUID()}`;
+  const write = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`set-buffer -b ${shellQuote(bufferName)} -- ${shellQuote(params.text)}`),
+  );
+  if (write.exitCode !== 0) {
+    throw new Error(
+      `tmux set-buffer for ${target} failed: ${write.stderr?.trim() || write.stdout?.trim() || `exit ${write.exitCode}`}`,
+    );
+  }
+  // `-d` deletes the buffer after pasting, so a long command is never left in
+  // the slot's shared paste stack.
+  const paste = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`paste-buffer -d -p -b ${shellQuote(bufferName)} -t ${shellQuote(target)}`),
+  );
+  if (paste.exitCode !== 0) {
+    await execOnSlot(
+      vars,
+      tmuxShellSnippet(`delete-buffer -b ${shellQuote(bufferName)} 2>/dev/null || true`),
+    );
+    throw new Error(
+      `tmux paste-buffer to ${target} failed: ${paste.stderr?.trim() || paste.stdout?.trim() || `exit ${paste.exitCode}`}`,
+    );
+  }
+  if (params.submit) {
+    const submit = await execOnSlot(
+      vars,
+      tmuxShellSnippet(`send-keys -t ${shellQuote(target)} Enter`),
+    );
+    if (submit.exitCode !== 0) {
+      throw new Error(
+        `tmux submit to ${target} failed: ${submit.stderr?.trim() || submit.stdout?.trim() || `exit ${submit.exitCode}`}`,
+      );
+    }
   }
   return { ok: true };
 }

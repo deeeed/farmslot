@@ -1,8 +1,11 @@
 // @farmslot:serial — writes slot fixtures into the shared repo `pool/` directory.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
+import { promisify } from 'node:util';
 
 import {
   AGENT_ROLES,
@@ -26,6 +29,8 @@ import {
   synthesizePrimaryContext,
   upsertAgentContext,
 } from './contexts.js';
+
+const execFileAsync = promisify(execFile);
 
 const testPoolFile = path.join(poolDir, `agent-contexts-fixture-${process.pid}.json`);
 
@@ -686,38 +691,47 @@ test('the guard observes state written by earlier queued mutations', async (t) =
   assert.equal(observedByGuard, 'first');
 });
 
-test('the slot mirror is compare-and-set on the same ownership as the write', async (t) => {
-  const run = createRun({
-    flowType: 'fix-bug',
-    project: 'example-browser-farm',
-    ticketOrPr: `PROJ-${Date.now()}-mirror-cas`,
-    slotId: 'runner-browser-1',
-  });
-  t.after(() => cleanupRun(run.id));
+test('the slot mirror predicate decides the write inside the slot chain', async (t) => {
+  // Exercise the CAS mechanism itself against an isolated status file: the
+  // agent-context fixture slot is not in the live fleet, so the mirror there
+  // returns before the predicate and proves nothing.
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-mirror-cas-'));
+  const statusPath = path.join(dir, 'farm-status.json');
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(
+    statusPath,
+    JSON.stringify({ slots: [{ slot: 'cas-slot', current_run_id: 'run-owner' }] }),
+  );
 
-  const seenPredicates: boolean[] = [];
-  await upsertAgentContext(
-    run.id,
-    'fix-bug',
-    { status: 'working' },
-    {
-      // The run-store write and the slot mirror are two separate writes; a
-      // transfer landing between them must not let this run overwrite the
-      // successor's agent_contexts on the slot.
-      mirrorIf: (slot) => {
-        const applies = slot.current_run_id === run.id;
-        seenPredicates.push(applies);
-        return applies;
-      },
+  const gatewayRoot = path.resolve(import.meta.dirname, '../..');
+  const script = `
+    const { updateSlotStatusIf } = await import('./src/core/state.js');
+    const seen = [];
+    const appliedForOwner = await updateSlotStatusIf(
+      'cas-slot',
+      (slot) => { seen.push(slot.current_run_id); return slot.current_run_id === 'run-owner'; },
+      { agent_contexts: [{ id: 'owner-ctx' }] },
+    );
+    const appliedForOther = await updateSlotStatusIf(
+      'cas-slot',
+      (slot) => slot.current_run_id === 'run-successor',
+      { agent_contexts: [{ id: 'successor-ctx' }] },
+    );
+    const { readFileSync } = await import('node:fs');
+    const row = JSON.parse(readFileSync(process.env.FARMSLOT_TEST_STATUS_FILE, 'utf8')).slots[0];
+    if (seen.length === 0) process.exit(2);
+    if (appliedForOwner !== true) process.exit(3);
+    if (appliedForOther !== false) process.exit(4);
+    if (row.agent_contexts[0].id !== 'owner-ctx') process.exit(5);
+  `;
+  await execFileAsync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+    cwd: gatewayRoot,
+    env: {
+      ...process.env,
+      NODE_TEST_CONTEXT: '1',
+      FARMSLOT_TEST_STATUS_FILE: statusPath,
     },
-  );
-
-  // The predicate is consulted inside the slot write chain, on the slot row as
-  // it stands at write time. A slot owned by nobody else must not match.
-  assert.ok(
-    seenPredicates.every((applied) => applied === false),
-    'a slot owned by another run must not be mirrored into',
-  );
+  });
 });
 
 test('upsert without mirrorIf keeps the unconditional mirror', () => {

@@ -323,6 +323,28 @@ export function parseCodexNativeBindingProbe(raw: string): CodexNativeBindingPro
 }
 
 /**
+ * Files a process currently holds open, one path per `n`-prefixed line.
+ *
+ * This is the PRIMARY ownership evidence: a process holding the exact rollout
+ * file open is a kernel fact about that pid, with no display formatting in the
+ * way. `ps -o args=` flattens argv into one display string, so a value
+ * containing spaces (`--config 'note = <uuid>'`) can masquerade as the
+ * positional session id — argv can therefore reject, but never certify.
+ */
+export function buildRunnerOpenFileProbeCommand(pid: string): string {
+  return `lsof -p ${shellQuote(pid)} -F n 2>/dev/null`;
+}
+
+/** Canonical paths held open by the probed process. */
+export function parseOpenFilePaths(lsofOutput: string): string[] {
+  return lsofOutput
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('n') && line.length > 1)
+    .map((line) => line.slice(1));
+}
+
+/**
  * Read one process's argv, for proving which session a live runner is resuming.
  * `ps -o args=` is a structured process read, not pane text.
  */
@@ -360,7 +382,6 @@ const CODEX_RESUME_VALUE_FLAGS = new Set([
 ]);
 
 const CODEX_RESUME_BOOLEAN_FLAGS = new Set([
-  '--last',
   '--all',
   '--include-non-interactive',
   '--strict-config',
@@ -414,6 +435,14 @@ export function codexResumeArgvVerdict(
       return {
         kind: 'indeterminate',
         reason: `variadic codex flag ${flag} makes the session argument ambiguous`,
+      };
+    }
+    if (flag === '--last') {
+      // `--last` picks the session by recency and shifts the positional to
+      // PROMPT, so argv cannot name the session at all.
+      return {
+        kind: 'indeterminate',
+        reason: '--last resumes by recency, so the positional is a prompt, not a session id',
       };
     }
     if (CODEX_RESUME_BOOLEAN_FLAGS.has(flag)) continue;
@@ -674,18 +703,30 @@ export const codexSessionObservability: RunnerObservability = {
       ? parsed.sessionId.trim()
       : null;
   },
-  async verifyResumedSessionBinding(vars, runnerPid, expectedSessionId) {
-    const result = await execOnSlot(vars, buildRunnerProcessArgvCommand(runnerPid), {
+  async verifyResumedSessionBinding(vars, runnerPid, expectedSessionId, expectedSessionPath) {
+    // argv first, but only to REJECT. `ps -o args=` is a flattened display
+    // string: a value containing spaces can present the expected id as a fake
+    // positional, so a match there is never sufficient on its own.
+    const argvResult = await execOnSlot(vars, buildRunnerProcessArgvCommand(runnerPid), {
       timeout: 10_000,
     });
-    if (result.exitCode !== 0) {
-      return { ok: false, reason: `runner process ${runnerPid} argv is unreadable` };
+    if (argvResult.exitCode !== 0) {
+      return {
+        ok: false,
+        indeterminate: true,
+        reason: `runner process ${runnerPid} argv is unreadable`,
+      };
     }
-    const argv = result.stdout.trim();
-    if (!argv) return { ok: false, reason: `runner process ${runnerPid} reported no argv` };
+    const argv = argvResult.stdout.trim();
+    if (!argv) {
+      return {
+        ok: false,
+        indeterminate: true,
+        reason: `runner process ${runnerPid} reported no argv`,
+      };
+    }
     const verdict = codexResumeArgvVerdict(argv, expectedSessionId);
     if (verdict.kind === 'indeterminate') {
-      // Cannot locate the session argument, so this proves nothing either way.
       return { ok: false, indeterminate: true, reason: verdict.reason };
     }
     if (verdict.kind !== 'resumes') {
@@ -694,7 +735,31 @@ export const codexSessionObservability: RunnerObservability = {
         reason: `runner process ${runnerPid} is not resuming session ${expectedSessionId}`,
       };
     }
-    return { ok: true };
+    if (!expectedSessionPath?.trim()) {
+      return {
+        ok: false,
+        indeterminate: true,
+        reason: 'no canonical session path was supplied to confirm the open handle',
+      };
+    }
+
+    // PRIMARY: the process must hold that exact rollout file open. Codex opens
+    // it on write, so allow a few samples before concluding.
+    let lastReason = `runner process ${runnerPid} does not hold ${expectedSessionPath} open`;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1_000));
+      const open = await execOnSlot(vars, buildRunnerOpenFileProbeCommand(runnerPid), {
+        timeout: 10_000,
+      });
+      if (open.exitCode !== 0) {
+        lastReason = `open-file probe for ${runnerPid} is unavailable`;
+        continue;
+      }
+      if (parseOpenFilePaths(open.stdout).includes(expectedSessionPath)) return { ok: true };
+    }
+    // Not proven, and not proven absent either: the handle may simply not be
+    // open yet. Never certify, never claim the session is elsewhere.
+    return { ok: false, indeterminate: true, reason: lastReason };
   },
 
   async normalizeRetainedSessionBinding(vars, binding) {

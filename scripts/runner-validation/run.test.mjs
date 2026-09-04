@@ -61,7 +61,7 @@ test('session-reopen-smoke reopens in a fresh window and keeps pane text out of 
   // plus a pane-died kill-pane hook), so the reopen must open its own window
   // instead of typing into whatever tmux resolves the stale target to.
   assert.match(source, /rpc\('tmux\.newWindow', \{ slotId, bareSession: true \}\)/);
-  assert.match(source, /sendLineToCurrentWindow\(slotId, session\.reopenCommand\)/);
+  assert.match(source, /pasteCommandToCurrentWindow\(slotId, session\.reopenCommand\)/);
   // Liveness and the session id are the pass evidence; the pane tail is only
   // captured on failure and is labelled as diagnostic.
   assert.match(source, /report\.diagnosticPaneTail = diagnosticPaneTail\(/);
@@ -87,6 +87,28 @@ test('session-reopen-smoke interrupts through the runner capability and demands 
   assert.doesNotMatch(source, /state\.liveness !== 'live'/);
   // AC1 scope is stated rather than silently skipped.
   assert.match(source, /nudge path is unit-covered/);
+});
+
+test('session-reopen-smoke pastes the reopen command atomically and fails fast', () => {
+  const source = fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      'scenarios/session-reopen-smoke.mjs',
+    ),
+    'utf8',
+  );
+
+  // Typed delivery chunks a ~3 KB command and strands zsh at a `quote>` prompt.
+  assert.match(
+    source,
+    /rpc\('tmux\.pasteText', \{ slotId, bareSession: true, text, submit: true \}\)/,
+  );
+  assert.doesNotMatch(source, /sendLineToCurrentWindow/);
+  // A shell that never started the command must fail in seconds, not after the
+  // full liveness timeout, and must carry the diagnostic tail.
+  assert.match(source, /waitForPaneChildProcess\(slotId\)/);
+  assert.match(source, /pasted reopen command never started a process/);
+  assert.match(source, /pane_current_command|currentCommand/);
 });
 
 test('session-reopen-smoke reads the pane tail from the snapshot lines array', () => {

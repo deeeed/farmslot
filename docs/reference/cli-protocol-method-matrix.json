@@ -1057,6 +1057,10 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "tmux.pasteText": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
     "tmux.sendKeys": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."

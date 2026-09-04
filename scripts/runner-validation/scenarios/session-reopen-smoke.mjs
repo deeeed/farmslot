@@ -75,19 +75,46 @@ function sendLine(slotId, runId, contextId, target, text, submitDelayMs = 300) {
 }
 
 /**
- * Deliver one literal line to the slot session's CURRENT window.
+ * Paste one command into the slot session's CURRENT window as a single
+ * bracketed paste, then submit.
  *
- * After the interrupt the recorded role window is gone: dispatch sets
- * `remain-on-exit off` and a `pane-died -> kill-pane` hook on role windows, so
- * a runner that exits takes its single-pane window with it. `bareSession`
- * routes to the session itself, which tmux resolves to the window that
- * `tmux.newWindow` just made current.
+ * Typed delivery is chunked: the ~3 KB single-quoted reopen command arrives in
+ * pieces and zsh can be left mid-string at a `quote>` continuation prompt with
+ * nothing executed. A paste buffer is written once and pasted once, which is
+ * what an operator's own paste does.
  */
-function sendLineToCurrentWindow(slotId, text) {
-  rpc('terminal.send', { slotId, bareSession: true, text, enter: false });
-  sleepMs(300);
-  rpc('tmux.sendKeys', { slotId, bareSession: true, keys: 'Enter' });
-  sleepMs(300);
+function pasteCommandToCurrentWindow(slotId, text) {
+  rpc('tmux.pasteText', { slotId, bareSession: true, text, submit: true });
+  sleepMs(500);
+}
+
+/**
+ * Structural check that the pasted command actually started something: a child
+ * process must appear under the pane's shell. A shell stranded at a
+ * continuation prompt has no child, so this fails in seconds instead of waiting
+ * out the liveness poll. Pane text is never consulted.
+ */
+async function waitForPaneChildProcess(slotId, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let latest = null;
+  while (Date.now() < deadline) {
+    const panes = rpc('tmux.list', { slotId, bareSession: true });
+    const active = (panes?.windows ?? [])
+      .flatMap((window) => window.panes ?? [])
+      .find((pane) => pane.active);
+    latest = active ?? null;
+    // `pane_current_command` moving off the login shell is the structural signal
+    // that the pasted line is executing.
+    if (
+      active &&
+      active.currentCommand &&
+      !/^(zsh|bash|sh|-zsh|-bash)$/.test(active.currentCommand)
+    ) {
+      return { started: true, pane: active };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return { started: false, pane: latest };
 }
 
 /**
@@ -107,6 +134,13 @@ function diagnosticPaneTail(slotId, lines = 40) {
     );
   }
   return snapshot.lines.slice(-lines).join('\n');
+}
+
+/** Index of the session's active window, read from structured tmux state. */
+function activeWindowIndex(slotId) {
+  const listed = rpc('tmux.list', { slotId, bareSession: true });
+  const active = (listed?.windows ?? []).find((window) => window.active);
+  return active ? active.index : null;
 }
 
 function capturedWorkerSession(run) {
@@ -149,6 +183,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
   const report = {
     runner: reportRunner,
     slotId,
+    reopenWindowIndex: null,
     runId: null,
     capturedRole: null,
     capturedSessionId: null,
@@ -166,6 +201,8 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     reopenedSessionId: null,
     reopenedTmuxTarget: null,
     reopenedInNewWindow: false,
+    reopenStartedCommand: false,
+    reopenPaneCommand: null,
     targetWasRediscovered: false,
     diagnosticPaneTail: null,
     diagnosticPaneTailError: null,
@@ -174,6 +211,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     error: null,
   };
   let runId = null;
+  let reopenWindowIndex = null;
 
   try {
     const fleet = rpc('fleet.status');
@@ -305,7 +343,23 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     rpc('tmux.newWindow', { slotId, bareSession: true });
     sleepMs(500);
     report.reopenedInNewWindow = true;
-    sendLineToCurrentWindow(slotId, session.reopenCommand);
+    // Remember the window so the scenario does not leave one behind on every
+    // run; without this the slot accumulates idle reopen windows.
+    reopenWindowIndex = activeWindowIndex(slotId);
+    report.reopenWindowIndex = reopenWindowIndex;
+    pasteCommandToCurrentWindow(slotId, session.reopenCommand);
+
+    // Fail fast on a shell that never started the command, rather than burning
+    // the liveness timeout on a pane that is stuck at a continuation prompt.
+    const started = await waitForPaneChildProcess(slotId);
+    report.reopenStartedCommand = started.started;
+    report.reopenPaneCommand = started.pane?.currentCommand ?? null;
+    if (!started.started) {
+      report.diagnosticPaneTail = diagnosticPaneTail(slotId);
+      throw new Error(
+        `pasted reopen command never started a process (pane command: ${report.reopenPaneCommand ?? 'unknown'})`,
+      );
+    }
 
     let reopened;
     try {
@@ -347,6 +401,17 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
   } catch (error) {
     report.error = error?.message || String(error);
   } finally {
+    if (reopenWindowIndex !== null) {
+      // The reopened runner is cancelled with the run; the window it lived in
+      // is this scenario's litter and is its own to clear.
+      try {
+        rpc('tmux.killPane', { slotId, target: `${reopenWindowIndex}` });
+        report.reopenWindowClosed = true;
+      } catch (closeError) {
+        report.reopenWindowClosed = false;
+        report.reopenWindowCloseError = closeError?.message || String(closeError);
+      }
+    }
     if (runId) {
       // A validation run that outlives the scenario holds a real slot. Report
       // the leaked runId so the operator can cancel it by hand.

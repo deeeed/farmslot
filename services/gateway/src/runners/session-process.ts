@@ -726,12 +726,18 @@ export async function verifyResumedRunnerSessionBinding(
   runner: string,
   runnerPid: string,
   expectedSessionId: string,
+  expectedSessionPath: string,
 ): Promise<{ ok: boolean; indeterminate?: true; reason?: string }> {
   const provider = getRunnerObservability(runner);
   if (!provider?.verifyResumedSessionBinding) {
     return { ok: false, reason: `runner '${runner}' cannot prove a resumed session binding` };
   }
-  return provider.verifyResumedSessionBinding(vars, runnerPid, expectedSessionId);
+  return provider.verifyResumedSessionBinding(
+    vars,
+    runnerPid,
+    expectedSessionId,
+    expectedSessionPath,
+  );
 }
 
 const EXACT_LIVE_BINDING_DEPS: ExactLiveRunnerSessionBindingDeps = {
@@ -766,34 +772,31 @@ export async function verifyExactLiveRunnerSessionBinding(
     // resuming exactly this session instead — a targeted check that needs an
     // expected id, so it cannot loosen open-ended discovery.
     if (options.runnerPid) {
+      // Canonicalize FIRST: the open-handle check compares against the real
+      // path, and the embedded-id check reads that same file.
+      const canonicalExpectedPath = await deps.canonicalizePath(vars, options.expectedSessionPath);
+      if (!canonicalExpectedPath) {
+        return {
+          ok: false,
+          indeterminate: true,
+          reason: `runner session path canonicalization failed for ${options.paneId}`,
+        };
+      }
+      const embeddedId = await deps.resolveSessionIdForPath(vars, runner, canonicalExpectedPath);
+      if (embeddedId !== options.expectedSessionId) {
+        return {
+          ok: false,
+          reason: `persisted session file '${canonicalExpectedPath}' carries session id '${embeddedId ?? 'unknown'}', not '${options.expectedSessionId}'`,
+        };
+      }
       const resumed = await deps.verifyResumed?.(
         vars,
         runner,
         options.runnerPid,
         options.expectedSessionId,
+        canonicalExpectedPath,
       );
       if (resumed?.ok) {
-        // The process proves WHICH session it resumed; the path still has to be
-        // proven the same way a fresh binding's is. Canonicalize it and confirm
-        // the file really carries that session id, so a stale or relocated path
-        // cannot ride in on the process check alone.
-        const canonicalExpectedPath = await deps.canonicalizePath(
-          vars,
-          options.expectedSessionPath,
-        );
-        if (!canonicalExpectedPath) {
-          return {
-            ok: false,
-            reason: `runner session path canonicalization failed for ${options.paneId}`,
-          };
-        }
-        const embeddedId = await deps.resolveSessionIdForPath(vars, runner, canonicalExpectedPath);
-        if (embeddedId !== options.expectedSessionId) {
-          return {
-            ok: false,
-            reason: `persisted session file '${canonicalExpectedPath}' carries session id '${embeddedId ?? 'unknown'}', not '${options.expectedSessionId}'`,
-          };
-        }
         return {
           ok: true,
           binding: {

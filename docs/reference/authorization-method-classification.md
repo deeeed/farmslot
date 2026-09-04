@@ -262,6 +262,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `tmux.killPane`                         | admin          |                                                          |
 | `tmux.list`                             | admin          |                                                          |
 | `tmux.newWindow`                        | admin          |                                                          |
+| `tmux.pasteText`                        | admin          |                                                          |
 | `tmux.renameWindow`                     | admin          |                                                          |
 | `tmux.selectPane`                       | admin          |                                                          |
 | `tmux.selectWindow`                     | admin          |                                                          |

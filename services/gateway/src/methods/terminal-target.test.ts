@@ -54,3 +54,33 @@ test('every tmux key delivery path fails loudly when tmux refuses the send', () 
     assert.match(source, /result\.exitCode !== 0/, `${name} must inspect the exit code`);
   }
 });
+
+/**
+ * A multi-kilobyte command typed as keystrokes is chunked, and a shell can be
+ * left mid-token at a continuation prompt with nothing executed. Paste is one
+ * buffer write and one paste.
+ */
+test('pasted text is delivered as one bracketed paste buffer, not typed keys', () => {
+  const source = readFileSync(path.join(GATEWAY_SRC, 'methods/tmux-control.ts'), 'utf8');
+  const fn = source.slice(source.indexOf('export async function tmuxPasteText'));
+  const body = fn.slice(0, fn.indexOf('\n}\n') + 3);
+
+  assert.match(body, /set-buffer -b /);
+  // `-p` brackets the paste so the shell does not run on an embedded newline.
+  assert.match(body, /paste-buffer -d -p -b /);
+  // The command body never goes through send-keys, which chunks and truncates.
+  assert.doesNotMatch(body, /send-keys -t \$\{shellQuote\(target\)\} \$\{/);
+  // Every tmux step is checked; a refused paste must not report success.
+  assert.match(body, /set-buffer for .* failed/);
+  assert.match(body, /paste-buffer to .* failed/);
+  assert.match(body, /submit to .* failed/);
+});
+
+test('the paste buffer is named uniquely and deleted after use', () => {
+  const source = readFileSync(path.join(GATEWAY_SRC, 'methods/tmux-control.ts'), 'utf8');
+
+  // A shared buffer name would collide between concurrent slots, and a retained
+  // buffer would leave a multi-kilobyte command in the slot's paste stack.
+  assert.match(source, /farmslot-paste-\$\{randomUUID\(\)\}/);
+  assert.match(source, /delete-buffer -b /);
+});

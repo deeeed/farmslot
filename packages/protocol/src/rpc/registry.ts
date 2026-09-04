@@ -163,6 +163,7 @@ export const Methods = {
   TMUX_WORKER_RESTORE: 'tmux.worker.restore',
   TMUX_RENAME_WINDOW: 'tmux.renameWindow',
   TMUX_SEND_KEYS: 'tmux.sendKeys',
+  TMUX_PASTE_TEXT: 'tmux.pasteText',
   TMUX_SYNCHRONIZE_PANES: 'tmux.synchronizePanes',
 
   // Editor

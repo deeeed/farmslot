@@ -62,6 +62,18 @@ export interface TmuxSendKeysParams extends TmuxTargetParams {
   keys: string;
 }
 
+export interface TmuxPasteTextParams extends TmuxTargetParams {
+  /**
+   * Exact text delivered as ONE bracketed paste. `tmux.sendKeys` types keys and
+   * chunks, which truncates a long command mid-token and strands the shell at a
+   * continuation prompt; a paste buffer is atomic, and is what an operator's
+   * own paste does.
+   */
+  text: string;
+  /** Press Enter after the paste. Bracketed paste never submits on its own. */
+  submit?: boolean;
+}
+
 export interface TmuxSynchronizePanesParams extends TmuxTargetParams {
   enabled: boolean;
 }
@@ -72,6 +84,12 @@ export interface TmuxPane {
   width: number;
   height: number;
   title: string;
+  /**
+   * tmux `#{pane_current_command}` — the foreground process in the pane. A
+   * structured field, not pane text: it distinguishes an idle login shell from
+   * a pane that is running something.
+   */
+  currentCommand?: string;
 }
 
 export interface TmuxWindow {

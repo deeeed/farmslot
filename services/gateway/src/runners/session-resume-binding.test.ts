@@ -4,9 +4,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  buildRunnerOpenFileProbeCommand,
   buildRunnerProcessArgvCommand,
   codexArgvResumesSession,
   codexResumeArgvVerdict,
+  parseOpenFilePaths,
 } from './codex-observability.js';
 import { verifyExactLiveRunnerSessionBinding } from './session-process.js';
 import { makeVars } from './test-fixtures.js';
@@ -350,7 +352,6 @@ test('every transcribed codex resume flag still finds the session argument', () 
     );
   }
   for (const flag of [
-    '--last',
     '--all',
     '--include-non-interactive',
     '--strict-config',
@@ -370,9 +371,9 @@ test('every transcribed codex resume flag still finds the session argument', () 
 });
 
 test('a boolean flag never swallows the session argument', () => {
-  // If `--last` were mistaken for a value flag the id would be skipped.
+  // If `--all` were mistaken for a value flag the id would be skipped.
   assert.equal(
-    codexResumeArgvVerdict(`codex resume --last ${SESSION_ID}`, SESSION_ID).kind,
+    codexResumeArgvVerdict(`codex resume --all ${SESSION_ID}`, SESSION_ID).kind,
     'resumes',
   );
   // And a value flag must still consume exactly one token.
@@ -410,4 +411,110 @@ test('an indeterminate argv verdict surfaces as indeterminate, not a proven abse
   if (result.ok) return;
   assert.equal(result.indeterminate, true);
   assert.match(result.reason, /unrecognized codex flag/);
+});
+
+test('the real manual resume argv with -C between resume and the id parses', () => {
+  // Exact shape seen live on macpro for a hand-typed resume.
+  assert.equal(
+    codexResumeArgvVerdict(
+      'codex resume --dangerously-bypass-approvals-and-sandbox -C /Users/example/dev/repo 01a06ac7-1111-2222-3333-444455556666',
+      '01a06ac7-1111-2222-3333-444455556666',
+    ).kind,
+    'resumes',
+  );
+  // `-C` consumes the directory, so the directory is never read as the id.
+  assert.equal(
+    codexResumeArgvVerdict(
+      'codex resume -C /Users/example/dev/repo 01a06ac7-1111-2222-3333-444455556666',
+      '/Users/example/dev/repo',
+    ).kind,
+    'other-session',
+  );
+});
+
+test('--last is indeterminate because the positional becomes the prompt', () => {
+  // `codex resume [OPTIONS] [SESSION_ID] [PROMPT]`; --last omits SESSION_ID and
+  // picks by recency, so the first positional is a prompt, not an id.
+  const verdict = codexResumeArgvVerdict(`codex resume --last ${SESSION_ID}`, SESSION_ID);
+
+  assert.equal(verdict.kind, 'indeterminate');
+  if (verdict.kind !== 'indeterminate') return;
+  assert.match(verdict.reason, /--last resumes by recency/);
+  assert.equal(codexArgvResumesSession(`codex resume --last ${SESSION_ID}`, SESSION_ID), false);
+});
+
+test('open file handles are read from lsof machine-readable output', () => {
+  assert.match(buildRunnerOpenFileProbeCommand('6892'), /^lsof -p '6892' -F n/);
+  // `-F n` emits one field per line; only `n` lines are paths.
+  assert.deepEqual(
+    parseOpenFilePaths(['p6892', 'fcwd', 'n/repo', 'ftxt', `n${SESSION_PATH}`, 'n'].join('\n')),
+    ['/repo', SESSION_PATH],
+  );
+  assert.deepEqual(parseOpenFilePaths(''), []);
+});
+
+test('a flattened argv cannot certify on its own: the open handle decides', async () => {
+  // `ps -o args=` joins argv with spaces, so `--config 'note = <uuid>'` can put
+  // the expected id where a positional would be. argv says `resumes` here, and
+  // the process does NOT hold the rollout open, so it must not be certified.
+  let openProbes = 0;
+  const result = await verifyExactLiveRunnerSessionBinding(
+    makeVars(),
+    'codex',
+    {
+      paneId: '%32',
+      slotId: 'macpro-ff-1',
+      expectedSessionId: SESSION_ID,
+      expectedSessionPath: SESSION_PATH,
+      runnerPid: '6892',
+    },
+    {
+      readPaneStartedAt: async () => 1_788_519_132_869,
+      resolveBinding: async () => null,
+      canonicalizePath: async (_vars, sessionPath) => sessionPath,
+      resolveSessionIdForPath: async () => SESSION_ID,
+      verifyResumed: async () => {
+        openProbes += 1;
+        return {
+          ok: false,
+          indeterminate: true,
+          reason: `runner process 6892 does not hold ${SESSION_PATH} open`,
+        };
+      },
+    },
+  );
+
+  assert.equal(openProbes, 1);
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.indeterminate, true);
+  assert.match(result.reason, /does not hold .* open/);
+});
+
+test('the canonical path is what the open-handle check is given', async () => {
+  let handedPath;
+  await verifyExactLiveRunnerSessionBinding(
+    makeVars(),
+    'codex',
+    {
+      paneId: '%32',
+      slotId: 'macpro-ff-1',
+      expectedSessionId: SESSION_ID,
+      expectedSessionPath: '/repo/./.agent/codex-home/sessions/rollout-01a06c09.jsonl',
+      runnerPid: '6892',
+    },
+    {
+      readPaneStartedAt: async () => 1_788_519_132_869,
+      resolveBinding: async () => null,
+      canonicalizePath: async () => SESSION_PATH,
+      resolveSessionIdForPath: async () => SESSION_ID,
+      verifyResumed: async (_vars, _runner, _pid, _id, expectedSessionPath) => {
+        handedPath = expectedSessionPath;
+        return { ok: true };
+      },
+    },
+  );
+
+  // A non-canonical path would never match an lsof entry.
+  assert.equal(handedPath, SESSION_PATH);
 });

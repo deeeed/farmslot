@@ -278,6 +278,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'tmux.killPane': { classification: 'admin' },
   'tmux.list': { classification: 'admin' },
   'tmux.newWindow': { classification: 'admin' },
+  'tmux.pasteText': { classification: 'admin' },
   'tmux.renameWindow': { classification: 'admin' },
   'tmux.selectPane': { classification: 'admin' },
   'tmux.selectWindow': { classification: 'admin' },
