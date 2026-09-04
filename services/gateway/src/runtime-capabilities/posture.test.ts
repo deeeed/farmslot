@@ -763,3 +763,60 @@ test('recordFailure persists an unreachable reconcile without changing the postu
   );
   assert.equal(runs.get('run-a')?.resourcePosture?.lastTransition?.outcome, 'failed');
 });
+
+test('validation preparation re-checks health even when the lease already looks acquired', async (t) => {
+  let healthy = true;
+  const { reconciler, registry, actions } = await harness(t, {
+    capabilities: [entry('browser')],
+    runAction: (_slot, action) =>
+      action.kind === 'slot-action' && action.actionId === 'browser.health' && !healthy
+        ? { ok: false, detail: 'browser is not responding' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
+  const requirements = [{ capabilityId: 'browser', reason: 'validation', mode: 'visual' as const }];
+  // First pass establishes `active`, so a second identical pass would otherwise
+  // take the idempotent short-circuit.
+  const first = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: requirements,
+  });
+  assert.equal(first.ok, true);
+
+  healthy = false;
+  actions.length = 0;
+  const second = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: requirements,
+  });
+  assert.notEqual(second.transition.outcome, 'idempotent', 'health must be proven, not assumed');
+  assert.equal(second.ok, false);
+  assert.equal(second.transition.rejection?.kind, 'capability-unavailable');
+  assert.ok(actions.includes('browser.health'), actions.join(', '));
+});
+
+test('a park that runs and reports failed is a rejection, not a parked run', async (t) => {
+  const { reconciler, registry, runs } = await harness(t, {
+    capabilities: [CATALOG_LINT],
+    parkExecute: async (params) => ({
+      ok: false,
+      outcome: 'failed',
+      operationId: params.operationId ?? 'op',
+      machine: params.machine,
+      mode: params.mode,
+      records: [],
+    }),
+  });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'parked' });
+  assert.equal(result.ok, false);
+  assert.equal(result.transition.outcome, 'rejected');
+  assert.equal(result.transition.rejection?.kind, 'park-ineligible');
+  assert.equal(result.status.posture, 'operator-wait');
+  assert.equal(result.status.workerRetained, true);
+  assert.equal(runs.get('run-a')?.resourcePosture?.posture, 'operator-wait');
+});

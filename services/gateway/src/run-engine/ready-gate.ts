@@ -85,7 +85,11 @@ import {
   publicationReviewPolicyForRun,
   requiresPublicationApproval,
 } from './publication-policy.js';
-import { gateChoiceFromSelectionData, reconcileRunPosture } from './resource-posture.js';
+import {
+  gateChoiceFromSelectionData,
+  reconcileRunPosture,
+  resolveGateChoiceOutcome,
+} from './resource-posture.js';
 import {
   assertIndependentReviewLaunchStateForSlot,
   publicationReviewLaunchRejectionFromError,
@@ -1005,17 +1009,18 @@ export async function executeReadyGate(runId: string): Promise<string> {
     boundary: 'gate-resolved',
     ...(postureChoice ? { gateChoice: postureChoice } : {}),
   });
-  const postureRejection = postureOutcome.result?.transition.rejection;
-  if (postureRejection) {
+  const postureResult = resolveGateChoiceOutcome(postureOutcome);
+  if (postureResult.kind !== 'applied') {
     // ADR-054 defines `free-slot` as a typed rejection until the run is
-    // park-eligible. The gate must not read as if the choice took effect: the
-    // rejection is already durable on the run, and the run stays in the posture
-    // it actually has, so re-state it here rather than continuing silently.
+    // park-eligible. The rejection and the posture actually in force are already
+    // durable on the run; reconciling again to "restore" operator-wait would
+    // overwrite that transition and erase the only record of the refusal. So
+    // this surfaces it and leaves the persisted state alone.
     console.warn(
       `[run-engine] run ${runId.slice(0, 8)} — posture choice '${postureChoice ?? 'default'}' ` +
-        `rejected (${postureRejection.kind}): ${postureRejection.reason}`,
+        `${postureResult.kind}${'code' in postureResult && postureResult.code ? ` (${postureResult.code})` : ''}: ` +
+        postureResult.reason,
     );
-    await reconcileRunPosture({ runId, boundary: 'operator-wait' });
   }
   if (publicationApprovalGate) {
     const decisionPayload = decision?.payload as ReadyGatePayload | undefined;

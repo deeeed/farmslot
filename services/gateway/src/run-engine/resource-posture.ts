@@ -104,23 +104,72 @@ export async function reconcileRunPosture(
     // run so posture status and reconnecting clients see it. The boundary itself
     // must still complete — losing an operator hold, a cancel, or a slot
     // teardown because a provider was unreachable would be the worse outcome.
+    let recordFailureError: string | undefined;
     try {
       await reconciler.recordFailure(request.runId, posture, detail, request.operationId);
     } catch (recordError) {
-      // The failure recorder itself failing is unrecoverable here; there is no
-      // durable channel left, so log it and let the boundary finish.
+      // A secondary failure of the recorder itself is NOT discarded: it is named,
+      // logged with both reasons, and returned to the caller so the boundary can
+      // surface it. Rethrowing here is what would be wrong — this catch exists
+      // only because the alternative is dropping the operator hold, the cancel,
+      // or the slot teardown this reconcile is attached to. Callers that can
+      // safely fail (the RPC path) go through `apply`, which never routes here.
+      recordFailureError = recordError instanceof Error ? recordError.message : String(recordError);
       console.error(
-        `[run-engine] could not persist posture failure for ${request.runId.slice(0, 8)}: ` +
-          `${recordError instanceof Error ? recordError.message : String(recordError)}`,
+        `[run-engine] posture failure for ${request.runId.slice(0, 8)} could not be persisted: ` +
+          `reconcile failed with "${detail}" and recording that failed with ` +
+          `"${recordFailureError}"`,
       );
     }
-    return { ok: false, error: detail };
+    return {
+      ok: false,
+      error: detail,
+      ...(recordFailureError ? { recordFailureError } : {}),
+    };
   }
 }
 
 export type RunPostureReconcileOutcome =
   | { ok: boolean; result: RuntimePostureApplyResult; error?: undefined }
-  | { ok: false; result?: undefined; error: string };
+  | {
+      ok: false;
+      result?: undefined;
+      error: string;
+      /** Set when the failure could not even be written to the run's posture. */
+      recordFailureError?: string;
+    };
+
+export type GateChoiceOutcome =
+  | { kind: 'applied' }
+  | { kind: 'rejected'; code?: string; reason: string }
+  | { kind: 'unavailable'; reason: string };
+
+/**
+ * What a resolved gate choice actually did. Pure so the gate's branch is
+ * testable without standing up a whole publication gate.
+ *
+ * A rejection is already durable on the run (the reconciler rolled the posture
+ * back and recorded a `rejected` transition), so the caller must NOT reconcile
+ * again to "restore" anything: a second apply would overwrite that transition
+ * with an `applied` one and erase the only record the operator has.
+ */
+export function resolveGateChoiceOutcome(outcome: RunPostureReconcileOutcome): GateChoiceOutcome {
+  if (outcome.error !== undefined) {
+    return {
+      kind: 'unavailable',
+      reason: outcome.recordFailureError
+        ? `${outcome.error} (and the failure could not be persisted: ${outcome.recordFailureError})`
+        : outcome.error,
+    };
+  }
+  const rejection = outcome.result.transition.rejection;
+  if (!rejection) return { kind: 'applied' };
+  return {
+    kind: 'rejected',
+    ...('code' in rejection && rejection.code ? { code: rejection.code } : {}),
+    reason: rejection.reason,
+  };
+}
 
 /**
  * Validation preparation is `active` with the action's proof plan re-applied.

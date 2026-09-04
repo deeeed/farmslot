@@ -7,6 +7,10 @@
  */
 import {
   Events,
+  isResourcePosture,
+  isResourcePostureGateChoice,
+  RESOURCE_POSTURE_GATE_CHOICES,
+  RESOURCE_POSTURES,
   type RuntimePostureApplyParams,
   type RuntimePostureApplyResult,
   type RuntimePosturePreviewParams,
@@ -52,20 +56,44 @@ export function getRunResourcePostureReconciler(): RunResourcePostureReconciler 
   return reconciler;
 }
 
+/**
+ * Wire-level guard. The reconciler already turns an unknown run into a typed
+ * rejection, but a malformed `runId` should fail as a request error rather than
+ * reaching the run store at all.
+ */
+function requireRunId(runId: unknown): string {
+  if (typeof runId !== 'string' || !runId.trim()) {
+    throw new Error('runId must be a non-empty string');
+  }
+  return runId;
+}
+
+function assertPostureRequest(params: RuntimePosturePreviewParams): void {
+  requireRunId(params.runId);
+  if (params.posture !== undefined && !isResourcePosture(params.posture)) {
+    throw new Error(`posture must be one of ${RESOURCE_POSTURES.join(', ')}`);
+  }
+  if (params.gateChoice !== undefined && !isResourcePostureGateChoice(params.gateChoice)) {
+    throw new Error(`gateChoice must be one of ${RESOURCE_POSTURE_GATE_CHOICES.join(', ')}`);
+  }
+}
+
 export async function runtimePostureStatus(
   params: RuntimePostureStatusParams,
 ): Promise<RuntimePostureStatusResult> {
-  return reconciler.status(params.runId);
+  return reconciler.status(requireRunId(params.runId));
 }
 
 export async function runtimePosturePreview(
   params: RuntimePosturePreviewParams,
 ): Promise<RuntimePosturePreviewResult> {
+  assertPostureRequest(params);
   return reconciler.preview(params);
 }
 
 export async function runtimePostureApply(
   params: RuntimePostureApplyParams,
 ): Promise<RuntimePostureApplyResult> {
+  assertPostureRequest(params);
   return reconciler.apply(params);
 }

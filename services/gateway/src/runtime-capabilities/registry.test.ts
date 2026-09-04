@@ -805,3 +805,62 @@ test('stopWarmProviders ends a keep-warm window before its deadline', async (t) 
     true,
   );
 });
+
+test('stopWarmProviders ends warm windows in dependency order', async (t) => {
+  const warmApp = { ...entry('app', 'exclusive', ['metro']), keepWarmMs: 600_000 };
+  const warmMetro = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warmApp, warmMetro]);
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+
+  actions.length = 0;
+  await registry.stopWarmProviders(SLOT);
+  const releases = actions.filter((action) => action.endsWith('.release'));
+  // The dependency was created first, so insertion order would stop metro out
+  // from under app.
+  assert.deepEqual(releases, ['app.release', 'metro.release']);
+});
+
+test('revalidateHealth on a healthy parent still proves its dependencies', async (t) => {
+  let metroHealthy = true;
+  const { registry, actions } = await fixture(
+    t,
+    [entry('app', 'exclusive', ['metro']), entry('metro')],
+    {
+      runAction: async (_slotId, action) =>
+        action.kind === 'slot-action' && action.actionId === 'metro.health' && !metroHealthy
+          ? { ok: false, detail: 'metro is not responding' }
+          : { ok: true },
+    },
+  );
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+
+  // The parent is still fine; the thing it runs on died.
+  metroHealthy = false;
+  actions.length = 0;
+  const blocked = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'app',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'app', reason: 'validation', mode: 'state' },
+    revalidateHealth: true,
+  });
+  assert.equal(blocked.ok, false, 'a dead dependency must not pass preparation');
+  assert.ok(actions.includes('metro.health'), actions.join(', '));
+  assert.ok(actions.includes('metro.release'), actions.join(', '));
+
+  metroHealthy = true;
+  const recovered = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'app',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'app', reason: 'validation', mode: 'state' },
+    revalidateHealth: true,
+  });
+  assert.equal(recovered.ok, true);
+  if (!recovered.ok) return;
+  assert.ok(
+    recovered.dependencyLeases.some((lease) => lease.capabilityId === 'metro'),
+    'the revalidated dependency is reported back to the caller',
+  );
+});

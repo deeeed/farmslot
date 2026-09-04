@@ -649,6 +649,21 @@ export class RunResourcePostureReconciler {
         priorState,
       );
     }
+    if (execution.outcome === 'failed') {
+      // Parking ran and refused: nothing was stopped, so this is the same
+      // situation as a thrown refusal and must not leave the run advertising
+      // itself as parked with its worker reported stopped.
+      return this.rejectionResult(
+        { runId: context.run.id, operationId: inProgress.id },
+        this.planFrom(context),
+        {
+          kind: 'park-ineligible',
+          code: 'PARK_EXECUTE_FAILED',
+          reason: `machine pause reported outcome 'failed' on ${machine}`,
+        },
+        priorState,
+      );
+    }
     const refreshed = await this.refresh(context);
     const transition: ResourcePostureTransition = {
       ...inProgress,
@@ -801,7 +816,19 @@ export class RunResourcePostureReconciler {
     return state;
   }
 
+  /**
+   * Preparation for a validation or recipe rerun has to prove its proof plan is
+   * alive, and lease state is not that proof: a provider can die while the run
+   * waits and the lease still reads `acquired`. So `active` with requirements
+   * never takes the idempotent short-circuit — the acquire pass runs and
+   * re-checks provider health.
+   */
+  private requiresFreshHealth(context: ResolvedContext): boolean {
+    return context.policy.posture === 'active' && context.proofRequirements.length > 0;
+  }
+
   private isIdempotent(context: ResolvedContext): boolean {
+    if (this.requiresFreshHealth(context)) return false;
     const persisted = context.run.resourcePosture;
     if (persisted?.posture !== context.policy.posture) return false;
     return context.states.every((state) => dispositionSatisfied(state.desiredDisposition, state));

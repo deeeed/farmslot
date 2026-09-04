@@ -342,10 +342,35 @@ export class RuntimeCapabilityRegistry {
             owner: sameOwner.owner,
             detail: 'retained provider revalidated healthy',
           });
+          // A healthy parent proves nothing about what it runs on. Walk the
+          // dependencies under the same revalidation so a dead one is cleaned up
+          // and reacquired instead of silently passing preparation.
+          const revalidatedDependencies: RuntimeCapabilityLease[] = [];
+          for (const dependencyId of entry.dependencies ?? []) {
+            const dependency = await this.acquireInternal(
+              snapshot,
+              catalog,
+              {
+                ...params,
+                capabilityId: dependencyId,
+                proofRequirement: {
+                  capabilityId: dependencyId,
+                  reason: `Required by ${entry.id}: ${params.proofRequirement.reason}`,
+                  mode: params.proofRequirement.mode,
+                },
+                parameters: {},
+                queueOnPressure: false,
+                revalidateHealth: true,
+              },
+              false,
+            );
+            if (!dependency.ok) return dependency;
+            revalidatedDependencies.push(dependency.lease, ...dependency.dependencyLeases);
+          }
           return {
             ok: true,
             lease: structuredClone(sameOwner),
-            dependencyLeases: [],
+            dependencyLeases: revalidatedDependencies,
             idempotent: true,
           };
         }
@@ -1106,8 +1131,17 @@ export class RuntimeCapabilityRegistry {
   ): Promise<void> {
     await this.mutate(async () => {
       const snapshot = this.options.store.snapshot();
-      const expired = snapshot.leases.filter(
+      const selected = snapshot.leases.filter(
         (lease) => lease.state === 'released' && select(lease),
+      );
+      // Warm providers are still real processes with real dependencies, so they
+      // stop in the same dependency order as an ordinary release. Lease
+      // insertion order is the opposite: `acquireInternal` creates dependencies
+      // before their dependent, so iterating the array would stop a dependency
+      // out from under something still using it.
+      const selectedIds = new Set(selected.map((lease) => lease.id));
+      const expired = this.releaseOrder(snapshot, selected).filter((lease) =>
+        selectedIds.has(lease.id),
       );
       for (const lease of expired) {
         const hasHolder = snapshot.leases.some(

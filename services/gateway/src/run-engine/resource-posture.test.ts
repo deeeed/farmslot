@@ -18,6 +18,7 @@ import {
   postureForBoundary,
   prepareRunPostureForValidation,
   reconcileRunPosture,
+  resolveGateChoiceOutcome,
   RUN_POSTURE_BOUNDARIES,
   type RunPostureBoundary,
 } from './resource-posture.js';
@@ -212,4 +213,100 @@ test('only the typed gate-choice vocabulary is read out of selectionData', () =>
     resourcePosture: 'project-default',
   });
   assert.equal(choice, 'project-default');
+});
+
+function outcomeWithRejection(rejection: Record<string, unknown> | undefined) {
+  return {
+    ok: !rejection,
+    result: {
+      ok: !rejection,
+      status: {
+        posture: 'operator-wait' as const,
+        policySource: 'framework-default' as const,
+        capabilities: [],
+        workerRetained: true,
+        updatedAt: '2026-09-05T00:00:00.000Z',
+      },
+      transition: {
+        id: 'op-1',
+        posture: 'parked' as const,
+        policySource: 'gate-choice' as const,
+        requestedAt: '2026-09-05T00:00:00.000Z',
+        completedAt: '2026-09-05T00:00:00.000Z',
+        outcome: rejection ? ('rejected' as const) : ('applied' as const),
+        effects: [],
+        progress: { total: 0, completed: 0 },
+        failures: [],
+        ...(rejection ? { rejection } : {}),
+      },
+    },
+  } as unknown as Parameters<typeof resolveGateChoiceOutcome>[0];
+}
+
+test('a resolved gate choice reports applied, rejected, or unavailable', () => {
+  assert.deepEqual(resolveGateChoiceOutcome(outcomeWithRejection(undefined)), { kind: 'applied' });
+
+  assert.deepEqual(
+    resolveGateChoiceOutcome(
+      outcomeWithRejection({
+        kind: 'park-ineligible',
+        code: 'STATUS_NOT_ELIGIBLE',
+        reason: "status 'human-gating' is not monitoring or ci-watching",
+      }),
+    ),
+    {
+      kind: 'rejected',
+      code: 'STATUS_NOT_ELIGIBLE',
+      reason: "status 'human-gating' is not monitoring or ci-watching",
+    },
+  );
+
+  // A capability rejection has no eligibility code.
+  assert.deepEqual(
+    resolveGateChoiceOutcome(
+      outcomeWithRejection({
+        kind: 'capability-unavailable',
+        capabilityId: 'browser-cdp',
+        reason: 'owned by run-b',
+        conflict: {},
+      }),
+    ),
+    { kind: 'rejected', reason: 'owned by run-b' },
+  );
+
+  assert.deepEqual(resolveGateChoiceOutcome({ ok: false, error: 'catalog unavailable' }), {
+    kind: 'unavailable',
+    reason: 'catalog unavailable',
+  });
+
+  // The secondary failure is carried, not dropped.
+  assert.deepEqual(
+    resolveGateChoiceOutcome({
+      ok: false,
+      error: 'catalog unavailable',
+      recordFailureError: 'run store unavailable',
+    }),
+    {
+      kind: 'unavailable',
+      reason: 'catalog unavailable (and the failure could not be persisted: run store unavailable)',
+    },
+  );
+});
+
+test('a failure of the failure recorder is named and returned, never dropped', async () => {
+  const throwing = {
+    apply: async () => {
+      throw new Error('catalog unavailable');
+    },
+    recordFailure: async () => {
+      throw new Error('run store unavailable');
+    },
+  } as unknown as RunResourcePostureReconciler;
+  const outcome = await reconcileRunPosture({ runId: newRun(), boundary: 'cancel' }, throwing);
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.error, 'catalog unavailable');
+  assert.equal(
+    outcome.result === undefined ? outcome.recordFailureError : undefined,
+    'run store unavailable',
+  );
 });
