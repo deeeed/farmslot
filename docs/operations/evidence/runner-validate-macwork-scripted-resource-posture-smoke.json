@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-04T15:49:09.197Z",
+  "recordedAt": "2026-09-04T16:19:31.643Z",
   "host": "macwork",
   "scenario": "resource-posture-smoke",
   "runner": "scripted",
   "slotId": "macpro-ff-1",
   "capabilityId": "sandbox-gateway-ui",
-  "runId": "76c0c753-dede-4e0d-a8ec-48b535520d36",
+  "runId": "851592ee-1ba8-4bcf-ba5a-9703f91491a0",
   "project": "farmslot-farm",
   "acquire": {
     "ok": true,
@@ -31,11 +31,11 @@
     "observedState": "running",
     "policySource": "framework-default",
     "reason": "kept so the next operator action stays usable",
-    "leaseId": "cap-3410763b-1b04-4bed-adbf-c131c663b5cb",
+    "leaseId": "cap-2750fa0c-6aa7-4a32-bd0c-eef65fc23f3a",
     "owner": {
-      "runId": "76c0c753-dede-4e0d-a8ec-48b535520d36"
+      "runId": "851592ee-1ba8-4bcf-ba5a-9703f91491a0"
     },
-    "lastTransitionAt": "2026-09-04T15:49:02.483Z",
+    "lastTransitionAt": "2026-09-04T16:19:13.912Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -56,11 +56,11 @@
     "observedState": "stopped",
     "policySource": "framework-default",
     "reason": "terminal cleanup stops every run- and family-owned provider",
-    "leaseId": "cap-3410763b-1b04-4bed-adbf-c131c663b5cb",
+    "leaseId": "cap-2750fa0c-6aa7-4a32-bd0c-eef65fc23f3a",
     "owner": {
-      "runId": "76c0c753-dede-4e0d-a8ec-48b535520d36"
+      "runId": "851592ee-1ba8-4bcf-ba5a-9703f91491a0"
     },
-    "lastTransitionAt": "2026-09-04T15:49:04.395Z",
+    "lastTransitionAt": "2026-09-04T16:19:18.167Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
