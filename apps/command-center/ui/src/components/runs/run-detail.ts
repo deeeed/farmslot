@@ -12,6 +12,7 @@ import type {
   RunDecision,
   RunGetResult,
   RunListResult,
+  RunSessionCommandResult,
   TaskProgressResult,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
@@ -31,6 +32,7 @@ import '../interactive/interactive-operator-packets.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
+import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { togglePinnedSlot } from '../../utils/pinned-slots.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
@@ -72,6 +74,13 @@ import {
   renderRunEvidence,
   renderRunGrade,
 } from './run-detail-renderers.js';
+import {
+  renderRunAgentSessions,
+  runSessionCommandTextForKind,
+  type RunSessionCopyKind,
+  type RunSessionRow,
+  runSessionRowStateFromResult,
+} from './run-detail-session-renderers.js';
 import { RunDetailState } from './run-detail-state.js';
 import { runDetailStyles } from './run-detail-styles.js';
 import {
@@ -787,6 +796,11 @@ export class RunDetail extends RunDetailState {
         }),
       _renderRunEvidence: (run) => this._renderRunEvidence(run),
       _renderInteractivePackets: (run) => this._renderInteractivePackets(run),
+      _renderAgentSessions: (run) =>
+        renderRunAgentSessions(run, {
+          states: this._sessionStates,
+          onCopy: (row, kind) => void this._copyRunnerSessionCommand(run, row, kind),
+        }),
       _onReplayStep: (stepName, skipPrepare, prepareProfile, freshDispatch) =>
         this._onReplayStep(stepName, skipPrepare, prepareProfile, freshDispatch),
       renderGateSection: (run) => this.renderGateSection(run),
@@ -804,6 +818,45 @@ export class RunDetail extends RunDetailState {
         this._showTerminal = !this._showTerminal;
       },
     });
+  }
+
+  /**
+   * Copy the gateway-built command for one agent context. The command is never
+   * assembled here — `run.sessionCommand` owns the runner CLI syntax, and its
+   * structured liveness is what labels the row.
+   */
+  private async _copyRunnerSessionCommand(
+    run: Run,
+    row: RunSessionRow,
+    kind: RunSessionCopyKind,
+  ): Promise<void> {
+    this._sessionStates = { ...this._sessionStates, [row.contextId]: { status: 'loading' } };
+    try {
+      const result = await gateway.request<RunSessionCommandResult>(Methods.RUN_SESSION_COMMAND, {
+        runId: run.id,
+        role: row.role,
+      });
+      const command = runSessionCommandTextForKind(result, kind);
+      let copyError: string | null = null;
+      if (command) {
+        // A refused clipboard must not hide the liveness the gateway proved,
+        // and must never be reported as a successful copy.
+        try {
+          await copyTextToClipboard(command);
+        } catch (err) {
+          copyError = (err as Error).message;
+        }
+      }
+      this._sessionStates = {
+        ...this._sessionStates,
+        [row.contextId]: runSessionRowStateFromResult(result, kind, copyError),
+      };
+    } catch (err) {
+      this._sessionStates = {
+        ...this._sessionStates,
+        [row.contextId]: { status: 'error', message: (err as Error).message },
+      };
+    }
   }
 
   private async _setRunTags(run: Run, tags: string[]) {

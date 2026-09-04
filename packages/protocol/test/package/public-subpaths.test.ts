@@ -262,6 +262,7 @@ for (const [name, actual, expected] of [
       interactiveDevResolve: Methods.RUN_INTERACTIVE_DEV_RESOLVE,
       forSlot: Methods.RUN_FOR_SLOT,
       probeWorkerSignal: Methods.RUN_PROBE_WORKER_SIGNAL,
+      sessionCommand: Methods.RUN_SESSION_COMMAND,
       resolveDecision: Methods.RUN_RESOLVE_DECISION,
       grade: Methods.RUN_GRADE,
       getGrade: Methods.RUN_GET_GRADE,

@@ -36,6 +36,7 @@ export const RunMethods = {
   forSlot: Methods.RUN_FOR_SLOT,
   resolveDecision: Methods.RUN_RESOLVE_DECISION,
   probeWorkerSignal: Methods.RUN_PROBE_WORKER_SIGNAL,
+  sessionCommand: Methods.RUN_SESSION_COMMAND,
   grade: Methods.RUN_GRADE,
   getGrade: Methods.RUN_GET_GRADE,
   proposeImprovement: Methods.RUN_PROPOSE_IMPROVEMENT,
@@ -486,6 +487,59 @@ export interface RunProbeWorkerSignalParams {
 }
 
 export type RunProbeWorkerSignalResult = import('../transport/signal.js').WorkerSignalProbeResult;
+
+export interface RunSessionCommandParams {
+  runId: string;
+  /** Agent context role to reopen. Defaults to the run's primary worker role. */
+  role?: import('../contracts/index.js').AgentRole;
+}
+
+/**
+ * Structured runner liveness for the persisted session's pane. `unknown` means
+ * the probe could not decide (unreachable machine, tmux query failure) — it is
+ * never derived from rendered pane text.
+ */
+export type RunSessionLiveness = 'live' | 'dead' | 'unknown';
+
+export type RunSessionCommandUnsupportedReason =
+  | 'no-agent-context'
+  | 'no-slot'
+  | 'unknown-runner'
+  | 'session-reload-unsupported'
+  | 'session-not-captured';
+
+export interface RunSessionCommandSupportedResult {
+  supported: true;
+  runId: string;
+  role: import('../contracts/index.js').AgentRole;
+  contextId: string;
+  runner: string;
+  model: string | null;
+  sessionId: string;
+  sessionPath: string;
+  capturedAt: string | null;
+  slotId: string;
+  machine: string;
+  tmuxTarget: string | null;
+  /** Built by the gateway runner layer. Clients never assemble runner CLI syntax. */
+  reopenCommand: string;
+  attachCommand: string | null;
+  liveness: RunSessionLiveness;
+  /** Why liveness is `unknown`, when the probe could not decide. */
+  livenessReason?: string;
+}
+
+export interface RunSessionCommandUnsupportedResult {
+  supported: false;
+  runId: string;
+  role: import('../contracts/index.js').AgentRole | null;
+  reason: RunSessionCommandUnsupportedReason;
+  detail: string;
+}
+
+export type RunSessionCommandResult =
+  | RunSessionCommandSupportedResult
+  | RunSessionCommandUnsupportedResult;
 
 export interface RunGradeParams {
   runId: string;

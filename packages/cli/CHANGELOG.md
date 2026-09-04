@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat(run): add `farmslot run session <runId> [--role <role>]`, printing the reopen and tmux attach commands for an agent context's runner session on their own lines.
 - fix(run): `farmslot run force-complete` accepts `--pr <n>` so an operator can attach an already-opened PR when marking a failed run done, and prints advisory effect failures after the run is already `done`.
 
 - feat(dispatch): add `farmslot dispatch pressure-admission status|enable|disable` for the durable pressure-prevention kill switch (MANUAL-000109).

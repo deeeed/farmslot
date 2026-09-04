@@ -48,9 +48,9 @@ test('dispatch-model-flag fails when named explicitly without its required argum
   assert.equal(matrix.pass, true);
 });
 
-test('runner-validation catalog includes four runners and twenty-three scenarios', () => {
+test('runner-validation catalog includes four runners and twenty-four scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
-  assert.equal(listScenarios().length, 23);
+  assert.equal(listScenarios().length, 24);
   assert.ok(listScenarios().includes('review-recovery-terminal-contract'));
   assert.ok(listScenarios().includes('self-review-fix-turn-lease'));
   assert.ok(listScenarios().includes('hook-smoke'));
@@ -66,6 +66,26 @@ test('runner-validation catalog includes four runners and twenty-three scenarios
   assert.ok(listScenarios().includes('token-usage-smoke'));
   assert.ok(listScenarios().includes('monitor-stuck-smoke'));
   assert.ok(listScenarios().includes('dispatch-model-flag'));
+  assert.ok(listScenarios().includes('session-reopen-smoke'));
+});
+
+test('session-reopen-smoke fails when named explicitly without a slot and never stubs real evidence', async (t) => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'session-reopen-args-'));
+  t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+  const scenario = await import('./scenarios/session-reopen-smoke.mjs');
+
+  const explicit = await scenario.runScenario({ timeoutMs: 1000, outDir, explicit: true });
+  assert.equal(explicit.pass, false);
+  assert.equal(Boolean(explicit.skipped), false);
+  assert.match(explicit.report.error, /needs --slot/);
+
+  // A real run's evidence must survive a later matrix skip on the same host.
+  const evidenceFile = explicit.outPath;
+  fs.writeFileSync(evidenceFile, JSON.stringify({ pass: true, marker: 'real-run' }));
+  const matrix = await scenario.runScenario({ timeoutMs: 1000, outDir });
+  assert.equal(matrix.skipped, true);
+  assert.equal(matrix.pass, true);
+  assert.equal(JSON.parse(fs.readFileSync(evidenceFile, 'utf8')).marker, 'real-run');
 });
 
 test('self-review routes argv-relaunch handoffs to cold process replacement', () => {

@@ -576,6 +576,60 @@ test('cleanupRuns quarantines gateway test fixture leaks', async () => {
   assert.equal(getRun(leaked.id), undefined);
 });
 
+test('agent-context runner session identity survives a gateway restart', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'farmslot-run-session-'));
+  const runId = 'c1a2b3c4-1111-4222-8333-444455556666';
+  const persisted = {
+    id: runId,
+    familyId: runId,
+    parentRunId: null,
+    familyRootTicketOrPr: 'SESSION-RESTART-1',
+    lane: 'production',
+    variant: null,
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    status: 'monitoring',
+    project: 'farmslot-farm',
+    ticketOrPr: 'SESSION-RESTART-1',
+    slotId: 'macpro-mm-1',
+    taskFile: 'tasks/session-restart/TASK.md',
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: 'gpt-5.6', runner: 'codex' },
+    agentContexts: [
+      {
+        id: 'fix-bug',
+        role: 'fix-bug',
+        label: 'Worker',
+        status: 'working',
+        slotId: 'macpro-mm-1',
+        runId,
+        runner: 'codex',
+        model: 'gpt-5.6',
+        runnerSessionId: 'codex-session-restart',
+        runnerSessionPath: '/repo/.agent/codex/sessions/codex-session-restart.jsonl',
+        runnerSessionCapturedAt: '2026-09-04T09:30:00.000Z',
+      },
+    ],
+    createdAt: '2026-09-04T09:00:00.000Z',
+    updatedAt: '2026-09-04T09:30:00.000Z',
+  };
+  await writeFile(path.join(tmp, `${runId}.json`), JSON.stringify(persisted));
+  const gatewayRoot = path.resolve(import.meta.dirname, '../..');
+  const script = `
+    process.env.FARMSLOT_RUNS_DIR = ${JSON.stringify(tmp)};
+    const { loadAllRuns, getRun } = await import('./src/runs/store.js');
+    await loadAllRuns();
+    const context = getRun(${JSON.stringify(runId)})?.agentContexts?.find((c) => c.role === 'fix-bug');
+    if (context?.runnerSessionId !== 'codex-session-restart') process.exit(2);
+    if (context?.runnerSessionPath !== '/repo/.agent/codex/sessions/codex-session-restart.jsonl') process.exit(3);
+    if (context?.runnerSessionCapturedAt !== '2026-09-04T09:30:00.000Z') process.exit(4);
+  `;
+  await execFileAsync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+    cwd: gatewayRoot,
+  });
+});
+
 test('loadAllRuns quarantines persisted gateway test fixture leaks', async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'farmslot-run-leak-'));
   const runId = '5dd53883-bb8f-4f24-a20e-a20ab2856974';

@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import type { Command } from 'commander';
 
 import {
+  AGENT_ROLES,
+  type AgentRole,
   buildRunResolveDecisionParams,
   type EventFrame,
   failedRunCancelEffects,
@@ -19,6 +21,7 @@ import {
   type RunGradeResult,
   type RunPauseResult,
   type RunResumeResult,
+  type RunSessionCommandResult,
 } from '@farmslot/protocol';
 
 import { bold, cyan, green } from '../colors.js';
@@ -347,6 +350,37 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
   };
 }
 
+/** Reject an unknown --role before it reaches the gateway. */
+export function parseAgentRole(raw: string | undefined): AgentRole | undefined {
+  if (raw == null || raw.trim() === '') return undefined;
+  const role = raw.trim();
+  if (!(AGENT_ROLES as readonly string[]).includes(role)) {
+    throw Object.assign(new Error(`Invalid --role '${role}'.`), {
+      code: 'RUN_SESSION_INVALID_ROLE',
+      userAction: `Pass one of: ${AGENT_ROLES.join(', ')}.`,
+    });
+  }
+  return role as AgentRole;
+}
+
+/**
+ * Human output for `run session`. The reopen and attach commands each get their
+ * own line with nothing else on it, so an operator can select and paste one.
+ */
+export function formatRunSessionLines(result: RunSessionCommandResult): string[] {
+  if (!result.supported) {
+    return [
+      `No reopen command for role ${result.role ?? 'unknown'}: ${result.reason}`,
+      result.detail,
+    ];
+  }
+  return [
+    `${result.runner}/${result.model ?? 'unknown'}  role=${result.role}  slot=${result.slotId}  session=${result.sessionId}  liveness=${result.liveness}`,
+    result.reopenCommand,
+    ...(result.attachCommand ? [result.attachCommand] : []),
+  ];
+}
+
 export function registerRunCommand(program: Command): void {
   const run = program.command('run').description('Run lifecycle operations');
 
@@ -398,6 +432,31 @@ export function registerRunCommand(program: Command): void {
         );
         if (emit.machine) emit.ok(result);
         else output.write(`${JSON.stringify(result.run, null, 2)}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  run
+    .command('session <runId>')
+    .description("Show the command that reopens a run agent's runner session")
+    .option('--role <role>', "Agent context role (default: the run's primary worker role)")
+    .action(async (runId: string, opts: { role?: string }, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const role = parseAgentRole(opts.role);
+        const result = await withProgress(
+          `Session for ${runId.slice(0, 8)}`,
+          () =>
+            client.call<RunSessionCommandResult>('run.sessionCommand', {
+              runId,
+              ...(role ? { role } : {}),
+            }),
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else for (const line of formatRunSessionLines(result)) output.write(`${line}\n`);
       } catch (err) {
         emit.fail(err);
       }

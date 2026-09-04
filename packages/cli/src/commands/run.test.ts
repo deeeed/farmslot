@@ -11,6 +11,8 @@ import {
   buildReviewChainResult,
   buildRunCreateParams,
   formatReviewChainLine,
+  formatRunSessionLines,
+  parseAgentRole,
   parseOptionalPrNumber,
   parseTaskPath,
 } from './run.js';
@@ -445,4 +447,54 @@ test('run create refuses partial pressure flags', () => {
       }),
     /--pressure-machine and --pressure-generation/,
   );
+});
+
+test('run session prints the reopen and attach commands on their own lines', () => {
+  const lines = formatRunSessionLines({
+    supported: true,
+    runId: 'run-1',
+    role: 'fix-bug',
+    contextId: 'fix-bug',
+    runner: 'codex',
+    model: 'gpt-5.6',
+    sessionId: 'codex-session-123',
+    sessionPath: '/repo/.agent/codex/sessions/codex-session-123.jsonl',
+    capturedAt: '2026-09-04T09:00:00.000Z',
+    slotId: 'macpro-mm-1',
+    machine: 'macpro',
+    tmuxTarget: 'mm-1:dev',
+    reopenCommand: "cd /repo && CODEX_HOME=/repo/.agent/codex codex resume 'codex-session-123'",
+    attachCommand: "tmux select-window -t 'mm-1:dev' \\; attach -t '=mm-1'",
+    liveness: 'dead',
+  });
+
+  assert.equal(lines.length, 3);
+  assert.match(lines[0]!, /codex\/gpt-5\.6/);
+  assert.match(lines[0]!, /liveness=dead/);
+  assert.equal(
+    lines[1],
+    "cd /repo && CODEX_HOME=/repo/.agent/codex codex resume 'codex-session-123'",
+  );
+  assert.equal(lines[2], "tmux select-window -t 'mm-1:dev' \\; attach -t '=mm-1'");
+});
+
+test('run session reports an unsupported runner instead of printing a guessed command', () => {
+  const lines = formatRunSessionLines({
+    supported: false,
+    runId: 'run-1',
+    role: 'fix-bug',
+    reason: 'session-reload-unsupported',
+    detail: "Runner 'cursor' has no validated session reload.",
+  });
+
+  assert.equal(lines.length, 2);
+  assert.match(lines[0]!, /session-reload-unsupported/);
+  assert.match(lines[1]!, /cursor/);
+});
+
+test('parseAgentRole accepts a known role and rejects the rest', () => {
+  assert.equal(parseAgentRole(undefined), undefined);
+  assert.equal(parseAgentRole(''), undefined);
+  assert.equal(parseAgentRole('self-review'), 'self-review');
+  assert.throws(() => parseAgentRole('reviewer'), /Invalid --role 'reviewer'/);
 });

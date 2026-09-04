@@ -36,6 +36,7 @@ import {
   deliverPromptWithRetainedFallback,
   type RetainedSessionDeliveryResult,
 } from '../../runners/session-reactivation.js';
+import { runnerSessionContextPatch } from '../../runners/session-record.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
 import { isWorkerAlive } from '../../self-review/worker-lifecycle.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
@@ -438,8 +439,10 @@ export async function warmSessionHandoffDispatch(
     runner,
     target: primaryTarget,
     nudgeCount: priorNudgeCount + 1,
-    runnerSessionId: retainedSessionId,
-    runnerSessionPath: retainedSessionPath,
+    ...(runnerSessionContextPatch(
+      { runnerSessionId: retainedSessionId, runnerSessionPath: retainedSessionPath },
+      'retained warm handoff',
+    ) ?? { runnerSessionId: null, runnerSessionPath: null }),
   });
   step(
     'handoff',

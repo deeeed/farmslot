@@ -22,6 +22,7 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     prNumber: overrides.prNumber,
     steps: overrides.steps ?? [],
     decisions: overrides.decisions ?? [],
+    agentContexts: overrides.agentContexts,
     metrics: overrides.metrics ?? {
       nudgeCount: 0,
       model: null,

@@ -45,6 +45,7 @@ import {
   type RunReplayStepParams,
   type RunResolveDecisionParams,
   type RunResumeParams,
+  type RunSessionCommandParams,
   type RunTagsSetParams,
   type SlotRunHistoryParams,
 } from '@farmslot/protocol';
@@ -101,6 +102,7 @@ import {
 } from '../methods/run/lifecycle-control.js';
 import { runProposeImprovement } from '../methods/run/propose-improvement.js';
 import { runReplayStep } from '../methods/run/replay-step.js';
+import { runSessionCommand } from '../methods/run/session-command.js';
 import { runSlotHistory } from '../methods/run/slot-history.js';
 import { runBundleExport, runBundleImport, runBundleList } from '../methods/run-bundle.js';
 
@@ -183,6 +185,8 @@ export async function routeRunMethod(
       return handled(runRecipeRunsForRun(p as RunRecipeRunsForRunParams));
     case Methods.RUN_PROBE_WORKER_SIGNAL:
       return handled(runProbeWorkerSignal(p as RunProbeWorkerSignalParams));
+    case Methods.RUN_SESSION_COMMAND:
+      return handled(runSessionCommand(p as RunSessionCommandParams));
     case Methods.RUN_RESOLVE_DECISION: {
       const params = p as RunResolveDecisionParams;
       // Forward all per-request emits as broadcasts so RUN_UPDATED, the inner

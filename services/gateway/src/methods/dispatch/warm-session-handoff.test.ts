@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
+
+import { runnerSessionContextPatch } from '../../runners/session-record.js';
 
 import {
   isWarmHandoffDispatchRecovery,
@@ -162,4 +166,26 @@ test('warm handoff accepts existing task acknowledgement only during a dispatch 
     }),
     false,
   );
+});
+
+test('warm handoff records the retained session through the runner-layer hook', () => {
+  const source = readFileSync(path.join(import.meta.dirname, 'warm-session-handoff.ts'), 'utf8');
+  // One hook owns the session fields: a raw `runnerSessionId:` assignment next
+  // to the working-context upsert is how the capturedAt stamp went missing.
+  assert.match(source, /runnerSessionContextPatch\(/);
+  assert.match(source, /'retained warm handoff'/);
+  assert.doesNotMatch(source, /nudgeCount: priorNudgeCount \+ 1,\n\s+runnerSessionId:/);
+});
+
+test('warm handoff stamps a capture time on the retained binding it hands to the hook', () => {
+  const patch = runnerSessionContextPatch(
+    { runnerSessionId: 'retained-1', runnerSessionPath: '/sessions/retained-1.jsonl' },
+    'retained warm handoff',
+    new Date('2026-09-04T11:00:00.000Z'),
+  );
+  assert.deepEqual(patch, {
+    runnerSessionId: 'retained-1',
+    runnerSessionPath: '/sessions/retained-1.jsonl',
+    runnerSessionCapturedAt: '2026-09-04T11:00:00.000Z',
+  });
 });

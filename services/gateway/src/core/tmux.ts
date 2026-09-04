@@ -52,6 +52,19 @@ export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * Operator-pasteable attach line for one agent pane. `=session` disables tmux
+ * prefix matching so `mm-1` never attaches to `mm-10`. When the role window is
+ * known the window is selected in the same command, otherwise the operator
+ * lands on whatever window the session last had focused.
+ */
+export function tmuxAttachCommandForTarget(session: string, windowTarget?: string | null): string {
+  const attach = `tmux attach -t ${shellQuote(`=${session}`)}`;
+  const target = windowTarget?.trim();
+  if (!target || target === session) return attach;
+  return `tmux select-window -t ${shellQuote(target)} \\; attach -t ${shellQuote(`=${session}`)}`;
+}
+
 export function tmuxShellSnippet(snippet: string): string {
   const trimmed = snippet.trim();
   return [

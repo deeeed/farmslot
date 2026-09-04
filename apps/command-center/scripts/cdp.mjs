@@ -4,6 +4,7 @@
 // Usage:
 //   node scripts/cdp.mjs eval <hash|-|<route#hash>> <expr>  Evaluate JS in a page tab (- = first tab).
 //   node scripts/cdp.mjs eval <hash> --file <path>    Evaluate the file contents in page context.
+//   node scripts/cdp.mjs focus <hash>                 Front the tab + grant clipboard (probes that click copy buttons).
 //   node scripts/cdp.mjs goto <hash|url> [--new]      Navigate a reused Command Center tab.
 //   node scripts/cdp.mjs login <hash>                 Fill the auth form from env token/password.
 //   node scripts/cdp.mjs screenshot <hash> <path>      Capture a PNG screenshot of a page tab.
@@ -187,6 +188,35 @@ async function navigateTab(target, forceNew = false) {
   await waitForNavigatedRoute(call, url);
   close();
   return { id: tab.id, url, reused };
+}
+
+/**
+ * Make a tab the active, focused one and grant it clipboard access.
+ *
+ * A probe's `element.click()` carries no user activation, so a copy button's
+ * `navigator.clipboard.writeText` rejects with "Document is not focused" in a
+ * background tab and "Write permission denied" without the granted permission.
+ * Both are browser gates on the automation, not app behaviour — the probe still
+ * drives the real button and the real RPC.
+ */
+async function focusTab(hash) {
+  const tab = await findTab(hash);
+  if (!tab) die(`no CDP tab matching hash=${hash || '(any)'}`, 2);
+  const { call, close } = await connect(tab.webSocketDebuggerUrl);
+  await call('Page.enable');
+  await call('Page.bringToFront');
+  close();
+  const origin = new URL(tab.url).origin;
+  const versionRes = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/version`);
+  if (!versionRes.ok) die(`CDP not reachable on :${CDP_PORT}`, 2);
+  const { webSocketDebuggerUrl } = await versionRes.json();
+  const browser = await connect(webSocketDebuggerUrl);
+  await browser.call('Browser.grantPermissions', {
+    origin,
+    permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+  });
+  browser.close();
+  return { id: tab.id, url: tab.url, origin, clipboardGranted: true };
 }
 
 async function evalInTab(hash, expr) {
@@ -432,6 +462,10 @@ try {
     if (!expr) die('missing expression');
     const value = await evalInTab(hash, expr);
     console.log(typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+  } else if (cmd === 'focus') {
+    const [hash] = rest;
+    if (!hash) die('usage: cdp.mjs focus <hash|-|route>');
+    console.log(JSON.stringify(await focusTab(hash), null, 2));
   } else if (cmd === 'login') {
     const [hash] = rest;
     if (!hash) die('usage: cdp.mjs login <hash>');
@@ -448,7 +482,7 @@ try {
     const result = await gatewayRpc(method, paramsJson);
     console.log(JSON.stringify(result, null, 2));
   } else {
-    die('usage: cdp.mjs <tabs | goto | eval | login | screenshot | gateway> ...');
+    die('usage: cdp.mjs <tabs | goto | eval | focus | login | screenshot | gateway> ...');
   }
 } catch (err) {
   die(`cdp.mjs: ${err.message}`, 2);

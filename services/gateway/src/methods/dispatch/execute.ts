@@ -85,6 +85,7 @@ import {
   listRunnerSessionFiles,
   recaptureRunnerSessionMetadataIfMissing,
 } from '../../runners/session-process.js';
+import { runnerSessionContextPatch } from '../../runners/session-record.js';
 import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.js';
 import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
 import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
@@ -1783,8 +1784,10 @@ export async function dispatchExecute(
         runner,
         model,
         target: primaryTarget,
-        runnerSessionId: sessionMeta.runnerSessionId,
-        runnerSessionPath: sessionMeta.runnerSessionPath,
+        ...(runnerSessionContextPatch(sessionMeta, 'dispatch launch') ?? {
+          runnerSessionId: null,
+          runnerSessionPath: null,
+        }),
       });
     }
   }
