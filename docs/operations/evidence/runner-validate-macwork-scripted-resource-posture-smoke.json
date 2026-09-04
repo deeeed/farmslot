@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-04T19:01:40.592Z",
+  "recordedAt": "2026-09-04T19:23:52.371Z",
   "host": "macwork",
   "scenario": "resource-posture-smoke",
   "runner": "scripted",
   "slotId": "macpro-ff-1",
   "capabilityId": "sandbox-gateway-ui",
-  "runId": "ac446556-fb77-4c06-820a-f5b6d1878a74",
+  "runId": "ef90952c-252e-43a8-9d4d-338db0794a38",
   "project": "farmslot-farm",
   "acquire": {
     "ok": true,
@@ -31,11 +31,11 @@
     "observedState": "running",
     "policySource": "framework-default",
     "reason": "kept so the next operator action stays usable",
-    "leaseId": "cap-335c9b37-d170-4a0e-a414-d7aceca4de34",
+    "leaseId": "cap-dcce0c4a-c98d-48e9-842b-731baf9e4229",
     "owner": {
-      "runId": "ac446556-fb77-4c06-820a-f5b6d1878a74"
+      "runId": "ef90952c-252e-43a8-9d4d-338db0794a38"
     },
-    "lastTransitionAt": "2026-09-04T19:01:19.297Z",
+    "lastTransitionAt": "2026-09-04T19:23:33.651Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -56,11 +56,11 @@
     "observedState": "stopped",
     "policySource": "framework-default",
     "reason": "terminal cleanup stops every run- and family-owned provider",
-    "leaseId": "cap-335c9b37-d170-4a0e-a414-d7aceca4de34",
+    "leaseId": "cap-dcce0c4a-c98d-48e9-842b-731baf9e4229",
     "owner": {
-      "runId": "ac446556-fb77-4c06-820a-f5b6d1878a74"
+      "runId": "ef90952c-252e-43a8-9d4d-338db0794a38"
     },
-    "lastTransitionAt": "2026-09-04T19:01:33.283Z",
+    "lastTransitionAt": "2026-09-04T19:23:49.406Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -73,6 +73,7 @@
   },
   "dependencyProof": {
     "attempted": true,
+    "skipped": false,
     "pass": true,
     "reason": null,
     "error": null,
@@ -114,7 +115,7 @@
         "policySource": "framework-default"
       }
     ],
-    "preparedAt": "2026-09-04T19:01:32.643Z",
+    "preparedAt": "2026-09-04T19:23:48.522Z",
     "terminalStates": [
       {
         "capabilityId": "ios-simulator",
@@ -129,9 +130,22 @@
     ],
     "releaseOrder": ["ios-simulator", "companion-metro"]
   },
+  "familyFenceProof": {
+    "attempted": true,
+    "pass": true,
+    "runId": "e66c70ab-fa94-49f1-b0f2-47c86566ceb0",
+    "error": null,
+    "familyId": "ef90952c-252e-43a8-9d4d-338db0794a38",
+    "acquire": {
+      "ok": false,
+      "reason": "Run 'e66c70ab-fa94-49f1-b0f2-47c86566ceb0' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
+    },
+    "leftoverLeases": []
+  },
   "leftoverLeases": [],
   "pass": true,
   "error": null,
+  "familyId": "ef90952c-252e-43a8-9d4d-338db0794a38",
   "terminalRepeatOutcome": "idempotent",
   "cancelEffects": [
     {
