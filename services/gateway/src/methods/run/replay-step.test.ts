@@ -22,6 +22,7 @@ import {
   freshDispatchEngineStateForReplay,
   normalizeReplayPrerequisites,
   replaySlotReclaimCheck,
+  ReplayTaskSignalProbeError,
   resetPublishGateApprovalForReplay,
   runReplayStep,
 } from './replay-step.js';
@@ -45,12 +46,12 @@ test('fresh dispatch replay drops only retained-handoff flags', () => {
 
 test('uncertain dispatch accepts only a fresh task-local signal with an attempt id', () => {
   const run = {
-    error: 'Prompt delivery failed. Exact prompt acknowledgement did not arrive.',
     steps: [
       {
         name: 'dispatch',
         status: 'failed' as const,
         startedAt: '2026-09-03T08:00:00.000Z',
+        outputs: { promptDeliveryUncertain: true },
       },
     ],
   };
@@ -80,37 +81,124 @@ test('uncertain dispatch accepts only a fresh task-local signal with an attempt 
   );
 });
 
-test('uncertain dispatch is recognised from the structured step marker, not only the prose', () => {
+test('uncertain dispatch requires the structured marker, never the failure prose', () => {
   const signal = {
     status: 'running',
     attemptId: 'attempt-1',
     timestamp: '2026-09-03T08:00:01.000Z',
   };
-  const structured = {
-    error: 'Prompt delivery failed.',
+  // Runner-layer prose is not evidence: a run failed before the marker existed
+  // is simply not adoptable and takes the ordinary fresh-dispatch replay path.
+  const proseOnly = {
     steps: [
       {
         name: 'dispatch',
         status: 'failed' as const,
         startedAt: '2026-09-03T08:00:00.000Z',
-        outputs: { promptDeliveryUncertain: true },
+        detail: 'Exact prompt acknowledgement did not arrive. Pane output cannot replace it.',
       },
     ],
   };
-  assert.equal(canAdoptTaskSignalAfterUncertainDispatch(structured, signal), true);
+  assert.equal(canAdoptTaskSignalAfterUncertainDispatch(proseOnly, signal), false);
+});
 
-  const plainFailure = {
-    error: 'Prompt delivery failed. The pane did not change.',
-    steps: [{ name: 'dispatch', status: 'failed' as const, startedAt: '2026-09-03T08:00:00.000Z' }],
-  };
-  assert.equal(canAdoptTaskSignalAfterUncertainDispatch(plainFailure, signal), false);
+test('an unreadable adoption probe fails the replay closed', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    // No such slot: loadSlotVars throws, which is an unexpected probe failure.
+    slotId: 'no-such-slot-for-probe',
+    agentContexts: [
+      {
+        id: 'fix-bug',
+        role: 'fix-bug',
+        label: 'Worker',
+        slotId: 'no-such-slot-for-probe',
+        runId: run.id,
+        status: 'working',
+        signalFile: '.task/SIGNAL.json',
+      },
+    ],
+    steps: [
+      { name: 'dispatch', status: 'failed', outputs: { promptDeliveryUncertain: true } },
+      { name: 'monitor', status: 'pending' },
+    ],
+  });
+
+  // The dispatch it would replay had uncertain delivery, so a worker may be
+  // running the prompt right now. Replay must refuse rather than resend blind.
+  await assert.rejects(
+    () => runReplayStep({ runId: run.id, stepName: 'dispatch' }, () => {}),
+    ReplayTaskSignalProbeError,
+  );
+  assert.equal(getRun(run.id)?.steps[0]?.status, 'failed');
+});
+
+test('a requested fresh dispatch skips adoption instead of failing on the probe', async (t) => {
+  const priorDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now() + 1}`,
+  });
+  t.after(async () => {
+    if (priorDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = priorDisableStart;
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    slotId: 'no-such-slot-for-probe',
+    engineState: { flags: { warmSessionReuse: true } },
+    agentContexts: [
+      {
+        id: 'fix-bug',
+        role: 'fix-bug',
+        label: 'Worker',
+        slotId: 'no-such-slot-for-probe',
+        runId: run.id,
+        status: 'working',
+        signalFile: '.task/SIGNAL.json',
+      },
+    ],
+    steps: [
+      { name: 'dispatch', status: 'failed', outputs: { promptDeliveryUncertain: true } },
+      { name: 'monitor', status: 'pending' },
+    ],
+  });
+
+  // The operator already chose to abandon the old worker, so an unreadable
+  // signal changes nothing. The replay may still fail later on the dead slot,
+  // but never on the adoption probe.
+  const error = await runReplayStep(
+    { runId: run.id, stepName: 'dispatch', freshDispatch: true },
+    () => {},
+  ).then(
+    () => null,
+    (err: unknown) => err,
+  );
+  assert.equal(error instanceof ReplayTaskSignalProbeError, false);
 });
 
 test('an adopted dispatch stays failed until the replay claims its slot', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',
-    ticketOrPr: `PROJ-${Date.now()}-deferred-dispatch`,
+    ticketOrPr: `PROJ-${Date.now() + 2}`,
   });
   t.after(async () => {
     if (getRun(run.id)) {

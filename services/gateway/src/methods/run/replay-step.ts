@@ -48,7 +48,6 @@ import {
   normalizeRunner,
   runnerDefaultModel,
   runnerSupportsModel,
-  UNCERTAIN_PROMPT_DELIVERY_DETAIL,
 } from '../../runners/registry.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../../runs/store.js';
 import { resolveContextFilePath } from '../../tasks/watcher.js';
@@ -268,22 +267,16 @@ export function normalizeReplayPrerequisites(
 }
 
 export function canAdoptTaskSignalAfterUncertainDispatch(
-  run: Pick<Run, 'error' | 'steps'>,
+  run: Pick<Run, 'steps'>,
   signal: unknown,
 ): signal is WorkerSignal {
   const dispatch = run.steps.find((step) => step.name === PS.DISPATCH);
   if (dispatch?.status !== 'failed') return false;
-  // The run engine stamps `promptDeliveryUncertain` when the runner layer throws
-  // PromptDeliveryUncertainError. Runs blocked before that marker existed only
-  // carry the runner layer's detail text, so fall back to the constant the
-  // producing module exports rather than a literal copied into workflow code.
-  const failure = `${run.error ?? ''}\n${dispatch.detail ?? ''}`;
-  if (
-    dispatch.outputs?.promptDeliveryUncertain !== true &&
-    !failure.includes(UNCERTAIN_PROMPT_DELIVERY_DETAIL)
-  ) {
-    return false;
-  }
+  // Structured evidence only: the run engine stamps `promptDeliveryUncertain`
+  // when the runner layer throws PromptDeliveryUncertainError. A run failed
+  // before that marker existed is simply not adoptable and takes the ordinary
+  // fresh-dispatch replay path.
+  if (dispatch.outputs?.promptDeliveryUncertain !== true) return false;
 
   const normalized = normalizeWorkerSignal(signal);
   if (!normalized.ok || !normalized.signal.attemptId) return false;
@@ -292,7 +285,18 @@ export function canAdoptTaskSignalAfterUncertainDispatch(
   return signalAt !== null && dispatchStartedAt !== null && signalAt >= dispatchStartedAt;
 }
 
-async function readAdoptableTaskSignal(run: Run): Promise<WorkerSignal | null> {
+/**
+ * The adoption probe could not reach the slot, so replay cannot tell whether a
+ * worker is already executing the prompt this replay would resend.
+ */
+export class ReplayTaskSignalProbeError extends Error {
+  override name = 'ReplayTaskSignalProbeError';
+}
+
+async function readAdoptableTaskSignal(
+  run: Run,
+  opts: { freshDispatch: boolean },
+): Promise<WorkerSignal | null> {
   const slotId = resolveRunSlotId(run);
   const context =
     run.agentContexts?.find((candidate) => candidate.role === primaryRoleForFlow(run.flowType)) ??
@@ -328,15 +332,24 @@ async function readAdoptableTaskSignal(run: Run): Promise<WorkerSignal | null> {
     if (!canAdoptTaskSignalAfterUncertainDispatch(run, signal)) return null;
     return normalizeWorkerSignal(signal).ok ? (signal as WorkerSignal) : null;
   } catch (error) {
-    // Unexpected probe failure (slot config missing, transport down). Log it
-    // rather than hide it, then fall back to fresh dispatch: that is exactly
-    // what replay did before adoption existed, and it is not a blind redispatch
-    // — the slot reclaim below refuses a slot owned by another run, and the
-    // runner layer re-checks for a durable prompt handoff before every send.
-    console.warn(
-      `[run] replay could not probe the task signal for ${run.id.slice(0, 8)} on ${slotId}: ${(error as Error).message}`,
+    const message = (error as Error).message;
+    if (opts.freshDispatch) {
+      // The operator has already decided to abandon the old worker and start a
+      // new session, so an unreadable signal changes nothing about the outcome.
+      console.warn(
+        `[run] replay could not probe the task signal for ${run.id.slice(0, 8)} on ${slotId}; fresh dispatch was requested: ${message}`,
+      );
+      return null;
+    }
+    // Fail closed. The dispatch it would replay had uncertain delivery, so a
+    // worker may be executing the prompt right now. Redispatching on a guess
+    // would send it a second time.
+    throw new ReplayTaskSignalProbeError(
+      `Run ${run.id.slice(0, 8)} could not be replayed: the worker signal on slot ${slotId} ` +
+        `could not be read (${message}), so replay cannot tell whether the prompt is already ` +
+        'executing. Next: retry once the slot is reachable, replay with freshDispatch to ' +
+        'abandon the retained handoff, or replay from find-slot to select a fresh worker.',
     );
-    return null;
   }
 }
 
@@ -538,7 +551,9 @@ export async function runReplayStep(
   const completeIdx = flowSteps ? flowSteps.indexOf(PS.COMPLETE) : -1;
   const humanGateIdx = flowSteps ? flowSteps.indexOf(PS.HUMAN_GATE) : -1;
   const probedTaskSignal =
-    replayStepName === PS.DISPATCH ? await readAdoptableTaskSignal(existing) : null;
+    replayStepName === PS.DISPATCH
+      ? await readAdoptableTaskSignal(existing, { freshDispatch: Boolean(params.freshDispatch) })
+      : null;
   const adoptedTaskSignal = probedTaskSignal && monitorIdx >= 0 ? probedTaskSignal : null;
   if (adoptedTaskSignal) {
     // Route this replay at monitor, but do NOT record dispatch as delivered yet:

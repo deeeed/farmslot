@@ -202,6 +202,37 @@ test('runForceComplete marks a blocked run done when its PR is already published
   assert.equal(getRun(run.id)?.steps[0]?.status, 'skipped');
 });
 
+test('runForceComplete ignores a stored 0 PR sentinel outside the blocked path', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-ci-watch-zero-pr`,
+  });
+  t.after(() => cleanupRun(run.id));
+  // `0` is the invalid-PR sentinel, not a linked PR. It must never be promoted
+  // into a fallback that then fails positive-number validation.
+  updateRun(run.id, { status: 'ci-watching', prNumber: 0 });
+
+  const result = await runForceComplete({ runId: run.id }, () => {});
+
+  assert.equal(result.run.status, 'ci-watching');
+});
+
+test('runForceComplete rejects a blocked run whose stored PR is the 0 sentinel', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-blocked-zero-pr`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { status: 'blocked', prNumber: 0 });
+
+  await assert.rejects(
+    () => runForceComplete({ runId: run.id }, () => {}),
+    /force-complete requires a published PR number/,
+  );
+});
+
 test('runForceComplete uses the run own PR number when completing a blocked run', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
@@ -211,7 +242,7 @@ test('runForceComplete uses the run own PR number when completing a blocked run'
   t.after(() => cleanupRun(run.id));
   updateRun(run.id, {
     status: 'blocked',
-    prNumber: 35671,
+    prNumber: 34865,
     error: 'review finding requires an external dependency',
     steps: [{ name: 'human-gate', status: 'running' }],
   });
@@ -221,7 +252,7 @@ test('runForceComplete uses the run own PR number when completing a blocked run'
   const result = await runForceComplete({ runId: run.id }, () => {});
 
   assert.equal(result.run.status, 'done');
-  assert.equal(result.run.prNumber, 35671);
+  assert.equal(result.run.prNumber, 34865);
   assert.equal(result.run.steps[0]?.status, 'skipped');
 });
 

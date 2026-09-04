@@ -1515,6 +1515,16 @@ describe('buildLaunchCommand', () => {
       );
     });
 
+    it('keeps a single --model when the Claude dispatch_cmd omits the placeholder', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {claude_path} {safety_flags}' });
+      const cmd = buildLaunchCommand(vars, 'claude', 'opus', PROMPT, {
+        taskFile: TASK_FILE,
+        claudeUsesDispatchCmd: true,
+      });
+      assert.match(cmd, /--model opus/);
+      assert.equal(cmd.match(/--model/g)?.length, 1);
+    });
+
     it('attaches runtime arguments to Claude before trailing shell commands', () => {
       const vars = makeVars({
         dispatchCmd: 'cd {repo} && {claude_path} --model {model}; echo ready',
@@ -1658,6 +1668,9 @@ describe('buildLaunchCommand', () => {
         /then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2"/,
       );
       assert.match(cmd, /model_reasoning_effort="xhigh"/);
+      // A template without {model} must still carry the operator's selection.
+      assert.match(cmd, /--model gpt-5/);
+      assert.equal(cmd.match(/--model/g)?.length, 1);
     });
 
     it('falls back to inline launcher when dispatch_cmd exists but is claude-shaped', () => {
@@ -1845,6 +1858,30 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);
     });
+
+    it('carries the selected model when a runner-aware dispatch_cmd omits {model}', () => {
+      // Real macpro pool template: runner-aware, no {model} placeholder.
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}' });
+      const cmd = buildLaunchCommand(vars, 'cursor', 'gpt-5.6-sol-max', PROMPT, {
+        safetyTier: 'dangerous',
+      });
+      assert.match(
+        cmd,
+        /\/usr\/local\/bin\/cursor-agent --model gpt-5\.6-sol-max --force --sandbox disabled /,
+      );
+      assert.equal(cmd.match(/--model/g)?.length, 1);
+    });
+
+    it('does not duplicate --model when the dispatch_cmd already has the placeholder', () => {
+      const vars = makeVars({
+        dispatchCmd: 'cd {repo} && {runner_path} {safety_flags} --model {model} {task_prompt}',
+      });
+      const cmd = buildLaunchCommand(vars, 'cursor', 'gpt-5.6-sol-max', PROMPT, {
+        safetyTier: 'dangerous',
+      });
+      assert.equal(cmd.match(/--model/g)?.length, 1);
+      assert.match(cmd, /--model gpt-5\.6-sol-max/);
+    });
   });
 
   describe('grok runner', () => {
@@ -1896,6 +1933,20 @@ describe('buildLaunchCommand', () => {
       );
       assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);
+    });
+
+    it('carries model and effort when a runner-aware dispatch_cmd omits both', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}' });
+      const cmd = buildLaunchCommand(vars, 'grok', 'grok-composer-2.5-fast', PROMPT, {
+        effort: 'high',
+        safetyTier: 'dangerous',
+      });
+      assert.match(
+        cmd,
+        /\/usr\/local\/bin\/grok --effort high --model grok-composer-2\.5-fast --permission-mode bypassPermissions$/,
+      );
+      assert.equal(cmd.match(/--model/g)?.length, 1);
+      assert.equal(cmd.match(/--effort/g)?.length, 1);
     });
   });
 

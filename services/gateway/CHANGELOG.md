@@ -4,7 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(review): preserve the pre-fix HEAD across restarts, re-review partial fixes before keeping an external blocker (also when the fix delta cannot be read), never publish that re-review as a passing independent review, discard consumed reviewer plans on explicit gate replay, record recovered dispatch only after the slot reclaim succeeds, and let operators close a blocked reviewed run with its already-linked PR number without a stale engine loop reopening it.
+- fix(review): preserve the pre-fix HEAD across restarts, re-review partial fixes before keeping an external blocker (also when the fix delta cannot be read), never publish that re-review as a passing independent review, discard consumed reviewer plans on explicit gate replay, record recovered dispatch only after the slot reclaim succeeds, refuse a dispatch replay when the worker signal cannot be read instead of resending over a possibly live worker, and let operators close a blocked reviewed run with its already-linked PR number without a stale engine loop reopening it.
+- fix(runners): a runner-aware `dispatch_cmd` without a `{model}` placeholder no longer drops the selected model: cursor, grok, and codex now receive `--model` (and grok its effort flag) after the runner binary, so a dispatch cannot silently start on the CLI default.
 - fix(orchestration): preserve run and worker-signal state across recovery, adopt delayed exact acknowledgements without relaunching live workers, and isolate gateway tests from live fleet state.
 - fix(publication): refuse dev and fix-bug packages that lack `pr-description.md` or omit and reorder sections from the repository's live PR template.
 - fix(observability): suppress legacy slot-level idle alerts while a structured worker or CI-fix context is launching or working.

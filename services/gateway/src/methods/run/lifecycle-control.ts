@@ -15,6 +15,7 @@ import { selectAgentContext } from '../../agents/contexts.js';
 import { markBacklogRunObserved } from '../../backlog/store.js';
 import { execOnSlot } from '../../core/exec.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { hasValidPrNumber } from '../../run-engine/gate-policy.js';
 import {
   bumpRunGeneration,
   cancelRunEngine,
@@ -132,10 +133,14 @@ export async function runForceCompleteTransitionLocked(
   const originalStatus = existing.status;
 
   const completableStatuses = new Set(['ci-watching', 'failed', 'blocked']);
-  // A run that already published its PR carries the number this gate needs.
-  // Requiring the caller to resend it makes the CLI and Command Center repeat a
-  // value the run itself owns, so fall back to the linked PR.
-  const effectivePrNumber = params.prNumber ?? existing.prNumber ?? null;
+  // Only the blocked path falls back to the run's own PR: it is the one status
+  // that requires a number, and making the caller resend a value the run already
+  // owns is what forced the CLI to repeat `--pr`. Every other status keeps the
+  // caller-supplied value, so a stored `0` sentinel (see `hasValidPrNumber`)
+  // cannot fail an otherwise valid completion. `0` is never a usable fallback.
+  const linkedPrNumber = hasValidPrNumber(existing) ? (existing.prNumber ?? null) : null;
+  const effectivePrNumber =
+    params.prNumber ?? (originalStatus === 'blocked' ? linkedPrNumber : null);
   const repairsStaleForceCompletion =
     existing.engineState?.operatorForceCompleted === true && effectivePrNumber != null;
   if (!completableStatuses.has(originalStatus) && !repairsStaleForceCompletion) {

@@ -882,13 +882,6 @@ export interface RunnerLaunchBlocker {
   defer?: boolean;
 }
 
-/**
- * Detail prefix stamped on a digest-required delivery that was sent without a
- * runner acknowledgement. Exported so recovery paths recognise the condition
- * from the runner layer that produces it instead of duplicating the prose.
- */
-export const UNCERTAIN_PROMPT_DELIVERY_DETAIL = 'Exact prompt acknowledgement did not arrive';
-
 /** The prompt was sent, but Farmslot could not prove whether the runner accepted it. */
 export class PromptDeliveryUncertainError extends Error {
   override name = 'PromptDeliveryUncertainError';
@@ -3431,7 +3424,7 @@ export async function sendRunnerPostLaunchPrompt(
     }
   }
   const verificationDetail = requirePromptDigest
-    ? `${UNCERTAIN_PROMPT_DELIVERY_DETAIL}. Pane output cannot replace the required runner acknowledgement.`
+    ? 'Exact prompt acknowledgement did not arrive. Pane output cannot replace the required runner acknowledgement.'
     : `The pane did not change, echo "${marker}", or show runner progress, meaning the runner input handler was not live.`;
   const failureMessage =
     `Prompt delivery failed after ${sentAttempts} send attempt(s) in tmux target ${target}. ` +

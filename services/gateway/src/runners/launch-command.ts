@@ -534,6 +534,20 @@ export function buildLaunchCommand(
   const dispatchCmdForExpand = injectQuotedArgvPrompt
     ? withArgvTaskPromptPlaceholder(vars.dispatchCmd)
     : vars.dispatchCmd;
+  // A runner-aware dispatch_cmd is free to omit `{model}` (and `{effort}`), but
+  // the operator's selection must still reach the CLI or the runner silently
+  // starts on its own default. `runnerArgs` is appended right after the runner
+  // binary during `{runner_path}` expansion, which is where every runner expects
+  // its flags. Placeholders present in the template win, so nothing duplicates.
+  const cmdHasEffortPlaceholder = hasDispatchCmd && vars.dispatchCmd.includes('{effort}');
+  const dispatchRunnerArgs = [
+    // Grok only: codex injects its own reasoning-effort config flag after
+    // expansion, and cursor has no effort flag at all.
+    runner === 'grok' && !cmdHasEffortPlaceholder ? grokEffortFlag(resolvedEffort).trim() : '',
+    cmdHasModelPlaceholder ? '' : modelFlag.trim(),
+  ]
+    .filter(Boolean)
+    .join(' ');
   const expanded = hasDispatchCmd
     ? expandDispatchCmd(
         { ...vars, dispatchCmd: dispatchCmdForExpand },
@@ -544,6 +558,7 @@ export function buildLaunchCommand(
           taskPrompt: injectQuotedArgvPrompt ? shellQuote(launchPrompt) : launchPrompt,
           effort: resolvedEffort,
           safetyFlags: safetyFlagsString,
+          ...(runner === 'claude' ? {} : { runnerArgs: dispatchRunnerArgs }),
         },
       )
     : '';
