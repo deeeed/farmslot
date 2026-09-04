@@ -29,8 +29,9 @@ worker acquires capabilities from its proof plan; the Gateway releases them at s
 
 Machine pause/restore also exists (`services/gateway/src/machine-parking/service.ts`, with the
 per-run `MachineParkRecord` in `packages/protocol/src/contracts/runs.ts`): an operator can pause
-runs on a machine in `release` mode, stop the worker plus its observed resources, and later restore
-the runner session and re-drive the step. Eligibility is limited to `monitoring` and `ci-watching`.
+runs on a machine in `release` mode, stop the worker plus the running, controllable resources in its
+manifest, and later restore the runner session and re-drive the step. Eligibility is limited to
+`monitoring` and `ci-watching`, and the run keeps its slot while parked.
 
 What is missing is lifecycle policy between those two ends. A run can wait at a human gate, wait
 for CI, or finish validation while Metro, Webpack, Chrome, and a simulator stay live. Nothing
@@ -59,7 +60,7 @@ The Gateway owns a run resource posture describing intent at semantic lifecycle 
 | `active`        | Keep only capabilities required by the current proof plan acquired and healthy.                   |
 | `operator-wait` | Apply the effective retention policy while the run waits for an operator or CI.                   |
 | `parked`        | Delegate to machine parking for this one run: stop worker and manifest resources, keep workspace. |
-| `terminal`      | Release every run- or family-owned runtime capability in dependency order.                        |
+| `terminal`      | Stop every run- or family-owned runtime capability in dependency order, bypassing keep-warm.      |
 
 Flows map their concrete steps to these postures in the run engine. Clients and project hooks
 never infer a posture from raw run status, step names, or slot phases.
@@ -94,20 +95,26 @@ posture plus proof plan:
 | --------------------- | ------------------------------------------------------------------ |
 | `keep-for-validation` | `active` with the validation proof plan                            |
 | `minimize`            | `operator-wait` with expensive providers released, worker retained |
-| `free-slot`           | `parked` (typed rejection when the run is not park-eligible)       |
+| `free-slot`           | `parked`; a typed rejection until the run is park-eligible         |
 | `project-default`     | Whatever the lower precedence levels resolve to                    |
 
 The Gateway returns a preview of the exact capabilities to acquire, retain, warm, or stop and
 their declared release effects before the operator resolves the gate.
+
+`free-slot` is defined here so the choice set, dispatch configuration, and clients are stable, but
+this ADR does not make it effective at a gate. Machine parking rejects gate-held runs and keeps the
+slot bound to the parked run, so until the follow-up item extends eligibility and frees the slot,
+`free-slot` resolves to a typed rejection that changes no lease, process, or worker.
 
 ### Policy precedence
 
 The effective policy resolves in this order, and every decision records its winning source:
 
 1. the operator's gate choice for the current wait;
-2. the run's dispatch configuration, persisted on the run from backlog dispatch settings
-   (`packages/protocol/src/contracts/backlog.ts`), so a batch or overnight dispatch can select
-   `minimize` or `free-slot` for every wait without operator input;
+2. the run's dispatch configuration: backlog dispatch settings
+   (`packages/protocol/src/contracts/backlog.ts`) gain a wait policy that is copied onto the run at
+   creation, so a batch or overnight dispatch can select `minimize` or `free-slot` for every wait
+   without operator input;
 3. project posture defaults and per-provider retention settings in `runtime_capabilities`;
 4. framework defaults: retain only what keeps the current operator action usable, release
    expensive unneeded providers at durable waits, stop every run-owned provider at terminal.
@@ -122,9 +129,11 @@ terminal cleanup. Reconciliation is idempotent and uses the existing capability 
 provider actions, dependency ordering, ownership checks, and recovery store. A client never
 restarts Metro, Webpack, Chrome, or a simulator with its own shell command.
 
-Terminal publication stays responsive under ADR-053. Slow cleanup runs as an explicit transition
-effect after publication. Failures stay attached to posture status and capability lifecycle
-events; the Gateway never reports a provider stopped when cleanup failed.
+Terminal publication stays responsive. ADR-053 guarantees publish-before-cleanup for cancel only;
+this ADR requires the same ordering for complete, fail, and block by routing their terminal
+reconciliation through the transition router as an after-effect. Failures stay attached to posture
+status and capability lifecycle events; the Gateway never reports a provider stopped when cleanup
+failed.
 
 ### Client responsibilities
 
@@ -143,9 +152,11 @@ Runner session retention, handoff, and resume stay in the shared runner capabili
 status may report whether the worker is live or resumable, but runtime providers never implement
 runner-specific resume commands.
 
-ADR-038 stays in force for `keep-for-validation`, `minimize`, and `project-default`: the gate-held
-worker is never killed by those choices. `free-slot` is the one path that stops a gate-held worker,
-and only under the machine-pause rule that a validated runner session reload exists.
+ADR-038 stays in force under this ADR: no posture applied here stops a gate-held worker, whatever
+source the policy came from. `parked` is the only posture that stops a worker at all, and it is
+reachable only through machine-pause eligibility, which excludes gate-held runs today. Making
+`free-slot` stop a gate-held worker is the follow-up item's decision and amends ADR-038 there,
+under the machine-pause rule that a validated runner session reload exists.
 
 ## Captured separately
 
