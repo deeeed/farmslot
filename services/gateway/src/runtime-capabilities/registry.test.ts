@@ -1212,3 +1212,79 @@ test('the family fence cannot be dodged by omitting ownerFamilyId', async (t) =>
   });
   assert.equal(other.ok, true);
 });
+
+test('a lease carries the run record family even when the caller omits it', async (t) => {
+  const families = new Map([
+    ['run-a', 'fam-a'],
+    ['sibling-run', 'fam-a'],
+  ]);
+  const { registry, actions } = await fixture(t, [entry('browser', 'shared')], {
+    familyForRun: (ownerRunId) => families.get(ownerRunId),
+  });
+  // Neither acquire names a family on the wire.
+  const first = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'browser', reason: 'work', mode: 'state' },
+  });
+  assert.equal(first.ok, true);
+  const sibling = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'sibling-run',
+    proofRequirement: { capabilityId: 'browser', reason: 'work', mode: 'state' },
+  });
+  assert.equal(sibling.ok, true);
+
+  const before = await registry.status({ slotId: SLOT });
+  for (const lease of before.leases) {
+    assert.equal(lease.owner.familyId, 'fam-a', `${lease.owner.runId} lost its family`);
+  }
+
+  // Family cleanup must therefore find both.
+  actions.length = 0;
+  const result = await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.released.map((lease) => lease.owner.runId).sort(), [
+    'run-a',
+    'sibling-run',
+  ]);
+  const after = await registry.status({ slotId: SLOT });
+  assert.deepEqual(
+    after.leases.filter((lease) => holdsProviderForTest(lease)),
+    [],
+  );
+  assert.ok(actions.includes('browser.release'));
+});
+
+test('a caller-supplied family that contradicts the run record is rejected', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('browser')], {
+    familyForRun: (ownerRunId) => (ownerRunId === 'run-a' ? 'fam-a' : undefined),
+  });
+  const mismatched = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    ownerFamilyId: 'fam-someone-else',
+    proofRequirement: { capabilityId: 'browser', reason: 'work', mode: 'state' },
+  });
+  assert.equal(mismatched.ok, false);
+  if (mismatched.ok) return;
+  assert.equal(mismatched.conflict.kind, 'invalid-request');
+  assert.match(mismatched.conflict.reason, /does not match the family of run 'run-a'/);
+  // Nothing was created and no provider was booted.
+  const status = await registry.status({ slotId: SLOT });
+  assert.deepEqual(status.leases, []);
+  assert.deepEqual(actions, []);
+
+  // The matching family is accepted.
+  const matched = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    ownerFamilyId: 'fam-a',
+    proofRequirement: { capabilityId: 'browser', reason: 'work', mode: 'state' },
+  });
+  assert.equal(matched.ok, true);
+});

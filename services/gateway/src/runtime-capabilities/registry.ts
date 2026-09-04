@@ -261,10 +261,33 @@ export class RuntimeCapabilityRegistry {
         },
       };
     }
-    // `ownerFamilyId` is optional on the wire, so a caller could omit it and slip
-    // past a family fence. Fall back to the run record's own family.
-    const acquiringFamilyId =
-      params.ownerFamilyId ?? this.options.familyForRun?.(params.ownerRunId);
+    // The run record is the authority on family membership. `ownerFamilyId` is
+    // optional on the wire, so a caller could omit it and get a family-less lease
+    // that family cleanup then misses, or pass someone else's family and be
+    // cleaned by the wrong one. Derive it here, reject a mismatch, and stamp the
+    // derived value on everything below so the lease itself carries the truth.
+    const authoritativeFamilyId = this.options.familyForRun?.(params.ownerRunId);
+    if (
+      authoritativeFamilyId !== undefined &&
+      params.ownerFamilyId !== undefined &&
+      params.ownerFamilyId !== authoritativeFamilyId
+    ) {
+      return {
+        ok: false,
+        conflict: {
+          kind: 'invalid-request',
+          capabilityId: entry.id,
+          reason: `ownerFamilyId '${params.ownerFamilyId}' does not match the family of run '${params.ownerRunId}' ('${authoritativeFamilyId}')`,
+        },
+      };
+    }
+    const acquiringFamilyId = params.ownerFamilyId ?? authoritativeFamilyId;
+    // Everything downstream — lease owner, events, dependency acquisitions —
+    // uses the resolved family, never the caller's optional field.
+    const ownedParams: RuntimeCapabilityAcquireParams =
+      acquiringFamilyId === params.ownerFamilyId
+        ? params
+        : { ...params, ...(acquiringFamilyId ? { ownerFamilyId: acquiringFamilyId } : {}) };
     if (
       this.terminatedOwners.has(params.ownerRunId) ||
       (acquiringFamilyId !== undefined && this.terminatedFamilies.has(acquiringFamilyId))
@@ -379,7 +402,7 @@ export class RuntimeCapabilityRegistry {
               snapshot,
               catalog,
               {
-                ...params,
+                ...ownedParams,
                 capabilityId: dependencyId,
                 proofRequirement: {
                   capabilityId: dependencyId,
@@ -500,7 +523,7 @@ export class RuntimeCapabilityRegistry {
         capabilityId: entry.id,
         owner: {
           runId: params.ownerRunId,
-          ...(params.ownerFamilyId ? { familyId: params.ownerFamilyId } : {}),
+          ...(acquiringFamilyId ? { familyId: acquiringFamilyId } : {}),
         },
         detail: params.proofRequirement.reason,
       });
@@ -514,7 +537,15 @@ export class RuntimeCapabilityRegistry {
     if (pressure) {
       if (pressure.kind === 'host-pressure' && pressure.queued && !sameOwner) {
         const now = this.timestamp();
-        const queuedLease = this.createLease(catalog, entry, params, parameters, [], now, 'queued');
+        const queuedLease = this.createLease(
+          catalog,
+          entry,
+          ownedParams,
+          parameters,
+          [],
+          now,
+          'queued',
+        );
         queuedLease.pressure = structuredClone(pressure);
         snapshot.leases.push(queuedLease);
         this.recordEvent(snapshot, {
@@ -619,7 +650,7 @@ export class RuntimeCapabilityRegistry {
         snapshot,
         catalog,
         {
-          ...params,
+          ...ownedParams,
           capabilityId: dependencyId,
           proofRequirement: requirement,
           parameters: {},
@@ -688,7 +719,7 @@ export class RuntimeCapabilityRegistry {
       this.createLease(
         catalog,
         entry,
-        params,
+        ownedParams,
         parameters,
         dependencyLeases.map((dependency) => dependency.id),
         now,
@@ -806,6 +837,7 @@ export class RuntimeCapabilityRegistry {
   private createLease(
     catalog: RuntimeCapabilityCatalogContext,
     entry: RuntimeCapabilityCatalogEntry,
+    /** Callers pass the family-resolved params, never the raw request. */
     params: RuntimeCapabilityAcquireParams,
     parameters: Record<string, unknown>,
     dependencyLeaseIds: string[],
