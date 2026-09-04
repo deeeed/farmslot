@@ -1977,6 +1977,22 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /CLAUDECODE/);
     });
 
+    it('refuses an effort value the runner CLI would parse as a flag', () => {
+      // A `{effort}` placeholder is filled by the template expander, which never
+      // reaches the per-flag helper, so the assertion has to run before it.
+      const vars = makeVars({
+        dispatchCmd: 'cd {repo} && {runner_path} {safety_flags} --effort {effort}',
+      });
+      assert.throws(
+        () =>
+          buildLaunchCommand(vars, 'grok', DEFAULT_GROK_MODEL, PROMPT, {
+            effort: '--help',
+            safetyTier: 'dangerous',
+          }),
+        /effort "--help" cannot be passed to a runner CLI/,
+      );
+    });
+
     it('carries model and effort when a runner-aware dispatch_cmd omits both', () => {
       const vars = makeVars({ dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}' });
       const cmd = buildLaunchCommand(vars, 'grok', 'grok-composer-2.5-fast', PROMPT, {

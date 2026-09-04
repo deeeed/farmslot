@@ -26,6 +26,28 @@ import {
 
 const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/panes');
 
+test('dispatch-model-flag fails when named explicitly without its required arguments', async (t) => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-model-flag-args-'));
+  t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+  const scenario = await import('./scenarios/dispatch-model-flag.mjs');
+
+  // Named on the command line, missing --slot/--model is an operator error.
+  const explicit = await scenario.runScenario({
+    timeoutMs: 1000,
+    outDir,
+    runner: 'cursor',
+    explicit: true,
+  });
+  assert.equal(explicit.pass, false);
+  assert.equal(Boolean(explicit.skipped), false);
+  assert.match(explicit.report.error, /needs --slot/);
+
+  // Reached through the full matrix there is nothing to supply, so it skips.
+  const matrix = await scenario.runScenario({ timeoutMs: 1000, outDir, runner: 'cursor' });
+  assert.equal(matrix.skipped, true);
+  assert.equal(matrix.pass, true);
+});
+
 test('runner-validation catalog includes four runners and twenty-three scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
   assert.equal(listScenarios().length, 23);

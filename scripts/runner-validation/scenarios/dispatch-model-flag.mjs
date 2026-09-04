@@ -57,15 +57,28 @@ function expectedModelArgument(model) {
   return `'${model.replace(/'/g, `'\\''`)}'`;
 }
 
-export async function runScenario({ timeoutMs, outDir, slotId, model, runner, taskFile }) {
+export async function runScenario({
+  timeoutMs,
+  outDir,
+  slotId,
+  model,
+  runner,
+  taskFile,
+  explicit = false,
+}) {
   const reportRunner = runner || 'cursor';
-  // This scenario dispatches against a real slot, so `--scenario all` has no
-  // arguments for it. Skip rather than fail: the harness prints SKIP and the
-  // full matrix stays green.
   if (!slotId || !model) {
-    const skipReason =
-      'dispatch-model-flag needs --slot <slotId> and --model <model>; run it on its own';
-    const report = { runner: reportRunner, skipped: true, skipReason, pass: true };
+    const requirement =
+      'dispatch-model-flag needs --slot <slotId> and --model <model>; it dispatches against a real slot';
+    // Asked for by name, the operator expects it to run, so missing arguments
+    // are a failure. Reached through `--scenario all` there are no arguments to
+    // supply, so skip and keep the full matrix green.
+    if (explicit) {
+      const report = { runner: reportRunner, pass: false, error: requirement };
+      const outPath = writeEvidence(report, SCENARIO_ID, reportRunner, outDir);
+      return { scenario: SCENARIO_ID, runner: reportRunner, outPath, pass: false, report };
+    }
+    const report = { runner: reportRunner, skipped: true, skipReason: requirement, pass: true };
     const outPath = writeEvidence(report, SCENARIO_ID, reportRunner, outDir);
     return {
       scenario: SCENARIO_ID,
@@ -157,14 +170,37 @@ export async function runScenario({ timeoutMs, outDir, slotId, model, runner, ta
       // to release it is a scenario failure, not a footnote: the operator has
       // to know which runId leaked so they can cancel it by hand.
       try {
-        rpc('run.cancel', { runId, reason: `${SCENARIO_ID} validation complete` });
+        const cancelResult = rpc('run.cancel', {
+          runId,
+          reason: `${SCENARIO_ID} validation complete`,
+        });
+        // A cancel can reach `cancelled` with a failed after-effect: a failed
+        // `slot-release` leaves the slot claimed while the run reads terminal,
+        // so status alone is not proof the slot came back.
+        const failedEffects = (cancelResult?.effects ?? []).filter(
+          (effect) => effect.status === 'failed',
+        );
+        report.cancelEffects = (cancelResult?.effects ?? []).map((effect) => ({
+          name: effect.name,
+          status: effect.status,
+        }));
         const after = rpc('run.get', { runId }).run;
         report.finalStatus = after?.status ?? null;
-        report.cancelled = after?.status === 'cancelled';
+        const slotOwner = rpc('fleet.status').fleet?.slots?.find(
+          (candidate) => candidate.slot === slotId,
+        )?.currentRunId;
+        report.slotReleased = slotOwner !== runId;
+        report.cancelled =
+          after?.status === 'cancelled' && failedEffects.length === 0 && report.slotReleased;
         if (!report.cancelled) {
           report.pass = false;
           report.leakedRunId = runId;
-          report.cancelError = `run ${runId} is ${report.finalStatus ?? 'unreadable'} after cancel, expected cancelled`;
+          report.cancelError =
+            failedEffects.length > 0
+              ? `run.cancel reported failed effect(s): ${failedEffects.map((effect) => effect.name).join(', ')}`
+              : !report.slotReleased
+                ? `slot ${slotId} still reports currentRunId ${runId} after cancel`
+                : `run ${runId} is ${report.finalStatus ?? 'unreadable'} after cancel, expected cancelled`;
           report.error = report.error ?? report.cancelError;
         }
       } catch (cancelError) {

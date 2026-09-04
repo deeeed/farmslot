@@ -83,6 +83,9 @@ async function main() {
         slotId: args.slotId,
         model: args.model,
         taskFile: args.taskFile,
+        // Named on the command line: missing required arguments are a failure,
+        // not a skip. Only the full matrix has no arguments to supply.
+        explicit: args.scenario !== 'all',
       });
       results.push(result);
       const label = result.skipped ? 'SKIP' : result.pass ? 'PASS' : 'FAIL';

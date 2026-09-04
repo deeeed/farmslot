@@ -543,6 +543,12 @@ export function buildLaunchCommand(
   // Resolve defaults before template expansion so `{effort}` placeholders get xhigh
   // for codex/grok when the operator left effort unset.
   const resolvedEffort = resolveRunnerEffort(runner, opts.effort);
+  // Assert once, before any expansion, for every runner path. A dispatch_cmd
+  // carrying `{model}` or `{effort}` is filled in by expandDispatchCmd and never
+  // reaches the per-flag helpers that validate, so `--effort --help` would
+  // otherwise be emitted verbatim.
+  assertSafeRunnerArgumentValue('model', model);
+  assertSafeRunnerArgumentValue('effort', resolvedEffort);
   const injectQuotedArgvPrompt =
     hasDispatchCmd &&
     Boolean(launchPrompt.trim()) &&
