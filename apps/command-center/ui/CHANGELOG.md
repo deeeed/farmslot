@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(posture): Command Center surfaces the ADR-054 run resource posture. Run Detail shows the effective posture beside the pipeline with its policy source, retained/warm/stopped/failed counts, the last transition outcome and time, and one row per capability giving the Gateway's desired disposition against the observed provider state — a released lease still inside its keep-warm window reads as running, not stopped. Human gates offer the four operator choices with the Gateway's effect preview before resolution and pass the typed `resourcePosture` param, surfacing a refusal such as park-ineligible instead of resolving the gate. Backlog dispatch settings expose `waitPolicy`, and Slot View separates lease state from provider state with the warm deadline, the retention reason, and explicit acquire, restart, and stop recovery actions.
 - feat(runs): Run Detail lists each agent context's runner session with its runner, model, short session id, structured liveness, addressed by exact context so two same-role reviewers stay distinct, and copy buttons for the gateway-built reopen and tmux attach commands.
 - feat(dispatch): add Cursor `gpt-5.6-sol-max` and drop unused Grok 4.5 model chips.
 - fix(runs): adopt a refreshed publication decision before re-enabling approval, preventing a fast post-refresh click from submitting the previous package identity.

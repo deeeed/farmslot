@@ -1,3 +1,4 @@
+import type { ResourcePostureGateChoice } from '../contracts/resource-posture.js';
 import type { PublicationTarget, ReadyGatePayload, RunDecision } from '../contracts/runs.js';
 import type { RunResolveDecisionParams } from '../rpc/run.js';
 
@@ -40,6 +41,12 @@ export function buildRunResolveDecisionParams(input: {
   publicationTarget?: PublicationTarget;
   selectedEvidenceKeys?: string[];
   selectionData?: Record<string, unknown>;
+  /**
+   * Operator resource-posture choice for the wait this decision ends (ADR-054).
+   * Carried as a typed field so no client can invent its own cleanup policy in
+   * free-form `selectionData`.
+   */
+  resourcePosture?: ResourcePostureGateChoice;
 }): RunResolveDecisionParams {
   const payload =
     input.decision.payload?.kind === 'ready'
@@ -56,5 +63,6 @@ export function buildRunResolveDecisionParams(input: {
     decisionId: input.decision.id,
     actionId: input.actionId,
     ...(selectionData ? { selectionData } : {}),
+    ...(input.resourcePosture ? { resourcePosture: input.resourcePosture } : {}),
   };
 }

@@ -4,6 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import {
   Events,
   Methods,
+  type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityCatalogEntry,
   type RuntimeCapabilityLease,
   type RuntimeCapabilityLifecyclePayload,
@@ -13,16 +14,31 @@ import {
 
 import { gateway } from '../../gateway-client.js';
 
-import { projectRuntimeCapabilityLeases } from './runtime-capabilities-panel-model.js';
+import {
+  projectRuntimeCapabilityLeases,
+  type RuntimeCapabilityRecoveryAction,
+  runtimeCapabilityRecoveryActions,
+  type RuntimeCapabilityRetentionView,
+  runtimeCapabilityRetentionView,
+} from './runtime-capabilities-panel-model.js';
 
 @customElement('runtime-capabilities-panel')
 export class RuntimeCapabilitiesPanel extends LitElement {
   @property({ type: String }) slotId = '';
+  /**
+   * Run that owns recovery actions taken from this panel. Acquire needs an owner
+   * run id, so without one the panel offers only what it can honestly perform.
+   */
+  @property({ type: String }) runId = '';
 
   @state() private status: RuntimeCapabilityStatusResult | null = null;
   @state() private error = '';
   @state() private loading = false;
-  @state() private releasingLeaseId = '';
+  /** Capability id currently running a recovery action, with which action it is. */
+  @state() private busyAction: {
+    capabilityId: string;
+    action: RuntimeCapabilityRecoveryAction;
+  } | null = null;
 
   private refreshPending = false;
   private unsubscribeEvent: (() => void) | null = null;
@@ -88,9 +104,17 @@ export class RuntimeCapabilitiesPanel extends LitElement {
     }
   }
 
-  private async release(entry: RuntimeCapabilityCatalogEntry, lease: RuntimeCapabilityLease) {
-    this.releasingLeaseId = lease.id;
-    try {
+  /**
+   * Stop the provider (ADR-054). `keepWarm: false` is deliberate: an operator
+   * pressing this in Slot View means "this process should not be running", and
+   * the historical default would have left it alive until its keep-warm
+   * deadline while the panel said the lease was released.
+   */
+  private async release(
+    entry: RuntimeCapabilityCatalogEntry,
+    lease: RuntimeCapabilityLease,
+  ): Promise<void> {
+    await this.runRecovery(entry.id, 'release', async () => {
       const result = await gateway.request<RuntimeCapabilityReleaseResult>(
         Methods.RUNTIME_CAPABILITY_RELEASE,
         {
@@ -98,17 +122,106 @@ export class RuntimeCapabilitiesPanel extends LitElement {
           ownerRunId: lease.owner.runId,
           capabilityId: entry.id,
           leaseId: lease.id,
+          keepWarm: false,
+          ...(lease.state === 'error' ? { force: true } : {}),
         },
         30_000,
       );
       if (!result.ok) {
         throw new Error(result.failures.map((failure) => failure.reason).join('; '));
       }
+    });
+  }
+
+  /**
+   * Acquire the capability for the run bound to this slot, through the same RPC
+   * a worker uses. `revalidateHealth` makes a dead warm provider fail here
+   * instead of being reused as if it were healthy.
+   */
+  private async acquire(entry: RuntimeCapabilityCatalogEntry, ownerRunId: string): Promise<void> {
+    await this.runRecovery(entry.id, 'acquire', async () => {
+      const result = await gateway.request<RuntimeCapabilityAcquireResult>(
+        Methods.RUNTIME_CAPABILITY_ACQUIRE,
+        {
+          slotId: this.slotId,
+          capabilityId: entry.id,
+          ownerRunId,
+          revalidateHealth: true,
+          proofRequirement: {
+            capabilityId: entry.id,
+            reason: 'operator recovery from Slot View',
+            mode: 'state',
+          },
+        },
+        120_000,
+      );
+      if (!result.ok) {
+        throw new Error(`Acquire refused: ${result.conflict.reason}`);
+      }
+    });
+  }
+
+  /** Stop the provider, then acquire it again for the same owner. */
+  private async restart(
+    entry: RuntimeCapabilityCatalogEntry,
+    lease: RuntimeCapabilityLease,
+  ): Promise<void> {
+    const ownerRunId = lease.owner.runId;
+    await this.runRecovery(entry.id, 'restart', async () => {
+      const released = await gateway.request<RuntimeCapabilityReleaseResult>(
+        Methods.RUNTIME_CAPABILITY_RELEASE,
+        {
+          slotId: this.slotId,
+          ownerRunId,
+          capabilityId: entry.id,
+          leaseId: lease.id,
+          keepWarm: false,
+          force: true,
+        },
+        30_000,
+      );
+      if (!released.ok) {
+        throw new Error(released.failures.map((failure) => failure.reason).join('; '));
+      }
+      const acquired = await gateway.request<RuntimeCapabilityAcquireResult>(
+        Methods.RUNTIME_CAPABILITY_ACQUIRE,
+        {
+          slotId: this.slotId,
+          capabilityId: entry.id,
+          ownerRunId,
+          revalidateHealth: true,
+          proofRequirement: {
+            capabilityId: entry.id,
+            reason: 'operator restart from Slot View',
+            mode: 'state',
+          },
+        },
+        120_000,
+      );
+      if (!acquired.ok) {
+        throw new Error(
+          `Restart stopped the provider but re-acquire was refused: ${acquired.conflict.reason}`,
+        );
+      }
+    });
+  }
+
+  private async runRecovery(
+    capabilityId: string,
+    action: RuntimeCapabilityRecoveryAction,
+    perform: () => Promise<void>,
+  ): Promise<void> {
+    this.busyAction = { capabilityId, action };
+    try {
+      await perform();
       await this.refresh();
     } catch (error) {
+      // The failure is surfaced, never swallowed: the panel would otherwise
+      // re-render an unchanged row that reads as a successful no-op.
       this.error = error instanceof Error ? error.message : String(error);
+      await this.refresh();
     } finally {
-      this.releasingLeaseId = '';
+      this.busyAction = null;
     }
   }
 
@@ -199,6 +312,23 @@ export class RuntimeCapabilitiesPanel extends LitElement {
         ? 'Healthy'
         : titleCase(displayedLease?.health.state);
     const queuedOwners = queuedReservations.map((lease) => lease.owner.runId).join(', ');
+    // Lease state and provider state are separate facts (ADR-054): a released
+    // lease inside its keep-warm window still has a live process behind it.
+    const stateLease = providerHolder ?? latest;
+    const view: RuntimeCapabilityRetentionView = runtimeCapabilityRetentionView({
+      entry,
+      lease: stateLease,
+      planned,
+      nowMs: Date.now(),
+    });
+    const ownerRunId = providerHolder?.owner.runId || this.runId;
+    const recoveryActions = runtimeCapabilityRecoveryActions({
+      view,
+      lease: stateLease,
+      hasOwnerRunId: Boolean(ownerRunId),
+      available: entry.availability.state === 'available',
+    });
+    const busy = this.busyAction?.capabilityId === entry.id ? this.busyAction.action : null;
     return html`
       <article
         data-capability-id=${entry.id}
@@ -206,6 +336,9 @@ export class RuntimeCapabilitiesPanel extends LitElement {
         data-capability-owner=${owner ?? 'none'}
         data-provider-holder-count=${providerHolder ? '1' : '0'}
         data-queued-lease-count=${String(queuedReservations.length)}
+        data-lease-state=${view.leaseLabel.toLowerCase()}
+        data-observed-state=${view.observedState}
+        data-warm-until=${view.warmUntil ?? ''}
       >
         <div class="summary">
           <div>
@@ -214,7 +347,12 @@ export class RuntimeCapabilitiesPanel extends LitElement {
           </div>
           <div class="badges">
             ${planned ? html`<span class="badge planned">Planned</span>` : nothing}
-            <span class="badge state">${displayState}</span>
+            <span class="badge state" data-testid=${`runtime-capability-lease-${entry.id}`}
+              >Lease ${displayState}</span
+            >
+            <span class="badge observed" data-testid=${`runtime-capability-observed-${entry.id}`}
+              >Provider ${view.observedLabel}</span
+            >
             ${queuedReservations.length > 0
               ? html`<span class="badge queued">${queuedReservations.length} queued</span>`
               : nothing}
@@ -227,6 +365,14 @@ export class RuntimeCapabilitiesPanel extends LitElement {
             'No active owner'}</span
           >
           <span><b>Health</b> ${health || 'Not acquired'}</span>
+          ${view.warmUntil
+            ? html`<span data-testid=${`runtime-capability-warm-until-${entry.id}`}
+                ><b>Warm until</b> ${view.warmUntil}</span
+              >`
+            : nothing}
+          <span class="queue" data-testid=${`runtime-capability-reason-${entry.id}`}
+            ><b>Why</b> ${view.retentionReason}</span
+          >
           <span><b>Sharing</b> ${titleCase(entry.sharePolicy)}</span>
           <span><b>Provider</b> v${entry.version} · ${entry.provenance.digest.slice(0, 8)}</span>
           ${queuedReservations.length > 0
@@ -245,22 +391,46 @@ export class RuntimeCapabilitiesPanel extends LitElement {
         ${!active && entry.availability.state === 'unavailable'
           ? html`<div class="error">Unavailable: ${entry.availability.reason}</div>`
           : nothing}
-        ${actionable
-          ? html`
-              <button
-                class="release"
-                data-testid=${`runtime-capability-release-${entry.id}`}
-                ?disabled=${this.releasingLeaseId === actionable.id}
-                @click=${() => this.release(entry, actionable)}
-              >
-                ${this.releasingLeaseId === actionable.id
-                  ? 'Releasing…'
-                  : actionable.state === 'error'
-                    ? `Retry release ${entry.label}`
-                    : `Release ${entry.label}`}
-              </button>
-            `
-          : nothing}
+        <div class="recovery">
+          ${recoveryActions.includes('acquire')
+            ? html`
+                <button
+                  data-testid=${`runtime-capability-acquire-${entry.id}`}
+                  ?disabled=${busy !== null}
+                  @click=${() => this.acquire(entry, ownerRunId)}
+                >
+                  ${busy === 'acquire' ? 'Acquiring…' : `Acquire ${entry.label}`}
+                </button>
+              `
+            : nothing}
+          ${recoveryActions.includes('restart') && stateLease
+            ? html`
+                <button
+                  data-testid=${`runtime-capability-restart-${entry.id}`}
+                  ?disabled=${busy !== null}
+                  @click=${() => this.restart(entry, stateLease)}
+                >
+                  ${busy === 'restart' ? 'Restarting…' : `Restart ${entry.label}`}
+                </button>
+              `
+            : nothing}
+          ${recoveryActions.includes('release') && (actionable ?? stateLease)
+            ? html`
+                <button
+                  class="release"
+                  data-testid=${`runtime-capability-release-${entry.id}`}
+                  ?disabled=${busy !== null}
+                  @click=${() => this.release(entry, (actionable ?? stateLease)!)}
+                >
+                  ${busy === 'release'
+                    ? 'Stopping…'
+                    : (actionable ?? stateLease)!.state === 'error'
+                      ? `Retry stop ${entry.label}`
+                      : `Stop ${entry.label}`}
+                </button>
+              `
+            : nothing}
+        </div>
       </article>
     `;
   }
@@ -389,9 +559,20 @@ export class RuntimeCapabilitiesPanel extends LitElement {
       margin: 3px 0 0;
       padding-left: 16px;
     }
-    .release {
+    .recovery {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
       margin-top: 8px;
+    }
+    .recovery button {
       padding: 5px 8px;
+    }
+    .observed {
+      background: #1b3a2c;
+      color: #8ce0b4;
+    }
+    .release {
       border-color: #74443e;
       color: #ffaaa0;
     }

@@ -3,9 +3,19 @@ import { html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { marked } from 'marked';
 
-import { primaryRoleForFlow, type Run, type RunDecision } from '@farmslot/protocol';
+import {
+  primaryRoleForFlow,
+  type ResourcePostureGateChoice,
+  type Run,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
+
+import {
+  renderRunPostureGateChoices,
+  type RunPostureGateState,
+} from './run-detail-posture-gate-renderers.js';
 
 const SIGNAL_EXAMPLE = `{
   "status": "complete",
@@ -22,6 +32,10 @@ export interface InteractiveHandoffRenderContext {
   signalCheckError: string | null;
   confirmResolve: (runId: string, decision: RunDecision, actionId: string) => void;
   checkSignalAndResume: (runId: string, decision: RunDecision) => void;
+  /** ADR-054 gate choice plus the Gateway's preview of its effect. */
+  posture: RunPostureGateState;
+  postureResolveBlocked: boolean;
+  selectPostureChoice: (choice: ResourcePostureGateChoice | null) => void;
 }
 
 function workerSignalFileForRun(run: Run, decision: RunDecision): string | null {
@@ -118,6 +132,11 @@ export function renderInteractiveHandoffGate(
       ${context.signalCheckError
         ? html`<div class="ih-error" role="alert">${context.signalCheckError}</div>`
         : nothing}
+      ${renderRunPostureGateChoices({
+        state: context.posture,
+        disabled: context.actionsBlocked || context.signalCheckBusy,
+        onSelect: (choice) => context.selectPostureChoice(choice),
+      })}
       <div class="gate-actions">
         ${primaryAction
           ? html`
@@ -125,8 +144,12 @@ export function renderInteractiveHandoffGate(
                 <button
                   class="gate-action-btn"
                   style="background:${colors.accent}; border-color:${colors.accent}; color:#fff"
-                  ?disabled=${context.actionsBlocked || context.signalCheckBusy}
-                  title=${primaryHelp}
+                  ?disabled=${context.actionsBlocked ||
+                  context.signalCheckBusy ||
+                  context.postureResolveBlocked}
+                  title=${context.postureResolveBlocked
+                    ? 'The Gateway rejected the selected resource posture; pick another choice first.'
+                    : primaryHelp}
                   @click=${() => context.checkSignalAndResume(run.id, decision)}
                 >
                   ${context.signalCheckBusy ? 'Checking…' : primaryAction.label}

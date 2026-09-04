@@ -1,5 +1,6 @@
 import type {
   DevInteractiveCompletionAction,
+  ResourcePostureGateChoice,
   Run,
   RunCancelResult,
   RunDecision,
@@ -7,6 +8,7 @@ import type {
   RunInteractiveDevResolveResult,
   RunProbeWorkerSignalResult,
   RunRehydratePrNumberResult,
+  RunResolveDecisionResult,
 } from '@farmslot/protocol';
 import { buildRunResolveDecisionParams, failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
@@ -182,6 +184,13 @@ export function confirmForceComplete(
 
 export interface ConfirmDecisionContext extends ConfirmTimerContext {
   jumpToSuccessorWhenAvailable: (originRunId: string) => void;
+  /**
+   * Operator resource-posture choice for the wait this decision ends (ADR-054).
+   * Sent as the typed `resourcePosture` param, never as free-form selection data.
+   */
+  resourcePosture?: () => ResourcePostureGateChoice | null;
+  /** Called with the resolved run so the caller can surface the apply outcome. */
+  onDecisionResolved?: (run: Run) => void;
 }
 
 export interface InteractiveHandoffSignalContext {
@@ -189,6 +198,9 @@ export interface InteractiveHandoffSignalContext {
   busy: () => boolean;
   setBusy: (busy: boolean) => void;
   setError: (error: string | null) => void;
+  /** ADR-054 operator choice for the wait this resume ends. */
+  resourcePosture?: () => ResourcePostureGateChoice | null;
+  onDecisionResolved?: (run: Run) => void;
 }
 
 export async function checkInteractiveHandoffSignal(
@@ -208,14 +220,17 @@ export async function checkInteractiveHandoffSignal(
       context.setError(probe.message);
       return;
     }
-    await gateway.request(
+    const resourcePosture = context.resourcePosture?.() ?? null;
+    const resolved = await gateway.request<RunResolveDecisionResult>(
       Methods.RUN_RESOLVE_DECISION,
       buildRunResolveDecisionParams({
         runId,
         decision,
         actionId: 'signal-written',
+        ...(resourcePosture ? { resourcePosture } : {}),
       }),
     );
+    if (resolved?.run) context.onDecisionResolved?.(resolved.run);
   } catch (err) {
     context.setError((err as Error).message);
   } finally {
@@ -236,12 +251,19 @@ export function confirmRunDecision(
   if (!isDanger || context.pendingConfirm() === actionId) {
     clearTimeout(context.confirmTimer());
     context.setPendingConfirm(null);
+    const resourcePosture = context.resourcePosture?.() ?? null;
     gateway
-      .request(
+      .request<RunResolveDecisionResult>(
         Methods.RUN_RESOLVE_DECISION,
-        buildRunResolveDecisionParams({ runId, decision, actionId }),
+        buildRunResolveDecisionParams({
+          runId,
+          decision,
+          actionId,
+          ...(resourcePosture ? { resourcePosture } : {}),
+        }),
       )
-      .then(() => {
+      .then((result) => {
+        if (result?.run) context.onDecisionResolved?.(result.run);
         // start-comparison cancels the current run and creates a successor in the comparison
         // lane. Without an auto-jump the operator stays on the now-cancelled origin and the
         // page looks stale — the only hint is the redirectedToRunId banner. Watch for the

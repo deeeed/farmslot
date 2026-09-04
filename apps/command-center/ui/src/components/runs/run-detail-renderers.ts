@@ -85,6 +85,8 @@ export interface RunDetailViewContext {
   _shouldShowCiStatus: (run: Run) => boolean;
   _renderCiStatus: (run: Run) => unknown;
   _renderRunEvidence: (run: Run) => unknown;
+  /** ADR-054 resource posture, rendered beside the pipeline phase. */
+  _renderPosture: (run: Run) => unknown;
   _renderInteractivePackets: (run: Run) => unknown;
   _renderAgentSessions: (run: Run) => unknown;
   _onReplayStep: (
@@ -836,7 +838,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           </div>
         `
       : nothing}
-    ${r.grade ? ctx.renderGrade(r.grade) : nothing}
+    ${r.grade ? ctx.renderGrade(r.grade) : nothing} ${ctx._renderPosture(r)}
     <div class="pipeline-section">
       <run-pipeline
         .run=${r}

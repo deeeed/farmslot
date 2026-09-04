@@ -12,6 +12,8 @@ import type {
 
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
+import type { RunPostureGateState } from './run-detail-posture-gate-renderers.js';
+import type { RunPostureStatusState } from './run-detail-posture-renderers.js';
 import type { RunSessionRowState } from './run-detail-session-renderers.js';
 
 export abstract class RunDetailState extends LitElement {
@@ -44,6 +46,13 @@ export abstract class RunDetailState extends LitElement {
    * per agent context so one row's click cannot strand another row's request.
    */
   _sessionRequestSeq: Record<string, number> = {};
+  /** ADR-054 posture summary, re-read from `runtime.posture.status` on every run update. */
+  @state() _postureStatus: RunPostureStatusState = { status: 'idle' };
+  /** Operator gate choice plus the Gateway's preview for it. */
+  @state() _postureGate: RunPostureGateState = { choice: null, status: 'idle' };
+  _postureStatusRequestSeq = 0;
+  _postureStatusKey = '';
+  _posturePreviewRequestSeq = 0;
   @state() _rescueInProgress = false;
   @state() _interactiveDevActionInProgress: string | null = null;
   @state() _handoffSignalCheckBusy = false;

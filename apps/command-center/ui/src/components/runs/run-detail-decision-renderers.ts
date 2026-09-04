@@ -10,6 +10,7 @@ import {
   type PendingDecision,
   type PRStatus,
   type RecipeRunArtifactGroup,
+  type ResourcePostureGateChoice,
   type Run,
   type RunDecision,
   type SlotPickerPayload,
@@ -25,6 +26,10 @@ import {
   renderReviewContinuation,
 } from './run-detail-collision-renderers.js';
 import { renderInteractiveHandoffGate } from './run-detail-interactive-handoff-renderers.js';
+import {
+  renderRunPostureGateChoices,
+  type RunPostureGateState,
+} from './run-detail-posture-gate-renderers.js';
 
 /**
  * Client-side fallback help text for decision actions where the gateway didn't persist a
@@ -106,6 +111,11 @@ export interface RunDecisionRenderContext {
   setResetBranch: (resetBranch: boolean) => void;
   setBranchNudgeShowPicker: (show: boolean) => void;
   confirmResolve: (runId: string, decision: RunDecision, actionId: string) => void;
+  /** ADR-054 gate choice plus the Gateway's preview of its effect. */
+  posture: RunPostureGateState;
+  /** True when the previewed choice was rejected, so resolving it is blocked. */
+  postureResolveBlocked: boolean;
+  selectPostureChoice: (choice: ResourcePostureGateChoice | null) => void;
   resolveSlotPick: (runId: string, decisionId: string) => void;
   resolveBranchNudgePick: (runId: string, decisionId: string) => void;
   checkInteractiveHandoffSignal: (runId: string, decision: RunDecision) => void;
@@ -321,6 +331,9 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                       signalCheckError: context.handoffSignalCheckError,
                       confirmResolve: context.confirmResolve,
                       checkSignalAndResume: context.checkInteractiveHandoffSignal,
+                      posture: context.posture,
+                      postureResolveBlocked: context.postureResolveBlocked,
+                      selectPostureChoice: context.selectPostureChoice,
                     })
                   : html`
                       <div class="gate-body">
@@ -355,6 +368,11 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                               </div>
                             `
                           : html`
+                              ${renderRunPostureGateChoices({
+                                state: context.posture,
+                                disabled: context.actionsBlocked,
+                                onSelect: (choice) => context.selectPostureChoice(choice),
+                              })}
                               <div class="gate-actions">
                                 ${pending.actions.map((a) => {
                                   const confirming = context.pendingConfirm === a.id;
@@ -372,8 +390,11 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                                             : a.style === 'danger'
                                               ? `border-color:${colors.statusFail}; color:${colors.statusFail}`
                                               : `border-color:${colors.textMuted}; color:${colors.textMuted}`}"
-                                        ?disabled=${context.actionsBlocked}
-                                        title=${help}
+                                        ?disabled=${context.actionsBlocked ||
+                                        context.postureResolveBlocked}
+                                        title=${context.postureResolveBlocked
+                                          ? 'The Gateway rejected the selected resource posture; pick another choice first.'
+                                          : help}
                                         @click=${() =>
                                           context.confirmResolve(run.id, pending, a.id)}
                                       >

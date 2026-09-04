@@ -1,0 +1,52 @@
+{
+  "ok": true,
+  "runId": "f50571a6-8638-40e7-be02-65b59a2afa5c",
+  "slotId": "macpro-ff-1",
+  "capturedAt": "2026-09-04T20:43:41.711Z",
+  "summary": {
+    "posture": "operator-wait",
+    "policySource": "framework-default",
+    "counts": {
+      "retained": 1,
+      "warm": 0,
+      "stopped": 0,
+      "failed": 0
+    },
+    "name": "Operator wait",
+    "source": "policy from framework default",
+    "countsText": "1 retained · 0 warm · 0 stopped · 0 failed",
+    "worker": "worker retained",
+    "lastTransition": "Last transition to Operator wait: applied · 2026-09-04T20:42:23.066Z · 1/1 steps",
+    "effects": null,
+    "rejection": null
+  },
+  "rows": [
+    {
+      "capabilityId": "sandbox-gateway-ui",
+      "desiredDisposition": "acquired",
+      "observedState": "running",
+      "rowStatus": "matches",
+      "text": "sandbox-gateway-ui wants retained observed running (as intended) kept so the next operator action stays usable"
+    }
+  ],
+  "rowsCarryBothStates": true,
+  "gate": {
+    "present": true,
+    "skipped": null,
+    "choices": ["keep-for-validation", "minimize", "free-slot", "project-default"],
+    "previewSettled": true,
+    "previewSummary": "Operator wait via operator gate choice — 1 retained",
+    "previewError": null,
+    "previewRejection": null,
+    "previewLines": [
+      "retain sandbox-gateway-ui — operator chose minimize: kept so the next operator action stays usable"
+    ],
+    "freeSlot": {
+      "settled": true,
+      "summary": "Parked via operator gate choice — 1 stopped",
+      "error": null,
+      "rejection": null
+    }
+  },
+  "gateProved": true
+}
