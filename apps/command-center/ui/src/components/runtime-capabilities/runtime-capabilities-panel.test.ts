@@ -5,13 +5,15 @@ import {
   observedStateForLease,
   type RuntimeCapabilityCatalogEntry,
   type RuntimeCapabilityLease,
+  type RuntimeCapabilityStopWarmResult,
 } from '@farmslot/protocol';
 
 import {
   projectRuntimeCapabilityLeases,
   runtimeCapabilityRecoveryActions,
   runtimeCapabilityRetentionView,
-  runtimeCapabilityWarmStopUnavailable,
+  runtimeCapabilityStopUsesWarmPath,
+  stopWarmOutcomeView,
 } from './runtime-capabilities-panel-model.js';
 
 const NOW_MS = Date.parse('2026-09-05T12:00:00.000Z');
@@ -225,10 +227,10 @@ test('acquire is offered only when an owner run and an available provider exist'
   );
 });
 
-test('a warm provider offers no Stop, because the release RPC would skip it', () => {
+test('a warm provider offers Stop, routed to the warm-stop RPC', () => {
   // `runtime.capability.release` filters out already-released leases and
-  // returns success, so a Stop button here would report a stop that never
-  // happened while the process kept running.
+  // returns success without touching the process, so a warm row must go to
+  // `runtime.capability.stopWarm` instead.
   const warm = lease('warm', 'released', 'run-1', { keepWarmUntil: '2026-09-05T12:10:00.000Z' });
   const view = runtimeCapabilityRetentionView({
     entry,
@@ -244,13 +246,12 @@ test('a warm provider offers no Stop, because the release RPC would skip it', ()
       hasOwnerRunId: true,
       available: true,
     }),
-    ['acquire'],
+    ['acquire', 'release'],
   );
-  // The absent control is explained rather than silently missing.
-  assert.match(runtimeCapabilityWarmStopUnavailable(view) ?? '', /not available yet/);
+  assert.equal(runtimeCapabilityStopUsesWarmPath(view, warm), true);
 });
 
-test('a provider that is not warm needs no warm-stop explanation', () => {
+test('a held lease stops through release, not the warm path', () => {
   const held = lease('held', 'acquired', 'run-1');
   const view = runtimeCapabilityRetentionView({
     entry,
@@ -259,7 +260,7 @@ test('a provider that is not warm needs no warm-stop explanation', () => {
     nowMs: NOW_MS,
   });
 
-  assert.equal(runtimeCapabilityWarmStopUnavailable(view), null);
+  assert.equal(runtimeCapabilityStopUsesWarmPath(view, held), false);
 });
 
 test('a held lease offers restart and stop, never a second acquire', () => {
@@ -299,4 +300,93 @@ test('a failed cleanup keeps the stop action reachable for a retry', () => {
       available: true,
     }).includes('release'),
   );
+});
+
+function stopWarmResult(
+  overrides: Partial<RuntimeCapabilityStopWarmResult> = {},
+): RuntimeCapabilityStopWarmResult {
+  return {
+    ok: true,
+    slotId: 'slot-a',
+    capabilityId: 'browser-cdp',
+    outcome: 'stopped',
+    observedState: 'stopped',
+    effects: ['Closes the CDP browser'],
+    ...overrides,
+  };
+}
+
+test('a stopped outcome reports the effects and retires the Stop control', () => {
+  const view = stopWarmOutcomeView(stopWarmResult());
+
+  assert.equal(view.tone, 'info');
+  assert.equal(view.observedState, 'stopped');
+  assert.equal(view.refresh, true);
+  assert.equal(view.keepStopAction, false);
+  assert.match(view.note ?? '', /Closes the CDP browser/);
+});
+
+test('a stopped outcome that did not observe a stop is surfaced as a discrepancy', () => {
+  // The one thing this must never do is show a stop that did not happen.
+  const view = stopWarmOutcomeView(
+    stopWarmResult({ outcome: 'stopped', observedState: 'running' }),
+  );
+
+  assert.equal(view.tone, 'error');
+  assert.equal(view.observedState, 'running');
+  assert.equal(view.keepStopAction, true);
+  assert.match(view.note ?? '', /Treat it as still running/);
+});
+
+test('a deferred outcome shows the Gateway reason and keeps the control', () => {
+  // Deferred is a refusal, not an error: a dependent still needs the provider.
+  const view = stopWarmOutcomeView(
+    stopWarmResult({
+      ok: false,
+      outcome: 'deferred',
+      observedState: 'running',
+      reason: "'ios-simulator' still depends on it",
+    }),
+  );
+
+  assert.equal(view.tone, 'info');
+  assert.equal(view.note, "'ios-simulator' still depends on it");
+  assert.equal(view.observedState, 'running');
+  assert.equal(view.keepStopAction, true);
+  // Nothing changed, so there is nothing to re-read.
+  assert.equal(view.refresh, false);
+});
+
+test('a not-warm outcome explains that nothing was warm and refreshes', () => {
+  const view = stopWarmOutcomeView(
+    stopWarmResult({
+      outcome: 'not-warm',
+      observedState: 'stopped',
+      reason: 'no warm lease for this capability',
+      effects: [],
+    }),
+  );
+
+  assert.equal(view.tone, 'info');
+  assert.equal(view.note, 'no warm lease for this capability');
+  assert.equal(view.refresh, true);
+  assert.equal(view.keepStopAction, false);
+});
+
+test('a failed outcome shows the cleanup failure and never claims a stop', () => {
+  const view = stopWarmOutcomeView(
+    stopWarmResult({
+      ok: false,
+      outcome: 'failed',
+      observedState: 'unhealthy',
+      cleanupFailure: 'shutdown action exited 1',
+      effects: [],
+    }),
+  );
+
+  assert.equal(view.tone, 'error');
+  assert.equal(view.note, 'shutdown action exited 1');
+  assert.equal(view.observedState, 'unhealthy');
+  assert.notEqual(view.observedState, 'stopped');
+  assert.equal(view.keepStopAction, true);
 });

@@ -11,6 +11,7 @@ import {
   type RuntimeCapabilityProofRequirement,
   type RuntimeCapabilityReleaseResult,
   type RuntimeCapabilityStatusResult,
+  type RuntimeCapabilityStopWarmResult,
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
@@ -21,7 +22,9 @@ import {
   runtimeCapabilityRecoveryActions,
   type RuntimeCapabilityRetentionView,
   runtimeCapabilityRetentionView,
-  runtimeCapabilityWarmStopUnavailable,
+  runtimeCapabilityStopUsesWarmPath,
+  type RuntimeCapabilityStopWarmView,
+  stopWarmOutcomeView,
 } from './runtime-capabilities-panel-model.js';
 
 @customElement('runtime-capabilities-panel')
@@ -43,6 +46,11 @@ export class RuntimeCapabilitiesPanel extends LitElement {
   } | null = null;
   /** Last recovery-action failure. Kept out of `error` so a refresh cannot erase it. */
   @state() private actionError = '';
+  /**
+   * Latest `runtime.capability.stopWarm` outcome per capability. Held separately
+   * from the fetch state so a refresh cannot erase the Gateway's answer.
+   */
+  @state() private stopWarmViews: Record<string, RuntimeCapabilityStopWarmView | undefined> = {};
 
   private refreshPending = false;
   private unsubscribeEvent: (() => void) | null = null;
@@ -149,6 +157,32 @@ export class RuntimeCapabilitiesPanel extends LitElement {
         throw new Error(
           `The Gateway did not release lease ${lease.id}; the provider may still be running.`,
         );
+      }
+    });
+  }
+
+  /**
+   * Stop a warm provider — a released lease whose process is still up.
+   *
+   * This is a different RPC from `release` on purpose: release filters released
+   * leases and returns success without touching the process. `deferred` is a
+   * refusal to render as-is, not an error: something still running depends on
+   * this provider.
+   */
+  private async stopWarm(entry: RuntimeCapabilityCatalogEntry): Promise<void> {
+    const slotId = this.slotId;
+    await this.runRecovery(entry.id, 'release', slotId, async () => {
+      const result = await gateway.request<RuntimeCapabilityStopWarmResult>(
+        Methods.RUNTIME_CAPABILITY_STOP_WARM,
+        { slotId, capabilityId: entry.id },
+        60_000,
+      );
+      const view = stopWarmOutcomeView(result);
+      this.stopWarmViews = { ...this.stopWarmViews, [entry.id]: view };
+      // A refusal or a failed cleanup is the Gateway's answer, shown on the row.
+      // Only a genuine transport/protocol fault belongs in the action error.
+      if (view.tone === 'error' && result.outcome === 'failed') {
+        throw new Error(view.note ?? 'Stopping the warm provider failed.');
       }
     });
   }
@@ -386,6 +420,9 @@ export class RuntimeCapabilitiesPanel extends LitElement {
       available: entry.availability.state === 'available',
     });
     const busy = this.busyAction?.capabilityId === entry.id ? this.busyAction.action : null;
+    // Warm rows go to stopWarm; held rows go to release. Different RPCs.
+    const usesWarmStop = runtimeCapabilityStopUsesWarmPath(view, stateLease);
+    const stopWarmView = this.stopWarmViews[entry.id];
     return html`
       <article
         data-capability-id=${entry.id}
@@ -448,9 +485,21 @@ export class RuntimeCapabilitiesPanel extends LitElement {
         ${!active && entry.availability.state === 'unavailable'
           ? html`<div class="error">Unavailable: ${entry.availability.reason}</div>`
           : nothing}
-        ${runtimeCapabilityWarmStopUnavailable(view)
+        ${view.warmWindowOpen
           ? html`<div class="warm-note" data-testid=${`runtime-capability-warm-note-${entry.id}`}>
-              ${runtimeCapabilityWarmStopUnavailable(view)}
+              Warm: the lease is released but the process stays up for reuse until
+              ${view.warmUntil ?? 'its deadline'}.
+            </div>`
+          : nothing}
+        ${stopWarmView?.note
+          ? html`<div
+              class=${stopWarmView.tone === 'error' ? 'error' : 'warm-note'}
+              role=${stopWarmView.tone === 'error' ? 'alert' : 'status'}
+              data-testid=${`runtime-capability-stopwarm-${entry.id}`}
+              data-outcome-tone=${stopWarmView.tone}
+              data-observed-state=${stopWarmView.observedState}
+            >
+              ${stopWarmView.note}
             </div>`
           : nothing}
         <div class="recovery">
@@ -476,19 +525,24 @@ export class RuntimeCapabilitiesPanel extends LitElement {
                 </button>
               `
             : nothing}
-          ${recoveryActions.includes('release') && (actionable ?? stateLease)
+          ${recoveryActions.includes('release') && (usesWarmStop || actionable || stateLease)
             ? html`
                 <button
                   class="release"
                   data-testid=${`runtime-capability-release-${entry.id}`}
                   ?disabled=${busy !== null}
-                  @click=${() => this.release(entry, (actionable ?? stateLease)!)}
+                  @click=${() =>
+                    usesWarmStop
+                      ? this.stopWarm(entry)
+                      : this.release(entry, (actionable ?? stateLease)!)}
                 >
                   ${busy === 'release'
                     ? 'Stopping…'
-                    : (actionable ?? stateLease)!.state === 'error'
-                      ? `Retry stop ${entry.label}`
-                      : `Stop ${entry.label}`}
+                    : usesWarmStop
+                      ? `Stop warm ${entry.label}`
+                      : (actionable ?? stateLease)?.state === 'error'
+                        ? `Retry stop ${entry.label}`
+                        : `Stop ${entry.label}`}
                 </button>
               `
             : nothing}

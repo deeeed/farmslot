@@ -3,6 +3,7 @@ import {
   type ResourcePostureObservedState,
   type RuntimeCapabilityCatalogEntry,
   type RuntimeCapabilityLease,
+  type RuntimeCapabilityStopWarmResult,
 } from '@farmslot/protocol';
 
 const PROVIDER_HOLDER_STATES = new Set<RuntimeCapabilityLease['state']>([
@@ -152,10 +153,9 @@ export type RuntimeCapabilityRecoveryAction = 'acquire' | 'restart' | 'release';
 /**
  * Which recovery actions this panel can honestly perform right now.
  *
- * `release` is offered only for a lease the Gateway will actually act on. The
- * release RPC skips leases that are already released, so offering "Stop" for a
- * warm provider would report success while the process kept running. Stopping a
- * warm provider needs a capability-scoped Gateway call that does not exist yet.
+ * A warm provider offers Stop again: `runtime.capability.stopWarm` acts on
+ * exactly the released-but-live lease that `runtime.capability.release` skips.
+ * The two go to different RPCs, so the caller must pick by `warmWindowOpen`.
  */
 export function runtimeCapabilityRecoveryActions(input: {
   view: RuntimeCapabilityRetentionView;
@@ -168,17 +168,95 @@ export function runtimeCapabilityRecoveryActions(input: {
   const held = Boolean(lease && lease.state !== 'released' && lease.state !== 'queued');
   if (!held && hasOwnerRunId && available) actions.push('acquire');
   if (held && hasOwnerRunId) actions.push('restart');
-  if (held || view.cleanupFailure) actions.push('release');
+  // Warm counts: it is a live process, just one no lease owns any more.
+  if (held || view.warmWindowOpen || view.cleanupFailure) actions.push('release');
   return actions;
 }
 
 /**
- * A warm provider the panel cannot stop, and why. Rendered so the missing
- * control is explained instead of silently absent.
+ * Whether Stop on this row must go through `runtime.capability.stopWarm` rather
+ * than `runtime.capability.release`. Release filters released leases and returns
+ * success without touching the process, so a warm row sent there reports a stop
+ * that never happened.
  */
-export function runtimeCapabilityWarmStopUnavailable(
+export function runtimeCapabilityStopUsesWarmPath(
   view: RuntimeCapabilityRetentionView,
-): string | null {
-  if (!view.warmWindowOpen) return null;
-  return 'This provider is warm: its lease is released but the process stays up for reuse. Stopping it from here is not available yet; it stops at its keep-warm deadline or when the run reaches terminal cleanup.';
+  lease: RuntimeCapabilityLease | undefined,
+): boolean {
+  const held = Boolean(lease && lease.state !== 'released' && lease.state !== 'queued');
+  return !held && view.warmWindowOpen;
+}
+
+/** How the panel should present one `runtime.capability.stopWarm` result. */
+export interface RuntimeCapabilityStopWarmView {
+  /** Inline note for the row, or null when the outcome speaks for itself. */
+  note: string | null;
+  tone: 'info' | 'error';
+  /** Re-read status from the Gateway, because the lease may have changed. */
+  refresh: boolean;
+  /** Keep Stop available for another attempt. */
+  keepStopAction: boolean;
+  /** What the Gateway observed. Never `stopped` unless it really stopped. */
+  observedState: ResourcePostureObservedState;
+}
+
+/**
+ * Turn a stopWarm result into what the row should show.
+ *
+ * `deferred` is a refusal, not a failure: something still needs the provider, so
+ * it is reported in the Gateway's own words with the control left in place. The
+ * one thing this must never do is present a stop that did not happen, so an
+ * outcome of `stopped` that did not come back with an observed `stopped` is
+ * surfaced as a discrepancy rather than trusted.
+ */
+export function stopWarmOutcomeView(
+  result: RuntimeCapabilityStopWarmResult,
+): RuntimeCapabilityStopWarmView {
+  const observedState = result.observedState;
+  if (result.outcome === 'stopped') {
+    if (observedState !== 'stopped') {
+      return {
+        note: `The Gateway reported the provider stopped but observed it '${observedState}'. Treat it as still running.`,
+        tone: 'error',
+        refresh: true,
+        keepStopAction: true,
+        observedState,
+      };
+    }
+    return {
+      note: result.effects.length ? `Stopped. ${result.effects.join('; ')}` : 'Stopped.',
+      tone: 'info',
+      refresh: true,
+      keepStopAction: false,
+      observedState,
+    };
+  }
+  if (result.outcome === 'deferred') {
+    return {
+      note:
+        result.reason ??
+        'The Gateway kept this provider: something that is still running depends on it.',
+      tone: 'info',
+      refresh: false,
+      keepStopAction: true,
+      observedState,
+    };
+  }
+  if (result.outcome === 'not-warm') {
+    return {
+      note: result.reason ?? 'Nothing was keeping this capability warm on this slot.',
+      tone: 'info',
+      refresh: true,
+      keepStopAction: false,
+      observedState,
+    };
+  }
+  return {
+    note:
+      result.cleanupFailure ?? result.reason ?? 'Cleanup failed; the provider state is unknown.',
+    tone: 'error',
+    refresh: true,
+    keepStopAction: true,
+    observedState,
+  };
 }

@@ -1,13 +1,13 @@
 {
-  "testedSha": "5945c786c69488fee74667a63f9472c3c12804eb",
+  "testedSha": "af83bc75402eeac115e4b6cebe3e171ef59f9bb3",
   "testedTreeDirty": true,
-  "capturedAt": "2026-09-04T21:53:59.364Z",
+  "capturedAt": "2026-09-04T22:35:54.124Z",
   "runDetail": {
     "ok": true,
     "testedSha": null,
-    "runId": "96edc109-b121-4c7b-a473-6844be5fd41f",
+    "runId": "6c154000-c569-478f-9eab-794519fb7089",
     "slotId": "macpro-ff-1",
-    "capturedAt": "2026-09-04T21:44:41.859Z",
+    "capturedAt": "2026-09-04T22:35:41.850Z",
     "summary": {
       "posture": "operator-wait",
       "policySource": "framework-default",
@@ -21,7 +21,7 @@
       "source": "policy from framework default",
       "countsText": "1 retained · 0 warm · 0 stopped · 0 failed",
       "worker": "worker retained",
-      "lastTransition": "Last transition to Operator wait: applied · 2026-09-04T21:42:49.580Z · 1/1 steps",
+      "lastTransition": "Last transition to Operator wait: applied · 2026-09-04T22:34:35.839Z · 1/1 steps",
       "effects": null,
       "rejection": null
     },
@@ -58,7 +58,7 @@
   },
   "surfaces": {
     "slotId": "macpro-ff-1",
-    "capturedAt": "2026-09-04T21:45:27.213Z",
+    "capturedAt": "2026-09-04T22:33:38.516Z",
     "backlog": {
       "attempted": true,
       "itemId": "7b3235c9-8288-4785-92d6-73aad1d35bff",
@@ -69,19 +69,16 @@
       "restored": true
     },
     "slotView": {
-      "attempted": true,
+      "attempted": false,
       "rows": [
         {
-          "capabilityId": "sandbox-gateway-ui",
-          "leaseState": "acquired",
-          "observedState": "running",
+          "capabilityId": "browser-cdp",
+          "leaseState": "released",
+          "observedState": "stopped",
           "warmUntil": null,
-          "reason": "Why held by an active lease and passing its health check",
+          "reason": "Why the lease was released with no keep-warm window",
           "warmNote": null,
-          "actions": [
-            "runtime-capability-restart-sandbox-gateway-ui",
-            "runtime-capability-release-sandbox-gateway-ui"
-          ]
+          "actions": []
         },
         {
           "capabilityId": "companion-native-client-ios",
@@ -90,7 +87,7 @@
           "warmUntil": null,
           "reason": "Why the lease was released with no keep-warm window",
           "warmNote": null,
-          "actions": ["runtime-capability-acquire-companion-native-client-ios"]
+          "actions": []
         },
         {
           "capabilityId": "ios-simulator",
@@ -99,7 +96,16 @@
           "warmUntil": null,
           "reason": "Why the lease was released with no keep-warm window",
           "warmNote": null,
-          "actions": ["runtime-capability-acquire-ios-simulator"]
+          "actions": []
+        },
+        {
+          "capabilityId": "sandbox-gateway-ui",
+          "leaseState": "released",
+          "observedState": "stopped",
+          "warmUntil": null,
+          "reason": "Why the lease was released with no keep-warm window",
+          "warmNote": null,
+          "actions": []
         },
         {
           "capabilityId": "android-device",
@@ -111,22 +117,13 @@
           "actions": []
         },
         {
-          "capabilityId": "browser-cdp",
-          "leaseState": "available",
-          "observedState": "stopped",
-          "warmUntil": null,
-          "reason": "Why no lease has been taken on this slot",
-          "warmNote": null,
-          "actions": ["runtime-capability-acquire-browser-cdp"]
-        },
-        {
           "capabilityId": "companion-metro",
           "leaseState": "released",
           "observedState": "stopped",
           "warmUntil": null,
           "reason": "Why the lease was released with no keep-warm window",
           "warmNote": null,
-          "actions": ["runtime-capability-acquire-companion-metro"]
+          "actions": []
         },
         {
           "capabilityId": "recording",
@@ -135,18 +132,29 @@
           "warmUntil": null,
           "reason": "Why no lease has been taken on this slot",
           "warmNote": null,
-          "actions": ["runtime-capability-acquire-recording"]
+          "actions": []
         }
       ],
       "rowsSeparateLeaseAndProvider": true,
-      "warmRowsOfferNoStop": true,
-      "action": "acquire",
-      "actionCapabilityId": "companion-native-client-ios",
-      "leasesBefore": 1,
-      "actionError": "acquire companion-native-client-ios: No stored proof plan for companion-native-client-ios on run 96edc109-b121-4c7b-a473-6844be5fd41f; the Gateway has no recorded reason or mode to acquire it under.",
-      "leasesAfter": 1,
-      "leaseStatesAfter": ["released"],
-      "actionProved": true
+      "warmRowsOfferStop": true,
+      "skipped": "no capability on this slot offers an acquire action right now"
+    },
+    "warmStop": {
+      "attempted": true,
+      "capabilityId": "browser-cdp",
+      "keepWarmMs": 600000,
+      "releasedOk": true,
+      "warmUntil": "2026-09-04T22:43:46.992Z",
+      "warmWindowOpen": true,
+      "buttonLabel": "Stop warm Browser / CDP",
+      "note": "Stopped. The lease owner can no longer drive the CDP session; Chrome remains reusable only until the explicit keep-warm deadline",
+      "noteTone": "info",
+      "noteObservedState": "stopped",
+      "gatewayKeepWarmUntil": null,
+      "gatewayCleanupFailure": null,
+      "honest": true,
+      "proved": true,
+      "leftoverLeases": 0
     },
     "ok": true
   },

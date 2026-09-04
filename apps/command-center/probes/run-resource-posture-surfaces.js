@@ -3,6 +3,11 @@
  * Slot View capability panel and the backlog dispatch `waitPolicy` field.
  * Usage: node apps/command-center/scripts/cdp.mjs eval backlog --file probes/run-resource-posture-surfaces.js
  *
+ * It also makes a real warm provider (acquire, then release with keepWarm) and
+ * stops it through the panel's Stop control, which routes to
+ * `runtime.capability.stopWarm`. The outcome is read back from the Gateway, and
+ * the probe releases its own lease in a finally block whatever happens.
+ *
  * Both are driven through real clicks on real controls. The backlog field is
  * read back from the gateway, not from component state, so the evidence proves
  * the value was persisted through `backlog.update` rather than merely rendered.
@@ -170,10 +175,10 @@ return (async () => {
       slotView.rowsSeparateLeaseAndProvider = rows.every(
         (row) => row.leaseState && row.observedState,
       );
-      // A warm provider must not offer Stop: the release RPC would skip it.
-      slotView.warmRowsOfferNoStop = rows
+      // A warm provider offers Stop, routed to `runtime.capability.stopWarm`.
+      slotView.warmRowsOfferStop = rows
         .filter((row) => row.warmNote)
-        .every((row) => !row.actions.some((id) => id?.startsWith('runtime-capability-release-')));
+        .every((row) => row.actions.some((id) => id?.startsWith('runtime-capability-release-')));
 
       // Exercise one real recovery action end to end.
       const target = rows.find((row) =>
@@ -214,11 +219,137 @@ return (async () => {
     }
     report.slotView = slotView;
 
+    // ---- Warm Stop, through runtime.capability.stopWarm ----
+    //
+    // A warm provider is a released lease whose process is still up. It is made
+    // here the same way the run engine makes one: acquire, then release with
+    // keepWarm so the provider outlives the lease. Then the panel's Stop button
+    // is clicked and the outcome is read back from the Gateway.
+    const warmStop = { attempted: false };
+    const warmOwnerRunId = `posture-warm-stop-probe-${Date.now()}`;
+    let warmCapabilityId = null;
+    try {
+      // Only a provider that declares keep_warm_ms can ever be warm, and one
+      // with no dependencies keeps the proof to a single process. Chosen from
+      // the live catalog rather than hardcoded, so it follows project config.
+      const catalog =
+        (await rpc('runtime.capability.list', { slotId: SLOT_ID })).capabilities ?? [];
+      const catalogEntry = catalog.find(
+        (candidate) =>
+          candidate.keepWarmMs &&
+          candidate.availability.state === 'available' &&
+          (candidate.dependencies ?? []).length === 0,
+      );
+      warmCapabilityId = catalogEntry?.id ?? null;
+      warmStop.capabilityId = warmCapabilityId;
+      warmStop.keepWarmMs = catalogEntry?.keepWarmMs ?? null;
+      if (!catalogEntry) {
+        warmStop.skipped =
+          'no available dependency-free provider on this slot declares keep_warm_ms, so no warm window can exist';
+      } else {
+        const acquired = await rpc('runtime.capability.acquire', {
+          slotId: SLOT_ID,
+          capabilityId: warmCapabilityId,
+          ownerRunId: warmOwnerRunId,
+          proofRequirement: {
+            capabilityId: warmCapabilityId,
+            reason: 'warm stop probe',
+            mode: 'state',
+          },
+        });
+        if (!acquired.ok) {
+          warmStop.error = `acquire failed: ${acquired.conflict?.reason ?? 'unknown'}`;
+        } else {
+          // keepWarm true is what leaves the process up behind a released lease.
+          const released = await rpc('runtime.capability.release', {
+            slotId: SLOT_ID,
+            ownerRunId: warmOwnerRunId,
+            capabilityId: warmCapabilityId,
+            leaseId: acquired.lease.id,
+            keepWarm: true,
+          });
+          warmStop.releasedOk = released.ok;
+          const warmed = (await rpc('runtime.capability.status', { slotId: SLOT_ID })).leases.find(
+            (lease) => lease.id === acquired.lease.id,
+          );
+          warmStop.warmUntil = warmed?.keepWarmUntil ?? null;
+          warmStop.warmWindowOpen = Boolean(
+            warmed?.keepWarmUntil && Date.parse(warmed.keepWarmUntil) > Date.now(),
+          );
+          if (!warmStop.warmWindowOpen) {
+            warmStop.skipped = 'the release left no open keep-warm window to stop';
+          } else {
+            // Re-render the panel against the warm lease, then click its Stop.
+            location.hash = '#fleet';
+            await wait(500);
+            location.hash = `#slot/${SLOT_ID}?activity=info`;
+            const button = await waitFor(
+              () => deepAll(`[data-testid="runtime-capability-release-${warmCapabilityId}"]`)[0],
+              25000,
+            );
+            if (!button) {
+              warmStop.error = 'the panel offered no Stop control for the warm provider';
+            } else {
+              warmStop.attempted = true;
+              warmStop.buttonLabel = button.textContent.trim();
+              button.click();
+              const note = await waitFor(
+                () =>
+                  deepAll(`[data-testid="runtime-capability-stopwarm-${warmCapabilityId}"]`)[0] ??
+                  deepAll('[data-testid="runtime-capability-action-error"]')[0],
+                90000,
+              );
+              warmStop.note = text(note);
+              warmStop.noteTone = note?.dataset.outcomeTone ?? null;
+              warmStop.noteObservedState = note?.dataset.observedState ?? null;
+              const afterStatus = await rpc('runtime.capability.status', { slotId: SLOT_ID });
+              const afterLease = afterStatus.leases.find((lease) => lease.id === acquired.lease.id);
+              warmStop.gatewayKeepWarmUntil = afterLease?.keepWarmUntil ?? null;
+              warmStop.gatewayCleanupFailure = afterLease?.cleanupFailure ?? null;
+              // The panel must never say stopped unless the Gateway observed one.
+              warmStop.honest =
+                warmStop.noteObservedState !== 'stopped' ||
+                !/still running/i.test(warmStop.note ?? '');
+              warmStop.proved = Boolean(warmStop.note && warmStop.noteObservedState);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      warmStop.error = error?.message ?? String(error);
+    } finally {
+      // Never leave the probe's own lease behind.
+      if (warmCapabilityId) {
+        try {
+          await rpc('runtime.capability.release', {
+            slotId: SLOT_ID,
+            ownerRunId: warmOwnerRunId,
+            capabilityId: warmCapabilityId,
+            keepWarm: false,
+          });
+        } catch {
+          warmStop.cleanupReleaseError = 'the probe could not release its own lease';
+        }
+      }
+      const finalStatus = await rpc('runtime.capability.status', { slotId: SLOT_ID });
+      warmStop.leftoverLeases = finalStatus.leases.filter(
+        (lease) =>
+          lease.owner.runId === warmOwnerRunId &&
+          ['queued', 'acquiring', 'acquired', 'releasing'].includes(lease.state),
+      ).length;
+    }
+    report.warmStop = warmStop;
+
+    // The warm Stop is the Slot View action this probe proves: a real click on a
+    // real control with a Gateway-verified outcome. The acquire attempt above is
+    // opportunistic — it needs a run bound to the slot, which is not always
+    // true — so it does not gate `ok`.
     report.ok = Boolean(
       report.backlog?.persisted &&
       report.slotView?.rowsSeparateLeaseAndProvider &&
-      report.slotView?.warmRowsOfferNoStop &&
-      report.slotView?.actionProved,
+      report.warmStop?.proved &&
+      report.warmStop?.honest &&
+      report.warmStop?.leftoverLeases === 0,
     );
     return report;
   } finally {
