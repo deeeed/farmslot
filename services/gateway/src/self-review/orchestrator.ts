@@ -593,11 +593,31 @@ export function resolveRecoveredFixBaseSha(
   return owner?.reviewSnapshot?.headSha?.trim() || owner?.reviewedHeadSha?.trim() || null;
 }
 
-function fixDeltaHasChanges(snapshot: ReviewFixDeltaSnapshot): boolean {
-  return (
-    snapshot.source === 'local-git' &&
-    ((snapshot.diffStat?.files ?? 0) > 0 || (snapshot.untrackedFiles?.length ?? 0) > 0)
-  );
+/**
+ * True only when the delta capture SUCCEEDED and found nothing. An
+ * `unavailable` snapshot (missing fix base, git failure, oversized diff, slot
+ * exec error) means "unknown", not "empty" — a blocked worker whose delta could
+ * not be read may still have changed files, so it must go through the re-review
+ * rather than short-circuit as if it had touched nothing.
+ */
+function fixDeltaIsKnownEmpty(snapshot: ReviewFixDeltaSnapshot): boolean {
+  if (snapshot.source !== 'local-git' || !snapshot.diffStat) return false;
+  return snapshot.diffStat.files === 0 && (snapshot.untrackedFiles?.length ?? 0) === 0;
+}
+
+/**
+ * A worker that blocked mid-fix leaves an external blocker on the run even when
+ * the re-review of its partial changes passes. `buildPublishGateReviewStatus`
+ * and `materializeIndependentReviewArtifacts` both derive the published review
+ * verdict from the FINAL attempt, so leaving a `pass` attempt here would let the
+ * publication gate materialize a qualifying PASS while the run is blocked.
+ * Stamp the block onto that attempt so the aggregate verdict stays authoritative.
+ */
+function blockedReviewAttempt(
+  attempt: IndependentReviewAttempt,
+  reason: string,
+): IndependentReviewAttempt {
+  return { ...attempt, verdict: 'failed', reason };
 }
 
 export async function runSelfReviewRetryLoop({
@@ -878,7 +898,7 @@ export async function runSelfReviewRetryLoop({
         fixBaseSha,
         artifactScope,
       );
-      if (workerBlockReason && !fixDeltaHasChanges(fixDelta.snapshot)) {
+      if (workerBlockReason && fixDeltaIsKnownEmpty(fixDelta.snapshot)) {
         attempts.push({
           loopNumber: nextLoopNumber,
           verdict: 'failed',
@@ -935,7 +955,7 @@ export async function runSelfReviewRetryLoop({
         artifactScope,
         sessionPolicy,
       );
-      attempts.push({
+      const retryAttempt: IndependentReviewAttempt = {
         ...reviewAttemptFromResult(
           result,
           nextLoopNumber,
@@ -943,7 +963,10 @@ export async function runSelfReviewRetryLoop({
           fixDelta.artifactPaths,
         ),
         timeline: [fixSegment, ...(result.timeline ?? [])],
-      });
+      };
+      attempts.push(
+        workerBlockReason ? blockedReviewAttempt(retryAttempt, workerBlockReason) : retryAttempt,
+      );
       debugSelfReviewLog(
         `[self-review] run ${runId.slice(0, 8)} — retry verdict: ${result.verdict}`,
       );
@@ -1554,7 +1577,7 @@ async function recoverSelfReviewFixPass({
       validationDepth,
       ...(ownerReview?.reviewSnapshot ? { reviewSnapshot: ownerReview.reviewSnapshot } : {}),
     };
-    if (workerBlockReason && !fixDeltaHasChanges(fixDelta.snapshot)) {
+    if (workerBlockReason && fixDeltaIsKnownEmpty(fixDelta.snapshot)) {
       return {
         verdict: 'blocked',
         reason: workerBlockReason,
@@ -1607,11 +1630,9 @@ async function recoverSelfReviewFixPass({
         !retryResult.incomplete &&
         retryResult.verdict === 'issues' &&
         retryResult.issues.length > 0;
-      const secondAttempt = reviewAttemptFromResult(
-        retryResult,
-        2,
-        fixDelta.snapshot,
-        fixDelta.artifactPaths,
+      const secondAttempt = blockedReviewAttempt(
+        reviewAttemptFromResult(retryResult, 2, fixDelta.snapshot, fixDelta.artifactPaths),
+        workerBlockReason,
       );
       return {
         verdict: 'blocked',

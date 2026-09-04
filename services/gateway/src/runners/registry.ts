@@ -882,6 +882,13 @@ export interface RunnerLaunchBlocker {
   defer?: boolean;
 }
 
+/**
+ * Detail prefix stamped on a digest-required delivery that was sent without a
+ * runner acknowledgement. Exported so recovery paths recognise the condition
+ * from the runner layer that produces it instead of duplicating the prose.
+ */
+export const UNCERTAIN_PROMPT_DELIVERY_DETAIL = 'Exact prompt acknowledgement did not arrive';
+
 /** The prompt was sent, but Farmslot could not prove whether the runner accepted it. */
 export class PromptDeliveryUncertainError extends Error {
   override name = 'PromptDeliveryUncertainError';
@@ -1776,6 +1783,16 @@ export async function runnerHasDurablePromptHandoff(
   }
 }
 
+/**
+ * Slack applied to a delivery-acceptance cutoff so evidence a runner recorded a
+ * moment before we sampled the clock still counts for that send. Applied within
+ * one timebase at a time: the gateway clock for `sentAtMs`, the provider clock
+ * for a native `promptAcceptanceBaselineMs`. Never mix the two — the provider
+ * baseline can come from the slot's clock, and lowering it with a gateway
+ * timestamp lets cross-node skew admit an older identical prompt as proof.
+ */
+const PROMPT_ACCEPTANCE_CLOCK_TOLERANCE_MS = 500;
+
 async function runnerShowsPromptDeliveryAccepted(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -1793,13 +1810,13 @@ async function runnerShowsPromptDeliveryAccepted(
     promptAcceptanceBaselineMs?: number | null;
   } = {},
 ): Promise<boolean> {
-  // `sinceMs` already includes the bounded post-send clock tolerance. Keep it
-  // when the provider baseline lands just after the runner records turn start,
-  // otherwise exact native evidence from that send is rejected as "too old".
+  // The provider baseline is sampled just before the send, so a runner that
+  // records turn start a few ms earlier would have its exact native evidence
+  // rejected as "too old". Relax the cutoff inside the provider's own timebase.
   const promptAcceptanceBaselineMs =
     opts.promptAcceptanceBaselineMs == null
       ? opts.promptAcceptanceBaselineMs
-      : Math.min(opts.promptAcceptanceBaselineMs, sinceMs);
+      : opts.promptAcceptanceBaselineMs - PROMPT_ACCEPTANCE_CLOCK_TOLERANCE_MS;
   const handoff = await runnerHasDurablePromptHandoff(vars, target, runner, message, sinceMs, {
     ...opts,
     promptAcceptanceBaselineMs,
@@ -3300,7 +3317,7 @@ export async function sendRunnerPostLaunchPrompt(
         tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
       )
     ).stdout;
-    const promptAcceptedSinceMs = sentAtMs - 500;
+    const promptAcceptedSinceMs = sentAtMs - PROMPT_ACCEPTANCE_CLOCK_TOLERANCE_MS;
     if (
       await runnerShowsPromptDeliveryAccepted(
         vars,
@@ -3414,7 +3431,7 @@ export async function sendRunnerPostLaunchPrompt(
     }
   }
   const verificationDetail = requirePromptDigest
-    ? 'Exact prompt acknowledgement did not arrive. Pane output cannot replace the required runner acknowledgement.'
+    ? `${UNCERTAIN_PROMPT_DELIVERY_DETAIL}. Pane output cannot replace the required runner acknowledgement.`
     : `The pane did not change, echo "${marker}", or show runner progress, meaning the runner input handler was not live.`;
   const failureMessage =
     `Prompt delivery failed after ${sentAttempts} send attempt(s) in tmux target ${target}. ` +

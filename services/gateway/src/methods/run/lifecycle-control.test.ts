@@ -202,6 +202,29 @@ test('runForceComplete marks a blocked run done when its PR is already published
   assert.equal(getRun(run.id)?.steps[0]?.status, 'skipped');
 });
 
+test('runForceComplete uses the run own PR number when completing a blocked run', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-blocked-linked-pr`,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    prNumber: 35671,
+    error: 'review finding requires an external dependency',
+    steps: [{ name: 'human-gate', status: 'running' }],
+  });
+
+  // No prNumber in the params: the run is already linked to a published PR, so
+  // the caller must not have to resend the number it already owns.
+  const result = await runForceComplete({ runId: run.id }, () => {});
+
+  assert.equal(result.run.status, 'done');
+  assert.equal(result.run.prNumber, 35671);
+  assert.equal(result.run.steps[0]?.status, 'skipped');
+});
+
 test('runForceComplete repairs a stale active status after an earlier force completion', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

@@ -48,6 +48,7 @@ import {
   normalizeRunner,
   runnerDefaultModel,
   runnerSupportsModel,
+  UNCERTAIN_PROMPT_DELIVERY_DETAIL,
 } from '../../runners/registry.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../../runs/store.js';
 import { resolveContextFilePath } from '../../tasks/watcher.js';
@@ -234,17 +235,22 @@ export function resetPublishGateApprovalForReplay(
   };
 }
 
-function normalizeReplayPrerequisites(
+export function normalizeReplayPrerequisites(
   runId: string,
   existing: NonNullable<ReturnType<typeof getRun>>,
   flowSteps: readonly string[] | undefined,
   targetIdx: number,
   replayStepName: string,
+  deferredStepName?: string,
 ): void {
   if (!flowSteps || targetIdx <= 0) return;
   const now = new Date().toISOString();
   for (let i = 0; i < targetIdx; i++) {
     const stepName = flowSteps[i];
+    // A deferred prerequisite is owned by a later write that only lands once the
+    // replay has actually claimed its slot; normalizing it here would persist a
+    // completed step for a replay that can still be refused.
+    if (stepName === deferredStepName) continue;
     const prior = existing.steps.find((candidate) => candidate.name === stepName);
     if (!prior || prior.status === 'done' || prior.status === 'pending') continue;
     updateRunStep(runId, stepName, {
@@ -261,15 +267,21 @@ function normalizeReplayPrerequisites(
   }
 }
 
-const UNCERTAIN_PROMPT_DELIVERY_DETAIL = 'Exact prompt acknowledgement did not arrive';
-
 export function canAdoptTaskSignalAfterUncertainDispatch(
   run: Pick<Run, 'error' | 'steps'>,
   signal: unknown,
 ): signal is WorkerSignal {
   const dispatch = run.steps.find((step) => step.name === PS.DISPATCH);
-  const failure = `${run.error ?? ''}\n${dispatch?.detail ?? ''}`;
-  if (dispatch?.status !== 'failed' || !failure.includes(UNCERTAIN_PROMPT_DELIVERY_DETAIL)) {
+  if (dispatch?.status !== 'failed') return false;
+  // The run engine stamps `promptDeliveryUncertain` when the runner layer throws
+  // PromptDeliveryUncertainError. Runs blocked before that marker existed only
+  // carry the runner layer's detail text, so fall back to the constant the
+  // producing module exports rather than a literal copied into workflow code.
+  const failure = `${run.error ?? ''}\n${dispatch.detail ?? ''}`;
+  if (
+    dispatch.outputs?.promptDeliveryUncertain !== true &&
+    !failure.includes(UNCERTAIN_PROMPT_DELIVERY_DETAIL)
+  ) {
     return false;
   }
 
@@ -300,14 +312,30 @@ async function readAdoptableTaskSignal(run: Run): Promise<WorkerSignal | null> {
       `cat ${shellQuote(signalPath)} 2>/dev/null`,
       vars.remoteRepo,
     );
+    // Absent file or unreadable path: `cat` exits non-zero, which is the
+    // expected "worker never wrote a signal" case, not an error.
     if (result.exitCode !== 0 || !result.stdout.trim()) return null;
-    const signal: unknown = JSON.parse(result.stdout);
+    let signal: unknown;
+    try {
+      signal = JSON.parse(result.stdout);
+    } catch (error) {
+      // A partially written signal file is expected while a worker is mid-write.
+      console.warn(
+        `[run] replay signal probe for ${run.id.slice(0, 8)} read malformed JSON from ${slotId}: ${(error as Error).message}`,
+      );
+      return null;
+    }
     if (!canAdoptTaskSignalAfterUncertainDispatch(run, signal)) return null;
     return normalizeWorkerSignal(signal).ok ? (signal as WorkerSignal) : null;
-  } catch {
-    // Best-effort recovery probe: an unreachable slot, missing signal file, or
-    // malformed JSON all mean there is no adoptable signal. Replay then falls
-    // back to fresh dispatch, which is the safe default.
+  } catch (error) {
+    // Unexpected probe failure (slot config missing, transport down). Log it
+    // rather than hide it, then fall back to fresh dispatch: that is exactly
+    // what replay did before adoption existed, and it is not a blind redispatch
+    // — the slot reclaim below refuses a slot owned by another run, and the
+    // runner layer re-checks for a durable prompt handoff before every send.
+    console.warn(
+      `[run] replay could not probe the task signal for ${run.id.slice(0, 8)} on ${slotId}: ${(error as Error).message}`,
+    );
     return null;
   }
 }
@@ -326,12 +354,16 @@ function assertReplayAfterDispatchAllowed(
   flowSteps: readonly string[] | undefined,
   targetIdx: number,
   replayStepName: string,
+  dispatchAdopted = false,
 ): void {
   const workerLifecycleSteps = new Set<string>([PS.MONITOR, PS.SELF_REVIEW]);
   if (!workerLifecycleSteps.has(replayStepName)) return;
   if (!flowSteps || targetIdx < 0) return;
   const dispatchIdx = flowSteps.indexOf(PS.DISPATCH);
   if (dispatchIdx < 0 || targetIdx <= dispatchIdx) return;
+  // Adoption already proved delivery from the worker's own fresh signal; the
+  // step itself is only marked done once the slot reclaim succeeds.
+  if (dispatchAdopted) return;
 
   const dispatchStep = existing.steps.find((candidate) => candidate.name === PS.DISPATCH);
   if (!dispatchStep) {
@@ -505,20 +537,13 @@ export async function runReplayStep(
   const selfReviewIdx = flowSteps ? flowSteps.indexOf(PS.SELF_REVIEW) : -1;
   const completeIdx = flowSteps ? flowSteps.indexOf(PS.COMPLETE) : -1;
   const humanGateIdx = flowSteps ? flowSteps.indexOf(PS.HUMAN_GATE) : -1;
-  const adoptedTaskSignal =
+  const probedTaskSignal =
     replayStepName === PS.DISPATCH ? await readAdoptableTaskSignal(existing) : null;
-  if (adoptedTaskSignal && monitorIdx >= 0) {
-    updateRunStep(params.runId, PS.DISPATCH, {
-      status: 'done',
-      completedAt: adoptedTaskSignal.timestamp,
-      detail: 'Recovered uncertain prompt delivery from the fresh task-local worker signal',
-      outputs: {
-        ...(existing.steps.find((candidate) => candidate.name === PS.DISPATCH)?.outputs ?? {}),
-        acknowledgement: 'task-signal',
-        signalAttemptId: adoptedTaskSignal.attemptId,
-        recoveredAt: new Date().toISOString(),
-      },
-    });
+  const adoptedTaskSignal = probedTaskSignal && monitorIdx >= 0 ? probedTaskSignal : null;
+  if (adoptedTaskSignal) {
+    // Route this replay at monitor, but do NOT record dispatch as delivered yet:
+    // the ownership checks and slot reclaim below can still refuse the replay,
+    // and a persisted "prompt acknowledged" step would outlive that rejection.
     replayStepName = PS.MONITOR;
     targetIdx = monitorIdx;
     console.log(
@@ -551,8 +576,21 @@ export async function runReplayStep(
   }
 
   const replaySnapshot = getRun(params.runId) ?? existing;
-  assertReplayAfterDispatchAllowed(replaySnapshot, flowSteps, targetIdx, replayStepName);
-  normalizeReplayPrerequisites(params.runId, replaySnapshot, flowSteps, targetIdx, replayStepName);
+  assertReplayAfterDispatchAllowed(
+    replaySnapshot,
+    flowSteps,
+    targetIdx,
+    replayStepName,
+    Boolean(adoptedTaskSignal),
+  );
+  normalizeReplayPrerequisites(
+    params.runId,
+    replaySnapshot,
+    flowSteps,
+    targetIdx,
+    replayStepName,
+    adoptedTaskSignal ? PS.DISPATCH : undefined,
+  );
 
   // Exclusive soft-lock via claim API (revoke-and-take) so replay shares the
   // same invariants as dispatch and UI gets queue.updated on claim/release.
@@ -711,6 +749,24 @@ export async function runReplayStep(
           throw err;
         }
       }
+    }
+
+    // Ownership is settled and the slot is ours: only now is it true that this
+    // run owns the worker whose signal we adopted, so record the delivery.
+    if (adoptedTaskSignal) {
+      assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+      const dispatchStep = existing.steps.find((candidate) => candidate.name === PS.DISPATCH);
+      updateRunStep(params.runId, PS.DISPATCH, {
+        status: 'done',
+        completedAt: adoptedTaskSignal.timestamp,
+        detail: 'Recovered uncertain prompt delivery from the fresh task-local worker signal',
+        outputs: {
+          ...(dispatchStep?.outputs ?? {}),
+          acknowledgement: 'task-signal',
+          signalAttemptId: adoptedTaskSignal.attemptId,
+          recoveredAt: new Date().toISOString(),
+        },
+      });
     }
 
     // A worker can continue refining evidence after the original gate was built.

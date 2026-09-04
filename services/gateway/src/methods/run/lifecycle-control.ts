@@ -132,17 +132,21 @@ export async function runForceCompleteTransitionLocked(
   const originalStatus = existing.status;
 
   const completableStatuses = new Set(['ci-watching', 'failed', 'blocked']);
+  // A run that already published its PR carries the number this gate needs.
+  // Requiring the caller to resend it makes the CLI and Command Center repeat a
+  // value the run itself owns, so fall back to the linked PR.
+  const effectivePrNumber = params.prNumber ?? existing.prNumber ?? null;
   const repairsStaleForceCompletion =
-    existing.engineState?.operatorForceCompleted === true && params.prNumber != null;
+    existing.engineState?.operatorForceCompleted === true && effectivePrNumber != null;
   if (!completableStatuses.has(originalStatus) && !repairsStaleForceCompletion) {
     throw new Error(`Run ${params.runId} cannot be force-completed in status: ${originalStatus}`);
   }
-  if (originalStatus === 'blocked' && params.prNumber == null) {
+  if (originalStatus === 'blocked' && effectivePrNumber == null) {
     throw new Error(
       `Run ${params.runId} is blocked; force-complete requires a published PR number`,
     );
   }
-  if (params.prNumber != null) assertPositivePrNumber(params.prNumber);
+  if (effectivePrNumber != null) assertPositivePrNumber(effectivePrNumber);
 
   if (originalStatus === 'ci-watching') {
     // Abort first so an await on PR attach cannot race the watch into a new

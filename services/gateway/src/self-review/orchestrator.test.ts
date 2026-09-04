@@ -610,6 +610,7 @@ interface ScriptedDepsOptions {
   feedbackError?: string;
   feedbackErrors?: Array<Error | undefined>;
   fixDeltaFiles?: number;
+  fixDeltaUnavailable?: boolean;
 }
 
 interface CallLog {
@@ -675,6 +676,18 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
     unwatchContext: async () => {},
     captureFixDelta: async (_vars, _taskDir, loopNumber, fixBaseSha, artifactScope) => {
       calls.artifactScopes.push(artifactScope);
+      if (opts.fixDeltaUnavailable) {
+        return {
+          snapshot: {
+            source: 'unavailable',
+            capturedAt: new Date().toISOString(),
+            missingReason: 'git-numstat-failed',
+            fixBaseSha,
+            fixHeadSha: null,
+          },
+          artifactPaths: [`artifacts/review-loop-${loopNumber}/fix-delta-stat.json`],
+        };
+      }
       return {
         snapshot: {
           source: 'local-git',
@@ -1068,11 +1081,37 @@ test('runSelfReviewRetryLoop: re-reviews partial changes before preserving a wor
   assert.equal(result.reason, 'live recipe unavailable');
   assert.deepEqual(result.issues, []);
   assert.equal(calls.reviewAgent, 1);
-  assert.equal(result.attempts?.[1]?.verdict, 'pass');
+  // The publication gate reads the FINAL attempt, so a passing re-review must
+  // not leave a `pass` attempt behind a blocked verdict.
+  assert.equal(result.attempts?.[1]?.verdict, 'failed');
+  assert.equal(result.attempts?.[1]?.reason, 'live recipe unavailable');
   assert.deepEqual(
     result.attempts?.[1]?.timeline?.map((segment) => segment.kind),
     ['worker-fix', 're-review'],
   );
+});
+
+test('runSelfReviewRetryLoop: an unreadable fix delta still forces the re-review', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['pass'],
+    fixDeltaUnavailable: true,
+    fixSignals: [
+      { status: 'blocked', reason: 'slot lost its git index', timestamp: new Date().toISOString() },
+    ],
+  });
+
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 3,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    deps,
+  });
+
+  // `unavailable` means unknown, not empty: the worker may have changed files.
+  assert.equal(calls.reviewAgent, 1);
+  assert.equal(result.verdict, 'blocked');
+  assert.equal(result.attempts?.[1]?.verdict, 'failed');
 });
 
 test('runSelfReviewRetryLoop: bails when worker is dead and relaunch fails', async () => {

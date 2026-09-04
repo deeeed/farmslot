@@ -20,6 +20,7 @@ import { runForceComplete } from './lifecycle-control.js';
 import {
   canAdoptTaskSignalAfterUncertainDispatch,
   freshDispatchEngineStateForReplay,
+  normalizeReplayPrerequisites,
   replaySlotReclaimCheck,
   resetPublishGateApprovalForReplay,
   runReplayStep,
@@ -77,6 +78,68 @@ test('uncertain dispatch accepts only a fresh task-local signal with an attempt 
     }),
     false,
   );
+});
+
+test('uncertain dispatch is recognised from the structured step marker, not only the prose', () => {
+  const signal = {
+    status: 'running',
+    attemptId: 'attempt-1',
+    timestamp: '2026-09-03T08:00:01.000Z',
+  };
+  const structured = {
+    error: 'Prompt delivery failed.',
+    steps: [
+      {
+        name: 'dispatch',
+        status: 'failed' as const,
+        startedAt: '2026-09-03T08:00:00.000Z',
+        outputs: { promptDeliveryUncertain: true },
+      },
+    ],
+  };
+  assert.equal(canAdoptTaskSignalAfterUncertainDispatch(structured, signal), true);
+
+  const plainFailure = {
+    error: 'Prompt delivery failed. The pane did not change.',
+    steps: [{ name: 'dispatch', status: 'failed' as const, startedAt: '2026-09-03T08:00:00.000Z' }],
+  };
+  assert.equal(canAdoptTaskSignalAfterUncertainDispatch(plainFailure, signal), false);
+});
+
+test('an adopted dispatch stays failed until the replay claims its slot', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-deferred-dispatch`,
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  updateRun(run.id, {
+    steps: [
+      { name: 'prepare', status: 'running' },
+      { name: 'dispatch', status: 'failed' },
+      { name: 'monitor', status: 'pending' },
+    ],
+  });
+
+  normalizeReplayPrerequisites(
+    run.id,
+    getRun(run.id)!,
+    ['prepare', 'dispatch', 'monitor'],
+    2,
+    'monitor',
+    'dispatch',
+  );
+
+  const steps = getRun(run.id)!.steps;
+  assert.equal(steps.find((step) => step.name === 'prepare')?.status, 'done');
+  // Deferred: the adopted dispatch is only recorded once the slot reclaim wins,
+  // so a refused replay never leaves a successful dispatch behind.
+  assert.equal(steps.find((step) => step.name === 'dispatch')?.status, 'failed');
 });
 
 test('human-gate replay drops a consumed reviewer plan', () => {
