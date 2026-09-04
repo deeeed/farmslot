@@ -32,17 +32,34 @@ return (async () => {
 
   const rows = [...section.querySelectorAll('[data-testid^="run-agent-session-"]')]
     .filter((node) => node.classList.contains('agent-session-row'))
-    .map((node) => ({
-      contextId: node.dataset.testid.replace('run-agent-session-', ''),
-      text: node.textContent.replace(/\s+/g, ' ').trim(),
-    }));
+    .map((node) => {
+      const contextId = node.dataset.testid.replace('run-agent-session-', '');
+      const roleNode = section.querySelector(`[data-testid="run-agent-session-role-${contextId}"]`);
+      return {
+        contextId,
+        role: roleNode?.getAttribute('data-role') ?? null,
+        text: node.textContent.replace(/\s+/g, ' ').trim(),
+      };
+    });
   // Rows are addressed by contextId: several contexts can share a role, and a
   // role-keyed id would make two reviewers indistinguishable in the DOM.
   const duplicateContextIds = new Set(rows.map((row) => row.contextId)).size !== rows.length;
 
-  const reopen = section.querySelector('[data-testid^="run-agent-session-reopen-"]');
+  // Exercise a same-role PAIR when the run has one: two contexts sharing a role
+  // is the case role-only selection resolved to the wrong session. Fall back to
+  // the first row only when the run has no such pair.
+  const duplicateRoleRows = rows.filter(
+    (candidate) =>
+      candidate.role &&
+      rows.some(
+        (other) => other.contextId !== candidate.contextId && other.role === candidate.role,
+      ),
+  );
+  const firstRow = duplicateRoleRows[0] ?? rows[0];
+  if (!firstRow) return { ok: false, error: 'no runner-session rows rendered', rows };
+  const role = firstRow.contextId;
+  const reopen = section.querySelector(`[data-testid="run-agent-session-reopen-${role}"]`);
   if (!reopen) return { ok: false, error: 'no reopen button rendered', rows };
-  const role = reopen.dataset.testid.replace('run-agent-session-reopen-', '');
   const labelBefore = reopen.textContent.trim();
 
   reopen.click();
@@ -68,9 +85,11 @@ return (async () => {
     section.querySelector(`[data-testid="run-agent-session-reopen-${role}"]`)?.textContent.trim() ??
     null;
 
-  // A run with several contexts must resolve each row independently: role-only
-  // selection used to hand every same-role reviewer the newest one's session.
-  const otherRow = rows.find((candidate) => candidate.contextId !== role);
+  // The sibling of the row just clicked, when the run has a same-role pair.
+  const sameRoleRow = duplicateRoleRows.find(
+    (candidate) => candidate.contextId !== role && candidate.role === firstRow.role,
+  );
+  const otherRow = sameRoleRow ?? rows.find((candidate) => candidate.contextId !== role);
   let secondRow = null;
   if (otherRow) {
     const otherButton = section.querySelector(
@@ -94,6 +113,8 @@ return (async () => {
       }
       secondRow = {
         contextId: otherRow.contextId,
+        role: otherRow.role,
+        sameRoleAsFirst: Boolean(sameRoleRow),
         sessionIdShort:
           section
             .querySelector(`[data-testid="run-agent-session-id-${otherRow.contextId}"]`)
@@ -147,8 +168,13 @@ return (async () => {
       Boolean(sessionId?.textContent.trim()) &&
       (labelAfter === 'Copied' || copyBlocked) &&
       firstRowStillSettled &&
-      (secondRow === null ||
-        (secondRow.settled && secondRow.sessionIdShort !== sessionId?.textContent.trim())),
+      // A single-context run cannot prove per-row resolution, so it is a miss,
+      // not a silent pass.
+      secondRow !== null &&
+      secondRow.settled &&
+      secondRow.sessionIdShort !== sessionId?.textContent.trim() &&
+      // When the run has a same-role pair, the second row must be one of them.
+      (duplicateRoleRows.length === 0 || secondRow.sameRoleAsFirst === true),
     runId: detail.run?.id ?? null,
     contextId: role,
     rowCount: rows.length,
@@ -159,6 +185,10 @@ return (async () => {
     attachLabelAfter,
     copyBlocked,
     secondRow,
+    duplicateRoleCount: duplicateRoleRows.length,
+    ...(secondRow === null
+      ? { error: 'run has only one agent context; cannot prove per-row resolution' }
+      : {}),
     firstRowStillSettled,
     sessionIdShort: sessionId?.textContent.trim() ?? null,
     liveness: liveness?.textContent.trim() ?? null,

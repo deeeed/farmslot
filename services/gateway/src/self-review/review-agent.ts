@@ -1322,8 +1322,9 @@ export async function runReviewAgent(
               id: allocated.id,
               label: allocated.label,
               status: 'working',
-              runnerSessionId: null,
-              runnerSessionPath: null,
+              // Cold relaunch destroys the old session; clear its identity as
+              // one unit so no stale capture timestamp survives the respawn.
+              ...clearedRunnerSessionContextPatch(),
             })) ?? reviewContext;
         } else {
           await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);

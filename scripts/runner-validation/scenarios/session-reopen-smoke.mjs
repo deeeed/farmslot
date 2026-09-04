@@ -90,15 +90,23 @@ function sendLineToCurrentWindow(slotId, text) {
   sleepMs(300);
 }
 
-/** Last lines of a pane, for failure diagnosis only — never pass evidence. */
-function diagnosticPaneTail(slotId, target, lines = 40) {
-  try {
-    const snapshot = rpc('terminal.snapshot', { slotId, bareSession: true, lines });
-    const text = typeof snapshot === 'string' ? snapshot : (snapshot?.data ?? snapshot?.text ?? '');
-    return String(text).split('\n').slice(-lines).join('\n');
-  } catch (error) {
-    return `pane tail unavailable: ${error?.message || String(error)}`;
+/**
+ * Last lines of the window where the reopen was actually typed — the new
+ * window, which `bareSession` resolves to because `tmux.newWindow` made it
+ * current. Diagnostic only, never pass evidence.
+ *
+ * `terminal.snapshot` answers `{ lines: string[] }`; reading a `data`/`text`
+ * field that does not exist is why an earlier run reported an empty tail for a
+ * pane that had 40+ lines on it.
+ */
+function diagnosticPaneTail(slotId, lines = 40) {
+  const snapshot = rpc('terminal.snapshot', { slotId, bareSession: true, lines });
+  if (!Array.isArray(snapshot?.lines)) {
+    throw new Error(
+      `terminal.snapshot returned no lines array (keys: ${Object.keys(snapshot ?? {}).join(',') || 'none'})`,
+    );
   }
+  return snapshot.lines.slice(-lines).join('\n');
 }
 
 function capturedWorkerSession(run) {
@@ -160,6 +168,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
     reopenedInNewWindow: false,
     targetWasRediscovered: false,
     diagnosticPaneTail: null,
+    diagnosticPaneTailError: null,
     conversationContinued: false,
     pass: false,
     error: null,
@@ -307,8 +316,16 @@ export async function runScenario({ timeoutMs, outDir, slotId, taskFile, explici
       );
     } catch (pollError) {
       // Diagnostic only: the pane text explains WHY the reopen did not take,
-      // and is never used as evidence that it did.
-      report.diagnosticPaneTail = diagnosticPaneTail(slotId, session.tmuxTarget);
+      // and is never used as evidence that it did. A capture that itself fails
+      // is recorded loudly rather than silently yielding an empty tail.
+      try {
+        report.diagnosticPaneTail = diagnosticPaneTail(slotId);
+        if (!report.diagnosticPaneTail.trim()) {
+          report.diagnosticPaneTailError = 'pane snapshot returned only blank lines';
+        }
+      } catch (captureError) {
+        report.diagnosticPaneTailError = captureError?.message || String(captureError);
+      }
       throw pollError;
     }
     report.livenessAfterReopen = reopened.liveness;

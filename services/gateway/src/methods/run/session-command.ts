@@ -20,12 +20,14 @@ import {
 
 import { upsertAgentContext } from '../../agents/contexts.js';
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../../core/config.js';
+import { readSlotRow } from '../../core/state.js';
 import {
   resolveExactTmuxWindowPane,
   resolveTmuxSession,
   tmuxAttachCommandForTarget,
 } from '../../core/tmux.js';
 import {
+  buildOperatorPasteableCommand,
   buildRunnerSessionReloadCommand,
   runnerSupportsSessionReload,
 } from '../../runners/launch-command.js';
@@ -53,6 +55,7 @@ export interface RunSessionCommandDeps {
   verifyBinding: typeof verifyExactLiveRunnerSessionBinding;
   rediscoverPane: typeof rediscoverRunnerSessionPane;
   upsert: typeof upsertAgentContext;
+  readSlot: typeof readSlotRow;
 }
 
 const DEFAULT_DEPS: RunSessionCommandDeps = {
@@ -67,6 +70,7 @@ const DEFAULT_DEPS: RunSessionCommandDeps = {
   verifyBinding: verifyExactLiveRunnerSessionBinding,
   rediscoverPane: rediscoverRunnerSessionPane,
   upsert: upsertAgentContext,
+  readSlot: readSlotRow,
 };
 
 function unsupported(
@@ -168,6 +172,19 @@ async function probeSessionLiveness(
   };
 }
 
+/**
+ * The run that currently holds the slot, or null when the slot row is
+ * unreadable or unowned. Same field dispatch and replay reclaim read.
+ */
+async function resolveSlotOwner(
+  slotId: string,
+  deps: RunSessionCommandDeps,
+): Promise<string | null> {
+  const row = await deps.readSlot(slotId);
+  const owner = row?.current_run_id;
+  return typeof owner === 'string' && owner.trim() ? owner : null;
+}
+
 export async function runSessionCommand(
   params: RunSessionCommandParams,
   deps: RunSessionCommandDeps = DEFAULT_DEPS,
@@ -250,7 +267,7 @@ export async function runSessionCommand(
     projectDefaultRaw: projectVars.projectJson.default_safety_tier,
   });
   const model = context.model ?? run.metrics.model ?? null;
-  const reopenCommand = deps.buildReloadCommand(
+  const rawReopenCommand = deps.buildReloadCommand(
     vars,
     runner,
     model,
@@ -265,6 +282,9 @@ export async function runSessionCommand(
         : {}),
     },
   );
+  // Operator-facing: this string is pasted into whatever interactive shell the
+  // operator has, so it must survive zsh/bash history expansion.
+  const reopenCommand = buildOperatorPasteableCommand(rawReopenCommand);
 
   const tmuxTarget = context.target?.target ?? null;
   // A context recorded before role-scoped targets (or one whose target was
@@ -280,8 +300,15 @@ export async function runSessionCommand(
   // replayed by validation — usually lands in a different window. Search the
   // slot's tmux session before reporting the conversation gone.
   let effectiveTarget = tmuxTarget;
+  let effectivePaneId = context.target?.paneId ?? null;
   let liveness = recorded;
   let rediscovered: Awaited<ReturnType<typeof rediscoverRunnerSessionPane>> | null = null;
+  // A warm handoff transfers a session to a successor run, so the run asking
+  // is not necessarily the run that owns the slot now. Only the current owner
+  // may write a target back; a historical run gets the answer but must never
+  // be able to steer the live run's pane.
+  const slotOwner = await resolveSlotOwner(slotId, deps);
+  const ownership = !slotOwner || slotOwner === run.id ? 'owned' : 'transferred';
   if (recorded.liveness !== 'live' && tmuxSession) {
     rediscovered = await deps.rediscoverPane({
       vars,
@@ -292,19 +319,28 @@ export async function runSessionCommand(
     });
     if (rediscovered.pane) {
       effectiveTarget = rediscovered.pane.target;
+      effectivePaneId = rediscovered.pane.paneId;
       liveness = { liveness: 'live' };
-      // Rebind so Command Center, the CLI, and the terminal all follow the
-      // session to its new window instead of pointing at a destroyed one.
-      await deps.upsert(run.id, context.role, {
-        id: context.id,
-        target: {
-          session: tmuxSession,
-          window: rediscovered.pane.windowName || null,
-          pane: null,
-          paneId: rediscovered.pane.paneId,
-          target: rediscovered.pane.target,
-        },
-      });
+      if (ownership === 'owned') {
+        // Rebind so Command Center, the CLI, and the terminal all follow the
+        // session to the exact pane it now lives in.
+        await deps.upsert(run.id, context.role, {
+          id: context.id,
+          target: {
+            session: tmuxSession,
+            window: rediscovered.pane.windowName || null,
+            pane: null,
+            paneId: rediscovered.pane.paneId,
+            target: rediscovered.pane.target,
+          },
+        });
+      }
+    } else if (rediscovered.indeterminate) {
+      // Part of the session could not be probed, so absence is unproven.
+      liveness = {
+        liveness: 'unknown',
+        ...(rediscovered.reason ? { livenessReason: rediscovered.reason } : {}),
+      };
     } else if (recorded.liveness === 'dead' && rediscovered.reason) {
       liveness = { liveness: 'dead', livenessReason: rediscovered.reason };
     }
@@ -323,7 +359,10 @@ export async function runSessionCommand(
     slotId,
     machine: vars.machine,
     tmuxTarget: effectiveTarget,
+    ...(effectivePaneId ? { paneId: effectivePaneId } : {}),
     ...(rediscovered?.pane ? { rediscoveredTarget: true } : {}),
+    ownership,
+    ...(ownership === 'transferred' && slotOwner ? { ownerRunId: slotOwner } : {}),
     // Runner-specific stop syntax stays declared in the runner registry; no
     // caller should carry a literal like `/exit`.
     interrupt: getRunnerDefinition(runner).gracefulExit ?? null,

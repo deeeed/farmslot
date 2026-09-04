@@ -192,6 +192,25 @@ export function runnerSupportsSessionReload(runnerId: string): boolean {
   return runnerSessionReloadCapability(runnerId) !== 'none';
 }
 
+/**
+ * Wrap a gateway-built command so it is safe to paste into an operator's own
+ * interactive shell.
+ *
+ * The reload command embeds the observability installer's `case` pattern
+ * `*[!0-9a-f]*`. tmux launch paths run it through a non-interactive
+ * `bash -lc`, where that is inert. Pasted into an interactive zsh it is not:
+ * ZLE applies history expansion to `!0` and aborts the whole line with
+ * `zsh: event not found: 0`, so nothing runs. Single-quoting the entire command
+ * stops history expansion in both zsh and bash, and `shellQuote`'s `'\''`
+ * escaping keeps the payload's own quotes intact.
+ *
+ * Applied only at the operator boundary. The tmux paths keep the unwrapped
+ * command they already deliver correctly.
+ */
+export function buildOperatorPasteableCommand(command: string): string {
+  return `bash -lc ${shellQuote(command)}`;
+}
+
 export function buildRunnerSessionReloadCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runnerId: string,

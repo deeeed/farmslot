@@ -173,7 +173,12 @@ export function renderRunAgentSessions(
         const busy = state?.status === 'loading';
         return html`
           <div class="agent-session-row" data-testid="run-agent-session-${row.contextId}">
-            <span class="agent-session-role">${row.label}</span>
+            <span
+              class="agent-session-role"
+              data-testid="run-agent-session-role-${row.contextId}"
+              data-role=${row.role}
+              >${row.label}</span
+            >
             <span class="agent-session-engine">${row.runner}/${row.model}</span>
             <span class="agent-session-id" data-testid="run-agent-session-id-${row.contextId}"
               >${row.sessionIdShort ?? 'no session captured'}</span

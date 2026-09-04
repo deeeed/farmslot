@@ -27,8 +27,10 @@ export interface RediscoveredRunnerSessionPane {
   paneId: string;
   panePid: string;
   windowName: string;
-  /** `session:window`, ready to store back on the agent context. */
+  /** Exact `%N` pane id — the routing target stored on the agent context. */
   target: string;
+  /** `session:window` for display; never used for routing. */
+  displayTarget: string;
 }
 
 export interface RunnerSessionRediscoveryResult {
@@ -36,6 +38,12 @@ export interface RunnerSessionRediscoveryResult {
   scannedPanes: number;
   /** Why no pane matched, for the caller's liveness reason. */
   reason?: string;
+  /**
+   * True when at least one pane could not be probed. A scan that could not read
+   * part of the session has NOT proven the session absent, so the caller must
+   * degrade to `unknown` rather than calling it dead.
+   */
+  indeterminate?: true;
 }
 
 export interface RunnerSessionRediscoveryDeps {
@@ -98,8 +106,15 @@ export async function rediscoverRunnerSessionPane(
     .filter((pane) => /^%\d+$/.test(pane.paneId) && /^\d+$/.test(pane.panePid))
     .filter((pane) => pane.paneId !== options.skipPaneId);
 
+  let indeterminate = false;
   for (const pane of panes) {
     const probe = await deps.probeRunnerPid(options.vars, pane.panePid, options.runner);
+    // `unknown` is a failed probe, not an empty pane. Skipping it silently
+    // turned an unreadable process tree into a confident "session is gone".
+    if (probe.state === 'unknown') {
+      indeterminate = true;
+      continue;
+    }
     if (probe.state !== 'present') continue;
     const owned = await deps.verifyBinding(options.vars, options.runner, {
       paneId: pane.paneId,
@@ -113,7 +128,11 @@ export async function rediscoverRunnerSessionPane(
         paneId: pane.paneId,
         panePid: pane.panePid,
         windowName: pane.windowName,
-        target: pane.windowName ? `${options.session}:${pane.windowName}` : options.session,
+        // The exact pane is the proof and the routing target. `session:window`
+        // is kept alongside for display only: a split window has several panes
+        // and the name alone would let input reach a sibling.
+        target: pane.paneId,
+        displayTarget: pane.windowName ? `${options.session}:${pane.windowName}` : options.session,
       },
       scannedPanes: panes.length,
     };
@@ -122,8 +141,10 @@ export async function rediscoverRunnerSessionPane(
   return {
     pane: null,
     scannedPanes: panes.length,
-    reason:
-      panes.length === 0
+    ...(indeterminate ? { indeterminate: true as const } : {}),
+    reason: indeterminate
+      ? `at least one pane in tmux session ${options.session} could not be probed`
+      : panes.length === 0
         ? `tmux session ${options.session} has no panes to scan`
         : `no pane in tmux session ${options.session} runs ${options.runner} session ${options.expectedSessionId}`,
   };

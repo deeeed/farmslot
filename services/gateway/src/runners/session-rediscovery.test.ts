@@ -57,7 +57,9 @@ test('rediscovery finds the session in another window and reports its new target
   assert.deepEqual(seen, ['%11', '%12']);
   assert.equal(result.pane?.paneId, '%12');
   assert.equal(result.pane?.windowName, 'dev-reopen');
-  assert.equal(result.pane?.target, 'ff-1:dev-reopen');
+  // The routing target is the exact pane; the window name is display only.
+  assert.equal(result.pane?.target, '%12');
+  assert.equal(result.pane?.displayTarget, 'ff-1:dev-reopen');
   assert.equal(result.scannedPanes, 2);
 });
 
@@ -118,4 +120,34 @@ test('an unreadable pane inventory is a reason, not a false negative claim', asy
   assert.equal(result.pane, null);
   assert.equal(result.scannedPanes, 0);
   assert.match(result.reason ?? '', /pane inventory for session ff-1 is unavailable/);
+});
+
+test('an unprobeable pane makes the scan indeterminate, not a confident absence', async () => {
+  const result = await rediscoverRunnerSessionPane(
+    { vars: VARS, session: 'ff-1', runner: 'codex', ...EXPECTED },
+    deps({
+      probeRunnerPid: async () => ({ state: 'unknown', reason: 'ps unavailable' }),
+    }),
+  );
+
+  assert.equal(result.pane, null);
+  // Skipping a failed probe silently turned an unreadable process tree into
+  // "the session is gone".
+  assert.equal(result.indeterminate, true);
+  assert.match(result.reason ?? '', /could not be probed/);
+});
+
+test('one unprobeable pane does not mask an owner found in another pane', async () => {
+  const result = await rediscoverRunnerSessionPane(
+    { vars: VARS, session: 'ff-1', runner: 'codex', ...EXPECTED },
+    deps({
+      probeRunnerPid: async (_vars, panePid) =>
+        panePid === '4001'
+          ? { state: 'unknown', reason: 'ps unavailable' }
+          : { state: 'present', pid: '9000' },
+    }),
+  );
+
+  assert.equal(result.pane?.paneId, '%12');
+  assert.equal(result.indeterminate, undefined);
 });

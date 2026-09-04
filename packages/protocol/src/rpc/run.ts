@@ -534,6 +534,19 @@ export interface RunSessionCommandSupportedResult {
    */
   rediscoveredTarget?: true;
   /**
+   * Who owns the slot this session runs on. `owned` means the requesting run
+   * still holds the slot, so a rediscovered target may be written back to its
+   * agent context. `transferred` means a warm handoff moved the session to
+   * `ownerRunId`: the command and liveness are still reported, but nothing is
+   * rebound, because steering a successor run's pane from a historical run is
+   * exactly the accident this guards.
+   */
+  ownership?: 'owned' | 'transferred';
+  /** The run that now owns the slot, when `ownership` is `transferred`. */
+  ownerRunId?: string;
+  /** Exact tmux pane that owns the session, when rediscovery proved one. */
+  paneId?: string;
+  /**
    * The runner's own declared graceful-exit input, from the runner capability
    * registry. Null when the runner declares none. Callers that need to stop the
    * session use this instead of hardcoding runner-specific text.

@@ -3,7 +3,10 @@ import test from 'node:test';
 
 import type { AgentContext, Run } from '@farmslot/protocol';
 
-import { buildRunnerSessionReloadCommand } from '../../runners/launch-command.js';
+import {
+  buildOperatorPasteableCommand,
+  buildRunnerSessionReloadCommand,
+} from '../../runners/launch-command.js';
 import { makeVars } from '../../runners/test-fixtures.js';
 
 import { runSessionCommand, type RunSessionCommandDeps } from './session-command.js';
@@ -62,6 +65,7 @@ function deps(
     verifyBinding: async () => OWNED_BINDING,
     rediscoverPane: async () => ({ pane: null, scannedPanes: 0 }),
     upsert: async () => null,
+    readSlot: async () => ({ current_run_id: 'run-1' }),
     probeRunnerPid: async () => ({ state: 'present', pid: '4243' }),
     ...overrides,
   } as RunSessionCommandDeps;
@@ -100,7 +104,7 @@ test('run.sessionCommand reopens a codex worker with the isolated CODEX_HOME and
   assert.equal(result.capturedAt, '2026-09-04T09:00:00.000Z');
   assert.match(result.reopenCommand, /CODEX_HOME=/);
   assert.match(result.reopenCommand, /resume/);
-  assert.match(result.reopenCommand, /'codex-session-123'/);
+  assert.match(result.reopenCommand, /codex-session-123/);
   assert.equal(result.attachCommand, "tmux select-window -t 'mm-1:dev' \\; attach -t '=mm-1'");
 });
 
@@ -165,7 +169,10 @@ test('run.sessionCommand selects the requested role instead of the primary worke
   assert.equal(result.role, 'self-review');
   assert.equal(result.runner, 'claude');
   assert.equal(result.sessionId, 'claude-session-9');
-  assert.match(result.reopenCommand, /--resume 'claude-session-9'/);
+  // The wrapper escapes the payload's own quotes, so assert on the resume flag
+  // and the session id rather than a literal quoting shape.
+  assert.match(result.reopenCommand, /--resume /);
+  assert.match(result.reopenCommand, /claude-session-9/);
 });
 
 test('run.sessionCommand returns a typed unsupported reason for a runner with no session reload', async () => {
@@ -284,10 +291,10 @@ test('contextId resolves each of two same-role reviewers to its own session', as
   if (!first.supported || !second.supported) return;
   assert.equal(first.contextId, 'rev-codex');
   assert.equal(first.sessionId, 'reviewer-session-1');
-  assert.match(first.reopenCommand, /'reviewer-session-1'/);
+  assert.match(first.reopenCommand, /reviewer-session-1/);
   assert.equal(second.contextId, 'rev2-codex');
   assert.equal(second.sessionId, 'reviewer-session-2');
-  assert.match(second.reopenCommand, /'reviewer-session-2'/);
+  assert.match(second.reopenCommand, /reviewer-session-2/);
   assert.notEqual(first.reopenCommand, second.reopenCommand);
 });
 
@@ -367,7 +374,8 @@ test('a session reopened in another window is reported live at its new target', 
           paneId: '%42',
           panePid: '5150',
           windowName: 'dev-reopen',
-          target: 'mm-1:dev-reopen',
+          target: '%42',
+          displayTarget: 'mm-1:dev-reopen',
         },
         scannedPanes: 3,
       }),
@@ -381,13 +389,12 @@ test('a session reopened in another window is reported live at its new target', 
   assert.equal(result.supported, true);
   if (!result.supported) return;
   assert.equal(result.liveness, 'live');
-  assert.equal(result.tmuxTarget, 'mm-1:dev-reopen');
+  // The exact pane, not the window: a split window would otherwise route input
+  // to a sibling pane.
+  assert.equal(result.tmuxTarget, '%42');
+  assert.equal(result.paneId, '%42');
   assert.equal(result.rediscoveredTarget, true);
-  // The attach line must follow the session to the window it actually lives in.
-  assert.equal(
-    result.attachCommand,
-    "tmux select-window -t 'mm-1:dev-reopen' \\; attach -t '=mm-1'",
-  );
+  assert.equal(result.ownership, 'owned');
   // The context is rebound so Command Center and the CLI stop pointing at a
   // window that no longer exists.
   assert.equal(upserts.length, 1);
@@ -397,7 +404,7 @@ test('a session reopened in another window is reported live at its new target', 
     window: 'dev-reopen',
     pane: null,
     paneId: '%42',
-    target: 'mm-1:dev-reopen',
+    target: '%42',
   });
 });
 
@@ -484,4 +491,153 @@ test('each reload-capable runner carries its own registry-declared exit', async 
     assert.equal(result.runner, runner);
     assert.equal(result.interrupt?.command, '/exit', `${runner} exit command`);
   }
+});
+
+/**
+ * Positions of `!` that an interactive shell would treat as a history
+ * expansion. Only single quotes suppress it in both zsh and bash — double
+ * quotes do not, in bash.
+ */
+function unquotedHistoryHazards(command: string): { indexes: number[]; balanced: boolean } {
+  const indexes: number[] = [];
+  let inSingle = false;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (ch === "'") {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (!inSingle && ch === '!') indexes.push(i);
+  }
+  return { indexes, balanced: !inSingle };
+}
+
+test('the scanner catches an unquoted history-expansion hazard', () => {
+  // Guard the guard: the raw reload command really does carry the pattern that
+  // made an interactive zsh abort the line with `event not found: 0`.
+  const raw = `case "$h" in ''|*[!0-9a-f]*) ;; *) ok ;; esac`;
+  assert.equal(unquotedHistoryHazards(raw).indexes.length, 1);
+  assert.equal(unquotedHistoryHazards("bash -lc 'echo hi'").indexes.length, 0);
+});
+
+test('the operator reopen command is one bash -lc invocation with no unquoted !', () => {
+  const scanned = unquotedHistoryHazards(
+    buildOperatorPasteableCommand(`case "$h" in ''|*[!0-9a-f]*) ;; *) ok ;; esac`),
+  );
+  assert.deepEqual(scanned.indexes, []);
+  assert.equal(scanned.balanced, true);
+});
+
+test('run.sessionCommand hands the operator a paste-safe single command', async () => {
+  const result = await runSessionCommand({ runId: 'run-1' }, deps(codexWorkerRun()));
+
+  assert.equal(result.supported, true);
+  if (!result.supported) return;
+  // A pasted command runs in the operator's own interactive shell, where the
+  // installer's `*[!0-9a-f]*` pattern would otherwise trigger history expansion.
+  const scanned = unquotedHistoryHazards(result.reopenCommand);
+  assert.deepEqual(scanned.indexes, [], 'reopen command must have no unquoted !');
+  assert.equal(scanned.balanced, true, 'reopen command quotes must balance');
+  assert.ok(result.reopenCommand.startsWith("bash -lc '"));
+  assert.equal(result.reopenCommand.match(/(^|\s)bash -lc /g)?.length, 1);
+  // The payload survives the wrapping.
+  assert.match(result.reopenCommand, /codex-session-123/);
+  assert.match(result.reopenCommand, /CODEX_HOME=/);
+});
+
+test('the tmux launch path keeps the unwrapped command it already delivers', async () => {
+  let builtCommand = '';
+  await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      buildReloadCommand: ((...args: Parameters<typeof buildRunnerSessionReloadCommand>) => {
+        builtCommand = buildRunnerSessionReloadCommand(...args);
+        return builtCommand;
+      }) as typeof buildRunnerSessionReloadCommand,
+    }),
+  );
+
+  // Only the operator boundary wraps. Changing the builder would alter the
+  // string tmux respawns with on the park/recovery paths.
+  assert.equal(builtCommand.startsWith('bash -lc '), false);
+});
+
+const REDISCOVERED_PANE = {
+  pane: {
+    paneId: '%42',
+    panePid: '5150',
+    windowName: 'dev-reopen',
+    target: '%42',
+    displayTarget: 'mm-1:dev-reopen',
+  },
+  scannedPanes: 3,
+};
+
+test("a historical run gets the command but never rebinds a successor run's pane", async () => {
+  let upserted = 0;
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      resolvePane: async () => null,
+      rediscoverPane: async () => REDISCOVERED_PANE,
+      // A warm handoff moved this slot to a successor run.
+      readSlot: async () => ({ current_run_id: 'run-successor' }),
+      upsert: async () => {
+        upserted += 1;
+        return null;
+      },
+    }),
+  );
+
+  assert.equal(result.supported, true);
+  if (!result.supported) return;
+  // The operator still gets a usable answer...
+  assert.equal(result.liveness, 'live');
+  assert.equal(result.tmuxTarget, '%42');
+  assert.ok(result.reopenCommand);
+  // ...but the historical run must not be able to steer the live run's pane.
+  assert.equal(result.ownership, 'transferred');
+  assert.equal(result.ownerRunId, 'run-successor');
+  assert.equal(upserted, 0);
+});
+
+test('an unreadable slot row does not block the owning-run rebind', async () => {
+  let upserted = 0;
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      resolvePane: async () => null,
+      rediscoverPane: async () => REDISCOVERED_PANE,
+      readSlot: async () => null,
+      upsert: async () => {
+        upserted += 1;
+        return null;
+      },
+    }),
+  );
+
+  // No recorded owner means nothing contradicts the requesting run.
+  assert.equal(result.supported && result.ownership, 'owned');
+  assert.equal(upserted, 1);
+});
+
+test('an unprobeable pane leaves liveness unknown rather than declaring the session dead', async () => {
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      resolvePane: async () => null,
+      rediscoverPane: async () => ({
+        pane: null,
+        scannedPanes: 2,
+        indeterminate: true as const,
+        reason: 'at least one pane in tmux session mm-1 could not be probed',
+      }),
+    }),
+  );
+
+  assert.equal(result.supported, true);
+  if (!result.supported) return;
+  // A scan that could not read part of the session has not proven absence.
+  assert.equal(result.liveness, 'unknown');
+  assert.match(result.livenessReason ?? '', /could not be probed/);
 });

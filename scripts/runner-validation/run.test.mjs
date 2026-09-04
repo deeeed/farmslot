@@ -89,6 +89,24 @@ test('session-reopen-smoke interrupts through the runner capability and demands 
   assert.match(source, /nudge path is unit-covered/);
 });
 
+test('session-reopen-smoke reads the pane tail from the snapshot lines array', () => {
+  const source = fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      'scenarios/session-reopen-smoke.mjs',
+    ),
+    'utf8',
+  );
+
+  // terminal.snapshot answers `{ lines: string[] }`. Reading `data`/`text` is
+  // why an earlier failure reported an empty tail for a pane with 40+ lines.
+  assert.match(source, /Array\.isArray\(snapshot\?\.lines\)/);
+  assert.match(source, /snapshot\.lines\.slice\(-lines\)/);
+  assert.doesNotMatch(source, /snapshot\?\.data \?\? snapshot\?\.text/);
+  // A capture that fails must say so instead of yielding an empty tail.
+  assert.match(source, /report\.diagnosticPaneTailError = /);
+});
+
 test('runner-validation catalog includes four runners and twenty-four scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
   assert.equal(listScenarios().length, 24);
