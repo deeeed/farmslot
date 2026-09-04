@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(dispatch): add Cursor `gpt-5.6-sol-max` and drop unused Grok 4.5 model chips.
 - fix(runs): adopt a refreshed publication decision before re-enabling approval, preventing a fast post-refresh click from submitting the previous package identity.
 - fix(dispatch): count the first configured independent publication review toward the required minimum, and reject queuing a replacement against changing slot state.
 - feat(dispatch): show unowned ready runner sessions as selectable `WARM · REPLACE` slots; selecting one sends an explicit fresh-replacement intent instead of treating the slot as disabled.

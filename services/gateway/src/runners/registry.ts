@@ -1793,7 +1793,17 @@ async function runnerShowsPromptDeliveryAccepted(
     promptAcceptanceBaselineMs?: number | null;
   } = {},
 ): Promise<boolean> {
-  const handoff = await runnerHasDurablePromptHandoff(vars, target, runner, message, sinceMs, opts);
+  // `sinceMs` already includes the bounded post-send clock tolerance. Keep it
+  // when the provider baseline lands just after the runner records turn start,
+  // otherwise exact native evidence from that send is rejected as "too old".
+  const promptAcceptanceBaselineMs =
+    opts.promptAcceptanceBaselineMs == null
+      ? opts.promptAcceptanceBaselineMs
+      : Math.min(opts.promptAcceptanceBaselineMs, sinceMs);
+  const handoff = await runnerHasDurablePromptHandoff(vars, target, runner, message, sinceMs, {
+    ...opts,
+    promptAcceptanceBaselineMs,
+  });
   if (handoff.accepted) {
     return true;
   }

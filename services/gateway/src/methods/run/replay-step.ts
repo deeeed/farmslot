@@ -17,6 +17,7 @@ import {
   type RunReplayStepParams,
   type RunReplayStepResult,
   type RunStatus,
+  type WorkerSignal,
 } from '@farmslot/protocol';
 
 import {
@@ -49,6 +50,8 @@ import {
   runnerSupportsModel,
 } from '../../runners/registry.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../../runs/store.js';
+import { resolveContextFilePath } from '../../tasks/watcher.js';
+import { normalizeWorkerSignal, parseStrictIsoMs } from '../../tasks/worker-signals.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
 
 import {
@@ -208,20 +211,24 @@ function assertCancelledReplayNodeAvailable(
   }
 }
 
-function resetPublishGateApprovalForReplay(
+export function resetPublishGateApprovalForReplay(
   engineState: RunEngineState | undefined,
+  preservePendingReviewPlan = false,
 ): RunEngineState | undefined {
   if (!engineState?.publishGate) return engineState;
   const {
     approvedAt: _approvedAt,
     approvedPackageHash: _approvedPackageHash,
     reviewRecovery: _reviewRecovery,
+    pendingReviewPlan,
+    pendingReviewPlanRequestedAt,
     ...publishGateWithoutApproval
   } = engineState.publishGate;
   return {
     ...engineState,
     publishGate: {
       ...publishGateWithoutApproval,
+      ...(preservePendingReviewPlan ? { pendingReviewPlan, pendingReviewPlanRequestedAt } : {}),
       publicationStatus: 'not_published',
     },
   };
@@ -251,6 +258,57 @@ function normalizeReplayPrerequisites(
         normalizedForReplayStep: replayStepName,
       },
     });
+  }
+}
+
+const UNCERTAIN_PROMPT_DELIVERY_DETAIL = 'Exact prompt acknowledgement did not arrive';
+
+export function canAdoptTaskSignalAfterUncertainDispatch(
+  run: Pick<Run, 'error' | 'steps'>,
+  signal: unknown,
+): signal is WorkerSignal {
+  const dispatch = run.steps.find((step) => step.name === PS.DISPATCH);
+  const failure = `${run.error ?? ''}\n${dispatch?.detail ?? ''}`;
+  if (dispatch?.status !== 'failed' || !failure.includes(UNCERTAIN_PROMPT_DELIVERY_DETAIL)) {
+    return false;
+  }
+
+  const normalized = normalizeWorkerSignal(signal);
+  if (!normalized.ok || !normalized.signal.attemptId) return false;
+  const signalAt = parseStrictIsoMs(normalized.signal.timestamp);
+  const dispatchStartedAt = parseStrictIsoMs(dispatch.startedAt);
+  return signalAt !== null && dispatchStartedAt !== null && signalAt >= dispatchStartedAt;
+}
+
+async function readAdoptableTaskSignal(run: Run): Promise<WorkerSignal | null> {
+  const slotId = resolveRunSlotId(run);
+  const context =
+    run.agentContexts?.find((candidate) => candidate.role === primaryRoleForFlow(run.flowType)) ??
+    run.agentContexts?.[0];
+  if (!slotId || !context?.signalFile) return null;
+
+  try {
+    const { loadSlotVars } = await import('../../core/config.js');
+    const vars = await loadSlotVars(slotId);
+    const signalPath = resolveContextFilePath(
+      vars.remoteRepo,
+      context.signalFile,
+      `${vars.remoteRepo}/${context.signalFile}`,
+    );
+    const result = await execOnSlot(
+      vars,
+      `cat ${shellQuote(signalPath)} 2>/dev/null`,
+      vars.remoteRepo,
+    );
+    if (result.exitCode !== 0 || !result.stdout.trim()) return null;
+    const signal: unknown = JSON.parse(result.stdout);
+    if (!canAdoptTaskSignalAfterUncertainDispatch(run, signal)) return null;
+    return normalizeWorkerSignal(signal).ok ? (signal as WorkerSignal) : null;
+  } catch {
+    // Best-effort recovery probe: an unreachable slot, missing signal file, or
+    // malformed JSON all mean there is no adoptable signal. Replay then falls
+    // back to fresh dispatch, which is the safe default.
+    return null;
   }
 }
 
@@ -447,6 +505,26 @@ export async function runReplayStep(
   const selfReviewIdx = flowSteps ? flowSteps.indexOf(PS.SELF_REVIEW) : -1;
   const completeIdx = flowSteps ? flowSteps.indexOf(PS.COMPLETE) : -1;
   const humanGateIdx = flowSteps ? flowSteps.indexOf(PS.HUMAN_GATE) : -1;
+  const adoptedTaskSignal =
+    replayStepName === PS.DISPATCH ? await readAdoptableTaskSignal(existing) : null;
+  if (adoptedTaskSignal && monitorIdx >= 0) {
+    updateRunStep(params.runId, PS.DISPATCH, {
+      status: 'done',
+      completedAt: adoptedTaskSignal.timestamp,
+      detail: 'Recovered uncertain prompt delivery from the fresh task-local worker signal',
+      outputs: {
+        ...(existing.steps.find((candidate) => candidate.name === PS.DISPATCH)?.outputs ?? {}),
+        acknowledgement: 'task-signal',
+        signalAttemptId: adoptedTaskSignal.attemptId,
+        recoveredAt: new Date().toISOString(),
+      },
+    });
+    replayStepName = PS.MONITOR;
+    targetIdx = monitorIdx;
+    console.log(
+      `[run] replay from dispatch — adopted fresh task signal and resumed ${params.runId.slice(0, 8)} at monitor`,
+    );
+  }
   if (
     existing.engineState?.evalExperiment &&
     targetIdx >= 0 &&
@@ -607,8 +685,8 @@ export async function runReplayStep(
             },
             {
               lifecycle: 'busy',
-              phase: 'preparing',
-              agent: 'orchestrator',
+              phase: adoptedTaskSignal ? 'working' : 'preparing',
+              agent: adoptedTaskSignal ? 'working' : 'orchestrator',
               current_run_id: params.runId,
               current_flow_type: existing.flowType || null,
               current_ticket_or_pr: existing.ticketOrPr,
@@ -903,7 +981,7 @@ export async function runReplayStep(
           model: replayModel ?? runnerDefaultModel(replayRunner),
         }
       : resetOutcomeMetrics;
-    const resetAgentContexts = hasRunnerOverride
+    const resetAgentContextsBase = hasRunnerOverride
       ? existing.agentContexts?.map((context) =>
           context.role === primaryRoleForFlow(existing.flowType)
             ? {
@@ -916,6 +994,19 @@ export async function runReplayStep(
             : context,
         )
       : existing.agentContexts;
+    const resetAgentContexts = adoptedTaskSignal
+      ? resetAgentContextsBase?.map((context) =>
+          context.role === primaryRoleForFlow(existing.flowType)
+            ? {
+                ...context,
+                status: 'working' as const,
+                completedAt: undefined,
+                lastSignalAt: adoptedTaskSignal.timestamp,
+                signalAttemptId: adoptedTaskSignal.attemptId,
+              }
+            : context,
+        )
+      : resetAgentContextsBase;
     const attemptCount =
       (existing.recoveryAttempts ?? []).filter(
         (attempt) => attempt.stepName === replayStepName && attempt.triggeredBy === triggeredBy,
@@ -941,7 +1032,10 @@ export async function runReplayStep(
         : undefined;
     const engineStateForReplay = freshDispatchEngineStateForReplay(
       replaysCompletionOrGate
-        ? resetPublishGateApprovalForReplay(currentBeforeReplayUpdate.engineState)
+        ? resetPublishGateApprovalForReplay(
+            currentBeforeReplayUpdate.engineState,
+            Boolean(activeFixTaskFile),
+          )
         : currentBeforeReplayUpdate.engineState,
       params.freshDispatch,
     );

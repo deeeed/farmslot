@@ -921,6 +921,16 @@ export function updateRun(id: string, partial: Partial<Run>): Run {
   if (!run) throw new Error(`Run not found: ${id}`);
   const previousStatus = run.status;
   const statusProvided = Object.prototype.hasOwnProperty.call(partial, 'status');
+  if (
+    run.engineState?.operatorForceCompleted === true &&
+    statusProvided &&
+    partial.status !== 'done'
+  ) {
+    console.warn(
+      `[run-store] ignored stale status '${partial.status}' for operator-force-completed run ${id}`,
+    );
+    return run;
+  }
   const updatedAt = new Date().toISOString();
 
   const shouldInvalidateRecipeRunGroups =
@@ -1011,6 +1021,12 @@ export function updateRunAgentContexts(
 export function updateRunStep(id: string, stepName: string, partial: Partial<RunStep>): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
+  if (run.engineState?.operatorForceCompleted === true) {
+    console.warn(
+      `[run-store] ignored stale step update '${stepName}' for force-completed run ${id}`,
+    );
+    return run;
+  }
 
   const step = run.steps.find((s) => s.name === stepName);
   if (!step) throw new Error(`Step not found: ${stepName}`);

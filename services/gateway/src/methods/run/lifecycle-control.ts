@@ -129,14 +129,22 @@ export async function runForceCompleteTransitionLocked(
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
   assertNotMachineParkManaged(existing);
+  const originalStatus = existing.status;
 
-  const completableStatuses = new Set(['ci-watching', 'failed']);
-  if (!completableStatuses.has(existing.status)) {
-    throw new Error(`Run ${params.runId} cannot be force-completed in status: ${existing.status}`);
+  const completableStatuses = new Set(['ci-watching', 'failed', 'blocked']);
+  const repairsStaleForceCompletion =
+    existing.engineState?.operatorForceCompleted === true && params.prNumber != null;
+  if (!completableStatuses.has(originalStatus) && !repairsStaleForceCompletion) {
+    throw new Error(`Run ${params.runId} cannot be force-completed in status: ${originalStatus}`);
+  }
+  if (originalStatus === 'blocked' && params.prNumber == null) {
+    throw new Error(
+      `Run ${params.runId} is blocked; force-complete requires a published PR number`,
+    );
   }
   if (params.prNumber != null) assertPositivePrNumber(params.prNumber);
 
-  if (existing.status === 'ci-watching') {
+  if (originalStatus === 'ci-watching') {
     // Abort first so an await on PR attach cannot race the watch into a new
     // status while this transition still reports ci-watching.
     deps.cancelEngine(params.runId);
@@ -160,12 +168,18 @@ export async function runForceCompleteTransitionLocked(
     return { run };
   }
 
-  // Failed path: fence recovery synchronously before any await. Replay and
+  // Terminal override path: fence recovery synchronously before any await. Replay and
   // auto-recovery key off `failed` + generation; yielding for link refresh
   // first lets them revive the run after this transition has committed done.
   deps.cancelEngine(params.runId);
   deps.bumpGeneration(params.runId);
-  const reason = 'operator force-completed a failed run';
+  if (repairsStaleForceCompletion) {
+    const current = getRun(params.runId)!;
+    const { operatorForceCompleted: _operatorForceCompleted, ...engineState } =
+      current.engineState ?? {};
+    updateRun(params.runId, { engineState });
+  }
+  const reason = `operator force-completed a ${originalStatus} run`;
   for (const step of existing.steps) {
     if (step.status === 'done' || step.status === 'skipped') continue;
     // Rewrite failed (and any other unfinished) steps: the operator is
@@ -236,7 +250,7 @@ export async function runForceCompleteTransitionLocked(
     settled = getRun(params.runId) ?? settled;
   }
   const effects = await collectForceCompleteSlotReleaseEffect(settled, deps);
-  console.log(`[run] force-completed failed run ${params.runId.slice(0, 8)}`);
+  console.log(`[run] force-completed ${originalStatus} run ${params.runId.slice(0, 8)}`);
   return { run: getRun(params.runId) ?? settled, effects };
 }
 

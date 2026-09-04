@@ -18,8 +18,10 @@ import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import { runForceComplete } from './lifecycle-control.js';
 import {
+  canAdoptTaskSignalAfterUncertainDispatch,
   freshDispatchEngineStateForReplay,
   replaySlotReclaimCheck,
+  resetPublishGateApprovalForReplay,
   runReplayStep,
 } from './replay-step.js';
 
@@ -38,6 +40,74 @@ test('fresh dispatch replay drops only retained-handoff flags', () => {
     ),
     { flags: { skipPrepare: true }, generation: 2 },
   );
+});
+
+test('uncertain dispatch accepts only a fresh task-local signal with an attempt id', () => {
+  const run = {
+    error: 'Prompt delivery failed. Exact prompt acknowledgement did not arrive.',
+    steps: [
+      {
+        name: 'dispatch',
+        status: 'failed' as const,
+        startedAt: '2026-09-03T08:00:00.000Z',
+      },
+    ],
+  };
+
+  assert.equal(
+    canAdoptTaskSignalAfterUncertainDispatch(run, {
+      status: 'running',
+      attemptId: 'attempt-1',
+      timestamp: '2026-09-03T08:00:01.000Z',
+    }),
+    true,
+  );
+  assert.equal(
+    canAdoptTaskSignalAfterUncertainDispatch(run, {
+      status: 'running',
+      timestamp: '2026-09-03T08:00:01.000Z',
+    }),
+    false,
+  );
+  assert.equal(
+    canAdoptTaskSignalAfterUncertainDispatch(run, {
+      status: 'running',
+      attemptId: 'stale-attempt',
+      timestamp: '2026-09-03T07:59:59.000Z',
+    }),
+    false,
+  );
+});
+
+test('human-gate replay drops a consumed reviewer plan', () => {
+  const reset = resetPublishGateApprovalForReplay({
+    publishGate: {
+      pendingReviewPlan: [{ order: 1, runner: 'claude', validationDepth: 'full-live' }],
+      pendingReviewPlanRequestedAt: '2026-09-03T05:00:00.000Z',
+      publicationStatus: 'not_published',
+    },
+  });
+
+  assert.equal(reset?.publishGate?.pendingReviewPlan, undefined);
+  assert.equal(reset?.publishGate?.pendingReviewPlanRequestedAt, undefined);
+});
+
+test('human-gate replay preserves the reviewer plan for an active fix recovery', () => {
+  const reset = resetPublishGateApprovalForReplay(
+    {
+      publishGate: {
+        pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'full-live' }],
+        pendingReviewPlanRequestedAt: '2026-09-03T05:00:00.000Z',
+        publicationStatus: 'not_published',
+      },
+    },
+    true,
+  );
+
+  assert.deepEqual(reset?.publishGate?.pendingReviewPlan, [
+    { order: 1, runner: 'codex', validationDepth: 'full-live' },
+  ]);
+  assert.equal(reset?.publishGate?.pendingReviewPlanRequestedAt, '2026-09-03T05:00:00.000Z');
 });
 
 test('runReplayStep abandons a retained handoff and re-enters normal dispatch', async (t) => {

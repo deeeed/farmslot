@@ -4,7 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(orchestration): preserve run and terminal-signal state across recovery paths, and isolate gateway tests from live fleet state.
+- fix(review): preserve the pre-fix HEAD across restarts, re-review partial fixes before keeping an external blocker, discard consumed reviewer plans on explicit gate replay, and let operators close a blocked reviewed run once its PR is published without a stale engine loop reopening it.
+- fix(orchestration): preserve run and worker-signal state across recovery, adopt delayed exact acknowledgements without relaunching live workers, and isolate gateway tests from live fleet state.
 - fix(publication): refuse dev and fix-bug packages that lack `pr-description.md` or omit and reorder sections from the repository's live PR template.
 - fix(observability): suppress legacy slot-level idle alerts while a structured worker or CI-fix context is launching or working.
 - fix(recovery): let an operator abandon an unacknowledged retained handoff and replay Dispatch fresh without risking duplicate prompt delivery.
@@ -13,7 +14,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - feat(dispatch): keep unowned runner sessions warm and expose them as replaceable candidates on every node; a selected fresh dispatch reserves the slot against races, terminates all retained runner panes without typing into their composers, then prepares normally.
 - fix(dispatch): failed prompt delivery terminates its newly launched runner without typing `/exit` into a possibly buffered task, preventing cleanup from submitting the task and exit command as one turn.
 - fix(runners): recognize Claude's first-run workspace trust prompt and confirm it from fresh deterministic pane evidence so newly relocated checkouts do not stall dispatch.
-- fix(observability): emit agent-idle violations only while a slot is in the working phase; preparing, dispatching, and review-gate slots may legitimately have no active runner.
+- fix(observability): emit agent-idle and tmux-gone stuck violations only while a slot is in the working phase; preparing, dispatching, review-gate, and releasing slots may legitimately have no active runner or tmux session.
 - fix(run-engine): static PR reviews run the project minimal prepare instead of skipping checkout binding, preventing user-selected slots from launching reviewers on an unrelated branch while still leaving runtime acquisition to the execution template.
 - fix(run-engine): review gates with no `review.md` never expose “Post to PR”; refreshing the gate adds the action only after non-empty review markdown is present.
 - fix(run-engine): persist lightweight interactive completion as an explicit operator hold so Command Center can distinguish it from a resumable pause, and reject Resume instead of reopening monitor against the same terminal signal.
