@@ -1,14 +1,14 @@
 {
-  "testedSha": "653a25487d4a1bd9b28e3cc4b9e0965c64998aa5",
-  "testedTreeDirty": true,
-  "dirtyPathCount": 13,
-  "capturedAt": "2026-09-04T23:00:22.224Z",
+  "testedSha": "8d10df00facfc08c9584f4f7a5c46c82cc9977e6",
+  "testedTreeDirty": false,
+  "dirtyPathCount": 0,
+  "capturedAt": "2026-09-04T23:32:16.448Z",
   "runDetail": {
     "ok": true,
-    "testedSha": "653a25487d4a1bd9b28e3cc4b9e0965c64998aa5",
-    "runId": "3ed86c16-11a4-4bc5-90ed-fcbc7880c671",
+    "testedSha": "8d10df00facfc08c9584f4f7a5c46c82cc9977e6",
+    "runId": "95087667-f2e6-4a68-bc8f-97339e49ade1",
     "slotId": "macpro-ff-1",
-    "capturedAt": "2026-09-04T22:59:41.855Z",
+    "capturedAt": "2026-09-04T23:31:41.929Z",
     "summary": {
       "posture": "operator-wait",
       "policySource": "framework-default",
@@ -22,7 +22,7 @@
       "source": "policy from framework default",
       "countsText": "1 retained · 0 warm · 0 stopped · 0 failed",
       "worker": "worker retained",
-      "lastTransition": "Last transition to Operator wait: applied · 2026-09-04T22:58:30.812Z · 1/1 steps",
+      "lastTransition": "Last transition to Operator wait: applied · 2026-09-04T23:29:19.075Z · 1/1 steps",
       "effects": null,
       "rejection": null
     },
@@ -59,8 +59,8 @@
   },
   "surfaces": {
     "slotId": "macpro-ff-1",
-    "testedSha": "653a25487d4a1bd9b28e3cc4b9e0965c64998aa5",
-    "capturedAt": "2026-09-04T22:59:54.248Z",
+    "testedSha": "8d10df00facfc08c9584f4f7a5c46c82cc9977e6",
+    "capturedAt": "2026-09-04T23:31:53.884Z",
     "backlog": {
       "attempted": true,
       "itemId": "7b3235c9-8288-4785-92d6-73aad1d35bff",
@@ -144,10 +144,10 @@
       "warmRowsOfferStop": true,
       "action": "acquire",
       "actionCapabilityId": "browser-cdp",
-      "leasesBefore": 2,
-      "actionError": "acquire browser-cdp: No stored proof plan for browser-cdp on run 3ed86c16-11a4-4bc5-90ed-fcbc7880c671; the Gateway has no recorded reason or mode to acquire it under.",
-      "leasesAfter": 2,
-      "leaseStatesAfter": ["released", "released"],
+      "leasesBefore": 3,
+      "actionError": "acquire browser-cdp: No stored proof plan for browser-cdp on run 95087667-f2e6-4a68-bc8f-97339e49ade1; the Gateway has no recorded reason or mode to acquire it under.",
+      "leasesAfter": 3,
+      "leaseStatesAfter": ["released", "released", "released"],
       "actionProved": true
     },
     "warmStop": {
@@ -155,7 +155,7 @@
       "capabilityId": "browser-cdp",
       "keepWarmMs": 600000,
       "releasedOk": true,
-      "warmUntil": "2026-09-04T23:10:03.890Z",
+      "warmUntil": "2026-09-04T23:42:04.027Z",
       "warmWindowOpen": true,
       "buttonLabel": "Stop warm Browser / CDP",
       "note": "Stopped. The lease owner can no longer drive the CDP session; Chrome remains reusable only until the explicit keep-warm deadline",
