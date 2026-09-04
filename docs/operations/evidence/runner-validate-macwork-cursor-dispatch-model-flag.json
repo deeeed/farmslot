@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-04T06:04:33.424Z",
+  "host": "macwork",
+  "scenario": "dispatch-model-flag",
+  "runner": "cursor",
+  "slotId": "macpro-ff-1",
+  "model": "gpt-5.6-sol-max",
+  "runId": "a5ce2b2b-b209-49bc-92c2-afa3bc59f71f",
+  "dispatchStatus": "done",
+  "launchCommand": "export DISABLE_OMC=1 DISABLE_OMX=1; ASDF_SHIMS=\"${ASDF_DATA_DIR:-$HOME/.asdf}/shims\"; if [ -d \"$ASDF_SHIMS\" ]; then export PATH=\"$ASDF_SHIMS:$PATH\"; fi && if [ -f '/Users/deeeed/dev/farmslot-wt/farmslot-1/.sandbox/farmslot-farm/worker-task/feat/dev-dispatch-model-flag-validation-197e18b6-0904-140418/inputs/inherited/recipe-source.json' ]; then unset FARMSLOT_RECIPE_SOURCE_DIGEST FARMSLOT_RECIPE_APPROVE_PLAN; export FARMSLOT_RECIPE_SOURCE_TRUST=untrusted; export FARMSLOT_RECIPE_SOURCE_KIND=task; export FARMSLOT_RECIPE_SOURCE_NAME=task-inherited; else unset FARMSLOT_RECIPE_SOURCE_TRUST FARMSLOT_RECIPE_SOURCE_KIND FARMSLOT_RECIPE_SOURCE_NAME FARMSLOT_RECIPE_SOURCE_DIGEST FARMSLOT_RECIPE_APPROVE_PLAN; fi; cd /Users/deeeed/dev/farmslot-wt/farmslot-1 && /Users/deeeed/.local/bin/cursor-agent --model gpt-5.6-sol-max --force --sandbox disabled 'Follow the checklist in .sandbox/farmslot-farm/worker-task/feat/dev-dispatch-model-flag-validation-197e18b6-0904-140418/TASK.md. After each step, run .sandbox/farmslot-farm/worker-task/feat/dev-dispatch-model-flag-validation-197e18b6-0904-140418/mark N before continuing.\n\nQuality contracts are synced to the slot runtime; the task checklist names the recipe/review quality docs — read them before recipe proof or evidence audit.'",
+  "expectedModelArgument": "gpt-5.6-sol-max",
+  "modelFlagCount": 1,
+  "pass": true,
+  "error": null,
+  "project": "farmslot-farm",
+  "terminalStatus": "monitoring",
+  "terminalError": null,
+  "cancelled": true
+}
