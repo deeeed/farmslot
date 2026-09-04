@@ -233,10 +233,21 @@ export function resolveEffectivePosturePolicy(
         // A dependency this run does not own is the registry's to protect.
         if (!dependency) continue;
         if (RETENTION_RANK[dependency.desired] >= RETENTION_RANK[decision.desired]) continue;
+        // `warm` means "released, but the provider stays up until a deadline".
+        // A provider with no keep-warm window has no such state: releasing it
+        // stops it outright. Inheriting `warm` there would shed the floor from
+        // under a dependent that is still warm, so it is retained instead.
+        const inherited: ResourcePostureDesiredDisposition =
+          decision.desired === 'warm' && !byId.get(dependencyId)?.keepWarmMs
+            ? 'acquired'
+            : decision.desired;
         perCapability.set(dependencyId, {
-          desired: decision.desired,
+          desired: inherited,
           source: decision.source,
-          reason: `kept ${decision.desired} because '${capabilityId}' depends on it and this posture keeps that ${decision.desired}`,
+          reason:
+            inherited === decision.desired
+              ? `kept ${inherited} because '${capabilityId}' depends on it and this posture keeps that ${inherited}`
+              : `kept acquired because '${capabilityId}' depends on it and stays warm, and this provider declares no keep_warm_ms`,
         });
         changed = true;
       }
@@ -284,9 +295,10 @@ function dispositionSatisfied(
   if (state.cleanupFailure) return false;
   if (desired === 'acquired') return state.observedState === 'running' && Boolean(state.leaseId);
   if (desired === 'stopped') return state.observedState === 'stopped';
-  // `warm` is satisfied by a live warm provider or by one whose window elapsed;
-  // neither needs another provider action.
-  return state.observedState === 'running' || state.observedState === 'stopped';
+  // `warm` wants a provider that is still up. A stopped one is a failure of the
+  // desire, not a cheaper way to satisfy it; `unknown` is an elapsed window
+  // whose real outcome cleanup has yet to determine.
+  return state.observedState === 'running' || state.observedState === 'unknown';
 }
 
 export interface ResourcePostureRequest {

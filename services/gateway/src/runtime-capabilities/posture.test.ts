@@ -949,13 +949,13 @@ test('a warm dependent keeps its dependency at least warm', () => {
         cost: { class: 'high', resources: [] },
         keepWarmMs: 1000,
       }),
-      entry('metro', { cost: { class: 'high', resources: [] } }),
+      // Declares its own window, so `warm` is a state it can actually be in.
+      entry('metro', { cost: { class: 'high', resources: [] }, keepWarmMs: 1000 }),
     ],
     proofRequirements: [],
     capabilityIds: ['app', 'metro'],
   });
   assert.equal(policy.perCapability.get('app')?.desired, 'warm');
-  // metro alone would be stopped (high cost, no keep-warm window).
   assert.equal(policy.perCapability.get('metro')?.desired, 'warm');
 });
 
@@ -976,4 +976,75 @@ test('a lease the registry must retain is reported partial, never applied', asyn
   const failure = result.transition.failures.find((item) => item.capabilityId === 'metro');
   assert.ok(failure, JSON.stringify(result.transition.failures));
   assert.match(failure.reason, /still required by/);
+});
+
+test('a warm dependent retains a dependency that declares no keep-warm window', () => {
+  const policy = resolveEffectivePosturePolicy({
+    posture: 'operator-wait',
+    catalog: [
+      entry('app', {
+        dependencies: ['metro'],
+        cost: { class: 'high', resources: [] },
+        keepWarmMs: 1000,
+      }),
+      // No keepWarmMs: releasing this stops it outright, so `warm` is not a
+      // state it can be in.
+      entry('metro', { cost: { class: 'high', resources: [] } }),
+    ],
+    proofRequirements: [],
+    capabilityIds: ['app', 'metro'],
+  });
+  assert.equal(policy.perCapability.get('app')?.desired, 'warm');
+  assert.equal(
+    policy.perCapability.get('metro')?.desired,
+    'acquired',
+    'inheriting warm here would stop it under a dependent that stays warm',
+  );
+  assert.match(policy.perCapability.get('metro')?.reason ?? '', /no keep_warm_ms/);
+});
+
+test('operator-wait keeps a warm parent up by retaining its window-less dependency', async (t) => {
+  const { reconciler, registry, actions } = await harness(t, {
+    capabilities: [
+      entry('app', {
+        dependencies: ['metro'],
+        cost: { class: 'high', resources: [] },
+        keepWarmMs: 600_000,
+      }),
+      entry('metro', { cost: { class: 'high', resources: [] } }),
+    ],
+  });
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+  actions.length = 0;
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+  const byId = new Map(
+    result.status.capabilities.map((state) => [state.capabilityId, state] as const),
+  );
+  assert.equal(byId.get('app')?.desiredDisposition, 'warm');
+  assert.equal(byId.get('metro')?.desiredDisposition, 'acquired');
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    [],
+    'nothing may be stopped under a provider this posture keeps warm',
+  );
+  assert.equal(byId.get('metro')?.observedState, 'running');
+});
+
+test('a stopped provider does not satisfy a warm desire', async (t) => {
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [CATALOG_METRO],
+  });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+  // Force the warm provider down the way the keep-warm sweeper would.
+  await registry.stopWarmProviders(SLOT, ['metro']);
+
+  const repeat = await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+  assert.notEqual(
+    repeat.transition.outcome,
+    'idempotent',
+    'a stopped provider is not a cheaper way to be warm',
+  );
+  assert.equal(repeat.status.capabilities[0].observedState, 'stopped');
 });

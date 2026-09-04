@@ -1053,3 +1053,34 @@ test('terminal cleanup bypasses keep-warm for every lease the run owns', async (
     true,
   );
 });
+
+test('a dependency is retained when its parent failed to release', async (t) => {
+  const { registry, actions } = await fixture(
+    t,
+    [entry('app', 'exclusive', ['metro']), entry('metro')],
+    {
+      runAction: async (_slotId, action) =>
+        action.kind === 'slot-action' && action.actionId === 'app.release'
+          ? { ok: false, detail: 'app shutdown exited 1' }
+          : { ok: true },
+    },
+  );
+  assert.equal((await acquire(registry, 'app', 'run-a', 'fam-a')).ok, true);
+  actions.length = 0;
+
+  const result = await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  assert.equal(result.ok, false);
+  assert.equal(result.failures[0]?.capabilityId, 'app');
+  // The parent is demonstrably still up, so its dependency must stay up too.
+  assert.ok(
+    !actions.includes('metro.release'),
+    `metro was stopped under a parent that failed to release: ${actions.join(', ')}`,
+  );
+  assert.deepEqual(
+    result.retained.map((lease) => lease.capabilityId),
+    ['metro'],
+  );
+  const status = await registry.status({ slotId: SLOT });
+  const metro = status.leases.find((lease) => lease.capabilityId === 'metro');
+  assert.equal(metro?.state, 'acquired');
+});

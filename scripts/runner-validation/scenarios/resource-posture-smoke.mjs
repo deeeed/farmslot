@@ -119,7 +119,7 @@ function releaseOrderFromEvents(status, capabilityIds) {
  * so this boots real resources. Set FARMSLOT_POSTURE_SKIP_DEPENDENCY_PROOF=1 to
  * record it as skipped instead; the skip is reported, never silently passed.
  */
-async function proveDependencyPosture({ slotId, runId, report, acquireBudgetMs }) {
+async function prepareDependencyPosture({ slotId, runId, report, acquireBudgetMs }) {
   const proof = { attempted: false, pass: false, reason: null, error: null };
   if (process.env.FARMSLOT_POSTURE_SKIP_DEPENDENCY_PROOF === '1') {
     proof.reason = 'skipped by FARMSLOT_POSTURE_SKIP_DEPENDENCY_PROOF=1';
@@ -231,45 +231,7 @@ async function proveDependencyPosture({ slotId, runId, report, acquireBudgetMs }
       }
     }
 
-    const terminalApply = rpc(
-      'runtime.posture.apply',
-      { runId, posture: 'terminal', operationId: `${SCENARIO_ID}-dep-terminal-${process.pid}` },
-      SLOW_RPC_TIMEOUT_MS,
-    );
-    if (!terminalApply.ok) {
-      throw new Error(`terminal apply failed: ${JSON.stringify(terminalApply.transition)}`);
-    }
-    const terminalStatus = rpc('runtime.posture.status', { runId });
-    proof.terminalStates = [pair.dependent.id, pair.dependency.id].map((id) => {
-      const state = capabilityState(terminalStatus, id);
-      return {
-        capabilityId: id,
-        desiredDisposition: state?.desiredDisposition ?? null,
-        observedState: state?.observedState ?? null,
-      };
-    });
-    for (const state of proof.terminalStates) {
-      if (state.desiredDisposition !== 'stopped' || state.observedState !== 'stopped') {
-        throw new Error(
-          `${state.capabilityId} ended ${state.desiredDisposition}/${state.observedState}, expected stopped/stopped`,
-        );
-      }
-    }
-
-    // The Gateway's own lifecycle events record the order it stopped them in.
-    const capabilityStatus = rpc('runtime.capability.status', { slotId, ownerRunId: runId });
-    const order = releaseOrderFromEvents(capabilityStatus, [pair.dependent.id, pair.dependency.id]);
-    proof.releaseOrder = order;
-    const dependentAt = order.indexOf(pair.dependent.id);
-    const dependencyAt = order.lastIndexOf(pair.dependency.id);
-    if (dependentAt === -1 || dependencyAt === -1) {
-      throw new Error(`missing release events for the pair: ${order.join(', ')}`);
-    }
-    if (dependentAt > dependencyAt) {
-      throw new Error(
-        `${pair.dependency.id} was released before ${pair.dependent.id}: ${order.join(', ')}`,
-      );
-    }
+    proof.preparedAt = new Date().toISOString();
     proof.pass = true;
   } catch (error) {
     proof.error = error?.message || String(error);
@@ -285,6 +247,51 @@ async function proveDependencyPosture({ slotId, runId, report, acquireBudgetMs }
     } catch (salvageError) {
       proof.salvageTerminalError = salvageError?.message || String(salvageError);
     }
+  }
+  return proof;
+}
+
+/**
+ * Terminal assertions for the dependency pair. Runs after the single `terminal`
+ * apply that covers every capability this run holds, so one teardown proves the
+ * whole set rather than each proof stopping its own providers.
+ */
+function assertDependencyTerminal({ slotId, runId, proof }) {
+  if (!proof.attempted || proof.error) return proof;
+  try {
+    const terminalStatus = rpc('runtime.posture.status', { runId });
+    proof.terminalStates = [proof.dependent, proof.dependency].map((id) => {
+      const state = capabilityState(terminalStatus, id);
+      return {
+        capabilityId: id,
+        desiredDisposition: state?.desiredDisposition ?? null,
+        observedState: state?.observedState ?? null,
+      };
+    });
+    for (const state of proof.terminalStates) {
+      if (state.desiredDisposition !== 'stopped' || state.observedState !== 'stopped') {
+        throw new Error(
+          `${state.capabilityId} ended ${state.desiredDisposition}/${state.observedState}, expected stopped/stopped`,
+        );
+      }
+    }
+    // The Gateway's own lifecycle events record the order it stopped them in.
+    const capabilityStatus = rpc('runtime.capability.status', { slotId, ownerRunId: runId });
+    const order = releaseOrderFromEvents(capabilityStatus, [proof.dependent, proof.dependency]);
+    proof.releaseOrder = order;
+    const dependentAt = order.indexOf(proof.dependent);
+    const dependencyAt = order.lastIndexOf(proof.dependency);
+    if (dependentAt === -1 || dependencyAt === -1) {
+      throw new Error(`missing release events for the pair: ${order.join(', ')}`);
+    }
+    if (dependentAt > dependencyAt) {
+      throw new Error(
+        `${proof.dependency} was released before ${proof.dependent}: ${order.join(', ')}`,
+      );
+    }
+    proof.pass = true;
+  } catch (error) {
+    proof.error = error?.message || String(error);
   }
   return proof;
 }
@@ -421,6 +428,21 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
       throw new Error('operator-wait must never report the worker as stopped');
     }
 
+    // ADR-054 dependency ordering, proved live against the project's own catalog.
+    // This runs BEFORE the base terminal step on purpose: terminal cleanup fences
+    // the run, and a fenced run is then correctly refused any further acquire.
+    // ADR-054 dependency ordering, proved live against the project's own catalog.
+    report.dependencyProof = await prepareDependencyPosture({
+      slotId,
+      runId,
+      report,
+      // Respect the operator's --timeout-ms while allowing a real device boot.
+      acquireBudgetMs: Math.max(timeoutMs, SLOW_RPC_TIMEOUT_MS),
+    });
+    if (report.dependencyProof.error) {
+      throw new Error(`dependency posture proof failed: ${report.dependencyProof.error}`);
+    }
+
     const terminalApply = rpc('runtime.posture.apply', {
       runId,
       posture: 'terminal',
@@ -450,6 +472,17 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
       );
     }
 
+    // The same teardown proves the dependency pair: dependent before dependency,
+    // both stopped.
+    report.dependencyProof = assertDependencyTerminal({
+      slotId,
+      runId,
+      proof: report.dependencyProof,
+    });
+    if (report.dependencyProof.attempted && !report.dependencyProof.pass) {
+      throw new Error(`dependency posture proof failed: ${report.dependencyProof.error}`);
+    }
+
     // Repeating the same posture must be idempotent, not a second stop.
     const repeat = rpc('runtime.posture.apply', { runId, posture: 'terminal' });
     report.terminalRepeatOutcome = repeat.transition.outcome;
@@ -472,18 +505,6 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
       throw new Error(
         `run record did not persist the terminal posture: ${JSON.stringify(persisted)}`,
       );
-    }
-
-    // ADR-054 dependency ordering, proved live against the project's own catalog.
-    report.dependencyProof = await proveDependencyPosture({
-      slotId,
-      runId,
-      report,
-      // Respect the operator's --timeout-ms while allowing a real device boot.
-      acquireBudgetMs: Math.max(timeoutMs, SLOW_RPC_TIMEOUT_MS),
-    });
-    if (report.dependencyProof.attempted && !report.dependencyProof.pass) {
-      throw new Error(`dependency posture proof failed: ${report.dependencyProof.error}`);
     }
 
     report.pass = true;

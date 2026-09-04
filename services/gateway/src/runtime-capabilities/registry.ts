@@ -1046,6 +1046,7 @@ export class RuntimeCapabilityRegistry {
       const retained: RuntimeCapabilityLease[] = [];
       const effects = new Set<string>();
       const failures: RuntimeCapabilityReleaseResult['failures'] = [];
+      const failedToRelease = new Set<string>();
       const selectedIds = new Set(order.map((lease) => lease.id));
 
       for (const lease of order) {
@@ -1061,6 +1062,7 @@ export class RuntimeCapabilityRegistry {
             capabilityId: lease.capabilityId,
             reason: lease.cleanupFailure,
           });
+          failedToRelease.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'cleanup-failed',
             slotId: lease.slotId,
@@ -1080,6 +1082,7 @@ export class RuntimeCapabilityRegistry {
             capabilityId: lease.capabilityId,
             reason: lease.cleanupFailure,
           });
+          failedToRelease.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'recovery-rejected',
             slotId: lease.slotId,
@@ -1093,7 +1096,10 @@ export class RuntimeCapabilityRegistry {
         const stillRequired = snapshot.leases.some(
           (candidate) =>
             candidate.id !== lease.id &&
-            !selectedIds.has(candidate.id) &&
+            // A selected lease that failed to release did not go away: it still
+            // holds whatever it depends on. Treating it as gone would stop a
+            // dependency out from under a provider that is demonstrably still up.
+            (!selectedIds.has(candidate.id) || failedToRelease.has(candidate.id)) &&
             blocksAcquisition(candidate) &&
             candidate.dependencyLeaseIds.includes(lease.id),
         );
@@ -1145,6 +1151,7 @@ export class RuntimeCapabilityRegistry {
             capabilityId: lease.capabilityId,
             reason: lease.cleanupFailure,
           });
+          failedToRelease.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'cleanup-failed',
             slotId: lease.slotId,
