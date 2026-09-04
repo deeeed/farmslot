@@ -8,8 +8,21 @@
  */
 import type {
   RuntimeCapabilityAcquireConflict,
+  RuntimeCapabilityHealthState,
   RuntimeCapabilityLeaseOwner,
+  RuntimeCapabilityLeaseState,
 } from './runtime-capabilities.js';
+
+/**
+ * The lease fields `observedStateForLease` reads. Structural so this module
+ * stays free of a value-level dependency on the lease type.
+ */
+export interface RuntimeCapabilityLeaseLike {
+  state: RuntimeCapabilityLeaseState;
+  health: { state: RuntimeCapabilityHealthState };
+  keepWarmUntil?: string;
+  cleanupFailure?: string;
+}
 
 /** Semantic lifecycle intent. Never derived from run status, step names, or slot phases. */
 export const RESOURCE_POSTURES = ['active', 'operator-wait', 'parked', 'terminal'] as const;
@@ -189,6 +202,36 @@ export function postureForGateChoice(
   if (choice === 'keep-for-validation') return 'active';
   if (choice === 'free-slot') return 'parked';
   return 'operator-wait';
+}
+
+/**
+ * The single derivation of a provider's observed state from its lease.
+ *
+ * Shared so the Gateway and every client answer "is this provider running?"
+ * identically. A client that re-derives this locally will drift — Slot View
+ * once decided an elapsed warm deadline meant `stopped` while the Gateway
+ * reported `unknown`, which labels a live provider as dead.
+ *
+ * `nowMs` is passed in so the caller evaluates the warm deadline against the
+ * same instant it rendered with.
+ */
+export function observedStateForLease(
+  lease: RuntimeCapabilityLeaseLike | undefined,
+  nowMs: number,
+): ResourcePostureObservedState {
+  if (!lease) return 'stopped';
+  if (lease.state === 'error') return lease.cleanupFailure ? 'unhealthy' : 'unknown';
+  if (lease.state === 'acquiring' || lease.state === 'releasing' || lease.state === 'queued') {
+    return 'transitioning';
+  }
+  if (lease.state === 'acquired')
+    return lease.health.state === 'unhealthy' ? 'unhealthy' : 'running';
+  // A released lease is not a stopped provider while keep-warm is still live.
+  if (lease.keepWarmUntil && Date.parse(lease.keepWarmUntil) > nowMs) return 'running';
+  // An elapsed warm deadline is a schedule, not an outcome: the sweeper may not
+  // have run yet, so the provider's real state is not known until cleanup does.
+  if (lease.keepWarmUntil) return 'unknown';
+  return 'stopped';
 }
 
 export function isResourcePosture(value: unknown): value is ResourcePosture {

@@ -34,7 +34,8 @@ export interface InteractiveHandoffRenderContext {
   checkSignalAndResume: (runId: string, decision: RunDecision) => void;
   /** ADR-054 gate choice plus the Gateway's preview of its effect. */
   posture: RunPostureGateState;
-  postureResolveBlocked: boolean;
+  /** Why resolving is blocked by the posture choice, or null when it is not. */
+  postureBlockedReason: string | null;
   selectPostureChoice: (choice: ResourcePostureGateChoice | null) => void;
 }
 
@@ -146,10 +147,8 @@ export function renderInteractiveHandoffGate(
                   style="background:${colors.accent}; border-color:${colors.accent}; color:#fff"
                   ?disabled=${context.actionsBlocked ||
                   context.signalCheckBusy ||
-                  context.postureResolveBlocked}
-                  title=${context.postureResolveBlocked
-                    ? 'The Gateway rejected the selected resource posture; pick another choice first.'
-                    : primaryHelp}
+                  context.postureBlockedReason !== null}
+                  title=${context.postureBlockedReason ?? primaryHelp}
                   @click=${() => context.checkSignalAndResume(run.id, decision)}
                 >
                   ${context.signalCheckBusy ? 'Checking…' : primaryAction.label}

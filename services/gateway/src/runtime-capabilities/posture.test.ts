@@ -1228,3 +1228,37 @@ test('preview for parked on an eligible run returns the plan', async (t) => {
   );
   assert.equal(parkCalls.length, 1, 'eligibility is checked, execute is not called');
 });
+
+test('preview and apply agree on an already-parked run', async (t) => {
+  const { reconciler, registry, parkCalls } = await harness(t, {
+    capabilities: [CATALOG_LINT],
+  });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+  // Park it for real once.
+  const parked = await reconciler.apply({ runId: 'run-a', gateChoice: 'free-slot' });
+  assert.equal(parked.transition.outcome, 'applied');
+  assert.equal(parked.status.posture, 'parked');
+  // Real machine parking stops the manifest resources; the harness's parking
+  // stub does not, so stop them here to reach the state a real park leaves.
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', keepWarm: false });
+  parkCalls.length = 0;
+
+  // Apply again: idempotent, and machine parking is never consulted.
+  const repeatApply = await reconciler.apply({ runId: 'run-a', gateChoice: 'free-slot' });
+  assert.equal(repeatApply.transition.outcome, 'idempotent');
+  assert.equal(repeatApply.ok, true);
+  assert.deepEqual(parkCalls, []);
+
+  // Preview must say the same thing: no rejection, nothing to do.
+  const plan = await reconciler.preview({ runId: 'run-a', gateChoice: 'free-slot' });
+  assert.equal(plan.posture, 'parked');
+  assert.equal(plan.rejection, undefined, 'an already-parked run is not ineligible');
+  assert.deepEqual(plan.acquire, []);
+  assert.deepEqual(plan.retain, []);
+  assert.deepEqual(plan.warm, []);
+  assert.deepEqual(plan.stop, []);
+  assert.deepEqual(plan.effects, []);
+  assert.match(plan.reason, /already parked/);
+  assert.deepEqual(parkCalls, [], 'preview must not consult parking either');
+});

@@ -16,6 +16,14 @@
  * probe records `gate.skipped` with the reason rather than reporting a pass it
  * did not earn.
  *
+ * `ok` requires a posture panel with at least one capability row AND a proved
+ * gate. A run that renders the panel but never exercises a gate has not proved
+ * the deliverable, so it must not report success.
+ *
+ * `gate.surface` records which human gate was exercised — `ready` and `review`
+ * are the publication gates whose workspaces resolve on their own, so the probe
+ * also reads back the choice those components actually received.
+ *
  * Top-level `return` + IIFE: Prettier accepts it (`allowReturnOutsideFunction`)
  * and `cdp.mjs` stmtForm fallback returns the value.
  */
@@ -168,8 +176,35 @@ return (async () => {
     ? Boolean(gate.previewSettled && (gate.previewSummary || gate.previewRejection))
     : false;
 
+  // Which gate surface this run exercised. The ready/review publication gates
+  // mount their own workspace, so the selector sits above it there; the generic
+  // and interactive-handoff gates render it inline.
+  gate.surface = root.querySelector('ready-workspace')
+    ? 'ready'
+    : root.querySelector('review-workspace')
+      ? 'review'
+      : gate.present
+        ? 'inline'
+        : 'none';
+  // The workspace gates resolve through their own component, so the choice has
+  // to reach them as a property or it is never sent.
+  const workspace = root.querySelector('ready-workspace') ?? root.querySelector('review-workspace');
+  if (workspace) {
+    gate.workspaceReceivesChoice = workspace.resourcePosture ?? null;
+    gate.workspaceBlockedReason = workspace.postureBlockedReason ?? null;
+  }
+
   return {
-    ok: Boolean(summary.posture && summary.policySource && rowsCarryBothStates),
+    // `ok` requires the gate proof: a run whose posture panel renders but whose
+    // gate was never exercised has not proved the deliverable.
+    ok: Boolean(
+      summary.posture &&
+      summary.policySource &&
+      rowsCarryBothStates &&
+      rows.length > 0 &&
+      gateProved,
+    ),
+    testedSha: document.documentElement.dataset.farmslotSha ?? null,
     runId: detail.run?.id ?? null,
     slotId: detail.run?.slotId ?? null,
     capturedAt: new Date().toISOString(),

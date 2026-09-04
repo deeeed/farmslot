@@ -1,7 +1,7 @@
 import { LitElement } from 'lit';
 import { property, state } from 'lit/decorators.js';
 
-import type { GitBranchDiffFile, RunDecision } from '@farmslot/protocol';
+import type { GitBranchDiffFile, ResourcePostureGateChoice, RunDecision } from '@farmslot/protocol';
 
 import { type RecoveryPhase } from '../../utils/reconnect.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
@@ -23,6 +23,14 @@ export abstract class ReviewWorkspaceState extends LitElement {
   @property({ attribute: false }) decision!: RunDecision;
   @property() slotId = '';
   @property() branch = ''; // expected branch from the run
+  /**
+   * Operator resource-posture choice for this wait (ADR-054), supplied by the
+   * gate section that mounts this workspace. Sent as the typed
+   * `resourcePosture` param so this client never invents a cleanup policy.
+   */
+  @property({ attribute: false }) resourcePosture: ResourcePostureGateChoice | null = null;
+  /** Why the posture choice blocks resolution, or null. Blocks resolve actions. */
+  @property({ attribute: false }) postureBlockedReason: string | null = null;
   @property() slotBranch = ''; // current slot branch (from slot-view's _liveGitData) — skips redundant git.status when provided
 
   @state() _includedComments = new Set<number>();

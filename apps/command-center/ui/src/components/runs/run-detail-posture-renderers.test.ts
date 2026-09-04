@@ -48,7 +48,7 @@ test('the summary reports the Gateway policy source rather than deriving one', (
   assert.equal(policySourceLabel('project-default'), 'project default');
 });
 
-test('counts group by desired disposition, not by what the provider is doing', () => {
+test('counts describe what the providers are observed doing', () => {
   const summary = summarizeRunPosture(
     postureState({
       capabilities: [
@@ -59,12 +59,18 @@ test('counts group by desired disposition, not by what the provider is doing', (
     }),
   );
 
-  assert.deepEqual(summary.counts, { retained: 1, warm: 1, stopped: 1, failed: 0 });
+  assert.deepEqual(summary.counts, {
+    retained: 1,
+    warm: 1,
+    stopped: 1,
+    failed: 0,
+    unresolved: 0,
+  });
 });
 
-test('a provider still running against a stop intent counts as failed, never as stopped', () => {
-  // The regression this guards: counting by desired disposition alone would
-  // report "1 stopped" for a provider that is demonstrably still up.
+test('a provider still running against a stop intent is never counted as stopped', () => {
+  // The regression this guards: counting by desired disposition would report
+  // "1 stopped" for a provider that is demonstrably still up.
   const summary = summarizeRunPosture(
     postureState({
       posture: 'terminal',
@@ -78,16 +84,17 @@ test('a provider still running against a stop intent counts as failed, never as 
     }),
   );
 
-  assert.equal(summary.counts.stopped, 1);
-  assert.equal(summary.counts.failed, 1);
+  assert.equal(summary.counts.stopped, 0);
+  assert.equal(summary.counts.unresolved, 1);
   assert.equal(summary.rows[0]?.rowStatus, 'mismatch');
 });
 
-test('a cleanup failure is counted even when the observed state agrees with intent', () => {
+test('a failed cleanup is counted once, as failed, and never also as stopped', () => {
   const summary = summarizeRunPosture(
     postureState({
       capabilities: [
         capability({
+          capabilityId: 'metro',
           desiredDisposition: 'stopped',
           observedState: 'stopped',
           cleanupFailure: 'shutdown action exited 1',
@@ -97,7 +104,58 @@ test('a cleanup failure is counted even when the observed state agrees with inte
   );
 
   assert.equal(summary.counts.failed, 1);
-  assert.equal(summary.rows[0]?.cleanupFailure, 'shutdown action exited 1');
+  assert.equal(summary.counts.stopped, 0);
+});
+
+test('a capability the last transition failed on counts as failed even with a clean row', () => {
+  const summary = summarizeRunPosture(
+    postureState({
+      capabilities: [
+        capability({
+          capabilityId: 'metro',
+          desiredDisposition: 'stopped',
+          observedState: 'stopped',
+        }),
+      ],
+      lastTransition: {
+        id: 'op-1',
+        posture: 'terminal',
+        policySource: 'framework-default',
+        requestedAt: '2026-09-05T10:00:00.000Z',
+        outcome: 'partial',
+        effects: [],
+        progress: { total: 1, completed: 0 },
+        failures: [{ capabilityId: 'metro', reason: 'shutdown timed out' }],
+      },
+    }),
+  );
+
+  assert.equal(summary.counts.failed, 1);
+  assert.equal(summary.counts.stopped, 0);
+});
+
+test('every row lands in exactly one bucket, so the counts never hide one', () => {
+  const summary = summarizeRunPosture(
+    postureState({
+      capabilities: [
+        capability({ capabilityId: 'a', desiredDisposition: 'acquired', observedState: 'running' }),
+        capability({ capabilityId: 'b', desiredDisposition: 'stopped', observedState: 'unknown' }),
+        capability({
+          capabilityId: 'c',
+          desiredDisposition: 'stopped',
+          observedState: 'transitioning',
+        }),
+        capability({
+          capabilityId: 'd',
+          desiredDisposition: 'acquired',
+          observedState: 'unhealthy',
+        }),
+      ],
+    }),
+  );
+
+  const { retained, warm, stopped, failed, unresolved } = summary.counts;
+  assert.equal(retained + warm + stopped + failed + unresolved, summary.rows.length);
 });
 
 test('an unknown observation is never claimed as matching or mismatching intent', () => {
@@ -111,6 +169,7 @@ test('an unknown observation is never claimed as matching or mismatching intent'
     }),
   );
   assert.equal(summary.counts.failed, 0);
+  assert.equal(summary.counts.unresolved, 1);
   assert.equal(summary.rows[0]?.rowStatus, 'unproven');
 });
 
@@ -178,6 +237,12 @@ test('a run holding nothing still reports its posture and worker retention', () 
   );
 
   assert.equal(summary.rows.length, 0);
-  assert.deepEqual(summary.counts, { retained: 0, warm: 0, stopped: 0, failed: 0 });
+  assert.deepEqual(summary.counts, {
+    retained: 0,
+    warm: 0,
+    stopped: 0,
+    failed: 0,
+    unresolved: 0,
+  });
   assert.equal(summary.workerRetained, true);
 });

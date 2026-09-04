@@ -14,6 +14,7 @@ import {
   type MachinePauseExecuteResult,
   type MachinePausePreviewParams,
   type MachinePausePreviewResult,
+  observedStateForLease,
   postureForGateChoice,
   type ProjectResourcePostureConfig,
   RESOURCE_POSTURE_TRANSITION_HISTORY,
@@ -270,25 +271,6 @@ export function resolveEffectivePosturePolicy(
   };
 }
 
-export function observedStateForLease(
-  lease: RuntimeCapabilityLease | undefined,
-  nowMs: number,
-): ResourcePostureObservedState {
-  if (!lease) return 'stopped';
-  if (lease.state === 'error') return lease.cleanupFailure ? 'unhealthy' : 'unknown';
-  if (lease.state === 'acquiring' || lease.state === 'releasing' || lease.state === 'queued') {
-    return 'transitioning';
-  }
-  if (lease.state === 'acquired')
-    return lease.health.state === 'unhealthy' ? 'unhealthy' : 'running';
-  // A released lease is not a stopped provider while keep-warm is still live.
-  if (lease.keepWarmUntil && Date.parse(lease.keepWarmUntil) > nowMs) return 'running';
-  // An elapsed warm deadline is a schedule, not an outcome: the sweeper may not
-  // have run yet, so the provider's real state is not known until cleanup does.
-  if (lease.keepWarmUntil) return 'unknown';
-  return 'stopped';
-}
-
 /** Transitions a run has retained, newest first, including the latest. */
 function historyOf(state: RunResourcePostureState | undefined): ResourcePostureTransition[] {
   if (!state) return [];
@@ -463,6 +445,21 @@ export class RunResourcePostureReconciler {
     const context = resolved.context;
     const plan = this.planFrom(context);
     if (context.policy.posture !== 'parked') return plan;
+    // Mirror apply's ordering exactly. Apply checks idempotency before it asks
+    // machine parking anything, so an already-parked run returns `idempotent`
+    // and never sees ALREADY_PARKED. A preview that asked first would report a
+    // rejection for the one case apply treats as a success.
+    if (this.isIdempotent(context)) {
+      return {
+        ...plan,
+        reason: 'run is already parked; applying this again would do nothing',
+        acquire: [],
+        retain: [],
+        warm: [],
+        stop: [],
+        effects: [],
+      };
+    }
     // Preview has to ask machine parking the same question apply does. Without
     // it, `free-slot` on a run parking will refuse previews as a normal plan —
     // the operator reads "Parked, 1 stopped" for a choice that cannot succeed.

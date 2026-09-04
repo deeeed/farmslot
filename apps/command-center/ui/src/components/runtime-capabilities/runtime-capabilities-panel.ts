@@ -8,6 +8,7 @@ import {
   type RuntimeCapabilityCatalogEntry,
   type RuntimeCapabilityLease,
   type RuntimeCapabilityLifecyclePayload,
+  type RuntimeCapabilityProofRequirement,
   type RuntimeCapabilityReleaseResult,
   type RuntimeCapabilityStatusResult,
 } from '@farmslot/protocol';
@@ -20,6 +21,7 @@ import {
   runtimeCapabilityRecoveryActions,
   type RuntimeCapabilityRetentionView,
   runtimeCapabilityRetentionView,
+  runtimeCapabilityWarmStopUnavailable,
 } from './runtime-capabilities-panel-model.js';
 
 @customElement('runtime-capabilities-panel')
@@ -39,6 +41,8 @@ export class RuntimeCapabilitiesPanel extends LitElement {
     capabilityId: string;
     action: RuntimeCapabilityRecoveryAction;
   } | null = null;
+  /** Last recovery-action failure. Kept out of `error` so a refresh cannot erase it. */
+  @state() private actionError = '';
 
   private refreshPending = false;
   private unsubscribeEvent: (() => void) | null = null;
@@ -105,32 +109,61 @@ export class RuntimeCapabilitiesPanel extends LitElement {
   }
 
   /**
-   * Stop the provider (ADR-054). `keepWarm: false` is deliberate: an operator
-   * pressing this in Slot View means "this process should not be running", and
-   * the historical default would have left it alive until its keep-warm
-   * deadline while the panel said the lease was released.
+   * Stop a provider this run still holds.
+   *
+   * Only offered for a lease the Gateway will act on: `runtime.capability.release`
+   * skips leases that are already released, so offering this for a warm provider
+   * would report success while the process kept running.
+   *
+   * `keepWarm: false` is deliberate — an operator pressing Stop means "this
+   * process should not be running", not "release ownership and leave it up".
+   * `force` is never sent from here: it bypasses the provenance guard, which is
+   * a decision the operator has to make explicitly, not a default.
    */
   private async release(
     entry: RuntimeCapabilityCatalogEntry,
     lease: RuntimeCapabilityLease,
   ): Promise<void> {
-    await this.runRecovery(entry.id, 'release', async () => {
+    // Captured before the first RPC: `this.slotId` is a mutable property, and an
+    // operator switching slots mid-action would otherwise retarget it.
+    const slotId = this.slotId;
+    const ownerRunId = lease.owner.runId;
+    await this.runRecovery(entry.id, 'release', slotId, async () => {
       const result = await gateway.request<RuntimeCapabilityReleaseResult>(
         Methods.RUNTIME_CAPABILITY_RELEASE,
         {
-          slotId: this.slotId,
-          ownerRunId: lease.owner.runId,
+          slotId,
+          ownerRunId,
           capabilityId: entry.id,
           leaseId: lease.id,
           keepWarm: false,
-          ...(lease.state === 'error' ? { force: true } : {}),
         },
         30_000,
       );
       if (!result.ok) {
         throw new Error(result.failures.map((failure) => failure.reason).join('; '));
       }
+      // A release the Gateway silently skipped is not a stop. Say so rather than
+      // letting the row re-render unchanged and read as success.
+      if (!result.released.some((released) => released.id === lease.id)) {
+        throw new Error(
+          `The Gateway did not release lease ${lease.id}; the provider may still be running.`,
+        );
+      }
     });
+  }
+
+  /**
+   * The proof requirement this capability was acquired under, from the owner's
+   * stored plan. Restart and operator acquire reuse it rather than inventing
+   * one, so a visual capability is not silently reacquired as state-only.
+   */
+  private proofRequirementFor(
+    capabilityId: string,
+    ownerRunId: string,
+  ): RuntimeCapabilityProofRequirement | null {
+    const plan = this.status?.proofPlans?.[ownerRunId];
+    return plan?.requirements.find((entry) => entry.capabilityId === capabilityId) ?? null;
   }
 
   /**
@@ -139,19 +172,22 @@ export class RuntimeCapabilitiesPanel extends LitElement {
    * instead of being reused as if it were healthy.
    */
   private async acquire(entry: RuntimeCapabilityCatalogEntry, ownerRunId: string): Promise<void> {
-    await this.runRecovery(entry.id, 'acquire', async () => {
+    const slotId = this.slotId;
+    const requirement = this.proofRequirementFor(entry.id, ownerRunId);
+    await this.runRecovery(entry.id, 'acquire', slotId, async () => {
+      if (!requirement) {
+        throw new Error(
+          `No stored proof plan for ${entry.id} on run ${ownerRunId}; the Gateway has no recorded reason or mode to acquire it under.`,
+        );
+      }
       const result = await gateway.request<RuntimeCapabilityAcquireResult>(
         Methods.RUNTIME_CAPABILITY_ACQUIRE,
         {
-          slotId: this.slotId,
+          slotId,
           capabilityId: entry.id,
           ownerRunId,
           revalidateHealth: true,
-          proofRequirement: {
-            capabilityId: entry.id,
-            reason: 'operator recovery from Slot View',
-            mode: 'state',
-          },
+          proofRequirement: requirement,
         },
         120_000,
       );
@@ -161,22 +197,34 @@ export class RuntimeCapabilitiesPanel extends LitElement {
     });
   }
 
-  /** Stop the provider, then acquire it again for the same owner. */
+  /**
+   * Stop the provider and acquire it again for the same owner, reusing the
+   * parameters and proof requirement it was originally acquired under. Slot and
+   * owner are captured up front so a slot switch between the two calls cannot
+   * reacquire one slot's capability against another.
+   */
   private async restart(
     entry: RuntimeCapabilityCatalogEntry,
     lease: RuntimeCapabilityLease,
   ): Promise<void> {
+    const slotId = this.slotId;
     const ownerRunId = lease.owner.runId;
-    await this.runRecovery(entry.id, 'restart', async () => {
+    const parameters = lease.parameters;
+    const requirement = this.proofRequirementFor(entry.id, ownerRunId);
+    await this.runRecovery(entry.id, 'restart', slotId, async () => {
+      if (!requirement) {
+        throw new Error(
+          `No stored proof plan for ${entry.id} on run ${ownerRunId}; restarting would have to invent the reason and mode it runs under.`,
+        );
+      }
       const released = await gateway.request<RuntimeCapabilityReleaseResult>(
         Methods.RUNTIME_CAPABILITY_RELEASE,
         {
-          slotId: this.slotId,
+          slotId,
           ownerRunId,
           capabilityId: entry.id,
           leaseId: lease.id,
           keepWarm: false,
-          force: true,
         },
         30_000,
       );
@@ -186,15 +234,12 @@ export class RuntimeCapabilitiesPanel extends LitElement {
       const acquired = await gateway.request<RuntimeCapabilityAcquireResult>(
         Methods.RUNTIME_CAPABILITY_ACQUIRE,
         {
-          slotId: this.slotId,
+          slotId,
           capabilityId: entry.id,
           ownerRunId,
           revalidateHealth: true,
-          proofRequirement: {
-            capabilityId: entry.id,
-            reason: 'operator restart from Slot View',
-            mode: 'state',
-          },
+          proofRequirement: requirement,
+          ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
         },
         120_000,
       );
@@ -206,22 +251,29 @@ export class RuntimeCapabilitiesPanel extends LitElement {
     });
   }
 
+  /**
+   * Run one recovery action and keep its outcome visible.
+   *
+   * The action error is held separately from the fetch error: `refresh()` clears
+   * its own error on success, which used to erase the very failure the operator
+   * needed to read.
+   */
   private async runRecovery(
     capabilityId: string,
     action: RuntimeCapabilityRecoveryAction,
+    slotId: string,
     perform: () => Promise<void>,
   ): Promise<void> {
     this.busyAction = { capabilityId, action };
+    this.actionError = '';
     try {
       await perform();
-      await this.refresh();
     } catch (error) {
-      // The failure is surfaced, never swallowed: the panel would otherwise
-      // re-render an unchanged row that reads as a successful no-op.
-      this.error = error instanceof Error ? error.message : String(error);
-      await this.refresh();
+      this.actionError = `${action} ${capabilityId}: ${error instanceof Error ? error.message : String(error)}`;
     } finally {
       this.busyAction = null;
+      // Only refresh the slot the action targeted; the operator may have moved.
+      if (slotId === this.slotId) await this.refresh();
     }
   }
 
@@ -277,6 +329,11 @@ export class RuntimeCapabilitiesPanel extends LitElement {
           </button>
         </header>
         ${this.error ? html`<div class="error" role="alert">${this.error}</div>` : nothing}
+        ${this.actionError
+          ? html`<div class="error" role="alert" data-testid="runtime-capability-action-error">
+              ${this.actionError}
+            </div>`
+          : nothing}
         ${catalog.length === 0 && !this.loading
           ? html`<div class="empty">No runtime capabilities configured for this project.</div>`
           : html` <div class="list">${catalog.map((entry) => this.renderCapability(entry))}</div> `}
@@ -390,6 +447,11 @@ export class RuntimeCapabilitiesPanel extends LitElement {
           : nothing}
         ${!active && entry.availability.state === 'unavailable'
           ? html`<div class="error">Unavailable: ${entry.availability.reason}</div>`
+          : nothing}
+        ${runtimeCapabilityWarmStopUnavailable(view)
+          ? html`<div class="warm-note" data-testid=${`runtime-capability-warm-note-${entry.id}`}>
+              ${runtimeCapabilityWarmStopUnavailable(view)}
+            </div>`
           : nothing}
         <div class="recovery">
           ${recoveryActions.includes('acquire')
@@ -558,6 +620,15 @@ export class RuntimeCapabilitiesPanel extends LitElement {
     ul {
       margin: 3px 0 0;
       padding-left: 16px;
+    }
+    .warm-note {
+      margin-top: 8px;
+      padding: 6px 8px;
+      border-radius: 4px;
+      background: #2a2a1c;
+      color: #ded39a;
+      font-size: 10px;
+      line-height: 1.45;
     }
     .recovery {
       display: flex;

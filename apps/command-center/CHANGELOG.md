@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- feat(probes): add the `run-resource-posture` probe, which reads the Run Detail posture summary and capability rows from the rendered page and drives the human-gate posture preview through the real UI path.
+- feat(probes): add the `run-resource-posture` probe, which reads the Run Detail posture summary and capability rows from the rendered page and drives the human-gate posture preview through the real UI path, and the `run-resource-posture-surfaces` probe, which drives the backlog `waitPolicy` field and one Slot View recovery action through real clicks and reads both back from the Gateway.
 - feat(probes): `cdp.mjs focus <hash>` fronts a tab and grants clipboard access so probes can exercise real copy buttons; add the `run-session-command` probe for the Run Detail runner-session panel.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

@@ -129,12 +129,21 @@ export interface RunPostureSummary {
   waitPolicy?: ResourcePostureWaitPolicy;
   workerRetained: boolean;
   /**
-   * Counts of the Gateway's desired disposition. `failed` is separate and counts
-   * capabilities whose provider contradicts that intent — a cleanup failure, an
-   * unhealthy provider, or anything else the row marks as a mismatch — so a
-   * failed cleanup can never be presented inside the "stopped" total.
+   * Counts of what the providers are observed to be doing, not of what was
+   * wanted. `stopped` requires an observed `stopped`: a provider the Gateway
+   * intended to stop but which is still running, or whose cleanup failed, must
+   * never be counted as stopped. Anything the Gateway cannot currently place —
+   * unknown, transitioning, or contradicting its intent — lands in `unresolved`
+   * so the four buckets always account for every row instead of quietly
+   * dropping one.
    */
-  counts: { retained: number; warm: number; stopped: number; failed: number };
+  counts: {
+    retained: number;
+    warm: number;
+    stopped: number;
+    failed: number;
+    unresolved: number;
+  };
   rows: RunPostureCapabilityRow[];
   lastTransition?: ResourcePostureTransition;
   updatedAt: string;
@@ -142,12 +151,26 @@ export interface RunPostureSummary {
 
 export function summarizeRunPosture(state: RunResourcePostureState): RunPostureSummary {
   const rows = state.capabilities.map(postureCapabilityRow);
-  const counts = { retained: 0, warm: 0, stopped: 0, failed: 0 };
+  const failedInTransition = new Set(
+    (state.lastTransition?.failures ?? []).map((failure) => failure.capabilityId),
+  );
+  const counts = { retained: 0, warm: 0, stopped: 0, failed: 0, unresolved: 0 };
   for (const row of rows) {
-    if (row.desiredDisposition === 'acquired') counts.retained += 1;
-    else if (row.desiredDisposition === 'warm') counts.warm += 1;
-    else counts.stopped += 1;
-    if (row.cleanupFailure || row.rowStatus === 'mismatch') counts.failed += 1;
+    // A failure is reported as a failure and nothing else. Counting it in a
+    // disposition bucket as well would let "1 stopped" describe a provider the
+    // Gateway could not stop.
+    if (row.cleanupFailure || failedInTransition.has(row.capabilityId)) {
+      counts.failed += 1;
+      continue;
+    }
+    if (row.observedState === 'stopped') counts.stopped += 1;
+    else if (row.observedState === 'running') {
+      if (row.desiredDisposition === 'warm') counts.warm += 1;
+      else if (row.desiredDisposition === 'acquired') counts.retained += 1;
+      // Running against a stop intent is neither retained nor stopped.
+      else counts.unresolved += 1;
+    } else if (row.observedState === 'unhealthy') counts.failed += 1;
+    else counts.unresolved += 1;
   }
   return {
     posture: state.posture,
@@ -286,6 +309,7 @@ export function renderRunPostureSummary(state: RunPostureStatusState): unknown {
       data-warm-count=${String(summary.counts.warm)}
       data-stopped-count=${String(summary.counts.stopped)}
       data-failed-count=${String(summary.counts.failed)}
+      data-unresolved-count=${String(summary.counts.unresolved)}
     >
       <div class="posture-title">Resource posture</div>
       <div class="posture-headline">
@@ -298,7 +322,10 @@ export function renderRunPostureSummary(state: RunPostureStatusState): unknown {
         >
         <span class="posture-counts" data-testid="run-posture-counts"
           >${summary.counts.retained} retained · ${summary.counts.warm} warm ·
-          ${summary.counts.stopped} stopped · ${summary.counts.failed} failed</span
+          ${summary.counts.stopped} stopped · ${summary.counts.failed}
+          failed${summary.counts.unresolved
+            ? ` · ${summary.counts.unresolved} unresolved`
+            : ''}</span
         >
         <span class="posture-source" data-testid="run-posture-worker"
           >worker ${summary.workerRetained ? 'retained' : 'stopped'}</span

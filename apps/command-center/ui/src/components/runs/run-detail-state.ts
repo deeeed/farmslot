@@ -52,6 +52,12 @@ export abstract class RunDetailState extends LitElement {
   @state() _postureGate: RunPostureGateState = { choice: null, status: 'idle' };
   _postureStatusRequestSeq = 0;
   _postureStatusKey = '';
+  /**
+   * Which pending decisions the current gate preview belongs to. A decision
+   * resolved elsewhere followed by a new one keeps the same run id, so the
+   * run-switch reset alone would leave a stale plan on screen.
+   */
+  _postureGateKey = '';
   _posturePreviewRequestSeq = 0;
   @state() _rescueInProgress = false;
   @state() _interactiveDevActionInProgress: string | null = null;

@@ -5,14 +5,19 @@ import {
   RESOURCE_POSTURE_GATE_CHOICES,
   type ResourcePostureCapabilityState,
   type ResourcePosturePlan,
+  type Run,
 } from '@farmslot/protocol';
 
 import {
   canResolveWithPostureChoice,
   gateChoiceHelp,
   gateChoiceLabel,
+  pendingDecisionKey,
+  postureChoiceHonored,
+  postureChoicesApply,
   postureGatePreviewLines,
   postureGatePreviewSummary,
+  postureResolveBlockReason,
   RUN_POSTURE_GATE_CHOICES,
 } from './run-detail-posture-gate-renderers.js';
 
@@ -117,4 +122,105 @@ test('no chosen posture leaves the gate resolvable exactly as before', () => {
   // Posture is additive: an operator who ignores it must still be able to
   // resolve the decision.
   assert.equal(canResolveWithPostureChoice({ choice: null, status: 'idle' }), true);
+});
+
+function decision(id: string, resolvedAt?: string): Run['decisions'][number] {
+  return {
+    id,
+    type: 'monitor_interactive_handoff',
+    title: 'Interactive handoff',
+    description: 'Finish in the slot, then resume.',
+    actions: [],
+    createdAt: '2026-09-05T10:00:00.000Z',
+    ...(resolvedAt ? { resolvedAt } : {}),
+  };
+}
+
+function runWith(decisions: Run['decisions']): Pick<Run, 'id' | 'decisions'> {
+  return { id: 'run-1', decisions };
+}
+
+test('the gate key changes when a new decision replaces a resolved one on the same run', () => {
+  // The stale-preview bug: the run id never changes, so a run-keyed reset alone
+  // leaves the previous gate's plan rendered beside the new decision.
+  const first = pendingDecisionKey(runWith([decision('gate-a')]));
+  const afterResolve = pendingDecisionKey(
+    runWith([decision('gate-a', '2026-09-05T11:00:00.000Z'), decision('gate-b')]),
+  );
+
+  assert.notEqual(first, afterResolve);
+  assert.equal(first, 'run-1:gate-a');
+  assert.equal(afterResolve, 'run-1:gate-b');
+});
+
+test('the gate key ignores decision order and resolved decisions', () => {
+  assert.equal(
+    pendingDecisionKey(runWith([decision('b'), decision('a')])),
+    pendingDecisionKey(runWith([decision('a'), decision('b')])),
+  );
+  assert.equal(pendingDecisionKey(runWith([decision('a', '2026-09-05T11:00:00.000Z')])), 'run-1:');
+  assert.equal(pendingDecisionKey(null), '');
+});
+
+test('a failed preview request and a Gateway rejection give different guidance', () => {
+  const failed = postureResolveBlockReason({
+    choice: 'minimize',
+    status: 'error',
+    message: 'gateway RPC timeout after 15000ms',
+  });
+  const rejected = postureResolveBlockReason({
+    choice: 'free-slot',
+    status: 'ready',
+    plan: plan({
+      posture: 'parked',
+      rejection: {
+        kind: 'park-ineligible',
+        code: 'STATUS_NOT_ELIGIBLE',
+        reason: "status 'blocked' is not monitoring or ci-watching",
+      },
+    }),
+  });
+
+  assert.match(failed ?? '', /preview request failed/);
+  assert.match(failed ?? '', /Retry it/);
+  assert.match(failed ?? '', /gateway RPC timeout after 15000ms/);
+  assert.doesNotMatch(failed ?? '', /rejected/);
+
+  assert.match(rejected ?? '', /rejected this choice/);
+  assert.match(rejected ?? '', /STATUS_NOT_ELIGIBLE/);
+  assert.doesNotMatch(rejected ?? '', /request failed/);
+});
+
+test('nothing blocks resolution when no choice is selected or the plan is clean', () => {
+  assert.equal(postureResolveBlockReason({ choice: null, status: 'idle' }), null);
+  assert.equal(
+    postureResolveBlockReason({ choice: 'minimize', status: 'ready', plan: plan() }),
+    null,
+  );
+});
+
+test('choices are offered only where the Gateway would honour them', () => {
+  // The Gateway resolves a gate choice into a posture only while the run's
+  // persisted posture is operator-wait; anywhere else the choice is ignored.
+  assert.equal(postureChoicesApply('operator-wait'), true);
+  assert.equal(postureChoicesApply('active'), false);
+  assert.equal(postureChoicesApply('terminal'), false);
+  assert.equal(postureChoicesApply('parked'), false);
+  assert.equal(postureChoicesApply(undefined), false);
+});
+
+test('an unknown posture offers no choices, so none can be sent before it is known', () => {
+  // `undefined` means the posture has not been read yet, never that the run is
+  // outside an operator wait — either way nothing is offered.
+  assert.equal(postureChoicesApply(undefined), false);
+});
+
+test('a plan the Gateway did not resolve from the choice is reported as such', () => {
+  // A run whose posture is not operator-wait gets the lifecycle-boundary plan
+  // back; presenting it as the effect of the clicked choice would be a lie.
+  assert.equal(postureChoiceHonored(plan({ policySource: 'gate-choice' })), true);
+  assert.equal(
+    postureChoiceHonored(plan({ posture: 'active', policySource: 'framework-default' })),
+    false,
+  );
 });

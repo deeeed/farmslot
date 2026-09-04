@@ -113,8 +113,8 @@ export interface RunDecisionRenderContext {
   confirmResolve: (runId: string, decision: RunDecision, actionId: string) => void;
   /** ADR-054 gate choice plus the Gateway's preview of its effect. */
   posture: RunPostureGateState;
-  /** True when the previewed choice was rejected, so resolving it is blocked. */
-  postureResolveBlocked: boolean;
+  /** Why resolving is blocked by the posture choice, or null when it is not. */
+  postureBlockedReason: string | null;
   selectPostureChoice: (choice: ResourcePostureGateChoice | null) => void;
   resolveSlotPick: (runId: string, decisionId: string) => void;
   resolveBranchNudgePick: (runId: string, decisionId: string) => void;
@@ -217,6 +217,11 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
         : hasPayload
           ? html`
               <div class="gate-workspace">
+                ${renderRunPostureGateChoices({
+                  state: context.posture,
+                  disabled: context.actionsBlocked,
+                  onSelect: (choice) => context.selectPostureChoice(choice),
+                })}
                 ${isReview
                   ? html`
                       <review-workspace
@@ -224,6 +229,8 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                         .decision=${pending}
                         slotId=${run.slotId ?? ''}
                         branch=${run.branch ?? ''}
+                        .resourcePosture=${context.posture.choice}
+                        .postureBlockedReason=${context.postureBlockedReason}
                       ></review-workspace>
                     `
                   : html`
@@ -236,6 +243,8 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                         slotId=${run.slotId ?? ''}
                         branch=${run.branch ?? ''}
                         runner=${run.metrics.runner ?? ''}
+                        .resourcePosture=${context.posture.choice}
+                        .postureBlockedReason=${context.postureBlockedReason}
                         @recipe-complete=${(event: CustomEvent<RecipeCompleteDetail>) =>
                           context.handleRecipeRunArtifacts(run, event.detail, true)}
                         @recipe-artifacts-request=${(event: CustomEvent<RecipeCompleteDetail>) =>
@@ -332,7 +341,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                       confirmResolve: context.confirmResolve,
                       checkSignalAndResume: context.checkInteractiveHandoffSignal,
                       posture: context.posture,
-                      postureResolveBlocked: context.postureResolveBlocked,
+                      postureBlockedReason: context.postureBlockedReason,
                       selectPostureChoice: context.selectPostureChoice,
                     })
                   : html`
@@ -391,10 +400,8 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                                               ? `border-color:${colors.statusFail}; color:${colors.statusFail}`
                                               : `border-color:${colors.textMuted}; color:${colors.textMuted}`}"
                                         ?disabled=${context.actionsBlocked ||
-                                        context.postureResolveBlocked}
-                                        title=${context.postureResolveBlocked
-                                          ? 'The Gateway rejected the selected resource posture; pick another choice first.'
-                                          : help}
+                                        context.postureBlockedReason !== null}
+                                        title=${context.postureBlockedReason ?? help}
                                         @click=${() =>
                                           context.confirmResolve(run.id, pending, a.id)}
                                       >

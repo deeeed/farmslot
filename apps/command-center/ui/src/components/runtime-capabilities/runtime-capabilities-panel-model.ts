@@ -1,7 +1,8 @@
-import type {
-  ResourcePostureObservedState,
-  RuntimeCapabilityCatalogEntry,
-  RuntimeCapabilityLease,
+import {
+  observedStateForLease,
+  type ResourcePostureObservedState,
+  type RuntimeCapabilityCatalogEntry,
+  type RuntimeCapabilityLease,
 } from '@farmslot/protocol';
 
 const PROVIDER_HOLDER_STATES = new Set<RuntimeCapabilityLease['state']>([
@@ -28,18 +29,24 @@ export function projectRuntimeCapabilityLeases(leases: RuntimeCapabilityLease[])
  * lease whose `keepWarmUntil` is still in the future leaves a live provider
  * behind, and the panel used to label exactly that case "Released", which reads
  * as "nothing is running".
+ *
+ * The provider verdict itself is never decided here: `observedStateForLease` in
+ * the protocol is the one derivation the Gateway and every client share. This
+ * module only turns that verdict into operator-facing words.
  */
 export interface RuntimeCapabilityRetentionView {
   /** Ownership: what the lease record says. */
   leaseLabel: string;
-  /** What the provider is doing, in the shared posture vocabulary. */
+  /** What the provider is doing, as the shared derivation reports it. */
   observedState: ResourcePostureObservedState;
   observedLabel: string;
-  /** ISO deadline while a released provider is still warm, else undefined. */
+  /** ISO deadline while a released provider is still within its warm window. */
   warmUntil?: string;
   /** Why the provider is in this state, in operator words. */
   retentionReason: string;
   cleanupFailure?: string;
+  /** True while a released lease is still inside its keep-warm window. */
+  warmWindowOpen: boolean;
 }
 
 function leaseLabelFor(
@@ -55,10 +62,62 @@ function leaseLabelFor(
   return `${lease.state.charAt(0).toUpperCase()}${lease.state.slice(1)}`;
 }
 
+const OBSERVED_LABELS: Record<ResourcePostureObservedState, string> = {
+  running: 'running',
+  stopped: 'stopped',
+  unhealthy: 'unhealthy',
+  transitioning: 'transitioning',
+  unknown: 'not observed',
+};
+
 /**
- * Derive lease-versus-provider state for one capability.
+ * Why the provider is in the state the Gateway reports. Explanation only — the
+ * state itself is never recomputed here.
+ */
+function retentionReasonFor(input: {
+  entry: Pick<RuntimeCapabilityCatalogEntry, 'availability'>;
+  lease: RuntimeCapabilityLease | undefined;
+  observed: ResourcePostureObservedState;
+  warmWindowOpen: boolean;
+}): string {
+  const { entry, lease, observed, warmWindowOpen } = input;
+  if (!lease) {
+    return entry.availability.state === 'unavailable'
+      ? (entry.availability.reason ?? 'the provider reports itself unavailable')
+      : 'no lease has been taken on this slot';
+  }
+  if (lease.cleanupFailure) return lease.cleanupFailure;
+  if (lease.state === 'error') {
+    return 'the last lifecycle action failed; the provider state is not proven';
+  }
+  if (lease.state === 'acquiring' || lease.state === 'releasing') {
+    return `a ${lease.state} action is in flight`;
+  }
+  if (lease.state === 'queued') {
+    return lease.pressure?.reason ?? 'the reservation is queued behind another holder';
+  }
+  if (lease.state === 'released') {
+    if (warmWindowOpen) {
+      return 'the lease was released but keep-warm holds the provider open for reuse';
+    }
+    if (lease.keepWarmUntil) {
+      // The Gateway reports `unknown` here on purpose: the warm deadline is a
+      // schedule, and the sweeper may not have run yet.
+      return 'the keep-warm deadline has passed; the Gateway has not yet confirmed the provider stopped';
+    }
+    return 'the lease was released with no keep-warm window';
+  }
+  if (observed === 'unhealthy') {
+    return lease.health.detail ?? 'the provider health check failed while acquired';
+  }
+  if (observed === 'running') return 'held by an active lease and passing its health check';
+  return 'the lease is held but no health check has answered yet';
+}
+
+/**
+ * Lease-versus-provider view for one capability.
  *
- * `nowMs` is passed in rather than read from the clock so the warm deadline is
+ * `nowMs` is passed in rather than read from the clock so the warm window is
  * evaluated against the same instant the caller rendered with.
  */
 export function runtimeCapabilityRetentionView(input: {
@@ -68,108 +127,35 @@ export function runtimeCapabilityRetentionView(input: {
   nowMs: number;
 }): RuntimeCapabilityRetentionView {
   const { entry, lease, planned, nowMs } = input;
-  const leaseLabel = leaseLabelFor(lease, planned, entry);
-  if (!lease) {
-    return {
-      leaseLabel,
-      observedState: 'unknown',
-      observedLabel: 'not observed',
-      retentionReason:
-        entry.availability.state === 'unavailable'
-          ? (entry.availability.reason ?? 'the provider reports itself unavailable')
-          : 'no lease has been taken on this slot',
-    };
-  }
-  const cleanupFailure = lease.cleanupFailure;
-  if (lease.state === 'error') {
-    return {
-      leaseLabel,
-      observedState: 'unhealthy',
-      observedLabel: 'unhealthy',
-      retentionReason:
-        cleanupFailure ?? 'the last lifecycle action failed; the provider state is not proven',
-      ...(cleanupFailure ? { cleanupFailure } : {}),
-    };
-  }
-  if (lease.state === 'acquiring' || lease.state === 'releasing') {
-    return {
-      leaseLabel,
-      observedState: 'transitioning',
-      observedLabel: 'transitioning',
-      retentionReason: `a ${lease.state} action is in flight`,
-      ...(cleanupFailure ? { cleanupFailure } : {}),
-    };
-  }
-  if (lease.state === 'released') {
-    const warmUntilMs = lease.keepWarmUntil ? Date.parse(lease.keepWarmUntil) : Number.NaN;
-    if (Number.isFinite(warmUntilMs) && warmUntilMs > nowMs) {
-      return {
-        leaseLabel,
-        observedState: 'running',
-        observedLabel: 'running (warm)',
-        warmUntil: lease.keepWarmUntil,
-        retentionReason: 'the lease was released but keep-warm holds the provider open for reuse',
-        ...(cleanupFailure ? { cleanupFailure } : {}),
-      };
-    }
-    if (cleanupFailure) {
-      return {
-        leaseLabel,
-        observedState: 'unhealthy',
-        observedLabel: 'unhealthy',
-        retentionReason: cleanupFailure,
-        cleanupFailure,
-      };
-    }
-    return {
-      leaseLabel,
-      observedState: 'stopped',
-      observedLabel: 'stopped',
-      retentionReason: 'the lease was released and its keep-warm window has passed',
-    };
-  }
-  if (lease.state === 'queued') {
-    return {
-      leaseLabel,
-      observedState: 'unknown',
-      observedLabel: 'not observed',
-      retentionReason: lease.pressure?.reason ?? 'the reservation is queued behind another holder',
-    };
-  }
-  // acquired
-  if (lease.health.state === 'unhealthy') {
-    return {
-      leaseLabel,
-      observedState: 'unhealthy',
-      observedLabel: 'unhealthy',
-      retentionReason: lease.health.detail ?? 'the provider health check failed while acquired',
-      ...(cleanupFailure ? { cleanupFailure } : {}),
-    };
-  }
-  if (lease.health.state === 'unknown') {
-    // An acquired lease with no health answer is not proof the provider is up.
-    return {
-      leaseLabel,
-      observedState: 'unknown',
-      observedLabel: 'not observed',
-      retentionReason: 'the lease is held but no health check has answered yet',
-      ...(cleanupFailure ? { cleanupFailure } : {}),
-    };
-  }
+  // The Gateway's derivation, not ours.
+  const observedState = observedStateForLease(lease, nowMs);
+  const warmWindowOpen = Boolean(
+    lease?.state === 'released' && lease.keepWarmUntil && Date.parse(lease.keepWarmUntil) > nowMs,
+  );
+  const cleanupFailure = lease?.cleanupFailure;
   return {
-    leaseLabel,
-    observedState: 'running',
-    observedLabel: 'running',
-    retentionReason: 'held by an active lease and passing its health check',
+    leaseLabel: leaseLabelFor(lease, planned, entry),
+    observedState,
+    observedLabel:
+      warmWindowOpen && observedState === 'running'
+        ? 'running (warm)'
+        : OBSERVED_LABELS[observedState],
+    ...(warmWindowOpen && lease?.keepWarmUntil ? { warmUntil: lease.keepWarmUntil } : {}),
+    retentionReason: retentionReasonFor({ entry, lease, observed: observedState, warmWindowOpen }),
     ...(cleanupFailure ? { cleanupFailure } : {}),
+    warmWindowOpen,
   };
 }
 
 export type RuntimeCapabilityRecoveryAction = 'acquire' | 'restart' | 'release';
 
 /**
- * Which recovery actions apply to a capability right now. Acquire needs an owner
- * run; restart and release need something to act on.
+ * Which recovery actions this panel can honestly perform right now.
+ *
+ * `release` is offered only for a lease the Gateway will actually act on. The
+ * release RPC skips leases that are already released, so offering "Stop" for a
+ * warm provider would report success while the process kept running. Stopping a
+ * warm provider needs a capability-scoped Gateway call that does not exist yet.
  */
 export function runtimeCapabilityRecoveryActions(input: {
   view: RuntimeCapabilityRetentionView;
@@ -182,7 +168,17 @@ export function runtimeCapabilityRecoveryActions(input: {
   const held = Boolean(lease && lease.state !== 'released' && lease.state !== 'queued');
   if (!held && hasOwnerRunId && available) actions.push('acquire');
   if (held && hasOwnerRunId) actions.push('restart');
-  // A warm provider still has something to stop even though its lease is gone.
-  if (held || view.observedState === 'running' || view.cleanupFailure) actions.push('release');
+  if (held || view.cleanupFailure) actions.push('release');
   return actions;
+}
+
+/**
+ * A warm provider the panel cannot stop, and why. Rendered so the missing
+ * control is explained instead of silently absent.
+ */
+export function runtimeCapabilityWarmStopUnavailable(
+  view: RuntimeCapabilityRetentionView,
+): string | null {
+  if (!view.warmWindowOpen) return null;
+  return 'This provider is warm: its lease is released but the process stays up for reuse. Stopping it from here is not available yet; it stops at its keep-warm deadline or when the run reaches terminal cleanup.';
 }

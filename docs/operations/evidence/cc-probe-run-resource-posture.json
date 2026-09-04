@@ -1,52 +1,159 @@
 {
-  "ok": true,
-  "runId": "f50571a6-8638-40e7-be02-65b59a2afa5c",
-  "slotId": "macpro-ff-1",
-  "capturedAt": "2026-09-04T20:43:41.711Z",
-  "summary": {
-    "posture": "operator-wait",
-    "policySource": "framework-default",
-    "counts": {
-      "retained": 1,
-      "warm": 0,
-      "stopped": 0,
-      "failed": 0
-    },
-    "name": "Operator wait",
-    "source": "policy from framework default",
-    "countsText": "1 retained · 0 warm · 0 stopped · 0 failed",
-    "worker": "worker retained",
-    "lastTransition": "Last transition to Operator wait: applied · 2026-09-04T20:42:23.066Z · 1/1 steps",
-    "effects": null,
-    "rejection": null
-  },
-  "rows": [
-    {
-      "capabilityId": "sandbox-gateway-ui",
-      "desiredDisposition": "acquired",
-      "observedState": "running",
-      "rowStatus": "matches",
-      "text": "sandbox-gateway-ui wants retained observed running (as intended) kept so the next operator action stays usable"
-    }
-  ],
-  "rowsCarryBothStates": true,
-  "gate": {
-    "present": true,
-    "skipped": null,
-    "choices": ["keep-for-validation", "minimize", "free-slot", "project-default"],
-    "previewSettled": true,
-    "previewSummary": "Operator wait via operator gate choice — 1 retained",
-    "previewError": null,
-    "previewRejection": null,
-    "previewLines": [
-      "retain sandbox-gateway-ui — operator chose minimize: kept so the next operator action stays usable"
-    ],
-    "freeSlot": {
-      "settled": true,
-      "summary": "Parked via operator gate choice — 1 stopped",
-      "error": null,
+  "testedSha": "5945c786c69488fee74667a63f9472c3c12804eb",
+  "testedTreeDirty": true,
+  "capturedAt": "2026-09-04T21:53:59.364Z",
+  "runDetail": {
+    "ok": true,
+    "testedSha": null,
+    "runId": "96edc109-b121-4c7b-a473-6844be5fd41f",
+    "slotId": "macpro-ff-1",
+    "capturedAt": "2026-09-04T21:44:41.859Z",
+    "summary": {
+      "posture": "operator-wait",
+      "policySource": "framework-default",
+      "counts": {
+        "retained": 1,
+        "warm": 0,
+        "stopped": 0,
+        "failed": 0
+      },
+      "name": "Operator wait",
+      "source": "policy from framework default",
+      "countsText": "1 retained · 0 warm · 0 stopped · 0 failed",
+      "worker": "worker retained",
+      "lastTransition": "Last transition to Operator wait: applied · 2026-09-04T21:42:49.580Z · 1/1 steps",
+      "effects": null,
       "rejection": null
-    }
+    },
+    "rows": [
+      {
+        "capabilityId": "sandbox-gateway-ui",
+        "desiredDisposition": "acquired",
+        "observedState": "running",
+        "rowStatus": "matches",
+        "text": "sandbox-gateway-ui wants retained observed running (as intended) kept so the next operator action stays usable"
+      }
+    ],
+    "rowsCarryBothStates": true,
+    "gate": {
+      "present": true,
+      "skipped": null,
+      "choices": ["keep-for-validation", "minimize", "free-slot", "project-default"],
+      "previewSettled": true,
+      "previewSummary": "Operator wait via operator gate choice — 1 retained",
+      "previewError": null,
+      "previewRejection": null,
+      "previewLines": [
+        "retain sandbox-gateway-ui — operator chose minimize: kept so the next operator action stays usable"
+      ],
+      "freeSlot": {
+        "settled": true,
+        "summary": "Parked via operator gate choice — no capability changes",
+        "error": null,
+        "rejection": "Rejected — the run cannot be parked (STATUS_NOT_ELIGIBLE): status 'blocked' is not monitoring or ci-watching"
+      },
+      "surface": "inline"
+    },
+    "gateProved": true
   },
-  "gateProved": true
+  "surfaces": {
+    "slotId": "macpro-ff-1",
+    "capturedAt": "2026-09-04T21:45:27.213Z",
+    "backlog": {
+      "attempted": true,
+      "itemId": "7b3235c9-8288-4785-92d6-73aad1d35bff",
+      "originalWaitPolicy": null,
+      "persistedWaitPolicy": "minimize",
+      "persisted": true,
+      "restoredWaitPolicy": null,
+      "restored": true
+    },
+    "slotView": {
+      "attempted": true,
+      "rows": [
+        {
+          "capabilityId": "sandbox-gateway-ui",
+          "leaseState": "acquired",
+          "observedState": "running",
+          "warmUntil": null,
+          "reason": "Why held by an active lease and passing its health check",
+          "warmNote": null,
+          "actions": [
+            "runtime-capability-restart-sandbox-gateway-ui",
+            "runtime-capability-release-sandbox-gateway-ui"
+          ]
+        },
+        {
+          "capabilityId": "companion-native-client-ios",
+          "leaseState": "released",
+          "observedState": "stopped",
+          "warmUntil": null,
+          "reason": "Why the lease was released with no keep-warm window",
+          "warmNote": null,
+          "actions": ["runtime-capability-acquire-companion-native-client-ios"]
+        },
+        {
+          "capabilityId": "ios-simulator",
+          "leaseState": "released",
+          "observedState": "stopped",
+          "warmUntil": null,
+          "reason": "Why the lease was released with no keep-warm window",
+          "warmNote": null,
+          "actions": ["runtime-capability-acquire-ios-simulator"]
+        },
+        {
+          "capabilityId": "android-device",
+          "leaseState": "unavailable",
+          "observedState": "stopped",
+          "warmUntil": null,
+          "reason": "Why Slot 'macpro-ff-1' does not configure resource 'android-device'",
+          "warmNote": null,
+          "actions": []
+        },
+        {
+          "capabilityId": "browser-cdp",
+          "leaseState": "available",
+          "observedState": "stopped",
+          "warmUntil": null,
+          "reason": "Why no lease has been taken on this slot",
+          "warmNote": null,
+          "actions": ["runtime-capability-acquire-browser-cdp"]
+        },
+        {
+          "capabilityId": "companion-metro",
+          "leaseState": "released",
+          "observedState": "stopped",
+          "warmUntil": null,
+          "reason": "Why the lease was released with no keep-warm window",
+          "warmNote": null,
+          "actions": ["runtime-capability-acquire-companion-metro"]
+        },
+        {
+          "capabilityId": "recording",
+          "leaseState": "available",
+          "observedState": "stopped",
+          "warmUntil": null,
+          "reason": "Why no lease has been taken on this slot",
+          "warmNote": null,
+          "actions": ["runtime-capability-acquire-recording"]
+        }
+      ],
+      "rowsSeparateLeaseAndProvider": true,
+      "warmRowsOfferNoStop": true,
+      "action": "acquire",
+      "actionCapabilityId": "companion-native-client-ios",
+      "leasesBefore": 1,
+      "actionError": "acquire companion-native-client-ios: No stored proof plan for companion-native-client-ios on run 96edc109-b121-4c7b-a473-6844be5fd41f; the Gateway has no recorded reason or mode to acquire it under.",
+      "leasesAfter": 1,
+      "leaseStatesAfter": ["released"],
+      "actionProved": true
+    },
+    "ok": true
+  },
+  "readyReviewGate": {
+    "proved": false,
+    "reason": "No run in the fleet has a pending ready or review decision, and the scripted runner parks at monitor_interactive_handoff because its terminal SIGNAL.json is rejected by the worker artifact contract, so it never reaches a publication gate. The wiring is covered by the source-level guards in ui/src/components/workspace/workspace-posture-wiring.test.ts, which are regression guards and not proof.",
+    "provesInstead": "A real fix-bug run that reaches the READY gate would prove it end to end."
+  },
+  "ok": true
 }

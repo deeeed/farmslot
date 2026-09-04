@@ -13,9 +13,11 @@ import { html, nothing } from 'lit';
 
 import {
   RESOURCE_POSTURE_GATE_CHOICES,
+  type ResourcePosture,
   type ResourcePostureGateChoice,
   type ResourcePosturePlan,
   type ResourcePostureTransition,
+  type Run,
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
@@ -65,6 +67,51 @@ export interface RunPostureGateState {
   message?: string;
   /** Apply outcome recorded after the decision resolved, so a rejection is visible. */
   appliedTransition?: ResourcePostureTransition;
+  /**
+   * The Gateway's persisted posture for this run, when its status has been read.
+   * `undefined` means the status is not known yet — never that the run is
+   * outside an operator wait.
+   */
+  runPosture?: ResourcePosture;
+}
+
+/**
+ * Identity of the decisions currently waiting on this run, newest state first.
+ *
+ * A preview belongs to the gate it was requested for. When one decision is
+ * resolved elsewhere and another opens on the same run, the run id is unchanged,
+ * so the run-switch reset does not fire and a stale plan would render beside the
+ * new decision.
+ */
+export function pendingDecisionKey(run: Pick<Run, 'id' | 'decisions'> | null | undefined): string {
+  if (!run) return '';
+  const pending = run.decisions
+    .filter((decision) => !decision.resolvedAt)
+    .map((decision) => decision.id)
+    .sort();
+  return `${run.id}:${pending.join(',')}`;
+}
+
+/**
+ * Whether the Gateway would honour a gate choice for this run right now.
+ *
+ * The Gateway only resolves a gate choice into a posture while the run's
+ * persisted posture is `operator-wait`; at any other posture the choice is
+ * ignored and the plan comes back from the lifecycle boundary instead. Offering
+ * the choices anyway would let an operator pick something that silently does
+ * nothing. This reads the Gateway's own posture — it does not decide policy.
+ */
+export function postureChoicesApply(runPosture: ResourcePosture | undefined): boolean {
+  return runPosture === 'operator-wait';
+}
+
+/**
+ * Whether the Gateway actually resolved the plan from the operator's choice.
+ * A plan that came back from any other source is reported as such rather than
+ * being presented as the effect of the choice that was clicked.
+ */
+export function postureChoiceHonored(plan: ResourcePosturePlan): boolean {
+  return plan.policySource === 'gate-choice';
 }
 
 export interface RunPostureGatePreviewLine {
@@ -105,14 +152,39 @@ export function postureGatePreviewSummary(plan: ResourcePosturePlan): string {
 }
 
 /**
+ * Why resolving the gate with the current choice is blocked, or null when it is
+ * not blocked.
+ *
+ * A failed preview request and a Gateway rejection are different problems with
+ * different fixes — retry the request versus pick another choice — so they get
+ * different copy rather than one "the Gateway rejected this" message that is
+ * wrong half the time.
+ */
+export function postureResolveBlockReason(state: RunPostureGateState): string | null {
+  if (!state.choice) return null;
+  if (state.status === 'idle' || state.status === 'loading') {
+    return 'Waiting for the Gateway to report what this choice would do.';
+  }
+  if (state.status === 'error') {
+    const detail = state.message ? ` ${state.message}` : '';
+    return `The posture preview request failed, so this choice is unproven. Retry it or clear the choice.${detail}`;
+  }
+  if (!state.plan) {
+    return 'The Gateway returned no plan for this choice. Retry it or clear the choice.';
+  }
+  if (state.plan.rejection) {
+    return `The Gateway rejected this choice, so pick another. ${rejectionMessage(state.plan.rejection)}`;
+  }
+  return null;
+}
+
+/**
  * Whether the operator may resolve the gate with this choice. A previewed
  * rejection blocks it: sending a choice the Gateway already refused would only
  * produce the same refusal after the decision is gone.
  */
 export function canResolveWithPostureChoice(state: RunPostureGateState): boolean {
-  if (!state.choice) return true;
-  if (state.status !== 'ready' || !state.plan) return false;
-  return !state.plan.rejection;
+  return postureResolveBlockReason(state) === null;
 }
 
 export interface RunPostureGateRenderContext {
@@ -123,6 +195,9 @@ export interface RunPostureGateRenderContext {
 
 export function renderRunPostureGateChoices(ctx: RunPostureGateRenderContext): unknown {
   const { state } = ctx;
+  // Outside an operator wait the Gateway ignores a gate choice, so there is
+  // nothing honest to show. The guard lives here so no caller can bypass it.
+  if (!postureChoicesApply(state.runPosture)) return nothing;
   const plan = state.status === 'ready' ? state.plan : undefined;
   return html`
     <style>
@@ -215,6 +290,13 @@ export function renderRunPostureGateChoices(ctx: RunPostureGateRenderContext): u
             <div class="posture-gate-summary" data-testid="run-posture-preview-summary">
               ${postureGatePreviewSummary(plan)}
             </div>
+            ${state.choice && !plan.rejection && !postureChoiceHonored(plan)
+              ? html`<div class="posture-gate-help" data-testid="run-posture-preview-not-honored">
+                  The Gateway did not resolve this plan from the choice — it came from
+                  ${policySourceLabel(plan.policySource)}. Resolving now applies that, not the
+                  choice above.
+                </div>`
+              : nothing}
             ${postureGatePreviewLines(plan).map(
               (line) => html`
                 <div
