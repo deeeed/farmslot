@@ -265,6 +265,17 @@ export class RuntimeCapabilitiesPanel extends LitElement {
       if (!released.ok) {
         throw new Error(released.failures.map((failure) => failure.reason).join('; '));
       }
+      // `ok` alone is not proof this lease went away: the Gateway skips leases
+      // it will not act on and still reports success. Reacquiring on top of a
+      // provider that never stopped is exactly the duplicate this must avoid.
+      if (!released.released.some((entry) => entry.id === lease.id)) {
+        const retained = released.retained.find((entry) => entry.id === lease.id);
+        throw new Error(
+          `The Gateway did not release lease ${lease.id}, so the provider was not restarted: ${
+            retained?.cleanupFailure ?? 'it was not among the released leases'
+          }`,
+        );
+      }
       const acquired = await gateway.request<RuntimeCapabilityAcquireResult>(
         Methods.RUNTIME_CAPABILITY_ACQUIRE,
         {

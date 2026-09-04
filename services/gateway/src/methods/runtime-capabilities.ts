@@ -6,6 +6,7 @@ import {
   type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityCatalogEntry,
+  type RuntimeCapabilityLease,
   type RuntimeCapabilityListParams,
   type RuntimeCapabilityListResult,
   type RuntimeCapabilityProviderActionRef,
@@ -271,6 +272,8 @@ export async function releaseRuntimeCapabilitiesForSlot(
 export function stopWarmResultFromSummary(
   params: RuntimeCapabilityStopWarmParams,
   summary: WarmSweepSummary,
+  /** The capability's leases on this slot after the sweep. */
+  leases: RuntimeCapabilityLease[] = [],
 ): RuntimeCapabilityStopWarmResult {
   const base = { slotId: params.slotId, capabilityId: params.capabilityId };
   const failure = summary.failures.find((entry) => entry.capabilityId === params.capabilityId);
@@ -315,12 +318,22 @@ export function stopWarmResultFromSummary(
       effects: [],
     };
   }
+  // Nothing was warm, which says nothing about whether the provider is up: an
+  // active lease may still hold it. Read that off the leases rather than
+  // assuming stopped.
+  const heldByActiveLease = leases.some(
+    (lease) =>
+      lease.capabilityId === params.capabilityId &&
+      ['acquiring', 'acquired', 'releasing'].includes(lease.state),
+  );
   return {
     ...base,
     ok: true,
     outcome: 'not-warm',
-    observedState: 'stopped',
-    reason: `nothing is keeping '${params.capabilityId}' warm on ${params.slotId}`,
+    observedState: heldByActiveLease ? 'running' : 'stopped',
+    reason: heldByActiveLease
+      ? `'${params.capabilityId}' is not warm on ${params.slotId}; it is held by an active lease`
+      : `nothing is keeping '${params.capabilityId}' warm on ${params.slotId}`,
     effects: [],
   };
 }
@@ -344,8 +357,7 @@ export async function runtimeCapabilityStopWarm(
   if (typeof params.capabilityId !== 'string' || !params.capabilityId.trim()) {
     throw new Error('capabilityId must be a non-empty string');
   }
-  return stopWarmResultFromSummary(
-    params,
-    await registry.stopWarmProviders(params.slotId, [params.capabilityId]),
-  );
+  const summary = await registry.stopWarmProviders(params.slotId, [params.capabilityId]);
+  const status = await registry.status({ slotId: params.slotId });
+  return stopWarmResultFromSummary(params, summary, status.leases);
 }

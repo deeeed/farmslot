@@ -156,6 +156,11 @@ export type RuntimeCapabilityRecoveryAction = 'acquire' | 'restart' | 'release';
  * A warm provider offers Stop again: `runtime.capability.stopWarm` acts on
  * exactly the released-but-live lease that `runtime.capability.release` skips.
  * The two go to different RPCs, so the caller must pick by `warmWindowOpen`.
+ *
+ * Acquire stays available even when the provider's observed state is `unknown`.
+ * The registry health-checks any lease still carrying a keep-warm deadline,
+ * expired or not, and either adopts that provider or cleans it up before
+ * acquiring fresh — so deciding here would only withhold a safe action.
  */
 export function runtimeCapabilityRecoveryActions(input: {
   view: RuntimeCapabilityRetentionView;

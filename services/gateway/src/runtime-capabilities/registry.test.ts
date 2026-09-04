@@ -1347,3 +1347,76 @@ test('stopWarmProviders reports a cleanup failure instead of claiming stopped', 
   const status = await registry.status({ slotId: SLOT });
   assert.equal(status.leases[0]?.cleanupFailure, 'metro shutdown exited 1');
 });
+
+test('a failed warm cleanup keeps the dependency it still holds', async (t) => {
+  const warmApp = { ...entry('app', 'exclusive', ['metro']), keepWarmMs: 600_000 };
+  const warmMetro = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warmApp, warmMetro], {
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'app.release'
+        ? { ok: false, detail: 'app shutdown exited 1' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  actions.length = 0;
+
+  // Both are warm and both are asked to stop. app fails, so metro must stay.
+  const summary = await registry.stopWarmProviders(SLOT, ['app', 'metro']);
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['app.release'],
+    `metro was stopped under a parent that failed to stop: ${actions.join(', ')}`,
+  );
+  assert.deepEqual(
+    summary.failures.map((failure) => failure.capabilityId),
+    ['app'],
+  );
+  assert.deepEqual(
+    summary.deferred.map((lease) => lease.capabilityId),
+    ['metro'],
+  );
+  assert.deepEqual(summary.released, []);
+});
+
+test('an expired warm provider is adopted after a health check, not duplicated', async (t) => {
+  let clock = new Date('2026-08-11T00:00:00.000Z');
+  const warm = { ...entry('metro'), keepWarmMs: 60_000 };
+  const { registry, actions } = await fixture(t, [warm], { now: () => clock });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+
+  // Past the deadline, before the sweeper ran: the provider may still be alive.
+  clock = new Date('2026-08-11T00:05:00.000Z');
+  actions.length = 0;
+  const again = await acquire(registry, 'metro', 'run-b');
+  assert.equal(again.ok, true);
+  assert.ok(actions.includes('metro.health'), `no health check ran: ${actions.join(', ')}`);
+  assert.ok(
+    !actions.includes('metro.acquire'),
+    `a healthy expired-warm provider was started again: ${actions.join(', ')}`,
+  );
+});
+
+test('an expired warm provider that is dead is cleaned up before a fresh acquire', async (t) => {
+  let clock = new Date('2026-08-11T00:00:00.000Z');
+  let healthy = true;
+  const warm = { ...entry('metro'), keepWarmMs: 60_000 };
+  const { registry, actions } = await fixture(t, [warm], {
+    now: () => clock,
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'metro.health' && !healthy
+        ? { ok: false, detail: 'metro is not responding' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+
+  clock = new Date('2026-08-11T00:05:00.000Z');
+  healthy = false;
+  actions.length = 0;
+  const again = await acquire(registry, 'metro', 'run-b');
+  // Health fails, so the stale provider is torn down before a new one starts.
+  assert.ok(actions.includes('metro.release'), actions.join(', '));
+  assert.equal(again.ok, false, 'the dead provider is reported, not silently replaced');
+});

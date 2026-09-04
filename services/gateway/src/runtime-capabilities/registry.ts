@@ -685,13 +685,16 @@ export class RuntimeCapabilityRegistry {
       dependencyLeases.push(dependency.lease, ...dependency.dependencyLeases);
     }
 
+    // Any lease still carrying a keep-warm deadline, expired or not. An elapsed
+    // deadline is a schedule, not proof the provider stopped: the sweeper may
+    // not have run yet. Ignoring those started a second instance blind, so the
+    // health check below decides — adopt it, or clean it up and acquire fresh.
     const warmLease = snapshot.leases.find(
       (candidate) =>
         candidate.slotId === params.slotId &&
         candidate.capabilityId === entry.id &&
         candidate.state === 'released' &&
         candidate.keepWarmUntil !== undefined &&
-        Date.parse(candidate.keepWarmUntil) > this.now().getTime() &&
         candidate.provenance.digest === entry.provenance.digest,
     );
     let warmProviderHealthy = false;
@@ -1343,12 +1346,35 @@ export class RuntimeCapabilityRegistry {
       summary.deferred = selected
         .filter((lease) => heldByWarmDependent(lease))
         .map((lease) => structuredClone(lease));
-      const eligible = selected.filter((lease) => !heldByWarmDependent(lease));
+      // Leases this sweep did not actually stop. Seeded with the ones a warm or
+      // active dependent already holds, then extended as cleanups fail: a
+      // provider that failed to stop is still up, so whatever it depends on is
+      // still in use and must not be stopped beneath it.
+      const stillHolding = new Set<string>();
+      const eligible = selected.filter((lease) => {
+        if (!heldByWarmDependent(lease)) return true;
+        stillHolding.add(lease.id);
+        return false;
+      });
       const eligibleIds = new Set(eligible.map((lease) => lease.id));
       const expired = this.releaseOrder(snapshot, eligible).filter((lease) =>
         eligibleIds.has(lease.id),
       );
       for (const lease of expired) {
+        // Recheck against failures recorded earlier in this same pass. The
+        // release order visits dependents first, so a parent that just failed
+        // is already known by the time its dependency comes up.
+        const requiredByFailedDependent = snapshot.leases.some(
+          (candidate) =>
+            candidate.id !== lease.id &&
+            stillHolding.has(candidate.id) &&
+            candidate.dependencyLeaseIds.includes(lease.id),
+        );
+        if (requiredByFailedDependent) {
+          stillHolding.add(lease.id);
+          summary.deferred.push(structuredClone(lease));
+          continue;
+        }
         const hasHolder = snapshot.leases.some(
           (candidate) =>
             candidate.slotId === lease.slotId &&
@@ -1377,6 +1403,7 @@ export class RuntimeCapabilityRegistry {
             capabilityId: lease.capabilityId,
             reason: lease.cleanupFailure,
           });
+          stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'recovery-rejected',
             slotId: lease.slotId,
@@ -1401,6 +1428,7 @@ export class RuntimeCapabilityRegistry {
             capabilityId: lease.capabilityId,
             reason: lease.cleanupFailure,
           });
+          stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'recovery-rejected',
             slotId: lease.slotId,
@@ -1421,6 +1449,7 @@ export class RuntimeCapabilityRegistry {
             capabilityId: lease.capabilityId,
             reason: lease.cleanupFailure,
           });
+          stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'cleanup-failed',
             slotId: lease.slotId,

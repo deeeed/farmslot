@@ -204,7 +204,9 @@ return (async () => {
       rows.length > 0 &&
       gateProved,
     ),
-    testedSha: document.documentElement.dataset.farmslotSha ?? null,
+    // Set by the caller before the probe runs. Read from a page dataset this
+    // build never populates, it was silently null in every capture.
+    testedSha: window.__farmslotProbeSha ?? null,
     runId: detail.run?.id ?? null,
     slotId: detail.run?.slotId ?? null,
     capturedAt: new Date().toISOString(),

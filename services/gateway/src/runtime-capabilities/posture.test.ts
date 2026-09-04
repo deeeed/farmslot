@@ -18,7 +18,11 @@ import {
   type RuntimeCapabilityReleaseResult,
 } from '@farmslot/protocol';
 
-import { resolveEffectivePosturePolicy, RunResourcePostureReconciler } from './posture.js';
+import {
+  type PostureWarmSweepResult,
+  resolveEffectivePosturePolicy,
+  RunResourcePostureReconciler,
+} from './posture.js';
 import { RuntimeCapabilityRegistry } from './registry.js';
 import { RuntimeCapabilityStore } from './store.js';
 
@@ -83,6 +87,8 @@ interface HarnessOptions {
   hideLeasesOnFirstStatus?: boolean;
   /** Force the registry to report a lease it refused to release. */
   retainOnRelease?: string[];
+  /** Replace the warm-sweep result the reconciler sees. */
+  warmSweepResult?: PostureWarmSweepResult;
   now?: () => Date;
   storePath?: string;
 }
@@ -183,7 +189,8 @@ async function harness(t: TestContext, options: HarnessOptions) {
     releaseForPosture: async (slotId, dispositions) =>
       withForcedRetention(await registry.releaseForPosture(slotId, dispositions)),
     stopWarmProviders: async (slotId, capabilityIds) => {
-      await registry.stopWarmProviders(slotId, capabilityIds);
+      const swept = await registry.stopWarmProviders(slotId, capabilityIds);
+      return options.warmSweepResult ?? swept;
     },
     releaseRunTerminal: async (slotId, ownerRunId, familyId) =>
       withForcedRetention(await registry.releaseRunTerminal(slotId, ownerRunId, familyId)),
@@ -1263,4 +1270,48 @@ test('preview and apply agree on an already-parked run', async (t) => {
   assert.deepEqual(plan.effects, []);
   assert.match(plan.reason, /already parked/);
   assert.deepEqual(parkCalls, [], 'preview must not consult parking either');
+});
+
+test('the reconciler folds a failed warm cleanup into the transition', async (t) => {
+  // Driven through the sweep result: a real failure also leaves an error lease
+  // that the terminal release re-reports, which would mask whether the summary
+  // itself is being read.
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [CATALOG_METRO],
+    warmSweepResult: {
+      released: [],
+      deferred: [],
+      failures: [{ capabilityId: 'metro', leaseId: 'lease-1', reason: 'metro shutdown exited 1' }],
+      effects: [],
+    },
+  });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
+  assert.equal(result.transition.outcome, 'partial');
+  assert.equal(result.ok, false, 'a warm provider that would not stop is not a success');
+  const failure = result.transition.failures.find((item) => item.capabilityId === 'metro');
+  assert.ok(failure, JSON.stringify(result.transition.failures));
+  assert.match(failure.reason, /metro shutdown exited 1/);
+});
+
+test('the reconciler reports a deferred warm cleanup as still running', async (t) => {
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [CATALOG_METRO],
+    warmSweepResult: {
+      released: [],
+      deferred: [{ capabilityId: 'metro' }],
+      failures: [],
+      effects: [],
+    },
+  });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
+  const metro = result.status.capabilities.find((state) => state.capabilityId === 'metro');
+  assert.equal(metro?.desiredDisposition, 'stopped');
+  assert.equal(metro?.observedState, 'running', 'a deferred provider is demonstrably still up');
+  assert.match(metro?.reason ?? '', /still needs it/);
 });

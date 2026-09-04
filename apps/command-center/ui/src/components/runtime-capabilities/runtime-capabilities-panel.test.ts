@@ -390,3 +390,69 @@ test('a failed outcome shows the cleanup failure and never claims a stop', () =>
   assert.notEqual(view.observedState, 'stopped');
   assert.equal(view.keepStopAction, true);
 });
+
+test('an elapsed warm window still offers Acquire, delegating the check to the Gateway', () => {
+  // The registry health-checks any lease still carrying a keep-warm deadline,
+  // expired or not, then adopts that provider or cleans it up before acquiring
+  // fresh. Deciding here instead would only withhold a safe action.
+  const stale = lease('stale', 'released', 'run-1', {
+    keepWarmUntil: '2026-09-05T11:00:00.000Z',
+  });
+  const view = runtimeCapabilityRetentionView({
+    entry,
+    lease: stale,
+    planned: false,
+    nowMs: NOW_MS,
+  });
+
+  assert.equal(view.observedState, 'unknown');
+  assert.equal(
+    runtimeCapabilityRecoveryActions({
+      view,
+      lease: stale,
+      hasOwnerRunId: true,
+      available: true,
+    }).includes('acquire'),
+    true,
+  );
+});
+
+test('a stopped provider offers Acquire', () => {
+  const done = lease('done', 'released', 'run-1');
+  const view = runtimeCapabilityRetentionView({
+    entry,
+    lease: done,
+    planned: false,
+    nowMs: NOW_MS,
+  });
+
+  assert.equal(view.observedState, 'stopped');
+  assert.equal(
+    runtimeCapabilityRecoveryActions({
+      view,
+      lease: done,
+      hasOwnerRunId: true,
+      available: true,
+    }).includes('acquire'),
+    true,
+  );
+});
+
+test('a capability with no lease at all still offers Acquire', () => {
+  const view = runtimeCapabilityRetentionView({
+    entry,
+    lease: undefined,
+    planned: true,
+    nowMs: NOW_MS,
+  });
+
+  assert.equal(
+    runtimeCapabilityRecoveryActions({
+      view,
+      lease: undefined,
+      hasOwnerRunId: true,
+      available: true,
+    }).includes('acquire'),
+    true,
+  );
+});

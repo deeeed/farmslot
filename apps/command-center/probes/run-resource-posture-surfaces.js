@@ -88,7 +88,13 @@ return (async () => {
       socket.send(JSON.stringify({ type: 'req', id, method, params }));
     });
 
-  const report = { slotId: SLOT_ID, capturedAt: new Date().toISOString() };
+  const report = {
+    slotId: SLOT_ID,
+    // Set by the caller before the probe runs; the page has no build stamp of
+    // its own, so evidence would otherwise carry a null SHA.
+    testedSha: window.__farmslotProbeSha ?? null,
+    capturedAt: new Date().toISOString(),
+  };
   try {
     await rpc('auth.connect', {
       clientKind: 'ui',
@@ -344,13 +350,26 @@ return (async () => {
     // real control with a Gateway-verified outcome. The acquire attempt above is
     // opportunistic — it needs a run bound to the slot, which is not always
     // true — so it does not gate `ok`.
-    report.ok = Boolean(
-      report.backlog?.persisted &&
-      report.slotView?.rowsSeparateLeaseAndProvider &&
-      report.warmStop?.proved &&
-      report.warmStop?.honest &&
-      report.warmStop?.leftoverLeases === 0,
-    );
+    // A probe that leaves state behind, or cannot put back what it changed, has
+    // not passed: the next run would start from a different world than this saw.
+    const failures = [];
+    if (!report.backlog?.persisted) failures.push('the backlog wait policy did not persist');
+    if (report.backlog?.attempted && !report.backlog?.restored) {
+      failures.push(
+        `the backlog wait policy was not restored (left '${report.backlog?.restoredWaitPolicy ?? 'unset'}', expected '${report.backlog?.originalWaitPolicy ?? 'unset'}')`,
+      );
+    }
+    if (!report.slotView?.rowsSeparateLeaseAndProvider) {
+      failures.push('a capability row did not report lease state and provider state separately');
+    }
+    if (!report.warmStop?.proved) failures.push('the warm Stop produced no Gateway outcome');
+    if (!report.warmStop?.honest) failures.push('the warm Stop claimed a stop it did not observe');
+    if (report.warmStop?.cleanupReleaseError) failures.push(report.warmStop.cleanupReleaseError);
+    if (report.warmStop?.leftoverLeases !== 0) {
+      failures.push(`${report.warmStop?.leftoverLeases} lease(s) left behind by this probe`);
+    }
+    report.failures = failures;
+    report.ok = failures.length === 0;
     return report;
   } finally {
     socket.close();

@@ -90,10 +90,23 @@ test('a cleanup failure is never reported as stopped', () => {
 });
 
 test('a capability that was never warm is a successful no-op', () => {
-  const result = stopWarmResultFromSummary(PARAMS, summary());
+  const result = stopWarmResultFromSummary(PARAMS, summary(), []);
   assert.equal(result.ok, true);
   assert.equal(result.outcome, 'not-warm');
+  assert.equal(result.observedState, 'stopped');
   assert.match(result.reason ?? '', /nothing is keeping 'metro' warm on slot-a/);
+});
+
+test('not-warm does not mean stopped when an active lease still holds it', () => {
+  const held: RuntimeCapabilityLease = { ...lease('metro'), state: 'acquired' };
+  const result = stopWarmResultFromSummary(PARAMS, summary(), [held]);
+  assert.equal(result.outcome, 'not-warm');
+  assert.equal(
+    result.observedState,
+    'running',
+    'an active lease holds the provider, so it is not stopped',
+  );
+  assert.match(result.reason ?? '', /held by an active lease/);
 });
 
 test('a failure on another capability does not change this verdict', () => {
