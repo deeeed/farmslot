@@ -119,6 +119,8 @@ test('an unreadable pane inventory is a reason, not a false negative claim', asy
 
   assert.equal(result.pane, null);
   assert.equal(result.scannedPanes, 0);
+  // An unreadable inventory proves nothing; the caller must not call it dead.
+  assert.equal(result.indeterminate, true);
   assert.match(result.reason ?? '', /pane inventory for session ff-1 is unavailable/);
 });
 
@@ -150,4 +152,38 @@ test('one unprobeable pane does not mask an owner found in another pane', async 
 
   assert.equal(result.pane?.paneId, '%12');
   assert.equal(result.indeterminate, undefined);
+});
+
+/**
+ * The shape observed live on macpro-ff-1: a session reopened in a new window.
+ * Fresh-launch attribution returns nothing, because the resumed transcript was
+ * written by the process that has since exited and is therefore older than the
+ * pane that reopened it. The runner proves ownership from the live process.
+ */
+test('a resumed session is recognized even though its transcript predates the pane', async () => {
+  const seen: Array<{ paneId: string; runnerPid?: string }> = [];
+  const result = await rediscoverRunnerSessionPane(
+    { vars: VARS, session: 'ff-1', runner: 'codex', ...EXPECTED },
+    deps({
+      exec: async () => ({ exitCode: 0, stdout: '%32|6601|\n', stderr: '' }),
+      probeRunnerPid: async () => ({ state: 'present', pid: '6892' }),
+      verifyBinding: async (_vars, _runner, options) => {
+        seen.push({
+          paneId: options.paneId,
+          ...(options.runnerPid ? { runnerPid: options.runnerPid } : {}),
+        });
+        // The verifier only reaches its resumed fallback when it is handed the
+        // proven runner pid.
+        return options.runnerPid === '6892'
+          ? ownedBinding(EXPECTED.expectedSessionId)
+          : { ok: false, reason: 'active runner session binding is unavailable for %32' };
+      },
+    }),
+  );
+
+  assert.deepEqual(seen, [{ paneId: '%32', runnerPid: '6892' }]);
+  assert.equal(result.pane?.paneId, '%32');
+  assert.equal(result.pane?.target, '%32');
+  // tmux.newWindow leaves the window unnamed; display falls back to the session.
+  assert.equal(result.pane?.displayTarget, 'ff-1');
 });

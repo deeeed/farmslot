@@ -16,6 +16,11 @@ export interface RunSessionRowState {
   liveness?: RunSessionLiveness;
   copied?: RunSessionCopyKind;
   message?: string;
+  /**
+   * The gateway answered but the browser refused the clipboard. A discrete flag
+   * so callers never have to pattern-match the human-readable message.
+   */
+  copyBlocked?: true;
 }
 
 export interface RunSessionRow {
@@ -78,7 +83,7 @@ export function runSessionRowStateFromResult(
     };
   }
   if (copyError) {
-    return { status: 'error', liveness: result.liveness, message: copyError };
+    return { status: 'error', liveness: result.liveness, message: copyError, copyBlocked: true };
   }
   return { status: 'ready', liveness: result.liveness, copied: kind };
 }
@@ -212,6 +217,7 @@ export function renderRunAgentSessions(
                   class="agent-session-error"
                   role="alert"
                   data-testid="run-agent-session-error-${row.contextId}"
+                  data-copy-blocked=${state.copyBlocked ? 'true' : 'false'}
                   >${state.message}</span
                 >`
               : nothing}

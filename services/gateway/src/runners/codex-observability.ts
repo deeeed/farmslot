@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { resolveTmuxPaneId } from '../core/tmux.js';
+import { resolveTmuxPaneId, shellQuote } from '../core/tmux.js';
 
 import { claudeHookObservability } from './claude-observability.js';
 import { observedAtFromRecord, readRunnerPaneObservabilityState } from './observability-files.js';
@@ -322,6 +322,29 @@ export function parseCodexNativeBindingProbe(raw: string): CodexNativeBindingPro
   throw new Error(`Invalid Codex native binding probe: ${raw}`);
 }
 
+/**
+ * Read one process's argv, for proving which session a live runner is resuming.
+ * `ps -o args=` is a structured process read, not pane text.
+ */
+export function buildRunnerProcessArgvCommand(pid: string): string {
+  return `ps -p ${shellQuote(pid)} -o args= 2>/dev/null`;
+}
+
+/**
+ * True when this argv shows codex resuming exactly {@link expectedSessionId}.
+ *
+ * Codex spells a reopen as `codex … resume … <sessionId>`, so both the resume
+ * subcommand and the id must be present as whole arguments. A substring match
+ * would let an unrelated id that merely contains this one pass.
+ */
+export function codexArgvResumesSession(argv: string, expectedSessionId: string): boolean {
+  const trimmedId = expectedSessionId.trim();
+  if (!trimmedId) return false;
+  const args = argv.trim().split(/\s+/).filter(Boolean);
+  if (!args.includes('resume')) return false;
+  return args.includes(trimmedId);
+}
+
 export function buildCodexNativeBindingProbeCommand(options: {
   repo: string;
   isolatedSessionsRoot: string;
@@ -564,6 +587,24 @@ export const codexSessionObservability: RunnerObservability = {
       ? parsed.sessionId.trim()
       : null;
   },
+  async verifyResumedSessionBinding(vars, runnerPid, expectedSessionId) {
+    const result = await execOnSlot(vars, buildRunnerProcessArgvCommand(runnerPid), {
+      timeout: 10_000,
+    });
+    if (result.exitCode !== 0) {
+      return { ok: false, reason: `runner process ${runnerPid} argv is unreadable` };
+    }
+    const argv = result.stdout.trim();
+    if (!argv) return { ok: false, reason: `runner process ${runnerPid} reported no argv` };
+    if (!codexArgvResumesSession(argv, expectedSessionId)) {
+      return {
+        ok: false,
+        reason: `runner process ${runnerPid} is not resuming session ${expectedSessionId}`,
+      };
+    }
+    return { ok: true };
+  },
+
   async normalizeRetainedSessionBinding(vars, binding) {
     const probe = await probeCodexSessionBinding(vars, binding.sessionPath, binding.sessionId);
     return probe.status === 'matched'

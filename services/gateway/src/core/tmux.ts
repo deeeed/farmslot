@@ -62,6 +62,17 @@ export function tmuxAttachCommandForTarget(session: string, windowTarget?: strin
   const attach = `tmux attach -t ${shellQuote(`=${session}`)}`;
   const target = windowTarget?.trim();
   if (!target || target === session) return attach;
+  // An exact `%N` addresses one pane. `select-window` alone would land the
+  // operator on the window's ACTIVE pane, which in a split is not necessarily
+  // the pane that owns the session — so select the pane first. tmux resolves
+  // the pane's own window from the pane id, so one target serves both.
+  if (/^%\d+$/.test(target)) {
+    return [
+      `tmux select-window -t ${shellQuote(target)}`,
+      `select-pane -t ${shellQuote(target)}`,
+      `attach -t ${shellQuote(`=${session}`)}`,
+    ].join(' \\; ');
+  }
   return `tmux select-window -t ${shellQuote(target)} \\; attach -t ${shellQuote(`=${session}`)}`;
 }
 

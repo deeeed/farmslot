@@ -680,6 +680,12 @@ export interface ExactLiveRunnerSessionBindingOptions {
   slotId: string;
   expectedSessionId: string;
   expectedSessionPath: string;
+  /**
+   * Live runner PID under this pane, when the caller already proved one. Lets a
+   * resumed session be recognized from the process itself; without it only
+   * fresh-launch attribution applies.
+   */
+  runnerPid?: string;
 }
 
 export type ExactLiveRunnerSessionBindingResult =
@@ -697,11 +703,27 @@ interface ExactLiveRunnerSessionBindingDeps {
   readPaneStartedAt: typeof readPaneProcessStartedAtMs;
   resolveBinding: typeof resolveRunnerSessionBinding;
   canonicalizePath: typeof canonicalizeRunnerSessionPath;
+  verifyResumed: typeof verifyResumedRunnerSessionBinding;
+}
+
+/** Runner-owned check that a live process is resuming one exact session. */
+export async function verifyResumedRunnerSessionBinding(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  runnerPid: string,
+  expectedSessionId: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  const provider = getRunnerObservability(runner);
+  if (!provider?.verifyResumedSessionBinding) {
+    return { ok: false, reason: `runner '${runner}' cannot prove a resumed session binding` };
+  }
+  return provider.verifyResumedSessionBinding(vars, runnerPid, expectedSessionId);
 }
 
 const EXACT_LIVE_BINDING_DEPS: ExactLiveRunnerSessionBindingDeps = {
   readPaneStartedAt: readPaneProcessStartedAtMs,
   resolveBinding: resolveRunnerSessionBinding,
+  verifyResumed: verifyResumedRunnerSessionBinding,
   canonicalizePath: canonicalizeRunnerSessionPath,
 };
 
@@ -722,6 +744,36 @@ export async function verifyExactLiveRunnerSessionBinding(
     paneStartedAtMs,
   });
   if (!binding) {
+    // Fresh-launch attribution requires session activity NEWER than the pane
+    // process. A resumed session can never satisfy that: its transcript was
+    // written by the process that has since exited, so it is always older than
+    // the pane that reopened it. Ask the runner whether the live process is
+    // resuming exactly this session instead — a targeted check that needs an
+    // expected id, so it cannot loosen open-ended discovery.
+    if (options.runnerPid) {
+      const resumed = await deps.verifyResumed?.(
+        vars,
+        runner,
+        options.runnerPid,
+        options.expectedSessionId,
+      );
+      if (resumed?.ok) {
+        return {
+          ok: true,
+          binding: {
+            runnerSessionId: options.expectedSessionId,
+            runnerSessionPath: options.expectedSessionPath,
+            source: 'native',
+            canonicalSessionPath: options.expectedSessionPath,
+          },
+        };
+      }
+      return {
+        ok: false,
+        reason:
+          resumed?.reason ?? `active runner session binding is unavailable for ${options.paneId}`,
+      };
+    }
     return {
       ok: false,
       reason: `active runner session binding is unavailable for ${options.paneId}`,

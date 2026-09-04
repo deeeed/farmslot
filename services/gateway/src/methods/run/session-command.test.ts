@@ -601,26 +601,6 @@ test("a historical run gets the command but never rebinds a successor run's pane
   assert.equal(upserted, 0);
 });
 
-test('an unreadable slot row does not block the owning-run rebind', async () => {
-  let upserted = 0;
-  const result = await runSessionCommand(
-    { runId: 'run-1' },
-    deps(codexWorkerRun(), {
-      resolvePane: async () => null,
-      rediscoverPane: async () => REDISCOVERED_PANE,
-      readSlot: async () => null,
-      upsert: async () => {
-        upserted += 1;
-        return null;
-      },
-    }),
-  );
-
-  // No recorded owner means nothing contradicts the requesting run.
-  assert.equal(result.supported && result.ownership, 'owned');
-  assert.equal(upserted, 1);
-});
-
 test('an unprobeable pane leaves liveness unknown rather than declaring the session dead', async () => {
   const result = await runSessionCommand(
     { runId: 'run-1' },
@@ -640,4 +620,92 @@ test('an unprobeable pane leaves liveness unknown rather than declaring the sess
   // A scan that could not read part of the session has not proven absence.
   assert.equal(result.liveness, 'unknown');
   assert.match(result.livenessReason ?? '', /could not be probed/);
+});
+
+test('the attach line selects the exact pane, not just its window', async () => {
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      resolvePane: async () => null,
+      rediscoverPane: async () => REDISCOVERED_PANE,
+    }),
+  );
+
+  assert.equal(result.supported, true);
+  if (!result.supported) return;
+  // select-window alone lands on the window's ACTIVE pane, which in a split is
+  // not necessarily the pane that owns the session.
+  assert.equal(
+    result.attachCommand,
+    "tmux select-window -t '%42' \\; select-pane -t '%42' \\; attach -t '=mm-1'",
+  );
+});
+
+test('ownership is re-read immediately before the rebind, not only before the scan', async () => {
+  const reads: string[] = [];
+  let upserted = 0;
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      resolvePane: async () => null,
+      rediscoverPane: async () => REDISCOVERED_PANE,
+      // Owned when sampled; a handoff lands while the scan runs.
+      readSlot: async () => {
+        reads.push('read');
+        return { current_run_id: reads.length === 1 ? 'run-1' : 'run-successor' };
+      },
+      upsert: async () => {
+        upserted += 1;
+        return null;
+      },
+    }),
+  );
+
+  assert.equal(reads.length, 2, 'ownership must be re-read before mutating');
+  assert.equal(result.supported && result.ownership, 'transferred');
+  assert.equal(result.supported && result.ownerRunId, 'run-successor');
+  assert.equal(upserted, 0);
+});
+
+test('an unreadable slot row blocks the rebind instead of failing open', async () => {
+  let upserted = 0;
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      resolvePane: async () => null,
+      rediscoverPane: async () => REDISCOVERED_PANE,
+      readSlot: async () => null,
+      upsert: async () => {
+        upserted += 1;
+        return null;
+      },
+    }),
+  );
+
+  assert.equal(result.supported, true);
+  if (!result.supported) return;
+  // An ownership we could not verify is not a licence to write routing state.
+  assert.equal(result.ownership, 'unknown');
+  assert.equal(upserted, 0);
+  // The operator still gets the command and the proved liveness.
+  assert.equal(result.liveness, 'live');
+  assert.ok(result.reopenCommand);
+});
+
+test('an unreadable pane inventory reports unknown, never dead', async () => {
+  const result = await runSessionCommand(
+    { runId: 'run-1' },
+    deps(codexWorkerRun(), {
+      resolvePane: async () => null,
+      rediscoverPane: async () => ({
+        pane: null,
+        scannedPanes: 0,
+        indeterminate: true as const,
+        reason: 'tmux pane inventory for session mm-1 is unavailable',
+      }),
+    }),
+  );
+
+  assert.equal(result.supported && result.liveness, 'unknown');
+  assert.match((result.supported && result.livenessReason) || '', /inventory .* is unavailable/);
 });

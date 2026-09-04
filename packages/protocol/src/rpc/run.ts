@@ -541,7 +541,7 @@ export interface RunSessionCommandSupportedResult {
    * rebound, because steering a successor run's pane from a historical run is
    * exactly the accident this guards.
    */
-  ownership?: 'owned' | 'transferred';
+  ownership?: 'owned' | 'transferred' | 'unknown';
   /** The run that now owns the slot, when `ownership` is `transferred`. */
   ownerRunId?: string;
   /** Exact tmux pane that owns the session, when rediscovery proved one. */

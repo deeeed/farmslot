@@ -129,7 +129,22 @@ test('a refused clipboard keeps the proved liveness and never reports Copied', (
   assert.equal(state.status, 'error');
   assert.equal(state.liveness, 'dead');
   assert.equal(state.copied, undefined);
-  assert.match(state.message ?? '', /Clipboard copy failed/);
+  // A discrete flag, so no caller has to pattern-match the message text.
+  assert.equal(state.copyBlocked, true);
+  assert.equal(state.message, 'Clipboard copy failed: denied');
+});
+
+test('a gateway-side failure is not marked as a blocked copy', () => {
+  const unsupportedResult: RunSessionCommandResult = {
+    supported: false,
+    runId: 'run-1',
+    role: 'fix-bug',
+    reason: 'session-not-captured',
+    detail: 'No runner session was captured.',
+  };
+
+  assert.equal(runSessionRowStateFromResult(unsupportedResult, 'reopen').copyBlocked, undefined);
+  assert.equal(runSessionRowStateFromResult(supported, 'reopen').copyBlocked, undefined);
 });
 
 test('two same-role reviewer rows stay distinct so each copies its own session', () => {

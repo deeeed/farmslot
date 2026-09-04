@@ -172,17 +172,28 @@ async function probeSessionLiveness(
   };
 }
 
+type SlotOwnership =
+  | { kind: 'owned' }
+  | { kind: 'transferred'; ownerRunId: string }
+  | { kind: 'unknown' };
+
 /**
- * The run that currently holds the slot, or null when the slot row is
- * unreadable or unowned. Same field dispatch and replay reclaim read.
+ * Whether this run still holds the slot. Same field dispatch and replay reclaim
+ * read. An unreadable slot row is `unknown`, never `owned`: a rebind writes
+ * routing state that later steers terminal input, so it must not proceed on an
+ * ownership we could not verify.
  */
-async function resolveSlotOwner(
+async function resolveSlotOwnership(
+  runId: string,
   slotId: string,
   deps: RunSessionCommandDeps,
-): Promise<string | null> {
+): Promise<SlotOwnership> {
   const row = await deps.readSlot(slotId);
-  const owner = row?.current_run_id;
-  return typeof owner === 'string' && owner.trim() ? owner : null;
+  if (!row) return { kind: 'unknown' };
+  const owner = row.current_run_id;
+  if (owner == null) return { kind: 'owned' };
+  if (typeof owner !== 'string' || !owner.trim()) return { kind: 'unknown' };
+  return owner === runId ? { kind: 'owned' } : { kind: 'transferred', ownerRunId: owner };
 }
 
 export async function runSessionCommand(
@@ -307,8 +318,7 @@ export async function runSessionCommand(
   // is not necessarily the run that owns the slot now. Only the current owner
   // may write a target back; a historical run gets the answer but must never
   // be able to steer the live run's pane.
-  const slotOwner = await resolveSlotOwner(slotId, deps);
-  const ownership = !slotOwner || slotOwner === run.id ? 'owned' : 'transferred';
+  let owned = await resolveSlotOwnership(run.id, slotId, deps);
   if (recorded.liveness !== 'live' && tmuxSession) {
     rediscovered = await deps.rediscoverPane({
       vars,
@@ -321,7 +331,11 @@ export async function runSessionCommand(
       effectiveTarget = rediscovered.pane.target;
       effectivePaneId = rediscovered.pane.paneId;
       liveness = { liveness: 'live' };
-      if (ownership === 'owned') {
+      // Ownership was sampled before the scan, which takes seconds against a
+      // live machine — long enough for a handoff to land. Re-read it against
+      // the state as it is NOW, immediately before the only mutation.
+      owned = await resolveSlotOwnership(run.id, slotId, deps);
+      if (owned.kind === 'owned') {
         // Rebind so Command Center, the CLI, and the terminal all follow the
         // session to the exact pane it now lives in.
         await deps.upsert(run.id, context.role, {
@@ -361,8 +375,8 @@ export async function runSessionCommand(
     tmuxTarget: effectiveTarget,
     ...(effectivePaneId ? { paneId: effectivePaneId } : {}),
     ...(rediscovered?.pane ? { rediscoveredTarget: true } : {}),
-    ownership,
-    ...(ownership === 'transferred' && slotOwner ? { ownerRunId: slotOwner } : {}),
+    ownership: owned.kind,
+    ...(owned.kind === 'transferred' ? { ownerRunId: owned.ownerRunId } : {}),
     // Runner-specific stop syntax stays declared in the runner registry; no
     // caller should carry a literal like `/exit`.
     interrupt: getRunnerDefinition(runner).gracefulExit ?? null,

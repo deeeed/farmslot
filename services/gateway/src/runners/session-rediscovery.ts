@@ -88,9 +88,12 @@ export async function rediscoverRunnerSessionPane(
     { timeout: 10_000 },
   );
   if (listed.exitCode !== 0) {
+    // An unreadable inventory has proven nothing about the session. Reporting a
+    // plain "not found" here let the caller call a live session dead.
     return {
       pane: null,
       scannedPanes: 0,
+      indeterminate: true,
       reason: `tmux pane inventory for session ${options.session} is unavailable`,
     };
   }
@@ -121,6 +124,10 @@ export async function rediscoverRunnerSessionPane(
       slotId: options.vars.slotId,
       expectedSessionId: options.expectedSessionId,
       expectedSessionPath: options.expectedSessionPath,
+      // The proven runner PID lets a RESUMED session be recognized: its
+      // transcript is older than the pane that reopened it, so fresh-launch
+      // attribution alone can never bind it.
+      runnerPid: probe.pid,
     });
     if (!owned.ok) continue;
     return {

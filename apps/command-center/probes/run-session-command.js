@@ -7,6 +7,11 @@
  * into component state: the row's liveness label only appears after the gateway
  * answered, so it is the proof the RPC ran through the real UI path.
  *
+ * REQUIRES a run with two agent contexts SHARING A ROLE (two `self-review`
+ * reviewers, for example). That pair is the case role-only selection resolved
+ * to the wrong session, so a run without one cannot prove per-row resolution
+ * and the probe reports `ok: false` rather than passing on a weaker pair.
+ *
  * The clipboard write itself is a browser capability, not app logic: Chrome
  * refuses it for a programmatic click in some profiles. The probe records
  * whether the copy landed (`copyBlocked`) but does not require it — a refused
@@ -55,8 +60,16 @@ return (async () => {
         (other) => other.contextId !== candidate.contextId && other.role === candidate.role,
       ),
   );
-  const firstRow = duplicateRoleRows[0] ?? rows[0];
-  if (!firstRow) return { ok: false, error: 'no runner-session rows rendered', rows };
+  if (duplicateRoleRows.length === 0) {
+    return {
+      ok: false,
+      error:
+        'run has no two agent contexts sharing a role; open a run with two same-role reviewers to prove per-row resolution',
+      rowCount: rows.length,
+      rows,
+    };
+  }
+  const firstRow = duplicateRoleRows[0];
   const role = firstRow.contextId;
   const reopen = section.querySelector(`[data-testid="run-agent-session-reopen-${role}"]`);
   if (!reopen) return { ok: false, error: 'no reopen button rendered', rows };
@@ -157,7 +170,9 @@ return (async () => {
   }
 
   const errorText = errorNode?.textContent.trim() ?? null;
-  const copyBlocked = Boolean(errorText && /Clipboard copy failed/.test(errorText));
+  // Structural flag from the component, not a match on the human-readable
+  // message: rendered text is never the signal.
+  const copyBlocked = errorNode?.getAttribute('data-copy-blocked') === 'true';
   return {
     // The gateway answered through the real button, the row shows its proved
     // liveness, and a blocked clipboard never masquerades as a copy.
@@ -168,13 +183,11 @@ return (async () => {
       Boolean(sessionId?.textContent.trim()) &&
       (labelAfter === 'Copied' || copyBlocked) &&
       firstRowStillSettled &&
-      // A single-context run cannot prove per-row resolution, so it is a miss,
-      // not a silent pass.
       secondRow !== null &&
       secondRow.settled &&
       secondRow.sessionIdShort !== sessionId?.textContent.trim() &&
-      // When the run has a same-role pair, the second row must be one of them.
-      (duplicateRoleRows.length === 0 || secondRow.sameRoleAsFirst === true),
+      // The pair exercised must be the same-role one.
+      secondRow.sameRoleAsFirst === true,
     runId: detail.run?.id ?? null,
     contextId: role,
     rowCount: rows.length,
