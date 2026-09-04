@@ -24,6 +24,7 @@ import {
 import { isLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { getRun } from '../runs/store.js';
 import {
   evaluateRuntimeCapabilityAdmission,
   type RuntimeCapabilityPressureSnapshot,
@@ -197,6 +198,7 @@ const registry = new RuntimeCapabilityRegistry({
   catalogForSlot,
   runAction: runProviderAction,
   pressureFor,
+  familyForRun: (ownerRunId) => getRun(ownerRunId)?.familyId,
   onEvent(event) {
     broadcastFn?.(Events.RUNTIME_CAPABILITY_LIFECYCLE, { event });
   },

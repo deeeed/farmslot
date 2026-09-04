@@ -20,6 +20,10 @@ export const RUNNER_AGNOSTIC = true;
  * spent, and it is cancelled at the end with the same slot-release proof the
  * other dispatch scenarios use.
  *
+ * Not covered live: chain retention when a provider's release action fails.
+ * There is no way to induce a release failure on farmslot-farm without changing
+ * project config, so that path stays unit-covered in registry.test.ts.
+ *
  * Capability choice: `farmslot-farm` declares no `low` cost provider, so this
  * uses the cheapest one that is safe to drive live — `sandbox-gateway-ui`
  * (medium cost, shared, and its release action deliberately retains the
@@ -120,15 +124,19 @@ function releaseOrderFromEvents(status, capabilityIds) {
  * record it as skipped instead; the skip is reported, never silently passed.
  */
 async function prepareDependencyPosture({ slotId, runId, report, acquireBudgetMs }) {
-  const proof = { attempted: false, pass: false, reason: null, error: null };
+  const proof = { attempted: false, skipped: false, pass: false, reason: null, error: null };
   if (process.env.FARMSLOT_POSTURE_SKIP_DEPENDENCY_PROOF === '1') {
+    // The only way to legitimately not prove dependency ordering.
+    proof.skipped = true;
     proof.reason = 'skipped by FARMSLOT_POSTURE_SKIP_DEPENDENCY_PROOF=1';
     return proof;
   }
   const catalog = rpc('runtime.capability.list', { slotId });
   const pair = findDependentPair(catalog.capabilities ?? []);
   if (!pair) {
-    proof.reason = `no available dependent capability pair in the ${report.project} catalog for ${slotId}`;
+    // Not a skip: the farm is expected to offer one, so its absence is a
+    // finding about the fleet or the catalog, not a free pass.
+    proof.error = `no available dependent capability pair in the ${report.project} catalog for ${slotId}`;
     return proof;
   }
   proof.attempted = true;
@@ -326,6 +334,96 @@ function assertDependencyTerminal({ slotId, runId, proof }) {
   return proof;
 }
 
+/**
+ * Live proof that terminal cleanup fences the whole family: a second run created
+ * in the SAME family, on the same slot, must be refused a capability after the
+ * first run's terminal cleanup ran. Cancelled at the end with a leftover check.
+ */
+async function proveFamilyFence({ slotId, project, familyId, timeoutMs }) {
+  const proof = { attempted: false, pass: false, runId: null, error: null };
+  if (!familyId) {
+    proof.error = 'first run reported no familyId, so the family fence cannot be exercised';
+    return proof;
+  }
+  proof.attempted = true;
+  let siblingRunId = null;
+  try {
+    const created = rpc('run.create', {
+      project,
+      flowType: 'dev',
+      mode: 'interactive',
+      ticketOrPr: 'resource posture family fence',
+      initialContext: 'Family fence validation run. Makes no changes.',
+      runner: 'scripted',
+      scripted: { mode: 'scenario', scenario: 'success', stepDelayMs: 0 },
+      familyId,
+      slotId,
+      skipPrepare: true,
+    });
+    siblingRunId = created.run.id;
+    proof.runId = siblingRunId;
+    proof.familyId = created.run.familyId ?? null;
+    if (created.run.familyId !== familyId) {
+      throw new Error(`sibling landed in family ${created.run.familyId}, expected ${familyId}`);
+    }
+
+    // Deliberately omits ownerFamilyId: the registry must derive it from the run
+    // record so the fence cannot be dodged by the wire param.
+    let refused = null;
+    try {
+      refused = rpc('runtime.capability.acquire', {
+        slotId,
+        capabilityId: CAPABILITY_ID,
+        ownerRunId: siblingRunId,
+        proofRequirement: {
+          capabilityId: CAPABILITY_ID,
+          reason: 'family fence validation',
+          mode: 'state',
+        },
+      });
+    } catch (error) {
+      throw new Error(`acquire call failed outright: ${error?.message || String(error)}`);
+    }
+    proof.acquire = { ok: refused.ok, reason: refused.conflict?.reason ?? null };
+    if (refused.ok) {
+      throw new Error('a fenced family member was granted a lease');
+    }
+    if (!/terminal capability cleanup/.test(refused.conflict?.reason ?? '')) {
+      throw new Error(`refused for the wrong reason: ${refused.conflict?.reason}`);
+    }
+    proof.pass = true;
+  } catch (error) {
+    proof.pass = false;
+    proof.error = error?.message || String(error);
+  } finally {
+    if (siblingRunId) {
+      try {
+        rpc(
+          'run.cancel',
+          { runId: siblingRunId, reason: `${SCENARIO_ID} family fence complete` },
+          SLOW_RPC_TIMEOUT_MS,
+        );
+        const leases = rpc('runtime.capability.status', {
+          slotId,
+          ownerRunId: siblingRunId,
+        }).leases;
+        proof.leftoverLeases = leases
+          .filter((lease) => ['acquiring', 'acquired', 'releasing'].includes(lease.state))
+          .map((lease) => lease.capabilityId);
+        if (proof.leftoverLeases.length > 0) {
+          proof.pass = false;
+          proof.error = proof.error ?? `sibling left leases: ${proof.leftoverLeases.join(', ')}`;
+        }
+      } catch (cleanupError) {
+        proof.pass = false;
+        proof.error = proof.error ?? `sibling cleanup failed: ${cleanupError?.message}`;
+      }
+    }
+    void timeoutMs;
+  }
+  return proof;
+}
+
 export async function runScenario({ timeoutMs, outDir, slotId, explicit = false }) {
   const reportRunner = 'scripted';
   if (!slotId || process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS !== '1') {
@@ -359,6 +457,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     terminalStatus: null,
     persistedPosture: null,
     dependencyProof: null,
+    familyFenceProof: null,
     leftoverLeases: null,
     pass: false,
     error: null,
@@ -389,6 +488,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     });
     runId = created.run.id;
     report.runId = runId;
+    report.familyId = created.run.familyId ?? null;
 
     await poll(
       'the run to bind its slot',
@@ -509,8 +609,24 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
       runId,
       proof: report.dependencyProof,
     });
-    if (report.dependencyProof.attempted && !report.dependencyProof.pass) {
-      throw new Error(`dependency posture proof failed: ${report.dependencyProof.error}`);
+    // Pass only on a real proof or an explicit opt-out. An unattempted,
+    // unskipped proof is a failure.
+    if (!report.dependencyProof.pass && !report.dependencyProof.skipped) {
+      throw new Error(
+        `dependency posture proof failed: ${report.dependencyProof.error ?? report.dependencyProof.reason ?? 'not attempted'}`,
+      );
+    }
+
+    // ADR-054 terminal fence, proved live: a sibling in the same family must not
+    // be able to pick a provider back up after the family's cleanup ran.
+    report.familyFenceProof = await proveFamilyFence({
+      slotId,
+      project: report.project,
+      familyId: report.familyId,
+      timeoutMs,
+    });
+    if (!report.familyFenceProof.pass) {
+      throw new Error(`family fence proof failed: ${report.familyFenceProof.error}`);
     }
 
     // Repeating the same posture must be idempotent, not a second stop.

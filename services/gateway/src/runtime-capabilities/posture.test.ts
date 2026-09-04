@@ -580,15 +580,29 @@ test('preview reports acquire, retain, warm, stop, and declared release effects'
   assert.deepEqual(terminal.effects.sort(), ['release lint', 'release metro']);
 });
 
-test('a run with no slot is a typed invalid-request rejection that mutates nothing', async (t) => {
+test('a run with no slot is a typed invalid-request rejection that changes no posture', async (t) => {
   const { reconciler, runs } = await harness(t, {
     capabilities: [CATALOG_LINT],
     run: makeRun({ slotId: null }),
   });
-  const result = await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'terminal',
+    operationId: 'op-rejected',
+  });
   assert.equal(result.ok, false);
   assert.equal(result.transition.rejection?.kind, 'invalid-request');
-  assert.equal(runs.get('run-a')?.resourcePosture?.posture, undefined);
+  // The requested posture was never applied.
+  assert.notEqual(runs.get('run-a')?.resourcePosture?.posture, 'terminal');
+  // But the rejection is durable, so replaying its id cannot execute for real.
+  assert.equal(runs.get('run-a')?.resourcePosture?.lastTransition?.id, 'op-rejected');
+  const replay = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'terminal',
+    operationId: 'op-rejected',
+  });
+  assert.equal(replay.transition.outcome, 'rejected');
+  assert.equal(replay.transition.rejection?.kind, 'invalid-request');
 });
 
 test('terminal stops a provider even when project retention asks to keep it warm', async (t) => {

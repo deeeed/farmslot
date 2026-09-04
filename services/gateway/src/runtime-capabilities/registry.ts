@@ -49,6 +49,8 @@ export interface RuntimeCapabilityRegistryOptions {
     capability: RuntimeCapabilityCatalogEntry,
     queueOnPressure: boolean,
   ) => Promise<RuntimeCapabilityAcquireConflict | null>;
+  /** Family of a run, used when a caller omits the optional `ownerFamilyId`. */
+  familyForRun?: (ownerRunId: string) => string | undefined;
   onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
   now?: () => Date;
   leaseId?: () => string;
@@ -259,9 +261,13 @@ export class RuntimeCapabilityRegistry {
         },
       };
     }
+    // `ownerFamilyId` is optional on the wire, so a caller could omit it and slip
+    // past a family fence. Fall back to the run record's own family.
+    const acquiringFamilyId =
+      params.ownerFamilyId ?? this.options.familyForRun?.(params.ownerRunId);
     if (
       this.terminatedOwners.has(params.ownerRunId) ||
-      (params.ownerFamilyId !== undefined && this.terminatedFamilies.has(params.ownerFamilyId))
+      (acquiringFamilyId !== undefined && this.terminatedFamilies.has(acquiringFamilyId))
     ) {
       // Fail closed. Handing a provider to a run that has already been torn down
       // leaks it: nothing will release it again.
@@ -1008,10 +1014,18 @@ export class RuntimeCapabilityRegistry {
       // Terminal bypasses keep-warm by definition (ADR-054).
       { force: false, keepWarmFor: () => false },
     );
-    // Also fence every owner whose lease this actually touched, so a run that
-    // shared the slot through the family is covered by run id too.
-    for (const lease of [...result.released, ...result.retained]) {
-      this.fenceOwner(lease.owner.runId);
+    // Fence every owner this cleanup covered, read back from the store rather
+    // than from the result: a lease whose cleanup FAILED appears in neither
+    // `released` nor `retained`, and that owner is exactly the one that must not
+    // be allowed to acquire again.
+    for (const lease of this.options.store.snapshot().leases) {
+      if (lease.slotId !== slotId) continue;
+      if (
+        lease.owner.runId === ownerRunId ||
+        (familyId !== undefined && lease.owner.familyId === familyId)
+      ) {
+        this.fenceOwner(lease.owner.runId);
+      }
     }
     return result;
   }

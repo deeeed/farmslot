@@ -57,6 +57,7 @@ async function fixture(
   capabilities: RuntimeCapabilityCatalogEntry[],
   options: {
     pressureFor?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['pressureFor'];
+    familyForRun?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['familyForRun'];
     runAction?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['runAction'];
     onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
     storeFactory?: (storePath: string) => RuntimeCapabilityStore;
@@ -78,6 +79,7 @@ async function fixture(
       return options.runAction ? options.runAction(_slotId, action) : { ok: true };
     },
     ...(options.pressureFor ? { pressureFor: options.pressureFor } : {}),
+    ...(options.familyForRun ? { familyForRun: options.familyForRun } : {}),
     ...(options.onEvent ? { onEvent: options.onEvent } : {}),
     leaseId: () => `lease-${++nextLease}`,
     now: options.now ?? (() => new Date('2026-08-11T00:00:00.000Z')),
@@ -1142,5 +1144,71 @@ test('family terminal cleanup fences the siblings it cleaned', async (t) => {
 
   // An unrelated family is unaffected.
   const other = await acquire(registry, 'browser', 'run-b', 'fam-b');
+  assert.equal(other.ok, true);
+});
+
+test('a sibling whose cleanup failed is still fenced', async (t) => {
+  // The initiating run is fenced up front, so the gap is a *sibling*: its lease
+  // appears in neither `released` nor `retained` when cleanup fails, and with no
+  // run record to derive a family from, the run-id fence is the only guard left.
+  const { registry } = await fixture(t, [entry('browser', 'shared')], {
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'browser.release'
+        ? { ok: false, detail: 'browser shutdown exited 1' }
+        : { ok: true },
+    familyForRun: () => undefined,
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-a', 'fam-a')).ok, true);
+  assert.equal((await acquire(registry, 'browser', 'sibling-run', 'fam-a')).ok, true);
+
+  const result = await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  assert.equal(result.ok, false);
+  const accounted = [...result.released, ...result.retained].map((lease) => lease.owner.runId);
+  assert.ok(
+    !accounted.includes('sibling-run'),
+    'this test is only meaningful when the failed sibling is absent from the result',
+  );
+
+  const again = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'sibling-run',
+    proofRequirement: { capabilityId: 'browser', reason: 'retry', mode: 'state' },
+  });
+  assert.equal(again.ok, false, 'a sibling whose cleanup failed must not reacquire');
+  if (again.ok) return;
+  assert.match(again.conflict.reason, /terminal capability cleanup/);
+});
+
+test('the family fence cannot be dodged by omitting ownerFamilyId', async (t) => {
+  const families = new Map([
+    ['run-a', 'fam-a'],
+    ['sibling-run', 'fam-a'],
+    ['run-b', 'fam-b'],
+  ]);
+  const { registry } = await fixture(t, [entry('browser', 'shared')], {
+    familyForRun: (ownerRunId) => families.get(ownerRunId),
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-a', 'fam-a')).ok, true);
+  await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+
+  // The wire param is optional; the registry falls back to the run record.
+  const dodged = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'sibling-run',
+    proofRequirement: { capabilityId: 'browser', reason: 'sneak', mode: 'state' },
+  });
+  assert.equal(dodged.ok, false, 'omitting ownerFamilyId must not bypass the fence');
+  if (dodged.ok) return;
+  assert.match(dodged.conflict.reason, /terminal capability cleanup/);
+
+  // A run in another family is still free to acquire without the param.
+  const other = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'browser',
+    ownerRunId: 'run-b',
+    proofRequirement: { capabilityId: 'browser', reason: 'unrelated', mode: 'state' },
+  });
   assert.equal(other.ok, true);
 });

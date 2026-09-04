@@ -812,11 +812,7 @@ export class RunResourcePostureReconciler {
       rejection,
     };
     const run = this.deps.getRun(request.runId);
-    const previous = rollbackTo ?? run?.resourcePosture;
-    if (!previous) {
-      // Nothing was applied and there is no earlier posture to annotate, so
-      // inventing one would report a policy the Gateway never resolved. The
-      // caller still receives the typed rejection.
+    if (!run) {
       return {
         ok: false,
         status: {
@@ -831,13 +827,17 @@ export class RunResourcePostureReconciler {
         transition,
       };
     }
+    // A rejection changes no posture, but it must still be persisted: replay
+    // looks up an operation id in the retained history, and an unrecorded
+    // rejection would let a retry of that id execute for real later.
+    const previous = rollbackTo ?? run.resourcePosture;
     const state: RunResourcePostureState = {
-      ...previous,
+      ...(previous ?? this.emptyState(run)),
       lastTransition: transition,
       recentTransitions: withTransition(previous, transition),
       updatedAt: at,
     };
-    const updated = this.deps.updateRun(run!.id, { resourcePosture: state });
+    const updated = this.deps.updateRun(run.id, { resourcePosture: state });
     this.deps.onRunUpdated?.(updated);
     return { ok: false, status: state, transition };
   }
