@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
-import { ROOT } from '../lib/common.mjs';
+import { ROOT, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 
 export const SCENARIO_ID = 'resource-posture-smoke';
@@ -335,59 +335,168 @@ function assertDependencyTerminal({ slotId, runId, proof }) {
 }
 
 /**
- * Live proof that terminal cleanup fences the whole family: a second run created
- * in the SAME family, on the same slot, must be refused a capability after the
- * first run's terminal cleanup ran. Cancelled at the end with a leftover check.
+ * Live proof of family-derived ownership and the terminal family fence.
+ *
+ * Sibling B is created in A's family BEFORE A's terminal, so a single terminal
+ * proves everything. B must stay NON-TERMINAL: a terminal run is a different
+ * situation and would make the acquire assertions pass or fail for the wrong
+ * reason.
+ *
+ * Passing `slotId` explicitly makes FIND_SLOT throw "Slot is busy (dispatching)"
+ * while A holds the slot, and B fails immediately. So B is created with
+ * `allowedSlots` narrowed to A's slot and no `slotId`: with nothing free,
+ * FIND_SLOT raises a slot-picker decision and waits, which is non-terminal and
+ * claims nothing. The capability RPCs take `slotId` as a parameter and never
+ * require B to own the slot.
+ *
+ * If B still reaches a terminal state, or binds some other slot, the proof is
+ * recorded as blocked with a reason. It is never reported as passing.
  */
-async function proveFamilyFence({ slotId, project, familyId, timeoutMs }) {
+function prepareFamilyProof({ slotId, project, familyId }) {
   const proof = { attempted: false, pass: false, runId: null, error: null };
   if (!familyId) {
-    proof.error = 'first run reported no familyId, so the family fence cannot be exercised';
+    proof.error = 'first run reported no familyId, so family behaviour cannot be exercised';
     return proof;
   }
   proof.attempted = true;
-  let siblingRunId = null;
+  const terminalStatuses = ['done', 'failed', 'cancelled'];
   try {
     const created = rpc('run.create', {
       project,
       flowType: 'dev',
       mode: 'interactive',
-      ticketOrPr: 'resource posture family fence',
-      initialContext: 'Family fence validation run. Makes no changes.',
+      ticketOrPr: 'resource posture family proof',
+      initialContext: 'Family proof sibling. Parks on the slot picker; never dispatches.',
       runner: 'scripted',
       scripted: { mode: 'scenario', scenario: 'success', stepDelayMs: 0 },
       familyId,
-      slotId,
+      allowedSlots: [slotId],
       skipPrepare: true,
     });
-    siblingRunId = created.run.id;
-    proof.runId = siblingRunId;
+    proof.runId = created.run.id;
     proof.familyId = created.run.familyId ?? null;
     if (created.run.familyId !== familyId) {
       throw new Error(`sibling landed in family ${created.run.familyId}, expected ${familyId}`);
     }
 
-    // Deliberately omits ownerFamilyId: the registry must derive it from the run
-    // record so the fence cannot be dodged by the wire param.
-    let refused = null;
-    try {
-      refused = rpc('runtime.capability.acquire', {
-        slotId,
+    // Give the engine a moment to reach its waiting state, then require that it
+    // is neither terminal nor holding a different slot.
+    let sibling = created.run;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      sibling = rpc('run.get', { runId: proof.runId }).run;
+      if (terminalStatuses.includes(sibling.status) || sibling.slotId) break;
+      sleepMs(500);
+    }
+    proof.siblingStatusBeforeAcquire = sibling.status;
+    proof.siblingSlotId = sibling.slotId ?? null;
+    if (terminalStatuses.includes(sibling.status)) {
+      throw new Error(
+        `blocked: sibling reached terminal status '${sibling.status}' before the acquire assertions, so family derivation could not be proved on a live run`,
+      );
+    }
+    if (sibling.slotId && sibling.slotId !== slotId) {
+      throw new Error(
+        `blocked: sibling claimed slot ${sibling.slotId} instead of waiting; refusing to acquire against a slot it took`,
+      );
+    }
+
+    // (a) Acquire with NO ownerFamilyId: the registry must derive it from the
+    // run record and stamp it on the lease, or family cleanup would miss it.
+    const derived = rpc('runtime.capability.acquire', {
+      slotId,
+      capabilityId: CAPABILITY_ID,
+      ownerRunId: proof.runId,
+      proofRequirement: {
         capabilityId: CAPABILITY_ID,
-        ownerRunId: siblingRunId,
-        proofRequirement: {
-          capabilityId: CAPABILITY_ID,
-          reason: 'family fence validation',
-          mode: 'state',
-        },
-      });
-    } catch (error) {
-      throw new Error(`acquire call failed outright: ${error?.message || String(error)}`);
+        reason: 'family derivation validation',
+        mode: 'state',
+      },
+    });
+    proof.derivedAcquire = {
+      ok: derived.ok,
+      familyId: derived.lease?.owner?.familyId ?? null,
+      reason: derived.conflict?.reason ?? null,
+    };
+    if (!derived.ok) throw new Error(`derived-family acquire failed: ${derived.conflict?.reason}`);
+    if (derived.lease.owner.familyId !== familyId) {
+      throw new Error(
+        `lease carries family ${derived.lease.owner.familyId}, expected the run record's ${familyId}`,
+      );
     }
-    proof.acquire = { ok: refused.ok, reason: refused.conflict?.reason ?? null };
-    if (refused.ok) {
-      throw new Error('a fenced family member was granted a lease');
+    proof.derivedLeaseId = derived.lease.id;
+
+    // (b) A contradicting ownerFamilyId must be refused outright.
+    const mismatched = rpc('runtime.capability.acquire', {
+      slotId,
+      capabilityId: CAPABILITY_ID,
+      ownerRunId: proof.runId,
+      ownerFamilyId: `${familyId}-not-really`,
+      proofRequirement: {
+        capabilityId: CAPABILITY_ID,
+        reason: 'family mismatch validation',
+        mode: 'state',
+      },
+    });
+    proof.mismatchAcquire = {
+      ok: mismatched.ok,
+      kind: mismatched.conflict?.kind ?? null,
+      reason: mismatched.conflict?.reason ?? null,
+    };
+    if (mismatched.ok) throw new Error('a contradicting ownerFamilyId was accepted');
+    if (mismatched.conflict?.kind !== 'invalid-request') {
+      throw new Error(`mismatch refused as ${mismatched.conflict?.kind}, expected invalid-request`);
     }
+    const afterMismatch = rpc('runtime.capability.status', {
+      slotId,
+      ownerRunId: proof.runId,
+    }).leases;
+    proof.leasesAfterMismatch = afterMismatch.length;
+    if (afterMismatch.length !== 1) {
+      throw new Error(`a refused acquire created leases: ${afterMismatch.length} present`);
+    }
+  } catch (error) {
+    proof.pass = false;
+    proof.error = error?.message || String(error);
+  }
+  return proof;
+}
+
+/** Post-terminal half: family coverage, then the fence. */
+function assertFamilyProof({ slotId, proof }) {
+  if (!proof.attempted || proof.error) return proof;
+  proof.pass = false;
+  try {
+    // (c) The sibling's lease is covered by the family cleanup A just ran.
+    const leases = rpc('runtime.capability.status', {
+      slotId,
+      ownerRunId: proof.runId,
+    }).leases;
+    proof.siblingLeasesAfterTerminal = leases.map((lease) => ({
+      capabilityId: lease.capabilityId,
+      state: lease.state,
+    }));
+    const held = leases.filter((lease) =>
+      ['acquiring', 'acquired', 'releasing'].includes(lease.state),
+    );
+    if (held.length > 0) {
+      throw new Error(
+        `family cleanup missed the sibling's lease(s): ${held.map((l) => l.capabilityId).join(', ')}`,
+      );
+    }
+
+    // (d) And the family is fenced, so the sibling cannot pick it back up.
+    const refused = rpc('runtime.capability.acquire', {
+      slotId,
+      capabilityId: CAPABILITY_ID,
+      ownerRunId: proof.runId,
+      proofRequirement: {
+        capabilityId: CAPABILITY_ID,
+        reason: 'family fence validation',
+        mode: 'state',
+      },
+    });
+    proof.fencedAcquire = { ok: refused.ok, reason: refused.conflict?.reason ?? null };
+    if (refused.ok) throw new Error('a fenced family member was granted a lease');
     if (!/terminal capability cleanup/.test(refused.conflict?.reason ?? '')) {
       throw new Error(`refused for the wrong reason: ${refused.conflict?.reason}`);
     }
@@ -395,31 +504,40 @@ async function proveFamilyFence({ slotId, project, familyId, timeoutMs }) {
   } catch (error) {
     proof.pass = false;
     proof.error = error?.message || String(error);
-  } finally {
-    if (siblingRunId) {
-      try {
-        rpc(
-          'run.cancel',
-          { runId: siblingRunId, reason: `${SCENARIO_ID} family fence complete` },
-          SLOW_RPC_TIMEOUT_MS,
-        );
-        const leases = rpc('runtime.capability.status', {
-          slotId,
-          ownerRunId: siblingRunId,
-        }).leases;
-        proof.leftoverLeases = leases
-          .filter((lease) => ['acquiring', 'acquired', 'releasing'].includes(lease.state))
-          .map((lease) => lease.capabilityId);
-        if (proof.leftoverLeases.length > 0) {
-          proof.pass = false;
-          proof.error = proof.error ?? `sibling left leases: ${proof.leftoverLeases.join(', ')}`;
-        }
-      } catch (cleanupError) {
-        proof.pass = false;
-        proof.error = proof.error ?? `sibling cleanup failed: ${cleanupError?.message}`;
-      }
+  }
+  return proof;
+}
+
+/**
+ * (e) Cleanup. The sibling reaches a terminal state on its own (FIND_SLOT
+ * refuses a busy slot), so an already-terminal run is a successful cleanup, not
+ * a failure; only a live run is cancelled.
+ */
+function cleanupFamilyProof({ slotId, proof }) {
+  if (!proof.runId) return proof;
+  try {
+    const before = rpc('run.get', { runId: proof.runId }).run;
+    proof.siblingFinalStatus = before?.status ?? null;
+    const terminal = ['done', 'failed', 'cancelled'];
+    if (before && !terminal.includes(before.status)) {
+      rpc(
+        'run.cancel',
+        { runId: proof.runId, reason: `${SCENARIO_ID} family proof complete` },
+        SLOW_RPC_TIMEOUT_MS,
+      );
+      proof.siblingFinalStatus = rpc('run.get', { runId: proof.runId }).run?.status ?? null;
     }
-    void timeoutMs;
+    const leases = rpc('runtime.capability.status', { slotId, ownerRunId: proof.runId }).leases;
+    proof.leftoverLeases = leases
+      .filter((lease) => ['acquiring', 'acquired', 'releasing'].includes(lease.state))
+      .map((lease) => lease.capabilityId);
+    if (proof.leftoverLeases.length > 0) {
+      proof.pass = false;
+      proof.error = proof.error ?? `sibling left leases: ${proof.leftoverLeases.join(', ')}`;
+    }
+  } catch (cleanupError) {
+    proof.pass = false;
+    proof.error = proof.error ?? `sibling cleanup failed: ${cleanupError?.message}`;
   }
   return proof;
 }
@@ -457,7 +575,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     terminalStatus: null,
     persistedPosture: null,
     dependencyProof: null,
-    familyFenceProof: null,
+    familyProof: null,
     leftoverLeases: null,
     pass: false,
     error: null,
@@ -573,6 +691,17 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
       throw new Error(`dependency posture proof failed: ${report.dependencyProof.error}`);
     }
 
+    // ADR-054 family ownership, proved live: the sibling is created before the
+    // terminal so one teardown proves derivation, coverage, and the fence.
+    report.familyProof = prepareFamilyProof({
+      slotId,
+      project: report.project,
+      familyId: report.familyId,
+    });
+    if (report.familyProof.error) {
+      throw new Error(`family proof setup failed: ${report.familyProof.error}`);
+    }
+
     const terminalApply = rpc('runtime.posture.apply', {
       runId,
       posture: 'terminal',
@@ -617,16 +746,9 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
       );
     }
 
-    // ADR-054 terminal fence, proved live: a sibling in the same family must not
-    // be able to pick a provider back up after the family's cleanup ran.
-    report.familyFenceProof = await proveFamilyFence({
-      slotId,
-      project: report.project,
-      familyId: report.familyId,
-      timeoutMs,
-    });
-    if (!report.familyFenceProof.pass) {
-      throw new Error(`family fence proof failed: ${report.familyFenceProof.error}`);
+    report.familyProof = assertFamilyProof({ slotId, proof: report.familyProof });
+    if (report.familyProof.attempted && !report.familyProof.pass) {
+      throw new Error(`family proof failed: ${report.familyProof.error}`);
     }
 
     // Repeating the same posture must be idempotent, not a second stop.
@@ -657,6 +779,13 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
   } catch (error) {
     report.error = error?.message || String(error);
   } finally {
+    if (report.familyProof?.runId) {
+      report.familyProof = cleanupFamilyProof({ slotId, proof: report.familyProof });
+      if (report.familyProof.attempted && !report.familyProof.pass) {
+        report.pass = false;
+        report.error = report.error ?? `family proof failed: ${report.familyProof.error}`;
+      }
+    }
     if (runId) {
       try {
         const cancelResult = rpc(
