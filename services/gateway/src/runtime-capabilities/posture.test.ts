@@ -13,6 +13,7 @@ import type {
   Run,
   RuntimeCapabilityCatalogEntry,
   RuntimeCapabilityProviderActionRef,
+  RuntimeCapabilityReleaseResult,
 } from '@farmslot/protocol';
 
 import { resolveEffectivePosturePolicy, RunResourcePostureReconciler } from './posture.js';
@@ -67,6 +68,10 @@ interface HarnessOptions {
   ) => { ok: boolean; detail?: string };
   parkPreview?: (params: MachinePausePreviewParams) => Promise<MachinePausePreviewResult>;
   parkExecute?: (params: MachinePauseExecuteParams) => Promise<MachinePauseExecuteResult>;
+  /** Simulate a status read taken while an acquire is still in flight. */
+  hideLeasesOnFirstStatus?: boolean;
+  /** Force the registry to report a lease it refused to release. */
+  retainOnRelease?: string[];
   now?: () => Date;
   storePath?: string;
 }
@@ -98,6 +103,18 @@ async function harness(t: TestContext, options: HarnessOptions) {
     now,
   });
 
+  let staleReadUsed = false;
+  const withForcedRetention = (result: RuntimeCapabilityReleaseResult) => {
+    if (!options.retainOnRelease?.length) return result;
+    const retained = result.released.filter((lease) =>
+      options.retainOnRelease!.includes(lease.capabilityId),
+    );
+    return {
+      ...result,
+      released: result.released.filter((lease) => !retained.includes(lease)),
+      retained: [...result.retained, ...retained],
+    };
+  };
   const runs = new Map<string, Run>();
   const run = options.run ?? makeRun();
   runs.set(run.id, run);
@@ -141,10 +158,22 @@ async function harness(t: TestContext, options: HarnessOptions) {
       runs.set(runId, updated);
       return updated;
     },
-    capabilityStatus: (slotId) => registry.status({ slotId }),
+    capabilityStatus: async (slotId) => {
+      const status = await registry.status({ slotId });
+      if (options.hideLeasesOnFirstStatus && !staleReadUsed) {
+        staleReadUsed = true;
+        // What the reconciler sees while an acquire is still in flight: the
+        // leases that acquire is about to create are simply not there yet.
+        return { ...status, leases: [] };
+      }
+      return status;
+    },
     acquireCapability: (params) => registry.acquire(params),
-    releaseForPosture: (slotId, dispositions) => registry.releaseForPosture(slotId, dispositions),
+    releaseForPosture: async (slotId, dispositions) =>
+      withForcedRetention(await registry.releaseForPosture(slotId, dispositions)),
     stopWarmProviders: (slotId, capabilityIds) => registry.stopWarmProviders(slotId, capabilityIds),
+    releaseRunTerminal: async (slotId, ownerRunId, familyId) =>
+      withForcedRetention(await registry.releaseRunTerminal(slotId, ownerRunId, familyId)),
     machineForSlot: async () => MACHINE,
     parkPreview: async (params) => {
       parkCalls.push(params);
@@ -848,4 +877,103 @@ test('operator-wait stops an expensive parent while its cheap dependency stays a
     ['app.release'],
   );
   assert.equal(byId.get('metro')?.observedState, 'running');
+});
+
+test('terminal cleanup releases leases the reconciler could not see when it planned', async (t) => {
+  // The live failure: cancel ran terminal cleanup while a dependent acquire was
+  // in flight, so the leases that completed afterwards were never in the plan
+  // and stayed acquired, holding a simulator and Metro for a dead run.
+  const { reconciler, registry, actions } = await harness(t, {
+    capabilities: [
+      entry('ios-simulator', { dependencies: ['companion-metro'] }),
+      entry('companion-metro'),
+    ],
+    hideLeasesOnFirstStatus: true,
+  });
+  assert.equal((await acquire(registry, 'ios-simulator', 'run-a')).ok, true);
+  actions.length = 0;
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
+  assert.equal(result.ok, true);
+  const status = await registry.status({ slotId: SLOT });
+  const held = status.leases.filter((lease) =>
+    ['acquiring', 'acquired', 'releasing'].includes(lease.state),
+  );
+  assert.deepEqual(held, [], 'a terminal run must hold nothing, planned or not');
+  assert.ok(actions.includes('ios-simulator.release'), actions.join(', '));
+  assert.ok(actions.includes('companion-metro.release'), actions.join(', '));
+});
+
+test('a dependency inherits the strongest disposition of anything that depends on it', () => {
+  // app is cheap and kept; metro is expensive and would be shed on its own.
+  const policy = resolveEffectivePosturePolicy({
+    posture: 'operator-wait',
+    catalog: [
+      entry('app', { dependencies: ['metro'], cost: { class: 'low', resources: [] } }),
+      entry('metro', { cost: { class: 'high', resources: [] } }),
+    ],
+    proofRequirements: [],
+    capabilityIds: ['app', 'metro'],
+  });
+  assert.equal(policy.perCapability.get('app')?.desired, 'acquired');
+  assert.equal(
+    policy.perCapability.get('metro')?.desired,
+    'acquired',
+    'shedding it would break the parent this posture keeps',
+  );
+  assert.match(policy.perCapability.get('metro')?.reason ?? '', /'app' depends on it/);
+});
+
+test('inheritance follows a whole dependency chain', () => {
+  const policy = resolveEffectivePosturePolicy({
+    posture: 'active',
+    catalog: [
+      entry('client', { dependencies: ['simulator'] }),
+      entry('simulator', { dependencies: ['metro'], cost: { class: 'high', resources: [] } }),
+      entry('metro', { cost: { class: 'high', resources: [] } }),
+    ],
+    proofRequirements: [{ capabilityId: 'client', reason: 'validation', mode: 'state' }],
+    capabilityIds: ['client', 'simulator', 'metro'],
+  });
+  assert.equal(policy.perCapability.get('client')?.desired, 'acquired');
+  assert.equal(policy.perCapability.get('simulator')?.desired, 'acquired');
+  assert.equal(policy.perCapability.get('metro')?.desired, 'acquired');
+});
+
+test('a warm dependent keeps its dependency at least warm', () => {
+  const policy = resolveEffectivePosturePolicy({
+    posture: 'operator-wait',
+    catalog: [
+      entry('app', {
+        dependencies: ['metro'],
+        cost: { class: 'high', resources: [] },
+        keepWarmMs: 1000,
+      }),
+      entry('metro', { cost: { class: 'high', resources: [] } }),
+    ],
+    proofRequirements: [],
+    capabilityIds: ['app', 'metro'],
+  });
+  assert.equal(policy.perCapability.get('app')?.desired, 'warm');
+  // metro alone would be stopped (high cost, no keep-warm window).
+  assert.equal(policy.perCapability.get('metro')?.desired, 'warm');
+});
+
+test('a lease the registry must retain is reported partial, never applied', async (t) => {
+  // The registry refuses to release a lease something still depends on. However
+  // that arises, the reconciler must not call it a success: the plan said stop
+  // and the provider is still running. Driven through the registry response
+  // because policy inheritance now prevents the run from planning this itself.
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [entry('app', { dependencies: ['metro'] }), entry('metro')],
+    retainOnRelease: ['metro'],
+  });
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
+  assert.equal(result.transition.outcome, 'partial');
+  assert.equal(result.ok, false, 'a retained provider is not a successful stop');
+  const failure = result.transition.failures.find((item) => item.capabilityId === 'metro');
+  assert.ok(failure, JSON.stringify(result.transition.failures));
+  assert.match(failure.reason, /still required by/);
 });

@@ -109,6 +109,11 @@ export class RuntimeCapabilityRegistry {
   private readonly now: () => Date;
   private readonly leaseId: () => string;
   private pendingEvents: RuntimeCapabilityLifecycleEvent[] = [];
+  /**
+   * Runs whose terminal cleanup has already run. A lease must never be handed to
+   * one of them: the run is gone, so nothing would ever release it again.
+   */
+  private terminatedOwners = new Set<string>();
   private loaded = false;
   private loadPromise: Promise<void> | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
@@ -249,6 +254,18 @@ export class RuntimeCapabilityRegistry {
           kind: 'unavailable',
           capabilityId: params.capabilityId,
           reason: `Capability '${params.capabilityId}' is not in the ${catalog.project} catalog`,
+        },
+      };
+    }
+    if (this.terminatedOwners.has(params.ownerRunId)) {
+      // Fail closed. Handing a provider to a run that has already been torn down
+      // leaks it: nothing will release it again.
+      return {
+        ok: false,
+        conflict: {
+          kind: 'invalid-request',
+          capabilityId: entry.id,
+          reason: `Run '${params.ownerRunId}' has already had its terminal capability cleanup; it cannot acquire '${entry.id}'`,
         },
       };
     }
@@ -950,6 +967,39 @@ export class RuntimeCapabilityRegistry {
    * across two calls (ADR-054). Leases pulled in as dependencies but not named
    * by the caller keep the project's own keep-warm policy.
    */
+  /**
+   * Terminal cleanup for one run and its family.
+   *
+   * Selection is by owner and is evaluated INSIDE the mutation lock, not from a
+   * lease list the caller read earlier. That matters: `status` does not take the
+   * lock, so a caller that snapshots lease ids while an acquire is in flight
+   * misses every lease that reaches `acquired` afterwards, and those leases then
+   * outlive the run — a cancelled run was observed holding a simulator and Metro
+   * this way. Queuing on the lock means any in-flight acquire finishes first and
+   * this sees its result.
+   *
+   * The owner is also fenced, so a later acquire cannot hand a provider to a run
+   * that is already terminal.
+   */
+  async releaseRunTerminal(
+    slotId: string,
+    ownerRunId: string,
+    familyId?: string,
+  ): Promise<RuntimeCapabilityReleaseResult> {
+    this.terminatedOwners.add(ownerRunId);
+    while (this.terminatedOwners.size > 1_000) {
+      this.terminatedOwners.delete(this.terminatedOwners.values().next().value!);
+    }
+    return this.releaseSelected(
+      slotId,
+      (lease) =>
+        lease.owner.runId === ownerRunId ||
+        (familyId !== undefined && lease.owner.familyId === familyId),
+      // Terminal bypasses keep-warm by definition (ADR-054).
+      { force: false, keepWarmFor: () => false },
+    );
+  }
+
   async releaseForPosture(
     slotId: string,
     dispositions: Array<{ leaseId: string; keepWarm: boolean }>,

@@ -43,6 +43,8 @@ const reconciler = new RunResourcePostureReconciler({
     getRuntimeCapabilityRegistry().releaseForPosture(slotId, dispositions),
   stopWarmProviders: (slotId, capabilityIds) =>
     getRuntimeCapabilityRegistry().stopWarmProviders(slotId, capabilityIds),
+  releaseRunTerminal: (slotId, ownerRunId, familyId) =>
+    getRuntimeCapabilityRegistry().releaseRunTerminal(slotId, ownerRunId, familyId),
   machineForSlot: async (slotId) => {
     const fleet = await loadFleetStatus();
     return fleet.slots.find((candidate) => candidate.slot === slotId)?.machine ?? null;
@@ -87,6 +89,14 @@ function assertProofRequirements(value: unknown): void {
     }
     if (typeof entry.mode !== 'string' || !PROOF_MODES.has(entry.mode)) {
       throw new Error(`${field}.mode must be one of ${[...PROOF_MODES].join(', ')}`);
+    }
+    if (
+      entry.parameters !== undefined &&
+      (entry.parameters === null ||
+        typeof entry.parameters !== 'object' ||
+        Array.isArray(entry.parameters))
+    ) {
+      throw new Error(`${field}.parameters must be an object`);
     }
   });
 }

@@ -147,7 +147,7 @@ test('session-reopen-smoke reads the pane tail from the snapshot lines array', (
 
 test('runner-validation catalog includes four runners and twenty-four scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
-  assert.equal(listScenarios().length, 24);
+  assert.equal(listScenarios().length, 25);
   assert.ok(listScenarios().includes('review-recovery-terminal-contract'));
   assert.ok(listScenarios().includes('self-review-fix-turn-lease'));
   assert.ok(listScenarios().includes('hook-smoke'));
@@ -164,6 +164,7 @@ test('runner-validation catalog includes four runners and twenty-four scenarios'
   assert.ok(listScenarios().includes('monitor-stuck-smoke'));
   assert.ok(listScenarios().includes('dispatch-model-flag'));
   assert.ok(listScenarios().includes('session-reopen-smoke'));
+  assert.ok(listScenarios().includes('resource-posture-smoke'));
 });
 
 test('session-reopen-smoke fails when named explicitly without a slot and never stubs real evidence', async (t) => {

@@ -28,6 +28,9 @@ export const RUNNER_AGNOSTIC = true;
  */
 const CAPABILITY_ID = 'sandbox-gateway-ui';
 
+/** Booting a simulator plus Metro is minutes, not seconds. */
+const SLOW_RPC_TIMEOUT_MS = 480_000;
+
 function rpc(method, params = {}, timeoutMs = 120_000) {
   const script = path.join(ROOT, 'apps/command-center/scripts/cdp.mjs');
   const result = spawnSync('node', [script, 'gateway', method, JSON.stringify(params)], {
@@ -61,34 +64,43 @@ function capabilityState(status, capabilityId) {
 }
 
 /**
- * The cheapest available provider in this slot's catalog that declares a
- * dependency, together with that dependency. Chosen from the live catalog rather
- * than hardcoded so the scenario follows the project's own configuration.
+ * The shallowest, cheapest dependent pair in this slot's catalog. Chosen from
+ * the live catalog rather than hardcoded so the scenario follows the project's
+ * own configuration.
+ *
+ * "Shallowest" is load-bearing: `companion-native-client-ios -> ios-simulator`
+ * costs the same by cost class as `ios-simulator -> companion-metro`, but the
+ * first drags in a whole native client build. So a dependent that itself depends
+ * on another dependent is never chosen — the pair must sit at depth 1, with a
+ * dependency that has no dependencies of its own.
  */
 function findDependentPair(capabilities) {
   const byId = new Map(capabilities.map((entry) => [entry.id, entry]));
   const cost = { low: 0, medium: 1, high: 2 };
-  const pairs = capabilities
-    .filter((entry) => (entry.dependencies ?? []).length > 0)
-    .flatMap((entry) =>
-      (entry.dependencies ?? []).map((dependencyId) => ({
-        dependent: entry,
-        dependency: byId.get(dependencyId),
-      })),
-    )
+  const available = (entry) => entry && entry.availability.state === 'available';
+  const candidates = capabilities
+    .filter((entry) => (entry.dependencies ?? []).length === 1)
+    .map((entry) => ({ dependent: entry, dependency: byId.get(entry.dependencies[0]) }))
     .filter(
       (pair) =>
-        pair.dependency &&
-        pair.dependent.availability.state === 'available' &&
-        pair.dependency.availability.state === 'available',
-    )
-    .sort(
-      (a, b) =>
-        cost[a.dependent.cost.class] +
-        cost[a.dependency.cost.class] -
-        (cost[b.dependent.cost.class] + cost[b.dependency.cost.class]),
+        available(pair.dependent) &&
+        available(pair.dependency) &&
+        // Depth 1 only: the dependency must be a leaf.
+        (pair.dependency.dependencies ?? []).length === 0,
     );
-  return pairs[0] ?? null;
+  const totalCost = (pair) => cost[pair.dependent.cost.class] + cost[pair.dependency.cost.class];
+  candidates.sort(
+    (a, b) => totalCost(a) - totalCost(b) || a.dependent.id.localeCompare(b.dependent.id),
+  );
+  const chosen = candidates[0];
+  if (!chosen) return null;
+  return {
+    ...chosen,
+    why:
+      `depth-1 pair with the lowest total cost class (${chosen.dependent.cost.class} + ` +
+      `${chosen.dependency.cost.class}); rejected ${capabilities.filter((entry) => (entry.dependencies ?? []).length > 0).length - candidates.length} ` +
+      'deeper or unavailable candidate(s)',
+  };
 }
 
 /** Lifecycle event order is the Gateway's own record of what it stopped when. */
@@ -107,7 +119,7 @@ function releaseOrderFromEvents(status, capabilityIds) {
  * so this boots real resources. Set FARMSLOT_POSTURE_SKIP_DEPENDENCY_PROOF=1 to
  * record it as skipped instead; the skip is reported, never silently passed.
  */
-async function proveDependencyPosture({ slotId, runId, report }) {
+async function proveDependencyPosture({ slotId, runId, report, acquireBudgetMs }) {
   const proof = { attempted: false, pass: false, reason: null, error: null };
   if (process.env.FARMSLOT_POSTURE_SKIP_DEPENDENCY_PROOF === '1') {
     proof.reason = 'skipped by FARMSLOT_POSTURE_SKIP_DEPENDENCY_PROOF=1';
@@ -122,33 +134,73 @@ async function proveDependencyPosture({ slotId, runId, report }) {
   proof.attempted = true;
   proof.dependent = pair.dependent.id;
   proof.dependency = pair.dependency.id;
+  proof.pairReason = pair.why;
+  proof.candidates = (catalog.capabilities ?? [])
+    .filter((entry) => (entry.dependencies ?? []).length > 0)
+    .map((entry) => ({
+      id: entry.id,
+      dependencies: entry.dependencies,
+      cost: entry.cost.class,
+      availability: entry.availability.state,
+    }));
   try {
-    // Acquiring the dependent implicitly acquires its dependency.
-    const acquired = rpc('runtime.capability.acquire', {
-      slotId,
-      capabilityId: pair.dependent.id,
-      ownerRunId: runId,
-      proofRequirement: {
-        capabilityId: pair.dependent.id,
-        reason: 'resource posture dependency validation',
-        mode: 'state',
-      },
-    });
-    if (!acquired.ok) {
-      throw new Error(`acquire failed: ${acquired.conflict?.reason ?? 'unknown'}`);
+    // Acquiring the dependent implicitly acquires its dependency. Booting a
+    // simulator and Metro takes minutes, so this gets its own RPC budget; if the
+    // client still gives up, the gateway may well be mid-acquire, so fall back
+    // to polling lease state rather than declaring failure on a client timeout.
+    let acquireError = null;
+    try {
+      const acquired = rpc(
+        'runtime.capability.acquire',
+        {
+          slotId,
+          capabilityId: pair.dependent.id,
+          ownerRunId: runId,
+          proofRequirement: {
+            capabilityId: pair.dependent.id,
+            reason: 'resource posture dependency validation',
+            mode: 'state',
+          },
+        },
+        Math.max(SLOW_RPC_TIMEOUT_MS, acquireBudgetMs),
+      );
+      if (!acquired.ok) {
+        throw new Error(`acquire failed: ${acquired.conflict?.reason ?? 'unknown'}`);
+      }
+    } catch (error) {
+      acquireError = error?.message || String(error);
+      proof.acquireClientError = acquireError;
     }
-    proof.dependencyLeaseAcquired = (acquired.dependencyLeases ?? []).some(
-      (lease) => lease.capabilityId === pair.dependency.id,
+
+    // Lease state is the authority, not the RPC's return: the gateway keeps
+    // acquiring after a client timeout.
+    const acquiredLeases = await poll(
+      `${pair.dependent.id} and ${pair.dependency.id} to reach acquired`,
+      () => rpc('runtime.capability.status', { slotId, ownerRunId: runId }).leases,
+      (leases) =>
+        [pair.dependent.id, pair.dependency.id].every((id) =>
+          leases.some((lease) => lease.capabilityId === id && lease.state === 'acquired'),
+        ),
+      acquireBudgetMs,
+    ).catch((error) => {
+      throw new Error(
+        acquireError
+          ? `${acquireError}; lease never reached acquired: ${error.message}`
+          : error.message,
+      );
+    });
+    proof.dependencyLeaseAcquired = acquiredLeases.some(
+      (lease) => lease.capabilityId === pair.dependency.id && lease.state === 'acquired',
     );
     if (!proof.dependencyLeaseAcquired) {
       throw new Error(`acquiring ${pair.dependent.id} did not acquire ${pair.dependency.id}`);
     }
 
-    const waitApply = rpc('runtime.posture.apply', {
-      runId,
-      posture: 'operator-wait',
-      operationId: `${SCENARIO_ID}-dep-wait-${process.pid}`,
-    });
+    const waitApply = rpc(
+      'runtime.posture.apply',
+      { runId, posture: 'operator-wait', operationId: `${SCENARIO_ID}-dep-wait-${process.pid}` },
+      SLOW_RPC_TIMEOUT_MS,
+    );
     if (!waitApply.ok) {
       throw new Error(`operator-wait apply failed: ${JSON.stringify(waitApply.transition)}`);
     }
@@ -179,11 +231,11 @@ async function proveDependencyPosture({ slotId, runId, report }) {
       }
     }
 
-    const terminalApply = rpc('runtime.posture.apply', {
-      runId,
-      posture: 'terminal',
-      operationId: `${SCENARIO_ID}-dep-terminal-${process.pid}`,
-    });
+    const terminalApply = rpc(
+      'runtime.posture.apply',
+      { runId, posture: 'terminal', operationId: `${SCENARIO_ID}-dep-terminal-${process.pid}` },
+      SLOW_RPC_TIMEOUT_MS,
+    );
     if (!terminalApply.ok) {
       throw new Error(`terminal apply failed: ${JSON.stringify(terminalApply.transition)}`);
     }
@@ -221,6 +273,18 @@ async function proveDependencyPosture({ slotId, runId, report }) {
     proof.pass = true;
   } catch (error) {
     proof.error = error?.message || String(error);
+    // Whatever went wrong, anything this proof booted must still come down.
+    // Recorded, not swallowed: the outcome lands in the evidence either way.
+    try {
+      const salvage = rpc(
+        'runtime.posture.apply',
+        { runId, posture: 'terminal', operationId: `${SCENARIO_ID}-dep-salvage-${process.pid}` },
+        SLOW_RPC_TIMEOUT_MS,
+      );
+      proof.salvageTerminal = salvage.transition.outcome;
+    } catch (salvageError) {
+      proof.salvageTerminalError = salvageError?.message || String(salvageError);
+    }
   }
   return proof;
 }
@@ -258,6 +322,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     terminalStatus: null,
     persistedPosture: null,
     dependencyProof: null,
+    leftoverLeases: null,
     pass: false,
     error: null,
   };
@@ -414,6 +479,8 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
       slotId,
       runId,
       report,
+      // Respect the operator's --timeout-ms while allowing a real device boot.
+      acquireBudgetMs: Math.max(timeoutMs, SLOW_RPC_TIMEOUT_MS),
     });
     if (report.dependencyProof.attempted && !report.dependencyProof.pass) {
       throw new Error(`dependency posture proof failed: ${report.dependencyProof.error}`);
@@ -425,10 +492,11 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
   } finally {
     if (runId) {
       try {
-        const cancelResult = rpc('run.cancel', {
-          runId,
-          reason: `${SCENARIO_ID} validation complete`,
-        });
+        const cancelResult = rpc(
+          'run.cancel',
+          { runId, reason: `${SCENARIO_ID} validation complete` },
+          SLOW_RPC_TIMEOUT_MS,
+        );
         const failedEffects = (cancelResult?.effects ?? []).filter(
           (effect) => effect.status === 'failed',
         );
@@ -448,6 +516,33 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
         report.slotReleased = slotOwner !== runId;
+
+        // Cancel routes through the ADR-054 terminal reconcile, so nothing this
+        // run acquired may still be held. This is the durable answer to "did a
+        // timed-out acquire leak a provider".
+        try {
+          const leases = rpc('runtime.capability.status', { slotId, ownerRunId: runId }).leases;
+          report.leftoverLeases = leases
+            .filter((lease) => ['acquiring', 'acquired', 'releasing'].includes(lease.state))
+            .map((lease) => ({
+              capabilityId: lease.capabilityId,
+              state: lease.state,
+              cleanupFailure: lease.cleanupFailure ?? null,
+            }));
+        } catch (leaseError) {
+          report.leftoverLeasesError = leaseError?.message || String(leaseError);
+          report.leftoverLeases = null;
+        }
+        if (report.leftoverLeases === null || report.leftoverLeases.length > 0) {
+          report.pass = false;
+          report.error =
+            report.error ??
+            (report.leftoverLeases === null
+              ? `could not verify leftover leases: ${report.leftoverLeasesError}`
+              : `run still holds ${report.leftoverLeases.length} lease(s) after cancel: ` +
+                report.leftoverLeases.map((lease) => lease.capabilityId).join(', '));
+        }
+
         report.cancelled =
           after?.status === 'cancelled' && failedEffects.length === 0 && report.slotReleased;
         if (!report.cancelled) {

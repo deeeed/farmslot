@@ -217,6 +217,32 @@ export function resolveEffectivePosturePolicy(
     });
   }
 
+  // A dependency cannot be shed out from under something this posture keeps.
+  // Propagate to a fixpoint so a chain (app -> simulator -> metro) inherits the
+  // whole way down, and record where the disposition came from.
+  const RETENTION_RANK: Record<ResourcePostureDesiredDisposition, number> = {
+    stopped: 0,
+    warm: 1,
+    acquired: 2,
+  };
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [capabilityId, decision] of perCapability) {
+      for (const dependencyId of byId.get(capabilityId)?.dependencies ?? []) {
+        const dependency = perCapability.get(dependencyId);
+        // A dependency this run does not own is the registry's to protect.
+        if (!dependency) continue;
+        if (RETENTION_RANK[dependency.desired] >= RETENTION_RANK[decision.desired]) continue;
+        perCapability.set(dependencyId, {
+          desired: decision.desired,
+          source: decision.source,
+          reason: `kept ${decision.desired} because '${capabilityId}' depends on it and this posture keeps that ${decision.desired}`,
+        });
+        changed = true;
+      }
+    }
+  }
+
   const policySource = strongestSource([
     postureSource,
     ...[...perCapability.values()].map((decision) => decision.source),
@@ -282,6 +308,12 @@ export interface RunResourcePostureDeps {
   releaseForPosture: (
     slotId: string,
     dispositions: Array<{ leaseId: string; keepWarm: boolean }>,
+  ) => Promise<RuntimeCapabilityReleaseResult>;
+  /** Owner-scoped terminal cleanup, resolved inside the registry's own lock. */
+  releaseRunTerminal: (
+    slotId: string,
+    ownerRunId: string,
+    familyId?: string,
   ) => Promise<RuntimeCapabilityReleaseResult>;
   /** Stop providers a released lease is still keeping warm (ADR-054 terminal). */
   stopWarmProviders: (slotId: string, capabilityIds: string[]) => Promise<void>;
@@ -509,8 +541,17 @@ export class RunResourcePostureReconciler {
     if (warmToStop.length > 0) {
       await this.deps.stopWarmProviders(context.slotId, warmToStop);
     }
-    if (dispositions.length > 0) {
-      const released = await this.deps.releaseForPosture(context.slotId, dispositions);
+    // At terminal the selection must be by owner and resolved inside the
+    // registry's lock, not from the lease ids read a moment ago: an acquire
+    // still in flight would otherwise finish afterwards and leave the run
+    // holding providers nothing will ever release.
+    const released =
+      context.policy.posture === 'terminal'
+        ? await this.deps.releaseRunTerminal(context.slotId, context.run.id, context.run.familyId)
+        : dispositions.length > 0
+          ? await this.deps.releaseForPosture(context.slotId, dispositions)
+          : null;
+    if (released) {
       for (const effect of released.effects) effects.add(effect);
       for (const failure of released.failures) {
         failures.push({
@@ -519,7 +560,31 @@ export class RunResourcePostureReconciler {
           reason: failure.reason,
         });
       }
-      completed += dispositions.length - released.failures.length;
+      // The registry refuses to release a lease something else still depends on.
+      // That is correct, but it means the plan did not happen: reporting
+      // `applied` here would pair a desired `stopped` with a running provider.
+      const wantedStopped = new Set(
+        context.states
+          .filter((state) => state.desiredDisposition !== 'acquired')
+          .map((state) => state.capabilityId),
+      );
+      const blocked = released.retained.filter((lease) => wantedStopped.has(lease.capabilityId));
+      for (const lease of blocked) {
+        const dependents = context.status.leases
+          .filter((candidate) => candidate.dependencyLeaseIds.includes(lease.id))
+          .map((candidate) => `${candidate.capabilityId} (${candidate.owner.runId})`);
+        failures.push({
+          capabilityId: lease.capabilityId,
+          leaseId: lease.id,
+          reason: dependents.length
+            ? `retained: still required by ${dependents.join(', ')}`
+            : 'retained: still required by another active lease',
+        });
+      }
+      completed +=
+        Math.max(dispositions.length, released.released.length) -
+        released.failures.length -
+        blocked.length;
     }
 
     for (const state of context.states) {

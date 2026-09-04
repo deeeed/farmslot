@@ -969,3 +969,87 @@ test('a warm sweep defers a dependency while its dependent is still warm', async
     ['app.release', 'metro.release'],
   );
 });
+
+test('terminal cleanup releases a lease that only reaches acquired after it started', async (t) => {
+  // Reproduces the live incident: an acquire was in flight when a cancelled run
+  // ran terminal cleanup, and the leases that completed afterwards stayed
+  // acquired, holding a simulator and Metro for a run that no longer existed.
+  let releaseSlowAcquire = (): void => {};
+  const slowAcquire = new Promise<void>((resolve) => {
+    releaseSlowAcquire = resolve;
+  });
+  let gateArmed = true;
+  const { registry, actions } = await fixture(
+    t,
+    [entry('ios-simulator', 'exclusive', ['companion-metro']), entry('companion-metro')],
+    {
+      runAction: async (_slotId, action) => {
+        if (
+          gateArmed &&
+          action.kind === 'slot-action' &&
+          action.actionId === 'ios-simulator.acquire'
+        ) {
+          gateArmed = false;
+          await slowAcquire;
+        }
+        return { ok: true };
+      },
+    },
+  );
+
+  const acquiring = acquire(registry, 'ios-simulator', 'run-a', 'fam-a');
+  // Let the acquire reach its slow provider action.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  // Terminal cleanup starts while the acquire is still running.
+  const terminal = registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  releaseSlowAcquire();
+  const [acquired, result] = await Promise.all([acquiring, terminal]);
+  assert.equal(acquired.ok, true);
+  assert.equal(result.ok, true);
+
+  const status = await registry.status({ slotId: SLOT });
+  const stillHeld = status.leases.filter((lease) => holdsProviderForTest(lease));
+  assert.deepEqual(stillHeld, [], 'no lease may survive its run terminal cleanup');
+  assert.ok(actions.includes('ios-simulator.release'), actions.join(', '));
+  assert.ok(actions.includes('companion-metro.release'), actions.join(', '));
+});
+
+test('a run that already had terminal cleanup cannot acquire again', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('browser')]);
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
+  await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  actions.length = 0;
+
+  const late = await acquire(registry, 'browser', 'run-a');
+  assert.equal(late.ok, false, 'a terminal run must not be handed a provider');
+  if (late.ok) return;
+  assert.match(late.conflict.reason, /terminal capability cleanup/);
+  assert.deepEqual(actions, [], 'nothing may be booted for a terminal run');
+  const status = await registry.status({ slotId: SLOT });
+  assert.deepEqual(
+    status.leases.filter((lease) => holdsProviderForTest(lease)),
+    [],
+  );
+
+  // Another run is unaffected by the fence.
+  const other = await acquire(registry, 'browser', 'run-b');
+  assert.equal(other.ok, true);
+});
+
+test('terminal cleanup bypasses keep-warm for every lease the run owns', async (t) => {
+  const warm = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warm]);
+  assert.equal((await acquire(registry, 'metro', 'run-a', 'fam-a')).ok, true);
+  actions.length = 0;
+  await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['metro.release'],
+  );
+  const status = await registry.status({ slotId: SLOT });
+  assert.equal(
+    status.leases.every((lease) => lease.keepWarmUntil === undefined),
+    true,
+  );
+});
