@@ -4,7 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
-- fix(dispatch): `expandDispatchCmd` attaches runtime runner args exactly once to whichever binary placeholder the template invokes (`{runner_path}`, `{<runner>_path}`, or a bare `{runner}`), and quotes `{model}` and `{effort}` values unless they are bare shell-inert tokens; templates must not add their own quotes around those placeholders.
+- fix(dispatch): `expandDispatchCmd` attaches runtime runner args exactly once to whichever binary placeholder the template invokes and actually resolves (`{runner_path}`, `{<runner>_path}`, then a bare `{runner}`), so a pool with no configured path for the runner still gets them, and quotes `{model}` and `{effort}` values unless they are bare shell-inert tokens; templates must not add their own quotes around those placeholders.
 - fix(session-usage): the local sampler's failure path keeps the transcript identity it is counting instead of stamping the requested path onto a prior offset.
 - fix(session-usage): a codex `token_count` record carrying only `last_token_usage` is skipped instead of folded. It reports one turn rather than the session, so folding it overwrote the reference and charged the next record the whole way back up to the session total.
 - feat(session-usage): `pinnedIncrementalSessionUsageState()` starts counting at a byte offset mid-transcript. An absent `lastCumulative` marks that the next session-total reading only establishes the reference, so runners that restate totals are counted as increments from the pin instead of restating someone else's history.

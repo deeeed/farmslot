@@ -15,6 +15,7 @@ import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
 
 import {
+  assertSafeRunnerArgumentValue,
   normalizeRunner,
   runnerDefaultSafetyTier,
   runnerFlagsForTier,
@@ -39,6 +40,22 @@ const CODEX_PLUGIN_HOOK_ARGS =
  * - `auto` → leave unset so the CLI/config default applies
  * - any other non-empty value → pass through
  */
+/**
+ * Single construction point for `--model`. Asserting here covers every launch
+ * path (fresh, retained reload, interactive refinement) instead of trusting
+ * each call site to validate first.
+ */
+function runnerModelFlag(model?: string | null): string {
+  if (!model || model === 'unknown') return '';
+  assertSafeRunnerArgumentValue('model', model);
+  return ` --model ${quoteRunnerArgValue(model)}`;
+}
+
+function assertedModel(model: string): string {
+  assertSafeRunnerArgumentValue('model', model);
+  return model;
+}
+
 export function resolveRunnerEffort(runnerId: string, effort?: string | null): string | undefined {
   const runner = normalizeRunner(runnerId);
   const trimmed = effort?.trim();
@@ -100,7 +117,7 @@ export function buildCursorAgentLaunch(options: {
   const flagList = runnerFlagsForTier('cursor', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
   const prompt = options.prompt.trim() ? ` ${shellQuote(options.prompt)}` : '';
-  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment} --model ${quoteRunnerArgValue(effectiveModel)}${prompt}`;
+  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment} --model ${quoteRunnerArgValue(assertedModel(effectiveModel))}${prompt}`;
 }
 
 export function resolveCursorAgentBinary(preferred?: string | null): string {
@@ -121,7 +138,7 @@ export function buildGrokLaunch(options: {
   const flagList = runnerFlagsForTier('grok', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
   const effortFlag = grokEffortFlag(options.effort);
-  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment}${effortFlag} --model ${quoteRunnerArgValue(effectiveModel)}`;
+  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment}${effortFlag} --model ${quoteRunnerArgValue(assertedModel(effectiveModel))}`;
 }
 
 export function resolveGrokBinary(preferred?: string | null): string {
@@ -206,7 +223,7 @@ export function buildRunnerSessionReloadCommand(
       repo,
       opts.runtimeDir,
     );
-    const modelFlag = model && model !== 'unknown' ? ` --model ${quoteRunnerArgValue(model)}` : '';
+    const modelFlag = runnerModelFlag(model);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const claudePath = vars.claudePath || 'claude';
@@ -235,7 +252,7 @@ export function buildRunnerSessionReloadCommand(
       opts.runtimeDir,
       { accountLabel: opts.codexAccountLabel, authSource: opts.codexAuthSource },
     );
-    const modelFlag = model && model !== 'unknown' ? ` --model ${quoteRunnerArgValue(model)}` : '';
+    const modelFlag = runnerModelFlag(model);
     const effortFlag = codexReasoningEffortFlag(opts.effort);
     const workerConfigFlags = codexWorkerConfigFlags();
     const flagList = runnerFlagsForTier(runner, tier);
@@ -254,7 +271,7 @@ export function buildRunnerSessionReloadCommand(
   }
 
   if (runner === 'grok') {
-    const modelFlag = model && model !== 'unknown' ? ` --model ${quoteRunnerArgValue(model)}` : '';
+    const modelFlag = runnerModelFlag(model);
     const effortFlag = grokEffortFlag(opts.effort);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
@@ -310,10 +327,7 @@ export function buildCodexExecLaunch(options: {
   /** Safety tier (ADR-023). Omit to let `runnerFlagsForTier` apply the codex default (`sandboxed`). */
   safetyTier?: SafetyTier;
 }): string {
-  const modelFlag =
-    options.model && options.model !== 'unknown'
-      ? ` --model ${quoteRunnerArgValue(options.model)}`
-      : '';
+  const modelFlag = runnerModelFlag(options.model);
   const effortFlag = codexReasoningEffortFlag(options.effort);
   const workerConfigFlags = codexWorkerConfigFlags();
   const flagList = runnerFlagsForTier('codex', options.safetyTier);
@@ -339,6 +353,7 @@ function grokEffortFlag(effort?: string | null): string {
   // Explicit `auto` leaves Grok config untouched.
   if (normalized?.toLowerCase() === 'auto') return '';
   const effective = normalized || DEFAULT_GROK_EFFORT;
+  assertSafeRunnerArgumentValue('effort', effective);
   return ` --effort ${quoteRunnerArgValue(effective)}`;
 }
 
@@ -491,7 +506,7 @@ export function buildLaunchCommand(
   const hasDispatchCmd = Boolean(vars.dispatchCmd);
   const cmdIsRunnerAware = dispatchCmdIsRunnerAware(vars.dispatchCmd, runner);
   const cmdHasModelPlaceholder = hasDispatchCmd && vars.dispatchCmd.includes('{model}');
-  const modelFlag = model && model !== 'unknown' ? ` --model ${quoteRunnerArgValue(model)}` : '';
+  const modelFlag = runnerModelFlag(model);
   const tier = opts.safetyTier ?? runnerDefaultSafetyTier(runner);
   const launchPrompt = runnerNeedsPostLaunchPrompt(runner) ? '' : prompt;
 

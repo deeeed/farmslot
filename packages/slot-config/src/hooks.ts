@@ -444,10 +444,18 @@ export function expandDispatchCmd(
   // land on it exactly once. Resolved path placeholders win over a bare
   // `{runner}`, which a template may also use as a plain label.
   const runnerArgsSuffix = context.runnerArgs?.trim() ? ` ${context.runnerArgs.trim()}` : '';
+  // Prefer a resolved path, but only when it actually resolves: a pool with no
+  // configured path for this runner leaves `{runner_path}` empty, and the args
+  // must then follow the bare `{runner}` the template falls back to.
   const argsPlaceholder =
-    ['{runner_path}', `{${runner}_path}`, '{runner}'].find((candidate) =>
-      template.includes(candidate),
-    ) ?? null;
+    (
+      [
+        ['{runner_path}', runnerPath],
+        [`{${runner}_path}`, runnerPath],
+        ['{runner}', runner],
+      ] as const
+    ).find(([placeholder, binary]) => template.includes(placeholder) && Boolean(binary))?.[0] ??
+    null;
   let runnerArgsAttached = false;
   // Replacement callbacks, not replacement strings: a runner path may contain
   // `$&` or `$'`, which a string pattern would treat as insert tokens.

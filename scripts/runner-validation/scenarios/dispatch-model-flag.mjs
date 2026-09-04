@@ -16,6 +16,11 @@ export const RUNNER_AGNOSTIC = true;
  *
  * This asserts on the persisted launch command the gateway actually ran, not on
  * pane text: `dispatch.outputs.launchCommand` is the same string tmux received.
+ *
+ * Scope: every runner-aware pool in this fleet uses `{runner_path}`
+ * (pool/macpro.json), which is what this scenario exercises live. The bare
+ * `{runner}` attachment has no pool to run against and is covered by unit tests
+ * in packages/slot-config/src/hooks.test.ts.
  */
 function rpc(method, params = {}, timeoutMs = 120_000) {
   const script = path.join(ROOT, 'apps/command-center/scripts/cdp.mjs');
@@ -54,6 +59,23 @@ function expectedModelArgument(model) {
 
 export async function runScenario({ timeoutMs, outDir, slotId, model, runner, taskFile }) {
   const reportRunner = runner || 'cursor';
+  // This scenario dispatches against a real slot, so `--scenario all` has no
+  // arguments for it. Skip rather than fail: the harness prints SKIP and the
+  // full matrix stays green.
+  if (!slotId || !model) {
+    const skipReason =
+      'dispatch-model-flag needs --slot <slotId> and --model <model>; run it on its own';
+    const report = { runner: reportRunner, skipped: true, skipReason, pass: true };
+    const outPath = writeEvidence(report, SCENARIO_ID, reportRunner, outDir);
+    return {
+      scenario: SCENARIO_ID,
+      runner: reportRunner,
+      outPath,
+      pass: true,
+      skipped: true,
+      report,
+    };
+  }
   const report = {
     runner: reportRunner,
     slotId: slotId ?? null,
@@ -69,10 +91,6 @@ export async function runScenario({ timeoutMs, outDir, slotId, model, runner, ta
   let runId = null;
 
   try {
-    if (!slotId) throw new Error('dispatch-model-flag requires --slot <slotId>');
-    if (!model) throw new Error('dispatch-model-flag requires --model <model>');
-    if (!runner) throw new Error('dispatch-model-flag requires --runner <runner>');
-
     const fleet = rpc('fleet.status');
     const slot = fleet.fleet?.slots?.find((candidate) => candidate.slot === slotId);
     if (!slot) throw new Error(`slot ${slotId} not found in fleet.status`);
@@ -90,7 +108,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, model, runner, ta
       ticketOrPr: 'dispatch model flag validation',
       initialContext:
         'Validation run for the dispatch model flag. Report the active model and stop; make no changes.',
-      runner,
+      runner: reportRunner,
       model,
       slotId,
       skipPrepare: true,
@@ -135,14 +153,26 @@ export async function runScenario({ timeoutMs, outDir, slotId, model, runner, ta
     report.error = error?.message || String(error);
   } finally {
     if (runId) {
+      // A validation run that outlives the scenario holds a real slot. Failing
+      // to release it is a scenario failure, not a footnote: the operator has
+      // to know which runId leaked so they can cancel it by hand.
       try {
         rpc('run.cancel', { runId, reason: `${SCENARIO_ID} validation complete` });
-        report.cancelled = true;
+        const after = rpc('run.get', { runId }).run;
+        report.finalStatus = after?.status ?? null;
+        report.cancelled = after?.status === 'cancelled';
+        if (!report.cancelled) {
+          report.pass = false;
+          report.leakedRunId = runId;
+          report.cancelError = `run ${runId} is ${report.finalStatus ?? 'unreadable'} after cancel, expected cancelled`;
+          report.error = report.error ?? report.cancelError;
+        }
       } catch (cancelError) {
-        // Advisory: the assertions above already ran. Surface the leak instead
-        // of hiding it so the operator can release the slot by hand.
+        report.pass = false;
         report.cancelled = false;
+        report.leakedRunId = runId;
         report.cancelError = cancelError?.message || String(cancelError);
+        report.error = report.error ?? report.cancelError;
       }
     }
   }

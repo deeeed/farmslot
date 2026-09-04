@@ -31,6 +31,9 @@ node scripts/runner-validation/run.mjs --runner grok --scenario dispatch-prompt-
 
 # Full matrix (skips apply per runner/scenario)
 node scripts/runner-validation/run.mjs --runner all --scenario all
+
+# Dispatch model flag (needs a real slot; skipped by the full matrix without these args)
+node scripts/runner-validation/run.mjs --runner cursor --scenario dispatch-model-flag --slot macpro-ff-1 --model gpt-5.6-sol-max
 ```
 
 Evidence JSON: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`

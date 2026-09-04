@@ -561,7 +561,38 @@ export function runnerSupportsModel(
   model: string | null | undefined,
 ): boolean {
   if (!model) return true;
+  // A leading `-` or whitespace-only value is never a usable CLI argument, no
+  // matter how permissive the runner's own `acceptsModel` is.
+  if (!runnerArgumentValueIsSafe(model)) return false;
   return getRunnerDefinition(runnerId).acceptsModel(model);
+}
+
+/**
+ * A model or effort value reaches the runner CLI as its own argv entry. Every
+ * runner CLI parses a leading `-` as an option, so such a value silently
+ * becomes a different flag, and an empty value makes the CLI consume whatever
+ * follows as the model. Shell quoting stops the shell, not argv parsing, so
+ * these have to be refused at the acceptance boundary instead.
+ */
+export class UnsafeRunnerArgumentError extends Error {
+  override name = 'UnsafeRunnerArgumentError';
+}
+
+export function runnerArgumentValueIsSafe(value: string | null | undefined): boolean {
+  if (value == null) return true;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && !trimmed.startsWith('-');
+}
+
+export function assertSafeRunnerArgumentValue(
+  kind: 'model' | 'effort',
+  value: string | null | undefined,
+): void {
+  if (runnerArgumentValueIsSafe(value)) return;
+  throw new UnsafeRunnerArgumentError(
+    `runner ${kind} ${JSON.stringify(value)} cannot be passed to a runner CLI: ` +
+      `it must be non-empty and must not start with '-'`,
+  );
 }
 
 export function isKnownRunner(runnerId?: string | null): boolean {

@@ -1886,6 +1886,23 @@ describe('buildLaunchCommand', () => {
       assert.equal(cmd.match(/--model/g)?.length, 1);
     });
 
+    it('refuses a model value the runner CLI would parse as a flag', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}' });
+      // Quoting stops the shell, not argv parsing: `--help` still reaches the
+      // CLI as an option. It must be refused before any command is built.
+      assert.throws(
+        () => buildLaunchCommand(vars, 'cursor', '--help', PROMPT, { safetyTier: 'dangerous' }),
+        /model "--help" cannot be passed to a runner CLI/,
+      );
+      assert.throws(
+        () => buildLaunchCommand(vars, 'cursor', '   ', PROMPT, { safetyTier: 'dangerous' }),
+        /cannot be passed to a runner CLI/,
+      );
+      assert.equal(runnerSupportsModel('cursor', '--help'), false);
+      assert.equal(runnerSupportsModel('grok', '-m'), false);
+      assert.equal(runnerSupportsModel('cursor', 'gpt-5.6-sol-max'), true);
+    });
+
     it('quotes a model value that could otherwise alter the command', () => {
       const vars = makeVars({ dispatchCmd: 'cd {repo} && {runner_path} {safety_flags}' });
       const cmd = buildLaunchCommand(vars, 'cursor', 'evil; touch /tmp/pwned', PROMPT, {

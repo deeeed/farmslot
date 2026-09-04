@@ -672,3 +672,17 @@ test('expandDispatchCmd leaves an ordinary model id unquoted', () => {
 
   assert.equal(command, 'cd /repo && /usr/local/bin/cursor-agent --model gpt-5.6-sol-max');
 });
+
+test('expandDispatchCmd falls back to {runner} when the path placeholder resolves empty', () => {
+  // A pool with no configured path for this runner leaves `{runner_path}`
+  // empty; the args must follow the bare `{runner}` the command actually runs.
+  const command = expandDispatchCmd(
+    runnerArgsSlotVars({
+      cursorPath: '',
+      dispatchCmd: 'cd {repo} && {runner_path}{runner} {safety_flags}',
+    }),
+    { runner: 'cursor', runnerArgs: '--model gpt-5.6-sol-max', safetyFlags: '--force' },
+  );
+
+  assert.equal(command, 'cd /repo && cursor --model gpt-5.6-sol-max --force');
+});
