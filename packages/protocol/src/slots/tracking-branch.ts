@@ -63,8 +63,14 @@ export function resolveSlotTrackingBranch(
  * What a detached HEAD reports. `git rev-parse --abbrev-ref HEAD` answers the
  * literal string `HEAD` when no branch is checked out, which is what the fleet
  * refresh records as the slot's branch.
+ *
+ * Exported, NOT baked into `isSlotIdleBranch`: this predicate is shared with
+ * `slot.release`'s unmerged-work refusal and with fleet health, where a
+ * detached HEAD can hold real unpushed commits that must still be protected.
+ * Only dispatch scoring may treat a detached slot as idle, and only when a park
+ * record proves the commits are preserved.
  */
-const DETACHED_HEAD_BRANCH = 'HEAD';
+export const DETACHED_HEAD_BRANCH = 'HEAD';
 
 export function isSlotIdleBranch(
   currentBranch: string,
@@ -73,12 +79,6 @@ export function isSlotIdleBranch(
   linkedWorktree: boolean,
 ): boolean {
   if (!currentBranch) return false;
-  // A detached HEAD holds no branch ref, so there is no work for the next
-  // occupant's prepare to clobber and nothing for an operator to rescue — the
-  // slot is as idle as one sitting on its tracking branch. ADR-054 `free-slot`
-  // detaches deliberately for exactly this reason, and without this the freed
-  // slot would carry the stale-branch penalty and force an operator pick.
-  if (currentBranch === DETACHED_HEAD_BRANCH) return true;
   if (linkedWorktree) {
     return currentBranch === trackingBranch || currentBranch === defaultBranch;
   }

@@ -56,6 +56,7 @@ import {
   isDispatchStaleBranch,
   isFreeSlot,
   isReplaceableWarmSlot,
+  parkPreservedSlotIds,
   prepareProfileNeedsCompanionResource,
   projectConfigsFromProjects,
   slotScore,
@@ -775,6 +776,9 @@ export async function dispatchCandidates(
   const allRuns = getAllRuns();
   const activeSlotIds = activeRunSlotIds(allRuns);
   const activeOwnerIds = activeRunIds(allRuns);
+  // ADR-054: a slot whose detached HEAD is a park's preserved workspace is
+  // dispatchable, so it must not carry the stale-branch penalty here.
+  const parkPreserved = parkPreservedSlotIds(allRuns);
 
   // PR-bound calls ALSO get the busy-slot branch-affinity nudge slice so the wizard can
   // surface "REUSE WORKER" rows. Refresh busy-slot branches first — without this, a slot
@@ -862,12 +866,13 @@ export async function dispatchCandidates(
             ? slotScore(s, scoring.targetBranch, {
                 familyId: scoring.familyId,
                 projectConfigs,
+                parkPreservedSlotIds: parkPreserved,
               })
             : 999,
         cdpLive: isCdpLive(s.health.cdp),
         branch: s.branch || '',
         lifecycle: s.lifecycle,
-        onMain: !isDispatchStaleBranch(s, projectConfigs),
+        onMain: !isDispatchStaleBranch(s, projectConfigs, parkPreserved),
         hostLoad: s.hostLoad,
         free: isFreeSlot(s),
         ...(replaceableWarm ? { replaceableWarm: true } : {}),

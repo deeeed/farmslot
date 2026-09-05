@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  DETACHED_HEAD_BRANCH,
   isSlotIdleBranch,
   isSlotRefreshStaleBranch,
   resolveSlotTrackingBranch,
@@ -64,30 +65,24 @@ test('isSlotRefreshStaleBranch uses fleet-probed linkedWorktree signal', () => {
   );
 });
 
-// ─── ADR-054 free-slot: a detached HEAD is idle, not stale ───
+// ─── ADR-054 free-slot: the shared predicate stays conservative ───
 
-test('a detached HEAD is idle, so a park-freed slot carries no stale penalty', () => {
+test('a detached HEAD is still a stale branch to the shared predicate', () => {
   const project = { defaultBranch: 'main', slotTrackingBranch: 'wt/{{session}}' };
-  // `git rev-parse --abbrev-ref HEAD` answers the literal 'HEAD' when detached,
-  // which is what the fleet refresh records as the slot's branch.
-  assert.equal(isSlotIdleBranch('HEAD', 'wt/ff-2', 'main', true), true);
-  assert.equal(isSlotIdleBranch('HEAD', 'main', 'main', false), true);
+  // This predicate is shared with `slot.release`'s unmerged-work refusal and
+  // with fleet health, where a detached HEAD can hold real unpushed commits. It
+  // must keep calling those stale; only dispatch scoring may make an exception,
+  // and only for a slot a park record proves is preserved.
+  assert.equal(isSlotIdleBranch(DETACHED_HEAD_BRANCH, 'wt/ff-2', 'main', true), false);
+  assert.equal(isSlotIdleBranch(DETACHED_HEAD_BRANCH, 'main', 'main', false), false);
   assert.equal(
-    isSlotRefreshStaleBranch('HEAD', project, {
-      session: 'ff-2',
-      slotId: 'macwork-ff-2',
-      linkedWorktree: true,
-    }),
-    false,
-    'a detached slot holds no branch ref for a prepare to clobber',
-  );
-  // A real feature branch is still stale: the detached case must not widen this.
-  assert.equal(
-    isSlotRefreshStaleBranch('feat/demo', project, {
+    isSlotRefreshStaleBranch(DETACHED_HEAD_BRANCH, project, {
       session: 'ff-2',
       slotId: 'macwork-ff-2',
       linkedWorktree: true,
     }),
     true,
+    'an unexplained detached HEAD must not silence the unmerged-work refusal',
   );
+  assert.equal(DETACHED_HEAD_BRANCH, 'HEAD');
 });

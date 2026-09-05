@@ -1779,8 +1779,26 @@ test('runResolveDecision refuses a park that landed during its awaited probes', 
     actions: [{ id: 'request-extra-review', label: 'Request review', style: 'secondary' }],
     createdAt: '2026-09-05T00:00:00.000Z',
   };
+  // A review whose normalization WOULD rewrite it. If the normalize write runs
+  // before the consumption-point fence, this run is mutated by a resolve that
+  // was then refused.
+  const exhaustedReview = {
+    id: 'independent-review-1',
+    source: 'human-gate' as const,
+    crossRunner: true,
+    loopNumber: 1,
+    verdict: 'issues' as const,
+    unresolvedCount: 1,
+    issues: [{ file: 'src/example.ts', description: 'Fix this' }],
+    feedbackSent: true,
+    attempts: [{ loopNumber: 1, verdict: 'issues' as const, unresolvedCount: 1 }],
+  };
   // Starts UNPARKED, so the entry check passes and only the re-check can catch it.
-  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  updateRun(run.id, {
+    status: 'blocked',
+    decisions: [decision],
+    engineState: { publishGate: { independentReviews: [exhaustedReview] } },
+  });
   t.after(async () => {
     updateRun(run.id, { status: 'failed', park: null });
     await deleteRun(run.id);
@@ -1813,4 +1831,64 @@ test('runResolveDecision refuses a park that landed during its awaited probes', 
   const persisted = getRun(run.id)!;
   assert.equal(persisted.decisions[0]?.resolvedAt, undefined);
   assert.equal(persisted.status, 'blocked');
+  // Nothing this refused resolve touched may have persisted, including the
+  // review normalization that runs alongside the launch assertion.
+  const stored = persisted.engineState?.publishGate?.independentReviews?.[0];
+  assert.equal(stored?.feedbackSent, true, 'a refused resolve must not normalize reviews');
+  assert.equal(stored?.recoveryContinuationPending, undefined);
+});
+
+test('the post-resolve resume timer does not restart a gate-parked run', async (t) => {
+  const slotId = `test-gate-park-resume-${Date.now()}`;
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-GATE-PARK-RESUME-${Date.now()}`,
+    runner: 'claude',
+    slotId,
+  });
+  const decision: RunDecision = {
+    id: 'gate-park-resume',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Approve package',
+    actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+    createdAt: '2026-09-05T00:00:00.000Z',
+  };
+  // Starts UNPARKED so the resolve succeeds and actually schedules the timer.
+  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  const { updateRunStep } = await import('../runs/store.js');
+  updateRunStep(run.id, 'finalize', { status: 'running' });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed', park: null });
+    await deleteRun(run.id);
+  });
+
+  const beforeSteps = JSON.stringify(getRun(run.id)!.steps);
+
+  // The park lands after the resolve and before the timer's tick — the window
+  // the timer reads the run in. `emit` runs synchronously at the end of the
+  // resolve, so this is exactly that gap.
+  await runResolveDecision(
+    { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+    () => {
+      if (getRun(run.id)?.park) return;
+      updateRun(run.id, {
+        status: 'blocked',
+        park: {
+          ...gateParkRecord(run.id, slotId, { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+          runId: run.id,
+          slotId,
+        },
+      });
+    },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  const after = getRun(run.id)!;
+  // Resuming would reset the stale step and re-enter FINALIZE against a slot a
+  // successor may already own.
+  assert.equal(after.status, 'blocked');
+  assert.equal(JSON.stringify(after.steps), beforeSteps, 'no step was reset for a resume');
 });

@@ -1198,7 +1198,10 @@ function assertGateParkEligibility({ slotId, runId, machine }) {
         // and both unrelated to the gate-park branch.
         realRunnerProbe: {
           runner: 'claude',
-          recoveryPolicySupported: false,
+          // `recoveryPolicy.supported` is NOT recorded: every reject sets it
+          // false regardless of reason, so it says nothing about the runner's
+          // declared reload capability and reading it as if it did was
+          // misleading. The codes below are what actually carries the finding.
           codesObserved: ['CAPABILITY_RESOURCE_UNOWNED', 'CAPABILITY_SLOT_ACTION_UNMAPPED'],
           note: 'not RUNNER_RELOAD_UNSUPPORTED: the runner declaration gate accepts a session-reload runner',
         },

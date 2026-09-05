@@ -79,7 +79,10 @@ import {
 } from '../run-engine/orchestrator.js';
 import { isGateParkInFlightOrFreed, isSlotFreedByPark } from '../run-engine/park-slot-binding.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
-import { normalizeExhaustedReviewContinuationsForRun } from '../run-engine/recover-inflight-reviews.js';
+import {
+  normalizeExhaustedReviewContinuationsForRun,
+  projectExhaustedReviewContinuationsForRun,
+} from '../run-engine/recover-inflight-reviews.js';
 import { assertIndependentReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
 import {
   probeWorkerSignalForRun,
@@ -1242,6 +1245,9 @@ export async function runResolveDecision(
       );
     }
   }
+  // Set when the review-request branch projected a normalization; committed
+  // only after the consumption-point park fence below.
+  let normalizedReviews: IndependentReviewStatus[] | undefined;
   if (
     decision.type === 'engine_human_gate' &&
     isHumanGateReviewRequestAction(params.actionId) &&
@@ -1257,7 +1263,12 @@ export async function runResolveDecision(
         },
       );
     }
-    const normalizedReviews = normalizeExhaustedReviewContinuationsForRun(existing.id);
+    // Read-only projection for the launch assertion. The WRITE that normalizing
+    // performs is deferred to `commitNormalizedReviews` below, after the
+    // consumption-point park fence — otherwise a park landing during the
+    // awaited assertion would leave this run mutated by a resolve that was then
+    // refused.
+    normalizedReviews = projectExhaustedReviewContinuationsForRun(existing.id);
     await (dependencies.assertReviewLaunchAllowed ?? assertIndependentReviewLaunchStateForSlot)(
       normalizedReviews,
       existing.slotId,
@@ -1273,6 +1284,8 @@ export async function runResolveDecision(
   // was not parked when the request arrived. Consuming the decision after that
   // would drive the engine against a worker the park stopped.
   assertNotGateParked(params.runId, getRun(params.runId)!);
+  // Past every refusal now, so the normalization may persist.
+  if (normalizedReviews) normalizeExhaustedReviewContinuationsForRun(params.runId);
   if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
     const fresh = getRun(params.runId)!;
     if (fresh.engineState?.publishGate?.reviewLaunchRejection) {
@@ -1315,6 +1328,19 @@ export async function runResolveDecision(
     void (async () => {
       const afterResolve = getRun(params.runId);
       if (!afterResolve || afterResolve.status !== 'blocked') return;
+      // ADR-054 `free-slot`: this timer exists to resume a run whose engine loop
+      // was lost. A gate-parked run is not that — a park can land while the
+      // engine holds the resolved decision, and the gate blocker then leaves the
+      // run `blocked` with HUMAN_GATE marked done and every decision resolved,
+      // which is exactly the shape below resumes. Resuming would enter FINALIZE
+      // against a slot a successor may already own. The park's own restore or
+      // cancel is the way out, not an automatic restart.
+      if (isGateParkInFlightOrFreed(afterResolve)) {
+        console.log(
+          `[run] run ${params.runId.slice(0, 8)} — gate-parked, not auto-resuming after decision resolve`,
+        );
+        return;
+      }
       const stillUnresolved = afterResolve.decisions.filter((d) => !d.resolvedAt);
       if (stillUnresolved.length === 0) {
         console.log(

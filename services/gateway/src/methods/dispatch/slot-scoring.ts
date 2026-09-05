@@ -1,5 +1,6 @@
 import {
   DEFAULT_BRANCH,
+  DETACHED_HEAD_BRANCH,
   isCdpLiveValue,
   isDispatchScoreStale,
   isSlotRefreshStaleBranch,
@@ -154,10 +155,37 @@ export function slotTrackingConfigForSlot(
   };
 }
 
+/**
+ * Slots whose detached HEAD is a park's preserved workspace, so dispatch may
+ * treat them as idle. Derived from the run store, never from the slot row
+ * alone: a detached HEAD is only safe to dispatch over when a park record says
+ * the commits survive on a branch ref. Any OTHER detached slot may hold real
+ * unpushed work, which is why `isSlotIdleBranch` still calls it stale for
+ * `slot.release` and fleet health.
+ */
+export function parkPreservedSlotIds(
+  runs: ReadonlyArray<Pick<Run, 'slotId' | 'park'>>,
+): Set<string> {
+  return new Set(
+    runs.flatMap((run) =>
+      run.slotId && run.park?.preservedWorkspace?.detachedAt ? [run.slotId] : [],
+    ),
+  );
+}
+
 export function isDispatchStaleBranch(
   slot: SlotStatus,
   projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>,
+  parkPreserved?: ReadonlySet<string>,
 ): boolean {
+  // Scoped exception, dispatch only. ADR-054 `free-slot` detaches the parked
+  // branch precisely so the next occupant's `git reset --hard` cannot move it,
+  // and the branch ref survives at the recorded tip. Without this the freed
+  // slot carries the stale penalty and a lone freed slot forces an operator
+  // pick. It applies ONLY to a slot a park record claims — a plain detached
+  // slot stays stale everywhere, including `slot.release`'s unmerged-work
+  // refusal.
+  if (slot.branch === DETACHED_HEAD_BRANCH && parkPreserved?.has(slot.slot)) return false;
   return isSlotRefreshStaleBranch(
     slot.branch ?? '',
     slotTrackingConfigForSlot(slot, projectConfigs),
@@ -175,6 +203,7 @@ export function slotScore(
   options?: {
     familyId?: string | null;
     projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
+    parkPreservedSlotIds?: ReadonlySet<string>;
   },
 ): number {
   let score = 0;
@@ -191,7 +220,7 @@ export function slotScore(
   // PR's own slot would score +50 (stale) and lose to any slot on main.
   if (targetBranch && slot.branch === targetBranch && !hostRed) {
     score -= TARGET_BRANCH_BONUS;
-  } else if (isDispatchStaleBranch(slot, options?.projectConfigs)) {
+  } else if (isDispatchStaleBranch(slot, options?.projectConfigs, options?.parkPreservedSlotIds)) {
     // Stale branch is the primary penalty — prepare must reset to idle baseline first
     score += STALE_BRANCH_PENALTY;
   }

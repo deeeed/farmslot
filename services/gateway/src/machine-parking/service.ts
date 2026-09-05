@@ -1643,12 +1643,31 @@ export class MachineParkingService {
       new Error(`slot '${record.slotId}' ownership could not be released for run '${runId}'`),
     );
     // The detach is this park's only landed effect now, and the park is not
-    // going to finish. Putting the branch back leaves the run exactly as it was
-    // before the park, which is what lets the in-flight fence clear and the run
-    // stay answerable and restorable instead of stranded.
+    // going to finish. Putting the branch back leaves the run exactly as the
+    // park found it, so restore has an unambiguous starting point.
     await this.rollBackDetachedWorkspace(runId);
+    // Abandon the write-ahead intent BEFORE the record settles. The journal
+    // exists to finish a transition a crash interrupted; this transition was
+    // not interrupted, it was refused and undone. Leaving the marker behind
+    // means the next reconcile re-drives it and frees the slot of a run that
+    // has since been restored and resumed.
+    await this.abandonFreeSlotIntent(runId, record);
     await this.patchRecord(runId, (current) => ({ ...current, phase: 'partial' }));
     return false;
+  }
+
+  /**
+   * Drop the `free-slot` write-ahead marker for a transition that will not be
+   * finished. Failing to delete it is itself recorded: a stale marker is the
+   * one thing that can still free this slot behind the operator's back, so it
+   * must not pass silently.
+   */
+  private async abandonFreeSlotIntent(runId: string, record: MachineParkRecord): Promise<void> {
+    try {
+      await this.deps.deleteIntentJournal(record.machine, 'free-slot', record.operationId, runId);
+    } catch (error) {
+      await this.appendError(runId, 'parked', 'slot.free-journal-abandon', error);
+    }
   }
 
   /**
@@ -1676,6 +1695,44 @@ export class MachineParkingService {
     const run = this.deps.getRun(runId);
     const workspace = run?.park?.preservedWorkspace;
     if (!run || !workspace?.detachedAt) return;
+    // The release was refused, which can mean a rival already owns this row. A
+    // checkout there would run `git checkout <our branch>` inside SOMEONE
+    // ELSE'S working tree, on top of whatever their prepare just laid down.
+    // Ownership first: only the run that still holds the slot may touch it.
+    const row = await this.deps.slotRow(run.park!.slotId);
+    const owner = row && typeof row.current_run_id === 'string' ? row.current_run_id : null;
+    if (owner !== runId) {
+      await this.appendError(
+        runId,
+        'parked',
+        'workspace.reattach',
+        new Error(
+          `slot '${run.slotId}' is owned by '${owner ?? 'nobody'}', not '${runId}'; leaving the detached workspace alone`,
+        ),
+      );
+      return;
+    }
+    // Identity second: the tree must still be sitting on the exact commit this
+    // park detached to. Anything else means another writer moved it, and a
+    // checkout would be guessing at whose work is on top.
+    let current: ParkWorkspaceInspection;
+    try {
+      current = await this.deps.inspectParkWorkspace(run);
+    } catch (error) {
+      await this.appendError(runId, 'parked', 'workspace.reattach', error);
+      return;
+    }
+    if (current.branch !== null || current.headSha !== workspace.headSha) {
+      await this.appendError(
+        runId,
+        'parked',
+        'workspace.reattach',
+        new Error(
+          `slot workspace moved to ${current.branch ?? 'detached'}@${current.headSha ?? 'unknown'} since the park detached ${workspace.headSha}`,
+        ),
+      );
+      return;
+    }
     try {
       await this.deps.reattachParkedWorkspace(run, workspace);
     } catch (error) {
@@ -1742,7 +1799,12 @@ export class MachineParkingService {
             'this park freed the slot; restoring a freed slot is not supported yet',
           );
         }
-        if (run.status !== 'paused')
+        // A gate park deliberately PRESERVES the run's status — the run stays at
+        // its gate rather than moving to `paused`. Requiring `paused` here would
+        // therefore refuse every gate park that needs restoring, which is the
+        // only exit a partial one has: its runner is already stopped, so the run
+        // is fenced out of answering its gate until restore reloads the worker.
+        if (run.status !== 'paused' && !isGateParkRecord(record))
           return reject('RUN_NOT_PAUSED', `run status is '${run.status}'`);
         if ((run.engineState?.generation ?? 0) !== record.generation) {
           return reject('GENERATION_CHANGED', 'run generation changed while parked');
@@ -2385,6 +2447,11 @@ export class MachineParkingService {
    * finished, or it is proven already done.
    */
   private async repairFreeSlotIntent(record: MachineParkRecord): Promise<boolean> {
+    // Reaching here at all means the marker is still on disk, which is the
+    // signal that this transition was INTERRUPTED rather than settled: the live
+    // path deletes the marker whenever it refuses and rolls back. So phase is
+    // deliberately not consulted — a crash after the release landed leaves a
+    // `partial` record that still needs finishing.
     const run = this.deps.getRun(record.runId);
     // Nothing to finish: the run is gone, terminal cleanup cleared the record,
     // or a restore already reclaimed the slot.
@@ -2712,6 +2779,15 @@ function intentFailureRecords(
       },
     ],
   }));
+}
+
+/**
+ * A record written by an ADR-054 `free-slot` gate park. Such a park preserves
+ * the run's status by design, so the `paused` precondition every other restore
+ * relies on never holds for one.
+ */
+function isGateParkRecord(record: MachineParkRecord): boolean {
+  return record.mode === 'release' && record.slotDisposition === 'freed';
 }
 
 function zeroEffectIntent(

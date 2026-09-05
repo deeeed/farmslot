@@ -42,12 +42,13 @@ export function isSlotFreedByPark(run: Pick<Run, 'park'>): boolean {
  * So:
  *
  *   - `slotFreedAt` set — the release landed. Fenced, until restore or cancel.
- *   - record settled `partial` with nothing landed — the park changed nothing
- *     (the usual case: the working tree went dirty between preview and detach,
- *     so the detach refused before touching anything). The run still owns its
- *     slot and its worker, so it stays answerable and restorable. Not fenced.
- *   - record settled `partial` with a detach still outstanding — one real
- *     effect is unreversed, so the fence holds until it is rolled back.
+ *   - record settled `partial` — the park will not finish. It is still fenced
+ *     while ANY of its effects is outstanding: a detach not yet rolled back, or
+ *     a runner it stopped. A stopped worker cannot act on a gate answer, and
+ *     letting the operator answer anyway would be the silent version of the
+ *     strand. `machine.pause.restore` is the exit: it reloads the worker and
+ *     settles the record, which lifts the fence. Only a park that stopped
+ *     nothing and detached nothing leaves the run answerable where it stands.
  *   - otherwise, while the intent is live — fenced.
  */
 export function isGateParkInFlightOrFreed(run: Pick<Run, 'park'>): boolean {
@@ -58,6 +59,12 @@ export function isGateParkInFlightOrFreed(run: Pick<Run, 'park'>): boolean {
   if (park.phase === 'restored' || park.phase === 'cancelled') return false;
   if (park.slotFreedAt) return true;
   if (park.mode !== 'release' || park.slotDisposition !== 'freed') return false;
-  if (park.phase === 'partial') return Boolean(park.preservedWorkspace?.detachedAt);
+  if (park.phase === 'partial') {
+    if (park.preservedWorkspace?.detachedAt) return true;
+    // The park stops the runner before it ever touches the slot, so a partial
+    // that got past that point has a dead worker even though the run still owns
+    // its slot. Restore is what brings it back.
+    return park.residuals?.runner === 'stopped';
+  }
   return true;
 }
