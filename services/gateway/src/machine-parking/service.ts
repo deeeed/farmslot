@@ -46,6 +46,7 @@ import { selectAgentContext } from '../agents/contexts.js';
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { readSlotRow, resetSlotIf, SLOT_PHASE_RELEASING } from '../core/index.js';
+import { captureSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
 import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
 import { readMachinePressure } from '../fleet/pressure-read.js';
 import {
@@ -2062,10 +2063,9 @@ export class MachineParkingService {
       // resource that died while the run was parked and let the restore report
       // success over it. Park never stopped these, so restore must find them
       // already up or refuse; it may not boot its way to a green result.
-      // One observation taken before anything acquires. It is both the input to
-      // the retained check and the baseline the acquire-boot detector below
-      // compares against, so the detector keeps working even if this ordering
-      // is ever changed again.
+      // One observation taken before anything acquires, feeding the retained
+      // check below. What each acquisition and boot actually did is reported by
+      // the code that performs it, not inferred from observations around it.
       await this.patchRecord(runId, (current) => ({ ...current, restoreEffects: [] }));
       let preAcquire: Map<string, SlotResource['status']> | null = null;
       try {
@@ -2078,219 +2078,243 @@ export class MachineParkingService {
       } catch (error) {
         await this.appendError(runId, 'resources-restoring', 'resource.retained-verify', error);
       }
-      const retainedFailure = !(await this.verifyRetainedResources(runId, record, preAcquire));
-      if (retainedFailure) {
-        failed = true;
-        // Say plainly which resources this restore never touched, so the record
-        // reads as a complete account rather than a silence to interpret.
-        for (const resource of record.resourceManifest.resources) {
-          if (resource.releaseEffect === 'retain') continue;
-          await this.recordRestoreEffect(runId, {
-            resourceId: resource.resourceId,
-            action: 'skipped',
-            ok: false,
-            reason: 'a retained resource failed verification, so nothing was acquired or booted',
-          });
+      // Every boot, shutdown, and relaunch on this slot from here on is
+      // reported by the code that runs it, including the ones a capability
+      // acquire reaches. A retained resource must never be booted at all, so a
+      // boot against one is recorded as an effect that should not have
+      // happened, whatever state it was in beforehand.
+      const retainedIds = new Set(
+        record.resourceManifest.resources
+          .filter((resource) => resource.releaseEffect === 'retain')
+          .map((resource) => resource.resourceId),
+      );
+      const performed: MachineParkRestoreEffect[] = [];
+      /** Resources the restore acted on, so a verification is not added on top. */
+      const actedOn = new Set<string>();
+      const stopCapture = captureSlotResourceLifecycle(record.slotId, (event) => {
+        actedOn.add(event.resourceId);
+        const action = event.action === 'shutdown' ? ('stopped' as const) : ('booted' as const);
+        const forbidden = action === 'booted' && retainedIds.has(event.resourceId);
+        performed.push({
+          resourceId: event.resourceId,
+          action,
+          at: this.deps.now(),
+          ok: forbidden ? false : event.ok,
+          ...(forbidden
+            ? {
+                reason: `a retained resource must never be booted by a restore; '${event.action}' ran anyway`,
+              }
+            : event.detail
+              ? { reason: event.detail }
+              : {}),
+        });
+      });
+      const drainPerformed = async (): Promise<void> => {
+        while (performed.length > 0) {
+          const effect = performed.shift()!;
+          if (!effect.ok) failed = true;
+          await this.recordRestoreEffect(runId, effect);
         }
-      }
-      for (const lease of retainedFailure ? [] : record.resourceManifest.capabilityLeases) {
-        let shouldAcquire = lease.state === 'released';
-        if (lease.state === 'held' || lease.state === 'reacquired') continue;
-        if (!shouldAcquire) {
-          try {
-            const status = await this.deps.capabilityStatus(record.slotId, runId);
-            const persisted = status.leases.find((candidate) => candidate.id === lease.leaseId);
-            if (persisted?.state === 'released') {
-              shouldAcquire = true;
-            } else if (persisted?.state === 'acquired') {
+      };
+      try {
+        const retainedFailure = !(await this.verifyRetainedResources(runId, record, preAcquire));
+        if (retainedFailure) {
+          failed = true;
+          // Say plainly which resources this restore never touched, so the record
+          // reads as a complete account rather than a silence to interpret.
+          for (const resource of record.resourceManifest.resources) {
+            if (resource.releaseEffect === 'retain') continue;
+            await this.recordRestoreEffect(runId, {
+              resourceId: resource.resourceId,
+              action: 'skipped',
+              ok: false,
+              reason: 'a retained resource failed verification, so nothing was acquired or booted',
+            });
+          }
+        }
+        for (const lease of retainedFailure ? [] : record.resourceManifest.capabilityLeases) {
+          let shouldAcquire = lease.state === 'released';
+          if (lease.state === 'held' || lease.state === 'reacquired') continue;
+          if (!shouldAcquire) {
+            try {
+              const status = await this.deps.capabilityStatus(record.slotId, runId);
+              const persisted = status.leases.find((candidate) => candidate.id === lease.leaseId);
+              if (persisted?.state === 'released') {
+                shouldAcquire = true;
+              } else if (persisted?.state === 'acquired') {
+                await this.patchCapability(runId, lease.leaseId, {
+                  state: 'held',
+                  error: undefined,
+                });
+                continue;
+              } else {
+                throw new Error(
+                  `capability '${lease.capabilityId}' cannot be safely reacquired from state '${persisted?.state ?? 'missing'}'`,
+                );
+              }
+            } catch (error) {
+              failed = true;
               await this.patchCapability(runId, lease.leaseId, {
-                state: 'held',
-                error: undefined,
+                state: 'failed',
+                error: messageOf(error),
               });
+              await this.appendError(runId, 'resources-restoring', 'capability.reconcile', error);
               continue;
-            } else {
-              throw new Error(
-                `capability '${lease.capabilityId}' cannot be safely reacquired from state '${persisted?.state ?? 'missing'}'`,
-              );
             }
+          }
+          if (!shouldAcquire) continue;
+          await this.patchCapability(runId, lease.leaseId, {
+            state: 'reacquiring',
+            error: undefined,
+          });
+          try {
+            const result = await this.deps.acquireCapability({
+              slotId: record.slotId,
+              capabilityId: lease.capabilityId,
+              ownerRunId: runId,
+              ...(lease.ownerFamilyId ? { ownerFamilyId: lease.ownerFamilyId } : {}),
+              proofRequirement: structuredClone(lease.proofRequirement),
+              parameters: structuredClone(lease.parameters),
+            });
+            if (!result.ok) throw new Error(result.conflict.reason);
+            await this.patchCapability(runId, lease.leaseId, {
+              state: 'reacquired',
+              restoredLeaseId: result.lease.id,
+              error: undefined,
+            });
           } catch (error) {
             failed = true;
             await this.patchCapability(runId, lease.leaseId, {
               state: 'failed',
               error: messageOf(error),
             });
-            await this.appendError(runId, 'resources-restoring', 'capability.reconcile', error);
-            continue;
+            await this.appendError(runId, 'resources-restoring', 'capability.acquire', error);
           }
         }
-        if (!shouldAcquire) continue;
-        await this.patchCapability(runId, lease.leaseId, {
-          state: 'reacquiring',
-          error: undefined,
-        });
-        try {
-          const result = await this.deps.acquireCapability({
-            slotId: record.slotId,
-            capabilityId: lease.capabilityId,
-            ownerRunId: runId,
-            ...(lease.ownerFamilyId ? { ownerFamilyId: lease.ownerFamilyId } : {}),
-            proofRequirement: structuredClone(lease.proofRequirement),
-            parameters: structuredClone(lease.parameters),
-          });
-          if (!result.ok) throw new Error(result.conflict.reason);
-          await this.patchCapability(runId, lease.leaseId, {
-            state: 'reacquired',
-            restoredLeaseId: result.lease.id,
+        await drainPerformed();
+        let observed = retainedFailure ? [] : await this.deps.observeResources(record.slotId);
+        const observedById = new Map(observed.map((resource) => [resource.id, resource.status]));
+        for (const resource of retainedFailure ? [] : record.resourceManifest.resources) {
+          await this.patchResource(runId, resource.resourceId, {
+            phase: 'restoring',
             error: undefined,
           });
-        } catch (error) {
-          failed = true;
-          await this.patchCapability(runId, lease.leaseId, {
-            state: 'failed',
-            error: messageOf(error),
-          });
-          await this.appendError(runId, 'resources-restoring', 'capability.acquire', error);
-        }
-      }
-      let observed = retainedFailure ? [] : await this.deps.observeResources(record.slotId);
-      const observedById = new Map(observed.map((resource) => [resource.id, resource.status]));
-      // A retained resource that was not running before the acquisitions and is
-      // running after them was booted by one of them. That boot leaves no error
-      // to find, so the transition itself is the only evidence it happened, and
-      // it is recorded as an effect that should not have occurred.
-      for (const resource of retainedFailure ? [] : record.resourceManifest.resources) {
-        if (resource.releaseEffect !== 'retain') continue;
-        const before = preAcquire?.get(resource.resourceId);
-        if (before === 'running' || observedById.get(resource.resourceId) !== 'running') continue;
-        failed = true;
-        await this.recordRestoreEffect(runId, {
-          resourceId: resource.resourceId,
-          action: 'booted',
-          ok: false,
-          reason: `was '${before ?? 'missing'}' before capability acquisition and running after it; a retained resource must never be booted by a restore`,
-        });
-        await this.appendError(
-          runId,
-          'resources-restoring',
-          'resource.retained-revived',
-          new Error(
-            `retained resource '${resource.resourceId}' was revived by capability acquisition`,
-          ),
-          resource.resourceId,
-        );
-      }
-      for (const resource of retainedFailure ? [] : record.resourceManifest.resources) {
-        await this.patchResource(runId, resource.resourceId, {
-          phase: 'restoring',
-          error: undefined,
-        });
-        try {
-          const status = observedById.get(resource.resourceId);
-          if (resource.releaseEffect === 'retain') {
-            // Park never stopped this one, so booting it here would start a
-            // second copy of something already running. Restore's job is to
-            // prove the claim held: it is still up.
-            if (status !== 'running') {
+          try {
+            const status = observedById.get(resource.resourceId);
+            if (resource.releaseEffect === 'retain') {
+              // Park never stopped this one, so booting it here would start a
+              // second copy of something already running. Restore's job is to
+              // prove the claim held: it is still up.
+              if (status !== 'running') {
+                throw new Error(
+                  `retained resource '${resource.resourceId}' is '${status ?? 'missing'}'; park never stopped it, so restore will not boot it`,
+                );
+              }
+            } else if (status === 'stopped') {
+              // No effect recorded here: the code that runs the boot hook reports
+              // it, so a boot reached through a capability acquire and a boot
+              // reached from this line land in the record the same way.
+              const result = await this.deps.startResource(record.slotId, resource.resourceId);
+              if (!result.ok) throw new Error(result.detail ?? 'resource boot failed');
+              observedById.set(resource.resourceId, 'running');
+            } else if (status === 'running') {
+              // Only when the restore did nothing to it. A resource an
+              // acquisition already booted is running for a reason the record
+              // states; adding a verification on top would report the same
+              // resource twice and hide which of the two actually happened.
+              if (!actedOn.has(resource.resourceId)) {
+                await this.recordRestoreEffect(runId, {
+                  resourceId: resource.resourceId,
+                  action: 'verified',
+                  ok: true,
+                });
+              }
+            } else {
               throw new Error(
-                `retained resource '${resource.resourceId}' is '${status ?? 'missing'}'; park never stopped it, so restore will not boot it`,
+                `resource '${resource.resourceId}' is '${status ?? 'missing'}'; refusing an unobserved boot`,
               );
             }
-          } else if (status === 'stopped') {
-            const result = await this.deps.startResource(record.slotId, resource.resourceId);
-            await this.recordRestoreEffect(runId, {
-              resourceId: resource.resourceId,
-              action: 'booted',
-              ok: result.ok,
-              ...(result.ok ? {} : { reason: result.detail ?? 'resource boot failed' }),
+            await this.patchResource(runId, resource.resourceId, {
+              phase: 'restored',
+              restoredAt: this.deps.now(),
+              error: undefined,
             });
-            if (!result.ok) throw new Error(result.detail ?? 'resource boot failed');
-            observedById.set(resource.resourceId, 'running');
-          } else if (status === 'running') {
-            await this.recordRestoreEffect(runId, {
-              resourceId: resource.resourceId,
-              action: 'verified',
-              ok: true,
+          } catch (error) {
+            failed = true;
+            await this.patchResource(runId, resource.resourceId, {
+              phase: 'failed',
+              error: messageOf(error),
             });
-          } else {
-            throw new Error(
-              `resource '${resource.resourceId}' is '${status ?? 'missing'}'; refusing an unobserved boot`,
+            await this.appendError(
+              runId,
+              'resources-restoring',
+              'resource.boot',
+              error,
+              resource.resourceId,
             );
           }
-          await this.patchResource(runId, resource.resourceId, {
-            phase: 'restored',
-            restoredAt: this.deps.now(),
-            error: undefined,
-          });
-        } catch (error) {
-          failed = true;
-          await this.patchResource(runId, resource.resourceId, {
-            phase: 'failed',
-            error: messageOf(error),
-          });
-          await this.appendError(
-            runId,
-            'resources-restoring',
-            'resource.boot',
-            error,
-            resource.resourceId,
-          );
         }
-      }
-      try {
-        observed = retainedFailure ? [] : await this.deps.observeResources(record.slotId);
-        const finalById = new Map(observed.map((resource) => [resource.id, resource.status]));
-        for (const resource of retainedFailure ? [] : record.resourceManifest.resources) {
-          if (finalById.get(resource.resourceId) === 'running') continue;
-          failed = true;
-          await this.appendError(
-            runId,
-            'resources-restoring',
-            'resource.restore-verify',
-            new Error(
-              `resource '${resource.resourceId}' is '${finalById.get(resource.resourceId) ?? 'missing'}' after restore`,
-            ),
-            resource.resourceId,
-          );
-        }
-      } catch (error) {
-        failed = true;
-        await this.appendError(runId, 'resources-restoring', 'resource.restore-verify', error);
-      }
-      if (!failed) {
+        await drainPerformed();
         try {
-          const runner = await this.deps.runnerRunning(
-            this.requireRun(runId),
-            record.recoveryHandle!,
-          );
-          if (runner === 'stopped') {
-            await this.patchRecord(runId, (current) => ({
-              ...current,
-              phase: 'runner-reloading',
-            }));
-            const current = this.requireRun(runId);
-            const proof = await this.deps.reloadRunner(
-              current,
-              record.recoveryHandle!,
-              buildMachineParkingContinuationPrompt(current, current.park!),
+          observed = retainedFailure ? [] : await this.deps.observeResources(record.slotId);
+          const finalById = new Map(observed.map((resource) => [resource.id, resource.status]));
+          for (const resource of retainedFailure ? [] : record.resourceManifest.resources) {
+            if (finalById.get(resource.resourceId) === 'running') continue;
+            failed = true;
+            await this.appendError(
+              runId,
+              'resources-restoring',
+              'resource.restore-verify',
+              new Error(
+                `resource '${resource.resourceId}' is '${finalById.get(resource.resourceId) ?? 'missing'}' after restore`,
+              ),
+              resource.resourceId,
             );
-            if (
-              proof.sessionId !== record.recoveryHandle!.sessionId ||
-              !proof.live ||
-              proof.acknowledgement.kind !== 'structured'
-            ) {
-              throw new Error('runner reload proof does not match the persisted recovery handle');
-            }
-            await this.patchRecord(runId, (park) => ({
-              ...park,
-              recoveryProof: structuredClone(proof),
-            }));
-          } else if (runner !== 'running') {
-            throw new Error('runner residual state is unknown; refusing an ambiguous reload');
           }
         } catch (error) {
           failed = true;
-          await this.appendError(runId, 'runner-reloading', 'runner.reload', error);
+          await this.appendError(runId, 'resources-restoring', 'resource.restore-verify', error);
         }
+        if (!failed) {
+          try {
+            const runner = await this.deps.runnerRunning(
+              this.requireRun(runId),
+              record.recoveryHandle!,
+            );
+            if (runner === 'stopped') {
+              await this.patchRecord(runId, (current) => ({
+                ...current,
+                phase: 'runner-reloading',
+              }));
+              const current = this.requireRun(runId);
+              const proof = await this.deps.reloadRunner(
+                current,
+                record.recoveryHandle!,
+                buildMachineParkingContinuationPrompt(current, current.park!),
+              );
+              if (
+                proof.sessionId !== record.recoveryHandle!.sessionId ||
+                !proof.live ||
+                proof.acknowledgement.kind !== 'structured'
+              ) {
+                throw new Error('runner reload proof does not match the persisted recovery handle');
+              }
+              await this.patchRecord(runId, (park) => ({
+                ...park,
+                recoveryProof: structuredClone(proof),
+              }));
+            } else if (runner !== 'running') {
+              throw new Error('runner residual state is unknown; refusing an ambiguous reload');
+            }
+          } catch (error) {
+            failed = true;
+            await this.appendError(runId, 'runner-reloading', 'runner.reload', error);
+          }
+        }
+      } finally {
+        // Always, so a finished restore never claims a later occupant's boots.
+        stopCapture();
+        await drainPerformed();
       }
     }
     // BEFORE the resume, because the resume may replay the gate and a replay

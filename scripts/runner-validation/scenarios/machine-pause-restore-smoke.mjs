@@ -370,11 +370,27 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
         );
       }
     }
+    // An empty stopped set is a fact about this run, not a pass. Say so, so a
+    // reader can tell "restore booted everything it stopped" from "there was
+    // nothing to boot" instead of reading a loop that never ran as proof.
+    report.retainedRestoreProof.stoppedResourcesExercised = parkedStopped.length > 0;
+    if (parkedStopped.length === 0) {
+      report.retainedRestoreProof.stoppedResourcesNote =
+        'this run parked no resource with release_effect stop, so the boot-on-restore claim was not exercised live here';
+    }
     for (const resourceId of parkedStopped) {
       const booted = effectsFor(resourceId).filter((effect) => effect.action === 'booted');
-      if (booted.length === 0 || !booted.every((effect) => effect.ok)) {
+      const failedBoots = booted.filter((effect) => !effect.ok);
+      if (booted.length === 0) {
         throw new Error(
-          `resource '${resourceId}' was stopped by the park but restore recorded ${booted.length} successful boot(s)`,
+          `resource '${resourceId}' was stopped by the park but restore recorded no boot`,
+        );
+      }
+      if (failedBoots.length > 0) {
+        throw new Error(
+          `resource '${resourceId}' recorded ${failedBoots.length} failed boot(s) of ${booted.length}: ${failedBoots
+            .map((effect) => effect.reason ?? 'no reason given')
+            .join('; ')}`,
         );
       }
     }

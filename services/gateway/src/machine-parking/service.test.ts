@@ -10,6 +10,7 @@ import type {
   SlotResource,
 } from '@farmslot/protocol';
 
+import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
 import { gateParkResumeAcknowledgement } from '../methods/run/lifecycle-control.js';
 import { isGateParkInFlightOrFreed } from '../run-engine/park-slot-binding.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
@@ -423,12 +424,18 @@ function harness(initialRuns: Run[]): Harness {
       };
     },
     runnerRunning: async (run) => runnerStates.get(run.id) ?? 'unknown',
+    // These stand in for executeResourceControl, which is the one place a
+    // resource hook runs in production and the place that reports what it ran.
+    // The stubs report too, so the tests exercise the same path the Gateway
+    // does rather than a shortcut around it.
     stopResource: async (slotId, resourceId) => {
       calls.push(`stop-resource:${slotId}:${resourceId}`);
+      reportSlotResourceLifecycle({ slotId, resourceId, action: 'shutdown', ok: true });
       return { ok: true };
     },
     startResource: async (slotId, resourceId) => {
       calls.push(`start-resource:${slotId}:${resourceId}`);
+      reportSlotResourceLifecycle({ slotId, resourceId, action: 'boot', ok: true });
       return { ok: true };
     },
   };
@@ -3959,4 +3966,105 @@ test('a retained resource with only a watch and no health hook is refused', asyn
   });
   assert.equal(preview.runs[0]?.eligibility.code, 'RESOURCE_HOOKS_UNAVAILABLE');
   assert.match(preview.runs[0]?.eligibility.reason ?? '', /health/);
+});
+
+/** A park whose manifest holds one resource with the given release effect. */
+async function parkWithEffect(ctx: Harness, releaseEffect: 'retain' | 'stop') {
+  let status = statusWithAffectedResources('run-a', [
+    { resourceId: 'browser-cdp', ownership: 'capability', releaseEffect },
+  ]);
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  ctx.deps.releaseCapability = async () => {
+    const own = structuredClone(status.leases[0]!);
+    status = { ...status, leases: [{ ...own, state: 'released' as const }] };
+    return { ok: true, released: [own], retained: [], effects: [], failures: [] };
+  };
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: `park-${releaseEffect}`,
+  });
+}
+
+async function restoreRun(ctx: Harness, operationId: string) {
+  const preview = await ctx.service.restore({ machine: 'machine-a', selector: { kind: 'all' } });
+  return ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId,
+  });
+}
+
+test('a boot performed by capability acquisition is recorded as booted, not verified', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  let running = true;
+  ctx.deps.observeResources = async () =>
+    running ? [runningResource()] : [{ ...runningResource(), status: 'stopped' }];
+  await parkWithEffect(ctx, 'stop');
+  // The park stopped it. The provider's acquire action is its resource's boot,
+  // so the acquisition is what brings it back, and the record must say so
+  // rather than calling the resulting running state a verification.
+  running = false;
+  const acquireCapability = ctx.deps.acquireCapability;
+  ctx.deps.acquireCapability = async (params) => {
+    running = true;
+    reportSlotResourceLifecycle({
+      slotId: params.slotId,
+      resourceId: 'browser-cdp',
+      action: 'boot',
+      ok: true,
+    });
+    return acquireCapability(params);
+  };
+  const restored = await restoreRun(ctx, 'acquire-boot-restore');
+  assert.equal(restored.ok, true);
+  const effects = ctx.runs.get('run-a')!.park!.restoreEffects ?? [];
+  assert.deepEqual(
+    effects.map((effect) => ({
+      resourceId: effect.resourceId,
+      action: effect.action,
+      ok: effect.ok,
+    })),
+    [{ resourceId: 'browser-cdp', action: 'booted', ok: true }],
+    'the acquisition performed the boot, so the boot is what is recorded',
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('start-resource:')),
+    false,
+    'the resource was already up by the time the boot loop looked, so nothing booted it twice',
+  );
+});
+
+test('a restart of an already-running retained resource is recorded as a boot that should not have happened', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  await parkWithEffect(ctx, 'retain');
+  // The resource never stops, so no before/after comparison could ever see
+  // this. Only the code that ran the hook knows it ran.
+  const acquireCapability = ctx.deps.acquireCapability;
+  ctx.deps.acquireCapability = async (params) => {
+    reportSlotResourceLifecycle({
+      slotId: params.slotId,
+      resourceId: 'browser-cdp',
+      action: 'relaunch',
+      ok: true,
+    });
+    return acquireCapability(params);
+  };
+  const restored = await restoreRun(ctx, 'retain-restart-restore');
+  const effects = ctx.runs.get('run-a')!.park!.restoreEffects ?? [];
+  const booted = effects.find((effect) => effect.action === 'booted');
+  assert.notEqual(booted, undefined, 'the restart must be recorded');
+  assert.equal(booted?.ok, false);
+  assert.match(booted?.reason ?? '', /must never be booted by a restore/);
+  assert.equal(restored.ok, false, 'restarting a retained resource fails the restore');
 });

@@ -377,3 +377,88 @@ test('write refuses a record the loader would quarantine', async (t) => {
   const { journals } = await store.load();
   assert.deepEqual(journals, []);
 });
+
+test('restore effects round-trip, and a malformed effect is refused at write', async (t) => {
+  const runsDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-machine-journal-'));
+  t.after(() => rm(runsDir, { recursive: true, force: true }));
+  const store = new MachineParkingIntentJournalStore(runsDir);
+
+  const withEffects: MachineParkRecord = {
+    ...richRecord('effects-op'),
+    restoreEffects: [
+      { resourceId: 'dev-server', action: 'verified', at: '2026-08-21T00:00:05.000Z', ok: true },
+      {
+        resourceId: 'browser-cdp',
+        action: 'booted',
+        at: '2026-08-21T00:00:06.000Z',
+        ok: false,
+        reason: 'a retained resource must never be booted by a restore',
+      },
+      { resourceId: 'metro', action: 'stopped', at: '2026-08-21T00:00:07.000Z', ok: true },
+      { resourceId: 'metro', action: 'skipped', at: '2026-08-21T00:00:08.000Z', ok: false },
+    ],
+  };
+  await store.write('restore', [withEffects]);
+  const { journals } = await store.load();
+  assert.deepEqual(journals[0]?.records[0]?.restoreEffects, withEffects.restoreEffects);
+
+  // A record written before the field existed must still load.
+  const legacy = await mkdtemp(path.join(os.tmpdir(), 'farmslot-machine-journal-'));
+  t.after(() => rm(legacy, { recursive: true, force: true }));
+  const legacyStore = new MachineParkingIntentJournalStore(legacy);
+  await legacyStore.write('restore', [richRecord('legacy-op')]);
+  assert.equal((await legacyStore.load()).journals.length, 1);
+
+  const refused: Array<{ name: string; effect: unknown }> = [
+    {
+      name: 'unknown action',
+      effect: { resourceId: 'a', action: 'rebooted', at: '2026-08-21T00:00:05.000Z', ok: true },
+    },
+    {
+      name: 'unparsable at',
+      effect: { resourceId: 'a', action: 'booted', at: 'whenever', ok: true },
+    },
+    {
+      name: 'missing ok',
+      effect: { resourceId: 'a', action: 'booted', at: '2026-08-21T00:00:05.000Z' },
+    },
+    {
+      name: 'empty resourceId',
+      effect: { resourceId: '', action: 'booted', at: '2026-08-21T00:00:05.000Z', ok: true },
+    },
+    {
+      name: 'non-string reason',
+      effect: {
+        resourceId: 'a',
+        action: 'booted',
+        at: '2026-08-21T00:00:05.000Z',
+        ok: true,
+        reason: 7,
+      },
+    },
+  ];
+  for (const { name, effect } of refused) {
+    const store2 = new MachineParkingIntentJournalStore(
+      await mkdtemp(path.join(os.tmpdir(), 'farmslot-machine-journal-')),
+    );
+    await assert.rejects(
+      () =>
+        store2.write('restore', [
+          { ...richRecord('bad-op'), restoreEffects: [effect] } as MachineParkRecord,
+        ]),
+      /invalid machine parking intent journal/,
+      `${name} must be refused`,
+    );
+  }
+
+  const notAnArray = new MachineParkingIntentJournalStore(
+    await mkdtemp(path.join(os.tmpdir(), 'farmslot-machine-journal-')),
+  );
+  await assert.rejects(
+    () =>
+      notAnArray.write('restore', [
+        { ...richRecord('bad-op'), restoreEffects: 'none' } as unknown as MachineParkRecord,
+      ]),
+    /invalid machine parking intent journal/,
+  );
+});
