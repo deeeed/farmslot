@@ -94,6 +94,7 @@ jobs:
               - 'packages/cli/**'
               - 'packages/protocol/**'
               - 'scripts/build-hosted-command-center.mjs'
+              - 'scripts/quality/check-gateway-api-docs.mjs'
               - 'services/gateway/**'
             cli:
               - '.github/workflows/farmslot-quality.yml'
@@ -354,6 +355,9 @@ jobs:
       - name: Docs quality
         working-directory: apps/docs
         run: yarn quality
+
+      - name: Generated gateway API reference freshness
+        run: yarn quality:gateway-api-docs
 
       - name: Hosted Pages bundle
         run: yarn cc:build:pages

@@ -38,6 +38,7 @@
     "test:slot-view": "yarn --cwd apps/command-center test:slot-view",
     "test:ui": "yarn --cwd apps/command-center test:ui",
     "docs:template-vars": "node scripts/docs/generate-template-variables.mjs",
+    "docs:gateway-api": "yarn workspace @farmslot/protocol build && yarn --cwd apps/docs generate:api",
     "docs:dev": "yarn workspace @farmslot/docs start",
     "docs:build": "yarn workspace @farmslot/docs build",
     "test:recipe-operational-gates": "yarn --cwd apps/command-center test:recipe-operational-gates",
@@ -66,7 +67,8 @@
     "e2e:scripted-runner": "tsx scripts/e2e-scripted-runner-dispatch.mts",
     "e2e:recipe-protocol": "tsx scripts/e2e-recipe-protocol-self-validation.mts",
     "quality:retired-scripts": "node scripts/quality/check-retired-scripts.mjs",
-    "quality:review-loop": "node scripts/quality/check-review-loop-validation-contract.mjs"
+    "quality:review-loop": "node scripts/quality/check-review-loop-validation-contract.mjs",
+    "quality:gateway-api-docs": "node scripts/quality/check-gateway-api-docs.mjs"
   },
   "license": "MIT",
   "resolutions": {
