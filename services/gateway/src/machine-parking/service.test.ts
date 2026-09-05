@@ -10,7 +10,11 @@ import type {
   SlotResource,
 } from '@farmslot/protocol';
 
-import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
+import {
+  activeResourceLifecycleCaptures,
+  reportSlotResourceLifecycle,
+  runWithResourceLifecycleContext,
+} from '../core/resource-lifecycle-log.js';
 import { gateParkResumeAcknowledgement } from '../methods/run/lifecycle-control.js';
 import { isGateParkInFlightOrFreed } from '../run-engine/park-slot-binding.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
@@ -430,20 +434,49 @@ function harness(initialRuns: Run[]): Harness {
     // does rather than a shortcut around it.
     stopResource: async (slotId, resourceId) => {
       calls.push(`stop-resource:${slotId}:${resourceId}`);
-      reportSlotResourceLifecycle({ slotId, resourceId, action: 'shutdown', ok: true });
       return { ok: true };
     },
     startResource: async (slotId, resourceId) => {
       calls.push(`start-resource:${slotId}:${resourceId}`);
-      reportSlotResourceLifecycle({ slotId, resourceId, action: 'boot', ok: true });
       return { ok: true };
     },
   };
+  // In production both of these ARE executeResourceControl, which reports what
+  // it ran. Wrapping on assignment rather than inside each stub means a test
+  // that swaps one in gets the same behaviour without having to remember, so
+  // "the harness reports like production" holds for overrides too.
+  const reportingControl =
+    (action: 'boot' | 'shutdown', impl: MachineParkingDependencies['startResource']) =>
+    async (slotId: string, resourceId: string) => {
+      const result = await impl(slotId, resourceId);
+      reportSlotResourceLifecycle({
+        slotId,
+        resourceId,
+        action,
+        ok: result.ok,
+        ...(result.detail ? { detail: result.detail } : {}),
+      });
+      return result;
+    };
+  deps.startResource = reportingControl('boot', deps.startResource);
+  deps.stopResource = reportingControl('shutdown', deps.stopResource);
+  const reportingDeps = new Proxy(deps, {
+    set(target, property, value) {
+      if (property === 'startResource' || property === 'stopResource') {
+        target[property] = reportingControl(
+          property === 'startResource' ? 'boot' : 'shutdown',
+          value as MachineParkingDependencies['startResource'],
+        );
+        return true;
+      }
+      return Reflect.set(target, property, value);
+    },
+  });
   return {
     service: new MachineParkingService(deps),
     runs,
     calls,
-    deps,
+    deps: reportingDeps,
     slotOwners,
     slotLifecycles,
     reloadSupport,
@@ -3969,8 +4002,8 @@ test('a retained resource with only a watch and no health hook is refused', asyn
 });
 
 /** A park whose manifest holds one resource with the given release effect. */
-async function parkWithEffect(ctx: Harness, releaseEffect: 'retain' | 'stop') {
-  let status = statusWithAffectedResources('run-a', [
+async function parkWithEffect(ctx: Harness, releaseEffect: 'retain' | 'stop', runId = 'run-a') {
+  let status = statusWithAffectedResources(runId, [
     { resourceId: 'browser-cdp', ownership: 'capability', releaseEffect },
   ]);
   ctx.deps.capabilityStatus = async () => structuredClone(status);
@@ -3988,19 +4021,19 @@ async function parkWithEffect(ctx: Harness, releaseEffect: 'retain' | 'stop') {
     machine: 'machine-a',
     mode: 'release',
     previewId: preview.previewId,
-    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
-    operationId: `park-${releaseEffect}`,
+    reviewedTargets: [{ runId, generation: 3 }],
+    operationId: `park-${releaseEffect}-${runId}`,
   });
 }
 
-async function restoreRun(ctx: Harness, operationId: string) {
+async function restoreRun(ctx: Harness, operationId: string, runId = 'run-a') {
   const preview = await ctx.service.restore({ machine: 'machine-a', selector: { kind: 'all' } });
   return ctx.service.restore({
     machine: 'machine-a',
     selector: { kind: 'all' },
     execute: true,
     previewId: preview.previewId,
-    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    reviewedTargets: [{ runId, generation: 3 }],
     operationId,
   });
 }
@@ -4067,4 +4100,65 @@ test('a restart of an already-running retained resource is recorded as a boot th
   assert.equal(booted?.ok, false);
   assert.match(booted?.reason ?? '', /must never be booted by a restore/);
   assert.equal(restored.ok, false, 'restarting a retained resource fails the restore');
+});
+
+test('an unrelated control on the same slot during a restore is not blamed on the restore', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  await parkWithEffect(ctx, 'retain');
+  // An operator's resource.control, the chat tool's resource control, and the
+  // cleanup shutdown all reach the same hook runner without the machine lock a
+  // restore holds. Booting a retained resource is the worst case: attributing
+  // it would fail the restore for something it never did. A hook already in
+  // flight when the restore began is the other half, and needs a real async
+  // boundary, so it is covered in the resource-control test instead.
+  const acquireCapability = ctx.deps.acquireCapability;
+  ctx.deps.acquireCapability = async (params) => {
+    await runWithResourceLifecycleContext('an-operator-somewhere-else', async () => {
+      reportSlotResourceLifecycle({
+        slotId: params.slotId,
+        resourceId: 'browser-cdp',
+        action: 'boot',
+        ok: true,
+      });
+    });
+    return acquireCapability(params);
+  };
+  const restored = await restoreRun(ctx, 'foreign-control-restore');
+  assert.equal(restored.ok, true, 'someone else touching the slot must not fail this restore');
+  const effects = ctx.runs.get('run-a')!.park!.restoreEffects ?? [];
+  assert.deepEqual(
+    effects.map((effect) => ({
+      resourceId: effect.resourceId,
+      action: effect.action,
+      ok: effect.ok,
+    })),
+    [{ resourceId: 'browser-cdp', action: 'verified', ok: true }],
+    'only what the restore itself initiated is recorded',
+  );
+});
+
+test('a restore removes its lifecycle capture however it ends', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const before = activeResourceLifecycleCaptures();
+  await parkWithEffect(ctx, 'retain');
+  const ok = await restoreRun(ctx, 'capture-cleanup-restore');
+  assert.equal(ok.ok, true);
+  assert.equal(
+    activeResourceLifecycleCaptures(),
+    before,
+    'a finished restore leaves no capture holding its record and effect buffer',
+  );
+
+  // And when the restore throws part-way, which is what the `finally` is for.
+  const failing = harness([activeRun('run-b', 'slot-b')]);
+  await parkWithEffect(failing, 'retain', 'run-b');
+  failing.deps.acquireCapability = async () => {
+    throw new Error('acquire exploded');
+  };
+  await restoreRun(failing, 'capture-cleanup-throw', 'run-b');
+  assert.equal(
+    activeResourceLifecycleCaptures(),
+    before,
+    'a restore that threw leaves no capture behind either',
+  );
 });
