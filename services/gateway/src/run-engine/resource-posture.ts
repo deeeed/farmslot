@@ -102,14 +102,20 @@ export async function reconcileRunPosture(
   // and clearing the suppression is a read-modify-write on `resourcePosture`,
   // and the reconciler is the only thing that serializes writes to it. Deciding
   // out here would race a concurrent boundary and could drop the other's write.
-  const carried = isWaitBoundary(request.boundary) ? request.gateChoice : request.gateChoice;
-  const inherit = isWaitBoundary(request.boundary) && request.gateChoice === undefined;
   try {
     const result = await reconciler.apply({
       runId: request.runId,
       posture,
-      ...(carried ? { gateChoice: carried } : {}),
-      ...(inherit ? { resolveInheritedGateChoice: consumeInheritedGateChoice } : {}),
+      ...(request.gateChoice ? { gateChoice: request.gateChoice } : {}),
+      // Passed at EVERY wait boundary, including one that already carries an
+      // explicit choice. The hook consumes the one-shot suppression, and an
+      // explicit choice wins over what it returns — so answering the restored
+      // gate explicitly clears the suppression too. Passing it only when no
+      // choice was given left the suppression armed at that generation, and the
+      // next inheriting wait swallowed a fresh choice once.
+      ...(isWaitBoundary(request.boundary)
+        ? { resolveInheritedGateChoice: consumeInheritedGateChoice }
+        : {}),
       ...(request.proofRequirements ? { proofRequirements: request.proofRequirements } : {}),
       ...(request.operationId ? { operationId: request.operationId } : {}),
     });

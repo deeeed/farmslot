@@ -193,6 +193,10 @@ export interface RunResourcePostureState {
    * wait boundary, a bare flag would sit on the run and silently swallow the
    * operator's choice at some unrelated later wait. A generation that has moved
    * on makes the suppression simply not apply.
+   *
+   * Cleared by the first wait boundary after it is set, whether or not that
+   * boundary carried an explicit choice — an operator who answers the restored
+   * gate consumes it just as an inheriting wait does.
    */
   gateChoiceSuppressedForGeneration?: number;
   waitPolicy?: ResourcePostureWaitPolicy;

@@ -29,11 +29,13 @@ function fakeReconciler(
   const calls: ResourcePostureRequest[] = [];
   const reconciler = {
     apply: async (request: ResourcePostureRequest): Promise<RuntimePostureApplyResult> => {
-      // Mirrors the real `apply`: the inherited choice is resolved INSIDE the
-      // per-run queue, so a double that skipped the hook would hide whether the
-      // production path ever consults it.
+      // Mirrors the real `apply`: the hook runs INSIDE the per-run queue and is
+      // called even when an explicit choice is present, so the one-shot
+      // suppression is consumed either way; the explicit choice then wins.
       const inherited = request.resolveInheritedGateChoice?.(request.runId);
-      if (inherited) request = { ...request, gateChoice: inherited };
+      if (request.gateChoice === undefined && inherited) {
+        request = { ...request, gateChoice: inherited };
+      }
       calls.push(request);
       const override = onApply(request);
       return {
@@ -395,6 +397,28 @@ test('a restored gate does not inherit the free-slot choice that parked the run'
     reconciler,
   );
   assert.equal(calls[2].gateChoice, 'free-slot');
+});
+
+test('answering the restored gate explicitly consumes the suppression too', async () => {
+  const { reconciler, calls } = fakeReconciler();
+  const runId = newRun();
+  const generation = getRun(runId)!.engineState?.generation ?? 0;
+  updateRun(runId, { resourcePosture: parkedFreeSlotPosture(generation) });
+
+  // The operator answers the restored gate rather than letting it inherit.
+  await reconcileRunPosture(
+    { runId, boundary: 'operator-wait', gateChoice: 'keep-for-validation' },
+    reconciler,
+  );
+  assert.equal(calls[0].gateChoice, 'keep-for-validation');
+
+  // Consumed here as well. Left armed, it would sit at this generation and
+  // swallow the next inheriting wait's choice once — the operator answering
+  // explicitly is exactly the case where the suppression has done its job.
+  assert.equal(getRun(runId)!.resourcePosture?.gateChoiceSuppressedForGeneration, undefined);
+
+  await reconcileRunPosture({ runId, boundary: 'operator-wait' }, reconciler);
+  assert.equal(calls[1].gateChoice, 'free-slot', 'the next wait inherits normally');
 });
 
 test('a suppression cannot outlive the gate it was set for', async () => {

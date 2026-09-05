@@ -505,8 +505,15 @@ export class RunResourcePostureReconciler {
       // Inside the queue, not before it. This is the only point where the check
       // and the effect are not separated by another request's execution.
       request.assertAdmissible?.();
+      // Always called so the one-shot suppression is consumed even when an
+      // explicit choice is present; that explicit choice then wins over what it
+      // returns.
       const inherited = request.resolveInheritedGateChoice?.(request.runId);
-      return this.applyInternal(inherited ? { ...request, gateChoice: inherited } : request);
+      return this.applyInternal(
+        request.gateChoice === undefined && inherited
+          ? { ...request, gateChoice: inherited }
+          : request,
+      );
     });
   }
 
