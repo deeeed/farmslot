@@ -15,7 +15,10 @@ import {
 export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
 
 import { SLOT_PHASE_RELEASING } from '../../core/index.js';
-import { isSlotFreedByPark } from '../../run-engine/park-slot-binding.js';
+import {
+  isGateParkInFlightOrFreed,
+  isSlotFreedByPark,
+} from '../../run-engine/park-slot-binding.js';
 
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 
@@ -508,8 +511,17 @@ export function slotClaimBlockedByLiveOwner(
 export function failedRunSlotCleanup(
   slot: Readonly<Record<string, unknown>>,
   runId: string,
-  ownerRunLookup: (id: string) => { status: string } | undefined,
+  ownerRunLookup: (id: string) => { status: string; park?: Run['park'] } | undefined,
 ): 'reset' | 'release-keep-handoff' | 'clear-reservation' | 'none' {
+  // ADR-054 `free-slot`: a gate-parked run's slot is never this cleanup's to
+  // take. In flight, the run still owns the row, so the plan below would read
+  // 'reset' and publish the slot ready while resources are still stopping and
+  // the parked branch may still be checked out — dispatch could then prepare
+  // over it, and the park's own release CAS would fail. Once freed, the row
+  // belongs to a successor and resetting it would tear down that run's work.
+  // Decided here, in the shared plan, so every failure path inherits it.
+  const failing = ownerRunLookup(runId);
+  if (failing && isGateParkInFlightOrFreed(failing)) return 'none';
   const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
   const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
   if (owner === runId) {

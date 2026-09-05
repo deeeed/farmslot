@@ -39,7 +39,7 @@ import {
 import { selectAgentContext } from '../agents/contexts.js';
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { readSlotField, resetSlotIf, SLOT_PHASE_RELEASING } from '../core/index.js';
+import { readSlotRow, resetSlotIf, SLOT_PHASE_RELEASING } from '../core/index.js';
 import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
 import { readMachinePressure } from '../fleet/pressure-read.js';
 import {
@@ -91,11 +91,16 @@ export interface MachineParkingDependencies {
   loadFleet(): Promise<Fleet>;
   updatePark(runId: string, park: MachineParkRecord | null): Run;
   persistRun(run: Run, reason: string): Promise<void>;
-  writeIntentJournal(kind: MachineParkingIntentKind, records: MachineParkRecord[]): Promise<void>;
+  writeIntentJournal(
+    kind: MachineParkingIntentKind,
+    records: MachineParkRecord[],
+    scopeId?: string,
+  ): Promise<void>;
   deleteIntentJournal(
     machine: string,
     kind: MachineParkingIntentKind,
     operationId: string,
+    scopeId?: string,
   ): Promise<void>;
   loadIntentJournals(): Promise<MachineParkingIntentJournal[]>;
   emit(event: string, payload: unknown): Promise<void>;
@@ -119,8 +124,10 @@ export interface MachineParkingDependencies {
   detachParkedWorkspace(run: Run, expected: MachineParkWorkspace): Promise<void>;
   /** Release slot ownership while the parked run keeps its slotId. */
   freeSlotOwnership(slotId: string, runId: string): Promise<boolean>;
-  /** The run id the slot row currently reports as its owner. */
-  slotOwner(slotId: string): Promise<string | null>;
+  /** The slot row as one snapshot, so owner and lifecycle cannot be read torn. */
+  slotRow(slotId: string): Promise<Readonly<Record<string, unknown>> | null>;
+  /** Put a detached branch back in the working tree when a park will not finish. */
+  reattachParkedWorkspace(run: Run, workspace: MachineParkWorkspace): Promise<void>;
   resolveRecoveryHandle(run: Run): Promise<MachinePauseRecoveryHandle>;
   inspectRecoveryHandle(
     run: Run,
@@ -413,6 +420,43 @@ async function defaultDetachParkedWorkspace(
   }
 }
 
+/**
+ * Put the parked branch back in the working tree at the exact tip the park
+ * detached from. Refuses rather than moving the branch: the ref must still be
+ * where the record says it is, or something else has touched this workspace and
+ * a checkout would be guessing.
+ */
+async function defaultReattachParkedWorkspace(
+  run: Run,
+  workspace: MachineParkWorkspace,
+): Promise<void> {
+  if (!run.slotId) throw new Error('run has no slot');
+  const vars = await loadSlotVars(run.slotId);
+  const repo = shellQuote(vars.remoteRepo);
+  const tip = await execOnSlot(
+    vars,
+    `cd ${repo} && git rev-parse ${shellQuote(workspace.branch)}`,
+    {
+      timeout: 15_000,
+    },
+  );
+  if (tip.exitCode !== 0 || tip.stdout.trim() !== workspace.headSha) {
+    throw new Error(
+      `branch '${workspace.branch}' is at ${tip.stdout.trim() || 'unknown'}, not the detached tip ${workspace.headSha}`,
+    );
+  }
+  const checkout = await execOnSlot(
+    vars,
+    `cd ${repo} && git checkout ${shellQuote(workspace.branch)}`,
+    { timeout: 60_000 },
+  );
+  if (checkout.exitCode !== 0) {
+    throw new Error(
+      `git checkout ${workspace.branch} failed in ${vars.remoteRepo}: ${checkout.stderr.slice(-200) || checkout.stdout.slice(-200)}`,
+    );
+  }
+}
+
 const defaultDependencies: MachineParkingDependencies = {
   now: () => new Date().toISOString(),
   operationId: () => `machine-park-${randomUUID()}`,
@@ -421,9 +465,9 @@ const defaultDependencies: MachineParkingDependencies = {
   loadFleet: loadFleetStatus,
   updatePark: (runId, park) => updateRun(runId, { park }),
   persistRun: persistRunNow,
-  writeIntentJournal: (kind, records) => intentJournalStore.write(kind, records),
-  deleteIntentJournal: (machine, kind, operationId) =>
-    intentJournalStore.delete(machine, kind, operationId),
+  writeIntentJournal: (kind, records, scopeId) => intentJournalStore.write(kind, records, scopeId),
+  deleteIntentJournal: (machine, kind, operationId, scopeId) =>
+    intentJournalStore.delete(machine, kind, operationId, scopeId),
   loadIntentJournals: defaultLoadIntentJournals,
   emit: broadcast,
   pressure: defaultPressure,
@@ -436,7 +480,8 @@ const defaultDependencies: MachineParkingDependencies = {
   inspectRunnerReload: defaultInspectRunnerReload,
   inspectParkWorkspace: defaultInspectParkWorkspace,
   detachParkedWorkspace: defaultDetachParkedWorkspace,
-  slotOwner: async (slotId) => ((await readSlotField(slotId, 'current_run_id')) as string) ?? null,
+  slotRow: readSlotRow,
+  reattachParkedWorkspace: defaultReattachParkedWorkspace,
   // CAS on the exact owner: a slot re-claimed between the park's last resource
   // stop and this write belongs to its new owner, and freeing must not touch a
   // pending handoff reservation or a teardown already fencing the slot.
@@ -1492,7 +1537,11 @@ export class MachineParkingService {
    */
   private async freeParkedSlot(runId: string, record: MachineParkRecord): Promise<void> {
     try {
-      await this.deps.writeIntentJournal('free-slot', [structuredClone(record)]);
+      // Scoped to THIS run. A batch shares one `operationId`, so an unscoped
+      // free-slot journal would be overwritten by the next member's write and
+      // then deleted by the first member that succeeded — taking a failed
+      // sibling's still-pending repair with it.
+      await this.deps.writeIntentJournal('free-slot', [structuredClone(record)], runId);
     } catch (error) {
       await this.appendError(runId, 'parked', 'slot.free-journal', error);
       await this.patchRecord(runId, (current) => ({ ...current, phase: 'partial' }));
@@ -1501,7 +1550,7 @@ export class MachineParkingService {
     const completed = await this.completeSlotFree(runId, record);
     if (!completed) return;
     await this.deps
-      .deleteIntentJournal(record.machine, 'free-slot', record.operationId)
+      .deleteIntentJournal(record.machine, 'free-slot', record.operationId, runId)
       .catch((error: unknown) => {
         // The free landed and is durable on the record; a stale journal only
         // makes the next reconcile re-prove an already-finished transition.
@@ -1523,6 +1572,20 @@ export class MachineParkingService {
     options: { recovering?: boolean } = {},
   ): Promise<boolean> {
     const run = this.requireRun(runId);
+    // Same guard the repair path carries. A cancel racing this park terminalizes
+    // the run and runs its own slot cleanup; detaching and releasing underneath
+    // that would have two owners mutating one slot. The park stops, and cancel's
+    // cleanup is the single writer.
+    if (isTerminalRunStatus(run.status)) {
+      await this.appendError(
+        runId,
+        'parked',
+        'slot.free',
+        new Error(`run '${runId}' became '${run.status}' before its slot could be freed`),
+      );
+      await this.patchRecord(runId, (current) => ({ ...current, phase: 'partial' }));
+      return false;
+    }
     if (record.preservedWorkspace && !record.preservedWorkspace.detachedAt) {
       try {
         await this.deps.detachParkedWorkspace(run, record.preservedWorkspace);
@@ -1555,19 +1618,23 @@ export class MachineParkingService {
     //
     // Re-driving from the journal is the opposite: the record exists precisely
     // because a crash interrupted this transition, so a slot that is no longer
-    // ours is the expected trace of a release that DID land before the crash.
+    // ours can be the trace of a release that DID land before the crash.
     // Leaving it unfreed there is the bug this journal exists to prevent: fleet
     // refresh would re-bind the slot to this run under whoever dispatch already
     // gave it to.
-    if (options.recovering) {
-      const owner = await this.deps.slotOwner(record.slotId);
-      if (owner !== runId) {
-        await this.patchRecord(runId, (current) => ({
-          ...current,
-          slotFreedAt: current.slotFreedAt ?? this.deps.now(),
-        }));
-        return true;
-      }
+    //
+    // But "not owned by us" is NOT by itself proof the release landed. A row
+    // fenced mid-teardown, or one carrying a foreign handoff reservation, also
+    // refuses the CAS while still holding this run's slot. Concluding "freed"
+    // there would publish a fact that never happened. So the row itself has to
+    // show a completed release: nobody owns it and it is back to ready, or a
+    // rival already owns it.
+    if (options.recovering && (await this.slotReleaseLanded(record.slotId, runId))) {
+      await this.patchRecord(runId, (current) => ({
+        ...current,
+        slotFreedAt: current.slotFreedAt ?? this.deps.now(),
+      }));
+      return true;
     }
     await this.appendError(
       runId,
@@ -1575,8 +1642,55 @@ export class MachineParkingService {
       'slot.free',
       new Error(`slot '${record.slotId}' ownership could not be released for run '${runId}'`),
     );
+    // The detach is this park's only landed effect now, and the park is not
+    // going to finish. Putting the branch back leaves the run exactly as it was
+    // before the park, which is what lets the in-flight fence clear and the run
+    // stay answerable and restorable instead of stranded.
+    await this.rollBackDetachedWorkspace(runId);
     await this.patchRecord(runId, (current) => ({ ...current, phase: 'partial' }));
     return false;
+  }
+
+  /**
+   * Whether the slot row proves this run's ownership release actually landed.
+   * A refused CAS alone does not: a releasing fence or a foreign handoff
+   * reservation refuses it too while the run still holds the slot.
+   */
+  private async slotReleaseLanded(slotId: string, runId: string): Promise<boolean> {
+    const row = await this.deps.slotRow(slotId);
+    // No row at all means the slot left the pool; there is nothing left bound
+    // to this run, and claiming otherwise would strand the record forever.
+    if (!row) return true;
+    const owner = typeof row.current_run_id === 'string' ? row.current_run_id : null;
+    if (owner === runId) return false;
+    if (owner) return true;
+    return row.lifecycle === 'ready';
+  }
+
+  /**
+   * Undo a detach this park performed when the park will not finish. The branch
+   * goes back into the working tree at the tip it was detached from, so the run
+   * is left exactly as the park found it and `detachedAt` is cleared.
+   */
+  private async rollBackDetachedWorkspace(runId: string): Promise<void> {
+    const run = this.deps.getRun(runId);
+    const workspace = run?.park?.preservedWorkspace;
+    if (!run || !workspace?.detachedAt) return;
+    try {
+      await this.deps.reattachParkedWorkspace(run, workspace);
+    } catch (error) {
+      // The branch ref still exists at `headSha`; only the checkout failed. The
+      // record keeps `detachedAt`, so the fence stays up and the operator sees
+      // an outstanding effect rather than a run that silently looks untouched.
+      await this.appendError(runId, 'parked', 'workspace.reattach', error);
+      return;
+    }
+    await this.patchRecord(runId, (current) => ({
+      ...current,
+      preservedWorkspace: current.preservedWorkspace
+        ? { branch: current.preservedWorkspace.branch, headSha: current.preservedWorkspace.headSha }
+        : current.preservedWorkspace,
+    }));
   }
 
   private async buildRestorePreview(machine: string, selector: MachinePauseSelector) {
@@ -1613,11 +1727,16 @@ export class MachineParkingService {
             record,
           };
         }
-        if (record.slotDisposition === 'freed') {
-          // Slice 1 frees the slot; restoring into it (in place when still free,
-          // otherwise re-dispatch through the affinity path) is the follow-up.
-          // Refusing with its own code keeps the verdict honest instead of
-          // reporting a slot-ownership drift the record deliberately created.
+        if (record.slotFreedAt) {
+          // Keyed on the FACT, not the intent. Slice 1 frees the slot; restoring
+          // into it (in place when still free, otherwise re-dispatch through the
+          // affinity path) is the follow-up. Refusing with its own code keeps the
+          // verdict honest instead of reporting a slot-ownership drift the record
+          // deliberately created.
+          //
+          // A freeing park that never released anything must NOT land here: it
+          // still owns its slot, so the ordinary restore path is exactly right,
+          // and refusing it would leave the run with no exit but cancellation.
           return reject(
             MachineParkEligibilityCodes.freedSlotRestoreUnsupported,
             'this park freed the slot; restoring a freed slot is not supported yet',
@@ -2224,7 +2343,12 @@ export class MachineParkingService {
           if (!(await this.repairFreeSlotIntent(record))) blockedRunIds.add(record.runId);
         }
         if (!records.some((record) => blockedRunIds.has(record.runId))) {
-          await this.deps.deleteIntentJournal(journal.machine, journal.kind, journal.operationId);
+          await this.deps.deleteIntentJournal(
+            journal.machine,
+            journal.kind,
+            journal.operationId,
+            journal.scopeId,
+          );
         }
         continue;
       }

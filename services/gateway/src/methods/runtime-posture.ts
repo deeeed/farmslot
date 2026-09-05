@@ -137,8 +137,15 @@ export async function runtimePostureApply(
       throw new Error('operationId must be a non-empty string');
     }
   }
+  // Checked here so an inadmissible request fails fast, AND again inside the
+  // reconciler's per-run queue: an `active` request queued behind the park's own
+  // `parked` request would otherwise pass this check before parking and execute
+  // after it.
   assertPostureApplyNotGateParked(params);
-  return reconciler.apply(params);
+  return reconciler.apply({
+    ...params,
+    assertAdmissible: () => assertPostureApplyNotGateParked(params),
+  });
 }
 
 /**

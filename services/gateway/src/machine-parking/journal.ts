@@ -18,6 +18,14 @@ export interface MachineParkingIntentJournal {
   kind: MachineParkingIntentKind;
   machine: string;
   operationId: string;
+  /**
+   * Narrows a journal's identity below the operation. A batch shares one
+   * `operationId`, so kinds whose repair is PER RUN must not share one file:
+   * the second run's write would overwrite the first, and the first run's
+   * completion would delete a sibling's still-pending repair. `free-slot`
+   * passes the run id here; batch-wide kinds leave it unset.
+   */
+  scopeId?: string;
   records: MachineParkRecord[];
 }
 
@@ -33,12 +41,27 @@ export class MachineParkingIntentJournalStore {
     this.directory = path.join(runsDirectory, 'machine-parking-batches');
   }
 
-  pathFor(machine: string, kind: MachineParkingIntentKind, operationId: string): string {
-    const digest = createHash('sha256').update(`${machine}\0${kind}\0${operationId}`).digest('hex');
+  pathFor(
+    machine: string,
+    kind: MachineParkingIntentKind,
+    operationId: string,
+    scopeId?: string,
+  ): string {
+    // The scope segment is APPENDED only when present, so an unscoped journal
+    // keeps the exact digest it had before scoping existed and a file already
+    // on disk across an upgrade still matches its own identity check.
+    const identity = scopeId
+      ? `${machine}\0${kind}\0${operationId}\0${scopeId}`
+      : `${machine}\0${kind}\0${operationId}`;
+    const digest = createHash('sha256').update(identity).digest('hex');
     return path.join(this.directory, `${digest}.json`);
   }
 
-  async write(kind: MachineParkingIntentKind, records: MachineParkRecord[]): Promise<void> {
+  async write(
+    kind: MachineParkingIntentKind,
+    records: MachineParkRecord[],
+    scopeId?: string,
+  ): Promise<void> {
     const first = records[0];
     if (!first) throw new Error('machine parking intent journal requires records');
     if (
@@ -48,16 +71,23 @@ export class MachineParkingIntentJournalStore {
     ) {
       throw new Error('machine parking intent journal records must share machine and operation id');
     }
-    await mkdir(this.directory, { recursive: true });
-    const target = this.pathFor(first.machine, kind, first.operationId);
-    const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
     const journal: MachineParkingIntentJournal = {
       version: 1,
       kind,
       machine: first.machine,
       operationId: first.operationId,
+      ...(scopeId ? { scopeId } : {}),
       records,
     };
+    // Validate at WRITE time, not only at load. An unvalidated write lands a
+    // file that `load()` then quarantines, so a writer/validator disagreement
+    // disables recovery silently and only shows up as a lost repair after a
+    // crash. Here it fails the park loudly instead, at the point that can still
+    // record the failure on the record.
+    assertValidJournal(journal);
+    await mkdir(this.directory, { recursive: true });
+    const target = this.pathFor(first.machine, kind, first.operationId, scopeId);
+    const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temp, JSON.stringify(journal, null, 2), 'utf8');
     await rename(temp, target);
   }
@@ -66,9 +96,10 @@ export class MachineParkingIntentJournalStore {
     machine: string,
     kind: MachineParkingIntentKind,
     operationId: string,
+    scopeId?: string,
   ): Promise<void> {
     try {
-      await unlink(this.pathFor(machine, kind, operationId));
+      await unlink(this.pathFor(machine, kind, operationId, scopeId));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -90,10 +121,12 @@ export class MachineParkingIntentJournalStore {
       const source = path.join(this.directory, file);
       try {
         const parsed = JSON.parse(await readFile(source, 'utf8')) as MachineParkingIntentJournal;
-        validateJournal(parsed);
+        assertValidJournal(parsed);
         if (
           path.basename(source) !==
-          path.basename(this.pathFor(parsed.machine, parsed.kind, parsed.operationId))
+          path.basename(
+            this.pathFor(parsed.machine, parsed.kind, parsed.operationId, parsed.scopeId),
+          )
         ) {
           throw new Error('machine parking intent journal filename does not match identity');
         }
@@ -108,7 +141,13 @@ export class MachineParkingIntentJournalStore {
   }
 }
 
-function validateJournal(value: MachineParkingIntentJournal): void {
+/**
+ * The one validator both the writer and the loader use. Exported so a test
+ * double can enforce the same contract the store does — an in-memory double
+ * that skips it lets a writer/validator mismatch pass every unit test and fail
+ * only on a real restart.
+ */
+export function assertValidJournal(value: MachineParkingIntentJournal): void {
   if (
     value?.version !== 1 ||
     (value.kind !== 'pause' && value.kind !== 'restore' && value.kind !== 'free-slot') ||
@@ -116,6 +155,7 @@ function validateJournal(value: MachineParkingIntentJournal): void {
     !value.machine ||
     typeof value.operationId !== 'string' ||
     !value.operationId ||
+    !optionalString(value.scopeId, true) ||
     !Array.isArray(value.records) ||
     value.records.length === 0 ||
     value.records.some(
@@ -334,8 +374,16 @@ function validRecoveryHandle(value: unknown): boolean {
 
 function validPreservedWorkspace(value: unknown): boolean {
   if (value === undefined) return true;
+  // `detachedAt` is the FACT, written only once the detach lands. Every record
+  // that reaches a journal is written BEFORE that — the pause intent captures
+  // `{branch, headSha}` at preview, and the free-slot intent is the pre-detach
+  // snapshot. Requiring it here quarantined every park journal on reload and
+  // silently disabled repair.
   return (
-    isRecord(value) && nonEmpty(value.branch) && nonEmpty(value.headSha) && iso(value.detachedAt)
+    isRecord(value) &&
+    nonEmpty(value.branch) &&
+    nonEmpty(value.headSha) &&
+    optionalIso(value.detachedAt)
   );
 }
 

@@ -310,6 +310,14 @@ export interface ResourcePostureRequest {
   gateChoice?: ResourcePostureGateChoice;
   proofRequirements?: RuntimeCapabilityProofRequirement[];
   operationId?: string;
+  /**
+   * Admission check re-run INSIDE the per-run serialization, immediately before
+   * the request executes. A caller that validated at the RPC boundary only
+   * proved the run was admissible when the request arrived; a request queued
+   * behind another one executes later, by which time a park may have landed.
+   * Throw from here to refuse. Engine-internal boundaries omit it.
+   */
+  assertAdmissible?: () => void;
 }
 
 export interface RunResourcePostureDeps {
@@ -486,7 +494,12 @@ export class RunResourcePostureReconciler {
   }
 
   async apply(request: ResourcePostureRequest): Promise<RuntimePostureApplyResult> {
-    return this.serialize(request.runId, () => this.applyInternal(request));
+    return this.serialize(request.runId, () => {
+      // Inside the queue, not before it. This is the only point where the check
+      // and the effect are not separated by another request's execution.
+      request.assertAdmissible?.();
+      return this.applyInternal(request);
+    });
   }
 
   private async applyInternal(request: ResourcePostureRequest): Promise<RuntimePostureApplyResult> {

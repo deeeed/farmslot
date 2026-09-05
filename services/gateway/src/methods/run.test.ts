@@ -1760,3 +1760,57 @@ for (const [label, record, expectedCode] of [
     assert.equal(persisted.park?.slotId, slotId);
   });
 }
+
+test('runResolveDecision refuses a park that landed during its awaited probes', async (t) => {
+  const slotId = `test-gate-park-race-${Date.now()}`;
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-GATE-PARK-RACE-${Date.now()}`,
+    runner: 'claude',
+    slotId,
+  });
+  const decision: RunDecision = {
+    id: 'gate-park-race',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Approve package',
+    actions: [{ id: 'request-extra-review', label: 'Request review', style: 'secondary' }],
+    createdAt: '2026-09-05T00:00:00.000Z',
+  };
+  // Starts UNPARKED, so the entry check passes and only the re-check can catch it.
+  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed', park: null });
+    await deleteRun(run.id);
+  });
+
+  await assert.rejects(
+    runResolveDecision(
+      { runId: run.id, decisionId: decision.id, actionId: 'request-extra-review' },
+      () => {},
+      {
+        // The park lands inside an awaited probe — the window the entry check
+        // cannot see, because it read the run before this ran.
+        assertReviewLaunchAllowed: async () => {
+          updateRun(run.id, {
+            park: {
+              ...gateParkRecord(run.id, slotId, { phase: 'resources-stopping' }),
+              runId: run.id,
+              slotId,
+            },
+          });
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.equal((error as GatewayMethodError).code, 'GATE_PARK_IN_FLIGHT');
+      return true;
+    },
+  );
+
+  const persisted = getRun(run.id)!;
+  assert.equal(persisted.decisions[0]?.resolvedAt, undefined);
+  assert.equal(persisted.status, 'blocked');
+});

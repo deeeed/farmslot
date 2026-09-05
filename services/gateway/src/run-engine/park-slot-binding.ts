@@ -27,19 +27,37 @@ export function isSlotFreedByPark(run: Pick<Run, 'park'>): boolean {
  * Whether a slot-freeing park is either done or still in flight for this run.
  *
  * The opposite bias to `isSlotFreedByPark`: it goes true the moment the
- * write-ahead record declares a freeing park and stays true until the record
- * is restored or cancelled — including the window where the runner and
- * resources are being stopped but `slotFreedAt` has not been written yet.
+ * write-ahead record declares a freeing park and stays true through the window
+ * where the runner and resources are being stopped but `slotFreedAt` has not
+ * been written yet.
  *
  * Every guard that must not act on a run whose slot is disappearing uses this:
- * resolving a gate, applying a posture, or driving a resolved gate onward.
- * Answering a gate mid-park would publish against a worker that is being
- * stopped underneath it.
+ * resolving a gate, applying a posture, driving a resolved gate onward, or
+ * tearing the slot down after a failure. Answering a gate mid-park would
+ * publish against a worker that is being stopped underneath it.
+ *
+ * It is keyed on intent-or-fact HONESTLY, which matters as much as the fence
+ * itself. A fence that never lifts is not a fence, it is a strand: the run can
+ * neither answer its gate nor be restored, and cancelling it is the only exit.
+ * So:
+ *
+ *   - `slotFreedAt` set — the release landed. Fenced, until restore or cancel.
+ *   - record settled `partial` with nothing landed — the park changed nothing
+ *     (the usual case: the working tree went dirty between preview and detach,
+ *     so the detach refused before touching anything). The run still owns its
+ *     slot and its worker, so it stays answerable and restorable. Not fenced.
+ *   - record settled `partial` with a detach still outstanding — one real
+ *     effect is unreversed, so the fence holds until it is rolled back.
+ *   - otherwise, while the intent is live — fenced.
  */
 export function isGateParkInFlightOrFreed(run: Pick<Run, 'park'>): boolean {
   const park = run.park;
   if (!park) return false;
+  // A record the operator already settled fences nothing, even though it still
+  // carries the historical `slotFreedAt` of the release it undid.
   if (park.phase === 'restored' || park.phase === 'cancelled') return false;
   if (park.slotFreedAt) return true;
-  return park.mode === 'release' && park.slotDisposition === 'freed';
+  if (park.mode !== 'release' || park.slotDisposition !== 'freed') return false;
+  if (park.phase === 'partial') return Boolean(park.preservedWorkspace?.detachedAt);
+  return true;
 }

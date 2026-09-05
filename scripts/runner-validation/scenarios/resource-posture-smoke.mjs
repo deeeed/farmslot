@@ -38,6 +38,17 @@ const CAPABILITY_ID = 'sandbox-gateway-ui';
  * the recorded evidence.
  */
 const ANSI_CSI = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+/**
+ * Braille spinner frames the CLI paints over a carriage return while it works.
+ * Stripping CSI codes and `\r` leaves them behind, so a transient progress
+ * frame ends up baked into the committed evidence as if it were report text.
+ */
+const SPINNER_FRAME = /[\u2800-\u28ff]/g;
+
+/** CLI stdout as the report should quote it: no colour codes, no spinner frames. */
+function humanText(stdout) {
+  return stdout.replace(ANSI_CSI, '').replace(SPINNER_FRAME, '').replace(/\r/g, '');
+}
 
 /** Booting a simulator plus Metro is minutes, not seconds. */
 const SLOW_RPC_TIMEOUT_MS = 480_000;
@@ -483,7 +494,7 @@ function assertCliPostureSurface({ runId, capabilityId }) {
     // never prints an observed stop while the provider is running.
     const humanRun = cliHuman(['resource', 'posture', 'status', runId]);
     // Strip the SGR colour codes the pty enables so the lines can be matched.
-    const humanLines = humanRun.stdout.replace(ANSI_CSI, '').replace(/\r/g, '').split('\n');
+    const humanLines = humanText(humanRun.stdout).split('\n');
     // This capability's block: its headline plus the indented detail lines under
     // it, which carry the reason and policy source without repeating the id.
     // Scoping matters because a whole-output match lets another capability's row
@@ -681,7 +692,7 @@ function assertCliRelease({ slotId, runId }) {
     // assertions about those rows passed without ever reading one.
     acquire();
     const releasedHuman = cliHuman(releaseArgs);
-    const releasedLines = releasedHuman.stdout.replace(ANSI_CSI, '').replace(/\r/g, '');
+    const releasedLines = humanText(releasedHuman.stdout);
     const releasedRow = releasedLines
       .split('\n')
       .find((line) => line.includes(RELEASE_CAPABILITY) && line.includes('provider='));
@@ -789,7 +800,7 @@ function assertCliReleaseRetained({ slotId, runId, dependencyPair }) {
         '--capability',
         dependencyPair.dependency,
       ]);
-      const retainedLines = retainedHuman.stdout.replace(ANSI_CSI, '').replace(/\r/g, '');
+      const retainedLines = humanText(retainedHuman.stdout);
       proof.retained.humanSample = retainedLines
         .split('\n')
         .filter((line) => line.includes(dependencyPair.dependency))
@@ -1170,6 +1181,27 @@ function assertGateParkEligibility({ slotId, runId, machine }) {
         attempted: false,
         reason:
           'no FARMSLOT_GATE_PARK_RUN_ID: a gate-held publication run needs a real local-first package, which the scripted runner cannot produce',
+        // Recorded from an actual attempt on macpro-ff-1 (2026-09-05) so the
+        // gap is a measured blocker rather than an assumption. Each step was
+        // driven through the production gateway on ws://localhost:7801.
+        blockers: [
+          "run.create flowType 'fix-bug' with a free-text ticket: refused, 'Paste a Jira key, a Jira URL, a GitHub issue/PR URL, or owner/repo#number'",
+          "run.create flowType 'fix-bug' ticketOrPr 'MANUAL-000112': refused, 'manual backlog refs must be dispatched from Backlog'",
+          "run.create flowType 'dev' mode 'autonomous' with a free-text ticket: refused the same way; free text is accepted only by interactive starts",
+          "run.create flowType 'dev' mode 'interactive' devInteractiveProfile 'reviewed' runner 'claude': ACCEPTED and reached 'monitoring' with a live claude session, but an interactive run completes only when an operator drives its pane, so COMPLETE never ran and no 'gate-held' disposition was produced",
+        ],
+        // What the attempt DID establish, read-only, through machine.pause.preview:
+        // a real session-reload runner clears the runner-capability gate that
+        // the scripted runner fails. The refusal moved off RUNNER_RELOAD_UNSUPPORTED
+        // to CAPABILITY_RESOURCE_UNOWNED, and after acquiring the catalog
+        // capability, to CAPABILITY_SLOT_ACTION_UNMAPPED — both later gates,
+        // and both unrelated to the gate-park branch.
+        realRunnerProbe: {
+          runner: 'claude',
+          recoveryPolicySupported: false,
+          codesObserved: ['CAPABILITY_RESOURCE_UNOWNED', 'CAPABILITY_SLOT_ACTION_UNMAPPED'],
+          note: 'not RUNNER_RELOAD_UNSUPPORTED: the runner declaration gate accepts a session-reload runner',
+        },
       };
       proof.pass = true;
       return proof;

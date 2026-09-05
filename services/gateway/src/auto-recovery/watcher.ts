@@ -20,6 +20,7 @@ import { loadProjectVars, normalizeRawProjectAutoRecovery } from '../core/config
 import { classifyFailureText } from '../core/failure-patterns.js';
 import { runReplayStep } from '../methods/run/replay-step.js';
 import { slotFixtureRefresh } from '../methods/slot.js';
+import { isGateParkInFlightOrFreed } from '../run-engine/park-slot-binding.js';
 import { getAllRuns, getRun, updateRun } from '../runs/store.js';
 
 import { writeAuditRecord } from './audit-writer.js';
@@ -128,6 +129,10 @@ function isMonitorBlockedRecoveryCandidate(run: Run): boolean {
 }
 
 function isAutoRecoveryCandidateRun(run: Run): boolean {
+  // ADR-054 `free-slot`: a gate-parked run is waiting on an operator, not
+  // failing. Auto-recovery would replay a step against a worker the park
+  // stopped, on a slot the park may already have handed to a successor.
+  if (isGateParkInFlightOrFreed(run)) return false;
   return run.status === 'failed' || isMonitorBlockedRecoveryCandidate(run);
 }
 

@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-05T09:13:02.408Z",
+  "recordedAt": "2026-09-05T10:40:02.094Z",
   "host": "macwork",
   "scenario": "resource-posture-smoke",
   "runner": "scripted",
   "slotId": "macpro-ff-1",
   "capabilityId": "sandbox-gateway-ui",
-  "runId": "5705934e-b515-466f-b11f-fe017a1781ea",
+  "runId": "d195c733-9ca1-4f0e-a895-105c8bc29674",
   "project": "farmslot-farm",
   "acquire": {
     "ok": true,
@@ -31,12 +31,12 @@
     "observedState": "running",
     "policySource": "project-default",
     "reason": "provider retention 'retain' at operator-wait",
-    "leaseId": "cap-f9eadbc0-1f3d-4717-adbc-d42d61526c98",
+    "leaseId": "cap-c08f3d68-9d48-4951-9732-edecf1cbc410",
     "owner": {
-      "runId": "5705934e-b515-466f-b11f-fe017a1781ea",
-      "familyId": "5705934e-b515-466f-b11f-fe017a1781ea"
+      "runId": "d195c733-9ca1-4f0e-a895-105c8bc29674",
+      "familyId": "d195c733-9ca1-4f0e-a895-105c8bc29674"
     },
-    "lastTransitionAt": "2026-09-05T09:12:26.671Z",
+    "lastTransitionAt": "2026-09-05T10:38:07.412Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -57,12 +57,12 @@
     "observedState": "stopped",
     "policySource": "project-default",
     "reason": "provider retention 'stop' at terminal",
-    "leaseId": "cap-f9eadbc0-1f3d-4717-adbc-d42d61526c98",
+    "leaseId": "cap-c08f3d68-9d48-4951-9732-edecf1cbc410",
     "owner": {
-      "runId": "5705934e-b515-466f-b11f-fe017a1781ea",
-      "familyId": "5705934e-b515-466f-b11f-fe017a1781ea"
+      "runId": "d195c733-9ca1-4f0e-a895-105c8bc29674",
+      "familyId": "d195c733-9ca1-4f0e-a895-105c8bc29674"
     },
-    "lastTransitionAt": "2026-09-05T09:12:58.609Z",
+    "lastTransitionAt": "2026-09-05T10:39:19.719Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -113,7 +113,7 @@
         "errorCode": "RUNTIME_CAPABILITY_RELEASE_RETAINED",
         "retained": ["companion-metro"],
         "released": [],
-        "humanSample": "⣋ Releasing capabilities on macpro-ff-1⣙ Releasing capabilities on macpro-ff-1Release capability  slot=macpro-ff-1  run=5705934e-b515-466f-b11f-fe017a1781ea  capability=companion-metro |   companion-metro  lease=cap-c2f3c5fb-038f-40d8-86ba-6160bd91e296  retained  provider=running | Error: Retained 1 lease(s) that something else still needs: companion-metro. | Next: Release whatever still depends on companion-metro first; `farmslot resource posture status 5705934e-b515-466f-b11f-fe017a1781ea` names what is holding it."
+        "humanSample": "Releasing capabilities on macpro-ff-1Release capability  slot=macpro-ff-1  run=d195c733-9ca1-4f0e-a895-105c8bc29674  capability=companion-metro |   companion-metro  lease=cap-62bd2d47-fd4b-4069-81ab-37f6d6db2980  retained  provider=running | Error: Retained 1 lease(s) that something else still needs: companion-metro. | Next: Release whatever still depends on companion-metro first; `farmslot resource posture status d195c733-9ca1-4f0e-a895-105c8bc29674` names what is holding it."
       }
     },
     "waitStates": [
@@ -130,7 +130,7 @@
         "policySource": "project-default"
       }
     ],
-    "preparedAt": "2026-09-05T09:12:43.600Z",
+    "preparedAt": "2026-09-05T10:38:48.000Z",
     "terminalStates": [
       {
         "capabilityId": "ios-simulator",
@@ -148,21 +148,21 @@
   "familyProof": {
     "attempted": true,
     "pass": true,
-    "runId": "de236522-f6a5-4fb7-820c-7b0c1ac09588",
+    "runId": "37d92fc4-ab4f-4d3c-8a29-68edf4755021",
     "error": null,
-    "familyId": "5705934e-b515-466f-b11f-fe017a1781ea",
+    "familyId": "d195c733-9ca1-4f0e-a895-105c8bc29674",
     "siblingStatusBeforeAcquire": "blocked",
     "siblingSlotId": null,
     "derivedAcquire": {
       "ok": true,
-      "familyId": "5705934e-b515-466f-b11f-fe017a1781ea",
+      "familyId": "d195c733-9ca1-4f0e-a895-105c8bc29674",
       "reason": null
     },
-    "derivedLeaseId": "cap-d6fa3eb5-d5fa-4975-979e-81b26c1b1c10",
+    "derivedLeaseId": "cap-b668e845-78ff-483c-b55e-8f1dc902e72a",
     "mismatchAcquire": {
       "ok": false,
       "kind": "invalid-request",
-      "reason": "ownerFamilyId '5705934e-b515-466f-b11f-fe017a1781ea-not-really' does not match the family of run 'de236522-f6a5-4fb7-820c-7b0c1ac09588' ('5705934e-b515-466f-b11f-fe017a1781ea')"
+      "reason": "ownerFamilyId 'd195c733-9ca1-4f0e-a895-105c8bc29674-not-really' does not match the family of run '37d92fc4-ab4f-4d3c-8a29-68edf4755021' ('d195c733-9ca1-4f0e-a895-105c8bc29674')"
     },
     "leasesAfterMismatch": 1,
     "siblingLeasesAfterTerminal": [
@@ -173,7 +173,7 @@
     ],
     "fencedAcquire": {
       "ok": false,
-      "reason": "Run 'de236522-f6a5-4fb7-820c-7b0c1ac09588' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
+      "reason": "Run '37d92fc4-ab4f-4d3c-8a29-68edf4755021' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
     },
     "siblingFinalStatus": "cancelled",
     "leftoverLeases": []
@@ -218,7 +218,7 @@
     "pass": true,
     "error": null,
     "released": {
-      "humanRow": "recording  lease=cap-9e2aae66-49ae-4686-be7b-3c9197ed0d31  released  provider=unknown",
+      "humanRow": "recording  lease=cap-3ffde92e-30e0-471b-9abe-7d3874f44adc  released  provider=unknown",
       "requestLine": "keep-warm requested: no",
       "exit": 0,
       "envelopeStatus": "ok",
@@ -248,14 +248,26 @@
     },
     "gateHeld": {
       "attempted": false,
-      "reason": "no FARMSLOT_GATE_PARK_RUN_ID: a gate-held publication run needs a real local-first package, which the scripted runner cannot produce"
+      "reason": "no FARMSLOT_GATE_PARK_RUN_ID: a gate-held publication run needs a real local-first package, which the scripted runner cannot produce",
+      "blockers": [
+        "run.create flowType 'fix-bug' with a free-text ticket: refused, 'Paste a Jira key, a Jira URL, a GitHub issue/PR URL, or owner/repo#number'",
+        "run.create flowType 'fix-bug' ticketOrPr 'MANUAL-000112': refused, 'manual backlog refs must be dispatched from Backlog'",
+        "run.create flowType 'dev' mode 'autonomous' with a free-text ticket: refused the same way; free text is accepted only by interactive starts",
+        "run.create flowType 'dev' mode 'interactive' devInteractiveProfile 'reviewed' runner 'claude': ACCEPTED and reached 'monitoring' with a live claude session, but an interactive run completes only when an operator drives its pane, so COMPLETE never ran and no 'gate-held' disposition was produced"
+      ],
+      "realRunnerProbe": {
+        "runner": "claude",
+        "recoveryPolicySupported": false,
+        "codesObserved": ["CAPABILITY_RESOURCE_UNOWNED", "CAPABILITY_SLOT_ACTION_UNMAPPED"],
+        "note": "not RUNNER_RELOAD_UNSUPPORTED: the runner declaration gate accepts a session-reload runner"
+      }
     },
     "gateHeldRunId": null
   },
   "leftoverLeases": [],
   "pass": true,
   "error": null,
-  "familyId": "5705934e-b515-466f-b11f-fe017a1781ea",
+  "familyId": "d195c733-9ca1-4f0e-a895-105c8bc29674",
   "terminalRepeatOutcome": "idempotent",
   "cancelEffects": [
     {

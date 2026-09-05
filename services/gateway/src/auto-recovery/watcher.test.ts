@@ -1072,3 +1072,64 @@ test('watcher follows up successful auto-recovery replay from run.completed even
   const audit = await readAuditLines();
   assert.equal(audit.at(-1).followupOutcome, 'recovered');
 });
+
+// ─── ADR-054 free-slot: a gate-parked run is waiting, not failing ───
+
+test('watcher excludes a gate-parked run from auto-recovery', async (t) => {
+  withTempAuditDir(t);
+  const project = await makeProject(t, {
+    auto_recovery: {
+      enabled: true,
+      maxAttempts: 2,
+      allowedSteps: ['prepare'],
+      allowedCategories: ['infra'],
+    },
+  });
+  const at = '2026-05-12T10:00:00.000Z';
+  const created = failRun(project);
+  // `failRun` does not carry a park record, so attach it the way a park would.
+  const run = updateRun(created.id, {
+    park: {
+      version: 1,
+      operationId: 'park-op',
+      previewId: 'park-preview',
+      generation: 1,
+      machine: 'macwork',
+      slotId: 'slot-a',
+      mode: 'release',
+      phase: 'parked',
+      slotDisposition: 'freed',
+      slotFreedAt: at,
+      prePauseStatus: 'blocked',
+      prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+      resourceManifest: { capturedAt: at, resources: [], capabilityLeases: [] },
+      recoveryHandle: null,
+      errors: [],
+      residuals: { runner: 'stopped', resources: [] },
+      createdAt: at,
+      updatedAt: at,
+      runId: created.id,
+    },
+  });
+  const replayCalls: unknown[] = [];
+  __resetAutoRecoveryForTest();
+  __setAutoRecoveryHandlersForTest({
+    runReplayStep: async () => {
+      replayCalls.push('replay');
+      throw new Error('auto-recovery must not replay a step on a gate-parked run');
+    },
+  });
+  initAutoRecovery(() => {});
+  t.after(async () => {
+    __resetAutoRecoveryForTest();
+    await cleanupRun(run.id);
+  });
+
+  routeEventToAutoRecovery(Events.RUN_UPDATED, { run });
+  await __drainAutoRecoveryForTest();
+
+  // Replaying would drive a step against a worker the park stopped, on a slot
+  // the park may already have handed to a successor.
+  assert.deepEqual(replayCalls, []);
+  assert.equal(getRun(run.id)?.recoveryProposal, undefined);
+});

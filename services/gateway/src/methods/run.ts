@@ -1184,6 +1184,26 @@ export interface RunResolveDecisionDependencies {
   ) => Promise<void>;
 }
 
+/**
+ * ADR-054 `free-slot`: refuse before the decision is consumed, so it stays
+ * pending and the run stays parked. Resolving would drive the engine onward
+ * against a worker the park stopped and a slot another run may already own.
+ * The fence covers the whole park — from the write-ahead intent, through the
+ * window where resources are stopping and `slotFreedAt` is still unset, to the
+ * landed release — and lifts for a park that settled without changing anything.
+ */
+function assertNotGateParked(runId: string, run: Run): void {
+  if (!isGateParkInFlightOrFreed(run)) return;
+  const code = isSlotFreedByPark(run)
+    ? MachineParkEligibilityCodes.freedSlotRestoreUnsupported
+    : MachineParkEligibilityCodes.gateParkInFlight;
+  throw new GatewayMethodError(
+    code,
+    `Run ${runId} is gate-parked; its decisions cannot be resolved while its slot is freed`,
+    { userAction: 'Restore the run into a slot before answering its gate, or cancel the run.' },
+  );
+}
+
 export async function runResolveDecision(
   params: RunResolveDecisionParams,
   emit: Emit,
@@ -1201,18 +1221,7 @@ export async function runResolveDecision(
   // and the fence covers the whole park — from the write-ahead intent, through
   // the window where resources are stopping and `slotFreedAt` is still unset,
   // to the landed release.
-  if (isGateParkInFlightOrFreed(existing)) {
-    const code = isSlotFreedByPark(existing)
-      ? MachineParkEligibilityCodes.freedSlotRestoreUnsupported
-      : MachineParkEligibilityCodes.gateParkInFlight;
-    throw new GatewayMethodError(
-      code,
-      `Run ${params.runId} is gate-parked; its decisions cannot be resolved while its slot is freed`,
-      {
-        userAction: 'Restore the run into a slot before answering its gate, or cancel the run.',
-      },
-    );
-  }
+  assertNotGateParked(params.runId, existing);
   if (!decision.actions.some((action) => action.id === params.actionId)) {
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
   }
@@ -1259,6 +1268,11 @@ export async function runResolveDecision(
   // auto-recovery) may have resolved this decision during that window. Re-read
   // from the store so the first resolution wins instead of being overwritten.
   assertDecisionStillUnresolved(params.runId, params.decisionId);
+  // Re-read and re-check at the CONSUMPTION point. The probes above await, and
+  // a park can land during any of them — the early check only proves the run
+  // was not parked when the request arrived. Consuming the decision after that
+  // would drive the engine against a worker the park stopped.
+  assertNotGateParked(params.runId, getRun(params.runId)!);
   if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
     const fresh = getRun(params.runId)!;
     if (fresh.engineState?.publishGate?.reviewLaunchRejection) {

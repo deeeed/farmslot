@@ -217,7 +217,7 @@ async function harness(t: TestContext, options: HarnessOptions) {
     newOperationId: () => 'op-generated',
   });
 
-  return { registry, reconciler, actions, runs, broadcasts, parkCalls, storePath, directory };
+  return { registry, reconciler, actions, runs, broadcasts, parkCalls, storePath, directory, run };
 }
 
 function acquire(
@@ -1323,4 +1323,48 @@ test('the reconciler reports a deferred warm cleanup as still running', async (t
   const deferral = result.transition.failures.find((item) => item.capabilityId === 'metro');
   assert.ok(deferral, JSON.stringify(result.transition.failures));
   assert.match(deferral.reason, /still needs it/);
+});
+
+// ─── ADR-054 free-slot: admission is re-checked inside the per-run queue ───
+
+test('a queued apply is admitted at execution time, not at enqueue time', async (t) => {
+  const { reconciler, run } = await harness(t, { capabilities: [] });
+  const order: string[] = [];
+  let parked = false;
+  let releaseFirst: () => void = () => {};
+  const firstRunning = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+
+  // First request occupies the queue. Its admission check is what the park
+  // itself would pass through.
+  const first = reconciler.apply({
+    runId: run.id,
+    posture: 'parked',
+    assertAdmissible: () => {
+      order.push('first-admitted');
+      // Stand in for the park's own work: the queue is busy while this runs.
+      parked = true;
+    },
+  });
+
+  // Second request is enqueued NOW, while the run is not yet parked — the state
+  // the RPC boundary would have validated against.
+  const second = reconciler.apply({
+    runId: run.id,
+    posture: 'active',
+    assertAdmissible: () => {
+      order.push('second-admitted');
+      if (parked) throw new Error('run is gate-parked');
+    },
+  });
+
+  releaseFirst();
+  await firstRunning;
+  await first.catch(() => undefined);
+
+  // Checked before the queue, this would have passed: the run was unparked when
+  // it was enqueued. Checked inside, it sees the park the first request landed.
+  await assert.rejects(second, /run is gate-parked/);
+  assert.deepEqual(order, ['first-admitted', 'second-admitted']);
 });

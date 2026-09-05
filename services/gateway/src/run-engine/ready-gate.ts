@@ -646,10 +646,13 @@ export function freedSlotGateResolutionBlocker(run: Run): BlockedRunError | null
   // BlockedRunError, not a plain Error: a plain throw makes the run terminal
   // `failed`, and cancel refuses terminal runs — which would strand the park
   // record with no way to clean it up. `blocked` keeps cancel available.
-  return new BlockedRunError(
+  const message =
     `Run ${run.id} is gate-parked (${code}); ` +
-      'restore it into a slot before resolving the publication gate, or cancel the run',
-  );
+    'restore it into a slot before resolving the publication gate, or cancel the run';
+  // Second argument is the STEP DETAIL. Without it the human-gate step records
+  // the generic blocked text and the operator sees a stalled gate with no
+  // reason; with it the code and the way out are on the step itself.
+  return new BlockedRunError(message, `Gate park in progress (${code}); restore or cancel the run`);
 }
 
 export async function executeReadyGate(runId: string): Promise<string> {

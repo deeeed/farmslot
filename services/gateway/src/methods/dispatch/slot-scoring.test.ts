@@ -392,3 +392,72 @@ test('findBestSlot selects the slot a gate park freed', () => {
   });
   assert.equal(findBestSlot([held], 'demo-farm'), null);
 });
+
+// ─── ADR-054 free-slot: a gate-parked run's slot is not this cleanup's to take ───
+
+function gateParkedOwner(overrides: Record<string, unknown> = {}) {
+  return {
+    status: 'blocked',
+    park: {
+      version: 1,
+      operationId: 'op',
+      previewId: 'preview',
+      runId: 'parked',
+      generation: 1,
+      machine: 'macwork',
+      slotId: 'slot-a',
+      mode: 'release',
+      phase: 'resources-stopping',
+      slotDisposition: 'freed',
+      prePauseStatus: 'blocked',
+      prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+      resourceManifest: { capturedAt: 'x', resources: [], capabilityLeases: [] },
+      recoveryHandle: null,
+      errors: [],
+      residuals: { runner: 'stopped', resources: [] },
+      createdAt: 'x',
+      updatedAt: 'x',
+      ...overrides,
+    },
+  } as never;
+}
+
+test('failedRunSlotCleanup leaves the slot alone while a gate park is in flight', () => {
+  const slot = { slot: 'slot-a', current_run_id: 'parked', handoff_run_id: null };
+  // The run still owns the row mid-park, so the plan would otherwise reset it —
+  // publishing the slot ready while resources stop and the branch is still out.
+  assert.equal(
+    failedRunSlotCleanup(slot, 'parked', () => gateParkedOwner()),
+    'none',
+  );
+});
+
+test('failedRunSlotCleanup leaves a freed slot to its successor', () => {
+  // The park already handed this row on; resetting it would tear down the
+  // successor's work.
+  const slot = { slot: 'slot-a', current_run_id: 'parked', handoff_run_id: null };
+  assert.equal(
+    failedRunSlotCleanup(slot, 'parked', () =>
+      gateParkedOwner({ phase: 'parked', slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+    ),
+    'none',
+  );
+});
+
+test('failedRunSlotCleanup still resets for a park that settled without changing anything', () => {
+  // Nothing landed, so the run owns its slot exactly as before and an ordinary
+  // failure must still clean it up. The fence must not become a leak.
+  const slot = { slot: 'slot-a', current_run_id: 'parked', handoff_run_id: null };
+  assert.equal(
+    failedRunSlotCleanup(slot, 'parked', () => gateParkedOwner({ phase: 'partial' })),
+    'reset',
+  );
+});
+
+test('failedRunSlotCleanup is unchanged for a run with no park record', () => {
+  const slot = { slot: 'slot-a', current_run_id: 'plain', handoff_run_id: null };
+  assert.equal(
+    failedRunSlotCleanup(slot, 'plain', () => ({ status: 'failed' })),
+    'reset',
+  );
+});

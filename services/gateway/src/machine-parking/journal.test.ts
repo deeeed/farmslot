@@ -260,3 +260,120 @@ test('deep-invalid record tables quarantine per file while valid journal loads',
   assert.equal(loaded.journals[0]?.operationId, 'valid-rich');
   assert.equal(loaded.quarantined.length, invalid.length);
 });
+
+// ─── ADR-054 free-slot: the write-ahead journal must survive its own reload ───
+
+/** The record shape a freeing park actually journals: preserved, not yet detached. */
+function freeingRecord(operationId: string, runId: string): MachineParkRecord {
+  return {
+    ...record('machine-a', operationId),
+    runId,
+    slotId: `slot-${runId}`,
+    mode: 'release',
+    slotDisposition: 'freed',
+    // No `detachedAt`. Every journal is written BEFORE the detach lands — that
+    // is the entire point of a write-ahead record.
+    preservedWorkspace: { branch: `work/${runId}`, headSha: `sha-${runId}` },
+  };
+}
+
+test('a journal written before the detach lands reloads instead of being quarantined', async (t) => {
+  const runsDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-machine-journal-'));
+  t.after(() => rm(runsDir, { recursive: true, force: true }));
+  const store = new MachineParkingIntentJournalStore(runsDir);
+
+  await store.write('free-slot', [freeingRecord('free-op', 'run-a')], 'run-a');
+  await store.write('pause', [freeingRecord('pause-op', 'run-a')]);
+
+  const { journals, quarantined } = await store.load();
+
+  // Requiring `detachedAt` here quarantined both, so repair never ran and a
+  // crash mid-park left the slot bound to the parked run.
+  assert.deepEqual(quarantined, []);
+  assert.deepEqual(journals.map((journal) => journal.kind).sort(), ['free-slot', 'pause']);
+  assert.equal(journals.find((journal) => journal.kind === 'free-slot')?.scopeId, 'run-a');
+});
+
+test('a landed detach still round-trips, so the fact is not lost on reload', async (t) => {
+  const runsDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-machine-journal-'));
+  t.after(() => rm(runsDir, { recursive: true, force: true }));
+  const store = new MachineParkingIntentJournalStore(runsDir);
+  const detached = freeingRecord('free-op', 'run-a');
+  await store.write(
+    'free-slot',
+    [
+      {
+        ...detached,
+        preservedWorkspace: {
+          ...detached.preservedWorkspace!,
+          detachedAt: '2026-09-05T00:00:00.000Z',
+        },
+      },
+    ],
+    'run-a',
+  );
+
+  const { journals, quarantined } = await store.load();
+
+  assert.deepEqual(quarantined, []);
+  assert.equal(journals[0]?.records[0]?.preservedWorkspace?.detachedAt, '2026-09-05T00:00:00.000Z');
+});
+
+test('free-slot journals of one batch are per run, so one member cannot erase another', async (t) => {
+  const runsDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-machine-journal-'));
+  t.after(() => rm(runsDir, { recursive: true, force: true }));
+  const store = new MachineParkingIntentJournalStore(runsDir);
+  // One batch, one operationId, two runs — the shape that overwrote itself.
+  await store.write('free-slot', [freeingRecord('batch-op', 'run-a')], 'run-a');
+  await store.write('free-slot', [freeingRecord('batch-op', 'run-b')], 'run-b');
+
+  assert.notEqual(
+    store.pathFor('machine-a', 'free-slot', 'batch-op', 'run-a'),
+    store.pathFor('machine-a', 'free-slot', 'batch-op', 'run-b'),
+  );
+
+  // run-a completes and deletes its own intent. run-b's pending repair must survive.
+  await store.delete('machine-a', 'free-slot', 'batch-op', 'run-a');
+
+  const { journals, quarantined } = await store.load();
+  assert.deepEqual(quarantined, []);
+  assert.deepEqual(
+    journals.map((journal) => journal.records[0]!.runId),
+    ['run-b'],
+  );
+});
+
+test('an unscoped journal keeps the exact path it had before scoping existed', async (t) => {
+  const runsDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-machine-journal-'));
+  t.after(() => rm(runsDir, { recursive: true, force: true }));
+  const store = new MachineParkingIntentJournalStore(runsDir);
+  // A file already on disk across an upgrade must still match its own identity
+  // check rather than being quarantined for a digest that silently changed.
+  assert.equal(
+    store.pathFor('machine-a', 'pause', 'op'),
+    store.pathFor('machine-a', 'pause', 'op', undefined),
+  );
+  await store.write('pause', [record('machine-a', 'op')]);
+  const { journals, quarantined } = await store.load();
+  assert.deepEqual(quarantined, []);
+  assert.equal(journals.length, 1);
+});
+
+test('write refuses a record the loader would quarantine', async (t) => {
+  const runsDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-machine-journal-'));
+  t.after(() => rm(runsDir, { recursive: true, force: true }));
+  const store = new MachineParkingIntentJournalStore(runsDir);
+  const broken = {
+    ...freeingRecord('free-op', 'run-a'),
+    preservedWorkspace: { branch: '', headSha: 'sha' },
+  } as MachineParkRecord;
+
+  // Validating only at load means a writer/validator mismatch lands a file and
+  // fails silently on the next restart. Validating at write fails the park now.
+  await assert.rejects(
+    () => store.write('free-slot', [broken], 'run-a'),
+    /invalid machine parking intent journal/,
+  );
+  const { journals } = await store.load();
+  assert.deepEqual(journals, []);
+});

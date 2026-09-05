@@ -9,10 +9,11 @@ import type {
   SlotResource,
 } from '@farmslot/protocol';
 
+import { isGateParkInFlightOrFreed } from '../run-engine/park-slot-binding.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { withMachineRunTransition } from '../run-lifecycle/transition-coordinator.js';
 
-import type { MachineParkingIntentJournal } from './journal.js';
+import { assertValidJournal, type MachineParkingIntentJournal } from './journal.js';
 import {
   type MachineParkingDependencies,
   MachineParkingService,
@@ -164,6 +165,7 @@ interface Harness {
   deps: MachineParkingDependencies;
   /** Slot -> owning run id, mutated by freeSlotOwnership and read by loadFleet. */
   slotOwners: Map<string, string | null>;
+  slotLifecycles: Map<string, string>;
   /** Per-run override for the declared runner graceful-stop + session-reload capability. */
   reloadSupport: Map<string, RunnerReloadInspection>;
   /** Observed runner liveness per run, as residual observation reads it. */
@@ -192,6 +194,7 @@ function harness(initialRuns: Run[]): Harness {
         { branch: `work/${run.id}`, headSha: `sha-${run.id}`, dirtyPaths: [] },
       ]),
   );
+  const slotLifecycles = new Map<string, string>();
   const freeSlotJournals = new Set<string>();
   const journals = new Map<string, MachineParkingIntentJournal>();
   let tick = 0;
@@ -232,26 +235,35 @@ function harness(initialRuns: Run[]): Harness {
     persistRun: async (run, reason) => {
       calls.push(`persist:${run.id}:${reason}`);
     },
-    writeIntentJournal: async (kind, records) => {
+    writeIntentJournal: async (kind, records, scopeId) => {
       calls.push(`journal-write:${records[0]!.operationId}`);
       if (kind === 'free-slot') calls.push(`free-journal-write:${records[0]!.operationId}`);
       if (kind === 'free-slot') {
-        freeSlotJournals.add(`${records[0]!.machine}:${records[0]!.operationId}`);
+        freeSlotJournals.add(`${records[0]!.machine}:${records[0]!.operationId}:${scopeId ?? ''}`);
       }
       const first = records[0]!;
-      journals.set(`${first.machine}:${kind}:${first.operationId}`, {
+      const journal: MachineParkingIntentJournal = {
         version: 1,
         kind,
         machine: first.machine,
         operationId: first.operationId,
+        ...(scopeId ? { scopeId } : {}),
         records: structuredClone(records),
-      });
+      };
+      // The REAL validator, not a permissive double. An in-memory Map that
+      // accepts anything lets the writer and the on-disk validator disagree and
+      // still pass every unit test — which is exactly how a required
+      // `detachedAt` shipped and quarantined every journal on reload.
+      assertValidJournal(journal);
+      journals.set(`${first.machine}:${kind}:${first.operationId}:${scopeId ?? ''}`, journal);
     },
-    deleteIntentJournal: async (machine, kind, operationId) => {
+    deleteIntentJournal: async (machine, kind, operationId, scopeId) => {
       calls.push(`journal-delete:${operationId}`);
       if (kind === 'free-slot') calls.push(`free-journal-delete:${operationId}`);
-      if (kind === 'free-slot') freeSlotJournals.delete(`${machine}:${operationId}`);
-      journals.delete(`${machine}:${kind}:${operationId}`);
+      if (kind === 'free-slot') {
+        freeSlotJournals.delete(`${machine}:${operationId}:${scopeId ?? ''}`);
+      }
+      journals.delete(`${machine}:${kind}:${operationId}:${scopeId ?? ''}`);
     },
     loadIntentJournals: async () =>
       [...journals.values()].map((journal) => structuredClone(journal)),
@@ -318,7 +330,17 @@ function harness(initialRuns: Run[]): Harness {
       if (workspace.dirtyPaths.length > 0) throw new Error('workspace became dirty');
       workspaces.set(run.slotId!, { ...workspace, branch: null });
     },
-    slotOwner: async (slotId) => slotOwners.get(slotId) ?? null,
+    slotRow: async (slotId) => ({
+      slot: slotId,
+      current_run_id: slotOwners.get(slotId) ?? null,
+      lifecycle: slotLifecycles.get(slotId) ?? (slotOwners.get(slotId) ? 'busy' : 'ready'),
+    }),
+    reattachParkedWorkspace: async (run, workspace) => {
+      calls.push(`reattach-workspace:${run.slotId}:${workspace.branch}`);
+      const current = workspaces.get(run.slotId!);
+      if (!current) throw new Error(`no workspace fixture for slot ${run.slotId}`);
+      workspaces.set(run.slotId!, { ...current, branch: workspace.branch });
+    },
     inspectRunnerReload: async (run) => {
       calls.push(`inspect-reload:${run.id}`);
       return (
@@ -401,6 +423,7 @@ function harness(initialRuns: Run[]): Harness {
     calls,
     deps,
     slotOwners,
+    slotLifecycles,
     reloadSupport,
     runnerStates,
     workspaces,
@@ -2441,5 +2464,261 @@ test('the detach timestamp records the fact, so a re-drive does not detach twice
   assert.equal(
     ctx.calls.filter((call) => call.startsWith('detach-workspace:')).length,
     detachCalls,
+  );
+});
+
+// ─── ADR-054 free-slot: a park that changes nothing must not strand the run ───
+
+test('a park that failed before touching the slot leaves the run answerable and restorable', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // The worker is live during preview and only stops later, so the tree can go
+  // dirty in between. The detach then refuses and nothing at all has landed.
+  const stopResource = ctx.deps.stopResource;
+  ctx.deps.stopResource = async (slotId, resourceId) => {
+    ctx.workspaces.set('slot-a', {
+      branch: 'work/run-gate',
+      headSha: 'sha-run-gate',
+      dirtyPaths: [' M src/late.ts'],
+    });
+    return stopResource(slotId, resourceId);
+  };
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  const parked = ctx.runs.get('run-gate')!;
+  assert.equal(parked.park!.phase, 'partial');
+  assert.equal(parked.park!.slotFreedAt, undefined);
+  assert.equal(parked.park!.preservedWorkspace?.detachedAt, undefined);
+  // The failure is on the record, so the operator can see why.
+  assert.ok(parked.park!.errors.some((error) => error.action === 'workspace.detach'));
+
+  // The fence must LIFT: nothing changed, the run still owns its slot and its
+  // worker, so answering the gate is safe. A fence that never lifts is a
+  // strand — the run could then only be cancelled, losing the work.
+  assert.equal(isGateParkInFlightOrFreed(parked), false);
+
+  // And restore must accept it, because the slot was never freed.
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  assert.notEqual(
+    restorePreview.runs[0]?.eligibility.code,
+    'FREED_SLOT_RESTORE_UNSUPPORTED',
+    'a park that never freed the slot must not be refused as if it had',
+  );
+});
+
+test('a detach that landed is rolled back when the release fails, so the run is not stranded', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // The detach succeeds; a rival fences the row so the ownership CAS refuses.
+  ctx.deps.freeSlotOwnership = async (slotId, runId) => {
+    ctx.calls.push(`free-slot:${slotId}:${runId}`);
+    return false;
+  };
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  const parked = ctx.runs.get('run-gate')!;
+  assert.equal(parked.park!.phase, 'partial');
+  assert.equal(parked.park!.slotFreedAt, undefined);
+  // The branch went back into the working tree at the tip it was detached from.
+  assert.ok(ctx.calls.includes('reattach-workspace:slot-a:work/run-gate'));
+  assert.equal(ctx.workspaces.get('slot-a')?.branch, 'work/run-gate');
+  assert.equal(parked.park!.preservedWorkspace?.detachedAt, undefined);
+  // Nothing landed, so the run is answerable again.
+  assert.equal(isGateParkInFlightOrFreed(parked), false);
+});
+
+test('a detach that cannot be rolled back keeps the fence up rather than lying', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async () => false;
+  ctx.deps.reattachParkedWorkspace = async () => {
+    throw new Error('branch moved under us');
+  };
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  const parked = ctx.runs.get('run-gate')!;
+  assert.ok(parked.park!.preservedWorkspace?.detachedAt);
+  assert.ok(parked.park!.errors.some((error) => error.action === 'workspace.reattach'));
+  // One real effect is still outstanding, so the run stays fenced.
+  assert.equal(isGateParkInFlightOrFreed(parked), true);
+});
+
+test('recovery concludes a release landed only when the slot row proves it', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // Crash shape: the detach landed and the release did not, and the row is
+  // fenced mid-teardown — still ours, so the CAS refuses for a reason that is
+  // NOT a completed release.
+  ctx.deps.freeSlotOwnership = async () => false;
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+  // Re-arm the journal and put the record back mid-transition.
+  await ctx.deps.writeIntentJournal(
+    'free-slot',
+    [{ ...ctx.runs.get('run-gate')!.park!, phase: 'parked' }],
+    'run-gate',
+  );
+  ctx.runs.get('run-gate')!.park = {
+    ...ctx.runs.get('run-gate')!.park!,
+    phase: 'parked',
+    slotFreedAt: undefined,
+  };
+  ctx.slotOwners.set('slot-a', 'run-gate');
+  ctx.slotLifecycles.set('slot-a', 'busy');
+
+  await ctx.service.reconcile();
+
+  // The row still names this run, so "not ours" was never true: concluding
+  // freed here would publish a release that never happened.
+  assert.equal(ctx.runs.get('run-gate')!.park!.slotFreedAt, undefined);
+  assert.equal(ctx.runs.get('run-gate')!.park!.phase, 'partial');
+});
+
+test('recovery finishes the transition when the row shows a rival already owns the slot', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async () => false;
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+  await ctx.deps.writeIntentJournal(
+    'free-slot',
+    [{ ...ctx.runs.get('run-gate')!.park!, phase: 'parked' }],
+    'run-gate',
+  );
+  ctx.runs.get('run-gate')!.park = {
+    ...ctx.runs.get('run-gate')!.park!,
+    phase: 'parked',
+    slotFreedAt: undefined,
+  };
+  // The release DID land before the crash and dispatch handed the slot on.
+  ctx.slotOwners.set('slot-a', 'successor-run');
+  ctx.slotLifecycles.set('slot-a', 'busy');
+
+  await ctx.service.reconcile();
+
+  assert.ok(ctx.runs.get('run-gate')!.park!.slotFreedAt);
+});
+
+test('a park stops rather than freeing a slot whose run went terminal underneath it', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // A cancel racing the park terminalizes the run while resources stop. Cancel
+  // owns the slot cleanup from here; two writers on one slot row is the bug.
+  const stopResource = ctx.deps.stopResource;
+  ctx.deps.stopResource = async (slotId, resourceId) => {
+    ctx.runs.get('run-gate')!.status = 'cancelled';
+    return stopResource(slotId, resourceId);
+  };
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  assert.equal(ctx.runs.get('run-gate')!.park!.slotFreedAt, undefined);
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('detach-workspace:')),
+    false,
+    'a terminal run must not have its workspace detached',
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('free-slot:')),
+    false,
+  );
+});
+
+test('one batch member completing does not erase a failed sibling pending repair', async () => {
+  const ctx = harness([gateHeldRun('run-a', 'slot-a'), gateHeldRun('run-b', 'slot-b')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-a', 'run-b'] },
+  });
+  // run-a's release is refused; run-b's succeeds. Both share one operationId,
+  // which is exactly why an unscoped journal file cannot hold both.
+  ctx.deps.freeSlotOwnership = async (slotId, runId) => {
+    ctx.calls.push(`free-slot:${slotId}:${runId}`);
+    if (runId === 'run-a') return false;
+    ctx.slotOwners.set(slotId, null);
+    return true;
+  };
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [
+      { runId: 'run-a', generation: 3 },
+      { runId: 'run-b', generation: 3 },
+    ],
+  });
+
+  assert.equal(ctx.runs.get('run-b')!.park!.slotFreedAt !== undefined, true);
+  assert.equal(ctx.runs.get('run-a')!.park!.slotFreedAt, undefined);
+  // run-b's completion deletes ITS journal. run-a's unfinished intent must
+  // survive, or the crash window it covers is silently lost.
+  assert.equal(
+    [...ctx.freeSlotJournals].some((key) => key.endsWith(':run-a')),
+    true,
+    'the failed member keeps its own pending repair',
+  );
+  assert.equal(
+    [...ctx.freeSlotJournals].some((key) => key.endsWith(':run-b')),
+    false,
+    'the completed member cleans up only its own intent',
   );
 });
