@@ -9,6 +9,7 @@ import type {
   SlotResource,
 } from '@farmslot/protocol';
 
+import { gateParkResumeAcknowledgement } from '../methods/run/lifecycle-control.js';
 import { isGateParkInFlightOrFreed } from '../run-engine/park-slot-binding.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { withMachineRunTransition } from '../run-lifecycle/transition-coordinator.js';
@@ -371,6 +372,19 @@ function harness(initialRuns: Run[]): Harness {
     resumeRun: async (runId, emit) => {
       calls.push(`resume:${runId}`);
       const run = runs.get(runId)!;
+      // The REAL gate-park decision, not a re-implementation. A double that
+      // decided this for itself is exactly how the resume side kept demanding
+      // `paused` after restore had been taught to admit a gate park.
+      const gateParkHold = gateParkResumeAcknowledgement(run, () => '2026-08-21T00:00:31.000Z');
+      if (gateParkHold) {
+        emit('run.updated', { runId });
+        return gateParkHold;
+      }
+      // The ordinary path still refuses a run that is not paused, matching
+      // `runResumeTransitionLocked`.
+      if (run.status !== 'paused') {
+        throw new Error(`Run ${runId} is not paused (status=${run.status})`);
+      }
       const previousGeneration = run.engineState?.generation ?? 0;
       run.status = run.park!.prePauseStatus;
       run.engineState = {
@@ -383,7 +397,7 @@ function harness(initialRuns: Run[]): Harness {
         previousGeneration,
         generation: run.engineState.generation!,
         stepName: run.park!.prePauseCurrentStep!.name,
-        status: run.status as 'monitoring' | 'ci-watching',
+        status: run.status,
         acknowledgedAt: '2026-08-21T00:00:31.000Z',
       };
     },
@@ -2805,4 +2819,69 @@ test('rollback refuses when the workspace moved off the commit the park detached
       (error) => error.action === 'workspace.reattach' && /moved to/.test(error.message ?? ''),
     ),
   );
+});
+
+test('a fenced partial gate park restores end to end and its gate is answerable again', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // The tree goes dirty between preview and detach, so the park refuses after
+  // it has already stopped the worker. This is the state restore is the
+  // advertised exit from.
+  const stopResource = ctx.deps.stopResource;
+  ctx.deps.stopResource = async (slotId, resourceId) => {
+    ctx.workspaces.set('slot-a', {
+      branch: 'work/run-gate',
+      headSha: 'sha-run-gate',
+      dirtyPaths: [' M src/late.ts'],
+    });
+    return stopResource(slotId, resourceId);
+  };
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+  ctx.deps.stopResource = stopResource;
+
+  const fenced = ctx.runs.get('run-gate')!;
+  assert.equal(fenced.park!.phase, 'partial');
+  assert.equal(fenced.status, 'human-gating', 'a gate park never moves the run to paused');
+  assert.equal(isGateParkInFlightOrFreed(fenced), true, 'fenced while the worker is stopped');
+
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  assert.equal(
+    restorePreview.runs[0]?.eligibility.eligible,
+    true,
+    JSON.stringify(restorePreview.runs[0]?.eligibility),
+  );
+
+  const restored = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'gate-park-restore',
+  });
+
+  // Before this branch existed the restore reloaded the worker and THEN threw
+  // at run.resume, reporting not-ok for a restore that had actually happened.
+  assert.equal(restored.ok, true, JSON.stringify(restored.records?.[0]?.errors ?? []));
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.phase, 'restored');
+  assert.equal(after.status, 'human-gating', 'the gate status the park preserved survives restore');
+  assert.equal(ctx.runnerStates.get('run-gate'), 'running', 'the worker came back');
+  // The whole point: the operator can answer the gate again.
+  assert.equal(isGateParkInFlightOrFreed(after), false);
+  // Nothing was re-driven — the gate loop was never cancelled, so a generation
+  // bump would only have made a live loop bail.
+  assert.equal(after.engineState?.generation, 3);
 });

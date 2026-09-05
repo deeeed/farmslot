@@ -113,6 +113,7 @@ interface SlotCheckResult {
   cdp: string;
   fixtures: string;
   branch: string;
+  headSha?: string;
   session?: string;
   repo?: string;
   linkedWorktree?: boolean;
@@ -425,6 +426,7 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     cdp: r.cdp,
     fixtures: r.fixtures,
     branch: r.branch,
+    ...(r.headSha ? { head_sha: r.headSha } : {}),
     ...(r.session ? { session: r.session } : {}),
     ...(r.repo ? { repo: r.repo } : {}),
     linked_worktree: r.linkedWorktree ?? false,
@@ -691,7 +693,7 @@ async function checkSingleSlot(
   }
 
   // Run all checks in parallel for this slot
-  const [branchStr, agentStr, emuStr, devserverStr, cdpStr, fixStr, linkedWorktree] =
+  const [branchInfo, agentStr, emuStr, devserverStr, cdpStr, fixStr, linkedWorktree] =
     await Promise.all([
       checkBranch(vars),
       checkAgent(vars),
@@ -721,7 +723,8 @@ async function checkSingleSlot(
     device: deviceName,
     cdp: cdpStr,
     fixtures: fixStr,
-    branch: branchStr,
+    branch: branchInfo.branch,
+    ...(branchInfo.headSha ? { headSha: branchInfo.headSha } : {}),
     session: vars.session || undefined,
     repo: vars.remoteRepo,
     linkedWorktree,
@@ -752,16 +755,27 @@ async function checkLinkedWorktree(vars: SlotVars): Promise<boolean> {
   }
 }
 
-async function checkBranch(vars: SlotVars): Promise<string> {
+/**
+ * Branch name and the commit HEAD points at, read in ONE exec. A detached
+ * checkout reports the branch as the literal `HEAD`, so the commit is the only
+ * thing that distinguishes one detached slot from another — dispatch needs it
+ * to tell a park's preserved workspace from unrelated leftover commits.
+ */
+async function checkBranch(vars: SlotVars): Promise<{ branch: string; headSha?: string }> {
   try {
     const r = await execOnSlot(
       vars,
-      `git -C '${vars.remoteRepo}' rev-parse --abbrev-ref HEAD 2>/dev/null`,
+      `git -C '${vars.remoteRepo}' rev-parse --abbrev-ref HEAD 2>/dev/null; ` +
+        `git -C '${vars.remoteRepo}' rev-parse HEAD 2>/dev/null`,
       { timeout: SLOT_CHECK_TIMEOUT_MS },
     );
-    return r.stdout.trim() || '-';
+    const [branch, headSha] = r.stdout.trim().split('\n');
+    return {
+      branch: branch?.trim() || '-',
+      ...(headSha?.trim() ? { headSha: headSha.trim() } : {}),
+    };
   } catch {
-    return '-';
+    return { branch: '-' };
   }
 }
 

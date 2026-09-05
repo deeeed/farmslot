@@ -883,3 +883,100 @@ test('cancelling a gate-parked run clears the record and leaves the freed slot a
     false,
   );
 });
+
+// ─── ADR-054 free-slot: the resume side has the gate-park branch too ───
+
+function gateParkedRun(ticket: string) {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: ticket,
+    slotId: `gate-park-resume-${Date.now()}`,
+  });
+  const at = '2026-09-05T00:00:00.000Z';
+  updateRun(run.id, {
+    // A gate park deliberately preserves this status; it never moves to paused.
+    status: 'human-gating',
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'running' },
+    ],
+    engineState: { generation: 3 },
+    park: {
+      version: 1,
+      operationId: 'park-resume',
+      previewId: 'preview-resume',
+      runId: run.id,
+      generation: 3,
+      machine: 'macwork',
+      slotId: getRun(run.id)!.slotId!,
+      mode: 'release',
+      phase: 'partial',
+      slotDisposition: 'freed',
+      prePauseStatus: 'human-gating',
+      prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+      resourceManifest: { capturedAt: at, resources: [], capabilityLeases: [] },
+      recoveryHandle: null,
+      errors: [],
+      residuals: { runner: 'stopped', resources: [] },
+      createdAt: at,
+      updatedAt: at,
+    },
+  });
+  return run;
+}
+
+test('a machine restore resumes a gate park without requiring paused or a monitor step', async (t) => {
+  const run = gateParkedRun(`PROJ-${Date.now()}-gate-park-resume`);
+  t.after(() => cleanupRun(run.id));
+  let redrives = 0;
+
+  const result = await runResumeTransitionLocked(
+    { runId: run.id },
+    () => {},
+    { machineParkingRestore: true },
+    {
+      nudgeMonitor: async () => {
+        throw new Error('a gate park has no monitor loop to nudge');
+      },
+      redrive: async () => {
+        redrives += 1;
+        throw new Error('a gate park re-drives nothing');
+      },
+    },
+  );
+
+  // Without this branch the transition throws "is not paused (status=human-gating)"
+  // AFTER restore has already reloaded the worker and reacquired capabilities.
+  assert.equal(result.gateParkHold, true);
+  assert.equal(result.stepName, 'human-gate');
+  assert.equal(result.status, 'human-gating');
+  // Nothing re-driven and no generation bump: the gate's engine loop was never
+  // cancelled, and a bump makes a live loop bail.
+  assert.equal(redrives, 0);
+  assert.equal(result.previousGeneration, 3);
+  assert.equal(result.generation, 3);
+  assert.equal(getRun(run.id)!.status, 'human-gating');
+});
+
+test('an ordinary resume still refuses a run that is not paused', async (t) => {
+  // The gate-park branch must not become a general bypass of the precondition.
+  const run = gateParkedRun(`PROJ-${Date.now()}-gate-park-resume-scope`);
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, { park: null });
+
+  await assert.rejects(
+    runResumeTransitionLocked(
+      { runId: run.id },
+      () => {},
+      { machineParkingRestore: true },
+      {
+        nudgeMonitor: async () => {},
+        redrive: async () => {
+          throw new Error('unreachable');
+        },
+      },
+    ),
+    /is not paused \(status=human-gating\)/,
+  );
+});

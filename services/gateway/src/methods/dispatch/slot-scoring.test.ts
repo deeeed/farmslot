@@ -484,22 +484,63 @@ test('failedRunSlotCleanup is unchanged for a run with no park record', () => {
 
 // ─── ADR-054 free-slot: the detached-HEAD exception is dispatch-only and scoped ───
 
+const PARKED_HEAD = 'sha-parked-tip';
+
 test('a detached slot scores stale unless a park record claims it', () => {
-  const detached = slot({ slot: 'slot-detached', branch: 'HEAD' });
+  const detached = slot({ slot: 'slot-detached', branch: 'HEAD', headSha: PARKED_HEAD });
 
   // No park claim: the commits on that detached HEAD are unaccounted for, so
   // dispatch must still charge the stale penalty and prepare must reset it.
   assert.equal(isDispatchStaleBranch(detached), true);
   assert.equal(slotScore(detached), SLOT_STALE_BRANCH_SCORE_PENALTY);
 
-  // A park record proves the branch ref survives at the recorded tip, so the
-  // slot is genuinely dispatchable and must not lose to a slot on main.
-  const claimed = new Set(['slot-detached']);
+  // A park record whose recorded tip is what the slot is sitting on: the branch
+  // ref survives there, so the slot is genuinely dispatchable.
+  const claimed = new Map([['slot-detached', { runId: 'run-parked', headSha: PARKED_HEAD }]]);
   assert.equal(isDispatchStaleBranch(detached, undefined, claimed), false);
   assert.equal(slotScore(detached, undefined, { parkPreservedSlotIds: claimed }), 0);
 
-  // The exception is keyed on the slot id, not on "detached" in general.
-  assert.equal(isDispatchStaleBranch(detached, undefined, new Set(['other-slot'])), true);
+  // The exception is keyed on the slot, not on "detached" in general.
+  assert.equal(
+    isDispatchStaleBranch(
+      detached,
+      undefined,
+      new Map([['other-slot', { runId: 'run-parked', headSha: PARKED_HEAD }]]),
+    ),
+    true,
+  );
+});
+
+test('a stale park record does not excuse an unrelated detached checkout', () => {
+  // The park detached this slot, a successor then took it, finished, and left
+  // its own detached commits behind. The park record still names the slot, but
+  // the commits sitting there now are nobody's accounted-for work.
+  const moved = slot({ slot: 'slot-detached', branch: 'HEAD', headSha: 'sha-successor-left-this' });
+  const claimed = new Map([['slot-detached', { runId: 'run-parked', headSha: PARKED_HEAD }]]);
+
+  assert.equal(
+    isDispatchStaleBranch(moved, undefined, claimed),
+    true,
+    'a slot id match alone must not suppress the stale penalty',
+  );
+  assert.equal(
+    slotScore(moved, undefined, { parkPreservedSlotIds: claimed }),
+    SLOT_STALE_BRANCH_SCORE_PENALTY,
+  );
+
+  // A slot whose head the refresh could not read is not evidence either.
+  const unknownHead = slot({ slot: 'slot-detached', branch: 'HEAD' });
+  assert.equal(isDispatchStaleBranch(unknownHead, undefined, claimed), true);
+
+  // Ownership is the other admissible evidence: the park's own run still holds
+  // the row, so the checkout is still the one the record describes.
+  const stillOwned = slot({
+    slot: 'slot-detached',
+    branch: 'HEAD',
+    headSha: 'sha-successor-left-this',
+    currentRunId: 'run-parked',
+  });
+  assert.equal(isDispatchStaleBranch(stillOwned, undefined, claimed), false);
 });
 
 test('parkPreservedSlotIds lists only slots whose detach actually landed', () => {
@@ -524,6 +565,7 @@ test('parkPreservedSlotIds lists only slots whose detach actually landed', () =>
   };
   const ids = parkPreservedSlotIds([
     {
+      id: 'a',
       slotId: 'landed',
       park: {
         ...base,
@@ -535,6 +577,7 @@ test('parkPreservedSlotIds lists only slots whose detach actually landed', () =>
     // Intent recorded, detach not yet performed: the branch is still checked
     // out, so this slot is not detached and has nothing to except.
     {
+      id: 'b',
       slotId: 'planned',
       park: {
         ...base,
@@ -543,8 +586,31 @@ test('parkPreservedSlotIds lists only slots whose detach actually landed', () =>
         preservedWorkspace: { branch: 'w/b', headSha: 'sha-b' },
       },
     },
-    { slotId: 'plain', park: null },
+    { id: 'c', slotId: 'plain', park: null },
   ] as never);
 
-  assert.deepEqual([...ids], ['landed']);
+  assert.deepEqual([...ids.keys()], ['landed']);
+  assert.deepEqual(ids.get('landed'), { runId: 'a', headSha: 'sha-a' });
+});
+
+test('findBestSlot ranks a park-preserved slot the same way slotScore does', () => {
+  const detached = slot({ slot: 'slot-detached', branch: 'HEAD', headSha: PARKED_HEAD });
+  const stale = slot({ slot: 'slot-stale', branch: 'feat/leftover' });
+  const claimed = new Map([['slot-detached', { runId: 'run-parked', headSha: PARKED_HEAD }]]);
+
+  // Without the claim both are stale, so the tie is broken by input order and
+  // the detached slot has no advantage.
+  assert.equal(
+    findBestSlot([stale, detached], 'demo-farm')?.slot,
+    'slot-stale',
+    'a plain detached slot ranks no better than any other stale slot',
+  );
+
+  // With the claim the detached slot is idle, so it must win — the AC that
+  // names findBestSlot. Ranking here disagreeing with find-slot-step is the
+  // drift the shared set exists to prevent.
+  assert.equal(
+    findBestSlot([stale, detached], 'demo-farm', { parkPreservedSlotIds: claimed })?.slot,
+    'slot-detached',
+  );
 });

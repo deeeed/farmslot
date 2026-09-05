@@ -337,6 +337,7 @@ interface RawSlot {
   cdp?: string;
   fixtures?: string;
   branch?: string;
+  head_sha?: string;
   session?: string;
   repo?: string;
   linked_worktree?: boolean;
@@ -446,6 +447,7 @@ function transformSlot(raw: RawSlot): SlotStatus {
     project: raw.project ?? '',
     health,
     branch: raw.branch ?? '',
+    ...(raw.head_sha ? { headSha: raw.head_sha } : {}),
     session: raw.session,
     repo: raw.repo,
     linkedWorktree: raw.linked_worktree ?? false,

@@ -1886,9 +1886,13 @@ export class MachineParkingService {
       const slot = fleet.slots.find((candidate) => candidate.slot === item.record.slotId);
       const zeroEffect = item.eligibility.code === 'ELIGIBLE_ZERO_EFFECT_REPAIR';
       if (
+        // Same relaxation the preview applies: a gate park preserves the run's
+        // status by design, so `paused` is the wrong precondition for it. Left
+        // in place here, the preflight would refuse the very restore the
+        // preview just declared eligible.
         (zeroEffect
           ? !current.park || !zeroEffectRecord(current, current.park)
-          : current.status !== 'paused') ||
+          : current.status !== 'paused' && !isGateParkRecord(item.record)) ||
         (current.engineState?.generation ?? 0) !== item.generation ||
         current.slotId !== item.record.slotId ||
         !current.park ||
@@ -2135,9 +2139,16 @@ export class MachineParkingService {
             suppressMonitorNudge: record.mode === 'release',
           }),
         );
+        // A gate-park restore re-drives nothing — the run never left its gate —
+        // so it is acknowledged with an UNCHANGED generation by design. Demanding
+        // an advance there would reject the very restore this branch exists to
+        // allow, after the reload had already landed.
+        const generationAdvanced = resumeAcknowledgement.gateParkHold
+          ? resumeAcknowledgement.generation === resumeAcknowledgement.previousGeneration
+          : resumeAcknowledgement.generation > resumeAcknowledgement.previousGeneration;
         if (
           resumeAcknowledgement.run.id !== runId ||
-          resumeAcknowledgement.generation <= resumeAcknowledgement.previousGeneration ||
+          !generationAdvanced ||
           resumeAcknowledgement.stepName !== record.prePauseCurrentStep?.name
         ) {
           throw new Error('run resume acknowledgement did not match the parked generation/step');
@@ -2447,11 +2458,14 @@ export class MachineParkingService {
    * finished, or it is proven already done.
    */
   private async repairFreeSlotIntent(record: MachineParkRecord): Promise<boolean> {
-    // Reaching here at all means the marker is still on disk, which is the
-    // signal that this transition was INTERRUPTED rather than settled: the live
-    // path deletes the marker whenever it refuses and rolls back. So phase is
-    // deliberately not consulted — a crash after the release landed leaves a
-    // `partial` record that still needs finishing.
+    // Phase is deliberately not consulted: a crash after the release landed
+    // leaves a `partial` record that still needs finishing.
+    //
+    // The marker being on disk does NOT prove the transition was interrupted.
+    // Only the CAS-refused path abandons it; the detach-failure and terminality
+    // paths return with the marker intact, on purpose, so a later reconcile can
+    // retry a transition that never touched the slot. Those retries are safe
+    // because every step below is idempotent and re-checks its preconditions.
     const run = this.deps.getRun(record.runId);
     // Nothing to finish: the run is gone, terminal cleanup cleared the record,
     // or a restore already reclaimed the slot.

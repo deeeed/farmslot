@@ -65,6 +65,13 @@ export interface SlotStatus {
   project: string;
   health: SlotHealth;
   branch: string;
+  /**
+   * The commit HEAD points at, as the last fleet refresh saw it. Recorded
+   * alongside `branch` because a detached checkout reports `branch` as the
+   * literal `HEAD`, which identifies nothing on its own — dispatch needs the
+   * commit to tell one detached slot from another.
+   */
+  headSha?: string;
   /** Pool tmux/session id — used to resolve slot_tracking_branch templates. */
   session?: string;
   /** Slot checkout path from pool config. */

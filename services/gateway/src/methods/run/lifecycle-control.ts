@@ -10,6 +10,7 @@ import {
   type RunPauseResult,
   type RunResumeParams,
   type RunResumeResult,
+  type RunStatus,
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../../agents/contexts.js';
@@ -416,8 +417,19 @@ export interface RunResumeAcknowledgement {
   previousGeneration: number;
   generation: number;
   stepName: string;
-  status: 'monitoring' | 'ci-watching';
+  /**
+   * Where the run ended up. An ordinary resume re-enters its monitor or
+   * ci-watch loop; a gate-park restore keeps the status the park preserved, so
+   * this is the run's own gate status rather than one of those two.
+   */
+  status: RunStatus;
   acknowledgedAt: string;
+  /**
+   * Set only by the gate-park branch: the run was never `paused` and nothing
+   * was re-driven, so the generation is unchanged by design. Callers that check
+   * an ordinary resume advanced the generation must not apply that rule here.
+   */
+  gateParkHold?: true;
 }
 
 export interface RunResumeTransitionOptions {
@@ -452,6 +464,26 @@ export async function runResumeTransitionLocked(
         `(${MachineParkEligibilityCodes.freedSlotRestoreUnsupported}); ` +
         'restoring into a freed slot is not supported yet — cancel the run to release its park record',
     );
+  }
+  // The counterpart to `isGateParkPause` on the pause side, and it has to
+  // exist: that branch deliberately never moved the run to `paused` and never
+  // aborted an engine loop, so none of the machinery below applies. The run is
+  // still sitting at its publication gate with a pending decision; what the
+  // park took away was its worker, and `restoreOne` has already reloaded that
+  // by the time this runs. So there is nothing to re-drive — settling the
+  // record here is what lifts the fence and makes the gate answerable again.
+  //
+  // Bumping the generation would be actively wrong: the gate's engine loop was
+  // never cancelled, and a bump makes live loops bail.
+  const gateParkHold = options.machineParkingRestore
+    ? gateParkResumeAcknowledgement(existing, () => new Date().toISOString())
+    : null;
+  if (gateParkHold) {
+    console.log(
+      `[run] gate-park restore for run ${params.runId.slice(0, 8)} (status ${existing.status} preserved)`,
+    );
+    emit(Events.RUN_UPDATED, { run: existing });
+    return gateParkHold;
   }
   if (existing.status !== 'paused') {
     throw new Error(`Run ${params.runId} is not paused (status=${existing.status})`);
@@ -564,6 +596,38 @@ async function nudgeResumedMonitor(existing: Run, emit: Emit): Promise<void> {
   } catch (error) {
     console.warn(`[run] resume nudge check failed: ${(error as Error).message}`);
   }
+}
+
+/**
+ * The acknowledgement a gate-park restore produces, or null when this is an
+ * ordinary resume that must go through the paused/monitor path.
+ *
+ * Pure and exported so the machine-parking test double resumes through the SAME
+ * decision the production transition uses. A double that re-implements this is
+ * how the resume side and the restore side drifted apart unnoticed: restore was
+ * admitted for a gate park while resume still demanded `paused`.
+ */
+export function gateParkResumeAcknowledgement(
+  run: Run,
+  now: () => string,
+): RunResumeAcknowledgement | null {
+  if (!isGateParkPause(run)) return null;
+  const gateStep = run.steps.find((step) => step.status === 'running');
+  if (!gateStep) {
+    throw new Error(`Run ${run.id} has no running step to restore its gate park onto`);
+  }
+  // Unchanged by design: nothing was re-driven, and the gate's engine loop was
+  // never cancelled, so a bump would only make a live loop bail.
+  const generation = run.engineState?.generation ?? 0;
+  return {
+    run,
+    previousGeneration: generation,
+    generation,
+    stepName: gateStep.name,
+    status: run.status,
+    acknowledgedAt: now(),
+    gateParkHold: true,
+  };
 }
 
 /**

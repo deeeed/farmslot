@@ -57,6 +57,7 @@ import {
   isFreeSlot,
   isReplaceableWarmSlot,
   parkPreservedSlotIds,
+  type ParkPreservedWorkspace,
   prepareProfileNeedsCompanionResource,
   projectConfigsFromProjects,
   slotScore,
@@ -1013,6 +1014,10 @@ export async function dispatchPreview(
       requiredPrepareProfile,
       pressureDecisions,
       replaceableWarmSlotIds,
+      // ADR-054: the same exception `dispatchCandidates` applies, so the two
+      // ranking paths cannot disagree about whether a park-preserved slot is
+      // stale — the drift the shared helper exists to prevent.
+      parkPreservedSlotIds: parkPreservedSlotIds(getAllRuns()),
       ...(params.pressureOverride
         ? { pressureOverrideMachine: params.pressureOverride.machine }
         : {}),
@@ -1071,6 +1076,9 @@ export function resolveDispatchPreviewFromFleet(
      * machine that differs from it reports PRESSURE_OVERRIDE_MISMATCH; other
      * machines keep their own base decision. */
     pressureOverrideMachine?: string;
+    /** Slots whose detached HEAD a park record preserves. Passed in rather than
+     * derived: this function is pure over the slots it is given. */
+    parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace>;
   },
 ): DispatchPreviewResult {
   let slotInfo: SlotStatus;
@@ -1165,6 +1173,7 @@ export function resolveDispatchPreviewFromFleet(
       requiredPrepareProfile,
       projectConfigs,
       pressureRejectedMachines,
+      parkPreservedSlotIds: options?.parkPreservedSlotIds,
     });
     if (!best) {
       const allow =

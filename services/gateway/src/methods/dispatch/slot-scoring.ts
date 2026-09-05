@@ -163,29 +163,52 @@ export function slotTrackingConfigForSlot(
  * unpushed work, which is why `isSlotIdleBranch` still calls it stale for
  * `slot.release` and fleet health.
  */
+export interface ParkPreservedWorkspace {
+  /** The run whose park detached this workspace. */
+  runId: string;
+  /** The commit the park left HEAD on. */
+  headSha: string;
+}
+
 export function parkPreservedSlotIds(
-  runs: ReadonlyArray<Pick<Run, 'slotId' | 'park'>>,
-): Set<string> {
-  return new Set(
-    runs.flatMap((run) =>
-      run.slotId && run.park?.preservedWorkspace?.detachedAt ? [run.slotId] : [],
-    ),
-  );
+  runs: ReadonlyArray<Pick<Run, 'id' | 'slotId' | 'park'>>,
+): Map<string, ParkPreservedWorkspace> {
+  const preserved = new Map<string, ParkPreservedWorkspace>();
+  for (const run of runs) {
+    const workspace = run.park?.preservedWorkspace;
+    if (!run.slotId || !workspace?.detachedAt) continue;
+    preserved.set(run.slotId, { runId: run.id, headSha: workspace.headSha });
+  }
+  return preserved;
 }
 
 export function isDispatchStaleBranch(
   slot: SlotStatus,
   projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>,
-  parkPreserved?: ReadonlySet<string>,
+  parkPreserved?: ReadonlyMap<string, ParkPreservedWorkspace>,
 ): boolean {
   // Scoped exception, dispatch only. ADR-054 `free-slot` detaches the parked
   // branch precisely so the next occupant's `git reset --hard` cannot move it,
   // and the branch ref survives at the recorded tip. Without this the freed
   // slot carries the stale penalty and a lone freed slot forces an operator
-  // pick. It applies ONLY to a slot a park record claims — a plain detached
-  // slot stays stale everywhere, including `slot.release`'s unmerged-work
-  // refusal.
-  if (slot.branch === DETACHED_HEAD_BRANCH && parkPreserved?.has(slot.slot)) return false;
+  // pick. A plain detached slot stays stale everywhere, including
+  // `slot.release`'s unmerged-work refusal.
+  //
+  // Matching the SLOT ID is not enough. A park record outlives the checkout it
+  // describes: once a successor has taken the slot and left its own detached
+  // commits behind, the stale record would keep suppressing the penalty over
+  // work nobody has accounted for. So the current checkout has to be evidence
+  // for itself — either the slot still sits on the exact commit the park
+  // detached to, or the slot row still names that park's run as its owner.
+  if (slot.branch === DETACHED_HEAD_BRANCH) {
+    const preserved = parkPreserved?.get(slot.slot);
+    if (
+      preserved &&
+      (slot.headSha === preserved.headSha || slot.currentRunId === preserved.runId)
+    ) {
+      return false;
+    }
+  }
   return isSlotRefreshStaleBranch(
     slot.branch ?? '',
     slotTrackingConfigForSlot(slot, projectConfigs),
@@ -203,7 +226,7 @@ export function slotScore(
   options?: {
     familyId?: string | null;
     projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
-    parkPreservedSlotIds?: ReadonlySet<string>;
+    parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace>;
   },
 ): number {
   let score = 0;
@@ -283,6 +306,8 @@ export function findBestSlot(
     /** Machines whose sustained-pressure admission decision is rejected.
      * Automatic selection never lands a new dispatch on them. */
     pressureRejectedMachines?: ReadonlySet<string>;
+    /** Slots whose detached HEAD a park record preserves; see `slotScore`. */
+    parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace>;
   },
 ): SlotStatus | null {
   const allow =
@@ -324,10 +349,12 @@ export function findBestSlot(
         slotScore(a, options?.targetBranch, {
           familyId: options?.familyId,
           projectConfigs: options?.projectConfigs,
+          parkPreservedSlotIds: options?.parkPreservedSlotIds,
         }) -
         slotScore(b, options?.targetBranch, {
           familyId: options?.familyId,
           projectConfigs: options?.projectConfigs,
+          parkPreservedSlotIds: options?.parkPreservedSlotIds,
         }),
     );
   if (candidates.length === 0) return null;
