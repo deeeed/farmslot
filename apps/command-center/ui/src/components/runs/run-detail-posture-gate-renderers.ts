@@ -234,6 +234,67 @@ export function postureTransitionAttributed(
   return Boolean(baseline.choice && transition.gateChoice === baseline.choice);
 }
 
+/**
+ * The fields describing a resolution that already happened, as opposed to the
+ * selection currently being made.
+ *
+ * These outlive every gate rebuild: the operator resolved, the Gateway is
+ * reconciling or has finished, and none of that stops being true because a new
+ * decision opened or a new choice was clicked. Only a run change ends them.
+ */
+export type RunPostureResolutionFields = Pick<
+  RunPostureGateState,
+  'appliedTransition' | 'appliedTransitionAttributed' | 'reconciliationPending'
+>;
+
+export function postureResolutionFields(state: RunPostureGateState): RunPostureResolutionFields {
+  return {
+    ...(state.appliedTransition ? { appliedTransition: state.appliedTransition } : {}),
+    ...(state.appliedTransitionAttributed !== undefined
+      ? { appliedTransitionAttributed: state.appliedTransitionAttributed }
+      : {}),
+    ...(state.reconciliationPending !== undefined
+      ? { reconciliationPending: state.reconciliationPending }
+      : {}),
+  };
+}
+
+/**
+ * Rebuild the gate for a new selection while carrying the resolution through.
+ *
+ * Every path that replaced the whole gate object dropped these fields, so a
+ * result preserved across a decision change was thrown away by the operator's
+ * next click, and an in-flight pending flag vanished until the next poll. One
+ * helper is the root fix: a caller cannot forget what it never has to remember.
+ */
+export function postureGateWithSelection(
+  previous: RunPostureGateState,
+  selection: Omit<RunPostureGateState, keyof RunPostureResolutionFields | 'runPosture'>,
+): RunPostureGateState {
+  return { ...selection, ...postureResolutionFields(previous) };
+}
+
+/**
+ * Adopt a terminal outcome for the resolution just made.
+ *
+ * `reconciliationPending` is always set false here, never merely left alone. A
+ * previous resolution's pending flag survives gate rebuilds by design, so an
+ * adopt that did not clear it would leave a completed result rendering as "not
+ * finished" for as long as the gate lived.
+ */
+export function postureGateWithAdoptedTransition(
+  previous: RunPostureGateState,
+  transition: ResourcePostureTransition,
+  attributed: boolean,
+): RunPostureGateState {
+  return {
+    ...previous,
+    appliedTransition: transition,
+    appliedTransitionAttributed: attributed,
+    reconciliationPending: false,
+  };
+}
+
 export interface RunPostureGatePreviewLine {
   action: 'acquire' | 'retain' | 'warm' | 'stop';
   capabilityId: string;

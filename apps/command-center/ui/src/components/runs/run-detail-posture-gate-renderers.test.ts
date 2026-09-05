@@ -21,6 +21,8 @@ import {
   postureChoiceWithheldReason,
   postureGatePreviewLines,
   postureGatePreviewSummary,
+  postureGateWithAdoptedTransition,
+  postureGateWithSelection,
   postureResolveBlockReason,
   postureTransitionAttributed,
   RUN_POSTURE_GATE_CHOICES,
@@ -536,4 +538,70 @@ test('a held choice is never dropped without the operator being told', () => {
     assert.equal(postureChoiceForResolve(idle), undefined);
     assert.equal(postureChoiceWithheldReason(idle), null);
   }
+});
+
+test('a resolution survives every gate rebuild, and a terminal adopt ends the wait', () => {
+  const transition = (id: string): ResourcePostureTransition =>
+    ({
+      id,
+      posture: 'operator-wait',
+      policySource: 'gate-choice',
+      requestedAt: '2026-09-05T12:00:00.000Z',
+      outcome: 'applied',
+      effects: [],
+      progress: { total: 1, completed: 1 },
+      failures: [],
+      gateChoice: 'minimize',
+    }) as ResourcePostureTransition;
+
+  const resolved = {
+    choice: null,
+    status: 'idle',
+    appliedTransition: transition('op-1'),
+    appliedTransitionAttributed: true,
+    reconciliationPending: false,
+  } as const;
+
+  // The operator's first click on a new gate used to throw the result away.
+  const clicked = postureGateWithSelection(resolved, { choice: 'minimize', status: 'loading' });
+  assert.equal(clicked.choice, 'minimize');
+  assert.equal(clicked.status, 'loading');
+  assert.deepEqual(clicked.appliedTransition, resolved.appliedTransition);
+  assert.equal(clicked.appliedTransitionAttributed, true);
+  assert.equal(clicked.reconciliationPending, false);
+
+  // So did an inapplicable clear, which dropped the attribution specifically and
+  // silently downgraded an attributed record to the positional wording.
+  const cleared = postureGateWithSelection(resolved, { choice: null, status: 'idle' });
+  assert.equal(cleared.appliedTransitionAttributed, true);
+
+  // An in-flight wait rides through a rebuild too, rather than blinking out.
+  const waiting = postureGateWithSelection(
+    { choice: 'minimize', status: 'ready', reconciliationPending: true },
+    { choice: null, status: 'idle' },
+  );
+  assert.equal(waiting.reconciliationPending, true);
+
+  // A terminal adopt always ends the wait. Leaving a previous resolution's true
+  // flag alone left a completed result rendering as "not finished" indefinitely.
+  const stale = { choice: 'minimize', status: 'ready', reconciliationPending: true } as const;
+  const adopted = postureGateWithAdoptedTransition(stale, transition('op-2'), true);
+  assert.equal(adopted.reconciliationPending, false);
+  assert.equal(adopted.appliedTransition?.id, 'op-2');
+  assert.equal(adopted.appliedTransitionAttributed, true);
+  // A positional adopt records that too, and still ends the wait.
+  const positional = postureGateWithAdoptedTransition(stale, transition('op-3'), false);
+  assert.equal(positional.appliedTransitionAttributed, false);
+  assert.equal(positional.reconciliationPending, false);
+
+  // A gate that never resolved carries nothing, so a fresh gate stays clean.
+  const fresh = postureGateWithSelection(
+    { choice: null, status: 'idle' },
+    {
+      choice: 'minimize',
+      status: 'loading',
+    },
+  );
+  assert.equal('appliedTransition' in fresh, false);
+  assert.equal('reconciliationPending' in fresh, false);
 });

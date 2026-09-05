@@ -82,6 +82,8 @@ import {
   postureChoiceForResolve,
   postureChoicesApply,
   postureChoiceWithheldReason,
+  postureGateWithAdoptedTransition,
+  postureGateWithSelection,
   postureResolveBlockReason,
   postureTransitionAttributed,
   postureTransitionBaseline,
@@ -358,16 +360,11 @@ export class RunDetail extends RunDetailState {
    */
   private _maybeClearInapplicablePostureChoice(): void {
     if (!postureChoiceBecameInapplicable(this._postureGateStateForRender())) return;
-    // Only the selection and its preview are stale. The applied transition and
-    // the pending flag describe a resolution that already happened, so dropping
-    // them mid-poll erased the outcome the operator is waiting to read.
-    const { appliedTransition, reconciliationPending } = this._postureGate;
-    this._postureGate = {
+    // Only the selection and its preview are stale; the resolution rides along.
+    this._postureGate = postureGateWithSelection(this._postureGate, {
       choice: null,
       status: 'idle',
-      ...(appliedTransition ? { appliedTransition } : {}),
-      ...(reconciliationPending !== undefined ? { reconciliationPending } : {}),
-    };
+    });
     this._posturePreviewRequestSeq++;
   }
 
@@ -391,19 +388,13 @@ export class RunDetail extends RunDetailState {
     const hadKey = this._postureGateKey !== '';
     this._postureGateKey = key;
     if (hadKey) {
-      // Only the selection and its preview belong to the old gate. The applied
-      // transition and the pending flag describe a resolution that already
-      // happened, and clearing them here erased a result adopted moments before
-      // this update. They are dropped on a run change, not a gate change.
-      const { appliedTransition, appliedTransitionAttributed, reconciliationPending } =
-        this._postureGate;
-      this._postureGate = {
+      // Only the selection and its preview belong to the old gate. A resolution
+      // that already happened is not undone by a new decision opening; it ends
+      // on a run change, which resets the whole gate.
+      this._postureGate = postureGateWithSelection(this._postureGate, {
         choice: null,
         status: 'idle',
-        ...(appliedTransition ? { appliedTransition } : {}),
-        ...(appliedTransitionAttributed !== undefined ? { appliedTransitionAttributed } : {}),
-        ...(reconciliationPending !== undefined ? { reconciliationPending } : {}),
-      };
+      });
       this._posturePreviewRequestSeq++;
     }
   }
@@ -466,7 +457,10 @@ export class RunDetail extends RunDetailState {
   ): Promise<void> {
     const requestSeq = ++this._posturePreviewRequestSeq;
     if (!choice) {
-      this._postureGate = { choice: null, status: 'idle' };
+      this._postureGate = postureGateWithSelection(this._postureGate, {
+        choice: null,
+        status: 'idle',
+      });
       return;
     }
     // The Gateway only resolves a gate choice while the run is at an operator
@@ -474,7 +468,10 @@ export class RunDetail extends RunDetailState {
     // and read as the effect of this choice.
     if (!postureChoicesApply(this._postureStatus.state?.posture)) return;
     const gateKey = this._postureGateKey;
-    this._postureGate = { choice, status: 'loading' };
+    this._postureGate = postureGateWithSelection(this._postureGate, {
+      choice,
+      status: 'loading',
+    });
     try {
       const plan = await gateway.request<RuntimePosturePreviewResult>(
         Methods.RUNTIME_POSTURE_PREVIEW,
@@ -483,14 +480,18 @@ export class RunDetail extends RunDetailState {
       // Guarded on the run and on the exact gate: a response that lands after
       // the operator moved on must not repopulate cleared state.
       if (!this._previewStillCurrent(requestSeq, runId, gateKey)) return;
-      this._postureGate = { choice, status: 'ready', plan };
+      this._postureGate = postureGateWithSelection(this._postureGate, {
+        choice,
+        status: 'ready',
+        plan,
+      });
     } catch (err) {
       if (!this._previewStillCurrent(requestSeq, runId, gateKey)) return;
-      this._postureGate = {
+      this._postureGate = postureGateWithSelection(this._postureGate, {
         choice,
         status: 'error',
         message: `Posture preview failed: ${(err as Error).message}`,
-      };
+      });
     }
   }
 
@@ -1227,11 +1228,11 @@ export class RunDetail extends RunDetailState {
       postureTransitionsOf(run.resourcePosture),
     );
     if (immediate && isTerminalPostureOutcome(immediate.outcome)) {
-      this._postureGate = {
-        ...this._postureGate,
-        appliedTransition: immediate,
-        appliedTransitionAttributed: postureTransitionAttributed(observation, immediate),
-      };
+      this._postureGate = postureGateWithAdoptedTransition(
+        this._postureGate,
+        immediate,
+        postureTransitionAttributed(observation, immediate),
+      );
       this._postureStatusKey = '';
       void this._refreshPostureStatus(run.id);
       return;
@@ -1267,12 +1268,11 @@ export class RunDetail extends RunDetailState {
         postureTransitionsOf(this._postureStatus.state),
       );
       if (observed && isTerminalPostureOutcome(observed.outcome)) {
-        this._postureGate = {
-          ...this._postureGate,
-          appliedTransition: observed,
-          appliedTransitionAttributed: postureTransitionAttributed(observation, observed),
-          reconciliationPending: false,
-        };
+        this._postureGate = postureGateWithAdoptedTransition(
+          this._postureGate,
+          observed,
+          postureTransitionAttributed(observation, observed),
+        );
         // The run record moved on; let the normal refresh path pick it up again.
         this._postureStatusKey = '';
         return;
