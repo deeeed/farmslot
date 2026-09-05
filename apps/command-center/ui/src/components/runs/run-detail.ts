@@ -81,7 +81,9 @@ import {
   postureChoiceBecameInapplicable,
   postureChoiceForResolve,
   postureChoicesApply,
+  postureChoiceWithheldReason,
   postureResolveBlockReason,
+  postureTransitionAttributed,
   postureTransitionBaseline,
   type PostureTransitionObservation,
   postureTransitionsOf,
@@ -389,7 +391,19 @@ export class RunDetail extends RunDetailState {
     const hadKey = this._postureGateKey !== '';
     this._postureGateKey = key;
     if (hadKey) {
-      this._postureGate = { choice: null, status: 'idle' };
+      // Only the selection and its preview belong to the old gate. The applied
+      // transition and the pending flag describe a resolution that already
+      // happened, and clearing them here erased a result adopted moments before
+      // this update. They are dropped on a run change, not a gate change.
+      const { appliedTransition, appliedTransitionAttributed, reconciliationPending } =
+        this._postureGate;
+      this._postureGate = {
+        choice: null,
+        status: 'idle',
+        ...(appliedTransition ? { appliedTransition } : {}),
+        ...(appliedTransitionAttributed !== undefined ? { appliedTransitionAttributed } : {}),
+        ...(reconciliationPending !== undefined ? { reconciliationPending } : {}),
+      };
       this._posturePreviewRequestSeq++;
     }
   }
@@ -990,9 +1004,15 @@ export class RunDetail extends RunDetailState {
           ...(this._postureGate.appliedTransition
             ? { appliedTransition: this._postureGate.appliedTransition }
             : {}),
+          ...(this._postureGate.appliedTransitionAttributed !== undefined
+            ? { appliedTransitionAttributed: this._postureGate.appliedTransitionAttributed }
+            : {}),
           ...(this._postureGate.reconciliationPending !== undefined
             ? { reconciliationPending: this._postureGate.reconciliationPending }
             : {}),
+          // The gate panel is hidden exactly when a choice is withheld, so the
+          // persistent summary is the only place the operator can be told.
+          withheldChoiceReason: postureChoiceWithheldReason(this._postureGateStateForRender()),
         }),
       _renderInteractivePackets: (run) => this._renderInteractivePackets(run),
       _renderAgentSessions: (run) =>
@@ -1155,14 +1175,16 @@ export class RunDetail extends RunDetailState {
     // A choice the Gateway already refused in preview must not be sent: the
     // decision would be consumed and the refusal repeated with nothing to undo.
     if (!canResolveWithPostureChoice(this._postureGateStateForRender())) return;
-    const observation = this._postureTransitionObservation();
+    // Snapshot once: the request and the baseline must agree on what was sent.
+    const forwardedChoice = postureChoiceForResolve(this._postureGateStateForRender()) ?? null;
+    const observation = this._postureTransitionObservation(forwardedChoice);
     confirmRunDecision(runId, decision, actionId, {
       ...this._confirmTimerContext(),
       jumpToSuccessorWhenAvailable: (originRunId) =>
         this._jumpToSuccessorWhenAvailable(originRunId),
       // Only ever forwarded where the Gateway would honour it; a hidden panel
       // must not send a choice the operator cannot see or clear.
-      resourcePosture: () => postureChoiceForResolve(this._postureGateStateForRender()) ?? null,
+      resourcePosture: () => forwardedChoice,
       onDecisionResolved: (run) => {
         // A response that lands after the operator navigated belongs to the run
         // it was requested for, not to whatever is on screen now.
@@ -1176,8 +1198,17 @@ export class RunDetail extends RunDetailState {
    * The transition the Gateway had recorded before a resolution was sent, so a
    * response carrying the same one is recognised as "not reconciled yet".
    */
-  private _postureTransitionObservation(): PostureTransitionObservation {
-    return postureTransitionBaseline(this._postureStatus.state, this._postureGate.choice);
+  /**
+   * The baseline must be built from the choice that is actually forwarded, not
+   * the one still selected. When forwarding withholds a retained choice, the
+   * Gateway reconciles under the run's own policy, and a baseline carrying the
+   * retained choice rejects that record as another choice's and reports pending
+   * forever.
+   */
+  private _postureTransitionObservation(
+    forwardedChoice: ResourcePostureGateChoice | null,
+  ): PostureTransitionObservation {
+    return postureTransitionBaseline(this._postureStatus.state, forwardedChoice);
   }
 
   /**
@@ -1196,7 +1227,11 @@ export class RunDetail extends RunDetailState {
       postureTransitionsOf(run.resourcePosture),
     );
     if (immediate && isTerminalPostureOutcome(immediate.outcome)) {
-      this._postureGate = { ...this._postureGate, appliedTransition: immediate };
+      this._postureGate = {
+        ...this._postureGate,
+        appliedTransition: immediate,
+        appliedTransitionAttributed: postureTransitionAttributed(observation, immediate),
+      };
       this._postureStatusKey = '';
       void this._refreshPostureStatus(run.id);
       return;
@@ -1235,6 +1270,7 @@ export class RunDetail extends RunDetailState {
         this._postureGate = {
           ...this._postureGate,
           appliedTransition: observed,
+          appliedTransitionAttributed: postureTransitionAttributed(observation, observed),
           reconciliationPending: false,
         };
         // The run record moved on; let the normal refresh path pick it up again.
@@ -1254,7 +1290,9 @@ export class RunDetail extends RunDetailState {
     // A refused posture choice blocks the resume for the same reason it blocks
     // any other resolution: the decision would be consumed by a refusal.
     if (!canResolveWithPostureChoice(this._postureGateStateForRender())) return;
-    const observation = this._postureTransitionObservation();
+    // Snapshot once: the request and the baseline must agree on what was sent.
+    const forwardedChoice = postureChoiceForResolve(this._postureGateStateForRender()) ?? null;
+    const observation = this._postureTransitionObservation(forwardedChoice);
     await checkInteractiveHandoffSignal(runId, decision, {
       actionsBlocked: () => this._actionsBlocked(),
       busy: () => this._handoffSignalCheckBusy,
@@ -1266,7 +1304,7 @@ export class RunDetail extends RunDetailState {
       },
       // Only ever forwarded where the Gateway would honour it; a hidden panel
       // must not send a choice the operator cannot see or clear.
-      resourcePosture: () => postureChoiceForResolve(this._postureGateStateForRender()) ?? null,
+      resourcePosture: () => forwardedChoice,
       onDecisionResolved: (run) => {
         if (this.runId !== run.id) return;
         this._adoptResolvedPostureTransition(run, observation);

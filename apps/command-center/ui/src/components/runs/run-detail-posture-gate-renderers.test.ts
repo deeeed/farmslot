@@ -5,6 +5,7 @@ import {
   RESOURCE_POSTURE_GATE_CHOICES,
   type ResourcePostureCapabilityState,
   type ResourcePosturePlan,
+  type ResourcePostureTransition,
   type Run,
 } from '@farmslot/protocol';
 
@@ -21,6 +22,7 @@ import {
   postureGatePreviewLines,
   postureGatePreviewSummary,
   postureResolveBlockReason,
+  postureTransitionAttributed,
   RUN_POSTURE_GATE_CHOICES,
 } from './run-detail-posture-gate-renderers.js';
 
@@ -370,9 +372,20 @@ test('a choice is forwarded only where the Gateway would honour it', () => {
   } as const;
 
   // At the wait the operator can see and clear the refusal, so the block guards
-  // it and the choice is still what would be sent.
-  assert.equal(postureChoiceForResolve({ ...refused, runPosture: 'operator-wait' }), 'free-slot');
+  // it. The forwarding guard refuses it too, so a caller that skipped the block
+  // could not send it either.
   assert.equal(canResolveWithPostureChoice({ ...refused, runPosture: 'operator-wait' }), false);
+  assert.equal(postureChoiceForResolve({ ...refused, runPosture: 'operator-wait' }), undefined);
+  // A clean choice at the wait is what actually forwards.
+  assert.equal(
+    postureChoiceForResolve({
+      choice: 'minimize',
+      status: 'ready',
+      runPosture: 'operator-wait',
+      plan: plan(),
+    }),
+    'minimize',
+  );
 
   // Posture unread after a failed status refresh: the panel is hidden and the
   // block lifts, so the forwarding guard is the only thing standing between a
@@ -403,7 +416,124 @@ test('a choice is forwarded only where the Gateway would honour it', () => {
     null,
   );
   // An honoured choice at a wait is forwarded and nothing is withheld.
-  const honoured = { choice: 'minimize', status: 'ready', runPosture: 'operator-wait' } as const;
+  const honoured = {
+    choice: 'minimize',
+    status: 'ready',
+    runPosture: 'operator-wait',
+    plan: plan(),
+  } as const;
   assert.equal(postureChoiceForResolve(honoured), 'minimize');
   assert.equal(postureChoiceWithheldReason(honoured), null);
+});
+
+test('a refused choice is not forwarded even where the choices still apply', () => {
+  // Companion's same-named function checks this; without it a third call site
+  // that did not pre-check would send a choice the Gateway already refused.
+  const refusedAtGate = {
+    choice: 'free-slot',
+    status: 'ready',
+    runPosture: 'operator-wait',
+    plan: plan({
+      posture: 'parked',
+      rejection: { kind: 'park-ineligible', code: 'STATUS_NOT_ELIGIBLE', reason: 'not eligible' },
+    }),
+  } as const;
+  assert.equal(canResolveWithPostureChoice(refusedAtGate), false);
+  assert.equal(postureChoiceForResolve(refusedAtGate), undefined);
+
+  // A preview that has not landed is not sendable either.
+  assert.equal(
+    postureChoiceForResolve({ choice: 'minimize', status: 'loading', runPosture: 'operator-wait' }),
+    undefined,
+  );
+  // A clean, previewed choice at a wait still forwards.
+  assert.equal(
+    postureChoiceForResolve({
+      choice: 'minimize',
+      status: 'ready',
+      runPosture: 'operator-wait',
+      plan: plan(),
+    }),
+    'minimize',
+  );
+});
+
+test('attribution is only claimed where the Gateway attributed the record', () => {
+  const record = (gateChoice?: 'minimize'): ResourcePostureTransition =>
+    ({
+      id: 'op-1',
+      posture: 'operator-wait',
+      policySource: gateChoice ? 'gate-choice' : 'framework-default',
+      requestedAt: '2026-09-05T12:00:00.000Z',
+      outcome: 'applied',
+      effects: [],
+      progress: { total: 1, completed: 1 },
+      failures: [],
+      ...(gateChoice ? { gateChoice } : {}),
+    }) as ResourcePostureTransition;
+  const baseline = (choice: 'minimize' | null) => ({
+    transitionIds: [],
+    newestRequestedAt: undefined,
+    choice,
+  });
+
+  assert.equal(postureTransitionAttributed(baseline('minimize'), record('minimize')), true);
+  // Positional: nothing attributed, so it may belong to a concurrent reconcile.
+  assert.equal(postureTransitionAttributed(baseline('minimize'), record()), false);
+  // Nothing was forwarded, so nothing can be attributed to it.
+  assert.equal(postureTransitionAttributed(baseline(null), record('minimize')), false);
+  assert.equal(postureTransitionAttributed(baseline(null), record()), false);
+});
+
+test('a held choice is never dropped without the operator being told', () => {
+  // The invariant the withheld notice exists to protect: a selection either
+  // travels, or the operator can read why it did not. It is stated as "never
+  // silently dropped" rather than "exactly one of forwarded/withheld is set",
+  // because at the gate a refused choice is explained by the visible block
+  // reason instead, and the panel is on screen to clear it.
+  const plans = {
+    clean: plan(),
+    refused: plan({
+      posture: 'parked',
+      rejection: { kind: 'park-ineligible', code: 'STATUS_NOT_ELIGIBLE', reason: 'not eligible' },
+    }),
+  };
+  const postures = ['operator-wait', 'active', 'terminal', 'parked', undefined] as const;
+  for (const runPosture of postures) {
+    for (const [planName, chosenPlan] of Object.entries(plans)) {
+      const state = {
+        choice: 'free-slot',
+        status: 'ready',
+        plan: chosenPlan,
+        runPosture,
+      } as const;
+      const forwarded = postureChoiceForResolve(state);
+      const withheld = postureChoiceWithheldReason(state);
+      const blocked = postureResolveBlockReason(state);
+      const where = `${runPosture ?? 'unread'}/${planName}`;
+
+      if (forwarded) {
+        // If it travels, nothing may claim it was withheld.
+        assert.equal(withheld, null, `${where}: forwarded and withheld at once`);
+        assert.equal(blocked, null, `${where}: forwarded while blocked`);
+        continue;
+      }
+      // Not forwarded, so the operator must be able to find out why: either the
+      // gate is on screen with a block reason, or the withheld notice says so.
+      const explained = Boolean(withheld) || Boolean(blocked);
+      assert.ok(explained, `${where}: choice dropped with no explanation`);
+      if (!postureChoicesApply(runPosture)) {
+        // The panel is hidden here, so the withheld notice is the only channel.
+        assert.ok(withheld, `${where}: panel hidden and nothing said`);
+        assert.match(withheld ?? '', /withheld/);
+      }
+    }
+  }
+
+  // With nothing selected there is nothing to forward and nothing to withhold.
+  for (const runPosture of postures) {
+    const idle = { choice: null, status: 'idle', runPosture } as const;
+    assert.equal(postureChoiceForResolve(idle), undefined);
+    assert.equal(postureChoiceWithheldReason(idle), null);
+  }
 });

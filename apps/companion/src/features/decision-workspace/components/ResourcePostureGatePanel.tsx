@@ -18,6 +18,7 @@ import {
   type PostureChoiceAvailability,
   postureChoiceHonored,
   postureChoicesApply,
+  postureChoiceWithheldReason,
   postureGatePreviewLines,
   postureGatePreviewSummary,
   postureResolveBlock,
@@ -137,6 +138,29 @@ export function ResourcePostureGatePanel({
   );
 }
 
+/**
+ * The notice for a selection that will not be forwarded.
+ *
+ * It lives outside the panel because the panel returns null in exactly the
+ * situations this reports, which is how the selection came to be dropped
+ * silently in the first place.
+ */
+export function ResourcePostureWithheldNotice({
+  gate,
+  availability,
+}: {
+  gate: RunPostureGateState;
+  availability: PostureChoiceAvailability;
+}) {
+  const reason = postureChoiceWithheldReason(gate, availability);
+  if (!reason) return null;
+  return (
+    <View style={styles.withheld} testID="companion-run-posture-withheld">
+      <Text style={styles.blocked}>{reason}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   blocked: {
     color: colors.statusWarn,
@@ -212,5 +236,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
+  },
+  withheld: {
+    backgroundColor: colors.bgCard,
+    borderColor: colors.statusWarn + '55',
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    marginBottom: spacing.lg,
+    padding: spacing.lg,
   },
 });

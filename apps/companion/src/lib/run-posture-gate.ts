@@ -276,6 +276,34 @@ export function postureChoiceHonored(
   return plan.posture === 'operator-wait';
 }
 
+/**
+ * Why a held choice is not being forwarded, for the operator to read, or null
+ * when there is nothing withheld. Silently dropping a selection the operator
+ * made is its own dishonesty.
+ *
+ * Wording matches Command Center's `postureChoiceWithheldReason` so the same
+ * situation reads the same on both surfaces. The first branch has no Command
+ * Center counterpart: only `run.resolveDecision` carries a typed
+ * `resourcePosture`, and that is a fact about the decision rather than a state
+ * that may resolve, so it is reported ahead of an unread posture.
+ */
+export function postureChoiceWithheldReason(
+  state: RunPostureGateState,
+  availability: PostureChoiceAvailability,
+): string | null {
+  if (!state.choice) return null;
+  if (postureChoicesApply(availability)) return null;
+  const label = gateChoiceLabel(state.choice);
+  const tail = `choice is withheld. Resolving now applies the run's own policy.`;
+  if (!availability.canForwardChoice) {
+    return `This decision cannot carry a posture choice, so the ${label} ${tail}`;
+  }
+  if (availability.runPosture === undefined) {
+    return `Resource posture is unknown, so the ${label} ${tail}`;
+  }
+  return `This run is no longer at an operator wait, so the ${label} ${tail}`;
+}
+
 export interface RunPostureGatePreviewLine {
   action: 'acquire' | 'retain' | 'warm' | 'stop';
   capabilityId: string;

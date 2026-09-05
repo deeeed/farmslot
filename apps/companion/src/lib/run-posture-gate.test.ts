@@ -21,6 +21,7 @@ import {
   postureChoiceForResolve,
   postureChoiceHonored,
   postureChoicesApply,
+  postureChoiceWithheldReason,
   postureGateKey,
   postureGatePreviewLines,
   postureGatePreviewSummary,
@@ -1028,4 +1029,134 @@ test('with nothing attributed the newest survivor is used, and it is the newest'
     correlateResourcePostureTransition(baseline, resourcePostureTransitions(history))?.id,
     'op-newest',
   );
+});
+
+test('a selection that will not be forwarded says so instead of vanishing', () => {
+  // The round-3 scenario the reviewer described: pick free-slot, the posture
+  // read fails, the panel disappears, and the choice is dropped with nothing
+  // said. The panel cannot carry this notice, because it returns null in exactly
+  // these situations.
+  const held = runPostureGateSelect(
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      ...atOperatorWait,
+    }),
+    'free-slot',
+    atOperatorWait,
+  );
+
+  assert.equal(postureChoiceWithheldReason(held, atOperatorWait), null);
+  assert.equal(
+    postureChoiceWithheldReason(held, { canForwardChoice: true, runPosture: undefined }),
+    "Resource posture is unknown, so the Free the slot choice is withheld. Resolving now applies the run's own policy.",
+  );
+  assert.equal(
+    postureChoiceWithheldReason(held, { canForwardChoice: true, runPosture: 'active' }),
+    "This run is no longer at an operator wait, so the Free the slot choice is withheld. Resolving now applies the run's own policy.",
+  );
+  // Companion-only: the decision resolves through decision.resolve, which has no
+  // field to carry the choice. A fact about the decision, not a passing state,
+  // so it is reported ahead of an unread posture.
+  assert.equal(
+    postureChoiceWithheldReason(held, { canForwardChoice: false, runPosture: 'operator-wait' }),
+    "This decision cannot carry a posture choice, so the Free the slot choice is withheld. Resolving now applies the run's own policy.",
+  );
+  assert.equal(
+    postureChoiceWithheldReason(held, { canForwardChoice: false, runPosture: undefined }),
+    "This decision cannot carry a posture choice, so the Free the slot choice is withheld. Resolving now applies the run's own policy.",
+  );
+});
+
+test('nothing is reported as withheld when no choice is held', () => {
+  const empty = runPostureGateForContext(initialRunPostureGateState(), {
+    gateKey: 'run-1:a',
+    ...atOperatorWait,
+  });
+  for (const availability of [
+    atOperatorWait,
+    { canForwardChoice: true, runPosture: undefined },
+    { canForwardChoice: false, runPosture: 'operator-wait' },
+    { canForwardChoice: true, runPosture: 'terminal' },
+  ] as const) {
+    assert.equal(postureChoiceWithheldReason(empty, availability), null);
+  }
+});
+
+test('a held choice either travels or the operator can read why not', () => {
+  // Stated as "exactly one of forwarded and withheld" this is FALSE, and my
+  // first version only passed because it used a clean plan. At the gate with a
+  // refused plan nothing forwards and nothing is withheld, because the panel is
+  // on screen with the rejection: the choice was not dropped in silence, it was
+  // refused out loud. So the property worth guarding is that a held choice is
+  // either sent, or its absence is readable somewhere.
+  const availabilities = [
+    atOperatorWait,
+    { canForwardChoice: true, runPosture: undefined },
+    { canForwardChoice: false, runPosture: 'operator-wait' },
+    { canForwardChoice: true, runPosture: 'active' },
+    { canForwardChoice: true, runPosture: 'parked' },
+  ] as const;
+  const held = runPostureGateSelect(
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      ...atOperatorWait,
+    }),
+    'free-slot',
+    atOperatorWait,
+  );
+  const clean = runPostureGatePreviewLoaded(held, {
+    gateKey: held.gateKey,
+    requestId: held.requestId,
+    ...atOperatorWait,
+    plan: plan(),
+  });
+  const refused = runPostureGatePreviewLoaded(held, {
+    gateKey: held.gateKey,
+    requestId: held.requestId,
+    ...atOperatorWait,
+    plan: plan({
+      posture: 'parked',
+      rejection: { kind: 'park-ineligible', code: 'gate-held', reason: 'gate-held run' },
+    }),
+  });
+
+  for (const gate of [clean, refused]) {
+    for (const availability of availabilities) {
+      const forwarded = postureChoiceForResolve(gate, availability);
+      const withheld = postureChoiceWithheldReason(gate, availability);
+      const blocked = postureResolveBlock(gate, availability).kind !== 'none';
+      const where = `${gate.plan?.rejection ? 'refused' : 'clean'} ${JSON.stringify(availability)}`;
+      if (forwarded) {
+        assert.equal(withheld, null, `claimed withheld while travelling: ${where}`);
+        assert.equal(blocked, false, `blocked while travelling: ${where}`);
+        continue;
+      }
+      assert.equal(
+        Boolean(withheld) || blocked,
+        true,
+        `choice dropped with no explanation: ${where}`,
+      );
+      if (!postureChoicesApply(availability)) {
+        // The panel is hidden here, so the notice is the only channel left.
+        assert.ok(withheld, `panel hidden and nothing said: ${where}`);
+      }
+    }
+  }
+});
+
+test('nothing is claimed about a choice that was never made', () => {
+  const empty = runPostureGateForContext(initialRunPostureGateState(), {
+    gateKey: 'run-1:a',
+    ...atOperatorWait,
+  });
+  for (const availability of [
+    atOperatorWait,
+    { canForwardChoice: true, runPosture: undefined },
+    { canForwardChoice: false, runPosture: 'operator-wait' },
+    { canForwardChoice: true, runPosture: 'terminal' },
+  ] as const) {
+    assert.equal(postureChoiceForResolve(empty, availability), undefined);
+    assert.equal(postureChoiceWithheldReason(empty, availability), null);
+    assert.equal(postureResolveBlock(empty, availability).kind, 'none');
+  }
 });

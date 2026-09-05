@@ -16,6 +16,7 @@ import {
   postureTransitionFailuresToShow,
   rejectionMessage,
   renderRunPostureResolution,
+  renderRunPostureSummary,
   summarizeRunPosture,
 } from './run-detail-posture-renderers.js';
 
@@ -372,4 +373,42 @@ test('the persistent summary carries the resolution outcome after the gate disap
 
   // Nothing resolved, nothing claimed.
   assert.equal(renderRunPostureResolution({}), nothing);
+});
+
+test('a withheld choice is reported in every summary branch, including a failed read', () => {
+  const withheld = {
+    withheldChoiceReason: 'Resource posture is unknown, so the Free the slot choice is withheld.',
+  };
+  // A failed status read is exactly when a choice is withheld, so the branch
+  // that reports the failure must also report the withholding.
+  assert.notEqual(renderRunPostureSummary({ status: 'error', message: 'boom' }, withheld), nothing);
+  assert.notEqual(renderRunPostureSummary({ status: 'loading' }, withheld), nothing);
+  // And it is visible on its own, without any resolution to accompany it.
+  assert.notEqual(renderRunPostureResolution(withheld), nothing);
+  assert.equal(renderRunPostureResolution({ withheldChoiceReason: null }), nothing);
+});
+
+test('a positional match is not described as the operator own resolution', () => {
+  const transition: ResourcePostureTransition = {
+    id: 'op-1',
+    posture: 'operator-wait',
+    policySource: 'framework-default',
+    requestedAt: '2026-09-05T12:00:00.000Z',
+    outcome: 'applied',
+    effects: [],
+    progress: { total: 1, completed: 1 },
+    failures: [],
+  };
+  // The shared contract admits a positional match may belong to a concurrent
+  // reconciliation, so only an attributed one may be called the operator's.
+  const attributed = renderRunPostureResolution({
+    appliedTransition: transition,
+    appliedTransitionAttributed: true,
+  });
+  const positional = renderRunPostureResolution({
+    appliedTransition: transition,
+    appliedTransitionAttributed: false,
+  });
+  assert.notDeepEqual(attributed, positional);
+  assert.notEqual(positional, nothing);
 });

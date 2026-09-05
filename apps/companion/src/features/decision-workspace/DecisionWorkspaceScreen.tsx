@@ -102,7 +102,10 @@ import {
   routeParamString,
   signalTarget,
 } from './components/decision-workspace-panels';
-import { ResourcePostureGatePanel } from './components/ResourcePostureGatePanel';
+import {
+  ResourcePostureGatePanel,
+  ResourcePostureWithheldNotice,
+} from './components/ResourcePostureGatePanel';
 import { decisionWorkspaceStyles as styles } from './styles/decision-workspace.styles';
 
 const TONE_COLORS = {
@@ -1464,6 +1467,9 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
               disabled={!client || !sourceRunId}
               onSelect={selectPostureChoice}
             />
+          )}
+          {decision.resolvedAt ? null : (
+            <ResourcePostureWithheldNotice gate={postureGate} availability={postureAvailability} />
           )}
           {decision.resolvedAt ? (
             <View style={styles.resolvedDecisionCard}>

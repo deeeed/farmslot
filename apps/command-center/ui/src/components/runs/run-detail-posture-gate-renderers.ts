@@ -17,6 +17,7 @@ import {
   type ResourcePostureGateChoice,
   type ResourcePosturePlan,
   type ResourcePostureTransition,
+  type ResourcePostureTransitionBaseline,
   type Run,
 } from '@farmslot/protocol';
 
@@ -79,6 +80,8 @@ export interface RunPostureGateState {
    * something else.
    */
   reconciliationPending?: boolean;
+  /** Whether `appliedTransition` was attributed by the Gateway or matched positionally. */
+  appliedTransitionAttributed?: boolean;
 }
 
 /** Delay between status reads while observing a resolution's transition. */
@@ -192,6 +195,11 @@ export function postureChoiceForResolve(
   state: RunPostureGateStateWithAvailability,
 ): ResourcePostureGateChoice | undefined {
   if (!postureChoicesApply(state.runPosture)) return undefined;
+  // A choice the Gateway already refused, or one whose preview never landed, is
+  // not sendable either. `_confirmResolve` checks this first today, so this
+  // changes nothing now; it is here so the guarantee lives in the function
+  // rather than in every caller, and matches Companion's same-named function.
+  if (!canResolveWithPostureChoice(state)) return undefined;
   return state.choice ?? undefined;
 }
 
@@ -209,6 +217,21 @@ export function postureChoiceWithheldReason(
     return `Resource posture is unknown, so the ${gateChoiceLabel(state.choice)} choice is withheld. Resolving now applies the run's own policy.`;
   }
   return `This run is no longer at an operator wait, so the ${gateChoiceLabel(state.choice)} choice is withheld. Resolving now applies the run's own policy.`;
+}
+
+/**
+ * Whether the Gateway attributed this record to the choice that was forwarded.
+ *
+ * The shared contract accepts a positional match — new, recent and unexcluded —
+ * when nothing is attributed, and is explicit that such a match may belong to a
+ * concurrent reconciliation. So the surface must say which kind it has: only an
+ * attributed match may be described as the operator's own outcome.
+ */
+export function postureTransitionAttributed(
+  baseline: ResourcePostureTransitionBaseline,
+  transition: ResourcePostureTransition,
+): boolean {
+  return Boolean(baseline.choice && transition.gateChoice === baseline.choice);
 }
 
 export interface RunPostureGatePreviewLine {

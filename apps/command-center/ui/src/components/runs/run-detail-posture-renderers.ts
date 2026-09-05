@@ -251,23 +251,40 @@ const POSTURE_STYLES = html`
 export interface RunPostureResolutionState {
   /** The transition correlated to the operator's resolution, once terminal. */
   appliedTransition?: ResourcePostureTransition;
+  /**
+   * The Gateway attributed that transition to the choice this client forwarded.
+   * When false the match is positional — new, recent and unexcluded — which the
+   * shared contract is explicit may belong to a concurrent reconciliation.
+   */
+  appliedTransitionAttributed?: boolean;
   /** The Gateway has not recorded a terminal outcome for it yet. */
   reconciliationPending?: boolean;
+  /** A selection the operator made that will not be sent, and why. */
+  withheldChoiceReason?: string | null;
 }
 
 export function renderRunPostureResolution(state: RunPostureResolutionState): unknown {
+  const withheld = state.withheldChoiceReason
+    ? html`<div class="posture-failure" role="alert" data-testid="run-posture-choice-withheld">
+        ${state.withheldChoiceReason}
+      </div>`
+    : nothing;
   if (state.reconciliationPending) {
-    return html`<div class="posture-transition" data-testid="run-posture-reconciliation-pending">
-      The Gateway has not finished reconciling your last resolution, so its outcome is not known
-      yet.
-    </div>`;
+    return html`${withheld}
+      <div class="posture-transition" data-testid="run-posture-reconciliation-pending">
+        The Gateway has not finished reconciling your last resolution, so its outcome is not known
+        yet.
+      </div>`;
   }
   const transition = state.appliedTransition;
-  if (!transition) return nothing;
+  if (!transition) return withheld;
   return html`
+    ${withheld}
     <div class="posture-transition" data-testid="run-posture-resolution">
-      Your last resolution: ${postureLabel(transition.posture)} ·
-      ${transitionOutcomeLabel(transition.outcome)} ·
+      ${state.appliedTransitionAttributed
+        ? 'Your last resolution'
+        : 'Run posture after resolution'}:
+      ${postureLabel(transition.posture)} · ${transitionOutcomeLabel(transition.outcome)} ·
       ${transition.completedAt ?? transition.requestedAt}
     </div>
     ${transition.rejection
@@ -297,10 +314,15 @@ export function renderRunPostureSummary(
   resolution: RunPostureResolutionState = {},
 ): unknown {
   if (state.status === 'idle') return nothing;
+  // The resolution and withheld notices render in every branch. A failed status
+  // read is exactly when `reconciliationPending` is true and exactly when a
+  // choice is withheld, so suppressing them here hid both in their likeliest
+  // case — which is what moving them out of the gate was meant to prevent.
   if (state.status === 'loading' && !state.state) {
     return html`${POSTURE_STYLES}
       <section class="posture-panel" aria-label="Resource posture" data-testid="run-posture">
         <div class="posture-title">Resource posture</div>
+        ${renderRunPostureResolution(resolution)}
         <div class="posture-empty">Loading posture…</div>
       </section>`;
   }
@@ -308,6 +330,7 @@ export function renderRunPostureSummary(
     return html`${POSTURE_STYLES}
       <section class="posture-panel" aria-label="Resource posture" data-testid="run-posture">
         <div class="posture-title">Resource posture</div>
+        ${renderRunPostureResolution(resolution)}
         <div class="posture-failure" role="alert" data-testid="run-posture-error">
           ${state.message ?? 'Posture status is unavailable.'}
         </div>
