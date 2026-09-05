@@ -378,6 +378,15 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
       report.retainedRestoreProof.stoppedResourcesNote =
         'this run parked no resource with release_effect stop, so the boot-on-restore claim was not exercised live here';
     }
+    // A `verified` effect is written by the retained check itself, not by the
+    // reporting path that attributes a performed hook to the initiating
+    // restore. If no hook ran, this run says nothing about that attribution.
+    const performedEffects = (effects ?? []).filter((effect) => effect.action !== 'verified');
+    report.retainedRestoreProof.attributionPathExercised = performedEffects.length > 0;
+    if (performedEffects.length === 0) {
+      report.retainedRestoreProof.attributionPathNote =
+        'no boot, shutdown, or relaunch hook ran during this restore, so the effect-attribution path was not exercised live here; it is covered by the gateway unit suite';
+    }
     for (const resourceId of parkedStopped) {
       const booted = effectsFor(resourceId).filter((effect) => effect.action === 'booted');
       const failedBoots = booted.filter((effect) => !effect.ok);

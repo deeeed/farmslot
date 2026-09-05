@@ -5243,7 +5243,9 @@
     ],
     "provesNoRestartBetweenGatewayObservations": false,
     "stoppedResourcesExercised": false,
-    "stoppedResourcesNote": "this run parked no resource with release_effect stop, so the boot-on-restore claim was not exercised live here"
+    "stoppedResourcesNote": "this run parked no resource with release_effect stop, so the boot-on-restore claim was not exercised live here",
+    "attributionPathExercised": false,
+    "attributionPathNote": "no boot, shutdown, or relaunch hook ran during this restore, so the effect-attribution path was not exercised live here; it is covered by the gateway unit suite"
   },
   "restorePreview": {
     "ok": true,

@@ -56,11 +56,15 @@ mock.module('../core/hooks.js', {
 });
 
 let exitCode = 0;
+let holdHook: (() => Promise<void>) | null = null;
 const realExec = await import('../core/exec.js');
 mock.module('../core/exec.js', {
   namedExports: {
     ...realExec,
-    execLocal: async () => ({ stdout: 'booted', stderr: '', exitCode }),
+    execLocal: async () => {
+      if (holdHook) await holdHook();
+      return { stdout: 'booted', stderr: '', exitCode };
+    },
   },
 });
 
@@ -138,22 +142,36 @@ test('a control on the same slot from outside the context is not attributed to i
   ]);
 });
 
-test('a hook started before the capture and finishing during it is not attributed', async () => {
+test('a hook already executing when the capture opens is not attributed', async () => {
   exitCode = 0;
-  let release = () => {};
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
+  // Hold the hook inside execLocal, so the control is genuinely mid-execution
+  // when the capture opens rather than merely descended from an earlier tick.
+  let releaseHook = () => {};
+  const hookRunning = new Promise<void>((resolve) => {
+    holdHook = () =>
+      new Promise<void>((release) => {
+        releaseHook = release;
+        resolve();
+      });
   });
-  // Started outside any context, still running when the capture opens.
-  const inFlight = (async () => {
-    await gate;
-    return executeResourceControl('slot-a', 'dev-server', 'boot');
-  })();
-  const seen = await capture({ contextId: 'ctx-3', slotId: 'slot-a' }, async () => {
-    release();
-    await inFlight;
-    await executeResourceControl('slot-a', 'dev-server', 'shutdown');
-  });
+  const inFlight = executeResourceControl('slot-a', 'dev-server', 'boot');
+  await hookRunning;
+
+  const seen: Array<Record<string, unknown>> = [];
+  const stop = captureSlotResourceLifecycle({ contextId: 'ctx-3', slotId: 'slot-a' }, (record) =>
+    seen.push(record as unknown as Record<string, unknown>),
+  );
+  try {
+    await runWithResourceLifecycleContext('ctx-3', async () => {
+      // Let the in-flight hook finish now, inside the capture window.
+      releaseHook();
+      await inFlight;
+      holdHook = null;
+      await executeResourceControl('slot-a', 'dev-server', 'shutdown');
+    });
+  } finally {
+    stop();
+  }
   assert.deepEqual(summarise(seen), [
     { slotId: 'slot-a', resourceId: 'dev-server', action: 'shutdown', ok: true },
   ]);

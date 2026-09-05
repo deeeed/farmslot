@@ -445,38 +445,35 @@ function harness(initialRuns: Run[]): Harness {
   // it ran. Wrapping on assignment rather than inside each stub means a test
   // that swaps one in gets the same behaviour without having to remember, so
   // "the harness reports like production" holds for overrides too.
-  const reportingControl =
-    (action: 'boot' | 'shutdown', impl: MachineParkingDependencies['startResource']) =>
-    async (slotId: string, resourceId: string) => {
-      const result = await impl(slotId, resourceId);
-      reportSlotResourceLifecycle({
-        slotId,
-        resourceId,
-        action,
-        ok: result.ok,
-        ...(result.detail ? { detail: result.detail } : {}),
-      });
-      return result;
-    };
-  deps.startResource = reportingControl('boot', deps.startResource);
-  deps.stopResource = reportingControl('shutdown', deps.stopResource);
+  // In production both of these ARE executeResourceControl, which reports what
+  // it ran. Reporting at the boundary the service sees, rather than wrapping
+  // whatever a test assigns, means an override that delegates to the previous
+  // stub still produces exactly one effect however deep the delegation goes.
   const reportingDeps = new Proxy(deps, {
-    set(target, property, value) {
-      if (property === 'startResource' || property === 'stopResource') {
-        target[property] = reportingControl(
-          property === 'startResource' ? 'boot' : 'shutdown',
-          value as MachineParkingDependencies['startResource'],
-        );
-        return true;
+    get(target, property, receiver) {
+      if (property !== 'startResource' && property !== 'stopResource') {
+        return Reflect.get(target, property, receiver);
       }
-      return Reflect.set(target, property, value);
+      const action = property === 'startResource' ? ('boot' as const) : ('shutdown' as const);
+      const impl = target[property];
+      return async (slotId: string, resourceId: string) => {
+        const result = await impl(slotId, resourceId);
+        reportSlotResourceLifecycle({
+          slotId,
+          resourceId,
+          action,
+          ok: result.ok,
+          ...(result.detail ? { detail: result.detail } : {}),
+        });
+        return result;
+      };
     },
   });
   return {
-    service: new MachineParkingService(deps),
+    service: new MachineParkingService(reportingDeps),
     runs,
     calls,
-    deps: reportingDeps,
+    deps,
     slotOwners,
     slotLifecycles,
     reloadSupport,
@@ -4149,16 +4146,73 @@ test('a restore removes its lifecycle capture however it ends', async () => {
     'a finished restore leaves no capture holding its record and effect buffer',
   );
 
-  // And when the restore throws part-way, which is what the `finally` is for.
+  // And when the restore throws out of the context block, which is the only
+  // thing the `finally` is for. An acquire failure would not do: the loop
+  // catches it and the restore settles normally down the happy path.
   const failing = harness([activeRun('run-b', 'slot-b')]);
-  await parkWithEffect(failing, 'retain', 'run-b');
-  failing.deps.acquireCapability = async () => {
-    throw new Error('acquire exploded');
+  const pausePreview = await failing.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  await failing.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: pausePreview.previewId,
+    reviewedTargets: [{ runId: 'run-b', generation: 3 }],
+    operationId: 'capture-cleanup-throw-park',
+  });
+  // The observation after the acquisitions is not wrapped, so this propagates.
+  let exploding = false;
+  failing.deps.observeResources = async () => {
+    if (exploding) throw new Error('the node went away mid-restore');
+    return [{ ...runningResource(), status: 'stopped' }];
   };
-  await restoreRun(failing, 'capture-cleanup-throw', 'run-b');
+  exploding = true;
+  // However the batch settles this — the throw unwinds through the context
+  // block and the `finally` either way — the capture must be gone.
+  await restoreRun(failing, 'capture-cleanup-throw', 'run-b').catch(() => undefined);
+  const record = failing.runs.get('run-b')?.park;
+  assert.equal(
+    record?.errors.some((error) => /the node went away mid-restore/.test(error.message)) ??
+      record === null,
+    true,
+    'the throw really happened inside the restore',
+  );
   assert.equal(
     activeResourceLifecycleCaptures(),
     before,
     'a restore that threw leaves no capture behind either',
+  );
+});
+
+test('an override that delegates to the previous stub still reports exactly once', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  // The natural way to add behaviour to a stub is to keep the old one and call
+  // it. Wrapping that again would report the same boot twice and invent an
+  // effect the Gateway never produced.
+  const inner = ctx.deps.startResource;
+  ctx.deps.startResource = async (slotId, resourceId) => inner(slotId, resourceId);
+  const pausePreview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: pausePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'delegating-override-park',
+  });
+  const restored = await restoreRun(ctx, 'delegating-override-restore');
+  assert.equal(restored.ok, true);
+  assert.deepEqual(
+    (ctx.runs.get('run-a')!.park!.restoreEffects ?? []).map((effect) => ({
+      resourceId: effect.resourceId,
+      action: effect.action,
+      ok: effect.ok,
+    })),
+    [{ resourceId: 'browser-cdp', action: 'booted', ok: true }],
   );
 });
