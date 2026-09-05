@@ -197,8 +197,6 @@ export interface RuntimeCapabilityStopWarmView {
   /** Inline note for the row, or null when the outcome speaks for itself. */
   note: string | null;
   tone: 'info' | 'error';
-  /** Re-read status from the Gateway, because the lease may have changed. */
-  refresh: boolean;
   /** Keep Stop available for another attempt. */
   keepStopAction: boolean;
   /** What the Gateway observed. Never `stopped` unless it really stopped. */
@@ -223,7 +221,6 @@ export function stopWarmOutcomeView(
       return {
         note: `The Gateway reported the provider stopped but observed it '${observedState}'. Treat it as still running.`,
         tone: 'error',
-        refresh: true,
         keepStopAction: true,
         observedState,
       };
@@ -231,7 +228,6 @@ export function stopWarmOutcomeView(
     return {
       note: result.effects.length ? `Stopped. ${result.effects.join('; ')}` : 'Stopped.',
       tone: 'info',
-      refresh: true,
       keepStopAction: false,
       observedState,
     };
@@ -242,7 +238,6 @@ export function stopWarmOutcomeView(
         result.reason ??
         'The Gateway kept this provider: something that is still running depends on it.',
       tone: 'info',
-      refresh: false,
       keepStopAction: true,
       observedState,
     };
@@ -251,7 +246,6 @@ export function stopWarmOutcomeView(
     return {
       note: result.reason ?? 'Nothing was keeping this capability warm on this slot.',
       tone: 'info',
-      refresh: true,
       keepStopAction: false,
       observedState,
     };
@@ -260,7 +254,6 @@ export function stopWarmOutcomeView(
     note:
       result.cleanupFailure ?? result.reason ?? 'Cleanup failed; the provider state is unknown.',
     tone: 'error',
-    refresh: true,
     keepStopAction: true,
     observedState,
   };

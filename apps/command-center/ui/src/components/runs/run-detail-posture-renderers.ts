@@ -18,6 +18,7 @@ import type {
   ResourcePosturePolicySource,
   ResourcePostureRejection,
   ResourcePostureTransition,
+  ResourcePostureTransitionFailure,
   ResourcePostureTransitionOutcome,
   ResourcePostureWaitPolicy,
   RunResourcePostureState,
@@ -187,6 +188,25 @@ export function summarizeRunPosture(state: RunResourcePostureState): RunPostureS
   };
 }
 
+/**
+ * Transition failures that are not already shown on a capability row.
+ *
+ * A failed cleanup lands in both places: the transition's failure list and the
+ * row's own `cleanupFailure`. Rendering both gave the operator the same alert
+ * twice. The row wins — it sits next to that capability's desired and observed
+ * state, which is the context needed to act on it.
+ */
+export function postureTransitionFailuresToShow(
+  summary: RunPostureSummary,
+): ResourcePostureTransitionFailure[] {
+  const shownOnRows = new Set(
+    summary.rows.filter((row) => row.cleanupFailure).map((row) => row.capabilityId),
+  );
+  return (summary.lastTransition?.failures ?? []).filter(
+    (failure) => !shownOnRows.has(failure.capabilityId),
+  );
+}
+
 function rowStatusColor(rowStatus: RunPostureRowStatus): string {
   if (rowStatus === 'matches') return colors.statusOk;
   if (rowStatus === 'mismatch') return colors.statusFail;
@@ -349,7 +369,7 @@ export function renderRunPostureSummary(state: RunPostureStatusState): unknown {
                   ${rejectionMessage(transition.rejection)}
                 </div>`
               : nothing}
-            ${transition.failures.map(
+            ${postureTransitionFailuresToShow(summary).map(
               (failure) =>
                 html`<div
                   class="posture-failure"

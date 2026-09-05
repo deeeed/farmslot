@@ -1,4 +1,4 @@
-import { css, html, LitElement, nothing } from 'lit';
+import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import {
@@ -15,6 +15,7 @@ import {
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { colors } from '../../styles/theme-tokens.js';
 
 import {
   projectRuntimeCapabilityLeases,
@@ -47,8 +48,10 @@ export class RuntimeCapabilitiesPanel extends LitElement {
   /** Last recovery-action failure. Kept out of `error` so a refresh cannot erase it. */
   @state() private actionError = '';
   /**
-   * Latest `runtime.capability.stopWarm` outcome per capability. Held separately
-   * from the fetch state so a refresh cannot erase the Gateway's answer.
+   * Latest `runtime.capability.stopWarm` outcome, keyed by slot AND capability.
+   * Capability alone let one slot's answer render against another slot's row
+   * after the operator navigated. Held separately from the fetch state so a
+   * refresh cannot erase the Gateway's answer.
    */
   @state() private stopWarmViews: Record<string, RuntimeCapabilityStopWarmView | undefined> = {};
 
@@ -169,6 +172,11 @@ export class RuntimeCapabilitiesPanel extends LitElement {
    * refusal to render as-is, not an error: something still running depends on
    * this provider.
    */
+  /** Namespaced so an answer can only ever render against the slot it came from. */
+  private stopWarmKey(slotId: string, capabilityId: string): string {
+    return `${slotId}::${capabilityId}`;
+  }
+
   private async stopWarm(entry: RuntimeCapabilityCatalogEntry): Promise<void> {
     const slotId = this.slotId;
     await this.runRecovery(entry.id, 'release', slotId, async () => {
@@ -178,7 +186,10 @@ export class RuntimeCapabilitiesPanel extends LitElement {
         60_000,
       );
       const view = stopWarmOutcomeView(result);
-      this.stopWarmViews = { ...this.stopWarmViews, [entry.id]: view };
+      this.stopWarmViews = {
+        ...this.stopWarmViews,
+        [this.stopWarmKey(slotId, entry.id)]: view,
+      };
       // A refusal or a failed cleanup is the Gateway's answer, shown on the row.
       // Only a genuine transport/protocol fault belongs in the action error.
       if (view.tone === 'error' && result.outcome === 'failed') {
@@ -433,7 +444,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
     const busy = this.busyAction?.capabilityId === entry.id ? this.busyAction.action : null;
     // Warm rows go to stopWarm; held rows go to release. Different RPCs.
     const usesWarmStop = runtimeCapabilityStopUsesWarmPath(view, stateLease);
-    const stopWarmView = this.stopWarmViews[entry.id];
+    const stopWarmView = this.stopWarmViews[this.stopWarmKey(this.slotId, entry.id)];
     return html`
       <article
         data-capability-id=${entry.id}
@@ -690,8 +701,8 @@ export class RuntimeCapabilitiesPanel extends LitElement {
       margin-top: 8px;
       padding: 6px 8px;
       border-radius: 4px;
-      background: #2a2a1c;
-      color: #ded39a;
+      background: ${unsafeCSS(colors.bgCard)};
+      color: ${unsafeCSS(colors.statusWarn)};
       font-size: 10px;
       line-height: 1.45;
     }
@@ -705,8 +716,8 @@ export class RuntimeCapabilitiesPanel extends LitElement {
       padding: 5px 8px;
     }
     .observed {
-      background: #1b3a2c;
-      color: #8ce0b4;
+      background: ${unsafeCSS(colors.bgCard)};
+      color: ${unsafeCSS(colors.statusOk)};
     }
     .release {
       border-color: #74443e;

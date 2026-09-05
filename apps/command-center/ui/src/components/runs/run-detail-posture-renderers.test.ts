@@ -7,6 +7,7 @@ import {
   policySourceLabel,
   postureCapabilityRow,
   postureRowStatus,
+  postureTransitionFailuresToShow,
   rejectionMessage,
   summarizeRunPosture,
 } from './run-detail-posture-renderers.js';
@@ -245,4 +246,57 @@ test('a run holding nothing still reports its posture and worker retention', () 
     unresolved: 0,
   });
   assert.equal(summary.workerRetained, true);
+});
+
+test('a cleanup failure shown on its row is not repeated in the transition list', () => {
+  // The same failure reaches both places. Rendering both gave the operator the
+  // identical alert twice.
+  const summary = summarizeRunPosture(
+    postureState({
+      capabilities: [
+        capability({
+          capabilityId: 'metro',
+          desiredDisposition: 'stopped',
+          observedState: 'stopped',
+          cleanupFailure: 'shutdown action exited 1',
+        }),
+      ],
+      lastTransition: {
+        id: 'op-1',
+        posture: 'terminal',
+        policySource: 'framework-default',
+        requestedAt: '2026-09-05T10:00:00.000Z',
+        outcome: 'partial',
+        effects: [],
+        progress: { total: 1, completed: 0 },
+        failures: [{ capabilityId: 'metro', reason: 'shutdown action exited 1' }],
+      },
+    }),
+  );
+
+  assert.equal(summary.rows[0]?.cleanupFailure, 'shutdown action exited 1');
+  assert.deepEqual(postureTransitionFailuresToShow(summary), []);
+});
+
+test('a transition failure with no row of its own is still shown', () => {
+  // Losing it would hide the only report of that capability's failure.
+  const summary = summarizeRunPosture(
+    postureState({
+      capabilities: [capability({ capabilityId: 'browser-cdp' })],
+      lastTransition: {
+        id: 'op-2',
+        posture: 'terminal',
+        policySource: 'framework-default',
+        requestedAt: '2026-09-05T10:00:00.000Z',
+        outcome: 'partial',
+        effects: [],
+        progress: { total: 1, completed: 0 },
+        failures: [{ capabilityId: 'ios-simulator', reason: 'device never shut down' }],
+      },
+    }),
+  );
+
+  assert.deepEqual(postureTransitionFailuresToShow(summary), [
+    { capabilityId: 'ios-simulator', reason: 'device never shut down' },
+  ]);
 });

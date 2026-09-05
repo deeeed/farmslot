@@ -321,7 +321,6 @@ test('a stopped outcome reports the effects and retires the Stop control', () =>
 
   assert.equal(view.tone, 'info');
   assert.equal(view.observedState, 'stopped');
-  assert.equal(view.refresh, true);
   assert.equal(view.keepStopAction, false);
   assert.match(view.note ?? '', /Closes the CDP browser/);
 });
@@ -353,11 +352,9 @@ test('a deferred outcome shows the Gateway reason and keeps the control', () => 
   assert.equal(view.note, "'ios-simulator' still depends on it");
   assert.equal(view.observedState, 'running');
   assert.equal(view.keepStopAction, true);
-  // Nothing changed, so there is nothing to re-read.
-  assert.equal(view.refresh, false);
 });
 
-test('a not-warm outcome explains that nothing was warm and refreshes', () => {
+test('a not-warm outcome explains that nothing was warm', () => {
   const view = stopWarmOutcomeView(
     stopWarmResult({
       outcome: 'not-warm',
@@ -369,7 +366,6 @@ test('a not-warm outcome explains that nothing was warm and refreshes', () => {
 
   assert.equal(view.tone, 'info');
   assert.equal(view.note, 'no warm lease for this capability');
-  assert.equal(view.refresh, true);
   assert.equal(view.keepStopAction, false);
 });
 
