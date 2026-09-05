@@ -361,7 +361,8 @@
         "release_effects": [
           "Gateway/UI capability ownership is removed",
           "The slot lifecycle retains the control-plane process until slot teardown"
-        ]
+        ],
+        "retention": { "operator-wait": "retain", "terminal": "stop" }
       },
       "browser-cdp": {
         "label": "Browser / CDP",
@@ -384,7 +385,8 @@
           "The lease owner can no longer drive the CDP session",
           "Chrome remains reusable only until the explicit keep-warm deadline"
         ],
-        "keep_warm_ms": 600000
+        "keep_warm_ms": 600000,
+        "retention": { "operator-wait": "warm", "terminal": "stop" }
       },
       "companion-metro": {
         "label": "Companion / Metro",
@@ -403,7 +405,8 @@
           "health": { "kind": "slot-action", "action_id": "companion-metro-health" },
           "release": { "kind": "slot-action", "action_id": "companion-metro-stop" }
         },
-        "release_effects": ["The final shared lease stops the slot-scoped Metro tmux session"]
+        "release_effects": ["The final shared lease stops the slot-scoped Metro tmux session"],
+        "retention": { "operator-wait": "stop", "terminal": "stop" }
       },
       "ios-simulator": {
         "label": "iOS Simulator",
