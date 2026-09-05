@@ -1,14 +1,14 @@
 {
-  "testedSha": "8d10df00facfc08c9584f4f7a5c46c82cc9977e6",
+  "testedSha": "62be77d2bc1a1ed3ac69db39e698f46b935ed7a4",
   "testedTreeDirty": false,
   "dirtyPathCount": 0,
-  "capturedAt": "2026-09-04T23:32:16.448Z",
+  "capturedAt": "2026-09-05T00:40:53.369Z",
   "runDetail": {
     "ok": true,
-    "testedSha": "8d10df00facfc08c9584f4f7a5c46c82cc9977e6",
-    "runId": "95087667-f2e6-4a68-bc8f-97339e49ade1",
+    "testedSha": "62be77d2bc1a1ed3ac69db39e698f46b935ed7a4",
+    "runId": "96c2e896-e961-4f17-8177-33282d672cd3",
     "slotId": "macpro-ff-1",
-    "capturedAt": "2026-09-04T23:31:41.929Z",
+    "capturedAt": "2026-09-05T00:40:41.962Z",
     "summary": {
       "posture": "operator-wait",
       "policySource": "framework-default",
@@ -22,7 +22,7 @@
       "source": "policy from framework default",
       "countsText": "1 retained · 0 warm · 0 stopped · 0 failed",
       "worker": "worker retained",
-      "lastTransition": "Last transition to Operator wait: applied · 2026-09-04T23:29:19.075Z · 1/1 steps",
+      "lastTransition": "Last transition to Operator wait: applied · 2026-09-05T00:39:29.610Z · 1/1 steps",
       "effects": null,
       "rejection": null
     },
@@ -59,8 +59,8 @@
   },
   "surfaces": {
     "slotId": "macpro-ff-1",
-    "testedSha": "8d10df00facfc08c9584f4f7a5c46c82cc9977e6",
-    "capturedAt": "2026-09-04T23:31:53.884Z",
+    "testedSha": "62be77d2bc1a1ed3ac69db39e698f46b935ed7a4",
+    "capturedAt": "2026-09-05T00:38:26.341Z",
     "backlog": {
       "attempted": true,
       "itemId": "7b3235c9-8288-4785-92d6-73aad1d35bff",
@@ -71,20 +71,8 @@
       "restored": true
     },
     "slotView": {
-      "attempted": true,
+      "attempted": false,
       "rows": [
-        {
-          "capabilityId": "sandbox-gateway-ui",
-          "leaseState": "acquired",
-          "observedState": "running",
-          "warmUntil": null,
-          "reason": "Why held by an active lease and passing its health check",
-          "warmNote": null,
-          "actions": [
-            "runtime-capability-restart-sandbox-gateway-ui",
-            "runtime-capability-release-sandbox-gateway-ui"
-          ]
-        },
         {
           "capabilityId": "browser-cdp",
           "leaseState": "released",
@@ -92,7 +80,7 @@
           "warmUntil": null,
           "reason": "Why the lease was released with no keep-warm window",
           "warmNote": null,
-          "actions": ["runtime-capability-acquire-browser-cdp"]
+          "actions": []
         },
         {
           "capabilityId": "companion-native-client-ios",
@@ -101,7 +89,7 @@
           "warmUntil": null,
           "reason": "Why the lease was released with no keep-warm window",
           "warmNote": null,
-          "actions": ["runtime-capability-acquire-companion-native-client-ios"]
+          "actions": []
         },
         {
           "capabilityId": "ios-simulator",
@@ -110,7 +98,25 @@
           "warmUntil": null,
           "reason": "Why the lease was released with no keep-warm window",
           "warmNote": null,
-          "actions": ["runtime-capability-acquire-ios-simulator"]
+          "actions": []
+        },
+        {
+          "capabilityId": "recording",
+          "leaseState": "released",
+          "observedState": "stopped",
+          "warmUntil": null,
+          "reason": "Why the lease was released with no keep-warm window",
+          "warmNote": null,
+          "actions": []
+        },
+        {
+          "capabilityId": "sandbox-gateway-ui",
+          "leaseState": "released",
+          "observedState": "stopped",
+          "warmUntil": null,
+          "reason": "Why the lease was released with no keep-warm window",
+          "warmNote": null,
+          "actions": []
         },
         {
           "capabilityId": "android-device",
@@ -128,34 +134,19 @@
           "warmUntil": null,
           "reason": "Why the lease was released with no keep-warm window",
           "warmNote": null,
-          "actions": ["runtime-capability-acquire-companion-metro"]
-        },
-        {
-          "capabilityId": "recording",
-          "leaseState": "available",
-          "observedState": "stopped",
-          "warmUntil": null,
-          "reason": "Why no lease has been taken on this slot",
-          "warmNote": null,
-          "actions": ["runtime-capability-acquire-recording"]
+          "actions": []
         }
       ],
       "rowsSeparateLeaseAndProvider": true,
       "warmRowsOfferStop": true,
-      "action": "acquire",
-      "actionCapabilityId": "browser-cdp",
-      "leasesBefore": 3,
-      "actionError": "acquire browser-cdp: No stored proof plan for browser-cdp on run 95087667-f2e6-4a68-bc8f-97339e49ade1; the Gateway has no recorded reason or mode to acquire it under.",
-      "leasesAfter": 3,
-      "leaseStatesAfter": ["released", "released", "released"],
-      "actionProved": true
+      "skipped": "no capability on this slot offers an acquire action right now"
     },
     "warmStop": {
       "attempted": true,
       "capabilityId": "browser-cdp",
       "keepWarmMs": 600000,
       "releasedOk": true,
-      "warmUntil": "2026-09-04T23:42:04.027Z",
+      "warmUntil": "2026-09-05T00:48:34.920Z",
       "warmWindowOpen": true,
       "buttonLabel": "Stop warm Browser / CDP",
       "note": "Stopped. The lease owner can no longer drive the CDP session; Chrome remains reusable only until the explicit keep-warm deadline",
@@ -163,9 +154,27 @@
       "noteObservedState": "stopped",
       "gatewayKeepWarmUntil": null,
       "gatewayCleanupFailure": null,
+      "gatewayLeaseState": "released",
       "honest": true,
       "proved": true,
-      "leftoverLeases": 0
+      "leftoverLeases": 0,
+      "teardownErrors": [],
+      "leasesInError": 0
+    },
+    "restart": {
+      "attempted": true,
+      "capabilityId": "recording",
+      "originalLeaseId": "cap-cc1025f8-21ac-4b09-b72e-40e877fd8607",
+      "actionError": null,
+      "originalLeaseState": "released",
+      "newLeaseId": "cap-279fba93-de4a-41b9-b538-7a9674093432",
+      "cleanupFailure": null,
+      "originalReleased": true,
+      "reacquired": true,
+      "proved": true,
+      "leftoverLeases": 0,
+      "teardownErrors": [],
+      "leasesInError": 0
     },
     "failures": [],
     "ok": true
