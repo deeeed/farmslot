@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ResourcePostureCapabilityState, RunResourcePostureState } from '@farmslot/protocol';
+import {
+  type ResourcePostureCapabilityState,
+  resourcePostureRowStatus,
+  type RunResourcePostureState,
+} from '@farmslot/protocol';
 
 import {
   policySourceLabel,
   postureCapabilityRow,
-  postureRowStatus,
   postureTransitionFailuresToShow,
   rejectionMessage,
   summarizeRunPosture,
@@ -160,9 +163,9 @@ test('every row lands in exactly one bucket, so the counts never hide one', () =
 });
 
 test('an unknown observation is never claimed as matching or mismatching intent', () => {
-  assert.equal(postureRowStatus('acquired', 'unknown'), 'unproven');
-  assert.equal(postureRowStatus('stopped', 'unknown'), 'unproven');
-  assert.equal(postureRowStatus('stopped', 'transitioning'), 'pending');
+  assert.equal(resourcePostureRowStatus('acquired', 'unknown'), 'unproven');
+  assert.equal(resourcePostureRowStatus('stopped', 'unknown'), 'unproven');
+  assert.equal(resourcePostureRowStatus('stopped', 'transitioning'), 'pending');
 
   const summary = summarizeRunPosture(
     postureState({

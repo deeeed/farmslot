@@ -1,0 +1,25 @@
+{
+  "pass": true,
+  "failures": [],
+  "results": {
+    "project-default": {
+      "choice": "project-default",
+      "policySource": "project-default",
+      "honored": true,
+      "warningShown": false,
+      "summary": "Operator wait via project default — 1 retained"
+    },
+    "minimize": {
+      "choice": "minimize",
+      "policySource": "gate-choice",
+      "honored": true,
+      "warningShown": false,
+      "summary": "Operator wait via operator gate choice — 1 retained"
+    },
+    "ignoredChoice": {
+      "choice": "minimize",
+      "policySource": "project-default",
+      "warningShown": true
+    }
+  }
+}

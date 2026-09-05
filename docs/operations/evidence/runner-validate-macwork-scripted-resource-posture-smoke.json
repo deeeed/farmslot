@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-04T20:05:11.958Z",
+  "recordedAt": "2026-09-05T02:22:13.489Z",
   "host": "macwork",
   "scenario": "resource-posture-smoke",
   "runner": "scripted",
   "slotId": "macpro-ff-1",
   "capabilityId": "sandbox-gateway-ui",
-  "runId": "a34c5d7f-0e73-4c11-a869-a6ce242f506f",
+  "runId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36",
   "project": "farmslot-farm",
   "acquire": {
     "ok": true,
@@ -14,7 +14,7 @@
   },
   "waitPreview": {
     "posture": "operator-wait",
-    "policySource": "framework-default",
+    "policySource": "project-default",
     "retain": ["sandbox-gateway-ui"],
     "warm": [],
     "stop": [],
@@ -23,20 +23,20 @@
   "waitApply": {
     "ok": true,
     "outcome": "applied",
-    "policySource": "framework-default"
+    "policySource": "project-default"
   },
   "waitStatus": {
     "capabilityId": "sandbox-gateway-ui",
     "desiredDisposition": "acquired",
     "observedState": "running",
-    "policySource": "framework-default",
-    "reason": "kept so the next operator action stays usable",
-    "leaseId": "cap-cc0167b3-8754-4934-a6c8-f45693d6aaac",
+    "policySource": "project-default",
+    "reason": "provider retention 'retain' at operator-wait",
+    "leaseId": "cap-f0740cd9-723c-48ad-ac04-dc231537bfb9",
     "owner": {
-      "runId": "a34c5d7f-0e73-4c11-a869-a6ce242f506f",
-      "familyId": "a34c5d7f-0e73-4c11-a869-a6ce242f506f"
+      "runId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36",
+      "familyId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36"
     },
-    "lastTransitionAt": "2026-09-04T20:04:46.026Z",
+    "lastTransitionAt": "2026-09-05T02:21:43.531Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -55,14 +55,14 @@
     "capabilityId": "sandbox-gateway-ui",
     "desiredDisposition": "stopped",
     "observedState": "stopped",
-    "policySource": "framework-default",
-    "reason": "terminal cleanup stops every run- and family-owned provider",
-    "leaseId": "cap-eb72ab77-5d67-4040-bb09-50e3de75c54e",
+    "policySource": "project-default",
+    "reason": "provider retention 'stop' at terminal",
+    "leaseId": "cap-f0740cd9-723c-48ad-ac04-dc231537bfb9",
     "owner": {
-      "runId": "34c09506-039a-4a0a-b4af-b56de5d29b4b",
-      "familyId": "a34c5d7f-0e73-4c11-a869-a6ce242f506f"
+      "runId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36",
+      "familyId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36"
     },
-    "lastTransitionAt": "2026-09-04T20:05:09.667Z",
+    "lastTransitionAt": "2026-09-05T02:22:10.708Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -70,7 +70,7 @@
   },
   "persistedPosture": {
     "posture": "terminal",
-    "policySource": "framework-default",
+    "policySource": "project-default",
     "lastTransition": "idempotent"
   },
   "dependencyProof": {
@@ -114,10 +114,10 @@
         "capabilityId": "companion-metro",
         "desiredDisposition": "stopped",
         "observedState": "stopped",
-        "policySource": "framework-default"
+        "policySource": "project-default"
       }
     ],
-    "preparedAt": "2026-09-04T20:04:56.070Z",
+    "preparedAt": "2026-09-05T02:21:57.482Z",
     "terminalStates": [
       {
         "capabilityId": "ios-simulator",
@@ -135,21 +135,21 @@
   "familyProof": {
     "attempted": true,
     "pass": true,
-    "runId": "34c09506-039a-4a0a-b4af-b56de5d29b4b",
+    "runId": "41a8bc7c-0023-4971-919c-44b7f45a509f",
     "error": null,
-    "familyId": "a34c5d7f-0e73-4c11-a869-a6ce242f506f",
+    "familyId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36",
     "siblingStatusBeforeAcquire": "blocked",
     "siblingSlotId": null,
     "derivedAcquire": {
       "ok": true,
-      "familyId": "a34c5d7f-0e73-4c11-a869-a6ce242f506f",
+      "familyId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36",
       "reason": null
     },
-    "derivedLeaseId": "cap-eb72ab77-5d67-4040-bb09-50e3de75c54e",
+    "derivedLeaseId": "cap-34a7e61d-10e2-457b-852d-6e4acd3041f1",
     "mismatchAcquire": {
       "ok": false,
       "kind": "invalid-request",
-      "reason": "ownerFamilyId 'a34c5d7f-0e73-4c11-a869-a6ce242f506f-not-really' does not match the family of run '34c09506-039a-4a0a-b4af-b56de5d29b4b' ('a34c5d7f-0e73-4c11-a869-a6ce242f506f')"
+      "reason": "ownerFamilyId 'c4945e2e-7552-40fb-90ff-8fd0e4a0ca36-not-really' does not match the family of run '41a8bc7c-0023-4971-919c-44b7f45a509f' ('c4945e2e-7552-40fb-90ff-8fd0e4a0ca36')"
     },
     "leasesAfterMismatch": 1,
     "siblingLeasesAfterTerminal": [
@@ -160,15 +160,59 @@
     ],
     "fencedAcquire": {
       "ok": false,
-      "reason": "Run '34c09506-039a-4a0a-b4af-b56de5d29b4b' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
+      "reason": "Run '41a8bc7c-0023-4971-919c-44b7f45a509f' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
     },
     "siblingFinalStatus": "cancelled",
     "leftoverLeases": []
   },
+  "cliProof": {
+    "attempted": true,
+    "pass": true,
+    "error": null,
+    "statusExit": 0,
+    "statusEnvelope": {
+      "command": "resource.posture.status",
+      "status": "ok",
+      "exitCode": 0
+    },
+    "statusCapability": {
+      "desiredDisposition": "acquired",
+      "observedState": "running",
+      "policySource": "project-default"
+    },
+    "humanSample": "sandbox-gateway-ui  wants=acquired  observed=running  match",
+    "preview": {
+      "exit": 0,
+      "posture": "terminal",
+      "stop": ["sandbox-gateway-ui"],
+      "rejected": false
+    },
+    "freeSlot": {
+      "exit": 1,
+      "gatewayRejected": true,
+      "errorCode": "RESOURCE_POSTURE_REJECTED",
+      "rejectionKind": "park-ineligible"
+    },
+    "projectDefault": {
+      "exit": 0,
+      "rpcPolicySource": "project-default",
+      "cliPolicySource": "project-default",
+      "rejected": false
+    }
+  },
+  "cliStopWarmProof": {
+    "attempted": true,
+    "pass": true,
+    "error": null,
+    "exit": 0,
+    "envelopeStatus": "ok",
+    "outcome": "not-warm",
+    "observedState": "stopped"
+  },
   "leftoverLeases": [],
   "pass": true,
   "error": null,
-  "familyId": "a34c5d7f-0e73-4c11-a869-a6ce242f506f",
+  "familyId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36",
   "terminalRepeatOutcome": "idempotent",
   "cancelEffects": [
     {

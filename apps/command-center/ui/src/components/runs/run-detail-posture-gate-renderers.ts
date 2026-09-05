@@ -106,11 +106,22 @@ export function postureChoicesApply(runPosture: ResourcePosture | undefined): bo
 }
 
 /**
- * Whether the Gateway actually resolved the plan from the operator's choice.
- * A plan that came back from any other source is reported as such rather than
- * being presented as the effect of the choice that was clicked.
+ * Whether the Gateway actually honoured the operator's choice. A plan that came
+ * back from somewhere else is reported as such rather than being presented as
+ * the effect of the choice that was clicked.
+ *
+ * `project-default` is the inverse of the others: it asks the Gateway to defer
+ * to the lower precedence levels, so a plan resolved from dispatch config, the
+ * project, or the framework is exactly what was requested. The Gateway drops
+ * `project-default` before it picks a policy source, so that choice can never
+ * come back as `gate-choice`; testing every choice for `gate-choice` warned
+ * about the one choice that was working as asked.
  */
-export function postureChoiceHonored(plan: ResourcePosturePlan): boolean {
+export function postureChoiceHonored(
+  plan: ResourcePosturePlan,
+  choice: ResourcePostureGateChoice,
+): boolean {
+  if (choice === 'project-default') return plan.policySource !== 'gate-choice';
   return plan.policySource === 'gate-choice';
 }
 
@@ -290,7 +301,7 @@ export function renderRunPostureGateChoices(ctx: RunPostureGateRenderContext): u
             <div class="posture-gate-summary" data-testid="run-posture-preview-summary">
               ${postureGatePreviewSummary(plan)}
             </div>
-            ${state.choice && !plan.rejection && !postureChoiceHonored(plan)
+            ${state.choice && !plan.rejection && !postureChoiceHonored(plan, state.choice)
               ? html`<div class="posture-gate-help" data-testid="run-posture-preview-not-honored">
                   The Gateway did not resolve this plan from the choice — it came from
                   ${policySourceLabel(plan.policySource)}. Resolving now applies that, not the

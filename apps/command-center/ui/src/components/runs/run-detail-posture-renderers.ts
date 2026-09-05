@@ -9,19 +9,24 @@
  */
 import { html, nothing } from 'lit';
 
-import type {
-  ResourcePosture,
-  ResourcePostureCapabilityState,
-  ResourcePostureDesiredDisposition,
-  ResourcePostureGateChoice,
-  ResourcePostureObservedState,
-  ResourcePosturePolicySource,
-  ResourcePostureRejection,
-  ResourcePostureTransition,
-  ResourcePostureTransitionFailure,
-  ResourcePostureTransitionOutcome,
-  ResourcePostureWaitPolicy,
-  RunResourcePostureState,
+import {
+  type ResourcePosture,
+  type ResourcePostureCapabilityState,
+  type ResourcePostureCounts,
+  resourcePostureCounts,
+  type ResourcePostureDesiredDisposition,
+  type ResourcePostureGateChoice,
+  type ResourcePostureObservedState,
+  type ResourcePosturePolicySource,
+  type ResourcePostureRejection,
+  type ResourcePostureRowStatus,
+  resourcePostureRowStatus,
+  type ResourcePostureTransition,
+  type ResourcePostureTransitionFailure,
+  resourcePostureTransitionFailuresToShow,
+  type ResourcePostureTransitionOutcome,
+  type ResourcePostureWaitPolicy,
+  type RunResourcePostureState,
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
@@ -71,32 +76,12 @@ export function rejectionMessage(rejection: ResourcePostureRejection): string {
   return `Rejected — ${rejection.reason}`;
 }
 
-/**
- * How the observed provider state stands against what the Gateway wanted.
- *
- * `unproven` is deliberately not folded into `mismatch` or `matches`: an
- * `unknown` observation means the Gateway could not see the provider, and
- * claiming either outcome from it would be a guess.
- */
-export type RunPostureRowStatus = 'matches' | 'pending' | 'mismatch' | 'unproven';
-
-export function postureRowStatus(
-  desired: ResourcePostureDesiredDisposition,
-  observed: ResourcePostureObservedState,
-): RunPostureRowStatus {
-  if (observed === 'transitioning') return 'pending';
-  if (observed === 'unknown') return 'unproven';
-  if (desired === 'stopped') return observed === 'stopped' ? 'matches' : 'mismatch';
-  // `acquired` and `warm` both want a live provider; the difference is ownership.
-  return observed === 'running' ? 'matches' : 'mismatch';
-}
-
 export interface RunPostureCapabilityRow {
   capabilityId: string;
   desiredDisposition: ResourcePostureDesiredDisposition;
   desiredLabel: string;
   observedState: ResourcePostureObservedState;
-  rowStatus: RunPostureRowStatus;
+  rowStatus: ResourcePostureRowStatus;
   reason: string;
   policySource: ResourcePosturePolicySource;
   warmUntil?: string;
@@ -112,7 +97,7 @@ export function postureCapabilityRow(
     desiredDisposition: state.desiredDisposition,
     desiredLabel: dispositionLabel(state.desiredDisposition),
     observedState: state.observedState,
-    rowStatus: postureRowStatus(state.desiredDisposition, state.observedState),
+    rowStatus: resourcePostureRowStatus(state.desiredDisposition, state.observedState),
     reason: state.reason,
     policySource: state.policySource,
     ...(state.warmUntil ? { warmUntil: state.warmUntil } : {}),
@@ -129,22 +114,8 @@ export interface RunPostureSummary {
   gateChoice?: ResourcePostureGateChoice;
   waitPolicy?: ResourcePostureWaitPolicy;
   workerRetained: boolean;
-  /**
-   * Counts of what the providers are observed to be doing, not of what was
-   * wanted. `stopped` requires an observed `stopped`: a provider the Gateway
-   * intended to stop but which is still running, or whose cleanup failed, must
-   * never be counted as stopped. Anything the Gateway cannot currently place —
-   * unknown, transitioning, or contradicting its intent — lands in `unresolved`
-   * so the four buckets always account for every row instead of quietly
-   * dropping one.
-   */
-  counts: {
-    retained: number;
-    warm: number;
-    stopped: number;
-    failed: number;
-    unresolved: number;
-  };
+  /** Observed-state counts, derived by the shared protocol helper. */
+  counts: ResourcePostureCounts;
   rows: RunPostureCapabilityRow[];
   lastTransition?: ResourcePostureTransition;
   updatedAt: string;
@@ -152,27 +123,7 @@ export interface RunPostureSummary {
 
 export function summarizeRunPosture(state: RunResourcePostureState): RunPostureSummary {
   const rows = state.capabilities.map(postureCapabilityRow);
-  const failedInTransition = new Set(
-    (state.lastTransition?.failures ?? []).map((failure) => failure.capabilityId),
-  );
-  const counts = { retained: 0, warm: 0, stopped: 0, failed: 0, unresolved: 0 };
-  for (const row of rows) {
-    // A failure is reported as a failure and nothing else. Counting it in a
-    // disposition bucket as well would let "1 stopped" describe a provider the
-    // Gateway could not stop.
-    if (row.cleanupFailure || failedInTransition.has(row.capabilityId)) {
-      counts.failed += 1;
-      continue;
-    }
-    if (row.observedState === 'stopped') counts.stopped += 1;
-    else if (row.observedState === 'running') {
-      if (row.desiredDisposition === 'warm') counts.warm += 1;
-      else if (row.desiredDisposition === 'acquired') counts.retained += 1;
-      // Running against a stop intent is neither retained nor stopped.
-      else counts.unresolved += 1;
-    } else if (row.observedState === 'unhealthy') counts.failed += 1;
-    else counts.unresolved += 1;
-  }
+  const counts = resourcePostureCounts(state.capabilities, state.lastTransition);
   return {
     posture: state.posture,
     postureLabel: postureLabel(state.posture),
@@ -189,41 +140,23 @@ export function summarizeRunPosture(state: RunResourcePostureState): RunPostureS
 }
 
 /**
- * Transition failures that are not already shown on a capability row.
- *
- * A failed cleanup lands in both places: the transition's failure list and the
- * row's own `cleanupFailure`. Rendering both gave the operator the same alert
- * twice. The row wins — it sits next to that capability's desired and observed
- * state, which is the context needed to act on it.
- *
- * The match is on capability AND reason. The Gateway reports a failure per
- * lease while a row carries one reason, so suppressing every failure for a
- * capability that had any row failure would silently drop a sibling lease's
- * different failure — the one case where the transition list is the only place
- * that failure is reported at all.
+ * Transition failures that are not already shown on a capability row. The
+ * de-duplication rule is the shared protocol one; this only adapts the row view
+ * back to the capability fields that rule reads.
  */
 export function postureTransitionFailuresToShow(
   summary: RunPostureSummary,
 ): ResourcePostureTransitionFailure[] {
-  // NUL separator: it cannot occur in a capability id or a reason, so no pair
-  // of distinct values can collide into one key.
-  const shownOnRows = new Set(
-    summary.rows
-      .filter((row) => row.cleanupFailure)
-      .map((row) => `${row.capabilityId}\u0000${row.cleanupFailure}`),
-  );
-  return (summary.lastTransition?.failures ?? []).filter(
-    (failure) => !shownOnRows.has(`${failure.capabilityId}\u0000${failure.reason}`),
-  );
+  return resourcePostureTransitionFailuresToShow(summary.rows, summary.lastTransition);
 }
 
-function rowStatusColor(rowStatus: RunPostureRowStatus): string {
+function rowStatusColor(rowStatus: ResourcePostureRowStatus): string {
   if (rowStatus === 'matches') return colors.statusOk;
   if (rowStatus === 'mismatch') return colors.statusFail;
   return colors.textMuted;
 }
 
-function rowStatusLabel(rowStatus: RunPostureRowStatus): string {
+function rowStatusLabel(rowStatus: ResourcePostureRowStatus): string {
   if (rowStatus === 'matches') return 'as intended';
   if (rowStatus === 'mismatch') return 'does not match intent';
   if (rowStatus === 'pending') return 'transition in flight';

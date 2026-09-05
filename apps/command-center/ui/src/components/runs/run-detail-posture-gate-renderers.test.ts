@@ -218,9 +218,34 @@ test('an unknown posture offers no choices, so none can be sent before it is kno
 test('a plan the Gateway did not resolve from the choice is reported as such', () => {
   // A run whose posture is not operator-wait gets the lifecycle-boundary plan
   // back; presenting it as the effect of the clicked choice would be a lie.
-  assert.equal(postureChoiceHonored(plan({ policySource: 'gate-choice' })), true);
+  assert.equal(postureChoiceHonored(plan({ policySource: 'gate-choice' }), 'minimize'), true);
   assert.equal(
-    postureChoiceHonored(plan({ posture: 'active', policySource: 'framework-default' })),
+    postureChoiceHonored(
+      plan({ posture: 'active', policySource: 'framework-default' }),
+      'minimize',
+    ),
+    false,
+  );
+});
+
+test('project-default is honoured by the Gateway deferring, not by a gate-choice source', () => {
+  // The Gateway drops `project-default` before picking a policy source, so it
+  // answers from run-dispatch, the project, or the framework. Each of those IS
+  // the requested outcome; warning about them would flag the one choice whose
+  // entire meaning is to defer.
+  for (const source of ['run-dispatch', 'project-default', 'framework-default'] as const) {
+    assert.equal(
+      postureChoiceHonored(plan({ policySource: source }), 'project-default'),
+      true,
+      `${source} is what project-default asks for`,
+    );
+    // The same plan under any other choice is still reported as not honoured.
+    assert.equal(postureChoiceHonored(plan({ policySource: source }), 'minimize'), false);
+  }
+  // A plan resolved from some earlier gate choice is not what project-default
+  // asked for, so it is still reported.
+  assert.equal(
+    postureChoiceHonored(plan({ policySource: 'gate-choice' }), 'project-default'),
     false,
   );
 });

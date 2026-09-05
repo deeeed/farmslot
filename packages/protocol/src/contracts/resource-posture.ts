@@ -245,3 +245,112 @@ export function isResourcePostureGateChoice(value: unknown): value is ResourcePo
 export function isResourcePostureWaitPolicy(value: unknown): value is ResourcePostureWaitPolicy {
   return RESOURCE_POSTURE_WAIT_POLICIES.includes(value as ResourcePostureWaitPolicy);
 }
+
+/**
+ * How the observed provider state stands against what the Gateway wanted.
+ *
+ * `unproven` is deliberately not folded into `mismatch` or `matches`: an
+ * `unknown` observation means the Gateway could not see the provider, and
+ * claiming either outcome from it would be a guess.
+ */
+export type ResourcePostureRowStatus = 'matches' | 'pending' | 'mismatch' | 'unproven';
+
+/**
+ * The single comparison of desired disposition against observed provider state.
+ *
+ * Shared so Command Center, Companion, and the CLI agree on when the Gateway
+ * got what it asked for. A client that re-derives this locally drifts, and the
+ * drift is always in the same direction: reporting a provider as handled when
+ * nothing observed it.
+ */
+export function resourcePostureRowStatus(
+  desired: ResourcePostureDesiredDisposition,
+  observed: ResourcePostureObservedState,
+): ResourcePostureRowStatus {
+  if (observed === 'transitioning') return 'pending';
+  if (observed === 'unknown') return 'unproven';
+  if (desired === 'stopped') return observed === 'stopped' ? 'matches' : 'mismatch';
+  // `acquired` and `warm` both want a live provider; the difference is ownership.
+  return observed === 'running' ? 'matches' : 'mismatch';
+}
+
+/**
+ * Counts of what the providers are observed to be doing, not of what was
+ * wanted. `stopped` requires an observed `stopped`: a provider the Gateway
+ * intended to stop but which is still running, or whose cleanup failed, must
+ * never be counted as stopped. Anything the Gateway cannot currently place —
+ * unknown, transitioning, or contradicting its intent — lands in `unresolved`
+ * so the buckets always account for every capability instead of quietly
+ * dropping one.
+ */
+export interface ResourcePostureCounts {
+  retained: number;
+  warm: number;
+  stopped: number;
+  failed: number;
+  unresolved: number;
+}
+
+export function resourcePostureCounts(
+  capabilities: readonly ResourcePostureCapabilityState[],
+  lastTransition?: ResourcePostureTransition,
+): ResourcePostureCounts {
+  const failedInTransition = new Set(
+    (lastTransition?.failures ?? []).map((failure) => failure.capabilityId),
+  );
+  const counts: ResourcePostureCounts = {
+    retained: 0,
+    warm: 0,
+    stopped: 0,
+    failed: 0,
+    unresolved: 0,
+  };
+  for (const capability of capabilities) {
+    // A failure is reported as a failure and nothing else. Counting it in a
+    // disposition bucket as well would let "1 stopped" describe a provider the
+    // Gateway could not stop.
+    if (capability.cleanupFailure || failedInTransition.has(capability.capabilityId)) {
+      counts.failed += 1;
+      continue;
+    }
+    if (capability.observedState === 'stopped') counts.stopped += 1;
+    else if (capability.observedState === 'running') {
+      if (capability.desiredDisposition === 'warm') counts.warm += 1;
+      else if (capability.desiredDisposition === 'acquired') counts.retained += 1;
+      // Running against a stop intent is neither retained nor stopped.
+      else counts.unresolved += 1;
+    } else if (capability.observedState === 'unhealthy') counts.failed += 1;
+    else counts.unresolved += 1;
+  }
+  return counts;
+}
+
+/**
+ * Transition failures that are not already reported on a capability entry.
+ *
+ * A failed cleanup lands in both places: the transition's failure list and the
+ * capability's own `cleanupFailure`. Reporting both gives the operator the same
+ * alert twice. The capability entry wins — it sits next to that capability's
+ * desired and observed state, which is the context needed to act on it.
+ *
+ * The match is on capability AND reason. The Gateway reports a failure per
+ * lease while a capability entry carries one reason, so suppressing every
+ * failure for a capability that had any entry failure would silently drop a
+ * sibling lease's different failure — the one case where the transition list is
+ * the only place that failure is reported at all.
+ */
+export function resourcePostureTransitionFailuresToShow(
+  capabilities: readonly Pick<ResourcePostureCapabilityState, 'capabilityId' | 'cleanupFailure'>[],
+  lastTransition?: ResourcePostureTransition,
+): ResourcePostureTransitionFailure[] {
+  // NUL separator: it cannot occur in a capability id or a reason, so no pair
+  // of distinct values can collide into one key.
+  const alreadyReported = new Set(
+    capabilities
+      .filter((capability) => capability.cleanupFailure)
+      .map((capability) => `${capability.capabilityId}\u0000${capability.cleanupFailure}`),
+  );
+  return (lastTransition?.failures ?? []).filter(
+    (failure) => !alreadyReported.has(`${failure.capabilityId}\u0000${failure.reason}`),
+  );
+}

@@ -609,7 +609,7 @@
     },
     "providerAccounts.snapshot": {
       "surface": "na",
-      "note": "Command Center fleet Setup / provider seats surface (web UI). Labels and identity only \u2014 never tokens or credential paths."
+      "note": "Command Center fleet Setup / provider seats surface (web UI). Labels and identity only — never tokens or credential paths."
     },
     "recipe.cancel": {
       "surface": "rpc-only",
@@ -861,36 +861,38 @@
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
     "runtime.capability.acquire": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+      "surface": "typed-command",
+      "command": "farmslot resource capability acquire"
     },
     "runtime.capability.list": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
     "runtime.capability.release": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel."
+      "surface": "typed-command",
+      "command": "farmslot resource capability release",
+      "note": "Also used by the Command Center runtime-capabilities panel."
     },
     "runtime.capability.stopWarm": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]`. ADR-054 slice 3 promotes this to `farmslot resource` alongside the posture commands. Also used by the Command Center Slot View to stop a warm provider."
+      "surface": "typed-command",
+      "command": "farmslot resource capability stop-warm",
+      "note": "Also used by the Command Center Slot View to stop a warm provider."
     },
     "runtime.capability.status": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel."
     },
     "runtime.posture.apply": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]`. ADR-054 slice 3 promotes this to `farmslot resource posture` in the existing resource command family."
+      "surface": "typed-command",
+      "command": "farmslot resource posture apply"
     },
     "runtime.posture.preview": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]`. ADR-054 slice 3 promotes this to `farmslot resource posture` in the existing resource command family."
+      "surface": "typed-command",
+      "command": "farmslot resource posture preview"
     },
     "runtime.posture.status": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]`. ADR-054 slice 3 promotes this to `farmslot resource posture` in the existing resource command family."
+      "surface": "typed-command",
+      "command": "farmslot resource posture status"
     },
     "screen.subscribe": {
       "surface": "na",

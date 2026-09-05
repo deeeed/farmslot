@@ -7,9 +7,13 @@ import {
   RESOURCE_POSTURE_GATE_CHOICES,
   RESOURCE_POSTURE_WAIT_POLICIES,
   RESOURCE_POSTURES,
+  type ResourcePostureCapabilityState,
+  resourcePostureCounts,
   type ResourcePosturePlan,
   type ResourcePostureRejection,
+  resourcePostureRowStatus,
   type ResourcePostureTransition,
+  resourcePostureTransitionFailuresToShow,
   type ResourcePostureWaitPolicy,
   type RunResourcePostureState,
   type RuntimeCapabilityCatalogEntry,
@@ -160,4 +164,97 @@ test('provider retention and release keepWarm ride the existing capability contr
 test('wait policy is assignable from the gate-choice vocabulary minus project-default', () => {
   const policy: ResourcePostureWaitPolicy = 'free-slot';
   assert.ok(RESOURCE_POSTURE_GATE_CHOICES.includes(policy));
+});
+
+test('row status never claims an outcome the Gateway did not observe', () => {
+  assert.equal(resourcePostureRowStatus('acquired', 'running'), 'matches');
+  assert.equal(resourcePostureRowStatus('warm', 'running'), 'matches');
+  assert.equal(resourcePostureRowStatus('stopped', 'stopped'), 'matches');
+  assert.equal(resourcePostureRowStatus('stopped', 'running'), 'mismatch');
+  assert.equal(resourcePostureRowStatus('acquired', 'stopped'), 'mismatch');
+  // A transition in flight is not yet a mismatch.
+  assert.equal(resourcePostureRowStatus('stopped', 'transitioning'), 'pending');
+  // An unseen provider is neither a match nor a mismatch.
+  assert.equal(resourcePostureRowStatus('acquired', 'unknown'), 'unproven');
+  assert.equal(resourcePostureRowStatus('stopped', 'unknown'), 'unproven');
+});
+
+test('counts report observed state, so an unstopped or failed provider is never counted stopped', () => {
+  const capability = (
+    overrides: Partial<ResourcePostureCapabilityState>,
+  ): ResourcePostureCapabilityState => ({
+    capabilityId: 'cap',
+    desiredDisposition: 'stopped',
+    observedState: 'stopped',
+    policySource: 'framework-default',
+    reason: 'terminal cleanup',
+    releaseEffects: [],
+    ...overrides,
+  });
+  const counts = resourcePostureCounts(
+    [
+      capability({ capabilityId: 'a', desiredDisposition: 'acquired', observedState: 'running' }),
+      capability({ capabilityId: 'b', desiredDisposition: 'warm', observedState: 'running' }),
+      capability({ capabilityId: 'c' }),
+      // Told to stop, still running: neither retained nor stopped.
+      capability({ capabilityId: 'd', observedState: 'running' }),
+      // Cleanup failed: a failure and nothing else.
+      capability({ capabilityId: 'e', cleanupFailure: 'stop exited 1' }),
+      capability({ capabilityId: 'f', observedState: 'unhealthy' }),
+      capability({ capabilityId: 'g', observedState: 'unknown' }),
+    ],
+    undefined,
+  );
+  assert.deepEqual(counts, { retained: 1, warm: 1, stopped: 1, failed: 2, unresolved: 2 });
+
+  // A transition failure disqualifies a capability from every other bucket even
+  // when its own entry looks clean.
+  const withTransitionFailure = resourcePostureCounts([capability({ capabilityId: 'a' })], {
+    id: 'op-1',
+    posture: 'terminal',
+    policySource: 'framework-default',
+    requestedAt: '2026-09-05T00:00:00.000Z',
+    outcome: 'partial',
+    effects: [],
+    progress: { total: 1, completed: 0 },
+    failures: [{ capabilityId: 'a', reason: 'stop exited 1' }],
+  });
+  assert.deepEqual(withTransitionFailure, {
+    retained: 0,
+    warm: 0,
+    stopped: 0,
+    failed: 1,
+    unresolved: 0,
+  });
+});
+
+test('transition failures already carried by a capability are not reported twice', () => {
+  const transition: ResourcePostureTransition = {
+    id: 'op-1',
+    posture: 'terminal',
+    policySource: 'framework-default',
+    requestedAt: '2026-09-05T00:00:00.000Z',
+    outcome: 'partial',
+    effects: [],
+    progress: { total: 2, completed: 1 },
+    failures: [
+      { capabilityId: 'metro', reason: 'stop timed out' },
+      { capabilityId: 'metro', leaseId: 'lease-9', reason: 'port still bound' },
+      { capabilityId: 'chrome', reason: 'no such process' },
+    ],
+  };
+  const remaining = resourcePostureTransitionFailuresToShow(
+    [
+      { capabilityId: 'metro', cleanupFailure: 'stop timed out' },
+      { capabilityId: 'chrome', cleanupFailure: undefined },
+    ],
+    transition,
+  );
+  // The sibling lease failed for a different reason, so it is still the only
+  // place that failure is reported.
+  assert.deepEqual(remaining, [
+    { capabilityId: 'metro', leaseId: 'lease-9', reason: 'port still bound' },
+    { capabilityId: 'chrome', reason: 'no such process' },
+  ]);
+  assert.deepEqual(resourcePostureTransitionFailuresToShow([], undefined), []);
 });

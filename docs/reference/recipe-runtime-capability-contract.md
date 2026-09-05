@@ -161,6 +161,122 @@ The generic bridge commands are:
 The bridge must drive supported app/user or test-host paths. It must not mutate
 React/Redux/MobX state to fabricate proof.
 
+## Run resource posture
+
+Runtime capability leases say who owns a provider. The **resource posture**
+(ADR-054) says which providers should be live at the run's current lifecycle
+boundary. The Gateway owns it. Recipes, runners, skills, and clients read it and
+never resolve it themselves, and never stop a provider with their own shell
+command — every change goes through the capability provider's declared release
+action.
+
+### The four postures
+
+| Posture         | Intent                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| `active`        | Keep only the capabilities the current proof plan requires acquired and healthy.                  |
+| `operator-wait` | Apply the effective retention policy while the run waits for an operator or CI.                   |
+| `parked`        | Delegate to machine parking for this one run: stop worker and manifest resources, keep workspace. |
+| `terminal`      | Stop every run- and family-owned capability in dependency order, bypassing keep-warm.             |
+
+Preparing a validation or a recipe rerun is not a fifth posture. It is `active`
+with the validation's proof plan re-applied: the Gateway reacquires the selected
+proof requirements and passes their health checks before the action starts.
+
+### The four gate choices
+
+A human-gate decision carries one operator choice, which resolves to a posture
+plus a proof plan.
+
+| Choice                | Resolves to                                                        |
+| --------------------- | ------------------------------------------------------------------ |
+| `keep-for-validation` | `active` with the validation proof plan                            |
+| `minimize`            | `operator-wait` with expensive providers released, worker retained |
+| `free-slot`           | `parked`; a typed rejection until the run is park-eligible         |
+| `project-default`     | Whatever the lower precedence levels resolve to                    |
+
+### Precedence
+
+The effective policy resolves in this order, and the winning level is recorded on
+every decision as its policy source:
+
+1. **`gate-choice`** — the operator's choice for the current wait.
+2. **`run-dispatch`** — the run's `waitPolicy`, copied from backlog dispatch
+   settings at creation, so a batch or overnight dispatch presets every wait.
+3. **`project-default`** — `runtime_capabilities.posture.defaults` and a
+   provider's own `retention` map in `project.json`; the provider overrides the
+   project default.
+4. **`framework-default`** — retain what keeps the current operator action
+   usable, release expensive unneeded providers at durable waits, stop every
+   run-owned provider at terminal.
+
+A client cannot widen an operator choice or invent its own cleanup policy.
+Projects configure retention only for `operator-wait` and `terminal`: `active` is
+derived from the proof plan and `parked` delegates to machine parking, and
+`terminal` accepts only `stop`.
+
+```json
+{
+  "runtime_capabilities": {
+    "posture": { "defaults": { "operator-wait": "warm", "terminal": "stop" } },
+    "providers": {
+      "browser-cdp": {
+        "keep_warm_ms": 600000,
+        "retention": { "operator-wait": "warm", "terminal": "stop" }
+      },
+      "companion-metro": { "retention": { "operator-wait": "stop", "terminal": "stop" } }
+    }
+  }
+}
+```
+
+### Warm is not stopped
+
+Posture status reports two independent things per capability, and they must never
+be collapsed into one:
+
+- **desired disposition** — `acquired`, `warm`, or `stopped`: what the Gateway
+  intends.
+- **observed provider state** — `running`, `stopped`, `unhealthy`,
+  `transitioning`, or `unknown`: what it saw.
+
+`warm` gives up ownership but deliberately keeps a healthy provider alive until
+an explicit deadline, so a released lease with a live keep-warm provider is
+observed `running`. Reacquiring a warm healthy provider reuses it through the
+existing health contract; an unhealthy one is cleaned up first. A provider is
+reported `stopped` only when the Gateway observed it stop — a failed cleanup
+leaves it `unhealthy` or `unknown` with a reason attached, never `stopped`.
+
+### Runner sessions are not runtime capabilities
+
+Posture never touches a runner session. Session retention, handoff, and resume
+stay in the shared runner capability layer, and no posture resolved here stops a
+gate-held worker (ADR-038). Stopping a worker belongs to machine parking, which
+is what `parked` delegates to and which excludes gate-held runs today. Posture
+status may report whether the worker is live; runtime providers never implement
+runner resume commands.
+
+### Operator commands
+
+```bash
+farmslot resource posture status <runId>
+farmslot resource posture preview <runId> --posture operator-wait
+farmslot resource posture preview <runId> --choice minimize
+farmslot resource posture apply <runId> --choice minimize --operation-id <key>
+
+farmslot resource capability acquire <slotId> <capabilityId> --run <runId> --reason <text>
+farmslot resource capability release <slotId> --run <runId> --capability <capabilityId> [--stop]
+farmslot resource capability stop-warm <slotId> <capabilityId>
+```
+
+`preview` returns exactly what would be acquired, retained, warmed, or stopped
+and the declared release effects, before an operator commits. `apply` takes an
+`--operation-id` idempotency key: replaying it returns the stored transition
+instead of executing again. `stop-warm` is the only way to stop a provider a
+released lease is keeping alive — a plain release reports success while the
+provider keeps running. Every command accepts `--json` and prints the Gateway's
+result unchanged.
+
 ## Project runner composition rule
 
 A runner should be mostly composition:
