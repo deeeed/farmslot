@@ -953,6 +953,14 @@ test('a release_effect claim must match the hooks its resource actually has', ()
   const opaque = {
     device: { label: 'Device', type: 'device' as const, hooks: { shutdown: 'true' } },
   };
+  const watchOnly = {
+    device: {
+      label: 'Device',
+      type: 'device' as const,
+      watch: { type: 'port-listen', port: '9323' },
+      hooks: { shutdown: 'true' },
+    },
+  };
 
   // A device with no boot hook cannot honour a `stop` claim, but `retain` is
   // exactly what it can honour, so long as it can be health-checked.
@@ -976,7 +984,17 @@ test('a release_effect claim must match the hooks its resource actually has', ()
         project(opaque, [{ resource_id: 'device', release_effect: 'retain' }]),
         'project.json',
       ),
-    /no health hook or watch to prove it stayed running/,
+    /no health hook to prove it stayed running/,
+  );
+  // A watch is not a health signal: polling reports a resource with no health
+  // hook as `unknown`, so restore could never verify a watch-only resource.
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project(watchOnly, [{ resource_id: 'device', release_effect: 'retain' }]),
+        'project.json',
+      ),
+    /no health hook to prove it stayed running/,
   );
   // An omitted release_effect defaults to `stop` and is held to the same bar.
   assert.throws(

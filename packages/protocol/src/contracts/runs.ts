@@ -1592,6 +1592,24 @@ export interface MachineParkResource {
   error?: string;
 }
 
+/** What restore did to one resource, emitted by the code path that did it. */
+export type MachineParkRestoreAction = 'verified' | 'booted' | 'stopped' | 'skipped';
+
+/**
+ * One lifecycle effect a restore performed, recorded as fact rather than
+ * inferred from the absence of an error. A successful boot leaves no error
+ * behind, so "no boot error" can never prove no boot happened; this can.
+ */
+export interface MachineParkRestoreEffect {
+  resourceId: string;
+  action: MachineParkRestoreAction;
+  /** Gateway clock, when the effect was performed or observed. */
+  at: string;
+  /** False when the action failed, or when it happened and should not have. */
+  ok: boolean;
+  reason?: string;
+}
+
 export interface MachineParkResourceManifest {
   capturedAt: string;
   resources: MachineParkResource[];
@@ -1730,6 +1748,12 @@ export interface MachineParkRecord {
   slotFreedAt?: string;
   /** Restore intent classification persisted before any selected batch member mutates. */
   restoreDisposition?: 'zero-effect' | 'effectful';
+  /**
+   * What the last restore attempt actually did to each manifest resource, in
+   * the order it did it. Reset at the start of each attempt. Absent on records
+   * written before restore recorded its effects.
+   */
+  restoreEffects?: MachineParkRestoreEffect[];
   /** Exact runner-native acknowledgement captured before orchestration resumes. */
   recoveryProof?: {
     sessionId: string;

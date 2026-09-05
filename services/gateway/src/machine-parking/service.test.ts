@@ -3644,6 +3644,21 @@ test('restore inspects a retained resource before it acquires anything', async (
     after.resourceManifest.resources[0]?.error ?? '',
     /park never stopped it, so restore will not boot it/,
   );
+  // The structural account, not the absence of an error: a successful boot
+  // leaves no error, so only a recorded effect can prove none happened.
+  // Reverting the ordering fix makes a `booted` effect appear here.
+  const effects = after.restoreEffects ?? [];
+  assert.deepEqual(
+    effects
+      .filter((effect) => effect.resourceId === 'browser-cdp')
+      .map((effect) => ({ action: effect.action, ok: effect.ok })),
+    [{ action: 'verified', ok: false }],
+    'the dead retained resource was verified and found dead, and nothing booted it',
+  );
+  assert.equal(
+    effects.some((effect) => effect.action === 'booted'),
+    false,
+  );
 });
 
 test('a declared retain resource with no boot hook is parkable, not RESOURCE_HOOKS_UNAVAILABLE', async () => {
@@ -3785,4 +3800,163 @@ test('a gate park that already released a lease is never treated as zero-effect'
     null,
     'a record whose leases were released is not zero-effect and must not be discarded',
   );
+});
+
+test('restore records exactly one verified effect per retained resource and never a boot', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  let status = statusWithAffectedResources('run-a', [
+    { resourceId: 'browser-cdp', ownership: 'capability', releaseEffect: 'retain' },
+  ]);
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  ctx.deps.releaseCapability = async () => {
+    const own = structuredClone(status.leases[0]!);
+    status = { ...status, leases: [{ ...own, state: 'released' as const }] };
+    return { ok: true, released: [own], retained: [], effects: [], failures: [] };
+  };
+  const pausePreview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: pausePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'effects-park',
+  });
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  const restored = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'effects-restore',
+  });
+  assert.equal(restored.ok, true);
+
+  // machine.pause.status is where a client reads this, so assert it there.
+  const machineStatus = await ctx.service.status('machine-a');
+  const effects = machineStatus.records.find((record) => record.runId === 'run-a')!.restoreEffects;
+  assert.deepEqual(
+    effects?.map((effect) => ({
+      resourceId: effect.resourceId,
+      action: effect.action,
+      ok: effect.ok,
+    })),
+    [{ resourceId: 'browser-cdp', action: 'verified', ok: true }],
+    'a retained resource is verified once and nothing else happens to it',
+  );
+  assert.equal(
+    effects?.some((effect) => effect.action === 'booted'),
+    false,
+  );
+  assert.equal(typeof effects?.[0]?.at, 'string');
+});
+
+test('restore records the boot it performed on a resource the park stopped', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const pausePreview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: pausePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'stop-effects-park',
+  });
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'stop-effects-restore',
+  });
+  const effects = ctx.runs.get('run-a')!.park!.restoreEffects;
+  assert.deepEqual(
+    effects?.map((effect) => ({
+      resourceId: effect.resourceId,
+      action: effect.action,
+      ok: effect.ok,
+    })),
+    [{ resourceId: 'browser-cdp', action: 'booted', ok: true }],
+    'a resource the park stopped is booted back, and the record says so',
+  );
+});
+
+test('a conflicting catalog is named as a conflict even when the resource also lacks hooks', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  // The resource has no boot hook, so the hooks guard would also refuse it.
+  // The operator needs to be told the catalog contradicts itself, which is the
+  // thing they can fix; the hooks verdict would send them after the wrong bug.
+  ctx.deps.observeResources = async () => [
+    {
+      id: 'browser-cdp',
+      definition: {
+        type: 'device',
+        label: 'Device',
+        streamable: false,
+        controllable: true,
+        hooks: { health: 'health', shutdown: 'true' },
+      },
+      status: 'running',
+    },
+  ];
+  const status = statusWithTwoClaimants('run-a', {
+    lifecycleLeased: true,
+    capabilityLeased: true,
+    lifecycleEffect: 'retain',
+    capabilityEffect: 'stop',
+  });
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(preview.runs[0]?.eligibility.code, 'CAPABILITY_CLAIM_CONFLICT');
+});
+
+test('a retained resource with only a watch and no health hook is refused', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  // Resource polling reports a resource with no health hook as `unknown`
+  // regardless of its watch config, so restore could never prove this one
+  // stayed running. Accepting the claim would strand every park on the slot.
+  ctx.deps.observeResources = async () => [
+    {
+      id: 'browser-cdp',
+      definition: {
+        type: 'device',
+        label: 'Watched device',
+        streamable: false,
+        controllable: true,
+        watch: { type: 'port-listen', port: '9323' },
+        hooks: { shutdown: 'true' },
+      },
+      status: 'running',
+    },
+  ];
+  const status = statusWithAffectedResources('run-a', [
+    { resourceId: 'browser-cdp', ownership: 'capability', releaseEffect: 'retain' },
+  ]);
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(preview.runs[0]?.eligibility.code, 'RESOURCE_HOOKS_UNAVAILABLE');
+  assert.match(preview.runs[0]?.eligibility.reason ?? '', /health/);
 });

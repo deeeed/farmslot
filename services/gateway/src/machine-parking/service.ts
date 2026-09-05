@@ -13,6 +13,7 @@ import {
   type MachineParkResource,
   type MachineParkResourceManifest,
   type MachineParkResourceReleaseEffect,
+  type MachineParkRestoreEffect,
   type MachineParkSlotDisposition,
   type MachineParkWorkspace,
   type MachinePauseExecuteParams,
@@ -1112,23 +1113,48 @@ export class MachineParkingService {
       );
     }
     const runningResources = resources.filter((resource) => resource.status === 'running');
+    // Ordered before the hooks guard. Which hooks a resource needs depends on
+    // what its claimants say happens to it, so a catalog that contradicts
+    // itself would otherwise surface as a hooks complaint and send the operator
+    // after the wrong bug. Name the contradiction they can actually fix.
+    const conflicted = runningResources
+      .map((resource) => ({
+        resource,
+        claims: capabilityClaimsForResource(capabilityStatus, resource.id),
+      }))
+      .find(
+        ({ claims }) => new Set([...claims.values()].map((claim) => claim.releaseEffect)).size > 1,
+      );
+    if (conflicted) {
+      return reject(
+        'CAPABILITY_CLAIM_CONFLICT',
+        `resource '${conflicted.resource.id}' has conflicting release effects from ${[
+          ...conflicted.claims.entries(),
+        ]
+          .map(([providerId, claim]) => `${providerId}=${claim.releaseEffect}`)
+          .sort()
+          .join(', ')}`,
+        emptyManifest(),
+        handle.runnerId,
+      );
+    }
     // A resource every claimant declares `retain` is never stopped by the park
     // and never booted by the restore, so demanding boot and shutdown hooks for
     // it refuses slots for capabilities it does not use — a physically attached
     // device has no boot hook and never will. What restore does need is a way
-    // to prove it stayed up, so a health signal stays mandatory. Derived claims
-    // are always `stop`, so this only ever admits an explicit declaration.
+    // to prove it stayed up. Resource polling reports a resource with no health
+    // hook as `unknown` whatever its watch config says, so a health hook is the
+    // only signal that can carry that proof. Derived claims are always `stop`,
+    // so this only ever admits an explicit declaration.
     const parkRetains = (resource: SlotResource): boolean => {
       const claims = capabilityClaimsForResource(capabilityStatus, resource.id);
       return (
         claims.size > 0 && [...claims.values()].every((claim) => claim.releaseEffect === 'retain')
       );
     };
-    const observableForRestore = (resource: SlotResource): boolean =>
-      Boolean(resource.definition.hooks?.health || resource.definition.watch);
     const controllableForPark = (resource: SlotResource): boolean =>
       parkRetains(resource)
-        ? observableForRestore(resource)
+        ? Boolean(resource.definition.hooks?.health)
         : Boolean(resource.definition.hooks?.shutdown && resource.definition.hooks?.boot);
     const unsafe = runningResources.find(
       (resource) => resource.definition.controllable && !controllableForPark(resource),
@@ -1137,7 +1163,7 @@ export class MachineParkingService {
       return reject(
         'RESOURCE_HOOKS_UNAVAILABLE',
         parkRetains(unsafe)
-          ? `retained resource '${unsafe.id}' has no project-owned health signal to prove it stayed running`
+          ? `retained resource '${unsafe.id}' has no project-owned health hook to prove it stayed running`
           : `running resource '${unsafe.id}' lacks project-owned shutdown and boot hooks`,
         emptyManifest(),
         handle.runnerId,
@@ -1187,23 +1213,6 @@ export class MachineParkingService {
     for (const resource of affected) {
       const claims = capabilityClaimsForResource(capabilityStatus, resource.id);
       const providerIds = new Set(claims.keys());
-      // Two providers cannot both be right about what a release does to one
-      // resource. Honouring 'retain' would put a resource in the manifest as
-      // surviving while the other provider's shutdown hook takes it down, and
-      // the park would only discover that at settle, after the effects. A
-      // catalog that contradicts itself is refused before anything is touched.
-      const declaredEffects = new Set([...claims.values()].map((claim) => claim.releaseEffect));
-      if (declaredEffects.size > 1) {
-        return reject(
-          'CAPABILITY_CLAIM_CONFLICT',
-          `resource '${resource.id}' has conflicting release effects from ${[...claims.entries()]
-            .map(([providerId, claim]) => `${providerId}=${claim.releaseEffect}`)
-            .sort()
-            .join(', ')}`,
-          emptyManifest(),
-          handle.runnerId,
-        );
-      }
       // Ownership is per claimant, never pooled. Each provider that claims to
       // own this resource must itself be leased by this run; a lease on some
       // OTHER claimant — a slot-lifecycle one especially — proves nothing about
@@ -2053,8 +2062,37 @@ export class MachineParkingService {
       // resource that died while the run was parked and let the restore report
       // success over it. Park never stopped these, so restore must find them
       // already up or refuse; it may not boot its way to a green result.
-      const retainedFailure = !(await this.verifyRetainedResources(runId, record));
-      if (retainedFailure) failed = true;
+      // One observation taken before anything acquires. It is both the input to
+      // the retained check and the baseline the acquire-boot detector below
+      // compares against, so the detector keeps working even if this ordering
+      // is ever changed again.
+      await this.patchRecord(runId, (current) => ({ ...current, restoreEffects: [] }));
+      let preAcquire: Map<string, SlotResource['status']> | null = null;
+      try {
+        preAcquire = new Map(
+          (await this.deps.observeResources(record.slotId)).map((resource) => [
+            resource.id,
+            resource.status,
+          ]),
+        );
+      } catch (error) {
+        await this.appendError(runId, 'resources-restoring', 'resource.retained-verify', error);
+      }
+      const retainedFailure = !(await this.verifyRetainedResources(runId, record, preAcquire));
+      if (retainedFailure) {
+        failed = true;
+        // Say plainly which resources this restore never touched, so the record
+        // reads as a complete account rather than a silence to interpret.
+        for (const resource of record.resourceManifest.resources) {
+          if (resource.releaseEffect === 'retain') continue;
+          await this.recordRestoreEffect(runId, {
+            resourceId: resource.resourceId,
+            action: 'skipped',
+            ok: false,
+            reason: 'a retained resource failed verification, so nothing was acquired or booted',
+          });
+        }
+      }
       for (const lease of retainedFailure ? [] : record.resourceManifest.capabilityLeases) {
         let shouldAcquire = lease.state === 'released';
         if (lease.state === 'held' || lease.state === 'reacquired') continue;
@@ -2116,6 +2154,31 @@ export class MachineParkingService {
       }
       let observed = retainedFailure ? [] : await this.deps.observeResources(record.slotId);
       const observedById = new Map(observed.map((resource) => [resource.id, resource.status]));
+      // A retained resource that was not running before the acquisitions and is
+      // running after them was booted by one of them. That boot leaves no error
+      // to find, so the transition itself is the only evidence it happened, and
+      // it is recorded as an effect that should not have occurred.
+      for (const resource of retainedFailure ? [] : record.resourceManifest.resources) {
+        if (resource.releaseEffect !== 'retain') continue;
+        const before = preAcquire?.get(resource.resourceId);
+        if (before === 'running' || observedById.get(resource.resourceId) !== 'running') continue;
+        failed = true;
+        await this.recordRestoreEffect(runId, {
+          resourceId: resource.resourceId,
+          action: 'booted',
+          ok: false,
+          reason: `was '${before ?? 'missing'}' before capability acquisition and running after it; a retained resource must never be booted by a restore`,
+        });
+        await this.appendError(
+          runId,
+          'resources-restoring',
+          'resource.retained-revived',
+          new Error(
+            `retained resource '${resource.resourceId}' was revived by capability acquisition`,
+          ),
+          resource.resourceId,
+        );
+      }
       for (const resource of retainedFailure ? [] : record.resourceManifest.resources) {
         await this.patchResource(runId, resource.resourceId, {
           phase: 'restoring',
@@ -2134,9 +2197,21 @@ export class MachineParkingService {
             }
           } else if (status === 'stopped') {
             const result = await this.deps.startResource(record.slotId, resource.resourceId);
+            await this.recordRestoreEffect(runId, {
+              resourceId: resource.resourceId,
+              action: 'booted',
+              ok: result.ok,
+              ...(result.ok ? {} : { reason: result.detail ?? 'resource boot failed' }),
+            });
             if (!result.ok) throw new Error(result.detail ?? 'resource boot failed');
             observedById.set(resource.resourceId, 'running');
-          } else if (status !== 'running') {
+          } else if (status === 'running') {
+            await this.recordRestoreEffect(runId, {
+              resourceId: resource.resourceId,
+              action: 'verified',
+              ok: true,
+            });
+          } else {
             throw new Error(
               `resource '${resource.resourceId}' is '${status ?? 'missing'}'; refusing an unobserved boot`,
             );
@@ -2382,27 +2457,45 @@ export class MachineParkingService {
    * fence stays up, because a retained resource that stopped means something
    * outside this run took down a lifecycle the park promised to leave alone.
    */
+  /** Append one lifecycle effect, so the record states what restore did. */
+  private recordRestoreEffect(
+    runId: string,
+    effect: Omit<MachineParkRestoreEffect, 'at'>,
+  ): Promise<MachineParkRecord> {
+    return this.patchRecord(runId, (record) => ({
+      ...record,
+      restoreEffects: [...(record.restoreEffects ?? []), { ...effect, at: this.deps.now() }],
+    }));
+  }
+
   private async verifyRetainedResources(
     runId: string,
     record: MachineParkRecord,
+    statusById: Map<string, SlotResource['status']> | null,
   ): Promise<boolean> {
     const retained = record.resourceManifest.resources.filter(
       (resource) => resource.releaseEffect === 'retain',
     );
     if (retained.length === 0) return true;
-    let observed: SlotResource[];
-    try {
-      observed = await this.deps.observeResources(record.slotId);
-    } catch (error) {
-      await this.appendError(runId, 'resources-restoring', 'resource.retained-verify', error);
-      return false;
-    }
-    const statusById = new Map(observed.map((resource) => [resource.id, resource.status]));
+    if (!statusById) return false;
     let intact = true;
     for (const resource of retained) {
       const status = statusById.get(resource.resourceId);
-      if (status === 'running') continue;
+      if (status === 'running') {
+        await this.recordRestoreEffect(runId, {
+          resourceId: resource.resourceId,
+          action: 'verified',
+          ok: true,
+        });
+        continue;
+      }
       intact = false;
+      await this.recordRestoreEffect(runId, {
+        resourceId: resource.resourceId,
+        action: 'verified',
+        ok: false,
+        reason: `observed '${status ?? 'missing'}'`,
+      });
       const failure = new Error(
         `retained resource '${resource.resourceId}' is '${status ?? 'missing'}'; park never stopped it, so restore will not boot it`,
       );

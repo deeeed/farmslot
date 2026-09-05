@@ -1526,9 +1526,12 @@ export function validateRuntimeCapabilitiesConfig(
             `${projectConfig}: ${claimField} declares release_effect "stop" but resource '${claim.resource_id}' lacks boot and shutdown hooks`,
           );
         }
-        if (effect === 'retain' && !(claimed.hooks?.health || claimed.watch)) {
+        // A watch does not substitute here: resource polling reports a resource
+        // with no health hook as `unknown` whatever its watch says, so restore
+        // could never prove a watch-only resource stayed running.
+        if (effect === 'retain' && !claimed.hooks?.health) {
           throw new Error(
-            `${projectConfig}: ${claimField} declares release_effect "retain" but resource '${claim.resource_id}' has no health hook or watch to prove it stayed running`,
+            `${projectConfig}: ${claimField} declares release_effect "retain" but resource '${claim.resource_id}' has no health hook to prove it stayed running`,
           );
         }
       }

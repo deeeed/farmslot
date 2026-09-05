@@ -216,6 +216,18 @@ const RESOURCE_PHASES = new Set([
   'failed',
 ]);
 const RESOURCE_RELEASE_EFFECTS = new Set(['stop', 'retain']);
+const RESTORE_ACTIONS = new Set(['verified', 'booted', 'stopped', 'skipped']);
+
+function validRestoreEffect(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    nonEmpty(value.resourceId) &&
+    RESTORE_ACTIONS.has(value.action as string) &&
+    iso(value.at) &&
+    typeof value.ok === 'boolean' &&
+    optionalString(value.reason)
+  );
+}
 const LEASE_STATES = new Set([
   'held',
   'releasing',
@@ -252,6 +264,9 @@ function validRecord(record: MachineParkRecord): boolean {
     (record.restoreDisposition === undefined ||
       record.restoreDisposition === 'zero-effect' ||
       record.restoreDisposition === 'effectful') &&
+    // Absent on records journalled before restore recorded its effects.
+    (record.restoreEffects === undefined ||
+      (Array.isArray(record.restoreEffects) && record.restoreEffects.every(validRestoreEffect))) &&
     validRecoveryProof(record.recoveryProof) &&
     (record.slotDisposition === undefined ||
       record.slotDisposition === 'retained' ||

@@ -274,8 +274,10 @@ Three rules follow from taking the declaration as fact:
 - **The hooks must match the claim.** A `stop` claim needs `boot` and `shutdown`
   on its resource, because the park stops it and the restore boots it back. A
   `retain` claim needs neither, which is what makes it usable for a physically
-  attached device that has no boot hook, but it does need a `health` hook or a
-  `watch`, because restore proves the resource stayed up instead of booting it.
+  attached device that has no boot hook, but it does need a `health` hook,
+  because restore proves the resource stayed up instead of booting it. A `watch`
+  does not substitute: resource polling reports a resource with no health hook
+  as `unknown` whatever its watch config says, so restore could never verify it.
   Both are enforced when the project config loads.
 
 ```json
