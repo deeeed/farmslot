@@ -68,3 +68,18 @@ export function isGateParkInFlightOrFreed(run: Pick<Run, 'park'>): boolean {
   }
   return true;
 }
+
+/**
+ * Whether machine parking still holds this run.
+ *
+ * The park RECORD is the authority for "is this run parked", not the run's
+ * persisted posture. A restore or a cancel settles the record while the posture
+ * it was applied under stays on the run, so a reader that trusts the posture
+ * decides an already-restored run is still parked — and then refuses to park it
+ * again, forever, as a no-op.
+ */
+export function hasLiveParkRecord(run: Pick<Run, 'park'>): boolean {
+  const park = run.park;
+  if (!park) return false;
+  return park.phase !== 'restored' && park.phase !== 'cancelled';
+}

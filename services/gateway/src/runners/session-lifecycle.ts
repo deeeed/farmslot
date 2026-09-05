@@ -3,6 +3,8 @@ import type { MachinePauseRecoveryHandle } from '@farmslot/protocol';
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
+  ensureTmuxWindow,
+  listExactTmuxWindows,
   respawnTmuxPaneWithCommand,
   shellQuote,
   tmuxSendTextCommand,
@@ -270,6 +272,9 @@ interface RunnerSessionLifecycleDeps {
   probePromptHandoff?: typeof runnerHasDurablePromptHandoff;
   writePromptSentinel?: typeof writeRunnerPromptSentinel;
   verifyLiveBinding?: typeof verifyExactLiveRunnerSessionBinding;
+  /** Exact-name window listing, used to find or re-host a parked session's pane. */
+  listWindows?: typeof listExactTmuxWindows;
+  ensureWindow?: typeof ensureTmuxWindow;
   sleep(ms: number): Promise<void>;
 }
 
@@ -281,6 +286,8 @@ const DEFAULT_DEPS: RunnerSessionLifecycleDeps = {
   probePromptHandoff: runnerHasDurablePromptHandoff,
   writePromptSentinel: writeRunnerPromptSentinel,
   verifyLiveBinding: verifyExactLiveRunnerSessionBinding,
+  listWindows: listExactTmuxWindows,
+  ensureWindow: ensureTmuxWindow,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
@@ -627,4 +634,207 @@ async function inspectExactPane(
     };
   }
   return { paneId, panePid, session, windowName: windowName ?? '' };
+}
+
+// ─── Re-hosting a parked session (ADR-054 `free-slot`) ───────────────────────
+//
+// A park that frees the slot hands the whole slot — tmux session included — to
+// the next occupant, and that occupant's dispatch replaces the windows in it.
+// So by the time an operator restores a freed park, the exact pane the recovery
+// handle names is routinely gone. Requiring it would make restore-after-a-
+// successor impossible, which is the entire point of freeing the slot.
+//
+// The pane was never the identity. The persisted runner SESSION is: the reload
+// command resumes it by id, and the structured acknowledgement proves the
+// reload landed in that exact session. So restore re-hosts the session on a
+// fresh pane in the slot's own tmux session and reloads into it, and refuses
+// rather than respawning over a pane where a runner is still alive.
+//
+// Runner-agnostic by construction: window/pane mechanics and the registry's
+// declarations only, no runner-name branch and no pane-text reading.
+
+export type RunnerParkHostDisposition = 'exact' | 'rehost';
+
+export type RunnerParkHostPlan =
+  | {
+      ok: true;
+      disposition: RunnerParkHostDisposition;
+      /**
+       * The handle a reload must use. Identical to the input for `exact`; bound
+       * to the re-hosted pane for `rehost`. The session id and path never move.
+       */
+      recoveryHandle: MachinePauseRecoveryHandle;
+    }
+  | { ok: false; reason: string };
+
+export interface RunnerParkHostOptions {
+  vars: SlotVars;
+  recoveryHandle: MachinePauseRecoveryHandle;
+}
+
+/**
+ * Read-only: can this persisted session be reloaded on this slot, and would it
+ * need a new pane? Creates nothing, so a preview can call it.
+ */
+export function inspectRunnerParkHost(
+  options: RunnerParkHostOptions,
+  deps: RunnerSessionLifecycleDeps = DEFAULT_DEPS,
+): Promise<RunnerParkHostPlan> {
+  return resolveRunnerParkHost(options, deps, false);
+}
+
+/**
+ * Bind the persisted session to a pane it can be reloaded into, creating the
+ * slot's window when the freed slot's successor removed it. Refuses rather than
+ * taking a pane a runner still occupies.
+ */
+export function rehostRunnerParkTarget(
+  options: RunnerParkHostOptions,
+  deps: RunnerSessionLifecycleDeps = DEFAULT_DEPS,
+): Promise<RunnerParkHostPlan> {
+  return resolveRunnerParkHost(options, deps, true);
+}
+
+async function resolveRunnerParkHost(
+  options: RunnerParkHostOptions,
+  deps: RunnerSessionLifecycleDeps,
+  create: boolean,
+): Promise<RunnerParkHostPlan> {
+  const handle = options.recoveryHandle;
+  const rawRunnerId = handle.runnerId.trim();
+  const runnerId = rawRunnerId ? normalizeRunner(rawRunnerId) : '';
+  if (!runnerId || !isKnownRunner(runnerId)) {
+    return { ok: false, reason: `runner '${rawRunnerId || 'unknown'}' is not registered` };
+  }
+  const definition = getRunnerDefinition(runnerId);
+  if (!definition.gracefulExit) {
+    return { ok: false, reason: `runner '${runnerId}' has no graceful exit capability` };
+  }
+  if (definition.sessionReload === 'none') {
+    return { ok: false, reason: `runner '${runnerId}' has no persisted session reload capability` };
+  }
+  const handleError = validateRecoveryHandle(runnerId, handle);
+  if (handleError) return { ok: false, reason: handleError };
+
+  // The conversation itself must still exist. Everything below only decides
+  // WHERE to reload it; without this the restore would create a pane for a
+  // session that cannot be resumed.
+  const probe = await deps.exec(options.vars, resumableSessionProbeCommand(handle.sessionPath), {
+    timeout: 10_000,
+  });
+  if (probe.exitCode !== 0) {
+    return {
+      ok: false,
+      reason: `Persisted runner session path is unavailable: ${handle.sessionPath}`,
+    };
+  }
+
+  const windowName = parkHostWindowName(handle);
+  if (!windowName) {
+    return {
+      ok: false,
+      reason: `persisted runner target '${handle.target.target}' names no exact tmux window to re-host into`,
+    };
+  }
+  const listWindows = deps.listWindows ?? listExactTmuxWindows;
+  // Lowest index wins, so two windows sharing a name resolve the same way on
+  // every call rather than however tmux happened to order them.
+  const windows = (await listWindows(options.vars, handle.target.session, windowName)).sort(
+    (a, b) => a.windowIndex - b.windowIndex,
+  );
+  const recorded = windows.find((window) => window.paneId === handle.target.paneId);
+  const candidate = recorded ?? windows[0];
+  if (candidate) {
+    const livePid = await deps.findRunnerPid(options.vars, candidate.panePid, runnerId, {
+      timeout: 10_000,
+    });
+    if (livePid) {
+      // A live runner is not automatically someone else's. A restore retried
+      // after one that reloaded the worker and then failed later finds ITS OWN
+      // session alive here, and refusing that would make the retry impossible
+      // for exactly the record that needs it. Decided by the structured binding
+      // check, never by what the pane is showing.
+      const binding = await (deps.verifyLiveBinding ?? verifyExactLiveRunnerSessionBinding)(
+        options.vars,
+        runnerId,
+        {
+          paneId: candidate.paneId,
+          slotId: options.vars.slotId,
+          expectedSessionId: handle.sessionId,
+          expectedSessionPath: handle.sessionPath,
+          runnerPid: livePid,
+        },
+      );
+      if (!binding.ok) {
+        // Someone else's worker. Respawning it would kill a process this
+        // restore does not own.
+        return {
+          ok: false,
+          reason: `tmux pane ${candidate.paneId} in ${handle.target.session}:${windowName} is already running '${runnerId}' (pid ${livePid}): ${binding.reason}`,
+        };
+      }
+    }
+    return recorded
+      ? { ok: true, disposition: 'exact', recoveryHandle: handle }
+      : {
+          ok: true,
+          disposition: 'rehost',
+          recoveryHandle: reboundParkHandle(handle, windowName, candidate.paneId),
+        };
+  }
+  if (!create) {
+    // Nothing exists to bind to yet, and an inspection must not create it. The
+    // verdict is still "re-hostable": the window is this slot's to make.
+    return { ok: true, disposition: 'rehost', recoveryHandle: handle };
+  }
+  const ensured = await (deps.ensureWindow ?? ensureTmuxWindow)(
+    options.vars,
+    handle.target.session,
+    windowName,
+  );
+  const created = [...ensured.windows].sort((a, b) => a.windowIndex - b.windowIndex)[0];
+  if (!created) {
+    return {
+      ok: false,
+      reason: `tmux window ${handle.target.session}:${windowName} could not be created for the re-hosted session`,
+    };
+  }
+  return {
+    ok: true,
+    disposition: 'rehost',
+    recoveryHandle: reboundParkHandle(handle, windowName, created.paneId),
+  };
+}
+
+/**
+ * The exact window a re-host may use. A numeric window reference identifies a
+ * position rather than a window, and positions shift when a successor's
+ * dispatch rewrites the session — re-hosting onto one would be a guess.
+ */
+function parkHostWindowName(handle: MachinePauseRecoveryHandle): string | null {
+  const explicit = handle.target.window?.trim();
+  if (explicit && !/^\d+$/.test(explicit)) return explicit;
+  const separator = handle.target.target.indexOf(':');
+  const derived = separator > 0 ? handle.target.target.slice(separator + 1).trim() : '';
+  return derived && !/^\d+$/.test(derived) ? derived : null;
+}
+
+function reboundParkHandle(
+  handle: MachinePauseRecoveryHandle,
+  windowName: string,
+  paneId: string,
+): MachinePauseRecoveryHandle {
+  return {
+    ...handle,
+    target: {
+      ...handle.target,
+      window: windowName,
+      // The recorded pane INDEX belonged to a layout that no longer exists;
+      // keeping it would name a different pane than `paneId` does.
+      pane: null,
+      paneId,
+      target: `${handle.target.session}:${windowName}`,
+    },
+    capturedAt: new Date().toISOString(),
+  };
 }

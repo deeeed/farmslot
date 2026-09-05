@@ -118,6 +118,20 @@ export type MachinePauseRestoreParams =
       operationId?: string;
     };
 
+/**
+ * Where a restore would put the run back. ADR-054 restores a freed slot into
+ * the ORIGINAL slot only: `available` is false when another run holds it, and
+ * the verdict is then `RESTORE_SLOT_TAKEN`. Cross-slot re-dispatch is a
+ * separate decision, so there is deliberately no alternative target here.
+ */
+export interface MachinePauseRestoreTarget {
+  slotId: string;
+  /** `freed` means the slot must be re-bound first; `retained` means it never left. */
+  disposition: MachineParkSlotDisposition;
+  /** Whether that exact slot can take the run back right now. */
+  available: boolean;
+}
+
 export interface MachinePauseRestorePreviewRun {
   runId: string;
   generation: number;
@@ -125,6 +139,8 @@ export interface MachinePauseRestorePreviewRun {
   selected: boolean;
   /** Backend-owned verdict; clients must not reimplement restore eligibility policy. */
   eligibility: MachinePauseEligibility;
+  /** Backend-resolved restore target; clients must not pick a slot themselves. */
+  restoreTarget: MachinePauseRestoreTarget;
   record: MachineParkRecord;
 }
 

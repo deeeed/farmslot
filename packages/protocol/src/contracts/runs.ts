@@ -1672,8 +1672,8 @@ export type MachineParkSlotDisposition = 'retained' | 'freed';
 
 /**
  * Machine-pause eligibility codes that clients and the Gateway share. Every
- * other code stays private to the Gateway verdict; these three are the
- * gate-park contract added by the free-slot-at-an-operator-wait decision.
+ * other code stays private to the Gateway verdict; these are the gate-park
+ * contract added by the free-slot-at-an-operator-wait decision.
  */
 export const MachineParkEligibilityCodes = {
   /** A gate-held publication run may be released and its slot freed. */
@@ -1682,8 +1682,34 @@ export const MachineParkEligibilityCodes = {
   runnerReloadUnsupported: 'RUNNER_RELOAD_UNSUPPORTED',
   /** A gate-held run can only be parked in release mode; orchestration-only would strand its gate. */
   gateParkRequiresRelease: 'GATE_PARK_REQUIRES_RELEASE',
-  /** The record freed its slot; restoring into a freed slot is not implemented yet. */
-  freedSlotRestoreUnsupported: 'FREED_SLOT_RESTORE_UNSUPPORTED',
+  /**
+   * The record freed its slot, so the operation asked for cannot act on the
+   * run until a restore has put it back. Not a refusal of restore itself:
+   * `machine.pause.restore` and gate resolution both drive that restore.
+   */
+  freedSlotRestoreRequired: 'FREED_SLOT_RESTORE_REQUIRED',
+  /**
+   * Restore refused: the original slot is no longer free. The record stays
+   * parked and its decision stays pending, so the run can be restored later or
+   * cancelled. Cross-slot re-dispatch is a separate decision.
+   */
+  restoreSlotTaken: 'RESTORE_SLOT_TAKEN',
+  /**
+   * Restore refused: the preserved branch cannot be checked back out — the
+   * successor left uncommitted work in the tree, or the branch no longer sits
+   * at the tip the park detached from.
+   */
+  restoreWorkspaceUnavailable: 'RESTORE_WORKSPACE_UNAVAILABLE',
+  /**
+   * Restore refused: the persisted runner session could not be reloaded with a
+   * structured acknowledgement, so nothing may claim the worker is back.
+   */
+  restoreRunnerReloadFailed: 'RESTORE_RUNNER_RELOAD_FAILED',
+  /**
+   * The restore had to re-present the gate because its engine loop had exited,
+   * so the decision the operator answered is no longer the live one.
+   */
+  restoreGateReplayed: 'RESTORE_GATE_REPLAYED',
   /**
    * Freeing the slot would expose the run's workspace to the next occupant's
    * prepare, and its branch tip could not be preserved first.
@@ -1716,6 +1742,21 @@ export interface MachineParkWorkspace {
   detachedAt?: string;
 }
 
+/**
+ * Why the last restore attempt refused, kept on the record so a reconnecting
+ * client sees the reason without replaying the RPC that produced it.
+ *
+ * A refusal is not a failure of the park: the record stays `parked`, its
+ * decision stays pending, and the run can be restored again later or
+ * cancelled. Cleared the moment a restore gets past the refusal.
+ */
+export interface MachineParkRestoreRefusal {
+  /** A `MachineParkEligibilityCode`; carried as a string like every verdict code. */
+  code: string;
+  reason: string;
+  at: string;
+}
+
 /** Write-ahead per-run record; persisted on Run before any release side effect. */
 export interface MachineParkRecord {
   version: 1;
@@ -1746,6 +1787,18 @@ export interface MachineParkRecord {
    * park never advertises a freed slot. Cleared when a restore reclaims a slot.
    */
   slotFreedAt?: string;
+  /**
+   * When a restore re-bound the freed slot to this run, not merely intended
+   * to. Written in the same write-ahead window that clears `slotFreedAt`, so a
+   * crash between the slot claim and the record write is repairable. Survives
+   * the restore as the note that this record's slot came back.
+   */
+  slotReboundAt?: string;
+  /**
+   * Why the last restore attempt refused, when it refused without changing
+   * anything. Absent once a restore gets past the refusal.
+   */
+  restoreRefusal?: MachineParkRestoreRefusal;
   /** Restore intent classification persisted before any selected batch member mutates. */
   restoreDisposition?: 'zero-effect' | 'effectful';
   /**

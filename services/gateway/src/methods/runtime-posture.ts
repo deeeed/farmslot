@@ -163,7 +163,7 @@ function assertPostureApplyNotGateParked(params: RuntimePostureApplyParams): voi
   const run = getRun(params.runId);
   if (!run || !isGateParkInFlightOrFreed(run)) return;
   const code = isSlotFreedByPark(run)
-    ? MachineParkEligibilityCodes.freedSlotRestoreUnsupported
+    ? MachineParkEligibilityCodes.freedSlotRestoreRequired
     : MachineParkEligibilityCodes.gateParkInFlight;
   throw new GatewayMethodError(
     code,

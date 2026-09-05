@@ -479,11 +479,15 @@ export async function runResumeTransitionLocked(
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
 
+  // The restore re-binds the slot and clears `slotFreedAt` BEFORE it reaches
+  // this transition, so a resume that still sees a freed slot means the rebind
+  // never landed. Resuming there would drive the run against a slot it does not
+  // hold, so it fails closed rather than trusting the caller's ordering.
   if (isSlotFreedByPark(existing)) {
     throw new Error(
-      `Run ${params.runId} is gate-parked with its slot freed ` +
-        `(${MachineParkEligibilityCodes.freedSlotRestoreUnsupported}); ` +
-        'restoring into a freed slot is not supported yet — cancel the run to release its park record',
+      `Run ${params.runId} is gate-parked with its slot still freed ` +
+        `(${MachineParkEligibilityCodes.freedSlotRestoreRequired}); ` +
+        'the restore must re-bind the slot before the run can resume',
     );
   }
   // The counterpart to `isGateParkPause` on the pause side, and it has to
@@ -501,8 +505,17 @@ export async function runResumeTransitionLocked(
     console.log(
       `[run] gate-park restore for run ${params.runId.slice(0, 8)} (status ${existing.status} preserved)`,
     );
-    emit(Events.RUN_UPDATED, { run: existing });
-    return gateParkResumeAcknowledgement(existing, () => new Date().toISOString())!;
+    // The gate the operator is about to answer must not re-park the run on the
+    // way out. A wait boundary with no explicit choice inherits the run's stored
+    // one, and the stored one is the `free-slot` that parked it — so answering
+    // the restored gate would immediately hand the slot away again, before the
+    // operator saw any of the outcome. Suppressed for exactly this generation,
+    // the one the hold preserved; choosing `free-slot` again is still available,
+    // it just has to be chosen rather than inherited.
+    suppressInheritedGateChoice(params.runId, existing, existing.engineState?.generation ?? 0);
+    const held = getRun(params.runId)!;
+    emit(Events.RUN_UPDATED, { run: held });
+    return gateParkResumeAcknowledgement(held, () => new Date().toISOString())!;
   }
   if (gateParkPlan?.kind === 'replay') {
     // Resolution raced the park: the ready-gate fence threw, the gate step was
@@ -520,14 +533,7 @@ export async function runResumeTransitionLocked(
     // outlive the gate it was set for: the replay is fire-and-forget, and a
     // bare flag would swallow the operator's choice at some unrelated later
     // wait if this gate never reached a boundary at all.
-    if (replayed.resourcePosture?.gateChoice === 'free-slot') {
-      updateRun(params.runId, {
-        resourcePosture: {
-          ...replayed.resourcePosture,
-          gateChoiceSuppressedForGeneration: generation,
-        },
-      });
-    }
+    suppressInheritedGateChoice(params.runId, replayed, generation);
     if (generation <= previousGeneration) {
       throw new Error(
         `Run ${params.runId} gate replay did not take ownership (generation ${generation})`,
@@ -720,6 +726,25 @@ export function gateParkResumeAcknowledgement(
     acknowledgedAt: now(),
     gateParkHold: true,
   };
+}
+
+/**
+ * Stop a restored gate from inheriting the `free-slot` choice that parked the
+ * run, for exactly one wait boundary.
+ *
+ * Bound to the generation the restore settled at so it cannot outlive the gate
+ * it was set for: a bare flag would sit on the run and silently swallow the
+ * operator's choice at some unrelated later wait if this gate never reached a
+ * boundary at all.
+ */
+function suppressInheritedGateChoice(runId: string, run: Run, generation: number): void {
+  if (run.resourcePosture?.gateChoice !== 'free-slot') return;
+  updateRun(runId, {
+    resourcePosture: {
+      ...run.resourcePosture,
+      gateChoiceSuppressedForGeneration: generation,
+    },
+  });
 }
 
 /**

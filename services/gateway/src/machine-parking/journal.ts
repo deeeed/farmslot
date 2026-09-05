@@ -10,8 +10,14 @@ import type { MachineParkRecord } from '@farmslot/protocol';
  * `parked` with the slot already handed to dispatch. Recovery cannot tell that
  * from a park that never freed anything, so the intent is journalled around
  * exactly that window.
+ *
+ * `restore-slot` is its mirror image, and needs its own marker for the same
+ * reason: the slot claim and the write that clears `slotFreedAt` are two
+ * writes, and a crash between them leaves a row bound to a run every reader
+ * still treats as freed — so dispatch would hand the slot out from under the
+ * run that just reclaimed it.
  */
-export type MachineParkingIntentKind = 'pause' | 'restore' | 'free-slot';
+export type MachineParkingIntentKind = 'pause' | 'restore' | 'free-slot' | 'restore-slot';
 
 export interface MachineParkingIntentJournal {
   version: 1;
@@ -22,8 +28,8 @@ export interface MachineParkingIntentJournal {
    * Narrows a journal's identity below the operation. A batch shares one
    * `operationId`, so kinds whose repair is PER RUN must not share one file:
    * the second run's write would overwrite the first, and the first run's
-   * completion would delete a sibling's still-pending repair. `free-slot`
-   * passes the run id here; batch-wide kinds leave it unset.
+   * completion would delete a sibling's still-pending repair. `free-slot` and
+   * `restore-slot` pass the run id here; batch-wide kinds leave it unset.
    */
   scopeId?: string;
   records: MachineParkRecord[];
@@ -141,6 +147,8 @@ export class MachineParkingIntentJournalStore {
   }
 }
 
+const INTENT_KINDS = new Set<string>(['pause', 'restore', 'free-slot', 'restore-slot']);
+
 /**
  * The one validator both the writer and the loader use. Exported so a test
  * double can enforce the same contract the store does — an in-memory double
@@ -150,7 +158,7 @@ export class MachineParkingIntentJournalStore {
 export function assertValidJournal(value: MachineParkingIntentJournal): void {
   if (
     value?.version !== 1 ||
-    (value.kind !== 'pause' && value.kind !== 'restore' && value.kind !== 'free-slot') ||
+    !INTENT_KINDS.has(value.kind as string) ||
     typeof value.machine !== 'string' ||
     !value.machine ||
     typeof value.operationId !== 'string' ||
@@ -272,6 +280,8 @@ function validRecord(record: MachineParkRecord): boolean {
       record.slotDisposition === 'retained' ||
       record.slotDisposition === 'freed') &&
     optionalIso(record.slotFreedAt) &&
+    optionalIso(record.slotReboundAt) &&
+    validRestoreRefusal(record.restoreRefusal) &&
     validPreservedWorkspace(record.preservedWorkspace) &&
     Array.isArray(record.errors) &&
     record.errors.every(validParkError) &&
@@ -282,6 +292,11 @@ function validRecord(record: MachineParkRecord): boolean {
     optionalIso(record.restoredAt) &&
     optionalIso(record.cancelledAt)
   );
+}
+
+function validRestoreRefusal(value: unknown): boolean {
+  if (value === undefined) return true;
+  return isRecord(value) && nonEmpty(value.code) && nonEmpty(value.reason) && iso(value.at);
 }
 
 function validResource(value: unknown): boolean {

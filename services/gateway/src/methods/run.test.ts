@@ -1701,65 +1701,187 @@ function gateParkRecord(
   };
 }
 
-for (const [label, record, expectedCode] of [
-  [
-    'a landed gate park',
-    gateParkRecord('x', 's', { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
-    'FREED_SLOT_RESTORE_UNSUPPORTED',
-  ],
-  [
-    'a gate park still stopping its resources',
-    gateParkRecord('x', 's', { phase: 'resources-stopping' }),
-    'GATE_PARK_IN_FLIGHT',
-  ],
-] as const) {
-  test(`runResolveDecision refuses and leaves the gate pending under ${label}`, async (t) => {
-    const slotId = `test-gate-park-fence-${Date.now()}`;
-    const run = createRun({
-      flowType: 'fix-bug',
-      mode: 'autonomous',
-      project: 'example-mobile-farm',
-      ticketOrPr: `PROJ-GATE-PARK-${expectedCode}`,
-      runner: 'claude',
-      slotId,
-    });
-    const decision: RunDecision = {
-      id: `gate-park-${expectedCode}`,
-      type: 'engine_human_gate',
-      title: 'Publication gate',
-      description: 'Approve package',
-      actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
-      createdAt: '2026-09-05T00:00:00.000Z',
-    };
-    updateRun(run.id, {
-      status: 'blocked',
-      decisions: [decision],
-      park: { ...record, runId: run.id, slotId },
-    });
-    t.after(async () => {
-      updateRun(run.id, { status: 'failed', park: null });
-      await deleteRun(run.id);
-    });
-
-    await assert.rejects(
-      runResolveDecision(
-        { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
-        () => {},
-      ),
-      (error: unknown) => {
-        assert.equal((error as GatewayMethodError).code, expectedCode);
-        return true;
-      },
-    );
-
-    // The refusal happens before the decision is consumed, so the operator can
-    // still answer it after a restore and the park record is not stranded.
-    const persisted = getRun(run.id)!;
-    assert.equal(persisted.decisions[0]?.resolvedAt, undefined);
-    assert.equal(persisted.status, 'blocked');
-    assert.equal(persisted.park?.slotId, slotId);
+/** A run sitting at a publication gate with the given park record. */
+function gateParkedRun(
+  t: { after: (fn: () => void | Promise<void>) => void },
+  label: string,
+  record: ReturnType<typeof gateParkRecord>,
+) {
+  const slotId = `test-gate-park-${label}-${Date.now()}`;
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-GATE-PARK-${label}`,
+    runner: 'claude',
+    slotId,
   });
+  const decision: RunDecision = {
+    id: `gate-park-${label}`,
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Approve package',
+    actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+    createdAt: '2026-09-05T00:00:00.000Z',
+  };
+  updateRun(run.id, {
+    status: 'blocked',
+    decisions: [decision],
+    park: { ...record, runId: run.id, slotId },
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed', park: null });
+    await deleteRun(run.id);
+  });
+  return { run, decision, slotId };
 }
+
+test('runResolveDecision refuses and leaves the gate pending while a park is in flight', async (t) => {
+  // Still stopping its resources: there is no coherent state to restore into
+  // yet, and the effects are landing right now.
+  const { run, decision, slotId } = gateParkedRun(
+    t,
+    'in-flight',
+    gateParkRecord('x', 's', { phase: 'resources-stopping' }),
+  );
+
+  await assert.rejects(
+    runResolveDecision(
+      { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+      () => {},
+    ),
+    (error: unknown) => {
+      assert.equal((error as GatewayMethodError).code, 'GATE_PARK_IN_FLIGHT');
+      return true;
+    },
+  );
+
+  // The refusal happens before the decision is consumed, so the operator can
+  // still answer it after a restore and the park record is not stranded.
+  const persisted = getRun(run.id)!;
+  assert.equal(persisted.decisions[0]?.resolvedAt, undefined);
+  assert.equal(persisted.status, 'blocked');
+  assert.equal(persisted.park?.slotId, slotId);
+});
+
+test('runResolveDecision restores a landed gate park before it consumes the decision', async (t) => {
+  const { run, decision, slotId } = gateParkedRun(
+    t,
+    'restore-first',
+    gateParkRecord('x', 's', { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+  );
+  const order: string[] = [];
+
+  const result = await runResolveDecision(
+    { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+    () => {},
+    {
+      restoreGatePark: async (runId) => {
+        order.push('restore');
+        // The restore's own effect: the record no longer advertises a freed slot.
+        const parked = getRun(runId)!.park!;
+        updateRun(runId, { park: { ...parked, phase: 'restored', slotFreedAt: undefined } });
+        return {
+          ok: true,
+          runId,
+          slotId,
+          restoredGeneration: 1,
+          reloadedSessionId: 'session-restored',
+          gateReplayed: false,
+          record: getRun(runId)!.park!,
+        };
+      },
+    },
+  );
+
+  order.push('resolved');
+  assert.deepEqual(order, ['restore', 'resolved'], 'the restore runs first, every time');
+  assert.deepEqual(result.gateParkRestore, {
+    runId: run.id,
+    slotId,
+    restoredGeneration: 1,
+    reloadedSessionId: 'session-restored',
+  });
+  assert.ok(
+    getRun(run.id)!.decisions[0]?.resolvedAt,
+    'the decision was consumed after the restore',
+  );
+});
+
+test('runResolveDecision leaves the gate pending when the restore is refused', async (t) => {
+  const { run, decision } = gateParkedRun(
+    t,
+    'restore-refused',
+    gateParkRecord('x', 's', { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+  );
+
+  await assert.rejects(
+    runResolveDecision(
+      { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+      () => {},
+      {
+        restoreGatePark: async (runId) => ({
+          ok: false,
+          runId,
+          slotId: 'macwork-ff-1',
+          code: 'RESTORE_SLOT_TAKEN',
+          reason: "slot 'macwork-ff-1' is now owned by run 'run-successor'",
+          record: getRun(runId)!.park!,
+        }),
+      },
+    ),
+    (error: unknown) => {
+      assert.equal((error as GatewayMethodError).code, 'RESTORE_SLOT_TAKEN');
+      assert.match((error as Error).message, /run-successor/);
+      return true;
+    },
+  );
+
+  // A refused restore is not a failed run and not a lost answer: the decision
+  // is still there to answer once the slot comes back.
+  const persisted = getRun(run.id)!;
+  assert.equal(persisted.decisions[0]?.resolvedAt, undefined);
+  assert.equal(persisted.status, 'blocked');
+  assert.ok(persisted.park?.slotFreedAt, 'the record is still parked and still freed');
+});
+
+test('runResolveDecision refuses to consume a decision the restore replaced by replaying the gate', async (t) => {
+  const { run, decision, slotId } = gateParkedRun(
+    t,
+    'restore-replayed',
+    gateParkRecord('x', 's', { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+  );
+
+  await assert.rejects(
+    runResolveDecision(
+      { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+      () => {},
+      {
+        restoreGatePark: async (runId) => {
+          const parked = getRun(runId)!.park!;
+          updateRun(runId, { park: { ...parked, phase: 'restored', slotFreedAt: undefined } });
+          return {
+            ok: true,
+            runId,
+            slotId,
+            restoredGeneration: 2,
+            reloadedSessionId: 'session-restored',
+            gateReplayed: true,
+            record: getRun(runId)!.park!,
+          };
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.equal((error as GatewayMethodError).code, 'RESTORE_GATE_REPLAYED');
+      return true;
+    },
+  );
+
+  // Consuming it would resolve a decision nothing is waiting on and leave the
+  // freshly presented gate unanswered.
+  assert.equal(getRun(run.id)!.decisions[0]?.resolvedAt, undefined);
+});
 
 test('runResolveDecision refuses a park that landed during its awaited probes', async (t) => {
   const slotId = `test-gate-park-race-${Date.now()}`;

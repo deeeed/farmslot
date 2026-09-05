@@ -395,7 +395,7 @@ test('a resolved publication gate fails closed when the run park freed its slot'
   // BlockedRunError so the engine marks the run `blocked`, not `failed`: cancel
   // refuses terminal runs, and a failed run would strand the park record.
   assert.ok(blocker instanceof BlockedRunError);
-  assert.match(blocker.message, /FREED_SLOT_RESTORE_UNSUPPORTED/);
+  assert.match(blocker.message, /FREED_SLOT_RESTORE_REQUIRED/);
   assert.match(blocker.message, /cancel the run/);
 
   // The fence covers the park BEFORE `slotFreedAt` lands too: while resources

@@ -3,9 +3,13 @@ import test from 'node:test';
 
 import type { MachinePauseRecoveryHandle } from '@farmslot/protocol';
 
+import type { TmuxWindowRef } from '../core/tmux.js';
+
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from './launch-command.js';
 import {
+  inspectRunnerParkHost,
   inspectRunnerRecovery,
+  rehostRunnerParkTarget,
   reloadRunnerForPark,
   RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS,
   RUNNER_PARK_RELOAD_ACCEPTANCE_TIMEOUT_MS,
@@ -413,4 +417,153 @@ test('reloadRunnerForPark times out without treating process liveness as prompt 
   assert.equal(result.ok, false);
   assert.equal(result.status, 'acceptance-failed');
   assert.match(result.error, /not accepted\/live/);
+});
+
+// ─── ADR-054 free-slot: re-hosting a parked session (slice 2) ────────────────
+
+const parkHostDeps = (options: {
+  windows?: TmuxWindowRef[];
+  created?: TmuxWindowRef[];
+  livePid?: string;
+  sessionPathExitCode?: number;
+  liveBindingOk?: boolean;
+}) => {
+  const calls: string[] = [];
+  return {
+    calls,
+    deps: {
+      exec: async (_vars: unknown, command: string) => {
+        calls.push(command);
+        return { exitCode: options.sessionPathExitCode ?? 0, stdout: '', stderr: '' };
+      },
+      findRunnerPid: async () => options.livePid ?? '',
+      verifyLiveBinding: async () =>
+        options.liveBindingOk
+          ? await verifyPersistedLiveBinding()
+          : ({ ok: false, reason: 'live runner owns a different session' } as const),
+      listWindows: async () => options.windows ?? [],
+      ensureWindow: async () => {
+        calls.push('ensure-window');
+        return { disposition: 'created' as const, windows: options.created ?? [] };
+      },
+      sleep: async () => {},
+    },
+  };
+};
+
+const windowRef = (paneId: string, index = 0): TmuxWindowRef => ({
+  windowId: `@${index + 1}`,
+  windowIndex: index,
+  windowName: 'worker',
+  activityAt: 0,
+  paneId,
+  panePid: '101',
+});
+
+test('a parked session whose recorded pane survived reloads in place', async () => {
+  const { deps } = parkHostDeps({ windows: [windowRef('%1')] });
+  const plan = await inspectRunnerParkHost({ vars, recoveryHandle: handle }, deps as never);
+  assert.equal(plan.ok, true);
+  assert.equal(plan.ok === true && plan.disposition, 'exact');
+  assert.equal(
+    plan.ok === true && plan.recoveryHandle.target.paneId,
+    '%1',
+    'nothing is re-bound when the recorded pane is still there',
+  );
+});
+
+test('a parked session whose pane a successor destroyed is re-hosted on a new pane', async () => {
+  // The slot was freed, its tmux session handed to the next occupant, and that
+  // occupant's dispatch replaced the window. This is the ordinary case, not an
+  // error: the persisted session is the identity, the pane is only its host.
+  const { deps, calls } = parkHostDeps({ windows: [], created: [windowRef('%42', 3)] });
+  const plan = await rehostRunnerParkTarget({ vars, recoveryHandle: handle }, deps as never);
+  assert.equal(plan.ok, true);
+  assert.equal(plan.ok === true && plan.disposition, 'rehost');
+  assert.ok(calls.includes('ensure-window'));
+  const rebound = plan.ok === true ? plan.recoveryHandle : null;
+  assert.equal(rebound?.target.paneId, '%42');
+  assert.equal(rebound?.target.target, 'slot-1:worker');
+  // The pane INDEX belonged to a layout that no longer exists; keeping it would
+  // name a different pane than the id does.
+  assert.equal(rebound?.target.pane, null);
+  // The identity that matters never moves.
+  assert.equal(rebound?.sessionId, handle.sessionId);
+  assert.equal(rebound?.sessionPath, handle.sessionPath);
+});
+
+test('a leftover window with the recorded name is re-hosted into rather than duplicated', async () => {
+  // The successor's dispatch left the window standing but the pane the park
+  // recorded is gone. Creating a second window of the same name would leave the
+  // operator two panes and no way to tell which one holds the session.
+  const { deps, calls } = parkHostDeps({ windows: [windowRef('%88', 2)] });
+  const plan = await rehostRunnerParkTarget({ vars, recoveryHandle: handle }, deps as never);
+  assert.equal(plan.ok, true);
+  assert.equal(plan.ok === true && plan.disposition, 'rehost');
+  assert.equal(plan.ok === true && plan.recoveryHandle.target.paneId, '%88');
+  assert.equal(calls.includes('ensure-window'), false);
+});
+
+test('an inspection never creates the window it reports as re-hostable', async () => {
+  const { deps, calls } = parkHostDeps({ windows: [], created: [windowRef('%42')] });
+  const plan = await inspectRunnerParkHost({ vars, recoveryHandle: handle }, deps as never);
+  assert.equal(plan.ok, true);
+  assert.equal(plan.ok === true && plan.disposition, 'rehost');
+  assert.equal(calls.includes('ensure-window'), false, 'a preview must not mutate the slot');
+});
+
+test('re-hosting refuses a pane a FOREIGN runner is still alive in', async () => {
+  // Respawning it would kill a process this restore does not own.
+  const { deps } = parkHostDeps({ windows: [windowRef('%9', 1)], livePid: '4242' });
+  const plan = await rehostRunnerParkTarget({ vars, recoveryHandle: handle }, deps as never);
+  assert.equal(plan.ok, false);
+  assert.match(plan.ok === false ? plan.reason : '', /already running 'claude' \(pid 4242\)/);
+});
+
+test('re-hosting accepts the recorded pane when the live runner IS this session', async () => {
+  // A restore retried after one that reloaded the worker and then failed later
+  // finds its own session alive. Refusing there makes the retry impossible for
+  // exactly the record that needs it, so the structured binding check decides.
+  const { deps } = parkHostDeps({
+    windows: [windowRef('%1')],
+    livePid: '4242',
+    liveBindingOk: true,
+  });
+  const plan = await inspectRunnerParkHost({ vars, recoveryHandle: handle }, deps as never);
+  assert.equal(plan.ok, true, plan.ok === false ? plan.reason : '');
+  assert.equal(plan.ok === true && plan.disposition, 'exact');
+});
+
+test('re-hosting refuses when the persisted session file is gone', async () => {
+  // Everything else only decides WHERE to reload; without the conversation
+  // there is nothing to reload at all.
+  const { deps } = parkHostDeps({ windows: [], sessionPathExitCode: 1 });
+  const plan = await rehostRunnerParkTarget({ vars, recoveryHandle: handle }, deps as never);
+  assert.equal(plan.ok, false);
+  assert.match(plan.ok === false ? plan.reason : '', /session path is unavailable/);
+});
+
+test('re-hosting refuses a runner that declares no persisted session reload', async () => {
+  const { deps } = parkHostDeps({ windows: [] });
+  const plan = await rehostRunnerParkTarget(
+    { vars, recoveryHandle: { ...handle, runnerId: 'cursor' } },
+    deps as never,
+  );
+  assert.equal(plan.ok, false);
+  assert.match(plan.ok === false ? plan.reason : '', /no (graceful exit|persisted session reload)/);
+});
+
+test('re-hosting refuses a numeric window reference rather than guessing a position', async () => {
+  // A numeric reference names a POSITION, and positions shift when a successor
+  // rewrites the session.
+  const { deps } = parkHostDeps({ windows: [] });
+  const plan = await rehostRunnerParkTarget(
+    {
+      vars,
+      recoveryHandle: { ...handle, target: { ...handle.target, window: '2', target: 'slot-1:2' } },
+    },
+    deps as never,
+  );
+  assert.equal(plan.ok, false);
+  assert.match(plan.ok === false ? plan.reason : '', /names no exact tmux window/);
 });

@@ -14,6 +14,7 @@ import {
   type MachineParkResourceManifest,
   type MachineParkResourceReleaseEffect,
   type MachineParkRestoreEffect,
+  type MachineParkRestoreRefusal,
   type MachineParkSlotDisposition,
   type MachineParkWorkspace,
   type MachinePauseExecuteParams,
@@ -26,6 +27,7 @@ import {
   type MachinePauseRestoreParams,
   type MachinePauseRestorePreviewRun,
   type MachinePauseRestoreResult,
+  type MachinePauseRestoreTarget,
   type MachinePauseReviewedTarget,
   type MachinePauseSelector,
   type MachinePauseStatusResult,
@@ -42,10 +44,15 @@ import {
   type SlotResource,
 } from '@farmslot/protocol';
 
-import { selectAgentContext } from '../agents/contexts.js';
+import { selectAgentContext, upsertAgentContext } from '../agents/contexts.js';
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { readSlotRow, resetSlotIf, SLOT_PHASE_RELEASING } from '../core/index.js';
+import {
+  claimSlotStatusIf,
+  readSlotRow,
+  resetSlotIf,
+  SLOT_PHASE_RELEASING,
+} from '../core/index.js';
 import {
   captureSlotResourceLifecycle,
   runWithResourceLifecycleContext,
@@ -59,6 +66,7 @@ import {
 } from '../fleet/resource-manager.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
+import { slotOwnershipFieldsForRun } from '../methods/fleet.js';
 import {
   runPauseTransitionLocked,
   type RunResumeAcknowledgement,
@@ -76,8 +84,11 @@ import {
 } from '../run-lifecycle/transition-coordinator.js';
 import { normalizeRunner } from '../runners/registry.js';
 import {
+  inspectRunnerParkHost,
   inspectRunnerRecovery,
+  rehostRunnerParkTarget,
   reloadRunnerForPark,
+  type RunnerParkHostPlan,
   runnerRunningForPark,
   stopRunnerForPark,
 } from '../runners/session-lifecycle.js';
@@ -134,6 +145,27 @@ export interface MachineParkingDependencies {
   detachParkedWorkspace(run: Run, expected: MachineParkWorkspace): Promise<void>;
   /** Release slot ownership while the parked run keeps its slotId. */
   freeSlotOwnership(slotId: string, runId: string): Promise<boolean>;
+  /**
+   * Bind a freed slot back to the run it was freed from. CAS on the slot still
+   * being unowned, so a restore can never take a slot dispatch already gave
+   * away.
+   */
+  claimSlotOwnership(run: Run, slotId: string): Promise<boolean>;
+  /** Read-only: where the preserved branch ref points now, or null when it is gone. */
+  preservedBranchTip(run: Run, workspace: MachineParkWorkspace): Promise<string | null>;
+  /** Read-only: can the persisted runner session be reloaded on this slot, and where. */
+  inspectParkHost(run: Run, handle: MachinePauseRecoveryHandle): Promise<RunnerParkHostPlan>;
+  /** Bind the persisted runner session to a pane a reload can run in. */
+  rehostParkTarget(run: Run, handle: MachinePauseRecoveryHandle): Promise<RunnerParkHostPlan>;
+  /** Point the run's agent context at the re-hosted pane so operator attach works. */
+  rebindAgentContextTarget(run: Run, handle: MachinePauseRecoveryHandle): Promise<void>;
+  /**
+   * Tell the posture reconciler the park its `parked` posture described is
+   * over. Without it every client reads a restored run as parked with a dead
+   * worker, because the posture records the policy that was applied rather than
+   * where the run is now.
+   */
+  recordParkRestoredPosture(runId: string): Promise<void>;
   /** The slot row as one snapshot, so owner and lifecycle cannot be read torn. */
   slotRow(slotId: string): Promise<Readonly<Record<string, unknown>> | null>;
   /** Put a detached branch back in the working tree when a park will not finish. */
@@ -181,6 +213,28 @@ export interface RunnerReloadInspection {
   supported: boolean;
   reason?: string;
 }
+
+/** What a gate-resolution-triggered restore did, or why it refused. */
+export type MachineParkGateRestoreResult =
+  | {
+      ok: true;
+      runId: string;
+      slotId: string;
+      restoredGeneration: number;
+      reloadedSessionId: string;
+      /** The gate loop had exited, so the gate was re-presented as a new decision. */
+      gateReplayed: boolean;
+      record: MachineParkRecord;
+    }
+  | {
+      ok: false;
+      runId: string;
+      slotId: string;
+      /** A `MachineParkEligibilityCode`, or `RESTORE_PARTIAL` for an attempt that started. */
+      code: string;
+      reason: string;
+      record: MachineParkRecord;
+    };
 
 export interface MachineParkingCancelEffect {
   name: string;
@@ -467,6 +521,30 @@ async function defaultReattachParkedWorkspace(
   }
 }
 
+/**
+ * Where the preserved branch ref points right now. Read-only: no checkout, no
+ * ref write. `null` means the ref is gone, which restore treats exactly like a
+ * moved tip — the recorded commit is no longer reachable by that name.
+ */
+async function defaultPreservedBranchTip(
+  run: Run,
+  workspace: MachineParkWorkspace,
+): Promise<string | null> {
+  if (!run.slotId) throw new Error('run has no slot');
+  const vars = await loadSlotVars(run.slotId);
+  const tip = await execOnSlot(
+    vars,
+    `cd ${shellQuote(vars.remoteRepo)} && git rev-parse ${shellQuote(workspace.branch)}`,
+    { timeout: 15_000 },
+  );
+  return tip.exitCode === 0 ? tip.stdout.trim() || null : null;
+}
+
+async function parkHostOptions(run: Run, handle: MachinePauseRecoveryHandle) {
+  if (!run.slotId) throw new Error('run has no slot');
+  return { vars: await loadSlotVars(run.slotId), recoveryHandle: handle };
+}
+
 const defaultDependencies: MachineParkingDependencies = {
   now: () => new Date().toISOString(),
   operationId: () => `machine-park-${randomUUID()}`,
@@ -503,6 +581,43 @@ const defaultDependencies: MachineParkingDependencies = {
         slot.phase !== SLOT_PHASE_RELEASING &&
         !(typeof slot.handoff_run_id === 'string' && slot.handoff_run_id),
     ),
+  // The mirror of the free, and CAS'd for the same reason: exclusivity is
+  // decided INSIDE the serialized write, so a dispatch claim landing between
+  // the eligibility read and this write wins rather than being clobbered. The
+  // fields are the ones fleet refresh would republish from the run store, so
+  // the slot stops looking free the instant the claim lands instead of at the
+  // next refresh.
+  claimSlotOwnership: async (run, slotId) => {
+    const { claimed } = await claimSlotStatusIf(
+      slotId,
+      (slot) =>
+        !(typeof slot.current_run_id === 'string' && slot.current_run_id) &&
+        slot.phase !== SLOT_PHASE_RELEASING &&
+        !(typeof slot.handoff_run_id === 'string' && slot.handoff_run_id),
+      slotOwnershipFieldsForRun(run),
+    );
+    return claimed;
+  },
+  preservedBranchTip: defaultPreservedBranchTip,
+  inspectParkHost: async (run, handle) => inspectRunnerParkHost(await parkHostOptions(run, handle)),
+  rehostParkTarget: async (run, handle) =>
+    rehostRunnerParkTarget(await parkHostOptions(run, handle)),
+  // Lazily imported: the posture reconciler reaches machine parking for the
+  // `parked` posture, and a static edge back would close that loop at load.
+  recordParkRestoredPosture: async (runId) => {
+    const { getRunResourcePostureReconciler } = await import('../methods/runtime-posture.js');
+    await getRunResourcePostureReconciler().recordParkRestored(runId);
+  },
+  rebindAgentContextTarget: async (run, handle) => {
+    const context = run.agentContexts?.find((candidate) => candidate.id === handle.contextId);
+    if (!context) {
+      throw new Error(`run ${run.id} has no agent context '${handle.contextId}' to re-bind`);
+    }
+    await upsertAgentContext(run.id, context.role, {
+      id: context.id,
+      target: structuredClone(handle.target),
+    });
+  },
   resolveRecoveryHandle: defaultResolveRecoveryHandle,
   inspectRecoveryHandle: defaultInspectRecoveryHandle,
   pauseRun: (runId, emit) =>
@@ -672,24 +787,7 @@ export class MachineParkingService {
           operationId,
           machine,
           selector: params.selector,
-          runs: idempotent.map((record) => ({
-            runId: record.runId,
-            generation: record.generation,
-            selected: true,
-            eligibility:
-              record.phase === 'restored'
-                ? {
-                    eligible: true as const,
-                    code: 'RESTORE_COMPLETE',
-                    reason: 'The reviewed parked run was restored.',
-                  }
-                : {
-                    eligible: false as const,
-                    code: 'RESTORE_PARTIAL',
-                    reason: lastError(record),
-                  },
-            record,
-          })),
+          runs: idempotent.map((record) => restoreOutcomeRun(record)),
           records: idempotent,
           ...(await this.optionalPressure(machine)),
         };
@@ -742,28 +840,102 @@ export class MachineParkingService {
         operationId,
         machine,
         selector: params.selector,
-        runs: records.map((record) => ({
-          runId: record.runId,
-          generation: record.generation,
-          selected: true,
-          eligibility:
-            record.phase === 'restored'
-              ? {
-                  eligible: true as const,
-                  code: 'RESTORE_COMPLETE',
-                  reason: 'The reviewed parked run was restored.',
-                }
-              : {
-                  eligible: false as const,
-                  code: 'RESTORE_PARTIAL',
-                  reason: lastError(record),
-                },
-          record,
-        })),
+        runs: records.map((record) => restoreOutcomeRun(record)),
         records,
         ...(await this.optionalPressure(machine)),
       };
     });
+  }
+
+  /**
+   * Restore a freed gate park because its operator is answering the gate.
+   *
+   * ADR-054: resolving a gate on a parked run cannot just consume the decision
+   * — the worker is stopped and the slot may belong to someone else. So the
+   * resolution restores FIRST and only consumes the decision if that succeeded.
+   * A refusal changes nothing the operator has to undo: the record stays
+   * parked, the decision stays pending, and the reason is durable on the record
+   * so a client that reconnects can still explain it.
+   *
+   * Deliberately not the public `machine.pause.restore` shape. There is no
+   * preview to review and no batch to reconcile: the operator already made
+   * their decision, and asking them to review a restore they did not ask for
+   * would be a second gate in front of the first.
+   */
+  async restoreForGateResolution(runId: string): Promise<MachineParkGateRestoreResult> {
+    const initial = this.requireRun(runId);
+    const record = initial.park;
+    if (!record || record.mode !== 'release' || record.slotDisposition !== 'freed') {
+      throw new Error(`Run ${runId} has no gate park to restore`);
+    }
+    const machine = record.machine;
+    return withMachineRunTransition(machine, async () => {
+      const preview = await this.buildRestorePreview(machine, {
+        kind: 'include',
+        runIds: [runId],
+      });
+      const item = preview.runs.find((entry) => entry.runId === runId);
+      if (!item) {
+        return this.refusedGateRestore(runId, record.slotId, 'NOT_PARKED', 'no park record');
+      }
+      if (!item.eligibility.eligible) {
+        return this.refusedGateRestore(
+          runId,
+          record.slotId,
+          item.eligibility.code,
+          item.eligibility.reason,
+        );
+      }
+      const operationId = `gate-restore-${randomUUID()}`;
+      const intent = await this.persistRestoreIntents([item], operationId, preview.previewId);
+      if (!intent.durable) {
+        return this.refusedGateRestore(
+          runId,
+          record.slotId,
+          'RESTORE_PARTIAL',
+          lastError(intent.records[0] ?? record),
+        );
+      }
+      try {
+        if (item.eligibility.code === 'ELIGIBLE_ZERO_EFFECT_REPAIR') {
+          await this.settleZeroEffectRestore(item, operationId, preview.previewId);
+        } else {
+          await this.restoreOne(runId, expectedRestoreRunnerState(item.record));
+        }
+      } catch (error) {
+        await this.settleUnexpectedFailure(runId, 'partial', 'machine-restore.unexpected', error, {
+          syncGeneration: true,
+        });
+      }
+      this.pressureCache.delete(machine);
+      const settled = this.requireRun(runId).park!;
+      if (settled.phase !== 'restored') {
+        return this.refusedGateRestore(runId, record.slotId, 'RESTORE_PARTIAL', lastError(settled));
+      }
+      const restoredGeneration = settled.restoredGeneration ?? settled.generation;
+      return {
+        ok: true,
+        runId,
+        slotId: record.slotId,
+        restoredGeneration,
+        reloadedSessionId: settled.recoveryProof?.sessionId ?? record.recoveryHandle!.sessionId,
+        // Only a replay advances the generation; a hold restore leaves it where
+        // the park found it. That is the difference between "the gate you are
+        // answering is still the live one" and "the gate was re-presented".
+        gateReplayed: restoredGeneration > settled.generation,
+        record: settled,
+      };
+    });
+  }
+
+  private async refusedGateRestore(
+    runId: string,
+    slotId: string,
+    code: string,
+    reason: string,
+  ): Promise<MachineParkGateRestoreResult> {
+    const record = await this.recordRestoreRefusal(runId, code, reason);
+    return { ok: false, runId, slotId, code, reason, record };
   }
 
   async reconcile(): Promise<{ reconciled: number; partial: number }> {
@@ -1773,6 +1945,182 @@ export class MachineParkingService {
   }
 
   /**
+   * Whether the ORIGINAL slot can take its parked run back right now.
+   *
+   * ADR-054 restores into the original slot only, so this is the whole
+   * question. It is deliberately read-only and deliberately strict: an owner
+   * that is not us, a row mid-release, and a foreign warm-handoff reservation
+   * each mean the slot belongs to someone else's transition, and taking it
+   * would put two runs on one slot. An owner that IS us is accepted so a
+   * re-driven restore, after a crash between the claim and the record write,
+   * finishes instead of refusing its own landed claim.
+   */
+  private async slotAcceptsRestore(
+    slotId: string,
+    runId: string,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const row = await this.deps.slotRow(slotId);
+    if (!row) return { ok: false, reason: `slot '${slotId}' has no status row to restore into` };
+    const owner =
+      typeof row.current_run_id === 'string' && row.current_run_id ? row.current_run_id : null;
+    if (owner && owner !== runId) {
+      return { ok: false, reason: `slot '${slotId}' is now owned by run '${owner}'` };
+    }
+    if (row.phase === SLOT_PHASE_RELEASING) {
+      return { ok: false, reason: `slot '${slotId}' is mid-release` };
+    }
+    const handoff = typeof row.handoff_run_id === 'string' ? row.handoff_run_id : '';
+    if (handoff && handoff !== runId) {
+      return {
+        ok: false,
+        reason: `slot '${slotId}' is reserved for a warm handoff to run '${handoff}'`,
+      };
+    }
+    if (!owner && row.lifecycle !== 'ready') {
+      return {
+        ok: false,
+        reason: `slot '${slotId}' is '${String(row.lifecycle ?? 'unknown')}', not ready`,
+      };
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Whether the preserved branch can be checked back out.
+   *
+   * Two ways a successor can make that impossible, and both must refuse rather
+   * than guess: uncommitted work in the tree (a checkout would carry someone
+   * else's changes onto the parked branch), and a branch ref that no longer
+   * sits at the tip the park detached from (the commits the operator is about
+   * to publish are not the ones that would come back).
+   */
+  private async inspectRestoreWorkspace(
+    run: Run,
+    workspace: MachineParkWorkspace,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    let current: ParkWorkspaceInspection;
+    try {
+      current = await this.deps.inspectParkWorkspace(run);
+    } catch (error) {
+      return { ok: false, reason: messageOf(error) };
+    }
+    if (current.dirtyPaths.length > 0) {
+      return {
+        ok: false,
+        reason: `the slot working tree has uncommitted changes (${current.dirtyPaths
+          .slice(0, 10)
+          .join(', ')}); checking '${workspace.branch}' out would carry them onto it`,
+      };
+    }
+    let tip: string | null;
+    try {
+      tip = await this.deps.preservedBranchTip(run, workspace);
+    } catch (error) {
+      return { ok: false, reason: messageOf(error) };
+    }
+    if (tip !== workspace.headSha) {
+      return {
+        ok: false,
+        reason: `branch '${workspace.branch}' is at ${tip ?? 'no ref'}, not the tip ${workspace.headSha} the park detached from`,
+      };
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Take the freed slot back for its parked run: re-bind ownership, then put
+   * the preserved branch back in the working tree.
+   *
+   * The mirror of `freeParkedSlot`, journalled for the mirror-image reason. The
+   * slot claim and the write that clears `slotFreedAt` are two writes, and a
+   * crash between them leaves a row bound to a run every other reader still
+   * treats as freed — so fleet refresh would not republish it and dispatch
+   * would keep offering a slot this run is sitting in. The `restore-slot`
+   * journal is the write-ahead marker that finishes exactly that window.
+   *
+   * Throws on refusal; the caller settles the record. Nothing here is reached
+   * until the preview and the in-transition preflight both proved the slot
+   * free, so a throw means the state changed underneath a checked precondition.
+   */
+  private async reclaimFreedSlot(runId: string, record: MachineParkRecord): Promise<void> {
+    const availability = await this.slotAcceptsRestore(record.slotId, runId);
+    if (!availability.ok) throw new Error(availability.reason);
+    // Scoped to THIS run, like the free it undoes: a batch shares one
+    // operationId, and an unscoped marker would be overwritten by the next
+    // member and then deleted by the first that succeeded.
+    await this.deps.writeIntentJournal('restore-slot', [structuredClone(record)], runId);
+    await this.completeSlotRebind(runId, record);
+    await this.deps
+      .deleteIntentJournal(record.machine, 'restore-slot', record.operationId, runId)
+      .catch((error: unknown) => {
+        // The rebind landed and is durable on the record; a stale marker only
+        // makes the next reconcile re-prove an already-finished transition.
+        console.warn(
+          `[machine-pause] could not delete restore-slot journal for ${runId}: ${messageOf(error)}`,
+        );
+      });
+  }
+
+  /**
+   * Claim the slot, clear `slotFreedAt`, and reattach the preserved branch.
+   * Idempotent at every step, so recovery can re-drive it from the journal
+   * after a crash at any point.
+   */
+  private async completeSlotRebind(runId: string, record: MachineParkRecord): Promise<void> {
+    const row = await this.deps.slotRow(record.slotId);
+    const owner =
+      row && typeof row.current_run_id === 'string' && row.current_run_id
+        ? row.current_run_id
+        : null;
+    if (owner !== runId) {
+      if (!(await this.deps.claimSlotOwnership(this.requireRun(runId), record.slotId))) {
+        throw new Error(`slot '${record.slotId}' could not be re-bound to run '${runId}'`);
+      }
+    }
+    // Clearing `slotFreedAt` is what makes the run an occupant again for every
+    // reader: dispatch scoring, fleet refresh, and the gate fence all key on it.
+    // It is written only AFTER the claim landed, so nothing ever reads the run
+    // as an occupant of a slot it does not hold.
+    await this.patchRecord(runId, (current) => ({
+      ...current,
+      slotFreedAt: undefined,
+      slotReboundAt: current.slotReboundAt ?? this.deps.now(),
+      restoreRefusal: undefined,
+    }));
+    const workspace = this.requireRun(runId).park?.preservedWorkspace;
+    if (!workspace?.detachedAt) return;
+    // Re-proved after the claim, not just at preview: the tree could have gone
+    // dirty in between, and a checkout on top of that would carry a successor's
+    // leftovers onto the parked branch.
+    const inspection = await this.inspectRestoreWorkspace(this.requireRun(runId), workspace);
+    if (!inspection.ok) throw new Error(inspection.reason);
+    await this.deps.reattachParkedWorkspace(this.requireRun(runId), workspace);
+    await this.patchRecord(runId, (current) => ({
+      ...current,
+      preservedWorkspace: current.preservedWorkspace
+        ? { branch: current.preservedWorkspace.branch, headSha: current.preservedWorkspace.headSha }
+        : current.preservedWorkspace,
+    }));
+  }
+
+  /**
+   * Record why a restore refused, without touching anything else.
+   *
+   * A refusal is not a park failure: the record stays `parked`, its slot stays
+   * freed, and its gate decision stays pending. Persisting the reason is what
+   * lets a client that reconnects — or one that never saw the RPC error —
+   * still explain why the operator's answer did not go through.
+   */
+  private recordRestoreRefusal(
+    runId: string,
+    code: string,
+    reason: string,
+  ): Promise<MachineParkRecord> {
+    const refusal: MachineParkRestoreRefusal = { code, reason, at: this.deps.now() };
+    return this.patchRecord(runId, (record) => ({ ...record, restoreRefusal: refusal }));
+  }
+
+  /**
    * Undo a detach this park performed when the park will not finish. The branch
    * goes back into the working tree at the tip it was detached from, so the run
    * is left exactly as the park found it and `detachedAt` is cleared.
@@ -1844,11 +2192,26 @@ export class MachineParkingService {
       records.map(async (run) => {
         const record = structuredClone(run.park!);
         const selected = selectedBySelector(run.id, selector);
+        const slot = fleet.slots.find((candidate) => candidate.slot === record.slotId);
+        const freed = Boolean(record.slotFreedAt);
+        // Read once and shared by the verdict and the target, so a client never
+        // sees a rejection that disagrees with the availability beside it.
+        const availability = freed
+          ? await this.slotAcceptsRestore(record.slotId, run.id)
+          : { ok: true as const };
+        const restoreTarget: MachinePauseRestoreTarget = {
+          slotId: record.slotId,
+          disposition: record.slotDisposition ?? 'retained',
+          available: freed
+            ? availability.ok
+            : Boolean(slot) && (record.mode !== 'release' || slot!.currentRunId === run.id),
+        };
         const reject = (code: string, reason: string): MachinePauseRestorePreviewRun => ({
           runId: run.id,
           generation: run.engineState?.generation ?? 0,
           selected,
           eligibility: { eligible: false, code, reason },
+          restoreTarget,
           record,
         });
         if (record.phase === 'restored' || record.phase === 'cancelled') {
@@ -1867,23 +2230,9 @@ export class MachineParkingService {
               code: 'ELIGIBLE_ZERO_EFFECT_REPAIR',
               reason: 'No pause side effect landed; restore will settle the durable record only.',
             },
+            restoreTarget,
             record,
           };
-        }
-        if (record.slotFreedAt) {
-          // Keyed on the FACT, not the intent. Slice 1 frees the slot; restoring
-          // into it (in place when still free, otherwise re-dispatch through the
-          // affinity path) is the follow-up. Refusing with its own code keeps the
-          // verdict honest instead of reporting a slot-ownership drift the record
-          // deliberately created.
-          //
-          // A freeing park that never released anything must NOT land here: it
-          // still owns its slot, so the ordinary restore path is exactly right,
-          // and refusing it would leave the run with no exit but cancellation.
-          return reject(
-            MachineParkEligibilityCodes.freedSlotRestoreUnsupported,
-            'this park freed the slot; restoring a freed slot is not supported yet',
-          );
         }
         // A gate park deliberately PRESERVES the run's status — the run stays at
         // its gate rather than moving to `paused`. Requiring `paused` here would
@@ -1895,18 +2244,59 @@ export class MachineParkingService {
         if ((run.engineState?.generation ?? 0) !== record.generation) {
           return reject('GENERATION_CHANGED', 'run generation changed while parked');
         }
-        const slot = fleet.slots.find((candidate) => candidate.slot === record.slotId);
         if (!slot || slot.machine !== machine) {
           return reject(
             'MACHINE_MISMATCH',
             'recorded slot no longer belongs to the selected machine',
           );
         }
-        if (record.mode === 'release' && slot.currentRunId !== run.id) {
-          return reject('SLOT_OWNERSHIP_CHANGED', 'slot no longer has the reviewed run ownership');
-        }
         if (record.mode === 'release' && !record.recoveryHandle) {
           return reject('RECOVERY_HANDLE_MISSING', 'release park has no runner recovery handle');
+        }
+        if (freed) {
+          // ADR-054 restores a freed slot into the ORIGINAL slot only. Every
+          // check below is READ-ONLY on purpose: a refusal here has changed
+          // nothing, so the record stays parked and its gate stays answerable
+          // once the slot comes back. Cross-slot re-dispatch is a separate
+          // decision and deliberately absent.
+          if (!availability.ok) {
+            return reject(MachineParkEligibilityCodes.restoreSlotTaken, availability.reason);
+          }
+          if (record.preservedWorkspace?.detachedAt) {
+            const workspace = await this.inspectRestoreWorkspace(run, record.preservedWorkspace);
+            if (!workspace.ok) {
+              return reject(
+                MachineParkEligibilityCodes.restoreWorkspaceUnavailable,
+                workspace.reason,
+              );
+            }
+          }
+          // The pane the park recorded is routinely gone: freeing the slot hands
+          // its tmux session to the next occupant. What must still hold is the
+          // persisted session and the runner's declared reload — the pane is a
+          // host the restore re-creates.
+          const host = await this.deps.inspectParkHost(run, record.recoveryHandle!);
+          if (!host.ok) {
+            return reject(MachineParkEligibilityCodes.restoreRunnerReloadFailed, host.reason);
+          }
+          return {
+            runId: run.id,
+            generation: record.generation,
+            selected,
+            eligibility: {
+              eligible: true,
+              code: 'ELIGIBLE_FREED_SLOT_RESTORE',
+              reason:
+                host.disposition === 'exact'
+                  ? 'The freed slot is still free and the persisted runner session is reloadable in place.'
+                  : 'The freed slot is still free and the persisted runner session will be re-hosted on a new pane.',
+            },
+            restoreTarget,
+            record,
+          };
+        }
+        if (record.mode === 'release' && slot.currentRunId !== run.id) {
+          return reject('SLOT_OWNERSHIP_CHANGED', 'slot no longer has the reviewed run ownership');
         }
         if (record.mode === 'release') {
           try {
@@ -1931,6 +2321,7 @@ export class MachineParkingService {
                 ? 'The parked generation and exact slot ownership still match the durable record.'
                 : 'The parked orchestration generation still belongs to the recorded machine slot.',
           },
+          restoreTarget,
           record,
         };
       }),
@@ -1960,6 +2351,15 @@ export class MachineParkingService {
         const run = this.requireRun(item.runId);
         if (!item.record.recoveryHandle)
           throw new Error(`run ${item.runId} has no recovery handle`);
+        if (item.record.slotFreedAt) {
+          // A freed park's recorded pane belongs to whoever dispatch gave the
+          // slot to, so probing it would refuse every restore this slice
+          // exists to allow. The persisted session and the runner's declared
+          // reload are what must still hold.
+          const host = await this.deps.inspectParkHost(run, item.record.recoveryHandle);
+          if (!host.ok) throw new Error(host.reason);
+          return;
+        }
         await this.deps.inspectRecoveryHandle(
           run,
           item.record.recoveryHandle,
@@ -1971,6 +2371,13 @@ export class MachineParkingService {
       const current = this.requireRun(item.runId);
       const slot = fleet.slots.find((candidate) => candidate.slot === item.record.slotId);
       const zeroEffect = item.eligibility.code === 'ELIGIBLE_ZERO_EFFECT_REPAIR';
+      // Re-proved INSIDE the machine transition, because the preview's read
+      // happened outside it: a dispatch that claimed the slot in between must
+      // stop this restore before it writes an intent, not after.
+      if (item.record.slotFreedAt) {
+        const availability = await this.slotAcceptsRestore(item.record.slotId, item.runId);
+        if (!availability.ok) throw new Error(availability.reason);
+      }
       if (
         // Same relaxation the preview applies: a gate park preserves the run's
         // status by design, so `paused` is the wrong precondition for it. Left
@@ -1985,7 +2392,11 @@ export class MachineParkingService {
         stableJson(current.park) !== stableJson(item.record) ||
         !slot ||
         slot.machine !== item.record.machine ||
-        (item.record.mode === 'release' && slot.currentRunId !== item.runId)
+        // A freed park has no slot ownership by construction; its availability
+        // was just re-proved above.
+        (item.record.mode === 'release' &&
+          !item.record.slotFreedAt &&
+          slot.currentRunId !== item.runId)
       ) {
         throw new Error(`run ${item.runId} changed during restore preflight; preview again`);
       }
@@ -2058,8 +2469,22 @@ export class MachineParkingService {
     const record = initial.park!;
     let failed = false;
     let resumeAcknowledgement: RunResumeAcknowledgement | null = null;
+    // The handle the reload will use. A freed park's recorded pane is routinely
+    // gone, so this is re-bound below; every later runner call reads THIS rather
+    // than the record's snapshot, or it would address a pane that no longer
+    // exists.
+    let handle = record.recoveryHandle!;
+    const freedSlot = Boolean(record.slotFreedAt);
     if (record.mode === 'release') {
-      await this.deps.inspectRecoveryHandle(initial, record.recoveryHandle!, expectedRunnerState);
+      if (freedSlot) {
+        // FIRST, before any resource or runner work. Everything that follows
+        // acts on the slot, and acting on a slot this run does not own would
+        // reach into whatever dispatch handed it to. A refusal here throws with
+        // the slot untouched.
+        await this.reclaimFreedSlot(runId, record);
+      } else {
+        await this.deps.inspectRecoveryHandle(initial, record.recoveryHandle!, expectedRunnerState);
+      }
       // Ordered FIRST, before anything acquires. A provider's acquire action is
       // frequently its resource's own boot action — the shipped gateway/UI
       // provider is exactly that — so acquiring first would revive a retained
@@ -2289,10 +2714,27 @@ export class MachineParkingService {
           }
           if (!failed) {
             try {
-              const runner = await this.deps.runnerRunning(
-                this.requireRun(runId),
-                record.recoveryHandle!,
-              );
+              if (freedSlot) {
+                // The park handed this slot's tmux session to the next
+                // occupant, whose dispatch replaced its windows. The session id
+                // is the identity that survives; the pane is a host the restore
+                // re-creates. Refuses rather than respawning over a live runner.
+                const host = await this.deps.rehostParkTarget(this.requireRun(runId), handle);
+                if (!host.ok) throw new Error(host.reason);
+                if (host.disposition === 'rehost') {
+                  handle = host.recoveryHandle;
+                  // The record AND the agent context, together: the record is
+                  // what a later restore reads, and the context is what the
+                  // operator's attach and the next handle resolution read. One
+                  // without the other leaves an operator staring at a dead pane.
+                  await this.patchRecord(runId, (current) => ({
+                    ...current,
+                    recoveryHandle: structuredClone(handle),
+                  }));
+                  await this.deps.rebindAgentContextTarget(this.requireRun(runId), handle);
+                }
+              }
+              const runner = await this.deps.runnerRunning(this.requireRun(runId), handle);
               if (runner === 'stopped') {
                 await this.patchRecord(runId, (current) => ({
                   ...current,
@@ -2301,11 +2743,11 @@ export class MachineParkingService {
                 const current = this.requireRun(runId);
                 const proof = await this.deps.reloadRunner(
                   current,
-                  record.recoveryHandle!,
+                  handle,
                   buildMachineParkingContinuationPrompt(current, current.park!),
                 );
                 if (
-                  proof.sessionId !== record.recoveryHandle!.sessionId ||
+                  proof.sessionId !== handle.sessionId ||
                   !proof.live ||
                   proof.acknowledgement.kind !== 'structured'
                 ) {
@@ -2413,6 +2855,20 @@ export class MachineParkingService {
             restoredGeneration: resumeAcknowledgement?.generation ?? current.generation,
           }),
     }));
+    // AFTER the record settles `restored`, because that is what makes the run
+    // no longer parked; recording the posture first would describe a state the
+    // record still contradicts. A partial keeps `parked`, which is honest: its
+    // worker is still stopped.
+    if (!failed) {
+      try {
+        await this.deps.recordParkRestoredPosture(runId);
+      } catch (error) {
+        // The restore itself is durable and complete. A posture note that could
+        // not be written is a reporting gap, not a reason to report a restore
+        // that happened as failed — but it is never silent.
+        await this.appendError(runId, 'restored', 'posture.record-restored', error);
+      }
+    }
   }
 
   private async observeResiduals(run: Run, record: MachineParkRecord) {
@@ -2727,9 +3183,13 @@ export class MachineParkingService {
     for (const journal of journals) {
       const { records } = journal;
       if (records.length === 0) continue;
-      if (journal.kind === 'free-slot') {
+      if (journal.kind === 'free-slot' || journal.kind === 'restore-slot') {
         for (const record of records) {
-          if (!(await this.repairFreeSlotIntent(record))) blockedRunIds.add(record.runId);
+          const repaired =
+            journal.kind === 'free-slot'
+              ? await this.repairFreeSlotIntent(record)
+              : await this.repairRestoreSlotIntent(record);
+          if (!repaired) blockedRunIds.add(record.runId);
         }
         if (!records.some((record) => blockedRunIds.has(record.runId))) {
           await this.deps.deleteIntentJournal(
@@ -2791,6 +3251,48 @@ export class MachineParkingService {
     if (run.park.slotFreedAt) return true;
     if (isTerminalRunStatus(run.status)) return true;
     return this.completeSlotFree(record.runId, run.park, { recovering: true });
+  }
+
+  /**
+   * Finish a `restore-slot` transition interrupted by a crash.
+   *
+   * The mirror of {@link repairFreeSlotIntent}. Without it a restore that
+   * claimed the slot and crashed before clearing `slotFreedAt` leaves a row
+   * bound to a run that every reader still treats as parked-and-freed: fleet
+   * refresh skips it, dispatch keeps offering the slot, and the operator's gate
+   * stays fenced. Re-driving the idempotent rebind settles both outcomes.
+   *
+   * Returns false only when the repair should be retried on the next reconcile.
+   * A slot a rival took in the meantime is NOT a retry: the record goes back to
+   * being an ordinary freed park with the refusal recorded, which is exactly
+   * the state a fresh restore attempt starts from, so the marker is dropped.
+   */
+  private async repairRestoreSlotIntent(record: MachineParkRecord): Promise<boolean> {
+    const run = this.deps.getRun(record.runId);
+    // Nothing to finish: the run is gone, terminal cleanup cleared the record,
+    // or a later operation already settled it.
+    if (!run?.park) return true;
+    if (run.park.operationId !== record.operationId) return true;
+    if (run.park.phase === 'restored' || run.park.phase === 'cancelled') return true;
+    if (isTerminalRunStatus(run.status)) return true;
+    // The rebind already landed; `slotFreedAt` is the fact it clears.
+    if (!run.park.slotFreedAt) return true;
+    const availability = await this.slotAcceptsRestore(record.slotId, record.runId);
+    if (!availability.ok) {
+      await this.recordRestoreRefusal(
+        record.runId,
+        MachineParkEligibilityCodes.restoreSlotTaken,
+        availability.reason,
+      );
+      return true;
+    }
+    try {
+      await this.completeSlotRebind(record.runId, run.park);
+    } catch (error) {
+      await this.appendError(record.runId, 'resources-restoring', 'slot.rebind', error);
+      return false;
+    }
+    return true;
   }
 
   private async settleUnexpectedFailure(
@@ -2930,8 +3432,43 @@ export const machinePausePreview = (params: MachinePausePreviewParams) =>
 export const machinePauseExecute = (params: MachinePauseExecuteParams) =>
   machineParkingService.execute(params);
 export const machinePauseStatus = (machine: string) => machineParkingService.status(machine);
+export const machineParkRestoreForGateResolution = (runId: string) =>
+  machineParkingService.restoreForGateResolution(runId);
 export const machinePauseRestore = (params: MachinePauseRestoreParams) =>
   machineParkingService.restore(params);
+/**
+ * The preview-shaped entry describing what a restore attempt actually did.
+ *
+ * `available` is read off the record rather than the fleet: after an attempt the
+ * record is the authority for its own slot binding, and one that still
+ * advertises a freed slot did not get it back.
+ */
+function restoreOutcomeRun(record: MachineParkRecord): MachinePauseRestorePreviewRun {
+  return {
+    runId: record.runId,
+    generation: record.generation,
+    selected: true,
+    eligibility:
+      record.phase === 'restored'
+        ? {
+            eligible: true as const,
+            code: 'RESTORE_COMPLETE',
+            reason: 'The reviewed parked run was restored.',
+          }
+        : {
+            eligible: false as const,
+            code: 'RESTORE_PARTIAL',
+            reason: lastError(record),
+          },
+    restoreTarget: {
+      slotId: record.slotId,
+      disposition: record.slotDisposition ?? 'retained',
+      available: !record.slotFreedAt,
+    },
+    record,
+  };
+}
+
 function selectPauseRuns(
   runs: Run[],
   fleet: Fleet,

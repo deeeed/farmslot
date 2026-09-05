@@ -333,6 +333,11 @@ function restorePreview(selector: MachinePauseSelector): MachinePauseRestoreResu
           code: 'parked-restorable',
           reason: 'Durable recovery handle and resource manifest are available.',
         },
+        restoreTarget: {
+          slotId: parkedRecord.slotId,
+          disposition: parkedRecord.slotDisposition ?? 'retained',
+          available: true,
+        },
         record: parkedRecord,
       },
       {
@@ -343,6 +348,11 @@ function restorePreview(selector: MachinePauseSelector): MachinePauseRestoreResu
           eligible: true,
           code: 'partial-retry-restorable',
           reason: 'The durable partial record can retry restore from its saved checkpoint.',
+        },
+        restoreTarget: {
+          slotId: partialRecord.slotId,
+          disposition: partialRecord.slotDisposition ?? 'retained',
+          available: true,
         },
         record: partialRecord,
       },

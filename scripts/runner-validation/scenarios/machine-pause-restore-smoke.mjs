@@ -65,6 +65,10 @@ function selectedRun(result, runId) {
 
 export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
+  const gateParkRunId = process.env.FARMSLOT_GATE_PARK_RESTORE_RUN_ID?.trim();
+  if (gateParkRunId) {
+    return runGateParkRestoreScenario({ runner, runId: gateParkRunId, timeoutMs, outDir });
+  }
   const runId = process.env.FARMSLOT_MACHINE_PAUSE_RUN_ID?.trim();
   if (!SUPPORTED_RUNNERS.has(runner)) {
     const report = {
@@ -457,4 +461,534 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
 
   const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
   return { scenario: SCENARIO_ID, runner, outPath, pass: report.pass, report };
+}
+
+// ─── ADR-054 `free-slot`: restoring a freed slot (MANUAL-000112 slice 2) ─────
+//
+// A different shape from the park/restore cycle above, and it needs its own
+// node: the run is ALREADY parked with its slot handed to dispatch, and what is
+// being proved is the way back. That state cannot be produced by a scripted
+// run — it needs a real publication package held at a gate — so the parked run
+// is supplied through FARMSLOT_GATE_PARK_RESTORE_RUN_ID rather than created.
+//
+// What each node proves, and how to make it fail:
+//
+//   parked             The supplied run really is a landed gate park with its
+//                      gate unanswered and its slot free. Answer the gate, or
+//                      restore the run first, and this node fails.
+//   fencedWhileParked  `runtime.posture.apply` still refuses a freed park with
+//                      FREED_SLOT_RESTORE_REQUIRED. Drop the fence in
+//                      methods/runtime-posture.ts and it fails.
+//   previewEligible    The freed slot is restorable into ITSELF, and the
+//                      Gateway says where. Restore the freed-slot rejection in
+//                      buildRestorePreview and it fails.
+//   slotTaken          With a successor holding the slot, answering the gate is
+//                      refused with RESTORE_SLOT_TAKEN and NOTHING moves — the
+//                      decision, the park record, the slot row, and the
+//                      detached worktree are all exactly as they were. Remove
+//                      the availability check in buildRestorePreview and it
+//                      fails (the restore proceeds and mutates the record).
+//   restored           The slot is re-bound, the branch is back on its ref at
+//                      the recorded tip, the retained resource is verified
+//                      rather than rebooted, and the worker is back through the
+//                      persisted session with a structured acknowledgement on a
+//                      RE-HOSTED pane. Skip reclaimFreedSlot, or make the
+//                      re-host reuse the dead pane, and it fails.
+//   answerable         The gate is answerable again and STILL PENDING: the
+//                      fence has lifted without the proof consuming the
+//                      operator's decision.
+const GATE_PARK_SCENARIO_ID = 'gate-park-restore-smoke';
+
+function fleetSlot(slotId) {
+  const status = rpc('fleet.status', {});
+  const slot = (status.fleet?.slots ?? []).find((candidate) => candidate.slot === slotId);
+  if (!slot) throw new Error(`slot ${slotId} is absent from fleet.status`);
+  return slot;
+}
+
+/** The slot-row facts a restore must move, read as one snapshot. */
+function slotBinding(slotId) {
+  const slot = fleetSlot(slotId);
+  return {
+    slot: slot.slot,
+    currentRunId: slot.currentRunId ?? null,
+    lifecycle: slot.lifecycle ?? null,
+    phase: slot.phase ?? null,
+    agent: slot.agent ?? null,
+  };
+}
+
+/**
+ * The slot working tree's git identity, read directly because the fleet row's
+ * branch/headSha are a refresh snapshot and a restore has to be judged against
+ * the tree itself. Local slots only; a remote slot skips rather than guessing.
+ */
+function workspaceIdentity(slot) {
+  if (slot.health?.ssh !== 'LOCAL' || !slot.repo) {
+    return { skipped: true, reason: `slot ${slot.slot} is not a local checkout` };
+  }
+  const git = (args) => {
+    const result = spawnSync('git', ['-C', slot.repo, ...args], { encoding: 'utf8' });
+    return result.status === 0 ? result.stdout.trim() : null;
+  };
+  return {
+    repo: slot.repo,
+    branch: git(['rev-parse', '--abbrev-ref', 'HEAD']),
+    headSha: git(['rev-parse', 'HEAD']),
+    dirty: (git(['status', '--porcelain']) ?? '').split('\n').filter(Boolean).length,
+  };
+}
+
+function pendingGateDecision(run) {
+  return (
+    run.decisions?.find(
+      (decision) => decision.type === 'engine_human_gate' && !decision.resolvedAt,
+    ) ?? null
+  );
+}
+
+function resolveDecisionAttempt(runId, decisionId, actionId) {
+  const script = path.resolve('apps/command-center/scripts/cdp.mjs');
+  const result = spawnSync(
+    'node',
+    [script, 'gateway', 'run.resolveDecision', JSON.stringify({ runId, decisionId, actionId })],
+    { cwd: process.cwd(), encoding: 'utf8', timeout: 300_000 },
+  );
+  return {
+    status: result.status,
+    stdout: result.stdout?.trim() ?? '',
+    stderr: result.stderr?.trim() ?? '',
+  };
+}
+
+async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) {
+  const operationId = `gate-park-restore-${process.pid}-${Date.now()}`;
+  const report = {
+    runner,
+    runId,
+    operationId,
+    machine: null,
+    slotId: null,
+    parkedByChoice: null,
+    parked: null,
+    fencedWhileParked: null,
+    previewEligible: null,
+    slotTaken: null,
+    restored: null,
+    answerable: null,
+    pass: false,
+    error: null,
+  };
+  // The successor is created here rather than supplied: a scripted run CAN take
+  // a freed slot, and proving RESTORE_SLOT_TAKEN against a slot this scenario
+  // handed away itself is what makes the refusal reproducible.
+  const takeSlot = process.env.FARMSLOT_GATE_PARK_TAKE_SLOT !== '0';
+  let successorRunId = process.env.FARMSLOT_GATE_PARK_SUCCESSOR_RUN_ID?.trim() || null;
+  try {
+    // ─── parked ───────────────────────────────────────────────────────────
+    // Re-runnable on purpose: a supplied run that is merely gate-held is parked
+    // here through the operator's own `free-slot` choice, so this node proves
+    // the park and the restore as one cycle rather than depending on a state
+    // some earlier session left behind.
+    let before = rpc('run.get', { runId }).run;
+    if (!before.park || !before.park.slotFreedAt) {
+      report.parkedByChoice = parkGateHeldRun(runId, timeoutMs);
+      before = rpc('run.get', { runId }).run;
+    }
+    const record = before.park;
+    if (!record) throw new Error(`run ${runId} carries no park record`);
+    if (record.mode !== 'release' || record.slotDisposition !== 'freed') {
+      throw new Error(
+        `run ${runId} is not a freed gate park (mode=${record.mode}, slotDisposition=${record.slotDisposition})`,
+      );
+    }
+    if (!record.slotFreedAt) throw new Error('the park never released the slot');
+    if (record.phase !== 'parked') throw new Error(`park record is '${record.phase}', not parked`);
+    const decision = pendingGateDecision(before);
+    if (!decision) throw new Error('the parked run has no pending publication gate decision');
+    report.machine = record.machine;
+    report.slotId = record.slotId;
+    const parkedSlot = slotBinding(record.slotId);
+    const parkedWorkspace = workspaceIdentity(fleetSlot(record.slotId));
+    report.parked = {
+      status: before.status,
+      phase: record.phase,
+      slotFreedAt: record.slotFreedAt,
+      generation: before.engineState?.generation ?? 0,
+      decisionId: decision.id,
+      preservedWorkspace: record.preservedWorkspace,
+      recordedPaneId: record.recoveryHandle?.target?.paneId ?? null,
+      sessionId: record.recoveryHandle?.sessionId ?? null,
+      slot: parkedSlot,
+      workspace: parkedWorkspace,
+    };
+    if (parkedSlot.currentRunId) {
+      throw new Error(`freed slot ${record.slotId} is held by ${parkedSlot.currentRunId}`);
+    }
+
+    // ─── fencedWhileParked ────────────────────────────────────────────────
+    // Read through the public RPC, because that is where an operator meets it.
+    const postureAttempt = spawnSync(
+      'node',
+      [
+        path.resolve('apps/command-center/scripts/cdp.mjs'),
+        'gateway',
+        'runtime.posture.apply',
+        JSON.stringify({ runId, posture: 'active' }),
+      ],
+      { cwd: process.cwd(), encoding: 'utf8', timeout: 120_000 },
+    );
+    const fencedOutput = `${postureAttempt.stdout ?? ''}${postureAttempt.stderr ?? ''}`;
+    report.fencedWhileParked = {
+      exit: postureAttempt.status,
+      matched: fencedOutput.includes('FREED_SLOT_RESTORE_REQUIRED'),
+    };
+    if (!report.fencedWhileParked.matched) {
+      throw new Error(
+        `runtime.posture.apply on a freed park did not report FREED_SLOT_RESTORE_REQUIRED: ${fencedOutput.slice(0, 400)}`,
+      );
+    }
+
+    // ─── previewEligible ──────────────────────────────────────────────────
+    const selector = { kind: 'include', runIds: [runId] };
+    const preview = rpc('machine.pause.restore', { machine: record.machine, selector });
+    const entry = selectedRun(preview, runId);
+    report.previewEligible = {
+      previewId: preview.previewId,
+      eligibility: entry?.eligibility ?? null,
+      restoreTarget: entry?.restoreTarget ?? null,
+    };
+    if (!entry?.eligibility.eligible) {
+      throw new Error(
+        `freed-slot restore preview refused: ${entry?.eligibility.code} — ${entry?.eligibility.reason}`,
+      );
+    }
+    if (entry.eligibility.code !== 'ELIGIBLE_FREED_SLOT_RESTORE') {
+      throw new Error(`restore preview took code '${entry.eligibility.code}'`);
+    }
+    if (entry.restoreTarget?.slotId !== record.slotId || entry.restoreTarget.available !== true) {
+      throw new Error(`restore target is ${JSON.stringify(entry.restoreTarget)}`);
+    }
+
+    // ─── slotTaken ────────────────────────────────────────────────────────
+    // Only when a successor really holds the slot. Asserted through the
+    // OPERATOR's path — answering the gate — because that is what has to refuse
+    // without consuming the decision.
+    // The successor needs a ticket `run.create` accepts for this project. The
+    // parked run's own ref is usually NOT one: a manual backlog item may only be
+    // dispatched from Backlog. Supplied rather than invented, because a ticket
+    // pattern is project policy and this harness is project-agnostic.
+    const successorTicket = process.env.FARMSLOT_GATE_PARK_SUCCESSOR_TICKET?.trim() || null;
+    if (takeSlot && !successorRunId && !successorTicket) {
+      report.slotTaken = {
+        skipped: true,
+        reason:
+          'RESTORE_SLOT_TAKEN needs a run holding the freed slot; set FARMSLOT_GATE_PARK_SUCCESSOR_TICKET to a ticket ref run.create accepts for this project, or FARMSLOT_GATE_PARK_SUCCESSOR_RUN_ID to a run already on it',
+      };
+    }
+    if (takeSlot && !successorRunId && successorTicket) {
+      successorRunId = await dispatchSlotSuccessor({
+        project: before.project,
+        ticketOrPr: successorTicket,
+        slotId: record.slotId,
+        timeoutMs,
+      });
+    }
+    if (successorRunId) {
+      const successorSlot = slotBinding(record.slotId);
+      if (successorSlot.currentRunId !== successorRunId) {
+        throw new Error(
+          `successor ${successorRunId} does not hold ${record.slotId} (owner=${successorSlot.currentRunId})`,
+        );
+      }
+      const takenPreview = rpc('machine.pause.restore', { machine: record.machine, selector });
+      const takenEntry = selectedRun(takenPreview, runId);
+      // The read-only verdict is checked BEFORE the resolve is attempted. If the
+      // Gateway thinks a taken slot is restorable, answering the gate would try
+      // the restore for real — and this node exists to prove it does not.
+      if (takenEntry?.eligibility.code !== 'RESTORE_SLOT_TAKEN') {
+        report.slotTaken = {
+          successorRunId,
+          previewCode: takenEntry?.eligibility.code ?? null,
+          previewAvailable: takenEntry?.restoreTarget?.available ?? null,
+        };
+        throw new Error(`a taken slot previewed as '${takenEntry?.eligibility.code}'`);
+      }
+      if (takenEntry.restoreTarget?.available !== false) {
+        throw new Error('a taken slot still reported its restore target available');
+      }
+      const attempt = resolveDecisionAttempt(runId, decision.id, decision.actions[0].id);
+      const attemptOutput = `${attempt.stdout}${attempt.stderr}`;
+      const after = rpc('run.get', { runId }).run;
+      report.slotTaken = {
+        successorRunId,
+        previewCode: takenEntry?.eligibility.code ?? null,
+        previewAvailable: takenEntry?.restoreTarget?.available ?? null,
+        resolveExit: attempt.status,
+        resolveMatched: attemptOutput.includes('RESTORE_SLOT_TAKEN'),
+        decisionStillPending: pendingGateDecision(after)?.id === decision.id,
+        recordAfter: {
+          phase: after.park?.phase ?? null,
+          slotFreedAt: after.park?.slotFreedAt ?? null,
+          slotReboundAt: after.park?.slotReboundAt ?? null,
+          restoreRefusal: after.park?.restoreRefusal ?? null,
+        },
+        slotAfter: slotBinding(record.slotId),
+        workspaceAfter: workspaceIdentity(fleetSlot(record.slotId)),
+      };
+      if (attempt.status === 0 || !report.slotTaken.resolveMatched) {
+        throw new Error(
+          `answering the gate over a taken slot did not refuse with RESTORE_SLOT_TAKEN: exit=${attempt.status} ${attemptOutput.slice(0, 400)}`,
+        );
+      }
+      if (!report.slotTaken.decisionStillPending) {
+        throw new Error('a refused restore consumed the operator decision');
+      }
+      if (
+        report.slotTaken.recordAfter.phase !== 'parked' ||
+        !report.slotTaken.recordAfter.slotFreedAt ||
+        report.slotTaken.recordAfter.slotReboundAt
+      ) {
+        throw new Error(
+          `a refused restore moved the park record: ${JSON.stringify(report.slotTaken.recordAfter)}`,
+        );
+      }
+      if (report.slotTaken.recordAfter.restoreRefusal?.code !== 'RESTORE_SLOT_TAKEN') {
+        throw new Error('the refusal reason was not persisted on the record');
+      }
+      if (
+        JSON.stringify(report.slotTaken.slotAfter) !== JSON.stringify(successorSlot) ||
+        JSON.stringify(report.slotTaken.workspaceAfter) !== JSON.stringify(parkedWorkspace)
+      ) {
+        throw new Error('a refused restore changed the slot row or the working tree');
+      }
+      // Hand the slot back before the restore half.
+      rpc('run.cancel', { runId: successorRunId, reason: 'gate-park restore live proof' });
+      await poll(
+        `${record.slotId} to be released by ${successorRunId}`,
+        () => slotBinding(record.slotId),
+        (slot) => slot.currentRunId === null,
+        timeoutMs,
+      );
+    }
+
+    // ─── restored ─────────────────────────────────────────────────────────
+    const freshPreview = rpc('machine.pause.restore', { machine: record.machine, selector });
+    const freshEntry = selectedRun(freshPreview, runId);
+    if (!freshEntry?.eligibility.eligible) {
+      throw new Error(
+        `restore preview refused before execute: ${freshEntry?.eligibility.code} — ${freshEntry?.eligibility.reason}`,
+      );
+    }
+    const executed = rpc(
+      'machine.pause.restore',
+      {
+        machine: record.machine,
+        selector,
+        execute: true,
+        previewId: freshPreview.previewId,
+        reviewedTargets: [{ runId, generation: freshEntry.generation }],
+        operationId,
+      },
+      timeoutMs,
+    );
+    const restoredRun = rpc('run.get', { runId }).run;
+    const restoredRecord = restoredRun.park;
+    const restoredContext = restoredRun.agentContexts?.find(
+      (context) => context.id === record.recoveryHandle.contextId,
+    );
+    report.restored = {
+      outcome: executed.outcome,
+      ok: executed.ok,
+      phase: restoredRecord?.phase ?? null,
+      slotFreedAt: restoredRecord?.slotFreedAt ?? null,
+      slotReboundAt: restoredRecord?.slotReboundAt ?? null,
+      restoreRefusal: restoredRecord?.restoreRefusal ?? null,
+      errors: restoredRecord?.errors ?? [],
+      slot: slotBinding(record.slotId),
+      workspace: workspaceIdentity(fleetSlot(record.slotId)),
+      recoveryProof: restoredRecord?.recoveryProof ?? null,
+      restoreEffects: restoredRecord?.restoreEffects ?? [],
+      paneBefore: record.recoveryHandle.target.paneId,
+      paneAfter: restoredRecord?.recoveryHandle?.target?.paneId ?? null,
+      contextPaneAfter: restoredContext?.target?.paneId ?? null,
+      generation: restoredRun.engineState?.generation ?? 0,
+      status: restoredRun.status,
+    };
+    if (!executed.ok || restoredRecord?.phase !== 'restored') {
+      throw new Error(
+        `restore did not complete: outcome=${executed.outcome} phase=${restoredRecord?.phase} errors=${JSON.stringify(restoredRecord?.errors ?? [])}`,
+      );
+    }
+    if (report.restored.slotFreedAt || !report.restored.slotReboundAt) {
+      throw new Error('the record still advertises a freed slot after a completed restore');
+    }
+    if (report.restored.slot.currentRunId !== runId) {
+      throw new Error(
+        `slot ${record.slotId} is owned by ${report.restored.slot.currentRunId}, not the restored run`,
+      );
+    }
+    if (!report.restored.workspace.skipped) {
+      if (report.restored.workspace.branch !== record.preservedWorkspace.branch) {
+        throw new Error(
+          `working tree is on '${report.restored.workspace.branch}', not the preserved '${record.preservedWorkspace.branch}'`,
+        );
+      }
+      if (report.restored.workspace.headSha !== record.preservedWorkspace.headSha) {
+        throw new Error(
+          `preserved branch came back at ${report.restored.workspace.headSha}, not ${record.preservedWorkspace.headSha}`,
+        );
+      }
+    }
+    // The retained resource was VERIFIED, never rebooted: the park left it
+    // running, and a boot here would start a second copy of it.
+    const retainedIds = record.resourceManifest.resources
+      .filter((resource) => resource.releaseEffect === 'retain')
+      .map((resource) => resource.resourceId);
+    for (const resourceId of retainedIds) {
+      const effects = report.restored.restoreEffects.filter(
+        (effect) => effect.resourceId === resourceId,
+      );
+      if (!effects.some((effect) => effect.action === 'verified' && effect.ok)) {
+        throw new Error(
+          `retained resource '${resourceId}' has no successful verification: ${JSON.stringify(effects)}`,
+        );
+      }
+      if (effects.some((effect) => effect.action === 'booted')) {
+        throw new Error(`restore booted retained resource '${resourceId}'`);
+      }
+    }
+    if (
+      report.restored.recoveryProof?.sessionId !== record.recoveryHandle.sessionId ||
+      report.restored.recoveryProof?.live !== true ||
+      report.restored.recoveryProof?.acknowledgement?.kind !== 'structured'
+    ) {
+      throw new Error(
+        `the worker did not come back on the persisted session with structured proof: ${JSON.stringify(report.restored.recoveryProof)}`,
+      );
+    }
+    if (report.restored.paneAfter !== report.restored.contextPaneAfter) {
+      throw new Error(
+        `the park record and the agent context disagree about the worker pane: ${report.restored.paneAfter} vs ${report.restored.contextPaneAfter}`,
+      );
+    }
+    if (report.restored.generation !== report.parked.generation) {
+      throw new Error(
+        `a held gate advanced the generation ${report.parked.generation} -> ${report.restored.generation}`,
+      );
+    }
+
+    // ─── answerable ───────────────────────────────────────────────────────
+    // Read-only on purpose: the operator's decision is theirs to make. What is
+    // proved here is that the fence lifted, not that the gate was answered.
+    const stillPending = pendingGateDecision(restoredRun);
+    const postureAfter = rpc('runtime.posture.status', { runId });
+    report.answerable = {
+      decisionId: stillPending?.id ?? null,
+      stillPending: stillPending?.id === decision.id,
+      posture: postureAfter.state?.posture ?? null,
+      gateChoiceSuppressedForGeneration:
+        postureAfter.state?.gateChoiceSuppressedForGeneration ?? null,
+    };
+    if (!report.answerable.stillPending) {
+      throw new Error('the restore consumed or replaced the pending gate decision');
+    }
+    // The restored gate must not inherit the choice that parked the run.
+    if (report.answerable.gateChoiceSuppressedForGeneration !== report.parked.generation) {
+      throw new Error(
+        `the restored gate can still inherit free-slot (suppressed=${report.answerable.gateChoiceSuppressedForGeneration}, generation=${report.parked.generation})`,
+      );
+    }
+    report.pass = true;
+  } catch (error) {
+    report.error = error?.message || String(error);
+  }
+
+  const outPath = writeEvidence(report, GATE_PARK_SCENARIO_ID, runner, outDir);
+  return { scenario: GATE_PARK_SCENARIO_ID, runner, outPath, pass: report.pass, report };
+}
+
+/**
+ * Park a gate-held run through the operator's own `free-slot` choice.
+ *
+ * The gateway path, not a shortcut: `runtime.posture.apply` is exactly what
+ * Command Center, the CLI, and Companion send, so a park that only works when
+ * this scenario drives machine-pause directly would not be the one operators
+ * get.
+ */
+function parkGateHeldRun(runId, timeoutMs) {
+  const before = rpc('run.get', { runId }).run;
+  if (!pendingGateDecision(before)) {
+    throw new Error(`run ${runId} has no pending publication gate to park at`);
+  }
+  const applied = rpc(
+    'runtime.posture.apply',
+    {
+      runId,
+      gateChoice: 'free-slot',
+      operationId: `gate-park-restore-park-${process.pid}-${Date.now()}`,
+    },
+    timeoutMs,
+  );
+  const parked = rpc('run.get', { runId }).run;
+  const outcome = {
+    transitionOutcome: applied.transition?.outcome ?? null,
+    rejection: applied.transition?.rejection ?? null,
+    phase: parked.park?.phase ?? null,
+    slotFreedAt: parked.park?.slotFreedAt ?? null,
+  };
+  if (!parked.park?.slotFreedAt || parked.park.phase !== 'parked') {
+    throw new Error(`free-slot did not park the run: ${JSON.stringify(outcome)}`);
+  }
+  return outcome;
+}
+
+/**
+ * Put a scripted run on the freed slot so the restore has something to refuse.
+ *
+ * It resolves the engine's own blocking decisions rather than pre-empting them:
+ * a freed slot legitimately looks stale (its HEAD is wherever the park detached
+ * it, or wherever the last occupant left it), so the slot picker is expected and
+ * answering it is the operator action that hands the slot over.
+ */
+async function dispatchSlotSuccessor({ project, ticketOrPr, slotId, timeoutMs }) {
+  const created = rpc('run.create', {
+    project,
+    flowType: 'dev',
+    mode: 'validation',
+    ticketOrPr,
+    initialContext: `Live proof successor: hold ${slotId} so a freed-slot restore must refuse.`,
+    runner: 'scripted',
+    scripted: { mode: 'scenario', scenario: 'success', stepDelayMs: 4000 },
+    allowedSlots: [slotId],
+    skipPrepare: true,
+  });
+  const successorRunId = created.run.id;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const run = rpc('run.get', { runId: successorRunId }).run;
+    if (run.slotId === slotId) return successorRunId;
+    if (['done', 'failed', 'cancelled'].includes(run.status)) {
+      throw new Error(`successor ${successorRunId} ended '${run.status}' without taking ${slotId}`);
+    }
+    const pending = (run.decisions ?? []).find((decision) => !decision.resolvedAt);
+    if (pending?.type === 'engine_collision') {
+      rpc('run.resolveDecision', {
+        runId: successorRunId,
+        decisionId: pending.id,
+        actionId: 'create-new',
+      });
+    } else if (pending?.type === 'engine_no_suitable_slot') {
+      // The freed slot scores stale by design; picking it is the operator
+      // action that hands it over.
+      rpc('run.resolveDecision', {
+        runId: successorRunId,
+        decisionId: pending.id,
+        actionId: 'pick',
+        selectionData: { slotId },
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`successor ${successorRunId} never took ${slotId}`);
 }

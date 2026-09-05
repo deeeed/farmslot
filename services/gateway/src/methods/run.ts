@@ -44,6 +44,7 @@ import { shellQuote } from '../core/tmux.js';
 import { buildFollowUpLineage, isFollowUpFlow } from '../family-observability/context.js';
 import { findFollowUpParentRun } from '../family-observability/state.js';
 import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
+import type { MachineParkGateRestoreResult } from '../machine-parking/service.js';
 import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
 import { normalizeReviewDepthForRunCreate } from '../quality/review-policy.js';
 import {
@@ -1185,26 +1186,94 @@ export interface RunResolveDecisionDependencies {
     reviews: readonly IndependentReviewStatus[],
     slotId: string,
   ) => Promise<void>;
+  /**
+   * ADR-054 `free-slot`: brings a run whose park freed its slot back before its
+   * gate is answered. Injectable so the resolve path's own ordering — restore,
+   * then consume — can be proved without standing up a real slot, runner, and
+   * tmux session.
+   */
+  restoreGatePark?: (runId: string) => Promise<MachineParkGateRestoreResult>;
 }
 
 /**
- * ADR-054 `free-slot`: refuse before the decision is consumed, so it stays
- * pending and the run stays parked. Resolving would drive the engine onward
- * against a worker the park stopped and a slot another run may already own.
- * The fence covers the whole park — from the write-ahead intent, through the
- * window where resources are stopping and `slotFreedAt` is still unset, to the
- * landed release — and lifts for a park that settled without changing anything.
+ * ADR-054 `free-slot`: nothing may consume a decision while a park is in
+ * flight. Resolving would drive the engine onward against a worker the park
+ * stopped and a slot another run may already own.
+ *
+ * This is the fence for a park that is still HAPPENING — from the write-ahead
+ * intent through the window where resources are stopping. A park that landed is
+ * not refused here: {@link restoreGateParkForResolution} brings the run back
+ * first, and by the time this runs again the record is settled. The fence lifts
+ * for a park that settled without changing anything.
  */
 function assertNotGateParked(runId: string, run: Run): void {
   if (!isGateParkInFlightOrFreed(run)) return;
   const code = isSlotFreedByPark(run)
-    ? MachineParkEligibilityCodes.freedSlotRestoreUnsupported
+    ? MachineParkEligibilityCodes.freedSlotRestoreRequired
     : MachineParkEligibilityCodes.gateParkInFlight;
   throw new GatewayMethodError(
     code,
-    `Run ${runId} is gate-parked; its decisions cannot be resolved while its slot is freed`,
+    `Run ${runId} is gate-parked; its decisions cannot be resolved until it is restored`,
     { userAction: 'Restore the run into a slot before answering its gate, or cancel the run.' },
   );
+}
+
+/**
+ * Bring a run whose park freed its slot back before its gate is answered.
+ *
+ * ADR-054: the operator answering the gate IS the restore trigger. The run's
+ * worker is stopped and its slot belongs to whoever dispatch gave it to, so the
+ * answer cannot be acted on until the slot is re-bound, the workspace is back,
+ * and the persisted runner session has been reloaded with a structured
+ * acknowledgement. Only then is the decision consumed.
+ *
+ * A refusal is not a failed run and not a lost answer: the record stays parked,
+ * the decision stays pending with the typed reason durable on the record, and
+ * the operator can answer again once the slot comes back — or cancel.
+ */
+async function restoreGateParkForResolution(
+  runId: string,
+  run: Run,
+  dependencies: RunResolveDecisionDependencies,
+): Promise<RunResolveDecisionResult['gateParkRestore']> {
+  if (!isSlotFreedByPark(run)) return undefined;
+  const restore = await (dependencies.restoreGatePark ?? defaultRestoreGatePark)(runId);
+  if (!restore.ok) {
+    throw new GatewayMethodError(
+      restore.code,
+      `Run ${runId} could not be restored into slot ${restore.slotId}: ${restore.reason}`,
+      {
+        userAction:
+          restore.code === MachineParkEligibilityCodes.restoreSlotTaken
+            ? `Wait for ${restore.slotId} to free up and answer the gate again, or cancel the run.`
+            : 'Resolve the reported problem and answer the gate again, or cancel the run.',
+      },
+    );
+  }
+  if (restore.gateReplayed) {
+    // The park's gate loop had exited, so the restore had to re-present the
+    // gate as a NEW decision. Consuming the old one would resolve a decision
+    // nothing is waiting on and leave the fresh gate unanswered — the run would
+    // sit blocked with the operator believing they had answered it.
+    throw new GatewayMethodError(
+      MachineParkEligibilityCodes.restoreGateReplayed,
+      `Run ${runId} was restored, but its gate loop had exited so the gate was re-presented as a new decision`,
+      { userAction: 'Answer the gate decision the restored run is now waiting on.' },
+    );
+  }
+  return {
+    runId,
+    slotId: restore.slotId,
+    restoredGeneration: restore.restoredGeneration,
+    reloadedSessionId: restore.reloadedSessionId,
+  };
+}
+
+// Lazily imported: machine parking reaches back into the run lifecycle, and a
+// static edge from here would close that loop at module load.
+async function defaultRestoreGatePark(runId: string): Promise<MachineParkGateRestoreResult> {
+  const { machineParkRestoreForGateResolution } = await import('../machine-parking/service.js');
+  return machineParkRestoreForGateResolution(runId);
 }
 
 export async function runResolveDecision(
@@ -1218,13 +1287,13 @@ export async function runResolveDecision(
   const decision = existing.decisions.find((d) => d.id === params.decisionId);
   if (!decision) throw new Error(`Decision not found: ${params.decisionId}`);
   if (decision.resolvedAt) throw new Error(`Decision already resolved`);
-  // ADR-054 `free-slot`: refuse before the decision is consumed, so it stays
-  // pending and the run stays parked. Resolving would drive the engine onward
-  // against a worker the park stopped and a slot another run may already own,
-  // and the fence covers the whole park — from the write-ahead intent, through
-  // the window where resources are stopping and `slotFreedAt` is still unset,
-  // to the landed release.
-  assertNotGateParked(params.runId, existing);
+  // ADR-054 `free-slot`, in two halves. A park still in flight is refused: its
+  // effects are landing right now and there is nothing coherent to restore
+  // into. A park that LANDED and freed the slot is restored instead of refused
+  // — the operator answering the gate is what asks for the run back. Both
+  // happen before anything reads the decision, so a refusal leaves it pending.
+  if (!isSlotFreedByPark(existing)) assertNotGateParked(params.runId, existing);
+  const gateParkRestore = await restoreGateParkForResolution(params.runId, existing, dependencies);
   if (!decision.actions.some((action) => action.id === params.actionId)) {
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
   }
@@ -1464,5 +1533,5 @@ export async function runResolveDecision(
     });
   }
 
-  return { run: updated };
+  return { run: updated, ...(gateParkRestore ? { gateParkRestore } : {}) };
 }

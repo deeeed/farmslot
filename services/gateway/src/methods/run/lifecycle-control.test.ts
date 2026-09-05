@@ -860,7 +860,7 @@ test('resume of a gate-parked run reports the freed slot, not a generic not-paus
       withMachineRunTransition('machine-a', () =>
         runResumeTransitionLocked({ runId: run.id }, () => {}, { machineParkingRestore: true }),
       ),
-    /FREED_SLOT_RESTORE_UNSUPPORTED/,
+    /FREED_SLOT_RESTORE_REQUIRED/,
   );
 });
 
@@ -973,6 +973,46 @@ test('a machine restore resumes a gate park without requiring paused or a monito
   assert.equal(result.previousGeneration, 3);
   assert.equal(result.generation, 3);
   assert.equal(getRun(run.id)!.status, 'human-gating');
+});
+
+test('a gate-park hold stops the restored gate from re-parking the run on the way out', async (t) => {
+  const run = gateParkedRun(`PROJ-${Date.now()}-gate-park-suppress`);
+  t.after(() => cleanupRun(run.id));
+  // The choice that parked the run. Left inheritable, the gate-resolved
+  // boundary right after the operator answers would carry it forward and hand
+  // the slot away again before they saw any of the outcome.
+  updateRun(run.id, {
+    resourcePosture: {
+      posture: 'parked',
+      policySource: 'gate-choice',
+      gateChoice: 'free-slot',
+      capabilities: [],
+      workerRetained: false,
+      updatedAt: '2026-09-05T00:00:00.000Z',
+    },
+  });
+
+  const result = await runResumeTransitionLocked(
+    { runId: run.id },
+    () => {},
+    { machineParkingRestore: true },
+    {
+      nudgeMonitor: async () => {},
+      replayGate: async () => {
+        throw new Error('no gate replay expected');
+      },
+      redrive: async () => {
+        throw new Error('a gate park re-drives nothing');
+      },
+    },
+  );
+
+  assert.equal(result.gateParkHold, true);
+  // Bound to the generation the hold preserved, so it cannot outlive the gate
+  // it was set for. Choosing free-slot again is still available; it just has to
+  // be chosen rather than inherited.
+  assert.equal(getRun(run.id)!.resourcePosture?.gateChoiceSuppressedForGeneration, 3);
+  assert.equal(getRun(run.id)!.resourcePosture?.gateChoice, 'free-slot');
 });
 
 test('an ordinary resume still refuses a run that is not paused', async (t) => {

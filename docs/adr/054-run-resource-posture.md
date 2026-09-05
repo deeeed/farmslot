@@ -166,11 +166,16 @@ item and depends on this one.
 - **Free the slot at an operator wait.** Extend machine-pause release eligibility to gate-held runs,
   mark the slot free, restore or re-dispatch on gate resolution. Amends ADR-038.
   `.backlog/specs/farmslot-farm/2026-09-04-free-slot-at-operator-wait.md`
-  Eligibility and slot freeing have since landed and are recorded in
+  Eligibility, slot freeing, and restore have since landed and are recorded in
   [ADR-038's `free-slot` amendment](038-gate-held-worker-session.md#amendment-free-slot-at-the-publication-gate-2026-09-05):
   `free-slot` at a gate is no longer a typed rejection when the run's runner declares a graceful
-  exit and a persisted session reload. Restoring into a freed slot is still outstanding and is
-  refused with `FREED_SLOT_RESTORE_UNSUPPORTED`.
+  exit and a persisted session reload, and a freed park is restored into the slot it was freed from
+  — the ORIGINAL slot only, triggered by the operator answering the gate. A slot another run has
+  since taken is refused with `RESTORE_SLOT_TAKEN` and the record stays parked and answerable.
+  Re-dispatching a parked run into a DIFFERENT slot through the warm-replacement or
+  recently-released affinity path is still outstanding and is its own item; until it lands, an
+  operation that needs the run back before that happens is refused with
+  `FREED_SLOT_RESTORE_REQUIRED`.
 - **Re-target validation to another device or platform.** Device-identity parameters on device
   capability providers; a rerun accepts a target override and reacquires.
   `.backlog/specs/farmslot-farm/2026-09-04-validation-device-retarget.md`

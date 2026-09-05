@@ -107,8 +107,39 @@ sweeps skip the freed slot, and restart recovery treats the parked run like a pa
 runtime reconcile, no gate replay, no publication-review re-arm on a slot it no longer owns. Its
 pending decision is still re-broadcast so clients show the run waiting.
 
+**Restore: the original slot, and nothing else (2026-09-06).** A freed park is restored into the
+slot it was freed from, and only that slot. Answering the pending gate is itself a restore trigger:
+`run.resolveDecision` restores first and consumes the decision only if that succeeded, so an
+operator never has to know the run was parked. `machine.pause.restore` drives the same path.
+
+- The slot must be free — no owner, not mid-release, no foreign warm-handoff reservation, and
+  `ready`. Otherwise the restore is refused with `RESTORE_SLOT_TAKEN`, the record stays `parked`,
+  the decision stays pending and answerable later, and nothing is touched. Cross-slot re-dispatch is
+  a separate decision and is deliberately not attempted here.
+- The restore claims the slot before anything else, journals that claim as a `restore-slot` intent,
+  and finishes it on restart. Acting on a slot the run does not own would reach into whatever
+  dispatch handed it to.
+- The preserved branch goes back at its recorded tip. Refused with `RESTORE_WORKSPACE_UNAVAILABLE`
+  when the successor left uncommitted work in the tree or the branch no longer sits at that tip:
+  a checkout would carry someone else's changes onto the parked branch, or bring back commits that
+  are not the ones under review.
+- The worker comes back through the persisted runner session, with a structured acknowledgement or
+  not at all (`RESTORE_RUNNER_RELOAD_FAILED`). **The recorded tmux pane is not part of the
+  contract**: freeing the slot hands its tmux session to the next occupant, whose dispatch replaces
+  the windows in it, so the pane is routinely gone. The runner capability layer re-hosts the session
+  on a fresh pane in that slot's session and writes the new target to both the park record and the
+  run's agent context. It refuses rather than respawning over a pane a runner is still alive in.
+- The gate itself is either held or replayed, as before: an engine loop still awaiting the operator
+  is left alone with its generation unchanged, and one that had exited is replayed with the
+  generation advanced. A replay presents a NEW decision, so resolving through it reports
+  `RESTORE_GATE_REPLAYED` rather than consuming a decision nothing is waiting on.
+- A restored gate does not inherit the `free-slot` choice that parked the run, for exactly one wait
+  boundary. Without that, answering the restored gate would hand the slot away again before the
+  operator saw any of the outcome.
+
 Operators lose tmux attach for the duration of the park, which is the trade the choice makes: the
-runner's persisted session is what brings the context back.
+runner's persisted session is what brings the context back — on whichever pane the restore gives
+it.
 
 ## Consequences
 

@@ -488,6 +488,22 @@ export interface RunResolveDecisionParams {
 
 export interface RunResolveDecisionResult {
   run: Run;
+  /**
+   * ADR-054 `free-slot`: the gate park this resolution had to restore before it
+   * could consume the decision. Present only when a restore actually ran, so a
+   * client can tell "answered a live gate" from "brought the run back, then
+   * answered it". A refused restore never reaches this result — it surfaces as
+   * a typed error and leaves the decision pending.
+   */
+  gateParkRestore?: {
+    runId: string;
+    /** The original slot the run was restored into. */
+    slotId: string;
+    /** Generation after the restore; unchanged when the gate loop was still alive. */
+    restoredGeneration: number;
+    /** The persisted runner session that was reloaded, with structured acceptance. */
+    reloadedSessionId: string;
+  };
 }
 
 export interface RunProbeWorkerSignalParams {
