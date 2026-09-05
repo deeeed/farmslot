@@ -204,6 +204,17 @@ async function prepareDependencyPosture({ slotId, runId, report, acquireBudgetMs
       throw new Error(`acquiring ${pair.dependent.id} did not acquire ${pair.dependency.id}`);
     }
 
+    // The pair is acquired right now and `operator-wait` is about to shed it, so
+    // this is the only window in which a retained lease can be observed.
+    proof.releaseRetained = assertCliReleaseRetained({
+      slotId,
+      runId,
+      dependencyPair: { dependent: pair.dependent.id, dependency: pair.dependency.id },
+    });
+    if (!proof.releaseRetained.pass) {
+      throw new Error(`CLI retained-release proof failed: ${proof.releaseRetained.error}`);
+    }
+
     const waitApply = rpc(
       'runtime.posture.apply',
       { runId, posture: 'operator-wait', operationId: `${SCENARIO_ID}-dep-wait-${process.pid}` },
@@ -396,7 +407,7 @@ function cliJson(args, timeoutMs = 120_000) {
   if (!run.stdout) {
     throw new Error(
       `CLI \`farmslot ${args.join(' ')} --json\` printed nothing (exit ${run.status}): ${
-        run.spawnError ?? run.stderr ?? 'no stderr'
+        run.spawnError || run.stderr || 'no stderr'
       }`,
     );
   }
@@ -490,9 +501,9 @@ function assertCliPostureSurface({ runId, capabilityId }) {
     if (!humanRun.stdout.includes('Resource posture')) {
       throw new Error(
         `human posture status printed no report (exit ${humanRun.status}): ${
-          humanRun.spawnError ??
-          humanRun.stdout.slice(0, 400) ??
-          humanRun.stderr.slice(0, 400) ??
+          humanRun.spawnError ||
+          humanRun.stdout.slice(0, 400) ||
+          humanRun.stderr.slice(0, 400) ||
           'no output'
         }`,
       );
@@ -616,6 +627,187 @@ function assertCliPostureSurface({ runId, capabilityId }) {
 }
 
 /**
+ * Live proof of `resource capability release` (ADR-054 deliverable 9), the
+ * round-1 blocker fix, for the case where the lease really is released.
+ *
+ * The lease is gone and the release action ran, but that result alone cannot
+ * prove the provider stopped: another holder of the same capability produces an
+ * identical record with the action skipped. So the CLI must report
+ * `provider=unknown` and exit 0, and `--stop` must read as a request rather than
+ * an outcome. The retained case is `assertCliReleaseRetained` below.
+ *
+ * `recording` carries this case because it is exclusive, cheap — its acquire is
+ * a slot action, not a device boot — and declares neither dependencies nor
+ * `keep_warm_ms`, so releasing it runs the real release action.
+ */
+function assertCliRelease({ slotId, runId }) {
+  const proof = { attempted: true, pass: false, error: null, released: null };
+  const RELEASE_CAPABILITY = 'recording';
+  const acquire = () => {
+    const acquired = rpc('runtime.capability.acquire', {
+      slotId,
+      capabilityId: RELEASE_CAPABILITY,
+      ownerRunId: runId,
+      proofRequirement: {
+        capabilityId: RELEASE_CAPABILITY,
+        reason: 'release reporting validation',
+        mode: 'state',
+      },
+    });
+    if (!acquired.ok) {
+      throw new Error(
+        `could not acquire ${RELEASE_CAPABILITY} for the release proof: ${acquired.conflict?.reason}`,
+      );
+    }
+  };
+  const releaseArgs = [
+    'resource',
+    'capability',
+    'release',
+    slotId,
+    '--run',
+    runId,
+    '--capability',
+    RELEASE_CAPABILITY,
+    '--stop',
+  ];
+  try {
+    // Each release needs its own lease. Reusing one across both calls made the
+    // second find nothing to release, so it rendered no capability rows and the
+    // assertions about those rows passed without ever reading one.
+    acquire();
+    const releasedHuman = cliHuman(releaseArgs);
+    const releasedLines = releasedHuman.stdout.replace(/\u001b\[[0-9;]*m/g, '').replace(/\r/g, '');
+    const releasedRow = releasedLines
+      .split('\n')
+      .find((line) => line.includes(RELEASE_CAPABILITY) && line.includes('provider='));
+    proof.released = {
+      humanRow: releasedRow?.trim() ?? null,
+      requestLine:
+        releasedLines
+          .split('\n')
+          .find((line) => line.includes('keep-warm requested'))
+          ?.trim() ?? null,
+    };
+    if (!proof.released.requestLine) {
+      throw new Error(`the request line was not reported: ${releasedLines.slice(0, 300)}`);
+    }
+    if (!/keep-warm requested: no/.test(proof.released.requestLine)) {
+      throw new Error(`--stop was not reported as the request: ${proof.released.requestLine}`);
+    }
+    if (!releasedRow) {
+      throw new Error(
+        `no ${RELEASE_CAPABILITY} row was rendered, so nothing about it was proved: ${releasedLines.slice(0, 300)}`,
+      );
+    }
+    // The claim under review: a released lease is never a proven stop.
+    if (!/released {2}provider=unknown/.test(releasedRow)) {
+      throw new Error(`a released lease was not reported as unknown: ${releasedRow.trim()}`);
+    }
+    if (/provider=stopped/.test(releasedLines)) {
+      throw new Error(`release claimed an observed stop: ${releasedRow.trim()}`);
+    }
+
+    // A second lease for the envelope assertions.
+    acquire();
+    const releasedRun = cliJson(releaseArgs);
+    const releasedResult = releasedRun.envelope.data ?? releasedRun.envelope.error?.details;
+    proof.released.exit = releasedRun.status;
+    proof.released.envelopeStatus = releasedRun.envelope.status;
+    proof.released.released = (releasedResult?.released ?? []).map((lease) => lease.capabilityId);
+    proof.released.retained = (releasedResult?.retained ?? []).map((lease) => lease.capabilityId);
+    proof.released.failures = releasedResult?.failures ?? [];
+    if (releasedRun.status !== 0) {
+      throw new Error(
+        `releasing ${RELEASE_CAPABILITY} exited ${releasedRun.status}: ${JSON.stringify(proof.released)}`,
+      );
+    }
+    if (!proof.released.released.includes(RELEASE_CAPABILITY)) {
+      throw new Error(`the Gateway did not report ${RELEASE_CAPABILITY} released`);
+    }
+    proof.pass = true;
+  } catch (error) {
+    proof.pass = false;
+    proof.error = error?.message || String(error);
+  }
+  return proof;
+}
+
+/**
+ * The retained half of the release proof.
+ *
+ * It can only run while the dependency pair is still acquired, which is a
+ * window that exists inside the dependency proof and nowhere else: applying
+ * `operator-wait` sheds both providers, so afterwards there is no live lease for
+ * anything to retain. Releasing the dependency while the dependent still holds
+ * it is the one cheap way to observe a retained lease without a second boot.
+ */
+function assertCliReleaseRetained({ slotId, runId, dependencyPair }) {
+  const proof = { attempted: true, pass: false, error: null };
+  try {
+    {
+      const retainedRun = cliJson([
+        'resource',
+        'capability',
+        'release',
+        slotId,
+        '--run',
+        runId,
+        '--capability',
+        dependencyPair.dependency,
+      ]);
+      const retainedResult = retainedRun.envelope.data ?? retainedRun.envelope.error?.details;
+      proof.retained = {
+        attempted: true,
+        exit: retainedRun.status,
+        errorCode: retainedRun.envelope.error?.code ?? null,
+        retained: (retainedResult?.retained ?? []).map((lease) => lease.capabilityId),
+        released: (retainedResult?.released ?? []).map((lease) => lease.capabilityId),
+      };
+      if (!proof.retained.retained.includes(dependencyPair.dependency)) {
+        throw new Error(
+          `expected ${dependencyPair.dependency} to be retained for ${dependencyPair.dependent}; got ${JSON.stringify(proof.retained)}`,
+        );
+      }
+      if (retainedRun.status !== 1) {
+        throw new Error('a retained lease was reported as a successful release');
+      }
+      if (retainedRun.envelope.error?.code !== 'RUNTIME_CAPABILITY_RELEASE_RETAINED') {
+        throw new Error(`retained release carried code ${retainedRun.envelope.error?.code}`);
+      }
+      const retainedHuman = cliHuman([
+        'resource',
+        'capability',
+        'release',
+        slotId,
+        '--run',
+        runId,
+        '--capability',
+        dependencyPair.dependency,
+      ]);
+      const retainedLines = retainedHuman.stdout
+        .replace(/\u001b\[[0-9;]*m/g, '')
+        .replace(/\r/g, '');
+      proof.retained.humanSample = retainedLines
+        .split('\n')
+        .filter((line) => line.includes(dependencyPair.dependency))
+        .join(' | ')
+        .trim();
+      if (!/retained {2}provider=running/.test(retainedLines)) {
+        throw new Error(
+          `a retained provider was not reported as running: ${proof.retained.humanSample}`,
+        );
+      }
+    }
+    proof.pass = true;
+  } catch (error) {
+    proof.pass = false;
+    proof.error = error?.message || String(error);
+  }
+  return proof;
+}
+
+/**
  * Live proof that single-capability recovery reaches the Gateway and reports its
  * outcome as-is. After terminal cleanup nothing is warm, so the honest answer is
  * `not-warm` with an observed state the Gateway actually holds.
@@ -638,9 +830,21 @@ function assertCliStopWarm({ slotId, capabilityId }) {
     if (result.observedState === 'stopped' && !['stopped', 'not-warm'].includes(result.outcome)) {
       throw new Error(`stop-warm reported observed 'stopped' with outcome '${result.outcome}'`);
     }
-    if (result.outcome === 'failed') {
-      if (run.status !== 1 || run.envelope.error?.code !== 'RUNTIME_CAPABILITY_STOP_WARM_FAILED') {
-        throw new Error('a failed cleanup was not reported as a CLI failure');
+    // Both outcomes that leave the provider running exit non-zero, each with its
+    // own code. `not-warm` and `stopped` are successes: nothing was left up.
+    const expectedFailure = {
+      failed: 'RUNTIME_CAPABILITY_STOP_WARM_FAILED',
+      deferred: 'RUNTIME_CAPABILITY_STOP_WARM_DEFERRED',
+    }[result.outcome];
+    proof.expectedCode = expectedFailure ?? null;
+    if (expectedFailure) {
+      if (run.status !== 1 || run.envelope.error?.code !== expectedFailure) {
+        throw new Error(
+          `outcome '${result.outcome}' must exit 1 with ${expectedFailure}; got exit ${run.status} code ${run.envelope.error?.code ?? 'none'}`,
+        );
+      }
+      if (result.outcome === 'deferred' && !result.reason) {
+        throw new Error('a deferred stop must name what still needs the provider');
       }
     } else if (run.status !== 0) {
       throw new Error(`stop-warm exited ${run.status} for outcome '${result.outcome}'`);
@@ -896,6 +1100,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     dependencyProof: null,
     familyProof: null,
     cliProof: null,
+    cliReleaseProof: null,
     cliStopWarmProof: null,
     leftoverLeases: null,
     pass: false,
@@ -1017,6 +1222,12 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     });
     if (report.dependencyProof.error) {
       throw new Error(`dependency posture proof failed: ${report.dependencyProof.error}`);
+    }
+
+    // `resource capability release`, the round-1 blocker fix, proved live.
+    report.cliReleaseProof = assertCliRelease({ slotId, runId });
+    if (!report.cliReleaseProof.pass) {
+      throw new Error(`CLI release proof failed: ${report.cliReleaseProof.error}`);
     }
 
     // ADR-054 family ownership, proved live: the sibling is created before the

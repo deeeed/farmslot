@@ -13,6 +13,7 @@ import {
   gateChoiceHelp,
   gateChoiceLabel,
   initialRunPostureGateState,
+  isTerminalPostureOutcome,
   observePostureTransition,
   postureApplyAlert,
   postureChoiceForResolve,
@@ -594,16 +595,61 @@ test('the transition already on screen before resolving is never reported as the
   assert.equal(correlatedPostureTransition(baseline, after)?.id, 'op-new');
 });
 
-test('a new transition from another boundary is not this operator choice outcome', () => {
+test('a record the Gateway attributed to a different choice is not this outcome', () => {
   const baseline = postureTransitionBaseline(
     postureStateWith([transitionWith('op-old')]),
     'minimize',
   );
-  const concurrent = postureStateWith([
-    transitionWith('op-terminal', { posture: 'terminal', policySource: 'framework-default' }),
+  const otherChoice = postureStateWith([
+    transitionWith('op-other', { gateChoice: 'keep-for-validation' }),
     transitionWith('op-old'),
   ]);
-  assert.equal(correlatedPostureTransition(baseline, concurrent), null);
+  assert.equal(correlatedPostureTransition(baseline, otherChoice), null);
+});
+
+test('an unattributed record is not excluded, because rejections carry no choice', () => {
+  // Rule 3 is conditional. A rejection can legitimately carry no gateChoice, and
+  // excluding it strands the one record the operator most needs to see.
+  const baseline = postureTransitionBaseline(
+    postureStateWith([transitionWith('op-old')]),
+    'free-slot',
+  );
+  const refused = postureStateWith([
+    transitionWith('op-refused', {
+      outcome: 'rejected',
+      rejection: { kind: 'park-ineligible', code: 'gate-held', reason: 'gate-held run' },
+    }),
+    transitionWith('op-old'),
+  ]);
+  assert.equal(correlatedPostureTransition(baseline, refused)?.id, 'op-refused');
+});
+
+test('a record older than everything already seen cannot be this outcome', () => {
+  // Rule 2, entirely in Gateway time: a backfilled or out-of-order record is new
+  // to this client but predates the resolution, so a novel id is not enough.
+  const baseline = postureTransitionBaseline(
+    postureStateWith([transitionWith('op-old', { requestedAt: '2026-09-05T10:00:00.000Z' })]),
+    'minimize',
+  );
+  assert.equal(baseline.newestRequestedAt, '2026-09-05T10:00:00.000Z');
+  const backfilled = postureStateWith([
+    transitionWith('op-backfilled', { requestedAt: '2026-09-05T09:59:00.000Z' }),
+    transitionWith('op-old', { requestedAt: '2026-09-05T10:00:00.000Z' }),
+  ]);
+  assert.equal(correlatedPostureTransition(baseline, backfilled), null);
+  const afterwards = postureStateWith([
+    transitionWith('op-new', { requestedAt: '2026-09-05T10:00:01.000Z' }),
+    transitionWith('op-old', { requestedAt: '2026-09-05T10:00:00.000Z' }),
+  ]);
+  assert.equal(correlatedPostureTransition(baseline, afterwards)?.id, 'op-new');
+});
+
+test('a run with no prior transitions bounds correlation on id alone', () => {
+  const baseline = postureTransitionBaseline(undefined, 'minimize');
+  assert.deepEqual(baseline.knownIds, []);
+  assert.equal(baseline.newestRequestedAt, undefined);
+  const first = postureStateWith([transitionWith('op-first', { gateChoice: 'minimize' })]);
+  assert.equal(correlatedPostureTransition(baseline, first)?.id, 'op-first');
 });
 
 test('the bounded wait reports pending rather than inventing an outcome', async () => {
@@ -686,7 +732,9 @@ test('a deferred project-default resolution still correlates, since the Gateway 
   // one would report every deferred resolution as still pending.
   const before = postureStateWith([transitionWith('op-old')]);
   const baseline = postureTransitionBaseline(before, 'project-default');
-  assert.equal(baseline.choice, undefined);
+  // The choice is kept on the baseline; rule 3 simply never fires for a record
+  // that carries none, so project-default is bounded by id and time like the rest.
+  assert.equal(baseline.choice, 'project-default');
   const after = postureStateWith([
     transitionWith('op-new', { policySource: 'project-default' }),
     transitionWith('op-old'),
@@ -812,4 +860,141 @@ test('a refusal stops blocking wherever the choices are not offered', () => {
     assert.equal(canResolveWithPostureChoice(rejected, availability), true);
     assert.equal(postureChoiceForResolve(rejected, availability), undefined);
   }
+});
+
+test('an in-progress record keeps the wait open until the Gateway finishes', async () => {
+  // Returning on in-progress reports a half-finished apply as the result, and
+  // the failure that lands a moment later is never seen.
+  const before = postureStateWith([transitionWith('op-old')]);
+  const baseline = postureTransitionBaseline(before, 'minimize');
+  const states = [
+    postureStateWith([
+      transitionWith('op-new', { gateChoice: 'minimize', outcome: 'in-progress' }),
+      transitionWith('op-old'),
+    ]),
+    postureStateWith([
+      transitionWith('op-new', { gateChoice: 'minimize', outcome: 'in-progress' }),
+      transitionWith('op-old'),
+    ]),
+    postureStateWith([
+      transitionWith('op-new', {
+        gateChoice: 'minimize',
+        outcome: 'partial',
+        failures: [{ capabilityId: 'metro', reason: 'stop command exited 1' }],
+      }),
+      transitionWith('op-old'),
+    ]),
+  ];
+  let reads = 0;
+  const observation = await observePostureTransition(baseline, async () => states[reads++]!, {
+    attempts: 5,
+    delayMs: 1,
+    wait: async () => {},
+  });
+  assert.equal(observation.status, 'observed');
+  assert.equal(reads, 3);
+  assert.deepEqual(postureApplyAlert(observation, 'minimize'), {
+    title: 'Resource posture partly applied',
+    message: 'metro: stop command exited 1',
+  });
+});
+
+test('a wait that ends while still in progress reports pending, never the half-finished record', async () => {
+  const before = postureStateWith([transitionWith('op-old')]);
+  const baseline = postureTransitionBaseline(before, 'minimize');
+  const stillWorking = postureStateWith([
+    transitionWith('op-new', { gateChoice: 'minimize', outcome: 'in-progress' }),
+    transitionWith('op-old'),
+  ]);
+  const observation = await observePostureTransition(baseline, async () => stillWorking, {
+    attempts: 3,
+    delayMs: 1,
+    wait: async () => {},
+  });
+  assert.equal(observation.status, 'pending');
+  assert.equal(postureApplyAlert(observation, 'minimize')?.title, 'Resource posture pending');
+});
+
+test('every settled outcome ends the wait', () => {
+  assert.equal(isTerminalPostureOutcome('in-progress'), false);
+  for (const outcome of ['applied', 'idempotent', 'partial', 'rejected', 'failed'] as const) {
+    assert.equal(isTerminalPostureOutcome(outcome), true, `${outcome} settles`);
+  }
+});
+
+test('a backgrounded app is waited through, not reported as an unknown outcome', async () => {
+  // Backgrounding pauses gateway requests routinely. Calling that unknown pops an
+  // alarming alert for something normal, so the wait rides it out.
+  const before = postureStateWith([transitionWith('op-old')]);
+  const baseline = postureTransitionBaseline(before, 'minimize');
+  const paused = new Error('gateway request paused while the app was backgrounded');
+  const settled = postureStateWith([
+    transitionWith('op-new', { gateChoice: 'minimize' }),
+    transitionWith('op-old'),
+  ]);
+  let reads = 0;
+  const observation = await observePostureTransition(
+    baseline,
+    async () => {
+      reads++;
+      if (reads < 3) throw paused;
+      return settled;
+    },
+    { attempts: 5, delayMs: 1, wait: async () => {}, isTransient: (err) => err === paused },
+  );
+  assert.equal(observation.status, 'observed');
+  assert.equal(reads, 3);
+
+  // A pause that never lifts is pending, not unknown.
+  const neverLifts = await observePostureTransition(
+    baseline,
+    async () => {
+      throw paused;
+    },
+    { attempts: 3, delayMs: 1, wait: async () => {}, isTransient: (err) => err === paused },
+  );
+  assert.equal(neverLifts.status, 'pending');
+
+  // A real failure is still reported rather than waited through.
+  const broken = await observePostureTransition(
+    baseline,
+    async () => {
+      throw new Error('socket closed');
+    },
+    { attempts: 3, delayMs: 1, wait: async () => {}, isTransient: (err) => err === paused },
+  );
+  assert.deepEqual(broken, { status: 'unreadable', message: 'socket closed' });
+});
+
+test('an attribution the Gateway made beats a newer unattributed record', () => {
+  // Taken from a real run's history: an attributed minimize apply followed by
+  // two unattributed reconciliations. Returning the newest survivor reported the
+  // wrong one as the operator's outcome.
+  const baseline = postureTransitionBaseline(
+    postureStateWith([transitionWith('op-oldest', { requestedAt: '2026-09-05T02:58:15.438Z' })]),
+    'minimize',
+  );
+  const history = postureStateWith([
+    transitionWith('op-newest', { requestedAt: '2026-09-05T02:58:18.614Z' }),
+    transitionWith('op-middle', { requestedAt: '2026-09-05T02:58:18.022Z' }),
+    transitionWith('op-mine', {
+      requestedAt: '2026-09-05T02:58:17.547Z',
+      gateChoice: 'minimize',
+    }),
+    transitionWith('op-oldest', { requestedAt: '2026-09-05T02:58:15.438Z' }),
+  ]);
+  assert.equal(correlatedPostureTransition(baseline, history)?.id, 'op-mine');
+});
+
+test('with nothing attributed the newest survivor is used, and it is the newest', () => {
+  const baseline = postureTransitionBaseline(
+    postureStateWith([transitionWith('op-oldest', { requestedAt: '2026-09-05T02:58:15.438Z' })]),
+    'project-default',
+  );
+  const history = postureStateWith([
+    transitionWith('op-newest', { requestedAt: '2026-09-05T02:58:18.614Z' }),
+    transitionWith('op-middle', { requestedAt: '2026-09-05T02:58:18.022Z' }),
+    transitionWith('op-oldest', { requestedAt: '2026-09-05T02:58:15.438Z' }),
+  ]);
+  assert.equal(correlatedPostureTransition(baseline, history)?.id, 'op-newest');
 });

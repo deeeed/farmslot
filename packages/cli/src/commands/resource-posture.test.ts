@@ -16,6 +16,8 @@ import type {
 
 import {
   capabilityLines,
+  capabilityReleaseError,
+  capabilityReleaseIncomplete,
   capabilityReleaseRows,
   formatCapabilityAcquire,
   formatCapabilityRelease,
@@ -496,6 +498,52 @@ test('stop-warm treats a deferred stop as a failure, because the provider is sti
   );
   assert.equal(
     stopWarmIncomplete({ ...base, outcome: 'stopped', observedState: 'stopped' }),
+    false,
+  );
+});
+
+test('a retained lease is a release that did not take effect', () => {
+  const retainedOnly: RuntimeCapabilityReleaseResult = {
+    ok: true,
+    released: [],
+    retained: [lease({ id: 'lease-3', capabilityId: 'companion-metro' })],
+    effects: [],
+    failures: [],
+  };
+  // The Gateway declined to release it because something still needs it, so the
+  // lease the operator asked to drop is still held. Exiting zero there would
+  // tell a script the request took effect.
+  assert.equal(capabilityReleaseIncomplete(retainedOnly), true);
+  const error = capabilityReleaseError(retainedOnly, 'run-1') as Error & {
+    code: string;
+    details: unknown;
+  };
+  assert.equal(error.code, 'RUNTIME_CAPABILITY_RELEASE_RETAINED');
+  assert.match(error.message, /companion-metro/);
+  assert.equal(error.details, retainedOnly);
+
+  // A cleanup failure keeps its own code.
+  const failed: RuntimeCapabilityReleaseResult = {
+    ...retainedOnly,
+    ok: false,
+    retained: [],
+    failures: [{ leaseId: 'lease-4', capabilityId: 'recording', reason: 'helper did not exit' }],
+  };
+  assert.equal(capabilityReleaseIncomplete(failed), true);
+  assert.equal(
+    (capabilityReleaseError(failed, 'run-1') as Error & { code: string }).code,
+    'RUNTIME_CAPABILITY_RELEASE_FAILED',
+  );
+
+  // A clean release of the requested lease is a success.
+  assert.equal(
+    capabilityReleaseIncomplete({
+      ok: true,
+      released: [lease({ state: 'released' })],
+      retained: [],
+      effects: [],
+      failures: [],
+    }),
     false,
   );
 });

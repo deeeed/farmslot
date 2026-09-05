@@ -19,6 +19,7 @@ import {
   type ResourcePostureGateChoice,
   type ResourcePosturePlan,
   type ResourcePostureTransition,
+  type ResourcePostureTransitionOutcome,
   type RunResourcePostureState,
 } from '@farmslot/protocol';
 
@@ -411,23 +412,44 @@ export function postureChoiceForResolve(
  * What the client already knew about this run's posture transitions before it
  * resolved a decision.
  *
- * Correlation is by transition id, not by timestamp. `requestedAt` is the
- * Gateway's clock and the phone's may be minutes off it, so a "newer than my
- * request" test would silently accept a stale transition or reject the real one.
- * An id the client had not seen before the resolution cannot be one it is
- * already showing.
+ * THE CORRELATION CONTRACT, shared with Command Center. A record produced by
+ * this resolution is one that satisfies all of:
+ *
+ *   1. its `id` is not one the client had already seen; and
+ *   2. its `requestedAt` is not older than the newest `requestedAt` in the
+ *      baseline; and
+ *   3. it is not attributed to some other choice; and among the survivors an
+ *      attributed match wins over an unattributed record.
+ *
+ * Both halves of rule 2 are Gateway timestamps. No client clock takes part: a
+ * phone's may be minutes off the Gateway's, so "newer than my request" measured
+ * locally would silently accept a stale record or reject the real one.
+ *
+ * Rule 3 has both halves for a reason. Requiring an attributed match strands the
+ * records that matter most, since a rejection can carry no choice and
+ * `resolveEffectivePosturePolicy` never attributes `project-default` at all. But
+ * accepting the newest survivor regardless then misreports a later unattributed
+ * reconciliation as the operator's outcome — observed on a real run whose history
+ * held an attributed `minimize` apply followed by two unattributed ones. So an
+ * attribution the Gateway did make is believed over one this client would infer.
+ *
+ * What this still cannot do: the record carries no decision key, and the Gateway
+ * mints the id on this path rather than accepting a caller `operationId`. When
+ * nothing is attributed, correlation is positional — the newest new, not-older
+ * transition — and a reconciliation from another boundary landing in that window
+ * would be picked up. That is why what is reported is the run's posture outcome
+ * and never "your choice did this".
  */
 export interface PostureTransitionBaseline {
+  /** Transition ids the client had already seen before the resolution. */
   knownIds: string[];
   /**
-   * The forwarded choice, but only when the Gateway records it on the
-   * transition. `project-default` is excluded because it is not a policy the
-   * Gateway attributes to the operator: it asks the lower precedence levels to
-   * decide, so `resolveEffectivePosturePolicy` leaves `gateChoice` unset and a
-   * match on it would never succeed — turning every deferred resolution into a
-   * false "still pending".
+   * The newest `requestedAt` among them, when the run had any. Compared only
+   * against other Gateway timestamps.
    */
-  choice?: Exclude<ResourcePostureGateChoice, 'project-default'>;
+  newestRequestedAt?: string;
+  /** The choice forwarded with the resolution, when one was. */
+  choice?: ResourcePostureGateChoice;
 }
 
 function transitionsOf(state: RunResourcePostureState | undefined): ResourcePostureTransition[] {
@@ -440,31 +462,51 @@ export function postureTransitionBaseline(
   state: RunResourcePostureState | undefined,
   choice: ResourcePostureGateChoice | undefined,
 ): PostureTransitionBaseline {
-  const attributable = choice && choice !== 'project-default' ? choice : undefined;
+  const seen = transitionsOf(state);
+  const newestRequestedAt = seen.reduce<string | undefined>(
+    (newest, transition) =>
+      newest === undefined || transition.requestedAt > newest ? transition.requestedAt : newest,
+    undefined,
+  );
   return {
-    knownIds: transitionsOf(state).map((transition) => transition.id),
-    ...(attributable ? { choice: attributable } : {}),
+    knownIds: seen.map((transition) => transition.id),
+    ...(newestRequestedAt ? { newestRequestedAt } : {}),
+    ...(choice ? { choice } : {}),
   };
 }
 
 /**
  * The transition produced by this resolution, or null while none has appeared.
+ * Applies the three rules documented on `PostureTransitionBaseline`.
  *
- * `recentTransitions` is newest first. When the resolution forwarded a choice,
- * the transition must also carry that choice: a concurrent reconciliation from
- * another boundary is new to the client but is not this operator's outcome.
+ * `recentTransitions` is newest first, so the first survivor of each kind is the
+ * newest one. Verified live: the Gateway returns them newest first, every record
+ * carries `requestedAt`, and `lastTransition` is the first entry.
  */
 export function correlatedPostureTransition(
   baseline: PostureTransitionBaseline,
   state: RunResourcePostureState | undefined,
 ): ResourcePostureTransition | null {
   const known = new Set(baseline.knownIds);
+  let unattributed: ResourcePostureTransition | null = null;
   for (const transition of transitionsOf(state)) {
     if (known.has(transition.id)) continue;
+    if (baseline.newestRequestedAt && transition.requestedAt < baseline.newestRequestedAt) {
+      // Older than everything the client had already seen, so it cannot be the
+      // record this resolution produced however new its id is to us.
+      continue;
+    }
+    if (!transition.gateChoice) {
+      // Kept as the fallback rather than returned: a rejection and a deferred
+      // apply both arrive unattributed, but an attribution the Gateway actually
+      // made is better evidence than this one's position in the list.
+      unattributed ??= transition;
+      continue;
+    }
     if (baseline.choice && transition.gateChoice !== baseline.choice) continue;
     return transition;
   }
-  return null;
+  return unattributed;
 }
 
 export type PostureTransitionObservation =
@@ -482,6 +524,17 @@ export type PostureTransitionObservation =
  * an old rejection, or miss a failure that had not happened yet. The reader is
  * injected so the rule is testable without a gateway.
  */
+/**
+ * Whether the Gateway has finished with this transition.
+ *
+ * `in-progress` is the one outcome that is not an answer. Returning on it stops
+ * the wait before the reconciliation's own failures or rejection are recorded,
+ * which reports a half-finished apply as the operator's result.
+ */
+export function isTerminalPostureOutcome(outcome: ResourcePostureTransitionOutcome): boolean {
+  return outcome !== 'in-progress';
+}
+
 export async function observePostureTransition(
   baseline: PostureTransitionBaseline,
   read: () => Promise<RunResourcePostureState | undefined>,
@@ -489,6 +542,12 @@ export async function observePostureTransition(
     attempts: number;
     delayMs: number;
     wait?: (ms: number) => Promise<void>;
+    /**
+     * Errors that mean "could not read just now", not "the read failed".
+     * Backgrounding the app pauses gateway requests routinely, and calling that
+     * an unknown outcome alarms the operator about something that is normal.
+     */
+    isTransient?: (err: unknown) => boolean;
   },
 ): Promise<PostureTransitionObservation> {
   const wait =
@@ -499,12 +558,18 @@ export async function observePostureTransition(
     try {
       state = await read();
     } catch (err) {
-      // Reported, not swallowed: an unreadable status is its own outcome, and
-      // retrying past it would present a later silence as "nothing happened".
+      // A transient pause is waited through; anything else is reported rather
+      // than swallowed, since retrying past it would present a later silence as
+      // "nothing happened".
+      if (options.isTransient?.(err)) continue;
       return { status: 'unreadable', message: (err as Error).message };
     }
     const transition = correlatedPostureTransition(baseline, state);
-    if (transition) return { status: 'observed', transition };
+    // Keep waiting while the Gateway is still working. The record is the right
+    // one; it just does not yet say how it ended.
+    if (transition && isTerminalPostureOutcome(transition.outcome)) {
+      return { status: 'observed', transition };
+    }
   }
   return { status: 'pending' };
 }

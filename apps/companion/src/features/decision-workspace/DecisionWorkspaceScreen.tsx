@@ -564,7 +564,14 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                     );
                     return status.state;
                   },
-                  { attempts: POSTURE_APPLY_POLL_ATTEMPTS, delayMs: POSTURE_APPLY_POLL_DELAY_MS },
+                  {
+                    attempts: POSTURE_APPLY_POLL_ATTEMPTS,
+                    delayMs: POSTURE_APPLY_POLL_DELAY_MS,
+                    // Backgrounding the app right after resolving pauses gateway
+                    // requests. That is routine, not an unknown outcome, so the
+                    // wait rides it out instead of alarming the operator.
+                    isTransient: isGatewayBackgroundPauseError,
+                  },
                 ).then((observation) => {
                   if (observation.status === 'observed') {
                     applyPostureGate((current) =>

@@ -404,6 +404,41 @@ export function formatCapabilityRelease(
   return lines.join('\n');
 }
 
+/**
+ * Whether a release left the operator's request unfulfilled.
+ *
+ * A cleanup failure is the obvious case. A retained lease is the same class as
+ * a deferred `stop-warm`: the Gateway declined to release it because something
+ * still needs the provider, so the lease the operator asked to drop is still
+ * held and the provider is still up. Exiting zero there tells a script the
+ * request took effect when nothing changed.
+ */
+export function capabilityReleaseIncomplete(result: RuntimeCapabilityReleaseResult): boolean {
+  return result.failures.length > 0 || result.retained.length > 0;
+}
+
+export function capabilityReleaseError(
+  result: RuntimeCapabilityReleaseResult,
+  ownerRunId: string,
+): Error {
+  const failed = result.failures.length > 0;
+  const retainedIds = [...new Set(result.retained.map((lease) => lease.capabilityId))];
+  return Object.assign(
+    new Error(
+      failed
+        ? `Cleanup failed for ${result.failures.length} lease(s).`
+        : `Retained ${result.retained.length} lease(s) that something else still needs: ${retainedIds.join(', ')}.`,
+    ),
+    {
+      code: failed ? 'RUNTIME_CAPABILITY_RELEASE_FAILED' : 'RUNTIME_CAPABILITY_RELEASE_RETAINED',
+      userAction: failed
+        ? `Read the provider's observed state with \`farmslot resource posture status ${ownerRunId}\` before assuming anything stopped.`
+        : `Release whatever still depends on ${retainedIds.join(', ')} first; \`farmslot resource posture status ${ownerRunId}\` names what is holding it.`,
+      details: result,
+    },
+  );
+}
+
 /** Outcomes that mean the operator's request did not take effect. */
 export function postureApplyFailed(result: RuntimePostureApplyResult): boolean {
   return (
@@ -665,15 +700,9 @@ export function registerResourcePostureCommands(resource: Command): void {
             client.call<RuntimeCapabilityReleaseResult>(RuntimeCapabilityMethods.release, params),
           !emitter.machine,
         );
-        if (result.failures.length > 0) {
+        if (capabilityReleaseIncomplete(result)) {
           if (!emitter.machine) output.write(`${formatCapabilityRelease(result, params)}\n`);
-          emitter.fail(
-            Object.assign(new Error(`Cleanup failed for ${result.failures.length} lease(s).`), {
-              code: 'RUNTIME_CAPABILITY_RELEASE_FAILED',
-              userAction: `Read the provider's observed state with \`farmslot resource posture status ${options.run}\` before assuming anything stopped.`,
-              details: result,
-            }),
-          );
+          emitter.fail(capabilityReleaseError(result, options.run));
           return;
         }
         emit(output, emitter, result, () => formatCapabilityRelease(result, params));

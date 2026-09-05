@@ -17,7 +17,9 @@ import {
   type ResourcePostureGateChoice,
   type ResourcePosturePlan,
   type ResourcePostureTransition,
+  type ResourcePostureTransitionOutcome,
   type Run,
+  type RunResourcePostureState,
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
@@ -73,7 +75,16 @@ export interface RunPostureGateState {
    * outside an operator wait.
    */
   runPosture?: ResourcePosture;
+  /**
+   * The Gateway has not yet recorded a terminal transition for the resolution
+   * that was just sent. Reported rather than showing an outcome that belongs to
+   * something else.
+   */
+  reconciliationPending?: boolean;
 }
+
+/** Delay between status reads while observing a resolution's transition. */
+export const POSTURE_TRANSITION_POLL_INTERVAL_MS = 1000;
 
 /**
  * Identity of the decisions currently waiting on this run, newest state first.
@@ -155,31 +166,127 @@ export function postureChoiceBecameInapplicable(state: RunPostureGateState): boo
   return state.choice !== null || state.status !== 'idle';
 }
 
+/** Terminal transition outcomes. `in-progress` is not an answer, it is a wait. */
+const TERMINAL_POSTURE_OUTCOMES: readonly ResourcePostureTransitionOutcome[] = [
+  'applied',
+  'idempotent',
+  'partial',
+  'rejected',
+  'failed',
+];
+
+export function isTerminalPostureOutcome(outcome: ResourcePostureTransitionOutcome): boolean {
+  return TERMINAL_POSTURE_OUTCOMES.includes(outcome);
+}
+
+/** How many status reads a resolution waits for before reporting it pending. */
+export const POSTURE_TRANSITION_POLL_LIMIT = 10;
+
+export interface PostureTransitionObservation {
+  /** Transition ids the Gateway had already recorded before the resolution. */
+  baselineTransitionIds: readonly string[];
+  /**
+   * Newest `requestedAt` among those, in the Gateway's own clock. Recency is
+   * compared Gateway-to-Gateway; see `correlatedPostureTransition`.
+   */
+  baselineNewestRequestedAt: string | undefined;
+  choice: ResourcePostureGateChoice | null;
+}
+
+/** The records to correlate over, newest first, as the protocol persists them. */
+export function postureTransitionsOf(
+  state: RunResourcePostureState | undefined,
+): readonly ResourcePostureTransition[] {
+  if (!state) return [];
+  if (state.recentTransitions?.length) return state.recentTransitions;
+  return state.lastTransition ? [state.lastTransition] : [];
+}
+
+export function postureTransitionBaseline(
+  state: RunResourcePostureState | undefined,
+  choice: ResourcePostureGateChoice | null,
+): PostureTransitionObservation {
+  const known = postureTransitionsOf(state);
+  const newest = known
+    .map((transition) => transition.requestedAt)
+    .filter((requestedAt): requestedAt is string => Boolean(requestedAt))
+    .sort()
+    .at(-1);
+  return {
+    baselineTransitionIds: known.map((transition) => transition.id),
+    baselineNewestRequestedAt: newest,
+    choice,
+  };
+}
+
 /**
  * The transition a resolution actually produced, or `undefined` while the
  * Gateway has not recorded one yet.
  *
  * `run.resolveDecision` returns before posture reconciliation finishes, so the
- * `lastTransition` on its response is frequently the transition from BEFORE
- * this resolution. Presenting that as the outcome reports an old rejection as
- * the answer to what the operator just did, or misses a new failure entirely.
+ * record on its response is frequently the one from BEFORE this resolution.
+ * Presenting that reports an old outcome as the answer to what the operator just
+ * did. This is the contract both clients follow, in four parts:
  *
- * Correlation is by transition id against the baseline captured before the
- * request. It deliberately does NOT correlate on `gateChoice`: the Gateway drops
- * `project-default` before it picks a policy source, so a deferred resolution
- * produces a transition carrying no choice at all, and matching on it would
- * report every one of them as forever pending.
+ * 1. Novelty. A record whose id was already in the baseline is one the Gateway
+ *    had before the resolution, and is never adopted.
+ * 2. Recency, in Gateway time. A record must not be older than the newest
+ *    `requestedAt` in the baseline. Both sides of that comparison come from the
+ *    Gateway, so no client clock is involved: anchoring on the client's send
+ *    moment would compare a phone or browser clock against the Gateway's, and a
+ *    skewed client would either adopt a stale record or reject the real one
+ *    forever. This excludes a backfilled or out-of-order record; it cannot
+ *    exclude a genuinely concurrent one, which is what part 3 is for.
+ * 3. Attribution. A record attributed to a different gate choice is excluded. A
+ *    record carrying no `gateChoice` is never excluded on that basis, because
+ *    the Gateway drops `project-default` before it picks a policy source and
+ *    genuine rejections can also arrive without one. Among the survivors, a
+ *    record the Gateway attributed to this choice WINS over an unattributed one;
+ *    an unattributed record is only the fallback. Without that preference a
+ *    concurrent unattributed reconciliation that lands after the operator's is
+ *    newest and therefore chosen, which misattributes it.
+ * 4. Terminality is the caller's half: `in-progress` is not an answer, so the
+ *    caller keeps polling until `isTerminalPostureOutcome`, bounded, and reports
+ *    the wait honestly on timeout.
+ *
+ * What this still cannot do: the record carries no decision key, and this path
+ * supplies no `operationId` for the Gateway to mint the id from, so for a record
+ * with nothing attributed the correlation is positional. A concurrent
+ * reconciliation from another boundary could in principle be picked up. That is
+ * why the surfaced wording describes what the run's posture did, never "your
+ * choice did this".
  */
 export function correlatedPostureTransition(
-  baselineTransitionId: string | undefined,
-  transition: ResourcePostureTransition | undefined,
+  observation: PostureTransitionObservation,
+  transitions: readonly ResourcePostureTransition[],
 ): ResourcePostureTransition | undefined {
-  if (!transition) return undefined;
-  // Unchanged id means reconciliation has not recorded this one yet.
-  if (baselineTransitionId !== undefined && transition.id === baselineTransitionId) {
-    return undefined;
-  }
-  return transition;
+  const baseline = new Set(observation.baselineTransitionIds);
+  const oldestAllowed = observation.baselineNewestRequestedAt
+    ? Date.parse(observation.baselineNewestRequestedAt)
+    : undefined;
+  const candidates = transitions.filter((transition) => {
+    if (baseline.has(transition.id)) return false;
+    if (oldestAllowed !== undefined) {
+      const requestedAtMs = Date.parse(transition.requestedAt);
+      // Not-older rather than strictly-newer, so two reconciliations in the same
+      // millisecond are not dropped; novelty already excludes the baseline.
+      if (!Number.isFinite(requestedAtMs) || requestedAtMs < oldestAllowed) return false;
+    }
+    if (
+      observation.choice &&
+      transition.gateChoice !== undefined &&
+      transition.gateChoice !== observation.choice
+    ) {
+      return false;
+    }
+    return true;
+  });
+  // A match the Gateway actually attributed beats one this client inferred.
+  return (
+    candidates.find(
+      (transition) => observation.choice && transition.gateChoice === observation.choice,
+    ) ?? candidates[0]
+  );
 }
 
 export interface RunPostureGatePreviewLine {
@@ -236,7 +343,31 @@ export function postureGatePreviewSummary(plan: ResourcePosturePlan): string {
  * different copy rather than one "the Gateway rejected this" message that is
  * wrong half the time.
  */
-export function postureResolveBlockReason(state: RunPostureGateState): string | null {
+/**
+ * A gate state whose availability has been resolved from the Gateway's posture.
+ *
+ * `runPosture` is required rather than optional, so a caller — or a test
+ * fixture — cannot leave it out. Omitting it used to short-circuit the guards
+ * below to "not blocked", which fails OPEN: an assertion meant to prove that a
+ * clean plan does not block passed instead because availability was never
+ * stated. Rendering can keep the optional field, because an absent posture
+ * there means "offer nothing", which fails closed.
+ */
+export type RunPostureGateStateWithAvailability = RunPostureGateState & {
+  /** The Gateway's posture for this run; `undefined` only when it is unread. */
+  runPosture: ResourcePosture | undefined;
+};
+
+export function postureResolveBlockReason(
+  state: RunPostureGateStateWithAvailability,
+): string | null {
+  // A block may only guard a choice the operator can actually see and clear.
+  // The panel renders nothing outside an operator wait, and an unread posture
+  // hides it too, so blocking there strands the decision behind a control that
+  // is not on screen. This is the other half of the rule that an unknown
+  // posture must never clear a selection: unknown means do nothing — neither
+  // destroy the operator's input nor stand in their way.
+  if (!postureChoicesApply(state.runPosture)) return null;
   if (!state.choice) return null;
   if (state.status === 'idle' || state.status === 'loading') {
     return 'Waiting for the Gateway to report what this choice would do.';
@@ -259,7 +390,7 @@ export function postureResolveBlockReason(state: RunPostureGateState): string | 
  * rejection blocks it: sending a choice the Gateway already refused would only
  * produce the same refusal after the decision is gone.
  */
-export function canResolveWithPostureChoice(state: RunPostureGateState): boolean {
+export function canResolveWithPostureChoice(state: RunPostureGateStateWithAvailability): boolean {
   return postureResolveBlockReason(state) === null;
 }
 
@@ -363,7 +494,15 @@ export function renderRunPostureGateChoices(ctx: RunPostureGateRenderContext): u
         : nothing}
       ${plan
         ? html`
-            <div class="posture-gate-summary" data-testid="run-posture-preview-summary">
+            <div
+              class="posture-gate-summary"
+              data-testid="run-posture-preview-summary"
+              data-policy-source=${plan.policySource}
+              data-rejected=${plan.rejection ? 'true' : 'false'}
+              data-choice-honored=${state.choice
+                ? String(postureChoiceHonored(plan, state.choice))
+                : 'none'}
+            >
               ${postureGatePreviewSummary(plan)}
             </div>
             ${state.choice && !plan.rejection && !postureChoiceHonored(plan, state.choice)
@@ -398,6 +537,12 @@ export function renderRunPostureGateChoices(ctx: RunPostureGateRenderContext): u
                 </div>`
               : nothing}
           `
+        : nothing}
+      ${state.reconciliationPending
+        ? html`<div class="posture-gate-help" data-testid="run-posture-reconciliation-pending">
+            The Gateway has not finished reconciling this resolution yet, so its outcome is not
+            known. Reload the run to see it.
+          </div>`
         : nothing}
       ${state.appliedTransition?.rejection
         ? html`<div

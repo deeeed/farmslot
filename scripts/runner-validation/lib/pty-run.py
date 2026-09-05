@@ -20,34 +20,59 @@ import pty
 import signal
 import subprocess
 import sys
+import time
 
 # Grace period before escalating from SIGTERM to SIGKILL on the child group.
 TERMINATE_GRACE_SECONDS = 5
 
 
+def _group_alive(pgid: int) -> bool:
+    """Whether any process is still in the group. Signal 0 only probes."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Something is there; this process just may not signal it.
+        return True
+    return True
+
+
 def terminate_group(child: subprocess.Popen) -> None:
-    """Kill the child and everything it spawned.
+    """Kill the child and everything it spawned, and wait for the group to go.
 
     The command here is `tsx <entry>`, which itself spawns node. A caller such as
     Node's `spawnSync` enforces its timeout by signalling this process only, so
     killing just `child` would leave that node process running against the live
-    gateway. The child runs in its own session, so one `killpg` reaches the whole
-    tree.
+    gateway. The child runs in its own session, so one `killpg` reaches the tree.
+
+    Reaping the direct child is NOT the end condition. A descendant that ignores
+    SIGTERM outlives its parent, so returning once `child.wait()` came back left
+    exactly the orphan this function exists to prevent. The group itself has to
+    be observed empty, escalating to SIGKILL, and the wait is bounded so a
+    process that cannot be killed at all reports rather than hanging.
     """
-    try:
-        os.killpg(child.pid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        return
-    try:
-        child.wait(timeout=TERMINATE_GRACE_SECONDS)
-        return
-    except subprocess.TimeoutExpired:
-        pass
-    try:
-        os.killpg(child.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
-    child.wait()
+    pgid = child.pid
+    for signal_number in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pgid, signal_number)
+        except (ProcessLookupError, PermissionError):
+            break
+        deadline = time.monotonic() + TERMINATE_GRACE_SECONDS
+        while time.monotonic() < deadline:
+            # Reap the direct child so it cannot linger as a zombie in the group.
+            try:
+                child.wait(timeout=0.1)
+            except subprocess.TimeoutExpired:
+                pass
+            if not _group_alive(pgid):
+                return
+        # Still alive after the grace period: escalate to SIGKILL.
+    if _group_alive(pgid):
+        print(
+            f"pty-run.py: process group {pgid} survived SIGTERM and SIGKILL",
+            file=sys.stderr,
+        )
 
 
 def main(argv: list[str]) -> int:

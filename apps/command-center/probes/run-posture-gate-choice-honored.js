@@ -14,6 +14,15 @@
  * no-injection rule: a probe that fed the renderer a plan directly would still
  * pass if selection or preview forwarding were broken.
  *
+ * What this probe does NOT cover: the "did not resolve this plan from the
+ * choice" warning firing. The Gateway cannot produce that state while the
+ * choices are on screen — at an operator wait every non-deferring choice comes
+ * back with policy source `gate-choice`, and a deferring one is honoured by
+ * definition — so there is no live run that renders it. That render is covered
+ * by the unit tests for `postureChoiceHonored`. An earlier version of this file
+ * claimed the free-slot rejection guarded it; it does not, because a rejection
+ * renders through a different element entirely.
+ *
  * Top-level `return` + IIFE: Prettier accepts it (`allowReturnOutsideFunction`)
  * and `cdp.mjs` stmtForm fallback returns the value.
  */
@@ -68,6 +77,10 @@ return (async () => {
       selected: Boolean(button?.classList.contains('selected')),
       loading: Boolean(one('[data-testid="run-posture-preview-loading"]')),
       summary: clean(one('[data-testid="run-posture-preview-summary"]')),
+      policySource:
+        one('[data-testid="run-posture-preview-summary"]')?.dataset.policySource ?? null,
+      honored: one('[data-testid="run-posture-preview-summary"]')?.dataset.choiceHonored ?? null,
+      rejectedFlag: one('[data-testid="run-posture-preview-summary"]')?.dataset.rejected ?? null,
       error: clean(one('[data-testid="run-posture-preview-error"]')),
       warningShown: Boolean(one('[data-testid="run-posture-preview-not-honored"]')),
       warningText: clean(one('[data-testid="run-posture-preview-not-honored"]')),
@@ -114,28 +127,47 @@ return (async () => {
   const results = {};
   const failures = [];
 
+  // Assertions are positive wherever they can be. The panel marks each plan with
+  // the Gateway's policy source and whether the selected choice was honoured, so
+  // these check what IS rendered rather than only that a warning is absent.
   results['project-default'] = await selectChoice('project-default');
+  if (results['project-default'].honored !== 'true') {
+    failures.push(
+      `project-default was marked honored=${results['project-default'].honored} from policy source ${results['project-default'].policySource}; deferring is what it asks for`,
+    );
+  }
+  if (results['project-default'].policySource === 'gate-choice') {
+    failures.push('project-default resolved from the gate choice, so nothing was deferred');
+  }
   if (results['project-default'].warningShown) {
     failures.push(
-      `project-default warned even though deferring is what it asks for: ${results['project-default'].warningText}`,
+      `project-default warned despite being honoured: ${results['project-default'].warningText}`,
     );
   }
 
   results.minimize = await selectChoice('minimize');
-  if (results.minimize.warningShown) {
+  if (results.minimize.honored !== 'true' || results.minimize.policySource !== 'gate-choice') {
     failures.push(
-      `minimize warned about a plan the Gateway resolved from the choice: ${results.minimize.warningText}`,
+      `minimize came back honored=${results.minimize.honored} from ${results.minimize.policySource}; the Gateway resolves it from the choice at an operator wait`,
     );
   }
+  if (results.minimize.warningShown) {
+    failures.push(`minimize warned about a plan the Gateway resolved from it`);
+  }
 
-  // The warning must still be reachable, or this probe would pass with it
-  // deleted. `free-slot` is the live case the Gateway refuses: it comes back
-  // rejected, which is reported by its own element rather than the not-honoured
-  // one, so both paths are checked here.
+  // free-slot is the refusal the Gateway really produces here. It is reported by
+  // its own element, and the summary must say the refusal changed nothing rather
+  // than reading as a harmless empty plan.
   results['free-slot'] = await selectChoice('free-slot');
-  if (!results['free-slot'].rejection && !results['free-slot'].warningShown) {
+  if (!results['free-slot'].rejection) {
+    failures.push('free-slot was not reported as rejected');
+  }
+  if (results['free-slot'].rejectedFlag !== 'true') {
+    failures.push('the rejected plan was not marked as such on the summary');
+  }
+  if (!/nothing applied/.test(results['free-slot'].summary ?? '')) {
     failures.push(
-      'free-slot was neither rejected nor flagged, so no negative path is exercised at all',
+      `a refused plan was summarised as "${results['free-slot'].summary}" instead of nothing applied`,
     );
   }
 
