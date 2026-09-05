@@ -1314,4 +1314,10 @@ test('the reconciler reports a deferred warm cleanup as still running', async (t
   assert.equal(metro?.desiredDisposition, 'stopped');
   assert.equal(metro?.observedState, 'running', 'a deferred provider is demonstrably still up');
   assert.match(metro?.reason ?? '', /still needs it/);
+  // Desired stopped while observed running is never a success.
+  assert.equal(result.transition.outcome, 'partial');
+  assert.equal(result.ok, false);
+  const deferral = result.transition.failures.find((item) => item.capabilityId === 'metro');
+  assert.ok(deferral, JSON.stringify(result.transition.failures));
+  assert.match(deferral.reason, /still needs it/);
 });

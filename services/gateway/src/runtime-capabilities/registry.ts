@@ -694,17 +694,29 @@ export class RuntimeCapabilityRegistry {
         candidate.slotId === params.slotId &&
         candidate.capabilityId === entry.id &&
         candidate.state === 'released' &&
-        candidate.keepWarmUntil !== undefined &&
-        candidate.provenance.digest === entry.provenance.digest,
+        candidate.keepWarmUntil !== undefined,
     );
+    // A warm lease from an older provider definition still describes a running
+    // process. Filtering it out by digest left it running and started a second
+    // one beside it. It is never adopted — the old definition's behaviour is not
+    // the new one's — but it is cleaned up first, through its own lease record.
+    const warmProvenanceChanged =
+      warmLease !== undefined && warmLease.provenance.digest !== entry.provenance.digest;
     let warmProviderHealthy = false;
     if (active.length === 0 && warmLease) {
-      const warmHealth = await this.runAction(params.slotId, entry.actions.health);
+      const warmHealth = warmProvenanceChanged
+        ? { ok: false, detail: 'warm provider predates the current provider definition' }
+        : await this.runAction(params.slotId, entry.actions.health);
       warmProviderHealthy = warmHealth.ok;
       if (warmHealth.ok) {
         warmLease.keepWarmUntil = undefined;
       } else {
-        const cleanup = await this.runAction(params.slotId, entry.actions.release);
+        const staleEntry = warmProvenanceChanged
+          ? catalog.capabilities.find(
+              (capability) => capability.provenance.digest === warmLease.provenance.digest,
+            )
+          : undefined;
+        const cleanup = await this.runAction(params.slotId, (staleEntry ?? entry).actions.release);
         warmLease.keepWarmUntil = undefined;
         if (!cleanup.ok) {
           warmLease.state = 'error';

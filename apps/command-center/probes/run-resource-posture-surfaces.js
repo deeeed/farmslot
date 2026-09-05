@@ -5,7 +5,7 @@
  *
  * It also makes a real warm provider (acquire, then release with keepWarm) and
  * stops it through the panel's Stop control, which routes to
- * `runtime.capability.stopWarm`. The outcome is read back from the Gateway, and
+ * `runtime.capability.stopWarm`, and exercises Restart on a held lease. The outcome is read back from the Gateway, and
  * the probe releases its own lease in a finally block whatever happens.
  *
  * Both are driven through real clicks on real controls. The backlog field is
@@ -37,10 +37,16 @@ return (async () => {
     return out;
   }
 
+  /**
+   * Poll until the predicate is truthy. The predicate is awaited: an async one
+   * returns a Promise, which is always truthy, so calling it without `await`
+   * would satisfy the wait on the first tick and read state before the action
+   * under test had finished.
+   */
   async function waitFor(predicate, timeoutMs = 15000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const value = predicate();
+      const value = await predicate();
       if (value) return value;
       await wait(100);
     }
@@ -87,6 +93,37 @@ return (async () => {
       pending.set(id, { resolve, reject });
       socket.send(JSON.stringify({ type: 'req', id, method, params }));
     });
+
+  /**
+   * Release everything this owner still holds, and keep releasing until nothing
+   * comes back. A panel action still in flight can reacquire *after* a single
+   * release, which is how an earlier version of this probe stranded a lease it
+   * had already reported as cleaned up.
+   */
+  async function releaseOwnedUntilClear(ownerRunId, capabilityId) {
+    let remaining = null;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      try {
+        await rpc('runtime.capability.release', {
+          slotId: SLOT_ID,
+          ownerRunId,
+          capabilityId,
+          keepWarm: false,
+        });
+      } catch {
+        // Recorded by the caller through the count below.
+      }
+      const status = await rpc('runtime.capability.status', { slotId: SLOT_ID });
+      remaining = status.leases.filter(
+        (lease) =>
+          lease.owner.runId === ownerRunId &&
+          ['queued', 'acquiring', 'acquired', 'releasing'].includes(lease.state),
+      ).length;
+      if (remaining === 0) return 0;
+      await wait(1500);
+    }
+    return remaining;
+  }
 
   const report = {
     slotId: SLOT_ID,
@@ -312,10 +349,15 @@ return (async () => {
               const afterLease = afterStatus.leases.find((lease) => lease.id === acquired.lease.id);
               warmStop.gatewayKeepWarmUntil = afterLease?.keepWarmUntil ?? null;
               warmStop.gatewayCleanupFailure = afterLease?.cleanupFailure ?? null;
-              // The panel must never say stopped unless the Gateway observed one.
+              warmStop.gatewayLeaseState = afterLease?.state ?? null;
+              // The panel must never claim a stop the Gateway does not back. This
+              // reads the renderer's own dataset and the Gateway's lease record —
+              // never the rendered sentence, which is copy that can change.
               warmStop.honest =
                 warmStop.noteObservedState !== 'stopped' ||
-                !/still running/i.test(warmStop.note ?? '');
+                (warmStop.gatewayKeepWarmUntil === null &&
+                  warmStop.gatewayCleanupFailure === null &&
+                  warmStop.gatewayLeaseState !== 'error');
               warmStop.proved = Boolean(warmStop.note && warmStop.noteObservedState);
             }
           }
@@ -325,26 +367,124 @@ return (async () => {
       warmStop.error = error?.message ?? String(error);
     } finally {
       // Never leave the probe's own lease behind.
-      if (warmCapabilityId) {
-        try {
-          await rpc('runtime.capability.release', {
-            slotId: SLOT_ID,
-            ownerRunId: warmOwnerRunId,
-            capabilityId: warmCapabilityId,
-            keepWarm: false,
-          });
-        } catch {
-          warmStop.cleanupReleaseError = 'the probe could not release its own lease';
-        }
+      warmStop.leftoverLeases = warmCapabilityId
+        ? await releaseOwnedUntilClear(warmOwnerRunId, warmCapabilityId)
+        : 0;
+      if (warmStop.leftoverLeases !== 0) {
+        warmStop.cleanupReleaseError = `the probe could not release its own lease (${warmStop.leftoverLeases} still held)`;
       }
       const finalStatus = await rpc('runtime.capability.status', { slotId: SLOT_ID });
-      warmStop.leftoverLeases = finalStatus.leases.filter(
-        (lease) =>
-          lease.owner.runId === warmOwnerRunId &&
-          ['queued', 'acquiring', 'acquired', 'releasing'].includes(lease.state),
+      // A lease this probe drove into an error state is a finding, not noise.
+      warmStop.leasesInError = finalStatus.leases.filter(
+        (lease) => lease.owner.runId === warmOwnerRunId && lease.state === 'error',
       ).length;
     }
     report.warmStop = warmStop;
+
+    // ---- Restart, through the panel's Restart control ----
+    //
+    // Restart is offered only for a lease this slot still holds, so the setup is
+    // an acquire (not a warm release: a released lease offers Acquire and Stop,
+    // never Restart). Clicking it makes the panel release with keepWarm false,
+    // confirm the Gateway actually listed that lease as released, and reacquire
+    // under the recorded proof requirement. Success is a different lease id
+    // holding the capability with no cleanup failure behind it.
+    const restart = { attempted: false };
+    const restartOwnerRunId = `posture-restart-probe-${Date.now()}`;
+    let restartCapabilityId = null;
+    try {
+      const catalog =
+        (await rpc('runtime.capability.list', { slotId: SLOT_ID })).capabilities ?? [];
+      const entry = catalog.find(
+        (candidate) =>
+          candidate.availability.state === 'available' &&
+          (candidate.dependencies ?? []).length === 0 &&
+          candidate.cost.class !== 'high',
+      );
+      restartCapabilityId = entry?.id ?? null;
+      restart.capabilityId = restartCapabilityId;
+      if (!entry) {
+        restart.skipped =
+          'no available dependency-free provider under high cost on this slot to restart';
+      } else {
+        const acquired = await rpc('runtime.capability.acquire', {
+          slotId: SLOT_ID,
+          capabilityId: restartCapabilityId,
+          ownerRunId: restartOwnerRunId,
+          proofRequirement: {
+            capabilityId: restartCapabilityId,
+            reason: 'restart probe',
+            mode: 'state',
+          },
+        });
+        if (!acquired.ok) {
+          restart.error = `acquire failed: ${acquired.conflict?.reason ?? 'unknown'}`;
+        } else {
+          restart.originalLeaseId = acquired.lease.id;
+          location.hash = '#fleet';
+          await wait(500);
+          location.hash = `#slot/${SLOT_ID}?activity=info`;
+          const button = await waitFor(
+            () => deepAll(`[data-testid="runtime-capability-restart-${restartCapabilityId}"]`)[0],
+            25000,
+          );
+          if (!button) {
+            restart.error = 'the panel offered no Restart control for the held lease';
+          } else {
+            restart.attempted = true;
+            button.click();
+            // Either a new lease is holding the capability, or the panel says why.
+            await waitFor(async () => {
+              const failed = deepAll('[data-testid="runtime-capability-action-error"]')[0];
+              if (failed) return failed;
+              const status = await rpc('runtime.capability.status', { slotId: SLOT_ID });
+              return status.leases.some(
+                (lease) =>
+                  lease.capabilityId === restartCapabilityId &&
+                  lease.owner.runId === restartOwnerRunId &&
+                  lease.state === 'acquired' &&
+                  lease.id !== restart.originalLeaseId,
+              );
+            }, 150000);
+            restart.actionError = text(
+              deepAll('[data-testid="runtime-capability-action-error"]')[0],
+            );
+            const after = await rpc('runtime.capability.status', { slotId: SLOT_ID });
+            const mine = after.leases.filter(
+              (lease) =>
+                lease.capabilityId === restartCapabilityId &&
+                lease.owner.runId === restartOwnerRunId,
+            );
+            const original = mine.find((lease) => lease.id === restart.originalLeaseId);
+            const replacement = mine.find(
+              (lease) => lease.id !== restart.originalLeaseId && lease.state === 'acquired',
+            );
+            restart.originalLeaseState = original?.state ?? null;
+            restart.newLeaseId = replacement?.id ?? null;
+            restart.cleanupFailure =
+              mine.map((lease) => lease.cleanupFailure).find(Boolean) ?? null;
+            // The three things that make this a restart rather than a no-op: the
+            // original lease is gone, a different lease holds the capability, and
+            // nothing failed on the way.
+            restart.originalReleased = original?.state === 'released';
+            restart.reacquired = Boolean(replacement);
+            restart.proved = Boolean(
+              restart.originalReleased && restart.reacquired && !restart.cleanupFailure,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      restart.error = error?.message ?? String(error);
+    } finally {
+      restart.leftoverLeases = restartCapabilityId
+        ? await releaseOwnedUntilClear(restartOwnerRunId, restartCapabilityId)
+        : 0;
+      if (restart.leftoverLeases !== 0) {
+        restart.cleanupReleaseError = `the probe could not release its restarted lease (${restart.leftoverLeases} still held)`;
+      }
+    }
+    report.restart = restart;
 
     // The warm Stop is the Slot View action this probe proves: a real click on a
     // real control with a Gateway-verified outcome. The acquire attempt above is
@@ -365,6 +505,32 @@ return (async () => {
     if (!report.warmStop?.proved) failures.push('the warm Stop produced no Gateway outcome');
     if (!report.warmStop?.honest) failures.push('the warm Stop claimed a stop it did not observe');
     if (report.warmStop?.cleanupReleaseError) failures.push(report.warmStop.cleanupReleaseError);
+    // A cleanup that failed is not a pass, however the rest of the run went.
+    if (report.warmStop?.gatewayCleanupFailure) {
+      failures.push(`warm cleanup failed: ${report.warmStop.gatewayCleanupFailure}`);
+    }
+    if (report.warmStop?.error) failures.push(`warm Stop node errored: ${report.warmStop.error}`);
+    if (report.warmStop?.gatewayLeaseState === 'error') {
+      failures.push('the Gateway left the warm lease in error state');
+    }
+    if (report.warmStop?.leasesInError) {
+      failures.push(`${report.warmStop.leasesInError} lease(s) left in error state on the slot`);
+    }
+    if (!report.restart?.proved) {
+      failures.push(
+        report.restart?.skipped ??
+          report.restart?.error ??
+          report.restart?.actionError ??
+          'Restart did not release the original lease and reacquire a new one',
+      );
+    }
+    if (report.restart?.cleanupFailure) {
+      failures.push(`restart cleanup failed: ${report.restart.cleanupFailure}`);
+    }
+    if (report.restart?.cleanupReleaseError) failures.push(report.restart.cleanupReleaseError);
+    if (report.restart?.leftoverLeases !== 0) {
+      failures.push(`${report.restart?.leftoverLeases} restart lease(s) left behind by this probe`);
+    }
     if (report.warmStop?.leftoverLeases !== 0) {
       failures.push(`${report.warmStop?.leftoverLeases} lease(s) left behind by this probe`);
     }

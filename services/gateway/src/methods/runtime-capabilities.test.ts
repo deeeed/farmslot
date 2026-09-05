@@ -132,3 +132,26 @@ test('stopWarm rejects malformed params before touching the registry', async () 
     /capabilityId must be a non-empty string/,
   );
 });
+
+test('a retry after a failed cleanup reports the unresolved failure, not stopped', () => {
+  // The sweep only selects `released` leases, so a retry finds nothing warm.
+  // The error lease is what records that the provider may still be running.
+  const failed: RuntimeCapabilityLease = {
+    ...lease('metro'),
+    state: 'error',
+    cleanupFailure: 'metro shutdown exited 1',
+  };
+  const result = stopWarmResultFromSummary(PARAMS, summary(), [failed]);
+  assert.equal(result.ok, false);
+  assert.equal(result.outcome, 'failed');
+  assert.notEqual(result.observedState, 'stopped');
+  assert.equal(result.observedState, 'unknown');
+  assert.equal(result.cleanupFailure, 'metro shutdown exited 1');
+  assert.match(result.reason ?? '', /unresolved cleanup/);
+});
+
+test('an error lease without a stored failure does not mask a real verdict', () => {
+  const stale: RuntimeCapabilityLease = { ...lease('metro'), state: 'error' };
+  const result = stopWarmResultFromSummary(PARAMS, summary(), [stale]);
+  assert.equal(result.outcome, 'not-warm');
+});

@@ -719,6 +719,17 @@ export class RunResourcePostureReconciler {
           : state,
       );
     }
+    // A deferral is not a failure of the provider, but it is a failure of the
+    // plan: desired `stopped` while the thing is demonstrably running is never
+    // `applied`. It is reported as `partial` with the reason, like any other
+    // stop that did not happen.
+    for (const capabilityId of warmDeferred) {
+      if (failures.some((failure) => failure.capabilityId === capabilityId)) continue;
+      failures.push({
+        capabilityId,
+        reason: `kept running because an active or warm dependent still needs it`,
+      });
+    }
     const transition: ResourcePostureTransition = {
       ...inProgress,
       completedAt: this.now().toISOString(),

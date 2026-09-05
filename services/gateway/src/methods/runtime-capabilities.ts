@@ -318,6 +318,27 @@ export function stopWarmResultFromSummary(
       effects: [],
     };
   }
+  // An earlier cleanup that failed leaves the lease in `error` with the reason
+  // stored on it. The sweep selects only `released` leases, so a retry finds
+  // nothing warm — but the provider may well still be up, which is exactly what
+  // that stored failure records. Report it, never `stopped`.
+  const unresolved = leases.find(
+    (lease) =>
+      lease.capabilityId === params.capabilityId &&
+      lease.state === 'error' &&
+      Boolean(lease.cleanupFailure),
+  );
+  if (unresolved) {
+    return {
+      ...base,
+      ok: false,
+      outcome: 'failed',
+      observedState: 'unknown',
+      reason: `'${params.capabilityId}' has unresolved cleanup on ${params.slotId}; its provider may still be running`,
+      cleanupFailure: unresolved.cleanupFailure!,
+      effects: [],
+    };
+  }
   // Nothing was warm, which says nothing about whether the provider is up: an
   // active lease may still hold it. Read that off the leases rather than
   // assuming stopped.
