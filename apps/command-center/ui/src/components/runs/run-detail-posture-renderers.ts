@@ -195,15 +195,25 @@ export function summarizeRunPosture(state: RunResourcePostureState): RunPostureS
  * row's own `cleanupFailure`. Rendering both gave the operator the same alert
  * twice. The row wins — it sits next to that capability's desired and observed
  * state, which is the context needed to act on it.
+ *
+ * The match is on capability AND reason. The Gateway reports a failure per
+ * lease while a row carries one reason, so suppressing every failure for a
+ * capability that had any row failure would silently drop a sibling lease's
+ * different failure — the one case where the transition list is the only place
+ * that failure is reported at all.
  */
 export function postureTransitionFailuresToShow(
   summary: RunPostureSummary,
 ): ResourcePostureTransitionFailure[] {
+  // NUL separator: it cannot occur in a capability id or a reason, so no pair
+  // of distinct values can collide into one key.
   const shownOnRows = new Set(
-    summary.rows.filter((row) => row.cleanupFailure).map((row) => row.capabilityId),
+    summary.rows
+      .filter((row) => row.cleanupFailure)
+      .map((row) => `${row.capabilityId}\u0000${row.cleanupFailure}`),
   );
   return (summary.lastTransition?.failures ?? []).filter(
-    (failure) => !shownOnRows.has(failure.capabilityId),
+    (failure) => !shownOnRows.has(`${failure.capabilityId}\u0000${failure.reason}`),
   );
 }
 

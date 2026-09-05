@@ -300,3 +300,39 @@ test('a transition failure with no row of its own is still shown', () => {
     { capabilityId: 'ios-simulator', reason: 'device never shut down' },
   ]);
 });
+
+test('a sibling lease failure with a different reason is still shown', () => {
+  // The Gateway reports one failure per lease; a row carries a single reason.
+  // Suppressing every failure for that capability would drop the sibling's
+  // failure entirely, and the transition list is its only report.
+  const summary = summarizeRunPosture(
+    postureState({
+      capabilities: [
+        capability({
+          capabilityId: 'ios-simulator',
+          desiredDisposition: 'stopped',
+          observedState: 'stopped',
+          cleanupFailure: 'first lease: shutdown exited 1',
+        }),
+      ],
+      lastTransition: {
+        id: 'op-3',
+        posture: 'terminal',
+        policySource: 'framework-default',
+        requestedAt: '2026-09-05T10:00:00.000Z',
+        outcome: 'partial',
+        effects: [],
+        progress: { total: 2, completed: 0 },
+        failures: [
+          { capabilityId: 'ios-simulator', reason: 'first lease: shutdown exited 1' },
+          { capabilityId: 'ios-simulator', reason: 'second lease: device never released' },
+        ],
+      },
+    }),
+  );
+
+  // The one already on the row is suppressed; the sibling's own reason survives.
+  assert.deepEqual(postureTransitionFailuresToShow(summary), [
+    { capabilityId: 'ios-simulator', reason: 'second lease: device never released' },
+  ]);
+});
