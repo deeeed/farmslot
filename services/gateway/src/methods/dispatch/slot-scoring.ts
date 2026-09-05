@@ -1,5 +1,6 @@
 import {
   DEFAULT_BRANCH,
+  DETACHED_HEAD_BRANCH,
   isCdpLiveValue,
   isDispatchScoreStale,
   isSlotRefreshStaleBranch,
@@ -15,6 +16,10 @@ import {
 export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
 
 import { SLOT_PHASE_RELEASING } from '../../core/index.js';
+import {
+  isGateParkInFlightOrFreed,
+  isSlotFreedByPark,
+} from '../../run-engine/park-slot-binding.js';
 
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 
@@ -43,8 +48,16 @@ export function isFreeSlot(slot: SlotStatus): boolean {
   return slot.agent !== 'working';
 }
 
+/**
+ * Slots occupied by a non-terminal run.
+ *
+ * A run whose park record freed its slot (ADR-054 `free-slot` at an operator
+ * wait) is excluded: it keeps `slotId` so restore and its workspace branch
+ * still resolve, but the slot is dispatchable while it waits. The predicate
+ * lives in the run engine so fleet refresh and dispatch cannot drift.
+ */
 export function activeRunSlotIds(
-  runs: ReadonlyArray<Pick<Run, 'id' | 'slotId' | 'status'>>,
+  runs: ReadonlyArray<Pick<Run, 'id' | 'slotId' | 'status' | 'park'>>,
   excludeRunId?: string,
 ): Set<string> {
   return new Set(
@@ -53,7 +66,8 @@ export function activeRunSlotIds(
         (run) =>
           run.id !== excludeRunId &&
           run.slotId &&
-          !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus),
+          !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) &&
+          !isSlotFreedByPark(run),
       )
       .map((run) => run.slotId as string),
   );
@@ -141,10 +155,67 @@ export function slotTrackingConfigForSlot(
   };
 }
 
+/**
+ * Slots whose detached HEAD is a park's preserved workspace, so dispatch may
+ * treat them as idle. Derived from the run store, never from the slot row
+ * alone: a detached HEAD is only safe to dispatch over when a park record says
+ * the commits survive on a branch ref. Any OTHER detached slot may hold real
+ * unpushed work, which is why `isSlotIdleBranch` still calls it stale for
+ * `slot.release` and fleet health.
+ */
+export interface ParkPreservedWorkspace {
+  /** The run whose park detached this workspace. */
+  runId: string;
+  /** The commit the park left HEAD on. */
+  headSha: string;
+}
+
+export function parkPreservedSlotIds(
+  runs: ReadonlyArray<Pick<Run, 'id' | 'slotId' | 'park'>>,
+): Map<string, ParkPreservedWorkspace[]> {
+  // ALL claims for a slot, not the last one written. Runs are not enumerated in
+  // parking order, so keeping one claim per slot let an older record overwrite
+  // the one that actually matches the checkout — and the exception then failed
+  // for a slot it should have covered.
+  const preserved = new Map<string, ParkPreservedWorkspace[]>();
+  for (const run of runs) {
+    const workspace = run.park?.preservedWorkspace;
+    if (!run.slotId || !workspace?.detachedAt) continue;
+    const claims = preserved.get(run.slotId);
+    const claim = { runId: run.id, headSha: workspace.headSha };
+    if (claims) claims.push(claim);
+    else preserved.set(run.slotId, [claim]);
+  }
+  return preserved;
+}
+
 export function isDispatchStaleBranch(
   slot: SlotStatus,
   projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>,
+  parkPreserved?: ReadonlyMap<string, ParkPreservedWorkspace[]>,
 ): boolean {
+  // Scoped exception, dispatch only. ADR-054 `free-slot` detaches the parked
+  // branch precisely so the next occupant's `git reset --hard` cannot move it,
+  // and the branch ref survives at the recorded tip. Without this the freed
+  // slot carries the stale penalty and a lone freed slot forces an operator
+  // pick. A plain detached slot stays stale everywhere, including
+  // `slot.release`'s unmerged-work refusal.
+  //
+  // Matching the SLOT ID is not enough. A park record outlives the checkout it
+  // describes: once a successor has taken the slot and left its own detached
+  // commits behind, the stale record would keep suppressing the penalty over
+  // work nobody has accounted for. So the current checkout has to be evidence
+  // for itself — either the slot still sits on the exact commit the park
+  // detached to, or the slot row still names that park's run as its owner.
+  if (slot.branch === DETACHED_HEAD_BRANCH) {
+    const claims = parkPreserved?.get(slot.slot) ?? [];
+    const matched = claims.some(
+      (claim) =>
+        (slot.headSha !== undefined && slot.headSha === claim.headSha) ||
+        (slot.currentRunId != null && slot.currentRunId === claim.runId),
+    );
+    if (matched) return false;
+  }
   return isSlotRefreshStaleBranch(
     slot.branch ?? '',
     slotTrackingConfigForSlot(slot, projectConfigs),
@@ -162,6 +233,7 @@ export function slotScore(
   options?: {
     familyId?: string | null;
     projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
+    parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
   },
 ): number {
   let score = 0;
@@ -178,7 +250,7 @@ export function slotScore(
   // PR's own slot would score +50 (stale) and lose to any slot on main.
   if (targetBranch && slot.branch === targetBranch && !hostRed) {
     score -= TARGET_BRANCH_BONUS;
-  } else if (isDispatchStaleBranch(slot, options?.projectConfigs)) {
+  } else if (isDispatchStaleBranch(slot, options?.projectConfigs, options?.parkPreservedSlotIds)) {
     // Stale branch is the primary penalty — prepare must reset to idle baseline first
     score += STALE_BRANCH_PENALTY;
   }
@@ -241,6 +313,8 @@ export function findBestSlot(
     /** Machines whose sustained-pressure admission decision is rejected.
      * Automatic selection never lands a new dispatch on them. */
     pressureRejectedMachines?: ReadonlySet<string>;
+    /** Slots whose detached HEAD a park record preserves; see `slotScore`. */
+    parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
   },
 ): SlotStatus | null {
   const allow =
@@ -282,10 +356,12 @@ export function findBestSlot(
         slotScore(a, options?.targetBranch, {
           familyId: options?.familyId,
           projectConfigs: options?.projectConfigs,
+          parkPreservedSlotIds: options?.parkPreservedSlotIds,
         }) -
         slotScore(b, options?.targetBranch, {
           familyId: options?.familyId,
           projectConfigs: options?.projectConfigs,
+          parkPreservedSlotIds: options?.parkPreservedSlotIds,
         }),
     );
   if (candidates.length === 0) return null;
@@ -498,8 +574,17 @@ export function slotClaimBlockedByLiveOwner(
 export function failedRunSlotCleanup(
   slot: Readonly<Record<string, unknown>>,
   runId: string,
-  ownerRunLookup: (id: string) => { status: string } | undefined,
+  ownerRunLookup: (id: string) => { status: string; park?: Run['park'] } | undefined,
 ): 'reset' | 'release-keep-handoff' | 'clear-reservation' | 'none' {
+  // ADR-054 `free-slot`: a gate-parked run's slot is never this cleanup's to
+  // take. In flight, the run still owns the row, so the plan below would read
+  // 'reset' and publish the slot ready while resources are still stopping and
+  // the parked branch may still be checked out — dispatch could then prepare
+  // over it, and the park's own release CAS would fail. Once freed, the row
+  // belongs to a successor and resetting it would tear down that run's work.
+  // Decided here, in the shared plan, so every failure path inherits it.
+  const failing = ownerRunLookup(runId);
+  if (failing && isGateParkInFlightOrFreed(failing)) return 'none';
   const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
   const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
   if (owner === runId) {

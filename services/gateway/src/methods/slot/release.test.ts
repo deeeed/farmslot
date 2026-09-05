@@ -250,3 +250,134 @@ test('concurrent slotRelease calls for one slot coalesce onto a single in-flight
     (results[1] as PromiseRejectedResult).reason,
   );
 });
+
+// ─── ADR-054 free-slot at an operator wait ───
+
+function freedGateParkRecord(runId: string, slotId: string) {
+  return {
+    version: 1 as const,
+    operationId: `park-${runId}`,
+    previewId: `preview-${runId}`,
+    runId,
+    generation: 1,
+    machine: 'demo',
+    slotId,
+    mode: 'release' as const,
+    phase: 'parked' as const,
+    slotDisposition: 'freed' as const,
+    slotFreedAt: new Date().toISOString(),
+    prePauseStatus: 'human-gating' as const,
+    prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' as const },
+    resourceManifest: {
+      capturedAt: new Date().toISOString(),
+      resources: [],
+      capabilityLeases: [],
+    },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped' as const, resources: [] },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function seedSlotRow(
+  t: { after: (fn: () => void | Promise<void>) => void },
+  slotId: string,
+  row: Record<string, unknown>,
+): Promise<void> {
+  const { readFile, rm, writeFile } = await import('node:fs/promises');
+  const { statusFile } = await import('../../core/state.js');
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const data = priorStatus ? JSON.parse(priorStatus) : { slots: [] };
+  const others = (data.slots ?? []).filter((entry: { slot: string }) => entry.slot !== slotId);
+  await writeFile(
+    statusFile,
+    JSON.stringify({ ...data, slots: [...others, { slot: slotId, ...row }] }, null, 2) + '\n',
+  );
+  t.after(async () => {
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+  });
+}
+
+test('slotRelease refuses to destroy a gate-parked run park record on the freed slot', async (t) => {
+  const slotId = 'demo-work-1';
+  const parked = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-park-guard`,
+    slotId,
+  });
+  t.after(() => cleanupRun(parked.id));
+  updateRun(parked.id, {
+    status: 'human-gating',
+    steps: [
+      { name: PipelineSteps.COMPLETE, status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: PipelineSteps.HUMAN_GATE, status: 'running' },
+    ],
+    park: freedGateParkRecord(parked.id, slotId),
+  });
+  // The park released ownership, so the row is ready and unowned.
+  await seedSlotRow(t, slotId, {
+    lifecycle: 'ready',
+    phase: null,
+    agent: 'idle',
+    current_run_id: null,
+  });
+
+  await assert.rejects(
+    () => slotRelease({ slotId }, noopEmit),
+    new RegExp(`park record for gate-parked run ${parked.id}`),
+  );
+});
+
+test('slotRelease still releases the new occupant of a slot a gate park freed', async (t) => {
+  const slotId = 'demo-work-1';
+  const parked = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-park-successor`,
+    slotId,
+  });
+  const occupant = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-park-successor-new`,
+    slotId,
+  });
+  t.after(() => cleanupRun(parked.id));
+  t.after(() => cleanupRun(occupant.id));
+  updateRun(parked.id, {
+    status: 'human-gating',
+    steps: [
+      { name: PipelineSteps.COMPLETE, status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: PipelineSteps.HUMAN_GATE, status: 'running' },
+    ],
+    park: freedGateParkRecord(parked.id, slotId),
+  });
+  updateRun(occupant.id, { status: 'monitoring' });
+  // The successor claimed the freed slot.
+  await seedSlotRow(t, slotId, {
+    lifecycle: 'busy',
+    phase: 'working',
+    agent: 'working',
+    current_run_id: occupant.id,
+  });
+
+  await assert.rejects(
+    () => slotRelease({ slotId }, noopEmit),
+    (error: Error) => {
+      // The park guard let this release through. It then stops at the next
+      // check in slotReleaseImpl — the operator-root safety assert, which the
+      // committed demo pool's `"repo": "."` slot always trips — instead of
+      // running a destructive teardown inside this test.
+      assert.doesNotMatch(error.message, /park record for gate-parked run/);
+      assert.match(error.message, /operator root/);
+      return true;
+    },
+  );
+});

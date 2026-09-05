@@ -122,6 +122,7 @@ function previewResult(): MachinePausePreviewResult {
         selected: true,
         status: 'monitoring',
         currentStep: { index: 2, name: 'monitor', status: 'running' },
+        slotDisposition: 'retained',
         eligibility: {
           eligible: true,
           code: 'ELIGIBLE_MONITORING',
@@ -163,6 +164,7 @@ function previewResult(): MachinePausePreviewResult {
         selected: true,
         status: 'dispatching',
         currentStep: { index: 3, name: 'publish', status: 'running' },
+        slotDisposition: 'retained',
         eligibility: {
           eligible: false,
           code: 'UNSAFE_STATUS',

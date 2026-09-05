@@ -59,6 +59,19 @@ export function resolveSlotTrackingBranch(
   return defaultBranch;
 }
 
+/**
+ * What a detached HEAD reports. `git rev-parse --abbrev-ref HEAD` answers the
+ * literal string `HEAD` when no branch is checked out, which is what the fleet
+ * refresh records as the slot's branch.
+ *
+ * Exported, NOT baked into `isSlotIdleBranch`: this predicate is shared with
+ * `slot.release`'s unmerged-work refusal and with fleet health, where a
+ * detached HEAD can hold real unpushed commits that must still be protected.
+ * Only dispatch scoring may treat a detached slot as idle, and only when a park
+ * record proves the commits are preserved.
+ */
+export const DETACHED_HEAD_BRANCH = 'HEAD';
+
 export function isSlotIdleBranch(
   currentBranch: string,
   trackingBranch: string,

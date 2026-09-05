@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- chore(dev): machine pause dev fixtures carry the new `slotDisposition` field on preview runs.
 - feat(posture): Run Detail shows the ADR-054 resource posture beside the pipeline — the effective posture, its policy source, retained/warm/stopped/failed counts, the last transition, and one row per capability giving the Gateway's desired disposition against the observed provider state.
 - feat(posture): human gates offer the four operator choices with the Gateway's effect preview, and carry the choice through as the typed `resourcePosture` param. Choices appear only where the Gateway would honour them, a refusal such as park-ineligible is shown instead of resolving the gate, and a choice that cannot be sent says so rather than disappearing.
 - feat(posture): after a gate resolves, the persistent posture summary reports that resolution's outcome, or that the Gateway is still reconciling it.

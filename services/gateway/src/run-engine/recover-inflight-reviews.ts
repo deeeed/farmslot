@@ -793,6 +793,20 @@ async function persistRecoveredFailedReviewer(
  * so the read/normalize/persist shape stays defined once. Idempotent: a second
  * pass over already-normalized reviews persists nothing.
  */
+/**
+ * What normalizing WOULD produce, without writing it. Callers that must not
+ * mutate the run until later refusals have passed project first and commit with
+ * `normalizeExhaustedReviewContinuationsForRun` once they are past them.
+ */
+export function projectExhaustedReviewContinuationsForRun(
+  runId: string,
+): IndependentReviewStatus[] {
+  const run = getRun(runId);
+  const storedReviews = run?.engineState?.publishGate?.independentReviews ?? [];
+  if (!run) return storedReviews;
+  return storedReviews.map(normalizeExhaustedReviewContinuation);
+}
+
 export function normalizeExhaustedReviewContinuationsForRun(
   runId: string,
 ): IndependentReviewStatus[] {

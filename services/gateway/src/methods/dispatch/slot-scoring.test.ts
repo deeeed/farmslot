@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { SlotStatus } from '@farmslot/protocol';
+import type { Run, SlotStatus } from '@farmslot/protocol';
 
 import {
   activeRunIds,
@@ -11,9 +11,12 @@ import {
   failedRunSlotCleanup,
   findBestSlot,
   isCdpLive,
+  isDispatchStaleBranch,
   isFreeSlot,
   isReplaceableWarmSlot,
+  parkPreservedSlotIds,
   pickedSlotIneligibility,
+  SLOT_STALE_BRANCH_SCORE_PENALTY,
   slotClaimBlockedByHandoff,
   slotClaimBlockedByLiveOwner,
   slotClaimBlockedByRelease,
@@ -331,4 +334,354 @@ test('failedRunSlotCleanup resets only owned slots and clears only own reservati
   assert.equal(failedRunSlotCleanup({ handoff_run_id: 'me' }, 'me', liveOwner), 'reset');
   assert.equal(failedRunSlotCleanup({ current_run_id: 'prior' }, 'me', liveOwner), 'none');
   assert.equal(failedRunSlotCleanup({}, 'me', liveOwner), 'none');
+});
+
+// ─── ADR-054 free-slot at an operator wait ───
+
+function freedParkRecord(runId: string, slotId: string): Run['park'] {
+  return {
+    version: 1,
+    operationId: `park-${runId}`,
+    previewId: `preview-${runId}`,
+    runId,
+    generation: 1,
+    machine: 'macwork',
+    slotId,
+    mode: 'release',
+    phase: 'parked',
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-09-04T00:00:10.000Z',
+    prePauseStatus: 'human-gating',
+    prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+    resourceManifest: {
+      capturedAt: '2026-09-04T00:00:00.000Z',
+      resources: [],
+      capabilityLeases: [],
+    },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped', resources: [] },
+    createdAt: '2026-09-04T00:00:00.000Z',
+    updatedAt: '2026-09-04T00:00:10.000Z',
+  };
+}
+
+test('activeRunSlotIds ignores a run whose park freed its slot', () => {
+  const parked = {
+    id: 'parked',
+    slotId: 'gate-slot',
+    status: 'human-gating' as const,
+    park: freedParkRecord('parked', 'gate-slot'),
+  };
+  assert.deepEqual(activeRunSlotIds([parked]), new Set());
+  // Intent alone is not enough: until the ownership release landed the run
+  // still occupies the slot.
+  assert.deepEqual(
+    activeRunSlotIds([{ ...parked, park: { ...parked.park!, slotFreedAt: undefined } }]),
+    new Set(['gate-slot']),
+  );
+});
+
+test('findBestSlot selects the slot a gate park freed', () => {
+  const freed = slot({ slot: 'gate-slot', branch: 'fix/gate', currentRunId: null });
+  assert.equal(findBestSlot([freed], 'demo-farm')?.slot, 'gate-slot');
+  // While the gate-held run held it, fleet refresh published it busy/working.
+  const held = slot({
+    slot: 'gate-slot',
+    lifecycle: 'busy',
+    phase: 'review-gate',
+    agent: 'working',
+    currentRunId: 'parked',
+  });
+  assert.equal(findBestSlot([held], 'demo-farm'), null);
+});
+
+// ─── ADR-054 free-slot: a gate-parked run's slot is not this cleanup's to take ───
+
+function gateParkedOwner(overrides: Record<string, unknown> = {}) {
+  return {
+    status: 'blocked',
+    park: {
+      version: 1,
+      operationId: 'op',
+      previewId: 'preview',
+      runId: 'parked',
+      generation: 1,
+      machine: 'macwork',
+      slotId: 'slot-a',
+      mode: 'release',
+      phase: 'resources-stopping',
+      slotDisposition: 'freed',
+      prePauseStatus: 'blocked',
+      prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+      resourceManifest: { capturedAt: 'x', resources: [], capabilityLeases: [] },
+      recoveryHandle: null,
+      errors: [],
+      residuals: { runner: 'stopped', resources: [] },
+      createdAt: 'x',
+      updatedAt: 'x',
+      ...overrides,
+    },
+  } as never;
+}
+
+test('failedRunSlotCleanup leaves the slot alone while a gate park is in flight', () => {
+  const slot = { slot: 'slot-a', current_run_id: 'parked', handoff_run_id: null };
+  // The run still owns the row mid-park, so the plan would otherwise reset it —
+  // publishing the slot ready while resources stop and the branch is still out.
+  assert.equal(
+    failedRunSlotCleanup(slot, 'parked', () => gateParkedOwner()),
+    'none',
+  );
+});
+
+test('failedRunSlotCleanup leaves a freed slot to its successor', () => {
+  // The park already handed this row on; resetting it would tear down the
+  // successor's work.
+  const slot = { slot: 'slot-a', current_run_id: 'parked', handoff_run_id: null };
+  assert.equal(
+    failedRunSlotCleanup(slot, 'parked', () =>
+      gateParkedOwner({ phase: 'parked', slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+    ),
+    'none',
+  );
+});
+
+test('failedRunSlotCleanup still resets for a park that settled without changing anything', () => {
+  // Nothing landed — not even the runner stop — so the run owns its slot and
+  // its worker exactly as before, and an ordinary failure must still clean it
+  // up. The fence must not become a leak.
+  const slot = { slot: 'slot-a', current_run_id: 'parked', handoff_run_id: null };
+  assert.equal(
+    failedRunSlotCleanup(slot, 'parked', () =>
+      gateParkedOwner({
+        phase: 'partial',
+        residuals: { runner: 'running', resources: [] },
+      }),
+    ),
+    'reset',
+  );
+});
+
+test('failedRunSlotCleanup leaves the slot alone for a partial park that stopped the worker', () => {
+  // The park died after stopping the runner. The run still owns the row, but it
+  // is fenced out of its own gate until a restore, so this cleanup is not the
+  // one that gets to decide the slot's fate.
+  const slot = { slot: 'slot-a', current_run_id: 'parked', handoff_run_id: null };
+  assert.equal(
+    failedRunSlotCleanup(slot, 'parked', () => gateParkedOwner({ phase: 'partial' })),
+    'none',
+  );
+});
+
+test('failedRunSlotCleanup is unchanged for a run with no park record', () => {
+  const slot = { slot: 'slot-a', current_run_id: 'plain', handoff_run_id: null };
+  assert.equal(
+    failedRunSlotCleanup(slot, 'plain', () => ({ status: 'failed' })),
+    'reset',
+  );
+});
+
+// ─── ADR-054 free-slot: the detached-HEAD exception is dispatch-only and scoped ───
+
+const PARKED_HEAD = 'sha-parked-tip';
+
+test('a detached slot scores stale unless a park record claims it', () => {
+  const detached = slot({ slot: 'slot-detached', branch: 'HEAD', headSha: PARKED_HEAD });
+
+  // No park claim: the commits on that detached HEAD are unaccounted for, so
+  // dispatch must still charge the stale penalty and prepare must reset it.
+  assert.equal(isDispatchStaleBranch(detached), true);
+  assert.equal(slotScore(detached), SLOT_STALE_BRANCH_SCORE_PENALTY);
+
+  // A park record whose recorded tip is what the slot is sitting on: the branch
+  // ref survives there, so the slot is genuinely dispatchable.
+  const claimed = new Map([['slot-detached', [{ runId: 'run-parked', headSha: PARKED_HEAD }]]]);
+  assert.equal(isDispatchStaleBranch(detached, undefined, claimed), false);
+  assert.equal(slotScore(detached, undefined, { parkPreservedSlotIds: claimed }), 0);
+
+  // The exception is keyed on the slot, not on "detached" in general.
+  assert.equal(
+    isDispatchStaleBranch(
+      detached,
+      undefined,
+      new Map([['other-slot', [{ runId: 'run-parked', headSha: PARKED_HEAD }]]]),
+    ),
+    true,
+  );
+});
+
+test('a stale park record does not excuse an unrelated detached checkout', () => {
+  // The park detached this slot, a successor then took it, finished, and left
+  // its own detached commits behind. The park record still names the slot, but
+  // the commits sitting there now are nobody's accounted-for work.
+  const moved = slot({ slot: 'slot-detached', branch: 'HEAD', headSha: 'sha-successor-left-this' });
+  const claimed = new Map([['slot-detached', [{ runId: 'run-parked', headSha: PARKED_HEAD }]]]);
+
+  assert.equal(
+    isDispatchStaleBranch(moved, undefined, claimed),
+    true,
+    'a slot id match alone must not suppress the stale penalty',
+  );
+  assert.equal(
+    slotScore(moved, undefined, { parkPreservedSlotIds: claimed }),
+    SLOT_STALE_BRANCH_SCORE_PENALTY,
+  );
+
+  // A slot whose head the refresh could not read is not evidence either.
+  const unknownHead = slot({ slot: 'slot-detached', branch: 'HEAD' });
+  assert.equal(isDispatchStaleBranch(unknownHead, undefined, claimed), true);
+
+  // Ownership is the other admissible evidence: the park's own run still holds
+  // the row, so the checkout is still the one the record describes.
+  const stillOwned = slot({
+    slot: 'slot-detached',
+    branch: 'HEAD',
+    headSha: 'sha-successor-left-this',
+    currentRunId: 'run-parked',
+  });
+  assert.equal(isDispatchStaleBranch(stillOwned, undefined, claimed), false);
+});
+
+test('parkPreservedSlotIds lists only slots whose detach actually landed', () => {
+  const detachedAt = '2026-09-05T00:00:00.000Z';
+  const base = {
+    version: 1,
+    operationId: 'op',
+    previewId: 'preview',
+    generation: 1,
+    machine: 'macwork',
+    mode: 'release',
+    phase: 'parked',
+    slotDisposition: 'freed',
+    prePauseStatus: 'blocked',
+    prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+    resourceManifest: { capturedAt: detachedAt, resources: [], capabilityLeases: [] },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped', resources: [] },
+    createdAt: detachedAt,
+    updatedAt: detachedAt,
+  };
+  const ids = parkPreservedSlotIds([
+    {
+      id: 'a',
+      slotId: 'landed',
+      park: {
+        ...base,
+        runId: 'a',
+        slotId: 'landed',
+        preservedWorkspace: { branch: 'w/a', headSha: 'sha-a', detachedAt },
+      },
+    },
+    // Intent recorded, detach not yet performed: the branch is still checked
+    // out, so this slot is not detached and has nothing to except.
+    {
+      id: 'b',
+      slotId: 'planned',
+      park: {
+        ...base,
+        runId: 'b',
+        slotId: 'planned',
+        preservedWorkspace: { branch: 'w/b', headSha: 'sha-b' },
+      },
+    },
+    { id: 'c', slotId: 'plain', park: null },
+  ] as never);
+
+  assert.deepEqual([...ids.keys()], ['landed']);
+  assert.deepEqual(ids.get('landed'), [{ runId: 'a', headSha: 'sha-a' }]);
+});
+
+test('findBestSlot ranks a park-preserved slot the same way slotScore does', () => {
+  const detached = slot({ slot: 'slot-detached', branch: 'HEAD', headSha: PARKED_HEAD });
+  const stale = slot({ slot: 'slot-stale', branch: 'feat/leftover' });
+  const claimed = new Map([['slot-detached', [{ runId: 'run-parked', headSha: PARKED_HEAD }]]]);
+
+  // Without the claim both are stale, so the tie is broken by input order and
+  // the detached slot has no advantage.
+  assert.equal(
+    findBestSlot([stale, detached], 'demo-farm')?.slot,
+    'slot-stale',
+    'a plain detached slot ranks no better than any other stale slot',
+  );
+
+  // With the claim the detached slot is idle, so it must win — the AC that
+  // names findBestSlot. Ranking here disagreeing with find-slot-step is the
+  // drift the shared set exists to prevent.
+  assert.equal(
+    findBestSlot([stale, detached], 'demo-farm', { parkPreservedSlotIds: claimed })?.slot,
+    'slot-detached',
+  );
+});
+
+test('every park claim on a slot is kept, so creation order cannot hide the matching one', () => {
+  const detachedAt = '2026-09-05T00:00:00.000Z';
+  const base = {
+    version: 1,
+    operationId: 'op',
+    previewId: 'preview',
+    generation: 1,
+    machine: 'macwork',
+    mode: 'release',
+    phase: 'parked',
+    slotDisposition: 'freed',
+    prePauseStatus: 'blocked',
+    prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+    resourceManifest: { capturedAt: detachedAt, resources: [], capabilityLeases: [] },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped', resources: [] },
+    createdAt: detachedAt,
+    updatedAt: detachedAt,
+  };
+  // Two runs claim the same slot. Run order is creation order, which need not
+  // be parking order — so the CURRENT checkout may match the first claim.
+  const claims = parkPreservedSlotIds([
+    {
+      id: 'run-old',
+      slotId: 'slot-shared',
+      park: {
+        ...base,
+        runId: 'run-old',
+        slotId: 'slot-shared',
+        preservedWorkspace: { branch: 'w/old', headSha: 'sha-old', detachedAt },
+      },
+    },
+    {
+      id: 'run-new',
+      slotId: 'slot-shared',
+      park: {
+        ...base,
+        runId: 'run-new',
+        slotId: 'slot-shared',
+        preservedWorkspace: { branch: 'w/new', headSha: 'sha-new', detachedAt },
+      },
+    },
+  ] as never);
+
+  assert.equal(claims.get('slot-shared')?.length, 2);
+
+  // Either claim matching is enough. Keeping only the last one written made the
+  // earlier claim unmatchable even when it described the actual checkout.
+  for (const headSha of ['sha-old', 'sha-new']) {
+    assert.equal(
+      isDispatchStaleBranch(
+        slot({ slot: 'slot-shared', branch: 'HEAD', headSha }),
+        undefined,
+        claims,
+      ),
+      false,
+      `claim ${headSha} should match`,
+    );
+  }
+  // A third, unrelated commit still scores stale.
+  assert.equal(
+    isDispatchStaleBranch(
+      slot({ slot: 'slot-shared', branch: 'HEAD', headSha: 'sha-unrelated' }),
+      undefined,
+      claims,
+    ),
+    true,
+  );
 });

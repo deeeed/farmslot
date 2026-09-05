@@ -8,6 +8,7 @@ import {
   type EvidenceRefreshOverrideRecord,
   GATE_SUMMARY_KINDS,
   type IndependentReviewStatus,
+  MachineParkEligibilityCodes,
   PipelineSteps,
   type PublicationReviewLaunchRejection,
   type ReadyGateInputSnapshot,
@@ -61,6 +62,7 @@ import {
 } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { createEngineDecision } from './engine-decisions.js';
+import { BlockedRunError } from './errors.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
@@ -80,6 +82,7 @@ import {
   validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { buildGateSummary } from './gate-summary.js';
+import { isGateParkInFlightOrFreed, isSlotFreedByPark } from './park-slot-binding.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import {
   publicationReviewPolicyForRun,
@@ -626,6 +629,32 @@ export function localVideoProofWarning(
   ].join(' ');
 }
 
+/**
+ * Why a resolved publication gate must not drive the rest of the run.
+ *
+ * ADR-054 `free-slot`: the operator answered a gate on a run whose park
+ * released its slot. Restoring into a freed slot is not implemented yet, and
+ * continuing from here would run FINALIZE against a stopped worker and a slot
+ * another run may already own. Failing closed leaves the park record, the freed
+ * slot, and the resolved decision intact for a restore or a cancel.
+ */
+export function freedSlotGateResolutionBlocker(run: Run): BlockedRunError | null {
+  if (!isGateParkInFlightOrFreed(run)) return null;
+  const code = isSlotFreedByPark(run)
+    ? MachineParkEligibilityCodes.freedSlotRestoreUnsupported
+    : MachineParkEligibilityCodes.gateParkInFlight;
+  // BlockedRunError, not a plain Error: a plain throw makes the run terminal
+  // `failed`, and cancel refuses terminal runs — which would strand the park
+  // record with no way to clean it up. `blocked` keeps cancel available.
+  const message =
+    `Run ${run.id} is gate-parked (${code}); ` +
+    'restore it into a slot before resolving the publication gate, or cancel the run';
+  // Second argument is the STEP DETAIL. Without it the human-gate step records
+  // the generic blocked text and the operator sees a stalled gate with no
+  // reason; with it the code and the way out are on the step itself.
+  return new BlockedRunError(message, `Gate park in progress (${code}); restore or cancel the run`);
+}
+
 export async function executeReadyGate(runId: string): Promise<string> {
   const current = getRun(runId)!;
   const artifactOnly = isArtifactOnlyRun(current);
@@ -1002,6 +1031,16 @@ export async function executeReadyGate(runId: string): Promise<string> {
       .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))[0] ??
     latestResolvedHumanGateDecision(afterDecisionRun.decisions);
   const selectionData = decision?.selectionData;
+  // BEFORE any gate-resolved effect. `run.resolveDecision` refuses to resolve a
+  // gate on a parked run, so reaching this means the park landed while the
+  // engine held the resolved decision (or a decision resolved earlier is being
+  // replayed). Reconciling first would let `keep-for-validation` reacquire
+  // capabilities on a slot another run may already own and report the worker
+  // retained when the park stopped it. Blocked, not failed: `blocked` is
+  // non-terminal, so the operator can still cancel the run and clear the park
+  // record, which a `failed` run refuses.
+  const freedSlotBlocker = freedSlotGateResolutionBlocker(getRun(runId)!);
+  if (freedSlotBlocker) throw freedSlotBlocker;
   // The operator's posture choice for the wait they just ended.
   const postureChoice = gateChoiceFromSelectionData(selectionData);
   const postureOutcome = await reconcileRunPosture({

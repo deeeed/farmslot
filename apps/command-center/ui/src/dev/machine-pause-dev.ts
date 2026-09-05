@@ -256,6 +256,7 @@ function pausePreview(
         slotId: 'macwork-mm-2',
         status: 'monitoring',
         currentStep: { index: 6, name: 'monitor', status: 'running' },
+        slotDisposition: 'retained',
         eligibility: {
           eligible: true,
           code: 'eligible-monitoring',
@@ -274,6 +275,7 @@ function pausePreview(
         slotId: 'macwork-mme-2',
         status: 'ci-watching',
         currentStep: { index: 8, name: 'ci-watch', status: 'running' },
+        slotDisposition: 'retained',
         eligibility: {
           eligible: true,
           code: 'eligible-ci-watching',
@@ -292,6 +294,7 @@ function pausePreview(
         slotId: 'macwork-mm-4',
         status: 'dispatching',
         currentStep: { index: 3, name: 'dispatch', status: 'running' },
+        slotDisposition: 'retained',
         eligibility: {
           eligible: false,
           code: 'status-not-pausable',

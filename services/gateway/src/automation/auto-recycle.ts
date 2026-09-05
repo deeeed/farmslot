@@ -5,6 +5,7 @@ import { Events, type ProjectConfig, type SlotStatus } from '@farmslot/protocol'
 
 import { loadFleetStatus, loadProjectConfigs } from '../fleet/state.js';
 import { slotRecycle } from '../methods/slot.js';
+import { parkFreedSlotIds } from '../run-engine/gate-held-lifecycle.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -107,7 +108,16 @@ async function runScan(): Promise<void> {
     const fleet = await loadFleetStatus(true); // force refresh
     const projects = await loadProjectConfigs();
 
-    const idleSlots = fleet.slots.filter((s) => s.lifecycle === 'ready');
+    // ADR-054 `free-slot`: a slot a gate park freed reports `ready`, but its
+    // working tree still holds the parked run's detached branch and its park
+    // record is the restore target. `slotRecycle` releases without an
+    // `expectedRunId`, which the park guard correctly refuses — so scanning
+    // these would throw on every pass instead of recycling anything. Skip them
+    // explicitly; an operator-initiated recycle still gets the typed refusal.
+    const parkedSlotIds = parkFreedSlotIds();
+    const idleSlots = fleet.slots.filter(
+      (s) => s.lifecycle === 'ready' && !parkedSlotIds.has(s.slot),
+    );
 
     let recycled = 0;
     let healthy = 0;

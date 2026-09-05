@@ -1669,3 +1669,226 @@ test('runCreate validates scripted commandRef against project config', async (t)
 
   assert.deepEqual(result.run.scripted, { mode: 'command', commandRef: 'smoke' });
 });
+
+// ─── ADR-054 free-slot: gate resolution is fenced from a park ───
+
+function gateParkRecord(
+  runId: string,
+  slotId: string,
+  overrides: { slotFreedAt?: string; phase?: 'resources-stopping' | 'parked' } = {},
+) {
+  const at = '2026-09-05T00:00:00.000Z';
+  return {
+    version: 1 as const,
+    operationId: `park-${runId}`,
+    previewId: `preview-${runId}`,
+    runId,
+    generation: 1,
+    machine: 'macwork',
+    slotId,
+    mode: 'release' as const,
+    phase: overrides.phase ?? ('parked' as const),
+    slotDisposition: 'freed' as const,
+    ...(overrides.slotFreedAt ? { slotFreedAt: overrides.slotFreedAt } : {}),
+    prePauseStatus: 'blocked' as const,
+    prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' as const },
+    resourceManifest: { capturedAt: at, resources: [], capabilityLeases: [] },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped' as const, resources: [] },
+    createdAt: at,
+    updatedAt: at,
+  };
+}
+
+for (const [label, record, expectedCode] of [
+  [
+    'a landed gate park',
+    gateParkRecord('x', 's', { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+    'FREED_SLOT_RESTORE_UNSUPPORTED',
+  ],
+  [
+    'a gate park still stopping its resources',
+    gateParkRecord('x', 's', { phase: 'resources-stopping' }),
+    'GATE_PARK_IN_FLIGHT',
+  ],
+] as const) {
+  test(`runResolveDecision refuses and leaves the gate pending under ${label}`, async (t) => {
+    const slotId = `test-gate-park-fence-${Date.now()}`;
+    const run = createRun({
+      flowType: 'fix-bug',
+      mode: 'autonomous',
+      project: 'example-mobile-farm',
+      ticketOrPr: `PROJ-GATE-PARK-${expectedCode}`,
+      runner: 'claude',
+      slotId,
+    });
+    const decision: RunDecision = {
+      id: `gate-park-${expectedCode}`,
+      type: 'engine_human_gate',
+      title: 'Publication gate',
+      description: 'Approve package',
+      actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+      createdAt: '2026-09-05T00:00:00.000Z',
+    };
+    updateRun(run.id, {
+      status: 'blocked',
+      decisions: [decision],
+      park: { ...record, runId: run.id, slotId },
+    });
+    t.after(async () => {
+      updateRun(run.id, { status: 'failed', park: null });
+      await deleteRun(run.id);
+    });
+
+    await assert.rejects(
+      runResolveDecision(
+        { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+        () => {},
+      ),
+      (error: unknown) => {
+        assert.equal((error as GatewayMethodError).code, expectedCode);
+        return true;
+      },
+    );
+
+    // The refusal happens before the decision is consumed, so the operator can
+    // still answer it after a restore and the park record is not stranded.
+    const persisted = getRun(run.id)!;
+    assert.equal(persisted.decisions[0]?.resolvedAt, undefined);
+    assert.equal(persisted.status, 'blocked');
+    assert.equal(persisted.park?.slotId, slotId);
+  });
+}
+
+test('runResolveDecision refuses a park that landed during its awaited probes', async (t) => {
+  const slotId = `test-gate-park-race-${Date.now()}`;
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-GATE-PARK-RACE-${Date.now()}`,
+    runner: 'claude',
+    slotId,
+  });
+  const decision: RunDecision = {
+    id: 'gate-park-race',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Approve package',
+    actions: [{ id: 'request-extra-review', label: 'Request review', style: 'secondary' }],
+    createdAt: '2026-09-05T00:00:00.000Z',
+  };
+  // A review whose normalization WOULD rewrite it. If the normalize write runs
+  // before the consumption-point fence, this run is mutated by a resolve that
+  // was then refused.
+  const exhaustedReview = {
+    id: 'independent-review-1',
+    source: 'human-gate' as const,
+    crossRunner: true,
+    loopNumber: 1,
+    verdict: 'issues' as const,
+    unresolvedCount: 1,
+    issues: [{ file: 'src/example.ts', description: 'Fix this' }],
+    feedbackSent: true,
+    attempts: [{ loopNumber: 1, verdict: 'issues' as const, unresolvedCount: 1 }],
+  };
+  // Starts UNPARKED, so the entry check passes and only the re-check can catch it.
+  updateRun(run.id, {
+    status: 'blocked',
+    decisions: [decision],
+    engineState: { publishGate: { independentReviews: [exhaustedReview] } },
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed', park: null });
+    await deleteRun(run.id);
+  });
+
+  await assert.rejects(
+    runResolveDecision(
+      { runId: run.id, decisionId: decision.id, actionId: 'request-extra-review' },
+      () => {},
+      {
+        // The park lands inside an awaited probe — the window the entry check
+        // cannot see, because it read the run before this ran.
+        assertReviewLaunchAllowed: async () => {
+          updateRun(run.id, {
+            park: {
+              ...gateParkRecord(run.id, slotId, { phase: 'resources-stopping' }),
+              runId: run.id,
+              slotId,
+            },
+          });
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.equal((error as GatewayMethodError).code, 'GATE_PARK_IN_FLIGHT');
+      return true;
+    },
+  );
+
+  const persisted = getRun(run.id)!;
+  assert.equal(persisted.decisions[0]?.resolvedAt, undefined);
+  assert.equal(persisted.status, 'blocked');
+  // Nothing this refused resolve touched may have persisted, including the
+  // review normalization that runs alongside the launch assertion.
+  const stored = persisted.engineState?.publishGate?.independentReviews?.[0];
+  assert.equal(stored?.feedbackSent, true, 'a refused resolve must not normalize reviews');
+  assert.equal(stored?.recoveryContinuationPending, undefined);
+});
+
+test('the post-resolve resume timer does not restart a gate-parked run', async (t) => {
+  const slotId = `test-gate-park-resume-${Date.now()}`;
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-GATE-PARK-RESUME-${Date.now()}`,
+    runner: 'claude',
+    slotId,
+  });
+  const decision: RunDecision = {
+    id: 'gate-park-resume',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Approve package',
+    actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+    createdAt: '2026-09-05T00:00:00.000Z',
+  };
+  // Starts UNPARKED so the resolve succeeds and actually schedules the timer.
+  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  const { updateRunStep } = await import('../runs/store.js');
+  updateRunStep(run.id, 'finalize', { status: 'running' });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed', park: null });
+    await deleteRun(run.id);
+  });
+
+  const beforeSteps = JSON.stringify(getRun(run.id)!.steps);
+
+  // The park lands after the resolve and before the timer's tick — the window
+  // the timer reads the run in. `emit` runs synchronously at the end of the
+  // resolve, so this is exactly that gap.
+  await runResolveDecision(
+    { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+    () => {
+      if (getRun(run.id)?.park) return;
+      updateRun(run.id, {
+        status: 'blocked',
+        park: {
+          ...gateParkRecord(run.id, slotId, { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+          runId: run.id,
+          slotId,
+        },
+      });
+    },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  const after = getRun(run.id)!;
+  // Resuming would reset the stale step and re-enter FINALIZE against a slot a
+  // successor may already own.
+  assert.equal(after.status, 'blocked');
+  assert.equal(JSON.stringify(after.steps), beforeSteps, 'no step was reset for a resume');
+});

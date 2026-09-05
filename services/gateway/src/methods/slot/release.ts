@@ -46,7 +46,10 @@ import {
   tmuxShellSnippet,
 } from '../../core/tmux.js';
 import { cleanupSlotStorage, normalizeTaskRelativeDir } from '../../fleet/slot-storage-cleanup.js';
-import { findActiveGateHeldRunForSlot } from '../../run-engine/gate-held-lifecycle.js';
+import {
+  findActiveGateHeldRunForSlot,
+  findGateParkedRunForSlot,
+} from '../../run-engine/gate-held-lifecycle.js';
 import { runnerPromptSubmitKey } from '../../runners/registry.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
@@ -131,15 +134,13 @@ async function slotReleaseImpl(
     console.log(`[release] slot ${params.slotId} is already mid-release; leaving it untouched`);
     return { released: false };
   }
-  if (params.expectedRunId) {
-    const boundOwner =
-      ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ?? null;
-    if (boundOwner !== params.expectedRunId) {
-      console.log(
-        `[release] slot ${params.slotId} is held by ${boundOwner ?? 'nobody'}, not expected run ${params.expectedRunId}; leaving it untouched`,
-      );
-      return { released: false };
-    }
+  const boundOwner =
+    ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ?? null;
+  if (params.expectedRunId && boundOwner !== params.expectedRunId) {
+    console.log(
+      `[release] slot ${params.slotId} is held by ${boundOwner ?? 'nobody'}, not expected run ${params.expectedRunId}; leaving it untouched`,
+    );
+    return { released: false };
   }
   const vars = await loadSlotVars(params.slotId);
   const forceReset = params.forceReset ?? false;
@@ -149,6 +150,23 @@ async function slotReleaseImpl(
     throw new Error(
       `Slot ${params.slotId} is gate-held for run ${gateHeldRun.id} — resolve or cancel the publication gate before release`,
     );
+  }
+  // A gate-parked run (ADR-054 `free-slot`) gave the slot up but keeps a park
+  // record whose restore target is this workspace. Releasing destroys it, so
+  // refuse — but only when this release is aimed at the parked run itself.
+  // Once another run claims the freed slot, ITS release must still work, which
+  // is the whole point of freeing the slot. `preserveAgents` does not bypass:
+  // there are no agents left to preserve, and the record dies either way.
+  const gateParkedRun = findGateParkedRunForSlot(params.slotId);
+  if (gateParkedRun && !forceReset) {
+    const targetsParkedRun = params.expectedRunId
+      ? params.expectedRunId === gateParkedRun.id
+      : boundOwner === null || boundOwner === gateParkedRun.id;
+    if (targetsParkedRun) {
+      throw new Error(
+        `Slot ${params.slotId} holds the park record for gate-parked run ${gateParkedRun.id} — cancel that run or pass forceReset before release`,
+      );
+    }
   }
 
   // Release runs idle-reset + the project recycle hook (both can reset --hard

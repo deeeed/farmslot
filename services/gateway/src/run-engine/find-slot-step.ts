@@ -39,6 +39,7 @@ import {
   isCdpLive,
   isFreeSlot,
   isReplaceableWarmSlot,
+  parkPreservedSlotIds,
   pickedSlotIneligibility,
   prepareProfileNeedsCompanionResource,
   projectConfigsFromProjects,
@@ -323,6 +324,10 @@ export async function executeFindSlotStep(
     flowType: run.flowType,
     requestedSlotId: run.slotId || undefined,
   };
+  // ADR-054: a slot whose detached HEAD is a park's preserved workspace is
+  // dispatchable, so scoring must not charge it the stale-branch penalty. Any
+  // other detached slot still scores stale — its commits are unaccounted for.
+  const parkPreserved = parkPreservedSlotIds(getAllRuns());
 
   // Collision precheck — runs before slot allocation, grading, task-file
   // creation, or worker prep. The precheck itself reads the tasks dir
@@ -533,7 +538,11 @@ export async function executeFindSlotStep(
   const candidates = freeSlots.slice(0, 10).map((s) => ({
     slotId: s.slot,
     score: isEligibleFreeSlot(s)
-      ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+      ? slotScore(s, targetBranch, {
+          familyId: run.familyId,
+          projectConfigs,
+          parkPreservedSlotIds: parkPreserved,
+        })
       : -1,
     cdpLive: isCdpLive(s.health.cdp),
   }));
@@ -639,7 +648,11 @@ export async function executeFindSlotStep(
           freeSlotCandidates: projectSlots.filter(isFreeSlot).map((s) => ({
             slotId: s.slot,
             score: isEligibleFreeSlot(s)
-              ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+              ? slotScore(s, targetBranch, {
+                  familyId: run.familyId,
+                  projectConfigs,
+                  parkPreservedSlotIds: parkPreserved,
+                })
               : -1,
             branch: s.branch || '',
             lifecycle: s.lifecycle,
@@ -802,7 +815,11 @@ export async function executeFindSlotStep(
     (eligibleFreeSlots.length === 0 ||
       eligibleFreeSlots.every((s) =>
         isDispatchScoreStale(
-          slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }),
+          slotScore(s, targetBranch, {
+            familyId: run.familyId,
+            projectConfigs,
+            parkPreservedSlotIds: parkPreserved,
+          }),
         ),
       ))
   ) {
@@ -820,10 +837,18 @@ export async function executeFindSlotStep(
       slotId: s.slot,
       score:
         isFreeSlot(s) && isEligibleFreeSlot(s)
-          ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+          ? slotScore(s, targetBranch, {
+              familyId: run.familyId,
+              projectConfigs,
+              parkPreservedSlotIds: parkPreserved,
+            })
           : reason === 'missing_required_resources' &&
               !companionResourceBlocker(s, requiredPrepareProfile)
-            ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+            ? slotScore(s, targetBranch, {
+                familyId: run.familyId,
+                projectConfigs,
+                parkPreservedSlotIds: parkPreserved,
+              })
             : -1,
       branch: s.branch || '',
       lifecycle: s.lifecycle,

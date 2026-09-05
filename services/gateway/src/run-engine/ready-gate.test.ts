@@ -1,19 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { PublicationReviewLaunchRejection } from '@farmslot/protocol';
+import type { PublicationReviewLaunchRejection, Run } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { TerminalReviewArtifactError } from '../self-review/terminal-result.js';
 
+import { BlockedRunError } from './errors.js';
 import {
   executePublishGateReviewPlan,
+  freedSlotGateResolutionBlocker,
   localVideoProofWarning,
   reconcileReviewLaunchRejectionForCurrentHead,
   resumeInterruptedPublicationReview,
 } from './ready-gate.js';
-import { deleteTestRunIfPresent } from './test-fixtures.js';
+import { deleteTestRunIfPresent, makeRun } from './test-fixtures.js';
 
 test('localVideoProofWarning flags screenshot packages without local video proof', () => {
   assert.match(
@@ -355,4 +357,66 @@ test('publish-gate review orchestration preserves a recoverable gate and launche
       ?.userAction,
     'Commit the validated fixes, then request re-review.',
   );
+});
+
+test('a resolved publication gate fails closed when the run park freed its slot', () => {
+  const base = makeRun({ id: 'run-gate-parked', flowType: 'dev', mode: 'autonomous' });
+  assert.equal(freedSlotGateResolutionBlocker(base), null);
+
+  const parked: Run = {
+    ...base,
+    park: {
+      version: 1,
+      operationId: 'park-1',
+      previewId: 'preview-1',
+      runId: base.id,
+      generation: 1,
+      machine: 'machine-a',
+      slotId: base.slotId!,
+      mode: 'release',
+      phase: 'parked',
+      slotDisposition: 'freed',
+      slotFreedAt: '2026-09-05T00:00:10.000Z',
+      prePauseStatus: 'human-gating',
+      prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+      resourceManifest: {
+        capturedAt: '2026-09-05T00:00:00.000Z',
+        resources: [],
+        capabilityLeases: [],
+      },
+      recoveryHandle: null,
+      errors: [],
+      residuals: { runner: 'stopped', resources: [] },
+      createdAt: '2026-09-05T00:00:00.000Z',
+      updatedAt: '2026-09-05T00:00:10.000Z',
+    },
+  };
+  const blocker = freedSlotGateResolutionBlocker(parked);
+  // BlockedRunError so the engine marks the run `blocked`, not `failed`: cancel
+  // refuses terminal runs, and a failed run would strand the park record.
+  assert.ok(blocker instanceof BlockedRunError);
+  assert.match(blocker.message, /FREED_SLOT_RESTORE_UNSUPPORTED/);
+  assert.match(blocker.message, /cancel the run/);
+
+  // The fence covers the park BEFORE `slotFreedAt` lands too: while resources
+  // are stopping, resolving the gate would publish against a worker being
+  // stopped underneath it.
+  const stopping: Run = {
+    ...parked,
+    park: { ...parked.park!, phase: 'resources-stopping', slotFreedAt: undefined },
+  };
+  assert.match(
+    freedSlotGateResolutionBlocker(stopping)?.message ?? '',
+    /GATE_PARK_IN_FLIGHT/,
+    'an in-flight gate park blocks gate resolution',
+  );
+
+  // A settled record does not block: restore and cancel both clear the fence.
+  for (const phase of ['restored', 'cancelled'] as const) {
+    assert.equal(
+      freedSlotGateResolutionBlocker({ ...parked, park: { ...parked.park!, phase } }),
+      null,
+      `a ${phase} record must not block the gate`,
+    );
+  }
 });

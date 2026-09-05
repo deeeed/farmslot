@@ -16,10 +16,12 @@ import {
 } from '@farmslot/protocol';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
+import { activeRunSlotIds } from '../methods/dispatch/slot-scoring.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
 import { pendingIndependentReviewContinuation } from './gate-policy.js';
+import { isGateParkInFlightOrFreed } from './park-slot-binding.js';
 import {
   type PublicationReviewRecoveryResult,
   reviewerContextNeedsRecovery,
@@ -300,6 +302,35 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
 
     if (run.status === 'paused') {
       console.log(`[run-engine] run ${run.id.slice(0, 8)} — paused, skipping recovery`);
+      continue;
+    }
+
+    // ADR-054 `free-slot`: the park published this run's slot for dispatch and
+    // another run may already own it. Every slot-bound recovery below would act
+    // on that foreign slot — reconciling agent runtime against its worker,
+    // replaying the human gate on it, or re-arming publication-review recovery
+    // there. A gate park is a durable wait like `paused`, so it is skipped the
+    // same way. The pending decision is still re-broadcast, which touches no
+    // slot, so clients keep showing the run waiting; resolving it stays refused
+    // until a restore puts the run back on a slot.
+    //
+    // The in-flight predicate, not the occupancy one: a park interrupted after
+    // its write-ahead record but before `slotFreedAt` stopped the worker on the
+    // way down, and `run.resolveDecision` refuses that run for exactly as long.
+    // Recovering it here would re-drive a gate the operator cannot answer.
+    // `reconcileMachineParking` runs first (index.ts), so a free-slot intent
+    // whose release did land is already finished by the time this reads it.
+    if (isGateParkInFlightOrFreed(run)) {
+      for (const decision of run.decisions.filter((candidate) => !candidate.resolvedAt)) {
+        deps.broadcast(Events.RUN_DECISION_NEW, {
+          runId: run.id,
+          decision: pendingDecisionForRun(run, decision),
+          slotId: run.slotId,
+        });
+      }
+      console.log(
+        `[run-engine] run ${run.id.slice(0, 8)} — gate-parked (slot freed for dispatch), skipping slot recovery`,
+      );
       continue;
     }
 
@@ -914,12 +945,13 @@ export function startOrphanReconciler(deps: RunRecoveryCollaborators): void {
 
 export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Promise<void> {
   const { runs: active } = deps.listRuns({ active: true });
-  const activeSlotIds = new Set(
-    active
-      .filter((r) => r.status !== 'failed' && r.status !== 'done')
-      .map((r) => r.slotId)
-      .filter(Boolean),
-  );
+  // The shared occupancy predicate, not an inline status filter. A run whose
+  // park freed its slot (ADR-054 `free-slot`) keeps `slotId` as its restore
+  // target but is no longer the occupant, so counting it here would mask a
+  // genuinely orphaned `busy`/`held` slot from reclamation forever. Sharing the
+  // helper with dispatch and fleet refresh also stops the terminal-status list
+  // from drifting — the inline version missed `cancelled`.
+  const activeSlotIds = activeRunSlotIds(active);
   const freshFleet = await deps.loadFleetStatus(true);
   for (const slot of freshFleet.slots) {
     if (['busy', 'held'].includes(slot.lifecycle) && !activeSlotIds.has(slot.slot)) {

@@ -24,6 +24,7 @@ import { farmslotRoot, loadFleetStatus } from '../fleet/state.js';
 import {
   capturePressureAdmissionDecisionsLightweight,
   isFreeSlot,
+  parkPreservedSlotIds,
   resolveDispatchPreviewFromFleet,
 } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
@@ -958,6 +959,9 @@ export async function selectQueueDispatchSlot(
   deps: { capturePressure?: QueuePressureCapture } = {},
 ): Promise<string | null> {
   const requiredPrepareProfile = requiredPrepareProfileForQueueItem(item);
+  // ADR-054: the unattended queue is the path the spec is about, so it must
+  // score a park-preserved slot the same way the interactive pickers do.
+  const parkPreserved = parkPreservedSlotIds(getAllRuns());
   const capturePressure = deps.capturePressure ?? queuePressureCaptureImpl;
   // No dispatchable slot at all (ready/held, allowlist-scoped): stay queued
   // WITHOUT any pressure work. A tick over a fully busy fleet must stay
@@ -1013,7 +1017,7 @@ export async function selectQueueDispatchSlot(
           { ...buildQueuePreviewParams(item), allowedSlots: allowed },
           slots,
           undefined,
-          { requiredPrepareProfile, pressureDecisions },
+          { requiredPrepareProfile, pressureDecisions, parkPreservedSlotIds: parkPreserved },
         );
         if (preview.pressureAdmission?.outcome === 'rejected') return null;
         return preview.preview.slotId;
@@ -1023,6 +1027,7 @@ export async function selectQueueDispatchSlot(
   const preview = resolveDispatchPreviewFromFleet(buildQueuePreviewParams(item), slots, undefined, {
     requiredPrepareProfile,
     pressureDecisions,
+    parkPreservedSlotIds: parkPreserved,
   });
   // A pinned queue item whose machine is pressure-rejected stays queued until
   // pressure recedes; automatic selection already excluded rejected machines.

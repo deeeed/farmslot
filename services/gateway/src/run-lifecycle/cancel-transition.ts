@@ -9,6 +9,7 @@ import { Events, primaryRoleForFlow, type Run } from '@farmslot/protocol';
 
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { cancelRunEngine } from '../run-engine/orchestrator.js';
+import { isSlotFreedByPark } from '../run-engine/park-slot-binding.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { invalidateWarmReviewerSessions } from '../self-review/session-policy.js';
 import { schedulerTick } from '../work-graph/store.js';
@@ -99,6 +100,15 @@ function cancelEffects(collaborators: CancelCollaborators): {
         severity: 'advisory',
         apply: async ({ run }) => {
           if (!run.slotId) return 'skipped';
+          // A gate park already stopped every provider this run owned and then
+          // published the slot for dispatch. Reconciling terminal posture now
+          // would act on leases and keep-warm providers of whoever claimed it.
+          if (isSlotFreedByPark(run)) {
+            return {
+              status: 'skipped' as const,
+              detail: "park already stopped this run's providers and freed the slot",
+            };
+          }
           await collaborators.releaseCapabilities(run);
           return 'ok';
         },
@@ -110,6 +120,16 @@ function cancelEffects(collaborators: CancelCollaborators): {
         // through `onMutated`, so Command Center does not wait on it.
         apply: async ({ run }) => {
           if (!run.slotId) return 'skipped';
+          // Same reason, one step further: killing agent windows and resetting a
+          // slot this run no longer owns would tear down its new occupant. The
+          // park left the slot ready and unowned, which is the end state cancel
+          // wants anyway.
+          if (isSlotFreedByPark(run)) {
+            return {
+              status: 'skipped' as const,
+              detail: 'park already released slot ownership; the slot is free',
+            };
+          }
           await collaborators.releaseSlot(run);
           return 'ok';
         },

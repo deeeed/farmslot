@@ -37,6 +37,7 @@ import {
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
+import { isSlotFreedByPark } from '../run-engine/park-slot-binding.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { listRuns } from '../runs/store.js';
 
@@ -112,6 +113,7 @@ interface SlotCheckResult {
   cdp: string;
   fixtures: string;
   branch: string;
+  headSha?: string;
   session?: string;
   repo?: string;
   linkedWorktree?: boolean;
@@ -204,8 +206,19 @@ function taskFileRefFromRun(run: Run): string | null {
     : run.taskFile.slice(index + marker.length).replace(/\\/g, '/');
 }
 
-function newestActiveRunForSlot(runs: Run[], slotId: string): Run | null {
-  const candidates = runs.filter((run) => run.slotId === slotId);
+/**
+ * The run whose state the slot row should reflect.
+ *
+ * ADR-054 `free-slot`: a park-freed run keeps `slotId` (its recovery handle and
+ * workspace branch key off it) but is no longer an occupant. Excluding it here
+ * is what keeps the freed slot free — it still satisfies
+ * `blocksGateHeldSlotRelease`, so winning this selection would republish the
+ * row as busy/review-gate and rebind `current_run_id` to it, and its
+ * human-gating priority would outrank a newly created run that legitimately
+ * claimed the slot.
+ */
+export function newestActiveRunForSlot(runs: Run[], slotId: string): Run | null {
+  const candidates = runs.filter((run) => run.slotId === slotId && !isSlotFreedByPark(run));
   if (candidates.length === 0) return null;
   return candidates.sort((a, b) => {
     const priorityDiff = activeRunPriority(b) - activeRunPriority(a);
@@ -413,6 +426,7 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     cdp: r.cdp,
     fixtures: r.fixtures,
     branch: r.branch,
+    ...(r.headSha ? { head_sha: r.headSha } : {}),
     ...(r.session ? { session: r.session } : {}),
     ...(r.repo ? { repo: r.repo } : {}),
     linked_worktree: r.linkedWorktree ?? false,
@@ -679,7 +693,7 @@ async function checkSingleSlot(
   }
 
   // Run all checks in parallel for this slot
-  const [branchStr, agentStr, emuStr, devserverStr, cdpStr, fixStr, linkedWorktree] =
+  const [branchInfo, agentStr, emuStr, devserverStr, cdpStr, fixStr, linkedWorktree] =
     await Promise.all([
       checkBranch(vars),
       checkAgent(vars),
@@ -709,7 +723,8 @@ async function checkSingleSlot(
     device: deviceName,
     cdp: cdpStr,
     fixtures: fixStr,
-    branch: branchStr,
+    branch: branchInfo.branch,
+    ...(branchInfo.headSha ? { headSha: branchInfo.headSha } : {}),
     session: vars.session || undefined,
     repo: vars.remoteRepo,
     linkedWorktree,
@@ -740,16 +755,66 @@ async function checkLinkedWorktree(vars: SlotVars): Promise<boolean> {
   }
 }
 
-async function checkBranch(vars: SlotVars): Promise<string> {
+/**
+ * Branch name and the commit HEAD points at, read in ONE exec. A detached
+ * checkout reports the branch as the literal `HEAD`, so the commit is the only
+ * thing that distinguishes one detached slot from another — dispatch needs it
+ * to tell a park's preserved workspace from unrelated leftover commits.
+ */
+/**
+ * One exec that reports both the commit HEAD points at and the branch name,
+ * each on its own labelled line.
+ *
+ * Labelled, not positional: parsing two concatenated `rev-parse` outputs by
+ * line index means an empty first output silently shifts the commit into the
+ * branch field. Labels make a missing value read as missing.
+ */
+export function gitHeadProbeCommand(repo: string): string {
+  // `printf '%s\n'` around a command substitution, NOT a bare `printf 'sha='`
+  // followed by the command: with the bare form a rev-parse that prints nothing
+  // leaves no newline, so the next label lands on the same line and the two
+  // values merge.
+  return (
+    `{ printf 'sha=%s\\n' "$(git -C '${repo}' rev-parse HEAD 2>/dev/null)"; ` +
+    `printf 'ref=%s\\n' "$(git -C '${repo}' rev-parse --abbrev-ref HEAD 2>/dev/null)"; } 2>/dev/null`
+  );
+}
+
+export function parseGitHeadProbe(stdout: string): { branch: string; headSha?: string } {
+  let branch = '';
+  let headSha = '';
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('sha=')) headSha = trimmed.slice(4).trim();
+    else if (trimmed.startsWith('ref=')) branch = trimmed.slice(4).trim();
+  }
+  return { branch: branch || '-', ...(headSha ? { headSha } : {}) };
+}
+
+/**
+ * What a branch refresh should write for a slot, or null when nothing moved.
+ *
+ * The COMMIT is part of this, not just the branch. Dispatch's detached-HEAD
+ * exception compares the slot's head against a park's recorded tip, so a
+ * refresh that updated only `branch` left a stale commit in the row and let
+ * unrelated detached work keep answering with the preserved SHA.
+ */
+export function slotHeadRefreshUpdate(
+  current: { branch?: string; headSha?: string },
+  probe: { branch: string; headSha?: string },
+): { branch: string; head_sha: string | null } | null {
+  if (probe.branch === current.branch && probe.headSha === current.headSha) return null;
+  return { branch: probe.branch, head_sha: probe.headSha ?? null };
+}
+
+async function checkBranch(vars: SlotVars): Promise<{ branch: string; headSha?: string }> {
   try {
-    const r = await execOnSlot(
-      vars,
-      `git -C '${vars.remoteRepo}' rev-parse --abbrev-ref HEAD 2>/dev/null`,
-      { timeout: SLOT_CHECK_TIMEOUT_MS },
-    );
-    return r.stdout.trim() || '-';
+    const r = await execOnSlot(vars, gitHeadProbeCommand(vars.remoteRepo), {
+      timeout: SLOT_CHECK_TIMEOUT_MS,
+    });
+    return parseGitHeadProbe(r.stdout);
   } catch {
-    return '-';
+    return { branch: '-' };
   }
 }
 

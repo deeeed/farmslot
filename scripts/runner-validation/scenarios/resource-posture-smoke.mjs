@@ -38,6 +38,17 @@ const CAPABILITY_ID = 'sandbox-gateway-ui';
  * the recorded evidence.
  */
 const ANSI_CSI = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+/**
+ * Braille spinner frames the CLI paints over a carriage return while it works.
+ * Stripping CSI codes and `\r` leaves them behind, so a transient progress
+ * frame ends up baked into the committed evidence as if it were report text.
+ */
+const SPINNER_FRAME = /[\u2800-\u28ff]/g;
+
+/** CLI stdout as the report should quote it: no colour codes, no spinner frames. */
+function humanText(stdout) {
+  return stdout.replace(ANSI_CSI, '').replace(SPINNER_FRAME, '').replace(/\r/g, '');
+}
 
 /** Booting a simulator plus Metro is minutes, not seconds. */
 const SLOW_RPC_TIMEOUT_MS = 480_000;
@@ -483,7 +494,7 @@ function assertCliPostureSurface({ runId, capabilityId }) {
     // never prints an observed stop while the provider is running.
     const humanRun = cliHuman(['resource', 'posture', 'status', runId]);
     // Strip the SGR colour codes the pty enables so the lines can be matched.
-    const humanLines = humanRun.stdout.replace(ANSI_CSI, '').replace(/\r/g, '').split('\n');
+    const humanLines = humanText(humanRun.stdout).split('\n');
     // This capability's block: its headline plus the indented detail lines under
     // it, which carry the reason and policy source without repeating the id.
     // Scoping matters because a whole-output match lets another capability's row
@@ -681,7 +692,7 @@ function assertCliRelease({ slotId, runId }) {
     // assertions about those rows passed without ever reading one.
     acquire();
     const releasedHuman = cliHuman(releaseArgs);
-    const releasedLines = releasedHuman.stdout.replace(ANSI_CSI, '').replace(/\r/g, '');
+    const releasedLines = humanText(releasedHuman.stdout);
     const releasedRow = releasedLines
       .split('\n')
       .find((line) => line.includes(RELEASE_CAPABILITY) && line.includes('provider='));
@@ -789,7 +800,7 @@ function assertCliReleaseRetained({ slotId, runId, dependencyPair }) {
         '--capability',
         dependencyPair.dependency,
       ]);
-      const retainedLines = retainedHuman.stdout.replace(ANSI_CSI, '').replace(/\r/g, '');
+      const retainedLines = humanText(retainedHuman.stdout);
       proof.retained.humanSample = retainedLines
         .split('\n')
         .filter((line) => line.includes(dependencyPair.dependency))
@@ -1067,6 +1078,205 @@ function cleanupFamilyProof({ slotId, proof }) {
   return proof;
 }
 
+/**
+ * Live proof for the ADR-054 `free-slot` gate-park ELIGIBILITY VERDICT
+ * (MANUAL-000112 slice 1), read through the production gateway's
+ * `machine.pause.preview` and the `runtime.posture.preview` surface that
+ * delegates to it.
+ *
+ * Scope, stated plainly: this node proves what the Gateway ANSWERS and that
+ * asking changed nothing. It is preview-only. A successful gate park — the
+ * branch detach, the slot release, a second run reusing the freed slot, the
+ * restart-recovery repair, and cancelling a parked run — is NOT proved here.
+ * Those need a runner with a persisted session reload driving a real
+ * publication package, which the scripted runner cannot produce; they are
+ * covered by the gateway unit suite and remain outstanding as live proof.
+ *
+ * Two halves, because only one of them can be produced from a scripted run:
+ *
+ * (A) Always runs. This scenario's own run is monitoring, NOT gate-held, so the
+ *     new branch must leave its verdict exactly as it was — `STATUS_NOT_ELIGIBLE`
+ *     with `slotDisposition: 'retained'` — and its slot must stay bound and busy.
+ *     A branch that widened eligibility, or a `slotDisposition` the Gateway did
+ *     not serve, fails here.
+ *
+ * (B) Runs only when FARMSLOT_GATE_PARK_RUN_ID names a live gate-held
+ *     publication run on this machine. That shape needs a real local-first
+ *     publication package, which a scripted runner cannot produce, so it is
+ *     supplied rather than created. It asserts the new verdict itself:
+ *     `RUNNER_RELOAD_UNSUPPORTED` with `slotDisposition: 'freed'`, and no lease,
+ *     runner process, or slot-row change from asking.
+ */
+function assertGateParkEligibility({ slotId, runId, machine }) {
+  const proof = {
+    attempted: true,
+    pass: false,
+    error: null,
+    nonGateHeld: null,
+    gateHeld: null,
+    gateHeldRunId: process.env.FARMSLOT_GATE_PARK_RUN_ID?.trim() || null,
+  };
+  const slotRow = (id) => {
+    const slot = rpc('fleet.status').fleet.slots.find((entry) => entry.slot === id);
+    if (!slot) throw new Error(`slot ${id} vanished from fleet.status`);
+    return {
+      lifecycle: slot.lifecycle,
+      phase: slot.phase ?? null,
+      agent: slot.agent ?? null,
+      currentRunId: slot.currentRunId ?? null,
+    };
+  };
+  // Slot-scoped: the supplied gate run lives on its OWN slot, and querying the
+  // scenario's slot would report an unchanged lease set no matter what the
+  // refused preview did over there.
+  const leaseIds = (leaseSlotId, owner) =>
+    rpc('runtime.capability.status', { slotId: leaseSlotId, ownerRunId: owner })
+      .leases.map((lease) => `${lease.capabilityId}:${lease.id}:${lease.state}`)
+      .sort();
+  try {
+    // (A) The monitoring run this scenario owns.
+    const beforeSlot = slotRow(slotId);
+    const beforeLeases = leaseIds(slotId, runId);
+    const preview = rpc('machine.pause.preview', {
+      machine,
+      mode: 'release',
+      selector: { kind: 'include', runIds: [runId] },
+    });
+    const entry = preview.runs.find((candidate) => candidate.runId === runId);
+    if (!entry) throw new Error(`machine.pause.preview returned no entry for ${runId}`);
+    proof.nonGateHeld = {
+      eligible: entry.eligibility.eligible,
+      code: entry.eligibility.code,
+      slotDisposition: entry.slotDisposition ?? null,
+    };
+    if (entry.slotDisposition !== 'retained') {
+      throw new Error(
+        `a non-gate-held run reported slotDisposition '${entry.slotDisposition}', expected 'retained'`,
+      );
+    }
+    if (entry.eligibility.eligible) {
+      throw new Error(
+        `the gate-park branch widened eligibility: a monitoring scripted run was accepted with '${entry.eligibility.code}'`,
+      );
+    }
+    if (
+      entry.eligibility.code === 'ELIGIBLE_GATE_RELEASE_PAUSE' ||
+      entry.eligibility.code === 'GATE_PARK_REQUIRES_RELEASE'
+    ) {
+      throw new Error(`a non-gate-held run took a gate-park code: ${entry.eligibility.code}`);
+    }
+    const afterSlot = slotRow(slotId);
+    if (JSON.stringify(beforeSlot) !== JSON.stringify(afterSlot)) {
+      throw new Error(
+        `a read-only preview changed the slot row: ${JSON.stringify(beforeSlot)} -> ${JSON.stringify(afterSlot)}`,
+      );
+    }
+    if (JSON.stringify(beforeLeases) !== JSON.stringify(leaseIds(slotId, runId))) {
+      throw new Error("a read-only preview changed this run's leases");
+    }
+
+    // (B) A supplied live gate-held run, when one exists.
+    if (!proof.gateHeldRunId) {
+      proof.gateHeld = {
+        attempted: false,
+        reason:
+          'no FARMSLOT_GATE_PARK_RUN_ID: a gate-held publication run needs a real local-first package, which the scripted runner cannot produce',
+        // Recorded from an actual attempt on macpro-ff-1 (2026-09-05) so the
+        // gap is a measured blocker rather than an assumption. Each step was
+        // driven through the production gateway on ws://localhost:7801.
+        blockers: [
+          "run.create flowType 'fix-bug' with a free-text ticket: refused, 'Paste a Jira key, a Jira URL, a GitHub issue/PR URL, or owner/repo#number'",
+          "run.create flowType 'fix-bug' ticketOrPr 'MANUAL-000112': refused, 'manual backlog refs must be dispatched from Backlog'",
+          "run.create flowType 'dev' mode 'autonomous' with a free-text ticket: refused the same way; free text is accepted only by interactive starts",
+          "run.create flowType 'dev' mode 'interactive' devInteractiveProfile 'reviewed' runner 'claude': ACCEPTED and reached 'monitoring' with a live claude session, but an interactive run completes only when an operator drives its pane, so COMPLETE never ran and no 'gate-held' disposition was produced",
+        ],
+        // What the attempt DID establish, read-only, through machine.pause.preview:
+        // a real session-reload runner clears the runner-capability gate that
+        // the scripted runner fails. The refusal moved off RUNNER_RELOAD_UNSUPPORTED
+        // to CAPABILITY_RESOURCE_UNOWNED, and after acquiring the catalog
+        // capability, to CAPABILITY_SLOT_ACTION_UNMAPPED — both later gates,
+        // and both unrelated to the gate-park branch.
+        realRunnerProbe: {
+          runner: 'claude',
+          // `recoveryPolicy.supported` is NOT recorded: every reject sets it
+          // false regardless of reason, so it says nothing about the runner's
+          // declared reload capability and reading it as if it did was
+          // misleading. The codes below are what actually carries the finding.
+          codesObserved: ['CAPABILITY_RESOURCE_UNOWNED', 'CAPABILITY_SLOT_ACTION_UNMAPPED'],
+          note: 'not RUNNER_RELOAD_UNSUPPORTED: the runner declaration gate accepts a session-reload runner',
+        },
+      };
+      proof.pass = true;
+      return proof;
+    }
+    const gateRun = rpc('run.get', { runId: proof.gateHeldRunId }).run;
+    if (!gateRun.slotId) throw new Error(`gate-held run ${proof.gateHeldRunId} holds no slot`);
+    const gateSlotBefore = slotRow(gateRun.slotId);
+    const gateLeasesBefore = leaseIds(gateRun.slotId, gateRun.id);
+    const gatePreview = rpc('machine.pause.preview', {
+      machine,
+      mode: 'release',
+      selector: { kind: 'include', runIds: [gateRun.id] },
+    });
+    const gateEntry = gatePreview.runs.find((candidate) => candidate.runId === gateRun.id);
+    if (!gateEntry) throw new Error(`machine.pause.preview returned no entry for ${gateRun.id}`);
+    const posture = rpc('runtime.posture.preview', {
+      runId: gateRun.id,
+      gateChoice: 'free-slot',
+    });
+    proof.gateHeld = {
+      attempted: true,
+      status: gateRun.status,
+      runnerId: gateRun.metrics?.runner ?? null,
+      eligible: gateEntry.eligibility.eligible,
+      code: gateEntry.eligibility.code,
+      slotDisposition: gateEntry.slotDisposition ?? null,
+      recoverySupported: gateEntry.recoveryPolicy?.supported ?? null,
+      postureRejectionCode: posture.rejection?.code ?? null,
+      postureRejectionKind: posture.rejection?.kind ?? null,
+    };
+    if (gateEntry.slotDisposition !== 'freed') {
+      throw new Error(
+        `a gate-held run reported slotDisposition '${gateEntry.slotDisposition}', expected 'freed'`,
+      );
+    }
+    if (gateEntry.eligibility.code !== 'RUNNER_RELOAD_UNSUPPORTED') {
+      throw new Error(
+        `gate-held preview returned '${gateEntry.eligibility.code}', expected RUNNER_RELOAD_UNSUPPORTED`,
+      );
+    }
+    if (gateEntry.recoveryPolicy?.supported !== false) {
+      throw new Error('a refused reload still advertised a supported recovery policy');
+    }
+    if (posture.rejection?.code !== 'RUNNER_RELOAD_UNSUPPORTED') {
+      throw new Error(
+        `free-slot posture preview surfaced '${posture.rejection?.code ?? 'no rejection'}' instead of the machine-pause verdict`,
+      );
+    }
+    const gateSlotAfter = slotRow(gateRun.slotId);
+    if (JSON.stringify(gateSlotBefore) !== JSON.stringify(gateSlotAfter)) {
+      throw new Error(
+        `a refused free-slot changed the gate-held slot row: ${JSON.stringify(gateSlotBefore)} -> ${JSON.stringify(gateSlotAfter)}`,
+      );
+    }
+    if (JSON.stringify(gateLeasesBefore) !== JSON.stringify(leaseIds(gateRun.slotId, gateRun.id))) {
+      throw new Error("a refused free-slot changed the gate-held run's leases");
+    }
+    const gateAfter = rpc('run.get', { runId: gateRun.id }).run;
+    if (gateAfter.park) throw new Error('a refused free-slot wrote a park record');
+    if (gateAfter.status !== gateRun.status) {
+      throw new Error(
+        `a refused free-slot moved the run from '${gateRun.status}' to '${gateAfter.status}'`,
+      );
+    }
+    proof.pass = true;
+  } catch (error) {
+    proof.pass = false;
+    proof.error = error?.message || String(error);
+  }
+  return proof;
+}
+
 export async function runScenario({ timeoutMs, outDir, slotId, explicit = false }) {
   const reportRunner = 'scripted';
   if (!slotId || process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS !== '1') {
@@ -1104,6 +1314,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     cliProof: null,
     cliReleaseProof: null,
     cliStopWarmProof: null,
+    gateParkProof: null,
     leftoverLeases: null,
     pass: false,
     error: null,
@@ -1209,6 +1420,17 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     report.cliProof = assertCliPostureSurface({ runId, capabilityId: CAPABILITY_ID });
     if (!report.cliProof.pass) {
       throw new Error(`CLI posture proof failed: ${report.cliProof.error}`);
+    }
+
+    // MANUAL-000112 slice 1: the gate-park eligibility branch, read-only, before
+    // anything in this scenario stops a provider.
+    report.gateParkProof = assertGateParkEligibility({
+      slotId,
+      runId,
+      machine: slot.machine,
+    });
+    if (!report.gateParkProof.pass) {
+      throw new Error(`gate-park eligibility proof failed: ${report.gateParkProof.error}`);
     }
 
     // ADR-054 dependency ordering, proved live against the project's own catalog.

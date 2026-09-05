@@ -3,7 +3,10 @@ import { isTerminalRunStatus, PipelineSteps, type Run } from '@farmslot/protocol
 import { killSlotAgents } from '../methods/slot/release.js';
 import { listRuns } from '../runs/store.js';
 
+import { isGateParkInFlightOrFreed, isSlotFreedByPark } from './park-slot-binding.js';
 import { requiresPublicationApproval } from './publication-policy.js';
+
+export { isGateParkInFlightOrFreed, isSlotFreedByPark };
 
 export function completeStepDisposition(run: Run): string | undefined {
   const step = run.steps?.find((entry) => entry.name === PipelineSteps.COMPLETE);
@@ -20,9 +23,38 @@ export function blocksGateHeldSlotRelease(run: Run): boolean {
   return !finalizeStep || finalizeStep.status !== 'done';
 }
 
+/**
+ * The gate-held run that still HOLDS `slotId`. A park-freed run is excluded: it
+ * no longer occupies the slot, so it must not block the new occupant's release.
+ * Its park record is protected separately by findGateParkedRunForSlot.
+ */
 export function findActiveGateHeldRunForSlot(slotId: string): Run | undefined {
   const { runs } = listRuns({ active: true });
-  return runs.find((run) => run.slotId === slotId && blocksGateHeldSlotRelease(run));
+  return runs.find(
+    (run) => run.slotId === slotId && !isSlotFreedByPark(run) && blocksGateHeldSlotRelease(run),
+  );
+}
+
+/**
+ * Slots currently held by a gate park's record. They report `ready` to the
+ * fleet, but their working tree holds a parked run's detached branch and their
+ * release is refused, so automated sweeps must leave them alone.
+ */
+export function parkFreedSlotIds(): Set<string> {
+  const { runs } = listRuns({ active: true });
+  return new Set(runs.flatMap((run) => (run.slotId && isSlotFreedByPark(run) ? [run.slotId] : [])));
+}
+
+/**
+ * The gate-held run whose park record was written against this slot and whose
+ * ownership was released. Destroying the slot would destroy that record's
+ * restore target, so release/reset must refuse unless forced.
+ */
+export function findGateParkedRunForSlot(slotId: string): Run | undefined {
+  const { runs } = listRuns({ active: true });
+  return runs.find(
+    (run) => run.slotId === slotId && isSlotFreedByPark(run) && blocksGateHeldSlotRelease(run),
+  );
 }
 
 export function isGateHeldPublicationRun(run: Run): boolean {

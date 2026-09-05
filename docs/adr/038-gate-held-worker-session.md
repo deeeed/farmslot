@@ -60,6 +60,56 @@ MONITOR → SELF_REVIEW → COMPLETE (gate-held) → HUMAN_GATE (worker live)
 
 Project worker templates (`dev.md`, `fix-bug.md`) should instruct: write `SIGNAL.json`, **do not `/exit`**, stay idle until publication gate resolves.
 
+## Amendment: `free-slot` at the publication gate (2026-09-05)
+
+[ADR-054](054-run-resource-posture.md) defines a `free-slot` gate choice. The gate-held worker
+guarantee above holds **unless** the operator's gate choice or the run's dispatch `waitPolicy`
+selected `free-slot`, and then only when the run's runner declares both a graceful exit and a
+persisted session reload in the runner capability registry. A runner that declares neither is
+refused with the typed `RUNNER_RELOAD_UNSUPPORTED`, and nothing is stopped — the worker stays live
+under the rule above.
+
+When the choice applies:
+
+- Machine-pause release accepts the gate-held run as a third parkable shape beside `monitor` and
+  `ci-watch`, stops the worker and the resources in its captured manifest, and releases slot
+  ownership so dispatch can select the slot for other work.
+- The run keeps its `slotId` and its park record; the record, not the slot row, is the authority
+  for the parked run's slot binding. The pending gate decision stays published and answerable, so
+  the run stays at `human-gating`/`blocked` rather than moving to `paused`.
+- `slot.release` and slot reset refuse to destroy that park record without `forceReset`, while a
+  run that claims the freed slot afterwards is released normally.
+- An orchestration-only park of a gate-held run is refused: it would move the run off its gate
+  without freeing anything.
+
+**Workspace contract.** The freed slot's working tree goes to the next occupant, whose prepare
+resets the checked-out branch to its base ref. That would move the parked run's branch and discard
+its commits, so the park takes the branch out of the tree first:
+
+- The park refuses, with `WORKSPACE_NOT_PRESERVABLE`, when the tree has uncommitted changes or its
+  git identity cannot be read. Committed work is preserved; uncommitted work is never silently
+  stashed, discarded, or committed on the run's behalf.
+- Otherwise the park records the branch and its tip on the park record and detaches HEAD at that
+  exact commit before releasing slot ownership. The branch ref survives untouched; the next
+  occupant's reset moves only a detached HEAD. Restore checks the branch back out at that tip.
+- A detach that fails, or a tree that moved between the preview and the detach, leaves the park
+  `partial` and does NOT release the slot. Fail closed: a slot dispatch could claim while the
+  parked branch is still checked out is the loss this contract exists to prevent.
+
+**Fences while a park is in flight.** From the moment the write-ahead record declares a freeing
+park until it is restored or cancelled, `run.resolveDecision` refuses to resolve the run's
+decisions and `runtime.posture.apply` refuses every posture but `parked`. Answering the gate
+mid-park would publish against a worker being stopped underneath it, and `keep-for-validation`
+would reacquire capabilities on a slot another run may already own. The engine's own gate path
+blocks rather than fails, because a terminal run cannot be cancelled and its park record would be
+stranded. A successor's `slot.release` never detaches the parked run's binding, automated recycle
+sweeps skip the freed slot, and restart recovery treats the parked run like a paused one: no agent
+runtime reconcile, no gate replay, no publication-review re-arm on a slot it no longer owns. Its
+pending decision is still re-broadcast so clients show the run waiting.
+
+Operators lose tmux attach for the duration of the park, which is the trade the choice makes: the
+runner's persisted session is what brings the context back.
+
 ## Consequences
 
 - Operators can attach to the worker during publication review on `dev` / `fix-bug`, matching the `review-pr` gate-first UX goal.

@@ -1,5 +1,6 @@
 import {
   Events,
+  MachineParkEligibilityCodes,
   type Run,
   type RunCancelParams,
   type RunCancelResult,
@@ -9,6 +10,7 @@ import {
   type RunPauseResult,
   type RunResumeParams,
   type RunResumeResult,
+  type RunStatus,
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../../agents/contexts.js';
@@ -22,6 +24,7 @@ import {
   type RunEngineStepStartAcknowledgement,
   startRunWithStepAcknowledgement,
 } from '../../run-engine/orchestrator.js';
+import { isSlotFreedByPark } from '../../run-engine/park-slot-binding.js';
 import {
   cancelTransitionDeps,
   defaultCancelCollaborators,
@@ -374,6 +377,19 @@ export async function runPauseTransitionLocked(
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
   if (!options.machineParkingPause) assertNotMachineParkManaged(existing);
 
+  // A gate park (ADR-054 `free-slot`, amending ADR-038) is its own branch, not a
+  // widening of the pausable statuses. The run is ALREADY durably waiting on an
+  // operator decision: there is no monitor loop to abort, and moving it to
+  // `paused` would clobber the `blocked`/`human-gating` status its pending gate
+  // is published under. The park record is the durable hold; the gate stays
+  // answerable while the slot is freed.
+  if (options.machineParkingPause && isGateParkPause(existing)) {
+    console.log(
+      `[run] gate-park hold for run ${params.runId.slice(0, 8)} (status ${existing.status} preserved)`,
+    );
+    return { run: existing };
+  }
+
   // Can only pause runs that are actively monitoring/watching
   const pausableStatuses = new Set(['monitoring', 'ci-watching']);
   if (!pausableStatuses.has(existing.status)) {
@@ -401,8 +417,25 @@ export interface RunResumeAcknowledgement {
   previousGeneration: number;
   generation: number;
   stepName: string;
-  status: 'monitoring' | 'ci-watching';
+  /**
+   * Where the run ended up. An ordinary resume re-enters its monitor or
+   * ci-watch loop; a gate-park restore keeps the status the park preserved, so
+   * this is the run's own gate status rather than one of those two.
+   */
+  status: RunStatus;
   acknowledgedAt: string;
+  /**
+   * Set only by the gate-park branch: the run was never `paused` and nothing
+   * was re-driven, so the generation is unchanged by design. Callers that check
+   * an ordinary resume advanced the generation must not apply that rule here.
+   */
+  gateParkHold?: true;
+  /**
+   * Set when the gate loop had already exited and restore had to re-present the
+   * gate. The generation DOES advance here, unlike `gateParkHold`: there was no
+   * live loop left to fence out, and the replay has to take ownership.
+   */
+  gateParkReplayed?: true;
 }
 
 export interface RunResumeTransitionOptions {
@@ -415,11 +448,26 @@ export interface RunResumeTransitionOptions {
 export interface RunResumeTransitionDependencies {
   nudgeMonitor(run: Run, emit: Emit): Promise<void>;
   redrive(runId: string, expectedGeneration: number): Promise<RunEngineStepStartAcknowledgement>;
+  /** Re-present a gate whose engine loop exited before the park was restored. */
+  replayGate(runId: string, stepName: string): Promise<void>;
 }
+
+/**
+ * Who a gate replay is attributed to. `operator`, not `auto-recovery`: a
+ * machine restore is an operator action, and recording it as auto-recovery
+ * would charge the replay against the automatic attempt budget and misreport
+ * its provenance in the recovery audit.
+ */
+export const GATE_PARK_REPLAY_TRIGGER = 'operator' as const;
 
 const DEFAULT_RUN_RESUME_DEPS: RunResumeTransitionDependencies = {
   nudgeMonitor: nudgeResumedMonitor,
   redrive: startRunWithStepAcknowledgement,
+  replayGate: async (runId, stepName) => {
+    // replay-step imports the orchestrator, so keep this lazy.
+    const { runReplayStep } = await import('./replay-step.js');
+    await runReplayStep({ runId, stepName, triggeredBy: GATE_PARK_REPLAY_TRIGGER }, () => {});
+  },
 };
 
 export async function runResumeTransitionLocked(
@@ -431,6 +479,71 @@ export async function runResumeTransitionLocked(
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
 
+  if (isSlotFreedByPark(existing)) {
+    throw new Error(
+      `Run ${params.runId} is gate-parked with its slot freed ` +
+        `(${MachineParkEligibilityCodes.freedSlotRestoreUnsupported}); ` +
+        'restoring into a freed slot is not supported yet — cancel the run to release its park record',
+    );
+  }
+  // The counterpart to `isGateParkPause` on the pause side, and it has to
+  // exist: that branch deliberately never moved the run to `paused` and never
+  // aborted an engine loop, so none of the machinery below applies. The run is
+  // still sitting at its publication gate with a pending decision; what the
+  // park took away was its worker, and `restoreOne` has already reloaded that
+  // by the time this runs. So there is nothing to re-drive — settling the
+  // record here is what lifts the fence and makes the gate answerable again.
+  //
+  // Bumping the generation would be actively wrong: the gate's engine loop was
+  // never cancelled, and a bump makes live loops bail.
+  const gateParkPlan = options.machineParkingRestore ? gateParkRestorePlan(existing) : null;
+  if (gateParkPlan?.kind === 'hold') {
+    console.log(
+      `[run] gate-park restore for run ${params.runId.slice(0, 8)} (status ${existing.status} preserved)`,
+    );
+    emit(Events.RUN_UPDATED, { run: existing });
+    return gateParkResumeAcknowledgement(existing, () => new Date().toISOString())!;
+  }
+  if (gateParkPlan?.kind === 'replay') {
+    // Resolution raced the park: the ready-gate fence threw, the gate step was
+    // marked done and the rest skipped, and the loop exited. Re-presenting the
+    // gate is the only way this run becomes answerable again — without it the
+    // record is admitted by the preview and then stranded here.
+    const previousGeneration = existing.engineState?.generation ?? 0;
+    console.log(
+      `[run] gate-park restore replaying '${gateParkPlan.stepName}' for run ${params.runId.slice(0, 8)} (its gate loop had exited)`,
+    );
+    await deps.replayGate(params.runId, gateParkPlan.stepName);
+    const replayed = getRun(params.runId)!;
+    const generation = replayed.engineState?.generation ?? previousGeneration;
+    // Bound to the generation the replay took ownership at, so it cannot
+    // outlive the gate it was set for: the replay is fire-and-forget, and a
+    // bare flag would swallow the operator's choice at some unrelated later
+    // wait if this gate never reached a boundary at all.
+    if (replayed.resourcePosture?.gateChoice === 'free-slot') {
+      updateRun(params.runId, {
+        resourcePosture: {
+          ...replayed.resourcePosture,
+          gateChoiceSuppressedForGeneration: generation,
+        },
+      });
+    }
+    if (generation <= previousGeneration) {
+      throw new Error(
+        `Run ${params.runId} gate replay did not take ownership (generation ${generation})`,
+      );
+    }
+    emit(Events.RUN_UPDATED, { run: replayed });
+    return {
+      run: replayed,
+      previousGeneration,
+      generation,
+      stepName: gateParkPlan.stepName,
+      status: replayed.status,
+      acknowledgedAt: new Date().toISOString(),
+      gateParkReplayed: true,
+    };
+  }
   if (existing.status !== 'paused') {
     throw new Error(`Run ${params.runId} is not paused (status=${existing.status})`);
   }
@@ -542,6 +655,79 @@ async function nudgeResumedMonitor(existing: Run, emit: Emit): Promise<void> {
   } catch (error) {
     console.warn(`[run] resume nudge check failed: ${(error as Error).message}`);
   }
+}
+
+/**
+ * The acknowledgement a gate-park restore produces, or null when this is an
+ * ordinary resume that must go through the paused/monitor path.
+ *
+ * Pure and exported so the machine-parking test double resumes through the SAME
+ * decision the production transition uses. A double that re-implements this is
+ * how the resume side and the restore side drifted apart unnoticed: restore was
+ * admitted for a gate park while resume still demanded `paused`.
+ */
+/**
+ * How a gate park has to be brought back, or null when this is an ordinary
+ * resume that must go through the paused/monitor path.
+ *
+ * Two shapes, because the park's own gate loop may or may not have survived:
+ *
+ *   - `hold` — the gate step is still `running`, so the loop is still awaiting
+ *     the operator. Nothing needs re-driving and the generation must NOT move:
+ *     it is a fencing token, and bumping it makes that live loop bail.
+ *   - `replay` — resolution raced the park. The ready-gate fence threw, which
+ *     marked the gate step `done` and the rest `skipped`, and the loop exited.
+ *     Re-arming the step is not enough on its own: nothing would be driving it,
+ *     so the run would sit blocked on a running step forever. The gate has to be
+ *     replayed, which is also why an advancing generation is correct HERE — there
+ *     is no live loop left to fence out.
+ */
+export type GateParkRestorePlan =
+  | { kind: 'hold'; stepName: string }
+  | { kind: 'replay'; stepName: string };
+
+export function gateParkRestorePlan(run: Run): GateParkRestorePlan | null {
+  if (!isGateParkPause(run)) return null;
+  const running = run.steps.find((step) => step.status === 'running');
+  if (running) return { kind: 'hold', stepName: running.name };
+  // No running step: the park's record still names the step the run was held
+  // on, and that is what has to come back.
+  const parkedStep = run.park?.prePauseCurrentStep?.name;
+  const recorded = parkedStep ? run.steps.find((step) => step.name === parkedStep) : undefined;
+  if (!recorded || (recorded.status !== 'done' && recorded.status !== 'skipped')) {
+    throw new Error(
+      `Run ${run.id} has no running step and no settled '${parkedStep ?? 'unknown'}' step to restore its gate park onto`,
+    );
+  }
+  return { kind: 'replay', stepName: recorded.name };
+}
+
+export function gateParkResumeAcknowledgement(
+  run: Run,
+  now: () => string,
+): RunResumeAcknowledgement | null {
+  const plan = gateParkRestorePlan(run);
+  if (!plan || plan.kind !== 'hold') return null;
+  // Unchanged by design: nothing was re-driven, and the gate's engine loop was
+  // never cancelled, so a bump would only make a live loop bail.
+  const generation = run.engineState?.generation ?? 0;
+  return {
+    run,
+    previousGeneration: generation,
+    generation,
+    stepName: plan.stepName,
+    status: run.status,
+    acknowledgedAt: now(),
+    gateParkHold: true,
+  };
+}
+
+/**
+ * A park whose record declares it frees the slot, taken at a publication gate.
+ * The record is written before this runs, so the intent is already durable.
+ */
+function isGateParkPause(run: Run): boolean {
+  return run.park?.mode === 'release' && run.park.slotDisposition === 'freed';
 }
 
 function assertNotMachineParkManaged(run: Run): void {

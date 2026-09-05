@@ -9,11 +9,18 @@ import type {
   SlotResource,
 } from '@farmslot/protocol';
 
+import { gateParkResumeAcknowledgement } from '../methods/run/lifecycle-control.js';
+import { isGateParkInFlightOrFreed } from '../run-engine/park-slot-binding.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { withMachineRunTransition } from '../run-lifecycle/transition-coordinator.js';
 
-import type { MachineParkingIntentJournal } from './journal.js';
-import { type MachineParkingDependencies, MachineParkingService } from './service.js';
+import { assertValidJournal, type MachineParkingIntentJournal } from './journal.js';
+import {
+  type MachineParkingDependencies,
+  MachineParkingService,
+  type ParkWorkspaceInspection,
+  type RunnerReloadInspection,
+} from './service.js';
 
 function recoveryHandle(runId: string, slotId: string): MachinePauseRecoveryHandle {
   return {
@@ -157,6 +164,17 @@ interface Harness {
   runs: Map<string, Run>;
   calls: string[];
   deps: MachineParkingDependencies;
+  /** Slot -> owning run id, mutated by freeSlotOwnership and read by loadFleet. */
+  slotOwners: Map<string, string | null>;
+  slotLifecycles: Map<string, string>;
+  /** Per-run override for the declared runner graceful-stop + session-reload capability. */
+  reloadSupport: Map<string, RunnerReloadInspection>;
+  /** Observed runner liveness per run, as residual observation reads it. */
+  runnerStates: Map<string, 'running' | 'stopped' | 'unknown'>;
+  /** Slot -> working-tree branch identity, mutated by detachParkedWorkspace. */
+  workspaces: Map<string, ParkWorkspaceInspection>;
+  /** Durable free-slot journals the harness wrote, keyed machine:operationId. */
+  freeSlotJournals: Set<string>;
 }
 
 function harness(initialRuns: Run[]): Harness {
@@ -165,6 +183,20 @@ function harness(initialRuns: Run[]): Harness {
     initialRuns.map((run) => [run.id, 'running']),
   );
   const calls: string[] = [];
+  const slotOwners = new Map<string, string | null>(
+    initialRuns.filter((run) => run.slotId).map((run) => [run.slotId!, run.id]),
+  );
+  const reloadSupport = new Map<string, RunnerReloadInspection>();
+  const workspaces = new Map<string, ParkWorkspaceInspection>(
+    initialRuns
+      .filter((run) => run.slotId)
+      .map((run) => [
+        run.slotId!,
+        { branch: `work/${run.id}`, headSha: `sha-${run.id}`, dirtyPaths: [] },
+      ]),
+  );
+  const slotLifecycles = new Map<string, string>();
+  const freeSlotJournals = new Set<string>();
   const journals = new Map<string, MachineParkingIntentJournal>();
   let tick = 0;
   const status: RuntimeCapabilityStatusResult = {
@@ -193,7 +225,7 @@ function harness(initialRuns: Run[]): Harness {
             lifecycle: 'busy',
             phase: 'working',
             enabled: true,
-            currentRunId: run.id,
+            currentRunId: slotOwners.get(run.slotId!) ?? null,
           })),
       }) as never,
     updatePark: (runId, park) => {
@@ -204,20 +236,35 @@ function harness(initialRuns: Run[]): Harness {
     persistRun: async (run, reason) => {
       calls.push(`persist:${run.id}:${reason}`);
     },
-    writeIntentJournal: async (kind, records) => {
+    writeIntentJournal: async (kind, records, scopeId) => {
       calls.push(`journal-write:${records[0]!.operationId}`);
+      if (kind === 'free-slot') calls.push(`free-journal-write:${records[0]!.operationId}`);
+      if (kind === 'free-slot') {
+        freeSlotJournals.add(`${records[0]!.machine}:${records[0]!.operationId}:${scopeId ?? ''}`);
+      }
       const first = records[0]!;
-      journals.set(`${first.machine}:${kind}:${first.operationId}`, {
+      const journal: MachineParkingIntentJournal = {
         version: 1,
         kind,
         machine: first.machine,
         operationId: first.operationId,
+        ...(scopeId ? { scopeId } : {}),
         records: structuredClone(records),
-      });
+      };
+      // The REAL validator, not a permissive double. An in-memory Map that
+      // accepts anything lets the writer and the on-disk validator disagree and
+      // still pass every unit test — which is exactly how a required
+      // `detachedAt` shipped and quarantined every journal on reload.
+      assertValidJournal(journal);
+      journals.set(`${first.machine}:${kind}:${first.operationId}:${scopeId ?? ''}`, journal);
     },
-    deleteIntentJournal: async (machine, kind, operationId) => {
+    deleteIntentJournal: async (machine, kind, operationId, scopeId) => {
       calls.push(`journal-delete:${operationId}`);
-      journals.delete(`${machine}:${kind}:${operationId}`);
+      if (kind === 'free-slot') calls.push(`free-journal-delete:${operationId}`);
+      if (kind === 'free-slot') {
+        freeSlotJournals.delete(`${machine}:${operationId}:${scopeId ?? ''}`);
+      }
+      journals.delete(`${machine}:${kind}:${operationId}:${scopeId ?? ''}`);
     },
     loadIntentJournals: async () =>
       [...journals.values()].map((journal) => structuredClone(journal)),
@@ -268,16 +315,76 @@ function harness(initialRuns: Run[]): Harness {
         },
       };
     },
+    inspectParkWorkspace: async (run) => {
+      calls.push(`inspect-workspace:${run.id}`);
+      const workspace = workspaces.get(run.slotId!);
+      if (!workspace) throw new Error(`no workspace fixture for slot ${run.slotId}`);
+      return structuredClone(workspace);
+    },
+    detachParkedWorkspace: async (run, expected) => {
+      calls.push(`detach-workspace:${run.slotId}:${expected.branch}`);
+      const workspace = workspaces.get(run.slotId!);
+      if (!workspace) throw new Error(`no workspace fixture for slot ${run.slotId}`);
+      if (workspace.branch !== null && workspace.branch !== expected.branch) {
+        throw new Error(`workspace moved to ${workspace.branch}`);
+      }
+      if (workspace.dirtyPaths.length > 0) throw new Error('workspace became dirty');
+      workspaces.set(run.slotId!, { ...workspace, branch: null });
+    },
+    slotRow: async (slotId) => ({
+      slot: slotId,
+      current_run_id: slotOwners.get(slotId) ?? null,
+      lifecycle: slotLifecycles.get(slotId) ?? (slotOwners.get(slotId) ? 'busy' : 'ready'),
+    }),
+    reattachParkedWorkspace: async (run, workspace) => {
+      calls.push(`reattach-workspace:${run.slotId}:${workspace.branch}`);
+      const current = workspaces.get(run.slotId!);
+      if (!current) throw new Error(`no workspace fixture for slot ${run.slotId}`);
+      workspaces.set(run.slotId!, { ...current, branch: workspace.branch });
+    },
+    inspectRunnerReload: async (run) => {
+      calls.push(`inspect-reload:${run.id}`);
+      return (
+        reloadSupport.get(run.id) ?? {
+          runnerId: run.metrics.runner ?? 'unknown',
+          supported: true,
+        }
+      );
+    },
+    freeSlotOwnership: async (slotId, runId) => {
+      calls.push(`free-slot:${slotId}:${runId}`);
+      if (slotOwners.get(slotId) !== runId) return false;
+      slotOwners.set(slotId, null);
+      return true;
+    },
     resolveRecoveryHandle: async (run) => recoveryHandle(run.id, run.slotId!),
     inspectRecoveryHandle: async () => {},
     pauseRun: async (runId, emit) => {
       calls.push(`pause:${runId}`);
-      runs.get(runId)!.status = 'paused';
+      const run = runs.get(runId)!;
+      // Mirrors runPauseTransitionLocked's gate-park branch: a park that frees
+      // the slot leaves the run at its gate so the decision stays answerable.
+      if (!(run.park?.mode === 'release' && run.park.slotDisposition === 'freed')) {
+        run.status = 'paused';
+      }
       emit('run.updated', { runId });
     },
     resumeRun: async (runId, emit) => {
       calls.push(`resume:${runId}`);
       const run = runs.get(runId)!;
+      // The REAL gate-park decision, not a re-implementation. A double that
+      // decided this for itself is exactly how the resume side kept demanding
+      // `paused` after restore had been taught to admit a gate park.
+      const gateParkHold = gateParkResumeAcknowledgement(run, () => '2026-08-21T00:00:31.000Z');
+      if (gateParkHold) {
+        emit('run.updated', { runId });
+        return gateParkHold;
+      }
+      // The ordinary path still refuses a run that is not paused, matching
+      // `runResumeTransitionLocked`.
+      if (run.status !== 'paused') {
+        throw new Error(`Run ${runId} is not paused (status=${run.status})`);
+      }
       const previousGeneration = run.engineState?.generation ?? 0;
       run.status = run.park!.prePauseStatus;
       run.engineState = {
@@ -290,7 +397,7 @@ function harness(initialRuns: Run[]): Harness {
         previousGeneration,
         generation: run.engineState.generation!,
         stepName: run.park!.prePauseCurrentStep!.name,
-        status: run.status as 'monitoring' | 'ci-watching',
+        status: run.status,
         acknowledgedAt: '2026-08-21T00:00:31.000Z',
       };
     },
@@ -324,7 +431,18 @@ function harness(initialRuns: Run[]): Harness {
       return { ok: true };
     },
   };
-  return { service: new MachineParkingService(deps), runs, calls, deps };
+  return {
+    service: new MachineParkingService(deps),
+    runs,
+    calls,
+    deps,
+    slotOwners,
+    slotLifecycles,
+    reloadSupport,
+    runnerStates,
+    workspaces,
+    freeSlotJournals,
+  };
 }
 
 function mixedRestoreHarness(): Harness {
@@ -1877,4 +1995,1278 @@ test('restart reconciliation recovers a pre-terminal cancelling intent back to p
   const result = await ctx.service.reconcile();
   assert.deepEqual(result, { reconciled: 1, partial: 0 });
   assert.equal(ctx.runs.get('run-a')?.park?.phase, 'parked');
+});
+
+// ─── ADR-054 free-slot at an operator wait ───
+
+function gateHeldRun(id: string, slotId: string): Run {
+  return makeRun({
+    id,
+    familyId: `family-${id}`,
+    flowType: 'dev',
+    mode: 'autonomous',
+    status: 'human-gating',
+    slotId,
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'running' },
+    ],
+    metrics: {
+      nudgeCount: 0,
+      model: 'sonnet',
+      runner: 'claude',
+      runnerSessionId: `session-${id}`,
+      runnerSessionPath: `/sessions/${id}.jsonl`,
+    },
+    engineState: { generation: 3 },
+  });
+}
+
+test('release preview accepts a gate-held run with a declared session reload and marks its slot freed', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const entry = preview.runs.find((run) => run.runId === 'run-gate')!;
+  assert.equal(entry.eligibility.eligible, true);
+  assert.equal(entry.eligibility.code, 'ELIGIBLE_GATE_RELEASE_PAUSE');
+  assert.equal(entry.slotDisposition, 'freed');
+  assert.equal(preview.eligibleCount, 1);
+});
+
+test('release preview rejects a gate-held run whose runner declares no session reload', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  ctx.reloadSupport.set('run-gate', {
+    runnerId: 'scripted',
+    supported: false,
+    reason: "runner 'scripted' declares no persisted session reload capability",
+  });
+
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const entry = preview.runs.find((run) => run.runId === 'run-gate')!;
+  assert.equal(entry.eligibility.eligible, false);
+  assert.equal(entry.eligibility.code, 'RUNNER_RELOAD_UNSUPPORTED');
+  assert.equal(entry.slotDisposition, 'freed');
+  assert.equal(entry.recoveryPolicy.kind, 'runner-session-reload');
+  assert.equal(entry.recoveryPolicy.supported, false);
+  // Fail closed before any side effect: no manifest capture, no handle probe.
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('observe:')),
+    false,
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('stop-runner:')),
+    false,
+  );
+});
+
+test('orchestration preview refuses a gate-held run instead of stranding its gate', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'orchestration',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const entry = preview.runs.find((run) => run.runId === 'run-gate')!;
+  assert.equal(entry.eligibility.eligible, false);
+  assert.equal(entry.eligibility.code, 'GATE_PARK_REQUIRES_RELEASE');
+  assert.equal(entry.slotDisposition, 'retained');
+});
+
+test('executing a gate park persists the record before side effects and frees the slot', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const result = await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  assert.equal(result.outcome, 'complete');
+  const record = ctx.runs.get('run-gate')!.park!;
+  assert.equal(record.phase, 'parked');
+  assert.equal(record.slotDisposition, 'freed');
+  assert.ok(record.slotFreedAt, 'slotFreedAt records that ownership was actually released');
+  // The park record survives with its slot binding; only slot ownership went away.
+  assert.equal(record.slotId, 'slot-a');
+  assert.equal(ctx.runs.get('run-gate')!.slotId, 'slot-a');
+  assert.equal(ctx.slotOwners.get('slot-a'), null);
+  // A gate park keeps the run at its gate: the pending decision stays answerable.
+  assert.equal(ctx.runs.get('run-gate')!.status, 'human-gating');
+  // Write-ahead ordering: the intent journal lands before the runner is stopped,
+  // and the slot is freed only after the last resource stop.
+  const journalIndex = ctx.calls.findIndex((call) => call.startsWith('journal-write:'));
+  const stopIndex = ctx.calls.findIndex((call) => call.startsWith('stop-runner:'));
+  const freeIndex = ctx.calls.findIndex((call) => call.startsWith('free-slot:'));
+  const resourceIndex = ctx.calls.findIndex((call) => call.startsWith('stop-resource:'));
+  assert.ok(journalIndex >= 0 && journalIndex < stopIndex);
+  assert.ok(resourceIndex >= 0 && resourceIndex < freeIndex);
+});
+
+test('a gate park that cannot release slot ownership records a partial, not a freed slot', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // Someone else claims the slot mid-park, after the preflight and before the
+  // ownership release. Stealing it earlier would just stale the preview.
+  const stopResource = ctx.deps.stopResource;
+  ctx.deps.stopResource = async (slotId, resourceId) => {
+    ctx.slotOwners.set('slot-a', 'run-other');
+    return stopResource(slotId, resourceId);
+  };
+
+  const result = await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  // No record reached `parked`, so the single-run batch reports failed.
+  assert.equal(result.outcome, 'failed');
+  const record = ctx.runs.get('run-gate')!.park!;
+  assert.equal(record.phase, 'partial');
+  assert.equal(record.slotFreedAt, undefined);
+  assert.ok(record.errors.some((error) => error.action === 'slot.free'));
+});
+
+test('restore refuses a freed-slot park record with its own code', async () => {
+  const run = gateHeldRun('run-gate', 'slot-a');
+  run.park = {
+    ...parkedRecord(run.id, 'slot-a'),
+    mode: 'release',
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-08-21T00:00:10.000Z',
+    prePauseStatus: 'human-gating',
+    recoveryHandle: recoveryHandle(run.id, 'slot-a'),
+    residuals: { runner: 'stopped', resources: [] },
+  };
+  const ctx = harness([run]);
+  ctx.slotOwners.set('slot-a', null);
+
+  const preview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const entry = preview.runs.find((item) => item.runId === 'run-gate')!;
+  assert.equal(entry.eligibility.eligible, false);
+  assert.equal(entry.eligibility.code, 'FREED_SLOT_RESTORE_UNSUPPORTED');
+});
+
+test('restart reconciliation keeps a freed-slot gate park parked without a paused run status', async () => {
+  const run = gateHeldRun('run-gate', 'slot-a');
+  run.park = {
+    ...parkedRecord(run.id, 'slot-a'),
+    mode: 'release',
+    phase: 'resources-stopping',
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-08-21T00:00:10.000Z',
+    prePauseStatus: 'human-gating',
+    recoveryHandle: recoveryHandle(run.id, 'slot-a'),
+    resourceManifest: {
+      capturedAt: '2026-08-21T00:00:00.000Z',
+      resources: [
+        {
+          resourceId: 'browser-cdp',
+          label: 'browser-cdp',
+          type: 'browser',
+          observedStatus: 'running',
+          phase: 'stopped',
+          capabilityLeaseIds: [],
+        },
+      ],
+      capabilityLeases: [],
+    },
+    residuals: { runner: 'stopped', resources: [{ resourceId: 'browser-cdp', state: 'stopped' }] },
+  };
+  const ctx = harness([run]);
+  ctx.slotOwners.set('slot-a', null);
+  ctx.runnerStates.set('run-gate', 'stopped');
+
+  const result = await ctx.service.reconcile();
+
+  assert.deepEqual(result, { reconciled: 1, partial: 0 });
+  assert.equal(ctx.runs.get('run-gate')!.park?.phase, 'parked');
+  assert.equal(ctx.runs.get('run-gate')!.status, 'human-gating');
+  assert.equal(ctx.slotOwners.get('slot-a'), null);
+});
+
+// ─── Round 2: workspace preservation and the journalled free transition ───
+
+test('a gate park refuses when freeing the slot would discard uncommitted work', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  ctx.workspaces.set('slot-a', {
+    branch: 'work/run-gate',
+    headSha: 'sha-run-gate',
+    dirtyPaths: [' M src/app.ts', '?? notes.md'],
+  });
+
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const entry = preview.runs.find((run) => run.runId === 'run-gate')!;
+  assert.equal(entry.eligibility.eligible, false);
+  assert.equal(entry.eligibility.code, 'WORKSPACE_NOT_PRESERVABLE');
+  assert.match(entry.eligibility.reason, /src\/app\.ts/);
+  // Fail closed: nothing was detached and the runner was never stopped.
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('detach-workspace:')),
+    false,
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('stop-runner:')),
+    false,
+  );
+});
+
+test('a gate park detaches the parked branch before it releases the slot', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  const record = ctx.runs.get('run-gate')!.park!;
+  assert.deepEqual(record.preservedWorkspace, {
+    branch: 'work/run-gate',
+    headSha: 'sha-run-gate',
+    detachedAt: record.preservedWorkspace!.detachedAt,
+  });
+  // The branch is out of the working tree, so the next occupant's prepare
+  // resets a detached HEAD instead of moving `work/run-gate`.
+  assert.equal(ctx.workspaces.get('slot-a')!.branch, null);
+  const detachIndex = ctx.calls.indexOf('detach-workspace:slot-a:work/run-gate');
+  const freeIndex = ctx.calls.findIndex((call) => call.startsWith('free-slot:'));
+  assert.ok(detachIndex >= 0, 'the parked branch was detached');
+  assert.ok(detachIndex < freeIndex, 'the detach lands before slot ownership is released');
+});
+
+test('a gate park that cannot detach the parked branch never releases the slot', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // The tree went dirty between the preview and the detach.
+  const stopResource = ctx.deps.stopResource;
+  ctx.deps.stopResource = async (slotId, resourceId) => {
+    ctx.workspaces.set('slot-a', {
+      branch: 'work/run-gate',
+      headSha: 'sha-run-gate',
+      dirtyPaths: [' M src/late.ts'],
+    });
+    return stopResource(slotId, resourceId);
+  };
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  const record = ctx.runs.get('run-gate')!.park!;
+  assert.equal(record.phase, 'partial');
+  assert.equal(record.slotFreedAt, undefined);
+  assert.ok(record.errors.some((error) => error.action === 'workspace.detach'));
+  // The slot still belongs to the parked run, so nothing can prepare over it.
+  assert.equal(ctx.slotOwners.get('slot-a'), 'run-gate');
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('free-slot:')),
+    false,
+  );
+});
+
+test('the free transition is journalled around the slot release and cleared after it', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  const writeIndex = ctx.calls.findIndex((call) => call.startsWith('free-journal-write:'));
+  const freeIndex = ctx.calls.findIndex((call) => call.startsWith('free-slot:'));
+  const deleteIndex = ctx.calls.findIndex((call) => call.startsWith('free-journal-delete:'));
+  assert.ok(writeIndex >= 0 && writeIndex < freeIndex, 'intent is durable before the release');
+  assert.ok(freeIndex < deleteIndex, 'the journal outlives the release it covers');
+  assert.equal(ctx.freeSlotJournals.size, 0, 'a completed transition leaves no journal');
+});
+
+test('recovery finishes a free transition whose slotFreedAt write was lost', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // Crash window: the slot release landed, the `slotFreedAt` write did not, and
+  // the journal survived. Dispatch has already handed the slot to another run.
+  const freeSlotOwnership = ctx.deps.freeSlotOwnership;
+  ctx.deps.freeSlotOwnership = async (slotId, runId) => {
+    await freeSlotOwnership(slotId, runId);
+    throw new Error('crashed before slotFreedAt was persisted');
+  };
+  await ctx.service
+    .execute({
+      machine: 'machine-a',
+      mode: 'release',
+      previewId: preview.previewId,
+      reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    })
+    .catch(() => undefined);
+  ctx.deps.freeSlotOwnership = freeSlotOwnership;
+  const crashed = ctx.runs.get('run-gate')!.park!;
+  assert.equal(crashed.slotFreedAt, undefined, 'the crash left the record unfreed');
+  assert.equal(ctx.freeSlotJournals.size, 1, 'the journal survived the crash');
+  ctx.slotOwners.set('slot-a', 'run-successor');
+  ctx.runnerStates.set('run-gate', 'stopped');
+
+  await ctx.service.reconcile();
+
+  const repaired = ctx.runs.get('run-gate')!.park!;
+  assert.ok(repaired.slotFreedAt, 'recovery settled the interrupted free transition');
+  assert.equal(repaired.phase, 'parked');
+  // The successor keeps the slot; the parked record keeps its binding.
+  assert.equal(ctx.slotOwners.get('slot-a'), 'run-successor');
+  assert.equal(repaired.slotId, 'slot-a');
+  assert.equal(ctx.runs.get('run-gate')!.slotId, 'slot-a');
+  assert.equal(ctx.freeSlotJournals.size, 0, 'the settled journal is cleared');
+});
+
+test('a freed record reports its own recorded residuals, not the successor providers', async () => {
+  const run = gateHeldRun('run-gate', 'slot-a');
+  run.park = {
+    ...parkedRecord(run.id, 'slot-a'),
+    mode: 'release',
+    phase: 'resources-stopping',
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-08-21T00:00:10.000Z',
+    prePauseStatus: 'human-gating',
+    recoveryHandle: recoveryHandle(run.id, 'slot-a'),
+    resourceManifest: {
+      capturedAt: '2026-08-21T00:00:00.000Z',
+      resources: [
+        {
+          resourceId: 'browser-cdp',
+          label: 'browser-cdp',
+          type: 'browser',
+          observedStatus: 'running',
+          phase: 'stopped',
+          capabilityLeaseIds: [],
+        },
+      ],
+      capabilityLeases: [],
+    },
+    residuals: { runner: 'stopped', resources: [{ resourceId: 'browser-cdp', state: 'stopped' }] },
+  };
+  const ctx = harness([run]);
+  ctx.slotOwners.set('slot-a', 'run-successor');
+  // The successor booted the same provider on the slot it now owns, and its
+  // runner is live. Probing the slot would read both as the parked run's.
+  ctx.runnerStates.set('run-gate', 'running');
+
+  await ctx.service.reconcile();
+
+  const record = ctx.runs.get('run-gate')!.park!;
+  assert.equal(record.phase, 'parked', 'the successor providers did not reopen the parked record');
+  assert.equal(record.residuals.runner, 'stopped');
+  assert.deepEqual(record.residuals.resources, [
+    {
+      resourceId: 'browser-cdp',
+      state: 'stopped',
+      detail: 'observed before the slot was freed',
+    },
+  ]);
+  // Nothing on the successor's slot was probed for this record.
+  assert.equal(
+    ctx.calls.some((call) => call === 'observe:slot-a'),
+    false,
+  );
+});
+
+test('a park that detached the branch is never discarded as zero-effect', async () => {
+  const run = gateHeldRun('run-gate', 'slot-a');
+  run.park = {
+    ...parkedRecord(run.id, 'slot-a'),
+    mode: 'release',
+    phase: 'partial',
+    slotDisposition: 'freed',
+    prePauseStatus: 'human-gating',
+    preservedWorkspace: {
+      branch: 'work/run-gate',
+      headSha: 'sha-run-gate',
+      detachedAt: '2026-08-21T00:00:09.000Z',
+    },
+    recoveryHandle: recoveryHandle(run.id, 'slot-a'),
+    residuals: { runner: 'running', resources: [] },
+  };
+  const ctx = harness([run]);
+
+  await ctx.service.reconcile();
+
+  // A gate park preserves the run status, so the status check says nothing.
+  // The detached branch is the effect that must keep the record alive — losing
+  // it would leave a detached HEAD with no note of which branch to restore.
+  const record = ctx.runs.get('run-gate')!.park;
+  assert.ok(record, 'the record survived reconciliation');
+  assert.equal(record!.preservedWorkspace?.branch, 'work/run-gate');
+});
+
+test('the detach timestamp records the fact, so a re-drive does not detach twice', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  const record = ctx.runs.get('run-gate')!.park!;
+  assert.ok(record.preservedWorkspace?.detachedAt, 'the landed detach is recorded');
+  const detachCalls = ctx.calls.filter((call) => call.startsWith('detach-workspace:')).length;
+  assert.equal(detachCalls, 1);
+
+  // Re-driving the settled transition is a no-op on the working tree.
+  await ctx.service.reconcile();
+  assert.equal(
+    ctx.calls.filter((call) => call.startsWith('detach-workspace:')).length,
+    detachCalls,
+  );
+});
+
+// ─── ADR-054 free-slot: a park that changes nothing must not strand the run ───
+
+test('a park that failed before touching the slot stays fenced but becomes restorable', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // The worker is live during preview and only stops later, so the tree can go
+  // dirty in between. The detach then refuses and nothing at all has landed.
+  const stopResource = ctx.deps.stopResource;
+  ctx.deps.stopResource = async (slotId, resourceId) => {
+    ctx.workspaces.set('slot-a', {
+      branch: 'work/run-gate',
+      headSha: 'sha-run-gate',
+      dirtyPaths: [' M src/late.ts'],
+    });
+    return stopResource(slotId, resourceId);
+  };
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  const parked = ctx.runs.get('run-gate')!;
+  assert.equal(parked.park!.phase, 'partial');
+  assert.equal(parked.park!.slotFreedAt, undefined);
+  assert.equal(parked.park!.preservedWorkspace?.detachedAt, undefined);
+  // The failure is on the record, so the operator can see why.
+  assert.ok(parked.park!.errors.some((error) => error.action === 'workspace.detach'));
+
+  // The park stops the runner BEFORE it touches the slot, so by the time the
+  // detach refused the worker was already dead. The fence therefore stays up:
+  // answering a publication gate with a stopped worker is the silent version of
+  // the strand this contract exists to prevent.
+  assert.equal(parked.park!.residuals.runner, 'stopped');
+  assert.equal(isGateParkInFlightOrFreed(parked), true);
+
+  // Restore is the exit, and it must be admitted. A gate park preserves the
+  // run's status by design, so the ordinary `paused` precondition would refuse
+  // every one of them and leave cancellation as the only way out.
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  const verdict = restorePreview.runs[0]?.eligibility;
+  assert.notEqual(verdict?.code, 'FREED_SLOT_RESTORE_UNSUPPORTED');
+  assert.notEqual(verdict?.code, 'RUN_NOT_PAUSED', 'a gate park never sets paused');
+});
+
+test('a detach that landed is rolled back when the release fails, so the run is not stranded', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // The detach succeeds; a rival fences the row so the ownership CAS refuses.
+  ctx.deps.freeSlotOwnership = async (slotId, runId) => {
+    ctx.calls.push(`free-slot:${slotId}:${runId}`);
+    return false;
+  };
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  const parked = ctx.runs.get('run-gate')!;
+  assert.equal(parked.park!.phase, 'partial');
+  assert.equal(parked.park!.slotFreedAt, undefined);
+  // The branch went back into the working tree at the tip it was detached from.
+  assert.ok(ctx.calls.includes('reattach-workspace:slot-a:work/run-gate'));
+  assert.equal(ctx.workspaces.get('slot-a')?.branch, 'work/run-gate');
+  assert.equal(parked.park!.preservedWorkspace?.detachedAt, undefined);
+  // The workspace is back, but the runner the park stopped is still stopped, so
+  // the run stays fenced until a restore reloads it.
+  assert.equal(isGateParkInFlightOrFreed(parked), true);
+  // The write-ahead marker is gone, so the next reconcile cannot re-drive this
+  // abandoned transition and free the slot of a run that has since resumed.
+  assert.equal(ctx.freeSlotJournals.size, 0, 'the abandoned intent is durably dropped');
+});
+
+test('a detach that cannot be rolled back keeps the fence up rather than lying', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async () => false;
+  ctx.deps.reattachParkedWorkspace = async () => {
+    throw new Error('branch moved under us');
+  };
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  const parked = ctx.runs.get('run-gate')!;
+  assert.ok(parked.park!.preservedWorkspace?.detachedAt);
+  assert.ok(parked.park!.errors.some((error) => error.action === 'workspace.reattach'));
+  // One real effect is still outstanding, so the run stays fenced.
+  assert.equal(isGateParkInFlightOrFreed(parked), true);
+});
+
+test('recovery concludes a release landed only when the slot row proves it', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // Crash shape: the detach landed and the release did not, and the row is
+  // fenced mid-teardown — still ours, so the CAS refuses for a reason that is
+  // NOT a completed release.
+  ctx.deps.freeSlotOwnership = async () => false;
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+  // Re-arm the journal and put the record back mid-transition.
+  await ctx.deps.writeIntentJournal(
+    'free-slot',
+    [{ ...ctx.runs.get('run-gate')!.park!, phase: 'parked' }],
+    'run-gate',
+  );
+  ctx.runs.get('run-gate')!.park = {
+    ...ctx.runs.get('run-gate')!.park!,
+    // An UNSETTLED phase, so reconcile actually re-observes this record.
+    phase: 'resources-stopping',
+    slotFreedAt: undefined,
+  };
+  ctx.slotOwners.set('slot-a', 'run-gate');
+  ctx.slotLifecycles.set('slot-a', 'busy');
+
+  await ctx.service.reconcile();
+
+  // The row still names this run, so "not ours" was never true: concluding
+  // freed here would publish a release that never happened.
+  assert.equal(ctx.runs.get('run-gate')!.park!.slotFreedAt, undefined);
+  assert.equal(ctx.runs.get('run-gate')!.park!.phase, 'partial');
+});
+
+test('recovery finishes the transition when the row shows a rival already owns the slot', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async () => false;
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+  await ctx.deps.writeIntentJournal(
+    'free-slot',
+    [{ ...ctx.runs.get('run-gate')!.park!, phase: 'parked' }],
+    'run-gate',
+  );
+  ctx.runs.get('run-gate')!.park = {
+    ...ctx.runs.get('run-gate')!.park!,
+    // An UNSETTLED phase, so reconcile actually re-observes this record.
+    phase: 'resources-stopping',
+    slotFreedAt: undefined,
+  };
+  // The release DID land before the crash and dispatch handed the slot on.
+  ctx.slotOwners.set('slot-a', 'successor-run');
+  ctx.slotLifecycles.set('slot-a', 'busy');
+
+  await ctx.service.reconcile();
+
+  assert.ok(ctx.runs.get('run-gate')!.park!.slotFreedAt);
+});
+
+test('a park stops rather than freeing a slot whose run went terminal underneath it', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // A cancel racing the park terminalizes the run while resources stop. Cancel
+  // owns the slot cleanup from here; two writers on one slot row is the bug.
+  const stopResource = ctx.deps.stopResource;
+  ctx.deps.stopResource = async (slotId, resourceId) => {
+    ctx.runs.get('run-gate')!.status = 'cancelled';
+    return stopResource(slotId, resourceId);
+  };
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  assert.equal(ctx.runs.get('run-gate')!.park!.slotFreedAt, undefined);
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('detach-workspace:')),
+    false,
+    'a terminal run must not have its workspace detached',
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('free-slot:')),
+    false,
+  );
+});
+
+test('one batch member completing does not erase a failed sibling pending repair', async () => {
+  const ctx = harness([gateHeldRun('run-a', 'slot-a'), gateHeldRun('run-b', 'slot-b')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-a', 'run-b'] },
+  });
+  // run-a CRASHES mid-transition, so its write-ahead marker must survive for the
+  // next reconcile; run-b completes and deletes its own. Both share one
+  // operationId, which is exactly why an unscoped journal file cannot hold both:
+  // run-b's cleanup would take run-a's pending repair with it.
+  ctx.deps.freeSlotOwnership = async (slotId, runId) => {
+    ctx.calls.push(`free-slot:${slotId}:${runId}`);
+    if (runId === 'run-a') throw new Error('crashed before slotFreedAt was persisted');
+    ctx.slotOwners.set(slotId, null);
+    return true;
+  };
+
+  await ctx.service
+    .execute({
+      machine: 'machine-a',
+      mode: 'release',
+      previewId: preview.previewId,
+      reviewedTargets: [
+        { runId: 'run-a', generation: 3 },
+        { runId: 'run-b', generation: 3 },
+      ],
+    })
+    .catch(() => undefined);
+
+  assert.equal(ctx.runs.get('run-b')!.park!.slotFreedAt !== undefined, true);
+  assert.equal(ctx.runs.get('run-a')!.park!.slotFreedAt, undefined);
+  // run-b's completion deletes ITS journal. run-a's unfinished intent must
+  // survive, or the crash window it covers is silently lost.
+  assert.equal(
+    [...ctx.freeSlotJournals].some((key) => key.endsWith(':run-a')),
+    true,
+    'the failed member keeps its own pending repair',
+  );
+  assert.equal(
+    [...ctx.freeSlotJournals].some((key) => key.endsWith(':run-b')),
+    false,
+    'the completed member cleans up only its own intent',
+  );
+});
+
+test('rollback refuses to touch a checkout a successor already owns', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // The release is refused because a rival already claimed the row. Reattaching
+  // would run `git checkout <our branch>` inside the successor's working tree,
+  // on top of whatever their prepare just laid down.
+  ctx.deps.freeSlotOwnership = async (slotId, runId) => {
+    ctx.calls.push(`free-slot:${slotId}:${runId}`);
+    ctx.slotOwners.set(slotId, 'run-successor');
+    return false;
+  };
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('reattach-workspace:')),
+    false,
+    'a slot owned by someone else is not ours to check out',
+  );
+  const parked = ctx.runs.get('run-gate')!.park!;
+  assert.ok(parked.errors.some((error) => error.action === 'workspace.reattach'));
+  // The detach is still on the record, so the fence stays up and the outstanding
+  // effect is visible rather than silently assumed reversed.
+  assert.ok(parked.preservedWorkspace?.detachedAt);
+  assert.equal(isGateParkInFlightOrFreed(ctx.runs.get('run-gate')!), true);
+});
+
+test('rollback refuses when the workspace moved off the commit the park detached', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async (slotId, runId) => {
+    ctx.calls.push(`free-slot:${slotId}:${runId}`);
+    // Ownership is still ours, but another writer moved the tree.
+    ctx.workspaces.set('slot-a', {
+      branch: null,
+      headSha: 'sha-someone-else',
+      dirtyPaths: [],
+    });
+    return false;
+  };
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('reattach-workspace:')),
+    false,
+    'a checkout onto an unknown tip would be guessing whose work is on top',
+  );
+  const parked = ctx.runs.get('run-gate')!.park!;
+  assert.ok(
+    parked.errors.some(
+      (error) => error.action === 'workspace.reattach' && /moved to/.test(error.message ?? ''),
+    ),
+  );
+});
+
+test('a fenced partial gate park restores end to end and its gate is answerable again', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // The tree goes dirty between preview and detach, so the park refuses after
+  // it has already stopped the worker. This is the state restore is the
+  // advertised exit from.
+  const stopResource = ctx.deps.stopResource;
+  ctx.deps.stopResource = async (slotId, resourceId) => {
+    ctx.workspaces.set('slot-a', {
+      branch: 'work/run-gate',
+      headSha: 'sha-run-gate',
+      dirtyPaths: [' M src/late.ts'],
+    });
+    return stopResource(slotId, resourceId);
+  };
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+  ctx.deps.stopResource = stopResource;
+
+  const fenced = ctx.runs.get('run-gate')!;
+  assert.equal(fenced.park!.phase, 'partial');
+  assert.equal(fenced.status, 'human-gating', 'a gate park never moves the run to paused');
+  assert.equal(isGateParkInFlightOrFreed(fenced), true, 'fenced while the worker is stopped');
+
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  assert.equal(
+    restorePreview.runs[0]?.eligibility.eligible,
+    true,
+    JSON.stringify(restorePreview.runs[0]?.eligibility),
+  );
+
+  const restored = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'gate-park-restore',
+  });
+
+  // Before this branch existed the restore reloaded the worker and THEN threw
+  // at run.resume, reporting not-ok for a restore that had actually happened.
+  assert.equal(restored.ok, true, JSON.stringify(restored.records?.[0]?.errors ?? []));
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.phase, 'restored');
+  assert.equal(after.status, 'human-gating', 'the gate status the park preserved survives restore');
+  assert.equal(ctx.runnerStates.get('run-gate'), 'running', 'the worker came back');
+  // The whole point: the operator can answer the gate again.
+  assert.equal(isGateParkInFlightOrFreed(after), false);
+  // Nothing was re-driven — the gate loop was never cancelled, so a generation
+  // bump would only have made a live loop bail.
+  assert.equal(after.engineState?.generation, 3);
+});
+
+test('restore refuses to report success while the parked branch is still detached', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // Release refused AND the rollback fails, so the park settles partial with
+  // the branch still out of the working tree.
+  ctx.deps.freeSlotOwnership = async () => false;
+  ctx.deps.reattachParkedWorkspace = async () => {
+    throw new Error('branch moved under us');
+  };
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+  assert.ok(ctx.runs.get('run-gate')!.park!.preservedWorkspace?.detachedAt);
+
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  const restored = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'gate-park-restore-detached',
+  });
+
+  // Reporting ok here would tell the operator the run is back while its
+  // workspace has no branch checked out.
+  assert.equal(restored.ok, false);
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.phase, 'partial');
+  assert.ok(after.park!.errors.some((error) => error.action === 'workspace.reattach'));
+  // The detach is still outstanding, so the fence stays up.
+  assert.ok(after.park!.preservedWorkspace?.detachedAt);
+  assert.equal(isGateParkInFlightOrFreed(after), true);
+});
+
+test('restore retries the reattach and completes once the branch is back', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async () => false;
+  const reattach = ctx.deps.reattachParkedWorkspace;
+  let attempts = 0;
+  ctx.deps.reattachParkedWorkspace = async (run, workspace) => {
+    attempts += 1;
+    // Fails during the park's own rollback, succeeds when restore retries it.
+    if (attempts === 1) throw new Error('transient checkout failure');
+    return reattach(run, workspace);
+  };
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+  assert.ok(ctx.runs.get('run-gate')!.park!.preservedWorkspace?.detachedAt);
+
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  const restored = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'gate-park-restore-retry',
+  });
+
+  assert.equal(restored.ok, true, JSON.stringify(ctx.runs.get('run-gate')!.park!.errors));
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.phase, 'restored');
+  assert.equal(after.park!.preservedWorkspace?.detachedAt, undefined);
+  assert.equal(ctx.workspaces.get('slot-a')?.branch, 'work/run-gate');
+  assert.equal(isGateParkInFlightOrFreed(after), false);
+});
+
+test('a reattach failure leaves the generation untouched, so the restore can be retried', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async () => false;
+  let allowReattach = false;
+  ctx.deps.reattachParkedWorkspace = async () => {
+    if (!allowReattach) throw new Error('checkout busy');
+  };
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+  assert.ok(ctx.runs.get('run-gate')!.park!.preservedWorkspace?.detachedAt);
+
+  // First restore: the reattach still fails. It must fail BEFORE anything that
+  // advances the generation, or the record is left describing a generation that
+  // no longer exists and every later preview rejects GENERATION_CHANGED.
+  const firstPreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  const firstAttempt = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: firstPreview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'restore-attempt-1',
+  });
+  assert.equal(firstAttempt.ok, false);
+  const afterFailure = ctx.runs.get('run-gate')!;
+  assert.equal(afterFailure.park!.phase, 'partial');
+  assert.equal(
+    afterFailure.park!.generation,
+    afterFailure.engineState?.generation ?? 3,
+    'the record must still describe the run generation that exists',
+  );
+
+  // Second restore once the checkout problem clears: it must be admitted.
+  allowReattach = true;
+  ctx.deps.reattachParkedWorkspace = async (run, workspace) => {
+    const current = ctx.workspaces.get(run.slotId!)!;
+    ctx.workspaces.set(run.slotId!, { ...current, branch: workspace.branch });
+  };
+  const retryPreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  assert.notEqual(
+    retryPreview.runs[0]?.eligibility.code,
+    'GENERATION_CHANGED',
+    'a failed restore must not make the record permanently unretryable',
+  );
+  const retry = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: retryPreview.previewId,
+    reviewedTargets: [
+      { runId: 'run-gate', generation: ctx.runs.get('run-gate')!.engineState?.generation ?? 3 },
+    ],
+    operationId: 'restore-attempt-2',
+  });
+  assert.equal(retry.ok, true, JSON.stringify(ctx.runs.get('run-gate')!.park!.errors));
+  assert.equal(ctx.runs.get('run-gate')!.park!.phase, 'restored');
+});
+
+test('a replay that advances the generation then fails still leaves the record retryable', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async () => false;
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  // The resume advances the generation (as a gate replay does) and then fails
+  // its acknowledgement check. This is the one failure path that can follow an
+  // advance, since the reattach is verified before the resume.
+  ctx.deps.resumeRun = async (runId) => {
+    const run = ctx.runs.get(runId)!;
+    run.engineState = { ...run.engineState, generation: 9 };
+    throw new Error('acknowledgement did not match');
+  };
+
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  const attempt = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'restore-advance-then-fail',
+  });
+
+  assert.equal(attempt.ok, false);
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.phase, 'partial');
+  // Left at the pre-replay generation, the preview would reject
+  // GENERATION_CHANGED and the record could never be retried.
+  assert.equal(after.park!.generation, 9);
+  const retryPreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  assert.notEqual(retryPreview.runs[0]?.eligibility.code, 'GENERATION_CHANGED');
+});
+
+test('a persistence failure after a replay still leaves the record retryable', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async () => false;
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  // The resume replays the gate, which takes ownership and ADVANCES the run
+  // generation. It succeeds.
+  ctx.deps.resumeRun = async (runId) => {
+    const run = ctx.runs.get(runId)!;
+    const previousGeneration = run.engineState?.generation ?? 0;
+    run.engineState = { ...run.engineState, generation: 9 };
+    return {
+      run,
+      previousGeneration,
+      generation: 9,
+      stepName: run.park!.prePauseCurrentStep!.name,
+      status: run.status,
+      acknowledgedAt: '2026-08-21T00:00:31.000Z',
+      gateParkReplayed: true as const,
+    };
+  };
+  // Then the settle's own persistence throws. This is OUTSIDE the resume's
+  // catch, so it escapes restoreOne and lands in settleUnexpectedFailure — the
+  // path that rebuilds the record from scratch.
+  const persistRun = ctx.deps.persistRun;
+  ctx.deps.persistRun = async (run, reason) => {
+    if (reason === 'machine-pause-restored') throw new Error('disk full');
+    return persistRun(run, reason);
+  };
+
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  const attempt = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'restore-persist-fails',
+  });
+
+  assert.equal(attempt.ok, false);
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.phase, 'partial');
+  assert.equal(after.engineState?.generation, 9, 'the replay advanced the run');
+  // Left at the pre-replay generation, both the restore preview and the execute
+  // preflight refuse every retry forever.
+  assert.equal(
+    after.park!.generation,
+    9,
+    'the record must describe the generation the run actually has',
+  );
+  assert.ok(
+    after.park!.errors.some((error) => error.code === 'UNEXPECTED_EFFECT_FAILURE'),
+    'the failure itself is on the record for the operator to read',
+  );
+
+  // And the retry is admitted rather than rejected as changed.
+  ctx.deps.persistRun = persistRun;
+  const retryPreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  assert.notEqual(retryPreview.runs[0]?.eligibility.code, 'GENERATION_CHANGED');
+  assert.equal(
+    retryPreview.runs[0]?.eligibility.eligible,
+    true,
+    JSON.stringify(retryPreview.runs[0]?.eligibility),
+  );
+});
+
+test('residual observation never throws, so a probe failure cannot erase a settled result', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  // Both probes are unreachable. Residual collection runs on settlement paths,
+  // after an operation has already had its effects, so it must report what it
+  // could observe rather than throwing and erasing that durable result.
+  ctx.deps.runnerRunning = async () => {
+    throw new Error('node unreachable');
+  };
+  ctx.deps.observeResources = async () => {
+    throw new Error('node unreachable');
+  };
+  ctx.runs.get('run-gate')!.park = {
+    ...ctx.runs.get('run-gate')!.park!,
+    // An UNSETTLED phase, so reconcile actually re-observes this record.
+    phase: 'resources-stopping',
+    slotFreedAt: undefined,
+    recoveryHandle: {
+      sessionId: 'session-run-gate',
+      sessionPath: '/sessions/run-gate.jsonl',
+      runnerId: 'claude',
+      target: { session: 'slot-a', window: '0', pane: '0' },
+      model: 'sonnet',
+      capturedAt: '2026-08-21T00:00:00.000Z',
+    } as never,
+  };
+
+  // Reconcile observes residuals for every unsettled record on the machine.
+  await ctx.service.reconcile();
+
+  const after = ctx.runs.get('run-gate')!.park!;
+  // What could not be observed is reported as unknown rather than guessed, and
+  // the reconcile completed instead of throwing.
+  assert.equal(after.residuals.runner, 'unknown');
+  for (const resource of after.residuals.resources) {
+    assert.equal(resource.state, 'unknown');
+  }
+});
+
+test('a pause-path failure never adopts a foreign generation bump', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // A pause never advances the run generation itself, so a bump seen here is
+  // FOREIGN — another actor moved the run while it parked. Adopting it would
+  // defeat the GENERATION_CHANGED check for this record's later restore, which
+  // is exactly the drift that check exists to catch.
+  const persistRun = ctx.deps.persistRun;
+  ctx.deps.persistRun = async (run, reason) => {
+    if (reason === 'machine-pause-parked') {
+      const live = ctx.runs.get(run.id)!;
+      live.engineState = { ...live.engineState, generation: 42 };
+      throw new Error('disk full');
+    }
+    return persistRun(run, reason);
+  };
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.engineState?.generation, 42, 'the foreign bump landed on the run');
+  assert.equal(
+    after.park!.generation,
+    3,
+    'the record keeps the generation it parked at, so the drift is still visible',
+  );
 });

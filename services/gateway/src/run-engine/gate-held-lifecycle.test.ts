@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { PipelineSteps } from '@farmslot/protocol';
+import { type MachineParkRecord, PipelineSteps } from '@farmslot/protocol';
 
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
@@ -9,7 +9,10 @@ import {
   blocksGateHeldSlotRelease,
   completeStepDisposition,
   findActiveGateHeldRunForSlot,
+  findGateParkedRunForSlot,
   isGateHeldPublicationRun,
+  isSlotFreedByPark,
+  parkFreedSlotIds,
   shouldKeepWorkerWarmThroughCiWatch,
   shouldTeardownGateHeldAgents,
 } from './gate-held-lifecycle.js';
@@ -313,4 +316,96 @@ test('a gate-held run waits under operator-wait, the one posture that cannot sto
   assert.equal(postureForBoundary('operator-wait'), 'operator-wait');
   assert.equal(postureForBoundary('gate-resolved'), 'operator-wait');
   assert.notEqual(postureForBoundary('operator-wait'), 'parked');
+});
+
+// ─── ADR-054 free-slot at an operator wait ───
+
+function freedGateParkRecord(runId: string, slotId: string): MachineParkRecord {
+  return {
+    version: 1,
+    operationId: `park-${runId}`,
+    previewId: `preview-${runId}`,
+    runId,
+    generation: 0,
+    machine: 'machine-a',
+    slotId,
+    mode: 'release',
+    phase: 'parked',
+    slotDisposition: 'freed',
+    slotFreedAt: new Date().toISOString(),
+    prePauseStatus: 'blocked',
+    prePauseCurrentStep: { index: 1, name: PipelineSteps.HUMAN_GATE, status: 'running' },
+    resourceManifest: { capturedAt: new Date().toISOString(), resources: [], capabilityLeases: [] },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped', resources: [] },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+test('isSlotFreedByPark keys on the recorded release, not the park intent', () => {
+  const record = freedGateParkRecord('run-1', 'slot-1');
+  assert.equal(isSlotFreedByPark({ park: record }), true);
+  assert.equal(isSlotFreedByPark({ park: { ...record, slotFreedAt: undefined } }), false);
+  assert.equal(isSlotFreedByPark({ park: null }), false);
+  assert.equal(isSlotFreedByPark({}), false);
+});
+
+test('a gate-parked run leaves findActiveGateHeldRunForSlot and moves to the park lookup', async (t) => {
+  const slotId = `gate-parked-release-${Date.now()}`;
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-gate-parked`,
+    slotId,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, gateHeldRunPatch());
+
+  // Still holding the slot: it blocks release and has no park lookup entry.
+  assert.equal(findActiveGateHeldRunForSlot(slotId)?.id, run.id);
+  assert.equal(findGateParkedRunForSlot(slotId), undefined);
+
+  updateRun(run.id, { park: freedGateParkRecord(run.id, slotId) });
+
+  // Freed: the run no longer occupies the slot, but its record is protected.
+  assert.equal(findActiveGateHeldRunForSlot(slotId), undefined);
+  assert.equal(findGateParkedRunForSlot(slotId)?.id, run.id);
+});
+
+test('parkFreedSlotIds lists exactly the slots an automated sweep must leave alone', async (t) => {
+  const parkedSlot = `park-freed-sweep-${Date.now()}`;
+  const busySlot = `park-busy-sweep-${Date.now()}`;
+  const parked = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-sweep-parked`,
+    slotId: parkedSlot,
+  });
+  const holding = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-sweep-holding`,
+    slotId: busySlot,
+  });
+  t.after(() => cleanupRun(parked.id));
+  t.after(() => cleanupRun(holding.id));
+  updateRun(parked.id, {
+    ...gateHeldRunPatch(),
+    park: freedGateParkRecord(parked.id, parkedSlot),
+  });
+  // Same gate-held shape, but its park never released the slot.
+  updateRun(holding.id, {
+    ...gateHeldRunPatch(),
+    park: { ...freedGateParkRecord(holding.id, busySlot), slotFreedAt: undefined },
+  });
+
+  const ids = parkFreedSlotIds();
+
+  assert.equal(ids.has(parkedSlot), true);
+  assert.equal(ids.has(busySlot), false, 'a park that kept its slot is not a swept-over slot');
 });

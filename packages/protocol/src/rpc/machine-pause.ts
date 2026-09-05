@@ -2,6 +2,7 @@ import type {
   MachineParkCurrentStep,
   MachineParkRecord,
   MachineParkResourceManifest,
+  MachineParkSlotDisposition,
   MachinePauseMode,
   RunStatus,
 } from '../contracts/index.js';
@@ -50,6 +51,8 @@ export interface MachinePausePreviewRun {
   currentStep: MachineParkCurrentStep | null;
   /** Backend-owned verdict; clients must not reimplement eligibility policy. */
   eligibility: MachinePauseEligibility;
+  /** Whether executing this park would free the run's slot for dispatch. */
+  slotDisposition: MachineParkSlotDisposition;
   recoveryPolicy: MachinePauseRecoveryPolicy;
   resourceManifest: MachineParkResourceManifest;
 }

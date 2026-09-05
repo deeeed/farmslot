@@ -10,6 +10,7 @@ import {
   type IndependentReviewStatus,
   isInteractiveDevRun,
   isTerminalRunStatus,
+  MachineParkEligibilityCodes,
   parseGitHubRef,
   PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
@@ -76,8 +77,12 @@ import {
   setRunFlags,
   startRun,
 } from '../run-engine/orchestrator.js';
+import { isGateParkInFlightOrFreed, isSlotFreedByPark } from '../run-engine/park-slot-binding.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
-import { normalizeExhaustedReviewContinuationsForRun } from '../run-engine/recover-inflight-reviews.js';
+import {
+  normalizeExhaustedReviewContinuationsForRun,
+  projectExhaustedReviewContinuationsForRun,
+} from '../run-engine/recover-inflight-reviews.js';
 import { assertIndependentReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
 import {
   probeWorkerSignalForRun,
@@ -1182,6 +1187,26 @@ export interface RunResolveDecisionDependencies {
   ) => Promise<void>;
 }
 
+/**
+ * ADR-054 `free-slot`: refuse before the decision is consumed, so it stays
+ * pending and the run stays parked. Resolving would drive the engine onward
+ * against a worker the park stopped and a slot another run may already own.
+ * The fence covers the whole park — from the write-ahead intent, through the
+ * window where resources are stopping and `slotFreedAt` is still unset, to the
+ * landed release — and lifts for a park that settled without changing anything.
+ */
+function assertNotGateParked(runId: string, run: Run): void {
+  if (!isGateParkInFlightOrFreed(run)) return;
+  const code = isSlotFreedByPark(run)
+    ? MachineParkEligibilityCodes.freedSlotRestoreUnsupported
+    : MachineParkEligibilityCodes.gateParkInFlight;
+  throw new GatewayMethodError(
+    code,
+    `Run ${runId} is gate-parked; its decisions cannot be resolved while its slot is freed`,
+    { userAction: 'Restore the run into a slot before answering its gate, or cancel the run.' },
+  );
+}
+
 export async function runResolveDecision(
   params: RunResolveDecisionParams,
   emit: Emit,
@@ -1193,6 +1218,13 @@ export async function runResolveDecision(
   const decision = existing.decisions.find((d) => d.id === params.decisionId);
   if (!decision) throw new Error(`Decision not found: ${params.decisionId}`);
   if (decision.resolvedAt) throw new Error(`Decision already resolved`);
+  // ADR-054 `free-slot`: refuse before the decision is consumed, so it stays
+  // pending and the run stays parked. Resolving would drive the engine onward
+  // against a worker the park stopped and a slot another run may already own,
+  // and the fence covers the whole park — from the write-ahead intent, through
+  // the window where resources are stopping and `slotFreedAt` is still unset,
+  // to the landed release.
+  assertNotGateParked(params.runId, existing);
   if (!decision.actions.some((action) => action.id === params.actionId)) {
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
   }
@@ -1213,6 +1245,9 @@ export async function runResolveDecision(
       );
     }
   }
+  // Set when the review-request branch projected a normalization; committed
+  // only after the consumption-point park fence below.
+  let normalizedReviews: IndependentReviewStatus[] | undefined;
   if (
     decision.type === 'engine_human_gate' &&
     isHumanGateReviewRequestAction(params.actionId) &&
@@ -1228,7 +1263,12 @@ export async function runResolveDecision(
         },
       );
     }
-    const normalizedReviews = normalizeExhaustedReviewContinuationsForRun(existing.id);
+    // Read-only projection for the launch assertion. The WRITE that normalizing
+    // performs is deferred to `commitNormalizedReviews` below, after the
+    // consumption-point park fence — otherwise a park landing during the
+    // awaited assertion would leave this run mutated by a resolve that was then
+    // refused.
+    normalizedReviews = projectExhaustedReviewContinuationsForRun(existing.id);
     await (dependencies.assertReviewLaunchAllowed ?? assertIndependentReviewLaunchStateForSlot)(
       normalizedReviews,
       existing.slotId,
@@ -1239,6 +1279,13 @@ export async function runResolveDecision(
   // auto-recovery) may have resolved this decision during that window. Re-read
   // from the store so the first resolution wins instead of being overwritten.
   assertDecisionStillUnresolved(params.runId, params.decisionId);
+  // Re-read and re-check at the CONSUMPTION point. The probes above await, and
+  // a park can land during any of them — the early check only proves the run
+  // was not parked when the request arrived. Consuming the decision after that
+  // would drive the engine against a worker the park stopped.
+  assertNotGateParked(params.runId, getRun(params.runId)!);
+  // Past every refusal now, so the normalization may persist.
+  if (normalizedReviews) normalizeExhaustedReviewContinuationsForRun(params.runId);
   if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
     const fresh = getRun(params.runId)!;
     if (fresh.engineState?.publishGate?.reviewLaunchRejection) {
@@ -1281,6 +1328,19 @@ export async function runResolveDecision(
     void (async () => {
       const afterResolve = getRun(params.runId);
       if (!afterResolve || afterResolve.status !== 'blocked') return;
+      // ADR-054 `free-slot`: this timer exists to resume a run whose engine loop
+      // was lost. A gate-parked run is not that — a park can land while the
+      // engine holds the resolved decision, and the gate blocker then leaves the
+      // run `blocked` with HUMAN_GATE marked done and every decision resolved,
+      // which is exactly the shape below resumes. Resuming would enter FINALIZE
+      // against a slot a successor may already own. The park's own restore or
+      // cancel is the way out, not an automatic restart.
+      if (isGateParkInFlightOrFreed(afterResolve)) {
+        console.log(
+          `[run] run ${params.runId.slice(0, 8)} — gate-parked, not auto-resuming after decision resolve`,
+        );
+        return;
+      }
       const stillUnresolved = afterResolve.decisions.filter((d) => !d.resolvedAt);
       if (stillUnresolved.length === 0) {
         console.log(

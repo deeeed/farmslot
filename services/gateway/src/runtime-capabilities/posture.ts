@@ -310,6 +310,21 @@ export interface ResourcePostureRequest {
   gateChoice?: ResourcePostureGateChoice;
   proofRequirements?: RuntimeCapabilityProofRequirement[];
   operationId?: string;
+  /**
+   * Resolves the gate choice this request inherits, called INSIDE the per-run
+   * serialization. Reading and clearing a one-shot suppression is a
+   * read-modify-write on the run's posture, and this queue is the only thing
+   * that serializes those writes.
+   */
+  resolveInheritedGateChoice?: (runId: string) => ResourcePostureGateChoice | undefined;
+  /**
+   * Admission check re-run INSIDE the per-run serialization, immediately before
+   * the request executes. A caller that validated at the RPC boundary only
+   * proved the run was admissible when the request arrived; a request queued
+   * behind another one executes later, by which time a park may have landed.
+   * Throw from here to refuse. Engine-internal boundaries omit it.
+   */
+  assertAdmissible?: () => void;
 }
 
 export interface RunResourcePostureDeps {
@@ -486,7 +501,20 @@ export class RunResourcePostureReconciler {
   }
 
   async apply(request: ResourcePostureRequest): Promise<RuntimePostureApplyResult> {
-    return this.serialize(request.runId, () => this.applyInternal(request));
+    return this.serialize(request.runId, () => {
+      // Inside the queue, not before it. This is the only point where the check
+      // and the effect are not separated by another request's execution.
+      request.assertAdmissible?.();
+      // Always called so the one-shot suppression is consumed even when an
+      // explicit choice is present; that explicit choice then wins over what it
+      // returns.
+      const inherited = request.resolveInheritedGateChoice?.(request.runId);
+      return this.applyInternal(
+        request.gateChoice === undefined && inherited
+          ? { ...request, gateChoice: inherited }
+          : request,
+      );
+    });
   }
 
   private async applyInternal(request: ResourcePostureRequest): Promise<RuntimePostureApplyResult> {
