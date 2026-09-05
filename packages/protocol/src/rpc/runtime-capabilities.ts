@@ -1,4 +1,7 @@
-import type { ProjectResourcePostureConfig } from '../contracts/resource-posture.js';
+import type {
+  ProjectResourcePostureConfig,
+  ResourcePostureObservedState,
+} from '../contracts/resource-posture.js';
 import type {
   RuntimeCapabilityAcquireConflict,
   RuntimeCapabilityCatalogEntry,
@@ -16,6 +19,7 @@ export const RuntimeCapabilityMethods = {
   acquire: Methods.RUNTIME_CAPABILITY_ACQUIRE,
   release: Methods.RUNTIME_CAPABILITY_RELEASE,
   status: Methods.RUNTIME_CAPABILITY_STATUS,
+  stopWarm: Methods.RUNTIME_CAPABILITY_STOP_WARM,
 } as const;
 
 export interface RuntimeCapabilityListParams {
@@ -91,4 +95,40 @@ export interface RuntimeCapabilityStatusResult {
   events: RuntimeCapabilityLifecycleEvent[];
   /** Project posture defaults for this slot's project (ADR-054). */
   posture?: ProjectResourcePostureConfig;
+}
+
+export interface RuntimeCapabilityStopWarmParams {
+  slotId: string;
+  capabilityId: string;
+}
+
+export const RUNTIME_CAPABILITY_STOP_WARM_OUTCOMES = [
+  /** The provider was kept alive by a released lease and has now been stopped. */
+  'stopped',
+  /** Something active or still warm depends on it; stopping it would break that. */
+  'deferred',
+  /** Nothing was keeping this capability warm on the slot. */
+  'not-warm',
+  /** Cleanup ran and failed; the provider's real state is not known. */
+  'failed',
+] as const;
+export type RuntimeCapabilityStopWarmOutcome =
+  (typeof RUNTIME_CAPABILITY_STOP_WARM_OUTCOMES)[number];
+
+/**
+ * Result of stopping one warm provider. `runtime.capability.release` cannot do
+ * this: it filters released leases, so it reports success while the provider
+ * keeps running. `observedState` is never `stopped` unless it really stopped.
+ */
+export interface RuntimeCapabilityStopWarmResult {
+  ok: boolean;
+  slotId: string;
+  capabilityId: string;
+  outcome: RuntimeCapabilityStopWarmOutcome;
+  observedState: ResourcePostureObservedState;
+  /** Why it was deferred or skipped, in operator terms. */
+  reason?: string;
+  cleanupFailure?: string;
+  /** Declared release effects of what actually stopped. */
+  effects: string[];
 }

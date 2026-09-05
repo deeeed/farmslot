@@ -32,6 +32,20 @@ export interface RuntimeCapabilityCatalogContext {
   posture?: ProjectResourcePostureConfig;
 }
 
+/** What one keep-warm sweep did, so a caller can report it without guessing. */
+export interface WarmSweepSummary {
+  /** Warm leases the selector matched. */
+  selected: RuntimeCapabilityLease[];
+  /** Left warm because something active or still warm depends on them. */
+  deferred: RuntimeCapabilityLease[];
+  /** Providers actually stopped. */
+  released: RuntimeCapabilityLease[];
+  /** Warm window cleared, but another lease still owns the running provider. */
+  stillHeld: RuntimeCapabilityLease[];
+  failures: Array<{ leaseId: string; capabilityId: string; reason: string }>;
+  effects: string[];
+}
+
 export interface RuntimeCapabilityActionResult {
   ok: boolean;
   detail?: string;
@@ -671,23 +685,77 @@ export class RuntimeCapabilityRegistry {
       dependencyLeases.push(dependency.lease, ...dependency.dependencyLeases);
     }
 
+    // Any lease still carrying a keep-warm deadline, expired or not. An elapsed
+    // deadline is a schedule, not proof the provider stopped: the sweeper may
+    // not have run yet. Ignoring those started a second instance blind, so the
+    // health check below decides — adopt it, or clean it up and acquire fresh.
     const warmLease = snapshot.leases.find(
       (candidate) =>
         candidate.slotId === params.slotId &&
         candidate.capabilityId === entry.id &&
         candidate.state === 'released' &&
-        candidate.keepWarmUntil !== undefined &&
-        Date.parse(candidate.keepWarmUntil) > this.now().getTime() &&
-        candidate.provenance.digest === entry.provenance.digest,
+        candidate.keepWarmUntil !== undefined,
     );
+    // A warm lease from an older provider definition still describes a running
+    // process. Filtering it out by digest left it running and started a second
+    // one beside it. It is never adopted — the old definition's behaviour is not
+    // the new one's — but it is cleaned up first, through its own lease record.
+    const warmProvenanceChanged =
+      warmLease !== undefined && warmLease.provenance.digest !== entry.provenance.digest;
     let warmProviderHealthy = false;
     if (active.length === 0 && warmLease) {
-      const warmHealth = await this.runAction(params.slotId, entry.actions.health);
+      const warmHealth = warmProvenanceChanged
+        ? { ok: false, detail: 'warm provider predates the current provider definition' }
+        : await this.runAction(params.slotId, entry.actions.health);
       warmProviderHealthy = warmHealth.ok;
       if (warmHealth.ok) {
         warmLease.keepWarmUntil = undefined;
       } else {
-        const cleanup = await this.runAction(params.slotId, entry.actions.release);
+        const staleEntry = warmProvenanceChanged
+          ? catalog.capabilities.find(
+              (capability) => capability.provenance.digest === warmLease.provenance.digest,
+            )
+          : undefined;
+        if (warmProvenanceChanged && !staleEntry) {
+          // Fail closed. The definition that started this provider is gone from
+          // the catalog, so the only release action on hand belongs to a
+          // different definition. If its target changed, running it stops the
+          // wrong thing, leaves the old provider up, and a second one starts
+          // beside it — while the acquire reports success. Refuse instead, and
+          // say what the operator has to do.
+          warmLease.state = 'error';
+          warmLease.cleanupFailure =
+            `Warm provider was started by a provider definition (digest ${warmLease.provenance.digest}) ` +
+            `that is no longer in the ${catalog.project} catalog, so its own release action is unavailable ` +
+            'and cleanup was refused rather than guessed from the current definition. Stop the provider, ' +
+            'then retry.';
+          warmLease.keepWarmUntil = undefined;
+          warmLease.updatedAt = this.timestamp();
+          this.recordEvent(snapshot, {
+            kind: 'recovery-rejected',
+            slotId: warmLease.slotId,
+            capabilityId: warmLease.capabilityId,
+            leaseId: warmLease.id,
+            owner: warmLease.owner,
+            detail: warmLease.cleanupFailure,
+          });
+          await this.rollbackLeases(
+            snapshot,
+            catalog,
+            snapshot.leases
+              .filter((lease) => !existingLeaseIds.has(lease.id))
+              .map((lease) => lease.id),
+          );
+          return {
+            ok: false,
+            conflict: {
+              kind: 'unavailable',
+              capabilityId: entry.id,
+              reason: `${warmLease.cleanupFailure} (lease ${warmLease.id})`,
+            },
+          };
+        }
+        const cleanup = await this.runAction(params.slotId, (staleEntry ?? entry).actions.release);
         warmLease.keepWarmUntil = undefined;
         if (!cleanup.ok) {
           warmLease.state = 'error';
@@ -1270,9 +1338,9 @@ export class RuntimeCapabilityRegistry {
    * deadline. A `terminal` posture must bypass keep-warm (ADR-054), and by then
    * the lease is already released, so the normal release path cannot see it.
    */
-  async stopWarmProviders(slotId: string, capabilityIds?: string[]): Promise<void> {
+  async stopWarmProviders(slotId: string, capabilityIds?: string[]): Promise<WarmSweepSummary> {
     const wanted = capabilityIds ? new Set(capabilityIds) : null;
-    await this.sweepWarmProviders(
+    return this.sweepWarmProviders(
       (lease) =>
         lease.slotId === slotId &&
         lease.keepWarmUntil !== undefined &&
@@ -1280,9 +1348,9 @@ export class RuntimeCapabilityRegistry {
     );
   }
 
-  async cleanupExpiredWarmProviders(slotIds?: string[]): Promise<void> {
+  async cleanupExpiredWarmProviders(slotIds?: string[]): Promise<WarmSweepSummary> {
     const nowMs = this.now().getTime();
-    await this.sweepWarmProviders(
+    return this.sweepWarmProviders(
       (lease) =>
         lease.keepWarmUntil !== undefined &&
         Date.parse(lease.keepWarmUntil) <= nowMs &&
@@ -1292,8 +1360,16 @@ export class RuntimeCapabilityRegistry {
 
   private async sweepWarmProviders(
     select: (lease: RuntimeCapabilityLease) => boolean,
-  ): Promise<void> {
-    await this.mutate(async () => {
+  ): Promise<WarmSweepSummary> {
+    return this.mutate(async () => {
+      const summary: WarmSweepSummary = {
+        selected: [],
+        deferred: [],
+        released: [],
+        stillHeld: [],
+        failures: [],
+        effects: [],
+      };
       const snapshot = this.options.store.snapshot();
       const selected = snapshot.leases.filter(
         (lease) => lease.state === 'released' && select(lease),
@@ -1317,12 +1393,39 @@ export class RuntimeCapabilityRegistry {
             (blocksAcquisition(candidate) ||
               (candidate.state === 'released' && candidate.keepWarmUntil !== undefined)),
         );
-      const eligible = selected.filter((lease) => !heldByWarmDependent(lease));
+      summary.selected = selected.map((lease) => structuredClone(lease));
+      summary.deferred = selected
+        .filter((lease) => heldByWarmDependent(lease))
+        .map((lease) => structuredClone(lease));
+      // Leases this sweep did not actually stop. Seeded with the ones a warm or
+      // active dependent already holds, then extended as cleanups fail: a
+      // provider that failed to stop is still up, so whatever it depends on is
+      // still in use and must not be stopped beneath it.
+      const stillHolding = new Set<string>();
+      const eligible = selected.filter((lease) => {
+        if (!heldByWarmDependent(lease)) return true;
+        stillHolding.add(lease.id);
+        return false;
+      });
       const eligibleIds = new Set(eligible.map((lease) => lease.id));
       const expired = this.releaseOrder(snapshot, eligible).filter((lease) =>
         eligibleIds.has(lease.id),
       );
       for (const lease of expired) {
+        // Recheck against failures recorded earlier in this same pass. The
+        // release order visits dependents first, so a parent that just failed
+        // is already known by the time its dependency comes up.
+        const requiredByFailedDependent = snapshot.leases.some(
+          (candidate) =>
+            candidate.id !== lease.id &&
+            stillHolding.has(candidate.id) &&
+            candidate.dependencyLeaseIds.includes(lease.id),
+        );
+        if (requiredByFailedDependent) {
+          stillHolding.add(lease.id);
+          summary.deferred.push(structuredClone(lease));
+          continue;
+        }
         const hasHolder = snapshot.leases.some(
           (candidate) =>
             candidate.slotId === lease.slotId &&
@@ -1330,7 +1433,10 @@ export class RuntimeCapabilityRegistry {
             holdsProvider(candidate),
         );
         if (hasHolder) {
+          // Another lease still owns this provider, so the warm window is moot
+          // but the process legitimately stays up.
           lease.keepWarmUntil = undefined;
+          summary.stillHeld.push(structuredClone(lease));
           continue;
         }
         let catalog: RuntimeCapabilityCatalogContext;
@@ -1343,6 +1449,12 @@ export class RuntimeCapabilityRegistry {
             error instanceof Error ? error.message : String(error)
           }`;
           lease.updatedAt = this.timestamp();
+          summary.failures.push({
+            leaseId: lease.id,
+            capabilityId: lease.capabilityId,
+            reason: lease.cleanupFailure,
+          });
+          stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'recovery-rejected',
             slotId: lease.slotId,
@@ -1362,6 +1474,12 @@ export class RuntimeCapabilityRegistry {
           lease.cleanupFailure =
             'Expired keep-warm provider no longer matches the project catalog; cleanup refused';
           lease.updatedAt = this.timestamp();
+          summary.failures.push({
+            leaseId: lease.id,
+            capabilityId: lease.capabilityId,
+            reason: lease.cleanupFailure,
+          });
+          stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'recovery-rejected',
             slotId: lease.slotId,
@@ -1377,6 +1495,12 @@ export class RuntimeCapabilityRegistry {
         if (!cleanup.ok) {
           lease.state = 'error';
           lease.cleanupFailure = cleanup.detail ?? 'expired keep-warm cleanup failed';
+          summary.failures.push({
+            leaseId: lease.id,
+            capabilityId: lease.capabilityId,
+            reason: lease.cleanupFailure,
+          });
+          stillHolding.add(lease.id);
           this.recordEvent(snapshot, {
             kind: 'cleanup-failed',
             slotId: lease.slotId,
@@ -1386,6 +1510,10 @@ export class RuntimeCapabilityRegistry {
             detail: lease.cleanupFailure,
           });
           continue;
+        }
+        summary.released.push(structuredClone(lease));
+        for (const effect of entry.releaseEffects) {
+          if (!summary.effects.includes(effect)) summary.effects.push(effect);
         }
         this.recordEvent(snapshot, {
           kind: 'released',
@@ -1397,6 +1525,7 @@ export class RuntimeCapabilityRegistry {
         });
       }
       await this.persist(snapshot);
+      return summary;
     });
   }
 

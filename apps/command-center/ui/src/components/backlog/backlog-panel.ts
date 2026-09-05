@@ -25,6 +25,7 @@ import type {
   ConfigTemplateOptionsResult,
   FlowType,
   ProjectConfig,
+  ResourcePostureWaitPolicy,
   ReviewDepthPolicy,
   ReviewLoopRequest,
   Run,
@@ -187,6 +188,8 @@ const BACKLOG_DISPATCH_CONFIG_CONTROLS: DispatchConfigEditorControls = {
   interactiveProfile: true,
   publicationReviews: true,
   explicitModeFallback: true,
+  // ADR-054: backlog dispatch settings are the surface that persists waitPolicy.
+  waitPolicy: true,
 };
 
 type DraftSlotPolicyKind = BacklogLaunchSlotPolicy['kind'];
@@ -232,6 +235,7 @@ interface BacklogDispatchDraft {
   devInteractiveProfile: 'lightweight' | 'reviewed' | '';
   reviewDepth?: ReviewDepthPolicy;
   pendingReviewPlan: ReviewLoopRequest[];
+  waitPolicy: ResourcePostureWaitPolicy | '';
 }
 
 interface LaunchSlotSelectorState {
@@ -263,6 +267,7 @@ function defaultDispatchDraft(): BacklogDispatchDraft {
     mode: '',
     devInteractiveProfile: '',
     pendingReviewPlan: [],
+    waitPolicy: '',
   };
 }
 
@@ -1911,6 +1916,7 @@ export class BacklogPanel extends LitElement {
       next.devInteractiveProfile = detail.devInteractiveProfile ?? '';
     }
     if (detail.reviewDepth !== undefined) next.reviewDepth = detail.reviewDepth ?? undefined;
+    if (detail.waitPolicy !== undefined) next.waitPolicy = detail.waitPolicy ?? '';
     if (detail.pendingReviewPlan !== undefined) {
       next.pendingReviewPlan = detail.pendingReviewPlan ?? [];
     }
@@ -2435,6 +2441,7 @@ export class BacklogPanel extends LitElement {
         .prepareProfile=${item.prepareProfile ?? ''}
         .prepareProfiles=${projectPrepareProfiles(this._configProjectConfigs, item.project)}
         .pendingReviewPlan=${item.pendingReviewPlan ?? []}
+        .waitPolicy=${item.waitPolicy ?? ''}
         .controls=${BACKLOG_DISPATCH_CONFIG_CONTROLS}
         .disabled=${disabled}
         @dispatch-config-change=${(event: CustomEvent<DispatchConfigChangeDetail>) =>
@@ -2602,6 +2609,7 @@ export class BacklogPanel extends LitElement {
         mode: this._draftDispatch.mode || undefined,
         devInteractiveProfile: this._draftDispatch.devInteractiveProfile || undefined,
         reviewDepth: this._draftDispatch.reviewDepth,
+        waitPolicy: this._draftDispatch.waitPolicy || undefined,
         pendingReviewPlan:
           this._draftDispatch.pendingReviewPlan.length > 0
             ? this._draftDispatch.pendingReviewPlan
@@ -2940,6 +2948,7 @@ export class BacklogPanel extends LitElement {
           .prepareProfile=${this._draftDispatch.prepareProfile}
           .prepareProfiles=${projectPrepareProfiles(this._configProjectConfigs, this._draftProject)}
           .pendingReviewPlan=${this._draftDispatch.pendingReviewPlan}
+          .waitPolicy=${this._draftDispatch.waitPolicy}
           .controls=${BACKLOG_DISPATCH_CONFIG_CONTROLS}
           .disabled=${!this._draftProject}
           @dispatch-config-change=${(event: CustomEvent<DispatchConfigChangeDetail>) =>

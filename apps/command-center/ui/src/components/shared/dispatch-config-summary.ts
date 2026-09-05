@@ -12,6 +12,7 @@ type DispatchConfigItem = Pick<
   | 'prepareProfile'
   | 'runner'
   | 'taskTemplate'
+  | 'waitPolicy'
   | 'workGraphId'
 >;
 
@@ -75,6 +76,7 @@ export function summarizeBacklogDispatchConfig(item: DispatchConfigItem): Dispat
     `Prepare: ${prepare}`,
     `Slots: ${slots}`,
     item.devInteractiveProfile ? `Interactive profile: ${item.devInteractiveProfile}` : '',
+    item.waitPolicy ? `Wait policy: ${item.waitPolicy}` : '',
     reviews ? `Publication reviews: ${reviews}` : '',
     item.workGraphId
       ? `Graph start: ${item.autoDispatch === false ? 'Manual start' : 'Auto start'}`
@@ -107,6 +109,13 @@ export function summarizeBacklogDispatchConfig(item: DispatchConfigItem): Dispat
       label: `profile: ${item.devInteractiveProfile}`,
       tone: 'accent',
       title: 'Interactive reply profile',
+    });
+  }
+  if (item.waitPolicy) {
+    chips.push({
+      label: `wait: ${item.waitPolicy}`,
+      tone: 'accent',
+      title: 'Resource posture preset applied at every durable wait of the dispatched run',
     });
   }
   if (item.workGraphId) {
@@ -147,7 +156,8 @@ export function summarizeBacklogDispatchConfig(item: DispatchConfigItem): Dispat
     item.prepareProfile ||
     item.allowedSlots?.length ||
     item.pendingReviewPlan?.length ||
-    item.devInteractiveProfile,
+    item.devInteractiveProfile ||
+    item.waitPolicy,
   );
 
   return { visible, execution, slots, rows, chips, meta, reviewSteps };

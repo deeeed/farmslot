@@ -146,6 +146,7 @@ import {
   type RuntimeCapabilityListParams,
   type RuntimeCapabilityReleaseParams,
   type RuntimeCapabilityStatusParams,
+  type RuntimeCapabilityStopWarmParams,
   type RuntimePostureApplyParams,
   type RuntimePosturePreviewParams,
   type RuntimePostureStatusParams,
@@ -406,6 +407,7 @@ import {
   runtimeCapabilityList,
   runtimeCapabilityRelease,
   runtimeCapabilityStatus,
+  runtimeCapabilityStopWarm,
 } from '../methods/runtime-capabilities.js';
 import {
   runtimePostureApply,
@@ -1247,6 +1249,8 @@ async function routeAuthorizedMethod(
       return runtimeCapabilityRelease(p as RuntimeCapabilityReleaseParams);
     case Methods.RUNTIME_CAPABILITY_STATUS:
       return runtimeCapabilityStatus(p as RuntimeCapabilityStatusParams);
+    case Methods.RUNTIME_CAPABILITY_STOP_WARM:
+      return runtimeCapabilityStopWarm(p as RuntimeCapabilityStopWarmParams);
     case Methods.RUNTIME_POSTURE_STATUS:
       return runtimePostureStatus(p as RuntimePostureStatusParams);
     case Methods.RUNTIME_POSTURE_PREVIEW:

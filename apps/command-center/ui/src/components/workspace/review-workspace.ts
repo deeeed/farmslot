@@ -421,6 +421,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   private _handlePost() {
     if (this._isRecovering) return;
+    // A posture choice the Gateway already refused must not ride along with a
+    // resolution: the decision would be consumed and the refusal repeated.
+    if (this.postureBlockedReason) return;
     this._confirmAction('post', async () => {
       this._posting = true;
       try {
@@ -430,6 +433,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
             runId: this.runId,
             decision: this.decision,
             actionId: 'post',
+            ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
             selectionData: {
               includedIndices: [...this._includedComments],
               recommendation: this._selectedRecommendation,
@@ -450,6 +454,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   private _handleDismiss() {
     if (this._isRecovering) return;
+    // A posture choice the Gateway already refused must not ride along with a
+    // resolution: the decision would be consumed and the refusal repeated.
+    if (this.postureBlockedReason) return;
     this._confirmAction('dismiss', async () => {
       this._posting = true;
       try {
@@ -459,6 +466,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
             runId: this.runId,
             decision: this.decision,
             actionId: 'dismiss',
+            ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
           }),
         );
       } catch (err) {

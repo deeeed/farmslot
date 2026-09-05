@@ -4,6 +4,7 @@ import { customElement, property } from 'lit/decorators.js';
 import type {
   DevInteractiveProfile,
   FlowType,
+  ResourcePostureWaitPolicy,
   ReviewDepthPolicy,
   ReviewLoopRequest,
   ReviewRunnerId,
@@ -11,7 +12,11 @@ import type {
   TaskTemplateSelection,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
-import { reviewValidationDepthForLoop, selectedTemplateMode } from '@farmslot/protocol';
+import {
+  RESOURCE_POSTURE_WAIT_POLICIES,
+  reviewValidationDepthForLoop,
+  selectedTemplateMode,
+} from '@farmslot/protocol';
 
 import './runner-model-effort-picker.js';
 import './slot-prepare-options.js';
@@ -43,6 +48,8 @@ export interface DispatchConfigChangeDetail {
   devInteractiveProfile?: DevInteractiveProfile | null;
   reviewDepth?: ReviewDepthPolicy | null;
   pendingReviewPlan?: ReviewLoopRequest[] | null;
+  /** ADR-054 dispatch preset for every durable wait of the created run. */
+  waitPolicy?: ResourcePostureWaitPolicy | null;
 }
 
 export interface DispatchConfigEditorControls {
@@ -52,8 +59,14 @@ export interface DispatchConfigEditorControls {
   interactiveProfile?: boolean;
   publicationReviews?: boolean;
   explicitModeFallback?: boolean;
+  waitPolicy?: boolean;
 }
 
+/**
+ * `waitPolicy` defaults off: only backlog dispatch settings persist it today
+ * (ADR-054 deliverable 3), so surfaces that do not write it must not offer a
+ * control whose selection would be silently dropped.
+ */
 const DEFAULT_CONTROLS: Required<DispatchConfigEditorControls> = {
   template: true,
   runnerModelEffort: true,
@@ -61,6 +74,7 @@ const DEFAULT_CONTROLS: Required<DispatchConfigEditorControls> = {
   interactiveProfile: true,
   publicationReviews: true,
   explicitModeFallback: true,
+  waitPolicy: false,
 };
 
 @customElement('dispatch-config-editor')
@@ -80,6 +94,7 @@ export class DispatchConfigEditor extends LitElement {
   @property({ type: String }) prepareVariant: 'profile' | 'dispatch' = 'profile';
   @property({ attribute: false }) prepareProfiles: readonly DispatchPrepareProfileOption[] = [];
   @property({ attribute: false }) pendingReviewPlan: readonly ReviewLoopRequest[] = [];
+  @property({ type: String }) waitPolicy: ResourcePostureWaitPolicy | '' = '';
   @property({ attribute: false }) controls: DispatchConfigEditorControls = {};
   @property({ type: Boolean }) disabled = false;
 
@@ -473,6 +488,45 @@ export class DispatchConfigEditor extends LitElement {
     </div>`;
   }
 
+  /**
+   * ADR-054 dispatch preset. `project-default` is deliberately absent: the
+   * protocol excludes it from wait policies because deferring to the lower
+   * precedence levels is exactly what leaving this unset already means.
+   */
+  private renderWaitPolicy() {
+    if (!this.resolvedControls().waitPolicy) return nothing;
+    return html`<div class="group">
+      <div class="section-label">Wait policy</div>
+      <div class="pill-row">
+        <button
+          class="pill ${this.waitPolicy ? '' : 'selected'}"
+          type="button"
+          data-testid="dispatch-wait-policy-unset"
+          ?disabled=${this.disabled}
+          @click=${() => this.emitChange({ waitPolicy: null })}
+        >
+          unset
+        </button>
+        ${RESOURCE_POSTURE_WAIT_POLICIES.map(
+          (policy) =>
+            html`<button
+              class="pill ${this.waitPolicy === policy ? 'selected' : ''}"
+              type="button"
+              data-testid="dispatch-wait-policy-${policy}"
+              ?disabled=${this.disabled}
+              @click=${() => this.emitChange({ waitPolicy: policy })}
+            >
+              ${policy}
+            </button>`,
+        )}
+      </div>
+      <div class="section-help">
+        Presets the resource-posture choice for every durable wait of the dispatched run. Unset
+        defers to the project and framework defaults.
+      </div>
+    </div>`;
+  }
+
   private renderRunnerModelEffort() {
     if (!this.resolvedControls().runnerModelEffort) return nothing;
     return html`<runner-model-effort-picker
@@ -493,7 +547,7 @@ export class DispatchConfigEditor extends LitElement {
   render() {
     return html`<div class="surface">
       ${this.renderTaskTemplate()} ${this.renderMode()} ${this.renderRunnerModelEffort()}
-      ${this.renderPrepareProfile()} ${this.renderInteractiveProfile()}
+      ${this.renderPrepareProfile()} ${this.renderInteractiveProfile()} ${this.renderWaitPolicy()}
       ${this.renderPublicationReviews()}
     </div>`;
   }

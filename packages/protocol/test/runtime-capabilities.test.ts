@@ -17,6 +17,7 @@ test('runtime capability methods and lifecycle event use the shared protocol reg
     acquire: 'runtime.capability.acquire',
     release: 'runtime.capability.release',
     status: 'runtime.capability.status',
+    stopWarm: 'runtime.capability.stopWarm',
   });
   assert.equal(Methods.RUNTIME_CAPABILITY_ACQUIRE, RuntimeCapabilityMethods.acquire);
   assert.equal(Events.RUNTIME_CAPABILITY_LIFECYCLE, 'runtime.capability.lifecycle');

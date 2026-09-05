@@ -872,6 +872,10 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel."
     },
+    "runtime.capability.stopWarm": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]`. ADR-054 slice 3 promotes this to `farmslot resource` alongside the posture commands. Also used by the Command Center Slot View to stop a warm provider."
+    },
     "runtime.capability.status": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel."

@@ -6,6 +6,7 @@ import {
   type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityCatalogEntry,
+  type RuntimeCapabilityLease,
   type RuntimeCapabilityListParams,
   type RuntimeCapabilityListResult,
   type RuntimeCapabilityProviderActionRef,
@@ -13,6 +14,8 @@ import {
   type RuntimeCapabilityReleaseResult,
   type RuntimeCapabilityStatusParams,
   type RuntimeCapabilityStatusResult,
+  type RuntimeCapabilityStopWarmParams,
+  type RuntimeCapabilityStopWarmResult,
 } from '@farmslot/protocol';
 
 import {
@@ -34,6 +37,7 @@ import {
   type RuntimeCapabilityCatalogContext,
   runtimeCapabilityProviderDigest,
   RuntimeCapabilityRegistry,
+  type WarmSweepSummary,
 } from '../runtime-capabilities/registry.js';
 import { RuntimeCapabilityStore } from '../runtime-capabilities/store.js';
 
@@ -259,4 +263,122 @@ export async function releaseRuntimeCapabilitiesForSlot(
   slotId: string,
 ): Promise<RuntimeCapabilityReleaseResult> {
   return registry.releaseSlot(slotId);
+}
+
+/**
+ * Map one warm-sweep summary onto the RPC result. Pure so every outcome —
+ * including "cleanup failed, so we do not know" — is testable without a slot.
+ */
+export function stopWarmResultFromSummary(
+  params: RuntimeCapabilityStopWarmParams,
+  summary: WarmSweepSummary,
+  /** The capability's leases on this slot after the sweep. */
+  leases: RuntimeCapabilityLease[] = [],
+): RuntimeCapabilityStopWarmResult {
+  const base = { slotId: params.slotId, capabilityId: params.capabilityId };
+  const failure = summary.failures.find((entry) => entry.capabilityId === params.capabilityId);
+  if (failure) {
+    // Cleanup ran and failed, so the provider's real state is not known. Never
+    // report it stopped.
+    return {
+      ...base,
+      ok: false,
+      outcome: 'failed',
+      observedState: 'unhealthy',
+      cleanupFailure: failure.reason,
+      effects: [],
+    };
+  }
+  if (summary.released.some((lease) => lease.capabilityId === params.capabilityId)) {
+    return {
+      ...base,
+      ok: true,
+      outcome: 'stopped',
+      observedState: 'stopped',
+      effects: summary.effects,
+    };
+  }
+  if (summary.deferred.some((lease) => lease.capabilityId === params.capabilityId)) {
+    return {
+      ...base,
+      ok: false,
+      outcome: 'deferred',
+      observedState: 'running',
+      reason: `'${params.capabilityId}' is still needed by an active or warm dependent; it stays up until that dependent is done with it`,
+      effects: [],
+    };
+  }
+  if (summary.stillHeld.some((lease) => lease.capabilityId === params.capabilityId)) {
+    return {
+      ...base,
+      ok: false,
+      outcome: 'deferred',
+      observedState: 'running',
+      reason: `'${params.capabilityId}' is still held by another lease on this slot`,
+      effects: [],
+    };
+  }
+  // An earlier cleanup that failed leaves the lease in `error` with the reason
+  // stored on it. The sweep selects only `released` leases, so a retry finds
+  // nothing warm — but the provider may well still be up, which is exactly what
+  // that stored failure records. Report it, never `stopped`.
+  const unresolved = leases.find(
+    (lease) =>
+      lease.capabilityId === params.capabilityId &&
+      lease.state === 'error' &&
+      Boolean(lease.cleanupFailure),
+  );
+  if (unresolved) {
+    return {
+      ...base,
+      ok: false,
+      outcome: 'failed',
+      observedState: 'unknown',
+      reason: `'${params.capabilityId}' has unresolved cleanup on ${params.slotId}; its provider may still be running`,
+      cleanupFailure: unresolved.cleanupFailure!,
+      effects: [],
+    };
+  }
+  // Nothing was warm, which says nothing about whether the provider is up: an
+  // active lease may still hold it. Read that off the leases rather than
+  // assuming stopped.
+  const heldByActiveLease = leases.some(
+    (lease) =>
+      lease.capabilityId === params.capabilityId &&
+      ['acquiring', 'acquired', 'releasing'].includes(lease.state),
+  );
+  return {
+    ...base,
+    ok: true,
+    outcome: 'not-warm',
+    observedState: heldByActiveLease ? 'running' : 'stopped',
+    reason: heldByActiveLease
+      ? `'${params.capabilityId}' is not warm on ${params.slotId}; it is held by an active lease`
+      : `nothing is keeping '${params.capabilityId}' warm on ${params.slotId}`,
+    effects: [],
+  };
+}
+
+/**
+ * Stop one provider that a released lease is still keeping warm.
+ *
+ * `runtime.capability.release` cannot do this: it only considers leases that
+ * still hold a provider, so for an already-released warm lease it reports
+ * success while the process keeps running. This runs the registry's own
+ * dependency-safe warm sweep for that single capability, which defers rather
+ * than stopping anything an active or still-warm dependent needs, and reports
+ * what actually happened instead of assuming.
+ */
+export async function runtimeCapabilityStopWarm(
+  params: RuntimeCapabilityStopWarmParams,
+): Promise<RuntimeCapabilityStopWarmResult> {
+  if (typeof params.slotId !== 'string' || !params.slotId.trim()) {
+    throw new Error('slotId must be a non-empty string');
+  }
+  if (typeof params.capabilityId !== 'string' || !params.capabilityId.trim()) {
+    throw new Error('capabilityId must be a non-empty string');
+  }
+  const summary = await registry.stopWarmProviders(params.slotId, [params.capabilityId]);
+  const status = await registry.status({ slotId: params.slotId });
+  return stopWarmResultFromSummary(params, summary, status.leases);
 }

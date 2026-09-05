@@ -14,6 +14,7 @@ import {
   type MachinePauseExecuteResult,
   type MachinePausePreviewParams,
   type MachinePausePreviewResult,
+  observedStateForLease,
   postureForGateChoice,
   type ProjectResourcePostureConfig,
   RESOURCE_POSTURE_TRANSITION_HISTORY,
@@ -270,25 +271,6 @@ export function resolveEffectivePosturePolicy(
   };
 }
 
-export function observedStateForLease(
-  lease: RuntimeCapabilityLease | undefined,
-  nowMs: number,
-): ResourcePostureObservedState {
-  if (!lease) return 'stopped';
-  if (lease.state === 'error') return lease.cleanupFailure ? 'unhealthy' : 'unknown';
-  if (lease.state === 'acquiring' || lease.state === 'releasing' || lease.state === 'queued') {
-    return 'transitioning';
-  }
-  if (lease.state === 'acquired')
-    return lease.health.state === 'unhealthy' ? 'unhealthy' : 'running';
-  // A released lease is not a stopped provider while keep-warm is still live.
-  if (lease.keepWarmUntil && Date.parse(lease.keepWarmUntil) > nowMs) return 'running';
-  // An elapsed warm deadline is a schedule, not an outcome: the sweeper may not
-  // have run yet, so the provider's real state is not known until cleanup does.
-  if (lease.keepWarmUntil) return 'unknown';
-  return 'stopped';
-}
-
 /** Transitions a run has retained, newest first, including the latest. */
 function historyOf(state: RunResourcePostureState | undefined): ResourcePostureTransition[] {
   if (!state) return [];
@@ -348,13 +330,21 @@ export interface RunResourcePostureDeps {
     familyId?: string,
   ) => Promise<RuntimeCapabilityReleaseResult>;
   /** Stop providers a released lease is still keeping warm (ADR-054 terminal). */
-  stopWarmProviders: (slotId: string, capabilityIds: string[]) => Promise<void>;
+  stopWarmProviders: (slotId: string, capabilityIds: string[]) => Promise<PostureWarmSweepResult>;
   machineForSlot: (slotId: string) => Promise<string | null>;
   parkPreview: (params: MachinePausePreviewParams) => Promise<MachinePausePreviewResult>;
   parkExecute: (params: MachinePauseExecuteParams) => Promise<MachinePauseExecuteResult>;
   onRunUpdated?: (run: Run) => void;
   now?: () => Date;
   newOperationId?: () => string;
+}
+
+/** What a keep-warm sweep did, in the shape the reconciler needs to report it. */
+export interface PostureWarmSweepResult {
+  released: Array<{ capabilityId: string }>;
+  deferred: Array<{ capabilityId: string }>;
+  failures: Array<{ capabilityId: string; leaseId?: string; reason: string }>;
+  effects: string[];
 }
 
 interface ParkTarget {
@@ -460,7 +450,39 @@ export class RunResourcePostureReconciler {
   async preview(request: ResourcePostureRequest): Promise<ResourcePosturePlan> {
     const resolved = await this.resolve(request);
     if ('rejection' in resolved) return resolved.plan;
-    return this.planFrom(resolved.context);
+    const context = resolved.context;
+    const plan = this.planFrom(context);
+    if (context.policy.posture !== 'parked') return plan;
+    // Mirror apply's ordering exactly. Apply checks idempotency before it asks
+    // machine parking anything, so an already-parked run returns `idempotent`
+    // and never sees ALREADY_PARKED. A preview that asked first would report a
+    // rejection for the one case apply treats as a success.
+    if (this.isIdempotent(context)) {
+      return {
+        ...plan,
+        reason: 'run is already parked; applying this again would do nothing',
+        acquire: [],
+        retain: [],
+        warm: [],
+        stop: [],
+        effects: [],
+      };
+    }
+    // Preview has to ask machine parking the same question apply does. Without
+    // it, `free-slot` on a run parking will refuse previews as a normal plan —
+    // the operator reads "Parked, 1 stopped" for a choice that cannot succeed.
+    // Read-only: this resolves eligibility and touches no lease, process, or run.
+    const eligibility = await this.parkTarget(context);
+    if (!('rejection' in eligibility)) return plan;
+    return {
+      ...plan,
+      acquire: [],
+      retain: [],
+      warm: [],
+      stop: [],
+      effects: [],
+      rejection: eligibility.rejection,
+    };
   }
 
   async apply(request: ResourcePostureRequest): Promise<RuntimePostureApplyResult> {
@@ -576,8 +598,21 @@ export class RunResourcePostureReconciler {
           ),
       )
       .map((state) => state.capabilityId);
+    // A warm cleanup that failed or was deferred is not a success. Folding its
+    // outcome into this transition is what stops the reconciler reporting
+    // `applied` while a provider it asked to stop is still running.
+    const warmDeferred = new Set<string>();
     if (warmToStop.length > 0) {
-      await this.deps.stopWarmProviders(context.slotId, warmToStop);
+      const swept = await this.deps.stopWarmProviders(context.slotId, warmToStop);
+      for (const effect of swept.effects) effects.add(effect);
+      for (const failure of swept.failures) {
+        failures.push({
+          capabilityId: failure.capabilityId,
+          ...(failure.leaseId ? { leaseId: failure.leaseId } : {}),
+          reason: failure.reason,
+        });
+      }
+      for (const lease of swept.deferred) warmDeferred.add(lease.capabilityId);
     }
     // At terminal the selection must be by owner and resolved inside the
     // registry's lock, not from the lease ids read a moment ago: an acquire
@@ -671,6 +706,30 @@ export class RunResourcePostureReconciler {
     }
 
     const refreshed = await this.refresh(context);
+    if (warmDeferred.size > 0) {
+      // The sweep declined to stop these because something still needs them, so
+      // they are demonstrably up whatever the lease rows say.
+      refreshed.states = refreshed.states.map((state) =>
+        warmDeferred.has(state.capabilityId)
+          ? {
+              ...state,
+              observedState: 'running' as const,
+              reason: `${state.reason}; kept running because an active or warm dependent still needs it`,
+            }
+          : state,
+      );
+    }
+    // A deferral is not a failure of the provider, but it is a failure of the
+    // plan: desired `stopped` while the thing is demonstrably running is never
+    // `applied`. It is reported as `partial` with the reason, like any other
+    // stop that did not happen.
+    for (const capabilityId of warmDeferred) {
+      if (failures.some((failure) => failure.capabilityId === capabilityId)) continue;
+      failures.push({
+        capabilityId,
+        reason: `kept running because an active or warm dependent still needs it`,
+      });
+    }
     const transition: ResourcePostureTransition = {
       ...inProgress,
       completedAt: this.now().toISOString(),

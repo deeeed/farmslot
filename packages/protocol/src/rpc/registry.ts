@@ -247,6 +247,7 @@ export const Methods = {
   RUNTIME_CAPABILITY_ACQUIRE: 'runtime.capability.acquire',
   RUNTIME_CAPABILITY_RELEASE: 'runtime.capability.release',
   RUNTIME_CAPABILITY_STATUS: 'runtime.capability.status',
+  RUNTIME_CAPABILITY_STOP_WARM: 'runtime.capability.stopWarm',
   RUNTIME_POSTURE_STATUS: 'runtime.posture.status',
   RUNTIME_POSTURE_PREVIEW: 'runtime.posture.preview',
   RUNTIME_POSTURE_APPLY: 'runtime.posture.apply',

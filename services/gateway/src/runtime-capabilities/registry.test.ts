@@ -1288,3 +1288,202 @@ test('a caller-supplied family that contradicts the run record is rejected', asy
   });
   assert.equal(matched.ok, true);
 });
+
+test('stopWarmProviders reports the provider it stopped', async (t) => {
+  const warm = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warm]);
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+  actions.length = 0;
+
+  const summary = await registry.stopWarmProviders(SLOT, ['metro']);
+  assert.deepEqual(actions, ['metro.release']);
+  assert.deepEqual(
+    summary.released.map((lease) => lease.capabilityId),
+    ['metro'],
+  );
+  assert.deepEqual(summary.deferred, []);
+  assert.deepEqual(summary.failures, []);
+  assert.deepEqual(summary.effects, ['release metro']);
+});
+
+test('stopWarmProviders defers a warm provider a warm dependent still needs', async (t) => {
+  let clock = new Date('2026-08-11T00:00:00.000Z');
+  const warmApp = { ...entry('app', 'exclusive', ['metro']), keepWarmMs: 600_000 };
+  const warmMetro = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warmApp, warmMetro], { now: () => clock });
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  actions.length = 0;
+  clock = new Date('2026-08-11T00:01:00.000Z');
+
+  // Asking for the dependency alone must not pull the floor out from under the
+  // dependent that is still warm.
+  const summary = await registry.stopWarmProviders(SLOT, ['metro']);
+  assert.deepEqual([...actions], []);
+  assert.deepEqual(summary.released, []);
+  assert.deepEqual(
+    summary.deferred.map((lease) => lease.capabilityId),
+    ['metro'],
+  );
+});
+
+test('stopWarmProviders reports a cleanup failure instead of claiming stopped', async (t) => {
+  const warm = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry } = await fixture(t, [warm], {
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'metro.release'
+        ? { ok: false, detail: 'metro shutdown exited 1' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+
+  const summary = await registry.stopWarmProviders(SLOT, ['metro']);
+  assert.deepEqual(summary.released, []);
+  assert.deepEqual(summary.failures, [
+    { leaseId: 'lease-1', capabilityId: 'metro', reason: 'metro shutdown exited 1' },
+  ]);
+  const status = await registry.status({ slotId: SLOT });
+  assert.equal(status.leases[0]?.cleanupFailure, 'metro shutdown exited 1');
+});
+
+test('a failed warm cleanup keeps the dependency it still holds', async (t) => {
+  const warmApp = { ...entry('app', 'exclusive', ['metro']), keepWarmMs: 600_000 };
+  const warmMetro = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warmApp, warmMetro], {
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'app.release'
+        ? { ok: false, detail: 'app shutdown exited 1' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  actions.length = 0;
+
+  // Both are warm and both are asked to stop. app fails, so metro must stay.
+  const summary = await registry.stopWarmProviders(SLOT, ['app', 'metro']);
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release')),
+    ['app.release'],
+    `metro was stopped under a parent that failed to stop: ${actions.join(', ')}`,
+  );
+  assert.deepEqual(
+    summary.failures.map((failure) => failure.capabilityId),
+    ['app'],
+  );
+  assert.deepEqual(
+    summary.deferred.map((lease) => lease.capabilityId),
+    ['metro'],
+  );
+  assert.deepEqual(summary.released, []);
+});
+
+test('an expired warm provider is adopted after a health check, not duplicated', async (t) => {
+  let clock = new Date('2026-08-11T00:00:00.000Z');
+  const warm = { ...entry('metro'), keepWarmMs: 60_000 };
+  const { registry, actions } = await fixture(t, [warm], { now: () => clock });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+
+  // Past the deadline, before the sweeper ran: the provider may still be alive.
+  clock = new Date('2026-08-11T00:05:00.000Z');
+  actions.length = 0;
+  const again = await acquire(registry, 'metro', 'run-b');
+  assert.equal(again.ok, true);
+  assert.ok(actions.includes('metro.health'), `no health check ran: ${actions.join(', ')}`);
+  assert.ok(
+    !actions.includes('metro.acquire'),
+    `a healthy expired-warm provider was started again: ${actions.join(', ')}`,
+  );
+});
+
+test('an expired warm provider that is dead is cleaned up before a fresh acquire', async (t) => {
+  let clock = new Date('2026-08-11T00:00:00.000Z');
+  let healthy = true;
+  const warm = { ...entry('metro'), keepWarmMs: 60_000 };
+  const { registry, actions } = await fixture(t, [warm], {
+    now: () => clock,
+    runAction: async (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'metro.health' && !healthy
+        ? { ok: false, detail: 'metro is not responding' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+
+  clock = new Date('2026-08-11T00:05:00.000Z');
+  healthy = false;
+  actions.length = 0;
+  const again = await acquire(registry, 'metro', 'run-b');
+  // Health fails, so the stale provider is torn down before a new one starts.
+  assert.ok(actions.includes('metro.release'), actions.join(', '));
+  assert.equal(again.ok, false, 'the dead provider is reported, not silently replaced');
+});
+
+test('a stale warm provider is stopped through its own definition when that definition is still in the catalog', async (t) => {
+  // The project duplicated the provider under a new id during a migration, so
+  // the digest the warm lease carries still resolves — to `metro-legacy`.
+  const current = { ...entry('metro'), keepWarmMs: 600_000 };
+  const legacy = { ...entry('metro-legacy'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [current, legacy]);
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+
+  // Redefine `metro`; its old definition survives under the legacy id.
+  legacy.provenance = { ...legacy.provenance, digest: current.provenance.digest };
+  current.provenance = { ...current.provenance, digest: 'digest-metro-v2' };
+  current.version = '2';
+  actions.length = 0;
+
+  const again = await acquire(registry, 'metro', 'run-b');
+  assert.equal(again.ok, true);
+  // The old provider is stopped through its own release action, not the new one's.
+  assert.ok(
+    actions.includes('metro-legacy.release'),
+    `the old definition's release did not run: ${actions.join(', ')}`,
+  );
+  assert.ok(actions.includes('metro.acquire'), `no fresh acquire ran: ${actions.join(', ')}`);
+  assert.ok(
+    actions.indexOf('metro-legacy.release') < actions.indexOf('metro.acquire'),
+    `cleanup must precede the fresh acquire: ${actions.join(', ')}`,
+  );
+});
+
+test('a stale warm provider whose definition is gone fails closed instead of guessing', async (t) => {
+  const warm = { ...entry('metro'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [warm]);
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+  const before = await registry.status({ slotId: SLOT });
+  const staleLeaseId = before.leases[0]!.id;
+  assert.ok(before.leases[0]?.keepWarmUntil, 'precondition: the lease is warm');
+
+  // The definition that started it is replaced outright and is not in the catalog.
+  warm.provenance = { ...warm.provenance, digest: 'digest-metro-v2' };
+  warm.version = '2';
+  actions.length = 0;
+
+  const again = await acquire(registry, 'metro', 'run-b');
+  assert.equal(again.ok, false, 'the acquire must not report success');
+  if (again.ok) return;
+  assert.equal(again.conflict.kind, 'unavailable');
+  assert.match(again.conflict.reason, /no longer in the .* catalog/);
+  assert.match(again.conflict.reason, new RegExp(`lease ${staleLeaseId}`));
+
+  // Nothing was guessed from the new definition, and no second provider started.
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release') || action.endsWith('.acquire')),
+    [],
+    `an action was run against a definition that did not start the provider: ${actions.join(', ')}`,
+  );
+  const after = await registry.status({ slotId: SLOT });
+  const stale = after.leases.find((l) => l.id === staleLeaseId);
+  assert.equal(stale?.state, 'error');
+  assert.match(stale?.cleanupFailure ?? '', /Stop the provider, then retry/);
+  assert.deepEqual(
+    after.leases.filter((l) => holdsProviderForTest(l)),
+    [],
+    'no second provider may be running',
+  );
+});

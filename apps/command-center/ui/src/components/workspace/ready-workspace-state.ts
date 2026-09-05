@@ -5,6 +5,7 @@ import type {
   GitBranchDiffFile,
   PublicationTarget,
   RecipeRunArtifactGroup,
+  ResourcePostureGateChoice,
   Run,
   RunDecision,
 } from '@farmslot/protocol';
@@ -43,6 +44,14 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @property({ type: Boolean }) hideRecipeTab = false;
   @property({ attribute: false }) recipeRuns: RecipeRunArtifactGroup[] = [];
   @property() selectedRecipeRunId = '';
+  /**
+   * Operator resource-posture choice for this wait (ADR-054), supplied by the
+   * gate section that mounts this workspace. Sent as the typed
+   * `resourcePosture` param so this client never invents a cleanup policy.
+   */
+  @property({ attribute: false }) resourcePosture: ResourcePostureGateChoice | null = null;
+  /** Why the posture choice blocks resolution, or null. Disables resolve actions. */
+  @property({ attribute: false }) postureBlockedReason: string | null = null;
 
   @state() _recipeRunnerUiOptions: RecipeRunnerUiOptions = recipeRunnerUiOptions(null);
 

@@ -684,6 +684,13 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
 
   async _resolve(actionId: string, extraSelectionData: Record<string, unknown> = {}) {
     if (this._isRecovering) return;
+    // A posture choice the Gateway already refused must not ride along with a
+    // resolution: the decision would be consumed and the refusal repeated.
+    if (this.postureBlockedReason) {
+      this._actionMessage = this.postureBlockedReason;
+      this._actionTone = 'error';
+      return;
+    }
     this._acting = true;
     const payload = this._payload;
     const approving = isReadyPublicationApproval(actionId, !!payload?.prPackage);
@@ -696,6 +703,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           runId: this.runId,
           decision: this.decision,
           actionId,
+          ...(this.resourcePosture ? { resourcePosture: this.resourcePosture } : {}),
           publicationTarget: this._publicationTarget,
           selectedEvidenceKeys: payload ? this._selectedEvidenceKeysForSubmit(payload) : [],
           selectionData: extraSelectionData,

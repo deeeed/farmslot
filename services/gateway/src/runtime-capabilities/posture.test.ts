@@ -18,7 +18,11 @@ import {
   type RuntimeCapabilityReleaseResult,
 } from '@farmslot/protocol';
 
-import { resolveEffectivePosturePolicy, RunResourcePostureReconciler } from './posture.js';
+import {
+  type PostureWarmSweepResult,
+  resolveEffectivePosturePolicy,
+  RunResourcePostureReconciler,
+} from './posture.js';
 import { RuntimeCapabilityRegistry } from './registry.js';
 import { RuntimeCapabilityStore } from './store.js';
 
@@ -83,6 +87,8 @@ interface HarnessOptions {
   hideLeasesOnFirstStatus?: boolean;
   /** Force the registry to report a lease it refused to release. */
   retainOnRelease?: string[];
+  /** Replace the warm-sweep result the reconciler sees. */
+  warmSweepResult?: PostureWarmSweepResult;
   now?: () => Date;
   storePath?: string;
 }
@@ -182,7 +188,10 @@ async function harness(t: TestContext, options: HarnessOptions) {
     acquireCapability: (params) => registry.acquire(params),
     releaseForPosture: async (slotId, dispositions) =>
       withForcedRetention(await registry.releaseForPosture(slotId, dispositions)),
-    stopWarmProviders: (slotId, capabilityIds) => registry.stopWarmProviders(slotId, capabilityIds),
+    stopWarmProviders: async (slotId, capabilityIds) => {
+      const swept = await registry.stopWarmProviders(slotId, capabilityIds);
+      return options.warmSweepResult ?? swept;
+    },
     releaseRunTerminal: async (slotId, ownerRunId, familyId) =>
       withForcedRetention(await registry.releaseRunTerminal(slotId, ownerRunId, familyId)),
     machineForSlot: async () => MACHINE,
@@ -1141,4 +1150,174 @@ test('operation history is bounded and keeps the newest ids', async (t) => {
     !history.some((entry) => entry.id === 'op-0'),
     'the oldest ids fall out of the bounded window',
   );
+});
+
+test('preview for parked surfaces the park rejection instead of a plan that cannot run', async (t) => {
+  const gateHeld = makeRun({ status: 'human-gating' });
+  const { reconciler, registry, runs, parkCalls, actions } = await harness(t, {
+    capabilities: [CATALOG_LINT],
+    run: gateHeld,
+    parkPreview: async (params) => ({
+      previewId: 'preview-1',
+      machine: params.machine,
+      mode: params.mode,
+      selector: params.selector,
+      createdAt: '2026-09-05T00:00:00.000Z',
+      runs: [
+        {
+          runId: 'run-a',
+          generation: 1,
+          selected: true,
+          slotId: SLOT,
+          status: 'human-gating',
+          currentStep: null,
+          eligibility: {
+            eligible: false,
+            code: 'STATUS_NOT_ELIGIBLE',
+            reason: "status 'human-gating' is not monitoring or ci-watching",
+          },
+          recoveryPolicy: { kind: 'runner-session-reload', supported: false, runnerId: 'claude' },
+          resourceManifest: {
+            capturedAt: '2026-09-05T00:00:00.000Z',
+            resources: [],
+            capabilityLeases: [],
+          },
+        },
+      ],
+      eligibleCount: 0,
+      rejectedCount: 1,
+    }),
+  });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+  // The gate-entry reconcile has already run, which is when an operator sees
+  // the four choices, so the run is at an operator wait.
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+  parkCalls.length = 0;
+  actions.length = 0;
+
+  const plan = await reconciler.preview({ runId: 'run-a', gateChoice: 'free-slot' });
+  assert.equal(plan.posture, 'parked');
+  assert.deepEqual(plan.rejection, {
+    kind: 'park-ineligible',
+    code: 'STATUS_NOT_ELIGIBLE',
+    reason: "status 'human-gating' is not monitoring or ci-watching",
+  });
+  // Nothing to show the operator, because nothing would happen.
+  assert.deepEqual(plan.acquire, []);
+  assert.deepEqual(plan.retain, []);
+  assert.deepEqual(plan.warm, []);
+  assert.deepEqual(plan.stop, []);
+  assert.deepEqual(plan.effects, []);
+  // A preview mutates nothing: eligibility only, no execute, no provider action.
+  assert.equal(parkCalls.length, 1);
+  assert.deepEqual(actions, []);
+  assert.equal(
+    runs.get('run-a')?.resourcePosture?.posture,
+    'operator-wait',
+    'a preview must not move the run',
+  );
+  const status = await registry.status({ slotId: SLOT, ownerRunId: 'run-a' });
+  assert.equal(status.leases[0]?.state, 'acquired');
+});
+
+test('preview for parked on an eligible run returns the plan', async (t) => {
+  const { reconciler, registry, parkCalls } = await harness(t, {
+    capabilities: [CATALOG_LINT],
+  });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+  parkCalls.length = 0;
+
+  const plan = await reconciler.preview({ runId: 'run-a', gateChoice: 'free-slot' });
+  assert.equal(plan.posture, 'parked');
+  assert.equal(plan.rejection, undefined);
+  assert.deepEqual(
+    plan.stop.map((state) => state.capabilityId),
+    ['lint'],
+  );
+  assert.equal(parkCalls.length, 1, 'eligibility is checked, execute is not called');
+});
+
+test('preview and apply agree on an already-parked run', async (t) => {
+  const { reconciler, registry, parkCalls } = await harness(t, {
+    capabilities: [CATALOG_LINT],
+  });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+  // Park it for real once.
+  const parked = await reconciler.apply({ runId: 'run-a', gateChoice: 'free-slot' });
+  assert.equal(parked.transition.outcome, 'applied');
+  assert.equal(parked.status.posture, 'parked');
+  // Real machine parking stops the manifest resources; the harness's parking
+  // stub does not, so stop them here to reach the state a real park leaves.
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', keepWarm: false });
+  parkCalls.length = 0;
+
+  // Apply again: idempotent, and machine parking is never consulted.
+  const repeatApply = await reconciler.apply({ runId: 'run-a', gateChoice: 'free-slot' });
+  assert.equal(repeatApply.transition.outcome, 'idempotent');
+  assert.equal(repeatApply.ok, true);
+  assert.deepEqual(parkCalls, []);
+
+  // Preview must say the same thing: no rejection, nothing to do.
+  const plan = await reconciler.preview({ runId: 'run-a', gateChoice: 'free-slot' });
+  assert.equal(plan.posture, 'parked');
+  assert.equal(plan.rejection, undefined, 'an already-parked run is not ineligible');
+  assert.deepEqual(plan.acquire, []);
+  assert.deepEqual(plan.retain, []);
+  assert.deepEqual(plan.warm, []);
+  assert.deepEqual(plan.stop, []);
+  assert.deepEqual(plan.effects, []);
+  assert.match(plan.reason, /already parked/);
+  assert.deepEqual(parkCalls, [], 'preview must not consult parking either');
+});
+
+test('the reconciler folds a failed warm cleanup into the transition', async (t) => {
+  // Driven through the sweep result: a real failure also leaves an error lease
+  // that the terminal release re-reports, which would mask whether the summary
+  // itself is being read.
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [CATALOG_METRO],
+    warmSweepResult: {
+      released: [],
+      deferred: [],
+      failures: [{ capabilityId: 'metro', leaseId: 'lease-1', reason: 'metro shutdown exited 1' }],
+      effects: [],
+    },
+  });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
+  assert.equal(result.transition.outcome, 'partial');
+  assert.equal(result.ok, false, 'a warm provider that would not stop is not a success');
+  const failure = result.transition.failures.find((item) => item.capabilityId === 'metro');
+  assert.ok(failure, JSON.stringify(result.transition.failures));
+  assert.match(failure.reason, /metro shutdown exited 1/);
+});
+
+test('the reconciler reports a deferred warm cleanup as still running', async (t) => {
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [CATALOG_METRO],
+    warmSweepResult: {
+      released: [],
+      deferred: [{ capabilityId: 'metro' }],
+      failures: [],
+      effects: [],
+    },
+  });
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'terminal' });
+  const metro = result.status.capabilities.find((state) => state.capabilityId === 'metro');
+  assert.equal(metro?.desiredDisposition, 'stopped');
+  assert.equal(metro?.observedState, 'running', 'a deferred provider is demonstrably still up');
+  assert.match(metro?.reason ?? '', /still needs it/);
+  // Desired stopped while observed running is never a success.
+  assert.equal(result.transition.outcome, 'partial');
+  assert.equal(result.ok, false);
+  const deferral = result.transition.failures.find((item) => item.capabilityId === 'metro');
+  assert.ok(deferral, JSON.stringify(result.transition.failures));
+  assert.match(deferral.reason, /still needs it/);
 });
