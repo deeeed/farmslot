@@ -177,6 +177,18 @@ export interface RunResourcePostureState {
   posture: ResourcePosture;
   policySource: ResourcePosturePolicySource;
   gateChoice?: ResourcePostureGateChoice;
+  /**
+   * Set by `machine.pause.restore` when it re-presents a gate, and consumed by
+   * the very next wait boundary.
+   *
+   * Without it a run whose stored choice is `free-slot` re-parks itself the
+   * instant restore re-presents its gate: the replayed gate reaches the
+   * operator-wait boundary, the stored choice is carried forward, and the run
+   * parks again before the operator ever sees it. The restored gate therefore
+   * falls back to the framework default once; choosing `free-slot` again is
+   * still available, it just has to be chosen rather than inherited.
+   */
+  gateChoiceSuppressedUntilNextWait?: true;
   waitPolicy?: ResourcePostureWaitPolicy;
   capabilities: ResourcePostureCapabilityState[];
   /** ADR-038: no posture resolved here stops a gate-held worker. */

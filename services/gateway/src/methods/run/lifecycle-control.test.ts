@@ -7,6 +7,7 @@ import { withMachineRunTransition } from '../../run-lifecycle/transition-coordin
 import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../../runs/store.js';
 
 import {
+  GATE_PARK_REPLAY_TRIGGER,
   publishForceCompletedRun,
   runCancel,
   runForceComplete,
@@ -1103,5 +1104,146 @@ test('a gate park with neither a running step nor a settled recorded step is ref
       },
     ),
     /no running step and no settled 'human-gate' step/,
+  );
+});
+
+test('a gate replay is attributed to the operator, not to auto-recovery', async (t) => {
+  const run = gateParkedRun(`PROJ-${Date.now()}-gate-park-provenance`);
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'done' },
+    ],
+  });
+  const triggers: string[] = [];
+
+  await runResumeTransitionLocked(
+    { runId: run.id },
+    () => {},
+    { machineParkingRestore: true },
+    {
+      nudgeMonitor: async () => {},
+      redrive: async () => {
+        throw new Error('unreachable');
+      },
+      replayGate: async (runId, stepName) => {
+        // The production dep records provenance; assert the transition asks for
+        // the operator attribution rather than charging the auto-recovery budget.
+        triggers.push('replayed');
+        updateRun(runId, {
+          engineState: { ...getRun(runId)!.engineState, generation: 4 },
+          steps: getRun(runId)!.steps.map((step) =>
+            step.name === stepName ? { ...step, status: 'running' as const } : step,
+          ),
+        });
+      },
+    },
+  );
+
+  assert.deepEqual(triggers, ['replayed']);
+  // A machine restore is an operator action; recording it as auto-recovery
+  // would consume the automatic attempt budget for a human-driven restore and
+  // misreport its provenance in the recovery audit.
+  assert.equal(GATE_PARK_REPLAY_TRIGGER, 'operator');
+  assert.equal(getRun(run.id)!.recoveryAttempts ?? undefined, undefined);
+});
+
+test('a restore suppresses an inherited free-slot choice for the gate it re-presents', async (t) => {
+  const run = gateParkedRun(`PROJ-${Date.now()}-gate-park-repark`);
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'done' },
+    ],
+    // The choice that parked the run in the first place.
+    resourcePosture: {
+      posture: 'parked',
+      policySource: 'gate-choice',
+      gateChoice: 'free-slot',
+      capabilities: [],
+      workerRetained: false,
+      updatedAt: '2026-09-05T00:00:00.000Z',
+    },
+  });
+
+  await runResumeTransitionLocked(
+    { runId: run.id },
+    () => {},
+    { machineParkingRestore: true },
+    {
+      nudgeMonitor: async () => {},
+      redrive: async () => {
+        throw new Error('unreachable');
+      },
+      replayGate: async (runId, stepName) => {
+        // Set INSIDE the replay's view: the boundary the replayed gate reaches
+        // must already see the suppression, or the run re-parks before the
+        // operator sees the gate.
+        assert.equal(
+          getRun(runId)!.resourcePosture?.gateChoiceSuppressedUntilNextWait,
+          true,
+          'the suppression must be in place before the gate is re-presented',
+        );
+        updateRun(runId, {
+          engineState: { ...getRun(runId)!.engineState, generation: 4 },
+          steps: getRun(runId)!.steps.map((step) =>
+            step.name === stepName ? { ...step, status: 'running' as const } : step,
+          ),
+        });
+      },
+    },
+  );
+
+  // The stored choice itself is untouched, so the operator can still pick
+  // free-slot again — it just is not inherited automatically.
+  assert.equal(getRun(run.id)!.resourcePosture?.gateChoice, 'free-slot');
+});
+
+test('a restore does not suppress anything when the run never chose free-slot', async (t) => {
+  const run = gateParkedRun(`PROJ-${Date.now()}-gate-park-no-suppress`);
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'done' },
+    ],
+    resourcePosture: {
+      posture: 'operator-wait',
+      policySource: 'project-default',
+      gateChoice: 'keep-for-validation',
+      capabilities: [],
+      workerRetained: true,
+      updatedAt: '2026-09-05T00:00:00.000Z',
+    },
+  });
+
+  await runResumeTransitionLocked(
+    { runId: run.id },
+    () => {},
+    { machineParkingRestore: true },
+    {
+      nudgeMonitor: async () => {},
+      redrive: async () => {
+        throw new Error('unreachable');
+      },
+      replayGate: async (runId, stepName) => {
+        assert.equal(
+          getRun(runId)!.resourcePosture?.gateChoiceSuppressedUntilNextWait,
+          undefined,
+          'only a free-slot choice can re-park the run, so only it is suppressed',
+        );
+        updateRun(runId, {
+          engineState: { ...getRun(runId)!.engineState, generation: 4 },
+          steps: getRun(runId)!.steps.map((step) =>
+            step.name === stepName ? { ...step, status: 'running' as const } : step,
+          ),
+        });
+      },
+    },
   );
 });

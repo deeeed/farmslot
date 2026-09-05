@@ -452,13 +452,21 @@ export interface RunResumeTransitionDependencies {
   replayGate(runId: string, stepName: string): Promise<void>;
 }
 
+/**
+ * Who a gate replay is attributed to. `operator`, not `auto-recovery`: a
+ * machine restore is an operator action, and recording it as auto-recovery
+ * would charge the replay against the automatic attempt budget and misreport
+ * its provenance in the recovery audit.
+ */
+export const GATE_PARK_REPLAY_TRIGGER = 'operator' as const;
+
 const DEFAULT_RUN_RESUME_DEPS: RunResumeTransitionDependencies = {
   nudgeMonitor: nudgeResumedMonitor,
   redrive: startRunWithStepAcknowledgement,
   replayGate: async (runId, stepName) => {
     // replay-step imports the orchestrator, so keep this lazy.
     const { runReplayStep } = await import('./replay-step.js');
-    await runReplayStep({ runId, stepName, triggeredBy: 'auto-recovery' }, () => {});
+    await runReplayStep({ runId, stepName, triggeredBy: GATE_PARK_REPLAY_TRIGGER }, () => {});
   },
 };
 
@@ -505,6 +513,17 @@ export async function runResumeTransitionLocked(
     console.log(
       `[run] gate-park restore replaying '${gateParkPlan.stepName}' for run ${params.runId.slice(0, 8)} (its gate loop had exited)`,
     );
+    // One-shot, set BEFORE the replay so the operator-wait boundary the replayed
+    // gate reaches cannot inherit a stored `free-slot` choice and park the run
+    // again before the operator has seen the gate at all.
+    if (existing.resourcePosture?.gateChoice === 'free-slot') {
+      updateRun(params.runId, {
+        resourcePosture: {
+          ...existing.resourcePosture,
+          gateChoiceSuppressedUntilNextWait: true,
+        },
+      });
+    }
     await deps.replayGate(params.runId, gateParkPlan.stepName);
     const replayed = getRun(params.runId)!;
     const generation = replayed.engineState?.generation ?? previousGeneration;

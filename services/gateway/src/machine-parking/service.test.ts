@@ -2975,3 +2975,126 @@ test('restore retries the reattach and completes once the branch is back', async
   assert.equal(ctx.workspaces.get('slot-a')?.branch, 'work/run-gate');
   assert.equal(isGateParkInFlightOrFreed(after), false);
 });
+
+test('a reattach failure leaves the generation untouched, so the restore can be retried', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async () => false;
+  let allowReattach = false;
+  ctx.deps.reattachParkedWorkspace = async () => {
+    if (!allowReattach) throw new Error('checkout busy');
+  };
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+  assert.ok(ctx.runs.get('run-gate')!.park!.preservedWorkspace?.detachedAt);
+
+  // First restore: the reattach still fails. It must fail BEFORE anything that
+  // advances the generation, or the record is left describing a generation that
+  // no longer exists and every later preview rejects GENERATION_CHANGED.
+  const firstPreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  const firstAttempt = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: firstPreview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'restore-attempt-1',
+  });
+  assert.equal(firstAttempt.ok, false);
+  const afterFailure = ctx.runs.get('run-gate')!;
+  assert.equal(afterFailure.park!.phase, 'partial');
+  assert.equal(
+    afterFailure.park!.generation,
+    afterFailure.engineState?.generation ?? 3,
+    'the record must still describe the run generation that exists',
+  );
+
+  // Second restore once the checkout problem clears: it must be admitted.
+  allowReattach = true;
+  ctx.deps.reattachParkedWorkspace = async (run, workspace) => {
+    const current = ctx.workspaces.get(run.slotId!)!;
+    ctx.workspaces.set(run.slotId!, { ...current, branch: workspace.branch });
+  };
+  const retryPreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  assert.notEqual(
+    retryPreview.runs[0]?.eligibility.code,
+    'GENERATION_CHANGED',
+    'a failed restore must not make the record permanently unretryable',
+  );
+  const retry = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: retryPreview.previewId,
+    reviewedTargets: [
+      { runId: 'run-gate', generation: ctx.runs.get('run-gate')!.engineState?.generation ?? 3 },
+    ],
+    operationId: 'restore-attempt-2',
+  });
+  assert.equal(retry.ok, true, JSON.stringify(ctx.runs.get('run-gate')!.park!.errors));
+  assert.equal(ctx.runs.get('run-gate')!.park!.phase, 'restored');
+});
+
+test('a replay that advances the generation then fails still leaves the record retryable', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async () => false;
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  // The resume advances the generation (as a gate replay does) and then fails
+  // its acknowledgement check. This is the one failure path that can follow an
+  // advance, since the reattach is verified before the resume.
+  ctx.deps.resumeRun = async (runId) => {
+    const run = ctx.runs.get(runId)!;
+    run.engineState = { ...run.engineState, generation: 9 };
+    throw new Error('acknowledgement did not match');
+  };
+
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  const attempt = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'restore-advance-then-fail',
+  });
+
+  assert.equal(attempt.ok, false);
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.phase, 'partial');
+  // Left at the pre-replay generation, the preview would reject
+  // GENERATION_CHANGED and the record could never be retried.
+  assert.equal(after.park!.generation, 9);
+  const retryPreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  assert.notEqual(retryPreview.runs[0]?.eligibility.code, 'GENERATION_CHANGED');
+});

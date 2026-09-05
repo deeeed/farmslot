@@ -770,9 +770,13 @@ async function checkLinkedWorktree(vars: SlotVars): Promise<boolean> {
  * branch field. Labels make a missing value read as missing.
  */
 export function gitHeadProbeCommand(repo: string): string {
+  // `printf '%s\n'` around a command substitution, NOT a bare `printf 'sha='`
+  // followed by the command: with the bare form a rev-parse that prints nothing
+  // leaves no newline, so the next label lands on the same line and the two
+  // values merge.
   return (
-    `{ printf 'sha='; git -C '${repo}' rev-parse HEAD 2>/dev/null; ` +
-    `printf 'ref='; git -C '${repo}' rev-parse --abbrev-ref HEAD 2>/dev/null; } 2>/dev/null`
+    `{ printf 'sha=%s\\n' "$(git -C '${repo}' rev-parse HEAD 2>/dev/null)"; ` +
+    `printf 'ref=%s\\n' "$(git -C '${repo}' rev-parse --abbrev-ref HEAD 2>/dev/null)"; } 2>/dev/null`
   );
 }
 

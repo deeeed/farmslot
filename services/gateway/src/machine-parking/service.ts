@@ -2128,6 +2128,31 @@ export class MachineParkingService {
         }
       }
     }
+    // BEFORE the resume, because the resume may replay the gate and a replay
+    // ADVANCES the run generation. A reattach failure after that advance would
+    // settle `partial` carrying the pre-replay generation, and every later
+    // restore preview would then reject GENERATION_CHANGED — the record could
+    // never be retried even once the checkout problem cleared. Failing here
+    // instead leaves the generation untouched, so a retry is still possible.
+    //
+    // A park that detached and then failed to roll back leaves the branch out of
+    // the working tree. Restoring on top of that would report success over a
+    // workspace the run cannot use, and lift the fence while the detach is still
+    // outstanding. Retry the reattach and PROVE it landed before going on.
+    if (!failed && this.requireRun(runId).park?.preservedWorkspace?.detachedAt) {
+      await this.rollBackDetachedWorkspace(runId);
+      if (this.requireRun(runId).park?.preservedWorkspace?.detachedAt) {
+        failed = true;
+        await this.appendError(
+          runId,
+          'orchestration-resuming',
+          'workspace.reattach',
+          new Error(
+            'the parked branch is still detached; restore cannot complete until it is back in the working tree',
+          ),
+        );
+      }
+    }
     if (!failed) {
       try {
         await this.patchRecord(runId, (current) => ({
@@ -2159,26 +2184,14 @@ export class MachineParkingService {
       } catch (error) {
         failed = true;
         await this.appendError(runId, 'orchestration-resuming', 'run.resume', error);
+        // Bring the record's generation up to the run's. A replay inside the
+        // resume advances it before it can fail the acknowledgement check, and a
+        // record left describing a generation that no longer exists is refused by
+        // the preview's GENERATION_CHANGED check forever — the retry this partial
+        // exists to allow could never happen. This is the ONLY failure path that
+        // can follow an advance: the reattach is verified before the resume.
         const generation = this.requireRun(runId).engineState?.generation ?? record.generation;
         await this.patchRecord(runId, (current) => ({ ...current, generation }));
-      }
-    }
-    // A park that detached and then failed to roll back leaves the branch out of
-    // the working tree. Restoring on top of that would report success over a
-    // workspace the run cannot use, and lift the fence while the detach is still
-    // outstanding. Retry the reattach and PROVE it landed before settling.
-    if (!failed && this.requireRun(runId).park?.preservedWorkspace?.detachedAt) {
-      await this.rollBackDetachedWorkspace(runId);
-      if (this.requireRun(runId).park?.preservedWorkspace?.detachedAt) {
-        failed = true;
-        await this.appendError(
-          runId,
-          'orchestration-resuming',
-          'workspace.reattach',
-          new Error(
-            'the parked branch is still detached; restore cannot complete until it is back in the working tree',
-          ),
-        );
       }
     }
     const latest = this.requireRun(runId);

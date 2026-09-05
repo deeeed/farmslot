@@ -670,10 +670,14 @@ test('the git head probe labels its values so a missing one cannot shift the oth
 
 test('the git head probe command asks for both values in one exec', () => {
   const cmd = gitHeadProbeCommand('/repo');
-  assert.match(cmd, /sha=/);
-  assert.match(cmd, /ref=/);
   assert.match(cmd, /rev-parse HEAD/);
   assert.match(cmd, /rev-parse --abbrev-ref HEAD/);
+  // `printf 'sha=%s\n' "$(...)"`, not a bare `printf 'sha='` followed by the
+  // command: the bare form emits no newline when rev-parse prints nothing, so
+  // the next label lands on the same line and the two values merge.
+  assert.match(cmd, /printf 'sha=%s\\n' "\$\(/);
+  assert.match(cmd, /printf 'ref=%s\\n' "\$\(/);
+  assert.doesNotMatch(cmd, /printf 'sha=';/);
 });
 
 test('a branch refresh writes the commit too, not just the branch name', () => {

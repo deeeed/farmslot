@@ -310,3 +310,84 @@ test('a failure of the failure recorder is named and returned, never dropped', a
     'run store unavailable',
   );
 });
+
+// ─── ADR-054 free-slot: a park in flight owns the run's posture ───
+
+const GATE_PARK_RECORD = {
+  version: 1,
+  operationId: 'op',
+  previewId: 'preview',
+  generation: 1,
+  machine: 'macwork',
+  slotId: 'slot-a',
+  mode: 'release',
+  phase: 'resources-stopping',
+  slotDisposition: 'freed',
+  prePauseStatus: 'blocked',
+  prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+  resourceManifest: { capturedAt: 'x', resources: [], capabilityLeases: [] },
+  recoveryHandle: null,
+  errors: [],
+  residuals: { runner: 'stopped', resources: [] },
+  createdAt: 'x',
+  updatedAt: 'x',
+} as const;
+
+test('a wait boundary does not act while a gate park is in flight', async () => {
+  const { reconciler, calls } = fakeReconciler();
+  const runId = newRun();
+  updateRun(runId, { park: { ...GATE_PARK_RECORD, runId } as never });
+
+  // Engine boundaries do not carry the public RPC's admission check, so without
+  // this guard a boundary reached mid-park acts on a slot the park is releasing.
+  const outcome = await reconcileRunPosture({ runId, boundary: 'operator-wait' }, reconciler);
+
+  assert.equal(calls.length, 0);
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.error ?? '', /gate park is in flight/);
+
+  // Non-wait boundaries are untouched: cancel still has to tear the run down.
+  await reconcileRunPosture({ runId, boundary: 'cancel' }, reconciler);
+  assert.deepEqual(
+    calls.map((call) => call.posture),
+    ['terminal'],
+  );
+});
+
+test('a restored gate does not inherit the free-slot choice that parked the run', async () => {
+  const { reconciler, calls } = fakeReconciler();
+  const runId = newRun();
+  updateRun(runId, {
+    resourcePosture: {
+      posture: 'parked',
+      policySource: 'gate-choice',
+      gateChoice: 'free-slot',
+      gateChoiceSuppressedUntilNextWait: true,
+      capabilities: [],
+      workerRetained: false,
+      updatedAt: '2026-09-05T00:00:00.000Z',
+    },
+  });
+
+  // The wait the restore re-presents must NOT carry `free-slot`, or the run
+  // parks itself again before the operator ever sees the gate.
+  await reconcileRunPosture({ runId, boundary: 'operator-wait' }, reconciler);
+  assert.equal(calls[0].gateChoice, undefined);
+
+  // One-shot: consumed, so the operator's next choice governs normally.
+  assert.equal(getRun(runId)!.resourcePosture?.gateChoiceSuppressedUntilNextWait, undefined);
+  assert.equal(getRun(runId)!.resourcePosture?.gateChoice, 'free-slot');
+
+  // An EXPLICIT choice still wins over the suppression.
+  updateRun(runId, {
+    resourcePosture: {
+      ...getRun(runId)!.resourcePosture!,
+      gateChoiceSuppressedUntilNextWait: true,
+    },
+  });
+  await reconcileRunPosture(
+    { runId, boundary: 'operator-wait', gateChoice: 'free-slot' },
+    reconciler,
+  );
+  assert.equal(calls[1].gateChoice, 'free-slot');
+});
