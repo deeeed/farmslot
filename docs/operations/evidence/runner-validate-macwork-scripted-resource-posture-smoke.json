@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-05T16:59:23.411Z",
+  "recordedAt": "2026-09-05T18:05:46.249Z",
   "host": "macwork",
   "scenario": "resource-posture-smoke",
   "runner": "scripted",
   "slotId": "macpro-ff-1",
   "capabilityId": "sandbox-gateway-ui",
-  "runId": "dac38dd8-8285-4bba-8600-89f637b6473e",
+  "runId": "d3412a9d-6723-415f-b7e7-cdfd9559877a",
   "project": "farmslot-farm",
   "acquire": {
     "ok": true,
@@ -31,22 +31,153 @@
     "observedState": "running",
     "policySource": "project-default",
     "reason": "provider retention 'retain' at operator-wait",
-    "leaseId": "cap-e08ea5da-56a7-470a-a2a8-9ddb3dd56698",
+    "leaseId": "cap-b88859f9-b82e-42be-b095-bf07c481d3ff",
     "owner": {
-      "runId": "dac38dd8-8285-4bba-8600-89f637b6473e",
-      "familyId": "dac38dd8-8285-4bba-8600-89f637b6473e"
+      "runId": "d3412a9d-6723-415f-b7e7-cdfd9559877a",
+      "familyId": "d3412a9d-6723-415f-b7e7-cdfd9559877a"
     },
-    "lastTransitionAt": "2026-09-05T16:58:33.405Z",
+    "lastTransitionAt": "2026-09-05T18:05:14.345Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
     ]
   },
-  "terminalApply": null,
-  "terminalStatus": null,
-  "persistedPosture": null,
-  "dependencyProof": null,
-  "familyProof": null,
+  "terminalApply": {
+    "ok": true,
+    "outcome": "applied",
+    "effects": [
+      "Gateway/UI capability ownership is removed",
+      "The slot lifecycle retains the control-plane process until slot teardown"
+    ],
+    "failures": []
+  },
+  "terminalStatus": {
+    "capabilityId": "sandbox-gateway-ui",
+    "desiredDisposition": "stopped",
+    "observedState": "stopped",
+    "policySource": "project-default",
+    "reason": "provider retention 'stop' at terminal",
+    "leaseId": "cap-ddf7827b-5811-4dbb-af7e-02df9ae5ff5c",
+    "owner": {
+      "runId": "7c718422-826a-46f4-8f51-6ed996a01f6c",
+      "familyId": "d3412a9d-6723-415f-b7e7-cdfd9559877a"
+    },
+    "lastTransitionAt": "2026-09-05T18:05:43.537Z",
+    "releaseEffects": [
+      "Gateway/UI capability ownership is removed",
+      "The slot lifecycle retains the control-plane process until slot teardown"
+    ]
+  },
+  "persistedPosture": {
+    "posture": "terminal",
+    "policySource": "project-default",
+    "lastTransition": "idempotent"
+  },
+  "dependencyProof": {
+    "attempted": true,
+    "skipped": false,
+    "pass": true,
+    "reason": null,
+    "error": null,
+    "dependent": "ios-simulator",
+    "dependency": "companion-metro",
+    "pairReason": "depth-1 pair with the lowest total cost class (high + high); rejected 2 deeper or unavailable candidate(s)",
+    "candidates": [
+      {
+        "id": "android-device",
+        "dependencies": ["companion-metro"],
+        "cost": "high",
+        "availability": "unavailable"
+      },
+      {
+        "id": "companion-native-client-ios",
+        "dependencies": ["ios-simulator"],
+        "cost": "high",
+        "availability": "available"
+      },
+      {
+        "id": "ios-simulator",
+        "dependencies": ["companion-metro"],
+        "cost": "high",
+        "availability": "available"
+      }
+    ],
+    "dependencyLeaseAcquired": true,
+    "releaseRetained": {
+      "attempted": true,
+      "pass": true,
+      "error": null,
+      "retained": {
+        "attempted": true,
+        "exit": 1,
+        "errorCode": "RUNTIME_CAPABILITY_RELEASE_RETAINED",
+        "retained": ["companion-metro"],
+        "released": [],
+        "humanSample": "Release capability  slot=macpro-ff-1  run=d3412a9d-6723-415f-b7e7-cdfd9559877a  capability=companion-metro |   companion-metro  lease=cap-de27d77a-e603-4e0e-9650-43ba838ed993  retained  provider=running | Error: Retained 1 lease(s) that something else still needs: companion-metro. | Next: Release whatever still depends on companion-metro first; `farmslot resource posture status d3412a9d-6723-415f-b7e7-cdfd9559877a` names what is holding it."
+      }
+    },
+    "waitStates": [
+      {
+        "capabilityId": "ios-simulator",
+        "desiredDisposition": "stopped",
+        "observedState": "stopped",
+        "policySource": "framework-default"
+      },
+      {
+        "capabilityId": "companion-metro",
+        "desiredDisposition": "stopped",
+        "observedState": "stopped",
+        "policySource": "project-default"
+      }
+    ],
+    "preparedAt": "2026-09-05T18:05:28.445Z",
+    "terminalStates": [
+      {
+        "capabilityId": "ios-simulator",
+        "desiredDisposition": "stopped",
+        "observedState": "stopped"
+      },
+      {
+        "capabilityId": "companion-metro",
+        "desiredDisposition": "stopped",
+        "observedState": "stopped"
+      }
+    ],
+    "releaseOrder": ["ios-simulator", "companion-metro"]
+  },
+  "familyProof": {
+    "attempted": true,
+    "pass": true,
+    "runId": "7c718422-826a-46f4-8f51-6ed996a01f6c",
+    "error": null,
+    "familyId": "d3412a9d-6723-415f-b7e7-cdfd9559877a",
+    "siblingStatusBeforeAcquire": "blocked",
+    "siblingSlotId": null,
+    "derivedAcquire": {
+      "ok": true,
+      "familyId": "d3412a9d-6723-415f-b7e7-cdfd9559877a",
+      "reason": null
+    },
+    "derivedLeaseId": "cap-ddf7827b-5811-4dbb-af7e-02df9ae5ff5c",
+    "mismatchAcquire": {
+      "ok": false,
+      "kind": "invalid-request",
+      "reason": "ownerFamilyId 'd3412a9d-6723-415f-b7e7-cdfd9559877a-not-really' does not match the family of run '7c718422-826a-46f4-8f51-6ed996a01f6c' ('d3412a9d-6723-415f-b7e7-cdfd9559877a')"
+    },
+    "leasesAfterMismatch": 1,
+    "siblingLeasesAfterTerminal": [
+      {
+        "capabilityId": "sandbox-gateway-ui",
+        "state": "released"
+      }
+    ],
+    "fencedAcquire": {
+      "ok": false,
+      "reason": "Run '7c718422-826a-46f4-8f51-6ed996a01f6c' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
+    },
+    "siblingFinalStatus": "cancelled",
+    "leftoverLeases": []
+  },
   "cliProof": {
     "attempted": true,
     "pass": true,
@@ -82,37 +213,59 @@
       "rejected": false
     }
   },
-  "cliReleaseProof": null,
-  "cliStopWarmProof": null,
+  "cliReleaseProof": {
+    "attempted": true,
+    "pass": true,
+    "error": null,
+    "released": {
+      "humanRow": "recording  lease=cap-0eca075e-fbe6-4720-8e5b-642143ac8e92  released  provider=unknown",
+      "requestLine": "keep-warm requested: no",
+      "exit": 0,
+      "envelopeStatus": "ok",
+      "released": ["recording"],
+      "retained": [],
+      "failures": []
+    }
+  },
+  "cliStopWarmProof": {
+    "attempted": true,
+    "pass": true,
+    "error": null,
+    "exit": 0,
+    "envelopeStatus": "ok",
+    "outcome": "not-warm",
+    "observedState": "stopped",
+    "expectedCode": null
+  },
   "gateParkProof": {
     "attempted": true,
-    "pass": false,
-    "error": "a session-reload gate-held run was refused with 'RUNNER_RECOVERY_UNSUPPORTED': Cannot determine runner liveness under pane PID 49548: command timed out after 10000ms",
+    "pass": true,
+    "error": null,
     "nonGateHeld": {
       "eligible": false,
       "code": "STATUS_NOT_ELIGIBLE",
       "slotDisposition": "retained"
     },
     "gateHeld": {
-      "attempted": true,
-      "status": "blocked",
-      "runnerId": "claude",
-      "eligible": false,
-      "code": "RUNNER_RECOVERY_UNSUPPORTED",
-      "slotDisposition": "freed",
-      "recoverySupported": false,
-      "postureRejectionCode": "RUNNER_RECOVERY_UNSUPPORTED",
-      "postureRejectionKind": "park-ineligible",
-      "capabilityGatesCleared": true,
-      "reloadRefused": false
+      "attempted": false,
+      "reason": "no FARMSLOT_GATE_PARK_RUN_ID: a gate-held publication run needs a real local-first package, which the scripted runner cannot produce",
+      "howToSupply": [
+        "pin a ready backlog item to a session-reload runner and one slot: backlog.update { itemId, runner: \"claude\", allowedSlots: [\"<slot>\"], mode: \"autonomous\" }",
+        "dispatch it: backlog.enqueue { itemId } — the queue launches it on that slot",
+        "wait for its publication HUMAN_GATE, then pass its run id as FARMSLOT_GATE_PARK_RUN_ID"
+      ],
+      "realRunnerProbe": {
+        "attempted": false,
+        "reason": "the live capability-gate assertion needs FARMSLOT_GATE_PARK_RUN_ID; it is asserted in the gate-held half"
+      }
     },
-    "gateHeldRunId": "aee49175-c87c-4b1d-816d-059c7a8a7018",
-    "gateHeldMachine": "macwork"
+    "gateHeldRunId": null
   },
   "leftoverLeases": [],
-  "pass": false,
-  "error": "gate-park eligibility proof failed: a session-reload gate-held run was refused with 'RUNNER_RECOVERY_UNSUPPORTED': Cannot determine runner liveness under pane PID 49548: command timed out after 10000ms",
-  "familyId": "dac38dd8-8285-4bba-8600-89f637b6473e",
+  "pass": true,
+  "error": null,
+  "familyId": "d3412a9d-6723-415f-b7e7-cdfd9559877a",
+  "terminalRepeatOutcome": "idempotent",
   "cancelEffects": [
     {
       "name": "engine-cancel",

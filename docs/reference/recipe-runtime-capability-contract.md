@@ -261,6 +261,23 @@ Declare the field honestly or not at all. A `retain` on something the release
 really does stop makes parking leave a dead resource in the manifest, and restore
 will refuse it rather than boot it.
 
+Three rules follow from taking the declaration as fact:
+
+- **Ownership is per claimant.** Every provider that claims `capability` on a
+  resource must itself be leased by the run. A lease on some other claimant of
+  the same resource — a `slot-lifecycle` one especially — proves nothing about
+  the owner and does not stand in for it.
+- **Claimants must agree.** Two providers cannot both be right about what a
+  release does to one resource, so a resource claimed `retain` by one and `stop`
+  by another is refused with `CAPABILITY_CLAIM_CONFLICT` before anything is
+  touched, rather than letting one silently win.
+- **The hooks must match the claim.** A `stop` claim needs `boot` and `shutdown`
+  on its resource, because the park stops it and the restore boots it back. A
+  `retain` claim needs neither, which is what makes it usable for a physically
+  attached device that has no boot hook, but it does need a `health` hook or a
+  `watch`, because restore proves the resource stayed up instead of booting it.
+  Both are enforced when the project config loads.
+
 ```json
 {
   "runtime_capabilities": {

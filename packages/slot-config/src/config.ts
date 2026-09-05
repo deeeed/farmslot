@@ -1480,7 +1480,13 @@ export function validateRuntimeCapabilitiesConfig(
         if (!claim || typeof claim !== 'object' || Array.isArray(claim)) {
           throw new Error(`${projectConfig}: ${claimField} must be an object`);
         }
-        if (typeof claim.resource_id !== 'string' || !projectJson.resources?.[claim.resource_id]) {
+        // Own properties only: a plain `in`/index check accepts `constructor`
+        // and every other inherited key as if it named a real resource.
+        if (
+          typeof claim.resource_id !== 'string' ||
+          !projectJson.resources ||
+          !Object.hasOwn(projectJson.resources, claim.resource_id)
+        ) {
           throw new Error(
             `${projectConfig}: ${claimField}.resource_id must name an existing resource`,
           );
@@ -1507,6 +1513,22 @@ export function validateRuntimeCapabilitiesConfig(
         ) {
           throw new Error(
             `${projectConfig}: ${claimField}.release_effect must be ${RUNTIME_CAPABILITY_AFFECTED_RELEASE_EFFECTS.join(' or ')}`,
+          );
+        }
+        // A claim states what machine parking will do, so the resource has to
+        // be able to do it. `stop` means the park shuts it down and the restore
+        // boots it back, which needs both hooks; `retain` touches neither but
+        // restore must still be able to prove it stayed running.
+        const claimed = projectJson.resources[claim.resource_id];
+        const effect = claim.release_effect ?? 'stop';
+        if (effect === 'stop' && !(claimed.hooks?.boot && claimed.hooks?.shutdown)) {
+          throw new Error(
+            `${projectConfig}: ${claimField} declares release_effect "stop" but resource '${claim.resource_id}' lacks boot and shutdown hooks`,
+          );
+        }
+        if (effect === 'retain' && !(claimed.hooks?.health || claimed.watch)) {
+          throw new Error(
+            `${projectConfig}: ${claimField} declares release_effect "retain" but resource '${claim.resource_id}' has no health hook or watch to prove it stayed running`,
           );
         }
       }

@@ -1112,23 +1112,39 @@ export class MachineParkingService {
       );
     }
     const runningResources = resources.filter((resource) => resource.status === 'running');
+    // A resource every claimant declares `retain` is never stopped by the park
+    // and never booted by the restore, so demanding boot and shutdown hooks for
+    // it refuses slots for capabilities it does not use — a physically attached
+    // device has no boot hook and never will. What restore does need is a way
+    // to prove it stayed up, so a health signal stays mandatory. Derived claims
+    // are always `stop`, so this only ever admits an explicit declaration.
+    const parkRetains = (resource: SlotResource): boolean => {
+      const claims = capabilityClaimsForResource(capabilityStatus, resource.id);
+      return (
+        claims.size > 0 && [...claims.values()].every((claim) => claim.releaseEffect === 'retain')
+      );
+    };
+    const observableForRestore = (resource: SlotResource): boolean =>
+      Boolean(resource.definition.hooks?.health || resource.definition.watch);
+    const controllableForPark = (resource: SlotResource): boolean =>
+      parkRetains(resource)
+        ? observableForRestore(resource)
+        : Boolean(resource.definition.hooks?.shutdown && resource.definition.hooks?.boot);
     const unsafe = runningResources.find(
-      (resource) =>
-        resource.definition.controllable &&
-        (!resource.definition.hooks?.shutdown || !resource.definition.hooks?.boot),
+      (resource) => resource.definition.controllable && !controllableForPark(resource),
     );
     if (unsafe) {
       return reject(
         'RESOURCE_HOOKS_UNAVAILABLE',
-        `running resource '${unsafe.id}' lacks project-owned shutdown and boot hooks`,
+        parkRetains(unsafe)
+          ? `retained resource '${unsafe.id}' has no project-owned health signal to prove it stayed running`
+          : `running resource '${unsafe.id}' lacks project-owned shutdown and boot hooks`,
         emptyManifest(),
         handle.runnerId,
       );
     }
     const affected = runningResources.filter(
-      (resource) =>
-        resource.definition.controllable &&
-        Boolean(resource.definition.hooks?.shutdown && resource.definition.hooks?.boot),
+      (resource) => resource.definition.controllable && controllableForPark(resource),
     );
     const proofPlan = capabilityStatus.proofPlans[run.id];
     const activeLeases = capabilityStatus.leases.filter(
@@ -1171,17 +1187,39 @@ export class MachineParkingService {
     for (const resource of affected) {
       const claims = capabilityClaimsForResource(capabilityStatus, resource.id);
       const providerIds = new Set(claims.keys());
-      const selectedHolders = activeLeases.filter((lease) => providerIds.has(lease.capabilityId));
-      // Only a capability-owned resource needs a lease to justify it running.
-      // A slot-lifecycle resource is prepare's, so a running one with no lease
-      // is the normal state, not a leak.
-      const capabilityOwned = [...claims.values()].some(
-        (claim) => claim.ownership === 'capability',
+      // Two providers cannot both be right about what a release does to one
+      // resource. Honouring 'retain' would put a resource in the manifest as
+      // surviving while the other provider's shutdown hook takes it down, and
+      // the park would only discover that at settle, after the effects. A
+      // catalog that contradicts itself is refused before anything is touched.
+      const declaredEffects = new Set([...claims.values()].map((claim) => claim.releaseEffect));
+      if (declaredEffects.size > 1) {
+        return reject(
+          'CAPABILITY_CLAIM_CONFLICT',
+          `resource '${resource.id}' has conflicting release effects from ${[...claims.entries()]
+            .map(([providerId, claim]) => `${providerId}=${claim.releaseEffect}`)
+            .sort()
+            .join(', ')}`,
+          emptyManifest(),
+          handle.runnerId,
+        );
+      }
+      // Ownership is per claimant, never pooled. Each provider that claims to
+      // own this resource must itself be leased by this run; a lease on some
+      // OTHER claimant — a slot-lifecycle one especially — proves nothing about
+      // the owner and must not stand in for it.
+      const unowned = [...claims.entries()].filter(
+        ([providerId, claim]) =>
+          claim.ownership === 'capability' &&
+          !activeLeases.some((lease) => lease.capabilityId === providerId),
       );
-      if (capabilityOwned && selectedHolders.length === 0) {
+      if (unowned.length > 0) {
         return reject(
           'CAPABILITY_RESOURCE_UNOWNED',
-          `resource '${resource.id}' is capability-backed but not leased by run '${run.id}'`,
+          `resource '${resource.id}' is capability-backed but not leased by run '${run.id}': ${unowned
+            .map(([providerId]) => providerId)
+            .sort()
+            .join(', ')}`,
           emptyManifest(),
           handle.runnerId,
         );
@@ -2009,7 +2047,15 @@ export class MachineParkingService {
     let resumeAcknowledgement: RunResumeAcknowledgement | null = null;
     if (record.mode === 'release') {
       await this.deps.inspectRecoveryHandle(initial, record.recoveryHandle!, expectedRunnerState);
-      for (const lease of record.resourceManifest.capabilityLeases) {
+      // Ordered FIRST, before anything acquires. A provider's acquire action is
+      // frequently its resource's own boot action — the shipped gateway/UI
+      // provider is exactly that — so acquiring first would revive a retained
+      // resource that died while the run was parked and let the restore report
+      // success over it. Park never stopped these, so restore must find them
+      // already up or refuse; it may not boot its way to a green result.
+      const retainedFailure = !(await this.verifyRetainedResources(runId, record));
+      if (retainedFailure) failed = true;
+      for (const lease of retainedFailure ? [] : record.resourceManifest.capabilityLeases) {
         let shouldAcquire = lease.state === 'released';
         if (lease.state === 'held' || lease.state === 'reacquired') continue;
         if (!shouldAcquire) {
@@ -2068,9 +2114,9 @@ export class MachineParkingService {
           await this.appendError(runId, 'resources-restoring', 'capability.acquire', error);
         }
       }
-      let observed = await this.deps.observeResources(record.slotId);
+      let observed = retainedFailure ? [] : await this.deps.observeResources(record.slotId);
       const observedById = new Map(observed.map((resource) => [resource.id, resource.status]));
-      for (const resource of record.resourceManifest.resources) {
+      for (const resource of retainedFailure ? [] : record.resourceManifest.resources) {
         await this.patchResource(runId, resource.resourceId, {
           phase: 'restoring',
           error: undefined,
@@ -2116,9 +2162,9 @@ export class MachineParkingService {
         }
       }
       try {
-        observed = await this.deps.observeResources(record.slotId);
+        observed = retainedFailure ? [] : await this.deps.observeResources(record.slotId);
         const finalById = new Map(observed.map((resource) => [resource.id, resource.status]));
-        for (const resource of record.resourceManifest.resources) {
+        for (const resource of retainedFailure ? [] : record.resourceManifest.resources) {
           if (finalById.get(resource.resourceId) === 'running') continue;
           failed = true;
           await this.appendError(
@@ -2327,6 +2373,52 @@ export class MachineParkingService {
     await this.deps.persistRun(run, `machine-pause-${next.phase}`);
     await this.emitRecord(next);
     return structuredClone(next);
+  }
+
+  /**
+   * Prove every `retain` resource in the manifest is still running, before the
+   * restore is allowed to acquire or boot anything. Returns false and records a
+   * typed failure per dead resource; the caller then settles `partial` and the
+   * fence stays up, because a retained resource that stopped means something
+   * outside this run took down a lifecycle the park promised to leave alone.
+   */
+  private async verifyRetainedResources(
+    runId: string,
+    record: MachineParkRecord,
+  ): Promise<boolean> {
+    const retained = record.resourceManifest.resources.filter(
+      (resource) => resource.releaseEffect === 'retain',
+    );
+    if (retained.length === 0) return true;
+    let observed: SlotResource[];
+    try {
+      observed = await this.deps.observeResources(record.slotId);
+    } catch (error) {
+      await this.appendError(runId, 'resources-restoring', 'resource.retained-verify', error);
+      return false;
+    }
+    const statusById = new Map(observed.map((resource) => [resource.id, resource.status]));
+    let intact = true;
+    for (const resource of retained) {
+      const status = statusById.get(resource.resourceId);
+      if (status === 'running') continue;
+      intact = false;
+      const failure = new Error(
+        `retained resource '${resource.resourceId}' is '${status ?? 'missing'}'; park never stopped it, so restore will not boot it`,
+      );
+      await this.patchResource(runId, resource.resourceId, {
+        phase: 'failed',
+        error: failure.message,
+      });
+      await this.appendError(
+        runId,
+        'resources-restoring',
+        'resource.retained-verify',
+        failure,
+        resource.resourceId,
+      );
+    }
+    return intact;
   }
 
   private patchResource(
@@ -2888,17 +2980,16 @@ function capabilityClaimsForResource(
 }
 
 /**
- * What parking does to a resource. `retain` wins over `stop`: a provider that
- * declares its release leaves the resource running is asserting something else
- * owns that lifecycle, so stopping it here would break that owner.
+ * What parking does to a resource. Every claimant must already agree — a
+ * catalog whose providers disagree is refused with `CAPABILITY_CLAIM_CONFLICT`
+ * before this runs — so this reports the one agreed effect rather than picking
+ * a winner. An unclaimed resource is stopped, which is what parking always did.
  */
 function resourceReleaseEffect(
   claims: Map<string, EffectiveAffectedResource>,
 ): MachineParkResourceReleaseEffect {
-  for (const claim of claims.values()) {
-    if (claim.releaseEffect === 'retain') return 'retain';
-  }
-  return 'stop';
+  const [first] = claims.values();
+  return first?.releaseEffect ?? 'stop';
 }
 
 function capabilityProvidersForResource(
@@ -2987,6 +3078,18 @@ function zeroEffectIntent(
   // which branch was taken out of the slot's working tree.
   if (record.slotFreedAt) return false;
   if (record.preservedWorkspace?.detachedAt) return false;
+  // A released lease is an effect the residuals cannot show. A manifest that is
+  // all `retain` resources reports every resource `running` by design, and a
+  // lease-only manifest has no resources at all, so without this a park that
+  // already gave up its leases would look untouched and its record — the only
+  // note of which leases were released — would be deleted.
+  if (
+    record.resourceManifest.capabilityLeases.some(
+      (lease) => lease.state !== 'held' && lease.state !== 'failed',
+    )
+  ) {
+    return false;
+  }
   if (run.status !== record.prePauseStatus) return false;
   if (
     record.phase !== 'intent-persisted' &&

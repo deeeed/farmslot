@@ -897,4 +897,97 @@ test('affected-resource metadata validates, defaults, and keeps absent distinct 
     () => validateRuntimeCapabilitiesConfig(project('all'), 'project.json'),
     /affected_resources must be an array/,
   );
+
+  // An inherited key is not a resource. A plain index check accepted these.
+  for (const inherited of ['constructor', 'toString', '__proto__']) {
+    assert.throws(
+      () =>
+        validateRuntimeCapabilitiesConfig(project([{ resource_id: inherited }]), 'project.json'),
+      /resource_id must name an existing resource/,
+      `${inherited} must not pass as a resource id`,
+    );
+  }
+});
+
+test('a release_effect claim must match the hooks its resource actually has', () => {
+  const slotActions = {
+    'browser-start': { label: 'start', command: 'start' },
+    'browser-health': { label: 'health', command: 'health' },
+    'browser-stop': { label: 'stop', command: 'stop' },
+  };
+  const provider = {
+    label: 'Browser',
+    version: '1',
+    share_policy: 'exclusive' as const,
+    cost: { class: 'high', resources: [{ id: 'cdp-port', access: 'exclusive' as const }] },
+    actions: {
+      acquire: { kind: 'slot-action' as const, action_id: 'browser-start' },
+      health: { kind: 'slot-action' as const, action_id: 'browser-health' },
+      release: { kind: 'slot-action' as const, action_id: 'browser-stop' },
+    },
+    release_effects: ['stop browser'],
+  };
+  const project = (resources: unknown, affected: unknown) =>
+    ({
+      slot_actions: slotActions,
+      resources,
+      runtime_capabilities: {
+        providers: { 'browser-cdp': { ...provider, affected_resources: affected } },
+      },
+    }) as RawProjectJson;
+
+  const full = {
+    device: {
+      label: 'Device',
+      type: 'device' as const,
+      hooks: { boot: 'boot', health: 'health', shutdown: 'stop' },
+    },
+  };
+  const noBoot = {
+    device: {
+      label: 'Device',
+      type: 'device' as const,
+      hooks: { health: 'health', shutdown: 'true' },
+    },
+  };
+  const opaque = {
+    device: { label: 'Device', type: 'device' as const, hooks: { shutdown: 'true' } },
+  };
+
+  // A device with no boot hook cannot honour a `stop` claim, but `retain` is
+  // exactly what it can honour, so long as it can be health-checked.
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project(noBoot, [{ resource_id: 'device', release_effect: 'stop' }]),
+        'project.json',
+      ),
+    /lacks boot and shutdown hooks/,
+  );
+  assert.doesNotThrow(() =>
+    validateRuntimeCapabilitiesConfig(
+      project(noBoot, [{ resource_id: 'device', release_effect: 'retain' }]),
+      'project.json',
+    ),
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project(opaque, [{ resource_id: 'device', release_effect: 'retain' }]),
+        'project.json',
+      ),
+    /no health hook or watch to prove it stayed running/,
+  );
+  // An omitted release_effect defaults to `stop` and is held to the same bar.
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project(noBoot, [{ resource_id: 'device' }]),
+        'project.json',
+      ),
+    /lacks boot and shutdown hooks/,
+  );
+  assert.doesNotThrow(() =>
+    validateRuntimeCapabilitiesConfig(project(full, [{ resource_id: 'device' }]), 'project.json'),
+  );
 });

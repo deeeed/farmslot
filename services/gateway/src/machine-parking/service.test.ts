@@ -3448,3 +3448,341 @@ test('a foreign lease on a declared slot-action provider surfaces the foreign ho
     reason: "resource 'browser-cdp' is held by run-foreign/browser-cdp",
   });
 });
+
+/**
+ * Two providers claiming one resource: a `slot-lifecycle` one the run holds a
+ * lease on, and a `capability` one it does not. Codex's reproduction for the
+ * ownership-widening defect.
+ */
+function statusWithTwoClaimants(
+  runId: string,
+  options: {
+    lifecycleLeased?: boolean;
+    capabilityLeased?: boolean;
+    lifecycleEffect?: 'stop' | 'retain';
+    capabilityEffect?: 'stop' | 'retain';
+  } = {},
+): RuntimeCapabilityStatusResult {
+  const status = capabilityStatusFor(runId);
+  const capabilityEntry = structuredClone(status.catalog[0]!);
+  const lifecycleEntry = structuredClone(status.catalog[0]!);
+  lifecycleEntry.id = 'sandbox-gateway-ui';
+  lifecycleEntry.label = 'Gateway';
+  lifecycleEntry.provenance = { ...lifecycleEntry.provenance, providerId: 'sandbox-gateway-ui' };
+  lifecycleEntry.affectedResources = [
+    {
+      resourceId: 'browser-cdp',
+      ownership: 'slot-lifecycle',
+      releaseEffect: options.lifecycleEffect ?? 'retain',
+    },
+  ];
+  capabilityEntry.affectedResources = [
+    {
+      resourceId: 'browser-cdp',
+      ownership: 'capability',
+      releaseEffect: options.capabilityEffect ?? 'stop',
+    },
+  ];
+  status.catalog = [capabilityEntry, lifecycleEntry];
+  const template = status.leases[0]!;
+  status.leases = [
+    ...(options.capabilityLeased ? [structuredClone(template)] : []),
+    ...(options.lifecycleLeased
+      ? [
+          {
+            ...structuredClone(template),
+            id: 'lease-gateway',
+            capabilityId: 'sandbox-gateway-ui',
+            provenance: { ...template.provenance, providerId: 'sandbox-gateway-ui' },
+          },
+        ]
+      : []),
+  ];
+  status.proofPlans[runId] = {
+    version: 1,
+    slotId: 'slot-a',
+    ownerRunId: runId,
+    createdAt: '2026-08-21T00:00:00.000Z',
+    requirements: [
+      { capabilityId: 'browser-cdp', reason: 'visual proof', mode: 'visual' },
+      { capabilityId: 'sandbox-gateway-ui', reason: 'control plane', mode: 'state' },
+    ],
+  };
+  return status;
+}
+
+test('a lease on a slot-lifecycle claimant does not satisfy another provider capability claim', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const status = statusWithTwoClaimants('run-a', {
+    lifecycleLeased: true,
+    capabilityLeased: false,
+    // Both agree the resource is stopped on release, so only ownership is under test.
+    lifecycleEffect: 'stop',
+  });
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(preview.runs[0]?.eligibility.eligible, false);
+  assert.equal(preview.runs[0]?.eligibility.code, 'CAPABILITY_RESOURCE_UNOWNED');
+  assert.match(preview.runs[0]?.eligibility.reason ?? '', /browser-cdp/);
+});
+
+test('a lease on every capability-owned claimant is what makes the resource eligible', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const status = statusWithTwoClaimants('run-a', {
+    lifecycleLeased: true,
+    capabilityLeased: true,
+    lifecycleEffect: 'stop',
+  });
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(preview.runs[0]?.eligibility.eligible, true);
+});
+
+test('providers that disagree about what a release does to one resource are refused', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  // One provider says releasing retains the resource, the other says it stops
+  // it. Honouring 'retain' would leave the manifest claiming a resource stays
+  // up while the other provider's shutdown hook takes it down.
+  const status = statusWithTwoClaimants('run-a', {
+    lifecycleLeased: true,
+    capabilityLeased: true,
+    lifecycleEffect: 'retain',
+    capabilityEffect: 'stop',
+  });
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(preview.runs[0]?.eligibility.eligible, false);
+  assert.equal(preview.runs[0]?.eligibility.code, 'CAPABILITY_CLAIM_CONFLICT');
+  assert.match(preview.runs[0]?.eligibility.reason ?? '', /browser-cdp/);
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('stop-resource:')),
+    false,
+    'a conflicting catalog must be refused before any mutation',
+  );
+});
+
+test('restore inspects a retained resource before it acquires anything', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  let status = statusWithAffectedResources('run-a', [
+    { resourceId: 'browser-cdp', ownership: 'capability', releaseEffect: 'retain' },
+  ]);
+  let resourceRunning = true;
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  ctx.deps.observeResources = async () =>
+    resourceRunning ? [runningResource()] : [{ ...runningResource(), status: 'stopped' }];
+  ctx.deps.releaseCapability = async () => {
+    const own = structuredClone(status.leases[0]!);
+    status = { ...status, leases: [{ ...own, state: 'released' as const }] };
+    return { ok: true, released: [own], retained: [], effects: [], failures: [] };
+  };
+  // The shipped gateway provider acquires through its resource's own boot
+  // action, so an acquire is exactly what silently revives a dead retained
+  // resource. Modelling that is the point of this test.
+  const acquireCapability = ctx.deps.acquireCapability;
+  ctx.deps.acquireCapability = async (params) => {
+    resourceRunning = true;
+    return acquireCapability(params);
+  };
+
+  const pausePreview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(pausePreview.runs[0]?.eligibility.eligible, true);
+  const parked = await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: pausePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'retain-with-lease-park',
+  });
+  assert.equal(parked.ok, true);
+  assert.equal(ctx.runs.get('run-a')!.park?.resourceManifest.resources[0]?.phase, 'retained');
+
+  // The retained resource dies while the run is parked.
+  resourceRunning = false;
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  const restored = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'retain-with-lease-restore',
+  });
+
+  assert.equal(restored.ok, false, 'a dead retained resource must fail the restore');
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('acquire-capability:')),
+    false,
+    'nothing may be acquired before the retained resources are proven intact',
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('start-resource:')),
+    false,
+  );
+  assert.equal(resourceRunning, false, 'the dead retained resource must not have been revived');
+  const after = ctx.runs.get('run-a')!.park!;
+  assert.equal(after.phase, 'partial', 'the fence stays until an operator looks at it');
+  assert.match(
+    after.resourceManifest.resources[0]?.error ?? '',
+    /park never stopped it, so restore will not boot it/,
+  );
+});
+
+test('a declared retain resource with no boot hook is parkable, not RESOURCE_HOOKS_UNAVAILABLE', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  // The android-device shape: a physical device is health-checked and never
+  // booted by us. Requiring a boot hook refused every slot with one attached,
+  // before its `retain` declaration was ever read.
+  ctx.deps.observeResources = async () => [
+    {
+      id: 'browser-cdp',
+      definition: {
+        type: 'device',
+        label: 'Android device',
+        streamable: false,
+        controllable: true,
+        hooks: { health: 'adb get-state', shutdown: 'true' },
+      },
+      status: 'running',
+    },
+  ];
+  const status = statusWithAffectedResources('run-a', [
+    { resourceId: 'browser-cdp', ownership: 'capability', releaseEffect: 'retain' },
+  ]);
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(preview.runs[0]?.eligibility.eligible, true);
+  assert.deepEqual(
+    preview.runs[0]?.resourceManifest.resources.map((resource) => ({
+      resourceId: resource.resourceId,
+      releaseEffect: resource.releaseEffect,
+    })),
+    [{ resourceId: 'browser-cdp', releaseEffect: 'retain' }],
+  );
+});
+
+test('a resource with no boot hook and no retain claim is still refused', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  ctx.deps.observeResources = async () => [
+    {
+      id: 'browser-cdp',
+      definition: {
+        type: 'device',
+        label: 'Android device',
+        streamable: false,
+        controllable: true,
+        hooks: { health: 'adb get-state', shutdown: 'true' },
+      },
+      status: 'running',
+    },
+  ];
+  const status = statusWithAffectedResources('run-a', [
+    { resourceId: 'browser-cdp', ownership: 'capability', releaseEffect: 'stop' },
+  ]);
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(preview.runs[0]?.eligibility.code, 'RESOURCE_HOOKS_UNAVAILABLE');
+});
+
+test('a retain resource with no way to health-check it is refused', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  ctx.deps.observeResources = async () => [
+    {
+      id: 'browser-cdp',
+      definition: {
+        type: 'device',
+        label: 'Opaque device',
+        streamable: false,
+        controllable: true,
+        hooks: { shutdown: 'true' },
+      },
+      status: 'running',
+    },
+  ];
+  const status = statusWithAffectedResources('run-a', [
+    { resourceId: 'browser-cdp', ownership: 'capability', releaseEffect: 'retain' },
+  ]);
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(preview.runs[0]?.eligibility.code, 'RESOURCE_HOOKS_UNAVAILABLE');
+});
+
+test('a gate park that already released a lease is never treated as zero-effect', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  // A gate park preserves the run's status by design and a retain-only
+  // manifest reports every resource running, so with the runner observed back
+  // up the residuals are indistinguishable from an intent that never ran. The
+  // released lease is the only surviving evidence that it did.
+  let status = statusWithAffectedResources('run-gate', [
+    { resourceId: 'browser-cdp', ownership: 'capability', releaseEffect: 'retain' },
+  ]);
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  ctx.deps.releaseCapability = async () => {
+    const own = structuredClone(status.leases[0]!);
+    status = { ...status, leases: [{ ...own, state: 'released' as const }] };
+    return { ok: true, released: [own], retained: [], effects: [], failures: [] };
+  };
+  ctx.deps.runnerRunning = async () => 'running';
+
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  const target = preview.runs.find((run) => run.runId === 'run-gate')!;
+  assert.equal(target.eligibility.eligible, true);
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: target.generation }],
+    operationId: 'gate-released-lease-not-zero-effect',
+  });
+  const record = ctx.runs.get('run-gate')!.park!;
+  assert.equal(record.phase, 'partial');
+  assert.equal(record.slotFreedAt, undefined, 'the free must not have landed');
+  assert.equal(ctx.runs.get('run-gate')!.status, record.prePauseStatus);
+  assert.deepEqual(
+    record.residuals.resources.map((resource) => resource.state),
+    ['running'],
+  );
+  assert.equal(record.residuals.runner, 'running');
+  assert.equal(record.resourceManifest.capabilityLeases[0]?.state, 'released');
+
+  await ctx.service.reconcile();
+  assert.notEqual(
+    ctx.runs.get('run-gate')!.park,
+    null,
+    'a record whose leases were released is not zero-effect and must not be discarded',
+  );
+});

@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-05T18:35:00.000Z",
+  "host": "macwork",
+  "surface": "Command Center fleet map, machine pause dialog",
+  "probe": "apps/command-center/probes/machine-pause-retained-resource-label.js",
+  "driver": "node apps/command-center/scripts/cdp.mjs eval fleet --file <probe>",
+  "ui": "http://localhost:5175/#fleet",
+  "gateway": "ws://localhost:7801",
+  "claim": "An operator previewing a release park sees which manifest resources the project catalog keeps running, and a parked release record does not flag a retained resource that is still running as an unexpected residual.",
+  "method": "The probe closes any open dialog, clicks the machine's own pressure-details control to reopen it, clicks the dialog's 'Pause & release' mode button, and reads the rendered rows. No component state is written; every value comes from a live gateway preview.",
+  "observed": {
+    "machine": "macwork",
+    "previewRows": [
+      {
+        "runId": "aee49175-c87c-4b1d-816d-059c7a8a7018",
+        "meta": "macwork-ff-1 \u00b7 generation 0 \u00b7 blocked \u00b7 human-gate",
+        "resources": "No running manifest resources or capability leases were observed."
+      },
+      {
+        "runId": "d0868fca-9571-4072-9c37-1f6ac6fe2f48",
+        "meta": "macwork-ff-2 \u00b7 generation 0 \u00b7 monitoring \u00b7 monitor",
+        "resources": "Gateway (dev-server) \u2014 kept running"
+      }
+    ],
+    "parkedRecords": [
+      {
+        "runId": "aee49175-c87c-4b1d-816d-059c7a8a7018",
+        "summary": "parked"
+      }
+    ],
+    "keptRunningRendered": true,
+    "unexpectedResourceWarning": false
+  },
+  "pairedNegativeControls": [
+    {
+      "change": "machine-pause-dialog.ts retained label",
+      "withFix": "Gateway (dev-server) \u2014 kept running",
+      "withFixReverted": "Gateway (dev-server)",
+      "restored": "Gateway (dev-server) \u2014 kept running",
+      "liveRunId": "d0868fca-9571-4072-9c37-1f6ac6fe2f48",
+      "slot": "macwork-ff-2"
+    },
+    {
+      "change": "machine-pause-dialog-model.ts per-resource residual expectation",
+      "withFix": "parked",
+      "withFixReverted": "parked \u00b7 1 unexpected resource(s)",
+      "restored": "parked",
+      "record": "aee49175-c87c-4b1d-816d-059c7a8a7018",
+      "slot": "macwork-ff-1"
+    }
+  ],
+  "pass": true
+}

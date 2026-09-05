@@ -300,12 +300,37 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
     };
     const restoredResources = report.restoredRecord.resourceManifest.resources;
     const resourcesRestored = restoredResources.every((resource) => resource.phase === 'restored');
-    // Restore verifies a retained resource rather than booting it. A boot would
-    // have had to stop it first, so a retained resource that still carries no
-    // stoppedAt after a full park-and-restore cycle is the observable proof
-    // that nothing in either direction touched it.
+    // A missing `stoppedAt` alone proves nothing: a restore that revives a dead
+    // retained resource through a provider's acquire never sets one either. So
+    // this asserts identities and recorded lifecycle effects instead.
+    //
+    // What it proves: the retained set is exactly the one the park captured and
+    // is not empty; the resource was observed running at every point this
+    // scenario could observe it (before the park, while parked, after the
+    // restore); and the restore recorded no boot and no retained-verify failure
+    // against it.
+    //
+    // What it does NOT prove: that nothing stopped and restarted the resource
+    // strictly between two of those observations. Framework-level RPC exposes
+    // no per-resource process identity to close that window, so this node
+    // deliberately does not claim it. The ordering guarantee itself — that
+    // restore inspects retained resources before it acquires anything — is
+    // covered deterministically by the gateway unit suite.
+    const parkedRetained = [...report.resourceStopProof.retained].sort();
+    const restoredRetained = restoredResources
+      .filter((resource) => resource.releaseEffect === 'retain')
+      .map((resource) => resource.resourceId)
+      .sort();
+    const liveAfter = rpc('resource.health', { slotId: before.slotId });
+    const bootErrors = (report.restoredRecord.errors ?? []).filter(
+      (entry) =>
+        (entry.action === 'resource.boot' || entry.action === 'resource.retained-verify') &&
+        parkedRetained.includes(entry.resourceId),
+    );
     report.retainedRestoreProof = {
-      retained: restoredResources
+      expected: parkedRetained,
+      observed: restoredRetained,
+      resources: restoredResources
         .filter((resource) => resource.releaseEffect === 'retain')
         .map((resource) => ({
           resourceId: resource.resourceId,
@@ -313,12 +338,45 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
           stoppedAt: resource.stoppedAt ?? null,
           restoredAt: resource.restoredAt ?? null,
         })),
-      neverStopped: restoredResources
-        .filter((resource) => resource.releaseEffect === 'retain')
-        .every((resource) => !resource.stoppedAt && resource.phase === 'restored'),
+      observedRunning: {
+        whileParked: report.retainedLiveProof?.observed ?? null,
+        afterRestore: parkedRetained.map((resourceId) => ({
+          resourceId,
+          status: liveAfter.resources.find((entry) => entry.id === resourceId)?.status ?? null,
+        })),
+      },
+      recordedBootOrVerifyErrors: bootErrors,
+      provesNoRestartBetweenObservations: false,
     };
-    if (!report.retainedRestoreProof.neverStopped) {
-      throw new Error('a retained resource was stopped or not verified across park and restore');
+    if (parkedRetained.length === 0) {
+      throw new Error(
+        'no retained resource was in the manifest; this run proves nothing about retention — boot the slot dev-server first',
+      );
+    }
+    if (JSON.stringify(parkedRetained) !== JSON.stringify(restoredRetained)) {
+      throw new Error(
+        `retained set changed across restore: parked ${parkedRetained.join(', ')} vs restored ${restoredRetained.join(', ')}`,
+      );
+    }
+    for (const resource of report.retainedRestoreProof.resources) {
+      if (resource.phase !== 'restored' || resource.stoppedAt) {
+        throw new Error(
+          `retained resource '${resource.resourceId}' settled at phase '${resource.phase}' with stoppedAt ${resource.stoppedAt}`,
+        );
+      }
+    }
+    const notRunningAfter = report.retainedRestoreProof.observedRunning.afterRestore.filter(
+      (entry) => entry.status !== 'running',
+    );
+    if (notRunningAfter.length > 0) {
+      throw new Error(
+        `retained resource(s) ${notRunningAfter.map((entry) => entry.resourceId).join(', ')} are not running after restore`,
+      );
+    }
+    if (bootErrors.length > 0) {
+      throw new Error(
+        `restore recorded ${bootErrors.map((entry) => `${entry.action} on ${entry.resourceId}`).join(', ')} against a retained resource`,
+      );
     }
     report.pass =
       report.structuredAcceptance?.live === true &&
