@@ -469,7 +469,15 @@ export class MachinePauseDialog extends LitElement {
       </div>
       <div class="mpd-resources">
         ${[
-          ...resources.map((resource) => `${resource.label} (${resource.resourceId})`),
+          // An operator reading this list is deciding whether to park. A
+          // resource the catalog retains is not going to stop, so saying so
+          // here is the difference between an informed choice and a surprise.
+          ...resources.map(
+            (resource) =>
+              `${resource.label} (${resource.resourceId})${
+                resource.releaseEffect === 'retain' ? ' — kept running' : ''
+              }`,
+          ),
           ...capabilityLeases.map((lease) => `capability ${lease.capabilityId}`),
         ].join(', ') ||
         (this.mode === 'orchestration'

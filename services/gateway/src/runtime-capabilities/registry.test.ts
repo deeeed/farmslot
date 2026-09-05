@@ -10,7 +10,7 @@ import type {
   RuntimeCapabilityProviderActionRef,
 } from '@farmslot/protocol';
 
-import { RuntimeCapabilityRegistry } from './registry.js';
+import { runtimeCapabilityProviderDigest, RuntimeCapabilityRegistry } from './registry.js';
 import { RuntimeCapabilityStore } from './store.js';
 
 const SLOT = 'slot-a';
@@ -1485,5 +1485,44 @@ test('a stale warm provider whose definition is gone fails closed instead of gue
     after.leases.filter((l) => holdsProviderForTest(l)),
     [],
     'no second provider may be running',
+  );
+});
+
+test('affected-resource metadata reaches capability status and is part of the provenance digest', async (t) => {
+  const declared = entry('gateway');
+  declared.affectedResources = [
+    { resourceId: 'dev-server', ownership: 'slot-lifecycle', releaseEffect: 'retain' },
+  ];
+  const { registry } = await fixture(t, [declared]);
+
+  const status = await registry.status({ slotId: SLOT });
+  assert.deepEqual(
+    status.catalog.find((capability) => capability.id === 'gateway')?.affectedResources,
+    [{ resourceId: 'dev-server', ownership: 'slot-lifecycle', releaseEffect: 'retain' }],
+    'machine parking reads this off capability.status, so it must survive the catalog copy',
+  );
+
+  // The field changes what a release does, so it belongs in the digest even
+  // though that invalidates every live lease once on the deploy that adds it.
+  const { id, project, provenance, availability, ...withMetadata } = declared;
+  void id;
+  void project;
+  void provenance;
+  void availability;
+  const { affectedResources, ...withoutMetadata } = withMetadata;
+  void affectedResources;
+  assert.notEqual(
+    runtimeCapabilityProviderDigest(withMetadata),
+    runtimeCapabilityProviderDigest(withoutMetadata),
+  );
+  assert.notEqual(
+    runtimeCapabilityProviderDigest(withMetadata),
+    runtimeCapabilityProviderDigest({
+      ...withMetadata,
+      affectedResources: [
+        { resourceId: 'dev-server', ownership: 'slot-lifecycle', releaseEffect: 'stop' },
+      ],
+    }),
+    'flipping retain to stop must not be adoptable under the same digest',
   );
 });

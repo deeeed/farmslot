@@ -26,6 +26,7 @@ import {
 import { loadProjectVars, loadSlotVars, type RawProjectJson, resolveSlot } from '../core/config.js';
 import { execLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
+import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
 import { shellQuote } from '../core/tmux.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 
@@ -1259,6 +1260,18 @@ export async function executeResourceControl(
       }
     }
   }
+
+  // Say what was run, before any of the bookkeeping below. This is the one
+  // place a slot resource's boot/shutdown/relaunch hook actually executes, so
+  // it is the only honest place to record that it happened — including when a
+  // capability acquire is what reached it.
+  reportSlotResourceLifecycle({
+    slotId,
+    resourceId,
+    action,
+    ok: result.ok,
+    ...(result.detail ? { detail: result.detail } : {}),
+  });
 
   // After a successful boot, write a sidecar `<pidPath>.meta` next to the
   // watched pidfile so downstream readers (resource-watch.ts, ResourceRollup,

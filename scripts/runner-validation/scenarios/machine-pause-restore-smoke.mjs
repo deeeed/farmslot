@@ -99,6 +99,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
     pauseExecute: null,
     parkedRecord: null,
     resourceStopProof: null,
+    retainedLiveProof: null,
+    retainedRestoreProof: null,
     restorePreview: null,
     restoreExecute: null,
     restoredRecord: null,
@@ -176,15 +178,79 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
     if (report.parkedRecord.residuals.runner !== 'stopped') {
       throw new Error(`Parked runner residual is ${report.parkedRecord.residuals.runner}`);
     }
+    // A park does not stop everything it observed running. The project catalog
+    // declares, per resource, whether releasing actually stops it; the manifest
+    // carries that as `releaseEffect`. A `retain` resource must still be running
+    // afterwards and must never have been stopped — the sandbox gateway UI is
+    // one, and stopping it would take down the control plane the slot needs.
+    // Judging every resource against a single "all stopped" expectation both
+    // hides that and fails a correct park.
     const resources = report.parkedRecord.resourceManifest.resources;
+    const residualState = (resourceId) =>
+      report.parkedRecord.residuals.resources.find((residual) => residual.resourceId === resourceId)
+        ?.state ?? null;
     report.resourceStopProof = {
       configured: resources.length,
-      allStopped:
-        resources.every((resource) => resource.phase === 'stopped') &&
-        report.parkedRecord.residuals.resources.every((resource) => resource.state === 'stopped'),
+      resources: resources.map((resource) => ({
+        resourceId: resource.resourceId,
+        releaseEffect: resource.releaseEffect ?? null,
+        phase: resource.phase,
+        residual: residualState(resource.resourceId),
+        stoppedAt: resource.stoppedAt ?? null,
+      })),
+      retained: resources
+        .filter((resource) => resource.releaseEffect === 'retain')
+        .map((resource) => resource.resourceId),
+      stopped: resources
+        .filter((resource) => resource.releaseEffect !== 'retain')
+        .map((resource) => resource.resourceId),
+      allAsDeclared: false,
     };
-    if (!report.resourceStopProof.allStopped) {
-      throw new Error('One or more manifest resources remained after release park');
+    const undeclared = resources.filter((resource) => !resource.releaseEffect);
+    if (undeclared.length > 0) {
+      throw new Error(
+        `park manifest carries no releaseEffect for ${undeclared
+          .map((resource) => resource.resourceId)
+          .join(', ')}; the catalog metadata did not reach the manifest`,
+      );
+    }
+    for (const resource of resources) {
+      const expectedPhase = resource.releaseEffect === 'retain' ? 'retained' : 'stopped';
+      const expectedResidual = resource.releaseEffect === 'retain' ? 'running' : 'stopped';
+      if (resource.phase !== expectedPhase) {
+        throw new Error(
+          `resource '${resource.resourceId}' declared '${resource.releaseEffect}' settled at phase '${resource.phase}', expected '${expectedPhase}'`,
+        );
+      }
+      if (residualState(resource.resourceId) !== expectedResidual) {
+        throw new Error(
+          `resource '${resource.resourceId}' declared '${resource.releaseEffect}' was observed '${residualState(resource.resourceId)}', expected '${expectedResidual}'`,
+        );
+      }
+      if (resource.releaseEffect === 'retain' && resource.stoppedAt) {
+        throw new Error(`retained resource '${resource.resourceId}' carries a stoppedAt timestamp`);
+      }
+    }
+    report.resourceStopProof.allAsDeclared = true;
+
+    // The record says the retained resource was left alone. Ask the node
+    // directly, while the run is still parked, whether the process is really
+    // up — a record entry is a claim, a live health probe is the evidence.
+    if (report.resourceStopProof.retained.length > 0) {
+      const live = rpc('resource.health', { slotId: before.slotId });
+      report.retainedLiveProof = {
+        slotId: before.slotId,
+        observed: report.resourceStopProof.retained.map((resourceId) => ({
+          resourceId,
+          status: live.resources.find((entry) => entry.id === resourceId)?.status ?? null,
+        })),
+      };
+      const dead = report.retainedLiveProof.observed.filter((entry) => entry.status !== 'running');
+      if (dead.length > 0) {
+        throw new Error(
+          `retained resource(s) ${dead.map((entry) => entry.resourceId).join(', ')} are not running on the node while the run is parked`,
+        );
+      }
     }
 
     report.restorePreview = rpc('machine.pause.restore', {
@@ -234,6 +300,124 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
     };
     const restoredResources = report.restoredRecord.resourceManifest.resources;
     const resourcesRestored = restoredResources.every((resource) => resource.phase === 'restored');
+    // A missing `stoppedAt` proves nothing, and neither does an absence of boot
+    // ERRORS: a boot that succeeds leaves no error behind. The Gateway now
+    // records what the restore actually did to each resource, emitted by the
+    // code paths that did it, so this asserts those effects directly.
+    //
+    // Every retained resource must carry exactly one `verified` effect and no
+    // `booted` effect. Every resource the park stopped must carry a `booted`
+    // effect, because restore is what brings those back.
+    //
+    // What this still does NOT prove: that nothing stopped and restarted a
+    // resource strictly between the Gateway's own observations. Framework-level
+    // RPC exposes no per-resource process identity to close that window.
+    const parkedRetained = [...report.resourceStopProof.retained].sort();
+    const parkedStopped = [...report.resourceStopProof.stopped].sort();
+    const restoredRetained = restoredResources
+      .filter((resource) => resource.releaseEffect === 'retain')
+      .map((resource) => resource.resourceId)
+      .sort();
+    const liveAfter = rpc('resource.health', { slotId: before.slotId });
+    const effects = report.restoredRecord.restoreEffects ?? null;
+    const effectsFor = (resourceId) =>
+      (effects ?? []).filter((effect) => effect.resourceId === resourceId);
+    report.retainedRestoreProof = {
+      expected: parkedRetained,
+      observed: restoredRetained,
+      resources: restoredResources
+        .filter((resource) => resource.releaseEffect === 'retain')
+        .map((resource) => ({
+          resourceId: resource.resourceId,
+          phase: resource.phase,
+          stoppedAt: resource.stoppedAt ?? null,
+          restoredAt: resource.restoredAt ?? null,
+        })),
+      restoreEffects: effects,
+      observedRunningAfterRestore: parkedRetained.map((resourceId) => ({
+        resourceId,
+        status: liveAfter.resources.find((entry) => entry.id === resourceId)?.status ?? null,
+      })),
+      provesNoRestartBetweenGatewayObservations: false,
+    };
+    if (parkedRetained.length === 0) {
+      throw new Error(
+        'no retained resource was in the manifest; this run proves nothing about retention — boot the slot dev-server first',
+      );
+    }
+    if (JSON.stringify(parkedRetained) !== JSON.stringify(restoredRetained)) {
+      throw new Error(
+        `retained set changed across restore: parked ${parkedRetained.join(', ')} vs restored ${restoredRetained.join(', ')}`,
+      );
+    }
+    if (!effects) {
+      throw new Error(
+        'the park record carries no restoreEffects; this Gateway does not record what its restore did, so the claim cannot be checked',
+      );
+    }
+    for (const resourceId of parkedRetained) {
+      const own = effectsFor(resourceId);
+      const verified = own.filter((effect) => effect.action === 'verified');
+      const booted = own.filter((effect) => effect.action === 'booted');
+      if (booted.length > 0) {
+        throw new Error(
+          `restore booted retained resource '${resourceId}': ${booted.map((effect) => effect.reason ?? 'no reason given').join('; ')}`,
+        );
+      }
+      if (verified.length !== 1 || !verified[0].ok) {
+        throw new Error(
+          `retained resource '${resourceId}' has ${verified.length} verified effect(s) (${own.map((effect) => `${effect.action}:${effect.ok}`).join(', ') || 'none'}); expected exactly one that passed`,
+        );
+      }
+    }
+    // An empty stopped set is a fact about this run, not a pass. Say so, so a
+    // reader can tell "restore booted everything it stopped" from "there was
+    // nothing to boot" instead of reading a loop that never ran as proof.
+    report.retainedRestoreProof.stoppedResourcesExercised = parkedStopped.length > 0;
+    if (parkedStopped.length === 0) {
+      report.retainedRestoreProof.stoppedResourcesNote =
+        'this run parked no resource with release_effect stop, so the boot-on-restore claim was not exercised live here';
+    }
+    // A `verified` effect is written by the retained check itself, not by the
+    // reporting path that attributes a performed hook to the initiating
+    // restore. If no hook ran, this run says nothing about that attribution.
+    const performedEffects = (effects ?? []).filter((effect) => effect.action !== 'verified');
+    report.retainedRestoreProof.attributionPathExercised = performedEffects.length > 0;
+    if (performedEffects.length === 0) {
+      report.retainedRestoreProof.attributionPathNote =
+        'no boot, shutdown, or relaunch hook ran during this restore, so the effect-attribution path was not exercised live here; it is covered by the gateway unit suite';
+    }
+    for (const resourceId of parkedStopped) {
+      const booted = effectsFor(resourceId).filter((effect) => effect.action === 'booted');
+      const failedBoots = booted.filter((effect) => !effect.ok);
+      if (booted.length === 0) {
+        throw new Error(
+          `resource '${resourceId}' was stopped by the park but restore recorded no boot`,
+        );
+      }
+      if (failedBoots.length > 0) {
+        throw new Error(
+          `resource '${resourceId}' recorded ${failedBoots.length} failed boot(s) of ${booted.length}: ${failedBoots
+            .map((effect) => effect.reason ?? 'no reason given')
+            .join('; ')}`,
+        );
+      }
+    }
+    for (const resource of report.retainedRestoreProof.resources) {
+      if (resource.phase !== 'restored' || resource.stoppedAt) {
+        throw new Error(
+          `retained resource '${resource.resourceId}' settled at phase '${resource.phase}' with stoppedAt ${resource.stoppedAt}`,
+        );
+      }
+    }
+    const notRunningAfter = report.retainedRestoreProof.observedRunningAfterRestore.filter(
+      (entry) => entry.status !== 'running',
+    );
+    if (notRunningAfter.length > 0) {
+      throw new Error(
+        `retained resource(s) ${notRunningAfter.map((entry) => entry.resourceId).join(', ')} are not running after restore`,
+      );
+    }
     report.pass =
       report.structuredAcceptance?.live === true &&
       report.structuredAcceptance?.acknowledgement?.kind === 'structured' &&

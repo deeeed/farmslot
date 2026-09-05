@@ -1,5 +1,6 @@
 import type {
   MachineParkPhase,
+  MachineParkResourceReleaseEffect,
   MachinePauseMode,
   MachinePauseRestoreParams,
   MachinePauseReviewedTarget,
@@ -95,6 +96,12 @@ export function machineParkRecordSummary(record: {
   mode: MachinePauseMode;
   phase: string;
   errors: readonly unknown[];
+  resourceManifest?: {
+    resources: ReadonlyArray<{
+      resourceId: string;
+      releaseEffect?: MachineParkResourceReleaseEffect;
+    }>;
+  };
   residuals: {
     runner: 'running' | 'stopped' | 'unknown';
     resources: ReadonlyArray<{
@@ -142,6 +149,12 @@ function expectedResidualState(
 export function machineParkResidualAssessment(record: {
   mode: MachinePauseMode;
   phase: MachineParkPhase | string;
+  resourceManifest?: {
+    resources: ReadonlyArray<{
+      resourceId: string;
+      releaseEffect?: MachineParkResourceReleaseEffect;
+    }>;
+  };
   residuals: {
     runner: ResidualState;
     resources: ReadonlyArray<{ resourceId: string; state: ResidualState }>;
@@ -151,12 +164,25 @@ export function machineParkResidualAssessment(record: {
   const runnerWarning =
     record.residuals.runner === 'unknown' ||
     (expected != null && record.residuals.runner !== expected);
-  const resources = record.residuals.resources.map((resource) => ({
-    resourceId: resource.resourceId,
-    actual: resource.state,
-    ...(expected ? { expected } : {}),
-    warning: resource.state === 'unknown' || (expected != null && resource.state !== expected),
-  }));
+  // A retained resource is meant to still be running in a parked release
+  // record. Judging it against the record-wide expectation would warn the
+  // operator that the park misbehaved when it did exactly what it promised.
+  const retained = new Set(
+    (record.resourceManifest?.resources ?? [])
+      .filter((resource) => resource.releaseEffect === 'retain')
+      .map((resource) => resource.resourceId),
+  );
+  const resources = record.residuals.resources.map((resource) => {
+    const resourceExpected = retained.has(resource.resourceId) ? 'running' : expected;
+    return {
+      resourceId: resource.resourceId,
+      actual: resource.state,
+      ...(resourceExpected ? { expected: resourceExpected } : {}),
+      warning:
+        resource.state === 'unknown' ||
+        (resourceExpected != null && resource.state !== resourceExpected),
+    };
+  });
   return {
     runner: {
       actual: record.residuals.runner,

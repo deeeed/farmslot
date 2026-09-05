@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(posture): the machine pause dialog marks a manifest resource the project catalog retains as "kept running", so an operator previewing a park is not told something will stop that will not. A parked release record no longer flags a retained resource that is still running as an unexpected residual, while a retained resource that actually stopped is still a warning.
 - chore(dev): machine pause dev fixtures carry the new `slotDisposition` field on preview runs.
 - feat(posture): Run Detail shows the ADR-054 resource posture beside the pipeline — the effective posture, its policy source, retained/warm/stopped/failed counts, the last transition, and one row per capability giving the Gateway's desired disposition against the observed provider state.
 - feat(posture): human gates offer the four operator choices with the Gateway's effect preview, and carry the choice through as the typed `resourcePosture` param. Choices appear only where the Gateway would honour them, a refusal such as park-ineligible is shown instead of resolving the gate, and a choice that cannot be sent says so rather than disappearing.

@@ -788,3 +788,224 @@ test('numeric and boolean project fields reach shell callers', () => {
   assert.equal(getProjectField(projectJson, 'nested.list'), '');
   assert.equal(getProjectField(projectJson, 'missing.path'), '');
 });
+
+test('affected-resource metadata validates, defaults, and keeps absent distinct from empty', () => {
+  const slotActions = {
+    'browser-start': { label: 'start', command: 'start' },
+    'browser-health': { label: 'health', command: 'health' },
+    'browser-stop': { label: 'stop', command: 'stop' },
+  };
+  const resources = {
+    'browser-cdp': {
+      label: 'Browser',
+      type: 'browser' as const,
+      hooks: { boot: 'boot', health: 'health', shutdown: 'stop' },
+    },
+  };
+  const provider = {
+    label: 'Browser',
+    version: '1',
+    share_policy: 'exclusive' as const,
+    cost: { class: 'high', resources: [{ id: 'cdp-port', access: 'exclusive' as const }] },
+    actions: {
+      acquire: { kind: 'slot-action' as const, action_id: 'browser-start' },
+      health: { kind: 'slot-action' as const, action_id: 'browser-health' },
+      release: { kind: 'slot-action' as const, action_id: 'browser-stop' },
+    },
+    release_effects: ['stop browser'],
+  };
+  const project = (affected?: unknown) =>
+    ({
+      slot_actions: slotActions,
+      resources,
+      runtime_capabilities: {
+        providers: {
+          'browser-cdp': {
+            ...provider,
+            ...(affected === undefined ? {} : { affected_resources: affected }),
+          },
+        },
+      },
+    }) as RawProjectJson;
+
+  // Absent stays absent so the parking resolver still derives the claim.
+  const absent = project();
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(absent, 'project.json'));
+  assert.equal(
+    normalizeRawRuntimeCapabilities(absent.runtime_capabilities)?.providers['browser-cdp']
+      ?.affectedResources,
+    undefined,
+  );
+
+  // An empty array survives normalization as the explicit "touches nothing" claim.
+  const empty = project([]);
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(empty, 'project.json'));
+  assert.deepEqual(
+    normalizeRawRuntimeCapabilities(empty.runtime_capabilities)?.providers['browser-cdp']
+      ?.affectedResources,
+    [],
+  );
+
+  // Omitted ownership and release_effect take the documented defaults.
+  const defaulted = project([{ resource_id: 'browser-cdp' }]);
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(defaulted, 'project.json'));
+  assert.deepEqual(
+    normalizeRawRuntimeCapabilities(defaulted.runtime_capabilities)?.providers['browser-cdp']
+      ?.affectedResources,
+    [{ resourceId: 'browser-cdp', ownership: 'capability', releaseEffect: 'stop' }],
+  );
+
+  const declared = project([
+    { resource_id: 'browser-cdp', ownership: 'slot-lifecycle', release_effect: 'retain' },
+  ]);
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(declared, 'project.json'));
+  assert.deepEqual(
+    normalizeRawRuntimeCapabilities(declared.runtime_capabilities)?.providers['browser-cdp']
+      ?.affectedResources,
+    [{ resourceId: 'browser-cdp', ownership: 'slot-lifecycle', releaseEffect: 'retain' }],
+  );
+
+  assert.throws(
+    () => validateRuntimeCapabilitiesConfig(project([{ resource_id: 'nope' }]), 'project.json'),
+    /affected_resources\.0\.resource_id must name an existing resource/,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project([{ resource_id: 'browser-cdp', ownership: 'slot' }]),
+        'project.json',
+      ),
+    /affected_resources\.0\.ownership must be capability or slot-lifecycle/,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project([{ resource_id: 'browser-cdp', release_effect: 'keep' }]),
+        'project.json',
+      ),
+    /affected_resources\.0\.release_effect must be stop or retain/,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project([{ resource_id: 'browser-cdp' }, { resource_id: 'browser-cdp' }]),
+        'project.json',
+      ),
+    /affected_resources\.1\.resource_id is declared twice/,
+  );
+  assert.throws(
+    () => validateRuntimeCapabilitiesConfig(project('all'), 'project.json'),
+    /affected_resources must be an array/,
+  );
+
+  // An inherited key is not a resource. A plain index check accepted these.
+  for (const inherited of ['constructor', 'toString', '__proto__']) {
+    assert.throws(
+      () =>
+        validateRuntimeCapabilitiesConfig(project([{ resource_id: inherited }]), 'project.json'),
+      /resource_id must name an existing resource/,
+      `${inherited} must not pass as a resource id`,
+    );
+  }
+});
+
+test('a release_effect claim must match the hooks its resource actually has', () => {
+  const slotActions = {
+    'browser-start': { label: 'start', command: 'start' },
+    'browser-health': { label: 'health', command: 'health' },
+    'browser-stop': { label: 'stop', command: 'stop' },
+  };
+  const provider = {
+    label: 'Browser',
+    version: '1',
+    share_policy: 'exclusive' as const,
+    cost: { class: 'high', resources: [{ id: 'cdp-port', access: 'exclusive' as const }] },
+    actions: {
+      acquire: { kind: 'slot-action' as const, action_id: 'browser-start' },
+      health: { kind: 'slot-action' as const, action_id: 'browser-health' },
+      release: { kind: 'slot-action' as const, action_id: 'browser-stop' },
+    },
+    release_effects: ['stop browser'],
+  };
+  const project = (resources: unknown, affected: unknown) =>
+    ({
+      slot_actions: slotActions,
+      resources,
+      runtime_capabilities: {
+        providers: { 'browser-cdp': { ...provider, affected_resources: affected } },
+      },
+    }) as RawProjectJson;
+
+  const full = {
+    device: {
+      label: 'Device',
+      type: 'device' as const,
+      hooks: { boot: 'boot', health: 'health', shutdown: 'stop' },
+    },
+  };
+  const noBoot = {
+    device: {
+      label: 'Device',
+      type: 'device' as const,
+      hooks: { health: 'health', shutdown: 'true' },
+    },
+  };
+  const opaque = {
+    device: { label: 'Device', type: 'device' as const, hooks: { shutdown: 'true' } },
+  };
+  const watchOnly = {
+    device: {
+      label: 'Device',
+      type: 'device' as const,
+      watch: { type: 'port-listen', port: '9323' },
+      hooks: { shutdown: 'true' },
+    },
+  };
+
+  // A device with no boot hook cannot honour a `stop` claim, but `retain` is
+  // exactly what it can honour, so long as it can be health-checked.
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project(noBoot, [{ resource_id: 'device', release_effect: 'stop' }]),
+        'project.json',
+      ),
+    /lacks boot and shutdown hooks/,
+  );
+  assert.doesNotThrow(() =>
+    validateRuntimeCapabilitiesConfig(
+      project(noBoot, [{ resource_id: 'device', release_effect: 'retain' }]),
+      'project.json',
+    ),
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project(opaque, [{ resource_id: 'device', release_effect: 'retain' }]),
+        'project.json',
+      ),
+    /no health hook to prove it stayed running/,
+  );
+  // A watch is not a health signal: polling reports a resource with no health
+  // hook as `unknown`, so restore could never verify a watch-only resource.
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project(watchOnly, [{ resource_id: 'device', release_effect: 'retain' }]),
+        'project.json',
+      ),
+    /no health hook to prove it stayed running/,
+  );
+  // An omitted release_effect defaults to `stop` and is held to the same bar.
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project(noBoot, [{ resource_id: 'device' }]),
+        'project.json',
+      ),
+    /lacks boot and shutdown hooks/,
+  );
+  assert.doesNotThrow(() =>
+    validateRuntimeCapabilitiesConfig(project(full, [{ resource_id: 'device' }]), 'project.json'),
+  );
+});

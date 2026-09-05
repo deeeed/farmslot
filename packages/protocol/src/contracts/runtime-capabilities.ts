@@ -52,6 +52,35 @@ export interface RuntimeCapabilityProviderActions {
   release: RuntimeCapabilityProviderActionRef;
 }
 
+/**
+ * Who owns the lifecycle of a slot resource a provider touches.
+ * - `capability`: the lease is the resource's owner, so a running resource with
+ *   no lease is an unowned leak and machine parking refuses to stop it.
+ * - `slot-lifecycle`: prepare (or the operator) owns the resource and the
+ *   capability only rides on it, so no lease is required for it to be running.
+ */
+export const RUNTIME_CAPABILITY_AFFECTED_OWNERSHIPS = ['capability', 'slot-lifecycle'] as const;
+export type RuntimeCapabilityAffectedOwnership =
+  (typeof RUNTIME_CAPABILITY_AFFECTED_OWNERSHIPS)[number];
+
+/**
+ * What releasing the provider factually does to the resource. This is a claim
+ * about mechanics, not a policy knob: `retain` means the provider's release
+ * action leaves the resource running, so parking must not stop it either and
+ * restore must find it still running rather than boot it.
+ */
+export const RUNTIME_CAPABILITY_AFFECTED_RELEASE_EFFECTS = ['stop', 'retain'] as const;
+export type RuntimeCapabilityAffectedReleaseEffect =
+  (typeof RUNTIME_CAPABILITY_AFFECTED_RELEASE_EFFECTS)[number];
+
+/** One slot resource a provider touches, declared by the project catalog. */
+export interface RuntimeCapabilityAffectedResource {
+  /** Names a key of the project's `resources` map. */
+  resourceId: string;
+  ownership: RuntimeCapabilityAffectedOwnership;
+  releaseEffect: RuntimeCapabilityAffectedReleaseEffect;
+}
+
 export interface RuntimeCapabilityProviderConfig {
   label: string;
   description?: string;
@@ -62,6 +91,14 @@ export interface RuntimeCapabilityProviderConfig {
   /** JSON Schema object for acquire parameters. */
   parameters?: Record<string, unknown>;
   actions: RuntimeCapabilityProviderActions;
+  /**
+   * Slot resources this provider touches. Absent means "derive from the
+   * resource-kind action refs" (every referenced resource, owned by the
+   * capability, stopped on release) — the behaviour every catalog had before
+   * this field existed. An empty array is a deliberate declaration that the
+   * provider touches no watched slot resource, which is distinct from absent.
+   */
+  affectedResources?: RuntimeCapabilityAffectedResource[];
   releaseEffects: string[];
   /** Explicit project policy; zero/absent means release immediately. */
   keepWarmMs?: number;

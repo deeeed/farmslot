@@ -162,6 +162,46 @@ test('residual assessment treats mode-and-phase expected running states as healt
   assert.equal(unexpected.resources[1].warning, false);
 });
 
+test('a retained resource still running in a parked release record is not a warning', () => {
+  const record = {
+    mode: 'release' as const,
+    phase: 'parked',
+    errors: [],
+    resourceManifest: {
+      resources: [
+        { resourceId: 'dev-server', releaseEffect: 'retain' as const },
+        { resourceId: 'browser-cdp', releaseEffect: 'stop' as const },
+      ],
+    },
+    residuals: {
+      runner: 'stopped' as const,
+      resources: [
+        { resourceId: 'dev-server', state: 'running' as const },
+        { resourceId: 'browser-cdp', state: 'stopped' as const },
+      ],
+    },
+  };
+  const assessment = machineParkResidualAssessment(record);
+  assert.equal(assessment.hasWarnings, false);
+  assert.equal(assessment.resources[0].expected, 'running');
+  assert.equal(assessment.resources[1].expected, 'stopped');
+  assert.equal(machineParkRecordSummary(record), 'parked');
+
+  // The claim still has to hold: a retained resource that stopped is a warning.
+  const lost = machineParkResidualAssessment({
+    ...record,
+    residuals: {
+      runner: 'stopped' as const,
+      resources: [
+        { resourceId: 'dev-server', state: 'stopped' as const },
+        { resourceId: 'browser-cdp', state: 'stopped' as const },
+      ],
+    },
+  });
+  assert.equal(lost.resources[0].warning, true);
+  assert.equal(lost.resources[1].warning, false);
+});
+
 test('updated pause records sort newest first with deterministic ties', () => {
   assert.deepEqual(
     sortMachinePauseRecords([

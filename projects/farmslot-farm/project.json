@@ -358,6 +358,9 @@
           "health": { "kind": "resource", "resource_id": "dev-server", "action": "health" },
           "release": { "kind": "slot-action", "action_id": "gateway-ui-retain" }
         },
+        "affected_resources": [
+          { "resource_id": "dev-server", "ownership": "slot-lifecycle", "release_effect": "retain" }
+        ],
         "release_effects": [
           "Gateway/UI capability ownership is removed",
           "The slot lifecycle retains the control-plane process until slot teardown"
@@ -381,6 +384,9 @@
           "health": { "kind": "slot-action", "action_id": "browser-cdp-health" },
           "release": { "kind": "slot-action", "action_id": "browser-cdp-stop" }
         },
+        "affected_resources": [
+          { "resource_id": "browser-cdp", "ownership": "capability", "release_effect": "stop" }
+        ],
         "release_effects": [
           "The lease owner can no longer drive the CDP session",
           "Chrome remains reusable only until the explicit keep-warm deadline"
@@ -405,6 +411,9 @@
           "health": { "kind": "slot-action", "action_id": "companion-metro-health" },
           "release": { "kind": "slot-action", "action_id": "companion-metro-stop" }
         },
+        "affected_resources": [
+          { "resource_id": "companion-metro", "ownership": "capability", "release_effect": "stop" }
+        ],
         "release_effects": ["The final shared lease stops the slot-scoped Metro tmux session"],
         "retention": { "operator-wait": "stop", "terminal": "stop" }
       },
@@ -423,6 +432,9 @@
           "health": { "kind": "resource", "resource_id": "ios-sim", "action": "health" },
           "release": { "kind": "resource", "resource_id": "ios-sim", "action": "shutdown" }
         },
+        "affected_resources": [
+          { "resource_id": "ios-sim", "ownership": "capability", "release_effect": "stop" }
+        ],
         "release_effects": [
           "The simulator is shut down",
           "Its Metro dependency is released only when no other lease needs it"
@@ -443,6 +455,13 @@
           "health": { "kind": "resource", "resource_id": "android-device", "action": "health" },
           "release": { "kind": "resource", "resource_id": "android-device", "action": "shutdown" }
         },
+        "affected_resources": [
+          {
+            "resource_id": "android-device",
+            "ownership": "capability",
+            "release_effect": "retain"
+          }
+        ],
         "release_effects": [
           "The adb reservation is released without clearing another slot's app data",
           "Its Metro dependency is reference-counted independently"
@@ -466,6 +485,7 @@
           "health": { "kind": "slot-action", "action_id": "native-client-health-ios" },
           "release": { "kind": "slot-action", "action_id": "native-client-retain-ios" }
         },
+        "affected_resources": [],
         "release_effects": [
           "The native-build lease is released",
           "The installed dev client remains reusable; simulator and Metro dependencies release normally"
@@ -492,6 +512,7 @@
           "health": { "kind": "slot-action", "action_id": "recording-ready" },
           "release": { "kind": "slot-action", "action_id": "recording-release" }
         },
+        "affected_resources": [],
         "release_effects": ["The owner releases the exclusive recording-helper reservation"]
       }
     }

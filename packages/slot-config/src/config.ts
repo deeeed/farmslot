@@ -18,6 +18,10 @@ import {
   type ProjectConfig,
   type ProjectExecutionTemplatesConfig,
   type ReviewSessionPolicy,
+  RUNTIME_CAPABILITY_AFFECTED_OWNERSHIPS,
+  RUNTIME_CAPABILITY_AFFECTED_RELEASE_EFFECTS,
+  type RuntimeCapabilityAffectedOwnership,
+  type RuntimeCapabilityAffectedReleaseEffect,
   type SlotActionDefinition,
 } from '@farmslot/protocol';
 
@@ -371,6 +375,11 @@ export interface RawProjectJson {
           health?: RawRuntimeCapabilityActionRef;
           release?: RawRuntimeCapabilityActionRef;
         };
+        affected_resources?: Array<{
+          resource_id?: string;
+          ownership?: string;
+          release_effect?: string;
+        }>;
         release_effects?: string[];
         keep_warm_ms?: number;
         retention?: Record<string, string>;
@@ -1461,6 +1470,72 @@ export function validateRuntimeCapabilitiesConfig(
       projectJson,
       projectConfig,
     );
+    if (provider.affected_resources !== undefined) {
+      if (!Array.isArray(provider.affected_resources)) {
+        throw new Error(`${projectConfig}: ${field}.affected_resources must be an array`);
+      }
+      const seen = new Set<string>();
+      for (const [index, claim] of provider.affected_resources.entries()) {
+        const claimField = `${field}.affected_resources.${index}`;
+        if (!claim || typeof claim !== 'object' || Array.isArray(claim)) {
+          throw new Error(`${projectConfig}: ${claimField} must be an object`);
+        }
+        // Own properties only: a plain `in`/index check accepts `constructor`
+        // and every other inherited key as if it named a real resource.
+        if (
+          typeof claim.resource_id !== 'string' ||
+          !projectJson.resources ||
+          !Object.hasOwn(projectJson.resources, claim.resource_id)
+        ) {
+          throw new Error(
+            `${projectConfig}: ${claimField}.resource_id must name an existing resource`,
+          );
+        }
+        if (seen.has(claim.resource_id)) {
+          throw new Error(`${projectConfig}: ${claimField}.resource_id is declared twice`);
+        }
+        seen.add(claim.resource_id);
+        if (
+          claim.ownership !== undefined &&
+          !RUNTIME_CAPABILITY_AFFECTED_OWNERSHIPS.includes(
+            claim.ownership as RuntimeCapabilityAffectedOwnership,
+          )
+        ) {
+          throw new Error(
+            `${projectConfig}: ${claimField}.ownership must be ${RUNTIME_CAPABILITY_AFFECTED_OWNERSHIPS.join(' or ')}`,
+          );
+        }
+        if (
+          claim.release_effect !== undefined &&
+          !RUNTIME_CAPABILITY_AFFECTED_RELEASE_EFFECTS.includes(
+            claim.release_effect as RuntimeCapabilityAffectedReleaseEffect,
+          )
+        ) {
+          throw new Error(
+            `${projectConfig}: ${claimField}.release_effect must be ${RUNTIME_CAPABILITY_AFFECTED_RELEASE_EFFECTS.join(' or ')}`,
+          );
+        }
+        // A claim states what machine parking will do, so the resource has to
+        // be able to do it. `stop` means the park shuts it down and the restore
+        // boots it back, which needs both hooks; `retain` touches neither but
+        // restore must still be able to prove it stayed running.
+        const claimed = projectJson.resources[claim.resource_id];
+        const effect = claim.release_effect ?? 'stop';
+        if (effect === 'stop' && !(claimed.hooks?.boot && claimed.hooks?.shutdown)) {
+          throw new Error(
+            `${projectConfig}: ${claimField} declares release_effect "stop" but resource '${claim.resource_id}' lacks boot and shutdown hooks`,
+          );
+        }
+        // A watch does not substitute here: resource polling reports a resource
+        // with no health hook as `unknown` whatever its watch says, so restore
+        // could never prove a watch-only resource stayed running.
+        if (effect === 'retain' && !claimed.hooks?.health) {
+          throw new Error(
+            `${projectConfig}: ${claimField} declares release_effect "retain" but resource '${claim.resource_id}' has no health hook to prove it stayed running`,
+          );
+        }
+      }
+    }
     if (
       !Array.isArray(provider.release_effects) ||
       provider.release_effects.some((effect) => typeof effect !== 'string' || !effect.trim())
@@ -1689,6 +1764,19 @@ export function normalizeRawRuntimeCapabilities(
         health: normalizeAction(provider.actions.health!),
         release: normalizeAction(provider.actions.release!),
       },
+      // Absent stays absent so the manifest resolver still derives the claim
+      // from the action refs; an empty array is preserved as the explicit
+      // "touches no watched resource" declaration.
+      ...(Array.isArray(provider.affected_resources)
+        ? {
+            affectedResources: provider.affected_resources.map((claim) => ({
+              resourceId: claim.resource_id!,
+              ownership: (claim.ownership ?? 'capability') as RuntimeCapabilityAffectedOwnership,
+              releaseEffect: (claim.release_effect ??
+                'stop') as RuntimeCapabilityAffectedReleaseEffect,
+            })),
+          }
+        : {}),
       releaseEffects: [...(provider.release_effects ?? [])],
       ...(provider.keep_warm_ms !== undefined ? { keepWarmMs: provider.keep_warm_ms } : {}),
       ...(normalizePostureRetentionMap(provider.retention)

@@ -1541,6 +1541,8 @@ export type MachineParkResourcePhase =
   | 'observed-running'
   | 'stopping'
   | 'stopped'
+  /** Left running on purpose because the catalog says releasing never stops it, and verified still running at settle. */
+  | 'retained'
   | 'restoring'
   | 'restored'
   | 'failed';
@@ -1567,6 +1569,9 @@ export interface MachineParkCapabilityLease {
   error?: string;
 }
 
+/** Parking's factual disposition for one manifest resource. */
+export type MachineParkResourceReleaseEffect = 'stop' | 'retain';
+
 /** One resource that was observed running when release-pause intent was captured. */
 export interface MachineParkResource {
   resourceId: string;
@@ -1574,10 +1579,35 @@ export interface MachineParkResource {
   type: ResourceType;
   observedStatus: 'running';
   phase: MachineParkResourcePhase;
+  /**
+   * What parking does to this resource, resolved from the project catalog's
+   * affected-resource metadata. `stop` shuts it down and restore boots it back;
+   * `retain` leaves it running and restore only verifies it never stopped.
+   * Absent on records journalled before the metadata existed; read it as `stop`.
+   */
+  releaseEffect?: MachineParkResourceReleaseEffect;
   capabilityLeaseIds: string[];
   stoppedAt?: string;
   restoredAt?: string;
   error?: string;
+}
+
+/** What restore did to one resource, emitted by the code path that did it. */
+export type MachineParkRestoreAction = 'verified' | 'booted' | 'stopped' | 'skipped';
+
+/**
+ * One lifecycle effect a restore performed, recorded as fact rather than
+ * inferred from the absence of an error. A successful boot leaves no error
+ * behind, so "no boot error" can never prove no boot happened; this can.
+ */
+export interface MachineParkRestoreEffect {
+  resourceId: string;
+  action: MachineParkRestoreAction;
+  /** Gateway clock, when the effect was performed or observed. */
+  at: string;
+  /** False when the action failed, or when it happened and should not have. */
+  ok: boolean;
+  reason?: string;
 }
 
 export interface MachineParkResourceManifest {
@@ -1718,6 +1748,12 @@ export interface MachineParkRecord {
   slotFreedAt?: string;
   /** Restore intent classification persisted before any selected batch member mutates. */
   restoreDisposition?: 'zero-effect' | 'effectful';
+  /**
+   * What the last restore attempt actually did to each manifest resource, in
+   * the order it did it. Reset at the start of each attempt. Absent on records
+   * written before restore recorded its effects.
+   */
+  restoreEffects?: MachineParkRestoreEffect[];
   /** Exact runner-native acknowledgement captured before orchestration resumes. */
   recoveryProof?: {
     sessionId: string;
