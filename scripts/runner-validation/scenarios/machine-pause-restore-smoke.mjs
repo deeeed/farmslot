@@ -99,6 +99,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
     pauseExecute: null,
     parkedRecord: null,
     resourceStopProof: null,
+    retainedLiveProof: null,
+    retainedRestoreProof: null,
     restorePreview: null,
     restoreExecute: null,
     restoredRecord: null,
@@ -176,15 +178,79 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
     if (report.parkedRecord.residuals.runner !== 'stopped') {
       throw new Error(`Parked runner residual is ${report.parkedRecord.residuals.runner}`);
     }
+    // A park does not stop everything it observed running. The project catalog
+    // declares, per resource, whether releasing actually stops it; the manifest
+    // carries that as `releaseEffect`. A `retain` resource must still be running
+    // afterwards and must never have been stopped — the sandbox gateway UI is
+    // one, and stopping it would take down the control plane the slot needs.
+    // Judging every resource against a single "all stopped" expectation both
+    // hides that and fails a correct park.
     const resources = report.parkedRecord.resourceManifest.resources;
+    const residualState = (resourceId) =>
+      report.parkedRecord.residuals.resources.find((residual) => residual.resourceId === resourceId)
+        ?.state ?? null;
     report.resourceStopProof = {
       configured: resources.length,
-      allStopped:
-        resources.every((resource) => resource.phase === 'stopped') &&
-        report.parkedRecord.residuals.resources.every((resource) => resource.state === 'stopped'),
+      resources: resources.map((resource) => ({
+        resourceId: resource.resourceId,
+        releaseEffect: resource.releaseEffect ?? null,
+        phase: resource.phase,
+        residual: residualState(resource.resourceId),
+        stoppedAt: resource.stoppedAt ?? null,
+      })),
+      retained: resources
+        .filter((resource) => resource.releaseEffect === 'retain')
+        .map((resource) => resource.resourceId),
+      stopped: resources
+        .filter((resource) => resource.releaseEffect !== 'retain')
+        .map((resource) => resource.resourceId),
+      allAsDeclared: false,
     };
-    if (!report.resourceStopProof.allStopped) {
-      throw new Error('One or more manifest resources remained after release park');
+    const undeclared = resources.filter((resource) => !resource.releaseEffect);
+    if (undeclared.length > 0) {
+      throw new Error(
+        `park manifest carries no releaseEffect for ${undeclared
+          .map((resource) => resource.resourceId)
+          .join(', ')}; the catalog metadata did not reach the manifest`,
+      );
+    }
+    for (const resource of resources) {
+      const expectedPhase = resource.releaseEffect === 'retain' ? 'retained' : 'stopped';
+      const expectedResidual = resource.releaseEffect === 'retain' ? 'running' : 'stopped';
+      if (resource.phase !== expectedPhase) {
+        throw new Error(
+          `resource '${resource.resourceId}' declared '${resource.releaseEffect}' settled at phase '${resource.phase}', expected '${expectedPhase}'`,
+        );
+      }
+      if (residualState(resource.resourceId) !== expectedResidual) {
+        throw new Error(
+          `resource '${resource.resourceId}' declared '${resource.releaseEffect}' was observed '${residualState(resource.resourceId)}', expected '${expectedResidual}'`,
+        );
+      }
+      if (resource.releaseEffect === 'retain' && resource.stoppedAt) {
+        throw new Error(`retained resource '${resource.resourceId}' carries a stoppedAt timestamp`);
+      }
+    }
+    report.resourceStopProof.allAsDeclared = true;
+
+    // The record says the retained resource was left alone. Ask the node
+    // directly, while the run is still parked, whether the process is really
+    // up — a record entry is a claim, a live health probe is the evidence.
+    if (report.resourceStopProof.retained.length > 0) {
+      const live = rpc('resource.health', { slotId: before.slotId });
+      report.retainedLiveProof = {
+        slotId: before.slotId,
+        observed: report.resourceStopProof.retained.map((resourceId) => ({
+          resourceId,
+          status: live.resources.find((entry) => entry.id === resourceId)?.status ?? null,
+        })),
+      };
+      const dead = report.retainedLiveProof.observed.filter((entry) => entry.status !== 'running');
+      if (dead.length > 0) {
+        throw new Error(
+          `retained resource(s) ${dead.map((entry) => entry.resourceId).join(', ')} are not running on the node while the run is parked`,
+        );
+      }
     }
 
     report.restorePreview = rpc('machine.pause.restore', {
@@ -234,6 +300,26 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
     };
     const restoredResources = report.restoredRecord.resourceManifest.resources;
     const resourcesRestored = restoredResources.every((resource) => resource.phase === 'restored');
+    // Restore verifies a retained resource rather than booting it. A boot would
+    // have had to stop it first, so a retained resource that still carries no
+    // stoppedAt after a full park-and-restore cycle is the observable proof
+    // that nothing in either direction touched it.
+    report.retainedRestoreProof = {
+      retained: restoredResources
+        .filter((resource) => resource.releaseEffect === 'retain')
+        .map((resource) => ({
+          resourceId: resource.resourceId,
+          phase: resource.phase,
+          stoppedAt: resource.stoppedAt ?? null,
+          restoredAt: resource.restoredAt ?? null,
+        })),
+      neverStopped: restoredResources
+        .filter((resource) => resource.releaseEffect === 'retain')
+        .every((resource) => !resource.stoppedAt && resource.phase === 'restored'),
+    };
+    if (!report.retainedRestoreProof.neverStopped) {
+      throw new Error('a retained resource was stopped or not verified across park and restore');
+    }
     report.pass =
       report.structuredAcceptance?.live === true &&
       report.structuredAcceptance?.acknowledgement?.kind === 'structured' &&

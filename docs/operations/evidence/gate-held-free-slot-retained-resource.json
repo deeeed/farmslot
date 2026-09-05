@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-05T17:10:00.000Z",
+  "host": "macwork",
+  "gateway": "ws://localhost:7801",
+  "scenario": "gate-held-free-slot-with-retained-resource",
+  "claim": "Catalog affected-resource metadata lets release-mode parking and ADR-054 free-slot complete on the real fleet, and a retained resource survives the park.",
+  "gateHeldRun": {
+    "runId": "aee49175-c87c-4b1d-816d-059c7a8a7018",
+    "project": "farmslot-farm",
+    "ticketOrPr": "MANUAL-000119",
+    "backlogItemId": "b1f18e32-b09d-41f1-b675-c5f93f7fca6e",
+    "runner": "claude",
+    "slotId": "macwork-ff-1",
+    "dispatchedVia": "backlog.update + backlog.enqueue",
+    "status": "blocked"
+  },
+  "negativeControl": {
+    "method": "removed sandbox-gateway-ui.affected_resources from projects/farmslot-farm/project.json (hot-reloaded), re-previewed 4x, restored",
+    "withoutMetadata": {
+      "eligible": false,
+      "code": "CAPABILITY_RESOURCE_UNOWNED",
+      "reason": "resource 'dev-server' is capability-backed but not leased by run 'aee49175-c87c-4b1d-816d-059c7a8a7018'"
+    },
+    "withMetadata": {
+      "eligible": true,
+      "code": "ELIGIBLE_GATE_RELEASE_PAUSE"
+    }
+  },
+  "preview": {
+    "eligible": true,
+    "code": "ELIGIBLE_GATE_RELEASE_PAUSE",
+    "slotDisposition": "freed",
+    "recoveryPolicy": {
+      "kind": "runner-session-reload",
+      "supported": true,
+      "runnerId": "claude"
+    },
+    "manifest": [
+      {
+        "resourceId": "dev-server",
+        "releaseEffect": "retain"
+      }
+    ]
+  },
+  "apply": {
+    "method": "runtime.posture.apply",
+    "gateChoice": "free-slot",
+    "operationId": "catalog-affected-resources-freeslot-1",
+    "ok": true,
+    "posture": "parked",
+    "policySource": "gate-choice",
+    "effects": ["machine parking complete on macwork"],
+    "failures": []
+  },
+  "parkRecord": {
+    "phase": "parked",
+    "mode": "release",
+    "slotDisposition": "freed",
+    "slotFreedAt": "2026-09-05T17:01:50.501Z",
+    "preservedWorkspace": {
+      "branch": "feat/manual-000119-regenerate-gateway-api-docs",
+      "headSha": "e8110332ab842e98a8eeb07ad11075c3f0e7ccd5",
+      "detachedAt": "2026-09-05T17:01:50.497Z"
+    },
+    "resources": [
+      {
+        "resourceId": "dev-server",
+        "label": "Gateway",
+        "type": "dev-server",
+        "observedStatus": "running",
+        "phase": "retained",
+        "releaseEffect": "retain",
+        "capabilityLeaseIds": []
+      }
+    ],
+    "residuals": {
+      "runner": "stopped",
+      "resources": [
+        {
+          "resourceId": "dev-server",
+          "state": "running",
+          "detail": "observed running"
+        }
+      ]
+    },
+    "errors": []
+  },
+  "retainedResourceProof": {
+    "resourceId": "dev-server",
+    "releaseEffect": "retain",
+    "manifestPhase": "retained",
+    "stoppedAt": null,
+    "residualState": "running",
+    "liveHealthAfterFree": [
+      {
+        "id": "ios-sim",
+        "status": "stopped"
+      },
+      {
+        "id": "dev-server",
+        "status": "running"
+      }
+    ],
+    "note": "the park stopped the worker and left the sandbox gateway UI running; before this change the same preview refused with CAPABILITY_RESOURCE_UNOWNED"
+  },
+  "successorReuse": {
+    "runId": "eaaa4a47-d39c-4693-afc7-e569bcf50e20",
+    "runner": "scripted",
+    "scenario": "success",
+    "dispatchedInto": "macwork-ff-1",
+    "reachedSteps": ["find-slot", "write-task", "prepare", "dispatch", "monitor"],
+    "reusedPaneId": "%606",
+    "finished": false,
+    "blockedOn": "monitor_interactive_handoff: the scripted worker wrote no terminal SIGNAL.json",
+    "cancelled": true,
+    "note": "slot reuse after the free is proved; the scripted worker's missing terminal signal is a scripted-runner gap, unrelated to this change"
+  },
+  "restore": {
+    "command": "machine.pause.restore {machine:'macwork', selector:{kind:'include', runIds:['aee49175-c87c-4b1d-816d-059c7a8a7018']}}",
+    "eligible": false,
+    "code": "FREED_SLOT_RESTORE_UNSUPPORTED",
+    "reason": "this park freed the slot; restoring a freed slot is not supported yet",
+    "note": "documented limitation of MANUAL-000112 slice 1 (PR #589); the follow-up slice implements it"
+  },
+  "gateLeftPending": {
+    "decisionId": "fa14a286-dcb9-4e38-8a5c-1a903aedd856",
+    "resolvedAt": null,
+    "actions": ["approve-publish", "hold", "request-extra-review", "request-cross-runner-review"],
+    "note": "deliberately not answered; while the park is landed run.resolveDecision refuses by design until the freed-slot restore slice lands"
+  },
+  "pass": true
+}

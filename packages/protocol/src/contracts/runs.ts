@@ -1541,6 +1541,8 @@ export type MachineParkResourcePhase =
   | 'observed-running'
   | 'stopping'
   | 'stopped'
+  /** Left running on purpose because the catalog says releasing never stops it, and verified still running at settle. */
+  | 'retained'
   | 'restoring'
   | 'restored'
   | 'failed';
@@ -1567,6 +1569,9 @@ export interface MachineParkCapabilityLease {
   error?: string;
 }
 
+/** Parking's factual disposition for one manifest resource. */
+export type MachineParkResourceReleaseEffect = 'stop' | 'retain';
+
 /** One resource that was observed running when release-pause intent was captured. */
 export interface MachineParkResource {
   resourceId: string;
@@ -1574,6 +1579,13 @@ export interface MachineParkResource {
   type: ResourceType;
   observedStatus: 'running';
   phase: MachineParkResourcePhase;
+  /**
+   * What parking does to this resource, resolved from the project catalog's
+   * affected-resource metadata. `stop` shuts it down and restore boots it back;
+   * `retain` leaves it running and restore only verifies it never stopped.
+   * Absent on records journalled before the metadata existed; read it as `stop`.
+   */
+  releaseEffect?: MachineParkResourceReleaseEffect;
   capabilityLeaseIds: string[];
   stoppedAt?: string;
   restoredAt?: string;

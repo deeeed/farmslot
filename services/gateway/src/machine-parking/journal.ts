@@ -210,10 +210,12 @@ const RESOURCE_PHASES = new Set([
   'observed-running',
   'stopping',
   'stopped',
+  'retained',
   'restoring',
   'restored',
   'failed',
 ]);
+const RESOURCE_RELEASE_EFFECTS = new Set(['stop', 'retain']);
 const LEASE_STATES = new Set([
   'held',
   'releasing',
@@ -275,6 +277,10 @@ function validResource(value: unknown): boolean {
     RESOURCE_TYPES.has(value.type as string) &&
     value.observedStatus === 'running' &&
     RESOURCE_PHASES.has(value.phase as string) &&
+    // Absent on records journalled before affected-resource metadata existed;
+    // the service reads that as 'stop', which is what those parks did.
+    (value.releaseEffect === undefined ||
+      RESOURCE_RELEASE_EFFECTS.has(value.releaseEffect as string)) &&
     Array.isArray(value.capabilityLeaseIds) &&
     value.capabilityLeaseIds.every(nonEmpty) &&
     optionalIso(value.stoppedAt) &&

@@ -1103,9 +1103,15 @@ function cleanupFamilyProof({ slotId, proof }) {
  * (B) Runs only when FARMSLOT_GATE_PARK_RUN_ID names a live gate-held
  *     publication run on this machine. That shape needs a real local-first
  *     publication package, which a scripted runner cannot produce, so it is
- *     supplied rather than created. It asserts the new verdict itself:
- *     `RUNNER_RELOAD_UNSUPPORTED` with `slotDisposition: 'freed'`, and no lease,
- *     runner process, or slot-row change from asking.
+ *     supplied rather than created. It asserts `slotDisposition: 'freed'`, that
+ *     neither capability gate — `CAPABILITY_RESOURCE_UNOWNED` nor
+ *     `CAPABILITY_SLOT_ACTION_UNMAPPED` — refuses the run any more now that the
+ *     project catalog declares its affected resources, and then splits: a
+ *     runner with no persisted session reload is still refused with
+ *     `RUNNER_RELOAD_UNSUPPORTED`, while a session-reload runner comes out
+ *     `ELIGIBLE_GATE_RELEASE_PAUSE` with a manifest that carries a
+ *     `releaseEffect` per resource. Either way, no lease, runner process, park
+ *     record, or slot-row changes from asking.
  */
 function assertGateParkEligibility({ slotId, runId, machine }) {
   const proof = {
@@ -1181,29 +1187,25 @@ function assertGateParkEligibility({ slotId, runId, machine }) {
         attempted: false,
         reason:
           'no FARMSLOT_GATE_PARK_RUN_ID: a gate-held publication run needs a real local-first package, which the scripted runner cannot produce',
-        // Recorded from an actual attempt on macpro-ff-1 (2026-09-05) so the
-        // gap is a measured blocker rather than an assumption. Each step was
-        // driven through the production gateway on ws://localhost:7801.
-        blockers: [
-          "run.create flowType 'fix-bug' with a free-text ticket: refused, 'Paste a Jira key, a Jira URL, a GitHub issue/PR URL, or owner/repo#number'",
-          "run.create flowType 'fix-bug' ticketOrPr 'MANUAL-000112': refused, 'manual backlog refs must be dispatched from Backlog'",
-          "run.create flowType 'dev' mode 'autonomous' with a free-text ticket: refused the same way; free text is accepted only by interactive starts",
-          "run.create flowType 'dev' mode 'interactive' devInteractiveProfile 'reviewed' runner 'claude': ACCEPTED and reached 'monitoring' with a live claude session, but an interactive run completes only when an operator drives its pane, so COMPLETE never ran and no 'gate-held' disposition was produced",
+        // How to produce one, measured on 2026-09-05 through the production
+        // gateway rather than assumed. `run.create` is the wrong door: it
+        // refuses free-text tickets outright, refuses a manual backlog ref
+        // because those must come from Backlog, and its one accepting shape
+        // (flowType 'dev', mode 'interactive') never reaches COMPLETE without
+        // an operator driving the pane. Dispatching a ready backlog item is
+        // the door that works.
+        howToSupply: [
+          'pin a ready backlog item to a session-reload runner and one slot: backlog.update { itemId, runner: "claude", allowedSlots: ["<slot>"], mode: "autonomous" }',
+          'dispatch it: backlog.enqueue { itemId } — the queue launches it on that slot',
+          'wait for its publication HUMAN_GATE, then pass its run id as FARMSLOT_GATE_PARK_RUN_ID',
         ],
-        // What the attempt DID establish, read-only, through machine.pause.preview:
-        // a real session-reload runner clears the runner-capability gate that
-        // the scripted runner fails. The refusal moved off RUNNER_RELOAD_UNSUPPORTED
-        // to CAPABILITY_RESOURCE_UNOWNED, and after acquiring the catalog
-        // capability, to CAPABILITY_SLOT_ACTION_UNMAPPED — both later gates,
-        // and both unrelated to the gate-park branch.
+        // The capability gates that used to sit behind the runner gate are
+        // asserted live, not recorded from memory, whenever a gate-held run is
+        // supplied. Without one there is nothing to assert here.
         realRunnerProbe: {
-          runner: 'claude',
-          // `recoveryPolicy.supported` is NOT recorded: every reject sets it
-          // false regardless of reason, so it says nothing about the runner's
-          // declared reload capability and reading it as if it did was
-          // misleading. The codes below are what actually carries the finding.
-          codesObserved: ['CAPABILITY_RESOURCE_UNOWNED', 'CAPABILITY_SLOT_ACTION_UNMAPPED'],
-          note: 'not RUNNER_RELOAD_UNSUPPORTED: the runner declaration gate accepts a session-reload runner',
+          attempted: false,
+          reason:
+            'the live capability-gate assertion needs FARMSLOT_GATE_PARK_RUN_ID; it is asserted in the gate-held half',
         },
       };
       proof.pass = true;
@@ -1213,8 +1215,19 @@ function assertGateParkEligibility({ slotId, runId, machine }) {
     if (!gateRun.slotId) throw new Error(`gate-held run ${proof.gateHeldRunId} holds no slot`);
     const gateSlotBefore = slotRow(gateRun.slotId);
     const gateLeasesBefore = leaseIds(gateRun.slotId, gateRun.id);
+    // The supplied gate-held run is on its own slot, which need not be on the
+    // machine this scenario is running against. Asking macpro about a macwork
+    // slot returns MACHINE_MISMATCH and says nothing about the gate-park
+    // branch, so resolve the run's own machine instead of reusing ours.
+    const gateMachine = rpc('fleet.status').fleet.slots.find(
+      (candidate) => candidate.slot === gateRun.slotId,
+    )?.machine;
+    if (!gateMachine) {
+      throw new Error(`gate-held run slot '${gateRun.slotId}' is absent from fleet.status`);
+    }
+    proof.gateHeldMachine = gateMachine;
     const gatePreview = rpc('machine.pause.preview', {
-      machine,
+      machine: gateMachine,
       mode: 'release',
       selector: { kind: 'include', runIds: [gateRun.id] },
     });
@@ -1224,6 +1237,17 @@ function assertGateParkEligibility({ slotId, runId, machine }) {
       runId: gateRun.id,
       gateChoice: 'free-slot',
     });
+    // The catalog's affected-resource metadata is what removes these two.
+    // Before it existed the preview refused every gate-held run here: first
+    // because the slot's dev-server ran with no lease, then because the
+    // capabilities the run did hold acquire and release through slot actions.
+    // Reverting one catalog entry to no metadata brings the matching code back
+    // and fails this node.
+    const CAPABILITY_GATE_CODES = [
+      'CAPABILITY_RESOURCE_UNOWNED',
+      'CAPABILITY_SLOT_ACTION_UNMAPPED',
+    ];
+    const reloadRefused = gateEntry.eligibility.code === 'RUNNER_RELOAD_UNSUPPORTED';
     proof.gateHeld = {
       attempted: true,
       status: gateRun.status,
@@ -1234,24 +1258,67 @@ function assertGateParkEligibility({ slotId, runId, machine }) {
       recoverySupported: gateEntry.recoveryPolicy?.supported ?? null,
       postureRejectionCode: posture.rejection?.code ?? null,
       postureRejectionKind: posture.rejection?.kind ?? null,
+      capabilityGatesCleared: !CAPABILITY_GATE_CODES.includes(gateEntry.eligibility.code),
+      reloadRefused,
     };
     if (gateEntry.slotDisposition !== 'freed') {
       throw new Error(
         `a gate-held run reported slotDisposition '${gateEntry.slotDisposition}', expected 'freed'`,
       );
     }
-    if (gateEntry.eligibility.code !== 'RUNNER_RELOAD_UNSUPPORTED') {
+    if (CAPABILITY_GATE_CODES.includes(gateEntry.eligibility.code)) {
       throw new Error(
-        `gate-held preview returned '${gateEntry.eligibility.code}', expected RUNNER_RELOAD_UNSUPPORTED`,
+        `gate-held preview still refuses at a capability gate: '${gateEntry.eligibility.code}' — ${gateEntry.eligibility.reason}`,
       );
     }
-    if (gateEntry.recoveryPolicy?.supported !== false) {
-      throw new Error('a refused reload still advertised a supported recovery policy');
-    }
-    if (posture.rejection?.code !== 'RUNNER_RELOAD_UNSUPPORTED') {
+    if (CAPABILITY_GATE_CODES.includes(posture.rejection?.code)) {
       throw new Error(
-        `free-slot posture preview surfaced '${posture.rejection?.code ?? 'no rejection'}' instead of the machine-pause verdict`,
+        `free-slot posture preview still refuses at a capability gate: '${posture.rejection.code}'`,
       );
+    }
+    if (reloadRefused) {
+      // A runner that declares no persisted session reload is still refused,
+      // and that refusal must stay clean: no park record, no lease change.
+      if (gateEntry.recoveryPolicy?.supported !== false) {
+        throw new Error('a refused reload still advertised a supported recovery policy');
+      }
+      if (posture.rejection?.code !== 'RUNNER_RELOAD_UNSUPPORTED') {
+        throw new Error(
+          `free-slot posture preview surfaced '${posture.rejection?.code ?? 'no rejection'}' instead of the machine-pause verdict`,
+        );
+      }
+    } else {
+      // A session-reload runner at a gate must now come out the other side.
+      if (!gateEntry.eligibility.eligible) {
+        throw new Error(
+          `a session-reload gate-held run was refused with '${gateEntry.eligibility.code}': ${gateEntry.eligibility.reason}`,
+        );
+      }
+      if (gateEntry.eligibility.code !== 'ELIGIBLE_GATE_RELEASE_PAUSE') {
+        throw new Error(
+          `an eligible gate-held run took code '${gateEntry.eligibility.code}', expected ELIGIBLE_GATE_RELEASE_PAUSE`,
+        );
+      }
+      if (posture.rejection) {
+        throw new Error(
+          `free-slot posture preview rejected an eligible gate-held run: '${posture.rejection.code}'`,
+        );
+      }
+      // The manifest is what the park will act on, so it has to carry the
+      // catalog's claim rather than leave parking to guess again.
+      const manifest = gateEntry.resourceManifest?.resources ?? [];
+      proof.gateHeld.manifest = manifest.map((resource) => ({
+        resourceId: resource.resourceId,
+        releaseEffect: resource.releaseEffect ?? null,
+      }));
+      const undeclared = manifest.filter((resource) => !resource.releaseEffect);
+      if (undeclared.length > 0) {
+        throw new Error(
+          `eligible preview manifest carries no releaseEffect for ${undeclared
+            .map((resource) => resource.resourceId)
+            .join(', ')}`,
+        );
+      }
     }
     const gateSlotAfter = slotRow(gateRun.slotId);
     if (JSON.stringify(gateSlotBefore) !== JSON.stringify(gateSlotAfter)) {

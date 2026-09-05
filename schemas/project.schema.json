@@ -1498,12 +1498,41 @@
             "release": { "$ref": "#/$defs/runtime_capability_action_ref" }
           }
         },
+        "affected_resources": { "$ref": "#/$defs/runtime_capability_affected_resources" },
         "release_effects": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 }
         },
         "keep_warm_ms": { "type": "integer", "minimum": 0 },
         "retention": { "$ref": "#/$defs/resource_posture_retention_map" }
+      }
+    },
+    "runtime_capability_affected_resources": {
+      "type": "array",
+      "description": "Slot resources this provider touches. Omit the field to derive the claim from the resource-kind action refs (every referenced resource, owned by the capability, stopped on release). An empty array is the explicit claim that the provider touches no watched slot resource.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resource_id"],
+        "properties": {
+          "resource_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "description": "Names a key of this project's resources map."
+          },
+          "ownership": {
+            "type": "string",
+            "enum": ["capability", "slot-lifecycle"],
+            "default": "capability",
+            "description": "'capability' means a lease owns the resource, so machine parking treats a running resource with no lease as unowned. 'slot-lifecycle' means prepare or the operator owns it and the capability only rides on it."
+          },
+          "release_effect": {
+            "type": "string",
+            "enum": ["stop", "retain"],
+            "default": "stop",
+            "description": "What releasing this provider factually does to the resource. 'retain' means the release action leaves it running, so parking must not stop it and restore verifies it rather than booting it."
+          }
+        }
       }
     },
     "resource_posture_retention_map": {

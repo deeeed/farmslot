@@ -230,6 +230,61 @@ derived from the proof plan and `parked` delegates to machine parking, and
 }
 ```
 
+### Affected resources
+
+`retention` is policy: it says what the framework should _want_ at a boundary, and
+an operator gate choice can override it. `affected_resources` is not policy. It is
+a factual claim about what the provider's own actions do, so nothing overrides it
+and no boundary changes it.
+
+A provider declares, per slot resource it touches:
+
+- **`resource_id`** — a key of the project's `resources` map.
+- **`ownership`** — `capability` (default) means a lease owns the resource, so
+  machine parking treats a running resource with no lease as an unowned leak.
+  `slot-lifecycle` means prepare or the operator owns it and the capability only
+  rides on it, so a running resource with no lease is the normal state.
+- **`release_effect`** — `stop` (default) means releasing the provider shuts the
+  resource down. `retain` means the release action leaves it running, so parking
+  must not stop it either and restore verifies it is still up instead of booting
+  a second copy.
+
+Omitting the field means "derive it": every resource named by a resource-kind
+action ref, owned by the capability and stopped on release. That is exactly what
+machine parking assumed before the field existed, so an unannotated catalog keeps
+its current meaning and its current refusals. An **empty array is not the same as
+omitting the field** — it is the explicit claim that the provider touches no
+watched slot resource, which is what lets a slot-action-only provider be parked
+instead of refused with `CAPABILITY_SLOT_ACTION_UNMAPPED`.
+
+Declare the field honestly or not at all. A `retain` on something the release
+really does stop makes parking leave a dead resource in the manifest, and restore
+will refuse it rather than boot it.
+
+```json
+{
+  "runtime_capabilities": {
+    "providers": {
+      "sandbox-gateway-ui": {
+        "affected_resources": [
+          { "resource_id": "dev-server", "ownership": "slot-lifecycle", "release_effect": "retain" }
+        ]
+      },
+      "browser-cdp": {
+        "affected_resources": [
+          { "resource_id": "browser-cdp", "ownership": "capability", "release_effect": "stop" }
+        ]
+      },
+      "recording": { "affected_resources": [] }
+    }
+  }
+}
+```
+
+The field is part of the provider provenance digest, because it changes what a
+release does. Adding it to a catalog therefore invalidates that project's live
+leases once, on the deploy that adds it.
+
 ### Warm is not stopped
 
 Posture status reports two independent things per capability, and they must never

@@ -788,3 +788,113 @@ test('numeric and boolean project fields reach shell callers', () => {
   assert.equal(getProjectField(projectJson, 'nested.list'), '');
   assert.equal(getProjectField(projectJson, 'missing.path'), '');
 });
+
+test('affected-resource metadata validates, defaults, and keeps absent distinct from empty', () => {
+  const slotActions = {
+    'browser-start': { label: 'start', command: 'start' },
+    'browser-health': { label: 'health', command: 'health' },
+    'browser-stop': { label: 'stop', command: 'stop' },
+  };
+  const resources = {
+    'browser-cdp': {
+      label: 'Browser',
+      type: 'browser' as const,
+      hooks: { boot: 'boot', health: 'health', shutdown: 'stop' },
+    },
+  };
+  const provider = {
+    label: 'Browser',
+    version: '1',
+    share_policy: 'exclusive' as const,
+    cost: { class: 'high', resources: [{ id: 'cdp-port', access: 'exclusive' as const }] },
+    actions: {
+      acquire: { kind: 'slot-action' as const, action_id: 'browser-start' },
+      health: { kind: 'slot-action' as const, action_id: 'browser-health' },
+      release: { kind: 'slot-action' as const, action_id: 'browser-stop' },
+    },
+    release_effects: ['stop browser'],
+  };
+  const project = (affected?: unknown) =>
+    ({
+      slot_actions: slotActions,
+      resources,
+      runtime_capabilities: {
+        providers: {
+          'browser-cdp': {
+            ...provider,
+            ...(affected === undefined ? {} : { affected_resources: affected }),
+          },
+        },
+      },
+    }) as RawProjectJson;
+
+  // Absent stays absent so the parking resolver still derives the claim.
+  const absent = project();
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(absent, 'project.json'));
+  assert.equal(
+    normalizeRawRuntimeCapabilities(absent.runtime_capabilities)?.providers['browser-cdp']
+      ?.affectedResources,
+    undefined,
+  );
+
+  // An empty array survives normalization as the explicit "touches nothing" claim.
+  const empty = project([]);
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(empty, 'project.json'));
+  assert.deepEqual(
+    normalizeRawRuntimeCapabilities(empty.runtime_capabilities)?.providers['browser-cdp']
+      ?.affectedResources,
+    [],
+  );
+
+  // Omitted ownership and release_effect take the documented defaults.
+  const defaulted = project([{ resource_id: 'browser-cdp' }]);
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(defaulted, 'project.json'));
+  assert.deepEqual(
+    normalizeRawRuntimeCapabilities(defaulted.runtime_capabilities)?.providers['browser-cdp']
+      ?.affectedResources,
+    [{ resourceId: 'browser-cdp', ownership: 'capability', releaseEffect: 'stop' }],
+  );
+
+  const declared = project([
+    { resource_id: 'browser-cdp', ownership: 'slot-lifecycle', release_effect: 'retain' },
+  ]);
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(declared, 'project.json'));
+  assert.deepEqual(
+    normalizeRawRuntimeCapabilities(declared.runtime_capabilities)?.providers['browser-cdp']
+      ?.affectedResources,
+    [{ resourceId: 'browser-cdp', ownership: 'slot-lifecycle', releaseEffect: 'retain' }],
+  );
+
+  assert.throws(
+    () => validateRuntimeCapabilitiesConfig(project([{ resource_id: 'nope' }]), 'project.json'),
+    /affected_resources\.0\.resource_id must name an existing resource/,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project([{ resource_id: 'browser-cdp', ownership: 'slot' }]),
+        'project.json',
+      ),
+    /affected_resources\.0\.ownership must be capability or slot-lifecycle/,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project([{ resource_id: 'browser-cdp', release_effect: 'keep' }]),
+        'project.json',
+      ),
+    /affected_resources\.0\.release_effect must be stop or retain/,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project([{ resource_id: 'browser-cdp' }, { resource_id: 'browser-cdp' }]),
+        'project.json',
+      ),
+    /affected_resources\.1\.resource_id is declared twice/,
+  );
+  assert.throws(
+    () => validateRuntimeCapabilitiesConfig(project('all'), 'project.json'),
+    /affected_resources must be an array/,
+  );
+});

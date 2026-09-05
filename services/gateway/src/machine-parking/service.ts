@@ -10,7 +10,9 @@ import {
   type MachineParkError,
   type MachineParkPhase,
   type MachineParkRecord,
+  type MachineParkResource,
   type MachineParkResourceManifest,
+  type MachineParkResourceReleaseEffect,
   type MachineParkSlotDisposition,
   type MachineParkWorkspace,
   type MachinePauseExecuteParams,
@@ -31,6 +33,9 @@ import {
   type Run,
   type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityAcquireResult,
+  type RuntimeCapabilityAffectedOwnership,
+  type RuntimeCapabilityAffectedReleaseEffect,
+  type RuntimeCapabilityCatalogEntry,
   type RuntimeCapabilityReleaseResult,
   type RuntimeCapabilityStatusResult,
   type SlotResource,
@@ -804,8 +809,7 @@ export class MachineParkingService {
           }
           let phase: MachineParkPhase = 'partial';
           const stopped =
-            residuals.runner === 'stopped' &&
-            residuals.resources.every((resource) => resource.state === 'stopped');
+            residuals.runner === 'stopped' && manifestResidualsSettled(record, residuals);
           if (isTerminalRunStatus(run.status)) phase = 'cancelled';
           else if (record.mode === 'orchestration' && run.status === 'paused') phase = 'parked';
           else if (record.mode === 'release' && run.status === 'paused' && stopped) {
@@ -1139,10 +1143,15 @@ export class MachineParkingService {
         lease.owner.runId === run.id &&
         (provider?.actions.acquire.kind === 'slot-action' ||
           provider?.actions.release.kind === 'slot-action');
+      // A provider that declares its affected resources has told us exactly
+      // what a slot action touches, so there is nothing left to refuse for.
+      // Absent metadata is still unproven and still refuses, so every catalog
+      // that has not been annotated behaves exactly as it did before.
+      const declaresAffectedResources = provider?.affectedResources !== undefined;
       const mapped = affected.some((resource) =>
         capabilityProvidersForResource(capabilityStatus, resource.id).has(lease.capabilityId),
       );
-      if (selectedLifecycleSlotAction) {
+      if (selectedLifecycleSlotAction && !declaresAffectedResources) {
         return reject(
           'CAPABILITY_SLOT_ACTION_UNMAPPED',
           `selected capability '${lease.capabilityId}' uses slot-action acquire/release without explicit affected-resource metadata`,
@@ -1150,7 +1159,7 @@ export class MachineParkingService {
           handle.runnerId,
         );
       }
-      if (hasSlotAction && !mapped) {
+      if (hasSlotAction && !declaresAffectedResources && !mapped) {
         return reject(
           'CAPABILITY_SLOT_ACTION_UNMAPPED',
           `active capability '${lease.capabilityId}' uses slot actions without a proven managed resource`,
@@ -1160,9 +1169,16 @@ export class MachineParkingService {
       }
     }
     for (const resource of affected) {
-      const providerIds = capabilityProvidersForResource(capabilityStatus, resource.id);
+      const claims = capabilityClaimsForResource(capabilityStatus, resource.id);
+      const providerIds = new Set(claims.keys());
       const selectedHolders = activeLeases.filter((lease) => providerIds.has(lease.capabilityId));
-      if (providerIds.size > 0 && selectedHolders.length === 0) {
+      // Only a capability-owned resource needs a lease to justify it running.
+      // A slot-lifecycle resource is prepare's, so a running one with no lease
+      // is the normal state, not a leak.
+      const capabilityOwned = [...claims.values()].some(
+        (claim) => claim.ownership === 'capability',
+      );
+      if (capabilityOwned && selectedHolders.length === 0) {
         return reject(
           'CAPABILITY_RESOURCE_UNOWNED',
           `resource '${resource.id}' is capability-backed but not leased by run '${run.id}'`,
@@ -1221,6 +1237,9 @@ export class MachineParkingService {
         type: resource.definition.type,
         observedStatus: 'running',
         phase: 'observed-running',
+        releaseEffect: resourceReleaseEffect(
+          capabilityClaimsForResource(capabilityStatus, resource.id),
+        ),
         capabilityLeaseIds: capabilityLeases
           .filter((lease) => lease.resourceId === resource.id)
           .map((lease) => lease.leaseId),
@@ -1437,6 +1456,10 @@ export class MachineParkingService {
     }
     for (const resource of record.resourceManifest.resources) {
       if (resource.capabilityLeaseIds.length > 0) continue;
+      // A retained resource is one the catalog says nothing in this release
+      // stops. Parking must not stop it either, or it would take down a
+      // lifecycle it does not own (the sandbox gateway UI, for one).
+      if (resource.releaseEffect === 'retain') continue;
       await this.patchResource(runId, resource.resourceId, { phase: 'stopping', error: undefined });
       try {
         const result = await this.deps.stopResource(record.slotId, resource.resourceId);
@@ -1498,11 +1521,18 @@ export class MachineParkingService {
         new Error(`runner remained '${residuals.runner}' after release pause`),
       );
     }
-    for (const residual of residuals.resources) {
-      if (residual.state === 'stopped') {
-        await this.patchResource(runId, residual.resourceId, {
-          phase: 'stopped',
-          stoppedAt: this.deps.now(),
+    for (const resource of record.resourceManifest.resources) {
+      const residual = residuals.resources.find(
+        (candidate) => candidate.resourceId === resource.resourceId,
+      );
+      const expected = expectedResidualState(resource);
+      if (residual?.state === expected) {
+        await this.patchResource(runId, resource.resourceId, {
+          // A retained resource was never stopped, so it carries no stoppedAt;
+          // its settled phase records that park verified it still running.
+          ...(expected === 'stopped'
+            ? { phase: 'stopped' as const, stoppedAt: this.deps.now() }
+            : { phase: 'retained' as const }),
           error: undefined,
         });
         continue;
@@ -1512,8 +1542,10 @@ export class MachineParkingService {
         runId,
         'resources-stopping',
         'resource.residual',
-        new Error(`resource '${residual.resourceId}' remained '${residual.state}'`),
-        residual.resourceId,
+        new Error(
+          `resource '${resource.resourceId}' is '${residual?.state ?? 'missing'}'; expected '${expected}'`,
+        ),
+        resource.resourceId,
       );
     }
     await this.patchRecord(runId, (current) => ({
@@ -2045,7 +2077,16 @@ export class MachineParkingService {
         });
         try {
           const status = observedById.get(resource.resourceId);
-          if (status === 'stopped') {
+          if (resource.releaseEffect === 'retain') {
+            // Park never stopped this one, so booting it here would start a
+            // second copy of something already running. Restore's job is to
+            // prove the claim held: it is still up.
+            if (status !== 'running') {
+              throw new Error(
+                `retained resource '${resource.resourceId}' is '${status ?? 'missing'}'; park never stopped it, so restore will not boot it`,
+              );
+            }
+          } else if (status === 'stopped') {
             const result = await this.deps.startResource(record.slotId, resource.resourceId);
             if (!result.ok) throw new Error(result.detail ?? 'resource boot failed');
             observedById.set(resource.resourceId, 'running');
@@ -2224,7 +2265,14 @@ export class MachineParkingService {
         runner: 'stopped' as const,
         resources: record.resourceManifest.resources.map((resource) => ({
           resourceId: resource.resourceId,
-          state: resource.phase === 'stopped' ? ('stopped' as const) : ('unknown' as const),
+          state:
+            resource.phase === 'stopped'
+              ? ('stopped' as const)
+              : // A retained resource was verified still running before the free;
+                // the successor now shares it, so the record stays the authority.
+                resource.phase === 'retained'
+                ? ('running' as const)
+                : ('unknown' as const),
           detail: 'observed before the slot was freed',
         })),
       };
@@ -2784,19 +2832,80 @@ function capabilityLeaseBlocksStop(
   );
 }
 
+/** One provider's resolved claim on a slot resource, declared or derived. */
+interface EffectiveAffectedResource {
+  resourceId: string;
+  ownership: RuntimeCapabilityAffectedOwnership;
+  releaseEffect: RuntimeCapabilityAffectedReleaseEffect;
+  /** True when the project catalog stated the claim instead of us deriving it. */
+  declared: boolean;
+}
+
+/**
+ * The claims one provider makes on slot resources. A catalog that declares
+ * `affectedResources` is taken at its word, including an empty array. A catalog
+ * that omits the field derives exactly what `capabilityProvidersForResource`
+ * derived before this metadata existed: every resource named by a resource-kind
+ * action ref, owned by the capability and stopped on release.
+ */
+function effectiveAffectedResources(
+  entry: RuntimeCapabilityCatalogEntry,
+): EffectiveAffectedResource[] {
+  if (entry.affectedResources) {
+    return entry.affectedResources.map((claim) => ({
+      resourceId: claim.resourceId,
+      ownership: claim.ownership,
+      releaseEffect: claim.releaseEffect,
+      declared: true,
+    }));
+  }
+  const derived = new Map<string, EffectiveAffectedResource>();
+  for (const action of Object.values(entry.actions)) {
+    if (action.kind !== 'resource') continue;
+    derived.set(action.resourceId, {
+      resourceId: action.resourceId,
+      ownership: 'capability',
+      releaseEffect: 'stop',
+      declared: false,
+    });
+  }
+  return [...derived.values()];
+}
+
+/** Providers claiming `resourceId`, keyed by capability id. */
+function capabilityClaimsForResource(
+  status: RuntimeCapabilityStatusResult,
+  resourceId: string,
+): Map<string, EffectiveAffectedResource> {
+  const claims = new Map<string, EffectiveAffectedResource>();
+  for (const entry of status.catalog) {
+    const claim = effectiveAffectedResources(entry).find(
+      (candidate) => candidate.resourceId === resourceId,
+    );
+    if (claim) claims.set(entry.id, claim);
+  }
+  return claims;
+}
+
+/**
+ * What parking does to a resource. `retain` wins over `stop`: a provider that
+ * declares its release leaves the resource running is asserting something else
+ * owns that lifecycle, so stopping it here would break that owner.
+ */
+function resourceReleaseEffect(
+  claims: Map<string, EffectiveAffectedResource>,
+): MachineParkResourceReleaseEffect {
+  for (const claim of claims.values()) {
+    if (claim.releaseEffect === 'retain') return 'retain';
+  }
+  return 'stop';
+}
+
 function capabilityProvidersForResource(
   status: RuntimeCapabilityStatusResult,
   resourceId: string,
 ): Set<string> {
-  return new Set(
-    status.catalog
-      .filter((entry) =>
-        Object.values(entry.actions).some(
-          (action) => action.kind === 'resource' && action.resourceId === resourceId,
-        ),
-      )
-      .map((entry) => entry.id),
-  );
+  return new Set(capabilityClaimsForResource(status, resourceId).keys());
 }
 
 export function buildMachineParkingContinuationPrompt(
@@ -2895,6 +3004,28 @@ function zeroEffectIntent(
 
 function zeroEffectRecord(run: Run, record: MachineParkRecord): boolean {
   return zeroEffectIntent(run, record, record.residuals);
+}
+
+/**
+ * What a settled release park must observe for one manifest resource. A
+ * retained resource that stopped is as much a failure as a stopped one that
+ * kept running: both mean the park did not do what the catalog claims.
+ * Records journalled before the metadata existed carry no `releaseEffect`,
+ * and every one of those parks stopped every resource.
+ */
+function expectedResidualState(resource: MachineParkResource): 'running' | 'stopped' {
+  return resource.releaseEffect === 'retain' ? 'running' : 'stopped';
+}
+
+function manifestResidualsSettled(
+  record: MachineParkRecord,
+  residuals: MachineParkRecord['residuals'],
+): boolean {
+  return record.resourceManifest.resources.every(
+    (resource) =>
+      residuals.resources.find((candidate) => candidate.resourceId === resource.resourceId)
+        ?.state === expectedResidualState(resource),
+  );
 }
 
 function expectedRestoreRunnerState(record: MachineParkRecord): 'stopped' | 'stopped-or-live' {

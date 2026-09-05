@@ -5,6 +5,7 @@ import type {
   MachineParkRecord,
   MachinePauseRecoveryHandle,
   Run,
+  RuntimeCapabilityCatalogEntry,
   RuntimeCapabilityStatusResult,
   SlotResource,
 } from '@farmslot/protocol';
@@ -3269,4 +3270,181 @@ test('a pause-path failure never adopts a foreign generation bump', async () => 
     3,
     'the record keeps the generation it parked at, so the drift is still visible',
   );
+});
+
+/** Catalog status whose single provider declares the affected resources it touches. */
+function statusWithAffectedResources(
+  runId: string,
+  affectedResources: RuntimeCapabilityCatalogEntry['affectedResources'],
+  options: { foreignRunId?: string; slotActions?: boolean; leases?: boolean } = {},
+): RuntimeCapabilityStatusResult {
+  const status = capabilityStatusFor(
+    runId,
+    options.foreignRunId ? { foreignRunId: options.foreignRunId } : {},
+  );
+  if (options.slotActions) {
+    status.catalog[0]!.actions = {
+      acquire: { kind: 'slot-action', actionId: 'browser-start' },
+      health: { kind: 'slot-action', actionId: 'browser-health' },
+      release: { kind: 'slot-action', actionId: 'browser-stop' },
+    };
+  }
+  status.catalog[0]!.affectedResources = affectedResources;
+  if (options.leases === false) status.leases = [];
+  return status;
+}
+
+test('a slot-action capability that declares its affected resources is eligible to park', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const status = statusWithAffectedResources(
+    'run-a',
+    [{ resourceId: 'browser-cdp', ownership: 'capability', releaseEffect: 'stop' }],
+    { slotActions: true },
+  );
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(preview.runs[0]?.eligibility.eligible, true);
+  assert.equal(preview.runs[0]?.eligibility.code, 'ELIGIBLE_RELEASE_PAUSE');
+  assert.equal(
+    preview.runs[0]?.resourceManifest.resources[0]?.releaseEffect,
+    'stop',
+    'a capability-owned resource is still stopped by parking',
+  );
+});
+
+test('a running slot-lifecycle resource with no lease is not an unowned capability leak', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const status = statusWithAffectedResources(
+    'run-a',
+    [{ resourceId: 'browser-cdp', ownership: 'slot-lifecycle', releaseEffect: 'retain' }],
+    { leases: false },
+  );
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.equal(preview.runs[0]?.eligibility.eligible, true);
+  assert.equal(preview.runs[0]?.resourceManifest.resources[0]?.releaseEffect, 'retain');
+});
+
+test('parking never stops a retained resource and restore verifies it instead of booting it', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const status = statusWithAffectedResources(
+    'run-a',
+    [{ resourceId: 'browser-cdp', ownership: 'slot-lifecycle', releaseEffect: 'retain' }],
+    { leases: false },
+  );
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const pausePreview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  const parked = await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: pausePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'retain-park',
+  });
+  assert.equal(parked.ok, true);
+  assert.equal(ctx.runs.get('run-a')!.park?.phase, 'parked');
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('stop-resource:')),
+    false,
+    'a retained resource must survive the park',
+  );
+  assert.equal(ctx.runs.get('run-a')!.park?.resourceManifest.resources[0]?.phase, 'retained');
+  assert.equal(ctx.runs.get('run-a')!.park?.residuals.resources[0]?.state, 'running');
+
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  const restored = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'retain-restore',
+  });
+  assert.equal(restored.ok, true);
+  assert.equal(ctx.runs.get('run-a')!.park?.phase, 'restored');
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('start-resource:')),
+    false,
+    'restore must verify a retained resource, never boot a second copy of it',
+  );
+  assert.equal(ctx.runs.get('run-a')!.park?.resourceManifest.resources[0]?.phase, 'restored');
+});
+
+test('restore refuses to boot a retained resource that stopped while the run was parked', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const status = statusWithAffectedResources(
+    'run-a',
+    [{ resourceId: 'browser-cdp', ownership: 'slot-lifecycle', releaseEffect: 'retain' }],
+    { leases: false },
+  );
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const pausePreview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: pausePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'retain-park-lost',
+  });
+  ctx.deps.observeResources = async () => [{ ...runningResource(), status: 'stopped' }];
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+  });
+  const restored = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-a', generation: 3 }],
+    operationId: 'retain-restore-lost',
+  });
+  assert.equal(restored.ok, false);
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('start-resource:')),
+    false,
+  );
+  assert.match(
+    ctx.runs.get('run-a')!.park?.resourceManifest.resources[0]?.error ?? '',
+    /park never stopped it, so restore will not boot it/,
+  );
+});
+
+test('a foreign lease on a declared slot-action provider surfaces the foreign holder, not unmapped', async () => {
+  const ctx = harness([activeRun('run-a', 'slot-a')]);
+  const status = statusWithAffectedResources(
+    'run-a',
+    [{ resourceId: 'browser-cdp', ownership: 'capability', releaseEffect: 'stop' }],
+    { slotActions: true, foreignRunId: 'run-foreign' },
+  );
+  ctx.deps.capabilityStatus = async () => structuredClone(status);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  assert.deepEqual(preview.runs[0]?.eligibility, {
+    eligible: false,
+    code: 'CAPABILITY_FOREIGN_HOLDER',
+    reason: "resource 'browser-cdp' is held by run-foreign/browser-cdp",
+  });
 });
