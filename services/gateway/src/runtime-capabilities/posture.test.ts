@@ -154,6 +154,7 @@ async function harness(t: TestContext, options: HarnessOptions) {
         slotId: SLOT,
         status: 'monitoring',
         currentStep: null,
+        slotDisposition: 'retained',
         eligibility: {
           eligible: true,
           code: 'ELIGIBLE_RELEASE_PAUSE',
@@ -483,6 +484,7 @@ test('parked on an ineligible run is a typed rejection with no lease or process 
           slotId: SLOT,
           status: 'human-gating',
           currentStep: null,
+          slotDisposition: 'retained',
           eligibility: {
             eligible: false,
             code: 'STATUS_NOT_ELIGIBLE',
@@ -1171,6 +1173,7 @@ test('preview for parked surfaces the park rejection instead of a plan that cann
           slotId: SLOT,
           status: 'human-gating',
           currentStep: null,
+          slotDisposition: 'retained',
           eligibility: {
             eligible: false,
             code: 'STATUS_NOT_ELIGIBLE',

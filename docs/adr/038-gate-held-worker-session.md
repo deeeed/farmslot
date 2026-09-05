@@ -60,6 +60,31 @@ MONITOR → SELF_REVIEW → COMPLETE (gate-held) → HUMAN_GATE (worker live)
 
 Project worker templates (`dev.md`, `fix-bug.md`) should instruct: write `SIGNAL.json`, **do not `/exit`**, stay idle until publication gate resolves.
 
+## Amendment: `free-slot` at the publication gate (2026-09-05)
+
+[ADR-054](054-run-resource-posture.md) defines a `free-slot` gate choice. The gate-held worker
+guarantee above holds **unless** the operator's gate choice or the run's dispatch `waitPolicy`
+selected `free-slot`, and then only when the run's runner declares both a graceful exit and a
+persisted session reload in the runner capability registry. A runner that declares neither is
+refused with the typed `RUNNER_RELOAD_UNSUPPORTED`, and nothing is stopped — the worker stays live
+under the rule above.
+
+When the choice applies:
+
+- Machine-pause release accepts the gate-held run as a third parkable shape beside `monitor` and
+  `ci-watch`, stops the worker and the resources in its captured manifest, and releases slot
+  ownership so dispatch can select the slot for other work.
+- The run keeps its `slotId` and its park record; the record, not the slot row, is the authority
+  for the parked run's slot binding. The pending gate decision stays published and answerable, so
+  the run stays at `human-gating`/`blocked` rather than moving to `paused`.
+- `slot.release` and slot reset refuse to destroy that park record without `forceReset`, while a
+  run that claims the freed slot afterwards is released normally.
+- An orchestration-only park of a gate-held run is refused: it would move the run off its gate
+  without freeing anything.
+
+Operators lose tmux attach for the duration of the park, which is the trade the choice makes: the
+runner's persisted session is what brings the context back.
+
 ## Consequences
 
 - Operators can attach to the worker during publication review on `dev` / `fix-bug`, matching the `review-pr` gate-first UX goal.

@@ -1629,6 +1629,36 @@ export interface MachineParkCurrentStep {
   status: RunStepStatus;
 }
 
+/**
+ * What a release-mode park does with the run's slot.
+ *
+ * `retained` keeps the slot bound to the parked run (machine-wide pause of a
+ * monitoring or CI-watching run). `freed` releases slot ownership so dispatch
+ * can select it while the run stays parked at its operator wait — the park
+ * record, not the slot row, is then the authority for the run's slot binding.
+ * Absent on records written before slot freeing existed; treat as `retained`.
+ */
+export type MachineParkSlotDisposition = 'retained' | 'freed';
+
+/**
+ * Machine-pause eligibility codes that clients and the Gateway share. Every
+ * other code stays private to the Gateway verdict; these three are the
+ * gate-park contract added by the free-slot-at-an-operator-wait decision.
+ */
+export const MachineParkEligibilityCodes = {
+  /** A gate-held publication run may be released and its slot freed. */
+  eligibleGateRelease: 'ELIGIBLE_GATE_RELEASE_PAUSE',
+  /** The run's runner declares no graceful stop plus persisted session reload. */
+  runnerReloadUnsupported: 'RUNNER_RELOAD_UNSUPPORTED',
+  /** A gate-held run can only be parked in release mode; orchestration-only would strand its gate. */
+  gateParkRequiresRelease: 'GATE_PARK_REQUIRES_RELEASE',
+  /** The record freed its slot; restoring into a freed slot is not implemented yet. */
+  freedSlotRestoreUnsupported: 'FREED_SLOT_RESTORE_UNSUPPORTED',
+} as const;
+
+export type MachineParkEligibilityCode =
+  (typeof MachineParkEligibilityCodes)[keyof typeof MachineParkEligibilityCodes];
+
 /** Write-ahead per-run record; persisted on Run before any release side effect. */
 export interface MachineParkRecord {
   version: 1;
@@ -1645,6 +1675,14 @@ export interface MachineParkRecord {
   prePauseCurrentStep: MachineParkCurrentStep | null;
   resourceManifest: MachineParkResourceManifest;
   recoveryHandle: MachinePauseRecoveryHandle | null;
+  /** Slot intent decided at preview; absent means `retained`. */
+  slotDisposition?: MachineParkSlotDisposition;
+  /**
+   * When slot ownership was actually released, not merely intended. Set only
+   * after the park stopped the runner and every manifest resource, so a partial
+   * park never advertises a freed slot. Cleared when a restore reclaims a slot.
+   */
+  slotFreedAt?: string;
   /** Restore intent classification persisted before any selected batch member mutates. */
   restoreDisposition?: 'zero-effect' | 'effectful';
   /** Exact runner-native acknowledgement captured before orchestration resumes. */

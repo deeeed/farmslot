@@ -37,6 +37,7 @@ import {
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
+import { isSlotFreedByPark } from '../run-engine/park-slot-binding.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { listRuns } from '../runs/store.js';
 
@@ -204,8 +205,19 @@ function taskFileRefFromRun(run: Run): string | null {
     : run.taskFile.slice(index + marker.length).replace(/\\/g, '/');
 }
 
-function newestActiveRunForSlot(runs: Run[], slotId: string): Run | null {
-  const candidates = runs.filter((run) => run.slotId === slotId);
+/**
+ * The run whose state the slot row should reflect.
+ *
+ * ADR-054 `free-slot`: a park-freed run keeps `slotId` (its recovery handle and
+ * workspace branch key off it) but is no longer an occupant. Excluding it here
+ * is what keeps the freed slot free — it still satisfies
+ * `blocksGateHeldSlotRelease`, so winning this selection would republish the
+ * row as busy/review-gate and rebind `current_run_id` to it, and its
+ * human-gating priority would outrank a newly created run that legitimately
+ * claimed the slot.
+ */
+export function newestActiveRunForSlot(runs: Run[], slotId: string): Run | null {
+  const candidates = runs.filter((run) => run.slotId === slotId && !isSlotFreedByPark(run));
   if (candidates.length === 0) return null;
   return candidates.sort((a, b) => {
     const priorityDiff = activeRunPriority(b) - activeRunPriority(a);

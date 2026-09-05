@@ -15,6 +15,7 @@ import {
 export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
 
 import { SLOT_PHASE_RELEASING } from '../../core/index.js';
+import { isSlotFreedByPark } from '../../run-engine/park-slot-binding.js';
 
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 
@@ -43,8 +44,16 @@ export function isFreeSlot(slot: SlotStatus): boolean {
   return slot.agent !== 'working';
 }
 
+/**
+ * Slots occupied by a non-terminal run.
+ *
+ * A run whose park record freed its slot (ADR-054 `free-slot` at an operator
+ * wait) is excluded: it keeps `slotId` so restore and its workspace branch
+ * still resolve, but the slot is dispatchable while it waits. The predicate
+ * lives in the run engine so fleet refresh and dispatch cannot drift.
+ */
 export function activeRunSlotIds(
-  runs: ReadonlyArray<Pick<Run, 'id' | 'slotId' | 'status'>>,
+  runs: ReadonlyArray<Pick<Run, 'id' | 'slotId' | 'status' | 'park'>>,
   excludeRunId?: string,
 ): Set<string> {
   return new Set(
@@ -53,7 +62,8 @@ export function activeRunSlotIds(
         (run) =>
           run.id !== excludeRunId &&
           run.slotId &&
-          !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus),
+          !TERMINAL_RUN_STATUSES.includes(run.status as RunStatus) &&
+          !isSlotFreedByPark(run),
       )
       .map((run) => run.slotId as string),
   );

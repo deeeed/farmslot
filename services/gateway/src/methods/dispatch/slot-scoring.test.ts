@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { SlotStatus } from '@farmslot/protocol';
+import type { Run, SlotStatus } from '@farmslot/protocol';
 
 import {
   activeRunIds,
@@ -331,4 +331,64 @@ test('failedRunSlotCleanup resets only owned slots and clears only own reservati
   assert.equal(failedRunSlotCleanup({ handoff_run_id: 'me' }, 'me', liveOwner), 'reset');
   assert.equal(failedRunSlotCleanup({ current_run_id: 'prior' }, 'me', liveOwner), 'none');
   assert.equal(failedRunSlotCleanup({}, 'me', liveOwner), 'none');
+});
+
+// ─── ADR-054 free-slot at an operator wait ───
+
+function freedParkRecord(runId: string, slotId: string): Run['park'] {
+  return {
+    version: 1,
+    operationId: `park-${runId}`,
+    previewId: `preview-${runId}`,
+    runId,
+    generation: 1,
+    machine: 'macwork',
+    slotId,
+    mode: 'release',
+    phase: 'parked',
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-09-04T00:00:10.000Z',
+    prePauseStatus: 'human-gating',
+    prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+    resourceManifest: {
+      capturedAt: '2026-09-04T00:00:00.000Z',
+      resources: [],
+      capabilityLeases: [],
+    },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped', resources: [] },
+    createdAt: '2026-09-04T00:00:00.000Z',
+    updatedAt: '2026-09-04T00:00:10.000Z',
+  };
+}
+
+test('activeRunSlotIds ignores a run whose park freed its slot', () => {
+  const parked = {
+    id: 'parked',
+    slotId: 'gate-slot',
+    status: 'human-gating' as const,
+    park: freedParkRecord('parked', 'gate-slot'),
+  };
+  assert.deepEqual(activeRunSlotIds([parked]), new Set());
+  // Intent alone is not enough: until the ownership release landed the run
+  // still occupies the slot.
+  assert.deepEqual(
+    activeRunSlotIds([{ ...parked, park: { ...parked.park!, slotFreedAt: undefined } }]),
+    new Set(['gate-slot']),
+  );
+});
+
+test('findBestSlot selects the slot a gate park freed', () => {
+  const freed = slot({ slot: 'gate-slot', branch: 'fix/gate', currentRunId: null });
+  assert.equal(findBestSlot([freed], 'demo-farm')?.slot, 'gate-slot');
+  // While the gate-held run held it, fleet refresh published it busy/working.
+  const held = slot({
+    slot: 'gate-slot',
+    lifecycle: 'busy',
+    phase: 'review-gate',
+    agent: 'working',
+    currentRunId: 'parked',
+  });
+  assert.equal(findBestSlot([held], 'demo-farm'), null);
 });

@@ -1,5 +1,6 @@
 import {
   Events,
+  MachineParkEligibilityCodes,
   type Run,
   type RunCancelParams,
   type RunCancelResult,
@@ -22,6 +23,7 @@ import {
   type RunEngineStepStartAcknowledgement,
   startRunWithStepAcknowledgement,
 } from '../../run-engine/orchestrator.js';
+import { isSlotFreedByPark } from '../../run-engine/park-slot-binding.js';
 import {
   cancelTransitionDeps,
   defaultCancelCollaborators,
@@ -374,6 +376,19 @@ export async function runPauseTransitionLocked(
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
   if (!options.machineParkingPause) assertNotMachineParkManaged(existing);
 
+  // A gate park (ADR-054 `free-slot`, amending ADR-038) is its own branch, not a
+  // widening of the pausable statuses. The run is ALREADY durably waiting on an
+  // operator decision: there is no monitor loop to abort, and moving it to
+  // `paused` would clobber the `blocked`/`human-gating` status its pending gate
+  // is published under. The park record is the durable hold; the gate stays
+  // answerable while the slot is freed.
+  if (options.machineParkingPause && isGateParkPause(existing)) {
+    console.log(
+      `[run] gate-park hold for run ${params.runId.slice(0, 8)} (status ${existing.status} preserved)`,
+    );
+    return { run: existing };
+  }
+
   // Can only pause runs that are actively monitoring/watching
   const pausableStatuses = new Set(['monitoring', 'ci-watching']);
   if (!pausableStatuses.has(existing.status)) {
@@ -431,6 +446,13 @@ export async function runResumeTransitionLocked(
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
 
+  if (isSlotFreedByPark(existing)) {
+    throw new Error(
+      `Run ${params.runId} is gate-parked with its slot freed ` +
+        `(${MachineParkEligibilityCodes.freedSlotRestoreUnsupported}); ` +
+        'restoring into a freed slot is not supported yet — cancel the run to release its park record',
+    );
+  }
   if (existing.status !== 'paused') {
     throw new Error(`Run ${params.runId} is not paused (status=${existing.status})`);
   }
@@ -542,6 +564,14 @@ async function nudgeResumedMonitor(existing: Run, emit: Emit): Promise<void> {
   } catch (error) {
     console.warn(`[run] resume nudge check failed: ${(error as Error).message}`);
   }
+}
+
+/**
+ * A park whose record declares it frees the slot, taken at a publication gate.
+ * The record is written before this runs, so the intent is already durable.
+ */
+function isGateParkPause(run: Run): boolean {
+  return run.park?.mode === 'release' && run.park.slotDisposition === 'freed';
 }
 
 function assertNotMachineParkManaged(run: Run): void {

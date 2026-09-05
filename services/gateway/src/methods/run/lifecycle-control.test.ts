@@ -12,6 +12,7 @@ import {
   runForceComplete,
   runForceCompleteTransitionLocked,
   runPause,
+  runPauseTransitionLocked,
   runResume,
   runResumeTransitionLocked,
 } from './lifecycle-control.js';
@@ -757,4 +758,128 @@ test('public resume waits for the owning machine transition before rejecting fre
   const error = await resume;
   assert.match((error as Error).message, /managed by machine pause/);
   assert.equal(getRun(run.id)?.status, 'paused');
+});
+
+// ─── ADR-054 free-slot at an operator wait ───
+
+function freedGateParkRecord(runId: string, slotId: string): MachineParkRecord {
+  return {
+    ...parkedRecord(runId, slotId),
+    mode: 'release',
+    slotDisposition: 'freed',
+    slotFreedAt: new Date().toISOString(),
+    prePauseStatus: 'human-gating',
+    prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+    residuals: { runner: 'stopped', resources: [] },
+  };
+}
+
+test('a gate park holds the run at its gate instead of pausing it', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-gate-park-pause`,
+    slotId: 'gate-park-slot',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'human-gating',
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'running' },
+    ],
+    park: freedGateParkRecord(run.id, 'gate-park-slot'),
+  });
+
+  const result = await withMachineRunTransition('machine-a', () =>
+    runPauseTransitionLocked({ runId: run.id }, () => {}, { machineParkingPause: true }),
+  );
+
+  // The pending gate decision is published under human-gating/blocked; moving
+  // the run to `paused` would hide the decision the operator still has to answer.
+  assert.equal(result.run.status, 'human-gating');
+  assert.equal(getRun(run.id)!.status, 'human-gating');
+  assert.equal(getRun(run.id)!.steps.find((step) => step.name === 'human-gate')?.status, 'running');
+});
+
+test('a non-gate park still pauses the run', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-monitor-park-pause`,
+    slotId: 'monitor-park-slot',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'monitoring',
+    steps: [{ name: 'monitor', status: 'running' }],
+    park: { ...parkedRecord(run.id, 'monitor-park-slot'), phase: 'intent-persisted' },
+  });
+
+  const result = await withMachineRunTransition('machine-a', () =>
+    runPauseTransitionLocked({ runId: run.id }, () => {}, { machineParkingPause: true }),
+  );
+
+  assert.equal(result.run.status, 'paused');
+});
+
+test('resume of a gate-parked run reports the freed slot, not a generic not-paused error', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-gate-park-resume`,
+    slotId: 'gate-park-resume-slot',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'human-gating',
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'running' },
+    ],
+    park: freedGateParkRecord(run.id, 'gate-park-resume-slot'),
+  });
+
+  await assert.rejects(
+    () =>
+      withMachineRunTransition('machine-a', () =>
+        runResumeTransitionLocked({ runId: run.id }, () => {}, { machineParkingRestore: true }),
+      ),
+    /FREED_SLOT_RESTORE_UNSUPPORTED/,
+  );
+});
+
+test('cancelling a gate-parked run clears the record and leaves the freed slot alone', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-gate-park-cancel`,
+    slotId: 'gate-park-cancel-slot',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'human-gating',
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'running' },
+    ],
+    park: freedGateParkRecord(run.id, 'gate-park-cancel-slot'),
+  });
+
+  const result = await runCancel({ runId: run.id });
+
+  assert.equal(result.run.status, 'cancelled');
+  assert.equal(result.run.park, null, 'the park record is cleared by terminal cleanup');
+  // The park already stopped this run's providers and released the slot, so
+  // terminal cleanup must not act on a slot someone else may now own.
+  const skipped = (name: string) => result.effects?.find((effect) => effect.name === name)?.status;
+  assert.equal(skipped('runtime-capabilities'), 'skipped');
+  assert.equal(skipped('slot-release'), 'skipped');
+  assert.equal(
+    result.effects?.some((effect) => effect.status === 'failed'),
+    false,
+  );
 });

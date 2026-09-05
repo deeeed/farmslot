@@ -14,6 +14,7 @@ import {
   fleetStatus,
   type FleetStatusDeps,
   isFleetCheckedAtStale,
+  newestActiveRunForSlot,
   preserveClaimedRowsUnknownToProbe,
   reconcileRefreshSlotRowWithActiveRun,
 } from './fleet.js';
@@ -550,3 +551,90 @@ test('buildRefreshSlotRow carries the handoff reservation and epoch through a re
   assert.equal(row.slot_epoch, 4, 'epoch survives refresh');
   assert.equal(row.current_run_id, 'prior-owner', 'ownership survives refresh');
 });
+
+test('fleet refresh leaves the slot free when a gate park released its ownership', () => {
+  const gateParkedRun: Run = {
+    ...makeRun({
+      id: 'run-gate-parked',
+      flowType: 'dev',
+      mode: 'autonomous',
+      status: 'human-gating',
+      slotId: 'macwork-mm-4',
+      ticketOrPr: 'TAT-3400',
+    }),
+    steps: [{ name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } }],
+    park: {
+      version: 1,
+      operationId: 'park-1',
+      previewId: 'preview-1',
+      runId: 'run-gate-parked',
+      generation: 1,
+      machine: 'macwork',
+      slotId: 'macwork-mm-4',
+      mode: 'release',
+      phase: 'parked',
+      slotDisposition: 'freed',
+      slotFreedAt: '2026-09-04T00:00:10.000Z',
+      prePauseStatus: 'human-gating',
+      prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+      resourceManifest: {
+        capturedAt: '2026-09-04T00:00:00.000Z',
+        resources: [],
+        capabilityLeases: [],
+      },
+      recoveryHandle: null,
+      errors: [],
+      residuals: { runner: 'stopped', resources: [] },
+      createdAt: '2026-09-04T00:00:00.000Z',
+      updatedAt: '2026-09-04T00:00:10.000Z',
+    },
+  };
+
+  // A gate-parked run is still active and still satisfies
+  // blocksGateHeldSlotRelease, but it no longer owns the slot.
+  assert.equal(newestActiveRunForSlot([gateParkedRun], 'macwork-mm-4'), null);
+  const stillHolding: Run = {
+    ...gateParkedRun,
+    park: { ...gateParkedRun.park!, slotFreedAt: undefined },
+  };
+  assert.equal(newestActiveRunForSlot([stillHolding], 'macwork-mm-4')?.id, 'run-gate-parked');
+
+  const row = makeRefreshRow({
+    agent: 'idle',
+    lifecycle: 'ready',
+    phase: null,
+    current_run_id: null,
+    dispatchable: true,
+  });
+  const reconciled = reconcileRefreshSlotRowWithActiveRun(
+    row,
+    newestActiveRunForSlot([gateParkedRun], 'macwork-mm-4'),
+  );
+
+  // The probe row wins untouched: no rebind to the parked run, no review-gate
+  // republish, and the slot stays dispatchable for the next run.
+  assert.equal(reconciled.lifecycle, 'ready');
+  assert.equal(reconciled.phase, null);
+  assert.equal(reconciled.agent, 'idle');
+  assert.equal(reconciled.current_run_id, null);
+  assert.equal(reconciled.dispatchable, true);
+  assert.equal(isFreeSlot(fleetSlotFromRow(reconciled)), true);
+
+  // Without the release the same run still holds the slot as review-gate.
+  const held = reconcileRefreshSlotRowWithActiveRun(
+    makeRefreshRow({ agent: 'idle', lifecycle: 'ready', phase: null, current_run_id: null }),
+    newestActiveRunForSlot([stillHolding], 'macwork-mm-4'),
+  );
+  assert.equal(held.lifecycle, 'busy');
+  assert.equal(held.phase, 'review-gate');
+  assert.equal(held.current_run_id, 'run-gate-parked');
+});
+
+/** Minimal SlotStatus projection of a refresh row, for the dispatch gate. */
+function fleetSlotFromRow(row: { lifecycle: string; agent: string }): SlotStatus {
+  return {
+    slot: 'macwork-mm-4',
+    lifecycle: row.lifecycle,
+    agent: row.agent,
+  } as unknown as SlotStatus;
+}

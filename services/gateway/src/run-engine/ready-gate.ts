@@ -8,6 +8,7 @@ import {
   type EvidenceRefreshOverrideRecord,
   GATE_SUMMARY_KINDS,
   type IndependentReviewStatus,
+  MachineParkEligibilityCodes,
   PipelineSteps,
   type PublicationReviewLaunchRejection,
   type ReadyGateInputSnapshot,
@@ -80,6 +81,7 @@ import {
   validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { buildGateSummary } from './gate-summary.js';
+import { isSlotFreedByPark } from './park-slot-binding.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import {
   publicationReviewPolicyForRun,
@@ -626,6 +628,24 @@ export function localVideoProofWarning(
   ].join(' ');
 }
 
+/**
+ * Why a resolved publication gate must not drive the rest of the run.
+ *
+ * ADR-054 `free-slot`: the operator answered a gate on a run whose park
+ * released its slot. Restoring into a freed slot is not implemented yet, and
+ * continuing from here would run FINALIZE against a stopped worker and a slot
+ * another run may already own. Failing closed leaves the park record, the freed
+ * slot, and the resolved decision intact for a restore or a cancel.
+ */
+export function freedSlotGateResolutionBlocker(run: Run): string | null {
+  if (!isSlotFreedByPark(run)) return null;
+  return (
+    `Run ${run.id} is gate-parked with its slot freed ` +
+    `(${MachineParkEligibilityCodes.freedSlotRestoreUnsupported}); ` +
+    'restore it into a slot before resolving the publication gate, or cancel the run'
+  );
+}
+
 export async function executeReadyGate(runId: string): Promise<string> {
   const current = getRun(runId)!;
   const artifactOnly = isArtifactOnlyRun(current);
@@ -1009,6 +1029,8 @@ export async function executeReadyGate(runId: string): Promise<string> {
     boundary: 'gate-resolved',
     ...(postureChoice ? { gateChoice: postureChoice } : {}),
   });
+  const freedSlotBlocker = freedSlotGateResolutionBlocker(getRun(runId)!);
+  if (freedSlotBlocker) throw new Error(freedSlotBlocker);
   const postureResult = resolveGateChoiceOutcome(postureOutcome);
   if (postureResult.kind !== 'applied') {
     // ADR-054 defines `free-slot` as a typed rejection until the run is

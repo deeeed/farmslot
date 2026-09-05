@@ -6,10 +6,12 @@ import {
   isTerminalRunStatus,
   type MachineParkCapabilityLease,
   type MachineParkCurrentStep,
+  MachineParkEligibilityCodes,
   type MachineParkError,
   type MachineParkPhase,
   type MachineParkRecord,
   type MachineParkResourceManifest,
+  type MachineParkSlotDisposition,
   type MachinePauseExecuteParams,
   type MachinePauseExecuteResult,
   type MachinePauseMode,
@@ -23,6 +25,7 @@ import {
   type MachinePauseReviewedTarget,
   type MachinePauseSelector,
   type MachinePauseStatusResult,
+  PipelineSteps,
   type ResourcePressureMachine,
   type Run,
   type RuntimeCapabilityAcquireParams,
@@ -34,6 +37,7 @@ import {
 
 import { selectAgentContext } from '../agents/contexts.js';
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
+import { resetSlotIf, SLOT_PHASE_RELEASING } from '../core/index.js';
 import { resolveTmuxSession } from '../core/tmux.js';
 import { readMachinePressure } from '../fleet/pressure-read.js';
 import {
@@ -53,6 +57,7 @@ import {
   runtimeCapabilityRelease,
   runtimeCapabilityStatus,
 } from '../methods/runtime-capabilities.js';
+import { isGateHeldPublicationRun } from '../run-engine/gate-held-lifecycle.js';
 import {
   withMachineRunTransition,
   withRunTransitionWhileMachineHeld,
@@ -104,6 +109,10 @@ export interface MachineParkingDependencies {
   acquireCapability(
     params: RuntimeCapabilityAcquireParams,
   ): Promise<RuntimeCapabilityAcquireResult>;
+  /** Declaration-only runner capability check; no session probe, no side effect. */
+  inspectRunnerReload(run: Run): Promise<RunnerReloadInspection>;
+  /** Release slot ownership while the parked run keeps its slotId. */
+  freeSlotOwnership(slotId: string, runId: string): Promise<boolean>;
   resolveRecoveryHandle(run: Run): Promise<MachinePauseRecoveryHandle>;
   inspectRecoveryHandle(
     run: Run,
@@ -128,6 +137,13 @@ export interface MachineParkingDependencies {
   ): Promise<'running' | 'stopped' | 'unknown'>;
   stopResource(slotId: string, resourceId: string): Promise<{ ok: boolean; detail?: string }>;
   startResource(slotId: string, resourceId: string): Promise<{ ok: boolean; detail?: string }>;
+}
+
+/** What the runner registry declares about stopping and reloading a session. */
+export interface RunnerReloadInspection {
+  runnerId: string;
+  supported: boolean;
+  reason?: string;
 }
 
 export interface MachineParkingCancelEffect {
@@ -280,6 +296,32 @@ async function defaultReloadRunner(
   };
 }
 
+/**
+ * Runner-capability-first gate for parking a gate-held worker: the registry's
+ * declared graceful exit + persisted session reload, read through the shared
+ * runner inspection with no handle probe and no runner-name branch. A runner
+ * that declares neither fails closed.
+ */
+async function defaultInspectRunnerReload(run: Run): Promise<RunnerReloadInspection> {
+  if (!run.slotId) throw new Error('run has no slot');
+  const vars = await loadSlotVars(run.slotId);
+  const inspection = await inspectRunnerRecovery({
+    vars,
+    runnerId: run.metrics.runner,
+    recoveryHandle: null,
+  });
+  const runnerId = inspection.runnerId || (run.metrics.runner?.trim() ?? 'unknown');
+  const supported = inspection.gracefulStop.supported && inspection.sessionReload.supported;
+  if (supported) return { runnerId, supported: true };
+  return {
+    runnerId,
+    supported: false,
+    reason: !inspection.gracefulStop.supported
+      ? `runner '${runnerId}' declares no graceful exit capability`
+      : `runner '${runnerId}' declares no persisted session reload capability`,
+  };
+}
+
 const defaultDependencies: MachineParkingDependencies = {
   now: () => new Date().toISOString(),
   operationId: () => `machine-park-${randomUUID()}`,
@@ -300,6 +342,18 @@ const defaultDependencies: MachineParkingDependencies = {
   releaseCapability: ({ slotId, runId, leaseId, capabilityId }) =>
     runtimeCapabilityRelease({ slotId, ownerRunId: runId, leaseId, capabilityId }),
   acquireCapability: runtimeCapabilityAcquire,
+  inspectRunnerReload: defaultInspectRunnerReload,
+  // CAS on the exact owner: a slot re-claimed between the park's last resource
+  // stop and this write belongs to its new owner, and freeing must not touch a
+  // pending handoff reservation or a teardown already fencing the slot.
+  freeSlotOwnership: (slotId, runId) =>
+    resetSlotIf(
+      slotId,
+      (slot) =>
+        slot.current_run_id === runId &&
+        slot.phase !== SLOT_PHASE_RELEASING &&
+        !(typeof slot.handoff_run_id === 'string' && slot.handoff_run_id),
+    ),
   resolveRecoveryHandle: defaultResolveRecoveryHandle,
   inspectRecoveryHandle: defaultInspectRecoveryHandle,
   pauseRun: (runId, emit) =>
@@ -601,13 +655,21 @@ export class MachineParkingService {
             continue;
           }
           let phase: MachineParkPhase = 'partial';
+          const stopped =
+            residuals.runner === 'stopped' &&
+            residuals.resources.every((resource) => resource.state === 'stopped');
           if (isTerminalRunStatus(run.status)) phase = 'cancelled';
           else if (record.mode === 'orchestration' && run.status === 'paused') phase = 'parked';
-          else if (
+          else if (record.mode === 'release' && run.status === 'paused' && stopped) {
+            phase = 'parked';
+          } else if (
+            // A gate park never moves the run to `paused` — its gate must stay
+            // answerable — so its parked proof is the record's own slot release
+            // plus stopped residuals, not the run status.
             record.mode === 'release' &&
-            run.status === 'paused' &&
-            residuals.runner === 'stopped' &&
-            residuals.resources.every((resource) => resource.state === 'stopped')
+            record.slotDisposition === 'freed' &&
+            Boolean(record.slotFreedAt) &&
+            stopped
           ) {
             phase = 'parked';
           } else if (
@@ -733,6 +795,14 @@ export class MachineParkingService {
       resources: [],
       capabilityLeases: [],
     });
+    // ADR-038 amendment (ADR-054 `free-slot`): a publication gate is a durable
+    // operator wait, so it is a third parkable shape beside monitor and
+    // ci-watch. It is the only shape that frees the slot: monitor/ci-watch
+    // parks keep the slot bound because their restore reclaims it in place.
+    const gateHeld =
+      isGateHeldPublicationRun(run) && currentStep?.name === PipelineSteps.HUMAN_GATE;
+    const slotDisposition: MachineParkSlotDisposition =
+      mode === 'release' && gateHeld ? 'freed' : 'retained';
     const base = {
       runId: run.id,
       generation,
@@ -740,6 +810,7 @@ export class MachineParkingService {
       slotId: run.slotId,
       status: run.status,
       currentStep,
+      slotDisposition,
     };
     const reject = (
       code: string,
@@ -763,16 +834,26 @@ export class MachineParkingService {
     if (!slot || slot.machine !== machine) {
       return reject('MACHINE_MISMATCH', `run slot is not owned by machine '${machine}'`);
     }
-    if (run.status !== 'monitoring' && run.status !== 'ci-watching') {
-      return reject(
-        'STATUS_NOT_ELIGIBLE',
-        `status '${run.status}' is not monitoring or ci-watching`,
-      );
-    }
-    if (!currentStep || (currentStep.name !== 'monitor' && currentStep.name !== 'ci-watch')) {
-      return reject('STEP_NOT_IDEMPOTENT', 'run has no active monitor or ci-watch step');
+    if (!gateHeld) {
+      if (run.status !== 'monitoring' && run.status !== 'ci-watching') {
+        return reject(
+          'STATUS_NOT_ELIGIBLE',
+          `status '${run.status}' is not monitoring or ci-watching`,
+        );
+      }
+      if (!currentStep || (currentStep.name !== 'monitor' && currentStep.name !== 'ci-watch')) {
+        return reject('STEP_NOT_IDEMPOTENT', 'run has no active monitor or ci-watch step');
+      }
     }
     if (mode === 'orchestration') {
+      if (gateHeld) {
+        // An orchestration pause would move the run off its gate without
+        // freeing anything, stranding the operator decision it is waiting on.
+        return reject(
+          MachineParkEligibilityCodes.gateParkRequiresRelease,
+          "a gate-held run can only be parked in 'release' mode",
+        );
+      }
       return {
         ...base,
         eligibility: {
@@ -783,6 +864,28 @@ export class MachineParkingService {
         recoveryPolicy: { kind: 'orchestration-only', supported: true },
         resourceManifest: emptyManifest(),
       };
+    }
+    if (gateHeld) {
+      // Fail closed before anything else touches the slot: stopping a gate-held
+      // worker is only safe when the runner itself declares a graceful stop and
+      // a persisted session reload to bring it back.
+      let reload: RunnerReloadInspection;
+      try {
+        reload = await this.deps.inspectRunnerReload(run);
+      } catch (error) {
+        return reject(
+          MachineParkEligibilityCodes.runnerReloadUnsupported,
+          `runner reload capability could not be inspected: ${messageOf(error)}`,
+        );
+      }
+      if (!reload.supported) {
+        return reject(
+          MachineParkEligibilityCodes.runnerReloadUnsupported,
+          reload.reason ?? `runner '${reload.runnerId}' cannot reload a persisted session`,
+          emptyManifest(),
+          reload.runnerId,
+        );
+      }
     }
     if (slot.currentRunId !== run.id) {
       return reject(
@@ -943,8 +1046,10 @@ export class MachineParkingService {
       ...base,
       eligibility: {
         eligible: true,
-        code: 'ELIGIBLE_RELEASE_PAUSE',
-        reason: 'The run has an exact reload handle and a restorable observed-running manifest.',
+        code: gateHeld ? MachineParkEligibilityCodes.eligibleGateRelease : 'ELIGIBLE_RELEASE_PAUSE',
+        reason: gateHeld
+          ? 'The gate-held run has an exact reload handle; parking frees its slot and keeps the gate answerable.'
+          : 'The run has an exact reload handle and a restorable observed-running manifest.',
       },
       recoveryPolicy: {
         kind: 'runner-session-reload',
@@ -1011,6 +1116,7 @@ export class MachineParkingService {
         slotId: run.slotId!,
         mode: preview.mode,
         phase: 'intent-persisted',
+        slotDisposition: item.slotDisposition,
         prePauseStatus: run.status,
         prePauseCurrentStep: item.currentStep,
         resourceManifest: structuredClone(item.resourceManifest),
@@ -1224,6 +1330,33 @@ export class MachineParkingService {
       residuals,
       parkedAt: this.deps.now(),
     }));
+    // Ordered last and gated on a clean park: freeing the slot publishes it for
+    // dispatch, so a run whose runner or resources are still up must keep it.
+    if (!failed && record.slotDisposition === 'freed') await this.freeParkedSlot(runId, record);
+  }
+
+  /**
+   * Release slot ownership for a parked run. The park record survives and keeps
+   * `slotId`; only the slot row's claim is dropped, so dispatch can select it
+   * while the run waits at its gate. A refused CAS means the slot was re-claimed
+   * or fenced under us — that is a partial park, not a silent success.
+   */
+  private async freeParkedSlot(runId: string, record: MachineParkRecord): Promise<void> {
+    const freed = await this.deps.freeSlotOwnership(record.slotId, runId);
+    if (freed) {
+      await this.patchRecord(runId, (current) => ({
+        ...current,
+        slotFreedAt: current.slotFreedAt ?? this.deps.now(),
+      }));
+      return;
+    }
+    await this.appendError(
+      runId,
+      'parked',
+      'slot.free',
+      new Error(`slot '${record.slotId}' ownership is no longer held by run '${runId}'`),
+    );
+    await this.patchRecord(runId, (current) => ({ ...current, phase: 'partial' }));
   }
 
   private async buildRestorePreview(machine: string, selector: MachinePauseSelector) {
@@ -1259,6 +1392,16 @@ export class MachineParkingService {
             },
             record,
           };
+        }
+        if (record.slotDisposition === 'freed') {
+          // Slice 1 frees the slot; restoring into it (in place when still free,
+          // otherwise re-dispatch through the affinity path) is the follow-up.
+          // Refusing with its own code keeps the verdict honest instead of
+          // reporting a slot-ownership drift the record deliberately created.
+          return reject(
+            MachineParkEligibilityCodes.freedSlotRestoreUnsupported,
+            'this park freed the slot; restoring a freed slot is not supported yet',
+          );
         }
         if (run.status !== 'paused')
           return reject('RUN_NOT_PAUSED', `run status is '${run.status}'`);

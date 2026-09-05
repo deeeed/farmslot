@@ -13,7 +13,11 @@ import { makeRun } from '../run-engine/test-fixtures.js';
 import { withMachineRunTransition } from '../run-lifecycle/transition-coordinator.js';
 
 import type { MachineParkingIntentJournal } from './journal.js';
-import { type MachineParkingDependencies, MachineParkingService } from './service.js';
+import {
+  type MachineParkingDependencies,
+  MachineParkingService,
+  type RunnerReloadInspection,
+} from './service.js';
 
 function recoveryHandle(runId: string, slotId: string): MachinePauseRecoveryHandle {
   return {
@@ -157,6 +161,12 @@ interface Harness {
   runs: Map<string, Run>;
   calls: string[];
   deps: MachineParkingDependencies;
+  /** Slot -> owning run id, mutated by freeSlotOwnership and read by loadFleet. */
+  slotOwners: Map<string, string | null>;
+  /** Per-run override for the declared runner graceful-stop + session-reload capability. */
+  reloadSupport: Map<string, RunnerReloadInspection>;
+  /** Observed runner liveness per run, as residual observation reads it. */
+  runnerStates: Map<string, 'running' | 'stopped' | 'unknown'>;
 }
 
 function harness(initialRuns: Run[]): Harness {
@@ -165,6 +175,10 @@ function harness(initialRuns: Run[]): Harness {
     initialRuns.map((run) => [run.id, 'running']),
   );
   const calls: string[] = [];
+  const slotOwners = new Map<string, string | null>(
+    initialRuns.filter((run) => run.slotId).map((run) => [run.slotId!, run.id]),
+  );
+  const reloadSupport = new Map<string, RunnerReloadInspection>();
   const journals = new Map<string, MachineParkingIntentJournal>();
   let tick = 0;
   const status: RuntimeCapabilityStatusResult = {
@@ -193,7 +207,7 @@ function harness(initialRuns: Run[]): Harness {
             lifecycle: 'busy',
             phase: 'working',
             enabled: true,
-            currentRunId: run.id,
+            currentRunId: slotOwners.get(run.slotId!) ?? null,
           })),
       }) as never,
     updatePark: (runId, park) => {
@@ -268,11 +282,31 @@ function harness(initialRuns: Run[]): Harness {
         },
       };
     },
+    inspectRunnerReload: async (run) => {
+      calls.push(`inspect-reload:${run.id}`);
+      return (
+        reloadSupport.get(run.id) ?? {
+          runnerId: run.metrics.runner ?? 'unknown',
+          supported: true,
+        }
+      );
+    },
+    freeSlotOwnership: async (slotId, runId) => {
+      calls.push(`free-slot:${slotId}:${runId}`);
+      if (slotOwners.get(slotId) !== runId) return false;
+      slotOwners.set(slotId, null);
+      return true;
+    },
     resolveRecoveryHandle: async (run) => recoveryHandle(run.id, run.slotId!),
     inspectRecoveryHandle: async () => {},
     pauseRun: async (runId, emit) => {
       calls.push(`pause:${runId}`);
-      runs.get(runId)!.status = 'paused';
+      const run = runs.get(runId)!;
+      // Mirrors runPauseTransitionLocked's gate-park branch: a park that frees
+      // the slot leaves the run at its gate so the decision stays answerable.
+      if (!(run.park?.mode === 'release' && run.park.slotDisposition === 'freed')) {
+        run.status = 'paused';
+      }
       emit('run.updated', { runId });
     },
     resumeRun: async (runId, emit) => {
@@ -324,7 +358,15 @@ function harness(initialRuns: Run[]): Harness {
       return { ok: true };
     },
   };
-  return { service: new MachineParkingService(deps), runs, calls, deps };
+  return {
+    service: new MachineParkingService(deps),
+    runs,
+    calls,
+    deps,
+    slotOwners,
+    reloadSupport,
+    runnerStates,
+  };
 }
 
 function mixedRestoreHarness(): Harness {
@@ -1877,4 +1919,219 @@ test('restart reconciliation recovers a pre-terminal cancelling intent back to p
   const result = await ctx.service.reconcile();
   assert.deepEqual(result, { reconciled: 1, partial: 0 });
   assert.equal(ctx.runs.get('run-a')?.park?.phase, 'parked');
+});
+
+// ─── ADR-054 free-slot at an operator wait ───
+
+function gateHeldRun(id: string, slotId: string): Run {
+  return makeRun({
+    id,
+    familyId: `family-${id}`,
+    flowType: 'dev',
+    mode: 'autonomous',
+    status: 'human-gating',
+    slotId,
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'running' },
+    ],
+    metrics: {
+      nudgeCount: 0,
+      model: 'sonnet',
+      runner: 'claude',
+      runnerSessionId: `session-${id}`,
+      runnerSessionPath: `/sessions/${id}.jsonl`,
+    },
+    engineState: { generation: 3 },
+  });
+}
+
+test('release preview accepts a gate-held run with a declared session reload and marks its slot freed', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const entry = preview.runs.find((run) => run.runId === 'run-gate')!;
+  assert.equal(entry.eligibility.eligible, true);
+  assert.equal(entry.eligibility.code, 'ELIGIBLE_GATE_RELEASE_PAUSE');
+  assert.equal(entry.slotDisposition, 'freed');
+  assert.equal(preview.eligibleCount, 1);
+});
+
+test('release preview rejects a gate-held run whose runner declares no session reload', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  ctx.reloadSupport.set('run-gate', {
+    runnerId: 'scripted',
+    supported: false,
+    reason: "runner 'scripted' declares no persisted session reload capability",
+  });
+
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const entry = preview.runs.find((run) => run.runId === 'run-gate')!;
+  assert.equal(entry.eligibility.eligible, false);
+  assert.equal(entry.eligibility.code, 'RUNNER_RELOAD_UNSUPPORTED');
+  assert.equal(entry.slotDisposition, 'freed');
+  assert.equal(entry.recoveryPolicy.kind, 'runner-session-reload');
+  assert.equal(entry.recoveryPolicy.supported, false);
+  // Fail closed before any side effect: no manifest capture, no handle probe.
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('observe:')),
+    false,
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('stop-runner:')),
+    false,
+  );
+});
+
+test('orchestration preview refuses a gate-held run instead of stranding its gate', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'orchestration',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const entry = preview.runs.find((run) => run.runId === 'run-gate')!;
+  assert.equal(entry.eligibility.eligible, false);
+  assert.equal(entry.eligibility.code, 'GATE_PARK_REQUIRES_RELEASE');
+  assert.equal(entry.slotDisposition, 'retained');
+});
+
+test('executing a gate park persists the record before side effects and frees the slot', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const result = await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  assert.equal(result.outcome, 'complete');
+  const record = ctx.runs.get('run-gate')!.park!;
+  assert.equal(record.phase, 'parked');
+  assert.equal(record.slotDisposition, 'freed');
+  assert.ok(record.slotFreedAt, 'slotFreedAt records that ownership was actually released');
+  // The park record survives with its slot binding; only slot ownership went away.
+  assert.equal(record.slotId, 'slot-a');
+  assert.equal(ctx.runs.get('run-gate')!.slotId, 'slot-a');
+  assert.equal(ctx.slotOwners.get('slot-a'), null);
+  // A gate park keeps the run at its gate: the pending decision stays answerable.
+  assert.equal(ctx.runs.get('run-gate')!.status, 'human-gating');
+  // Write-ahead ordering: the intent journal lands before the runner is stopped,
+  // and the slot is freed only after the last resource stop.
+  const journalIndex = ctx.calls.findIndex((call) => call.startsWith('journal-write:'));
+  const stopIndex = ctx.calls.findIndex((call) => call.startsWith('stop-runner:'));
+  const freeIndex = ctx.calls.findIndex((call) => call.startsWith('free-slot:'));
+  const resourceIndex = ctx.calls.findIndex((call) => call.startsWith('stop-resource:'));
+  assert.ok(journalIndex >= 0 && journalIndex < stopIndex);
+  assert.ok(resourceIndex >= 0 && resourceIndex < freeIndex);
+});
+
+test('a gate park that cannot release slot ownership records a partial, not a freed slot', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // Someone else claims the slot mid-park, after the preflight and before the
+  // ownership release. Stealing it earlier would just stale the preview.
+  const stopResource = ctx.deps.stopResource;
+  ctx.deps.stopResource = async (slotId, resourceId) => {
+    ctx.slotOwners.set('slot-a', 'run-other');
+    return stopResource(slotId, resourceId);
+  };
+
+  const result = await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  // No record reached `parked`, so the single-run batch reports failed.
+  assert.equal(result.outcome, 'failed');
+  const record = ctx.runs.get('run-gate')!.park!;
+  assert.equal(record.phase, 'partial');
+  assert.equal(record.slotFreedAt, undefined);
+  assert.ok(record.errors.some((error) => error.action === 'slot.free'));
+});
+
+test('restore refuses a freed-slot park record with its own code', async () => {
+  const run = gateHeldRun('run-gate', 'slot-a');
+  run.park = {
+    ...parkedRecord(run.id, 'slot-a'),
+    mode: 'release',
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-08-21T00:00:10.000Z',
+    prePauseStatus: 'human-gating',
+    recoveryHandle: recoveryHandle(run.id, 'slot-a'),
+    residuals: { runner: 'stopped', resources: [] },
+  };
+  const ctx = harness([run]);
+  ctx.slotOwners.set('slot-a', null);
+
+  const preview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const entry = preview.runs.find((item) => item.runId === 'run-gate')!;
+  assert.equal(entry.eligibility.eligible, false);
+  assert.equal(entry.eligibility.code, 'FREED_SLOT_RESTORE_UNSUPPORTED');
+});
+
+test('restart reconciliation keeps a freed-slot gate park parked without a paused run status', async () => {
+  const run = gateHeldRun('run-gate', 'slot-a');
+  run.park = {
+    ...parkedRecord(run.id, 'slot-a'),
+    mode: 'release',
+    phase: 'resources-stopping',
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-08-21T00:00:10.000Z',
+    prePauseStatus: 'human-gating',
+    recoveryHandle: recoveryHandle(run.id, 'slot-a'),
+    resourceManifest: {
+      capturedAt: '2026-08-21T00:00:00.000Z',
+      resources: [
+        {
+          resourceId: 'browser-cdp',
+          label: 'browser-cdp',
+          type: 'browser',
+          observedStatus: 'running',
+          phase: 'stopped',
+          capabilityLeaseIds: [],
+        },
+      ],
+      capabilityLeases: [],
+    },
+    residuals: { runner: 'stopped', resources: [{ resourceId: 'browser-cdp', state: 'stopped' }] },
+  };
+  const ctx = harness([run]);
+  ctx.slotOwners.set('slot-a', null);
+  ctx.runnerStates.set('run-gate', 'stopped');
+
+  const result = await ctx.service.reconcile();
+
+  assert.deepEqual(result, { reconciled: 1, partial: 0 });
+  assert.equal(ctx.runs.get('run-gate')!.park?.phase, 'parked');
+  assert.equal(ctx.runs.get('run-gate')!.status, 'human-gating');
+  assert.equal(ctx.slotOwners.get('slot-a'), null);
 });
