@@ -1421,32 +1421,69 @@ test('an expired warm provider that is dead is cleaned up before a fresh acquire
   assert.equal(again.ok, false, 'the dead provider is reported, not silently replaced');
 });
 
-test('a warm lease from an older provider definition is cleaned up, not left running', async (t) => {
+test('a stale warm provider is stopped through its own definition when that definition is still in the catalog', async (t) => {
+  // The project duplicated the provider under a new id during a migration, so
+  // the digest the warm lease carries still resolves — to `metro-legacy`.
+  const current = { ...entry('metro'), keepWarmMs: 600_000 };
+  const legacy = { ...entry('metro-legacy'), keepWarmMs: 600_000 };
+  const { registry, actions } = await fixture(t, [current, legacy]);
+  assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+
+  // Redefine `metro`; its old definition survives under the legacy id.
+  legacy.provenance = { ...legacy.provenance, digest: current.provenance.digest };
+  current.provenance = { ...current.provenance, digest: 'digest-metro-v2' };
+  current.version = '2';
+  actions.length = 0;
+
+  const again = await acquire(registry, 'metro', 'run-b');
+  assert.equal(again.ok, true);
+  // The old provider is stopped through its own release action, not the new one's.
+  assert.ok(
+    actions.includes('metro-legacy.release'),
+    `the old definition's release did not run: ${actions.join(', ')}`,
+  );
+  assert.ok(actions.includes('metro.acquire'), `no fresh acquire ran: ${actions.join(', ')}`);
+  assert.ok(
+    actions.indexOf('metro-legacy.release') < actions.indexOf('metro.acquire'),
+    `cleanup must precede the fresh acquire: ${actions.join(', ')}`,
+  );
+});
+
+test('a stale warm provider whose definition is gone fails closed instead of guessing', async (t) => {
   const warm = { ...entry('metro'), keepWarmMs: 600_000 };
   const { registry, actions } = await fixture(t, [warm]);
   assert.equal((await acquire(registry, 'metro', 'run-a')).ok, true);
   await registry.release({ slotId: SLOT, ownerRunId: 'run-a', capabilityId: 'metro' });
+  const before = await registry.status({ slotId: SLOT });
+  const staleLeaseId = before.leases[0]!.id;
+  assert.ok(before.leases[0]?.keepWarmUntil, 'precondition: the lease is warm');
 
-  // The project redefined the provider while it was warm.
-  const stale = await registry.status({ slotId: SLOT });
-  assert.ok(stale.leases[0]?.keepWarmUntil, 'precondition: the lease is warm');
+  // The definition that started it is replaced outright and is not in the catalog.
   warm.provenance = { ...warm.provenance, digest: 'digest-metro-v2' };
   warm.version = '2';
   actions.length = 0;
 
   const again = await acquire(registry, 'metro', 'run-b');
-  assert.equal(again.ok, true);
-  // The old process is stopped before the new definition starts one.
-  assert.ok(actions.includes('metro.release'), `no cleanup ran: ${actions.join(', ')}`);
-  assert.ok(actions.includes('metro.acquire'), `no fresh acquire ran: ${actions.join(', ')}`);
-  assert.ok(
-    actions.indexOf('metro.release') < actions.indexOf('metro.acquire'),
-    `cleanup must precede the fresh acquire: ${actions.join(', ')}`,
+  assert.equal(again.ok, false, 'the acquire must not report success');
+  if (again.ok) return;
+  assert.equal(again.conflict.kind, 'unavailable');
+  assert.match(again.conflict.reason, /no longer in the .* catalog/);
+  assert.match(again.conflict.reason, new RegExp(`lease ${staleLeaseId}`));
+
+  // Nothing was guessed from the new definition, and no second provider started.
+  assert.deepEqual(
+    actions.filter((action) => action.endsWith('.release') || action.endsWith('.acquire')),
+    [],
+    `an action was run against a definition that did not start the provider: ${actions.join(', ')}`,
   );
   const after = await registry.status({ slotId: SLOT });
-  assert.equal(
-    after.leases.filter((l) => holdsProviderForTest(l)).length,
-    1,
-    'exactly one provider is held, not a duplicate',
+  const stale = after.leases.find((l) => l.id === staleLeaseId);
+  assert.equal(stale?.state, 'error');
+  assert.match(stale?.cleanupFailure ?? '', /Stop the provider, then retry/);
+  assert.deepEqual(
+    after.leases.filter((l) => holdsProviderForTest(l)),
+    [],
+    'no second provider may be running',
   );
 });

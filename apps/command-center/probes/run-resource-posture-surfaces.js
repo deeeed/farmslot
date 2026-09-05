@@ -94,15 +94,24 @@ return (async () => {
       socket.send(JSON.stringify({ type: 'req', id, method, params }));
     });
 
+  /** Lease states that mean this owner has not cleanly let go of the capability. */
+  const UNCLEARED_LEASE_STATES = ['queued', 'acquiring', 'acquired', 'releasing', 'error'];
+
   /**
    * Release everything this owner still holds, and keep releasing until nothing
    * comes back. A panel action still in flight can reacquire *after* a single
    * release, which is how an earlier version of this probe stranded a lease it
    * had already reported as cleaned up.
+   *
+   * `error` counts as uncleared: a lease the Gateway could not clean up is not a
+   * tidy teardown, whatever its owner intended. Every thrown release is returned
+   * to the caller with its attempt number — a teardown that could not run is the
+   * finding, and swallowing it would let a broken cleanup report success.
    */
   async function releaseOwnedUntilClear(ownerRunId, capabilityId) {
+    const errors = [];
     let remaining = null;
-    for (let attempt = 0; attempt < 6; attempt += 1) {
+    for (let attempt = 1; attempt <= 6; attempt += 1) {
       try {
         await rpc('runtime.capability.release', {
           slotId: SLOT_ID,
@@ -110,19 +119,17 @@ return (async () => {
           capabilityId,
           keepWarm: false,
         });
-      } catch {
-        // Recorded by the caller through the count below.
+      } catch (error) {
+        errors.push(`attempt ${attempt}: ${error?.message ?? String(error)}`);
       }
       const status = await rpc('runtime.capability.status', { slotId: SLOT_ID });
       remaining = status.leases.filter(
-        (lease) =>
-          lease.owner.runId === ownerRunId &&
-          ['queued', 'acquiring', 'acquired', 'releasing'].includes(lease.state),
+        (lease) => lease.owner.runId === ownerRunId && UNCLEARED_LEASE_STATES.includes(lease.state),
       ).length;
-      if (remaining === 0) return 0;
+      if (remaining === 0) return { remaining: 0, errors };
       await wait(1500);
     }
-    return remaining;
+    return { remaining, errors };
   }
 
   const report = {
@@ -367,9 +374,11 @@ return (async () => {
       warmStop.error = error?.message ?? String(error);
     } finally {
       // Never leave the probe's own lease behind.
-      warmStop.leftoverLeases = warmCapabilityId
+      const warmTeardown = warmCapabilityId
         ? await releaseOwnedUntilClear(warmOwnerRunId, warmCapabilityId)
-        : 0;
+        : { remaining: 0, errors: [] };
+      warmStop.leftoverLeases = warmTeardown.remaining;
+      warmStop.teardownErrors = warmTeardown.errors;
       if (warmStop.leftoverLeases !== 0) {
         warmStop.cleanupReleaseError = `the probe could not release its own lease (${warmStop.leftoverLeases} still held)`;
       }
@@ -477,9 +486,20 @@ return (async () => {
     } catch (error) {
       restart.error = error?.message ?? String(error);
     } finally {
-      restart.leftoverLeases = restartCapabilityId
+      const teardown = restartCapabilityId
         ? await releaseOwnedUntilClear(restartOwnerRunId, restartCapabilityId)
-        : 0;
+        : { remaining: 0, errors: [] };
+      restart.leftoverLeases = teardown.remaining;
+      restart.teardownErrors = teardown.errors;
+      // Re-read AFTER the teardown. The earlier snapshot was taken before any
+      // cleanup ran, so a failure the teardown itself caused was invisible.
+      const post = await rpc('runtime.capability.status', { slotId: SLOT_ID });
+      const postMine = post.leases.filter((lease) => lease.owner.runId === restartOwnerRunId);
+      restart.cleanupFailure =
+        postMine.map((lease) => lease.cleanupFailure).find(Boolean) ??
+        restart.cleanupFailure ??
+        null;
+      restart.leasesInError = postMine.filter((lease) => lease.state === 'error').length;
       if (restart.leftoverLeases !== 0) {
         restart.cleanupReleaseError = `the probe could not release its restarted lease (${restart.leftoverLeases} still held)`;
       }
@@ -528,6 +548,17 @@ return (async () => {
       failures.push(`restart cleanup failed: ${report.restart.cleanupFailure}`);
     }
     if (report.restart?.cleanupReleaseError) failures.push(report.restart.cleanupReleaseError);
+    if (report.restart?.teardownErrors?.length) {
+      failures.push(`restart teardown release failed: ${report.restart.teardownErrors.join('; ')}`);
+    }
+    if (report.restart?.leasesInError) {
+      failures.push(`${report.restart.leasesInError} restart lease(s) left in error state`);
+    }
+    if (report.warmStop?.teardownErrors?.length) {
+      failures.push(
+        `warm Stop teardown release failed: ${report.warmStop.teardownErrors.join('; ')}`,
+      );
+    }
     if (report.restart?.leftoverLeases !== 0) {
       failures.push(`${report.restart?.leftoverLeases} restart lease(s) left behind by this probe`);
     }

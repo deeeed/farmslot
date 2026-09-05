@@ -716,6 +716,45 @@ export class RuntimeCapabilityRegistry {
               (capability) => capability.provenance.digest === warmLease.provenance.digest,
             )
           : undefined;
+        if (warmProvenanceChanged && !staleEntry) {
+          // Fail closed. The definition that started this provider is gone from
+          // the catalog, so the only release action on hand belongs to a
+          // different definition. If its target changed, running it stops the
+          // wrong thing, leaves the old provider up, and a second one starts
+          // beside it — while the acquire reports success. Refuse instead, and
+          // say what the operator has to do.
+          warmLease.state = 'error';
+          warmLease.cleanupFailure =
+            `Warm provider was started by a provider definition (digest ${warmLease.provenance.digest}) ` +
+            `that is no longer in the ${catalog.project} catalog, so its own release action is unavailable ` +
+            'and cleanup was refused rather than guessed from the current definition. Stop the provider, ' +
+            'then retry.';
+          warmLease.keepWarmUntil = undefined;
+          warmLease.updatedAt = this.timestamp();
+          this.recordEvent(snapshot, {
+            kind: 'recovery-rejected',
+            slotId: warmLease.slotId,
+            capabilityId: warmLease.capabilityId,
+            leaseId: warmLease.id,
+            owner: warmLease.owner,
+            detail: warmLease.cleanupFailure,
+          });
+          await this.rollbackLeases(
+            snapshot,
+            catalog,
+            snapshot.leases
+              .filter((lease) => !existingLeaseIds.has(lease.id))
+              .map((lease) => lease.id),
+          );
+          return {
+            ok: false,
+            conflict: {
+              kind: 'unavailable',
+              capabilityId: entry.id,
+              reason: `${warmLease.cleanupFailure} (lease ${warmLease.id})`,
+            },
+          };
+        }
         const cleanup = await this.runAction(params.slotId, (staleEntry ?? entry).actions.release);
         warmLease.keepWarmUntil = undefined;
         if (!cleanup.ok) {
