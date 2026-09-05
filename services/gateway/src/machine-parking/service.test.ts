@@ -3098,3 +3098,86 @@ test('a replay that advances the generation then fails still leaves the record r
   });
   assert.notEqual(retryPreview.runs[0]?.eligibility.code, 'GENERATION_CHANGED');
 });
+
+test('a persistence failure after a replay still leaves the record retryable', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async () => false;
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  // The resume replays the gate, which takes ownership and ADVANCES the run
+  // generation. It succeeds.
+  ctx.deps.resumeRun = async (runId) => {
+    const run = ctx.runs.get(runId)!;
+    const previousGeneration = run.engineState?.generation ?? 0;
+    run.engineState = { ...run.engineState, generation: 9 };
+    return {
+      run,
+      previousGeneration,
+      generation: 9,
+      stepName: run.park!.prePauseCurrentStep!.name,
+      status: run.status,
+      acknowledgedAt: '2026-08-21T00:00:31.000Z',
+      gateParkReplayed: true as const,
+    };
+  };
+  // Then the settle's own persistence throws. This is OUTSIDE the resume's
+  // catch, so it escapes restoreOne and lands in settleUnexpectedFailure — the
+  // path that rebuilds the record from scratch.
+  const persistRun = ctx.deps.persistRun;
+  ctx.deps.persistRun = async (run, reason) => {
+    if (reason === 'machine-pause-restored') throw new Error('disk full');
+    return persistRun(run, reason);
+  };
+
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  const attempt = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'restore-persist-fails',
+  });
+
+  assert.equal(attempt.ok, false);
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.phase, 'partial');
+  assert.equal(after.engineState?.generation, 9, 'the replay advanced the run');
+  // Left at the pre-replay generation, both the restore preview and the execute
+  // preflight refuse every retry forever.
+  assert.equal(
+    after.park!.generation,
+    9,
+    'the record must describe the generation the run actually has',
+  );
+  assert.ok(
+    after.park!.errors.some((error) => error.code === 'UNEXPECTED_EFFECT_FAILURE'),
+    'the failure itself is on the record for the operator to read',
+  );
+
+  // And the retry is admitted rather than rejected as changed.
+  ctx.deps.persistRun = persistRun;
+  const retryPreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  assert.notEqual(retryPreview.runs[0]?.eligibility.code, 'GENERATION_CHANGED');
+  assert.equal(
+    retryPreview.runs[0]?.eligibility.eligible,
+    true,
+    JSON.stringify(retryPreview.runs[0]?.eligibility),
+  );
+});
