@@ -8,11 +8,14 @@ import type {
 } from '@farmslot/protocol';
 
 import {
+  postureAfterPausedRefresh,
   postureCountsLine,
   posturePolicyLine,
   postureRowStatusLabel,
   postureTransitionLine,
+  postureWhileRefreshing,
   rejectionMessage,
+  type RunPostureStatusState,
   summarizeRunPosture,
 } from './run-resource-posture';
 
@@ -234,4 +237,39 @@ test('a run holding nothing summarizes as zero rather than as unknown', () => {
   assert.equal(summary.rows.length, 0);
   assert.equal(postureCountsLine(summary.counts), '0 retained · 0 warm · 0 stopped · 0 failed');
   assert.equal(summary.postureLabel, 'Terminal');
+});
+
+test('a refresh of the same run keeps its counts on screen', () => {
+  const ready: RunPostureStatusState = {
+    status: 'ready',
+    slotId: 'macpro-ff-1',
+    state: postureState({ capabilities: [capability({ capabilityId: 'metro' })] }),
+  };
+  const refreshing = postureWhileRefreshing(ready, true);
+  assert.equal(refreshing.status, 'loading');
+  assert.equal(refreshing.state?.capabilities.length, 1);
+  assert.equal(refreshing.slotId, 'macpro-ff-1');
+});
+
+test('switching run or connection drops the previous counts instead of relabelling them', () => {
+  const ready: RunPostureStatusState = {
+    status: 'ready',
+    slotId: 'macpro-ff-1',
+    state: postureState({ capabilities: [capability({ capabilityId: 'metro' })] }),
+  };
+  const switched = postureWhileRefreshing(ready, false);
+  assert.deepEqual(switched, { status: 'loading' });
+});
+
+test('a paused refresh cannot mark another run counts ready', () => {
+  const ready: RunPostureStatusState = {
+    status: 'ready',
+    state: postureState({ capabilities: [capability({ capabilityId: 'metro' })] }),
+  };
+  // Same run: the last reading is still the Gateway's answer for it.
+  assert.equal(postureAfterPausedRefresh(postureWhileRefreshing(ready, true)).status, 'ready');
+  // Different run: nothing was retained, so there is nothing to call ready.
+  assert.deepEqual(postureAfterPausedRefresh(postureWhileRefreshing(ready, false)), {
+    status: 'idle',
+  });
 });

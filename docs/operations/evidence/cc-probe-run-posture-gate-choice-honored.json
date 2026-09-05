@@ -4,22 +4,33 @@
   "results": {
     "project-default": {
       "choice": "project-default",
-      "policySource": "project-default",
-      "honored": true,
+      "selected": true,
+      "loading": false,
+      "summary": "Operator wait via project default — 1 retained",
+      "error": null,
       "warningShown": false,
-      "summary": "Operator wait via project default — 1 retained"
+      "warningText": null,
+      "rejection": null
     },
     "minimize": {
       "choice": "minimize",
-      "policySource": "gate-choice",
-      "honored": true,
+      "selected": true,
+      "loading": false,
+      "summary": "Operator wait via operator gate choice — 1 retained",
+      "error": null,
       "warningShown": false,
-      "summary": "Operator wait via operator gate choice — 1 retained"
+      "warningText": null,
+      "rejection": null
     },
-    "ignoredChoice": {
-      "choice": "minimize",
-      "policySource": "project-default",
-      "warningShown": true
+    "free-slot": {
+      "choice": "free-slot",
+      "selected": true,
+      "loading": false,
+      "summary": "Parked via operator gate choice — nothing applied",
+      "error": null,
+      "warningShown": false,
+      "warningText": null,
+      "rejection": "Rejected — the run cannot be parked (STATUS_NOT_ELIGIBLE): status 'blocked' is not monitoring or ci-watching"
     }
   }
 }

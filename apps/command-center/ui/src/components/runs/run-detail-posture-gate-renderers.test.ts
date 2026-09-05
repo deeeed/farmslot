@@ -5,14 +5,17 @@ import {
   RESOURCE_POSTURE_GATE_CHOICES,
   type ResourcePostureCapabilityState,
   type ResourcePosturePlan,
+  type ResourcePostureTransition,
   type Run,
 } from '@farmslot/protocol';
 
 import {
   canResolveWithPostureChoice,
+  correlatedPostureTransition,
   gateChoiceHelp,
   gateChoiceLabel,
   pendingDecisionKey,
+  postureChoiceBecameInapplicable,
   postureChoiceHonored,
   postureChoicesApply,
   postureGatePreviewLines,
@@ -248,4 +251,121 @@ test('project-default is honoured by the Gateway deferring, not by a gate-choice
     postureChoiceHonored(plan({ policySource: 'gate-choice' }), 'project-default'),
     false,
   );
+});
+
+test('a project-default choice ignored because the run left operator-wait is reported', () => {
+  // The run moves on before the preview executes. The Gateway then answers from
+  // the new lifecycle boundary and still reports framework-default, so the
+  // policy source alone cannot tell this apart from an honoured deferral. The
+  // plan's posture can: it describes the boundary, not the wait.
+  for (const posture of ['active', 'terminal', 'parked'] as const) {
+    assert.equal(
+      postureChoiceHonored(plan({ posture, policySource: 'framework-default' }), 'project-default'),
+      false,
+      `${posture} is a lifecycle boundary, not the operator wait the choice was made at`,
+    );
+    assert.equal(
+      postureChoiceHonored(plan({ posture, policySource: 'project-default' }), 'project-default'),
+      false,
+    );
+  }
+  // Still at the wait, so deferring really did produce this plan.
+  assert.equal(
+    postureChoiceHonored(
+      plan({ posture: 'operator-wait', policySource: 'framework-default' }),
+      'project-default',
+    ),
+    true,
+  );
+  // A dispatch preset is the run's own wait policy applying, which is exactly
+  // what project-default defers to, so its resolved posture may be any of them.
+  for (const posture of ['active', 'operator-wait', 'parked'] as const) {
+    assert.equal(
+      postureChoiceHonored(plan({ posture, policySource: 'run-dispatch' }), 'project-default'),
+      true,
+      `run-dispatch resolved ${posture} from the wait policy the choice defers to`,
+    );
+  }
+});
+
+test('a rejected plan is summarised as a refusal, not as a harmless no-op', () => {
+  const rejected = plan({
+    posture: 'parked',
+    rejection: {
+      kind: 'park-ineligible',
+      code: 'STATUS_NOT_ELIGIBLE',
+      reason: "status 'blocked' is not monitoring or ci-watching",
+    },
+  });
+  // Both a rejection and an empty plan have no groups; only one is safe to resolve.
+  assert.match(postureGatePreviewSummary(rejected), /nothing applied/);
+  assert.doesNotMatch(postureGatePreviewSummary(rejected), /no capability changes/);
+  assert.match(postureGatePreviewSummary(plan()), /no capability changes/);
+});
+
+test('a held choice is dropped once the Gateway moves the run out of operator-wait', () => {
+  const held = {
+    choice: 'free-slot',
+    status: 'ready',
+    plan: plan({
+      posture: 'parked',
+      rejection: { kind: 'park-ineligible', code: 'X', reason: 'not eligible' },
+    }),
+  } as const;
+  // Still at the wait: the choice is the operator's to keep or clear.
+  assert.equal(postureChoiceBecameInapplicable({ ...held, runPosture: 'operator-wait' }), false);
+  // The Gateway moved on, so the panel hides while this selection would linger
+  // and keep blocking Resolve.
+  for (const runPosture of ['active', 'terminal', 'parked'] as const) {
+    assert.equal(
+      postureChoiceBecameInapplicable({ ...held, runPosture }),
+      true,
+      `${runPosture} no longer honours a gate choice`,
+    );
+  }
+  // An unread posture proves nothing, so nothing is dropped.
+  assert.equal(postureChoiceBecameInapplicable(held), false);
+  // Nothing held, nothing to drop.
+  assert.equal(
+    postureChoiceBecameInapplicable({ choice: null, status: 'idle', runPosture: 'active' }),
+    false,
+  );
+});
+
+test("an apply outcome is adopted only once it is demonstrably this resolution's", () => {
+  const transition = (id: string, overrides = {}): ResourcePostureTransition => ({
+    id,
+    posture: 'operator-wait',
+    policySource: 'framework-default',
+    requestedAt: '2026-09-05T00:00:00.000Z',
+    outcome: 'applied',
+    effects: [],
+    progress: { total: 1, completed: 1 },
+    failures: [],
+    ...overrides,
+  });
+  // `run.resolveDecision` returns before reconciliation finishes, so the same id
+  // coming back means the Gateway has not recorded this resolution yet. Showing
+  // it would report the previous outcome — often an old rejection — as this one.
+  assert.equal(correlatedPostureTransition('op-1', transition('op-1')), undefined);
+  assert.deepEqual(correlatedPostureTransition('op-1', transition('op-2')), transition('op-2'));
+  // No transition at all is still nothing to show.
+  assert.equal(correlatedPostureTransition('op-1', undefined), undefined);
+  // No baseline: the run had no transition before, so any transition is new.
+  assert.deepEqual(correlatedPostureTransition(undefined, transition('op-2')), transition('op-2'));
+
+  // A deferred resolution carries no gateChoice, because the Gateway drops
+  // `project-default` before it picks a policy source. Correlating on the choice
+  // would report every one of these as forever pending; correlating on the id
+  // adopts it correctly.
+  const deferred = transition('op-3', { policySource: 'project-default' });
+  assert.equal(deferred.gateChoice, undefined);
+  assert.deepEqual(correlatedPostureTransition('op-1', deferred), deferred);
+
+  // A stale rejection left over from an earlier choice is never adopted.
+  const staleRejection = transition('op-1', {
+    outcome: 'rejected',
+    rejection: { kind: 'park-ineligible', code: 'STATUS_NOT_ELIGIBLE', reason: 'not eligible' },
+  });
+  assert.equal(correlatedPostureTransition('op-1', staleRejection), undefined);
 });

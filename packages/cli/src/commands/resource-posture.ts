@@ -18,6 +18,7 @@ import {
   type ResourcePostureCapabilityState,
   resourcePostureCounts,
   type ResourcePostureGateChoice,
+  type ResourcePostureObservedState,
   type ResourcePosturePlan,
   type ResourcePostureRejection,
   type ResourcePostureRowStatus,
@@ -25,6 +26,7 @@ import {
   type ResourcePostureTransition,
   resourcePostureTransitionFailuresToShow,
   type RunResourcePostureState,
+  RUNTIME_CAPABILITY_PROOF_MODES,
   type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityLease,
@@ -224,6 +226,39 @@ export function formatStopWarm(result: RuntimeCapabilityStopWarmResult): string 
   return lines.join('\n');
 }
 
+/**
+ * Outcomes that leave the provider running. `deferred` is one of them: the
+ * Gateway declined to stop the provider because something still needs it, so
+ * exiting zero would tell a script the provider is down when it is not.
+ * `not-warm` is the only non-stop outcome that is a success — there was nothing
+ * warm to stop.
+ */
+export function stopWarmIncomplete(result: RuntimeCapabilityStopWarmResult): boolean {
+  return result.outcome === 'failed' || result.outcome === 'deferred';
+}
+
+export function stopWarmError(result: RuntimeCapabilityStopWarmResult): Error {
+  const failed = result.outcome === 'failed';
+  return Object.assign(
+    new Error(
+      failed
+        ? `Cleanup failed; ${result.capabilityId} is observed '${result.observedState}'.`
+        : `Stop deferred; ${result.capabilityId} is observed '${result.observedState}'${
+            result.reason ? ` — ${result.reason}` : ''
+          }.`,
+    ),
+    {
+      code: failed
+        ? 'RUNTIME_CAPABILITY_STOP_WARM_FAILED'
+        : 'RUNTIME_CAPABILITY_STOP_WARM_DEFERRED',
+      userAction: failed
+        ? `Re-read the provider state with \`farmslot rpc runtime.capability.status '{"slotId":"${result.slotId}"}'\` and fix the provider's release action before retrying.`
+        : `Release or stop whatever still holds ${result.capabilityId} on ${result.slotId}, then stop it again. \`farmslot resource posture status <runId>\` names the run that holds it.`,
+      details: result,
+    },
+  );
+}
+
 function leaseLine(lease: RuntimeCapabilityLease): string {
   return `  ${bold(lease.capabilityId)}  lease=${lease.id}  state=${lease.state}  health=${lease.health.state}${
     lease.keepWarmUntil ? `  warm-until=${lease.keepWarmUntil}` : ''
@@ -245,29 +280,125 @@ export function formatCapabilityAcquire(
   return lines.join('\n');
 }
 
+/** What the Gateway did with one lease. Distinct from what the operator asked for. */
+export const CAPABILITY_RELEASE_OUTCOMES = [
+  /** Released, and the provider is deliberately kept alive to a deadline. */
+  'warm',
+  /** Released, but this result alone does not prove the provider stopped. */
+  'released',
+  /** Not released: something else still needs the provider. */
+  'retained',
+  /** The release action ran and failed, so the provider's real state is unknown. */
+  'cleanup-failed',
+] as const;
+export type CapabilityReleaseOutcome = (typeof CAPABILITY_RELEASE_OUTCOMES)[number];
+
+export interface CapabilityReleaseRow {
+  capabilityId: string;
+  leaseId: string;
+  outcome: CapabilityReleaseOutcome;
+  /** Strictly what the result proves about the provider — never more than that. */
+  observed: ResourcePostureObservedState;
+  detail: string;
+  warmUntil?: string;
+}
+
+/**
+ * Per-lease outcome of a release, derived only from the Gateway's own result.
+ *
+ * `stopped` is deliberately unreachable here. A released lease with no warm
+ * deadline looks identical whether the release action ran and stopped the
+ * provider or whether another lease on the same capability kept it up, in which
+ * case the action never ran at all. The release result cannot tell those apart,
+ * so the honest answer is `unknown` and a pointer at the command that can.
+ */
+export function capabilityReleaseRows(
+  result: RuntimeCapabilityReleaseResult,
+  nowMs: number,
+): CapabilityReleaseRow[] {
+  const failureByLease = new Map(result.failures.map((failure) => [failure.leaseId, failure]));
+  const rows: CapabilityReleaseRow[] = result.failures.map((failure) => ({
+    capabilityId: failure.capabilityId,
+    leaseId: failure.leaseId,
+    outcome: 'cleanup-failed',
+    observed: 'unknown',
+    detail: failure.reason,
+  }));
+  for (const lease of result.retained) {
+    rows.push({
+      capabilityId: lease.capabilityId,
+      leaseId: lease.id,
+      outcome: 'retained',
+      // Retained means the Gateway kept it up on purpose, so it is running.
+      observed: 'running',
+      detail: 'something that still holds it needs this provider',
+    });
+  }
+  for (const lease of result.released) {
+    if (failureByLease.has(lease.id)) continue;
+    const warmUntil = lease.keepWarmUntil;
+    if (warmUntil && Date.parse(warmUntil) > nowMs) {
+      rows.push({
+        capabilityId: lease.capabilityId,
+        leaseId: lease.id,
+        outcome: 'warm',
+        observed: 'running',
+        detail: 'lease released; the provider is kept alive to its warm deadline',
+        warmUntil,
+      });
+      continue;
+    }
+    rows.push({
+      capabilityId: lease.capabilityId,
+      leaseId: lease.id,
+      outcome: 'released',
+      observed: 'unknown',
+      detail: 'lease released; this result does not prove the provider stopped',
+    });
+  }
+  return rows;
+}
+
 export function formatCapabilityRelease(
   result: RuntimeCapabilityReleaseResult,
   params: RuntimeCapabilityReleaseParams,
+  nowMs = Date.now(),
 ): string {
+  const rows = capabilityReleaseRows(result, nowMs);
   const lines = [
     `${bold('Release capability')}  slot=${params.slotId}  run=${params.ownerRunId}${
       params.capabilityId ? `  capability=${params.capabilityId}` : ''
     }${params.leaseId ? `  lease=${params.leaseId}` : ''}`,
-    // A released lease is not a stopped provider: with keepWarm the provider is
-    // deliberately still running. Say which one this was.
-    `keep-warm=${params.keepWarm === false ? 'no (provider stopped)' : 'yes (provider may stay live)'}`,
+    // The request is what the operator asked for. It is reported on its own line
+    // because it says nothing about what happened.
+    // The request names the flag that was sent and nothing else. It cannot
+    // describe an outcome: the Gateway skips the release action entirely when
+    // another holder still needs the provider, and that case reports no failure
+    // at all, so `--stop` and "the provider stopped" are unrelated facts.
+    `keep-warm requested: ${params.keepWarm === false ? 'no' : 'yes'}${
+      params.force ? '  force: yes' : ''
+    }`,
   ];
-  lines.push(
-    result.released.length > 0 ? 'released:' : dim('released: none'),
-    ...result.released.map(leaseLine),
-  );
-  if (result.retained.length > 0) {
-    lines.push('retained for another holder:', ...result.retained.map(leaseLine));
+  if (rows.length === 0) {
+    lines.push(dim('no lease matched this request'));
+  }
+  for (const row of rows) {
+    const marker =
+      row.outcome === 'cleanup-failed' ? red : row.observed === 'running' ? yellow : dim;
+    lines.push(
+      `  ${bold(row.capabilityId)}  lease=${row.leaseId}  ${marker(row.outcome)}  provider=${row.observed}${
+        row.warmUntil ? `  warm-until=${row.warmUntil}` : ''
+      }`,
+      dim(`    ${row.detail}`),
+    );
   }
   lines.push(`effects: ${list(result.effects)}`);
-  for (const failure of result.failures) {
+  // Nothing above claims a stop, so name the command that can actually prove one.
+  if (rows.some((row) => row.outcome === 'released')) {
     lines.push(
-      red(`  cleanup failed on ${failure.capabilityId} (${failure.leaseId}): ${failure.reason}`),
+      dim(
+        'To confirm a provider really stopped, read `farmslot resource posture status <runId>`, or stop a warm one with `farmslot resource capability stop-warm <slotId> <capabilityId>`.',
+      ),
     );
   }
   return lines.join('\n');
@@ -435,18 +566,9 @@ export function registerResourcePostureCommands(resource: Command): void {
             client.call<RuntimeCapabilityStopWarmResult>(RuntimeCapabilityMethods.stopWarm, params),
           !emitter.machine,
         );
-        if (result.outcome === 'failed') {
+        if (stopWarmIncomplete(result)) {
           if (!emitter.machine) output.write(`${formatStopWarm(result)}\n`);
-          emitter.fail(
-            Object.assign(
-              new Error(`Cleanup failed; ${capabilityId} is observed '${result.observedState}'.`),
-              {
-                code: 'RUNTIME_CAPABILITY_STOP_WARM_FAILED',
-                userAction: `Re-read the provider state with \`farmslot rpc runtime.capability.status '{"slotId":"${slotId}"}'\` and fix the provider's release action before retrying.`,
-                details: result,
-              },
-            ),
-          );
+          emitter.fail(stopWarmError(result));
           return;
         }
         emit(output, emitter, result, () => formatStopWarm(result));
@@ -467,7 +589,7 @@ export function registerResourcePostureCommands(resource: Command): void {
     )
     .addOption(
       new Option('--mode <mode>', 'Proof mode for the requirement')
-        .choices(['state', 'visual', 'mixed'])
+        .choices([...RUNTIME_CAPABILITY_PROOF_MODES])
         .default('state'),
     )
     .option(

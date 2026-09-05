@@ -19,6 +19,7 @@ import {
   type ResourcePostureGateChoice,
   type ResourcePosturePlan,
   type ResourcePostureTransition,
+  type RunResourcePostureState,
 } from '@farmslot/protocol';
 
 import { policySourceLabel, postureLabel, rejectionMessage } from './run-resource-posture';
@@ -68,6 +69,12 @@ export interface RunPostureGateState {
   requestId: number;
   choice: ResourcePostureGateChoice | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
+  /**
+   * The Gateway posture observed when the choice was made. A response that
+   * comes back after the run moved to a different boundary describes that
+   * boundary, not the wait the operator was answering.
+   */
+  requestedAtPosture?: ResourcePosture;
   plan?: ResourcePosturePlan;
   message?: string;
   /** Apply outcome recorded after the decision resolved, so a rejection is visible. */
@@ -96,16 +103,46 @@ export function postureGateKey(
 }
 
 /**
- * Rebind the gate state to the gate now on screen. A different gate gets a clean
- * state and a bumped request id, so a preview still in flight for the previous
- * gate cannot land on the new one.
+ * Rebind the gate state to the gate and the Gateway posture now on screen.
+ *
+ * Two things invalidate a selection. A different gate gets a clean state, so a
+ * preview still in flight for the previous decision cannot land on the new one.
+ * A run that has left the operator wait invalidates the selection too: the
+ * choices stop being offered, and leaving the selection behind would keep a
+ * previewed rejection blocking every action on a decision the choice no longer
+ * has any bearing on. Both bump the request id so an in-flight response is
+ * discarded rather than repopulating what was just cleared.
+ *
+ * The applied transition survives: it reports something that already happened,
+ * and it does not block anything.
  */
-export function runPostureGateForKey(
+export function runPostureGateForContext(
   state: RunPostureGateState,
-  gateKey: string,
+  context: PostureChoiceAvailability & { gateKey: string },
 ): RunPostureGateState {
-  if (state.gateKey === gateKey) return state;
-  return { gateKey, requestId: state.requestId + 1, choice: null, status: 'idle' };
+  if (state.gateKey !== context.gateKey) {
+    return {
+      gateKey: context.gateKey,
+      requestId: state.requestId + 1,
+      choice: null,
+      status: 'idle',
+      ...(state.appliedTransition ? { appliedTransition: state.appliedTransition } : {}),
+    };
+  }
+  if (postureChoicesApply(context)) return state;
+  // An unread posture means the status has not come back yet, never that the
+  // choice stopped applying. Clearing on it would discard a selection the
+  // operator just made because a refresh happened to be in flight or to fail.
+  // Nothing is forwarded while the posture is unknown, so keeping it is safe.
+  if (context.runPosture === undefined) return state;
+  if (state.choice === null && state.status === 'idle') return state;
+  return {
+    gateKey: state.gateKey,
+    requestId: state.requestId + 1,
+    choice: null,
+    status: 'idle',
+    ...(state.appliedTransition ? { appliedTransition: state.appliedTransition } : {}),
+  };
 }
 
 /**
@@ -116,24 +153,54 @@ export function runPostureGateForKey(
 export function runPostureGateSelect(
   state: RunPostureGateState,
   choice: ResourcePostureGateChoice | null,
+  availability: PostureChoiceAvailability,
 ): RunPostureGateState {
-  const next = state.choice === choice ? null : choice;
   const requestId = state.requestId + 1;
-  if (!next) return { gateKey: state.gateKey, requestId, choice: null, status: 'idle' };
-  return { gateKey: state.gateKey, requestId, choice: next, status: 'loading' };
+  const cleared: RunPostureGateState = {
+    gateKey: state.gateKey,
+    requestId,
+    choice: null,
+    status: 'idle',
+  };
+  // The Gateway only resolves a gate choice at an operator wait. Selecting
+  // anywhere else would preview a different boundary and render it as the effect
+  // of the choice, so the guard lives here and no caller can bypass it.
+  if (!postureChoicesApply(availability)) return cleared;
+  const next = state.choice === choice ? null : choice;
+  if (!next) return cleared;
+  return {
+    gateKey: state.gateKey,
+    requestId,
+    choice: next,
+    status: 'loading',
+    requestedAtPosture: availability.runPosture,
+  };
 }
 
-/** Whether a preview response still belongs to the selection on screen. */
+/**
+ * Whether a preview response still belongs to the selection on screen.
+ *
+ * The posture is part of the identity, not just the gate and the request id. If
+ * the run left the operator wait between the request and the response, the
+ * Gateway computed the plan for whatever boundary it had reached, and rendering
+ * that as the effect of the operator's choice is the failure this guards.
+ */
 export function runPostureGateResponseApplies(
   state: RunPostureGateState,
-  response: { gateKey: string; requestId: number },
+  response: PostureChoiceAvailability & { gateKey: string; requestId: number },
 ): boolean {
-  return state.gateKey === response.gateKey && state.requestId === response.requestId;
+  if (state.gateKey !== response.gateKey || state.requestId !== response.requestId) return false;
+  if (!postureChoicesApply(response)) return false;
+  return state.requestedAtPosture === response.runPosture;
 }
 
 export function runPostureGatePreviewLoaded(
   state: RunPostureGateState,
-  response: { gateKey: string; requestId: number; plan: ResourcePosturePlan },
+  response: PostureChoiceAvailability & {
+    gateKey: string;
+    requestId: number;
+    plan: ResourcePosturePlan;
+  },
 ): RunPostureGateState {
   if (!runPostureGateResponseApplies(state, response)) return state;
   return { ...state, status: 'ready', plan: response.plan, message: undefined };
@@ -141,7 +208,11 @@ export function runPostureGatePreviewLoaded(
 
 export function runPostureGatePreviewFailed(
   state: RunPostureGateState,
-  response: { gateKey: string; requestId: number; message: string },
+  response: PostureChoiceAvailability & {
+    gateKey: string;
+    requestId: number;
+    message: string;
+  },
 ): RunPostureGateState {
   if (!runPostureGateResponseApplies(state, response)) return state;
   return { ...state, status: 'error', plan: undefined, message: response.message };
@@ -165,8 +236,19 @@ export function runPostureGateApplied(
  * the choices anyway would let an operator pick something that silently does
  * nothing. This reads the Gateway's own posture — it does not decide policy.
  */
-export function postureChoicesApply(runPosture: ResourcePosture | undefined): boolean {
-  return runPosture === 'operator-wait';
+export interface PostureChoiceAvailability {
+  /**
+   * Whether resolving this decision can carry the choice at all. Only
+   * `run.resolveDecision` has the typed `resourcePosture` field; a decision
+   * resolved through `decision.resolve` has nowhere to put it, so offering the
+   * choices there shows the operator a plan that resolving silently discards.
+   */
+  canForwardChoice: boolean;
+  runPosture: ResourcePosture | undefined;
+}
+
+export function postureChoicesApply(input: PostureChoiceAvailability): boolean {
+  return input.canForwardChoice && input.runPosture === 'operator-wait';
 }
 
 /**
@@ -182,8 +264,12 @@ export function postureChoiceHonored(
   plan: ResourcePosturePlan,
   choice: ResourcePostureGateChoice,
 ): boolean {
-  if (choice === 'project-default') return plan.policySource !== 'gate-choice';
-  return plan.policySource === 'gate-choice';
+  if (choice !== 'project-default') return plan.policySource === 'gate-choice';
+  // Some other choice won, so this one was not what produced the plan.
+  if (plan.policySource === 'gate-choice') return false;
+  // The run's dispatch preset applied, which is precisely what deferring means.
+  if (plan.policySource === 'run-dispatch') return true;
+  return plan.posture === 'operator-wait';
 }
 
 export interface RunPostureGatePreviewLine {
@@ -247,7 +333,14 @@ export interface RunPostureGateBlock {
   message: string;
 }
 
-export function postureResolveBlock(state: RunPostureGateState): RunPostureGateBlock {
+export function postureResolveBlock(
+  state: RunPostureGateState,
+  availability: PostureChoiceAvailability,
+): RunPostureGateBlock {
+  // The block exists to stop an offered choice being sent unproven or refused.
+  // Where the choices are not offered nothing will be forwarded, so a verdict
+  // about one must not stand between the operator and the decision.
+  if (!postureChoicesApply(availability)) return { kind: 'none', message: '' };
   if (!state.choice) return { kind: 'none', message: '' };
   if (state.status === 'idle' || state.status === 'loading') {
     return {
@@ -279,8 +372,11 @@ export function postureResolveBlock(state: RunPostureGateState): RunPostureGateB
   return { kind: 'none', message: '' };
 }
 
-export function postureResolveBlockReason(state: RunPostureGateState): string | null {
-  const block = postureResolveBlock(state);
+export function postureResolveBlockReason(
+  state: RunPostureGateState,
+  availability: PostureChoiceAvailability,
+): string | null {
+  const block = postureResolveBlock(state, availability);
   return block.kind === 'none' ? null : block.message;
 }
 
@@ -289,8 +385,11 @@ export function postureResolveBlockReason(state: RunPostureGateState): string | 
  * rejection blocks it: sending a choice the Gateway already refused would only
  * produce the same refusal after the decision is gone.
  */
-export function canResolveWithPostureChoice(state: RunPostureGateState): boolean {
-  return postureResolveBlock(state).kind === 'none';
+export function canResolveWithPostureChoice(
+  state: RunPostureGateState,
+  availability: PostureChoiceAvailability,
+): boolean {
+  return postureResolveBlock(state, availability).kind === 'none';
 }
 
 /**
@@ -300,10 +399,153 @@ export function canResolveWithPostureChoice(state: RunPostureGateState): boolean
  */
 export function postureChoiceForResolve(
   state: RunPostureGateState,
-  runPosture: ResourcePosture | undefined,
+  availability: PostureChoiceAvailability,
 ): ResourcePostureGateChoice | undefined {
-  if (!postureChoicesApply(runPosture)) return undefined;
+  if (!postureChoicesApply(availability)) return undefined;
   if (!state.choice) return undefined;
-  if (!canResolveWithPostureChoice(state)) return undefined;
+  if (!canResolveWithPostureChoice(state, availability)) return undefined;
   return state.choice;
+}
+
+/**
+ * What the client already knew about this run's posture transitions before it
+ * resolved a decision.
+ *
+ * Correlation is by transition id, not by timestamp. `requestedAt` is the
+ * Gateway's clock and the phone's may be minutes off it, so a "newer than my
+ * request" test would silently accept a stale transition or reject the real one.
+ * An id the client had not seen before the resolution cannot be one it is
+ * already showing.
+ */
+export interface PostureTransitionBaseline {
+  knownIds: string[];
+  /**
+   * The forwarded choice, but only when the Gateway records it on the
+   * transition. `project-default` is excluded because it is not a policy the
+   * Gateway attributes to the operator: it asks the lower precedence levels to
+   * decide, so `resolveEffectivePosturePolicy` leaves `gateChoice` unset and a
+   * match on it would never succeed — turning every deferred resolution into a
+   * false "still pending".
+   */
+  choice?: Exclude<ResourcePostureGateChoice, 'project-default'>;
+}
+
+function transitionsOf(state: RunResourcePostureState | undefined): ResourcePostureTransition[] {
+  if (!state) return [];
+  if (state.recentTransitions?.length) return state.recentTransitions;
+  return state.lastTransition ? [state.lastTransition] : [];
+}
+
+export function postureTransitionBaseline(
+  state: RunResourcePostureState | undefined,
+  choice: ResourcePostureGateChoice | undefined,
+): PostureTransitionBaseline {
+  const attributable = choice && choice !== 'project-default' ? choice : undefined;
+  return {
+    knownIds: transitionsOf(state).map((transition) => transition.id),
+    ...(attributable ? { choice: attributable } : {}),
+  };
+}
+
+/**
+ * The transition produced by this resolution, or null while none has appeared.
+ *
+ * `recentTransitions` is newest first. When the resolution forwarded a choice,
+ * the transition must also carry that choice: a concurrent reconciliation from
+ * another boundary is new to the client but is not this operator's outcome.
+ */
+export function correlatedPostureTransition(
+  baseline: PostureTransitionBaseline,
+  state: RunResourcePostureState | undefined,
+): ResourcePostureTransition | null {
+  const known = new Set(baseline.knownIds);
+  for (const transition of transitionsOf(state)) {
+    if (known.has(transition.id)) continue;
+    if (baseline.choice && transition.gateChoice !== baseline.choice) continue;
+    return transition;
+  }
+  return null;
+}
+
+export type PostureTransitionObservation =
+  | { status: 'observed'; transition: ResourcePostureTransition }
+  /** The bounded wait elapsed with no correlated transition. Never a success. */
+  | { status: 'pending' }
+  | { status: 'unreadable'; message: string };
+
+/**
+ * Wait, briefly and finitely, for the Gateway to report this resolution's own
+ * posture transition.
+ *
+ * `run.resolveDecision` returns before reconciliation finishes, so the run it
+ * returns still carries the previous transition. Reporting that one would show
+ * an old rejection, or miss a failure that had not happened yet. The reader is
+ * injected so the rule is testable without a gateway.
+ */
+export async function observePostureTransition(
+  baseline: PostureTransitionBaseline,
+  read: () => Promise<RunResourcePostureState | undefined>,
+  options: {
+    attempts: number;
+    delayMs: number;
+    wait?: (ms: number) => Promise<void>;
+  },
+): Promise<PostureTransitionObservation> {
+  const wait =
+    options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  for (let attempt = 0; attempt < options.attempts; attempt++) {
+    if (attempt > 0) await wait(options.delayMs);
+    let state: RunResourcePostureState | undefined;
+    try {
+      state = await read();
+    } catch (err) {
+      // Reported, not swallowed: an unreadable status is its own outcome, and
+      // retrying past it would present a later silence as "nothing happened".
+      return { status: 'unreadable', message: (err as Error).message };
+    }
+    const transition = correlatedPostureTransition(baseline, state);
+    if (transition) return { status: 'observed', transition };
+  }
+  return { status: 'pending' };
+}
+
+/**
+ * What to tell the operator about a resolution's posture outcome, or null when
+ * there is nothing worth interrupting them for.
+ *
+ * A clean apply says nothing: the posture summary on Run Detail already shows
+ * it. Silence is reserved for outcomes that are both correlated and fine.
+ */
+export function postureApplyAlert(
+  observation: PostureTransitionObservation,
+  choice: ResourcePostureGateChoice,
+): { title: string; message: string } | null {
+  if (observation.status === 'pending') {
+    return {
+      title: 'Resource posture pending',
+      message: `The Gateway has not reported the outcome of "${gateChoiceLabel(choice)}" yet. The run's posture summary will show it once reconciliation finishes.`,
+    };
+  }
+  if (observation.status === 'unreadable') {
+    return {
+      title: 'Resource posture unknown',
+      message: `The outcome of "${gateChoiceLabel(choice)}" could not be read: ${observation.message}`,
+    };
+  }
+  const { transition } = observation;
+  if (transition.rejection) {
+    return {
+      title: 'Resource posture not applied',
+      message: rejectionMessage(transition.rejection),
+    };
+  }
+  if (transition.failures.length) {
+    return {
+      title: 'Resource posture partly applied',
+      message: transition.failures
+        .map((failure) => `${failure.capabilityId}: ${failure.reason}`)
+        .join('\n'),
+    };
+  }
+  return null;
 }

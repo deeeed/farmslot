@@ -12,7 +12,11 @@ import { Methods, type RuntimePostureStatusResult } from '@farmslot/protocol';
 
 import type { GatewayClient } from '../lib/gateway-client';
 import { isGatewayBackgroundPauseError } from '../lib/recoverable-errors';
-import type { RunPostureStatusState } from '../lib/run-resource-posture';
+import {
+  postureAfterPausedRefresh,
+  postureWhileRefreshing,
+  type RunPostureStatusState,
+} from '../lib/run-resource-posture';
 
 export function useRunResourcePosture(
   client: GatewayClient | null,
@@ -22,20 +26,23 @@ export function useRunResourcePosture(
 ): { posture: RunPostureStatusState } {
   const [posture, setPosture] = useState<RunPostureStatusState>({ status: 'idle' });
   const requestRef = useRef(0);
+  // Which run, read over which connection, the state on screen describes.
+  const heldFor = useRef<{ client: GatewayClient | null; runId: string | null }>({
+    client: null,
+    runId: null,
+  });
 
   useEffect(() => {
+    const sameTarget = heldFor.current.client === client && heldFor.current.runId === runId;
+    heldFor.current = { client, runId };
     if (!client || !runId) {
-      // A posture belongs to the run it was read for; carrying it across would
-      // describe the previous run's providers under this run's id.
       requestRef.current += 1;
       setPosture({ status: 'idle' });
       return;
     }
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
-    setPosture((current) =>
-      current.status === 'idle' ? { status: 'loading' } : { ...current, status: 'loading' },
-    );
+    setPosture((current) => postureWhileRefreshing(current, sameTarget));
     client
       .request<RuntimePostureStatusResult>(Methods.RUNTIME_POSTURE_STATUS, { runId })
       .then((result) => {
@@ -49,9 +56,7 @@ export function useRunResourcePosture(
           // read is still the Gateway's answer, and the next refresh replaces it,
           // so it is kept rather than replaced with an error the operator cannot act on.
           console.warn(`Resource posture refresh paused: ${err.message}`);
-          setPosture((current) =>
-            current.state ? { ...current, status: 'ready' } : { status: 'idle' },
-          );
+          setPosture(postureAfterPausedRefresh);
           return;
         }
         // Never fall back to "no posture": an unreadable status is its own state.

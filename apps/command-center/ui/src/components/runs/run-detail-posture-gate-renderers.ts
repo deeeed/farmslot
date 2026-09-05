@@ -110,19 +110,76 @@ export function postureChoicesApply(runPosture: ResourcePosture | undefined): bo
  * back from somewhere else is reported as such rather than being presented as
  * the effect of the choice that was clicked.
  *
- * `project-default` is the inverse of the others: it asks the Gateway to defer
- * to the lower precedence levels, so a plan resolved from dispatch config, the
- * project, or the framework is exactly what was requested. The Gateway drops
- * `project-default` before it picks a policy source, so that choice can never
- * come back as `gate-choice`; testing every choice for `gate-choice` warned
- * about the one choice that was working as asked.
+ * Every other choice is proved by the source alone: the Gateway sets
+ * `gate-choice` only when it resolved the plan from an explicit choice at an
+ * operator wait.
+ *
+ * `project-default` is the inverse — it asks the Gateway to defer to the lower
+ * precedence levels, so a plan resolved from dispatch config, the project, or
+ * the framework is exactly what was requested, and it can never come back as
+ * `gate-choice`. The source alone is not enough for it, though. If the run
+ * leaves `operator-wait` before the preview executes, the Gateway ignores the
+ * choice and answers from the new lifecycle boundary, which also reports
+ * `framework-default`. The plan's posture separates the two: a deferred choice
+ * at an operator wait describes that wait, while an ignored one describes
+ * whatever boundary the run moved to. This reads the plan only, so a stale
+ * cached run posture cannot make an ignored choice look honoured.
  */
 export function postureChoiceHonored(
   plan: ResourcePosturePlan,
   choice: ResourcePostureGateChoice,
 ): boolean {
-  if (choice === 'project-default') return plan.policySource !== 'gate-choice';
-  return plan.policySource === 'gate-choice';
+  if (choice !== 'project-default') return plan.policySource === 'gate-choice';
+  // Some other choice won, so this one was not what produced the plan.
+  if (plan.policySource === 'gate-choice') return false;
+  // The run's dispatch preset applied, which is precisely what deferring means.
+  if (plan.policySource === 'run-dispatch') return true;
+  return plan.posture === 'operator-wait';
+}
+
+/**
+ * Whether a held gate choice must be dropped because the Gateway has moved the
+ * run out of an operator wait.
+ *
+ * The choices stop rendering at that point, but the selection and its plan live
+ * on the host component, not in the panel. A refused `free-slot` left behind
+ * keeps blocking Resolve from behind a panel the operator can no longer see or
+ * clear, which is a deadlock with no visible cause.
+ *
+ * An unread posture is not a reason to drop anything: `undefined` means the
+ * status has not come back yet, never that the choice stopped applying.
+ */
+export function postureChoiceBecameInapplicable(state: RunPostureGateState): boolean {
+  if (!state.runPosture) return false;
+  if (postureChoicesApply(state.runPosture)) return false;
+  return state.choice !== null || state.status !== 'idle';
+}
+
+/**
+ * The transition a resolution actually produced, or `undefined` while the
+ * Gateway has not recorded one yet.
+ *
+ * `run.resolveDecision` returns before posture reconciliation finishes, so the
+ * `lastTransition` on its response is frequently the transition from BEFORE
+ * this resolution. Presenting that as the outcome reports an old rejection as
+ * the answer to what the operator just did, or misses a new failure entirely.
+ *
+ * Correlation is by transition id against the baseline captured before the
+ * request. It deliberately does NOT correlate on `gateChoice`: the Gateway drops
+ * `project-default` before it picks a policy source, so a deferred resolution
+ * produces a transition carrying no choice at all, and matching on it would
+ * report every one of them as forever pending.
+ */
+export function correlatedPostureTransition(
+  baselineTransitionId: string | undefined,
+  transition: ResourcePostureTransition | undefined,
+): ResourcePostureTransition | undefined {
+  if (!transition) return undefined;
+  // Unchanged id means reconciliation has not recorded this one yet.
+  if (baselineTransitionId !== undefined && transition.id === baselineTransitionId) {
+    return undefined;
+  }
+  return transition;
 }
 
 export interface RunPostureGatePreviewLine {
@@ -158,7 +215,15 @@ export function postureGatePreviewSummary(plan: ResourcePosturePlan): string {
   if (plan.retain.length) parts.push(`${plan.retain.length} retained`);
   if (plan.warm.length) parts.push(`${plan.warm.length} left warm`);
   if (plan.stop.length) parts.push(`${plan.stop.length} stopped`);
-  const body = parts.length ? parts.join(' · ') : 'no capability changes';
+  // A rejected plan and an empty plan both have no groups, but they are not the
+  // same answer: one is a safe no-op, the other is a refusal. Summarising a
+  // refusal as "no capability changes" reads as "this is fine to resolve".
+  // Companion uses this same wording, so the two clients say one thing.
+  const body = plan.rejection
+    ? 'nothing applied'
+    : parts.length
+      ? parts.join(' · ')
+      : 'no capability changes';
   return `${postureLabel(plan.posture)} via ${policySourceLabel(plan.policySource)} — ${body}`;
 }
 

@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-05T02:22:13.489Z",
+  "recordedAt": "2026-09-05T03:14:24.068Z",
   "host": "macwork",
   "scenario": "resource-posture-smoke",
   "runner": "scripted",
   "slotId": "macpro-ff-1",
   "capabilityId": "sandbox-gateway-ui",
-  "runId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36",
+  "runId": "b175572e-6680-4dc5-8088-ade89af86d71",
   "project": "farmslot-farm",
   "acquire": {
     "ok": true,
@@ -31,12 +31,12 @@
     "observedState": "running",
     "policySource": "project-default",
     "reason": "provider retention 'retain' at operator-wait",
-    "leaseId": "cap-f0740cd9-723c-48ad-ac04-dc231537bfb9",
+    "leaseId": "cap-216d10b4-0cb2-4238-b31b-de0874961065",
     "owner": {
-      "runId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36",
-      "familyId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36"
+      "runId": "b175572e-6680-4dc5-8088-ade89af86d71",
+      "familyId": "b175572e-6680-4dc5-8088-ade89af86d71"
     },
-    "lastTransitionAt": "2026-09-05T02:21:43.531Z",
+    "lastTransitionAt": "2026-09-05T03:13:53.644Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -57,12 +57,12 @@
     "observedState": "stopped",
     "policySource": "project-default",
     "reason": "provider retention 'stop' at terminal",
-    "leaseId": "cap-f0740cd9-723c-48ad-ac04-dc231537bfb9",
+    "leaseId": "cap-3d8cdf64-2ffb-4a01-b9d1-4a5956b917aa",
     "owner": {
-      "runId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36",
-      "familyId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36"
+      "runId": "b9128ab8-47aa-43fd-8efe-bc80c68eeb2e",
+      "familyId": "b175572e-6680-4dc5-8088-ade89af86d71"
     },
-    "lastTransitionAt": "2026-09-05T02:22:10.708Z",
+    "lastTransitionAt": "2026-09-05T03:14:20.522Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -117,7 +117,7 @@
         "policySource": "project-default"
       }
     ],
-    "preparedAt": "2026-09-05T02:21:57.482Z",
+    "preparedAt": "2026-09-05T03:14:06.987Z",
     "terminalStates": [
       {
         "capabilityId": "ios-simulator",
@@ -135,21 +135,21 @@
   "familyProof": {
     "attempted": true,
     "pass": true,
-    "runId": "41a8bc7c-0023-4971-919c-44b7f45a509f",
+    "runId": "b9128ab8-47aa-43fd-8efe-bc80c68eeb2e",
     "error": null,
-    "familyId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36",
+    "familyId": "b175572e-6680-4dc5-8088-ade89af86d71",
     "siblingStatusBeforeAcquire": "blocked",
     "siblingSlotId": null,
     "derivedAcquire": {
       "ok": true,
-      "familyId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36",
+      "familyId": "b175572e-6680-4dc5-8088-ade89af86d71",
       "reason": null
     },
-    "derivedLeaseId": "cap-34a7e61d-10e2-457b-852d-6e4acd3041f1",
+    "derivedLeaseId": "cap-3d8cdf64-2ffb-4a01-b9d1-4a5956b917aa",
     "mismatchAcquire": {
       "ok": false,
       "kind": "invalid-request",
-      "reason": "ownerFamilyId 'c4945e2e-7552-40fb-90ff-8fd0e4a0ca36-not-really' does not match the family of run '41a8bc7c-0023-4971-919c-44b7f45a509f' ('c4945e2e-7552-40fb-90ff-8fd0e4a0ca36')"
+      "reason": "ownerFamilyId 'b175572e-6680-4dc5-8088-ade89af86d71-not-really' does not match the family of run 'b9128ab8-47aa-43fd-8efe-bc80c68eeb2e' ('b175572e-6680-4dc5-8088-ade89af86d71')"
     },
     "leasesAfterMismatch": 1,
     "siblingLeasesAfterTerminal": [
@@ -160,7 +160,7 @@
     ],
     "fencedAcquire": {
       "ok": false,
-      "reason": "Run '41a8bc7c-0023-4971-919c-44b7f45a509f' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
+      "reason": "Run 'b9128ab8-47aa-43fd-8efe-bc80c68eeb2e' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
     },
     "siblingFinalStatus": "cancelled",
     "leftoverLeases": []
@@ -180,7 +180,7 @@
       "observedState": "running",
       "policySource": "project-default"
     },
-    "humanSample": "sandbox-gateway-ui  wants=acquired  observed=running  match",
+    "humanSample": "sandbox-gateway-ui  wants=acquired  observed=running  match |     provider retention 'retain' at operator-wait  [policy: project-default]",
     "preview": {
       "exit": 0,
       "posture": "terminal",
@@ -212,7 +212,7 @@
   "leftoverLeases": [],
   "pass": true,
   "error": null,
-  "familyId": "c4945e2e-7552-40fb-90ff-8fd0e4a0ca36",
+  "familyId": "b175572e-6680-4dc5-8088-ade89af86d71",
   "terminalRepeatOutcome": "idempotent",
   "cancelEffects": [
     {

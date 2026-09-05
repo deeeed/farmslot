@@ -73,7 +73,9 @@ import {
 } from './run-detail-model.js';
 import {
   canResolveWithPostureChoice,
+  correlatedPostureTransition,
   pendingDecisionKey,
+  postureChoiceBecameInapplicable,
   postureChoicesApply,
   postureResolveBlockReason,
   type RunPostureGateState,
@@ -314,6 +316,7 @@ export class RunDetail extends RunDetailState {
     this._maybeRefreshLiveTimeoutPrStatus();
     this._maybeRefreshPostureStatus();
     this._maybeResetPostureGate();
+    this._maybeClearInapplicablePostureChoice();
   }
 
   /**
@@ -333,6 +336,19 @@ export class RunDetail extends RunDetailState {
       this.runId === runId &&
       this._postureGateKey === gateKey
     );
+  }
+
+  /**
+   * Drop a held choice once the Gateway's posture leaves an operator wait.
+   *
+   * Without this the panel hides itself while the selection stays behind, and a
+   * previously refused choice keeps `canResolveWithPostureChoice` false, so
+   * Resolve silently does nothing with no control on screen to clear it.
+   */
+  private _maybeClearInapplicablePostureChoice(): void {
+    if (!postureChoiceBecameInapplicable(this._postureGateStateForRender())) return;
+    this._postureGate = { choice: null, status: 'idle' };
+    this._posturePreviewRequestSeq++;
   }
 
   /** Drop any in-flight or displayed preview; it belongs to the previous gate. */
@@ -1106,6 +1122,7 @@ export class RunDetail extends RunDetailState {
     // A choice the Gateway already refused in preview must not be sent: the
     // decision would be consumed and the refusal repeated with nothing to undo.
     if (!canResolveWithPostureChoice(this._postureGate)) return;
+    const baselineTransitionId = this._postureTransitionBaseline();
     confirmRunDecision(runId, decision, actionId, {
       ...this._confirmTimerContext(),
       jumpToSuccessorWhenAvailable: (originRunId) =>
@@ -1115,22 +1132,47 @@ export class RunDetail extends RunDetailState {
         // A response that lands after the operator navigated belongs to the run
         // it was requested for, not to whatever is on screen now.
         if (this.runId !== run.id) return;
-        // The apply outcome is the Gateway's, read back from the run it returned.
-        const transition = run.resourcePosture?.lastTransition;
-        this._postureGate = {
-          ...this._postureGate,
-          ...(transition ? { appliedTransition: transition } : {}),
-        };
-        this._postureStatusKey = '';
-        void this._refreshPostureStatus(run.id);
+        this._adoptResolvedPostureTransition(run, baselineTransitionId);
       },
     });
+  }
+
+  /**
+   * The transition the Gateway had recorded before a resolution was sent, so a
+   * response carrying the same one is recognised as "not reconciled yet".
+   */
+  private _postureTransitionBaseline(): string | undefined {
+    return this._postureStatus.state?.lastTransition?.id ?? this._postureGate.appliedTransition?.id;
+  }
+
+  /**
+   * Adopt the apply outcome only once it is demonstrably this resolution's.
+   * Reconciliation is asynchronous, so the resolve response usually still
+   * carries the previous transition; showing that would report an old rejection
+   * as the answer to what the operator just did. The posture status refresh
+   * below supplies the real one when it lands.
+   */
+  private _adoptResolvedPostureTransition(
+    run: Run,
+    baselineTransitionId: string | undefined,
+  ): void {
+    const transition = correlatedPostureTransition(
+      baselineTransitionId,
+      run.resourcePosture?.lastTransition,
+    );
+    this._postureGate = {
+      ...this._postureGate,
+      ...(transition ? { appliedTransition: transition } : {}),
+    };
+    this._postureStatusKey = '';
+    void this._refreshPostureStatus(run.id);
   }
 
   private async _checkInteractiveHandoffSignal(runId: string, decision: RunDecision) {
     // A refused posture choice blocks the resume for the same reason it blocks
     // any other resolution: the decision would be consumed by a refusal.
     if (!canResolveWithPostureChoice(this._postureGate)) return;
+    const baselineTransitionId = this._postureTransitionBaseline();
     await checkInteractiveHandoffSignal(runId, decision, {
       actionsBlocked: () => this._actionsBlocked(),
       busy: () => this._handoffSignalCheckBusy,
@@ -1143,13 +1185,7 @@ export class RunDetail extends RunDetailState {
       resourcePosture: () => this._postureGate.choice,
       onDecisionResolved: (run) => {
         if (this.runId !== run.id) return;
-        const transition = run.resourcePosture?.lastTransition;
-        this._postureGate = {
-          ...this._postureGate,
-          ...(transition ? { appliedTransition: transition } : {}),
-        };
-        this._postureStatusKey = '';
-        void this._refreshPostureStatus(run.id);
+        this._adoptResolvedPostureTransition(run, baselineTransitionId);
       },
     });
   }

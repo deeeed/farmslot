@@ -3,7 +3,9 @@ import test from 'node:test';
 
 import {
   Events,
+  isRuntimeCapabilityProofMode,
   Methods,
+  RUNTIME_CAPABILITY_PROOF_MODES,
   type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityCatalogEntry,
   RuntimeCapabilityMethods,
@@ -63,4 +65,15 @@ test('catalog, proof plan, pressure, and acquire result shapes compose without p
   assert.equal(plan.requirements[0]?.capabilityId, entry.provenance.providerId);
   assert.equal(result.ok, false);
   assert.equal(result.conflict.kind, 'host-pressure');
+});
+
+test('proof modes are exported as a value so clients build option lists from the protocol', () => {
+  // The CLI's `--mode` choices and the Gateway's validator both read this, so a
+  // new mode cannot be accepted by one and rejected by the other.
+  assert.deepEqual([...RUNTIME_CAPABILITY_PROOF_MODES], ['state', 'visual', 'mixed']);
+  for (const mode of RUNTIME_CAPABILITY_PROOF_MODES) {
+    assert.equal(isRuntimeCapabilityProofMode(mode), true);
+  }
+  assert.equal(isRuntimeCapabilityProofMode('screenshot'), false);
+  assert.equal(isRuntimeCapabilityProofMode(undefined), false);
 });

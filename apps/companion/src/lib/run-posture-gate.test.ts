@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ResourcePosturePlan, ResourcePostureTransition } from '@farmslot/protocol';
+import type {
+  ResourcePosturePlan,
+  ResourcePostureTransition,
+  RunResourcePostureState,
+} from '@farmslot/protocol';
 
 import {
   canResolveWithPostureChoice,
+  correlatedPostureTransition,
   gateChoiceHelp,
   gateChoiceLabel,
   initialRunPostureGateState,
+  observePostureTransition,
+  postureApplyAlert,
   postureChoiceForResolve,
   postureChoiceHonored,
   postureChoicesApply,
@@ -15,9 +22,10 @@ import {
   postureGatePreviewLines,
   postureGatePreviewSummary,
   postureResolveBlock,
+  postureTransitionBaseline,
   RUN_POSTURE_GATE_CHOICES,
   runPostureGateApplied,
-  runPostureGateForKey,
+  runPostureGateForContext,
   runPostureGatePreviewFailed,
   runPostureGatePreviewLoaded,
   runPostureGateSelect,
@@ -38,6 +46,8 @@ function plan(overrides: Partial<ResourcePosturePlan> = {}): ResourcePosturePlan
     ...overrides,
   };
 }
+
+const atOperatorWait = { canForwardChoice: true, runPosture: 'operator-wait' } as const;
 
 function capability(capabilityId: string, reason: string) {
   return {
@@ -62,11 +72,11 @@ test('all four ADR-054 gate choices are offered, each with operator copy', () =>
 });
 
 test('choices are offered only where the Gateway would honour them', () => {
-  assert.equal(postureChoicesApply('operator-wait'), true);
-  assert.equal(postureChoicesApply('active'), false);
-  assert.equal(postureChoicesApply('parked'), false);
-  assert.equal(postureChoicesApply('terminal'), false);
-  assert.equal(postureChoicesApply(undefined), false);
+  assert.equal(postureChoicesApply({ canForwardChoice: true, runPosture: 'operator-wait' }), true);
+  assert.equal(postureChoicesApply({ canForwardChoice: true, runPosture: 'active' }), false);
+  assert.equal(postureChoicesApply({ canForwardChoice: true, runPosture: 'parked' }), false);
+  assert.equal(postureChoicesApply({ canForwardChoice: true, runPosture: 'terminal' }), false);
+  assert.equal(postureChoicesApply({ canForwardChoice: true, runPosture: undefined }), false);
 });
 
 test('the gate key distinguishes two decisions on the same run', () => {
@@ -79,13 +89,23 @@ test('the gate key distinguishes two decisions on the same run', () => {
 });
 
 test('selecting a choice loads a preview and selecting it again clears it', () => {
-  const gate = runPostureGateForKey(initialRunPostureGateState(), 'run-1:a');
-  const selected = runPostureGateSelect(gate, 'minimize');
+  const gate = runPostureGateForContext(initialRunPostureGateState(), {
+    gateKey: 'run-1:a',
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
+  });
+  const selected = runPostureGateSelect(gate, 'minimize', {
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
+  });
   assert.equal(selected.choice, 'minimize');
   assert.equal(selected.status, 'loading');
   assert.ok(selected.requestId > gate.requestId);
 
-  const cleared = runPostureGateSelect(selected, 'minimize');
+  const cleared = runPostureGateSelect(selected, 'minimize', {
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
+  });
   assert.equal(cleared.choice, null);
   assert.equal(cleared.status, 'idle');
   assert.ok(cleared.requestId > selected.requestId);
@@ -93,13 +113,23 @@ test('selecting a choice loads a preview and selecting it again clears it', () =
 
 test('a preview that lands after the operator changed choice is discarded', () => {
   const first = runPostureGateSelect(
-    runPostureGateForKey(initialRunPostureGateState(), 'run-1:a'),
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      canForwardChoice: true,
+      runPosture: 'operator-wait',
+    }),
     'minimize',
+    { canForwardChoice: true, runPosture: 'operator-wait' },
   );
-  const second = runPostureGateSelect(first, 'keep-for-validation');
+  const second = runPostureGateSelect(first, 'keep-for-validation', {
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
+  });
   const stale = runPostureGatePreviewLoaded(second, {
     gateKey: first.gateKey,
     requestId: first.requestId,
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
     plan: plan({ reason: 'stale minimize plan' }),
   });
   assert.equal(stale, second);
@@ -109,14 +139,25 @@ test('a preview that lands after the operator changed choice is discarded', () =
 
 test('a preview that lands after a different gate opened is discarded', () => {
   const onFirstGate = runPostureGateSelect(
-    runPostureGateForKey(initialRunPostureGateState(), 'run-1:a'),
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      canForwardChoice: true,
+      runPosture: 'operator-wait',
+    }),
     'minimize',
+    { canForwardChoice: true, runPosture: 'operator-wait' },
   );
-  const onSecondGate = runPostureGateForKey(onFirstGate, 'run-1:b');
+  const onSecondGate = runPostureGateForContext(onFirstGate, {
+    gateKey: 'run-1:b',
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
+  });
   assert.equal(onSecondGate.choice, null);
   const stale = runPostureGatePreviewLoaded(onSecondGate, {
     gateKey: 'run-1:a',
     requestId: onFirstGate.requestId,
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
     plan: plan(),
   });
   assert.equal(stale.plan, undefined);
@@ -124,37 +165,57 @@ test('a preview that lands after a different gate opened is discarded', () => {
 
 test('a current preview populates the plan and clears an earlier message', () => {
   const selected = runPostureGateSelect(
-    runPostureGateForKey(initialRunPostureGateState(), 'run-1:a'),
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      canForwardChoice: true,
+      runPosture: 'operator-wait',
+    }),
     'minimize',
+    { canForwardChoice: true, runPosture: 'operator-wait' },
   );
   const failed = runPostureGatePreviewFailed(selected, {
     gateKey: selected.gateKey,
     requestId: selected.requestId,
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
     message: 'socket closed',
   });
   assert.equal(failed.status, 'error');
-  assert.equal(postureResolveBlock(failed).kind, 'request-failed');
-  assert.equal(canResolveWithPostureChoice(failed), false);
+  assert.equal(postureResolveBlock(failed, atOperatorWait).kind, 'request-failed');
+  assert.equal(canResolveWithPostureChoice(failed, atOperatorWait), false);
 
-  const retried = runPostureGateSelect(runPostureGateSelect(failed, null), 'minimize');
+  const retried = runPostureGateSelect(
+    runPostureGateSelect(failed, null, { canForwardChoice: true, runPosture: 'operator-wait' }),
+    'minimize',
+    { canForwardChoice: true, runPosture: 'operator-wait' },
+  );
   const ready = runPostureGatePreviewLoaded(retried, {
     gateKey: retried.gateKey,
     requestId: retried.requestId,
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
     plan: plan({ stop: [capability('metro', 'expensive for a wait')] }),
   });
   assert.equal(ready.status, 'ready');
   assert.equal(ready.message, undefined);
-  assert.equal(canResolveWithPostureChoice(ready), true);
+  assert.equal(canResolveWithPostureChoice(ready, atOperatorWait), true);
 });
 
 test('a park-ineligible free-slot preview blocks the choice as rejected, not as a failure', () => {
   const selected = runPostureGateSelect(
-    runPostureGateForKey(initialRunPostureGateState(), 'run-1:a'),
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      canForwardChoice: true,
+      runPosture: 'operator-wait',
+    }),
     'free-slot',
+    { canForwardChoice: true, runPosture: 'operator-wait' },
   );
   const rejected = runPostureGatePreviewLoaded(selected, {
     gateKey: selected.gateKey,
     requestId: selected.requestId,
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
     plan: plan({
       posture: 'parked',
       rejection: {
@@ -164,44 +225,78 @@ test('a park-ineligible free-slot preview blocks the choice as rejected, not as 
       },
     }),
   });
-  const block = postureResolveBlock(rejected);
+  const block = postureResolveBlock(rejected, atOperatorWait);
   assert.equal(block.kind, 'rejected');
   assert.match(block.message, /pick another/);
   assert.match(block.message, /gate-held/);
-  assert.equal(canResolveWithPostureChoice(rejected), false);
-  assert.equal(postureChoiceForResolve(rejected, 'operator-wait'), undefined);
+  assert.equal(canResolveWithPostureChoice(rejected, atOperatorWait), false);
+  assert.equal(
+    postureChoiceForResolve(rejected, { canForwardChoice: true, runPosture: 'operator-wait' }),
+    undefined,
+  );
 });
 
 test('resolving is blocked while the preview is still in flight', () => {
   const selected = runPostureGateSelect(
-    runPostureGateForKey(initialRunPostureGateState(), 'run-1:a'),
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      canForwardChoice: true,
+      runPosture: 'operator-wait',
+    }),
     'minimize',
+    { canForwardChoice: true, runPosture: 'operator-wait' },
   );
-  assert.equal(postureResolveBlock(selected).kind, 'pending');
-  assert.equal(canResolveWithPostureChoice(selected), false);
-  assert.equal(postureChoiceForResolve(selected, 'operator-wait'), undefined);
+  assert.equal(postureResolveBlock(selected, atOperatorWait).kind, 'pending');
+  assert.equal(canResolveWithPostureChoice(selected, atOperatorWait), false);
+  assert.equal(
+    postureChoiceForResolve(selected, { canForwardChoice: true, runPosture: 'operator-wait' }),
+    undefined,
+  );
 });
 
 test('no choice selected is not a block: the run keeps its own policy', () => {
-  const gate = runPostureGateForKey(initialRunPostureGateState(), 'run-1:a');
-  assert.equal(postureResolveBlock(gate).kind, 'none');
-  assert.equal(canResolveWithPostureChoice(gate), true);
-  assert.equal(postureChoiceForResolve(gate, 'operator-wait'), undefined);
+  const gate = runPostureGateForContext(initialRunPostureGateState(), {
+    gateKey: 'run-1:a',
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
+  });
+  assert.equal(postureResolveBlock(gate, atOperatorWait).kind, 'none');
+  assert.equal(canResolveWithPostureChoice(gate, atOperatorWait), true);
+  assert.equal(
+    postureChoiceForResolve(gate, { canForwardChoice: true, runPosture: 'operator-wait' }),
+    undefined,
+  );
 });
 
 test('a proven choice is forwarded only while the Gateway is still at an operator wait', () => {
   const selected = runPostureGateSelect(
-    runPostureGateForKey(initialRunPostureGateState(), 'run-1:a'),
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      canForwardChoice: true,
+      runPosture: 'operator-wait',
+    }),
     'minimize',
+    { canForwardChoice: true, runPosture: 'operator-wait' },
   );
   const ready = runPostureGatePreviewLoaded(selected, {
     gateKey: selected.gateKey,
     requestId: selected.requestId,
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
     plan: plan(),
   });
-  assert.equal(postureChoiceForResolve(ready, 'operator-wait'), 'minimize');
-  assert.equal(postureChoiceForResolve(ready, 'active'), undefined);
-  assert.equal(postureChoiceForResolve(ready, undefined), undefined);
+  assert.equal(
+    postureChoiceForResolve(ready, { canForwardChoice: true, runPosture: 'operator-wait' }),
+    'minimize',
+  );
+  assert.equal(
+    postureChoiceForResolve(ready, { canForwardChoice: true, runPosture: 'active' }),
+    undefined,
+  );
+  assert.equal(
+    postureChoiceForResolve(ready, { canForwardChoice: true, runPosture: undefined }),
+    undefined,
+  );
 });
 
 test('a plan the Gateway resolved from another source is not presented as the choice', () => {
@@ -213,15 +308,24 @@ test('project-default is honoured precisely when the Gateway deferred to a lower
   // Choosing "project default" and being warned that the plan came from the
   // project default would flag the choice as ignored at the moment it was obeyed.
   assert.equal(
-    postureChoiceHonored(plan({ policySource: 'project-default' }), 'project-default'),
+    postureChoiceHonored(
+      plan({ policySource: 'project-default', posture: 'operator-wait' }),
+      'project-default',
+    ),
     true,
   );
   assert.equal(
-    postureChoiceHonored(plan({ policySource: 'framework-default' }), 'project-default'),
+    postureChoiceHonored(
+      plan({ policySource: 'framework-default', posture: 'operator-wait' }),
+      'project-default',
+    ),
     true,
   );
   assert.equal(
-    postureChoiceHonored(plan({ policySource: 'run-dispatch' }), 'project-default'),
+    postureChoiceHonored(
+      plan({ policySource: 'run-dispatch', posture: 'active' }),
+      'project-default',
+    ),
     true,
   );
   assert.equal(
@@ -276,7 +380,436 @@ test('the apply outcome is recorded so a rejection at resolve time stays visible
     failures: [],
     rejection: { kind: 'park-ineligible', code: 'gate-held', reason: 'gate-held run' },
   };
-  const gate = runPostureGateForKey(initialRunPostureGateState(), 'run-1:a');
+  const gate = runPostureGateForContext(initialRunPostureGateState(), {
+    gateKey: 'run-1:a',
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
+  });
   assert.equal(runPostureGateApplied(gate, undefined), gate);
   assert.equal(runPostureGateApplied(gate, transition).appliedTransition?.outcome, 'rejected');
+});
+
+test('a choice is never honoured once the run has left the operator wait', () => {
+  // The gap the source test alone cannot see: project-default asked the Gateway
+  // to defer, the run moved off the wait before the preview ran, and the plan for
+  // that boundary is "not gate-choice" like any other. Reporting it as honoured
+  // tells the operator their ignored choice took effect. The plan carries the
+  // answer, so no cached client posture is consulted: a stale one is exactly how
+  // an ignored choice would look honoured.
+  for (const posture of ['active', 'terminal', 'parked'] as const) {
+    for (const policySource of ['framework-default', 'project-default'] as const) {
+      assert.equal(
+        postureChoiceHonored(plan({ posture, policySource }), 'project-default'),
+        false,
+        `${posture}/${policySource} left the wait, so the deferral was not applied`,
+      );
+    }
+  }
+  // Still at the wait with nothing lower to defer to: the run's own posture wins.
+  assert.equal(
+    postureChoiceHonored(
+      plan({ posture: 'operator-wait', policySource: 'framework-default' }),
+      'project-default',
+    ),
+    true,
+  );
+  // A dispatch preset applying IS what deferring means, whichever posture it picks.
+  for (const posture of ['active', 'operator-wait', 'parked'] as const) {
+    assert.equal(
+      postureChoiceHonored(plan({ posture, policySource: 'run-dispatch' }), 'project-default'),
+      true,
+    );
+  }
+  // The non-deferring choices resolve to their own postures, so posture is never
+  // required of them: keep-for-validation is active and free-slot is parked.
+  assert.equal(
+    postureChoiceHonored(
+      plan({ posture: 'active', policySource: 'gate-choice' }),
+      'keep-for-validation',
+    ),
+    true,
+  );
+  assert.equal(
+    postureChoiceHonored(plan({ posture: 'parked', policySource: 'gate-choice' }), 'free-slot'),
+    true,
+  );
+});
+
+test('a preview answered after the run left the operator wait is discarded', () => {
+  const selected = runPostureGateSelect(
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      canForwardChoice: true,
+      runPosture: 'operator-wait',
+    }),
+    'project-default',
+    { canForwardChoice: true, runPosture: 'operator-wait' },
+  );
+  const landedTooLate = runPostureGatePreviewLoaded(selected, {
+    gateKey: selected.gateKey,
+    requestId: selected.requestId,
+    canForwardChoice: true,
+    runPosture: 'active',
+    plan: plan({ posture: 'active', policySource: 'framework-default' }),
+  });
+  assert.equal(landedTooLate.plan, undefined);
+  assert.equal(landedTooLate.status, 'loading');
+  const failedTooLate = runPostureGatePreviewFailed(selected, {
+    gateKey: selected.gateKey,
+    requestId: selected.requestId,
+    canForwardChoice: true,
+    runPosture: 'terminal',
+    message: 'socket closed',
+  });
+  assert.equal(failedTooLate.status, 'loading');
+});
+
+test('a choice cannot be selected outside an operator wait', () => {
+  const gate = runPostureGateForContext(initialRunPostureGateState(), {
+    gateKey: 'run-1:a',
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
+  });
+  const attempted = runPostureGateSelect(gate, 'minimize', {
+    canForwardChoice: true,
+    runPosture: 'active',
+  });
+  assert.equal(attempted.choice, null);
+  assert.equal(attempted.status, 'idle');
+  assert.ok(attempted.requestId > gate.requestId);
+});
+
+test('a rejected choice stops blocking once the choices no longer apply', () => {
+  // Select free-slot, see the Gateway refuse it, then the run leaves the wait.
+  // The choices disappear; leaving the refusal behind would block every action
+  // on the decision with a verdict about a choice that no longer has any bearing.
+  const selected = runPostureGateSelect(
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      canForwardChoice: true,
+      runPosture: 'operator-wait',
+    }),
+    'free-slot',
+    { canForwardChoice: true, runPosture: 'operator-wait' },
+  );
+  const rejected = runPostureGatePreviewLoaded(selected, {
+    gateKey: selected.gateKey,
+    requestId: selected.requestId,
+    canForwardChoice: true,
+    runPosture: 'operator-wait',
+    plan: plan({
+      posture: 'parked',
+      rejection: { kind: 'park-ineligible', code: 'gate-held', reason: 'gate-held run' },
+    }),
+  });
+  assert.equal(canResolveWithPostureChoice(rejected, atOperatorWait), false);
+
+  const movedOn = runPostureGateForContext(rejected, {
+    gateKey: 'run-1:a',
+    canForwardChoice: true,
+    runPosture: 'active',
+  });
+  assert.equal(movedOn.choice, null);
+  assert.equal(movedOn.plan, undefined);
+  assert.equal(postureResolveBlock(movedOn, atOperatorWait).kind, 'none');
+  assert.equal(canResolveWithPostureChoice(movedOn, atOperatorWait), true);
+  // The request id moved, so the in-flight preview cannot repopulate it.
+  assert.ok(movedOn.requestId > rejected.requestId);
+});
+
+test('an applied outcome survives the gate being rebound, since it already happened', () => {
+  const applied = runPostureGateApplied(
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      canForwardChoice: true,
+      runPosture: 'operator-wait',
+    }),
+    {
+      id: 'op-1',
+      posture: 'parked',
+      policySource: 'gate-choice',
+      requestedAt: '2026-09-05T10:00:00.000Z',
+      outcome: 'rejected',
+      effects: [],
+      progress: { total: 0, completed: 0 },
+      failures: [],
+      rejection: { kind: 'park-ineligible', code: 'gate-held', reason: 'gate-held run' },
+    },
+  );
+  const movedOn = runPostureGateForContext(applied, {
+    gateKey: 'run-1:b',
+    canForwardChoice: true,
+    runPosture: 'active',
+  });
+  assert.equal(movedOn.appliedTransition?.id, 'op-1');
+});
+
+function postureStateWith(transitions: ResourcePostureTransition[]): RunResourcePostureState {
+  return {
+    posture: 'operator-wait',
+    policySource: 'gate-choice',
+    capabilities: [],
+    workerRetained: true,
+    updatedAt: '2026-09-05T10:00:00.000Z',
+    ...(transitions[0] ? { lastTransition: transitions[0] } : {}),
+    recentTransitions: transitions,
+  };
+}
+
+function transitionWith(
+  id: string,
+  overrides: Partial<ResourcePostureTransition> = {},
+): ResourcePostureTransition {
+  return {
+    id,
+    posture: 'operator-wait',
+    policySource: 'gate-choice',
+    requestedAt: '2026-09-05T10:00:00.000Z',
+    outcome: 'applied',
+    effects: [],
+    progress: { total: 1, completed: 1 },
+    failures: [],
+    ...overrides,
+  };
+}
+
+test('the transition already on screen before resolving is never reported as the outcome', () => {
+  // The dangerous shape: the operator retries the same choice, so the stale
+  // transition carries that choice too and only its id can rule it out.
+  const before = postureStateWith([
+    transitionWith('op-old', {
+      outcome: 'rejected',
+      gateChoice: 'minimize',
+      rejection: { kind: 'invalid-request', reason: 'earlier refusal' },
+    }),
+  ]);
+  const baseline = postureTransitionBaseline(before, 'minimize');
+  // run.resolveDecision returns before reconciliation finishes, so the status
+  // still carries only the transition the client already had.
+  assert.equal(correlatedPostureTransition(baseline, before), null);
+  const after = postureStateWith([
+    transitionWith('op-new', { gateChoice: 'minimize' }),
+    ...(before.recentTransitions ?? []),
+  ]);
+  assert.equal(correlatedPostureTransition(baseline, after)?.id, 'op-new');
+});
+
+test('a new transition from another boundary is not this operator choice outcome', () => {
+  const baseline = postureTransitionBaseline(
+    postureStateWith([transitionWith('op-old')]),
+    'minimize',
+  );
+  const concurrent = postureStateWith([
+    transitionWith('op-terminal', { posture: 'terminal', policySource: 'framework-default' }),
+    transitionWith('op-old'),
+  ]);
+  assert.equal(correlatedPostureTransition(baseline, concurrent), null);
+});
+
+test('the bounded wait reports pending rather than inventing an outcome', async () => {
+  const before = postureStateWith([transitionWith('op-old')]);
+  const baseline = postureTransitionBaseline(before, 'minimize');
+  let reads = 0;
+  const observation = await observePostureTransition(
+    baseline,
+    async () => {
+      reads++;
+      return before;
+    },
+    { attempts: 3, delayMs: 1, wait: async () => {} },
+  );
+  assert.equal(observation.status, 'pending');
+  assert.equal(reads, 3);
+  assert.deepEqual(postureApplyAlert(observation, 'minimize'), {
+    title: 'Resource posture pending',
+    message:
+      'The Gateway has not reported the outcome of "Minimize" yet. The run\'s posture summary will show it once reconciliation finishes.',
+  });
+});
+
+test('the bounded wait returns the correlated transition as soon as it appears', async () => {
+  const before = postureStateWith([transitionWith('op-old')]);
+  const baseline = postureTransitionBaseline(before, 'minimize');
+  const states = [
+    before,
+    before,
+    postureStateWith([
+      transitionWith('op-new', {
+        gateChoice: 'minimize',
+        outcome: 'partial',
+        failures: [{ capabilityId: 'metro', reason: 'stop command exited 1' }],
+      }),
+      transitionWith('op-old'),
+    ]),
+  ];
+  let reads = 0;
+  const observation = await observePostureTransition(
+    baseline,
+    async () => states[reads++] ?? before,
+    { attempts: 5, delayMs: 1, wait: async () => {} },
+  );
+  assert.equal(observation.status, 'observed');
+  assert.equal(reads, 3);
+  assert.deepEqual(postureApplyAlert(observation, 'minimize'), {
+    title: 'Resource posture partly applied',
+    message: 'metro: stop command exited 1',
+  });
+});
+
+test('an unreadable status is reported, not retried into silence', async () => {
+  const baseline = postureTransitionBaseline(
+    postureStateWith([transitionWith('op-old')]),
+    'minimize',
+  );
+  const observation = await observePostureTransition(
+    baseline,
+    async () => {
+      throw new Error('socket closed');
+    },
+    { attempts: 3, delayMs: 1, wait: async () => {} },
+  );
+  assert.deepEqual(observation, { status: 'unreadable', message: 'socket closed' });
+  assert.equal(postureApplyAlert(observation, 'minimize')?.title, 'Resource posture unknown');
+});
+
+test('a clean applied outcome says nothing, so success is not an interruption', () => {
+  const observation = {
+    status: 'observed' as const,
+    transition: transitionWith('op-new', { gateChoice: 'minimize' }),
+  };
+  assert.equal(postureApplyAlert(observation, 'minimize'), null);
+});
+
+test('a deferred project-default resolution still correlates, since the Gateway attributes no choice', () => {
+  // `resolveEffectivePosturePolicy` treats project-default as "no explicit
+  // choice", so the transition it produces carries no gateChoice. Matching on
+  // one would report every deferred resolution as still pending.
+  const before = postureStateWith([transitionWith('op-old')]);
+  const baseline = postureTransitionBaseline(before, 'project-default');
+  assert.equal(baseline.choice, undefined);
+  const after = postureStateWith([
+    transitionWith('op-new', { policySource: 'project-default' }),
+    transitionWith('op-old'),
+  ]);
+  assert.equal(correlatedPostureTransition(baseline, after)?.id, 'op-new');
+});
+
+test('a decision that cannot carry a choice is never offered one', () => {
+  // sourceRunId falls back to context.runId and the route param, so a decision
+  // without runMeta still has a run. It resolves through `decision.resolve`,
+  // which has no resourcePosture field, so showing the choices would let the
+  // operator read a plan that resolving silently discards.
+  const atWait = { canForwardChoice: true, runPosture: 'operator-wait' } as const;
+  const noRunDecision = { canForwardChoice: false, runPosture: 'operator-wait' } as const;
+  assert.equal(postureChoicesApply(atWait), true);
+  assert.equal(postureChoicesApply(noRunDecision), false);
+
+  const gate = runPostureGateForContext(initialRunPostureGateState(), {
+    gateKey: 'run-1:a',
+    ...noRunDecision,
+  });
+  const attempted = runPostureGateSelect(gate, 'minimize', noRunDecision);
+  assert.equal(attempted.choice, null);
+  assert.equal(postureChoiceForResolve(attempted, noRunDecision), undefined);
+
+  // And a choice made while it was deliverable stops being forwarded if it is not.
+  const selected = runPostureGateSelect(gate, 'minimize', atWait);
+  const ready = runPostureGatePreviewLoaded(selected, {
+    gateKey: selected.gateKey,
+    requestId: selected.requestId,
+    ...atWait,
+    plan: plan(),
+  });
+  assert.equal(postureChoiceForResolve(ready, atWait), 'minimize');
+  assert.equal(postureChoiceForResolve(ready, noRunDecision), undefined);
+});
+
+test('two selections in one frame get their own request ids', () => {
+  // The screen must derive each selection from the previous one, not from the
+  // value it rendered with. Sharing a request id lets the first choice's preview
+  // pass the staleness guard and render under the second.
+  const availability = { canForwardChoice: true, runPosture: 'operator-wait' } as const;
+  const base = runPostureGateForContext(initialRunPostureGateState(), {
+    gateKey: 'run-1:a',
+    ...availability,
+  });
+  const first = runPostureGateSelect(base, 'minimize', availability);
+  const fromStaleBase = runPostureGateSelect(base, 'free-slot', availability);
+  assert.equal(
+    first.requestId,
+    fromStaleBase.requestId,
+    'deriving both taps from the rendered value collides the ids',
+  );
+
+  const second = runPostureGateSelect(first, 'free-slot', availability);
+  assert.notEqual(first.requestId, second.requestId);
+  // The first choice's preview must not land on the second choice.
+  const landed = runPostureGatePreviewLoaded(second, {
+    gateKey: second.gateKey,
+    requestId: first.requestId,
+    ...availability,
+    plan: plan({ reason: 'minimize plan' }),
+  });
+  assert.equal(landed.plan, undefined);
+  assert.equal(landed.choice, 'free-slot');
+});
+
+test('an unread posture never clears the selection the operator just made', () => {
+  // The status has not come back yet, or its refresh failed. That is not
+  // evidence the choice stopped applying, and clearing on it would discard a
+  // tap the operator made a moment ago while the preview was still in flight.
+  const selected = runPostureGateSelect(
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      ...atOperatorWait,
+    }),
+    'minimize',
+    atOperatorWait,
+  );
+  const unknown = { canForwardChoice: true, runPosture: undefined } as const;
+  const kept = runPostureGateForContext(selected, { gateKey: 'run-1:a', ...unknown });
+  assert.equal(kept, selected);
+  assert.equal(kept.choice, 'minimize');
+  // Nothing is forwarded while the posture is unknown, so keeping it is safe.
+  assert.equal(postureChoiceForResolve(kept, unknown), undefined);
+  // A posture that IS known and off the wait still clears.
+  const cleared = runPostureGateForContext(selected, {
+    gateKey: 'run-1:a',
+    canForwardChoice: true,
+    runPosture: 'active',
+  });
+  assert.equal(cleared.choice, null);
+});
+
+test('a refusal stops blocking wherever the choices are not offered', () => {
+  // Held rejection plus an unreadable status: the panel is hidden and no choice
+  // can be forwarded, so standing between the operator and the decision with a
+  // verdict about that choice is the same deadlock in a different disguise.
+  const selected = runPostureGateSelect(
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      ...atOperatorWait,
+    }),
+    'free-slot',
+    atOperatorWait,
+  );
+  const rejected = runPostureGatePreviewLoaded(selected, {
+    gateKey: selected.gateKey,
+    requestId: selected.requestId,
+    ...atOperatorWait,
+    plan: plan({
+      posture: 'parked',
+      rejection: { kind: 'park-ineligible', code: 'gate-held', reason: 'gate-held run' },
+    }),
+  });
+  assert.equal(postureResolveBlock(rejected, atOperatorWait).kind, 'rejected');
+  for (const availability of [
+    { canForwardChoice: true, runPosture: undefined },
+    { canForwardChoice: false, runPosture: 'operator-wait' },
+    { canForwardChoice: true, runPosture: 'active' },
+  ] as const) {
+    assert.equal(postureResolveBlock(rejected, availability).kind, 'none');
+    assert.equal(canResolveWithPostureChoice(rejected, availability), true);
+    assert.equal(postureChoiceForResolve(rejected, availability), undefined);
+  }
 });

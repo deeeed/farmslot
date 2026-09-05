@@ -186,3 +186,32 @@ export function postureTransitionLine(transition: ResourcePostureTransition): st
     transition.outcome,
   )} · ${transition.progress.completed}/${transition.progress.total} steps`;
 }
+
+/**
+ * The posture state to show while a refresh is in flight.
+ *
+ * Counts are kept across a refresh of the same run so the panel does not
+ * flicker, and dropped the moment the run or the connection changes. They
+ * describe one run read over one connection; carrying them across would label
+ * the previous run's providers with this run's id, and a refresh paused by app
+ * backgrounding would then mark that borrowed state ready.
+ */
+export function postureWhileRefreshing(
+  current: RunPostureStatusState,
+  sameTarget: boolean,
+): RunPostureStatusState {
+  if (sameTarget && current.state) return { ...current, status: 'loading' };
+  return { status: 'loading' };
+}
+
+/**
+ * The posture state after a refresh the app paused in the background.
+ *
+ * A paused request is not an error the operator can act on, so a reading that
+ * is still the Gateway's own answer for this run is kept. With nothing retained
+ * there is nothing to claim, and `idle` renders no posture rather than an
+ * invented one.
+ */
+export function postureAfterPausedRefresh(current: RunPostureStatusState): RunPostureStatusState {
+  return current.state ? { ...current, status: 'ready' } : { status: 'idle' };
+}

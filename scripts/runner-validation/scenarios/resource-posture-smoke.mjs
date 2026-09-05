@@ -347,7 +347,17 @@ function cli(args, timeoutMs = 120_000) {
     { cwd: ROOT, encoding: 'utf8', timeout: timeoutMs },
   );
   const stdout = result.stdout?.trim() ?? '';
-  return { status: result.status, stdout, stderr: result.stderr?.trim() ?? '' };
+  return {
+    status: result.status,
+    stdout,
+    stderr: result.stderr?.trim() ?? '',
+    // spawnSync reports a missing binary or an enforced timeout here, not on the
+    // exit status. Dropping it turned "python3 is not installed" and "the CLI
+    // hung" into the same blank "printed nothing".
+    spawnError: result.error
+      ? `${result.error.code ?? result.error.name}: ${result.error.message}`
+      : null,
+  };
 }
 
 /**
@@ -371,14 +381,23 @@ function cliHuman(args, timeoutMs = 120_000) {
     ],
     { cwd: ROOT, encoding: 'utf8', timeout: timeoutMs },
   );
-  return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+  return {
+    status: result.status,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    spawnError: result.error
+      ? `${result.error.code ?? result.error.name}: ${result.error.message}`
+      : null,
+  };
 }
 
 function cliJson(args, timeoutMs = 120_000) {
   const run = cli([...args, '--json'], timeoutMs);
   if (!run.stdout) {
     throw new Error(
-      `CLI \`farmslot ${args.join(' ')} --json\` printed nothing (exit ${run.status}): ${run.stderr || 'no stderr'}`,
+      `CLI \`farmslot ${args.join(' ')} --json\` printed nothing (exit ${run.status}): ${
+        run.spawnError ?? run.stderr ?? 'no stderr'
+      }`,
     );
   }
   let envelope;
@@ -445,30 +464,59 @@ function assertCliPostureSurface({ runId, capabilityId }) {
     // (b) The human renderer, under a real pty, shows desired beside observed and
     // never prints an observed stop while the provider is running.
     const humanRun = cliHuman(['resource', 'posture', 'status', runId]);
-    proof.humanSample = humanRun.stdout
-      .split('\n')
-      .filter((line) => line.includes(capabilityId))
-      .join(' | ')
-      // Strip the SGR colour codes the pty enables so the sample stays readable.
+    // Strip the SGR colour codes the pty enables so the lines can be matched.
+    const humanLines = humanRun.stdout
       .replace(/\u001b\[[0-9;]*m/g, '')
-      .trim();
+      .replace(/\r/g, '')
+      .split('\n');
+    // This capability's block: its headline plus the indented detail lines under
+    // it, which carry the reason and policy source without repeating the id.
+    // Scoping matters because a whole-output match lets another capability's row
+    // satisfy — or wrongly fail — an assertion about this one.
+    const headlineIndex = humanLines.findIndex(
+      (line) => line.includes(capabilityId) && line.includes('wants='),
+    );
+    const capabilityLines = [];
+    if (headlineIndex >= 0) {
+      capabilityLines.push(humanLines[headlineIndex]);
+      for (let index = headlineIndex + 1; index < humanLines.length; index += 1) {
+        // Detail lines are indented deeper than the headline; the next headline
+        // ends the block.
+        if (!/^ {4}\S/.test(humanLines[index])) break;
+        capabilityLines.push(humanLines[index]);
+      }
+    }
+    proof.humanSample = capabilityLines.join(' | ').trim();
     if (!humanRun.stdout.includes('Resource posture')) {
       throw new Error(
-        `human posture status printed no report (exit ${humanRun.status}): ${humanRun.stdout.slice(0, 400) || humanRun.stderr.slice(0, 400)}`,
+        `human posture status printed no report (exit ${humanRun.status}): ${
+          humanRun.spawnError ??
+          humanRun.stdout.slice(0, 400) ??
+          humanRun.stderr.slice(0, 400) ??
+          'no output'
+        }`,
       );
+    }
+    if (capabilityLines.length === 0) {
+      throw new Error(`human output has no line for ${capabilityId}`);
     }
     const wanted = `wants=${rpcCapability.desiredDisposition}`;
     const observed = `observed=${rpcCapability.observedState}`;
-    if (!humanRun.stdout.includes(wanted) || !humanRun.stdout.includes(observed)) {
+    const headline = capabilityLines.find(
+      (line) => line.includes(wanted) && line.includes(observed),
+    );
+    if (!headline) {
       throw new Error(
-        `human output did not show '${wanted}' beside '${observed}': ${proof.humanSample}`,
+        `no ${capabilityId} line showed '${wanted}' beside '${observed}': ${proof.humanSample}`,
       );
     }
-    if (rpcCapability.observedState === 'running' && humanRun.stdout.includes('observed=stopped')) {
-      throw new Error('human output claimed an observed stop while the provider is running');
+    if (rpcCapability.observedState === 'running' && headline.includes('observed=stopped')) {
+      throw new Error(
+        `the ${capabilityId} line claimed an observed stop while the provider is running: ${headline.trim()}`,
+      );
     }
-    if (!humanRun.stdout.includes(`[policy: ${rpcCapability.policySource}]`)) {
-      throw new Error('human output omitted the winning policy source');
+    if (!capabilityLines.some((line) => line.includes(`[policy: ${rpcCapability.policySource}]`))) {
+      throw new Error(`no ${capabilityId} line carried the winning policy source`);
     }
 
     // (c) `posture preview` returns the Gateway's plan, and the CLI's exit code

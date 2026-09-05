@@ -10,11 +10,12 @@
  */
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { ResourcePosture, ResourcePostureGateChoice } from '@farmslot/protocol';
+import type { ResourcePostureGateChoice } from '@farmslot/protocol';
 
 import {
   gateChoiceHelp,
   gateChoiceLabel,
+  type PostureChoiceAvailability,
   postureChoiceHonored,
   postureChoicesApply,
   postureGatePreviewLines,
@@ -28,22 +29,24 @@ import { colors, fonts, radii, spacing } from '../../../lib/theme';
 
 export function ResourcePostureGatePanel({
   gate,
-  runPosture,
+  availability,
   disabled,
   onSelect,
 }: {
   gate: RunPostureGateState;
-  runPosture: ResourcePosture | undefined;
+  availability: PostureChoiceAvailability;
   disabled: boolean;
   /** Selecting the current choice again clears it; the state machine owns that toggle. */
   onSelect: (choice: ResourcePostureGateChoice) => void;
 }) {
-  // Outside an operator wait the Gateway ignores a gate choice, so there is
-  // nothing honest to offer. The guard lives here so no caller can bypass it.
-  if (!postureChoicesApply(runPosture)) return null;
+  // Outside an operator wait the Gateway ignores a gate choice, and a decision
+  // this client cannot resolve through `run.resolveDecision` has no way to carry
+  // one. Either way there is nothing honest to offer, so the guard lives here
+  // where no caller can bypass it.
+  if (!postureChoicesApply(availability)) return null;
 
   const plan = gate.status === 'ready' ? gate.plan : undefined;
-  const block = postureResolveBlock(gate);
+  const block = postureResolveBlock(gate, availability);
   return (
     <View style={styles.card} testID="companion-run-posture-gate">
       <Text style={styles.title}>Resource posture for this wait</Text>

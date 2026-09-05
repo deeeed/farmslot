@@ -274,8 +274,48 @@ and the declared release effects, before an operator commits. `apply` takes an
 `--operation-id` idempotency key: replaying it returns the stored transition
 instead of executing again. `stop-warm` is the only way to stop a provider a
 released lease is keeping alive — a plain release reports success while the
-provider keeps running. Every command accepts `--json` and prints the Gateway's
-result unchanged.
+provider keeps running.
+
+### Reading the machine output
+
+Every command accepts `--json`, and machine mode is also implied whenever stdout
+is not a terminal, so a piped or scripted invocation always emits one envelope
+and never the human rendering. Where the Gateway's answer lands depends on the
+exit code:
+
+| Exit | Envelope                                                                     | Where the RPC result is                        |
+| ---- | ---------------------------------------------------------------------------- | ---------------------------------------------- |
+| `0`  | `{"status":"ok","exitCode":0,"data":…}`                                      | `data`, unchanged                              |
+| `1`  | `{"status":"error","exitCode":1,"error":{code,message,userAction,details?}}` | `error.details`, unchanged; there is no `data` |
+
+`error.details` carries the Gateway's result only for the typed outcomes listed
+below. A transport, authentication, or request error has no `details` at all,
+because there was no Gateway result to carry.
+
+A non-zero exit is not only a transport failure. The CLI also exits `1` when the
+Gateway answered successfully but the operator's request did not take effect, so
+a script cannot mistake a refusal for a change:
+
+- a previewed posture the Gateway would reject (`RESOURCE_POSTURE_REJECTED`);
+- a transition that ended `rejected`, `failed`, or `partial`
+  (`RESOURCE_POSTURE_TRANSITION_INCOMPLETE`);
+- a refused acquire (`RUNTIME_CAPABILITY_ACQUIRE_REFUSED`);
+- a release whose cleanup failed (`RUNTIME_CAPABILITY_RELEASE_FAILED`);
+- a `stop-warm` whose cleanup failed (`RUNTIME_CAPABILITY_STOP_WARM_FAILED`) or
+  that was deferred because something still needs the provider
+  (`RUNTIME_CAPABILITY_STOP_WARM_DEFERRED`) — deferred means the provider is
+  still running.
+
+Read the Gateway result at `.data // .error.details` to handle both.
+
+### What a release does and does not prove
+
+`resource capability release` reports the request and the outcome separately.
+`keep-warm requested: no` records the flag that was sent; it is not a claim that
+anything stopped. The Gateway skips the release action entirely when another
+holder still needs the provider, and that case reports no failure, so a released
+lease with no warm deadline is reported as `provider=unknown`. Only
+`resource posture status` and `stop-warm` report an observed stop.
 
 ## Project runner composition rule
 
