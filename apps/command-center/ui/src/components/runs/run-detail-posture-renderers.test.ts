@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { nothing } from 'lit';
+
 import {
   type ResourcePostureCapabilityState,
   resourcePostureRowStatus,
+  type ResourcePostureTransition,
   type RunResourcePostureState,
 } from '@farmslot/protocol';
 
@@ -12,6 +15,7 @@ import {
   postureCapabilityRow,
   postureTransitionFailuresToShow,
   rejectionMessage,
+  renderRunPostureResolution,
   summarizeRunPosture,
 } from './run-detail-posture-renderers.js';
 
@@ -338,4 +342,34 @@ test('a sibling lease failure with a different reason is still shown', () => {
   assert.deepEqual(postureTransitionFailuresToShow(summary), [
     { capabilityId: 'ios-simulator', reason: 'second lease: device never released' },
   ]);
+});
+
+test('the persistent summary carries the resolution outcome after the gate disappears', () => {
+  const transition: ResourcePostureTransition = {
+    id: 'op-1',
+    posture: 'operator-wait',
+    policySource: 'gate-choice',
+    requestedAt: '2026-09-05T12:00:00.000Z',
+    completedAt: '2026-09-05T12:00:02.000Z',
+    outcome: 'partial',
+    effects: [],
+    progress: { total: 2, completed: 1 },
+    failures: [{ capabilityId: 'metro', reason: 'stop timed out' }],
+  };
+  // The gate panel is gone once the decision resolves, so this is the only place
+  // the operator can still read what their resolution did.
+  const applied = renderRunPostureResolution({ appliedTransition: transition });
+  assert.notEqual(applied, nothing);
+
+  // Pending wins over any stale record: an unfinished reconciliation is not an
+  // outcome, and showing the previous one would answer the wrong question.
+  const pending = renderRunPostureResolution({
+    appliedTransition: transition,
+    reconciliationPending: true,
+  });
+  assert.notEqual(pending, nothing);
+  assert.notDeepEqual(pending, applied);
+
+  // Nothing resolved, nothing claimed.
+  assert.equal(renderRunPostureResolution({}), nothing);
 });

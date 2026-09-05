@@ -24,6 +24,8 @@ import time
 
 # Grace period before escalating from SIGTERM to SIGKILL on the child group.
 TERMINATE_GRACE_SECONDS = 5
+# Gap between group-liveness checks, so waiting on descendants does not spin.
+POLL_SECONDS = 0.1
 
 
 def _group_alive(pgid: int) -> bool:
@@ -62,9 +64,14 @@ def terminate_group(child: subprocess.Popen) -> None:
         while time.monotonic() < deadline:
             # Reap the direct child so it cannot linger as a zombie in the group.
             try:
-                child.wait(timeout=0.1)
+                child.wait(timeout=POLL_SECONDS)
             except subprocess.TimeoutExpired:
                 pass
+            else:
+                # Already reaped: `wait` returns immediately from here on, so
+                # without this the loop spins for the whole grace period while
+                # descendants are still going down.
+                time.sleep(POLL_SECONDS)
             if not _group_alive(pgid):
                 return
         # Still alive after the grace period: escalate to SIGKILL.

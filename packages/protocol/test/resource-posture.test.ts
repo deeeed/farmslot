@@ -2,18 +2,26 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  correlateResourcePostureTransition,
+  isTerminalResourcePostureOutcome,
   Methods,
   postureForGateChoice,
   RESOURCE_POSTURE_GATE_CHOICES,
+  RESOURCE_POSTURE_TERMINAL_OUTCOMES,
+  RESOURCE_POSTURE_TRANSITION_OUTCOMES,
   RESOURCE_POSTURE_WAIT_POLICIES,
   RESOURCE_POSTURES,
   type ResourcePostureCapabilityState,
   resourcePostureCounts,
+  type ResourcePostureGateChoice,
   type ResourcePosturePlan,
   type ResourcePostureRejection,
   resourcePostureRowStatus,
   type ResourcePostureTransition,
+  resourcePostureTransitionBaseline,
   resourcePostureTransitionFailuresToShow,
+  type ResourcePostureTransitionOutcome,
+  resourcePostureTransitions,
   type ResourcePostureWaitPolicy,
   type RunResourcePostureState,
   type RuntimeCapabilityCatalogEntry,
@@ -257,4 +265,121 @@ test('transition failures already carried by a capability are not reported twice
     { capabilityId: 'chrome', reason: 'no such process' },
   ]);
   assert.deepEqual(resourcePostureTransitionFailuresToShow([], undefined), []);
+});
+
+test('terminal outcomes are an allowlist, so a new outcome is a wait until considered', () => {
+  // `!== 'in-progress'` would make any future outcome terminal on whichever
+  // client updated last. Failing towards "keep waiting" is the safe direction.
+  assert.equal(isTerminalResourcePostureOutcome('in-progress'), false);
+  for (const outcome of ['applied', 'idempotent', 'partial', 'rejected', 'failed'] as const) {
+    assert.equal(isTerminalResourcePostureOutcome(outcome), true, `${outcome} ends the wait`);
+  }
+  assert.equal(
+    RESOURCE_POSTURE_TERMINAL_OUTCOMES.length + 1,
+    RESOURCE_POSTURE_TRANSITION_OUTCOMES.length,
+    'every outcome except in-progress is terminal today',
+  );
+  // The whole point of the allowlist: an outcome this build has never heard of
+  // is a wait until someone considers it. `!== 'in-progress'` would call it
+  // terminal and stop polling on a state nobody has reasoned about.
+  assert.equal(
+    isTerminalResourcePostureOutcome('queued' as ResourcePostureTransitionOutcome),
+    false,
+  );
+});
+
+function correlationRecord(
+  id: string,
+  requestedAt: string,
+  gateChoice?: ResourcePostureGateChoice,
+): ResourcePostureTransition {
+  return {
+    id,
+    posture: 'operator-wait',
+    policySource: gateChoice ? 'gate-choice' : 'framework-default',
+    requestedAt,
+    outcome: gateChoice ? 'idempotent' : 'applied',
+    effects: [],
+    progress: { total: 1, completed: 1 },
+    failures: [],
+    ...(gateChoice ? { gateChoice } : {}),
+  };
+}
+
+test('correlation applies novelty, Gateway-time recency, and attribution in one place', () => {
+  const seen = correlationRecord('op-0', '2026-09-05T12:00:00.000Z');
+  const baseline = resourcePostureTransitionBaseline(
+    { recentTransitions: [seen], lastTransition: seen },
+    'minimize',
+  );
+
+  // 1. Novelty.
+  assert.equal(correlateResourcePostureTransition(baseline, [seen]), undefined);
+  assert.equal(correlateResourcePostureTransition(baseline, []), undefined);
+
+  // 2. Recency in Gateway time: a backfilled record predating the resolution.
+  assert.equal(
+    correlateResourcePostureTransition(baseline, [
+      correlationRecord('op-old', '2026-09-05T11:59:59.000Z'),
+    ]),
+    undefined,
+  );
+  // A tie is kept; novelty already removed the baseline record itself.
+  const tie = correlationRecord('op-tie', '2026-09-05T12:00:00.000Z');
+  assert.deepEqual(correlateResourcePostureTransition(baseline, [tie]), tie);
+
+  // 3. Attribution: another choice's record is excluded outright.
+  assert.equal(
+    correlateResourcePostureTransition(baseline, [
+      correlationRecord('op-other', '2026-09-05T12:00:02.000Z', 'keep-for-validation'),
+    ]),
+    undefined,
+  );
+});
+
+test('an attributed record beats an unattributed one that merely landed later', () => {
+  // The real history of run 35c0428c read off the dev gateway, newest first.
+  // Taking the newest survivor returns the unattributed reconciliation that
+  // landed after the operator's; the Gateway attributed theirs two rows down.
+  const history = [
+    correlationRecord('posture-d193d148', '2026-09-05T02:58:18.614Z'),
+    correlationRecord('posture-6c1f2a87', '2026-09-05T02:58:18.022Z'),
+    correlationRecord('posture-1e08ef03', '2026-09-05T02:58:17.547Z', 'minimize'),
+    correlationRecord('posture-cbf380af', '2026-09-05T02:58:15.438Z'),
+  ];
+  const baseline = resourcePostureTransitionBaseline(
+    { recentTransitions: [history[3]], lastTransition: history[3] },
+    'minimize',
+  );
+  assert.equal(correlateResourcePostureTransition(baseline, history)?.id, 'posture-1e08ef03');
+
+  // With nothing attributed the newest survivor is the honest fallback, which is
+  // what a rejection carrying no choice and a deferred project-default rely on.
+  assert.equal(
+    correlateResourcePostureTransition(baseline, [history[0], history[1]])?.id,
+    'posture-d193d148',
+  );
+  const deferred = resourcePostureTransitionBaseline(
+    { recentTransitions: [history[3]], lastTransition: history[3] },
+    'project-default',
+  );
+  assert.equal(correlateResourcePostureTransition(deferred, history)?.id, 'posture-d193d148');
+});
+
+test('the baseline reads the persisted history and falls back to lastTransition', () => {
+  const older = correlationRecord('op-a', '2026-09-05T12:00:00.000Z');
+  const newer = correlationRecord('op-b', '2026-09-05T12:00:05.000Z');
+  const baseline = resourcePostureTransitionBaseline(
+    { recentTransitions: [newer, older], lastTransition: newer },
+    null,
+  );
+  assert.deepEqual([...baseline.transitionIds], ['op-b', 'op-a']);
+  assert.equal(baseline.newestRequestedAt, '2026-09-05T12:00:05.000Z');
+
+  // A run with no history anchors on nothing, so any record qualifies.
+  const empty = resourcePostureTransitionBaseline(undefined, null);
+  assert.deepEqual([...empty.transitionIds], []);
+  assert.equal(empty.newestRequestedAt, undefined);
+  assert.deepEqual(correlateResourcePostureTransition(empty, [older]), older);
+  assert.deepEqual(resourcePostureTransitions({ lastTransition: older }), [older]);
 });

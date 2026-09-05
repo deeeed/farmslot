@@ -14,12 +14,15 @@
  * gateway or a renderer.
  */
 import {
+  correlateResourcePostureTransition,
+  isTerminalResourcePostureOutcome,
   RESOURCE_POSTURE_GATE_CHOICES,
   type ResourcePosture,
   type ResourcePostureGateChoice,
   type ResourcePosturePlan,
   type ResourcePostureTransition,
-  type ResourcePostureTransitionOutcome,
+  type ResourcePostureTransitionBaseline,
+  resourcePostureTransitions,
   type RunResourcePostureState,
 } from '@farmslot/protocol';
 
@@ -408,107 +411,6 @@ export function postureChoiceForResolve(
   return state.choice;
 }
 
-/**
- * What the client already knew about this run's posture transitions before it
- * resolved a decision.
- *
- * THE CORRELATION CONTRACT, shared with Command Center. A record produced by
- * this resolution is one that satisfies all of:
- *
- *   1. its `id` is not one the client had already seen; and
- *   2. its `requestedAt` is not older than the newest `requestedAt` in the
- *      baseline; and
- *   3. it is not attributed to some other choice; and among the survivors an
- *      attributed match wins over an unattributed record.
- *
- * Both halves of rule 2 are Gateway timestamps. No client clock takes part: a
- * phone's may be minutes off the Gateway's, so "newer than my request" measured
- * locally would silently accept a stale record or reject the real one.
- *
- * Rule 3 has both halves for a reason. Requiring an attributed match strands the
- * records that matter most, since a rejection can carry no choice and
- * `resolveEffectivePosturePolicy` never attributes `project-default` at all. But
- * accepting the newest survivor regardless then misreports a later unattributed
- * reconciliation as the operator's outcome — observed on a real run whose history
- * held an attributed `minimize` apply followed by two unattributed ones. So an
- * attribution the Gateway did make is believed over one this client would infer.
- *
- * What this still cannot do: the record carries no decision key, and the Gateway
- * mints the id on this path rather than accepting a caller `operationId`. When
- * nothing is attributed, correlation is positional — the newest new, not-older
- * transition — and a reconciliation from another boundary landing in that window
- * would be picked up. That is why what is reported is the run's posture outcome
- * and never "your choice did this".
- */
-export interface PostureTransitionBaseline {
-  /** Transition ids the client had already seen before the resolution. */
-  knownIds: string[];
-  /**
-   * The newest `requestedAt` among them, when the run had any. Compared only
-   * against other Gateway timestamps.
-   */
-  newestRequestedAt?: string;
-  /** The choice forwarded with the resolution, when one was. */
-  choice?: ResourcePostureGateChoice;
-}
-
-function transitionsOf(state: RunResourcePostureState | undefined): ResourcePostureTransition[] {
-  if (!state) return [];
-  if (state.recentTransitions?.length) return state.recentTransitions;
-  return state.lastTransition ? [state.lastTransition] : [];
-}
-
-export function postureTransitionBaseline(
-  state: RunResourcePostureState | undefined,
-  choice: ResourcePostureGateChoice | undefined,
-): PostureTransitionBaseline {
-  const seen = transitionsOf(state);
-  const newestRequestedAt = seen.reduce<string | undefined>(
-    (newest, transition) =>
-      newest === undefined || transition.requestedAt > newest ? transition.requestedAt : newest,
-    undefined,
-  );
-  return {
-    knownIds: seen.map((transition) => transition.id),
-    ...(newestRequestedAt ? { newestRequestedAt } : {}),
-    ...(choice ? { choice } : {}),
-  };
-}
-
-/**
- * The transition produced by this resolution, or null while none has appeared.
- * Applies the three rules documented on `PostureTransitionBaseline`.
- *
- * `recentTransitions` is newest first, so the first survivor of each kind is the
- * newest one. Verified live: the Gateway returns them newest first, every record
- * carries `requestedAt`, and `lastTransition` is the first entry.
- */
-export function correlatedPostureTransition(
-  baseline: PostureTransitionBaseline,
-  state: RunResourcePostureState | undefined,
-): ResourcePostureTransition | null {
-  const known = new Set(baseline.knownIds);
-  let unattributed: ResourcePostureTransition | null = null;
-  for (const transition of transitionsOf(state)) {
-    if (known.has(transition.id)) continue;
-    if (baseline.newestRequestedAt && transition.requestedAt < baseline.newestRequestedAt) {
-      // Older than everything the client had already seen, so it cannot be the
-      // record this resolution produced however new its id is to us.
-      continue;
-    }
-    if (!transition.gateChoice) {
-      // Kept as the fallback rather than returned: a rejection and a deferred
-      // apply both arrive unattributed, but an attribution the Gateway actually
-      // made is better evidence than this one's position in the list.
-      unattributed ??= transition;
-      continue;
-    }
-    if (baseline.choice && transition.gateChoice !== baseline.choice) continue;
-    return transition;
-  }
-  return unattributed;
-}
-
 export type PostureTransitionObservation =
   | { status: 'observed'; transition: ResourcePostureTransition }
   /** The bounded wait elapsed with no correlated transition. Never a success. */
@@ -519,24 +421,16 @@ export type PostureTransitionObservation =
  * Wait, briefly and finitely, for the Gateway to report this resolution's own
  * posture transition.
  *
- * `run.resolveDecision` returns before reconciliation finishes, so the run it
- * returns still carries the previous transition. Reporting that one would show
- * an old rejection, or miss a failure that had not happened yet. The reader is
- * injected so the rule is testable without a gateway.
- */
-/**
- * Whether the Gateway has finished with this transition.
+ * Which record belongs to this resolution is decided by
+ * `correlateResourcePostureTransition` in `@farmslot/protocol`, where the four
+ * rules and their limits are documented once for every client. This function
+ * owns only rule 4's polling half plus the mobile concern the shared code has no
+ * business knowing about: a backgrounded app.
  *
- * `in-progress` is the one outcome that is not an answer. Returning on it stops
- * the wait before the reconciliation's own failures or rejection are recorded,
- * which reports a half-finished apply as the operator's result.
+ * The reader is injected so the wait is testable without a gateway.
  */
-export function isTerminalPostureOutcome(outcome: ResourcePostureTransitionOutcome): boolean {
-  return outcome !== 'in-progress';
-}
-
 export async function observePostureTransition(
-  baseline: PostureTransitionBaseline,
+  baseline: ResourcePostureTransitionBaseline,
   read: () => Promise<RunResourcePostureState | undefined>,
   options: {
     attempts: number;
@@ -564,10 +458,13 @@ export async function observePostureTransition(
       if (options.isTransient?.(err)) continue;
       return { status: 'unreadable', message: (err as Error).message };
     }
-    const transition = correlatedPostureTransition(baseline, state);
+    const transition = correlateResourcePostureTransition(
+      baseline,
+      resourcePostureTransitions(state),
+    );
     // Keep waiting while the Gateway is still working. The record is the right
     // one; it just does not yet say how it ended.
-    if (transition && isTerminalPostureOutcome(transition.outcome)) {
+    if (transition && isTerminalResourcePostureOutcome(transition.outcome)) {
       return { status: 'observed', transition };
     }
   }

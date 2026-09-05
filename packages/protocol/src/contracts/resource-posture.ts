@@ -354,3 +354,140 @@ export function resourcePostureTransitionFailuresToShow(
     (failure) => !alreadyReported.has(`${failure.capabilityId}\u0000${failure.reason}`),
   );
 }
+
+/**
+ * Outcomes that end a transition. `in-progress` is deliberately absent: it is a
+ * wait, not an answer, and adopting it reports a reconciliation that can still
+ * fail as the operator's result.
+ *
+ * This is an allowlist rather than `!== 'in-progress'` so a new outcome added to
+ * the protocol is treated as non-terminal until it is considered here. The
+ * inverse defaults a new outcome to terminal on whichever client happens to
+ * update last, which is the wrong direction to fail in.
+ */
+export const RESOURCE_POSTURE_TERMINAL_OUTCOMES: readonly ResourcePostureTransitionOutcome[] = [
+  'applied',
+  'idempotent',
+  'partial',
+  'rejected',
+  'failed',
+];
+
+export function isTerminalResourcePostureOutcome(
+  outcome: ResourcePostureTransitionOutcome,
+): boolean {
+  return RESOURCE_POSTURE_TERMINAL_OUTCOMES.includes(outcome);
+}
+
+/** How many status reads a client waits through before reporting reconciliation pending. */
+export const RESOURCE_POSTURE_TRANSITION_POLL_LIMIT = 10;
+
+/**
+ * What a client knew before it sent a resolution, so the answer can be told
+ * apart from what was already there.
+ */
+export interface ResourcePostureTransitionBaseline {
+  /** Transition ids the Gateway had already recorded. */
+  transitionIds: readonly string[];
+  /**
+   * Newest `requestedAt` among those, in the Gateway's own clock. Recency is
+   * compared Gateway-to-Gateway; a client clock never enters the comparison.
+   */
+  newestRequestedAt: string | undefined;
+  /** The gate choice the client forwarded, when it forwarded one. */
+  choice: ResourcePostureGateChoice | null;
+}
+
+/** The records to correlate over, newest first, as the protocol persists them. */
+export function resourcePostureTransitions(
+  state: Pick<RunResourcePostureState, 'recentTransitions' | 'lastTransition'> | undefined,
+): readonly ResourcePostureTransition[] {
+  if (!state) return [];
+  if (state.recentTransitions?.length) return state.recentTransitions;
+  return state.lastTransition ? [state.lastTransition] : [];
+}
+
+export function resourcePostureTransitionBaseline(
+  state: Pick<RunResourcePostureState, 'recentTransitions' | 'lastTransition'> | undefined,
+  choice: ResourcePostureGateChoice | null,
+): ResourcePostureTransitionBaseline {
+  const known = resourcePostureTransitions(state);
+  const newestRequestedAt = known
+    .map((transition) => transition.requestedAt)
+    .filter((requestedAt): requestedAt is string => Boolean(requestedAt))
+    .reduce<string | undefined>(
+      (newest, requestedAt) =>
+        newest === undefined || Date.parse(requestedAt) > Date.parse(newest) ? requestedAt : newest,
+      undefined,
+    );
+  return { transitionIds: known.map((transition) => transition.id), newestRequestedAt, choice };
+}
+
+/**
+ * The transition a resolution actually produced, or `undefined` while the
+ * Gateway has not recorded one yet.
+ *
+ * `run.resolveDecision` returns before posture reconciliation finishes, so the
+ * record on its response is frequently the one from BEFORE the resolution.
+ * Presenting that reports an old outcome as the answer to what the operator just
+ * did. Every client applies these four rules, from this one implementation:
+ *
+ * 1. Novelty. A record whose id was already in the baseline is one the Gateway
+ *    had before the resolution, and is never adopted.
+ * 2. Recency, in Gateway time. A record must not be older than the newest
+ *    `requestedAt` in the baseline. Both sides come from the Gateway, so no
+ *    client clock is involved: anchoring on the client's send moment compares a
+ *    phone or browser clock against the Gateway's, and a skewed client either
+ *    adopts a stale record or rejects the real one forever. Not-older rather
+ *    than strictly-newer, so two reconciliations in the same millisecond are not
+ *    dropped; novelty already excludes the baseline itself. This rule excludes a
+ *    backfilled or out-of-order record; it cannot exclude a genuinely concurrent
+ *    one, which is what rule 3 is for.
+ * 3. Attribution. A record attributed to a different gate choice is excluded. A
+ *    record carrying no `gateChoice` is never excluded on that basis, because
+ *    the Gateway drops `project-default` before it picks a policy source and
+ *    genuine rejections can also arrive without one. Among the survivors, a
+ *    record the Gateway attributed to this choice WINS over an unattributed one;
+ *    an unattributed record is only the fallback. Without that preference a
+ *    concurrent unattributed reconciliation that lands afterwards is newest and
+ *    therefore chosen, which misattributes it.
+ * 4. Terminality is the caller's half: `in-progress` is not an answer, so the
+ *    caller keeps polling until `isTerminalResourcePostureOutcome`, bounded by
+ *    `RESOURCE_POSTURE_TRANSITION_POLL_LIMIT`, and reports the wait on timeout.
+ *
+ * What this still cannot do: the record carries no decision key, and the
+ * resolve path supplies no `operationId` for the Gateway to mint the id from, so
+ * for a record with nothing attributed the correlation is positional. A
+ * concurrent reconciliation from another boundary could in principle be picked
+ * up. Surfaced wording must therefore describe what the run's posture did, never
+ * claim the operator's choice caused it.
+ */
+export function correlateResourcePostureTransition(
+  baseline: ResourcePostureTransitionBaseline,
+  records: readonly ResourcePostureTransition[],
+): ResourcePostureTransition | undefined {
+  const known = new Set(baseline.transitionIds);
+  const oldestAllowed = baseline.newestRequestedAt
+    ? Date.parse(baseline.newestRequestedAt)
+    : undefined;
+  const candidates = records.filter((record) => {
+    if (known.has(record.id)) return false;
+    if (oldestAllowed !== undefined && Number.isFinite(oldestAllowed)) {
+      const requestedAtMs = Date.parse(record.requestedAt);
+      if (!Number.isFinite(requestedAtMs) || requestedAtMs < oldestAllowed) return false;
+    }
+    if (
+      baseline.choice &&
+      record.gateChoice !== undefined &&
+      record.gateChoice !== baseline.choice
+    ) {
+      return false;
+    }
+    return true;
+  });
+  // A match the Gateway actually attributed beats one a client inferred.
+  return (
+    candidates.find((record) => baseline.choice && record.gateChoice === baseline.choice) ??
+    candidates[0]
+  );
+}

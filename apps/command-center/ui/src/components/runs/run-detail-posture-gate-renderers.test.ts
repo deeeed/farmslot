@@ -5,27 +5,22 @@ import {
   RESOURCE_POSTURE_GATE_CHOICES,
   type ResourcePostureCapabilityState,
   type ResourcePosturePlan,
-  type ResourcePostureTransition,
   type Run,
-  type RunResourcePostureState,
 } from '@farmslot/protocol';
 
 import {
   canResolveWithPostureChoice,
-  correlatedPostureTransition,
   gateChoiceHelp,
   gateChoiceLabel,
-  isTerminalPostureOutcome,
   pendingDecisionKey,
-  POSTURE_TRANSITION_POLL_LIMIT,
   postureChoiceBecameInapplicable,
+  postureChoiceForResolve,
   postureChoiceHonored,
   postureChoicesApply,
+  postureChoiceWithheldReason,
   postureGatePreviewLines,
   postureGatePreviewSummary,
   postureResolveBlockReason,
-  postureTransitionBaseline,
-  postureTransitionsOf,
   RUN_POSTURE_GATE_CHOICES,
 } from './run-detail-posture-gate-renderers.js';
 
@@ -37,17 +32,6 @@ function capability(capabilityId: string, reason: string): ResourcePostureCapabi
     policySource: 'gate-choice',
     reason,
     releaseEffects: [],
-  };
-}
-
-/** Minimal persisted posture state, for building correlation baselines. */
-function postureState(): RunResourcePostureState {
-  return {
-    posture: 'operator-wait',
-    policySource: 'framework-default',
-    workerRetained: true,
-    capabilities: [],
-    updatedAt: '2026-09-05T12:00:00.000Z',
   };
 }
 
@@ -375,139 +359,51 @@ test('a held choice is dropped once the Gateway moves the run out of operator-wa
   );
 });
 
-test("an apply outcome is adopted only once it is demonstrably this resolution's", () => {
-  const transition = (
-    id: string,
-    requestedAt: string,
-    overrides: Partial<ResourcePostureTransition> = {},
-  ): ResourcePostureTransition => ({
-    id,
-    posture: 'operator-wait',
-    policySource: 'framework-default',
-    requestedAt,
-    outcome: 'applied',
-    effects: [],
-    progress: { total: 1, completed: 1 },
-    failures: [],
-    ...overrides,
-  });
-  const baseline = transition('op-0', '2026-09-05T12:00:00.000Z');
-  const observation = postureTransitionBaseline(
-    { ...postureState(), recentTransitions: [baseline], lastTransition: baseline },
-    'minimize',
+test('a choice is forwarded only where the Gateway would honour it', () => {
+  const refused = {
+    choice: 'free-slot',
+    status: 'ready',
+    plan: plan({
+      posture: 'parked',
+      rejection: { kind: 'park-ineligible', code: 'STATUS_NOT_ELIGIBLE', reason: 'not eligible' },
+    }),
+  } as const;
+
+  // At the wait the operator can see and clear the refusal, so the block guards
+  // it and the choice is still what would be sent.
+  assert.equal(postureChoiceForResolve({ ...refused, runPosture: 'operator-wait' }), 'free-slot');
+  assert.equal(canResolveWithPostureChoice({ ...refused, runPosture: 'operator-wait' }), false);
+
+  // Posture unread after a failed status refresh: the panel is hidden and the
+  // block lifts, so the forwarding guard is the only thing standing between a
+  // refused choice and a consumed decision.
+  assert.equal(postureChoiceForResolve({ ...refused, runPosture: undefined }), undefined);
+  assert.equal(canResolveWithPostureChoice({ ...refused, runPosture: undefined }), true);
+  assert.match(
+    postureChoiceWithheldReason({ ...refused, runPosture: undefined }) ?? '',
+    /posture is unknown.*withheld/i,
   );
 
-  // 1. Novelty: a record the Gateway already had is not this resolution's.
-  assert.equal(correlatedPostureTransition(observation, [baseline]), undefined);
-  assert.equal(correlatedPostureTransition(observation, []), undefined);
-
-  // 2. Recency, in Gateway time: a backfilled record older than the baseline's
-  //    newest is excluded even though its id is new.
-  assert.equal(
-    correlatedPostureTransition(observation, [transition('op-9', '2026-09-05T11:59:59.000Z')]),
-    undefined,
-  );
-  // Same millisecond as the baseline is kept: novelty already excluded the
-  // baseline itself, so dropping a tie would lose a real record.
-  const tie = transition('op-8', '2026-09-05T12:00:00.000Z');
-  assert.deepEqual(correlatedPostureTransition(observation, [tie]), tie);
-
-  // 3. Attribution: another choice's record is excluded outright.
-  assert.equal(
-    correlatedPostureTransition(observation, [
-      transition('op-2', '2026-09-05T12:00:02.000Z', { gateChoice: 'keep-for-validation' }),
-    ]),
-    undefined,
-  );
-});
-
-test('an attributed transition beats an unattributed one that merely landed later', () => {
-  // This is the real history of run 35c0428c read back off the dev gateway,
-  // newest first, with the oldest record as the baseline and `minimize`
-  // forwarded. Taking the newest survivor returns posture-d193d148, an
-  // unattributed reconciliation that landed after the operator's. The record the
-  // Gateway actually attributed to minimize is two rows further down.
-  const at = (
-    id: string,
-    requestedAt: string,
-    gateChoice?: 'minimize',
-  ): ResourcePostureTransition =>
-    ({
-      id,
-      posture: 'operator-wait',
-      policySource: gateChoice ? 'gate-choice' : 'framework-default',
-      requestedAt,
-      outcome: gateChoice ? 'idempotent' : 'applied',
-      effects: [],
-      progress: { total: 1, completed: 1 },
-      failures: [],
-      ...(gateChoice ? { gateChoice } : {}),
-    }) as ResourcePostureTransition;
-  const history = [
-    at('posture-d193d148', '2026-09-05T02:58:18.614Z'),
-    at('posture-6c1f2a87', '2026-09-05T02:58:18.022Z'),
-    at('posture-1e08ef03', '2026-09-05T02:58:17.547Z', 'minimize'),
-    at('posture-cbf380af', '2026-09-05T02:58:15.438Z'),
-  ];
-  const observation = postureTransitionBaseline(
-    { ...postureState(), recentTransitions: [history[3]], lastTransition: history[3] },
-    'minimize',
-  );
-
-  const chosen = correlatedPostureTransition(observation, history);
-  assert.equal(chosen?.id, 'posture-1e08ef03');
-  assert.equal(chosen?.gateChoice, 'minimize');
-
-  // With nothing attributed, the newest survivor is the honest fallback: a
-  // rejection carrying no choice, and a deferred project-default, both rely on it.
-  const unattributed = correlatedPostureTransition(observation, [history[0], history[1]]);
-  assert.equal(unattributed?.id, 'posture-d193d148');
-  const deferred = postureTransitionBaseline(
-    { ...postureState(), recentTransitions: [history[3]], lastTransition: history[3] },
-    'project-default',
-  );
-  // project-default is never attributed, so it takes the fallback and is not
-  // excluded by another choice's record sitting in the same window.
-  assert.equal(correlatedPostureTransition(deferred, history)?.id, 'posture-d193d148');
-});
-
-test('in-progress is a wait, not an outcome, and every terminal outcome ends the wait', () => {
-  // Adopting `in-progress` would report a reconciliation that can still fail as
-  // the operator's result, which is what the bounded observation exists to stop.
-  assert.equal(isTerminalPostureOutcome('in-progress'), false);
-  for (const outcome of ['applied', 'idempotent', 'partial', 'rejected', 'failed'] as const) {
-    assert.equal(isTerminalPostureOutcome(outcome), true, `${outcome} ends the wait`);
+  // The run left the wait: same rule, different wording.
+  for (const runPosture of ['active', 'terminal', 'parked'] as const) {
+    assert.equal(postureChoiceForResolve({ ...refused, runPosture }), undefined);
+    assert.match(
+      postureChoiceWithheldReason({ ...refused, runPosture }) ?? '',
+      /no longer at an operator wait.*withheld/i,
+    );
   }
-  // Bounded, so a Gateway that never finishes is reported pending, not polled forever.
-  assert.ok(POSTURE_TRANSITION_POLL_LIMIT > 0 && POSTURE_TRANSITION_POLL_LIMIT <= 20);
-});
 
-test('the baseline reads the persisted history, newest first, and falls back to lastTransition', () => {
-  const one = {
-    id: 'op-a',
-    posture: 'operator-wait',
-    policySource: 'framework-default',
-    requestedAt: '2026-09-05T12:00:00.000Z',
-    outcome: 'applied',
-    effects: [],
-    progress: { total: 1, completed: 1 },
-    failures: [],
-  } as ResourcePostureTransition;
-  const two = { ...one, id: 'op-b', requestedAt: '2026-09-05T12:00:05.000Z' };
-  // The protocol persists recentTransitions newest first.
-  const baseline = postureTransitionBaseline(
-    { ...postureState(), recentTransitions: [two, one], lastTransition: two },
+  // Nothing selected, nothing withheld and nothing to forward.
+  assert.equal(
+    postureChoiceForResolve({ choice: null, status: 'idle', runPosture: 'operator-wait' }),
+    undefined,
+  );
+  assert.equal(
+    postureChoiceWithheldReason({ choice: null, status: 'idle', runPosture: undefined }),
     null,
   );
-  assert.deepEqual([...baseline.baselineTransitionIds], ['op-b', 'op-a']);
-  assert.equal(baseline.baselineNewestRequestedAt, '2026-09-05T12:00:05.000Z');
-
-  // A run with no history yet anchors on nothing, so any record qualifies.
-  const empty = postureTransitionBaseline(undefined, null);
-  assert.deepEqual([...empty.baselineTransitionIds], []);
-  assert.equal(empty.baselineNewestRequestedAt, undefined);
-  assert.deepEqual(correlatedPostureTransition(empty, [one]), one);
-
-  // Older clients may send only lastTransition; it is still a baseline.
-  assert.deepEqual(postureTransitionsOf({ ...postureState(), lastTransition: one }), [one]);
+  // An honoured choice at a wait is forwarded and nothing is withheld.
+  const honoured = { choice: 'minimize', status: 'ready', runPosture: 'operator-wait' } as const;
+  assert.equal(postureChoiceForResolve(honoured), 'minimize');
+  assert.equal(postureChoiceWithheldReason(honoured), null);
 });

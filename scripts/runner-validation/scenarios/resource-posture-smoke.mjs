@@ -32,6 +32,13 @@ export const RUNNER_AGNOSTIC = true;
  */
 const CAPABILITY_ID = 'sandbox-gateway-ui';
 
+/**
+ * Any CSI escape, not only the SGR colour ones. A pty also emits erase-line
+ * (`ESC [ K`) and cursor moves, which survived an SGR-only strip and landed in
+ * the recorded evidence.
+ */
+const ANSI_CSI = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+
 /** Booting a simulator plus Metro is minutes, not seconds. */
 const SLOW_RPC_TIMEOUT_MS = 480_000;
 
@@ -476,10 +483,7 @@ function assertCliPostureSurface({ runId, capabilityId }) {
     // never prints an observed stop while the provider is running.
     const humanRun = cliHuman(['resource', 'posture', 'status', runId]);
     // Strip the SGR colour codes the pty enables so the lines can be matched.
-    const humanLines = humanRun.stdout
-      .replace(/\u001b\[[0-9;]*m/g, '')
-      .replace(/\r/g, '')
-      .split('\n');
+    const humanLines = humanRun.stdout.replace(ANSI_CSI, '').replace(/\r/g, '').split('\n');
     // This capability's block: its headline plus the indented detail lines under
     // it, which carry the reason and policy source without repeating the id.
     // Scoping matters because a whole-output match lets another capability's row
@@ -677,7 +681,7 @@ function assertCliRelease({ slotId, runId }) {
     // assertions about those rows passed without ever reading one.
     acquire();
     const releasedHuman = cliHuman(releaseArgs);
-    const releasedLines = releasedHuman.stdout.replace(/\u001b\[[0-9;]*m/g, '').replace(/\r/g, '');
+    const releasedLines = releasedHuman.stdout.replace(ANSI_CSI, '').replace(/\r/g, '');
     const releasedRow = releasedLines
       .split('\n')
       .find((line) => line.includes(RELEASE_CAPABILITY) && line.includes('provider='));
@@ -785,9 +789,7 @@ function assertCliReleaseRetained({ slotId, runId, dependencyPair }) {
         '--capability',
         dependencyPair.dependency,
       ]);
-      const retainedLines = retainedHuman.stdout
-        .replace(/\u001b\[[0-9;]*m/g, '')
-        .replace(/\r/g, '');
+      const retainedLines = retainedHuman.stdout.replace(ANSI_CSI, '').replace(/\r/g, '');
       proof.retained.humanSample = retainedLines
         .split('\n')
         .filter((line) => line.includes(dependencyPair.dependency))

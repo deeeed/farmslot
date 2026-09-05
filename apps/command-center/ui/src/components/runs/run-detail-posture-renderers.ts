@@ -240,7 +240,62 @@ const POSTURE_STYLES = html`
  * Posture summary for Run Detail. Rendered next to the pipeline so the operator
  * reads "what this run is holding" beside "where this run is".
  */
-export function renderRunPostureSummary(state: RunPostureStatusState): unknown {
+/**
+ * What a just-resolved resolution produced, carried by the persistent summary.
+ *
+ * The gate panel disappears the moment the decision resolves, so a notice living
+ * inside it is unreadable exactly when the operator wants it. The summary
+ * otherwise renders only the run's latest transition, which is not necessarily
+ * the correlated one, so the observation is passed in rather than re-derived.
+ */
+export interface RunPostureResolutionState {
+  /** The transition correlated to the operator's resolution, once terminal. */
+  appliedTransition?: ResourcePostureTransition;
+  /** The Gateway has not recorded a terminal outcome for it yet. */
+  reconciliationPending?: boolean;
+}
+
+export function renderRunPostureResolution(state: RunPostureResolutionState): unknown {
+  if (state.reconciliationPending) {
+    return html`<div class="posture-transition" data-testid="run-posture-reconciliation-pending">
+      The Gateway has not finished reconciling your last resolution, so its outcome is not known
+      yet.
+    </div>`;
+  }
+  const transition = state.appliedTransition;
+  if (!transition) return nothing;
+  return html`
+    <div class="posture-transition" data-testid="run-posture-resolution">
+      Your last resolution: ${postureLabel(transition.posture)} ·
+      ${transitionOutcomeLabel(transition.outcome)} ·
+      ${transition.completedAt ?? transition.requestedAt}
+    </div>
+    ${transition.rejection
+      ? html`<div
+          class="posture-failure"
+          role="alert"
+          data-testid="run-posture-resolution-rejection"
+        >
+          ${rejectionMessage(transition.rejection)}
+        </div>`
+      : nothing}
+    ${transition.failures.map(
+      (failure) =>
+        html`<div
+          class="posture-failure"
+          role="alert"
+          data-testid="run-posture-resolution-failure-${failure.capabilityId}"
+        >
+          ${failure.capabilityId}: ${failure.reason}
+        </div>`,
+    )}
+  `;
+}
+
+export function renderRunPostureSummary(
+  state: RunPostureStatusState,
+  resolution: RunPostureResolutionState = {},
+): unknown {
   if (state.status === 'idle') return nothing;
   if (state.status === 'loading' && !state.state) {
     return html`${POSTURE_STYLES}
@@ -294,6 +349,7 @@ export function renderRunPostureSummary(state: RunPostureStatusState): unknown {
           >worker ${summary.workerRetained ? 'retained' : 'stopped'}</span
         >
       </div>
+      ${renderRunPostureResolution(resolution)}
       ${transition
         ? html`
             <div class="posture-transition" data-testid="run-posture-transition">

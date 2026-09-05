@@ -11,7 +11,9 @@ import {
   Events,
   Methods,
   type RecipeRunArtifactGroup,
+  RESOURCE_POSTURE_TRANSITION_POLL_LIMIT,
   type ResourcePostureGateChoice,
+  resourcePostureTransitionBaseline,
   reviewChainForRun,
   type Run,
   type RunGetResult,
@@ -50,7 +52,6 @@ import {
   postureChoiceForResolve,
   postureGateKey,
   postureResolveBlock,
-  postureTransitionBaseline,
   runPostureGateApplied,
   runPostureGateForContext,
   runPostureGatePreviewFailed,
@@ -111,8 +112,8 @@ const TONE_COLORS = {
   info: colors.accent,
 } as const;
 
-/** Bounded wait for the Gateway to report a resolution's own posture transition. */
-const POSTURE_APPLY_POLL_ATTEMPTS = 10;
+/** The shared poll bound; the interval is this client's own pacing. */
+const POSTURE_APPLY_POLL_ATTEMPTS = RESOURCE_POSTURE_TRANSITION_POLL_LIMIT;
 const POSTURE_APPLY_POLL_DELAY_MS = 600;
 
 type DecisionSectionKey = 'signals' | 'evidence' | 'reports' | 'progress' | 'terminal' | 'actions';
@@ -531,7 +532,10 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
       // reconciliation finishes, so the run it returns still carries the previous
       // transition; anything already in this baseline is not this resolution's
       // outcome and must never be reported as one.
-      const baseline = postureTransitionBaseline(runPostureStatus.state, resourcePosture);
+      const baseline = resourcePostureTransitionBaseline(
+        runPostureStatus.state,
+        resourcePosture ?? null,
+      );
 
       Alert.alert('Confirm action', `Send "${actionId}" for ${decision.title}?`, [
         { text: 'Cancel', style: 'cancel' },

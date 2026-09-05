@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-05T04:05:55.496Z",
+  "recordedAt": "2026-09-05T04:49:54.096Z",
   "host": "macwork",
   "scenario": "resource-posture-smoke",
   "runner": "scripted",
   "slotId": "macpro-ff-1",
   "capabilityId": "sandbox-gateway-ui",
-  "runId": "3930bca7-b6e3-4604-834a-94122f6365ca",
+  "runId": "939af7fc-120c-434b-9b4e-455c9a42a50a",
   "project": "farmslot-farm",
   "acquire": {
     "ok": true,
@@ -31,12 +31,12 @@
     "observedState": "running",
     "policySource": "project-default",
     "reason": "provider retention 'retain' at operator-wait",
-    "leaseId": "cap-de345f06-d298-4b86-9daa-9be3fd8356a7",
+    "leaseId": "cap-837da9ed-97e7-4aa1-81d3-c903ffcce89f",
     "owner": {
-      "runId": "3930bca7-b6e3-4604-834a-94122f6365ca",
-      "familyId": "3930bca7-b6e3-4604-834a-94122f6365ca"
+      "runId": "939af7fc-120c-434b-9b4e-455c9a42a50a",
+      "familyId": "939af7fc-120c-434b-9b4e-455c9a42a50a"
     },
-    "lastTransitionAt": "2026-09-05T04:05:10.410Z",
+    "lastTransitionAt": "2026-09-05T04:49:16.823Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -57,12 +57,12 @@
     "observedState": "stopped",
     "policySource": "project-default",
     "reason": "provider retention 'stop' at terminal",
-    "leaseId": "cap-de345f06-d298-4b86-9daa-9be3fd8356a7",
+    "leaseId": "cap-837da9ed-97e7-4aa1-81d3-c903ffcce89f",
     "owner": {
-      "runId": "3930bca7-b6e3-4604-834a-94122f6365ca",
-      "familyId": "3930bca7-b6e3-4604-834a-94122f6365ca"
+      "runId": "939af7fc-120c-434b-9b4e-455c9a42a50a",
+      "familyId": "939af7fc-120c-434b-9b4e-455c9a42a50a"
     },
-    "lastTransitionAt": "2026-09-05T04:05:50.079Z",
+    "lastTransitionAt": "2026-09-05T04:49:50.766Z",
     "releaseEffects": [
       "Gateway/UI capability ownership is removed",
       "The slot lifecycle retains the control-plane process until slot teardown"
@@ -113,7 +113,7 @@
         "errorCode": "RUNTIME_CAPABILITY_RELEASE_RETAINED",
         "retained": ["companion-metro"],
         "released": [],
-        "humanSample": "\u001b[KRelease capability  slot=macpro-ff-1  run=3930bca7-b6e3-4604-834a-94122f6365ca  capability=companion-metro |   companion-metro  lease=cap-d4cdc827-d3e7-463a-8ee6-5945453293c5  retained  provider=running | Error: Retained 1 lease(s) that something else still needs: companion-metro. | Next: Release whatever still depends on companion-metro first; `farmslot resource posture status 3930bca7-b6e3-4604-834a-94122f6365ca` names what is holding it."
+        "humanSample": "Release capability  slot=macpro-ff-1  run=939af7fc-120c-434b-9b4e-455c9a42a50a  capability=companion-metro |   companion-metro  lease=cap-f72eea2e-65fc-4fef-84e8-ae4eef49a838  retained  provider=running | Error: Retained 1 lease(s) that something else still needs: companion-metro. | Next: Release whatever still depends on companion-metro first; `farmslot resource posture status 939af7fc-120c-434b-9b4e-455c9a42a50a` names what is holding it."
       }
     },
     "waitStates": [
@@ -130,7 +130,7 @@
         "policySource": "project-default"
       }
     ],
-    "preparedAt": "2026-09-05T04:05:34.228Z",
+    "preparedAt": "2026-09-05T04:49:34.168Z",
     "terminalStates": [
       {
         "capabilityId": "ios-simulator",
@@ -148,21 +148,21 @@
   "familyProof": {
     "attempted": true,
     "pass": true,
-    "runId": "00d92e14-e380-458c-bd97-f9f4dc2d8b41",
+    "runId": "65780fae-3d01-4f46-9c77-f9675bce017d",
     "error": null,
-    "familyId": "3930bca7-b6e3-4604-834a-94122f6365ca",
+    "familyId": "939af7fc-120c-434b-9b4e-455c9a42a50a",
     "siblingStatusBeforeAcquire": "blocked",
     "siblingSlotId": null,
     "derivedAcquire": {
       "ok": true,
-      "familyId": "3930bca7-b6e3-4604-834a-94122f6365ca",
+      "familyId": "939af7fc-120c-434b-9b4e-455c9a42a50a",
       "reason": null
     },
-    "derivedLeaseId": "cap-780b39ee-c73e-410c-bdb5-85c12d9f9620",
+    "derivedLeaseId": "cap-56998056-b4f7-49df-bf8b-f1bcce90b2d5",
     "mismatchAcquire": {
       "ok": false,
       "kind": "invalid-request",
-      "reason": "ownerFamilyId '3930bca7-b6e3-4604-834a-94122f6365ca-not-really' does not match the family of run '00d92e14-e380-458c-bd97-f9f4dc2d8b41' ('3930bca7-b6e3-4604-834a-94122f6365ca')"
+      "reason": "ownerFamilyId '939af7fc-120c-434b-9b4e-455c9a42a50a-not-really' does not match the family of run '65780fae-3d01-4f46-9c77-f9675bce017d' ('939af7fc-120c-434b-9b4e-455c9a42a50a')"
     },
     "leasesAfterMismatch": 1,
     "siblingLeasesAfterTerminal": [
@@ -173,7 +173,7 @@
     ],
     "fencedAcquire": {
       "ok": false,
-      "reason": "Run '00d92e14-e380-458c-bd97-f9f4dc2d8b41' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
+      "reason": "Run '65780fae-3d01-4f46-9c77-f9675bce017d' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
     },
     "siblingFinalStatus": "cancelled",
     "leftoverLeases": []
@@ -218,7 +218,7 @@
     "pass": true,
     "error": null,
     "released": {
-      "humanRow": "recording  lease=cap-72b5ecca-6a4e-4339-b0ca-58707620df86  released  provider=unknown",
+      "humanRow": "recording  lease=cap-b44b3878-0920-4328-9cca-aba2596634e3  released  provider=unknown",
       "requestLine": "keep-warm requested: no",
       "exit": 0,
       "envelopeStatus": "ok",
@@ -240,7 +240,7 @@
   "leftoverLeases": [],
   "pass": true,
   "error": null,
-  "familyId": "3930bca7-b6e3-4604-834a-94122f6365ca",
+  "familyId": "939af7fc-120c-434b-9b4e-455c9a42a50a",
   "terminalRepeatOutcome": "idempotent",
   "cancelEffects": [
     {
