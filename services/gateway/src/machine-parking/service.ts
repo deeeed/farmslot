@@ -2143,6 +2143,9 @@ export class MachineParkingService {
         // so it is acknowledged with an UNCHANGED generation by design. Demanding
         // an advance there would reject the very restore this branch exists to
         // allow, after the reload had already landed.
+        // `gateParkHold` re-drives nothing and must NOT advance; every other
+        // shape, including a gate whose loop had exited and was replayed, takes
+        // ownership and must.
         const generationAdvanced = resumeAcknowledgement.gateParkHold
           ? resumeAcknowledgement.generation === resumeAcknowledgement.previousGeneration
           : resumeAcknowledgement.generation > resumeAcknowledgement.previousGeneration;
@@ -2158,6 +2161,24 @@ export class MachineParkingService {
         await this.appendError(runId, 'orchestration-resuming', 'run.resume', error);
         const generation = this.requireRun(runId).engineState?.generation ?? record.generation;
         await this.patchRecord(runId, (current) => ({ ...current, generation }));
+      }
+    }
+    // A park that detached and then failed to roll back leaves the branch out of
+    // the working tree. Restoring on top of that would report success over a
+    // workspace the run cannot use, and lift the fence while the detach is still
+    // outstanding. Retry the reattach and PROVE it landed before settling.
+    if (!failed && this.requireRun(runId).park?.preservedWorkspace?.detachedAt) {
+      await this.rollBackDetachedWorkspace(runId);
+      if (this.requireRun(runId).park?.preservedWorkspace?.detachedAt) {
+        failed = true;
+        await this.appendError(
+          runId,
+          'orchestration-resuming',
+          'workspace.reattach',
+          new Error(
+            'the parked branch is still detached; restore cannot complete until it is back in the working tree',
+          ),
+        );
       }
     }
     const latest = this.requireRun(runId);

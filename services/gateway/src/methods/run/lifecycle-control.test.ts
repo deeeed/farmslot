@@ -576,6 +576,9 @@ test('locked resume awaits matching generation and step acknowledgement', async 
       nudgeMonitor: async () => {
         nudges += 1;
       },
+      replayGate: async () => {
+        throw new Error('no gate replay expected');
+      },
       redrive: async (runId, generation) => ({
         runId,
         generation,
@@ -620,6 +623,9 @@ test('resume rejects an operator-held interactive completion', async (t) => {
           nudgeMonitor: async () => {
             throw new Error('must not nudge an operator-held worker');
           },
+          replayGate: async () => {
+            throw new Error('no gate replay expected');
+          },
           redrive: async () => {
             throw new Error('must not redrive an operator-held monitor');
           },
@@ -642,6 +648,9 @@ test('release restore suppresses the ordinary monitor resume nudge', async (t) =
     {
       nudgeMonitor: async () => {
         nudges += 1;
+      },
+      replayGate: async () => {
+        throw new Error('no gate replay expected');
       },
       redrive: async (runId, generation) => ({
         runId,
@@ -666,6 +675,9 @@ test('resume failure re-parks the run while preserving monotonic generation fenc
         { suppressMonitorNudge: true, machineParkingRestore: true },
         {
           nudgeMonitor: async () => {},
+          replayGate: async () => {
+            throw new Error('no gate replay expected');
+          },
           redrive: async () => {
             throw new Error('engine restart failed');
           },
@@ -939,6 +951,9 @@ test('a machine restore resumes a gate park without requiring paused or a monito
       nudgeMonitor: async () => {
         throw new Error('a gate park has no monitor loop to nudge');
       },
+      replayGate: async () => {
+        throw new Error('no gate replay expected');
+      },
       redrive: async () => {
         redrives += 1;
         throw new Error('a gate park re-drives nothing');
@@ -972,11 +987,121 @@ test('an ordinary resume still refuses a run that is not paused', async (t) => {
       { machineParkingRestore: true },
       {
         nudgeMonitor: async () => {},
+        replayGate: async () => {
+          throw new Error('no gate replay expected');
+        },
         redrive: async () => {
           throw new Error('unreachable');
         },
       },
     ),
     /is not paused \(status=human-gating\)/,
+  );
+});
+
+test('a gate park whose loop already exited is restored by replaying the gate', async (t) => {
+  const run = gateParkedRun(`PROJ-${Date.now()}-gate-park-replay`);
+  t.after(() => cleanupRun(run.id));
+  // The shape the ready-gate fence leaves behind when resolution races parking:
+  // the gate step is done, the rest skipped, and nothing is running.
+  updateRun(run.id, {
+    status: 'blocked',
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'done' },
+      { name: 'finalize', status: 'skipped' },
+    ],
+  });
+  const replays: Array<{ runId: string; stepName: string }> = [];
+
+  const result = await runResumeTransitionLocked(
+    { runId: run.id },
+    () => {},
+    { machineParkingRestore: true },
+    {
+      nudgeMonitor: async () => {
+        throw new Error('a gate park has no monitor loop to nudge');
+      },
+      redrive: async () => {
+        throw new Error('the gate replay owns this, not the monitor re-drive');
+      },
+      replayGate: async (runId, stepName) => {
+        replays.push({ runId, stepName });
+        // The replay takes ownership, which is what advances the generation.
+        updateRun(runId, {
+          engineState: { ...getRun(runId)!.engineState, generation: 4 },
+          steps: getRun(runId)!.steps.map((step) =>
+            step.name === stepName ? { ...step, status: 'running' as const } : step,
+          ),
+        });
+      },
+    },
+  );
+
+  // Before this branch, restore threw "no running step" AFTER reloading the
+  // worker, leaving the run stranded with the fence up.
+  assert.deepEqual(replays, [{ runId: run.id, stepName: 'human-gate' }]);
+  assert.equal(result.gateParkReplayed, true);
+  assert.equal(result.gateParkHold, undefined);
+  assert.equal(result.stepName, 'human-gate');
+  // The generation MUST advance here: there is no live loop left to fence out,
+  // and the replay has to own the step it just re-armed.
+  assert.equal(result.previousGeneration, 3);
+  assert.equal(result.generation, 4);
+});
+
+test('a gate park restore refuses when the replay does not take ownership', async (t) => {
+  const run = gateParkedRun(`PROJ-${Date.now()}-gate-park-replay-noop`);
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'done' },
+    ],
+  });
+
+  await assert.rejects(
+    runResumeTransitionLocked(
+      { runId: run.id },
+      () => {},
+      { machineParkingRestore: true },
+      {
+        nudgeMonitor: async () => {},
+        redrive: async () => {
+          throw new Error('unreachable');
+        },
+        // A replay that silently does nothing must not be reported as a restore.
+        replayGate: async () => {},
+      },
+    ),
+    /gate replay did not take ownership/,
+  );
+});
+
+test('a gate park with neither a running step nor a settled recorded step is refused', async (t) => {
+  const run = gateParkedRun(`PROJ-${Date.now()}-gate-park-no-step`);
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    steps: [{ name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } }],
+  });
+
+  await assert.rejects(
+    runResumeTransitionLocked(
+      { runId: run.id },
+      () => {},
+      { machineParkingRestore: true },
+      {
+        nudgeMonitor: async () => {},
+        redrive: async () => {
+          throw new Error('unreachable');
+        },
+        replayGate: async () => {
+          throw new Error('nothing to replay');
+        },
+      },
+    ),
+    /no running step and no settled 'human-gate' step/,
   );
 });

@@ -496,7 +496,7 @@ test('a detached slot scores stale unless a park record claims it', () => {
 
   // A park record whose recorded tip is what the slot is sitting on: the branch
   // ref survives there, so the slot is genuinely dispatchable.
-  const claimed = new Map([['slot-detached', { runId: 'run-parked', headSha: PARKED_HEAD }]]);
+  const claimed = new Map([['slot-detached', [{ runId: 'run-parked', headSha: PARKED_HEAD }]]]);
   assert.equal(isDispatchStaleBranch(detached, undefined, claimed), false);
   assert.equal(slotScore(detached, undefined, { parkPreservedSlotIds: claimed }), 0);
 
@@ -505,7 +505,7 @@ test('a detached slot scores stale unless a park record claims it', () => {
     isDispatchStaleBranch(
       detached,
       undefined,
-      new Map([['other-slot', { runId: 'run-parked', headSha: PARKED_HEAD }]]),
+      new Map([['other-slot', [{ runId: 'run-parked', headSha: PARKED_HEAD }]]]),
     ),
     true,
   );
@@ -516,7 +516,7 @@ test('a stale park record does not excuse an unrelated detached checkout', () =>
   // its own detached commits behind. The park record still names the slot, but
   // the commits sitting there now are nobody's accounted-for work.
   const moved = slot({ slot: 'slot-detached', branch: 'HEAD', headSha: 'sha-successor-left-this' });
-  const claimed = new Map([['slot-detached', { runId: 'run-parked', headSha: PARKED_HEAD }]]);
+  const claimed = new Map([['slot-detached', [{ runId: 'run-parked', headSha: PARKED_HEAD }]]]);
 
   assert.equal(
     isDispatchStaleBranch(moved, undefined, claimed),
@@ -590,13 +590,13 @@ test('parkPreservedSlotIds lists only slots whose detach actually landed', () =>
   ] as never);
 
   assert.deepEqual([...ids.keys()], ['landed']);
-  assert.deepEqual(ids.get('landed'), { runId: 'a', headSha: 'sha-a' });
+  assert.deepEqual(ids.get('landed'), [{ runId: 'a', headSha: 'sha-a' }]);
 });
 
 test('findBestSlot ranks a park-preserved slot the same way slotScore does', () => {
   const detached = slot({ slot: 'slot-detached', branch: 'HEAD', headSha: PARKED_HEAD });
   const stale = slot({ slot: 'slot-stale', branch: 'feat/leftover' });
-  const claimed = new Map([['slot-detached', { runId: 'run-parked', headSha: PARKED_HEAD }]]);
+  const claimed = new Map([['slot-detached', [{ runId: 'run-parked', headSha: PARKED_HEAD }]]]);
 
   // Without the claim both are stale, so the tie is broken by input order and
   // the detached slot has no advantage.
@@ -612,5 +612,76 @@ test('findBestSlot ranks a park-preserved slot the same way slotScore does', () 
   assert.equal(
     findBestSlot([stale, detached], 'demo-farm', { parkPreservedSlotIds: claimed })?.slot,
     'slot-detached',
+  );
+});
+
+test('every park claim on a slot is kept, so creation order cannot hide the matching one', () => {
+  const detachedAt = '2026-09-05T00:00:00.000Z';
+  const base = {
+    version: 1,
+    operationId: 'op',
+    previewId: 'preview',
+    generation: 1,
+    machine: 'macwork',
+    mode: 'release',
+    phase: 'parked',
+    slotDisposition: 'freed',
+    prePauseStatus: 'blocked',
+    prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+    resourceManifest: { capturedAt: detachedAt, resources: [], capabilityLeases: [] },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped', resources: [] },
+    createdAt: detachedAt,
+    updatedAt: detachedAt,
+  };
+  // Two runs claim the same slot. Run order is creation order, which need not
+  // be parking order — so the CURRENT checkout may match the first claim.
+  const claims = parkPreservedSlotIds([
+    {
+      id: 'run-old',
+      slotId: 'slot-shared',
+      park: {
+        ...base,
+        runId: 'run-old',
+        slotId: 'slot-shared',
+        preservedWorkspace: { branch: 'w/old', headSha: 'sha-old', detachedAt },
+      },
+    },
+    {
+      id: 'run-new',
+      slotId: 'slot-shared',
+      park: {
+        ...base,
+        runId: 'run-new',
+        slotId: 'slot-shared',
+        preservedWorkspace: { branch: 'w/new', headSha: 'sha-new', detachedAt },
+      },
+    },
+  ] as never);
+
+  assert.equal(claims.get('slot-shared')?.length, 2);
+
+  // Either claim matching is enough. Keeping only the last one written made the
+  // earlier claim unmatchable even when it described the actual checkout.
+  for (const headSha of ['sha-old', 'sha-new']) {
+    assert.equal(
+      isDispatchStaleBranch(
+        slot({ slot: 'slot-shared', branch: 'HEAD', headSha }),
+        undefined,
+        claims,
+      ),
+      false,
+      `claim ${headSha} should match`,
+    );
+  }
+  // A third, unrelated commit still scores stale.
+  assert.equal(
+    isDispatchStaleBranch(
+      slot({ slot: 'slot-shared', branch: 'HEAD', headSha: 'sha-unrelated' }),
+      undefined,
+      claims,
+    ),
+    true,
   );
 });

@@ -761,19 +761,54 @@ async function checkLinkedWorktree(vars: SlotVars): Promise<boolean> {
  * thing that distinguishes one detached slot from another — dispatch needs it
  * to tell a park's preserved workspace from unrelated leftover commits.
  */
+/**
+ * One exec that reports both the commit HEAD points at and the branch name,
+ * each on its own labelled line.
+ *
+ * Labelled, not positional: parsing two concatenated `rev-parse` outputs by
+ * line index means an empty first output silently shifts the commit into the
+ * branch field. Labels make a missing value read as missing.
+ */
+export function gitHeadProbeCommand(repo: string): string {
+  return (
+    `{ printf 'sha='; git -C '${repo}' rev-parse HEAD 2>/dev/null; ` +
+    `printf 'ref='; git -C '${repo}' rev-parse --abbrev-ref HEAD 2>/dev/null; } 2>/dev/null`
+  );
+}
+
+export function parseGitHeadProbe(stdout: string): { branch: string; headSha?: string } {
+  let branch = '';
+  let headSha = '';
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('sha=')) headSha = trimmed.slice(4).trim();
+    else if (trimmed.startsWith('ref=')) branch = trimmed.slice(4).trim();
+  }
+  return { branch: branch || '-', ...(headSha ? { headSha } : {}) };
+}
+
+/**
+ * What a branch refresh should write for a slot, or null when nothing moved.
+ *
+ * The COMMIT is part of this, not just the branch. Dispatch's detached-HEAD
+ * exception compares the slot's head against a park's recorded tip, so a
+ * refresh that updated only `branch` left a stale commit in the row and let
+ * unrelated detached work keep answering with the preserved SHA.
+ */
+export function slotHeadRefreshUpdate(
+  current: { branch?: string; headSha?: string },
+  probe: { branch: string; headSha?: string },
+): { branch: string; head_sha: string | null } | null {
+  if (probe.branch === current.branch && probe.headSha === current.headSha) return null;
+  return { branch: probe.branch, head_sha: probe.headSha ?? null };
+}
+
 async function checkBranch(vars: SlotVars): Promise<{ branch: string; headSha?: string }> {
   try {
-    const r = await execOnSlot(
-      vars,
-      `git -C '${vars.remoteRepo}' rev-parse --abbrev-ref HEAD 2>/dev/null; ` +
-        `git -C '${vars.remoteRepo}' rev-parse HEAD 2>/dev/null`,
-      { timeout: SLOT_CHECK_TIMEOUT_MS },
-    );
-    const [branch, headSha] = r.stdout.trim().split('\n');
-    return {
-      branch: branch?.trim() || '-',
-      ...(headSha?.trim() ? { headSha: headSha.trim() } : {}),
-    };
+    const r = await execOnSlot(vars, gitHeadProbeCommand(vars.remoteRepo), {
+      timeout: SLOT_CHECK_TIMEOUT_MS,
+    });
+    return parseGitHeadProbe(r.stdout);
   } catch {
     return { branch: '-' };
   }

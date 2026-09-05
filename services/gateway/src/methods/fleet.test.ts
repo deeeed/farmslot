@@ -13,10 +13,13 @@ import {
   fleetStaleThresholdMs,
   fleetStatus,
   type FleetStatusDeps,
+  gitHeadProbeCommand,
   isFleetCheckedAtStale,
   newestActiveRunForSlot,
+  parseGitHeadProbe,
   preserveClaimedRowsUnknownToProbe,
   reconcileRefreshSlotRowWithActiveRun,
+  slotHeadRefreshUpdate,
 } from './fleet.js';
 
 function makeRefreshRow(overrides: Record<string, unknown> = {}) {
@@ -638,3 +641,64 @@ function fleetSlotFromRow(row: { lifecycle: string; agent: string }): SlotStatus
     agent: row.agent,
   } as unknown as SlotStatus;
 }
+
+// ─── ADR-054 free-slot: the head probe must not confuse its two values ───
+
+test('the git head probe labels its values so a missing one cannot shift the other', () => {
+  assert.deepEqual(parseGitHeadProbe('sha=abc123\nref=wt/ff-1\n'), {
+    branch: 'wt/ff-1',
+    headSha: 'abc123',
+  });
+
+  // The failure the labels exist to prevent: positional parsing of two
+  // concatenated rev-parse outputs turned the commit into the branch name when
+  // the first command printed nothing.
+  assert.deepEqual(parseGitHeadProbe('sha=\nref=wt/ff-1\n'), { branch: 'wt/ff-1' });
+  assert.deepEqual(parseGitHeadProbe('sha=abc123\nref=\n'), { branch: '-', headSha: 'abc123' });
+  assert.deepEqual(parseGitHeadProbe(''), { branch: '-' });
+
+  // A detached checkout reports the literal HEAD, and the commit is what
+  // distinguishes it from any other detached slot.
+  assert.deepEqual(parseGitHeadProbe('sha=deadbeef\nref=HEAD\n'), {
+    branch: 'HEAD',
+    headSha: 'deadbeef',
+  });
+
+  // Order is not assumed either.
+  assert.deepEqual(parseGitHeadProbe('ref=main\nsha=abc\n'), { branch: 'main', headSha: 'abc' });
+});
+
+test('the git head probe command asks for both values in one exec', () => {
+  const cmd = gitHeadProbeCommand('/repo');
+  assert.match(cmd, /sha=/);
+  assert.match(cmd, /ref=/);
+  assert.match(cmd, /rev-parse HEAD/);
+  assert.match(cmd, /rev-parse --abbrev-ref HEAD/);
+});
+
+test('a branch refresh writes the commit too, not just the branch name', () => {
+  // A detached slot keeps reporting the same branch name forever, so a
+  // branch-only comparison sees "no change" while the commit underneath moved.
+  assert.deepEqual(
+    slotHeadRefreshUpdate(
+      { branch: 'HEAD', headSha: 'sha-parked' },
+      { branch: 'HEAD', headSha: 'sha-successor' },
+    ),
+    { branch: 'HEAD', head_sha: 'sha-successor' },
+  );
+  // Genuinely unchanged writes nothing.
+  assert.equal(
+    slotHeadRefreshUpdate({ branch: 'main', headSha: 'abc' }, { branch: 'main', headSha: 'abc' }),
+    null,
+  );
+  // A head the probe could not read clears the stale one rather than keeping it.
+  assert.deepEqual(slotHeadRefreshUpdate({ branch: 'main', headSha: 'abc' }, { branch: 'main' }), {
+    branch: 'main',
+    head_sha: null,
+  });
+  // First refresh after deploy, when the cached row has no commit yet.
+  assert.deepEqual(slotHeadRefreshUpdate({ branch: 'main' }, { branch: 'main', headSha: 'abc' }), {
+    branch: 'main',
+    head_sha: 'abc',
+  });
+});

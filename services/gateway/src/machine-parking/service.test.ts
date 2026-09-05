@@ -2885,3 +2885,93 @@ test('a fenced partial gate park restores end to end and its gate is answerable 
   // bump would only have made a live loop bail.
   assert.equal(after.engineState?.generation, 3);
 });
+
+test('restore refuses to report success while the parked branch is still detached', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // Release refused AND the rollback fails, so the park settles partial with
+  // the branch still out of the working tree.
+  ctx.deps.freeSlotOwnership = async () => false;
+  ctx.deps.reattachParkedWorkspace = async () => {
+    throw new Error('branch moved under us');
+  };
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+  assert.ok(ctx.runs.get('run-gate')!.park!.preservedWorkspace?.detachedAt);
+
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  const restored = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'gate-park-restore-detached',
+  });
+
+  // Reporting ok here would tell the operator the run is back while its
+  // workspace has no branch checked out.
+  assert.equal(restored.ok, false);
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.phase, 'partial');
+  assert.ok(after.park!.errors.some((error) => error.action === 'workspace.reattach'));
+  // The detach is still outstanding, so the fence stays up.
+  assert.ok(after.park!.preservedWorkspace?.detachedAt);
+  assert.equal(isGateParkInFlightOrFreed(after), true);
+});
+
+test('restore retries the reattach and completes once the branch is back', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  ctx.deps.freeSlotOwnership = async () => false;
+  const reattach = ctx.deps.reattachParkedWorkspace;
+  let attempts = 0;
+  ctx.deps.reattachParkedWorkspace = async (run, workspace) => {
+    attempts += 1;
+    // Fails during the park's own rollback, succeeds when restore retries it.
+    if (attempts === 1) throw new Error('transient checkout failure');
+    return reattach(run, workspace);
+  };
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+  assert.ok(ctx.runs.get('run-gate')!.park!.preservedWorkspace?.detachedAt);
+
+  const restorePreview = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  const restored = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: restorePreview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'gate-park-restore-retry',
+  });
+
+  assert.equal(restored.ok, true, JSON.stringify(ctx.runs.get('run-gate')!.park!.errors));
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.phase, 'restored');
+  assert.equal(after.park!.preservedWorkspace?.detachedAt, undefined);
+  assert.equal(ctx.workspaces.get('slot-a')?.branch, 'work/run-gate');
+  assert.equal(isGateParkInFlightOrFreed(after), false);
+});

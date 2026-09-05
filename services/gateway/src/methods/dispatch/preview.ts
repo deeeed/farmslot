@@ -41,6 +41,7 @@ import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
 } from '../../tasks/execution-template-catalog.js';
+import { gitHeadProbeCommand, parseGitHeadProbe, slotHeadRefreshUpdate } from '../fleet.js';
 import { normalizeRunCreateMode } from '../run-create-mode.js';
 
 import {
@@ -657,15 +658,20 @@ export async function refreshBranches(
       const vars = await loadSlotVars(s.slot);
       const action = classifyRefreshSlotAction(s.slot, vars, getNode);
       if (action === 'skip-disconnected') return;
-      const r = await execOnSlot(
-        vars,
-        `git -C '${vars.remoteRepo}' rev-parse --abbrev-ref HEAD 2>/dev/null`,
-        { timeout: BRANCH_REFRESH_TIMEOUT_MS },
-      );
-      const live = r.stdout.trim() || '-';
-      if (live !== s.branch) {
-        s.branch = live;
-        await updateSlotStatus(s.slot, { branch: live });
+      // Refresh the COMMIT alongside the branch. Dispatch's detached-HEAD
+      // exception compares the slot's head against a park's recorded tip, and a
+      // branch-only refresh left a stale commit in the row — so unrelated
+      // detached work could keep answering with the preserved SHA.
+      const r = await execOnSlot(vars, gitHeadProbeCommand(vars.remoteRepo), {
+        timeout: BRANCH_REFRESH_TIMEOUT_MS,
+      });
+      const probe = parseGitHeadProbe(r.stdout);
+      const update = slotHeadRefreshUpdate(s, probe);
+      if (update) {
+        s.branch = update.branch;
+        if (update.head_sha) s.headSha = update.head_sha;
+        else delete s.headSha;
+        await updateSlotStatus(s.slot, update);
       }
       branchRefreshAt.set(s.slot, now);
     } catch (err) {
@@ -1014,9 +1020,9 @@ export async function dispatchPreview(
       requiredPrepareProfile,
       pressureDecisions,
       replaceableWarmSlotIds,
-      // ADR-054: the same exception `dispatchCandidates` applies, so the two
-      // ranking paths cannot disagree about whether a park-preserved slot is
-      // stale — the drift the shared helper exists to prevent.
+      // ADR-054: the same exception `dispatchCandidates` applies. Every
+      // ranking path that has run context passes it, so a park-preserved slot
+      // cannot be stale to one picker and idle to another.
       parkPreservedSlotIds: parkPreservedSlotIds(getAllRuns()),
       ...(params.pressureOverride
         ? { pressureOverrideMachine: params.pressureOverride.machine }
@@ -1078,7 +1084,7 @@ export function resolveDispatchPreviewFromFleet(
     pressureOverrideMachine?: string;
     /** Slots whose detached HEAD a park record preserves. Passed in rather than
      * derived: this function is pure over the slots it is given. */
-    parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace>;
+    parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
   },
 ): DispatchPreviewResult {
   let slotInfo: SlotStatus;

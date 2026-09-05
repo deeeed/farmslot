@@ -172,12 +172,19 @@ export interface ParkPreservedWorkspace {
 
 export function parkPreservedSlotIds(
   runs: ReadonlyArray<Pick<Run, 'id' | 'slotId' | 'park'>>,
-): Map<string, ParkPreservedWorkspace> {
-  const preserved = new Map<string, ParkPreservedWorkspace>();
+): Map<string, ParkPreservedWorkspace[]> {
+  // ALL claims for a slot, not the last one written. Runs are not enumerated in
+  // parking order, so keeping one claim per slot let an older record overwrite
+  // the one that actually matches the checkout — and the exception then failed
+  // for a slot it should have covered.
+  const preserved = new Map<string, ParkPreservedWorkspace[]>();
   for (const run of runs) {
     const workspace = run.park?.preservedWorkspace;
     if (!run.slotId || !workspace?.detachedAt) continue;
-    preserved.set(run.slotId, { runId: run.id, headSha: workspace.headSha });
+    const claims = preserved.get(run.slotId);
+    const claim = { runId: run.id, headSha: workspace.headSha };
+    if (claims) claims.push(claim);
+    else preserved.set(run.slotId, [claim]);
   }
   return preserved;
 }
@@ -185,7 +192,7 @@ export function parkPreservedSlotIds(
 export function isDispatchStaleBranch(
   slot: SlotStatus,
   projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>,
-  parkPreserved?: ReadonlyMap<string, ParkPreservedWorkspace>,
+  parkPreserved?: ReadonlyMap<string, ParkPreservedWorkspace[]>,
 ): boolean {
   // Scoped exception, dispatch only. ADR-054 `free-slot` detaches the parked
   // branch precisely so the next occupant's `git reset --hard` cannot move it,
@@ -201,13 +208,13 @@ export function isDispatchStaleBranch(
   // for itself — either the slot still sits on the exact commit the park
   // detached to, or the slot row still names that park's run as its owner.
   if (slot.branch === DETACHED_HEAD_BRANCH) {
-    const preserved = parkPreserved?.get(slot.slot);
-    if (
-      preserved &&
-      (slot.headSha === preserved.headSha || slot.currentRunId === preserved.runId)
-    ) {
-      return false;
-    }
+    const claims = parkPreserved?.get(slot.slot) ?? [];
+    const matched = claims.some(
+      (claim) =>
+        (slot.headSha !== undefined && slot.headSha === claim.headSha) ||
+        (slot.currentRunId != null && slot.currentRunId === claim.runId),
+    );
+    if (matched) return false;
   }
   return isSlotRefreshStaleBranch(
     slot.branch ?? '',
@@ -226,7 +233,7 @@ export function slotScore(
   options?: {
     familyId?: string | null;
     projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
-    parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace>;
+    parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
   },
 ): number {
   let score = 0;
@@ -307,7 +314,7 @@ export function findBestSlot(
      * Automatic selection never lands a new dispatch on them. */
     pressureRejectedMachines?: ReadonlySet<string>;
     /** Slots whose detached HEAD a park record preserves; see `slotScore`. */
-    parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace>;
+    parkPreservedSlotIds?: ReadonlyMap<string, ParkPreservedWorkspace[]>;
   },
 ): SlotStatus | null {
   const allow =
