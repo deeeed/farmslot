@@ -178,8 +178,8 @@ export interface RunResourcePostureState {
   policySource: ResourcePosturePolicySource;
   gateChoice?: ResourcePostureGateChoice;
   /**
-   * Set by `machine.pause.restore` when it re-presents a gate, and consumed by
-   * the very next wait boundary.
+   * The run generation a `machine.pause.restore` replay took ownership at, when
+   * that restore re-presented a gate whose stored choice would re-park the run.
    *
    * Without it a run whose stored choice is `free-slot` re-parks itself the
    * instant restore re-presents its gate: the replayed gate reaches the
@@ -187,8 +187,14 @@ export interface RunResourcePostureState {
    * parks again before the operator ever sees it. The restored gate therefore
    * falls back to the framework default once; choosing `free-slot` again is
    * still available, it just has to be chosen rather than inherited.
+   *
+   * Keyed on the GENERATION rather than a bare flag so it cannot outlive the
+   * gate it was set for. The replay is fire-and-forget: if it never reaches a
+   * wait boundary, a bare flag would sit on the run and silently swallow the
+   * operator's choice at some unrelated later wait. A generation that has moved
+   * on makes the suppression simply not apply.
    */
-  gateChoiceSuppressedUntilNextWait?: true;
+  gateChoiceSuppressedForGeneration?: number;
   waitPolicy?: ResourcePostureWaitPolicy;
   capabilities: ResourcePostureCapabilityState[];
   /** ADR-038: no posture resolved here stops a gate-held worker. */

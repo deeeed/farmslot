@@ -97,18 +97,19 @@ export async function reconcileRunPosture(
   // that follows it (a gate resolving into a CI watch is one operator decision).
   // A restore that re-presented the gate suppresses that inheritance ONCE, so a
   // stored `free-slot` cannot re-park the run before the operator sees it.
-  const suppressed =
-    isWaitBoundary(request.boundary) &&
-    run?.resourcePosture?.gateChoiceSuppressedUntilNextWait === true;
-  const carried = isWaitBoundary(request.boundary)
-    ? (request.gateChoice ?? (suppressed ? undefined : run?.resourcePosture?.gateChoice))
-    : request.gateChoice;
-  if (suppressed) consumeGateChoiceSuppression(request.runId);
+  //
+  // Resolved INSIDE the reconciler's per-run queue, not here: reading the run
+  // and clearing the suppression is a read-modify-write on `resourcePosture`,
+  // and the reconciler is the only thing that serializes writes to it. Deciding
+  // out here would race a concurrent boundary and could drop the other's write.
+  const carried = isWaitBoundary(request.boundary) ? request.gateChoice : request.gateChoice;
+  const inherit = isWaitBoundary(request.boundary) && request.gateChoice === undefined;
   try {
     const result = await reconciler.apply({
       runId: request.runId,
       posture,
       ...(carried ? { gateChoice: carried } : {}),
+      ...(inherit ? { resolveInheritedGateChoice: consumeInheritedGateChoice } : {}),
       ...(request.proofRequirements ? { proofRequirements: request.proofRequirements } : {}),
       ...(request.operationId ? { operationId: request.operationId } : {}),
     });
@@ -156,14 +157,28 @@ export const GATE_PARK_IN_FLIGHT_BOUNDARY_SKIP =
   'a gate park is in flight for this run; its posture is owned by the park record';
 
 /**
- * Clear the one-shot suppression a restore set. Consumed on use, so the choice
- * the operator makes at the restored gate governs every wait after it.
+ * The gate choice a wait boundary inherits, resolved and consumed inside the
+ * reconciler's per-run queue.
+ *
+ * Returns nothing when a restore suppressed the inheritance for the generation
+ * the run is still on — the restored gate then falls back to the framework
+ * default, so it cannot re-park the run before the operator has seen it. The
+ * suppression is cleared here whether or not it applied: a stale one belonging
+ * to a generation the run has left must not linger.
  */
-function consumeGateChoiceSuppression(runId: string): void {
+export function consumeInheritedGateChoice(runId: string): ResourcePostureGateChoice | undefined {
   const run = getRun(runId);
-  if (!run?.resourcePosture?.gateChoiceSuppressedUntilNextWait) return;
-  const { gateChoiceSuppressedUntilNextWait: _consumed, ...rest } = run.resourcePosture;
+  const posture = run?.resourcePosture;
+  if (!posture) return undefined;
+  const suppressedFor = posture.gateChoiceSuppressedForGeneration;
+  if (suppressedFor === undefined) return posture.gateChoice;
+  const { gateChoiceSuppressedForGeneration: _consumed, ...rest } = posture;
   updateRun(runId, { resourcePosture: rest });
+  // Only the generation it was set for is suppressed; a run that has moved on
+  // inherits normally, because that suppression was for a gate now gone.
+  // `?? 0` matches how every other generation comparison in the engine defaults
+  // a missing engineState, so the two cannot disagree about the same run.
+  return suppressedFor === (run?.engineState?.generation ?? 0) ? undefined : posture.gateChoice;
 }
 
 export type RunPostureReconcileOutcome =

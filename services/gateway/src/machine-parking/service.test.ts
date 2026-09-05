@@ -2620,7 +2620,8 @@ test('recovery concludes a release landed only when the slot row proves it', asy
   );
   ctx.runs.get('run-gate')!.park = {
     ...ctx.runs.get('run-gate')!.park!,
-    phase: 'parked',
+    // An UNSETTLED phase, so reconcile actually re-observes this record.
+    phase: 'resources-stopping',
     slotFreedAt: undefined,
   };
   ctx.slotOwners.set('slot-a', 'run-gate');
@@ -2655,7 +2656,8 @@ test('recovery finishes the transition when the row shows a rival already owns t
   );
   ctx.runs.get('run-gate')!.park = {
     ...ctx.runs.get('run-gate')!.park!,
-    phase: 'parked',
+    // An UNSETTLED phase, so reconcile actually re-observes this record.
+    phase: 'resources-stopping',
     slotFreedAt: undefined,
   };
   // The release DID land before the crash and dispatch handed the slot on.
@@ -3179,5 +3181,92 @@ test('a persistence failure after a replay still leaves the record retryable', a
     retryPreview.runs[0]?.eligibility.eligible,
     true,
     JSON.stringify(retryPreview.runs[0]?.eligibility),
+  );
+});
+
+test('residual observation never throws, so a probe failure cannot erase a settled result', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  // Both probes are unreachable. Residual collection runs on settlement paths,
+  // after an operation has already had its effects, so it must report what it
+  // could observe rather than throwing and erasing that durable result.
+  ctx.deps.runnerRunning = async () => {
+    throw new Error('node unreachable');
+  };
+  ctx.deps.observeResources = async () => {
+    throw new Error('node unreachable');
+  };
+  ctx.runs.get('run-gate')!.park = {
+    ...ctx.runs.get('run-gate')!.park!,
+    // An UNSETTLED phase, so reconcile actually re-observes this record.
+    phase: 'resources-stopping',
+    slotFreedAt: undefined,
+    recoveryHandle: {
+      sessionId: 'session-run-gate',
+      sessionPath: '/sessions/run-gate.jsonl',
+      runnerId: 'claude',
+      target: { session: 'slot-a', window: '0', pane: '0' },
+      model: 'sonnet',
+      capturedAt: '2026-08-21T00:00:00.000Z',
+    } as never,
+  };
+
+  // Reconcile observes residuals for every unsettled record on the machine.
+  await ctx.service.reconcile();
+
+  const after = ctx.runs.get('run-gate')!.park!;
+  // What could not be observed is reported as unknown rather than guessed, and
+  // the reconcile completed instead of throwing.
+  assert.equal(after.residuals.runner, 'unknown');
+  for (const resource of after.residuals.resources) {
+    assert.equal(resource.state, 'unknown');
+  }
+});
+
+test('a pause-path failure never adopts a foreign generation bump', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+  // A pause never advances the run generation itself, so a bump seen here is
+  // FOREIGN — another actor moved the run while it parked. Adopting it would
+  // defeat the GENERATION_CHANGED check for this record's later restore, which
+  // is exactly the drift that check exists to catch.
+  const persistRun = ctx.deps.persistRun;
+  ctx.deps.persistRun = async (run, reason) => {
+    if (reason === 'machine-pause-parked') {
+      const live = ctx.runs.get(run.id)!;
+      live.engineState = { ...live.engineState, generation: 42 };
+      throw new Error('disk full');
+    }
+    return persistRun(run, reason);
+  };
+
+  await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+  });
+
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.engineState?.generation, 42, 'the foreign bump landed on the run');
+  assert.equal(
+    after.park!.generation,
+    3,
+    'the record keeps the generation it parked at, so the drift is still visible',
   );
 });

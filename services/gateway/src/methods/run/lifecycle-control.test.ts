@@ -1180,14 +1180,6 @@ test('a restore suppresses an inherited free-slot choice for the gate it re-pres
         throw new Error('unreachable');
       },
       replayGate: async (runId, stepName) => {
-        // Set INSIDE the replay's view: the boundary the replayed gate reaches
-        // must already see the suppression, or the run re-parks before the
-        // operator sees the gate.
-        assert.equal(
-          getRun(runId)!.resourcePosture?.gateChoiceSuppressedUntilNextWait,
-          true,
-          'the suppression must be in place before the gate is re-presented',
-        );
         updateRun(runId, {
           engineState: { ...getRun(runId)!.engineState, generation: 4 },
           steps: getRun(runId)!.steps.map((step) =>
@@ -1198,6 +1190,9 @@ test('a restore suppresses an inherited free-slot choice for the gate it re-pres
     },
   );
 
+  // Keyed to the generation the replay took ownership at, so it applies to
+  // THIS gate and cannot linger onto an unrelated later wait.
+  assert.equal(getRun(run.id)!.resourcePosture?.gateChoiceSuppressedForGeneration, 4);
   // The stored choice itself is untouched, so the operator can still pick
   // free-slot again — it just is not inherited automatically.
   assert.equal(getRun(run.id)!.resourcePosture?.gateChoice, 'free-slot');
@@ -1232,11 +1227,6 @@ test('a restore does not suppress anything when the run never chose free-slot', 
         throw new Error('unreachable');
       },
       replayGate: async (runId, stepName) => {
-        assert.equal(
-          getRun(runId)!.resourcePosture?.gateChoiceSuppressedUntilNextWait,
-          undefined,
-          'only a free-slot choice can re-park the run, so only it is suppressed',
-        );
         updateRun(runId, {
           engineState: { ...getRun(runId)!.engineState, generation: 4 },
           steps: getRun(runId)!.steps.map((step) =>

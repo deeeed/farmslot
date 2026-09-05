@@ -1368,3 +1368,40 @@ test('a queued apply is admitted at execution time, not at enqueue time', async 
   await assert.rejects(second, /run is gate-parked/);
   assert.deepEqual(order, ['first-admitted', 'second-admitted']);
 });
+
+test('the inherited gate choice is resolved inside the per-run queue', async (t) => {
+  const { reconciler, run } = await harness(t, { capabilities: [] });
+  const resolvedAt: string[] = [];
+  let releaseFirst: () => void = () => {};
+  const firstRunning = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+
+  const first = reconciler.apply({
+    runId: run.id,
+    posture: 'parked',
+    assertAdmissible: () => {
+      resolvedAt.push('first-admitted');
+    },
+  });
+
+  // Enqueued while the first request holds the queue. Resolving the inherited
+  // choice out here would read the run BEFORE the first request's write; the
+  // hook has to run inside the queue, after it.
+  const second = reconciler.apply({
+    runId: run.id,
+    posture: 'operator-wait',
+    resolveInheritedGateChoice: () => {
+      resolvedAt.push('second-resolved');
+      return 'keep-for-validation';
+    },
+  });
+
+  releaseFirst();
+  await firstRunning;
+  await first.catch(() => undefined);
+  await second.catch(() => undefined);
+
+  // Ordering proves the hook ran inside the queue rather than at enqueue time.
+  assert.deepEqual(resolvedAt, ['first-admitted', 'second-resolved']);
+});

@@ -311,6 +311,13 @@ export interface ResourcePostureRequest {
   proofRequirements?: RuntimeCapabilityProofRequirement[];
   operationId?: string;
   /**
+   * Resolves the gate choice this request inherits, called INSIDE the per-run
+   * serialization. Reading and clearing a one-shot suppression is a
+   * read-modify-write on the run's posture, and this queue is the only thing
+   * that serializes those writes.
+   */
+  resolveInheritedGateChoice?: (runId: string) => ResourcePostureGateChoice | undefined;
+  /**
    * Admission check re-run INSIDE the per-run serialization, immediately before
    * the request executes. A caller that validated at the RPC boundary only
    * proved the run was admissible when the request arrived; a request queued
@@ -498,7 +505,8 @@ export class RunResourcePostureReconciler {
       // Inside the queue, not before it. This is the only point where the check
       // and the effect are not separated by another request's execution.
       request.assertAdmissible?.();
-      return this.applyInternal(request);
+      const inherited = request.resolveInheritedGateChoice?.(request.runId);
+      return this.applyInternal(inherited ? { ...request, gateChoice: inherited } : request);
     });
   }
 

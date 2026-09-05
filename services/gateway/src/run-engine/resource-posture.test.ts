@@ -29,6 +29,11 @@ function fakeReconciler(
   const calls: ResourcePostureRequest[] = [];
   const reconciler = {
     apply: async (request: ResourcePostureRequest): Promise<RuntimePostureApplyResult> => {
+      // Mirrors the real `apply`: the inherited choice is resolved INSIDE the
+      // per-run queue, so a double that skipped the hook would hide whether the
+      // production path ever consults it.
+      const inherited = request.resolveInheritedGateChoice?.(request.runId);
+      if (inherited) request = { ...request, gateChoice: inherited };
       calls.push(request);
       const override = onApply(request);
       return {
@@ -354,20 +359,23 @@ test('a wait boundary does not act while a gate park is in flight', async () => 
   );
 });
 
+function parkedFreeSlotPosture(suppressedFor?: number) {
+  return {
+    posture: 'parked' as const,
+    policySource: 'gate-choice' as const,
+    gateChoice: 'free-slot' as const,
+    ...(suppressedFor === undefined ? {} : { gateChoiceSuppressedForGeneration: suppressedFor }),
+    capabilities: [],
+    workerRetained: false,
+    updatedAt: '2026-09-05T00:00:00.000Z',
+  };
+}
+
 test('a restored gate does not inherit the free-slot choice that parked the run', async () => {
   const { reconciler, calls } = fakeReconciler();
   const runId = newRun();
-  updateRun(runId, {
-    resourcePosture: {
-      posture: 'parked',
-      policySource: 'gate-choice',
-      gateChoice: 'free-slot',
-      gateChoiceSuppressedUntilNextWait: true,
-      capabilities: [],
-      workerRetained: false,
-      updatedAt: '2026-09-05T00:00:00.000Z',
-    },
-  });
+  const generation = getRun(runId)!.engineState?.generation ?? 0;
+  updateRun(runId, { resourcePosture: parkedFreeSlotPosture(generation) });
 
   // The wait the restore re-presents must NOT carry `free-slot`, or the run
   // parks itself again before the operator ever sees the gate.
@@ -375,19 +383,34 @@ test('a restored gate does not inherit the free-slot choice that parked the run'
   assert.equal(calls[0].gateChoice, undefined);
 
   // One-shot: consumed, so the operator's next choice governs normally.
-  assert.equal(getRun(runId)!.resourcePosture?.gateChoiceSuppressedUntilNextWait, undefined);
+  assert.equal(getRun(runId)!.resourcePosture?.gateChoiceSuppressedForGeneration, undefined);
   assert.equal(getRun(runId)!.resourcePosture?.gateChoice, 'free-slot');
+  await reconcileRunPosture({ runId, boundary: 'operator-wait' }, reconciler);
+  assert.equal(calls[1].gateChoice, 'free-slot', 'the next wait inherits normally again');
 
   // An EXPLICIT choice still wins over the suppression.
-  updateRun(runId, {
-    resourcePosture: {
-      ...getRun(runId)!.resourcePosture!,
-      gateChoiceSuppressedUntilNextWait: true,
-    },
-  });
+  updateRun(runId, { resourcePosture: parkedFreeSlotPosture(generation) });
   await reconcileRunPosture(
     { runId, boundary: 'operator-wait', gateChoice: 'free-slot' },
     reconciler,
   );
-  assert.equal(calls[1].gateChoice, 'free-slot');
+  assert.equal(calls[2].gateChoice, 'free-slot');
+});
+
+test('a suppression cannot outlive the gate it was set for', async () => {
+  const { reconciler, calls } = fakeReconciler();
+  const runId = newRun();
+  // The replay is fire-and-forget. If its gate never reaches a wait boundary
+  // and the run moves on, a bare flag would sit there and silently swallow the
+  // operator's choice at some unrelated later wait.
+  updateRun(runId, {
+    resourcePosture: parkedFreeSlotPosture(1),
+    engineState: { ...getRun(runId)!.engineState, generation: 7 },
+  });
+
+  await reconcileRunPosture({ runId, boundary: 'operator-wait' }, reconciler);
+
+  assert.equal(calls[0].gateChoice, 'free-slot', 'a stale suppression does not apply');
+  // Cleared regardless, so it cannot apply to a later generation either.
+  assert.equal(getRun(runId)!.resourcePosture?.gateChoiceSuppressedForGeneration, undefined);
 });

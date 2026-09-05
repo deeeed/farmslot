@@ -712,6 +712,9 @@ export class MachineParkingService {
               'partial',
               'machine-restore.unexpected',
               error,
+              // Only restore can legitimately advance the run generation, via a
+              // gate replay, so only restore may adopt it.
+              { syncGeneration: true },
             );
           }
         }
@@ -2232,6 +2235,11 @@ export class MachineParkingService {
       try {
         runner = await this.deps.runnerRunning(run, record.recoveryHandle);
       } catch {
+        // Same fail-closed contract as the resource probe below: this function
+        // reports what it could observe and never throws. It runs on the
+        // settlement path of an operation that has already had its effects, so
+        // a probe failure here must not erase the durable result of that
+        // operation — `unknown` is the honest answer and the operator sees it.
         runner = 'unknown';
       }
     }
@@ -2516,6 +2524,7 @@ export class MachineParkingService {
     phase: MachineParkPhase,
     action: string,
     error: unknown,
+    options: { syncGeneration?: boolean } = {},
   ): Promise<void> {
     const run = this.deps.getRun(runId);
     if (!run?.park) {
@@ -2526,24 +2535,24 @@ export class MachineParkingService {
     }
     const residuals = await this.observeResiduals(run, run.park);
     const occurredAt = this.deps.now();
-    // Bring the record's generation up to the run's.
+    // Bring the record's generation up to the run's — but ONLY for the caller
+    // that can legitimately advance it.
     //
-    // A restore can advance the run generation before it fails: the gate replay
-    // takes ownership, and only afterwards can a write throw — the final
-    // `patchRecord` persists outside the resume's own catch, so a persistence
-    // failure lands here. Cloning the record verbatim would settle `partial`
-    // describing a generation that no longer exists, and every retry would then
-    // be refused by the preview's GENERATION_CHANGED check and the execute
-    // preflight. The record could never be retried, on a run whose only other
-    // exit is cancellation.
+    // A restore advances it on purpose: the gate replay takes ownership, and
+    // only afterwards can a write throw — the final `patchRecord` persists
+    // outside the resume's own catch, so a persistence failure lands here.
+    // Cloning the record verbatim would settle `partial` describing a
+    // generation that no longer exists, and every retry would then be refused
+    // by the preview's GENERATION_CHANGED check and the execute preflight.
     //
-    // Unconditional on this path because it settles failures only, and it is
-    // the last writer standing: it rebuilds the record from the live run rather
-    // than patching, so it is the one place that survives any earlier write
-    // failing. Absorbing a foreign generation bump here is the lesser harm — the
-    // failure itself is on the record, with `retryable: true`, for the operator
-    // to read.
-    const liveGeneration = run.engineState?.generation ?? run.park.generation;
+    // A PAUSE never advances it, so any bump seen on that path is foreign — a
+    // replay or another actor moving the run while it parked. Absorbing it
+    // there would defeat the GENERATION_CHANGED check for this record's later
+    // restore, which is precisely the drift that check exists to catch.
+    const liveGeneration =
+      options.syncGeneration === true
+        ? (run.engineState?.generation ?? run.park.generation)
+        : run.park.generation;
     const next: MachineParkRecord = {
       ...structuredClone(run.park),
       generation: liveGeneration,

@@ -513,20 +513,21 @@ export async function runResumeTransitionLocked(
     console.log(
       `[run] gate-park restore replaying '${gateParkPlan.stepName}' for run ${params.runId.slice(0, 8)} (its gate loop had exited)`,
     );
-    // One-shot, set BEFORE the replay so the operator-wait boundary the replayed
-    // gate reaches cannot inherit a stored `free-slot` choice and park the run
-    // again before the operator has seen the gate at all.
-    if (existing.resourcePosture?.gateChoice === 'free-slot') {
-      updateRun(params.runId, {
-        resourcePosture: {
-          ...existing.resourcePosture,
-          gateChoiceSuppressedUntilNextWait: true,
-        },
-      });
-    }
     await deps.replayGate(params.runId, gateParkPlan.stepName);
     const replayed = getRun(params.runId)!;
     const generation = replayed.engineState?.generation ?? previousGeneration;
+    // Bound to the generation the replay took ownership at, so it cannot
+    // outlive the gate it was set for: the replay is fire-and-forget, and a
+    // bare flag would swallow the operator's choice at some unrelated later
+    // wait if this gate never reached a boundary at all.
+    if (replayed.resourcePosture?.gateChoice === 'free-slot') {
+      updateRun(params.runId, {
+        resourcePosture: {
+          ...replayed.resourcePosture,
+          gateChoiceSuppressedForGeneration: generation,
+        },
+      });
+    }
     if (generation <= previousGeneration) {
       throw new Error(
         `Run ${params.runId} gate replay did not take ownership (generation ${generation})`,
