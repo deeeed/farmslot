@@ -5,6 +5,7 @@ import {
   RESOURCE_POSTURE_GATE_CHOICES,
   type ResourcePostureCapabilityState,
   type ResourcePosturePlan,
+  type ResourcePostureTransition,
   type Run,
 } from '@farmslot/protocol';
 
@@ -13,11 +14,17 @@ import {
   gateChoiceHelp,
   gateChoiceLabel,
   pendingDecisionKey,
+  postureChoiceBecameInapplicable,
+  postureChoiceForResolve,
   postureChoiceHonored,
   postureChoicesApply,
+  postureChoiceWithheldReason,
   postureGatePreviewLines,
   postureGatePreviewSummary,
+  postureGateWithAdoptedTransition,
+  postureGateWithSelection,
   postureResolveBlockReason,
+  postureTransitionAttributed,
   RUN_POSTURE_GATE_CHOICES,
 } from './run-detail-posture-gate-renderers.js';
 
@@ -90,9 +97,12 @@ test('a plan that changes nothing says so instead of rendering as unknown', () =
 });
 
 test('a previewed rejection blocks resolution instead of sending a refused choice', () => {
+  // The gate is on screen, which is the only situation where a block is honest:
+  // the operator can see the refusal and clear the choice.
   const rejected = canResolveWithPostureChoice({
     choice: 'free-slot',
     status: 'ready',
+    runPosture: 'operator-wait',
     plan: plan({
       posture: 'parked',
       rejection: {
@@ -107,13 +117,22 @@ test('a previewed rejection blocks resolution instead of sending a refused choic
 });
 
 test('resolution is blocked while a chosen preview is still loading or failed', () => {
-  assert.equal(canResolveWithPostureChoice({ choice: 'minimize', status: 'loading' }), false);
+  const atGate = { runPosture: 'operator-wait' } as const;
   assert.equal(
-    canResolveWithPostureChoice({ choice: 'minimize', status: 'error', message: 'boom' }),
+    canResolveWithPostureChoice({ ...atGate, choice: 'minimize', status: 'loading' }),
     false,
   );
   assert.equal(
-    canResolveWithPostureChoice({ choice: 'minimize', status: 'ready', plan: plan() }),
+    canResolveWithPostureChoice({
+      ...atGate,
+      choice: 'minimize',
+      status: 'error',
+      message: 'boom',
+    }),
+    false,
+  );
+  assert.equal(
+    canResolveWithPostureChoice({ ...atGate, choice: 'minimize', status: 'ready', plan: plan() }),
     true,
   );
 });
@@ -121,7 +140,10 @@ test('resolution is blocked while a chosen preview is still loading or failed', 
 test('no chosen posture leaves the gate resolvable exactly as before', () => {
   // Posture is additive: an operator who ignores it must still be able to
   // resolve the decision.
-  assert.equal(canResolveWithPostureChoice({ choice: null, status: 'idle' }), true);
+  assert.equal(
+    canResolveWithPostureChoice({ choice: null, status: 'idle', runPosture: 'operator-wait' }),
+    true,
+  );
 });
 
 function decision(id: string, resolvedAt?: string): Run['decisions'][number] {
@@ -166,11 +188,13 @@ test('a failed preview request and a Gateway rejection give different guidance',
   const failed = postureResolveBlockReason({
     choice: 'minimize',
     status: 'error',
+    runPosture: 'operator-wait',
     message: 'gateway RPC timeout after 15000ms',
   });
   const rejected = postureResolveBlockReason({
     choice: 'free-slot',
     status: 'ready',
+    runPosture: 'operator-wait',
     plan: plan({
       posture: 'parked',
       rejection: {
@@ -192,9 +216,19 @@ test('a failed preview request and a Gateway rejection give different guidance',
 });
 
 test('nothing blocks resolution when no choice is selected or the plan is clean', () => {
-  assert.equal(postureResolveBlockReason({ choice: null, status: 'idle' }), null);
+  // Both state the gate is on screen, or they would pass because the choices are
+  // unavailable rather than because nothing is wrong with the choice.
   assert.equal(
-    postureResolveBlockReason({ choice: 'minimize', status: 'ready', plan: plan() }),
+    postureResolveBlockReason({ choice: null, status: 'idle', runPosture: 'operator-wait' }),
+    null,
+  );
+  assert.equal(
+    postureResolveBlockReason({
+      choice: 'minimize',
+      status: 'ready',
+      runPosture: 'operator-wait',
+      plan: plan(),
+    }),
     null,
   );
 });
@@ -218,9 +252,356 @@ test('an unknown posture offers no choices, so none can be sent before it is kno
 test('a plan the Gateway did not resolve from the choice is reported as such', () => {
   // A run whose posture is not operator-wait gets the lifecycle-boundary plan
   // back; presenting it as the effect of the clicked choice would be a lie.
-  assert.equal(postureChoiceHonored(plan({ policySource: 'gate-choice' })), true);
+  assert.equal(postureChoiceHonored(plan({ policySource: 'gate-choice' }), 'minimize'), true);
   assert.equal(
-    postureChoiceHonored(plan({ posture: 'active', policySource: 'framework-default' })),
+    postureChoiceHonored(
+      plan({ posture: 'active', policySource: 'framework-default' }),
+      'minimize',
+    ),
     false,
   );
+});
+
+test('project-default is honoured by the Gateway deferring, not by a gate-choice source', () => {
+  // The Gateway drops `project-default` before picking a policy source, so it
+  // answers from run-dispatch, the project, or the framework. Each of those IS
+  // the requested outcome; warning about them would flag the one choice whose
+  // entire meaning is to defer.
+  for (const source of ['run-dispatch', 'project-default', 'framework-default'] as const) {
+    assert.equal(
+      postureChoiceHonored(plan({ policySource: source }), 'project-default'),
+      true,
+      `${source} is what project-default asks for`,
+    );
+    // The same plan under any other choice is still reported as not honoured.
+    assert.equal(postureChoiceHonored(plan({ policySource: source }), 'minimize'), false);
+  }
+  // A plan resolved from some earlier gate choice is not what project-default
+  // asked for, so it is still reported.
+  assert.equal(
+    postureChoiceHonored(plan({ policySource: 'gate-choice' }), 'project-default'),
+    false,
+  );
+});
+
+test('a project-default choice ignored because the run left operator-wait is reported', () => {
+  // The run moves on before the preview executes. The Gateway then answers from
+  // the new lifecycle boundary and still reports framework-default, so the
+  // policy source alone cannot tell this apart from an honoured deferral. The
+  // plan's posture can: it describes the boundary, not the wait.
+  for (const posture of ['active', 'terminal', 'parked'] as const) {
+    assert.equal(
+      postureChoiceHonored(plan({ posture, policySource: 'framework-default' }), 'project-default'),
+      false,
+      `${posture} is a lifecycle boundary, not the operator wait the choice was made at`,
+    );
+    assert.equal(
+      postureChoiceHonored(plan({ posture, policySource: 'project-default' }), 'project-default'),
+      false,
+    );
+  }
+  // Still at the wait, so deferring really did produce this plan.
+  assert.equal(
+    postureChoiceHonored(
+      plan({ posture: 'operator-wait', policySource: 'framework-default' }),
+      'project-default',
+    ),
+    true,
+  );
+  // A dispatch preset is the run's own wait policy applying, which is exactly
+  // what project-default defers to, so its resolved posture may be any of them.
+  for (const posture of ['active', 'operator-wait', 'parked'] as const) {
+    assert.equal(
+      postureChoiceHonored(plan({ posture, policySource: 'run-dispatch' }), 'project-default'),
+      true,
+      `run-dispatch resolved ${posture} from the wait policy the choice defers to`,
+    );
+  }
+});
+
+test('a rejected plan is summarised as a refusal, not as a harmless no-op', () => {
+  const rejected = plan({
+    posture: 'parked',
+    rejection: {
+      kind: 'park-ineligible',
+      code: 'STATUS_NOT_ELIGIBLE',
+      reason: "status 'blocked' is not monitoring or ci-watching",
+    },
+  });
+  // Both a rejection and an empty plan have no groups; only one is safe to resolve.
+  assert.match(postureGatePreviewSummary(rejected), /nothing applied/);
+  assert.doesNotMatch(postureGatePreviewSummary(rejected), /no capability changes/);
+  assert.match(postureGatePreviewSummary(plan()), /no capability changes/);
+});
+
+test('a held choice is dropped once the Gateway moves the run out of operator-wait', () => {
+  const held = {
+    choice: 'free-slot',
+    status: 'ready',
+    plan: plan({
+      posture: 'parked',
+      rejection: { kind: 'park-ineligible', code: 'X', reason: 'not eligible' },
+    }),
+  } as const;
+  // Still at the wait: the choice is the operator's to keep or clear.
+  assert.equal(postureChoiceBecameInapplicable({ ...held, runPosture: 'operator-wait' }), false);
+  // The Gateway moved on, so the panel hides while this selection would linger
+  // and keep blocking Resolve.
+  for (const runPosture of ['active', 'terminal', 'parked'] as const) {
+    assert.equal(
+      postureChoiceBecameInapplicable({ ...held, runPosture }),
+      true,
+      `${runPosture} no longer honours a gate choice`,
+    );
+  }
+  // An unread posture proves nothing, so nothing is dropped.
+  assert.equal(postureChoiceBecameInapplicable(held), false);
+  // Nothing held, nothing to drop.
+  assert.equal(
+    postureChoiceBecameInapplicable({ choice: null, status: 'idle', runPosture: 'active' }),
+    false,
+  );
+});
+
+test('a choice is forwarded only where the Gateway would honour it', () => {
+  const refused = {
+    choice: 'free-slot',
+    status: 'ready',
+    plan: plan({
+      posture: 'parked',
+      rejection: { kind: 'park-ineligible', code: 'STATUS_NOT_ELIGIBLE', reason: 'not eligible' },
+    }),
+  } as const;
+
+  // At the wait the operator can see and clear the refusal, so the block guards
+  // it. The forwarding guard refuses it too, so a caller that skipped the block
+  // could not send it either.
+  assert.equal(canResolveWithPostureChoice({ ...refused, runPosture: 'operator-wait' }), false);
+  assert.equal(postureChoiceForResolve({ ...refused, runPosture: 'operator-wait' }), undefined);
+  // A clean choice at the wait is what actually forwards.
+  assert.equal(
+    postureChoiceForResolve({
+      choice: 'minimize',
+      status: 'ready',
+      runPosture: 'operator-wait',
+      plan: plan(),
+    }),
+    'minimize',
+  );
+
+  // Posture unread after a failed status refresh: the panel is hidden and the
+  // block lifts, so the forwarding guard is the only thing standing between a
+  // refused choice and a consumed decision.
+  assert.equal(postureChoiceForResolve({ ...refused, runPosture: undefined }), undefined);
+  assert.equal(canResolveWithPostureChoice({ ...refused, runPosture: undefined }), true);
+  assert.match(
+    postureChoiceWithheldReason({ ...refused, runPosture: undefined }) ?? '',
+    /posture is unknown.*withheld/i,
+  );
+
+  // The run left the wait: same rule, different wording.
+  for (const runPosture of ['active', 'terminal', 'parked'] as const) {
+    assert.equal(postureChoiceForResolve({ ...refused, runPosture }), undefined);
+    assert.match(
+      postureChoiceWithheldReason({ ...refused, runPosture }) ?? '',
+      /no longer at an operator wait.*withheld/i,
+    );
+  }
+
+  // Nothing selected, nothing withheld and nothing to forward.
+  assert.equal(
+    postureChoiceForResolve({ choice: null, status: 'idle', runPosture: 'operator-wait' }),
+    undefined,
+  );
+  assert.equal(
+    postureChoiceWithheldReason({ choice: null, status: 'idle', runPosture: undefined }),
+    null,
+  );
+  // An honoured choice at a wait is forwarded and nothing is withheld.
+  const honoured = {
+    choice: 'minimize',
+    status: 'ready',
+    runPosture: 'operator-wait',
+    plan: plan(),
+  } as const;
+  assert.equal(postureChoiceForResolve(honoured), 'minimize');
+  assert.equal(postureChoiceWithheldReason(honoured), null);
+});
+
+test('a refused choice is not forwarded even where the choices still apply', () => {
+  // Companion's same-named function checks this; without it a third call site
+  // that did not pre-check would send a choice the Gateway already refused.
+  const refusedAtGate = {
+    choice: 'free-slot',
+    status: 'ready',
+    runPosture: 'operator-wait',
+    plan: plan({
+      posture: 'parked',
+      rejection: { kind: 'park-ineligible', code: 'STATUS_NOT_ELIGIBLE', reason: 'not eligible' },
+    }),
+  } as const;
+  assert.equal(canResolveWithPostureChoice(refusedAtGate), false);
+  assert.equal(postureChoiceForResolve(refusedAtGate), undefined);
+
+  // A preview that has not landed is not sendable either.
+  assert.equal(
+    postureChoiceForResolve({ choice: 'minimize', status: 'loading', runPosture: 'operator-wait' }),
+    undefined,
+  );
+  // A clean, previewed choice at a wait still forwards.
+  assert.equal(
+    postureChoiceForResolve({
+      choice: 'minimize',
+      status: 'ready',
+      runPosture: 'operator-wait',
+      plan: plan(),
+    }),
+    'minimize',
+  );
+});
+
+test('attribution is only claimed where the Gateway attributed the record', () => {
+  const record = (gateChoice?: 'minimize'): ResourcePostureTransition =>
+    ({
+      id: 'op-1',
+      posture: 'operator-wait',
+      policySource: gateChoice ? 'gate-choice' : 'framework-default',
+      requestedAt: '2026-09-05T12:00:00.000Z',
+      outcome: 'applied',
+      effects: [],
+      progress: { total: 1, completed: 1 },
+      failures: [],
+      ...(gateChoice ? { gateChoice } : {}),
+    }) as ResourcePostureTransition;
+  const baseline = (choice: 'minimize' | null) => ({
+    transitionIds: [],
+    newestRequestedAt: undefined,
+    choice,
+  });
+
+  assert.equal(postureTransitionAttributed(baseline('minimize'), record('minimize')), true);
+  // Positional: nothing attributed, so it may belong to a concurrent reconcile.
+  assert.equal(postureTransitionAttributed(baseline('minimize'), record()), false);
+  // Nothing was forwarded, so nothing can be attributed to it.
+  assert.equal(postureTransitionAttributed(baseline(null), record('minimize')), false);
+  assert.equal(postureTransitionAttributed(baseline(null), record()), false);
+});
+
+test('a held choice is never dropped without the operator being told', () => {
+  // The invariant the withheld notice exists to protect: a selection either
+  // travels, or the operator can read why it did not. It is stated as "never
+  // silently dropped" rather than "exactly one of forwarded/withheld is set",
+  // because at the gate a refused choice is explained by the visible block
+  // reason instead, and the panel is on screen to clear it.
+  const plans = {
+    clean: plan(),
+    refused: plan({
+      posture: 'parked',
+      rejection: { kind: 'park-ineligible', code: 'STATUS_NOT_ELIGIBLE', reason: 'not eligible' },
+    }),
+  };
+  const postures = ['operator-wait', 'active', 'terminal', 'parked', undefined] as const;
+  for (const runPosture of postures) {
+    for (const [planName, chosenPlan] of Object.entries(plans)) {
+      const state = {
+        choice: 'free-slot',
+        status: 'ready',
+        plan: chosenPlan,
+        runPosture,
+      } as const;
+      const forwarded = postureChoiceForResolve(state);
+      const withheld = postureChoiceWithheldReason(state);
+      const blocked = postureResolveBlockReason(state);
+      const where = `${runPosture ?? 'unread'}/${planName}`;
+
+      if (forwarded) {
+        // If it travels, nothing may claim it was withheld.
+        assert.equal(withheld, null, `${where}: forwarded and withheld at once`);
+        assert.equal(blocked, null, `${where}: forwarded while blocked`);
+        continue;
+      }
+      // Not forwarded, so the operator must be able to find out why: either the
+      // gate is on screen with a block reason, or the withheld notice says so.
+      const explained = Boolean(withheld) || Boolean(blocked);
+      assert.ok(explained, `${where}: choice dropped with no explanation`);
+      if (!postureChoicesApply(runPosture)) {
+        // The panel is hidden here, so the withheld notice is the only channel.
+        assert.ok(withheld, `${where}: panel hidden and nothing said`);
+        assert.match(withheld ?? '', /withheld/);
+      }
+    }
+  }
+
+  // With nothing selected there is nothing to forward and nothing to withhold.
+  for (const runPosture of postures) {
+    const idle = { choice: null, status: 'idle', runPosture } as const;
+    assert.equal(postureChoiceForResolve(idle), undefined);
+    assert.equal(postureChoiceWithheldReason(idle), null);
+  }
+});
+
+test('a resolution survives every gate rebuild, and a terminal adopt ends the wait', () => {
+  const transition = (id: string): ResourcePostureTransition =>
+    ({
+      id,
+      posture: 'operator-wait',
+      policySource: 'gate-choice',
+      requestedAt: '2026-09-05T12:00:00.000Z',
+      outcome: 'applied',
+      effects: [],
+      progress: { total: 1, completed: 1 },
+      failures: [],
+      gateChoice: 'minimize',
+    }) as ResourcePostureTransition;
+
+  const resolved = {
+    choice: null,
+    status: 'idle',
+    appliedTransition: transition('op-1'),
+    appliedTransitionAttributed: true,
+    reconciliationPending: false,
+  } as const;
+
+  // The operator's first click on a new gate used to throw the result away.
+  const clicked = postureGateWithSelection(resolved, { choice: 'minimize', status: 'loading' });
+  assert.equal(clicked.choice, 'minimize');
+  assert.equal(clicked.status, 'loading');
+  assert.deepEqual(clicked.appliedTransition, resolved.appliedTransition);
+  assert.equal(clicked.appliedTransitionAttributed, true);
+  assert.equal(clicked.reconciliationPending, false);
+
+  // So did an inapplicable clear, which dropped the attribution specifically and
+  // silently downgraded an attributed record to the positional wording.
+  const cleared = postureGateWithSelection(resolved, { choice: null, status: 'idle' });
+  assert.equal(cleared.appliedTransitionAttributed, true);
+
+  // An in-flight wait rides through a rebuild too, rather than blinking out.
+  const waiting = postureGateWithSelection(
+    { choice: 'minimize', status: 'ready', reconciliationPending: true },
+    { choice: null, status: 'idle' },
+  );
+  assert.equal(waiting.reconciliationPending, true);
+
+  // A terminal adopt always ends the wait. Leaving a previous resolution's true
+  // flag alone left a completed result rendering as "not finished" indefinitely.
+  const stale = { choice: 'minimize', status: 'ready', reconciliationPending: true } as const;
+  const adopted = postureGateWithAdoptedTransition(stale, transition('op-2'), true);
+  assert.equal(adopted.reconciliationPending, false);
+  assert.equal(adopted.appliedTransition?.id, 'op-2');
+  assert.equal(adopted.appliedTransitionAttributed, true);
+  // A positional adopt records that too, and still ends the wait.
+  const positional = postureGateWithAdoptedTransition(stale, transition('op-3'), false);
+  assert.equal(positional.appliedTransitionAttributed, false);
+  assert.equal(positional.reconciliationPending, false);
+
+  // A gate that never resolved carries nothing, so a fresh gate stays clean.
+  const fresh = postureGateWithSelection(
+    { choice: null, status: 'idle' },
+    {
+      choice: 'minimize',
+      status: 'loading',
+    },
+  );
+  assert.equal('appliedTransition' in fresh, false);
+  assert.equal('reconciliationPending' in fresh, false);
 });

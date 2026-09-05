@@ -4,6 +4,9 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat(resources): add `farmslot resource posture status|preview|apply <runId>` and `farmslot resource capability acquire|release|stop-warm` for the ADR-054 run resource posture. Human output shows the Gateway's desired disposition beside the observed provider state per capability, with the warm deadline, the winning policy source, and the transition outcome.
+- feat(resources): the resource commands report only what the Gateway observed. A provider is called stopped only when a stop was observed; a failed cleanup, a deferred stop, a retained lease, or a still-running provider is named as such, and `release --stop` reports the flag that was requested separately from what the result proves.
+- feat(resources): `--json` emits one envelope, with the Gateway result at `data` on exit 0 and at `error.details` on exit 1. Any outcome where the request did not take effect exits 1, so a refusal is never mistaken for a change.
 - feat(run): add `farmslot run session <runId> [--context <id>] [--role <role>]`, printing the reopen and tmux attach commands for an agent context's runner session on their own lines.
 - fix(run): `farmslot run force-complete` accepts `--pr <n>` so an operator can attach an already-opened PR when marking a failed run done, and prints advisory effect failures after the run is already `done`.
 

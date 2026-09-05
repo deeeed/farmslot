@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- feat(runs): offer the four resource-posture choices with the Gateway's effect preview when resolving a human gate, and show a compact retained, warm, stopped, failed posture summary on Run Detail.
 - feat(notifications): add configurable decision and monitor-violation alerts with independent sound and haptic controls.
 - fix(runs): hide Replay on a force-completed run; the gateway rejects those replays.
 - fix(recipes): keep the native recipe HUD visible without hiding the app's accessibility tree from live UI actions.

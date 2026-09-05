@@ -32,6 +32,13 @@ export const RUNNER_AGNOSTIC = true;
  */
 const CAPABILITY_ID = 'sandbox-gateway-ui';
 
+/**
+ * Any CSI escape, not only the SGR colour ones. A pty also emits erase-line
+ * (`ESC [ K`) and cursor moves, which survived an SGR-only strip and landed in
+ * the recorded evidence.
+ */
+const ANSI_CSI = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+
 /** Booting a simulator plus Metro is minutes, not seconds. */
 const SLOW_RPC_TIMEOUT_MS = 480_000;
 
@@ -204,6 +211,17 @@ async function prepareDependencyPosture({ slotId, runId, report, acquireBudgetMs
       throw new Error(`acquiring ${pair.dependent.id} did not acquire ${pair.dependency.id}`);
     }
 
+    // The pair is acquired right now and `operator-wait` is about to shed it, so
+    // this is the only window in which a retained lease can be observed.
+    proof.releaseRetained = assertCliReleaseRetained({
+      slotId,
+      runId,
+      dependencyPair: { dependent: pair.dependent.id, dependency: pair.dependency.id },
+    });
+    if (!proof.releaseRetained.pass) {
+      throw new Error(`CLI retained-release proof failed: ${proof.releaseRetained.error}`);
+    }
+
     const waitApply = rpc(
       'runtime.posture.apply',
       { runId, posture: 'operator-wait', operationId: `${SCENARIO_ID}-dep-wait-${process.pid}` },
@@ -327,6 +345,513 @@ function assertDependencyTerminal({ slotId, runId, proof }) {
     });
     proof.pass = verdict.pass;
     proof.error = verdict.error;
+  } catch (error) {
+    proof.pass = false;
+    proof.error = error?.message || String(error);
+  }
+  return proof;
+}
+
+/**
+ * Run the workspace CLI (never a PATH `farmslot`) against the same gateway this
+ * scenario drives, and return the parsed machine envelope with its exit code.
+ */
+function cli(args, timeoutMs = 120_000) {
+  const tsx = path.join(ROOT, 'node_modules', '.bin', 'tsx');
+  const entry = path.join(ROOT, 'packages/cli/src/entry.ts');
+  const result = spawnSync(
+    tsx,
+    [entry, '--url', process.env.FARMSLOT_GATEWAY ?? 'ws://localhost:7777', ...args],
+    { cwd: ROOT, encoding: 'utf8', timeout: timeoutMs },
+  );
+  const stdout = result.stdout?.trim() ?? '';
+  return {
+    status: result.status,
+    stdout,
+    stderr: result.stderr?.trim() ?? '',
+    // spawnSync reports a missing binary or an enforced timeout here, not on the
+    // exit status. Dropping it turned "python3 is not installed" and "the CLI
+    // hung" into the same blank "printed nothing".
+    spawnError: result.error
+      ? `${result.error.code ?? result.error.name}: ${result.error.message}`
+      : null,
+  };
+}
+
+/**
+ * The same CLI under a pseudo-terminal.
+ *
+ * The machine envelope is implied by a non-TTY stdout, so a piped run can never
+ * exercise the human renderer. `pty-run.py` gives the child a real pty without
+ * needing a controlling terminal, which is the only way to prove what an
+ * operator actually reads.
+ */
+function cliHuman(args, timeoutMs = 120_000) {
+  const result = spawnSync(
+    'python3',
+    [
+      path.join(ROOT, 'scripts/runner-validation/lib/pty-run.py'),
+      path.join(ROOT, 'node_modules', '.bin', 'tsx'),
+      path.join(ROOT, 'packages/cli/src/entry.ts'),
+      '--url',
+      process.env.FARMSLOT_GATEWAY ?? 'ws://localhost:7777',
+      ...args,
+    ],
+    { cwd: ROOT, encoding: 'utf8', timeout: timeoutMs },
+  );
+  return {
+    status: result.status,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    spawnError: result.error
+      ? `${result.error.code ?? result.error.name}: ${result.error.message}`
+      : null,
+  };
+}
+
+function cliJson(args, timeoutMs = 120_000) {
+  const run = cli([...args, '--json'], timeoutMs);
+  if (!run.stdout) {
+    throw new Error(
+      `CLI \`farmslot ${args.join(' ')} --json\` printed nothing (exit ${run.status}): ${
+        run.spawnError || run.stderr || 'no stderr'
+      }`,
+    );
+  }
+  let envelope;
+  try {
+    envelope = JSON.parse(run.stdout);
+  } catch (error) {
+    throw new Error(
+      `CLI \`farmslot ${args.join(' ')} --json\` printed non-JSON: ${run.stdout.slice(0, 400)} (${error.message})`,
+    );
+  }
+  return { ...run, envelope };
+}
+
+/**
+ * Live proof of ADR-054 deliverable 9: the typed CLI commands read the same
+ * Gateway result the RPCs return, and the human renderer never claims a stop the
+ * Gateway did not observe.
+ *
+ * Every assertion compares CLI output against the RPC result taken at the same
+ * moment, so this cannot pass by the CLI inventing plausible-looking state.
+ */
+function assertCliPostureSurface({ runId, capabilityId }) {
+  const proof = { attempted: true, pass: false, error: null };
+  try {
+    // (a) `posture status --json` is the exact RPC result inside the envelope.
+    const rpcStatus = rpc('runtime.posture.status', { runId });
+    const statusRun = cliJson(['resource', 'posture', 'status', runId]);
+    proof.statusExit = statusRun.status;
+    proof.statusEnvelope = {
+      command: statusRun.envelope.command,
+      status: statusRun.envelope.status,
+      exitCode: statusRun.envelope.exitCode,
+    };
+    if (statusRun.status !== 0 || statusRun.envelope.status !== 'ok') {
+      throw new Error(`posture status --json exited ${statusRun.status}: ${statusRun.stdout}`);
+    }
+    if (statusRun.envelope.command !== 'resource.posture.status') {
+      throw new Error(`envelope named the command ${statusRun.envelope.command}`);
+    }
+    const cliState = statusRun.envelope.data;
+    if (cliState.runId !== runId) {
+      throw new Error(`CLI reported run ${cliState.runId}, expected ${runId}`);
+    }
+    const cliCapability = (cliState.state?.capabilities ?? []).find(
+      (entry) => entry.capabilityId === capabilityId,
+    );
+    const rpcCapability = capabilityState(rpcStatus, capabilityId);
+    if (!cliCapability) throw new Error(`CLI status omitted ${capabilityId}`);
+    proof.statusCapability = {
+      desiredDisposition: cliCapability.desiredDisposition,
+      observedState: cliCapability.observedState,
+      policySource: cliCapability.policySource,
+    };
+    if (
+      cliCapability.desiredDisposition !== rpcCapability.desiredDisposition ||
+      cliCapability.observedState !== rpcCapability.observedState ||
+      cliCapability.policySource !== rpcCapability.policySource
+    ) {
+      throw new Error(
+        `CLI reported ${cliCapability.desiredDisposition}/${cliCapability.observedState}/${cliCapability.policySource} where the RPC reported ${rpcCapability.desiredDisposition}/${rpcCapability.observedState}/${rpcCapability.policySource}`,
+      );
+    }
+
+    // (b) The human renderer, under a real pty, shows desired beside observed and
+    // never prints an observed stop while the provider is running.
+    const humanRun = cliHuman(['resource', 'posture', 'status', runId]);
+    // Strip the SGR colour codes the pty enables so the lines can be matched.
+    const humanLines = humanRun.stdout.replace(ANSI_CSI, '').replace(/\r/g, '').split('\n');
+    // This capability's block: its headline plus the indented detail lines under
+    // it, which carry the reason and policy source without repeating the id.
+    // Scoping matters because a whole-output match lets another capability's row
+    // satisfy — or wrongly fail — an assertion about this one.
+    const headlineIndex = humanLines.findIndex(
+      (line) => line.includes(capabilityId) && line.includes('wants='),
+    );
+    const capabilityLines = [];
+    if (headlineIndex >= 0) {
+      capabilityLines.push(humanLines[headlineIndex]);
+      for (let index = headlineIndex + 1; index < humanLines.length; index += 1) {
+        // Detail lines are indented deeper than the headline; the next headline
+        // ends the block.
+        if (!/^ {4}\S/.test(humanLines[index])) break;
+        capabilityLines.push(humanLines[index]);
+      }
+    }
+    proof.humanSample = capabilityLines.join(' | ').trim();
+    if (!humanRun.stdout.includes('Resource posture')) {
+      throw new Error(
+        `human posture status printed no report (exit ${humanRun.status}): ${
+          humanRun.spawnError ||
+          humanRun.stdout.slice(0, 400) ||
+          humanRun.stderr.slice(0, 400) ||
+          'no output'
+        }`,
+      );
+    }
+    if (capabilityLines.length === 0) {
+      throw new Error(`human output has no line for ${capabilityId}`);
+    }
+    const wanted = `wants=${rpcCapability.desiredDisposition}`;
+    const observed = `observed=${rpcCapability.observedState}`;
+    const headline = capabilityLines.find(
+      (line) => line.includes(wanted) && line.includes(observed),
+    );
+    if (!headline) {
+      throw new Error(
+        `no ${capabilityId} line showed '${wanted}' beside '${observed}': ${proof.humanSample}`,
+      );
+    }
+    if (rpcCapability.observedState === 'running' && headline.includes('observed=stopped')) {
+      throw new Error(
+        `the ${capabilityId} line claimed an observed stop while the provider is running: ${headline.trim()}`,
+      );
+    }
+    if (!capabilityLines.some((line) => line.includes(`[policy: ${rpcCapability.policySource}]`))) {
+      throw new Error(`no ${capabilityId} line carried the winning policy source`);
+    }
+
+    // (c) `posture preview` returns the Gateway's plan, and the CLI's exit code
+    // agrees with whether the Gateway would reject the requested posture.
+    const rpcPreview = rpc('runtime.posture.preview', { runId, posture: 'terminal' });
+    const previewRun = cliJson(['resource', 'posture', 'preview', runId, '--posture', 'terminal']);
+    proof.preview = {
+      exit: previewRun.status,
+      posture: previewRun.envelope.data?.posture ?? previewRun.envelope.error?.details?.posture,
+      stop: (previewRun.envelope.data?.stop ?? []).map((entry) => entry.capabilityId),
+      rejected: Boolean(rpcPreview.rejection),
+    };
+    const expectedExit = rpcPreview.rejection ? 1 : 0;
+    if (previewRun.status !== expectedExit) {
+      throw new Error(
+        `preview exited ${previewRun.status} while the Gateway ${rpcPreview.rejection ? 'rejected' : 'accepted'} the posture`,
+      );
+    }
+    if (!rpcPreview.rejection) {
+      if (previewRun.envelope.data.posture !== 'terminal') {
+        throw new Error(`preview resolved ${previewRun.envelope.data.posture}, expected terminal`);
+      }
+      if (!proof.preview.stop.includes(capabilityId)) {
+        throw new Error(`terminal preview did not list ${capabilityId} among the stops`);
+      }
+    }
+
+    // (d) A gate choice the Gateway refuses must exit non-zero and carry the
+    // typed rejection, never be reported as a successful preview.
+    const rpcFreeSlot = rpc('runtime.posture.preview', { runId, gateChoice: 'free-slot' });
+    const freeSlotRun = cliJson(['resource', 'posture', 'preview', runId, '--choice', 'free-slot']);
+    proof.freeSlot = {
+      exit: freeSlotRun.status,
+      gatewayRejected: Boolean(rpcFreeSlot.rejection),
+      errorCode: freeSlotRun.envelope.error?.code ?? null,
+      rejectionKind:
+        freeSlotRun.envelope.error?.details?.rejection?.kind ??
+        freeSlotRun.envelope.data?.rejection?.kind ??
+        null,
+    };
+    if (rpcFreeSlot.rejection) {
+      if (freeSlotRun.status !== 1 || freeSlotRun.envelope.status !== 'error') {
+        throw new Error('the CLI reported a Gateway-rejected gate choice as a success');
+      }
+      if (freeSlotRun.envelope.error.code !== 'RESOURCE_POSTURE_REJECTED') {
+        throw new Error(`rejection carried code ${freeSlotRun.envelope.error.code}`);
+      }
+      if (!freeSlotRun.envelope.error.details?.rejection) {
+        throw new Error('the error envelope dropped the Gateway rejection');
+      }
+    } else if (freeSlotRun.status !== 0) {
+      throw new Error('the CLI failed a gate choice the Gateway accepted');
+    }
+
+    // (e) `project-default` asks the Gateway to defer to the lower precedence
+    // levels, so it must never come back as `gate-choice`. Command Center reads
+    // this to decide whether the choice was honoured; when it required
+    // `gate-choice` for every choice it warned about the one choice that was
+    // working as asked.
+    const rpcProjectDefault = rpc('runtime.posture.preview', {
+      runId,
+      gateChoice: 'project-default',
+    });
+    const projectDefaultRun = cliJson([
+      'resource',
+      'posture',
+      'preview',
+      runId,
+      '--choice',
+      'project-default',
+    ]);
+    const projectDefaultPlan =
+      projectDefaultRun.envelope.data ?? projectDefaultRun.envelope.error?.details;
+    proof.projectDefault = {
+      exit: projectDefaultRun.status,
+      rpcPolicySource: rpcProjectDefault.policySource,
+      cliPolicySource: projectDefaultPlan?.policySource ?? null,
+      rejected: Boolean(rpcProjectDefault.rejection),
+    };
+    if (rpcProjectDefault.policySource === 'gate-choice') {
+      throw new Error(
+        "the Gateway resolved 'project-default' from the gate choice, so deferring is not what it means",
+      );
+    }
+    if (projectDefaultPlan?.policySource !== rpcProjectDefault.policySource) {
+      throw new Error(
+        `CLI reported policy source ${projectDefaultPlan?.policySource} where the RPC reported ${rpcProjectDefault.policySource}`,
+      );
+    }
+
+    proof.pass = true;
+  } catch (error) {
+    proof.pass = false;
+    proof.error = error?.message || String(error);
+  }
+  return proof;
+}
+
+/**
+ * Live proof of `resource capability release` (ADR-054 deliverable 9), the
+ * round-1 blocker fix, for the case where the lease really is released.
+ *
+ * The lease is gone and the release action ran, but that result alone cannot
+ * prove the provider stopped: another holder of the same capability produces an
+ * identical record with the action skipped. So the CLI must report
+ * `provider=unknown` and exit 0, and `--stop` must read as a request rather than
+ * an outcome. The retained case is `assertCliReleaseRetained` below.
+ *
+ * `recording` carries this case because it is exclusive, cheap — its acquire is
+ * a slot action, not a device boot — and declares neither dependencies nor
+ * `keep_warm_ms`, so releasing it runs the real release action.
+ */
+function assertCliRelease({ slotId, runId }) {
+  const proof = { attempted: true, pass: false, error: null, released: null };
+  const RELEASE_CAPABILITY = 'recording';
+  const acquire = () => {
+    const acquired = rpc('runtime.capability.acquire', {
+      slotId,
+      capabilityId: RELEASE_CAPABILITY,
+      ownerRunId: runId,
+      proofRequirement: {
+        capabilityId: RELEASE_CAPABILITY,
+        reason: 'release reporting validation',
+        mode: 'state',
+      },
+    });
+    if (!acquired.ok) {
+      throw new Error(
+        `could not acquire ${RELEASE_CAPABILITY} for the release proof: ${acquired.conflict?.reason}`,
+      );
+    }
+  };
+  const releaseArgs = [
+    'resource',
+    'capability',
+    'release',
+    slotId,
+    '--run',
+    runId,
+    '--capability',
+    RELEASE_CAPABILITY,
+    '--stop',
+  ];
+  try {
+    // Each release needs its own lease. Reusing one across both calls made the
+    // second find nothing to release, so it rendered no capability rows and the
+    // assertions about those rows passed without ever reading one.
+    acquire();
+    const releasedHuman = cliHuman(releaseArgs);
+    const releasedLines = releasedHuman.stdout.replace(ANSI_CSI, '').replace(/\r/g, '');
+    const releasedRow = releasedLines
+      .split('\n')
+      .find((line) => line.includes(RELEASE_CAPABILITY) && line.includes('provider='));
+    proof.released = {
+      humanRow: releasedRow?.trim() ?? null,
+      requestLine:
+        releasedLines
+          .split('\n')
+          .find((line) => line.includes('keep-warm requested'))
+          ?.trim() ?? null,
+    };
+    if (!proof.released.requestLine) {
+      throw new Error(`the request line was not reported: ${releasedLines.slice(0, 300)}`);
+    }
+    if (!/keep-warm requested: no/.test(proof.released.requestLine)) {
+      throw new Error(`--stop was not reported as the request: ${proof.released.requestLine}`);
+    }
+    if (!releasedRow) {
+      throw new Error(
+        `no ${RELEASE_CAPABILITY} row was rendered, so nothing about it was proved: ${releasedLines.slice(0, 300)}`,
+      );
+    }
+    // The claim under review: a released lease is never a proven stop.
+    if (!/released {2}provider=unknown/.test(releasedRow)) {
+      throw new Error(`a released lease was not reported as unknown: ${releasedRow.trim()}`);
+    }
+    if (/provider=stopped/.test(releasedLines)) {
+      throw new Error(`release claimed an observed stop: ${releasedRow.trim()}`);
+    }
+
+    // A second lease for the envelope assertions.
+    acquire();
+    const releasedRun = cliJson(releaseArgs);
+    const releasedResult = releasedRun.envelope.data ?? releasedRun.envelope.error?.details;
+    proof.released.exit = releasedRun.status;
+    proof.released.envelopeStatus = releasedRun.envelope.status;
+    proof.released.released = (releasedResult?.released ?? []).map((lease) => lease.capabilityId);
+    proof.released.retained = (releasedResult?.retained ?? []).map((lease) => lease.capabilityId);
+    proof.released.failures = releasedResult?.failures ?? [];
+    if (releasedRun.status !== 0) {
+      throw new Error(
+        `releasing ${RELEASE_CAPABILITY} exited ${releasedRun.status}: ${JSON.stringify(proof.released)}`,
+      );
+    }
+    if (!proof.released.released.includes(RELEASE_CAPABILITY)) {
+      throw new Error(`the Gateway did not report ${RELEASE_CAPABILITY} released`);
+    }
+    proof.pass = true;
+  } catch (error) {
+    proof.pass = false;
+    proof.error = error?.message || String(error);
+  }
+  return proof;
+}
+
+/**
+ * The retained half of the release proof.
+ *
+ * It can only run while the dependency pair is still acquired, which is a
+ * window that exists inside the dependency proof and nowhere else: applying
+ * `operator-wait` sheds both providers, so afterwards there is no live lease for
+ * anything to retain. Releasing the dependency while the dependent still holds
+ * it is the one cheap way to observe a retained lease without a second boot.
+ */
+function assertCliReleaseRetained({ slotId, runId, dependencyPair }) {
+  const proof = { attempted: true, pass: false, error: null };
+  try {
+    {
+      const retainedRun = cliJson([
+        'resource',
+        'capability',
+        'release',
+        slotId,
+        '--run',
+        runId,
+        '--capability',
+        dependencyPair.dependency,
+      ]);
+      const retainedResult = retainedRun.envelope.data ?? retainedRun.envelope.error?.details;
+      proof.retained = {
+        attempted: true,
+        exit: retainedRun.status,
+        errorCode: retainedRun.envelope.error?.code ?? null,
+        retained: (retainedResult?.retained ?? []).map((lease) => lease.capabilityId),
+        released: (retainedResult?.released ?? []).map((lease) => lease.capabilityId),
+      };
+      if (!proof.retained.retained.includes(dependencyPair.dependency)) {
+        throw new Error(
+          `expected ${dependencyPair.dependency} to be retained for ${dependencyPair.dependent}; got ${JSON.stringify(proof.retained)}`,
+        );
+      }
+      if (retainedRun.status !== 1) {
+        throw new Error('a retained lease was reported as a successful release');
+      }
+      if (retainedRun.envelope.error?.code !== 'RUNTIME_CAPABILITY_RELEASE_RETAINED') {
+        throw new Error(`retained release carried code ${retainedRun.envelope.error?.code}`);
+      }
+      const retainedHuman = cliHuman([
+        'resource',
+        'capability',
+        'release',
+        slotId,
+        '--run',
+        runId,
+        '--capability',
+        dependencyPair.dependency,
+      ]);
+      const retainedLines = retainedHuman.stdout.replace(ANSI_CSI, '').replace(/\r/g, '');
+      proof.retained.humanSample = retainedLines
+        .split('\n')
+        .filter((line) => line.includes(dependencyPair.dependency))
+        .join(' | ')
+        .trim();
+      if (!/retained {2}provider=running/.test(retainedLines)) {
+        throw new Error(
+          `a retained provider was not reported as running: ${proof.retained.humanSample}`,
+        );
+      }
+    }
+    proof.pass = true;
+  } catch (error) {
+    proof.pass = false;
+    proof.error = error?.message || String(error);
+  }
+  return proof;
+}
+
+/**
+ * Live proof that single-capability recovery reaches the Gateway and reports its
+ * outcome as-is. After terminal cleanup nothing is warm, so the honest answer is
+ * `not-warm` with an observed state the Gateway actually holds.
+ */
+function assertCliStopWarm({ slotId, capabilityId }) {
+  const proof = { attempted: true, pass: false, error: null };
+  try {
+    const run = cliJson(['resource', 'capability', 'stop-warm', slotId, capabilityId]);
+    proof.exit = run.status;
+    proof.envelopeStatus = run.envelope.status;
+    const result = run.envelope.data ?? run.envelope.error?.details;
+    proof.outcome = result?.outcome ?? null;
+    proof.observedState = result?.observedState ?? null;
+    if (!result) throw new Error(`stop-warm returned no result: ${run.stdout}`);
+    if (!['stopped', 'deferred', 'not-warm', 'failed'].includes(result.outcome)) {
+      throw new Error(`stop-warm returned an unknown outcome '${result.outcome}'`);
+    }
+    // The honesty contract: an observed stop is only claimed when the Gateway
+    // stopped the provider.
+    if (result.observedState === 'stopped' && !['stopped', 'not-warm'].includes(result.outcome)) {
+      throw new Error(`stop-warm reported observed 'stopped' with outcome '${result.outcome}'`);
+    }
+    // Both outcomes that leave the provider running exit non-zero, each with its
+    // own code. `not-warm` and `stopped` are successes: nothing was left up.
+    const expectedFailure = {
+      failed: 'RUNTIME_CAPABILITY_STOP_WARM_FAILED',
+      deferred: 'RUNTIME_CAPABILITY_STOP_WARM_DEFERRED',
+    }[result.outcome];
+    proof.expectedCode = expectedFailure ?? null;
+    if (expectedFailure) {
+      if (run.status !== 1 || run.envelope.error?.code !== expectedFailure) {
+        throw new Error(
+          `outcome '${result.outcome}' must exit 1 with ${expectedFailure}; got exit ${run.status} code ${run.envelope.error?.code ?? 'none'}`,
+        );
+      }
+      if (result.outcome === 'deferred' && !result.reason) {
+        throw new Error('a deferred stop must name what still needs the provider');
+      }
+    } else if (run.status !== 0) {
+      throw new Error(`stop-warm exited ${run.status} for outcome '${result.outcome}'`);
+    }
+    proof.pass = true;
   } catch (error) {
     proof.pass = false;
     proof.error = error?.message || String(error);
@@ -576,6 +1101,9 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     persistedPosture: null,
     dependencyProof: null,
     familyProof: null,
+    cliProof: null,
+    cliReleaseProof: null,
+    cliStopWarmProof: null,
     leftoverLeases: null,
     pass: false,
     error: null,
@@ -676,6 +1204,13 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
       throw new Error('operator-wait must never report the worker as stopped');
     }
 
+    // ADR-054 deliverable 9: the typed CLI surface, proved against this live
+    // posture rather than a fixture.
+    report.cliProof = assertCliPostureSurface({ runId, capabilityId: CAPABILITY_ID });
+    if (!report.cliProof.pass) {
+      throw new Error(`CLI posture proof failed: ${report.cliProof.error}`);
+    }
+
     // ADR-054 dependency ordering, proved live against the project's own catalog.
     // This runs BEFORE the base terminal step on purpose: terminal cleanup fences
     // the run, and a fenced run is then correctly refused any further acquire.
@@ -689,6 +1224,12 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     });
     if (report.dependencyProof.error) {
       throw new Error(`dependency posture proof failed: ${report.dependencyProof.error}`);
+    }
+
+    // `resource capability release`, the round-1 blocker fix, proved live.
+    report.cliReleaseProof = assertCliRelease({ slotId, runId });
+    if (!report.cliReleaseProof.pass) {
+      throw new Error(`CLI release proof failed: ${report.cliReleaseProof.error}`);
     }
 
     // ADR-054 family ownership, proved live: the sibling is created before the
@@ -729,6 +1270,13 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
       throw new Error(
         `expected observed 'stopped' at terminal, got '${terminalState.observedState}'`,
       );
+    }
+
+    // Single-capability recovery through the CLI. After terminal cleanup nothing
+    // is warm, so the Gateway's honest answer is `not-warm`.
+    report.cliStopWarmProof = assertCliStopWarm({ slotId, capabilityId: CAPABILITY_ID });
+    if (!report.cliStopWarmProof.pass) {
+      throw new Error(`CLI stop-warm proof failed: ${report.cliStopWarmProof.error}`);
     }
 
     // The same teardown proves the dependency pair: dependent before dependency,

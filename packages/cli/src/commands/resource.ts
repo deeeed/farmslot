@@ -12,6 +12,8 @@ import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
 import { withProgress } from '../progress.js';
 
+import { registerResourcePostureCommands } from './resource-posture.js';
+
 function percent(ratio: number | undefined): string {
   return ratio == null ? '-' : `${Math.round(ratio * 100)}%`;
 }
@@ -71,7 +73,9 @@ export function formatResourcePressure(result: ResourcePressureSnapshotResult): 
 }
 
 export function registerResourceCommand(program: Command): void {
-  const resource = program.command('resource').description('Resource pressure diagnostics');
+  const resource = program
+    .command('resource')
+    .description('Resource pressure diagnostics and run resource posture');
   resource
     .command('pressure')
     .description('Show bounded host pressure history and process attribution')
@@ -116,4 +120,5 @@ export function registerResourceCommand(program: Command): void {
         }
       },
     );
+  registerResourcePostureCommands(resource);
 }

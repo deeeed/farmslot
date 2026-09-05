@@ -17,6 +17,7 @@ import {
   type ResourcePostureGateChoice,
   type ResourcePosturePlan,
   type ResourcePostureTransition,
+  type ResourcePostureTransitionBaseline,
   type Run,
 } from '@farmslot/protocol';
 
@@ -73,7 +74,18 @@ export interface RunPostureGateState {
    * outside an operator wait.
    */
   runPosture?: ResourcePosture;
+  /**
+   * The Gateway has not yet recorded a terminal transition for the resolution
+   * that was just sent. Reported rather than showing an outcome that belongs to
+   * something else.
+   */
+  reconciliationPending?: boolean;
+  /** Whether `appliedTransition` was attributed by the Gateway or matched positionally. */
+  appliedTransitionAttributed?: boolean;
 }
+
+/** Delay between status reads while observing a resolution's transition. */
+export const POSTURE_TRANSITION_POLL_INTERVAL_MS = 1000;
 
 /**
  * Identity of the decisions currently waiting on this run, newest state first.
@@ -106,12 +118,181 @@ export function postureChoicesApply(runPosture: ResourcePosture | undefined): bo
 }
 
 /**
- * Whether the Gateway actually resolved the plan from the operator's choice.
- * A plan that came back from any other source is reported as such rather than
- * being presented as the effect of the choice that was clicked.
+ * Whether the Gateway actually honoured the operator's choice. A plan that came
+ * back from somewhere else is reported as such rather than being presented as
+ * the effect of the choice that was clicked.
+ *
+ * Every other choice is proved by the source alone: the Gateway sets
+ * `gate-choice` only when it resolved the plan from an explicit choice at an
+ * operator wait.
+ *
+ * `project-default` is the inverse — it asks the Gateway to defer to the lower
+ * precedence levels, so a plan resolved from dispatch config, the project, or
+ * the framework is exactly what was requested, and it can never come back as
+ * `gate-choice`. The source alone is not enough for it, though. If the run
+ * leaves `operator-wait` before the preview executes, the Gateway ignores the
+ * choice and answers from the new lifecycle boundary, which also reports
+ * `framework-default`. The plan's posture separates the two: a deferred choice
+ * at an operator wait describes that wait, while an ignored one describes
+ * whatever boundary the run moved to. This reads the plan only, so a stale
+ * cached run posture cannot make an ignored choice look honoured.
  */
-export function postureChoiceHonored(plan: ResourcePosturePlan): boolean {
-  return plan.policySource === 'gate-choice';
+export function postureChoiceHonored(
+  plan: ResourcePosturePlan,
+  choice: ResourcePostureGateChoice,
+): boolean {
+  if (choice !== 'project-default') return plan.policySource === 'gate-choice';
+  // Some other choice won, so this one was not what produced the plan.
+  if (plan.policySource === 'gate-choice') return false;
+  // The run's dispatch preset applied, which is precisely what deferring means.
+  if (plan.policySource === 'run-dispatch') return true;
+  return plan.posture === 'operator-wait';
+}
+
+/**
+ * Whether a held gate choice must be dropped because the Gateway has moved the
+ * run out of an operator wait.
+ *
+ * The choices stop rendering at that point, but the selection and its plan live
+ * on the host component, not in the panel. A refused `free-slot` left behind
+ * keeps blocking Resolve from behind a panel the operator can no longer see or
+ * clear, which is a deadlock with no visible cause.
+ *
+ * An unread posture is not a reason to drop anything: `undefined` means the
+ * status has not come back yet, never that the choice stopped applying.
+ */
+export function postureChoiceBecameInapplicable(state: RunPostureGateState): boolean {
+  if (!state.runPosture) return false;
+  if (postureChoicesApply(state.runPosture)) return false;
+  return state.choice !== null || state.status !== 'idle';
+}
+
+/**
+ * The correlation contract lives in `@farmslot/protocol` so Command Center and
+ * Companion cannot drift. Re-exported here under the names this surface already
+ * uses; the rules are documented once, on the protocol functions.
+ */
+export {
+  correlateResourcePostureTransition as correlatedPostureTransition,
+  isTerminalResourcePostureOutcome as isTerminalPostureOutcome,
+  RESOURCE_POSTURE_TRANSITION_POLL_LIMIT as POSTURE_TRANSITION_POLL_LIMIT,
+  resourcePostureTransitionBaseline as postureTransitionBaseline,
+  type ResourcePostureTransitionBaseline as PostureTransitionObservation,
+  resourcePostureTransitions as postureTransitionsOf,
+} from '@farmslot/protocol';
+
+/**
+ * The gate choice to send with a resolution, or `undefined` to send none.
+ *
+ * A choice is only ever forwarded where the Gateway would honour it. Outside an
+ * operator wait — including when the posture is unread after a failed status
+ * refresh — the panel is not on screen, so the operator cannot see or clear the
+ * selection, and sending it anyway consumes the decision with a refusal they
+ * were never shown. The block lifting where the choices are hidden is correct;
+ * it is the forwarding that must be gated too, and separately.
+ */
+export function postureChoiceForResolve(
+  state: RunPostureGateStateWithAvailability,
+): ResourcePostureGateChoice | undefined {
+  if (!postureChoicesApply(state.runPosture)) return undefined;
+  // A choice the Gateway already refused, or one whose preview never landed, is
+  // not sendable either. `_confirmResolve` checks this first today, so this
+  // changes nothing now; it is here so the guarantee lives in the function
+  // rather than in every caller, and matches Companion's same-named function.
+  if (!canResolveWithPostureChoice(state)) return undefined;
+  return state.choice ?? undefined;
+}
+
+/**
+ * Why a held choice is not being forwarded, for the operator to read, or null
+ * when there is nothing withheld. Silently dropping a selection the operator
+ * made is its own dishonesty.
+ */
+export function postureChoiceWithheldReason(
+  state: RunPostureGateStateWithAvailability,
+): string | null {
+  if (!state.choice) return null;
+  if (postureChoicesApply(state.runPosture)) return null;
+  if (state.runPosture === undefined) {
+    return `Resource posture is unknown, so the ${gateChoiceLabel(state.choice)} choice is withheld. Resolving now applies the run's own policy.`;
+  }
+  return `This run is no longer at an operator wait, so the ${gateChoiceLabel(state.choice)} choice is withheld. Resolving now applies the run's own policy.`;
+}
+
+/**
+ * Whether the Gateway attributed this record to the choice that was forwarded.
+ *
+ * The shared contract accepts a positional match — new, recent and unexcluded —
+ * when nothing is attributed, and is explicit that such a match may belong to a
+ * concurrent reconciliation. So the surface must say which kind it has: only an
+ * attributed match may be described as the operator's own outcome.
+ */
+export function postureTransitionAttributed(
+  baseline: ResourcePostureTransitionBaseline,
+  transition: ResourcePostureTransition,
+): boolean {
+  return Boolean(baseline.choice && transition.gateChoice === baseline.choice);
+}
+
+/**
+ * The fields describing a resolution that already happened, as opposed to the
+ * selection currently being made.
+ *
+ * These outlive every gate rebuild: the operator resolved, the Gateway is
+ * reconciling or has finished, and none of that stops being true because a new
+ * decision opened or a new choice was clicked. Only a run change ends them.
+ */
+export type RunPostureResolutionFields = Pick<
+  RunPostureGateState,
+  'appliedTransition' | 'appliedTransitionAttributed' | 'reconciliationPending'
+>;
+
+export function postureResolutionFields(state: RunPostureGateState): RunPostureResolutionFields {
+  return {
+    ...(state.appliedTransition ? { appliedTransition: state.appliedTransition } : {}),
+    ...(state.appliedTransitionAttributed !== undefined
+      ? { appliedTransitionAttributed: state.appliedTransitionAttributed }
+      : {}),
+    ...(state.reconciliationPending !== undefined
+      ? { reconciliationPending: state.reconciliationPending }
+      : {}),
+  };
+}
+
+/**
+ * Rebuild the gate for a new selection while carrying the resolution through.
+ *
+ * Every path that replaced the whole gate object dropped these fields, so a
+ * result preserved across a decision change was thrown away by the operator's
+ * next click, and an in-flight pending flag vanished until the next poll. One
+ * helper is the root fix: a caller cannot forget what it never has to remember.
+ */
+export function postureGateWithSelection(
+  previous: RunPostureGateState,
+  selection: Omit<RunPostureGateState, keyof RunPostureResolutionFields | 'runPosture'>,
+): RunPostureGateState {
+  return { ...selection, ...postureResolutionFields(previous) };
+}
+
+/**
+ * Adopt a terminal outcome for the resolution just made.
+ *
+ * `reconciliationPending` is always set false here, never merely left alone. A
+ * previous resolution's pending flag survives gate rebuilds by design, so an
+ * adopt that did not clear it would leave a completed result rendering as "not
+ * finished" for as long as the gate lived.
+ */
+export function postureGateWithAdoptedTransition(
+  previous: RunPostureGateState,
+  transition: ResourcePostureTransition,
+  attributed: boolean,
+): RunPostureGateState {
+  return {
+    ...previous,
+    appliedTransition: transition,
+    appliedTransitionAttributed: attributed,
+    reconciliationPending: false,
+  };
 }
 
 export interface RunPostureGatePreviewLine {
@@ -147,7 +328,15 @@ export function postureGatePreviewSummary(plan: ResourcePosturePlan): string {
   if (plan.retain.length) parts.push(`${plan.retain.length} retained`);
   if (plan.warm.length) parts.push(`${plan.warm.length} left warm`);
   if (plan.stop.length) parts.push(`${plan.stop.length} stopped`);
-  const body = parts.length ? parts.join(' · ') : 'no capability changes';
+  // A rejected plan and an empty plan both have no groups, but they are not the
+  // same answer: one is a safe no-op, the other is a refusal. Summarising a
+  // refusal as "no capability changes" reads as "this is fine to resolve".
+  // Companion uses this same wording, so the two clients say one thing.
+  const body = plan.rejection
+    ? 'nothing applied'
+    : parts.length
+      ? parts.join(' · ')
+      : 'no capability changes';
   return `${postureLabel(plan.posture)} via ${policySourceLabel(plan.policySource)} — ${body}`;
 }
 
@@ -160,7 +349,31 @@ export function postureGatePreviewSummary(plan: ResourcePosturePlan): string {
  * different copy rather than one "the Gateway rejected this" message that is
  * wrong half the time.
  */
-export function postureResolveBlockReason(state: RunPostureGateState): string | null {
+/**
+ * A gate state whose availability has been resolved from the Gateway's posture.
+ *
+ * `runPosture` is required rather than optional, so a caller — or a test
+ * fixture — cannot leave it out. Omitting it used to short-circuit the guards
+ * below to "not blocked", which fails OPEN: an assertion meant to prove that a
+ * clean plan does not block passed instead because availability was never
+ * stated. Rendering can keep the optional field, because an absent posture
+ * there means "offer nothing", which fails closed.
+ */
+export type RunPostureGateStateWithAvailability = RunPostureGateState & {
+  /** The Gateway's posture for this run; `undefined` only when it is unread. */
+  runPosture: ResourcePosture | undefined;
+};
+
+export function postureResolveBlockReason(
+  state: RunPostureGateStateWithAvailability,
+): string | null {
+  // A block may only guard a choice the operator can actually see and clear.
+  // The panel renders nothing outside an operator wait, and an unread posture
+  // hides it too, so blocking there strands the decision behind a control that
+  // is not on screen. This is the other half of the rule that an unknown
+  // posture must never clear a selection: unknown means do nothing — neither
+  // destroy the operator's input nor stand in their way.
+  if (!postureChoicesApply(state.runPosture)) return null;
   if (!state.choice) return null;
   if (state.status === 'idle' || state.status === 'loading') {
     return 'Waiting for the Gateway to report what this choice would do.';
@@ -183,7 +396,7 @@ export function postureResolveBlockReason(state: RunPostureGateState): string | 
  * rejection blocks it: sending a choice the Gateway already refused would only
  * produce the same refusal after the decision is gone.
  */
-export function canResolveWithPostureChoice(state: RunPostureGateState): boolean {
+export function canResolveWithPostureChoice(state: RunPostureGateStateWithAvailability): boolean {
   return postureResolveBlockReason(state) === null;
 }
 
@@ -287,10 +500,18 @@ export function renderRunPostureGateChoices(ctx: RunPostureGateRenderContext): u
         : nothing}
       ${plan
         ? html`
-            <div class="posture-gate-summary" data-testid="run-posture-preview-summary">
+            <div
+              class="posture-gate-summary"
+              data-testid="run-posture-preview-summary"
+              data-policy-source=${plan.policySource}
+              data-rejected=${plan.rejection ? 'true' : 'false'}
+              data-choice-honored=${state.choice
+                ? String(postureChoiceHonored(plan, state.choice))
+                : 'none'}
+            >
               ${postureGatePreviewSummary(plan)}
             </div>
-            ${state.choice && !plan.rejection && !postureChoiceHonored(plan)
+            ${state.choice && !plan.rejection && !postureChoiceHonored(plan, state.choice)
               ? html`<div class="posture-gate-help" data-testid="run-posture-preview-not-honored">
                   The Gateway did not resolve this plan from the choice — it came from
                   ${policySourceLabel(plan.policySource)}. Resolving now applies that, not the

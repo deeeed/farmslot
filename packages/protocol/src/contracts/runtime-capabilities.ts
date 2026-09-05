@@ -15,7 +15,14 @@ export type RuntimeCapabilityLeaseState =
   | 'released'
   | 'error';
 export type RuntimeCapabilityHealthState = 'unknown' | 'healthy' | 'unhealthy';
-export type RuntimeCapabilityProofMode = 'state' | 'visual' | 'mixed';
+/** Proof modes a requirement may ask for. Exported as a value so clients can
+ * build option lists and validators from the protocol instead of retyping it. */
+export const RUNTIME_CAPABILITY_PROOF_MODES = ['state', 'visual', 'mixed'] as const;
+export type RuntimeCapabilityProofMode = (typeof RUNTIME_CAPABILITY_PROOF_MODES)[number];
+
+export function isRuntimeCapabilityProofMode(value: unknown): value is RuntimeCapabilityProofMode {
+  return RUNTIME_CAPABILITY_PROOF_MODES.includes(value as RuntimeCapabilityProofMode);
+}
 
 export interface RuntimeCapabilityResourceClaim {
   id: string;

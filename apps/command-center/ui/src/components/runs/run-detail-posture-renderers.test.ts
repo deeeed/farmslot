@@ -1,14 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ResourcePostureCapabilityState, RunResourcePostureState } from '@farmslot/protocol';
+import { nothing } from 'lit';
+
+import {
+  type ResourcePostureCapabilityState,
+  resourcePostureRowStatus,
+  type ResourcePostureTransition,
+  type RunResourcePostureState,
+} from '@farmslot/protocol';
 
 import {
   policySourceLabel,
   postureCapabilityRow,
-  postureRowStatus,
   postureTransitionFailuresToShow,
   rejectionMessage,
+  renderRunPostureResolution,
+  renderRunPostureSummary,
   summarizeRunPosture,
 } from './run-detail-posture-renderers.js';
 
@@ -160,9 +168,9 @@ test('every row lands in exactly one bucket, so the counts never hide one', () =
 });
 
 test('an unknown observation is never claimed as matching or mismatching intent', () => {
-  assert.equal(postureRowStatus('acquired', 'unknown'), 'unproven');
-  assert.equal(postureRowStatus('stopped', 'unknown'), 'unproven');
-  assert.equal(postureRowStatus('stopped', 'transitioning'), 'pending');
+  assert.equal(resourcePostureRowStatus('acquired', 'unknown'), 'unproven');
+  assert.equal(resourcePostureRowStatus('stopped', 'unknown'), 'unproven');
+  assert.equal(resourcePostureRowStatus('stopped', 'transitioning'), 'pending');
 
   const summary = summarizeRunPosture(
     postureState({
@@ -335,4 +343,72 @@ test('a sibling lease failure with a different reason is still shown', () => {
   assert.deepEqual(postureTransitionFailuresToShow(summary), [
     { capabilityId: 'ios-simulator', reason: 'second lease: device never released' },
   ]);
+});
+
+test('the persistent summary carries the resolution outcome after the gate disappears', () => {
+  const transition: ResourcePostureTransition = {
+    id: 'op-1',
+    posture: 'operator-wait',
+    policySource: 'gate-choice',
+    requestedAt: '2026-09-05T12:00:00.000Z',
+    completedAt: '2026-09-05T12:00:02.000Z',
+    outcome: 'partial',
+    effects: [],
+    progress: { total: 2, completed: 1 },
+    failures: [{ capabilityId: 'metro', reason: 'stop timed out' }],
+  };
+  // The gate panel is gone once the decision resolves, so this is the only place
+  // the operator can still read what their resolution did.
+  const applied = renderRunPostureResolution({ appliedTransition: transition });
+  assert.notEqual(applied, nothing);
+
+  // Pending wins over any stale record: an unfinished reconciliation is not an
+  // outcome, and showing the previous one would answer the wrong question.
+  const pending = renderRunPostureResolution({
+    appliedTransition: transition,
+    reconciliationPending: true,
+  });
+  assert.notEqual(pending, nothing);
+  assert.notDeepEqual(pending, applied);
+
+  // Nothing resolved, nothing claimed.
+  assert.equal(renderRunPostureResolution({}), nothing);
+});
+
+test('a withheld choice is reported in every summary branch, including a failed read', () => {
+  const withheld = {
+    withheldChoiceReason: 'Resource posture is unknown, so the Free the slot choice is withheld.',
+  };
+  // A failed status read is exactly when a choice is withheld, so the branch
+  // that reports the failure must also report the withholding.
+  assert.notEqual(renderRunPostureSummary({ status: 'error', message: 'boom' }, withheld), nothing);
+  assert.notEqual(renderRunPostureSummary({ status: 'loading' }, withheld), nothing);
+  // And it is visible on its own, without any resolution to accompany it.
+  assert.notEqual(renderRunPostureResolution(withheld), nothing);
+  assert.equal(renderRunPostureResolution({ withheldChoiceReason: null }), nothing);
+});
+
+test('a positional match is not described as the operator own resolution', () => {
+  const transition: ResourcePostureTransition = {
+    id: 'op-1',
+    posture: 'operator-wait',
+    policySource: 'framework-default',
+    requestedAt: '2026-09-05T12:00:00.000Z',
+    outcome: 'applied',
+    effects: [],
+    progress: { total: 1, completed: 1 },
+    failures: [],
+  };
+  // The shared contract admits a positional match may belong to a concurrent
+  // reconciliation, so only an attributed one may be called the operator's.
+  const attributed = renderRunPostureResolution({
+    appliedTransition: transition,
+    appliedTransitionAttributed: true,
+  });
+  const positional = renderRunPostureResolution({
+    appliedTransition: transition,
+    appliedTransitionAttributed: false,
+  });
+  assert.notDeepEqual(attributed, positional);
+  assert.notEqual(positional, nothing);
 });

@@ -73,10 +73,23 @@ import {
 } from './run-detail-model.js';
 import {
   canResolveWithPostureChoice,
+  correlatedPostureTransition,
+  isTerminalPostureOutcome,
   pendingDecisionKey,
+  POSTURE_TRANSITION_POLL_INTERVAL_MS,
+  POSTURE_TRANSITION_POLL_LIMIT,
+  postureChoiceBecameInapplicable,
+  postureChoiceForResolve,
   postureChoicesApply,
+  postureChoiceWithheldReason,
+  postureGateWithAdoptedTransition,
+  postureGateWithSelection,
   postureResolveBlockReason,
-  type RunPostureGateState,
+  postureTransitionAttributed,
+  postureTransitionBaseline,
+  type PostureTransitionObservation,
+  postureTransitionsOf,
+  type RunPostureGateStateWithAvailability,
 } from './run-detail-posture-gate-renderers.js';
 import { renderRunPostureSummary } from './run-detail-posture-renderers.js';
 import {
@@ -314,6 +327,7 @@ export class RunDetail extends RunDetailState {
     this._maybeRefreshLiveTimeoutPrStatus();
     this._maybeRefreshPostureStatus();
     this._maybeResetPostureGate();
+    this._maybeClearInapplicablePostureChoice();
   }
 
   /**
@@ -321,9 +335,11 @@ export class RunDetail extends RunDetailState {
    * choices are only offered where the Gateway would honour them. The posture
    * is read from `runtime.posture.status`, never inferred from run status.
    */
-  private _postureGateStateForRender(): RunPostureGateState {
-    const runPosture = this._postureStatus.state?.posture;
-    return { ...this._postureGate, ...(runPosture ? { runPosture } : {}) };
+  private _postureGateStateForRender(): RunPostureGateStateWithAvailability {
+    // Always set the key, even when unread. An absent property and an explicit
+    // `undefined` mean the same thing to the guards, but only the explicit form
+    // is enforceable, and the guards require it for exactly that reason.
+    return { ...this._postureGate, runPosture: this._postureStatus.state?.posture };
   }
 
   /** Whether a preview response still belongs to the run and gate on screen. */
@@ -333,6 +349,23 @@ export class RunDetail extends RunDetailState {
       this.runId === runId &&
       this._postureGateKey === gateKey
     );
+  }
+
+  /**
+   * Drop a held choice once the Gateway's posture leaves an operator wait.
+   *
+   * Without this the panel hides itself while the selection stays behind, and a
+   * previously refused choice keeps `canResolveWithPostureChoice` false, so
+   * Resolve silently does nothing with no control on screen to clear it.
+   */
+  private _maybeClearInapplicablePostureChoice(): void {
+    if (!postureChoiceBecameInapplicable(this._postureGateStateForRender())) return;
+    // Only the selection and its preview are stale; the resolution rides along.
+    this._postureGate = postureGateWithSelection(this._postureGate, {
+      choice: null,
+      status: 'idle',
+    });
+    this._posturePreviewRequestSeq++;
   }
 
   /** Drop any in-flight or displayed preview; it belongs to the previous gate. */
@@ -355,7 +388,13 @@ export class RunDetail extends RunDetailState {
     const hadKey = this._postureGateKey !== '';
     this._postureGateKey = key;
     if (hadKey) {
-      this._postureGate = { choice: null, status: 'idle' };
+      // Only the selection and its preview belong to the old gate. A resolution
+      // that already happened is not undone by a new decision opening; it ends
+      // on a run change, which resets the whole gate.
+      this._postureGate = postureGateWithSelection(this._postureGate, {
+        choice: null,
+        status: 'idle',
+      });
       this._posturePreviewRequestSeq++;
     }
   }
@@ -393,6 +432,11 @@ export class RunDetail extends RunDetailState {
         slotId: result.slotId,
         state: result.state,
       };
+      // The clear in `updated()` runs before this lands, so a rejection selected
+      // at a wait the run has since left would keep blocking until some other
+      // shared-state update happened to re-render. Re-check against the posture
+      // that just arrived.
+      this._maybeClearInapplicablePostureChoice();
     } catch (err) {
       if (!stillCurrent()) return;
       // Never fall back to "no posture": an unreadable status is its own state.
@@ -413,7 +457,10 @@ export class RunDetail extends RunDetailState {
   ): Promise<void> {
     const requestSeq = ++this._posturePreviewRequestSeq;
     if (!choice) {
-      this._postureGate = { choice: null, status: 'idle' };
+      this._postureGate = postureGateWithSelection(this._postureGate, {
+        choice: null,
+        status: 'idle',
+      });
       return;
     }
     // The Gateway only resolves a gate choice while the run is at an operator
@@ -421,7 +468,10 @@ export class RunDetail extends RunDetailState {
     // and read as the effect of this choice.
     if (!postureChoicesApply(this._postureStatus.state?.posture)) return;
     const gateKey = this._postureGateKey;
-    this._postureGate = { choice, status: 'loading' };
+    this._postureGate = postureGateWithSelection(this._postureGate, {
+      choice,
+      status: 'loading',
+    });
     try {
       const plan = await gateway.request<RuntimePosturePreviewResult>(
         Methods.RUNTIME_POSTURE_PREVIEW,
@@ -430,14 +480,18 @@ export class RunDetail extends RunDetailState {
       // Guarded on the run and on the exact gate: a response that lands after
       // the operator moved on must not repopulate cleared state.
       if (!this._previewStillCurrent(requestSeq, runId, gateKey)) return;
-      this._postureGate = { choice, status: 'ready', plan };
+      this._postureGate = postureGateWithSelection(this._postureGate, {
+        choice,
+        status: 'ready',
+        plan,
+      });
     } catch (err) {
       if (!this._previewStillCurrent(requestSeq, runId, gateKey)) return;
-      this._postureGate = {
+      this._postureGate = postureGateWithSelection(this._postureGate, {
         choice,
         status: 'error',
         message: `Posture preview failed: ${(err as Error).message}`,
-      };
+      });
     }
   }
 
@@ -944,7 +998,23 @@ export class RunDetail extends RunDetailState {
           now: this._now,
         }),
       _renderRunEvidence: (run) => this._renderRunEvidence(run),
-      _renderPosture: () => renderRunPostureSummary(this._postureStatus),
+      // The gate disappears when the decision resolves, so the correlated result
+      // and the pending notice live on the persistent summary instead.
+      _renderPosture: () =>
+        renderRunPostureSummary(this._postureStatus, {
+          ...(this._postureGate.appliedTransition
+            ? { appliedTransition: this._postureGate.appliedTransition }
+            : {}),
+          ...(this._postureGate.appliedTransitionAttributed !== undefined
+            ? { appliedTransitionAttributed: this._postureGate.appliedTransitionAttributed }
+            : {}),
+          ...(this._postureGate.reconciliationPending !== undefined
+            ? { reconciliationPending: this._postureGate.reconciliationPending }
+            : {}),
+          // The gate panel is hidden exactly when a choice is withheld, so the
+          // persistent summary is the only place the operator can be told.
+          withheldChoiceReason: postureChoiceWithheldReason(this._postureGateStateForRender()),
+        }),
       _renderInteractivePackets: (run) => this._renderInteractivePackets(run),
       _renderAgentSessions: (run) =>
         renderRunAgentSessions(run, {
@@ -1105,32 +1175,124 @@ export class RunDetail extends RunDetailState {
   private _confirmResolve(runId: string, decision: RunDecision, actionId: string) {
     // A choice the Gateway already refused in preview must not be sent: the
     // decision would be consumed and the refusal repeated with nothing to undo.
-    if (!canResolveWithPostureChoice(this._postureGate)) return;
+    if (!canResolveWithPostureChoice(this._postureGateStateForRender())) return;
+    // Snapshot once: the request and the baseline must agree on what was sent.
+    const forwardedChoice = postureChoiceForResolve(this._postureGateStateForRender()) ?? null;
+    const observation = this._postureTransitionObservation(forwardedChoice);
     confirmRunDecision(runId, decision, actionId, {
       ...this._confirmTimerContext(),
       jumpToSuccessorWhenAvailable: (originRunId) =>
         this._jumpToSuccessorWhenAvailable(originRunId),
-      resourcePosture: () => this._postureGate.choice,
+      // Only ever forwarded where the Gateway would honour it; a hidden panel
+      // must not send a choice the operator cannot see or clear.
+      resourcePosture: () => forwardedChoice,
       onDecisionResolved: (run) => {
         // A response that lands after the operator navigated belongs to the run
         // it was requested for, not to whatever is on screen now.
         if (this.runId !== run.id) return;
-        // The apply outcome is the Gateway's, read back from the run it returned.
-        const transition = run.resourcePosture?.lastTransition;
-        this._postureGate = {
-          ...this._postureGate,
-          ...(transition ? { appliedTransition: transition } : {}),
-        };
-        this._postureStatusKey = '';
-        void this._refreshPostureStatus(run.id);
+        this._adoptResolvedPostureTransition(run, observation);
       },
     });
+  }
+
+  /**
+   * The transition the Gateway had recorded before a resolution was sent, so a
+   * response carrying the same one is recognised as "not reconciled yet".
+   */
+  /**
+   * The baseline must be built from the choice that is actually forwarded, not
+   * the one still selected. When forwarding withholds a retained choice, the
+   * Gateway reconciles under the run's own policy, and a baseline carrying the
+   * retained choice rejects that record as another choice's and reports pending
+   * forever.
+   */
+  private _postureTransitionObservation(
+    forwardedChoice: ResourcePostureGateChoice | null,
+  ): PostureTransitionObservation {
+    return postureTransitionBaseline(this._postureStatus.state, forwardedChoice);
+  }
+
+  /**
+   * Adopt the apply outcome only once it is demonstrably this resolution's.
+   * Reconciliation is asynchronous, so the resolve response usually still
+   * carries the previous transition; showing that would report an old rejection
+   * as the answer to what the operator just did. The posture status refresh
+   * below supplies the real one when it lands.
+   */
+  private _adoptResolvedPostureTransition(
+    run: Run,
+    observation: PostureTransitionObservation,
+  ): void {
+    const immediate = correlatedPostureTransition(
+      observation,
+      postureTransitionsOf(run.resourcePosture),
+    );
+    if (immediate && isTerminalPostureOutcome(immediate.outcome)) {
+      this._postureGate = postureGateWithAdoptedTransition(
+        this._postureGate,
+        immediate,
+        postureTransitionAttributed(observation, immediate),
+      );
+      this._postureStatusKey = '';
+      void this._refreshPostureStatus(run.id);
+      return;
+    }
+    // Reconciliation is asynchronous, so the resolve response usually carries
+    // the previous transition or one still in progress. Observe until the
+    // Gateway records a terminal outcome for THIS resolution.
+    void this._observePostureTransition(run.id, observation);
+  }
+
+  /**
+   * Poll `runtime.posture.status` until the Gateway records a terminal outcome
+   * for this resolution, bounded.
+   *
+   * `in-progress` is not an answer: adopting it would report a reconciliation
+   * that can still fail as the operator's result. On timeout the gate reports
+   * the wait rather than the last thing seen, because "still reconciling" is the
+   * truthful state and a stale record is not.
+   */
+  private async _observePostureTransition(
+    runId: string,
+    observation: PostureTransitionObservation,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < POSTURE_TRANSITION_POLL_LIMIT; attempt += 1) {
+      // One read per attempt. Clearing `_postureStatusKey` here let the refresh
+      // in `updated()` fire a second, concurrent read whose sequence number
+      // invalidated this loop's own request, doubling the RPCs and burning an
+      // attempt. The key is only cleared once the wait is over.
+      await this._refreshPostureStatus(runId);
+      if (this.runId !== runId) return;
+      const observed = correlatedPostureTransition(
+        observation,
+        postureTransitionsOf(this._postureStatus.state),
+      );
+      if (observed && isTerminalPostureOutcome(observed.outcome)) {
+        this._postureGate = postureGateWithAdoptedTransition(
+          this._postureGate,
+          observed,
+          postureTransitionAttributed(observation, observed),
+        );
+        // The run record moved on; let the normal refresh path pick it up again.
+        this._postureStatusKey = '';
+        return;
+      }
+      this._postureGate = { ...this._postureGate, reconciliationPending: true };
+      await new Promise((resolve) => setTimeout(resolve, POSTURE_TRANSITION_POLL_INTERVAL_MS));
+    }
+    if (this.runId !== runId) return;
+    // Bounded and honest: say the Gateway has not finished rather than showing
+    // an outcome that is not this resolution's.
+    this._postureGate = { ...this._postureGate, reconciliationPending: true };
   }
 
   private async _checkInteractiveHandoffSignal(runId: string, decision: RunDecision) {
     // A refused posture choice blocks the resume for the same reason it blocks
     // any other resolution: the decision would be consumed by a refusal.
-    if (!canResolveWithPostureChoice(this._postureGate)) return;
+    if (!canResolveWithPostureChoice(this._postureGateStateForRender())) return;
+    // Snapshot once: the request and the baseline must agree on what was sent.
+    const forwardedChoice = postureChoiceForResolve(this._postureGateStateForRender()) ?? null;
+    const observation = this._postureTransitionObservation(forwardedChoice);
     await checkInteractiveHandoffSignal(runId, decision, {
       actionsBlocked: () => this._actionsBlocked(),
       busy: () => this._handoffSignalCheckBusy,
@@ -1140,16 +1302,12 @@ export class RunDetail extends RunDetailState {
       setError: (error) => {
         this._handoffSignalCheckError = error;
       },
-      resourcePosture: () => this._postureGate.choice,
+      // Only ever forwarded where the Gateway would honour it; a hidden panel
+      // must not send a choice the operator cannot see or clear.
+      resourcePosture: () => forwardedChoice,
       onDecisionResolved: (run) => {
         if (this.runId !== run.id) return;
-        const transition = run.resourcePosture?.lastTransition;
-        this._postureGate = {
-          ...this._postureGate,
-          ...(transition ? { appliedTransition: transition } : {}),
-        };
-        this._postureStatusKey = '';
-        void this._refreshPostureStatus(run.id);
+        this._adoptResolvedPostureTransition(run, observation);
       },
     });
   }

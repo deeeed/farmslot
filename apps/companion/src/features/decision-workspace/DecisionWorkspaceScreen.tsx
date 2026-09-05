@@ -11,10 +11,15 @@ import {
   Events,
   Methods,
   type RecipeRunArtifactGroup,
+  RESOURCE_POSTURE_TRANSITION_POLL_LIMIT,
+  type ResourcePostureGateChoice,
+  resourcePostureTransitionBaseline,
   reviewChainForRun,
   type Run,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
+  type RuntimePosturePreviewResult,
+  type RuntimePostureStatusResult,
   type TaskProgressResult,
   type TaskProgressStructured,
   type TaskProgressUpdatedPayload,
@@ -24,6 +29,7 @@ import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -38,6 +44,21 @@ import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-
 import { diffArtifactCandidate } from '../../lib/diff';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
+import {
+  canResolveWithPostureChoice,
+  initialRunPostureGateState,
+  observePostureTransition,
+  postureApplyAlert,
+  postureChoiceForResolve,
+  postureGateKey,
+  postureResolveBlock,
+  runPostureGateApplied,
+  runPostureGateForContext,
+  runPostureGatePreviewFailed,
+  runPostureGatePreviewLoaded,
+  runPostureGateSelect,
+  type RunPostureGateState,
+} from '../../lib/run-posture-gate';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
 import {
   hasRunWorkspaceDiff,
@@ -81,6 +102,10 @@ import {
   routeParamString,
   signalTarget,
 } from './components/decision-workspace-panels';
+import {
+  ResourcePostureGatePanel,
+  ResourcePostureWithheldNotice,
+} from './components/ResourcePostureGatePanel';
 import { decisionWorkspaceStyles as styles } from './styles/decision-workspace.styles';
 
 const TONE_COLORS = {
@@ -89,6 +114,10 @@ const TONE_COLORS = {
   fail: colors.statusFail,
   info: colors.accent,
 } as const;
+
+/** The shared poll bound; the interval is this client's own pacing. */
+const POSTURE_APPLY_POLL_ATTEMPTS = RESOURCE_POSTURE_TRANSITION_POLL_LIMIT;
+const POSTURE_APPLY_POLL_DELAY_MS = 600;
 
 type DecisionSectionKey = 'signals' | 'evidence' | 'reports' | 'progress' | 'terminal' | 'actions';
 
@@ -201,6 +230,92 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const decisionRouteContext = useMemo(
     () => decisionWorkspaceRouteParams(presentation?.kind),
     [presentation?.kind],
+  );
+
+  // ADR-054 gate choices. The posture comes from `runtime.posture.status` and the
+  // effect of a choice from `runtime.posture.preview`; nothing on this screen
+  // resolves retention policy of its own.
+  const { posture: runPostureStatus } = useRunResourcePosture(
+    client,
+    sourceRunId,
+    sourceRun?.updatedAt ?? '',
+  );
+  const runPosture = runPostureStatus.state?.posture;
+  // Only `run.resolveDecision` carries a typed `resourcePosture`. A decision
+  // reached through the route or `context.runId` alone resolves through
+  // `decision.resolve`, which has nowhere to put a choice, so the choices must
+  // not be offered for it.
+  const postureAvailability = useMemo(
+    () => ({ canForwardChoice: Boolean(decision?.runMeta), runPosture }),
+    [decision?.runMeta, runPosture],
+  );
+  // Availability as of right now, for async handlers whose closure captured it
+  // at request time. A response is only current if the run is still at the wait
+  // the operator was answering.
+  const postureAvailabilityRef = useRef(postureAvailability);
+  useEffect(() => {
+    postureAvailabilityRef.current = postureAvailability;
+  }, [postureAvailability]);
+  const [postureGate, setPostureGate] = useState(initialRunPostureGateState());
+  // Mirrors the gate state synchronously. Deriving the next state from the
+  // rendered value made two taps in one frame share a request id, so the first
+  // choice's preview passed the staleness guard and rendered under the second.
+  const postureGateRef = useRef(postureGate);
+  const applyPostureGate = useCallback(
+    (update: (current: RunPostureGateState) => RunPostureGateState) => {
+      const next = update(postureGateRef.current);
+      postureGateRef.current = next;
+      setPostureGate(next);
+      return next;
+    },
+    [],
+  );
+  const gateKey = postureGateKey(sourceRunId, resolvedDecisionId);
+  useEffect(() => {
+    // A plan is only true of the gate it was requested for and only while the
+    // Gateway is still at that wait. Rebinding on both drops a preview in flight
+    // for a decision the operator left, and clears a previewed rejection that
+    // would otherwise keep blocking every action after the choices stop applying.
+    applyPostureGate((current) =>
+      runPostureGateForContext(current, { gateKey, ...postureAvailability }),
+    );
+  }, [applyPostureGate, gateKey, postureAvailability]);
+
+  const selectPostureChoice = useCallback(
+    (choice: ResourcePostureGateChoice) => {
+      if (!client || !sourceRunId) return;
+      const next = applyPostureGate((current) =>
+        runPostureGateSelect(current, choice, postureAvailability),
+      );
+      if (!next.choice) return;
+      const { gateKey: requestedGateKey, requestId } = next;
+      client
+        .request<RuntimePosturePreviewResult>(Methods.RUNTIME_POSTURE_PREVIEW, {
+          runId: sourceRunId,
+          gateChoice: next.choice,
+        })
+        .then((plan) => {
+          applyPostureGate((current) =>
+            runPostureGatePreviewLoaded(current, {
+              gateKey: requestedGateKey,
+              requestId,
+              ...postureAvailabilityRef.current,
+              plan,
+            }),
+          );
+        })
+        .catch((err: Error) => {
+          applyPostureGate((current) =>
+            runPostureGatePreviewFailed(current, {
+              gateKey: requestedGateKey,
+              requestId,
+              ...postureAvailabilityRef.current,
+              message: `Posture preview failed: ${err.message}`,
+            }),
+          );
+        });
+    },
+    [applyPostureGate, client, postureAvailability, sourceRunId],
   );
   useEffect(() => {
     if (
@@ -393,14 +508,37 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   const resolveAction = useCallback(
     (actionId: string) => {
       if (!client || !decision) return;
+      // A choice the Gateway already refused, or one whose effect is still
+      // unproven, must not be sent: the decision would be consumed and the
+      // refusal repeated with nothing left to undo.
+      // Re-derived here rather than trusting the effect to have run: a decision
+      // that cannot carry a choice, or a run that has left the wait, must not be
+      // blocked by a verdict about a choice that no longer applies to it.
+      const gate = runPostureGateForContext(postureGate, { gateKey, ...postureAvailability });
+      const postureBlock = postureResolveBlock(gate, postureAvailability);
+      if (!canResolveWithPostureChoice(gate, postureAvailability)) {
+        Alert.alert('Resource posture', postureBlock.message);
+        return;
+      }
       const method = decision.runMeta ? 'run.resolveDecision' : 'decision.resolve';
+      const resourcePosture = postureChoiceForResolve(gate, postureAvailability);
       const params = decision.runMeta
         ? buildRunResolveDecisionParams({
             runId: decision.runMeta.runId,
             decision,
             actionId,
+            ...(resourcePosture ? { resourcePosture } : {}),
           })
         : { decisionId: decision.id, actionId };
+
+      // Transition ids already on screen. `run.resolveDecision` returns before
+      // reconciliation finishes, so the run it returns still carries the previous
+      // transition; anything already in this baseline is not this resolution's
+      // outcome and must never be reported as one.
+      const baseline = resourcePostureTransitionBaseline(
+        runPostureStatus.state,
+        resourcePosture ?? null,
+      );
 
       Alert.alert('Confirm action', `Send "${actionId}" for ${decision.title}?`, [
         { text: 'Cancel', style: 'cancel' },
@@ -417,16 +555,58 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                     pathname: '/workspace/run/[runId]/evidence',
                     params: { runId: sourceRunId },
                   });
-                  return;
+                } else {
+                  router.back();
                 }
-                router.back();
+                // The decision is resolved either way, so navigation is not held
+                // for reconciliation. Only a choice the operator actually made is
+                // worth following: without one there is no outcome they asked for.
+                if (!resourcePosture || !sourceRunId) return;
+                void observePostureTransition(
+                  baseline,
+                  async () => {
+                    const status = await client.request<RuntimePostureStatusResult>(
+                      Methods.RUNTIME_POSTURE_STATUS,
+                      { runId: sourceRunId },
+                    );
+                    return status.state;
+                  },
+                  {
+                    attempts: POSTURE_APPLY_POLL_ATTEMPTS,
+                    delayMs: POSTURE_APPLY_POLL_DELAY_MS,
+                    // Backgrounding the app right after resolving pauses gateway
+                    // requests. That is routine, not an unknown outcome, so the
+                    // wait rides it out instead of alarming the operator.
+                    isTransient: isGatewayBackgroundPauseError,
+                  },
+                ).then((observation) => {
+                  if (observation.status === 'observed') {
+                    applyPostureGate((current) =>
+                      runPostureGateApplied(current, observation.transition),
+                    );
+                  }
+                  const alert = postureApplyAlert(observation, resourcePosture);
+                  if (alert) Alert.alert(alert.title, alert.message);
+                });
               })
               .catch((err: Error) => Alert.alert('Failed to resolve', err.message));
           },
         },
       ]);
     },
-    [client, decision, embedded, removeDecision, router, sourceRunId],
+    [
+      applyPostureGate,
+      client,
+      decision,
+      embedded,
+      gateKey,
+      postureAvailability,
+      postureGate,
+      removeDecision,
+      router,
+      runPostureStatus.state,
+      sourceRunId,
+    ],
   );
 
   const openDocumentArtifact = useCallback(
@@ -1280,6 +1460,17 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
                 : 'Mobile gate shortcuts route here first. Review the summary, criteria, visual evidence, reports, artifacts, and terminal context above before sending a response.'}
             </Text>
           </View>
+          {decision.resolvedAt ? null : (
+            <ResourcePostureGatePanel
+              gate={postureGate}
+              availability={postureAvailability}
+              disabled={!client || !sourceRunId}
+              onSelect={selectPostureChoice}
+            />
+          )}
+          {decision.resolvedAt ? null : (
+            <ResourcePostureWithheldNotice gate={postureGate} availability={postureAvailability} />
+          )}
           {decision.resolvedAt ? (
             <View style={styles.resolvedDecisionCard}>
               <Text style={styles.safetyTitle}>Already resolved</Text>

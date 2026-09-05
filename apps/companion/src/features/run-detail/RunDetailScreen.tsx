@@ -21,6 +21,7 @@ import {
 
 import { RunPipelineFull } from '../../components/RunPipeline';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
+import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import {
   artifactsForRecipeRun,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -71,6 +72,7 @@ import {
   RunFocusedArtifactCard,
   RunReviewWorkspaceSummary,
 } from './components/run-detail-panels';
+import { RunPosturePanel } from './components/RunPosturePanel';
 import { runDetailStyles as styles } from './styles/run-detail.styles';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -386,6 +388,14 @@ export default function RunDetailScreen() {
   const visibleRecipeArtifactCount = recipeRunsLoaded
     ? totalRecipeArtifactCount || selectedRecipeArtifactCount
     : null;
+  // ADR-054: the run carries the persisted desired policy, but only
+  // `runtime.posture.status` re-merges it with what the providers are observed
+  // to be doing, so the summary is never rendered from `run.resourcePosture`.
+  const { posture: runPosture } = useRunResourcePosture(
+    client,
+    resolvedRunId || null,
+    run?.updatedAt ?? '',
+  );
   const compareTarget = useMemo(
     () =>
       run
@@ -520,6 +530,8 @@ export default function RunDetailScreen() {
             <Text style={baseStyles.textMuted}>{formatDuration(run.metrics?.durationMs)}</Text>
           </View>
         </View>
+
+        <RunPosturePanel state={runPosture} />
 
         {reviewPackageActiveTab === 'evidence' && focusedArtifactPath ? (
           <RunFocusedArtifactCard
