@@ -165,8 +165,12 @@ test('a hook already executing when the capture opens is not attributed', async 
     await runWithResourceLifecycleContext('ctx-3', async () => {
       // Let the in-flight hook finish now, inside the capture window.
       releaseHook();
-      await inFlight;
-      holdHook = null;
+      try {
+        await inFlight;
+      } finally {
+        // Reset even if the in-flight control rejects, or every later test hangs.
+        holdHook = null;
+      }
       await executeResourceControl('slot-a', 'dev-server', 'shutdown');
     });
   } finally {

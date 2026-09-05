@@ -4173,11 +4173,16 @@ test('a restore removes its lifecycle capture however it ends', async () => {
   // block and the `finally` either way — the capture must be gone.
   await restoreRun(failing, 'capture-cleanup-throw', 'run-b').catch(() => undefined);
   const record = failing.runs.get('run-b')?.park;
+  // Only the propagating throw settles with this code; the caught pre-capture
+  // observation failure carries a different one, so this cannot pass vacuously.
   assert.equal(
-    record?.errors.some((error) => /the node went away mid-restore/.test(error.message)) ??
-      record === null,
+    record?.errors.some(
+      (error) =>
+        error.code === 'UNEXPECTED_EFFECT_FAILURE' &&
+        /the node went away mid-restore/.test(error.message),
+    ),
     true,
-    'the throw really happened inside the restore',
+    'the throw really happened inside the restore and unwound to the settlement',
   );
   assert.equal(
     activeResourceLifecycleCaptures(),
