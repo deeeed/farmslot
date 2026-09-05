@@ -1,14 +1,14 @@
 {
-  "testedSha": "62be77d2bc1a1ed3ac69db39e698f46b935ed7a4",
+  "testedSha": "7cdcdca73711d9867809bb64b0fcaf887261cf0d",
   "testedTreeDirty": false,
   "dirtyPathCount": 0,
-  "capturedAt": "2026-09-05T00:40:53.369Z",
+  "capturedAt": "2026-09-05T01:28:54.001Z",
   "runDetail": {
     "ok": true,
-    "testedSha": "62be77d2bc1a1ed3ac69db39e698f46b935ed7a4",
-    "runId": "96c2e896-e961-4f17-8177-33282d672cd3",
+    "testedSha": "7cdcdca73711d9867809bb64b0fcaf887261cf0d",
+    "runId": "af18e7ff-4fe7-4c88-8b41-d57d83e44aff",
     "slotId": "macpro-ff-1",
-    "capturedAt": "2026-09-05T00:40:41.962Z",
+    "capturedAt": "2026-09-05T01:28:41.964Z",
     "summary": {
       "posture": "operator-wait",
       "policySource": "framework-default",
@@ -22,7 +22,7 @@
       "source": "policy from framework default",
       "countsText": "1 retained · 0 warm · 0 stopped · 0 failed",
       "worker": "worker retained",
-      "lastTransition": "Last transition to Operator wait: applied · 2026-09-05T00:39:29.610Z · 1/1 steps",
+      "lastTransition": "Last transition to Operator wait: applied · 2026-09-05T01:27:25.661Z · 1/1 steps",
       "effects": null,
       "rejection": null
     },
@@ -59,8 +59,8 @@
   },
   "surfaces": {
     "slotId": "macpro-ff-1",
-    "testedSha": "62be77d2bc1a1ed3ac69db39e698f46b935ed7a4",
-    "capturedAt": "2026-09-05T00:38:26.341Z",
+    "testedSha": "7cdcdca73711d9867809bb64b0fcaf887261cf0d",
+    "capturedAt": "2026-09-05T01:25:35.122Z",
     "backlog": {
       "attempted": true,
       "itemId": "7b3235c9-8288-4785-92d6-73aad1d35bff",
@@ -146,7 +146,7 @@
       "capabilityId": "browser-cdp",
       "keepWarmMs": 600000,
       "releasedOk": true,
-      "warmUntil": "2026-09-05T00:48:34.920Z",
+      "warmUntil": "2026-09-05T01:35:52.390Z",
       "warmWindowOpen": true,
       "buttonLabel": "Stop warm Browser / CDP",
       "note": "Stopped. The lease owner can no longer drive the CDP session; Chrome remains reusable only until the explicit keep-warm deadline",
@@ -164,10 +164,10 @@
     "restart": {
       "attempted": true,
       "capabilityId": "recording",
-      "originalLeaseId": "cap-cc1025f8-21ac-4b09-b72e-40e877fd8607",
+      "originalLeaseId": "cap-85e267c1-85ff-4d97-bbaf-fad26a9b2d26",
       "actionError": null,
       "originalLeaseState": "released",
-      "newLeaseId": "cap-279fba93-de4a-41b9-b538-7a9674093432",
+      "newLeaseId": "cap-86045e99-2132-4ef6-ad7d-92e55ffa9e8b",
       "cleanupFailure": null,
       "originalReleased": true,
       "reacquired": true,
