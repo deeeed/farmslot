@@ -1068,11 +1068,18 @@ function cleanupFamilyProof({ slotId, proof }) {
 }
 
 /**
- * Live proof for the ADR-054 `free-slot` gate-park eligibility branch
+ * Live proof for the ADR-054 `free-slot` gate-park ELIGIBILITY VERDICT
  * (MANUAL-000112 slice 1), read through the production gateway's
  * `machine.pause.preview` and the `runtime.posture.preview` surface that
- * delegates to it. Both are read-only: nothing here stops a runner, releases a
- * lease, or touches a slot row.
+ * delegates to it.
+ *
+ * Scope, stated plainly: this node proves what the Gateway ANSWERS and that
+ * asking changed nothing. It is preview-only. A successful gate park — the
+ * branch detach, the slot release, a second run reusing the freed slot, the
+ * restart-recovery repair, and cancelling a parked run — is NOT proved here.
+ * Those need a runner with a persisted session reload driving a real
+ * publication package, which the scripted runner cannot produce; they are
+ * covered by the gateway unit suite and remain outstanding as live proof.
  *
  * Two halves, because only one of them can be produced from a scripted run:
  *
@@ -1108,14 +1115,17 @@ function assertGateParkEligibility({ slotId, runId, machine }) {
       currentRunId: slot.currentRunId ?? null,
     };
   };
-  const leaseIds = (owner) =>
-    rpc('runtime.capability.status', { slotId, ownerRunId: owner })
+  // Slot-scoped: the supplied gate run lives on its OWN slot, and querying the
+  // scenario's slot would report an unchanged lease set no matter what the
+  // refused preview did over there.
+  const leaseIds = (leaseSlotId, owner) =>
+    rpc('runtime.capability.status', { slotId: leaseSlotId, ownerRunId: owner })
       .leases.map((lease) => `${lease.capabilityId}:${lease.id}:${lease.state}`)
       .sort();
   try {
     // (A) The monitoring run this scenario owns.
     const beforeSlot = slotRow(slotId);
-    const beforeLeases = leaseIds(runId);
+    const beforeLeases = leaseIds(slotId, runId);
     const preview = rpc('machine.pause.preview', {
       machine,
       mode: 'release',
@@ -1150,7 +1160,7 @@ function assertGateParkEligibility({ slotId, runId, machine }) {
         `a read-only preview changed the slot row: ${JSON.stringify(beforeSlot)} -> ${JSON.stringify(afterSlot)}`,
       );
     }
-    if (JSON.stringify(beforeLeases) !== JSON.stringify(leaseIds(runId))) {
+    if (JSON.stringify(beforeLeases) !== JSON.stringify(leaseIds(slotId, runId))) {
       throw new Error("a read-only preview changed this run's leases");
     }
 
@@ -1167,7 +1177,7 @@ function assertGateParkEligibility({ slotId, runId, machine }) {
     const gateRun = rpc('run.get', { runId: proof.gateHeldRunId }).run;
     if (!gateRun.slotId) throw new Error(`gate-held run ${proof.gateHeldRunId} holds no slot`);
     const gateSlotBefore = slotRow(gateRun.slotId);
-    const gateLeasesBefore = leaseIds(gateRun.id);
+    const gateLeasesBefore = leaseIds(gateRun.slotId, gateRun.id);
     const gatePreview = rpc('machine.pause.preview', {
       machine,
       mode: 'release',
@@ -1214,7 +1224,7 @@ function assertGateParkEligibility({ slotId, runId, machine }) {
         `a refused free-slot changed the gate-held slot row: ${JSON.stringify(gateSlotBefore)} -> ${JSON.stringify(gateSlotAfter)}`,
       );
     }
-    if (JSON.stringify(gateLeasesBefore) !== JSON.stringify(leaseIds(gateRun.id))) {
+    if (JSON.stringify(gateLeasesBefore) !== JSON.stringify(leaseIds(gateRun.slotId, gateRun.id))) {
       throw new Error("a refused free-slot changed the gate-held run's leases");
     }
     const gateAfter = rpc('run.get', { runId: gateRun.id }).run;

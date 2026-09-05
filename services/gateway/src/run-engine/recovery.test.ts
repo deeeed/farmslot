@@ -7,6 +7,7 @@ import {
   hasPendingPublicationReviewContinuation,
   hasRecoverablePublicationReviewer,
   prepareSubstepsShowCompletion,
+  reconcileOrphanedSlots,
   recoverActiveRuns,
   recoveryHealthIsReady,
   type RunRecoveryCollaborators,
@@ -1261,4 +1262,203 @@ test('recovery re-enters monitor for an idle-looking autonomous worker', async (
 
   assert.deepEqual(statuses, [], 'recovery must not bypass monitor signal validation');
   assert.equal(started, true);
+});
+
+// ─── ADR-054 free-slot: restart recovery treats a gate-parked run as parked ───
+
+const GATE_PARK_AT = '2026-09-05T00:00:00.000Z';
+
+/**
+ * A gate-held run at its publication gate with an ADR-054 `free-slot` park
+ * record. `parkOverrides` chooses where in the park the restart landed: after
+ * `slotFreedAt` (the release is durable) or before it (the record declares the
+ * freeing intent and the worker was already stopped on the way down).
+ */
+function gateParkedRun(parkOverrides: Record<string, unknown>): Run {
+  return minimalActiveRun({
+    id: 'parked-run',
+    status: 'blocked',
+    slotId: 'macwork-ff-2',
+    ticketOrPr: 'RECOVERY-GATE-PARK',
+    familyRootTicketOrPr: 'RECOVERY-GATE-PARK',
+    taskFile: '/tmp/recovery-gate-park/TASK.md',
+    steps: [
+      { name: 'complete', status: 'done', outputs: { slotDisposition: 'gate-held' } },
+      { name: 'human-gate', status: 'running' },
+    ],
+    decisions: [
+      {
+        id: 'gate-1',
+        type: 'engine_human_gate',
+        title: 'Publication gate',
+        description: 'Approve package',
+        actions: [],
+        createdAt: GATE_PARK_AT,
+      },
+    ],
+    park: {
+      version: 1,
+      operationId: 'park-recovery',
+      previewId: 'preview-recovery',
+      runId: 'parked-run',
+      generation: 1,
+      machine: 'macwork',
+      slotId: 'macwork-ff-2',
+      mode: 'release',
+      slotDisposition: 'freed',
+      prePauseStatus: 'blocked',
+      prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+      resourceManifest: { capturedAt: GATE_PARK_AT, resources: [], capabilityLeases: [] },
+      recoveryHandle: null,
+      errors: [],
+      residuals: { runner: 'stopped', resources: [] },
+      createdAt: GATE_PARK_AT,
+      updatedAt: GATE_PARK_AT,
+      ...parkOverrides,
+    },
+  } as unknown as Partial<Run>);
+}
+
+/**
+ * Runs restart recovery against a single gate-parked run and records every
+ * slot-bound collaborator it reached. Each one would act on a slot the park
+ * handed to dispatch, which the fleet here reports as already re-claimed.
+ */
+async function recoverGateParked(run: Run) {
+  const calls: string[] = [];
+  const broadcasts: string[] = [];
+  const updates: Array<Partial<Run>> = [];
+  // The successor that took the freed slot. `paused` so it drives no recovery
+  // of its own and every recorded call belongs to the parked run — but it is a
+  // real active binding, so the closing orphan sweep sees the slot occupied.
+  const successor = minimalActiveRun({
+    id: 'successor-run',
+    status: 'paused',
+    slotId: 'macwork-ff-2',
+    ticketOrPr: 'RECOVERY-GATE-PARK-SUCCESSOR',
+    familyRootTicketOrPr: 'RECOVERY-GATE-PARK-SUCCESSOR',
+    taskFile: '/tmp/recovery-gate-park-successor/TASK.md',
+  });
+  const deps = {
+    listRuns: () => ({ runs: [run, successor] }),
+    quarantineLeakedRun: async () => calls.push('quarantineLeakedRun'),
+    // The successor already owns the slot the park handed to dispatch.
+    loadFleetStatus: async () => ({
+      slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', currentRunId: 'successor-run' }],
+    }),
+    getRun: (runId: string) => (runId === successor.id ? successor : run),
+    updateRun: (runId: string, fields: Partial<Run>) => {
+      if (runId === run.id) updates.push(fields);
+    },
+    updateRunStep: () => calls.push('updateRunStep'),
+    setRunFlags: () => calls.push('setRunFlags'),
+    broadcast: (event: string) => broadcasts.push(event),
+    reconcileRunAgentRuntime: async () => calls.push('reconcileRunAgentRuntime'),
+    replayHumanGate: async () => calls.push('replayHumanGate'),
+    rearmPublicationReviewRecovery: () => {
+      calls.push('rearmPublicationReviewRecovery');
+      return true;
+    },
+    startRun: async () => calls.push('startRun'),
+    resetSlot: async () => calls.push('resetSlot'),
+    loadSlotVars: async () => {
+      calls.push('loadSlotVars');
+      return {};
+    },
+    execOnSlot: async () => {
+      calls.push('execOnSlot');
+      return { exitCode: 0, stdout: '', stderr: '' };
+    },
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+  return { calls, broadcasts, updates };
+}
+
+test('restart recovery drives no slot work for a run whose park freed its slot', async () => {
+  const { calls, broadcasts, updates } = await recoverGateParked(
+    gateParkedRun({
+      phase: 'parked',
+      slotFreedAt: '2026-09-05T00:00:10.000Z',
+      preservedWorkspace: {
+        branch: 'work/parked-run',
+        headSha: 'sha-parked',
+        detachedAt: '2026-09-05T00:00:09.000Z',
+      },
+    }),
+  );
+
+  // Every one of these would act on a slot the parked run no longer owns.
+  assert.deepEqual(calls, []);
+  // The pending gate is still published so clients show the run waiting; a
+  // broadcast touches no slot.
+  assert.deepEqual(broadcasts, ['run.decision.new']);
+  assert.equal(
+    updates.some((fields) => 'slotId' in fields),
+    false,
+    'recovery must not rebind or clear the parked run slot',
+  );
+});
+
+test('restart recovery drives no slot work for a park that crashed before slotFreedAt', async () => {
+  // The write-ahead record declares the freeing intent and the worker was
+  // stopped on the way down, but the release had not been recorded when the
+  // gateway died. `run.resolveDecision` refuses this run for exactly as long,
+  // so recovery must not re-drive the gate it cannot answer.
+  const { calls, broadcasts, updates } = await recoverGateParked(
+    gateParkedRun({ phase: 'stopping', slotFreedAt: undefined }),
+  );
+
+  assert.deepEqual(calls, []);
+  assert.deepEqual(broadcasts, ['run.decision.new']);
+  assert.equal(
+    updates.some((fields) => 'slotId' in fields),
+    false,
+    'recovery must not rebind or clear the parked run slot',
+  );
+});
+
+test('orphan reconcile reclaims a busy slot that only a park-freed run still names', async () => {
+  // The parked run keeps `slotId` as its restore target, so counting it as an
+  // occupant would mask this slot from reclamation for as long as the park
+  // lives. Occupancy comes from the shared predicate, not from `slotId` alone.
+  const parked = gateParkedRun({
+    phase: 'parked',
+    slotFreedAt: '2026-09-05T00:00:10.000Z',
+  });
+  const reset: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [parked] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: null }],
+    }),
+    resetSlot: async (slotId: string) => reset.push(slotId),
+  } as unknown as RunRecoveryCollaborators;
+
+  await reconcileOrphanedSlots(deps);
+
+  assert.deepEqual(reset, ['macwork-ff-2']);
+});
+
+test('orphan reconcile leaves a busy slot its live occupant still holds', async () => {
+  const running = minimalActiveRun({
+    id: 'successor-run',
+    status: 'monitoring',
+    slotId: 'macwork-ff-2',
+    ticketOrPr: 'RECOVERY-GATE-PARK-SUCCESSOR',
+    familyRootTicketOrPr: 'RECOVERY-GATE-PARK-SUCCESSOR',
+    taskFile: '/tmp/recovery-gate-park-successor/TASK.md',
+  });
+  const reset: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [running] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: null }],
+    }),
+    resetSlot: async (slotId: string) => reset.push(slotId),
+  } as unknown as RunRecoveryCollaborators;
+
+  await reconcileOrphanedSlots(deps);
+
+  assert.deepEqual(reset, []);
 });

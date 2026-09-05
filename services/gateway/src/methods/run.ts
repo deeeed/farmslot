@@ -10,6 +10,7 @@ import {
   type IndependentReviewStatus,
   isInteractiveDevRun,
   isTerminalRunStatus,
+  MachineParkEligibilityCodes,
   parseGitHubRef,
   PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
@@ -76,6 +77,7 @@ import {
   setRunFlags,
   startRun,
 } from '../run-engine/orchestrator.js';
+import { isGateParkInFlightOrFreed, isSlotFreedByPark } from '../run-engine/park-slot-binding.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import { normalizeExhaustedReviewContinuationsForRun } from '../run-engine/recover-inflight-reviews.js';
 import { assertIndependentReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
@@ -1193,6 +1195,24 @@ export async function runResolveDecision(
   const decision = existing.decisions.find((d) => d.id === params.decisionId);
   if (!decision) throw new Error(`Decision not found: ${params.decisionId}`);
   if (decision.resolvedAt) throw new Error(`Decision already resolved`);
+  // ADR-054 `free-slot`: refuse before the decision is consumed, so it stays
+  // pending and the run stays parked. Resolving would drive the engine onward
+  // against a worker the park stopped and a slot another run may already own,
+  // and the fence covers the whole park — from the write-ahead intent, through
+  // the window where resources are stopping and `slotFreedAt` is still unset,
+  // to the landed release.
+  if (isGateParkInFlightOrFreed(existing)) {
+    const code = isSlotFreedByPark(existing)
+      ? MachineParkEligibilityCodes.freedSlotRestoreUnsupported
+      : MachineParkEligibilityCodes.gateParkInFlight;
+    throw new GatewayMethodError(
+      code,
+      `Run ${params.runId} is gate-parked; its decisions cannot be resolved while its slot is freed`,
+      {
+        userAction: 'Restore the run into a slot before answering its gate, or cancel the run.',
+      },
+    );
+  }
   if (!decision.actions.some((action) => action.id === params.actionId)) {
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
   }

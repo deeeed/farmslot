@@ -1654,10 +1654,37 @@ export const MachineParkEligibilityCodes = {
   gateParkRequiresRelease: 'GATE_PARK_REQUIRES_RELEASE',
   /** The record freed its slot; restoring into a freed slot is not implemented yet. */
   freedSlotRestoreUnsupported: 'FREED_SLOT_RESTORE_UNSUPPORTED',
+  /**
+   * Freeing the slot would expose the run's workspace to the next occupant's
+   * prepare, and its branch tip could not be preserved first.
+   */
+  workspaceNotPreservable: 'WORKSPACE_NOT_PRESERVABLE',
+  /** A gate park is in flight for this run; its gate cannot be resolved yet. */
+  gateParkInFlight: 'GATE_PARK_IN_FLIGHT',
 } as const;
 
 export type MachineParkEligibilityCode =
   (typeof MachineParkEligibilityCodes)[keyof typeof MachineParkEligibilityCodes];
+
+/**
+ * The git identity a freeing park took out of the slot's working tree.
+ *
+ * A linked worktree keeps the parked run's branch checked out, and the next
+ * occupant's prepare resets the checked-out branch to its base ref — which
+ * would move the parked branch and discard its commits. The park detaches HEAD
+ * first and records what it detached from, so the branch ref survives at
+ * `headSha` and restore can check it out again.
+ */
+export interface MachineParkWorkspace {
+  branch: string;
+  headSha: string;
+  /**
+   * When the detach actually landed, not when it was planned. Absent means the
+   * branch is still checked out in the slot, so the park had no workspace
+   * effect yet. Same fact-versus-intent split as `slotFreedAt`.
+   */
+  detachedAt?: string;
+}
 
 /** Write-ahead per-run record; persisted on Run before any release side effect. */
 export interface MachineParkRecord {
@@ -1677,6 +1704,12 @@ export interface MachineParkRecord {
   recoveryHandle: MachinePauseRecoveryHandle | null;
   /** Slot intent decided at preview; absent means `retained`. */
   slotDisposition?: MachineParkSlotDisposition;
+  /**
+   * The workspace a freeing park detached, so the next occupant's prepare
+   * cannot reset the parked run's branch. Written before slot ownership is
+   * released; `restore` checks the branch back out at this exact tip.
+   */
+  preservedWorkspace?: MachineParkWorkspace;
   /**
    * When slot ownership was actually released, not merely intended. Set only
    * after the park stopped the runner and every manifest resource, so a partial

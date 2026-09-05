@@ -9,6 +9,7 @@ import {
   Events,
   isResourcePosture,
   isResourcePostureGateChoice,
+  MachineParkEligibilityCodes,
   RESOURCE_POSTURE_GATE_CHOICES,
   RESOURCE_POSTURES,
   type RuntimePostureApplyParams,
@@ -19,8 +20,10 @@ import {
   type RuntimePostureStatusResult,
 } from '@farmslot/protocol';
 
+import { GatewayMethodError } from '../core/method-error.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { machineParkingService } from '../machine-parking/service.js';
+import { isGateParkInFlightOrFreed, isSlotFreedByPark } from '../run-engine/park-slot-binding.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { RunResourcePostureReconciler } from '../runtime-capabilities/posture.js';
 
@@ -134,5 +137,30 @@ export async function runtimePostureApply(
       throw new Error('operationId must be a non-empty string');
     }
   }
+  assertPostureApplyNotGateParked(params);
   return reconciler.apply(params);
+}
+
+/**
+ * ADR-054 `free-slot`: a client may not drive a posture on a run whose slot a
+ * park freed or is freeing. `active` would reacquire capabilities on a slot
+ * another run may already own, `operator-wait` would report the worker retained
+ * when the park stopped it, and `terminal` would stop the successor's
+ * providers. `parked` stays allowed so re-applying the park is idempotent.
+ *
+ * Guards only the public RPC. Engine boundaries have their own: the gate blocks
+ * before its effects, and cancel skips terminal reconciliation for a freed slot.
+ */
+function assertPostureApplyNotGateParked(params: RuntimePostureApplyParams): void {
+  if (params.posture === 'parked') return;
+  const run = getRun(params.runId);
+  if (!run || !isGateParkInFlightOrFreed(run)) return;
+  const code = isSlotFreedByPark(run)
+    ? MachineParkEligibilityCodes.freedSlotRestoreUnsupported
+    : MachineParkEligibilityCodes.gateParkInFlight;
+  throw new GatewayMethodError(
+    code,
+    `Run ${params.runId} is gate-parked; posture '${params.posture ?? 'default'}' cannot be applied while its slot is freed`,
+    { userAction: 'Restore the run into a slot before changing its posture, or cancel the run.' },
+  );
 }

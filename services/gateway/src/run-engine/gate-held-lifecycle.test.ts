@@ -12,6 +12,7 @@ import {
   findGateParkedRunForSlot,
   isGateHeldPublicationRun,
   isSlotFreedByPark,
+  parkFreedSlotIds,
   shouldKeepWorkerWarmThroughCiWatch,
   shouldTeardownGateHeldAgents,
 } from './gate-held-lifecycle.js';
@@ -372,4 +373,39 @@ test('a gate-parked run leaves findActiveGateHeldRunForSlot and moves to the par
   // Freed: the run no longer occupies the slot, but its record is protected.
   assert.equal(findActiveGateHeldRunForSlot(slotId), undefined);
   assert.equal(findGateParkedRunForSlot(slotId)?.id, run.id);
+});
+
+test('parkFreedSlotIds lists exactly the slots an automated sweep must leave alone', async (t) => {
+  const parkedSlot = `park-freed-sweep-${Date.now()}`;
+  const busySlot = `park-busy-sweep-${Date.now()}`;
+  const parked = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-sweep-parked`,
+    slotId: parkedSlot,
+  });
+  const holding = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-sweep-holding`,
+    slotId: busySlot,
+  });
+  t.after(() => cleanupRun(parked.id));
+  t.after(() => cleanupRun(holding.id));
+  updateRun(parked.id, {
+    ...gateHeldRunPatch(),
+    park: freedGateParkRecord(parked.id, parkedSlot),
+  });
+  // Same gate-held shape, but its park never released the slot.
+  updateRun(holding.id, {
+    ...gateHeldRunPatch(),
+    park: { ...freedGateParkRecord(holding.id, busySlot), slotFreedAt: undefined },
+  });
+
+  const ids = parkFreedSlotIds();
+
+  assert.equal(ids.has(parkedSlot), true);
+  assert.equal(ids.has(busySlot), false, 'a park that kept its slot is not a swept-over slot');
 });

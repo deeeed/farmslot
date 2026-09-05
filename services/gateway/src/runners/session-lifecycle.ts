@@ -57,7 +57,13 @@ export interface RunnerRecoveryInspection {
 }
 
 export interface InspectRunnerRecoveryOptions {
-  vars: SlotVars;
+  /**
+   * Required only to probe a persisted session. A declaration-only inspection
+   * (no `recoveryHandle`) reads the runner registry and returns before any
+   * exec, so callers asking only "can this runner reload a session?" must not
+   * be forced to load slot vars they will never use.
+   */
+  vars?: SlotVars;
   runnerId: string | null | undefined;
   recoveryHandle: MachinePauseRecoveryHandle | null | undefined;
   /** Release requires live; restore preview may accept stopped or live; reload requires stopped. */
@@ -107,6 +113,9 @@ export async function inspectRunnerRecovery(
     ...(reason ? { reason } : {}),
   };
   if (!inspection.supported || !options.recoveryHandle) return inspection;
+  if (!options.vars) {
+    throw new Error('inspectRunnerRecovery requires slot vars to probe a recovery handle');
+  }
   const probe = await deps.exec(
     options.vars,
     resumableSessionProbeCommand(options.recoveryHandle.sessionPath),

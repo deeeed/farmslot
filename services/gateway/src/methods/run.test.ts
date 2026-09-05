@@ -1669,3 +1669,94 @@ test('runCreate validates scripted commandRef against project config', async (t)
 
   assert.deepEqual(result.run.scripted, { mode: 'command', commandRef: 'smoke' });
 });
+
+// ─── ADR-054 free-slot: gate resolution is fenced from a park ───
+
+function gateParkRecord(
+  runId: string,
+  slotId: string,
+  overrides: { slotFreedAt?: string; phase?: 'resources-stopping' | 'parked' } = {},
+) {
+  const at = '2026-09-05T00:00:00.000Z';
+  return {
+    version: 1 as const,
+    operationId: `park-${runId}`,
+    previewId: `preview-${runId}`,
+    runId,
+    generation: 1,
+    machine: 'macwork',
+    slotId,
+    mode: 'release' as const,
+    phase: overrides.phase ?? ('parked' as const),
+    slotDisposition: 'freed' as const,
+    ...(overrides.slotFreedAt ? { slotFreedAt: overrides.slotFreedAt } : {}),
+    prePauseStatus: 'blocked' as const,
+    prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' as const },
+    resourceManifest: { capturedAt: at, resources: [], capabilityLeases: [] },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped' as const, resources: [] },
+    createdAt: at,
+    updatedAt: at,
+  };
+}
+
+for (const [label, record, expectedCode] of [
+  [
+    'a landed gate park',
+    gateParkRecord('x', 's', { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+    'FREED_SLOT_RESTORE_UNSUPPORTED',
+  ],
+  [
+    'a gate park still stopping its resources',
+    gateParkRecord('x', 's', { phase: 'resources-stopping' }),
+    'GATE_PARK_IN_FLIGHT',
+  ],
+] as const) {
+  test(`runResolveDecision refuses and leaves the gate pending under ${label}`, async (t) => {
+    const slotId = `test-gate-park-fence-${Date.now()}`;
+    const run = createRun({
+      flowType: 'fix-bug',
+      mode: 'autonomous',
+      project: 'example-mobile-farm',
+      ticketOrPr: `PROJ-GATE-PARK-${expectedCode}`,
+      runner: 'claude',
+      slotId,
+    });
+    const decision: RunDecision = {
+      id: `gate-park-${expectedCode}`,
+      type: 'engine_human_gate',
+      title: 'Publication gate',
+      description: 'Approve package',
+      actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+      createdAt: '2026-09-05T00:00:00.000Z',
+    };
+    updateRun(run.id, {
+      status: 'blocked',
+      decisions: [decision],
+      park: { ...record, runId: run.id, slotId },
+    });
+    t.after(async () => {
+      updateRun(run.id, { status: 'failed', park: null });
+      await deleteRun(run.id);
+    });
+
+    await assert.rejects(
+      runResolveDecision(
+        { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+        () => {},
+      ),
+      (error: unknown) => {
+        assert.equal((error as GatewayMethodError).code, expectedCode);
+        return true;
+      },
+    );
+
+    // The refusal happens before the decision is consumed, so the operator can
+    // still answer it after a restore and the park record is not stranded.
+    const persisted = getRun(run.id)!;
+    assert.equal(persisted.decisions[0]?.resolvedAt, undefined);
+    assert.equal(persisted.status, 'blocked');
+    assert.equal(persisted.park?.slotId, slotId);
+  });
+}

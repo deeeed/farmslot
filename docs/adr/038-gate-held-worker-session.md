@@ -82,6 +82,31 @@ When the choice applies:
 - An orchestration-only park of a gate-held run is refused: it would move the run off its gate
   without freeing anything.
 
+**Workspace contract.** The freed slot's working tree goes to the next occupant, whose prepare
+resets the checked-out branch to its base ref. That would move the parked run's branch and discard
+its commits, so the park takes the branch out of the tree first:
+
+- The park refuses, with `WORKSPACE_NOT_PRESERVABLE`, when the tree has uncommitted changes or its
+  git identity cannot be read. Committed work is preserved; uncommitted work is never silently
+  stashed, discarded, or committed on the run's behalf.
+- Otherwise the park records the branch and its tip on the park record and detaches HEAD at that
+  exact commit before releasing slot ownership. The branch ref survives untouched; the next
+  occupant's reset moves only a detached HEAD. Restore checks the branch back out at that tip.
+- A detach that fails, or a tree that moved between the preview and the detach, leaves the park
+  `partial` and does NOT release the slot. Fail closed: a slot dispatch could claim while the
+  parked branch is still checked out is the loss this contract exists to prevent.
+
+**Fences while a park is in flight.** From the moment the write-ahead record declares a freeing
+park until it is restored or cancelled, `run.resolveDecision` refuses to resolve the run's
+decisions and `runtime.posture.apply` refuses every posture but `parked`. Answering the gate
+mid-park would publish against a worker being stopped underneath it, and `keep-for-validation`
+would reacquire capabilities on a slot another run may already own. The engine's own gate path
+blocks rather than fails, because a terminal run cannot be cancelled and its park record would be
+stranded. A successor's `slot.release` never detaches the parked run's binding, automated recycle
+sweeps skip the freed slot, and restart recovery treats the parked run like a paused one: no agent
+runtime reconcile, no gate replay, no publication-review re-arm on a slot it no longer owns. Its
+pending decision is still re-broadcast so clients show the run waiting.
+
 Operators lose tmux attach for the duration of the park, which is the trade the choice makes: the
 runner's persisted session is what brings the context back.
 

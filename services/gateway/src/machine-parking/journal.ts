@@ -4,7 +4,14 @@ import path from 'node:path';
 
 import type { MachineParkRecord } from '@farmslot/protocol';
 
-export type MachineParkingIntentKind = 'pause' | 'restore';
+/**
+ * `free-slot` is its own kind: the slot release and the `slotFreedAt` write
+ * that records it are two writes, and a crash between them leaves the record
+ * `parked` with the slot already handed to dispatch. Recovery cannot tell that
+ * from a park that never freed anything, so the intent is journalled around
+ * exactly that window.
+ */
+export type MachineParkingIntentKind = 'pause' | 'restore' | 'free-slot';
 
 export interface MachineParkingIntentJournal {
   version: 1;
@@ -104,7 +111,7 @@ export class MachineParkingIntentJournalStore {
 function validateJournal(value: MachineParkingIntentJournal): void {
   if (
     value?.version !== 1 ||
-    (value.kind !== 'pause' && value.kind !== 'restore') ||
+    (value.kind !== 'pause' && value.kind !== 'restore' && value.kind !== 'free-slot') ||
     typeof value.machine !== 'string' ||
     !value.machine ||
     typeof value.operationId !== 'string' ||
@@ -204,6 +211,11 @@ function validRecord(record: MachineParkRecord): boolean {
       record.restoreDisposition === 'zero-effect' ||
       record.restoreDisposition === 'effectful') &&
     validRecoveryProof(record.recoveryProof) &&
+    (record.slotDisposition === undefined ||
+      record.slotDisposition === 'retained' ||
+      record.slotDisposition === 'freed') &&
+    optionalIso(record.slotFreedAt) &&
+    validPreservedWorkspace(record.preservedWorkspace) &&
     Array.isArray(record.errors) &&
     record.errors.every(validParkError) &&
     validResiduals(record.residuals) &&
@@ -317,6 +329,13 @@ function validRecoveryHandle(value: unknown): boolean {
     optionalString(value.runtimeDir) &&
     optionalString(value.taskDir) &&
     iso(value.capturedAt)
+  );
+}
+
+function validPreservedWorkspace(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isRecord(value) && nonEmpty(value.branch) && nonEmpty(value.headSha) && iso(value.detachedAt)
   );
 }
 

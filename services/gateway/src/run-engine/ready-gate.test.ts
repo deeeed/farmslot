@@ -7,6 +7,7 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { TerminalReviewArtifactError } from '../self-review/terminal-result.js';
 
+import { BlockedRunError } from './errors.js';
 import {
   executePublishGateReviewPlan,
   freedSlotGateResolutionBlocker,
@@ -391,6 +392,31 @@ test('a resolved publication gate fails closed when the run park freed its slot'
     },
   };
   const blocker = freedSlotGateResolutionBlocker(parked);
-  assert.match(blocker ?? '', /FREED_SLOT_RESTORE_UNSUPPORTED/);
-  assert.match(blocker ?? '', /cancel the run/);
+  // BlockedRunError so the engine marks the run `blocked`, not `failed`: cancel
+  // refuses terminal runs, and a failed run would strand the park record.
+  assert.ok(blocker instanceof BlockedRunError);
+  assert.match(blocker.message, /FREED_SLOT_RESTORE_UNSUPPORTED/);
+  assert.match(blocker.message, /cancel the run/);
+
+  // The fence covers the park BEFORE `slotFreedAt` lands too: while resources
+  // are stopping, resolving the gate would publish against a worker being
+  // stopped underneath it.
+  const stopping: Run = {
+    ...parked,
+    park: { ...parked.park!, phase: 'resources-stopping', slotFreedAt: undefined },
+  };
+  assert.match(
+    freedSlotGateResolutionBlocker(stopping)?.message ?? '',
+    /GATE_PARK_IN_FLIGHT/,
+    'an in-flight gate park blocks gate resolution',
+  );
+
+  // A settled record does not block: restore and cancel both clear the fence.
+  for (const phase of ['restored', 'cancelled'] as const) {
+    assert.equal(
+      freedSlotGateResolutionBlocker({ ...parked, park: { ...parked.park!, phase } }),
+      null,
+      `a ${phase} record must not block the gate`,
+    );
+  }
 });
