@@ -1160,3 +1160,110 @@ test('nothing is claimed about a choice that was never made', () => {
     assert.equal(postureResolveBlock(empty, availability).kind, 'none');
   }
 });
+
+test('the apply outcome survives every gate rebuild', () => {
+  // It reports something that already happened, so a rebuild that drops it
+  // discards a rejection the operator may not have read. Selecting a choice on
+  // the next gate used to do exactly that.
+  const rejected: ResourcePostureTransition = {
+    id: 'op-applied',
+    posture: 'parked',
+    policySource: 'gate-choice',
+    gateChoice: 'free-slot',
+    requestedAt: '2026-09-05T10:00:00.000Z',
+    outcome: 'rejected',
+    effects: [],
+    progress: { total: 0, completed: 0 },
+    failures: [],
+    rejection: { kind: 'park-ineligible', code: 'gate-held', reason: 'gate-held run' },
+  };
+  const applied = runPostureGateApplied(
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      ...atOperatorWait,
+    }),
+    rejected,
+  );
+  assert.equal(applied.appliedTransition?.id, 'op-applied');
+
+  // Every rebuild path, not just the one the reviewer found.
+  const selected = runPostureGateSelect(applied, 'minimize', atOperatorWait);
+  assert.equal(selected.appliedTransition?.id, 'op-applied');
+  assert.equal(selected.choice, 'minimize');
+
+  const deselected = runPostureGateSelect(selected, 'minimize', atOperatorWait);
+  assert.equal(deselected.appliedTransition?.id, 'op-applied');
+
+  const refused = runPostureGateSelect(applied, 'minimize', {
+    canForwardChoice: true,
+    runPosture: 'active',
+  });
+  assert.equal(refused.appliedTransition?.id, 'op-applied');
+
+  const nextGate = runPostureGateForContext(selected, { gateKey: 'run-1:b', ...atOperatorWait });
+  assert.equal(nextGate.appliedTransition?.id, 'op-applied');
+  assert.equal(nextGate.choice, null);
+
+  const movedOff = runPostureGateForContext(selected, {
+    gateKey: 'run-1:a',
+    canForwardChoice: true,
+    runPosture: 'terminal',
+  });
+  assert.equal(movedOff.appliedTransition?.id, 'op-applied');
+
+  const previewed = runPostureGatePreviewLoaded(selected, {
+    gateKey: selected.gateKey,
+    requestId: selected.requestId,
+    ...atOperatorWait,
+    plan: plan(),
+  });
+  assert.equal(previewed.appliedTransition?.id, 'op-applied');
+
+  const failed = runPostureGatePreviewFailed(selected, {
+    gateKey: selected.gateKey,
+    requestId: selected.requestId,
+    ...atOperatorWait,
+    message: 'socket closed',
+  });
+  assert.equal(failed.appliedTransition?.id, 'op-applied');
+});
+
+test('a later apply outcome replaces the earlier one', () => {
+  // Carrying the field forward must not pin the first result: the operator
+  // reads the outcome of what they just did, not of what they did before.
+  const first: ResourcePostureTransition = {
+    id: 'op-first',
+    posture: 'parked',
+    policySource: 'gate-choice',
+    requestedAt: '2026-09-05T10:00:00.000Z',
+    outcome: 'rejected',
+    effects: [],
+    progress: { total: 0, completed: 0 },
+    failures: [],
+    rejection: { kind: 'park-ineligible', code: 'gate-held', reason: 'gate-held run' },
+  };
+  // Built from scratch rather than spread from `first`: spreading carried its
+  // rejection into the replacement and made the assertion fail for the fixture's
+  // reason instead of the code's.
+  const second: ResourcePostureTransition = {
+    id: 'op-second',
+    posture: 'operator-wait',
+    policySource: 'gate-choice',
+    requestedAt: '2026-09-05T10:05:00.000Z',
+    outcome: 'applied',
+    effects: [],
+    progress: { total: 1, completed: 1 },
+    failures: [],
+  };
+  const gate = runPostureGateApplied(
+    runPostureGateForContext(initialRunPostureGateState(), {
+      gateKey: 'run-1:a',
+      ...atOperatorWait,
+    }),
+    first,
+  );
+  const nextGate = runPostureGateSelect(gate, 'minimize', atOperatorWait);
+  const readopted = runPostureGateApplied(nextGate, second);
+  assert.equal(readopted.appliedTransition?.id, 'op-second');
+  assert.equal(readopted.appliedTransition?.rejection, undefined);
+});

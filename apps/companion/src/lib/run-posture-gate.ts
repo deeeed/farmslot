@@ -85,6 +85,26 @@ export interface RunPostureGateState {
   appliedTransition?: ResourcePostureTransition;
 }
 
+/**
+ * Rebuild the gate around a new selection while keeping what the operator has
+ * already been told.
+ *
+ * Every rebuild path goes through this. `appliedTransition` is the one field on
+ * this state that describes something which already happened rather than
+ * something being chosen now, so a fresh object built without it silently
+ * discards a rejection report the operator may not have read yet. That is
+ * exactly what picking a choice on the next gate used to do.
+ */
+function postureGateWithSelection(
+  previous: RunPostureGateState,
+  next: Omit<RunPostureGateState, 'appliedTransition'>,
+): RunPostureGateState {
+  return {
+    ...next,
+    ...(previous.appliedTransition ? { appliedTransition: previous.appliedTransition } : {}),
+  };
+}
+
 export function initialRunPostureGateState(): RunPostureGateState {
   return { gateKey: '', requestId: 0, choice: null, status: 'idle' };
 }
@@ -125,13 +145,12 @@ export function runPostureGateForContext(
   context: PostureChoiceAvailability & { gateKey: string },
 ): RunPostureGateState {
   if (state.gateKey !== context.gateKey) {
-    return {
+    return postureGateWithSelection(state, {
       gateKey: context.gateKey,
       requestId: state.requestId + 1,
       choice: null,
       status: 'idle',
-      ...(state.appliedTransition ? { appliedTransition: state.appliedTransition } : {}),
-    };
+    });
   }
   if (postureChoicesApply(context)) return state;
   // An unread posture means the status has not come back yet, never that the
@@ -140,13 +159,12 @@ export function runPostureGateForContext(
   // Nothing is forwarded while the posture is unknown, so keeping it is safe.
   if (context.runPosture === undefined) return state;
   if (state.choice === null && state.status === 'idle') return state;
-  return {
+  return postureGateWithSelection(state, {
     gateKey: state.gateKey,
     requestId: state.requestId + 1,
     choice: null,
     status: 'idle',
-    ...(state.appliedTransition ? { appliedTransition: state.appliedTransition } : {}),
-  };
+  });
 }
 
 /**
@@ -160,25 +178,25 @@ export function runPostureGateSelect(
   availability: PostureChoiceAvailability,
 ): RunPostureGateState {
   const requestId = state.requestId + 1;
-  const cleared: RunPostureGateState = {
+  const cleared = postureGateWithSelection(state, {
     gateKey: state.gateKey,
     requestId,
     choice: null,
     status: 'idle',
-  };
+  });
   // The Gateway only resolves a gate choice at an operator wait. Selecting
   // anywhere else would preview a different boundary and render it as the effect
   // of the choice, so the guard lives here and no caller can bypass it.
   if (!postureChoicesApply(availability)) return cleared;
   const next = state.choice === choice ? null : choice;
   if (!next) return cleared;
-  return {
+  return postureGateWithSelection(state, {
     gateKey: state.gateKey,
     requestId,
     choice: next,
     status: 'loading',
     requestedAtPosture: availability.runPosture,
-  };
+  });
 }
 
 /**
