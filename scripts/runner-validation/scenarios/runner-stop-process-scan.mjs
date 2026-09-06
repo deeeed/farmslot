@@ -118,6 +118,8 @@ export async function runScenario({ outDir }) {
     baselineRef: BASELINE_REF,
     baselineSha: null,
     currentSha: null,
+    /** True when the measured tree carried uncommitted work, so currentSha is not the whole story. */
+    currentTreeDirty: null,
     baseline: null,
     current: null,
     baselineLog: [],
@@ -151,10 +153,18 @@ export async function runScenario({ outDir }) {
       sourceSha: baselineSha,
       resultPath: path.join(tempRoot, 'baseline-result.json'),
     });
+    // Stamp what was actually measured. The scan runs against the WORKING TREE,
+    // so naming HEAD alone would overclaim whenever the tree carries uncommitted
+    // work — which is exactly when this scenario is most often run.
     report.currentSha = execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: root,
       encoding: 'utf-8',
     }).trim();
+    report.currentTreeDirty =
+      execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], {
+        cwd: root,
+        encoding: 'utf-8',
+      }).trim().length > 0;
     const current = runExecutor({
       root,
       sourceRoot: root,
@@ -173,10 +183,9 @@ export async function runScenario({ outDir }) {
       nodeById(baseline.result, 'one-probe-reads-the-process-table-once')?.pass === false;
     report.passAfter = current.result.pass === true;
     report.gatewayNode = probeGatewayFleet(root);
-    report.pass =
-      report.failBefore &&
-      report.passAfter &&
-      (report.gatewayNode.pass || report.gatewayNode.skipped);
+    // A gateway we could not reach is a proof we did not get, not a proof we
+    // may skip. The reason is recorded either way, but the scenario fails.
+    report.pass = report.failBefore && report.passAfter && report.gatewayNode.pass === true;
   } catch (error) {
     report.error = error?.message || String(error);
   } finally {

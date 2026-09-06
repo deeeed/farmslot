@@ -13,10 +13,12 @@ import {
   reloadRunnerForPark,
   RUNNER_PARK_GRACEFUL_EXIT_MIN_PROBES,
   RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS,
+  RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
   RUNNER_PARK_RELOAD_ACCEPTANCE_TIMEOUT_MS,
   runnerRunningForPark,
   stopRunnerForPark,
 } from './session-lifecycle.js';
+import { RunnerProcessProbeError } from './session-process.js';
 import { makeVars } from './test-fixtures.js';
 
 const vars = makeVars({
@@ -452,6 +454,99 @@ test('stopRunnerForPark fails closed, and bounded, when the pane stays unreadabl
   assert.equal(result.ok === false && result.residualRunner, 'unknown');
   assert.match(result.ok === false ? result.error : '', /uninspectable/);
   assert.ok(elapsed < 2_000, `an unreadable pane must not hold the wait, took ${elapsed}ms`);
+});
+
+test('stopRunnerForPark holds its wall-clock ceiling across a whole iteration', async () => {
+  // The ceiling used to gate loop ENTRY only, so an iteration admitted just
+  // under it could still spend a pane read plus three escalating probe attempts
+  // on top. The budget has to reach inside the iteration, not just guard it.
+  const startedAt = Date.now();
+  let exitSent = false;
+  const result = await stopRunnerForPark(
+    { vars, recoveryHandle: handle, timeoutMs: 0, maxTimeoutMs: 250 },
+    {
+      exec: async (_vars, command) => {
+        if (command.includes('send-keys')) exitSent = true;
+        if (!command.includes('display-message')) return { exitCode: 0, stdout: '', stderr: '' };
+        return { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' };
+      },
+      findRunnerPid: async () => '202',
+      probeRunnerPid: async (_vars, _panePid, _runnerId, options) => {
+        // Honour the budget the caller passed, the way the real probe does.
+        const budget = options?.deadline ? options.deadline - Date.now() : 10_000;
+        await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(budget, 10_000))));
+        return { state: 'present', pid: '202' };
+      },
+      verifyLiveBinding: verifyPersistedLiveBinding,
+      respawnPane: async () => {},
+      sleep: async () => {},
+    },
+  );
+  const elapsed = Date.now() - startedAt;
+
+  assert.equal(exitSent, true, 'the graceful exit must have been sent');
+  assert.equal(result.ok, false);
+  assert.ok(
+    elapsed < 1_500,
+    `the stop must respect its 250ms ceiling, not the probe escalation; took ${elapsed}ms`,
+  );
+});
+
+test('stopRunnerForPark keeps the probe code when the pre-flight cannot decide', async () => {
+  // The pre-flight inspection probes liveness too, and it throws rather than
+  // returning. That throw used to escape past the typed result entirely, so the
+  // park recorded EFFECT_FAILED over a host that never answered.
+  let attempts = 0;
+  const result = await stopRunnerForPark(
+    { vars, recoveryHandle: handle, timeoutMs: 100 },
+    {
+      exec: async (_vars, command) =>
+        command.includes('display-message')
+          ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+          : { exitCode: 0, stdout: '', stderr: '' },
+      findRunnerPid: async (_vars, panePid, _runnerId, options) => {
+        attempts = options?.attempts ?? 1;
+        throw new RunnerProcessProbeError(
+          'probe-timeout',
+          panePid,
+          'command timed out after 10000ms',
+        );
+      },
+      probeRunnerPid: paneStopped,
+      verifyLiveBinding: verifyPersistedLiveBinding,
+      respawnPane: async () => {},
+      sleep: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok === false && result.code, 'liveness-probe-timeout');
+  assert.equal(result.ok === false && result.residualRunner, 'unknown');
+  assert.match(result.ok === false ? result.error : '', /probe-timeout/);
+  // And it is given the same transient retry the wait loop gets.
+  assert.equal(attempts, RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS);
+});
+
+test('stopRunnerForPark still rethrows a failure that is not a liveness verdict', async () => {
+  await assert.rejects(
+    stopRunnerForPark(
+      { vars, recoveryHandle: handle, timeoutMs: 100 },
+      {
+        exec: async (_vars, command) =>
+          command.includes('display-message')
+            ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+            : { exitCode: 0, stdout: '', stderr: '' },
+        findRunnerPid: async () => {
+          throw new Error('transport lost');
+        },
+        probeRunnerPid: paneStopped,
+        verifyLiveBinding: verifyPersistedLiveBinding,
+        respawnPane: async () => {},
+        sleep: async () => {},
+      },
+    ),
+    /transport lost/,
+  );
 });
 
 test('stopRunnerForPark fails closed when the intended pane is gone despite a live sibling', async () => {

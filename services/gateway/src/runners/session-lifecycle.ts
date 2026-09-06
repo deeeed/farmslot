@@ -33,6 +33,8 @@ import {
   probeRunnerDescendantPid,
   resumableSessionProbeCommand,
   RUNNER_PROCESS_PROBE_TIMEOUT_MS,
+  RunnerProcessProbeError,
+  type RunnerProcessProbeFailureCode,
   verifyExactLiveRunnerSessionBinding,
 } from './session-process.js';
 
@@ -52,6 +54,8 @@ export const RUNNER_PARK_GRACEFUL_EXIT_MIN_PROBES = 3;
 export const RUNNER_PARK_GRACEFUL_EXIT_MAX_TIMEOUT_MS = 120_000;
 /** Bounded retries for the liveness probe that decides whether the runner is gone. */
 export const RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS = 3;
+/** Budget for one exact-pane read when the caller holds no tighter ceiling. */
+const RUNNER_PANE_INSPECT_TIMEOUT_MS = 10_000;
 export const RUNNER_PARK_RELOAD_ACCEPTANCE_TIMEOUT_MS = RUNNER_LAUNCH_READY_TIMEOUT_MS;
 
 export interface RunnerRecoveryInspection {
@@ -88,6 +92,13 @@ export interface InspectRunnerRecoveryOptions {
   recoveryHandle: MachinePauseRecoveryHandle | null | undefined;
   /** Release requires live; restore preview may accept stopped or live; reload requires stopped. */
   expectedRunnerState?: 'live' | 'stopped' | 'stopped-or-live';
+  /**
+   * Liveness-probe policy for this inspection. A park's pre-flight is the same
+   * question the wait loop asks and deserves the same transient retry: without
+   * it a single failed `ps` here throws out of the caller with one attempt
+   * spent and no typed code left to record.
+   */
+  livenessProbe?: { attempts?: number; deadline?: number };
 }
 
 /** Inspect registry declarations and prove the exact persisted session still exists. */
@@ -164,7 +175,8 @@ export async function inspectRunnerRecovery(
     };
   }
   const runnerPid = await deps.findRunnerPid(options.vars, pane.panePid, runnerId, {
-    timeout: 10_000,
+    timeout: RUNNER_PROCESS_PROBE_TIMEOUT_MS,
+    ...options.livenessProbe,
   });
   const state = runnerPid ? 'live' : 'stopped';
   const expected = options.expectedRunnerState ?? 'live';
@@ -396,15 +408,38 @@ export async function stopRunnerForPark(
     };
   }
 
-  const inspection = await inspectRunnerRecovery(
-    {
-      vars: options.vars,
+  // The ceiling starts here, not after the exit command: the pre-flight probe
+  // spends the same wall clock the caller budgeted for the whole stop.
+  const hardDeadline =
+    Date.now() + (options.maxTimeoutMs ?? RUNNER_PARK_GRACEFUL_EXIT_MAX_TIMEOUT_MS);
+  let inspection: RunnerRecoveryInspection;
+  try {
+    inspection = await inspectRunnerRecovery(
+      {
+        vars: options.vars,
+        runnerId,
+        recoveryHandle: handle,
+        expectedRunnerState: 'stopped-or-live',
+        // Same transient-retry policy the wait loop uses. A `ps` that could not
+        // fork must not decide the park on its first miss.
+        livenessProbe: { attempts: RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS, deadline: hardDeadline },
+      },
+      deps,
+    );
+  } catch (error) {
+    // `findRunnerDescendantPid` throws when liveness is undecidable. Letting it
+    // escape loses the probe's own code: the park record would stamp the
+    // blanket EFFECT_FAILED over a host that simply never answered.
+    if (!(error instanceof RunnerProcessProbeError)) throw error;
+    return failure(
+      'failed',
+      stopFailureCodeForProbe(error.code),
       runnerId,
-      recoveryHandle: handle,
-      expectedRunnerState: 'stopped-or-live',
-    },
-    deps,
-  );
+      target,
+      'unknown',
+      `Runner liveness under ${target} is unknown (${error.code})${error.reason ? `: ${error.reason}` : ''}`,
+    );
+  }
   if (!inspection.supported) {
     return failure(
       'failed',
@@ -453,8 +488,6 @@ export async function stopRunnerForPark(
   // unreadable tree neither concludes nor gives up.
   const startedAt = Date.now();
   const deadline = startedAt + (options.timeoutMs ?? RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS);
-  const hardDeadline =
-    startedAt + (options.maxTimeoutMs ?? RUNNER_PARK_GRACEFUL_EXIT_MAX_TIMEOUT_MS);
   let probes = 0;
   let lastUnusable: string | null = null;
   while (
@@ -464,7 +497,16 @@ export async function stopRunnerForPark(
     // hold the wait open to the hard deadline.
     (Date.now() < deadline || (probes < RUNNER_PARK_GRACEFUL_EXIT_MIN_PROBES && !lastUnusable))
   ) {
-    const pane = await inspectExactPane(options.vars, handle, deps);
+    // Everything inside one iteration spends the SAME ceiling. Checking it only
+    // at loop entry let an admitted iteration spend a 10s pane read plus three
+    // escalating probe attempts (10s, 20s, 40s) on top of it, so a 120s ceiling
+    // could return near 190s.
+    const pane = await inspectExactPane(
+      options.vars,
+      handle,
+      deps,
+      Math.min(RUNNER_PANE_INSPECT_TIMEOUT_MS, hardDeadline - Date.now()),
+    );
     if ('error' in pane) {
       lastUnusable = `Exact runner target is uninspectable: ${pane.error}`;
       await deps.sleep(200);
@@ -478,6 +520,7 @@ export async function stopRunnerForPark(
       {
         timeout: RUNNER_PROCESS_PROBE_TIMEOUT_MS,
         attempts: RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
+        deadline: hardDeadline,
       },
     );
     probes += 1;
@@ -493,7 +536,7 @@ export async function stopRunnerForPark(
     if (live.state === 'unknown') {
       return failure(
         'failed',
-        live.code === 'probe-timeout' ? 'liveness-probe-timeout' : 'liveness-unknown',
+        stopFailureCodeForProbe(live.code),
         runnerId,
         target,
         'unknown',
@@ -515,6 +558,13 @@ export async function stopRunnerForPark(
     `Runner '${runnerId}' did not exit gracefully from ${target} after ${probes} liveness probe(s) in ${Date.now() - startedAt}ms`,
     probes,
   );
+}
+
+/** One mapping from a probe's own code to the stop's, used by both entry points. */
+function stopFailureCodeForProbe(
+  code: RunnerProcessProbeFailureCode,
+): StopRunnerForParkFailureCode {
+  return code === 'probe-timeout' ? 'liveness-probe-timeout' : 'liveness-unknown';
 }
 
 function failure(
@@ -724,6 +774,11 @@ async function inspectExactPane(
   vars: SlotVars,
   handle: MachinePauseRecoveryHandle,
   deps: Pick<RunnerSessionLifecycleDeps, 'exec'>,
+  /**
+   * Budget for this one read. The graceful-exit wait owns a wall-clock ceiling
+   * and this read sits inside it, so it cannot keep a fixed budget of its own.
+   */
+  timeoutMs: number = RUNNER_PANE_INSPECT_TIMEOUT_MS,
 ): Promise<
   { paneId: string; panePid: string; session: string; windowName: string } | { error: string }
 > {
@@ -733,7 +788,7 @@ async function inspectExactPane(
     tmuxShellSnippet(
       `display-message -p -t ${shellQuote(paneId)} '#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_pid}' 2>/dev/null`,
     ),
-    { timeout: 10_000 },
+    { timeout: timeoutMs },
   );
   if (panes.exitCode !== 0) {
     return { error: panes.stderr || panes.stdout || `Cannot inspect tmux pane ${paneId}` };

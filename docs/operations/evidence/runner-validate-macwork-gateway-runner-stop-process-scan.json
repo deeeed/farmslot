@@ -1,25 +1,27 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-06T13:27:27.510Z",
+  "recordedAt": "2026-09-06T14:30:15.137Z",
   "host": "macwork",
   "scenario": "runner-stop-process-scan",
   "runner": "gateway",
   "baselineRef": "origin/main",
   "baselineSha": "af5897644de3216cbaa3008fe6b2e1e49b07ac63",
-  "currentSha": "216ef362b85d0cc20582b290bdb3c34a0777efaf",
+  "currentSha": "1df30c4b01d5791d9a4568bd9868d4cd7599d5d5",
+  "currentTreeDirty": true,
   "baseline": {
-    "sourceRoot": "/Users/deeeed/dev/farmslot/temp/runner-stop-process-scan-SXWpPi/baseline",
+    "sourceRoot": "/Users/deeeed/dev/farmslot/temp/runner-stop-process-scan-p2pY9t/baseline",
     "sourceSha": "af5897644de3216cbaa3008fe6b2e1e49b07ac63",
-    "loadAverage": [109.65869140625, 111.26123046875, 108.5595703125],
+    "loadAverage": [126.28759765625, 126.48388671875, 126.619140625],
     "cpus": 16,
     "nodes": [
       {
         "id": "walk-finds-the-nested-runner",
-        "claim": "the generated walk finds a runner nested two levels under the root process",
+        "claim": "the generated walk finds a runner nested under the tmux pane process",
         "pass": true,
         "observed": {
+          "paneRoot": "30905",
           "exitCode": 0,
-          "stdout": "41875"
+          "stdout": "31271"
         }
       },
       {
@@ -27,11 +29,11 @@
         "claim": "a probe of a branching pane tree costs exactly one process-table read and no per-node pgrep",
         "pass": false,
         "observed": {
-          "psCalls": 5,
-          "pgrepCalls": 5,
+          "psCalls": 6,
+          "pgrepCalls": 6,
           "directChildrenOfRoot": 4,
           "exitCode": 0,
-          "elapsedMs": 1388
+          "elapsedMs": 1550
         }
       },
       {
@@ -88,17 +90,18 @@
   },
   "current": {
     "sourceRoot": "/Users/deeeed/dev/farmslot",
-    "sourceSha": "216ef362b85d0cc20582b290bdb3c34a0777efaf",
-    "loadAverage": [105.8955078125, 110.41064453125, 108.28955078125],
+    "sourceSha": "1df30c4b01d5791d9a4568bd9868d4cd7599d5d5",
+    "loadAverage": [121.10791015625, 125.41748046875, 126.24169921875],
     "cpus": 16,
     "nodes": [
       {
         "id": "walk-finds-the-nested-runner",
-        "claim": "the generated walk finds a runner nested two levels under the root process",
+        "claim": "the generated walk finds a runner nested under the tmux pane process",
         "pass": true,
         "observed": {
+          "paneRoot": "37724",
           "exitCode": 0,
-          "stdout": "47477"
+          "stdout": "38337"
         }
       },
       {
@@ -110,7 +113,7 @@
           "pgrepCalls": 0,
           "directChildrenOfRoot": 4,
           "exitCode": 0,
-          "elapsedMs": 536
+          "elapsedMs": 502
         }
       },
       {
@@ -139,7 +142,7 @@
         "pass": true,
         "observed": {
           "exitCode": 3,
-          "stderr": "runner liveness probe: process table snapshot has no rows",
+          "stderr": "runner liveness probe: process table snapshot unusable (0 row(s), 1 malformed)",
           "confirmedAbsentSignature": false
         }
       },
@@ -166,7 +169,7 @@
     "pass": true
   },
   "baselineLog": [
-    "PASS walk-finds-the-nested-runner: the generated walk finds a runner nested two levels under the root process",
+    "PASS walk-finds-the-nested-runner: the generated walk finds a runner nested under the tmux pane process",
     "FAIL one-probe-reads-the-process-table-once: a probe of a branching pane tree costs exactly one process-table read and no per-node pgrep",
     "FAIL a-failed-ps-is-not-a-confirmed-absence: a `ps` that exits nonzero is reported as undecided, not as a stopped runner",
     "FAIL an-empty-ps-is-not-a-confirmed-absence: a `ps` that returns no output is reported as undecided, not as a stopped runner",
@@ -175,7 +178,7 @@
     "PASS a-tree-with-no-runner-is-confirmed-absent: a pane whose runner exited reports the confirmed-absent signature: exit 1, nothing printed"
   ],
   "currentLog": [
-    "PASS walk-finds-the-nested-runner: the generated walk finds a runner nested two levels under the root process",
+    "PASS walk-finds-the-nested-runner: the generated walk finds a runner nested under the tmux pane process",
     "PASS one-probe-reads-the-process-table-once: a probe of a branching pane tree costs exactly one process-table read and no per-node pgrep",
     "PASS a-failed-ps-is-not-a-confirmed-absence: a `ps` that exits nonzero is reported as undecided, not as a stopped runner",
     "PASS an-empty-ps-is-not-a-confirmed-absence: a `ps` that returns no output is reported as undecided, not as a stopped runner",
@@ -190,7 +193,7 @@
     "pass": true,
     "skipped": false,
     "observed": {
-      "elapsedMs": 98760,
+      "elapsedMs": 83079,
       "verdictCounts": {
         "-": 5,
         "no-tmux": 55,

@@ -1038,6 +1038,14 @@ export interface RunnerDescendantPidProbeOptions extends ExecOnSlotOptions {
    * Defaults to 1 — callers that must not stall keep today's single attempt.
    */
   attempts?: number;
+  /**
+   * Absolute epoch-ms ceiling on the WHOLE probe, retries included. Without it
+   * `attempts` multiplies the caller's budget: three attempts of a 10s base
+   * spend 70s, so a caller holding a 120s wall-clock ceiling could admit a
+   * probe at 119s and return near 190s. Each attempt is clamped to what remains
+   * of this, and the retries stop once nothing remains.
+   */
+  deadline?: number;
 }
 
 /**
@@ -1087,13 +1095,31 @@ export async function probeRunnerDescendantPid(
   const cmd = buildFindRunnerDescendantPidCommand(panePid, pattern);
   const attempts = Math.max(1, options?.attempts ?? 1);
   const baseTimeout = options?.timeout ?? RUNNER_PROCESS_PROBE_TIMEOUT_MS;
+  const deadline = options?.deadline;
   let failure: Extract<RunnerDescendantPidProbe, { state: 'unknown' }> = {
     state: 'unknown',
     code: 'probe-transport',
     reason: 'probe was never attempted',
   };
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const timeout = Math.min(baseTimeout * 2 ** (attempt - 1), RUNNER_PROCESS_PROBE_MAX_TIMEOUT_MS);
+    const escalated = Math.min(
+      baseTimeout * 2 ** (attempt - 1),
+      RUNNER_PROCESS_PROBE_MAX_TIMEOUT_MS,
+    );
+    // The caller's ceiling wins over the escalation. An attempt that cannot fit
+    // is not started, because starting it is exactly how the ceiling gets
+    // overrun.
+    const remaining = deadline === undefined ? escalated : deadline - Date.now();
+    if (remaining <= 0) {
+      failure = {
+        state: 'unknown',
+        code: 'probe-timeout',
+        reason: `liveness probe budget exhausted before attempt ${attempt}`,
+        attempts: attempt - 1,
+      };
+      return failure;
+    }
+    const timeout = Math.min(escalated, remaining);
     try {
       const result = await exec(vars, cmd, { ...options, timeout });
       const pid = result.stdout.trim();
@@ -1380,22 +1406,40 @@ export function buildFindRunnerDescendantPidFromVariableCommand(
  * The pattern reaches awk through the environment, not `-v`: `awk -v` runs the
  * value through escape processing, so `-v pattern='foo\.bar'` would hand awk
  * `foo.bar` and silently widen the match. `ENVIRON` is passed through verbatim.
+ *
+ * Every row must carry a numeric pid, a numeric ppid, a state and a command. A
+ * single malformed row condemns the whole snapshot rather than being skipped:
+ * a table we only partly understood cannot support a CONFIRMED absence, and
+ * absence is what frees a slot. `123 garbage` therefore exits
+ * {@link RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT}, not 1.
+ *
+ * The walk carries a visited set, so an inconsistent snapshot whose ppid edges
+ * form a cycle — possible when a pid is recycled between rows — terminates
+ * instead of queueing forever until the exec timeout kills it. A zombie is
+ * never matched as a live runner: it has already exited and only its exit
+ * status remains, but its children are still traversed.
  */
 function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern: string): string {
   const walk = [
     'BEGIN { pattern = ENVIRON["FARMSLOT_RUNNER_PATTERN"] }',
-    '$1 ~ /^[0-9]+$/ {',
+    '{',
+    '  if (NF < 4 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ || $3 == "") {',
+    '    malformed++',
+    '    next',
+    '  }',
     '  rows++',
     '  line = $0',
     '  sub(/^[ \\t]+/, "", line)',
     '  sub(/^[^ \\t]+[ \\t]+/, "", line)',
     '  sub(/^[^ \\t]+[ \\t]+/, "", line)',
+    '  sub(/^[^ \\t]+[ \\t]+/, "", line)',
     '  cmd[$1] = line',
+    '  state[$1] = $3',
     '  kids[$2] = kids[$2] " " $1',
     '}',
     'END {',
-    '  if (rows == 0) {',
-    '    print "runner liveness probe: process table snapshot has no rows" > "/dev/stderr"',
+    '  if (rows == 0 || malformed > 0) {',
+    '    printf "runner liveness probe: process table snapshot unusable (%d row(s), %d malformed)\\n", rows + 0, malformed + 0 > "/dev/stderr"',
     `    exit ${RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT}`,
     '  }',
     '  queue[0] = root',
@@ -1403,8 +1447,10 @@ function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern
     '  tail = 1',
     '  while (head < tail) {',
     '    pid = queue[head++]',
+    '    if (pid in visited) continue',
+    '    visited[pid] = 1',
     '    command = cmd[pid]',
-    '    if (command != "" && index(command, "__farmslot_status") == 0 && command ~ pattern) {',
+    '    if (command != "" && state[pid] !~ /^Z/ && index(command, "__farmslot_status") == 0 && command ~ pattern) {',
     '      fallback = pid',
     '      split(command, argv, /[ \\t]/)',
     '      if (exact == "" && argv[1] ~ pattern) exact = pid',
@@ -1423,7 +1469,7 @@ function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern
     `root=${quotedRoot}`,
     `FARMSLOT_RUNNER_PATTERN=${shellQuote(pattern)}`,
     'export FARMSLOT_RUNNER_PATTERN',
-    `snapshot=$(ps -axo pid=,ppid=,command= 2>/dev/null) || ${snapshotFailed('ps snapshot exited nonzero')}`,
+    `snapshot=$(ps -axo pid=,ppid=,state=,command= 2>/dev/null) || ${snapshotFailed('ps snapshot exited nonzero')}`,
     `[ -n "$snapshot" ] || ${snapshotFailed('ps snapshot was empty')}`,
     `printf '%s\\n' "$snapshot" | awk -v root="$root" ${shellQuote(walk)}`,
   ].join('\n');

@@ -98,7 +98,10 @@ import {
   runnerRunningForPark,
   stopRunnerForPark,
 } from '../runners/session-lifecycle.js';
-import { resolveRunRetainedSessionBinding } from '../runners/session-process.js';
+import {
+  resolveRunRetainedSessionBinding,
+  RunnerProcessProbeError,
+} from '../runners/session-process.js';
 import { getAllRuns, getRun, persistRunNow, runsDirectory, updateRun } from '../runs/store.js';
 
 import {
@@ -4220,6 +4223,12 @@ function messageOf(error: unknown): string {
  */
 function parkErrorCode(error: unknown): string {
   if (error instanceof RunnerParkStopError) {
+    return error.code.replaceAll('-', '_').toUpperCase();
+  }
+  // A liveness probe can also throw straight past the stop wrapper — from a
+  // pre-flight inspection, or from any other park effect that walks a pane
+  // tree. Its own code is the operational fact worth recording.
+  if (error instanceof RunnerProcessProbeError) {
     return error.code.replaceAll('-', '_').toUpperCase();
   }
   return 'EFFECT_FAILED';

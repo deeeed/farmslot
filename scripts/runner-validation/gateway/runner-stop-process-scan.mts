@@ -99,14 +99,33 @@ function whichOrThrow(binary: string): string {
   return found;
 }
 
+function isErrnoCode(error: unknown, code: string): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === code;
+}
+
 function tallyCount(tally: string, name: string): number {
   try {
     return readFileSync(tally, 'utf8')
       .split('\n')
       .filter((line) => line.trim() === name).length;
-  } catch {
-    // No file means the shim was never invoked, which is a real observation.
-    return 0;
+  } catch (error) {
+    // A missing file means the shim was never invoked, which is a real
+    // observation. A permission or I/O error is not, and silently reading it as
+    // "zero forks" would turn a broken proof into a passing one.
+    if (isErrnoCode(error, 'ENOENT')) return 0;
+    throw error;
+  }
+}
+
+/** SIGKILL a process, tolerating only the race where it already exited. */
+function killIfAlive(pid: number, label: string): void {
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (error) {
+    if (isErrnoCode(error, 'ESRCH')) return;
+    throw new Error(
+      `could not kill ${label} (pid ${pid}): ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -124,9 +143,10 @@ async function main(): Promise<void> {
   const build = (panePid: string, pattern = claudePattern) =>
     sessionProcess.buildFindRunnerDescendantPidCommand(panePid, pattern);
 
-  // ── A real pane tree, in a real tmux session ──────────────────────────────
-  // The runner is a grandchild of the pane process, the shape a launched or
-  // reopened worker actually has.
+  // ── A real pane tree, inside the tmux pane it is inspected in ─────────────
+  // Every observation below roots at the SAME pane PID. Launching the tree
+  // outside the pane and then checking absence inside it would prove nothing:
+  // the second reading would be of an unrelated process tree.
   const session = `runner-stop-scan-${process.pid}`;
   const workdir = mkdtempSync(path.join(tempRoot, 'repo-'));
   execFileSync('tmux', ['new-session', '-d', '-s', session, '-c', workdir, 'bash', '--norc']);
@@ -138,8 +158,10 @@ async function main(): Promise<void> {
 
   // A branching tree, not a chain: the old walk's cost scaled with the number
   // of processes it visited, so a single-process tree would hide the very
-  // difference this proof is about.
+  // difference this proof is about. The runner sits two levels down, the shape
+  // a launched or reopened worker actually has.
   const treeScript = path.join(tempRoot, 'pane-tree.sh');
+  const treePidFile = path.join(tempRoot, 'pane-tree.pid');
   writeFileSync(
     treeScript,
     [
@@ -153,27 +175,27 @@ async function main(): Promise<void> {
     ].join('\n'),
     { mode: 0o755 },
   );
-  const runner = spawn('bash', [treeScript], { stdio: 'ignore' });
+  execFileSync('tmux', [
+    'send-keys',
+    '-t',
+    session,
+    `${treeScript} & echo $! > ${treePidFile}`,
+    'Enter',
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+  const treePid = Number(readFileSync(treePidFile, 'utf8').trim());
+  assert.ok(Number.isInteger(treePid) && treePid > 0, 'pane tree did not report its PID');
   cleanup.push(() => {
-    try {
-      process.kill(-runner.pid!, 'SIGKILL');
-    } catch {
-      // Already gone; the assertions own the outcome, not the cleanup.
-    }
-    try {
-      process.kill(runner.pid!, 'SIGKILL');
-    } catch {
-      // Already gone.
-    }
+    spawnSync('pkill', ['-9', '-P', String(treePid)]);
+    killIfAlive(treePid, 'pane tree');
   });
-  await new Promise((resolve) => setTimeout(resolve, 2000));
 
-  const found = runShell(build(String(runner.pid)));
+  const found = runShell(build(panePid));
   record(
     'walk-finds-the-nested-runner',
-    'the generated walk finds a runner nested two levels under the root process',
+    'the generated walk finds a runner nested under the tmux pane process',
     found.exitCode === 0 && /^\d+$/.test(found.stdout.trim()),
-    { exitCode: found.exitCode, stdout: found.stdout.trim() },
+    { paneRoot: panePid, exitCode: found.exitCode, stdout: found.stdout.trim() },
   );
 
   // ── Cost: how many process-table reads one probe costs ────────────────────
@@ -185,11 +207,11 @@ async function main(): Promise<void> {
     pgrep: countingShim('pgrep', realPgrep, tally),
   });
   const countedStart = Date.now();
-  const counted = runShell(build(String(runner.pid)), withShims(counting));
+  const counted = runShell(build(panePid), withShims(counting));
   const countedMs = Date.now() - countedStart;
   const psCalls = tallyCount(tally, 'ps');
   const pgrepCalls = tallyCount(tally, 'pgrep');
-  const treeSize = runShell(`pgrep -d' ' -P ${String(runner.pid)} | wc -w`).stdout.trim();
+  const treeSize = runShell(`pgrep -d' ' -P ${String(treePid)} | wc -w`).stdout.trim();
   record(
     'one-probe-reads-the-process-table-once',
     'a probe of a branching pane tree costs exactly one process-table read and no per-node pgrep',
@@ -207,7 +229,7 @@ async function main(): Promise<void> {
   // Confirmed absence is exit 1 with nothing on either stream. Anything the
   // caller must not read as absence has to differ on that exact signature.
   const failedSnapshot = runShell(
-    build(String(runner.pid)),
+    build(panePid),
     withShims(shimDir({ ps: '#!/bin/sh\nexit 1\n', pgrep: '#!/bin/sh\nexit 1\n' })),
   );
   record(
@@ -222,7 +244,7 @@ async function main(): Promise<void> {
   );
 
   const emptySnapshot = runShell(
-    build(String(runner.pid)),
+    build(panePid),
     withShims(shimDir({ ps: '#!/bin/sh\nexit 0\n', pgrep: '#!/bin/sh\nexit 0\n' })),
   );
   record(
@@ -237,7 +259,7 @@ async function main(): Promise<void> {
   );
 
   const unparsableSnapshot = runShell(
-    build(String(runner.pid)),
+    build(panePid),
     withShims(
       shimDir({
         ps: "#!/bin/sh\nprintf '%s\\n' 'ps: cannot read the process table'\n",
@@ -259,13 +281,7 @@ async function main(): Promise<void> {
 
   // ── The runner pattern must not be widened on its way to the matcher ──────
   const decoy = spawn('bash', ['-lc', 'exec -a farmslotXprobe sleep 240'], { stdio: 'ignore' });
-  cleanup.push(() => {
-    try {
-      process.kill(decoy.pid!, 'SIGKILL');
-    } catch {
-      // Already gone.
-    }
-  });
+  cleanup.push(() => killIfAlive(decoy.pid!, 'pattern decoy'));
   await new Promise((resolve) => setTimeout(resolve, 1200));
   const escaped = runShell(build(String(decoy.pid), 'farmslot\\.probe'));
   const widened = runShell(build(String(decoy.pid), 'farmslot.probe'));
@@ -277,10 +293,12 @@ async function main(): Promise<void> {
   );
 
   // ── Confirmed absence, on a tree whose runner really is gone ──────────────
-  spawnSync('pkill', ['-P', String(runner.pid)]);
-  process.kill(runner.pid!, 'SIGKILL');
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-  const absent = runShell(build(String(panePid)));
+  // The same pane, the same root, after its runner tree is gone. Absence is
+  // only meaningful as a SECOND reading of the tree the first reading found.
+  spawnSync('pkill', ['-9', '-P', String(treePid)]);
+  killIfAlive(treePid, 'pane tree');
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  const absent = runShell(build(panePid));
   record(
     'a-tree-with-no-runner-is-confirmed-absent',
     'a pane whose runner exited reports the confirmed-absent signature: exit 1, nothing printed',

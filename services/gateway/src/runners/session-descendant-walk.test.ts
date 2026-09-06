@@ -56,12 +56,15 @@ function runProbe(panePid: string, runner: string): { exitCode: number; stdout: 
 function runProbeWithPsShim(
   shimBody: string,
   t: { after(fn: () => void): void },
+  // The root must exist in the SHIMMED table, or the walk exits absent before
+  // reaching anything the shim is meant to exercise.
+  root: string = String(process.pid),
 ): { exitCode: number; stdout: string; stderr: string } {
   const shimDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-ps-shim-'));
   t.after(() => rmSync(shimDir, { recursive: true, force: true }));
   writeFileSync(path.join(shimDir, 'ps'), shimBody, { mode: 0o755 });
   return runCommand(
-    buildFindRunnerDescendantPidCommand(String(process.pid), runnerProcessPatternSource('codex')),
+    buildFindRunnerDescendantPidCommand(root, runnerProcessPatternSource('codex')),
     { ...process.env, PATH: `${shimDir}${path.delimiter}${process.env.PATH ?? ''}` },
   );
 }
@@ -138,7 +141,7 @@ test('a ps snapshot with no parsable rows is never reported as a confirmed absen
   );
 
   assert.equal(probe.exitCode, RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT);
-  assert.match(probe.stderr, /process table snapshot has no rows/);
+  assert.match(probe.stderr, /snapshot unusable \(0 row\(s\), 1 malformed\)/);
 });
 
 test('the runner pattern reaches awk with its regex escapes intact', async (t) => {
@@ -164,4 +167,59 @@ test('the runner pattern reaches awk with its regex escapes intact', async (t) =
   );
   assert.equal(widened.exitCode, 0, 'an unescaped dot still matches any character');
   assert.match(widened.stdout.trim(), /^\d+$/);
+});
+
+test('a malformed row condemns the snapshot instead of yielding absence', (t) => {
+  // `123 garbage` used to count as a valid row, so a table we only partly
+  // understood could still produce a CONFIRMED absence — and absence is what
+  // frees a slot.
+  const probe = runProbeWithPsShim(
+    "#!/bin/sh\nprintf '%s\\n' '1 0 Ss /sbin/launchd' '123 garbage'\n",
+    t,
+  );
+
+  assert.equal(probe.exitCode, RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT);
+  assert.notEqual(probe.exitCode, 1, 'a partly-parsed table must not confirm absence');
+  assert.match(probe.stderr, /snapshot unusable \(1 row\(s\), 1 malformed\)/);
+});
+
+test('a zombie runner is not reported as a live one', (t) => {
+  // A zombie has already exited; only its exit status remains. Matching it
+  // would report a runner that is gone as still running and settle the park
+  // partial.
+  const probe = runProbeWithPsShim(
+    "#!/bin/sh\nprintf '%s\\n' '1 0 Ss /sbin/launchd' '222 1 Z+ codex'\n",
+    t,
+    '1',
+  );
+
+  assert.equal(probe.exitCode, 1, 'a zombie tree is confirmed absent');
+  assert.equal(probe.stdout.trim(), '');
+});
+
+test('a live runner in the same shape is still found', (t) => {
+  // The control for the zombie case: only the state column may differ.
+  const probe = runProbeWithPsShim(
+    "#!/bin/sh\nprintf '%s\\n' '1 0 Ss /sbin/launchd' '222 1 S+ codex'\n",
+    t,
+    '1',
+  );
+
+  assert.equal(probe.exitCode, 0);
+  assert.equal(probe.stdout.trim(), '222');
+});
+
+test('a pid-reuse cycle terminates instead of running until the probe times out', (t) => {
+  // An inconsistent snapshot can name one pid twice with different parents, so
+  // the ppid edges form a cycle reachable from the root. Without a visited set
+  // the walk queues forever and only the exec timeout ends it.
+  const started = Date.now();
+  const probe = runProbeWithPsShim(
+    "#!/bin/sh\nprintf '%s\\n' '1 0 Ss /sbin/launchd' '222 1 S+ sh' '333 222 S+ sh' '222 333 S+ sleep'\n",
+    t,
+    '1',
+  );
+
+  assert.equal(probe.exitCode, 1, 'the cycle resolves to confirmed absence');
+  assert.ok(Date.now() - started < 5_000, 'the walk must terminate on its own');
 });

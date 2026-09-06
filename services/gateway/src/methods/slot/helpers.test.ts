@@ -53,7 +53,8 @@ test('buildMonitorCommand embeds slot identity, task dir, repo, session, and run
   // an escaped character in it cannot be stripped on the way.
   assert.match(cmd, /FARMSLOT_RUNNER_PATTERN='claude\|codex\|scripted-runner'/);
   // One snapshot, walked in awk — not a pgrep/ps fork per visited process.
-  assert.match(cmd, /ps -axo pid=,ppid=,command=/);
+  // State travels with the snapshot so a zombie is never matched as a live runner.
+  assert.match(cmd, /ps -axo pid=,ppid=,state=,command=/);
   assert.doesNotMatch(cmd, /pgrep -P/);
   assert.match(cmd, /\) >\/dev\/null 2>&1; then/);
 });

@@ -98,6 +98,59 @@ test('a failed process-table snapshot is undecided, never a confirmed absence', 
   assert.deepEqual(attemptTimeouts, [50, 100]);
 });
 
+test('a probe deadline caps the retries, not just each attempt', async () => {
+  // Without a deadline three attempts of a 10s base spend 70s, which is how a
+  // caller holding a wall-clock ceiling blows past it. Each attempt must be
+  // clamped to what remains, and an attempt that cannot fit must not start.
+  const timeouts: Array<number | undefined> = [];
+  const startedAt = Date.now();
+  const probe = await probeRunnerDescendantPid(
+    makeVars(),
+    String(process.pid),
+    'codex',
+    { attempts: 5, timeout: 10_000, deadline: Date.now() + 120 },
+    {
+      exec: async (_vars, _cmd, opts) => {
+        const timeout = typeof opts === 'string' ? undefined : opts?.timeout;
+        timeouts.push(timeout);
+        await new Promise((resolve) => setTimeout(resolve, timeout ?? 0));
+        return { exitCode: 124, stdout: '', stderr: 'command timed out' };
+      },
+    },
+  );
+  const elapsed = Date.now() - startedAt;
+
+  assert.equal(probe.state, 'unknown');
+  assert.equal(probe.state === 'unknown' && probe.code, 'probe-timeout');
+  assert.ok(
+    timeouts.every((timeout) => (timeout ?? 0) <= 120),
+    `no attempt may exceed the remaining budget, saw ${JSON.stringify(timeouts)}`,
+  );
+  assert.ok(elapsed < 1_000, `retries must stop at the deadline, took ${elapsed}ms`);
+  assert.ok(timeouts.length < 5, `the last attempts must not start, ran ${timeouts.length}`);
+});
+
+test('a probe whose budget is already spent is not attempted at all', async () => {
+  let calls = 0;
+  const probe = await probeRunnerDescendantPid(
+    makeVars(),
+    String(process.pid),
+    'codex',
+    { attempts: 3, deadline: Date.now() - 1 },
+    {
+      exec: async () => {
+        calls += 1;
+        return { exitCode: 0, stdout: '1\n', stderr: '' };
+      },
+    },
+  );
+
+  assert.equal(calls, 0, 'an exhausted budget must not start an exec');
+  assert.equal(probe.state, 'unknown');
+  assert.equal(probe.state === 'unknown' && probe.code, 'probe-timeout');
+  assert.match(probe.state === 'unknown' ? (probe.reason ?? '') : '', /budget exhausted/);
+});
+
 test('a probe failure that a retry would only repeat is not retried', async () => {
   let calls = 0;
   const probe = await probeRunnerDescendantPid(
