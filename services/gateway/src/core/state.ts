@@ -368,6 +368,18 @@ export async function resetSlot(slotId: string, warm = false): Promise<void> {
   // the live-sim kill problem.
   void warm; // kept for API compatibility — caller still distinguishes warm vs cold elsewhere
 
+  // A slot mid-release belongs to that teardown. This is the unguarded reset —
+  // no phase check and no epoch check — so publishing a `releasing` slot back
+  // to ready here hands out a slot whose windows are still being killed and
+  // whose worktree is still being reset. Every path that OWNS a release
+  // (`slotRelease`, `cleanupSlotAfterRunFailure`) fences the slot and then
+  // finishes through `resetSlotIf` under its own epoch guard, so nothing
+  // legitimate needs to reset through the fence.
+  if ((await readSlotField(slotId, 'phase')) === SLOT_PHASE_RELEASING) {
+    console.log(`[state] slot ${slotId} is mid-release; leaving the reset to that teardown`);
+    return;
+  }
+
   // Slot release ends any warm reviewer sessions that lived on this slot — a
   // later run must never resume a prior run's reviewer context. Listener
   // registration (see initSelfReview) keeps core/ free of upward imports.

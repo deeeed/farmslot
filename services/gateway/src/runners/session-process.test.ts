@@ -7,10 +7,13 @@ import test from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
+import { NodeRpcTimeoutError } from '../fleet/node-rpc.js';
+
 import {
   buildFindRunnerDescendantPidCommand,
   buildRunnerSessionDiscoveryCommand,
   findRunnerDescendantPid,
+  probeTimeoutBudgetFromError,
   readPaneProcessStartedAtMs,
   recaptureRunnerSessionMetadataIfMissing,
   resolvePersistedRunnerSessionBinding,
@@ -50,6 +53,21 @@ test('a liveness probe that exhausts its budget is typed, not just worded', asyn
     `expected a typed probe timeout, got ${String(rejection)}`,
   );
   assert.equal(rejection.probeBudgetMs, 1);
+});
+
+test('a transport deadline counts as a probe timeout; an unreachable node does not', () => {
+  // The remote half of the same classification, as the rule itself: a probe
+  // whose RPC deadline elapsed has no exit status to read, so without this it
+  // fell through as an unclassified failure and a loaded machine looked like a
+  // runner that cannot be recovered.
+  assert.equal(probeTimeoutBudgetFromError(new NodeRpcTimeoutError('mini', 10_000)), 10_000);
+  // A node that never connected exhausted no budget. It is a real verdict about
+  // the machine, not a transient stall, and must not be retried through.
+  assert.equal(
+    probeTimeoutBudgetFromError(new Error('No node connected for machine mini after 15000ms')),
+    undefined,
+  );
+  assert.equal(probeTimeoutBudgetFromError(new Error('boom')), undefined);
 });
 
 test('an indeterminate probe that did not time out stays untyped', async () => {

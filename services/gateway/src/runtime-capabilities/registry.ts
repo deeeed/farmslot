@@ -76,6 +76,16 @@ export interface RuntimeCapabilityRegistryOptions {
    * tests and validation gateways that have no run store.
    */
   isTerminalOwner?: (ownerRunId: string) => boolean;
+  /**
+   * Whether the RUN STORE says this FAMILY has had its terminal cleanup.
+   *
+   * Terminal cleanup covers a whole family, so the family list has to survive
+   * eviction exactly as the owner list does — and it cannot be derived from the
+   * requesting run, which is the hole this closes: a LIVE sibling of an evicted
+   * terminal family is not itself terminal, so an owner-only fallback let it
+   * acquire a provider its family's cleanup had already torn down.
+   */
+  isTerminalFamily?: (familyId: string) => boolean;
   onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
   now?: () => Date;
   leaseId?: () => string;
@@ -327,7 +337,8 @@ export class RuntimeCapabilityRegistry {
       acquiringFamilyId === params.ownerFamilyId
         ? params
         : { ...params, ...(acquiringFamilyId ? { ownerFamilyId: acquiringFamilyId } : {}) };
-    if (this.isFencedOwner(params.ownerRunId, acquiringFamilyId)) {
+    const fenced = this.fenceVerdict(params.ownerRunId, acquiringFamilyId);
+    if (fenced) {
       // Fail closed. Handing a provider to a run that has already been torn down
       // leaks it: nothing will release it again.
       return {
@@ -335,7 +346,10 @@ export class RuntimeCapabilityRegistry {
         conflict: {
           kind: 'invalid-request',
           capabilityId: entry.id,
-          reason: `Run '${params.ownerRunId}' has already had its terminal capability cleanup; it cannot acquire '${entry.id}'`,
+          reason:
+            fenced.scope === 'owner'
+              ? `Run '${fenced.id}' has already had its terminal capability cleanup; it cannot acquire '${entry.id}'`
+              : `Family '${fenced.id}' has already had its terminal capability cleanup; run '${params.ownerRunId}' cannot acquire '${entry.id}'`,
         },
       };
     }
@@ -1173,9 +1187,32 @@ export class RuntimeCapabilityRegistry {
    * posture and never forgets.
    */
   private isFencedOwner(ownerRunId: string, familyId?: string): boolean {
-    if (this.terminatedOwners.has(ownerRunId)) return true;
-    if (familyId !== undefined && this.terminatedFamilies.has(familyId)) return true;
-    return this.options.isTerminalOwner?.(ownerRunId) === true;
+    return this.fenceVerdict(ownerRunId, familyId) !== null;
+  }
+
+  /**
+   * Which half of the fence refuses this acquire, or null when neither does.
+   *
+   * Returned rather than collapsed to a boolean so the refusal can say what is
+   * actually true. The message used to claim the requesting run had already had
+   * its own terminal cleanup even when it was a live sibling refused by the
+   * family fence, which sent operators looking for a cleanup that never
+   * happened.
+   */
+  private fenceVerdict(
+    ownerRunId: string,
+    familyId?: string,
+  ): { scope: 'owner' | 'family'; id: string } | null {
+    if (this.terminatedOwners.has(ownerRunId)) return { scope: 'owner', id: ownerRunId };
+    if (this.options.isTerminalOwner?.(ownerRunId) === true) {
+      return { scope: 'owner', id: ownerRunId };
+    }
+    if (familyId === undefined) return null;
+    if (this.terminatedFamilies.has(familyId)) return { scope: 'family', id: familyId };
+    if (this.options.isTerminalFamily?.(familyId) === true) {
+      return { scope: 'family', id: familyId };
+    }
+    return null;
   }
 
   async releaseForPosture(
@@ -1672,6 +1709,27 @@ export class RuntimeCapabilityRegistry {
             entry?.sharePolicy === 'exclusive' &&
             (initialProviderHolderCounts.get(lease.capabilityId) ?? 0) > 1;
           if (lease.state === 'queued') {
+            // The fence applies to a queue slot too. A queued lease holds no
+            // provider, but `blocksAcquisition` counts it, so a fenced owner's
+            // queued exclusive lease blocks every other run on that capability
+            // for as long as the record survives — forever, since the owner is
+            // gone and will never retry admission. Released without any
+            // provider action, because there is nothing running to stop.
+            if (this.isFencedOwner(lease.owner.runId, lease.owner.familyId)) {
+              lease.state = 'released';
+              lease.updatedAt = this.timestamp();
+              lease.releasedAt = lease.updatedAt;
+              lease.referenceCount = 0;
+              this.recordEvent(snapshot, {
+                kind: 'recovery-rejected',
+                slotId,
+                capabilityId: lease.capabilityId,
+                leaseId: lease.id,
+                owner: lease.owner,
+                detail: `queue slot dropped: owner run '${lease.owner.runId}' already had its terminal capability cleanup`,
+              });
+              continue;
+            }
             this.recordEvent(snapshot, {
               kind: 'queued',
               slotId,
@@ -1749,21 +1807,31 @@ export class RuntimeCapabilityRegistry {
             );
             // A sibling that is NOT fenced still owns the running provider, so
             // stopping it here would tear it out from under a live run.
-            const cleanup =
-              liveHolders.length === 0
-                ? await this.runAction(slotId, entry.actions.release)
-                : { ok: true };
+            const stopped = liveHolders.length === 0;
+            const cleanup = stopped
+              ? await this.runAction(slotId, entry.actions.release)
+              : { ok: true };
             lease.updatedAt = this.timestamp();
             lease.health = { state: 'unknown', checkedAt: lease.updatedAt };
-            if (cleanup.ok) {
+            // The detail states what actually happened to the PROVIDER, which
+            // is not the same in all three cases: it was stopped, it was left
+            // running for a live sibling, or the stop failed and the lease is
+            // an error. Reporting "released" for all three told an operator the
+            // provider was down when it may still be up.
+            let outcome: string;
+            if (!cleanup.ok) {
+              lease.state = 'error';
+              lease.cleanupFailure =
+                cleanup.detail ?? 'restart cleanup failed after terminal capability cleanup';
+              outcome = `provider stop FAILED (${lease.cleanupFailure})`;
+            } else {
               lease.state = 'released';
               lease.releasedAt = lease.updatedAt;
               lease.referenceCount = 0;
               lease.cleanupFailure = undefined;
-            } else {
-              lease.state = 'error';
-              lease.cleanupFailure =
-                cleanup.detail ?? 'restart cleanup failed after terminal capability cleanup';
+              outcome = stopped
+                ? 'provider stopped'
+                : 'provider left running for a live sibling holder';
             }
             this.recordEvent(snapshot, {
               kind: 'recovery-rejected',
@@ -1771,7 +1839,7 @@ export class RuntimeCapabilityRegistry {
               capabilityId: lease.capabilityId,
               leaseId: lease.id,
               owner: lease.owner,
-              detail: `owner run '${lease.owner.runId}' already had its terminal capability cleanup; lease released instead of adopted`,
+              detail: `owner run '${lease.owner.runId}' already had its terminal capability cleanup; lease not adopted, ${outcome}`,
             });
             continue;
           }

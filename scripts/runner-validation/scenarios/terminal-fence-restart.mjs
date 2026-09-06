@@ -86,19 +86,18 @@ function listenerPid() {
 /**
  * Acquire, riding out machine pressure.
  *
- * Admission refuses on load, and this farm's node runs many agents at once, so
- * a pressure refusal is a fact about the machine at that second and not a
- * verdict about the fence. Only that one refusal is retried; every other
- * conflict is returned unchanged so a real refusal is never waited away.
+ * Admission refuses a medium-cost provider while the host is at critical
+ * pressure, and this farm's node runs many agents at once — so a pressure
+ * refusal is a fact about the machine at that second, not a verdict about the
+ * fence. Branches on the conflict KIND the gateway already returns, never on
+ * the reason prose: load, memory, and disk each word it differently, and a
+ * regex over them silently stopped retrying when the wording moved. Every other
+ * conflict is returned unchanged, so a real refusal is never waited away.
  */
 async function acquireThroughPressure(slotId, ownerRunId, ownerFamilyId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let latest = acquire(slotId, ownerRunId, ownerFamilyId);
-  while (
-    !latest.ok &&
-    /Load average|above 1\.5x|pressure/i.test(latest.conflict?.reason ?? '') &&
-    Date.now() < deadline
-  ) {
+  while (!latest.ok && latest.conflict?.kind === 'host-pressure' && Date.now() < deadline) {
     await sleep(15_000);
     latest = acquire(slotId, ownerRunId, ownerFamilyId);
   }
@@ -212,22 +211,49 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     if (!slot) throw new Error(`slot ${slotId} not found in fleet.status`);
     report.project = slot.project;
 
-    // The restart kills every operator session on this gateway, so it may only
-    // run when nothing else is live on it.
+    // The restart replaces the whole gateway process, not one slot's worth of
+    // it: every operator session on it dies. So the check has to be
+    // gateway-WIDE, which is what it claims to be — checking only this slot
+    // promised inactivity it had not looked for.
+    //
+    // A run parked at a gate is not a live proof: it holds no turn and its
+    // record survives the restart. Anything actually executing is.
     const active = rpc('run.list', { active: true }).runs ?? [];
-    const foreign = active.filter((run) => run.slotId === slotId);
-    node(
-      'no-live-proof-on-slot',
-      foreign.length === 0,
-      foreign.length === 0
-        ? `no active run occupies ${slotId}`
-        : `active run(s) on ${slotId}: ${foreign.map((run) => `${run.id.slice(0, 8)}/${run.status}`).join(', ')}`,
-    );
+    const EXECUTING = new Set([
+      'grading',
+      'writing-task',
+      'slot-finding',
+      'preparing',
+      'dispatching',
+      'monitoring',
+      'self-reviewing',
+      'completing',
+      'ci-watching',
+    ]);
+    const executing = active.filter((run) => EXECUTING.has(run.status));
     report.otherActiveRuns = active.map((run) => ({
       runId: run.id,
       status: run.status,
       slotId: run.slotId,
     }));
+    node(
+      'no-live-proof-on-this-gateway',
+      executing.length === 0,
+      executing.length === 0
+        ? `no executing run on this gateway (${active.length} non-terminal run(s), none mid-turn)`
+        : `executing run(s) that a restart would interrupt: ${executing
+            .map(
+              (run) => `${run.id.slice(0, 8)}/${run.status}${run.slotId ? `@${run.slotId}` : ''}`,
+            )
+            .join(', ')}`,
+    );
+    node(
+      'target-slot-free',
+      active.every((run) => run.slotId !== slotId),
+      active.some((run) => run.slotId === slotId)
+        ? `an active run already occupies ${slotId}`
+        : `no active run occupies ${slotId}`,
+    );
 
     const owner = createScriptedRun(slotId, slot.project, undefined);
     createdRunIds.push(owner.id);

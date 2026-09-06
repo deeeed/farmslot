@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
+import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+
 import {
   routeTerminalRunTransition,
   type TerminalTransitionCollaborators,
@@ -219,23 +221,58 @@ test('settling an already-terminal status is allowed only for that same status',
 });
 
 test('a refused transition is reported as null rather than thrown at the engine', async () => {
-  // The production entry point: `startRun` calls this from inside its own catch,
-  // so a guard refusal must not reject and take the engine down with it.
+  // The production entry point, which `startRun` calls from inside its own
+  // catch: a guard refusal must come back as null, not reject and take the
+  // engine down. An operator cancel that landed while a step was failing is
+  // exactly this case.
+  const cancelled = run({ id: 'run_refused', status: 'cancelled' });
+  const seeded = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'MANUAL-000117-REFUSED',
+    runner: 'claude',
+    slotId: cancelled.slotId ?? undefined,
+  });
+  updateRun(seeded.id, { status: 'cancelled', completedAt: NOW });
+
+  const log: string[] = [];
   const refused = await routeTerminalRunTransition({
-    runId: 'run-that-does-not-exist-117',
+    runId: seeded.id,
     kind: 'fail',
     actor: 'engine',
-    settlingStatus: 'failed',
-    patch: {},
+    patch: { status: 'failed', completedAt: NOW },
     collaborators: {
-      settleBacklog: async () => {},
-      tickWorkGraph: async () => {},
-      cleanupEvalHarness: async () => {},
-      cleanupSlot: null,
-      emit: () => {},
+      settleBacklog: async () => void log.push('settleBacklog'),
+      tickWorkGraph: async () => void log.push('tickWorkGraph'),
+      cleanupEvalHarness: async () => void log.push('cleanupEvalHarness'),
+      cleanupSlot: async () => void log.push('cleanupSlot'),
+      emit: () => void log.push('publish'),
     },
-  }).catch((error: unknown) => error);
-  // A missing run is a hard error, not a guard refusal — it must still throw.
-  assert.ok(refused instanceof Error);
-  assert.match((refused as Error).message, /Run not found/);
+  });
+
+  assert.equal(refused, null, 'the operator-owned terminal state wins; the engine yields');
+  assert.deepEqual(log, [], 'a refused transition must not publish or tear anything down');
+  assert.equal(getRun(seeded.id)?.status, 'cancelled', 'the cancel is not overwritten');
+  await deleteRun(seeded.id);
+});
+
+test('a missing run is a hard error, not a guard refusal', async () => {
+  await assert.rejects(
+    routeTerminalRunTransition({
+      runId: 'run-that-does-not-exist-117',
+      kind: 'fail',
+      actor: 'engine',
+      settlingStatus: 'failed',
+      patch: {},
+      collaborators: {
+        settleBacklog: async () => {},
+        tickWorkGraph: async () => {},
+        cleanupEvalHarness: async () => {},
+        cleanupSlot: null,
+        emit: () => {},
+      },
+    }),
+    /Run not found/,
+  );
 });

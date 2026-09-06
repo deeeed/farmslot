@@ -16,6 +16,7 @@ import {
 } from '@farmslot/protocol';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
+import { SLOT_PHASE_RELEASING } from '../core/state.js';
 import { activeRunSlotIds } from '../methods/dispatch/slot-scoring.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
@@ -65,6 +66,13 @@ interface ReviewArtifactsSnapshot {
 export interface RunRecoveryCollaborators {
   listRuns: (params: { active: true }) => { runs: Run[] };
   loadFleetStatus: (force?: boolean) => Promise<FleetSnapshot>;
+  /**
+   * Whether a terminal run's teardown currently owns this slot's lifecycle.
+   *
+   * Injected so the reconciler stays testable, and so a validation gateway that
+   * runs no engine can answer `false` for every slot.
+   */
+  isTerminalTeardownInFlight: (slotId: string) => boolean;
   getRun: (runId: string) => Run | undefined;
   updateRun: (runId: string, fields: Partial<Run>) => void;
   updateRunStep: (runId: string, stepName: string, fields: Partial<RunStep>) => void;
@@ -954,11 +962,26 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
   const activeSlotIds = activeRunSlotIds(active);
   const freshFleet = await deps.loadFleetStatus(true);
   for (const slot of freshFleet.slots) {
-    if (['busy', 'held'].includes(slot.lifecycle) && !activeSlotIds.has(slot.slot)) {
-      console.log(
-        `[run-engine] reconcile: orphaned ${slot.slot} (${slot.lifecycle}/${slot.phase}) → ready`,
-      );
-      await deps.resetSlot(slot.slot);
+    if (!['busy', 'held'].includes(slot.lifecycle) || activeSlotIds.has(slot.slot)) continue;
+    // A terminal run's slot is NOT orphaned while its teardown is still
+    // running. ADR-053 publishes the terminal status before the teardown, and
+    // `activeRunSlotIds` counts only non-terminal runs, so for that window the
+    // slot looks abandoned to this loop. Resetting it there republishes a slot
+    // whose tmux windows are still being killed and whose worktree is still
+    // being reset, straight into dispatch.
+    if (deps.isTerminalTeardownInFlight(slot.slot)) {
+      console.log(`[run-engine] reconcile: ${slot.slot} left alone; a terminal teardown owns it`);
+      continue;
     }
+    // Same reason, for a release this process did not start: the releasing
+    // fence is the marker every other teardown path already respects.
+    if (slot.phase === SLOT_PHASE_RELEASING) {
+      console.log(`[run-engine] reconcile: ${slot.slot} left alone; a release owns it`);
+      continue;
+    }
+    console.log(
+      `[run-engine] reconcile: orphaned ${slot.slot} (${slot.lifecycle}/${slot.phase}) → ready`,
+    );
+    await deps.resetSlot(slot.slot);
   }
 }

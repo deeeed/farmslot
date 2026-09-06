@@ -325,7 +325,16 @@ export interface CompleteStepOutput {
   prTitleUpdated: boolean;
   prMarkedReady: boolean;
   retrospectiveCreated: boolean;
-  slotDisposition: 'ci-watch' | 'released' | 'gate-held';
+  /**
+   * What COMPLETE decided about the slot.
+   *
+   * `release-deferred` is the terminal-flow case: the step chose the release
+   * but the engine performs it as a transition after-effect, once the run has
+   * published `done` (ADR-053). It is distinct from `released` on purpose —
+   * reporting a teardown that has not happened yet is what an operator reads
+   * off this record.
+   */
+  slotDisposition: 'ci-watch' | 'released' | 'release-deferred' | 'gate-held';
   artifacts: ArtifactRef[];
   cliCommand?: string;
 }

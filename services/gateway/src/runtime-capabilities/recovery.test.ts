@@ -131,10 +131,39 @@ test('restart does not adopt a healthy lease owned by a terminal run', async (t)
   assert.deepEqual(actions, ['browser.release']);
   const rejected = status.events.find((event) => event.kind === 'recovery-rejected');
   assert.match(rejected?.detail ?? '', /terminal capability cleanup/);
+  // The event says what happened to the PROVIDER, not just to the lease.
+  assert.match(rejected?.detail ?? '', /provider stopped/);
   assert.equal(
     status.events.some((event) => event.kind === 'recovery-adopted'),
     false,
   );
+});
+
+test('a fenced lease whose provider stop fails is not reported as released', async (t) => {
+  const store = await seededStore(t);
+  const registry = new RuntimeCapabilityRegistry({
+    store,
+    catalogForSlot: async (slotId) => ({
+      slotId,
+      project: 'test-project',
+      capabilities: [browser()],
+    }),
+    runAction: async (_slot, action) =>
+      action.kind === 'slot-action' && action.actionId === 'browser.release'
+        ? { ok: false, detail: 'shutdown refused' }
+        : { ok: true },
+    isTerminalOwner: (ownerRunId) => ownerRunId === 'run-a',
+  });
+
+  await reconcileRuntimeCapabilityLeases(registry);
+
+  const status = await registry.status({ slotId: 'slot-a' });
+  assert.equal(status.leases[0]?.state, 'error');
+  assert.equal(status.leases[0]?.cleanupFailure, 'shutdown refused');
+  const rejected = status.events.find((event) => event.kind === 'recovery-rejected');
+  // The provider may still be up, so the event must not claim it went away.
+  assert.match(rejected?.detail ?? '', /provider stop FAILED/);
+  assert.doesNotMatch(rejected?.detail ?? '', /provider stopped/);
 });
 
 test('restart still adopts a healthy lease owned by a live run', async (t) => {

@@ -92,6 +92,7 @@ import {
   suspendPublicationReviewRecoveryForRun,
 } from './run-engine/orchestrator.js';
 import { initRunMonitor } from './run-engine/run-monitor.js';
+import { withRunSettlementLane } from './run-lifecycle/broadcast-lanes.js';
 import { loadAllRuns } from './runs/store.js';
 import { reconcileRuntimeCapabilityLeases } from './runtime-capabilities/recovery.js';
 import {
@@ -263,28 +264,40 @@ async function main(): Promise<void> {
   // Co-pilot observer — wraps broadcastEvent so the observer sees every event
   // without modifying any individual handler
   const originalBroadcast = broadcastEvent;
-  const observedBroadcast = (event: string, payload: unknown): void => {
+  /**
+   * Everything the observed broadcast does EXCEPT the backlog and work-graph
+   * lane below.
+   *
+   * ADR-053's transition router settles those itself, awaited and ordered, and
+   * repairs a failed settle. Publishing a router-owned terminal run through the
+   * observed broadcast started a second, unordered copy of the same work: the
+   * scheduler could tick on a projection whose persistence was still in flight,
+   * or had already failed, which is the exact ordering the router exists to
+   * impose. Every other observer still runs, so nothing is lost by publishing
+   * here.
+   */
+  const settledBroadcast = (event: string, payload: unknown): void => {
     originalBroadcast(event, payload);
     routeEventToObserver(event, payload);
     routeEventToAutoRecovery(event, payload);
-    if (event === Events.RUN_UPDATED || event === Events.RUN_COMPLETED) {
-      const run = (payload as { run?: import('@farmslot/protocol').Run }).run;
-      if (run) {
-        // Fire-and-forget backstop lane: markBacklogRunObserved now propagates its
-        // rejection so ADR-053's transition router can report a failed settle, so
-        // this caller owns its own failure handling.
-        markBacklogRunObserved(run).catch((err) => {
-          console.error(`[backlog] failed to observe run: ${(err as Error).message}`);
-        });
-        if (run.workGraphId) {
-          schedulerTick({ graphId: run.workGraphId }).catch((err) => {
-            console.error(
-              `[work-graph] run event reconciliation failed for ${run.workGraphId}: ${(err as Error).message}`,
-            );
-          });
-        }
-      }
+  };
+  const runSettlementBroadcast = withRunSettlementLane(settledBroadcast, (run) => {
+    // Fire-and-forget backstop lane: markBacklogRunObserved now propagates its
+    // rejection so ADR-053's transition router can report a failed settle, so
+    // this caller owns its own failure handling.
+    markBacklogRunObserved(run).catch((err) => {
+      console.error(`[backlog] failed to observe run: ${(err as Error).message}`);
+    });
+    if (run.workGraphId) {
+      schedulerTick({ graphId: run.workGraphId }).catch((err) => {
+        console.error(
+          `[work-graph] run event reconciliation failed for ${run.workGraphId}: ${(err as Error).message}`,
+        );
+      });
     }
+  });
+  const observedBroadcast = (event: string, payload: unknown): void => {
+    runSettlementBroadcast(event, payload);
     if (event === Events.RUN_DELETED) {
       const runId = (payload as { runId?: string }).runId;
       if (runId) {
@@ -334,7 +347,7 @@ async function main(): Promise<void> {
 
   // Restore active runs from .runs/ + init engine + monitor
   await loadAllRuns();
-  initRunEngine(observedBroadcast);
+  initRunEngine(observedBroadcast, settledBroadcast);
   initRunMonitor(observedBroadcast);
   {
     const { setFileTransferBroadcast } = await import('./core/file-transfer.js');

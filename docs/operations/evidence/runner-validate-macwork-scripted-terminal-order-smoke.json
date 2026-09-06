@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-06T10:20:08.333Z",
+  "recordedAt": "2026-09-06T12:06:02.247Z",
   "host": "macwork",
   "scenario": "terminal-order-smoke",
   "runner": "scripted",
@@ -16,17 +16,17 @@
     {
       "name": "run-reached-terminal",
       "pass": true,
-      "detail": "run settled at failed completedAt=2026-09-06T10:19:58.586Z; slot settled=true"
+      "detail": "run settled at failed completedAt=2026-09-06T12:05:45.750Z; slot settled=true"
     },
     {
       "name": "slot-binding-observed",
       "pass": true,
-      "detail": "macwork-ff-4 was observed bound to 39350048"
+      "detail": "macwork-ff-4 was observed bound to ae7e5d47"
     },
     {
       "name": "terminal-status-published-without-waiting-for-teardown",
       "pass": true,
-      "detail": "terminal run.updated broadcast 2ms after the status write (budget 500ms)"
+      "detail": "terminal run.updated broadcast 1ms after the status write (budget 500ms)"
     },
     {
       "name": "slot-returned-to-ready",
@@ -35,198 +35,198 @@
     }
   ],
   "project": "farmslot-farm",
-  "runId": "39350048-7de8-4a1a-951d-f49071c98cb2",
-  "sampleCount": 201,
-  "sampleCadenceMs": 68,
+  "runId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d",
+  "sampleCount": 301,
+  "sampleCadenceMs": 74,
   "finalStatus": "failed",
-  "finalCompletedAt": "2026-09-06T10:19:58.586Z",
-  "publishedAt": 1788689998588,
+  "finalCompletedAt": "2026-09-06T12:05:45.750Z",
+  "publishedAt": 1788696345751,
   "publishedEvent": "run.updated",
-  "slotBoundSampleAt": 1788689998011,
-  "slotReleasedObservedAt": 1788689999166,
-  "publishToSlotReadyMs": 578,
-  "publishLagMs": 2,
+  "slotBoundSampleAt": 1788696345308,
+  "slotReleasedObservedAt": 1788696348241,
+  "publishToSlotReadyMs": 2490,
+  "publishLagMs": 1,
   "publishedBeforeReleaseSamples": [
     {
-      "at": 1788689998590,
-      "elapsedMs": 12971,
+      "at": 1788696345753,
+      "elapsedMs": 19643,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998591,
-      "elapsedMs": 12972,
+      "at": 1788696346049,
+      "elapsedMs": 19939,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998592,
-      "elapsedMs": 12973,
+      "at": 1788696346051,
+      "elapsedMs": 19941,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998593,
-      "elapsedMs": 12974,
+      "at": 1788696346053,
+      "elapsedMs": 19943,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998594,
-      "elapsedMs": 12975,
+      "at": 1788696346055,
+      "elapsedMs": 19945,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998595,
-      "elapsedMs": 12976,
+      "at": 1788696346062,
+      "elapsedMs": 19952,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998596,
-      "elapsedMs": 12977,
+      "at": 1788696346068,
+      "elapsedMs": 19958,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998597,
-      "elapsedMs": 12978,
+      "at": 1788696346352,
+      "elapsedMs": 20242,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998603,
-      "elapsedMs": 12984,
+      "at": 1788696346360,
+      "elapsedMs": 20250,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998604,
-      "elapsedMs": 12985,
+      "at": 1788696346583,
+      "elapsedMs": 20473,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998605,
-      "elapsedMs": 12986,
+      "at": 1788696346585,
+      "elapsedMs": 20475,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998607,
-      "elapsedMs": 12988,
+      "at": 1788696346587,
+      "elapsedMs": 20477,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998609,
-      "elapsedMs": 12990,
+      "at": 1788696346603,
+      "elapsedMs": 20493,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998611,
-      "elapsedMs": 12992,
+      "at": 1788696346605,
+      "elapsedMs": 20495,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998612,
-      "elapsedMs": 12993,
+      "at": 1788696346609,
+      "elapsedMs": 20499,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998613,
-      "elapsedMs": 12994,
+      "at": 1788696346855,
+      "elapsedMs": 20745,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998685,
-      "elapsedMs": 13066,
+      "at": 1788696346864,
+      "elapsedMs": 20754,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998692,
-      "elapsedMs": 13073,
+      "at": 1788696346874,
+      "elapsedMs": 20764,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998698,
-      "elapsedMs": 13079,
+      "at": 1788696346881,
+      "elapsedMs": 20771,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     },
     {
-      "at": 1788689998704,
-      "elapsedMs": 13085,
+      "at": 1788696346889,
+      "elapsedMs": 20779,
       "runStatus": "failed",
-      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "runCompletedAt": "2026-09-06T12:05:45.750Z",
       "slotLifecycle": "busy",
       "slotPhase": "preparing",
-      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+      "slotCurrentRunId": "ae7e5d47-81c4-4ed2-a120-4cddf2a6247d"
     }
   ],
-  "pairedSampleCatches": 32
+  "pairedSampleCatches": 41
 }

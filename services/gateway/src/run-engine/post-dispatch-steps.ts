@@ -1210,7 +1210,7 @@ export async function executeCompleteStep(
   // diffStat needs the slot's git tree; runs before slotRelease below.
   const diffStat = await getDiffStat(getRun(runId) ?? current);
   const finalizedEvalPackage = await finalizeEvalResultPackageForRun(getRun(runId) ?? current);
-  let slotDisposition: 'ci-watch' | 'released';
+  let slotDisposition: 'ci-watch' | 'released' | 'release-deferred';
 
   if (!noCodeDisposition && hasCIWatch && completion.prNumber && completion.ciRepo) {
     // Keep slot alive for CI monitoring — worker is done so clear agent
@@ -1232,11 +1232,15 @@ export async function executeCompleteStep(
     // now, because the run is not terminal and later steps read slot state.
     if (isFlowTerminalStep(current.flowType, S.COMPLETE)) {
       context.deferTerminalSlotRelease(release);
+      // Reported honestly: the step decided the disposition, the engine performs
+      // it after the run publishes. Recording 'released' here claimed a teardown
+      // that has not happened, in the step I/O an operator reads.
+      slotDisposition = 'release-deferred';
     } else {
       const noopEmit = () => {};
       await slotRelease(release, noopEmit);
+      slotDisposition = 'released';
     }
-    slotDisposition = 'released';
   }
   const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;
   return {

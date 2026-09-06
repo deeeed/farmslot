@@ -8,6 +8,7 @@ import {
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { EXEC_TIMEOUT_EXIT_CODE, execOnSlot, type ExecOnSlotOptions } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import { NodeRpcTimeoutError } from '../fleet/node-rpc.js';
 
 import {
   observedAtFromRecord,
@@ -1049,8 +1050,30 @@ export async function probeRunnerDescendantPid(
         : {}),
     };
   } catch (error) {
-    return { state: 'unknown', reason: (error as Error).message };
+    const timedOutAfterMs = probeTimeoutBudgetFromError(error);
+    return {
+      state: 'unknown',
+      reason: (error as Error).message,
+      ...(timedOutAfterMs !== undefined ? { timedOutAfterMs } : {}),
+    };
   }
+}
+
+/**
+ * The probe budget an error says was exhausted, or undefined when it says
+ * nothing about a budget.
+ *
+ * A transport deadline is a probe timeout too. Only the LOCAL path can report
+ * exit 124; a remote probe whose RPC never came back never got an exit status
+ * at all, and reading that as "cannot determine, cause unknown" is what made a
+ * loaded machine look like a runner without recovery support.
+ *
+ * A node that never connected is deliberately NOT here: no budget was
+ * exhausted, the machine is simply unreachable, and that is a real verdict an
+ * operator has to act on rather than retry through.
+ */
+export function probeTimeoutBudgetFromError(error: unknown): number | undefined {
+  return error instanceof NodeRpcTimeoutError ? error.timeoutMs : undefined;
 }
 
 interface TerminateRunnerDescendantsDeps {

@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   Events,
   isTerminalRunStatus,
+  type Run,
   type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityCatalogEntry,
@@ -28,7 +29,7 @@ import {
 import { isLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { getRun } from '../runs/store.js';
+import { getRun, listRuns } from '../runs/store.js';
 import {
   evaluateRuntimeCapabilityAdmission,
   type RuntimeCapabilityPressureSnapshot,
@@ -198,6 +199,17 @@ async function pressureFor(
   return evaluateRuntimeCapabilityAdmission(entry, pressure, queueOnPressure);
 }
 
+/**
+ * Whether the run store says this run has had its terminal capability cleanup.
+ *
+ * Terminal status OR the ADR-054 terminal posture: the posture is what the
+ * reconciler records when it stops a run's providers, and it can land before
+ * the run itself settles.
+ */
+function hasHadTerminalCleanup(run: Run): boolean {
+  return isTerminalRunStatus(run.status) || run.resourcePosture?.posture === 'terminal';
+}
+
 const registry = new RuntimeCapabilityRegistry({
   store: new RuntimeCapabilityStore(runtimeCapabilityStorePath()),
   catalogForSlot,
@@ -211,8 +223,14 @@ const registry = new RuntimeCapabilityRegistry({
   isTerminalOwner: (ownerRunId) => {
     const run = getRun(ownerRunId);
     if (!run) return false;
-    return isTerminalRunStatus(run.status) || run.resourcePosture?.posture === 'terminal';
+    return hasHadTerminalCleanup(run);
   },
+  // The family half, and the reason it cannot be derived from the requesting
+  // run: a LIVE sibling of a terminal family is not itself terminal, so an
+  // owner-only fallback let it acquire a provider the family cleanup already
+  // tore down once the bounded family list evicted.
+  isTerminalFamily: (familyId) =>
+    listRuns({ familyId }).runs.some((run) => hasHadTerminalCleanup(run)),
   onEvent(event) {
     broadcastFn?.(Events.RUNTIME_CAPABILITY_LIFECYCLE, { event });
   },
