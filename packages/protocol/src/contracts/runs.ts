@@ -1743,6 +1743,56 @@ export interface MachineParkWorkspace {
 }
 
 /**
+ * The stages a freed-slot restore owes, in the order it owes them.
+ *
+ * Tracked as its own sequence rather than inferred from what the record happens
+ * to look like. Occupancy, the detached branch, the lease states, and the
+ * runner proof each record ONE stage's outcome, so reading them as a whole is a
+ * guess: a restore that re-bound the slot and then died before re-creating the
+ * pane looks, to an occupancy reader, exactly like a restore that never had to
+ * touch the slot at all — and the retry then takes the ordinary path and fails
+ * on a recovery handle nothing re-hosted.
+ */
+export const MACHINE_PARK_RESTORE_STAGES = [
+  /** The slot row is bound to the run again. */
+  'rebind',
+  /** The preserved branch is back in the working tree at its recorded tip. */
+  'reattach',
+  /** Manifest capabilities and resources are held and running again. */
+  'reacquire',
+  /** The worker is back on its persisted session, and both attach targets say where. */
+  'reload',
+] as const;
+
+export type MachineParkRestoreStage = (typeof MACHINE_PARK_RESTORE_STAGES)[number];
+
+/**
+ * How far the current restore attempt got, written around each stage.
+ *
+ * `attempting` is written BEFORE the stage runs and `completed` only after it
+ * lands, so a crash anywhere inside a stage is visible as an unfinished stage
+ * rather than as an absence. The write-ahead journal is kept until every stage
+ * is in `completed`.
+ */
+export interface MachineParkRestoreProgress {
+  /** The restore operation these stages belong to; a newer one starts over. */
+  operationId: string;
+  /** The stage currently being attempted, if any. Cleared when it completes. */
+  attempting?: MachineParkRestoreStage;
+  /** Stages proven complete, in the order they landed. */
+  completed: MachineParkRestoreStage[];
+  updatedAt: string;
+}
+
+/** Whether every stage a freed-slot restore owes has landed. */
+export function machineParkRestoreComplete(
+  progress: MachineParkRestoreProgress | undefined,
+): boolean {
+  if (!progress || progress.attempting) return false;
+  return MACHINE_PARK_RESTORE_STAGES.every((stage) => progress.completed.includes(stage));
+}
+
+/**
  * Why the last restore attempt refused, kept on the record so a reconnecting
  * client sees the reason without replaying the RPC that produced it.
  *
@@ -1784,7 +1834,13 @@ export interface MachineParkRecord {
   /**
    * When slot ownership was actually released, not merely intended. Set only
    * after the park stopped the runner and every manifest resource, so a partial
-   * park never advertises a freed slot. Cleared when a restore reclaims a slot.
+   * park never advertises a freed slot.
+   *
+   * Kept for the whole restore and cleared only when every restore stage has
+   * landed, so it stays the marker of "this record owes a freed-slot restore".
+   * OCCUPANCY is `slotReboundAt`, which lands earlier: the two are deliberately
+   * separate, because a restore that re-bound the slot and then failed still
+   * owes the rest of its stages.
    */
   slotFreedAt?: string;
   /**
@@ -1794,6 +1850,12 @@ export interface MachineParkRecord {
    * the restore as the note that this record's slot came back.
    */
   slotReboundAt?: string;
+  /**
+   * How far the current restore attempt got. Absent until a freed-slot restore
+   * starts, and the authority for what a retry still owes — never inferred from
+   * whether the run currently occupies its slot.
+   */
+  restoreProgress?: MachineParkRestoreProgress;
   /**
    * Why the last restore attempt refused, when it refused without changing
    * anything. Absent once a restore gets past the refusal.

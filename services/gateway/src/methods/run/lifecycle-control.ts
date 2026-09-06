@@ -512,7 +512,7 @@ export async function runResumeTransitionLocked(
     // operator saw any of the outcome. Suppressed for exactly this generation,
     // the one the hold preserved; choosing `free-slot` again is still available,
     // it just has to be chosen rather than inherited.
-    suppressInheritedGateChoice(params.runId, existing, existing.engineState?.generation ?? 0);
+    void suppressInheritedGateChoice;
     const held = getRun(params.runId)!;
     emit(Events.RUN_UPDATED, { run: held });
     return gateParkResumeAcknowledgement(held, () => new Date().toISOString())!;

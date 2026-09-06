@@ -78,7 +78,11 @@ import {
   setRunFlags,
   startRun,
 } from '../run-engine/orchestrator.js';
-import { isGateParkInFlightOrFreed, isSlotFreedByPark } from '../run-engine/park-slot-binding.js';
+import {
+  isGateParkInFlightOrFreed,
+  isSlotFreedByPark,
+  needsGateParkRestore,
+} from '../run-engine/park-slot-binding.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import {
   normalizeExhaustedReviewContinuationsForRun,
@@ -1236,7 +1240,12 @@ async function restoreGateParkForResolution(
   run: Run,
   dependencies: RunResolveDecisionDependencies,
 ): Promise<RunResolveDecisionResult['gateParkRestore']> {
-  if (!isSlotFreedByPark(run)) return undefined;
+  // Keyed on what the RESTORE still owes, not on whether the run currently
+  // occupies its slot. A restore whose reload started the worker and then
+  // failed to get an acknowledgement leaves an occupied slot and a running
+  // process, and reading occupancy there skips the restore and consumes the
+  // gate with no proof the worker ever came back.
+  if (!needsGateParkRestore(run)) return undefined;
   const restore = await (dependencies.restoreGatePark ?? defaultRestoreGatePark)(runId);
   if (!restore.ok) {
     throw new GatewayMethodError(
@@ -1287,13 +1296,15 @@ export async function runResolveDecision(
   const decision = existing.decisions.find((d) => d.id === params.decisionId);
   if (!decision) throw new Error(`Decision not found: ${params.decisionId}`);
   if (decision.resolvedAt) throw new Error(`Decision already resolved`);
-  // ADR-054 `free-slot`, in two halves. A park still in flight is refused: its
-  // effects are landing right now and there is nothing coherent to restore
-  // into. A park that LANDED and freed the slot is restored instead of refused
-  // — the operator answering the gate is what asks for the run back. Both
-  // happen before anything reads the decision, so a refusal leaves it pending.
-  if (!isSlotFreedByPark(existing)) assertNotGateParked(params.runId, existing);
-  const gateParkRestore = await restoreGateParkForResolution(params.runId, existing, dependencies);
+  // ADR-054 `free-slot`: refuse a park that is still LANDING before anything
+  // else looks at the request. Its effects are in flight and there is nothing
+  // coherent to restore into, so there is no point validating further.
+  if (!needsGateParkRestore(existing)) assertNotGateParked(params.runId, existing);
+  // Every pure request check runs BEFORE the restore. Restoring is a slot
+  // claim, a checkout, a resource boot, and a runner relaunch — minutes of real
+  // effects on a real machine — and a request that was never going to be
+  // accepted must not buy any of them. A typo'd action id did exactly that:
+  // full restore, then `Action not found`.
   if (!decision.actions.some((action) => action.id === params.actionId)) {
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
   }
@@ -1306,6 +1317,10 @@ export async function runResolveDecision(
         `resolving '${params.decisionId}' here would record it as applied without changing any file.`,
     );
   }
+  // A park that LANDED and freed the slot is restored rather than refused — the
+  // operator answering the gate is what asks for the run back. Still before
+  // anything READS or consumes the decision, so a refusal leaves it pending.
+  const gateParkRestore = await restoreGateParkForResolution(params.runId, existing, dependencies);
   if (decision.type === 'monitor_interactive_handoff' && params.actionId !== 'abort') {
     const signal = await readFreshTerminalSignalForRun(existing.id, existing.slotId);
     if (!signal) {

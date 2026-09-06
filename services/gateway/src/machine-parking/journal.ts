@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { MachineParkRecord } from '@farmslot/protocol';
+import { MACHINE_PARK_RESTORE_STAGES, type MachineParkRecord } from '@farmslot/protocol';
 
 /**
  * `free-slot` is its own kind: the slot release and the `slotFreedAt` write
@@ -281,6 +281,7 @@ function validRecord(record: MachineParkRecord): boolean {
       record.slotDisposition === 'freed') &&
     optionalIso(record.slotFreedAt) &&
     optionalIso(record.slotReboundAt) &&
+    validRestoreProgress(record.restoreProgress) &&
     validRestoreRefusal(record.restoreRefusal) &&
     validPreservedWorkspace(record.preservedWorkspace) &&
     Array.isArray(record.errors) &&
@@ -291,6 +292,20 @@ function validRecord(record: MachineParkRecord): boolean {
     optionalIso(record.parkedAt) &&
     optionalIso(record.restoredAt) &&
     optionalIso(record.cancelledAt)
+  );
+}
+
+const RESTORE_STAGES = new Set<string>(MACHINE_PARK_RESTORE_STAGES);
+
+function validRestoreProgress(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isRecord(value) &&
+    nonEmpty(value.operationId) &&
+    (value.attempting === undefined || RESTORE_STAGES.has(value.attempting as string)) &&
+    Array.isArray(value.completed) &&
+    value.completed.every((stage) => RESTORE_STAGES.has(stage as string)) &&
+    iso(value.updatedAt)
   );
 }
 

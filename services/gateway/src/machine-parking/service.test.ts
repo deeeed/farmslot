@@ -19,7 +19,11 @@ import {
   gateParkRestorePlan,
   gateParkResumeAcknowledgement,
 } from '../methods/run/lifecycle-control.js';
-import { isGateParkInFlightOrFreed } from '../run-engine/park-slot-binding.js';
+import {
+  isGateParkInFlightOrFreed,
+  isSlotFreedByPark,
+  needsGateParkRestore,
+} from '../run-engine/park-slot-binding.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { withMachineRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import type { RunnerParkHostPlan } from '../runners/session-lifecycle.js';
@@ -400,12 +404,16 @@ function harness(initialRuns: Run[]): Harness {
       const key = `${run.slotId}:${workspace.branch}`;
       return branchTips.has(key) ? branchTips.get(key)! : workspace.headSha;
     },
-    inspectParkHost: async (run, handle) => {
-      calls.push(`inspect-park-host:${run.id}`);
+    inspectParkHost: async (run, handle, ownership) => {
+      calls.push(
+        `inspect-park-host:${run.id}:${ownership?.ownedPaneIds.join(',') ?? 'no-ownership'}`,
+      );
       return parkHosts.get(run.id) ?? { ok: true, disposition: 'exact', recoveryHandle: handle };
     },
-    rehostParkTarget: async (run, handle) => {
-      calls.push(`rehost-park-target:${run.id}`);
+    rehostParkTarget: async (run, handle, ownership) => {
+      calls.push(
+        `rehost-park-target:${run.id}:${ownership?.ownedPaneIds.join(',') ?? 'no-ownership'}`,
+      );
       return parkHosts.get(run.id) ?? { ok: true, disposition: 'exact', recoveryHandle: handle };
     },
     rebindAgentContextTarget: async (run, handle) => {
@@ -2513,12 +2521,12 @@ test('a re-hosted pane lands on the record and the agent context together', asyn
   assert.ok(ctx.calls.includes('rebind-context:run-gate:%777'));
 });
 
-test('restart finishes a restore-slot transition that crashed after the claim', async () => {
+test('restart finishes the fleet-visible restore stages a crash interrupted', async () => {
   const ctx = await freedGateParkHarness();
   const record = ctx.runs.get('run-gate')!.park!;
-  // The crash shape: the marker is on disk and the claim landed, but the write
-  // that clears `slotFreedAt` never happened. Every reader still treats the run
-  // as freed, so dispatch would offer a slot the run is sitting in.
+  // The crash shape: the marker is on disk and the claim landed, but the branch
+  // is still detached. Recovery has to finish the stages that strand the fleet
+  // without an operator — the slot binding and the checkout — and no more.
   await ctx.deps.writeIntentJournal('restore-slot', [structuredClone(record)], 'run-gate');
   ctx.slotOwners.set('slot-a', 'run-gate');
   ctx.slotLifecycles.set('slot-a', 'busy');
@@ -2526,10 +2534,42 @@ test('restart finishes a restore-slot transition that crashed after the claim', 
   await ctx.service.reconcile();
 
   const after = ctx.runs.get('run-gate')!;
-  assert.equal(after.park!.slotFreedAt, undefined, 'the interrupted transition is finished');
-  assert.ok(after.park!.slotReboundAt);
+  assert.ok(after.park!.slotReboundAt, 'the slot is bound to the run again');
   assert.equal(ctx.workspaces.get('slot-a')?.branch, 'work/run-gate');
-  assert.equal(ctx.restoreSlotJournals.size, 0, 'the finished marker is dropped');
+  assert.equal(after.park!.preservedWorkspace?.detachedAt, undefined);
+  assert.deepEqual(after.park!.restoreProgress?.completed, ['rebind', 'reattach']);
+  assert.equal(after.park!.restoreProgress?.attempting, undefined);
+  // Reacquiring capabilities and relaunching a worker are the operator's
+  // restore to ask for, so the obligation — and its marker — survive.
+  assert.ok(after.park!.slotFreedAt, 'the record still owes the remaining stages');
+  assert.equal(ctx.restoreSlotJournals.size, 1, 'the marker outlives the partial repair');
+  // Occupancy has moved even though the obligation has not: the run is sitting
+  // in that slot, so nothing may offer it to dispatch.
+  assert.equal(isSlotFreedByPark(after), false);
+});
+
+test('a restore that crashed before the checkout keeps its marker and its detached branch', async () => {
+  const ctx = await freedGateParkHarness();
+  const record = ctx.runs.get('run-gate')!.park!;
+  await ctx.deps.writeIntentJournal('restore-slot', [structuredClone(record)], 'run-gate');
+  ctx.slotOwners.set('slot-a', 'run-gate');
+  ctx.slotLifecycles.set('slot-a', 'busy');
+  // The successor left the tree dirty, so the checkout cannot land.
+  ctx.workspaces.set('slot-a', {
+    branch: null,
+    headSha: 'sha-run-gate',
+    dirtyPaths: [' M src/successor.ts'],
+  });
+
+  await ctx.service.reconcile();
+
+  const after = ctx.runs.get('run-gate')!;
+  // Dropping the marker here is what left a branch out of its working tree with
+  // nothing recording that a restore still owed the checkout.
+  assert.equal(ctx.restoreSlotJournals.size, 1, 'the marker survives an unfinished stage');
+  assert.equal(after.park!.restoreProgress?.attempting, 'reattach');
+  assert.ok(after.park!.preservedWorkspace?.detachedAt, 'the branch is still detached');
+  assert.ok(after.park!.slotFreedAt);
 });
 
 test('restart abandons a restore-slot transition whose slot a rival took', async () => {
@@ -2564,6 +2604,215 @@ test('a run whose restore was refused can still be cancelled', async () => {
 
   assert.equal(ctx.runs.get('run-gate')!.park, null, 'the park record is cleared');
   assert.equal(ctx.slotOwners.get('slot-a'), 'run-successor', 'the successor keeps the slot');
+});
+
+test('a reload that starts the worker without acknowledgement still owes the gate a restore', async () => {
+  const ctx = await freedGateParkHarness();
+  // The exact shape: the process really starts, so occupancy and residuals both
+  // look healthy, and only the acknowledgement is missing.
+  ctx.deps.reloadRunner = async (run) => {
+    ctx.calls.push(`reload-runner:${run.id}`);
+    ctx.runnerStates.set(run.id, 'running');
+    throw new Error('structured acceptance never arrived');
+  };
+
+  const refused = await ctx.service.restoreForGateResolution('run-gate');
+  assert.equal(refused.ok, false);
+
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.recoveryProof, undefined, 'nothing acknowledged the reload');
+  assert.equal(after.park!.restoreProgress?.attempting, 'reload');
+  // The slot is bound and the worker is running, so every occupancy reader says
+  // this run is healthy. Only the stage record knows the restore is unfinished,
+  // and that is what has to keep the gate closed.
+  assert.equal(ctx.slotOwners.get('slot-a'), 'run-gate');
+  assert.equal(ctx.runnerStates.get('run-gate'), 'running');
+  assert.equal(isSlotFreedByPark(after), false, 'the run occupies its slot again');
+  assert.equal(needsGateParkRestore(after), true, 'and still owes the rest of its restore');
+  assert.equal(isGateParkInFlightOrFreed(after), true, 'so the gate stays fenced');
+});
+
+test('the retry of a half-finished restore re-runs its stages instead of the ordinary path', async () => {
+  const ctx = await freedGateParkHarness();
+  // Fail in the resource stage, i.e. after the slot came back and before
+  // anything re-created the pane the successor destroyed.
+  const startResource = ctx.deps.startResource;
+  ctx.deps.startResource = async () => ({ ok: false, detail: 'boot hook exploded' });
+
+  assert.equal((await ctx.service.restoreForGateResolution('run-gate')).ok, false);
+  const halfway = ctx.runs.get('run-gate')!;
+  assert.ok(halfway.park!.slotFreedAt, 'the record still owes freed-slot stages');
+  assert.deepEqual(halfway.park!.restoreProgress?.completed, ['rebind', 'reattach']);
+  // Read out now: the harness hands back the live run object, so a later read
+  // of the same reference would report the retry's values, not this attempt's.
+  const firstAttemptId = halfway.park!.restoreProgress?.operationId;
+
+  // Clearing `slotFreedAt` at the rebind made this preview take the ordinary
+  // path, which probes the recorded pane and refuses RECOVERY_HANDLE_STALE for
+  // a pane the restore itself was supposed to re-create.
+  const { entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.eligible, true, JSON.stringify(entry.eligibility));
+  assert.equal(entry.eligibility.code, 'ELIGIBLE_FREED_SLOT_RESTORE');
+
+  ctx.deps.startResource = startResource;
+  const retried = await ctx.service.restoreForGateResolution('run-gate');
+  assert.equal(retried.ok, true, JSON.stringify(ctx.runs.get('run-gate')!.park!.errors));
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.slotFreedAt, undefined, 'the obligation ends when every stage lands');
+  // This attempt's own history, in the order it ran them. Carrying the previous
+  // attempt's stages forward would let the record claim a stage landed here
+  // that landed somewhere else, under conditions that may no longer hold.
+  assert.deepEqual(after.park!.restoreProgress?.completed, [
+    'rebind',
+    'reattach',
+    'reacquire',
+    'reload',
+  ]);
+  assert.notEqual(after.park!.restoreProgress?.operationId, firstAttemptId);
+  assert.equal(ctx.restoreSlotJournals.size, 0);
+});
+
+test("a new attempt records its own stages, not the previous one's", async () => {
+  const ctx = await freedGateParkHarness();
+  const startResource = ctx.deps.startResource;
+  ctx.deps.startResource = async () => ({ ok: false, detail: 'boot hook exploded' });
+  assert.equal((await ctx.service.restoreForGateResolution('run-gate')).ok, false);
+  assert.deepEqual(ctx.runs.get('run-gate')!.park!.restoreProgress?.completed, [
+    'rebind',
+    'reattach',
+  ]);
+
+  // The retry cannot even take the slot back, so it has completed nothing. A
+  // `rebind` the PREVIOUS attempt landed says nothing about a slot a rival has
+  // since taken, and carrying it forward would let this attempt claim it.
+  ctx.deps.startResource = startResource;
+  ctx.deps.claimSlotOwnership = async () => false;
+  ctx.slotOwners.set('slot-a', null);
+  ctx.slotLifecycles.set('slot-a', 'ready');
+  assert.equal((await ctx.service.restoreForGateResolution('run-gate')).ok, false);
+
+  const progress = ctx.runs.get('run-gate')!.park!.restoreProgress;
+  assert.deepEqual(progress?.completed, []);
+  assert.equal(progress?.attempting, 'rebind');
+});
+
+test('a retry repairs an attach target the previous attempt left on a dead pane', async () => {
+  const ctx = await freedGateParkHarness();
+  const rehosted = {
+    ...recoveryHandle('run-gate', 'slot-a'),
+    target: {
+      session: 'slot-a',
+      window: 'worker',
+      pane: null,
+      paneId: '%555',
+      target: 'slot-a:worker',
+    },
+  };
+  let hostCalls = 0;
+  ctx.deps.rehostParkTarget = async () => {
+    hostCalls += 1;
+    // The first attempt re-hosts. By the retry the pane it created IS the
+    // recorded one, so the plan is `exact` — which is exactly the shape that
+    // used to skip the context write and leave the repair undone.
+    return hostCalls === 1
+      ? { ok: true, disposition: 'rehost', recoveryHandle: rehosted }
+      : { ok: true, disposition: 'exact', recoveryHandle: rehosted };
+  };
+  let contextWrites = 0;
+  const rebindContext = ctx.deps.rebindAgentContextTarget;
+  ctx.deps.rebindAgentContextTarget = async (run, handle) => {
+    contextWrites += 1;
+    // Dies between the record write and the context write, which is what left
+    // an operator's attach pointing at the pane the successor destroyed.
+    if (contextWrites === 1) throw new Error('context store unavailable');
+    return rebindContext(run, handle);
+  };
+
+  assert.equal((await ctx.service.restoreForGateResolution('run-gate')).ok, false);
+  assert.equal(ctx.runs.get('run-gate')!.park!.recoveryHandle?.target.paneId, '%555');
+
+  const retried = await ctx.service.restoreForGateResolution('run-gate');
+
+  assert.equal(retried.ok, true, JSON.stringify(ctx.runs.get('run-gate')!.park!.errors));
+  // The retry re-ran the stage rather than skipping it because the record
+  // already looked right, so both targets agree again.
+  assert.equal(contextWrites, 2);
+  assert.ok(ctx.calls.includes('rebind-context:run-gate:%555'));
+});
+
+test('a restoration with no acknowledged reload is reported as a refusal, not a success', async () => {
+  const ctx = await freedGateParkHarness();
+  const parked = ctx.runs.get('run-gate')!;
+  // The shape a reload that started the worker and lost its acknowledgement
+  // leaves behind, or that an older record carries: settled, occupied, running
+  // — and with nothing that says the worker confirmed it came back.
+  parked.park = { ...parked.park!, phase: 'restored', recoveryProof: undefined };
+
+  const result = await ctx.service.restoreForGateResolution('run-gate');
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok === false && result.code, 'RESTORE_RUNNER_RELOAD_FAILED');
+  assert.match(result.ok === false ? result.reason : '', /no acknowledged runner session reload/);
+});
+
+test('a restore that re-bound the slot before stages were tracked still takes the freed path', async () => {
+  const ctx = await freedGateParkHarness();
+  const parked = ctx.runs.get('run-gate')!;
+  // The record an earlier gateway left behind: it cleared the freed marker at
+  // its first stage, so the disposition plus the rebind are the only things
+  // still saying the slot was ever freed. Reading `slotFreedAt` alone sends the
+  // retry down the retained path, onto the pane a successor destroyed.
+  parked.park = {
+    ...parked.park!,
+    phase: 'partial',
+    slotFreedAt: undefined,
+    slotReboundAt: '2026-08-21T00:00:22.000Z',
+    restoreProgress: undefined,
+  };
+  ctx.slotOwners.set('slot-a', 'run-gate');
+  ctx.slotLifecycles.set('slot-a', 'busy');
+  ctx.deps.inspectRecoveryHandle = async () => {
+    throw new Error('RECOVERY_HANDLE_STALE: the recorded pane is gone');
+  };
+
+  const { entry } = await previewFreedRestore(ctx);
+
+  assert.equal(entry.eligibility.eligible, true, JSON.stringify(entry.eligibility));
+  assert.equal(entry.eligibility.code, 'ELIGIBLE_FREED_SLOT_RESTORE');
+});
+
+test('a gate restore queued behind a completed one reports the completed restoration', async () => {
+  const ctx = await freedGateParkHarness();
+  // The concurrent shape: another caller's restore serialized first and
+  // finished. Throwing "no park record" here reports a failure for work that
+  // succeeded, and the operator's gate answer is lost to a race they cannot see.
+  assert.equal((await ctx.service.restoreForGateResolution('run-gate')).ok, true);
+
+  const queued = await ctx.service.restoreForGateResolution('run-gate');
+
+  assert.equal(queued.ok, true);
+  assert.equal(queued.ok === true && queued.reloadedSessionId, 'session-run-gate');
+  assert.equal(queued.ok === true && queued.slotId, 'slot-a');
+  // And it leaves no mark: stamping a refusal on a record that restored
+  // successfully tells every later reader the run has a problem it does not.
+  assert.equal(ctx.runs.get('run-gate')!.park!.restoreRefusal, undefined);
+  assert.equal(ctx.runs.get('run-gate')!.park!.phase, 'restored');
+});
+
+test('the restore asks the runner layer what this run may adopt, never just the session', async () => {
+  const ctx = await freedGateParkHarness();
+  await ctx.service.restoreForGateResolution('run-gate');
+  // The recorded pane is what this run's own records name; a live worker on any
+  // other pane is not this run's to adopt however well its session id matches.
+  assert.ok(
+    ctx.calls.some((call) => call.startsWith('rehost-park-target:run-gate:%')),
+    ctx.calls.filter((call) => call.startsWith('rehost-park-target:')).join('\n'),
+  );
+  assert.equal(
+    ctx.calls.some((call) => call.endsWith(':no-ownership')),
+    false,
+    'no host decision is made without ownership evidence',
+  );
 });
 
 test('a completed restore stops the run reporting itself as parked', async () => {
@@ -2995,7 +3244,7 @@ test('a park that failed before touching the slot stays fenced but becomes resto
     selector: { kind: 'include', runIds: ['run-gate'] },
   });
   const verdict = restorePreview.runs[0]?.eligibility;
-  assert.notEqual(verdict?.code, 'FREED_SLOT_RESTORE_UNSUPPORTED');
+  assert.equal(verdict?.eligible, true, JSON.stringify(verdict));
   assert.notEqual(verdict?.code, 'RUN_NOT_PAUSED', 'a gate park never sets paused');
 });
 

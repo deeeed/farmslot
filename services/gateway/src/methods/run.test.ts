@@ -1808,6 +1808,88 @@ test('runResolveDecision restores a landed gate park before it consumes the deci
   );
 });
 
+test('runResolveDecision restores a half-finished restore rather than reading its occupancy', async (t) => {
+  // The slot is bound and the worker is running, so every occupancy reader says
+  // this run is healthy — but the reload was never acknowledged, and consuming
+  // the gate there drives the engine against a worker that never confirmed it
+  // came back.
+  const { run, decision, slotId } = gateParkedRun(
+    t,
+    'half-restored',
+    gateParkRecord('x', 's', { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+  );
+  const parked = getRun(run.id)!.park!;
+  updateRun(run.id, {
+    park: {
+      ...parked,
+      slotReboundAt: '2026-09-05T00:00:20.000Z',
+      restoreProgress: {
+        operationId: 'restore-1',
+        attempting: 'reload',
+        completed: ['rebind', 'reattach', 'reacquire'],
+        updatedAt: '2026-09-05T00:00:20.000Z',
+      },
+    },
+  });
+  let restores = 0;
+
+  const result = await runResolveDecision(
+    { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+    () => {},
+    {
+      restoreGatePark: async (runId) => {
+        restores += 1;
+        const current = getRun(runId)!.park!;
+        updateRun(runId, {
+          park: { ...current, phase: 'restored', slotFreedAt: undefined },
+        });
+        return {
+          ok: true,
+          runId,
+          slotId,
+          restoredGeneration: 1,
+          reloadedSessionId: 'session-restored',
+          gateReplayed: false,
+          record: getRun(runId)!.park!,
+        };
+      },
+    },
+  );
+
+  assert.equal(restores, 1, 'the unfinished restore is re-run, not skipped');
+  assert.equal(result.gateParkRestore?.reloadedSessionId, 'session-restored');
+  assert.ok(getRun(run.id)!.decisions[0]?.resolvedAt);
+});
+
+test('runResolveDecision validates the request before it buys a restore', async (t) => {
+  // Restoring is a slot claim, a checkout, a resource boot, and a runner
+  // relaunch — minutes of real effects on a real machine. A request that was
+  // never going to be accepted must not buy any of them.
+  const { run, decision } = gateParkedRun(
+    t,
+    'validate-first',
+    gateParkRecord('x', 's', { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+  );
+  let restores = 0;
+
+  await assert.rejects(
+    runResolveDecision(
+      { runId: run.id, decisionId: decision.id, actionId: 'approve-publsh' },
+      () => {},
+      {
+        restoreGatePark: async () => {
+          restores += 1;
+          throw new Error('unreachable');
+        },
+      },
+    ),
+    /Action not found/,
+  );
+
+  assert.equal(restores, 0, 'a typo never restores the run');
+  assert.equal(getRun(run.id)!.decisions[0]?.resolvedAt, undefined);
+});
+
 test('runResolveDecision leaves the gate pending when the restore is refused', async (t) => {
   const { run, decision } = gateParkedRun(
     t,

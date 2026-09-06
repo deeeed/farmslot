@@ -419,14 +419,83 @@ test('reloadRunnerForPark times out without treating process liveness as prompt 
   assert.match(result.error, /not accepted\/live/);
 });
 
+test('a graceful exit that lands mid-inspection is a stop, not a failure', async () => {
+  // The real shape: one probe still sees the process, the next no longer finds
+  // it to read a start time from, so the ownership inspection turns unusable at
+  // the exact moment the exit lands. Reading that as a stop failure failed the
+  // park for doing what it asked.
+  let inspections = 0;
+  const deps = {
+    exec: async (_vars: unknown, command: string) => {
+      if (command.includes('display-message')) {
+        return { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    },
+    findRunnerPid: async () => {
+      inspections += 1;
+      // Alive for the pre-exit inspection, alive again on the first poll, and
+      // by then the start-time read below can no longer see it.
+      return inspections <= 2 ? '202' : '';
+    },
+    verifyLiveBinding: async () =>
+      inspections <= 1
+        ? await verifyPersistedLiveBinding()
+        : ({ ok: false, reason: 'live runner process start is unavailable for %1' } as const),
+    probeRunnerPid: async () => ({ state: 'absent' as const }),
+    sleep: async () => {},
+  };
+
+  const result = await stopRunnerForPark({ vars, recoveryHandle: handle }, deps as never);
+
+  assert.equal(result.ok, true, result.ok === false ? result.error : '');
+  assert.equal(result.ok === true && result.status, 'stopped');
+  assert.equal(result.ok === true && result.residualRunner, 'stopped');
+});
+
+test('an unusable inspection with the runner still there does not report a stop', async () => {
+  let inspections = 0;
+  const deps = {
+    exec: async (_vars: unknown, command: string) =>
+      command.includes('display-message')
+        ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+        : { exitCode: 0, stdout: '', stderr: '' },
+    findRunnerPid: async () => {
+      inspections += 1;
+      return '202';
+    },
+    // The pre-exit inspection succeeds, so the exit is sent and the wait loop
+    // runs; every later inspection is unreadable while the runner is still
+    // there. Absence is the only thing that may be read as a stop.
+    verifyLiveBinding: async () =>
+      inspections <= 1
+        ? await verifyPersistedLiveBinding()
+        : ({ ok: false, reason: 'binding unreadable' } as const),
+    probeRunnerPid: async () => ({ state: 'present' as const, pid: '202' }),
+    sleep: async () => {},
+  };
+
+  const result = await stopRunnerForPark(
+    { vars, recoveryHandle: handle, timeoutMs: 400 },
+    deps as never,
+  );
+
+  assert.equal(result.ok, false, 'a runner still under the pane has not stopped');
+  assert.match(result.ok === false ? result.error : '', /binding unreadable/);
+});
+
 // ─── ADR-054 free-slot: re-hosting a parked session (slice 2) ────────────────
 
 const parkHostDeps = (options: {
   windows?: TmuxWindowRef[];
   created?: TmuxWindowRef[];
   livePid?: string;
+  /** Which runner the live process belongs to; defaults to the parked one. */
+  liveRunnerId?: string;
+  probeUnreadable?: boolean;
   sessionPathExitCode?: number;
   liveBindingOk?: boolean;
+  slotSession?: string;
 }) => {
   const calls: string[] = [];
   return {
@@ -436,7 +505,16 @@ const parkHostDeps = (options: {
         calls.push(command);
         return { exitCode: options.sessionPathExitCode ?? 0, stdout: '', stderr: '' };
       },
-      findRunnerPid: async () => options.livePid ?? '',
+      findRunnerPid: async () => '',
+      resolveSession: async () => options.slotSession ?? 'slot-1',
+      probeRunnerPid: async (_vars: unknown, _panePid: string, runnerId?: string | null) => {
+        calls.push(`probe:${runnerId ?? 'unknown'}`);
+        if (options.probeUnreadable) return { state: 'unknown' as const, reason: 'ps failed' };
+        if (!options.livePid) return { state: 'absent' as const };
+        return runnerId === (options.liveRunnerId ?? 'claude')
+          ? { state: 'present' as const, pid: options.livePid }
+          : { state: 'absent' as const };
+      },
       verifyLiveBinding: async () =>
         options.liveBindingOk
           ? await verifyPersistedLiveBinding()
@@ -450,6 +528,9 @@ const parkHostDeps = (options: {
     },
   };
 };
+
+/** Ownership evidence naming exactly the panes this run's records bind. */
+const ownedPanes = (...paneIds: string[]) => ({ runId: 'run-parked', ownedPaneIds: paneIds });
 
 const windowRef = (paneId: string, index = 0): TmuxWindowRef => ({
   windowId: `@${index + 1}`,
@@ -504,6 +585,20 @@ test('a leftover window with the recorded name is re-hosted into rather than dup
   assert.equal(calls.includes('ensure-window'), false);
 });
 
+test('re-hosting refuses a tmux session that is no longer this slot', async () => {
+  // The retained path proves this before every stop and reload. Without it the
+  // re-host creates a window in a same-named but foreign or stale session and
+  // reloads this run's worker there.
+  const { deps, calls } = parkHostDeps({ windows: [], slotSession: 'someone-else' });
+  const plan = await rehostRunnerParkTarget(
+    { vars, recoveryHandle: handle, ownership: ownedPanes('%1') },
+    deps as never,
+  );
+  assert.equal(plan.ok, false);
+  assert.match(plan.ok === false ? plan.reason : '', /slot session changed from 'slot-1'/);
+  assert.equal(calls.includes('ensure-window'), false, 'nothing is created in a foreign session');
+});
+
 test('an inspection never creates the window it reports as re-hostable', async () => {
   const { deps, calls } = parkHostDeps({ windows: [], created: [windowRef('%42')] });
   const plan = await inspectRunnerParkHost({ vars, recoveryHandle: handle }, deps as never);
@@ -515,23 +610,90 @@ test('an inspection never creates the window it reports as re-hostable', async (
 test('re-hosting refuses a pane a FOREIGN runner is still alive in', async () => {
   // Respawning it would kill a process this restore does not own.
   const { deps } = parkHostDeps({ windows: [windowRef('%9', 1)], livePid: '4242' });
-  const plan = await rehostRunnerParkTarget({ vars, recoveryHandle: handle }, deps as never);
+  const plan = await rehostRunnerParkTarget(
+    { vars, recoveryHandle: handle, ownership: ownedPanes('%9') },
+    deps as never,
+  );
   assert.equal(plan.ok, false);
   assert.match(plan.ok === false ? plan.reason : '', /already running 'claude' \(pid 4242\)/);
 });
 
-test('re-hosting accepts the recorded pane when the live runner IS this session', async () => {
+test('a surviving successor of ANOTHER runner is seen and refused', async () => {
+  // The freed slot goes to whoever dispatch picked, and that can be any runner.
+  // Probing only the parked runner's own process pattern made a live codex
+  // worker invisible to a claude restore, which then respawned the pane over it.
+  const { deps, calls } = parkHostDeps({
+    windows: [windowRef('%1')],
+    livePid: '7777',
+    liveRunnerId: 'codex',
+    liveBindingOk: true,
+  });
+  const plan = await rehostRunnerParkTarget(
+    { vars, recoveryHandle: handle, ownership: ownedPanes('%1') },
+    deps as never,
+  );
+  assert.equal(plan.ok, false);
+  assert.match(plan.ok === false ? plan.reason : '', /already running 'codex' \(pid 7777\)/);
+  assert.match(plan.ok === false ? plan.reason : '', /not this run's 'claude' session/);
+  assert.ok(calls.includes('probe:codex'), 'every runner is probed, not just the parked one');
+});
+
+test('an unreadable process tree refuses rather than respawning over it', async () => {
+  const { deps } = parkHostDeps({ windows: [windowRef('%1')], probeUnreadable: true });
+  const plan = await rehostRunnerParkTarget(
+    { vars, recoveryHandle: handle, ownership: ownedPanes('%1') },
+    deps as never,
+  );
+  assert.equal(plan.ok, false);
+  assert.match(plan.ok === false ? plan.reason : '', /unreadable process tree/);
+});
+
+test('re-hosting accepts the recorded pane when the live runner IS this run', async () => {
   // A restore retried after one that reloaded the worker and then failed later
-  // finds its own session alive. Refusing there makes the retry impossible for
-  // exactly the record that needs it, so the structured binding check decides.
+  // finds its own worker alive. Refusing there makes the retry impossible for
+  // exactly the record that needs it.
+  const { deps } = parkHostDeps({
+    windows: [windowRef('%1')],
+    livePid: '4242',
+    liveBindingOk: true,
+  });
+  const plan = await inspectRunnerParkHost(
+    { vars, recoveryHandle: handle, ownership: ownedPanes('%1') },
+    deps as never,
+  );
+  assert.equal(plan.ok, true, plan.ok === false ? plan.reason : '');
+  assert.equal(plan.ok === true && plan.disposition, 'exact');
+});
+
+test('a live worker is refused when the session matches but ownership does not', async () => {
+  // A successor dispatched with the same `--resume` inherits the conversation,
+  // so a matching session id proves conversation identity and nothing about
+  // which Farmslot run owns the process.
+  const { deps } = parkHostDeps({
+    windows: [windowRef('%1')],
+    livePid: '4242',
+    liveBindingOk: true,
+  });
+  const plan = await inspectRunnerParkHost(
+    { vars, recoveryHandle: handle, ownership: ownedPanes('%404') },
+    deps as never,
+  );
+  assert.equal(plan.ok, false);
+  assert.match(
+    plan.ok === false ? plan.reason : '',
+    /session records do not bind this pane to run 'run-parked'/,
+  );
+});
+
+test('a live worker is refused when the caller offers no ownership evidence', async () => {
   const { deps } = parkHostDeps({
     windows: [windowRef('%1')],
     livePid: '4242',
     liveBindingOk: true,
   });
   const plan = await inspectRunnerParkHost({ vars, recoveryHandle: handle }, deps as never);
-  assert.equal(plan.ok, true, plan.ok === false ? plan.reason : '');
-  assert.equal(plan.ok === true && plan.disposition, 'exact');
+  assert.equal(plan.ok, false);
+  assert.match(plan.ok === false ? plan.reason : '', /no run-ownership evidence/);
 });
 
 test('re-hosting refuses when the persisted session file is gone', async () => {

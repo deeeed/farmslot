@@ -483,11 +483,14 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
 //                      Gateway says where. Restore the freed-slot rejection in
 //                      buildRestorePreview and it fails.
 //   slotTaken          With a successor holding the slot, answering the gate is
-//                      refused with RESTORE_SLOT_TAKEN and NOTHING moves — the
-//                      decision, the park record, the slot row, and the
-//                      detached worktree are all exactly as they were. Remove
-//                      the availability check in buildRestorePreview and it
-//                      fails (the restore proceeds and mutates the record).
+//                      refused with RESTORE_SLOT_TAKEN and nothing the operator
+//                      has to undo moves: the decision stays pending, the park
+//                      record stays parked and freed, the slot row keeps its
+//                      successor, and the worktree stays detached. The record
+//                      DOES gain a `restoreRefusal` — that is the refusal being
+//                      made durable, and the assertions require it. Remove the
+//                      availability check in buildRestorePreview and it fails
+//                      (the restore proceeds and mutates the record).
 //   restored           The slot is re-bound, the branch is back on its ref at
 //                      the recorded tip, the retained resource is verified
 //                      rather than rebooted, and the worker is back through the
@@ -496,7 +499,13 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
 //                      re-host reuse the dead pane, and it fails.
 //   answerable         The gate is answerable again and STILL PENDING: the
 //                      fence has lifted without the proof consuming the
-//                      operator's decision.
+//                      operator's decision, and the restored gate no longer
+//                      inherits the `free-slot` choice that parked the run.
+//                      Drop the suppression in the resume transition's hold
+//                      branch and it fails.
+//
+// Each node's break-and-observe run is recorded, verbatim, in
+// `gate-park-restore-negative-proofs.json` beside this scenario's evidence.
 const GATE_PARK_SCENARIO_ID = 'gate-park-restore-smoke';
 
 function fleetSlot(slotId) {
@@ -575,6 +584,7 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
     previewEligible: null,
     slotTaken: null,
     restored: null,
+    consumed: null,
     answerable: null,
     pass: false,
     error: null,
@@ -701,7 +711,22 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
           `successor ${successorRunId} does not hold ${record.slotId} (owner=${successorSlot.currentRunId})`,
         );
       }
+      // Snapshotted immediately either side of the READ, so "no mutation" is a
+      // measurement of the preview itself rather than of the window around it.
+      const beforePreview = {
+        record: rpc('run.get', { runId }).run.park,
+        slot: slotBinding(record.slotId),
+        workspace: workspaceIdentity(fleetSlot(record.slotId)),
+      };
       const takenPreview = rpc('machine.pause.restore', { machine: record.machine, selector });
+      const afterPreview = {
+        record: rpc('run.get', { runId }).run.park,
+        slot: slotBinding(record.slotId),
+        workspace: workspaceIdentity(fleetSlot(record.slotId)),
+      };
+      if (JSON.stringify(beforePreview) !== JSON.stringify(afterPreview)) {
+        throw new Error('the slot-taken restore preview changed the record, the slot, or the tree');
+      }
       const takenEntry = selectedRun(takenPreview, runId);
       // The read-only verdict is checked BEFORE the resolve is attempted. If the
       // Gateway thinks a taken slot is restorable, answering the gate would try
@@ -724,6 +749,7 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
         successorRunId,
         previewCode: takenEntry?.eligibility.code ?? null,
         previewAvailable: takenEntry?.restoreTarget?.available ?? null,
+        previewMutatedNothing: true,
         resolveExit: attempt.status,
         resolveMatched: attemptOutput.includes('RESTORE_SLOT_TAKEN'),
         decisionStillPending: pendingGateDecision(after)?.id === decision.id,
@@ -878,6 +904,17 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
       );
     }
 
+    // ─── consumed ─────────────────────────────────────────────────────────
+    // The REAL operator trigger, end to end: `run.resolveDecision` restores a
+    // freed park, consumes the decision, and the run walks past the gate. It
+    // needs a gate-held run the proof may spend, because consuming is the
+    // point — so it runs against a disposable run supplied for it, never
+    // against the one whose gate an operator is still holding.
+    report.consumed = await proveGateConsumption({ machine: record.machine, timeoutMs });
+    if (report.consumed.attempted && !report.consumed.pass) {
+      throw new Error(`gate consumption proof failed: ${report.consumed.error}`);
+    }
+
     // ─── answerable ───────────────────────────────────────────────────────
     // Read-only on purpose: the operator's decision is theirs to make. What is
     // proved here is that the fence lifted, not that the gate was answered.
@@ -967,7 +1004,12 @@ async function dispatchSlotSuccessor({ project, ticketOrPr, slotId, timeoutMs })
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const run = rpc('run.get', { runId: successorRunId }).run;
-    if (run.slotId === slotId) return successorRunId;
+    // The SLOT ROW is what a restore reads, and the run's own `slotId` is set
+    // before the row claim is visible. Waiting on the run would hand the next
+    // node a slot nothing owns yet.
+    if (run.slotId === slotId && slotBinding(slotId).currentRunId === successorRunId) {
+      return successorRunId;
+    }
     if (['done', 'failed', 'cancelled'].includes(run.status)) {
       throw new Error(`successor ${successorRunId} ended '${run.status}' without taking ${slotId}`);
     }
@@ -991,4 +1033,89 @@ async function dispatchSlotSuccessor({ project, ticketOrPr, slotId, timeoutMs })
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   throw new Error(`successor ${successorRunId} never took ${slotId}`);
+}
+
+/**
+ * Prove `run.resolveDecision` on a freed gate park end to end: it restores, it
+ * consumes the decision, and the run moves past the gate.
+ *
+ * Deliberately a separate, disposable run. Consuming a decision is the thing
+ * being proved, so it cannot be done to a gate an operator is still holding —
+ * and the run that IS held is the only one on this machine, because a
+ * publication gate needs a real prepared package that a scripted worker cannot
+ * produce. So the run is supplied rather than created, and without one the node
+ * says exactly what it did not prove and how to supply it.
+ */
+async function proveGateConsumption({ machine, timeoutMs }) {
+  const consumeRunId = process.env.FARMSLOT_GATE_PARK_CONSUME_RUN_ID?.trim();
+  if (!consumeRunId) {
+    return {
+      attempted: false,
+      pass: false,
+      reason:
+        'proving consumption spends a publication gate, so it needs a run supplied for that purpose',
+      howToSupply: [
+        'dispatch a second backlog item to a session-reload runner and let it reach its publication HUMAN_GATE',
+        'park it with runtime.posture.apply { gateChoice: "free-slot" }',
+        'pass its run id as FARMSLOT_GATE_PARK_CONSUME_RUN_ID; this node then answers that gate',
+      ],
+    };
+  }
+  const proof = { attempted: true, pass: false, runId: consumeRunId, error: null };
+  try {
+    const before = rpc('run.get', { runId: consumeRunId }).run;
+    const park = before.park;
+    if (!park?.slotFreedAt || park.mode !== 'release' || park.slotDisposition !== 'freed') {
+      throw new Error(`run ${consumeRunId} is not a freed gate park`);
+    }
+    if (park.machine !== machine)
+      throw new Error(`run ${consumeRunId} is parked on ${park.machine}`);
+    const decision = pendingGateDecision(before);
+    if (!decision) throw new Error(`run ${consumeRunId} has no pending publication gate`);
+    const action = decision.actions[0].id;
+    proof.decisionId = decision.id;
+    proof.actionId = action;
+    proof.beforeStatus = before.status;
+
+    const attempt = resolveDecisionAttempt(consumeRunId, decision.id, action);
+    proof.resolveExit = attempt.status;
+    if (attempt.status !== 0) {
+      throw new Error(
+        `run.resolveDecision failed: ${`${attempt.stdout}${attempt.stderr}`.slice(0, 400)}`,
+      );
+    }
+    const response = JSON.parse(attempt.stdout);
+    proof.gateParkRestore = response.gateParkRestore ?? null;
+    if (!proof.gateParkRestore?.reloadedSessionId) {
+      throw new Error('the resolution reported no gate-park restore, so it never restored the run');
+    }
+    const after = rpc('run.get', { runId: consumeRunId }).run;
+    proof.resolvedAt =
+      after.decisions.find((candidate) => candidate.id === decision.id)?.resolvedAt ?? null;
+    if (!proof.resolvedAt) throw new Error('the decision was not consumed');
+    proof.parkPhase = after.park?.phase ?? null;
+    proof.slotFreedAt = after.park?.slotFreedAt ?? null;
+    proof.restoreProgress = after.park?.restoreProgress ?? null;
+    if (proof.parkPhase !== 'restored' || proof.slotFreedAt) {
+      throw new Error(
+        `the park settled '${proof.parkPhase}' with slotFreedAt ${proof.slotFreedAt}`,
+      );
+    }
+    // Consuming is not progress. The gate step has to leave `running` and the
+    // run has to move on, or the answer went nowhere.
+    const progressed = await poll(
+      `run ${consumeRunId} to move past its gate`,
+      () => rpc('run.get', { runId: consumeRunId }).run,
+      (run) =>
+        run.steps.find((step) => step.name === 'human-gate')?.status !== 'running' ||
+        run.status !== before.status,
+      timeoutMs,
+    );
+    proof.afterStatus = progressed.status;
+    proof.gateStep = progressed.steps.find((step) => step.name === 'human-gate')?.status ?? null;
+    proof.pass = true;
+  } catch (error) {
+    proof.error = error?.message || String(error);
+  }
+  return proof;
 }
