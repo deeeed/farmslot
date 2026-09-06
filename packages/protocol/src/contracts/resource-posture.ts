@@ -6,6 +6,7 @@
  * the Gateway's decision — desired disposition, observed provider state, the
  * winning policy source — and never resolve policy themselves.
  */
+import type { MachinePauseEligibilityDetails } from './runs.js';
 import type {
   RuntimeCapabilityAcquireConflict,
   RuntimeCapabilityHealthState,
@@ -114,6 +115,8 @@ export type ResourcePostureRejection =
       /** Machine-parking eligibility code, passed through unchanged. */
       code: string;
       reason: string;
+      /** Structured facts for the code, passed through unchanged. */
+      details?: MachinePauseEligibilityDetails;
     }
   | {
       kind: 'capability-unavailable';

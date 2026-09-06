@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import test, { type TestContext } from 'node:test';
 
 import type {
   RuntimeCapabilityLease,
@@ -11,7 +14,9 @@ import {
   compactRuntimeCapabilitySnapshot,
   RUNTIME_CAPABILITY_EVENT_LIMIT,
   RUNTIME_CAPABILITY_PROOF_PLAN_LIMIT,
+  RUNTIME_CAPABILITY_TERMINAL_FENCE_LIMIT,
   RUNTIME_CAPABILITY_TERMINAL_LEASE_LIMIT,
+  RuntimeCapabilityStore,
   type RuntimeCapabilityStoreSnapshot,
 } from './store.js';
 
@@ -124,4 +129,44 @@ test('a warm provider and a cleanup failure survive compaction so reconnects sti
   const byId = new Map(compacted.leases.map((candidate) => [candidate.id, candidate]));
   assert.equal(byId.get('lease-warm')?.keepWarmUntil, '2026-01-01T01:00:00.000Z');
   assert.equal(byId.get('lease-failed')?.cleanupFailure, 'shutdown exited 1');
+});
+
+test('a store file written before the terminal fence existed still loads', async (t: TestContext) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-store-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const storePath = path.join(directory, 'leases.json');
+  // Exactly the shape the gateway wrote before the fence was persisted: no
+  // version bump, no fence keys. Refusing it would strand every existing store.
+  await writeFile(
+    storePath,
+    `${JSON.stringify({ version: 1, leases: [lease(0, 'acquired')], proofPlans: {}, events: [] })}\n`,
+    'utf8',
+  );
+
+  const loaded = await new RuntimeCapabilityStore(storePath).load();
+  assert.equal(loaded.leases.length, 1);
+  assert.equal(loaded.terminalOwners, undefined);
+  assert.equal(loaded.terminalFamilies, undefined);
+});
+
+test('store compaction bounds the terminal fence lists newest-first', () => {
+  const owners = Array.from(
+    { length: RUNTIME_CAPABILITY_TERMINAL_FENCE_LIMIT + 25 },
+    (_, index) => `run-${index}`,
+  );
+  const compacted = compactRuntimeCapabilitySnapshot({
+    version: 1,
+    leases: [],
+    proofPlans: {},
+    events: [],
+    terminalOwners: owners,
+    terminalFamilies: owners.map((owner) => `fam-${owner}`),
+  });
+
+  assert.equal(compacted.terminalOwners?.length, RUNTIME_CAPABILITY_TERMINAL_FENCE_LIMIT);
+  assert.equal(compacted.terminalFamilies?.length, RUNTIME_CAPABILITY_TERMINAL_FENCE_LIMIT);
+  // The most recent cleanups are the ones kept; the oldest fall through to the
+  // run-store predicate.
+  assert.equal(compacted.terminalOwners?.at(-1), owners.at(-1));
+  assert.equal(compacted.terminalOwners?.includes('run-0'), false);
 });

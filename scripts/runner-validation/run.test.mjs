@@ -146,9 +146,9 @@ test('session-reopen-smoke reads the pane tail from the snapshot lines array', (
   assert.match(source, /report\.diagnosticPaneTailError = /);
 });
 
-test('runner-validation catalog includes four runners and twenty-four scenarios', () => {
+test('runner-validation catalog includes four runners and twenty-seven scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
-  assert.equal(listScenarios().length, 25);
+  assert.equal(listScenarios().length, 27);
   assert.ok(listScenarios().includes('review-recovery-terminal-contract'));
   assert.ok(listScenarios().includes('self-review-fix-turn-lease'));
   assert.ok(listScenarios().includes('hook-smoke'));
@@ -158,6 +158,8 @@ test('runner-validation catalog includes four runners and twenty-four scenarios'
   assert.ok(listScenarios().includes('dispatch-prompt-trust'));
   assert.ok(listScenarios().includes('retained-handoff-smoke'));
   assert.ok(listScenarios().includes('warm-replacement-smoke'));
+  assert.ok(listScenarios().includes('terminal-order-smoke'));
+  assert.ok(listScenarios().includes('terminal-fence-restart'));
   assert.ok(listScenarios().includes('copilot-runtime-smoke'));
   assert.ok(listScenarios().includes('retained-safe-send-smoke'));
   assert.ok(listScenarios().includes('session-attribution-smoke'));

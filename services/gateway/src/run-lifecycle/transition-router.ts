@@ -12,7 +12,14 @@
 
 import { isTerminalRunStatus, type Run } from '@farmslot/protocol';
 
-export type RunTransitionKind = 'cancel';
+/**
+ * The lifecycle transitions the router owns.
+ *
+ * `cancel` came first (ADR-053). `complete`, `fail`, and `block` joined it so
+ * every terminal transition publishes before it tears anything down, instead of
+ * gating the terminal status on tmux teardown the way the engine used to.
+ */
+export type RunTransitionKind = 'cancel' | 'complete' | 'fail' | 'block';
 
 /** Who asked for the transition. Consumers use this instead of re-deriving intent. */
 export type RunTransitionActor = 'operator' | 'engine' | 'recovery';
@@ -22,6 +29,24 @@ export interface RunTransitionRequest {
   runId: string;
   actor: RunTransitionActor;
   reason?: string;
+}
+
+/**
+ * The guard refused this transition; nothing was mutated and no effect ran.
+ *
+ * Typed because refusal is a NORMAL outcome for the engine's terminal paths: an
+ * operator cancel that landed while a step was failing already settled the run,
+ * and the late failure must yield to it rather than propagate as an engine
+ * crash. Every other failure still throws a plain error.
+ */
+export class RunTransitionRefusedError extends Error {
+  constructor(
+    message: string,
+    readonly runId: string,
+  ) {
+    super(message);
+    this.name = 'RunTransitionRefusedError';
+  }
 }
 
 export type RunTransitionEffectStatus = 'ok' | 'skipped' | 'failed';
@@ -118,6 +143,22 @@ export interface RunTransitionDeps {
    * rejection. Publication still precedes the slow after-effects.
    */
   onMutated?(run: Run): void | Promise<void>;
+  /**
+   * Refuses the transition when it returns a reason.
+   *
+   * Defaults to refusing any run that is already terminal — the double-cancel
+   * fence. A transition that SETTLES a status another writer already wrote (the
+   * engine's backstop for a step that flipped `failed`/`blocked` without
+   * throwing) overrides it: for that caller the terminal status is the entry
+   * condition, not the thing being prevented.
+   */
+  guard?(run: Run, request: RunTransitionRequest): string | null;
+}
+
+function defaultTransitionGuard(run: Run): string | null {
+  return isTerminalRunStatus(run.status)
+    ? `Run ${run.id} already in terminal state: ${run.status}`
+    : null;
 }
 
 function runSyncEffects(
@@ -230,9 +271,8 @@ export async function routeRunTransition(
     // observe the state that one left behind, not the state it was queued with.
     const existing = deps.getRun(request.runId);
     if (!existing) throw new Error(`Run not found: ${request.runId}`);
-    if (isTerminalRunStatus(existing.status)) {
-      throw new Error(`Run ${request.runId} already in terminal state: ${existing.status}`);
-    }
+    const refusal = (deps.guard ?? defaultTransitionGuard)(existing, request);
+    if (refusal) throw new RunTransitionRefusedError(refusal, request.runId);
 
     const plan = deps.planFor(request, existing);
     const effects: RunTransitionEffectOutcome[] = [];

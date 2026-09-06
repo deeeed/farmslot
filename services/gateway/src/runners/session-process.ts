@@ -6,7 +6,7 @@ import {
 } from '@farmslot/protocol';
 
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
-import { execOnSlot, type ExecOnSlotOptions } from '../core/exec.js';
+import { EXEC_TIMEOUT_EXIT_CODE, execOnSlot, type ExecOnSlotOptions } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 
 import {
@@ -979,14 +979,45 @@ export async function findRunnerDescendantPid(
   const probe = await probeRunnerDescendantPid(vars, panePid, runnerId, options);
   if (probe.state === 'present') return probe.pid;
   if (probe.state === 'absent') return '';
-  throw new Error(
-    `Cannot determine runner liveness under pane PID ${panePid || '(missing)'}${probe.reason ? `: ${probe.reason}` : ''}`,
-  );
+  const detail = `Cannot determine runner liveness under pane PID ${panePid || '(missing)'}${probe.reason ? `: ${probe.reason}` : ''}`;
+  // A probe that ran out of budget said nothing about this runner's
+  // capabilities, so callers that classify recovery verdicts must be able to
+  // tell it apart from "this runner cannot be recovered" without reading the
+  // message. The distinction is carried by the type, never by the prose.
+  if (probe.timedOutAfterMs !== undefined) {
+    throw new RunnerLivenessProbeTimeoutError(detail, probe.timedOutAfterMs);
+  }
+  throw new Error(detail);
+}
+
+/**
+ * The runner liveness probe exhausted its budget before returning a verdict.
+ *
+ * Transient by construction — a loaded machine, not a runner without the
+ * capability — so the operator's own retry is the answer and the caller must
+ * not record it as a capability refusal.
+ */
+export class RunnerLivenessProbeTimeoutError extends Error {
+  constructor(
+    message: string,
+    readonly probeBudgetMs: number,
+  ) {
+    super(message);
+    this.name = 'RunnerLivenessProbeTimeoutError';
+  }
 }
 
 export type RunnerDescendantPidProbe =
   | { state: 'present'; pid: string }
-  | { state: 'absent' | 'unknown'; reason?: string };
+  | {
+      state: 'absent' | 'unknown';
+      reason?: string;
+      /**
+       * Set only when the probe command hit its own timeout, carrying the
+       * budget that elapsed. Read from the exec exit status, not the message.
+       */
+      timedOutAfterMs?: number;
+    };
 
 /**
  * Preserve transport/probe failure separately from a confirmed empty process tree.
@@ -1011,6 +1042,11 @@ export async function probeRunnerDescendantPid(
     return {
       state: 'unknown',
       reason: result.stderr.trim() || result.stdout.trim() || `probe exited ${result.exitCode}`,
+      // 124 is `execOnSlot`'s own timeout status, so the budget is a structural
+      // fact here rather than something recovered from the stderr text.
+      ...(result.exitCode === EXEC_TIMEOUT_EXIT_CODE && options?.timeout !== undefined
+        ? { timedOutAfterMs: options.timeout }
+        : {}),
     };
   } catch (error) {
     return { state: 'unknown', reason: (error as Error).message };

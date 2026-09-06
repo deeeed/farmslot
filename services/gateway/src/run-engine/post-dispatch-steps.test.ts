@@ -18,6 +18,7 @@ import {
   executeHumanGateStep,
   executeSelfReviewStep,
   holdInteractiveCompletionForOperator,
+  isFlowTerminalStep,
   persistedUpdateBranchNeedsSelfReview,
   type PostDispatchStepContext,
   readyGateReviewSubjectMatches,
@@ -48,6 +49,7 @@ function restartReplayContext(): PostDispatchStepContext {
     monitorTerminalError: ({ reason }) => new Error(reason),
     refreshRunLinks: async () => {},
     stepPartialIO: new Map(),
+    deferTerminalSlotRelease: () => {},
   };
 }
 
@@ -162,6 +164,7 @@ test('executeSelfReviewStep honors a persisted update-branch skip signal', async
     },
     refreshRunLinks: async () => {},
     stepPartialIO: new Map(),
+    deferTerminalSlotRelease: () => {},
   });
 
   assert.deepEqual(io, {
@@ -266,6 +269,7 @@ test('executeSelfReviewStep honors the slot signal probe fallback', async (t) =>
     },
     refreshRunLinks: async () => {},
     stepPartialIO: new Map(),
+    deferTerminalSlotRelease: () => {},
   });
 
   assert.deepEqual(io, {
@@ -317,6 +321,7 @@ test('executeSelfReviewStep proceeds when the slot signal probe cannot approve a
     }),
     refreshRunLinks: async () => {},
     stepPartialIO: new Map(),
+    deferTerminalSlotRelease: () => {},
   });
 
   assert.equal(selfReviewCalls, 1);
@@ -360,6 +365,7 @@ test('interactive send-feedback continues from existing findings without another
     monitorTerminalError: ({ reason }) => new Error(reason),
     refreshRunLinks: async () => {},
     stepPartialIO: new Map(),
+    deferTerminalSlotRelease: () => {},
   });
 
   assert.equal(calls.length, 2);
@@ -421,6 +427,7 @@ test('human-gate can approve a prepared local-first package when slot was detach
     monitorTerminalError: ({ reason }) => new Error(reason),
     refreshRunLinks: async () => {},
     stepPartialIO: new Map(),
+    deferTerminalSlotRelease: () => {},
   });
 
   assert.equal(markedSlot, false, 'released-slot human gate must not mutate fleet state');
@@ -706,6 +713,7 @@ test('human-gate partial review refusal retains only unconsumed work and rebuild
     },
     refreshRunLinks: async () => {},
     stepPartialIO: new Map(),
+    deferTerminalSlotRelease: () => {},
   });
 
   const persistedGate = getRun(run.id)?.engineState?.publishGate;
@@ -777,6 +785,7 @@ test('review-pr always presents its publication gate in autonomous mode', async 
     monitorTerminalError: ({ reason }) => new Error(reason),
     refreshRunLinks: async () => {},
     stepPartialIO: new Map(),
+    deferTerminalSlotRelease: () => {},
   });
 
   assert.equal(reviewGateCalls, 1);
@@ -963,6 +972,7 @@ test('executeSelfReviewStep skips eval packages with review axis none', async (t
     monitorTerminalError: ({ reason }) => new Error(reason),
     refreshRunLinks: async () => {},
     stepPartialIO: new Map(),
+    deferTerminalSlotRelease: () => {},
   });
 
   assert.deepEqual(io.inputs, {
@@ -975,4 +985,21 @@ test('executeSelfReviewStep skips eval packages with review axis none', async (t
     reason: 'eval-review-axis-none',
     reviewAxis: { name: 'none', version: 'first-pass' },
   });
+});
+
+test('only a flow whose COMPLETE ends the run defers its slot release to the engine', () => {
+  // The branch that decides whether COMPLETE performs its own release or hands
+  // it to the terminal transition. review-pr ends at COMPLETE, so releasing
+  // there gated the run's own `done` status on tmux teardown (ADR-053). Every
+  // other flow continues through human-gate/finalize/ci-watch, and those later
+  // steps read slot state, so the release still has to happen in the step.
+  assert.equal(isFlowTerminalStep('review-pr', 'complete'), true);
+  for (const flowType of ['fix-bug', 'dev', 'pr-complete', 'update-branch'] as const) {
+    assert.equal(
+      isFlowTerminalStep(flowType, 'complete'),
+      false,
+      `${flowType} continues past COMPLETE`,
+    );
+    assert.equal(isFlowTerminalStep(flowType, 'ci-watch'), true, `${flowType} ends at CI_WATCH`);
+  }
 });

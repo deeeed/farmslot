@@ -34,6 +34,9 @@ let sessionState: ObservabilityReading<RunnerSessionDeliveryState> | null = {
 
 mock.module('../core/exec.js', {
   namedExports: {
+    // Mirrors the real module: callers classify a probe timeout by this exit
+    // status, so the mocked module has to export it too.
+    EXEC_TIMEOUT_EXIT_CODE: 124,
     execArgvOnSlot: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execFileArgv: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execLocal: async () => ({ exitCode: 0, stdout: '', stderr: '' }),

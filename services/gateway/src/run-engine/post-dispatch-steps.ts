@@ -9,6 +9,7 @@ import {
   type ReadyGatePrPackage,
   type ReviewLoopRequest,
   type Run,
+  type SlotReleaseParams,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -170,6 +171,14 @@ export interface PostDispatchStepContext {
   probeWorkerSignalForRun?: typeof probeWorkerSignalForRun;
   refreshRunLinks: (runId: string) => Promise<void>;
   stepPartialIO: Map<string, StepIO>;
+  /**
+   * Hand a TERMINAL slot release to the engine instead of performing it here.
+   *
+   * Only used when COMPLETE is the flow's last step: the engine runs it as a
+   * transition after-effect, so the run reaches `done` before tmux teardown
+   * starts rather than after it (ADR-053).
+   */
+  deferTerminalSlotRelease: (params: SlotReleaseParams) => void;
 }
 
 export function persistedUpdateBranchNeedsSelfReview(
@@ -1114,6 +1123,12 @@ export async function executeHumanGateStep(
   };
 }
 
+/** Whether `step` is the last step of `flowType`, so finishing it ends the run. */
+export function isFlowTerminalStep(flowType: Run['flowType'], step: string): boolean {
+  const steps = FLOW_STEPS[flowType];
+  return steps[steps.length - 1] === step;
+}
+
 export async function executeCompleteStep(
   runId: string,
   context: PostDispatchStepContext,
@@ -1204,11 +1219,23 @@ export async function executeCompleteStep(
     slotDisposition = 'ci-watch';
   } else {
     // No CI watch (review-pr) or no PR found — release slot
-    const noopEmit = () => {};
-    await slotRelease(
-      { slotId: current.slotId, keepWork: true, detachRuns: false, expectedRunId: current.id },
-      noopEmit,
-    );
+    const release: SlotReleaseParams = {
+      slotId: current.slotId,
+      keepWork: true,
+      detachRuns: false,
+      expectedRunId: current.id,
+    };
+    // Deferred only when COMPLETE is the flow's last step. There the release was
+    // gating the run's own `done` status on tmux teardown (ADR-053), so the
+    // engine runs it after publication instead. A flow that continues past
+    // COMPLETE — human gate, finalize, ci-watch — still needs the slot freed
+    // now, because the run is not terminal and later steps read slot state.
+    if (isFlowTerminalStep(current.flowType, S.COMPLETE)) {
+      context.deferTerminalSlotRelease(release);
+    } else {
+      const noopEmit = () => {};
+      await slotRelease(release, noopEmit);
+    }
     slotDisposition = 'released';
   }
   const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;

@@ -103,6 +103,62 @@ test('restart adopts a matching healthy lease with provenance intact', async (t)
   assert(status.events.some((event) => event.kind === 'recovery-adopted'));
 });
 
+test('restart does not adopt a healthy lease owned by a terminal run', async (t) => {
+  const store = await seededStore(t);
+  const actions: string[] = [];
+  const registry = new RuntimeCapabilityRegistry({
+    store,
+    catalogForSlot: async (slotId) => ({
+      slotId,
+      project: 'test-project',
+      capabilities: [browser()],
+    }),
+    runAction: async (_slot, action) => {
+      if (action.kind === 'slot-action') actions.push(action.actionId);
+      return { ok: true };
+    },
+    // The run store, not the registry's own memory: this is exactly the state a
+    // restart comes back to after the run went terminal.
+    isTerminalOwner: (ownerRunId) => ownerRunId === 'run-a',
+  });
+
+  await reconcileRuntimeCapabilityLeases(registry);
+
+  const status = await registry.status({ slotId: 'slot-a' });
+  assert.equal(status.leases[0]?.state, 'released');
+  // The provider is stopped rather than adopted; a health probe would have
+  // promoted it straight back to `acquired` for a run that no longer exists.
+  assert.deepEqual(actions, ['browser.release']);
+  const rejected = status.events.find((event) => event.kind === 'recovery-rejected');
+  assert.match(rejected?.detail ?? '', /terminal capability cleanup/);
+  assert.equal(
+    status.events.some((event) => event.kind === 'recovery-adopted'),
+    false,
+  );
+});
+
+test('restart still adopts a healthy lease owned by a live run', async (t) => {
+  const store = await seededStore(t);
+  const registry = new RuntimeCapabilityRegistry({
+    store,
+    catalogForSlot: async (slotId) => ({
+      slotId,
+      project: 'test-project',
+      capabilities: [browser()],
+    }),
+    runAction: async (_slot, action) => ({
+      ok: action.kind === 'slot-action' && action.actionId === 'browser.health',
+    }),
+    isTerminalOwner: () => false,
+  });
+
+  await reconcileRuntimeCapabilityLeases(registry);
+
+  const status = await registry.status({ slotId: 'slot-a' });
+  assert.equal(status.leases[0]?.state, 'acquired');
+  assert(status.events.some((event) => event.kind === 'recovery-adopted'));
+});
+
 test('restart rejects stale provenance and ambiguous exclusive ownership', async (t) => {
   const staleStore = await seededStore(t);
   const stale = recoveringRegistry(staleStore, [browser('changed-digest')], async () => ({

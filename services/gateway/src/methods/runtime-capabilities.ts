@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import {
   Events,
+  isTerminalRunStatus,
   type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityCatalogEntry,
@@ -203,6 +204,15 @@ const registry = new RuntimeCapabilityRegistry({
   runAction: runProviderAction,
   pressureFor,
   familyForRun: (ownerRunId) => getRun(ownerRunId)?.familyId,
+  // The durable half of the terminal fence. The registry's own owner list is a
+  // bounded fast path; the run store is what still knows after a restart or an
+  // eviction, from the run's own terminal status or the terminal posture
+  // ADR-054 recorded on it.
+  isTerminalOwner: (ownerRunId) => {
+    const run = getRun(ownerRunId);
+    if (!run) return false;
+    return isTerminalRunStatus(run.status) || run.resourcePosture?.posture === 'terminal';
+  },
   onEvent(event) {
     broadcastFn?.(Events.RUNTIME_CAPABILITY_LIFECYCLE, { event });
   },

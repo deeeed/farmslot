@@ -3,6 +3,7 @@ import type {
   MachineParkRecord,
   MachineParkResourceManifest,
   MachineParkSlotDisposition,
+  MachinePauseEligibilityDetails,
   MachinePauseMode,
   RunStatus,
 } from '../contracts/index.js';
@@ -38,8 +39,8 @@ export type MachinePauseRecoveryPolicy =
     };
 
 export type MachinePauseEligibility =
-  | { eligible: true; code: string; reason: string }
-  | { eligible: false; code: string; reason: string };
+  | { eligible: true; code: string; reason: string; details?: MachinePauseEligibilityDetails }
+  | { eligible: false; code: string; reason: string; details?: MachinePauseEligibilityDetails };
 
 export interface MachinePausePreviewRun {
   runId: string;

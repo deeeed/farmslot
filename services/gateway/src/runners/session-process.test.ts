@@ -18,6 +18,7 @@ import {
   resolveRetainedRunnerPane,
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
+  RunnerLivenessProbeTimeoutError,
   terminateRunnerDescendantsInTmuxSession,
   verifyExactLiveRunnerSessionBinding,
 } from './session-process.js';
@@ -30,6 +31,37 @@ test('runner descendant PID lookup preserves an indeterminate probe', async () =
     findRunnerDescendantPid(makeVars(), '', 'cursor'),
     /Cannot determine runner liveness under pane PID/,
   );
+});
+
+test('a liveness probe that exhausts its budget is typed, not just worded', async () => {
+  // 1ms cannot outlast a process spawn, so the probe always hits its own
+  // timeout here. What the test asserts is the TYPE and the recorded budget:
+  // a caller classifying park eligibility must never have to read the message
+  // to tell a stalled probe from a runner that cannot be recovered.
+  const vars = makeVars({ repo: os.tmpdir(), remoteRepo: os.tmpdir() });
+  const rejection = await findRunnerDescendantPid(vars, String(process.pid), 'codex', {
+    timeout: 1,
+  }).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  assert.ok(
+    rejection instanceof RunnerLivenessProbeTimeoutError,
+    `expected a typed probe timeout, got ${String(rejection)}`,
+  );
+  assert.equal(rejection.probeBudgetMs, 1);
+});
+
+test('an indeterminate probe that did not time out stays untyped', async () => {
+  // Same rejection path, no budget exhausted: the generic error is what a real
+  // "cannot read this process tree" must keep producing, or the retry
+  // classification would treat every unreadable tree as a transient stall.
+  const rejection = await findRunnerDescendantPid(makeVars(), '', 'cursor').then(
+    () => null,
+    (error: unknown) => error,
+  );
+  assert.ok(rejection instanceof Error);
+  assert.equal(rejection instanceof RunnerLivenessProbeTimeoutError, false);
 });
 
 test('runner descendant scan ignores the diagnostic wrapper after child exit', async () => {

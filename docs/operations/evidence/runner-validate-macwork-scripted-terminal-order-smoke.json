@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06T10:20:08.333Z",
+  "host": "macwork",
+  "scenario": "terminal-order-smoke",
+  "runner": "scripted",
+  "slotId": "macwork-ff-4",
+  "pass": true,
+  "discrimination": "The `fail` teardown reachable on this fleet — `cleanupSlotAfterRunFailure` after a WRITE_TASK failure — is slot-row work with no worker to kill, and completes in tens of milliseconds. Re-running this scenario against a build that awaits the teardown BEFORE publishing (the pre-ADR-053 shape) therefore still passes: there is nothing slow to wait for. The node below is a REGRESSION GUARD on the publish lag, not a discriminating proof of the ordering. The discriminating proof is run-lifecycle/terminal-transition.test.ts, whose ordering assertions do fail when the teardown is moved ahead of the publish. The slow teardown (`slotRelease`: tmux kill, git reset, artifact copy) belongs to the `complete` path, which a scripted run cannot reach on farmslot-farm without producing a real publication package and writing to a real PR.",
+  "coverage": {
+    "fail": "live end-to-end in this scenario, through a WRITE_TASK failure on a nonexistent PR: the run reaches `failed` through the refactored transition and its slot returns to ready",
+    "complete": "not live: a scripted run cannot reach `done` on farmslot-farm without producing a real publication package and PR. Covered by run-lifecycle/terminal-transition.test.ts and the ci-watch step deferral test.",
+    "block": "not live: unit-covered in run-lifecycle/terminal-transition.test.ts, as planned for this slice."
+  },
+  "nodes": [
+    {
+      "name": "run-reached-terminal",
+      "pass": true,
+      "detail": "run settled at failed completedAt=2026-09-06T10:19:58.586Z; slot settled=true"
+    },
+    {
+      "name": "slot-binding-observed",
+      "pass": true,
+      "detail": "macwork-ff-4 was observed bound to 39350048"
+    },
+    {
+      "name": "terminal-status-published-without-waiting-for-teardown",
+      "pass": true,
+      "detail": "terminal run.updated broadcast 2ms after the status write (budget 500ms)"
+    },
+    {
+      "name": "slot-returned-to-ready",
+      "pass": true,
+      "detail": "macwork-ff-4 returned to ready after the terminal status"
+    }
+  ],
+  "project": "farmslot-farm",
+  "runId": "39350048-7de8-4a1a-951d-f49071c98cb2",
+  "sampleCount": 201,
+  "sampleCadenceMs": 68,
+  "finalStatus": "failed",
+  "finalCompletedAt": "2026-09-06T10:19:58.586Z",
+  "publishedAt": 1788689998588,
+  "publishedEvent": "run.updated",
+  "slotBoundSampleAt": 1788689998011,
+  "slotReleasedObservedAt": 1788689999166,
+  "publishToSlotReadyMs": 578,
+  "publishLagMs": 2,
+  "publishedBeforeReleaseSamples": [
+    {
+      "at": 1788689998590,
+      "elapsedMs": 12971,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998591,
+      "elapsedMs": 12972,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998592,
+      "elapsedMs": 12973,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998593,
+      "elapsedMs": 12974,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998594,
+      "elapsedMs": 12975,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998595,
+      "elapsedMs": 12976,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998596,
+      "elapsedMs": 12977,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998597,
+      "elapsedMs": 12978,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998603,
+      "elapsedMs": 12984,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998604,
+      "elapsedMs": 12985,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998605,
+      "elapsedMs": 12986,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998607,
+      "elapsedMs": 12988,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998609,
+      "elapsedMs": 12990,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998611,
+      "elapsedMs": 12992,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998612,
+      "elapsedMs": 12993,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998613,
+      "elapsedMs": 12994,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998685,
+      "elapsedMs": 13066,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998692,
+      "elapsedMs": 13073,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998698,
+      "elapsedMs": 13079,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    },
+    {
+      "at": 1788689998704,
+      "elapsedMs": 13085,
+      "runStatus": "failed",
+      "runCompletedAt": "2026-09-06T10:19:58.586Z",
+      "slotLifecycle": "busy",
+      "slotPhase": "preparing",
+      "slotCurrentRunId": "39350048-7de8-4a1a-951d-f49071c98cb2"
+    }
+  ],
+  "pairedSampleCatches": 32
+}

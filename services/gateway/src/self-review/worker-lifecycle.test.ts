@@ -12,6 +12,9 @@ function cmdIncludes(cmd: string, fragment: string): boolean {
 
 mock.module('../core/exec.js', {
   namedExports: {
+    // Mirrors the real module: callers classify a probe timeout by this exit
+    // status, so the mocked module has to export it too.
+    EXEC_TIMEOUT_EXIT_CODE: 124,
     isLocal: () => true,
     execLocal: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execArgvOnSlot: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
