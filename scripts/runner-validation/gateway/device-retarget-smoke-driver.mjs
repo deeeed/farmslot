@@ -104,11 +104,18 @@ function leaseSummary(status) {
   }));
 }
 
-/** Why a node did not pass, read off the evidence it recorded. */
+/** True when any object in the evidence tree is a host-pressure refusal. */
+function mentionsHostPressure(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (value.kind === 'host-pressure') return true;
+  return Object.values(value).some(mentionsHostPressure);
+}
+
+/** Why a node did not pass, read off the structured evidence it recorded. */
 function blockedReason(entry) {
-  const text = JSON.stringify(entry.evidence ?? {});
-  if (text.includes('not-exercised')) return 'precondition';
-  if (text.includes('host-pressure') || /above 1\.5x/.test(text)) return 'host-admission';
+  const evidence = entry.evidence ?? {};
+  if ('not-exercised' in evidence) return 'precondition';
+  if (mentionsHostPressure(evidence)) return 'host-admission';
   return 'failure';
 }
 
@@ -122,7 +129,7 @@ function blockedReason(entry) {
  * from a previous run.
  *
  * What IS carried over is evidence this driver cannot produce: the CDP probe
- * results and their negative proofs. Overwriting those on a rerun, or on a
+ * results (their negative proofs live inside them). Overwriting those on a rerun, or on a
  * thrown gateway call, would destroy the only record of the browser validation.
  */
 function writeEvidence({ measured = {}, error } = {}) {
@@ -148,12 +155,13 @@ function writeEvidence({ measured = {}, error } = {}) {
     },
     // Evidence from another producer, never this driver's to overwrite.
     ...(previous.cdp !== undefined ? { cdp: previous.cdp } : {}),
-    ...(previous.negativeProof !== undefined ? { negativeProof: previous.negativeProof } : {}),
     ...(rerunEnv ? { rerunEnv } : {}),
     ownDevice: OWN_SIM,
     retargetDevice: OTHER_SIM,
     completedAt: capturedAt,
-    hostLoad: hostLoad ?? previous.hostLoad,
+    // This run's host state only; a previous load beside this run's nodes would
+    // read as its own.
+    hostLoad: hostLoad ?? null,
     nodes,
     ok: blockedNodes.length === 0 && !error,
     ...(error ? { error } : {}),

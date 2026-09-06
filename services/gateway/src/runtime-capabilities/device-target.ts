@@ -379,6 +379,20 @@ export function retargetProofRequirements(
         reason: `no capability in this run's proof plan serves platform '${platform}'`,
       };
     }
+    // A group is rewritten whole, so a member whose schema names a DIFFERENT
+    // platform would only be refused at acquire, after the previous device was
+    // already released. Refuse here, before anything is released.
+    for (const group of groups) {
+      const refusing = [...group].find(
+        (id) => schemaAllowsPlatform(byId.get(id), platform) === false,
+      );
+      if (refusing) {
+        return {
+          ok: false,
+          reason: `capability '${refusing}' is connected to a device group serving platform '${platform}' but its schema does not accept that platform`,
+        };
+      }
+    }
   }
   if (groups.length > 1) {
     return {

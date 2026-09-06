@@ -341,6 +341,25 @@ test('a device target reaches every requirement that declares it', () => {
   assert.deepEqual(outcome.value[2]?.parameters, { simulator: 'SIM-2' });
 });
 
+test('a connected member whose schema names another platform is refused before any release', () => {
+  const client = entry(
+    'companion-native-client-android',
+    {
+      type: 'object',
+      properties: { platform: { const: 'android' }, simulator: { type: 'string' } },
+    },
+    { device: true, dependencies: ['ios-simulator'] },
+  );
+  const outcome = retargetProofRequirements(
+    [requirement('ios-simulator'), requirement(client.id)],
+    [IOS, client],
+    { platform: 'ios', simulator: 'SIM-2' },
+  );
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.match(outcome.reason, /companion-native-client-android.*does not accept that platform/);
+});
+
 test('a target still reaches only the providers that declare its key', () => {
   const outcome = retargetProofRequirements(
     [requirement('ios-simulator'), requirement('android-device')],
