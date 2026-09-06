@@ -7,6 +7,7 @@
  * different step orders (MONITOR hold, HUMAN_GATE, CI watch) behaving the same.
  */
 import {
+  isGateParkInFlightOrFreed,
   isResourcePostureGateChoice,
   type ResourcePosture,
   type ResourcePostureGateChoice,
@@ -17,8 +18,6 @@ import {
 import { getRunResourcePostureReconciler } from '../methods/runtime-posture.js';
 import { getRun, updateRun } from '../runs/store.js';
 import type { RunResourcePostureReconciler } from '../runtime-capabilities/posture.js';
-
-import { isGateParkInFlightOrFreed } from './park-slot-binding.js';
 
 export const RUN_POSTURE_BOUNDARIES = [
   /** The run parked itself on an operator or on CI and will not progress alone. */

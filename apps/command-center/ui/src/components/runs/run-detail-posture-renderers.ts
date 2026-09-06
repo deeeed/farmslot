@@ -10,6 +10,9 @@
 import { html, nothing } from 'lit';
 
 import {
+  gateParkStateLabel,
+  gateParkSummaryLine,
+  type GateParkView,
   type ResourcePosture,
   type ResourcePostureCapabilityState,
   type ResourcePostureCounts,
@@ -233,6 +236,21 @@ const POSTURE_STYLES = html`
       color: ${colors.textMuted};
       font-size: ${fonts.sizeXs};
     }
+    .posture-park {
+      margin-top: 8px;
+      border-top: 1px solid ${colors.bgCard};
+      padding-top: 8px;
+      color: ${colors.textMuted};
+      font-size: ${fonts.sizeXs};
+    }
+    .posture-park-headline {
+      color: ${colors.textPrimary};
+      font-family: ${fonts.mono};
+    }
+    .posture-park-line {
+      font-family: ${fonts.mono};
+      margin-top: 3px;
+    }
   </style>
 `;
 
@@ -309,11 +327,90 @@ export function renderRunPostureResolution(state: RunPostureResolutionState): un
   `;
 }
 
+/**
+ * The run's gate park, rendered from the shared protocol reading.
+ *
+ * The posture panel says what the run is HOLDING; this says where the run's
+ * slot went. They are different questions and a parked run needs both answered:
+ * the posture reports `parked`, and only this says which slot dispatch was
+ * handed, which branch was taken out of its working tree, and which slot a
+ * restore would use. Availability is whatever the Gateway said, or "not known"
+ * — this never decides it.
+ *
+ * The freed line is HISTORICAL. The record proves this run released the slot;
+ * it says nothing about who holds it now, and a successor takes it routinely.
+ * The old present-tense wording stayed on screen next to RESTORE_SLOT_TAKEN,
+ * which is one slot described as free and taken at once. Current occupancy is
+ * only ever the restore target's Gateway verdict, rendered below it.
+ */
+export function renderRunGatePark(view: GateParkView | null): unknown {
+  if (!view) return nothing;
+  const target = view.restoreTarget;
+  return html`
+    <div
+      class="posture-park"
+      data-testid="run-posture-gate-park"
+      data-slot-state=${view.slotState}
+      data-slot-disposition=${view.slotDisposition}
+      data-freed-slot=${view.freedSlotId ?? ''}
+      data-restore-first=${String(view.restoreBeforeGateAnswer)}
+      data-restore-available=${target.available === null ? 'unknown' : String(target.available)}
+      data-restore-stage=${view.restoreStage.state}
+    >
+      <div class="posture-park-headline" data-testid="run-posture-gate-park-state">
+        ${gateParkStateLabel(view)}
+      </div>
+      <div class="posture-park-line" data-testid="run-posture-gate-park-summary">
+        ${gateParkSummaryLine(view)}
+      </div>
+      ${view.freedSlotId
+        ? html`<div class="posture-park-line" data-testid="run-posture-gate-park-freed">
+            This run released ${view.freedSlotId} to dispatch.
+          </div>`
+        : nothing}
+      <div class="posture-park-line" data-testid="run-posture-gate-park-target">
+        Restore target ${target.slotId} —
+        ${target.available === null
+          ? 'availability not read; ask the Gateway with a restore preview'
+          : target.available
+            ? `available${target.reason ? `: ${target.reason}` : ''}`
+            : `not available${target.reason ? `: ${target.reason}` : ''}`}
+      </div>
+      ${view.refusal
+        ? html`<div
+            class="posture-failure"
+            role="alert"
+            data-testid="run-posture-gate-park-refusal"
+          >
+            Last restore refused (${view.refusal.code}): ${view.refusal.reason}
+          </div>`
+        : nothing}
+    </div>
+  `;
+}
+
 export function renderRunPostureSummary(
   state: RunPostureStatusState,
   resolution: RunPostureResolutionState = {},
+  gatePark: GateParkView | null = null,
 ): unknown {
-  if (state.status === 'idle') return nothing;
+  // A live park is worth a panel on its own: the posture read can be idle or
+  // failed exactly when a run is parked, and hiding where its slot went because
+  // a different request has not landed is the wrong thing to hide.
+  if (state.status === 'idle' && !gatePark) return nothing;
+  if (state.status === 'idle') {
+    // An unread posture is not an unavailable one. Saying so keeps the park
+    // visible without claiming the Gateway failed to answer a question that was
+    // never asked.
+    return html`${POSTURE_STYLES}
+      <section class="posture-panel" aria-label="Resource posture" data-testid="run-posture">
+        <div class="posture-title">Resource posture</div>
+        ${renderRunPostureResolution(resolution)} ${renderRunGatePark(gatePark)}
+        <div class="posture-empty" data-testid="run-posture-unread">
+          Posture status has not been read for this run.
+        </div>
+      </section>`;
+  }
   // The resolution and withheld notices render in every branch. A failed status
   // read is exactly when `reconciliationPending` is true and exactly when a
   // choice is withheld, so suppressing them here hid both in their likeliest
@@ -322,7 +419,7 @@ export function renderRunPostureSummary(
     return html`${POSTURE_STYLES}
       <section class="posture-panel" aria-label="Resource posture" data-testid="run-posture">
         <div class="posture-title">Resource posture</div>
-        ${renderRunPostureResolution(resolution)}
+        ${renderRunPostureResolution(resolution)} ${renderRunGatePark(gatePark)}
         <div class="posture-empty">Loading posture…</div>
       </section>`;
   }
@@ -330,7 +427,7 @@ export function renderRunPostureSummary(
     return html`${POSTURE_STYLES}
       <section class="posture-panel" aria-label="Resource posture" data-testid="run-posture">
         <div class="posture-title">Resource posture</div>
-        ${renderRunPostureResolution(resolution)}
+        ${renderRunPostureResolution(resolution)} ${renderRunGatePark(gatePark)}
         <div class="posture-failure" role="alert" data-testid="run-posture-error">
           ${state.message ?? 'Posture status is unavailable.'}
         </div>
@@ -372,7 +469,7 @@ export function renderRunPostureSummary(
           >worker ${summary.workerRetained ? 'retained' : 'stopped'}</span
         >
       </div>
-      ${renderRunPostureResolution(resolution)}
+      ${renderRunPostureResolution(resolution)} ${renderRunGatePark(gatePark)}
       ${transition
         ? html`
             <div class="posture-transition" data-testid="run-posture-transition">

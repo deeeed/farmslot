@@ -57,6 +57,7 @@ export const STEPS = [
   ['tsx test partition tests', ['node', '--test', 'scripts/quality/run-tsx-tests.test.mjs']],
   ['worker template lint', ['node', 'scripts/quality/check-worker-template-contract.mjs']],
   ['template variable docs', ['node', 'scripts/quality/check-template-variables-docs.mjs']],
+  ['generated gateway API docs', ['node', 'scripts/quality/check-gateway-api-docs.mjs']],
   ['shell script tests', ['bash', 'scripts/tests/run-shell-tests.sh']],
   ['project hook conformance tests', ['yarn', 'test:project-hooks']],
   [

@@ -9,6 +9,7 @@ import {
   buildRunResolveDecisionParams,
   type DecisionListResult,
   Events,
+  liveGateParkView,
   Methods,
   type RecipeRunArtifactGroup,
   RESOURCE_POSTURE_TRANSITION_POLL_LIMIT,
@@ -105,6 +106,7 @@ import {
 import {
   ResourcePostureGatePanel,
   ResourcePostureWithheldNotice,
+  RunGateParkNotice,
 } from './components/ResourcePostureGatePanel';
 import { decisionWorkspaceStyles as styles } from './styles/decision-workspace.styles';
 
@@ -1470,6 +1472,9 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
           )}
           {decision.resolvedAt ? null : (
             <ResourcePostureWithheldNotice gate={postureGate} availability={postureAvailability} />
+          )}
+          {decision.resolvedAt ? null : (
+            <RunGateParkNotice view={sourceRun ? liveGateParkView(sourceRun) : null} />
           )}
           {decision.resolvedAt ? (
             <View style={styles.resolvedDecisionCard}>

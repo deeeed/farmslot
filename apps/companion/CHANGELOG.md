@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- feat(runs): a run parked with `free-slot` shows its parked state, the slot handed back to dispatch, the preserved branch, and the restore target on Run Detail, and the decision workspace says that answering the gate restores the run into that slot first or shows the typed refusal standing against it. The freed slot is described as released by this run rather than free now, a park that failed partway says whether the gate is answerable or owes a restore, and the Slot line drops the restore implication once the run is terminal.
 - feat(runs): offer the four resource-posture choices with the Gateway's effect preview when resolving a human gate, and show a compact retained, warm, stopped, failed posture summary on Run Detail.
 - feat(notifications): add configurable decision and monitor-violation alerts with independent sound and haptic controls.
 - fix(runs): hide Replay on a force-completed run; the gateway rejects those replays.

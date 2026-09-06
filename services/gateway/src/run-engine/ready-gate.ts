@@ -8,6 +8,8 @@ import {
   type EvidenceRefreshOverrideRecord,
   GATE_SUMMARY_KINDS,
   type IndependentReviewStatus,
+  isGateParkInFlightOrFreed,
+  isSlotFreedByPark,
   MachineParkEligibilityCodes,
   PipelineSteps,
   type PublicationReviewLaunchRejection,
@@ -82,7 +84,6 @@ import {
   validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { buildGateSummary } from './gate-summary.js';
-import { isGateParkInFlightOrFreed, isSlotFreedByPark } from './park-slot-binding.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import {
   publicationReviewPolicyForRun,

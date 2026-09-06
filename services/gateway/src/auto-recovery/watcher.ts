@@ -8,6 +8,7 @@ import {
   type IntelligenceActionGuard,
   type IntelligenceActionOutcomeReason,
   type IntelligenceActionProposedType,
+  isGateParkInFlightOrFreed,
   isTerminalRunStatus,
   type MonitorViolation,
   type PipelineStep,
@@ -20,7 +21,6 @@ import { loadProjectVars, normalizeRawProjectAutoRecovery } from '../core/config
 import { classifyFailureText } from '../core/failure-patterns.js';
 import { runReplayStep } from '../methods/run/replay-step.js';
 import { slotFixtureRefresh } from '../methods/slot.js';
-import { isGateParkInFlightOrFreed } from '../run-engine/park-slot-binding.js';
 import { getAllRuns, getRun, updateRun } from '../runs/store.js';
 
 import { writeAuditRecord } from './audit-writer.js';

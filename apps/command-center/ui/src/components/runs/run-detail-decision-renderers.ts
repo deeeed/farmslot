@@ -221,6 +221,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                   state: context.posture,
                   disabled: context.actionsBlocked,
                   onSelect: (choice) => context.selectPostureChoice(choice),
+                  run,
                 })}
                 ${isReview
                   ? html`
@@ -381,6 +382,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                                 state: context.posture,
                                 disabled: context.actionsBlocked,
                                 onSelect: (choice) => context.selectPostureChoice(choice),
+                                run,
                               })}
                               <div class="gate-actions">
                                 ${pending.actions.map((a) => {

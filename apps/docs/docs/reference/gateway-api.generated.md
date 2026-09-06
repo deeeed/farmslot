@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.23.0`
+Protocol version: `0.24.0`
 
 ## WebSocket frame shape
 
@@ -255,6 +255,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.replayStep`                        | run              | bounded-write | —      | —      | Run ReplayStep gateway method.                        |
 | `run.resolveDecision`                   | run              | high-impact   | —      | —      | Run ResolveDecision gateway method.                   |
 | `run.resume`                            | run              | lifecycle     | —      | —      | Run Resume gateway method.                            |
+| `run.sessionCommand`                    | run              | bounded-write | —      | —      | Run SessionCommand gateway method.                    |
 | `run.slotHistory`                       | run              | bounded-write | —      | —      | Run SlotHistory gateway method.                       |
 | `run.tags.list`                         | run              | read-only     | —      | —      | Run Tags List gateway method.                         |
 | `run.tags.set`                          | run              | bounded-write | —      | —      | Run Tags Set gateway method.                          |
@@ -262,6 +263,10 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `runtime.capability.list`               | runtime          | read-only     | —      | —      | Runtime Capability List gateway method.               |
 | `runtime.capability.release`            | runtime          | lifecycle     | —      | —      | Runtime Capability Release gateway method.            |
 | `runtime.capability.status`             | runtime          | read-only     | —      | —      | Runtime Capability Status gateway method.             |
+| `runtime.capability.stopWarm`           | runtime          | bounded-write | —      | —      | Runtime Capability StopWarm gateway method.           |
+| `runtime.posture.apply`                 | runtime          | bounded-write | —      | —      | Runtime Posture Apply gateway method.                 |
+| `runtime.posture.preview`               | runtime          | bounded-write | —      | —      | Runtime Posture Preview gateway method.               |
+| `runtime.posture.status`                | runtime          | read-only     | —      | —      | Runtime Posture Status gateway method.                |
 | `screen.subscribe`                      | screen           | bounded-write | —      | —      | Screen Subscribe gateway method.                      |
 | `screen.thumbnail`                      | screen           | bounded-write | —      | —      | Screen Thumbnail gateway method.                      |
 | `screen.unsubscribe`                    | screen           | bounded-write | —      | —      | Screen Unsubscribe gateway method.                    |
@@ -304,6 +309,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `tmux.killPane`                         | tmux             | bounded-write | —      | —      | Tmux KillPane gateway method.                         |
 | `tmux.list`                             | tmux             | read-only     | —      | —      | Tmux List gateway method.                             |
 | `tmux.newWindow`                        | tmux             | bounded-write | —      | —      | Tmux NewWindow gateway method.                        |
+| `tmux.pasteText`                        | tmux             | bounded-write | —      | —      | Tmux PasteText gateway method.                        |
 | `tmux.renameWindow`                     | tmux             | bounded-write | —      | —      | Tmux RenameWindow gateway method.                     |
 | `tmux.selectPane`                       | tmux             | bounded-write | —      | —      | Tmux SelectPane gateway method.                       |
 | `tmux.selectWindow`                     | tmux             | bounded-write | —      | —      | Tmux SelectWindow gateway method.                     |

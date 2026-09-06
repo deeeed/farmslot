@@ -637,6 +637,79 @@ function resolveDecisionAttempt(runId, decisionId, actionId, timeoutMs = 300_000
   };
 }
 
+/**
+ * `farmslot machine status <machine> --json`, run as a real process, must list
+ * the gate-parked run.
+ *
+ * The envelope's `records` already carried the raw park; what this proves is
+ * the DERIVED `gateParks` entry an operator (or a script) reads instead of
+ * re-implementing the reading — the slot disposition, the freed slot, the
+ * preserved branch, the restore target, and the restore the gate answer owes.
+ *
+ * Availability is deliberately expected to be `null`. `machine status` reads
+ * durable records and probes no slot, so claiming the target were free would be
+ * a claim nothing checked; `machine restore` is the command that asks.
+ */
+function proveCliMachineStatus({ machine, runId, record }) {
+  const proof = { attempted: true, pass: false, machine, runId, error: null };
+  const result = spawnSync('yarn', ['farmslot', 'machine', 'status', machine, '--json'], {
+    cwd: path.resolve('apps/command-center'),
+    encoding: 'utf8',
+    timeout: 120_000,
+  });
+  proof.exit = result.status;
+  try {
+    if (result.status !== 0) {
+      throw new Error(
+        `machine status exited ${result.status}: ${`${result.stdout ?? ''}${result.stderr ?? ''}`.slice(0, 400)}`,
+      );
+    }
+    const envelope = JSON.parse(result.stdout);
+    proof.envelopeStatus = envelope.status;
+    proof.envelopeCommand = envelope.command;
+    const parks = envelope.data?.gateParks ?? null;
+    if (!Array.isArray(parks)) {
+      throw new Error('the status envelope carried no gateParks list');
+    }
+    proof.gateParkRunIds = parks.map((park) => park.runId);
+    const entry = parks.find((park) => park.runId === runId);
+    proof.entry = entry ?? null;
+    if (!entry) throw new Error(`gateParks did not list the parked run ${runId}`);
+    if (entry.slotDisposition !== 'freed') {
+      throw new Error(`gateParks reported slotDisposition '${entry.slotDisposition}'`);
+    }
+    if (entry.slotState !== 'freed') {
+      throw new Error(`gateParks reported slot state '${entry.slotState}'`);
+    }
+    if (entry.freedSlotId !== record.slotId) {
+      throw new Error(
+        `gateParks named freed slot '${entry.freedSlotId}' for a park on '${record.slotId}'`,
+      );
+    }
+    if (entry.restoreTarget?.slotId !== record.slotId) {
+      throw new Error(`gateParks named restore target '${entry.restoreTarget?.slotId}'`);
+    }
+    if (entry.restoreTarget?.available !== null) {
+      throw new Error(
+        `machine status claimed restore availability '${entry.restoreTarget?.available}' without probing the slot`,
+      );
+    }
+    if (entry.restoreBeforeGateAnswer !== true) {
+      throw new Error('gateParks did not report that answering the gate restores the run first');
+    }
+    const branch = record.preservedWorkspace?.branch ?? null;
+    if (branch && entry.preservedWorkspace?.branch !== branch) {
+      throw new Error(
+        `gateParks reported preserved branch '${entry.preservedWorkspace?.branch}', expected '${branch}'`,
+      );
+    }
+    proof.pass = true;
+  } catch (error) {
+    proof.error = error?.message || String(error);
+  }
+  return proof;
+}
+
 async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) {
   const operationId = `gate-park-restore-${process.pid}-${Date.now()}`;
   const report = {
@@ -648,6 +721,7 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
     slotId: null,
     parkedByChoice: null,
     parked: null,
+    cliStatus: null,
     fencedWhileParked: null,
     previewEligible: null,
     slotTaken: null,
@@ -702,6 +776,17 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
     };
     if (parkedSlot.currentRunId) {
       throw new Error(`freed slot ${record.slotId} is held by ${parkedSlot.currentRunId}`);
+    }
+
+    // ─── cliStatus ────────────────────────────────────────────────────────
+    // The operator surface for "what is parked on this machine right now".
+    // Asserted against the real CLI process against the real gateway, not
+    // against the RPC it wraps: the claim is that `machine status --json`
+    // LISTS the gate-parked run with what an operator needs to act on it, and
+    // only running the command proves the envelope carries that.
+    report.cliStatus = proveCliMachineStatus({ machine: record.machine, runId, record });
+    if (!report.cliStatus.pass) {
+      throw new Error(`machine status did not list the gate park: ${report.cliStatus.error}`);
     }
 
     // ─── fencedWhileParked ────────────────────────────────────────────────

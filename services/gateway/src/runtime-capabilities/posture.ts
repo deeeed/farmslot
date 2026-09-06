@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  hasLiveParkRecord,
   MachineParkEligibilityCodes,
   type MachinePauseExecuteParams,
   type MachinePauseExecuteResult,
@@ -46,7 +47,6 @@ import {
 } from '@farmslot/protocol';
 
 import { MachinePausePreviewStaleError } from '../machine-parking/preview-errors.js';
-import { hasLiveParkRecord } from '../run-engine/park-slot-binding.js';
 
 const POLICY_SOURCE_RANK: Record<ResourcePosturePolicySource, number> = {
   'gate-choice': 3,

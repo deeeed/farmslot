@@ -5,11 +5,10 @@
 // `status: 'running'` and the work-graph node was never told; the scheduler only
 // discovered the stop later by polling and inferring it from run fields (#466).
 
-import { Events, primaryRoleForFlow, type Run } from '@farmslot/protocol';
+import { Events, isSlotFreedByPark, primaryRoleForFlow, type Run } from '@farmslot/protocol';
 
 import { markBacklogRunObserved } from '../backlog/store.js';
 import { cancelRunEngine } from '../run-engine/orchestrator.js';
-import { isSlotFreedByPark } from '../run-engine/park-slot-binding.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { invalidateWarmReviewerSessions } from '../self-review/session-policy.js';
 import { schedulerTick } from '../work-graph/store.js';

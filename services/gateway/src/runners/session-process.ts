@@ -68,6 +68,7 @@ export async function readPaneProcessStartedAtMs(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   paneId: string,
   runnerId?: string | null,
+  options?: ExecOnSlotOptions,
 ): Promise<number | null> {
   const processPattern = runnerId ? runnerProcessPatternSource(runnerId) : '';
   const script = `
@@ -166,7 +167,13 @@ except Exception as error:
     print(f'pane process start probe failed: {error}', file=sys.stderr)
     raise SystemExit(1)
 PY`;
-  const result = await execOnSlot(vars, script);
+  // This probe starts a python3 interpreter and reads the whole process table.
+  // It ran unbounded until now, so a wedged interpreter on a loaded node could
+  // stall every caller indefinitely.
+  const result = await execOnSlot(vars, script, {
+    timeout: RUNNER_PROCESS_PROBE_TIMEOUT_MS,
+    ...options,
+  });
   if (result.exitCode !== 0) return null;
   const parsed = Number(result.stdout.trim());
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -975,20 +982,50 @@ export async function findRunnerDescendantPid(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   panePid: string,
   runnerId?: string | null,
-  options?: ExecOnSlotOptions,
+  options?: RunnerDescendantPidProbeOptions,
 ): Promise<string> {
   const probe = await probeRunnerDescendantPid(vars, panePid, runnerId, options);
   if (probe.state === 'present') return probe.pid;
   if (probe.state === 'absent') return '';
-  const detail = `Cannot determine runner liveness under pane PID ${panePid || '(missing)'}${probe.reason ? `: ${probe.reason}` : ''}`;
   // A probe that ran out of budget said nothing about this runner's
   // capabilities, so callers that classify recovery verdicts must be able to
   // tell it apart from "this runner cannot be recovered" without reading the
-  // message. The distinction is carried by the type, never by the prose.
+  // message. The distinction is carried by the type, never by the prose, and
+  // the exhausted budget rides along for the operator-facing rejection.
   if (probe.timedOutAfterMs !== undefined) {
-    throw new RunnerLivenessProbeTimeoutError(detail, probe.timedOutAfterMs);
+    throw new RunnerLivenessProbeTimeoutError(panePid, probe.timedOutAfterMs, probe.reason);
   }
-  throw new Error(detail);
+  throw new RunnerProcessProbeError(probe.code, panePid, probe.reason);
+}
+
+/**
+ * Why liveness could not be decided. Callers that persist an outcome — the
+ * machine-park record above all — record this instead of re-deriving intent
+ * from a free-text `command timed out after 10000ms`.
+ */
+export type RunnerProcessProbeFailureCode =
+  | 'pane-pid-missing'
+  | 'runner-pattern-missing'
+  /** A process matched, but only a recorded runner identity may act on it. */
+  | 'runner-identity-ambiguous'
+  | 'probe-timeout'
+  | 'probe-transport';
+
+/** Typed liveness-probe failure, so a timeout stays a timeout up the stack. */
+export class RunnerProcessProbeError extends Error {
+  readonly name: string = 'RunnerProcessProbeError';
+
+  constructor(
+    readonly code: RunnerProcessProbeFailureCode,
+    readonly panePid: string,
+    readonly reason?: string,
+  ) {
+    super(
+      `Cannot determine runner liveness under pane PID ${panePid || '(missing)'} (${code})${
+        reason ? `: ${reason}` : ''
+      }`,
+    );
+  }
 }
 
 /**
@@ -996,29 +1033,76 @@ export async function findRunnerDescendantPid(
  *
  * Transient by construction — a loaded machine, not a runner without the
  * capability — so the operator's own retry is the answer and the caller must
- * not record it as a capability refusal.
+ * not record it as a capability refusal. It is a `probe-timeout` like any
+ * other, so callers that only read {@link RunnerProcessProbeError.code} keep
+ * working; the subclass exists to carry the budget that elapsed.
  */
-export class RunnerLivenessProbeTimeoutError extends Error {
+export class RunnerLivenessProbeTimeoutError extends RunnerProcessProbeError {
+  override readonly name = 'RunnerLivenessProbeTimeoutError';
+
   constructor(
-    message: string,
+    panePid: string,
     readonly probeBudgetMs: number,
+    reason?: string,
   ) {
-    super(message);
-    this.name = 'RunnerLivenessProbeTimeoutError';
+    super('probe-timeout', panePid, reason);
   }
 }
 
 export type RunnerDescendantPidProbe =
   | { state: 'present'; pid: string }
+  | { state: 'absent' }
   | {
-      state: 'absent' | 'unknown';
+      state: 'unknown';
+      code: RunnerProcessProbeFailureCode;
       reason?: string;
+      /** How many exec attempts were spent before giving up. */
+      attempts?: number;
       /**
-       * Set only when the probe command hit its own timeout, carrying the
-       * budget that elapsed. Read from the exec exit status, not the message.
+       * Set only when the probe ran out of budget, carrying the budget that
+       * elapsed. Read from the exec exit status or the transport's own typed
+       * deadline, never from the message text.
        */
       timedOutAfterMs?: number;
     };
+
+export interface RunnerDescendantPidProbeOptions extends ExecOnSlotOptions {
+  /**
+   * Bounded retries for a timed-out or transport-failed attempt. Each retry
+   * doubles the exec budget, so a host too loaded to answer inside the first
+   * window gets a proportionally larger one instead of a false verdict.
+   * Defaults to 1 — callers that must not stall keep today's single attempt.
+   */
+  attempts?: number;
+  /**
+   * Absolute epoch-ms ceiling on the WHOLE probe, retries included. Without it
+   * `attempts` multiplies the caller's budget: three attempts of a 10s base
+   * spend 70s, so a caller holding a 120s wall-clock ceiling could admit a
+   * probe at 119s and return near 190s. Each attempt is clamped to what remains
+   * of this, and the retries stop once nothing remains.
+   */
+  deadline?: number;
+}
+
+/**
+ * Exec seam, mirroring {@link TerminateRunnerDescendantsDeps}. Production always
+ * takes the default; the regression guards use it to drive the exit statuses a
+ * loaded host produces without shelling out to a doctored `ps`.
+ */
+export interface RunnerDescendantPidProbeDeps {
+  exec?: typeof execOnSlot;
+}
+
+/** Exec budget for one liveness probe when a caller states none. */
+export const RUNNER_PROCESS_PROBE_TIMEOUT_MS = 10_000;
+/** Upper bound on a single escalated attempt, so backoff cannot run away. */
+export const RUNNER_PROCESS_PROBE_MAX_TIMEOUT_MS = 60_000;
+/**
+ * Exit status the probe reserves for "the `ps` snapshot itself did not happen".
+ * It must not collide with the walk's own verdicts — 0 found, 1 confirmed
+ * absent — because a snapshot that never ran proves nothing about the tree.
+ */
+export const RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT = 3;
 
 /**
  * Preserve transport/probe failure separately from a confirmed empty process tree.
@@ -1029,34 +1113,91 @@ export async function probeRunnerDescendantPid(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   panePid: string,
   runnerId?: string | null,
-  options?: ExecOnSlotOptions,
+  options?: RunnerDescendantPidProbeOptions,
+  deps: RunnerDescendantPidProbeDeps = {},
 ): Promise<RunnerDescendantPidProbe> {
-  if (!panePid) return { state: 'unknown', reason: 'pane PID is missing' };
+  const exec = deps.exec ?? execOnSlot;
+  if (!panePid) {
+    return { state: 'unknown', code: 'pane-pid-missing', reason: 'pane PID is missing' };
+  }
   const pattern = runnerProcessPatternSource(runnerId);
-  if (!pattern) return { state: 'unknown', reason: 'runner process pattern is missing' };
-  const cmd = buildFindRunnerDescendantPidCommand(panePid, pattern);
-  try {
-    const result = await execOnSlot(vars, cmd, options);
-    const pid = result.stdout.trim();
-    if (result.exitCode === 0 && /^\d+$/.test(pid)) return { state: 'present', pid };
-    if (result.exitCode === 1 && !pid && !result.stderr.trim()) return { state: 'absent' };
+  if (!pattern) {
     return {
       state: 'unknown',
-      reason: result.stderr.trim() || result.stdout.trim() || `probe exited ${result.exitCode}`,
-      // 124 is `execOnSlot`'s own timeout status, so the budget is a structural
-      // fact here rather than something recovered from the stderr text.
-      ...(result.exitCode === EXEC_TIMEOUT_EXIT_CODE && options?.timeout !== undefined
-        ? { timedOutAfterMs: options.timeout }
-        : {}),
-    };
-  } catch (error) {
-    const timedOutAfterMs = probeTimeoutBudgetFromError(error);
-    return {
-      state: 'unknown',
-      reason: (error as Error).message,
-      ...(timedOutAfterMs !== undefined ? { timedOutAfterMs } : {}),
+      code: 'runner-pattern-missing',
+      reason: 'runner process pattern is missing',
     };
   }
+  const cmd = buildFindRunnerDescendantPidCommand(panePid, pattern);
+  const attempts = Math.max(1, options?.attempts ?? 1);
+  const baseTimeout = options?.timeout ?? RUNNER_PROCESS_PROBE_TIMEOUT_MS;
+  const deadline = options?.deadline;
+  let failure: Extract<RunnerDescendantPidProbe, { state: 'unknown' }> = {
+    state: 'unknown',
+    code: 'probe-transport',
+    reason: 'probe was never attempted',
+  };
+  let lastAttemptTimeout: number | undefined;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const escalated = Math.min(
+      baseTimeout * 2 ** (attempt - 1),
+      RUNNER_PROCESS_PROBE_MAX_TIMEOUT_MS,
+    );
+    // The caller's ceiling wins over the escalation. An attempt that cannot fit
+    // is not started, because starting it is exactly how the ceiling gets
+    // overrun.
+    const remaining = deadline === undefined ? escalated : deadline - Date.now();
+    if (remaining <= 0) {
+      failure = {
+        state: 'unknown',
+        code: 'probe-timeout',
+        reason: `liveness probe budget exhausted before attempt ${attempt}`,
+        attempts: attempt - 1,
+        // Nothing was spent on this attempt, so the budget the operator's
+        // retry has to beat is the one the previous attempt already burned.
+        timedOutAfterMs: lastAttemptTimeout ?? baseTimeout,
+      };
+      return failure;
+    }
+    const timeout = Math.min(escalated, remaining);
+    lastAttemptTimeout = timeout;
+    try {
+      const result = await exec(vars, cmd, { ...options, timeout });
+      const pid = result.stdout.trim();
+      if (result.exitCode === 0 && /^\d+$/.test(pid)) return { state: 'present', pid };
+      if (result.exitCode === 1 && !pid && !result.stderr.trim()) return { state: 'absent' };
+      // EXEC_TIMEOUT_EXIT_CODE (124) is the exec layer's own timeout verdict and
+      // RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT is a `ps` that could not fork or
+      // returned nothing. Both are what an overloaded host does, so both earn
+      // another attempt with a larger budget. Any other status is a real probe
+      // failure that another attempt would only repeat.
+      const timedOut = result.exitCode === EXEC_TIMEOUT_EXIT_CODE;
+      const snapshotFailed = result.exitCode === RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT;
+      failure = {
+        state: 'unknown',
+        code: timedOut ? 'probe-timeout' : 'probe-transport',
+        reason: result.stderr.trim() || result.stdout.trim() || `probe exited ${result.exitCode}`,
+        attempts: attempt,
+        // 124 is `execOnSlot`'s own timeout status, so the budget is a
+        // structural fact here rather than something recovered from stderr.
+        ...(timedOut ? { timedOutAfterMs: timeout } : {}),
+      };
+      if (!timedOut && !snapshotFailed) return failure;
+    } catch (error) {
+      // A transport deadline is a probe timeout too: the remote probe never
+      // got an exit status, so without this it would read as a runner that
+      // cannot be recovered rather than as a machine that was too loaded.
+      const timedOutAfterMs = probeTimeoutBudgetFromError(error);
+      failure = {
+        state: 'unknown',
+        code: timedOutAfterMs === undefined ? 'probe-transport' : 'probe-timeout',
+        reason: (error as Error).message,
+        attempts: attempt,
+        ...(timedOutAfterMs === undefined ? {} : { timedOutAfterMs }),
+      };
+    }
+  }
+  return failure;
 }
 
 /**
@@ -1119,6 +1260,7 @@ export async function terminateRunnerDescendantsInTmuxSession(
       if (result.state === 'present') {
         return {
           state: 'unknown',
+          code: 'runner-identity-ambiguous',
           reason: `${runnerId} process requires matching recorded runner identity`,
         };
       }
@@ -1304,36 +1446,99 @@ export function buildFindRunnerDescendantPidFromVariableCommand(
   return buildFindRunnerDescendantPidCommandWithRoot(`"$${variableName}"`, pattern);
 }
 
+/**
+ * One `ps` snapshot, one `awk` walk. The previous shape forked `pgrep -P` plus
+ * `ps -p` for every node it visited, and each of those re-reads the whole
+ * process table — so a pane tree of N processes cost 2N+1 full table passes.
+ * On a node at load 34-72 that blew the stop path's budget, the park settled
+ * `partial`, and a runner that had already exited was reported still running.
+ *
+ * The walk itself is unchanged and stays scoped to {@link quotedRoot}'s
+ * descendants: breadth-first from the root, `exact_match` is the FIRST process
+ * whose argv0 matches the runner pattern (the runner executable), and
+ * `fallback_match` the LAST whose full command line matches (a launcher or
+ * wrapper). Children are visited in the order `ps` reports them, which is pid
+ * order on both macOS and Linux.
+ *
+ * The snapshot is taken before the walk and checked, because the whole tree now
+ * rests on that one `ps`. A `ps` that could not fork, was killed, or returned
+ * nothing leaves the walk with no rows, and "no rows" is indistinguishable from
+ * "the runner is gone" once the walk has started — which is exactly the false
+ * `stopped` a park must never act on. A failed or empty snapshot therefore
+ * exits {@link RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT} with a reason on stderr, so
+ * the caller classifies it as an undecided probe rather than a confirmed
+ * absence.
+ *
+ * The pattern reaches awk through the environment, not `-v`: `awk -v` runs the
+ * value through escape processing, so `-v pattern='foo\.bar'` would hand awk
+ * `foo.bar` and silently widen the match. `ENVIRON` is passed through verbatim.
+ *
+ * Every row must carry a numeric pid, a numeric ppid, a state and a command. A
+ * single malformed row condemns the whole snapshot rather than being skipped:
+ * a table we only partly understood cannot support a CONFIRMED absence, and
+ * absence is what frees a slot. `123 garbage` therefore exits
+ * {@link RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT}, not 1.
+ *
+ * The walk carries a visited set, so an inconsistent snapshot whose ppid edges
+ * form a cycle — possible when a pid is recycled between rows — terminates
+ * instead of queueing forever until the exec timeout kills it. A zombie is
+ * never matched as a live runner: it has already exited and only its exit
+ * status remains, but its children are still traversed.
+ */
 function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern: string): string {
-  const cmd = [
-    `root=${quotedRoot}`,
-    `exact_match=''`,
-    `fallback_match=''`,
-    `command=$(ps -o command= -p "$root" 2>/dev/null || true)`,
-    `argv0=\${command%% *}`,
-    `case "$command" in`,
-    `  *'__farmslot_status'*) ;;`,
-    `  *) if printf '%s\\n' "$command" | grep -Eq ${shellQuote(pattern)}; then fallback_match="$root"; if printf '%s\\n' "$argv0" | grep -Eq ${shellQuote(pattern)}; then exact_match="$root"; fi; fi ;;`,
-    `esac`,
-    `set -- "$root"`,
-    `while [ "$#" -gt 0 ]; do`,
-    `  parent=$1`,
-    `  shift`,
-    `  for pid in $(pgrep -P "$parent" 2>/dev/null); do`,
-    `    command=$(ps -o command= -p "$pid" 2>/dev/null || true)`,
-    `    argv0=\${command%% *}`,
-    `    case "$command" in`,
-    `      *'__farmslot_status'*) ;;`,
-    `      *) if printf '%s\\n' "$command" | grep -Eq ${shellQuote(pattern)}; then fallback_match="$pid"; if [ -z "$exact_match" ] && printf '%s\\n' "$argv0" | grep -Eq ${shellQuote(pattern)}; then exact_match="$pid"; fi; fi ;;`,
-    `    esac`,
-    `    set -- "$@" "$pid"`,
-    `  done`,
-    `done`,
-    `[ -n "$exact_match" ] && { echo "$exact_match"; exit 0; }`,
-    `[ -n "$fallback_match" ] && { echo "$fallback_match"; exit 0; }`,
-    `exit 1`,
+  const walk = [
+    'BEGIN { pattern = ENVIRON["FARMSLOT_RUNNER_PATTERN"] }',
+    '{',
+    '  if (NF < 4 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ || $3 == "") {',
+    '    malformed++',
+    '    next',
+    '  }',
+    '  rows++',
+    '  line = $0',
+    '  sub(/^[ \\t]+/, "", line)',
+    '  sub(/^[^ \\t]+[ \\t]+/, "", line)',
+    '  sub(/^[^ \\t]+[ \\t]+/, "", line)',
+    '  sub(/^[^ \\t]+[ \\t]+/, "", line)',
+    '  cmd[$1] = line',
+    '  state[$1] = $3',
+    '  kids[$2] = kids[$2] " " $1',
+    '}',
+    'END {',
+    '  if (rows == 0 || malformed > 0) {',
+    '    printf "runner liveness probe: process table snapshot unusable (%d row(s), %d malformed)\\n", rows + 0, malformed + 0 > "/dev/stderr"',
+    `    exit ${RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT}`,
+    '  }',
+    '  queue[0] = root',
+    '  head = 0',
+    '  tail = 1',
+    '  while (head < tail) {',
+    '    pid = queue[head++]',
+    '    if (pid in visited) continue',
+    '    visited[pid] = 1',
+    '    command = cmd[pid]',
+    '    if (command != "" && state[pid] !~ /^Z/ && index(command, "__farmslot_status") == 0 && command ~ pattern) {',
+    '      fallback = pid',
+    '      split(command, argv, /[ \\t]/)',
+    '      if (exact == "" && argv[1] ~ pattern) exact = pid',
+    '    }',
+    '    n = split(kids[pid], child, " ")',
+    '    for (i = 1; i <= n; i++) if (child[i] != "") queue[tail++] = child[i]',
+    '  }',
+    '  if (exact != "") { print exact; exit 0 }',
+    '  if (fallback != "") { print fallback; exit 0 }',
+    '  exit 1',
+    '}',
   ].join('\n');
-  return cmd;
+  const snapshotFailed = (reason: string) =>
+    `{ printf '%s\\n' ${shellQuote(`runner liveness probe: ${reason}`)} >&2; exit ${RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT}; }`;
+  return [
+    `root=${quotedRoot}`,
+    `FARMSLOT_RUNNER_PATTERN=${shellQuote(pattern)}`,
+    'export FARMSLOT_RUNNER_PATTERN',
+    `snapshot=$(ps -axo pid=,ppid=,state=,command= 2>/dev/null) || ${snapshotFailed('ps snapshot exited nonzero')}`,
+    `[ -n "$snapshot" ] || ${snapshotFailed('ps snapshot was empty')}`,
+    `printf '%s\\n' "$snapshot" | awk -v root="$root" ${shellQuote(walk)}`,
+  ].join('\n');
 }
 
 /**

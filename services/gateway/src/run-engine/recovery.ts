@@ -7,6 +7,7 @@ import {
   Events,
   FLOW_STEPS,
   type FlowType,
+  isGateParkInFlightOrFreed,
   PipelineSteps,
   type ReviewGatePayload,
   type Run,
@@ -22,7 +23,6 @@ import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
 import { pendingIndependentReviewContinuation } from './gate-policy.js';
-import { isGateParkInFlightOrFreed } from './park-slot-binding.js';
 import {
   type PublicationReviewRecoveryResult,
   reviewerContextNeedsRecovery,

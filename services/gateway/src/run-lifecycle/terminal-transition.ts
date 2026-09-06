@@ -14,9 +14,8 @@
 // content changes — and the router applies it, publishes through `onMutated`,
 // and only then runs the teardown as awaited after-effects.
 
-import { isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import { isSlotFreedByPark, isTerminalRunStatus, type Run } from '@farmslot/protocol';
 
-import { isSlotFreedByPark } from '../run-engine/park-slot-binding.js';
 import { getRun, updateRun } from '../runs/store.js';
 
 import {

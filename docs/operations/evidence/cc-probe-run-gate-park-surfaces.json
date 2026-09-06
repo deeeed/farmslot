@@ -1,0 +1,136 @@
+{
+  "runId": "98c3657b-caae-41d6-91eb-1b96447f2480",
+  "testedSha": "d3fe0cb6ef8d11ba7f1925710e4458d21629442a",
+  "capturedAt": "2026-09-06T08:30:11.318Z",
+  "slotId": "macwork-ff-2",
+  "machine": "macwork",
+  "before": {
+    "park": {
+      "phase": "restored",
+      "slotDisposition": "freed",
+      "slotFreedAt": null,
+      "slotReboundAt": "2026-09-06T07:41:39.730Z",
+      "preservedBranch": "feat/manual-000121-fix-runner-stop-process-scan",
+      "preservedHeadSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
+      "restoreStages": ["rebind", "reattach", "reacquire", "reload"],
+      "refusal": null,
+      "workerProofKind": "structured"
+    },
+    "pendingDecisions": ["99573519-b166-48ce-a17f-2cf202f7a537"],
+    "surfaces": {
+      "parkBlockPresent": false,
+      "parkSlotState": null,
+      "parkSlotDisposition": null,
+      "parkFreedSlot": null,
+      "parkRestoreFirst": null,
+      "parkRestoreAvailable": null,
+      "parkState": null,
+      "parkSummary": null,
+      "parkFreedLine": null,
+      "parkTargetLine": null,
+      "parkRefusalLine": null,
+      "noticePresent": false,
+      "noticeKind": null,
+      "noticeText": null,
+      "slotBadgeFreedMarker": null,
+      "postureName": "Operator wait"
+    }
+  },
+  "previewPlan": {
+    "posture": "parked",
+    "policySource": "gate-choice",
+    "slotId": "macwork-ff-2",
+    "rejection": null,
+    "effects": []
+  },
+  "applyOutcome": {
+    "ok": true,
+    "posture": "parked",
+    "transitionOutcome": "applied",
+    "rejection": null,
+    "effects": ["machine parking complete on macwork"]
+  },
+  "parked": {
+    "park": {
+      "phase": "parked",
+      "slotDisposition": "freed",
+      "slotFreedAt": "2026-09-06T08:30:47.264Z",
+      "slotReboundAt": null,
+      "preservedBranch": "feat/manual-000121-fix-runner-stop-process-scan",
+      "preservedHeadSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
+      "restoreStages": null,
+      "refusal": null,
+      "workerProofKind": null
+    },
+    "pendingDecisions": ["99573519-b166-48ce-a17f-2cf202f7a537"],
+    "surfaces": {
+      "parkBlockPresent": true,
+      "parkSlotState": "freed",
+      "parkSlotDisposition": "freed",
+      "parkFreedSlot": "macwork-ff-2",
+      "parkRestoreFirst": "true",
+      "parkRestoreAvailable": "unknown",
+      "parkState": "Parked, slot freed for dispatch",
+      "parkSummary": "Parked, slot freed for dispatch · slot macwork-ff-2 · branch feat/manual-000121-fix-runner-stop-process-scan at e32886e217f77bac5e0688d49ae87590cbf78f6c (detached)",
+      "parkFreedLine": "macwork-ff-2 is free for dispatch while this run stays parked.",
+      "parkTargetLine": "Restore target macwork-ff-2 — availability not read; ask the Gateway with a restore preview",
+      "parkRefusalLine": null,
+      "noticePresent": true,
+      "noticeKind": "restore-first",
+      "noticeText": "Answering this gate restores the run into macwork-ff-2 first, then resolves the decision. Parked, slot freed for dispatch · slot macwork-ff-2 · branch feat/manual-000121-fix-runner-stop-process-scan at e32886e217f77bac5e0688d49ae87590cbf78f6c (detached)",
+      "slotBadgeFreedMarker": "freed for dispatch",
+      "postureName": "Parked"
+    }
+  },
+  "restorePreview": {
+    "previewId": "restore-ed71223caca2fe495bbbb180",
+    "eligibility": {
+      "eligible": true,
+      "code": "ELIGIBLE_FREED_SLOT_RESTORE",
+      "reason": "The freed slot is still free and the persisted runner session is reloadable in place."
+    },
+    "restoreTarget": {
+      "slotId": "macwork-ff-2",
+      "disposition": "freed",
+      "available": true
+    }
+  },
+  "restoreOutcome": {
+    "ok": true,
+    "outcome": "complete"
+  },
+  "after": {
+    "park": {
+      "phase": "restored",
+      "slotDisposition": "freed",
+      "slotFreedAt": null,
+      "slotReboundAt": "2026-09-06T08:30:57.160Z",
+      "preservedBranch": "feat/manual-000121-fix-runner-stop-process-scan",
+      "preservedHeadSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
+      "restoreStages": ["rebind", "reattach", "reacquire", "reload"],
+      "refusal": null,
+      "workerProofKind": "structured"
+    },
+    "pendingDecisions": ["99573519-b166-48ce-a17f-2cf202f7a537"],
+    "surfaces": {
+      "parkBlockPresent": false,
+      "parkSlotState": null,
+      "parkSlotDisposition": null,
+      "parkFreedSlot": null,
+      "parkRestoreFirst": null,
+      "parkRestoreAvailable": null,
+      "parkState": null,
+      "parkSummary": null,
+      "parkFreedLine": null,
+      "parkTargetLine": null,
+      "parkRefusalLine": null,
+      "noticePresent": false,
+      "noticeKind": null,
+      "noticeText": null,
+      "slotBadgeFreedMarker": null,
+      "postureName": "Operator wait"
+    }
+  },
+  "failures": [],
+  "ok": true
+}

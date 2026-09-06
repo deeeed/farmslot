@@ -416,6 +416,7 @@ test('review prompt recovery preserves an argv-first reviewer when liveness is u
       resolveExactTmuxWindowPane: async () => ({ paneId: '%151', panePid: '59361' }),
       probeRunnerDescendantPid: async () => ({
         state: 'unknown',
+        code: 'probe-timeout',
         reason: 'probe timed out',
       }),
       killTmuxWindowById: async () => {

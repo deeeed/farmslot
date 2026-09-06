@@ -6,7 +6,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   Events,
+  isSlotFreedByPark,
   isTerminalRunStatus,
+  liveGateParkView,
   Methods,
   type RecipeRunArtifactGroup,
   type Run,
@@ -526,12 +528,27 @@ export default function RunDetailScreen() {
           <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
           {run.summary && <Text style={baseStyles.textSecondary}>{run.summary}</Text>}
           <View style={[styles.row, { marginTop: spacing.lg }]}>
-            {run.slotId && <Text style={baseStyles.textMuted}>Slot: {run.slotId}</Text>}
+            {run.slotId && (
+              <Text style={baseStyles.textMuted} testID="companion-run-detail-slot">
+                Slot: {run.slotId}
+                {/*
+                  `isSlotFreedByPark` ignores `phase`, and cancel skips slot
+                  release for a park-freed run, so this marker outlives the run.
+                  On a terminal run the release is still a fact but no restore
+                  is coming, and the wording must not imply one.
+                */}
+                {isSlotFreedByPark(run)
+                  ? isTerminalRunStatus(run.status)
+                    ? ' (released to dispatch; no restore pending)'
+                    : ' (freed for dispatch)'
+                  : ''}
+              </Text>
+            )}
             <Text style={baseStyles.textMuted}>{formatDuration(run.metrics?.durationMs)}</Text>
           </View>
         </View>
 
-        <RunPosturePanel state={runPosture} />
+        <RunPosturePanel state={runPosture} gatePark={liveGateParkView(run)} />
 
         {reviewPackageActiveTab === 'evidence' && focusedArtifactPath ? (
           <RunFocusedArtifactCard
