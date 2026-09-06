@@ -78,6 +78,7 @@ import { normalizeRunner } from '../runners/registry.js';
 import {
   inspectRunnerRecovery,
   reloadRunnerForPark,
+  RunnerParkStopError,
   runnerRunningForPark,
   stopRunnerForPark,
 } from '../runners/session-lifecycle.js';
@@ -520,7 +521,7 @@ const defaultDependencies: MachineParkingDependencies = {
     if (!run.slotId) throw new Error('run has no slot');
     const vars = await loadSlotVars(run.slotId);
     const result = await stopRunnerForPark({ vars, recoveryHandle: handle });
-    if (!result.ok) throw new Error(result.error);
+    if (!result.ok) throw new RunnerParkStopError(result.code, result.error);
   },
   reloadRunner: defaultReloadRunner,
   runnerRunning: async (run, handle) => {
@@ -2597,7 +2598,7 @@ export class MachineParkingService {
     const item: MachineParkError = {
       phase,
       action,
-      code: 'EFFECT_FAILED',
+      code: parkErrorCode(error),
       message: messageOf(error),
       occurredAt: this.deps.now(),
       retryable: true,
@@ -3332,6 +3333,19 @@ function stableJson(value: unknown): string {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Prefer the failure's own typed code over the blanket `EFFECT_FAILED`. A park
+ * that could not stop the runner because the host never answered the liveness
+ * probe is a different operational problem from one whose runner ignored
+ * `/exit`, and the record is where an operator reads that distinction.
+ */
+function parkErrorCode(error: unknown): string {
+  if (error instanceof RunnerParkStopError) {
+    return error.code.replaceAll('-', '_').toUpperCase();
+  }
+  return 'EFFECT_FAILED';
 }
 
 function lastError(record: MachineParkRecord): string {
