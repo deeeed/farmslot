@@ -1,0 +1,206 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06T07:42:40.753Z",
+  "host": "macwork",
+  "scenario": "gate-park-restore-smoke",
+  "runner": "claude",
+  "runId": "98c3657b-caae-41d6-91eb-1b96447f2480",
+  "operationId": "gate-park-restore-63438-1788680342356",
+  "gatewaySource": {
+    "sha": "66891e19298cd01587249a70450f1465d5857962",
+    "scope": ["services/gateway", "packages/protocol"],
+    "dirty": false,
+    "describedAt": "2026-09-06T07:39:02.454Z"
+  },
+  "machine": "macwork",
+  "slotId": "macwork-ff-2",
+  "parkedByChoice": {
+    "attempt": 1,
+    "operationId": "gate-park-restore-park-63438-1788680347118-1",
+    "transitionOutcome": "applied",
+    "rejection": null,
+    "phase": "parked",
+    "slotFreedAt": "2026-09-06T07:40:02.537Z",
+    "attempts": [
+      {
+        "attempt": 1,
+        "operationId": "gate-park-restore-park-63438-1788680347118-1",
+        "transitionOutcome": "applied",
+        "rejection": null,
+        "phase": "parked",
+        "slotFreedAt": "2026-09-06T07:40:02.537Z"
+      }
+    ]
+  },
+  "parked": {
+    "status": "blocked",
+    "phase": "parked",
+    "slotFreedAt": "2026-09-06T07:40:02.537Z",
+    "generation": 0,
+    "decisionId": "03503f8f-f539-472f-b515-929c14a0f03f",
+    "preservedWorkspace": {
+      "branch": "feat/manual-000121-fix-runner-stop-process-scan",
+      "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
+      "detachedAt": "2026-09-06T07:40:02.529Z"
+    },
+    "recordedPaneId": "%1384",
+    "sessionId": "12eb4240-de29-437b-88ff-9ba331f32899",
+    "slot": {
+      "slot": "macwork-ff-2",
+      "currentRunId": null,
+      "lifecycle": "ready",
+      "phase": null,
+      "agent": "idle"
+    },
+    "workspace": {
+      "repo": "/Users/deeeed/dev/farmslot-wt/farmslot-2",
+      "branch": "HEAD",
+      "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
+      "dirty": 0
+    }
+  },
+  "fencedWhileParked": {
+    "exit": 2,
+    "matched": true
+  },
+  "previewEligible": {
+    "previewId": "restore-501720f86fbb0cb484b074f1",
+    "eligibility": {
+      "eligible": true,
+      "code": "ELIGIBLE_FREED_SLOT_RESTORE",
+      "reason": "The freed slot is still free and the persisted runner session is reloadable in place."
+    },
+    "restoreTarget": {
+      "slotId": "macwork-ff-2",
+      "disposition": "freed",
+      "available": true
+    }
+  },
+  "slotTaken": {
+    "successorRunId": "25f9a39d-4fd8-4707-80ef-5880c0047bc0",
+    "previewCode": "RESTORE_SLOT_TAKEN",
+    "previewAvailable": false,
+    "previewMutatedNothing": true,
+    "resolveExit": 2,
+    "resolveMatched": true,
+    "decisionStillPending": true,
+    "recordAfter": {
+      "phase": "parked",
+      "slotFreedAt": "2026-09-06T07:40:02.537Z",
+      "slotReboundAt": null,
+      "restoreRefusal": {
+        "code": "RESTORE_SLOT_TAKEN",
+        "reason": "slot 'macwork-ff-2' is now owned by run '25f9a39d-4fd8-4707-80ef-5880c0047bc0'",
+        "at": "2026-09-06T07:40:14.298Z"
+      }
+    },
+    "slotAfter": {
+      "slot": "macwork-ff-2",
+      "currentRunId": "25f9a39d-4fd8-4707-80ef-5880c0047bc0",
+      "lifecycle": "busy",
+      "phase": "preparing",
+      "agent": "idle"
+    },
+    "workspaceAfter": {
+      "repo": "/Users/deeeed/dev/farmslot-wt/farmslot-2",
+      "branch": "HEAD",
+      "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
+      "dirty": 0
+    }
+  },
+  "restored": {
+    "outcome": "complete",
+    "ok": true,
+    "phase": "restored",
+    "slotFreedAt": null,
+    "slotReboundAt": "2026-09-06T07:40:18.042Z",
+    "restoreRefusal": null,
+    "errors": [],
+    "slot": {
+      "slot": "macwork-ff-2",
+      "currentRunId": "98c3657b-caae-41d6-91eb-1b96447f2480",
+      "lifecycle": "busy",
+      "phase": "review-gate",
+      "agent": "working"
+    },
+    "workspace": {
+      "repo": "/Users/deeeed/dev/farmslot-wt/farmslot-2",
+      "branch": "feat/manual-000121-fix-runner-stop-process-scan",
+      "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
+      "dirty": 0
+    },
+    "recoveryProof": {
+      "sessionId": "12eb4240-de29-437b-88ff-9ba331f32899",
+      "live": true,
+      "acknowledgement": {
+        "kind": "structured",
+        "source": "hook-digest",
+        "reason": "hook prompt digest matched on pane %1385",
+        "turnToken": "12eb4240-de29-437b-88ff-9ba331f32899:1788680436238"
+      },
+      "acceptedAt": "2026-09-06T07:40:40.296Z"
+    },
+    "restoreEffects": [],
+    "paneBefore": "%1384",
+    "paneAfter": "%1385",
+    "contextPaneAfter": "%1385",
+    "generation": 0,
+    "status": "blocked"
+  },
+  "consumed": {
+    "attempted": true,
+    "pass": true,
+    "runId": "98c3657b-caae-41d6-91eb-1b96447f2480",
+    "error": null,
+    "parkedByChoice": {
+      "attempt": 1,
+      "operationId": "gate-park-restore-park-63438-1788680454601-1",
+      "transitionOutcome": "applied",
+      "rejection": null,
+      "phase": "parked",
+      "slotFreedAt": "2026-09-06T07:41:32.953Z",
+      "attempts": [
+        {
+          "attempt": 1,
+          "operationId": "gate-park-restore-park-63438-1788680454601-1",
+          "transitionOutcome": "applied",
+          "rejection": null,
+          "phase": "parked",
+          "slotFreedAt": "2026-09-06T07:41:32.953Z"
+        }
+      ]
+    },
+    "actionIsNonPublishing": true,
+    "decisionId": "03503f8f-f539-472f-b515-929c14a0f03f",
+    "actionId": "hold",
+    "beforeStatus": "blocked",
+    "resolveExit": 0,
+    "gateParkRestore": {
+      "runId": "98c3657b-caae-41d6-91eb-1b96447f2480",
+      "slotId": "macwork-ff-2",
+      "restoredGeneration": 0,
+      "reloadedSessionId": "12eb4240-de29-437b-88ff-9ba331f32899"
+    },
+    "resolvedAt": "2026-09-06T07:42:23.068Z",
+    "parkPhase": "restored",
+    "slotFreedAt": null,
+    "restoreProgress": {
+      "operationId": "gate-restore-bd91d8ef-3a23-4d4e-94e4-72664a914cb0",
+      "completed": ["rebind", "reattach", "reacquire", "reload"],
+      "updatedAt": "2026-09-06T07:42:10.030Z"
+    },
+    "statusAfterRestore": "human-gating",
+    "afterStatus": "blocked",
+    "gateStep": "running",
+    "rePresentedDecisionId": "99573519-b166-48ce-a17f-2cf202f7a537"
+  },
+  "answerable": {
+    "decisionId": "03503f8f-f539-472f-b515-929c14a0f03f",
+    "stillPending": true,
+    "posture": "operator-wait",
+    "gateChoiceSuppressedForGeneration": 0
+  },
+  "pass": true,
+  "error": null,
+  "restoreWaitedThrough": []
+}

@@ -44,6 +44,8 @@ import {
   type RuntimePostureStatusResult,
 } from '@farmslot/protocol';
 
+import { hasLiveParkRecord } from '../run-engine/park-slot-binding.js';
+
 const POLICY_SOURCE_RANK: Record<ResourcePosturePolicySource, number> = {
   'gate-choice': 3,
   'run-dispatch': 2,
@@ -970,6 +972,54 @@ export class RunResourcePostureReconciler {
     return state;
   }
 
+  /**
+   * Record that the park this run's `parked` posture described is over.
+   *
+   * Not a reconcile, deliberately: nothing is acquired, released, or warmed.
+   * `machine.pause.restore` has already put the run back where the park found
+   * it — at its operator wait with its worker live and the manifest's
+   * capabilities reacquired — and all that is left is for the persisted posture
+   * to stop saying `parked` with the worker stopped. Without this, every client
+   * reads a restored run as parked with a dead worker.
+   *
+   * Not a wait-boundary reconcile either, for a reason that matters: a wait
+   * boundary resolves the run's INHERITED gate choice, and the choice this run
+   * carries is the `free-slot` that parked it. Reconciling here would park it
+   * again the instant it came back.
+   */
+  async recordParkRestored(runId: string): Promise<RunResourcePostureState | null> {
+    const run = this.deps.getRun(runId);
+    if (!run) return null;
+    const previous = run.resourcePosture;
+    if (previous?.posture !== 'parked') return previous ?? null;
+    const at = this.now().toISOString();
+    const transition: ResourcePostureTransition = {
+      id: this.newOperationId(),
+      posture: 'operator-wait',
+      policySource: 'framework-default',
+      requestedAt: at,
+      completedAt: at,
+      outcome: 'applied',
+      effects: ['machine park restored; the run is back at its operator wait'],
+      progress: { total: 0, completed: 0 },
+      failures: [],
+    };
+    const state: RunResourcePostureState = {
+      ...previous,
+      posture: 'operator-wait',
+      policySource: 'framework-default',
+      // The park stopped the worker; the restore reloaded it. Leaving this false
+      // is the same lie as leaving the posture `parked`.
+      workerRetained: true,
+      lastTransition: transition,
+      recentTransitions: withTransition(previous, transition),
+      updatedAt: at,
+    };
+    const updated = this.deps.updateRun(runId, { resourcePosture: state });
+    this.deps.onRunUpdated?.(updated);
+    return state;
+  }
+
   private emptyState(run: Run): RunResourcePostureState {
     return {
       posture: 'active',
@@ -1025,6 +1075,12 @@ export class RunResourcePostureReconciler {
     if (this.requiresFreshHealth(context)) return false;
     const persisted = context.run.resourcePosture;
     if (persisted?.posture !== context.policy.posture) return false;
+    // `parked` is the one posture this module does not own — machine parking
+    // does, and its record is the authority. A run whose park was restored or
+    // cancelled is NOT parked however the persisted posture still reads, and
+    // short-circuiting there refuses to park it ever again: the operator picks
+    // `free-slot` at the next gate and gets a silent no-op.
+    if (context.policy.posture === 'parked' && !hasLiveParkRecord(context.run)) return false;
     return context.states.every((state) => dispositionSatisfied(state.desiredDisposition, state));
   }
 

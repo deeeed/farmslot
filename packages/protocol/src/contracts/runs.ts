@@ -1672,8 +1672,8 @@ export type MachineParkSlotDisposition = 'retained' | 'freed';
 
 /**
  * Machine-pause eligibility codes that clients and the Gateway share. Every
- * other code stays private to the Gateway verdict; these three are the
- * gate-park contract added by the free-slot-at-an-operator-wait decision.
+ * other code stays private to the Gateway verdict; these are the gate-park
+ * contract added by the free-slot-at-an-operator-wait decision.
  */
 export const MachineParkEligibilityCodes = {
   /** A gate-held publication run may be released and its slot freed. */
@@ -1682,8 +1682,34 @@ export const MachineParkEligibilityCodes = {
   runnerReloadUnsupported: 'RUNNER_RELOAD_UNSUPPORTED',
   /** A gate-held run can only be parked in release mode; orchestration-only would strand its gate. */
   gateParkRequiresRelease: 'GATE_PARK_REQUIRES_RELEASE',
-  /** The record freed its slot; restoring into a freed slot is not implemented yet. */
-  freedSlotRestoreUnsupported: 'FREED_SLOT_RESTORE_UNSUPPORTED',
+  /**
+   * The record freed its slot, so the operation asked for cannot act on the
+   * run until a restore has put it back. Not a refusal of restore itself:
+   * `machine.pause.restore` and gate resolution both drive that restore.
+   */
+  freedSlotRestoreRequired: 'FREED_SLOT_RESTORE_REQUIRED',
+  /**
+   * Restore refused: the original slot is no longer free. The record stays
+   * parked and its decision stays pending, so the run can be restored later or
+   * cancelled. Cross-slot re-dispatch is a separate decision.
+   */
+  restoreSlotTaken: 'RESTORE_SLOT_TAKEN',
+  /**
+   * Restore refused: the preserved branch cannot be checked back out — the
+   * successor left uncommitted work in the tree, or the branch no longer sits
+   * at the tip the park detached from.
+   */
+  restoreWorkspaceUnavailable: 'RESTORE_WORKSPACE_UNAVAILABLE',
+  /**
+   * Restore refused: the persisted runner session could not be reloaded with a
+   * structured acknowledgement, so nothing may claim the worker is back.
+   */
+  restoreRunnerReloadFailed: 'RESTORE_RUNNER_RELOAD_FAILED',
+  /**
+   * The restore had to re-present the gate because its engine loop had exited,
+   * so the decision the operator answered is no longer the live one.
+   */
+  restoreGateReplayed: 'RESTORE_GATE_REPLAYED',
   /**
    * Freeing the slot would expose the run's workspace to the next occupant's
    * prepare, and its branch tip could not be preserved first.
@@ -1716,6 +1742,71 @@ export interface MachineParkWorkspace {
   detachedAt?: string;
 }
 
+/**
+ * The stages a freed-slot restore owes, in the order it owes them.
+ *
+ * Tracked as its own sequence rather than inferred from what the record happens
+ * to look like. Occupancy, the detached branch, the lease states, and the
+ * runner proof each record ONE stage's outcome, so reading them as a whole is a
+ * guess: a restore that re-bound the slot and then died before re-creating the
+ * pane looks, to an occupancy reader, exactly like a restore that never had to
+ * touch the slot at all — and the retry then takes the ordinary path and fails
+ * on a recovery handle nothing re-hosted.
+ */
+export const MACHINE_PARK_RESTORE_STAGES = [
+  /** The slot row is bound to the run again. */
+  'rebind',
+  /** The preserved branch is back in the working tree at its recorded tip. */
+  'reattach',
+  /** Manifest capabilities and resources are held and running again. */
+  'reacquire',
+  /** The worker is back on its persisted session, and both attach targets say where. */
+  'reload',
+] as const;
+
+export type MachineParkRestoreStage = (typeof MACHINE_PARK_RESTORE_STAGES)[number];
+
+/**
+ * How far the current restore attempt got, written around each stage.
+ *
+ * `attempting` is written BEFORE the stage runs and `completed` only after it
+ * lands, so a crash anywhere inside a stage is visible as an unfinished stage
+ * rather than as an absence. The write-ahead journal is kept until every stage
+ * is in `completed`.
+ */
+export interface MachineParkRestoreProgress {
+  /** The restore operation these stages belong to; a newer one starts over. */
+  operationId: string;
+  /** The stage currently being attempted, if any. Cleared when it completes. */
+  attempting?: MachineParkRestoreStage;
+  /** Stages proven complete, in the order they landed. */
+  completed: MachineParkRestoreStage[];
+  updatedAt: string;
+}
+
+/** Whether every stage a freed-slot restore owes has landed. */
+export function machineParkRestoreComplete(
+  progress: MachineParkRestoreProgress | undefined,
+): boolean {
+  if (!progress || progress.attempting) return false;
+  return MACHINE_PARK_RESTORE_STAGES.every((stage) => progress.completed.includes(stage));
+}
+
+/**
+ * Why the last restore attempt refused, kept on the record so a reconnecting
+ * client sees the reason without replaying the RPC that produced it.
+ *
+ * A refusal is not a failure of the park: the record stays `parked`, its
+ * decision stays pending, and the run can be restored again later or
+ * cancelled. Cleared the moment a restore gets past the refusal.
+ */
+export interface MachineParkRestoreRefusal {
+  /** A `MachineParkEligibilityCode`; carried as a string like every verdict code. */
+  code: string;
+  reason: string;
+  at: string;
+}
+
 /** Write-ahead per-run record; persisted on Run before any release side effect. */
 export interface MachineParkRecord {
   version: 1;
@@ -1743,9 +1834,33 @@ export interface MachineParkRecord {
   /**
    * When slot ownership was actually released, not merely intended. Set only
    * after the park stopped the runner and every manifest resource, so a partial
-   * park never advertises a freed slot. Cleared when a restore reclaims a slot.
+   * park never advertises a freed slot.
+   *
+   * Kept for the whole restore and cleared only when every restore stage has
+   * landed, so it stays the marker of "this record owes a freed-slot restore".
+   * OCCUPANCY is `slotReboundAt`, which lands earlier: the two are deliberately
+   * separate, because a restore that re-bound the slot and then failed still
+   * owes the rest of its stages.
    */
   slotFreedAt?: string;
+  /**
+   * When a restore re-bound the freed slot to this run, not merely intended
+   * to. Written in the same write-ahead window that clears `slotFreedAt`, so a
+   * crash between the slot claim and the record write is repairable. Survives
+   * the restore as the note that this record's slot came back.
+   */
+  slotReboundAt?: string;
+  /**
+   * How far the current restore attempt got. Absent until a freed-slot restore
+   * starts, and the authority for what a retry still owes — never inferred from
+   * whether the run currently occupies its slot.
+   */
+  restoreProgress?: MachineParkRestoreProgress;
+  /**
+   * Why the last restore attempt refused, when it refused without changing
+   * anything. Absent once a restore gets past the refusal.
+   */
+  restoreRefusal?: MachineParkRestoreRefusal;
   /** Restore intent classification persisted before any selected batch member mutates. */
   restoreDisposition?: 'zero-effect' | 'effectful';
   /**
@@ -1759,9 +1874,23 @@ export interface MachineParkRecord {
     sessionId: string;
     live: true;
     acknowledgement: {
-      kind: 'structured';
+      /**
+       * How the worker was proven back.
+       *
+       * `structured` — the restore relaunched the session and the runner
+       * acknowledged the continuation prompt: a turn was delivered and started.
+       *
+       * `adopted` — the worker was ALREADY running this run's persisted session
+       * when the restore reached it, so nothing was relaunched and no turn was
+       * delivered. The evidence is the structured live-binding check, not a
+       * prompt acknowledgement, and the two must be distinguishable: a consumer
+       * with only `source` to go on cannot tell a delivered turn from an
+       * inherited one.
+       */
+      kind: 'structured' | 'adopted';
       source: string;
       reason: string;
+      /** Present only for `structured`; an adopted worker started no turn. */
       turnToken?: string;
     };
     acceptedAt: string;

@@ -5,6 +5,7 @@ import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
 import {
+  type MachineParkRecord,
   type MachinePauseExecuteParams,
   type MachinePauseExecuteResult,
   type MachinePausePreviewParams,
@@ -203,13 +204,19 @@ async function harness(t: TestContext, options: HarnessOptions) {
     parkExecute: async (params) => {
       parkCalls.push(params);
       if (options.parkExecute) return options.parkExecute(params);
+      // Production's `machinePauseExecute` writes the park record onto the run,
+      // and the record — not the persisted posture — is what says a run is
+      // parked. A stub that skipped it let "already parked" mean nothing more
+      // than a matching posture string.
+      const parked = runs.get(run.id);
+      if (parked) parked.park = parkRecord(run.id, params.machine, params.operationId ?? 'op');
       return {
         ok: true,
         outcome: 'complete',
         operationId: params.operationId ?? 'op',
         machine: params.machine,
         mode: params.mode,
-        records: [],
+        records: parked?.park ? [parked.park] : [],
       };
     },
     onRunUpdated: (updated) => broadcasts.push(updated),
@@ -218,6 +225,31 @@ async function harness(t: TestContext, options: HarnessOptions) {
   });
 
   return { registry, reconciler, actions, runs, broadcasts, parkCalls, storePath, directory, run };
+}
+
+/** The record a completed release park leaves on the run. */
+function parkRecord(runId: string, machine: string, operationId: string): MachineParkRecord {
+  const at = '2026-09-05T00:00:00.000Z';
+  return {
+    version: 1,
+    operationId,
+    previewId: 'preview-1',
+    runId,
+    generation: 3,
+    machine,
+    slotId: SLOT,
+    mode: 'release',
+    phase: 'parked',
+    prePauseStatus: 'monitoring',
+    prePauseCurrentStep: { index: 0, name: 'monitor', status: 'running' },
+    resourceManifest: { capturedAt: at, resources: [], capabilityLeases: [] },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped', resources: [] },
+    createdAt: at,
+    updatedAt: at,
+    parkedAt: at,
+  };
 }
 
 function acquire(
@@ -1273,6 +1305,29 @@ test('preview and apply agree on an already-parked run', async (t) => {
   assert.deepEqual(plan.effects, []);
   assert.match(plan.reason, /already parked/);
   assert.deepEqual(parkCalls, [], 'preview must not consult parking either');
+});
+
+test('a run whose park was restored can be parked again', async (t) => {
+  // The persisted posture stays `parked` after a restore — it records the
+  // policy that was applied, not where the run is now. Reading it as "already
+  // parked" made `free-slot` at the next gate a silent no-op forever.
+  const { reconciler, registry, runs, parkCalls } = await harness(t, {
+    capabilities: [CATALOG_LINT],
+  });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+  await reconciler.apply({ runId: 'run-a', posture: 'operator-wait' });
+  assert.equal(
+    (await reconciler.apply({ runId: 'run-a', gateChoice: 'free-slot' })).status.posture,
+    'parked',
+  );
+  const restored = runs.get('run-a')!;
+  restored.park = { ...restored.park!, phase: 'restored', restoredAt: '2026-09-05T01:00:00.000Z' };
+  parkCalls.length = 0;
+
+  const again = await reconciler.apply({ runId: 'run-a', gateChoice: 'free-slot' });
+
+  assert.notEqual(again.transition.outcome, 'idempotent');
+  assert.ok(parkCalls.length > 0, 'machine parking is consulted for a run that is not parked');
 });
 
 test('the reconciler folds a failed warm cleanup into the transition', async (t) => {

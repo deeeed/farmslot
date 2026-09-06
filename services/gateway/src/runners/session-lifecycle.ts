@@ -3,6 +3,9 @@ import type { MachinePauseRecoveryHandle } from '@farmslot/protocol';
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
+  ensureTmuxWindow,
+  listExactTmuxWindows,
+  resolveTmuxSession,
   respawnTmuxPaneWithCommand,
   shellQuote,
   tmuxSendTextCommand,
@@ -20,11 +23,14 @@ import {
   isKnownRunner,
   normalizeRunner,
   runnerHasDurablePromptHandoff,
+  runnerIdsRequiringExplicitTerminationIdentity,
+  runnerIdsSafeForUnattributedTermination,
   type SessionReloadCapability,
   WORKER_ENV_PREFIX,
 } from './registry.js';
 import {
   findRunnerDescendantPid,
+  probeRunnerDescendantPid,
   resumableSessionProbeCommand,
   verifyExactLiveRunnerSessionBinding,
 } from './session-process.js';
@@ -270,6 +276,13 @@ interface RunnerSessionLifecycleDeps {
   probePromptHandoff?: typeof runnerHasDurablePromptHandoff;
   writePromptSentinel?: typeof writeRunnerPromptSentinel;
   verifyLiveBinding?: typeof verifyExactLiveRunnerSessionBinding;
+  /** Runner-neutral occupancy probe; preserves "unreadable" separately from "absent". */
+  probeRunnerPid?: typeof probeRunnerDescendantPid;
+  /** The slot's own tmux session, so a re-host cannot land in a foreign one. */
+  resolveSession?: typeof resolveTmuxSession;
+  /** Exact-name window listing, used to find or re-host a parked session's pane. */
+  listWindows?: typeof listExactTmuxWindows;
+  ensureWindow?: typeof ensureTmuxWindow;
   sleep(ms: number): Promise<void>;
 }
 
@@ -281,6 +294,10 @@ const DEFAULT_DEPS: RunnerSessionLifecycleDeps = {
   probePromptHandoff: runnerHasDurablePromptHandoff,
   writePromptSentinel: writeRunnerPromptSentinel,
   verifyLiveBinding: verifyExactLiveRunnerSessionBinding,
+  probeRunnerPid: probeRunnerDescendantPid,
+  resolveSession: resolveTmuxSession,
+  listWindows: listExactTmuxWindows,
+  ensureWindow: ensureTmuxWindow,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
@@ -361,6 +378,7 @@ export async function stopRunnerForPark(
   }
 
   const deadline = Date.now() + (options.timeoutMs ?? RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS);
+  let lastUnusable: string | null = null;
   while (Date.now() < deadline) {
     const remaining = await inspectRunnerRecovery(
       {
@@ -372,7 +390,37 @@ export async function stopRunnerForPark(
       deps,
     );
     if (!remaining.supported) {
-      return failure('failed', runnerId, target, 'unknown', remaining.reason!);
+      // The inspection proves the live process still OWNS the persisted
+      // session, and a worker in the middle of the exit we just asked for
+      // cannot: one probe still sees the process while the next no longer
+      // finds it to read a start time from. Treating that as a stop failure
+      // fails the park at the exact moment the exit is landing — which is the
+      // outcome this loop is waiting for.
+      //
+      // So ask the question the loop actually cares about, structurally: is a
+      // runner process still there? Absence is the exit; presence keeps
+      // waiting; an unreadable tree neither concludes nor gives up.
+      lastUnusable = remaining.reason ?? 'runner recovery inspection is unusable';
+      const pane = await inspectExactPane(options.vars, handle, deps);
+      if (!('error' in pane)) {
+        const probe = await (deps.probeRunnerPid ?? probeRunnerDescendantPid)(
+          options.vars,
+          pane.panePid,
+          runnerId,
+          { timeout: 10_000 },
+        );
+        if (probe.state === 'absent') {
+          return {
+            ok: true,
+            status: 'stopped',
+            runnerId,
+            target: sendTarget,
+            residualRunner: 'stopped',
+          };
+        }
+      }
+      await deps.sleep(200);
+      continue;
     }
     if (remaining.liveTarget.state === 'stopped') {
       return {
@@ -384,6 +432,9 @@ export async function stopRunnerForPark(
       };
     }
     await deps.sleep(200);
+  }
+  if (lastUnusable) {
+    return failure('failed', runnerId, target, 'unknown', lastUnusable);
   }
   return failure(
     'still-running',
@@ -627,4 +678,312 @@ async function inspectExactPane(
     };
   }
   return { paneId, panePid, session, windowName: windowName ?? '' };
+}
+
+// ─── Re-hosting a parked session (ADR-054 `free-slot`) ───────────────────────
+//
+// A park that frees the slot hands the whole slot — tmux session included — to
+// the next occupant, and that occupant's dispatch replaces the windows in it.
+// So by the time an operator restores a freed park, the exact pane the recovery
+// handle names is routinely gone. Requiring it would make restore-after-a-
+// successor impossible, which is the entire point of freeing the slot.
+//
+// The pane was never the identity. The persisted runner SESSION is: the reload
+// command resumes it by id, and the structured acknowledgement proves the
+// reload landed in that exact session. So restore re-hosts the session on a
+// fresh pane in the slot's own tmux session and reloads into it, and refuses
+// rather than respawning over a pane where a runner is still alive.
+//
+// Runner-agnostic by construction: window/pane mechanics and the registry's
+// declarations only, no runner-name branch and no pane-text reading.
+
+export type RunnerParkHostDisposition = 'exact' | 'rehost';
+
+export type RunnerParkHostPlan =
+  | {
+      ok: true;
+      disposition: RunnerParkHostDisposition;
+      /**
+       * The handle a reload must use. Identical to the input for `exact`; bound
+       * to the re-hosted pane for `rehost`. The session id and path never move.
+       */
+      recoveryHandle: MachinePauseRecoveryHandle;
+    }
+  | { ok: false; reason: string };
+
+/**
+ * What the caller can prove about who owns a live worker on this slot.
+ *
+ * A matching native session id proves CONVERSATION identity, not Farmslot run
+ * ownership: a successor dispatched with `--resume` inherits the same
+ * conversation and would otherwise be adopted, and then respawned over. So
+ * adopting a live worker needs evidence from the slot's own session records
+ * that the pane belongs to THIS run.
+ */
+export interface RunnerParkHostOwnership {
+  /** The run the restore is for. */
+  runId: string;
+  /** Exact pane ids the slot's session records bind to that run id. */
+  ownedPaneIds: readonly string[];
+}
+
+export interface RunnerParkHostOptions {
+  vars: SlotVars;
+  recoveryHandle: MachinePauseRecoveryHandle;
+  /** Omit to refuse every live occupant; nothing is adopted without evidence. */
+  ownership?: RunnerParkHostOwnership;
+}
+
+/**
+ * Read-only: can this persisted session be reloaded on this slot, and would it
+ * need a new pane? Creates nothing, so a preview can call it.
+ */
+export function inspectRunnerParkHost(
+  options: RunnerParkHostOptions,
+  deps: RunnerSessionLifecycleDeps = DEFAULT_DEPS,
+): Promise<RunnerParkHostPlan> {
+  return resolveRunnerParkHost(options, deps, false);
+}
+
+/**
+ * Bind the persisted session to a pane it can be reloaded into, creating the
+ * slot's window when the freed slot's successor removed it. Refuses rather than
+ * taking a pane a runner still occupies.
+ */
+export function rehostRunnerParkTarget(
+  options: RunnerParkHostOptions,
+  deps: RunnerSessionLifecycleDeps = DEFAULT_DEPS,
+): Promise<RunnerParkHostPlan> {
+  return resolveRunnerParkHost(options, deps, true);
+}
+
+async function resolveRunnerParkHost(
+  options: RunnerParkHostOptions,
+  deps: RunnerSessionLifecycleDeps,
+  create: boolean,
+): Promise<RunnerParkHostPlan> {
+  const handle = options.recoveryHandle;
+  const rawRunnerId = handle.runnerId.trim();
+  const runnerId = rawRunnerId ? normalizeRunner(rawRunnerId) : '';
+  if (!runnerId || !isKnownRunner(runnerId)) {
+    return { ok: false, reason: `runner '${rawRunnerId || 'unknown'}' is not registered` };
+  }
+  const definition = getRunnerDefinition(runnerId);
+  if (!definition.gracefulExit) {
+    return { ok: false, reason: `runner '${runnerId}' has no graceful exit capability` };
+  }
+  if (definition.sessionReload === 'none') {
+    return { ok: false, reason: `runner '${runnerId}' has no persisted session reload capability` };
+  }
+  const handleError = validateRecoveryHandle(runnerId, handle);
+  if (handleError) return { ok: false, reason: handleError };
+
+  // The conversation itself must still exist. Everything below only decides
+  // WHERE to reload it; without this the restore would create a pane for a
+  // session that cannot be resumed.
+  const probe = await deps.exec(options.vars, resumableSessionProbeCommand(handle.sessionPath), {
+    timeout: 10_000,
+  });
+  if (probe.exitCode !== 0) {
+    return {
+      ok: false,
+      reason: `Persisted runner session path is unavailable: ${handle.sessionPath}`,
+    };
+  }
+
+  // The slot's own session is the only one this restore may touch. The retained
+  // path proves this before every stop and reload; the re-host has to as well,
+  // or a same-named but foreign or stale session gets a window created in it
+  // and this run's worker reloaded there.
+  let slotSession: string;
+  try {
+    slotSession = await (deps.resolveSession ?? resolveTmuxSession)(
+      options.vars.slotId,
+      options.vars,
+      { strict: true },
+    );
+  } catch (error) {
+    return { ok: false, reason: `slot tmux session is unresolvable: ${messageOf(error)}` };
+  }
+  if (slotSession !== handle.target.session) {
+    return {
+      ok: false,
+      reason: `slot session changed from '${handle.target.session}' to '${slotSession}'; recovery handle is stale`,
+    };
+  }
+
+  const windowName = parkHostWindowName(handle);
+  if (!windowName) {
+    return {
+      ok: false,
+      reason: `persisted runner target '${handle.target.target}' names no exact tmux window to re-host into`,
+    };
+  }
+  const listWindows = deps.listWindows ?? listExactTmuxWindows;
+  // Lowest index wins, so two windows sharing a name resolve the same way on
+  // every call rather than however tmux happened to order them.
+  const windows = (await listWindows(options.vars, handle.target.session, windowName)).sort(
+    (a, b) => a.windowIndex - b.windowIndex,
+  );
+  const recorded = windows.find((window) => window.paneId === handle.target.paneId);
+  const candidate = recorded ?? windows[0];
+  if (candidate) {
+    // Runner-NEUTRAL, because the pane is not this runner's to assume. A freed
+    // slot is handed to whoever dispatch picked, and that successor can be any
+    // runner: probing only the parked runner's own process pattern makes a
+    // surviving codex worker invisible to a claude restore, which then respawns
+    // the pane and kills it.
+    const occupant = await probeAnyRunnerOccupant(options.vars, candidate.panePid, runnerId, deps);
+    if (occupant.state === 'unknown') {
+      // Never destructive on an unreadable process tree.
+      return {
+        ok: false,
+        reason: `tmux pane ${candidate.paneId} in ${handle.target.session}:${windowName} has an unreadable process tree: ${occupant.reason}`,
+      };
+    }
+    if (occupant.state === 'present') {
+      const refuse = (reason: string): RunnerParkHostPlan => ({
+        ok: false,
+        reason: `tmux pane ${candidate.paneId} in ${handle.target.session}:${windowName} is already running '${occupant.runnerId}' (pid ${occupant.pid}): ${reason}`,
+      });
+      // A live runner is not automatically someone else's: a restore retried
+      // after one that reloaded the worker and then failed later finds ITS OWN
+      // worker alive, and refusing that would make the retry impossible for
+      // exactly the record that needs it.
+      //
+      // Two independent things have to hold, and the second is the one a
+      // session id alone cannot give. Conversation identity says the process is
+      // resuming this session; a successor dispatched with the same `--resume`
+      // satisfies that too. OWNERSHIP is the slot's own session record binding
+      // this pane to this run id, and without it nothing is adopted.
+      if (occupant.runnerId !== runnerId) {
+        return refuse(`a '${occupant.runnerId}' worker is not this run's '${runnerId}' session`);
+      }
+      if (!options.ownership) {
+        return refuse('the caller supplied no run-ownership evidence for this slot');
+      }
+      if (!options.ownership.ownedPaneIds.includes(candidate.paneId)) {
+        return refuse(
+          `the slot's session records do not bind this pane to run '${options.ownership.runId}'`,
+        );
+      }
+      const binding = await (deps.verifyLiveBinding ?? verifyExactLiveRunnerSessionBinding)(
+        options.vars,
+        runnerId,
+        {
+          paneId: candidate.paneId,
+          slotId: options.vars.slotId,
+          expectedSessionId: handle.sessionId,
+          expectedSessionPath: handle.sessionPath,
+          runnerPid: occupant.pid,
+        },
+      );
+      if (!binding.ok) return refuse(binding.reason);
+    }
+    return recorded
+      ? { ok: true, disposition: 'exact', recoveryHandle: handle }
+      : {
+          ok: true,
+          disposition: 'rehost',
+          recoveryHandle: reboundParkHandle(handle, windowName, candidate.paneId),
+        };
+  }
+  if (!create) {
+    // Nothing exists to bind to yet, and an inspection must not create it. The
+    // verdict is still "re-hostable": the window is this slot's to make.
+    return { ok: true, disposition: 'rehost', recoveryHandle: handle };
+  }
+  const ensured = await (deps.ensureWindow ?? ensureTmuxWindow)(
+    options.vars,
+    handle.target.session,
+    windowName,
+  );
+  const created = [...ensured.windows].sort((a, b) => a.windowIndex - b.windowIndex)[0];
+  if (!created) {
+    return {
+      ok: false,
+      reason: `tmux window ${handle.target.session}:${windowName} could not be created for the re-hosted session`,
+    };
+  }
+  return {
+    ok: true,
+    disposition: 'rehost',
+    recoveryHandle: reboundParkHandle(handle, windowName, created.paneId),
+  };
+}
+
+type RunnerParkOccupant =
+  | { state: 'present'; runnerId: string; pid: string }
+  | { state: 'absent' }
+  | { state: 'unknown'; reason: string };
+
+/**
+ * Every runner that could be alive under this pane, not just the parked one.
+ *
+ * Uses the registry's own termination-identity vocabulary rather than a local
+ * list, so a runner added to the registry is covered here without a second
+ * edit. A runner that needs explicit identity to be attributed is reported as
+ * `unknown` unless it is the one we are restoring: "cannot attribute" must not
+ * read as "nobody is there" when the next step respawns the pane.
+ */
+async function probeAnyRunnerOccupant(
+  vars: SlotVars,
+  panePid: string,
+  parkedRunnerId: string,
+  deps: RunnerSessionLifecycleDeps,
+): Promise<RunnerParkOccupant> {
+  const probe = deps.probeRunnerPid ?? probeRunnerDescendantPid;
+  const attributable = new Set([parkedRunnerId, ...runnerIdsSafeForUnattributedTermination()]);
+  const ambiguous = runnerIdsRequiringExplicitTerminationIdentity().filter(
+    (candidate) => !attributable.has(candidate),
+  );
+  for (const runnerId of [...attributable, ...ambiguous]) {
+    const result = await probe(vars, panePid, runnerId, { timeout: 10_000 });
+    if (result.state === 'unknown') return { state: 'unknown', reason: result.reason ?? 'unknown' };
+    if (result.state === 'present') {
+      if (attributable.has(runnerId)) return { state: 'present', runnerId, pid: result.pid };
+      return {
+        state: 'unknown',
+        reason: `a '${runnerId}' process is present but cannot be attributed without its recorded runner identity`,
+      };
+    }
+  }
+  return { state: 'absent' };
+}
+
+/**
+ * The exact window a re-host may use. A numeric window reference identifies a
+ * position rather than a window, and positions shift when a successor's
+ * dispatch rewrites the session — re-hosting onto one would be a guess.
+ */
+function parkHostWindowName(handle: MachinePauseRecoveryHandle): string | null {
+  const explicit = handle.target.window?.trim();
+  if (explicit && !/^\d+$/.test(explicit)) return explicit;
+  const separator = handle.target.target.indexOf(':');
+  const derived = separator > 0 ? handle.target.target.slice(separator + 1).trim() : '';
+  return derived && !/^\d+$/.test(derived) ? derived : null;
+}
+
+function reboundParkHandle(
+  handle: MachinePauseRecoveryHandle,
+  windowName: string,
+  paneId: string,
+): MachinePauseRecoveryHandle {
+  return {
+    ...handle,
+    target: {
+      ...handle.target,
+      window: windowName,
+      // The recorded pane INDEX belonged to a layout that no longer exists;
+      // keeping it would name a different pane than `paneId` does.
+      pane: null,
+      paneId,
+      target: `${handle.target.session}:${windowName}`,
+    },
+    capturedAt: new Date().toISOString(),
+  };
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -252,27 +252,48 @@ export function reconcileRefreshSlotRowWithActiveRun<T extends RefreshSlotRow>(
   }
   return {
     ...row,
-    lifecycle: activeState.lifecycle,
-    phase: activeState.phase,
-    agent: activeState.agent,
+    ...slotOwnershipFieldsForRun(activeRun, row.agent_contexts),
     dispatchable: false,
     task_id: row.task_id ?? activeRun.ticketOrPr,
     task_file: row.task_file ?? taskFileRefFromRun(activeRun),
-    current_run_id: activeRun.id,
-    current_flow_type: activeRun.flowType,
-    current_ticket_or_pr: activeRun.ticketOrPr,
-    current_mode: activeRun.mode,
-    current_family_id: activeRun.familyId,
-    current_lane: activeRun.lane,
-    current_variant: activeRun.variant ?? null,
-    agent_contexts:
-      activeRun.agentContexts && activeRun.agentContexts.length > 0
-        ? summarizeAgentContexts(activeRun)
-        : row.agent_contexts,
     dispatched_at: row.dispatched_at ?? activeRun.createdAt.replace(/\.\d{3}Z$/, 'Z'),
     completed_at: null,
     runner: activeRun.metrics.runner ?? row.runner,
     model: activeRun.metrics.model ?? row.model,
+  };
+}
+
+/**
+ * The slot-row fields that say "this run occupies this slot", derived from the
+ * run alone.
+ *
+ * One definition, because two writers need exactly the same answer: fleet
+ * refresh republishing a row from the run store, and an ADR-054 `free-slot`
+ * restore re-binding the original slot to the run it was freed from. A restore
+ * that wrote a subset would leave the slot looking free to `isFreeSlot` between
+ * the claim and the next refresh, which is the window dispatch would use to
+ * hand the slot to someone else.
+ */
+export function slotOwnershipFieldsForRun(
+  run: Run,
+  fallbackAgentContexts?: AgentContextSummary[] | null,
+) {
+  const activeState = activeSlotPhaseForRun(run);
+  return {
+    lifecycle: activeState.lifecycle,
+    phase: activeState.phase,
+    agent: activeState.agent,
+    current_run_id: run.id,
+    current_flow_type: run.flowType,
+    current_ticket_or_pr: run.ticketOrPr,
+    current_mode: run.mode,
+    current_family_id: run.familyId,
+    current_lane: run.lane,
+    current_variant: run.variant ?? null,
+    agent_contexts:
+      run.agentContexts && run.agentContexts.length > 0
+        ? summarizeAgentContexts(run)
+        : fallbackAgentContexts,
   };
 }
 

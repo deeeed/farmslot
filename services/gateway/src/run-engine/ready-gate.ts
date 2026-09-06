@@ -632,16 +632,18 @@ export function localVideoProofWarning(
 /**
  * Why a resolved publication gate must not drive the rest of the run.
  *
- * ADR-054 `free-slot`: the operator answered a gate on a run whose park
- * released its slot. Restoring into a freed slot is not implemented yet, and
- * continuing from here would run FINALIZE against a stopped worker and a slot
- * another run may already own. Failing closed leaves the park record, the freed
- * slot, and the resolved decision intact for a restore or a cancel.
+ * ADR-054 `free-slot`: `run.resolveDecision` restores a freed park BEFORE it
+ * consumes the decision, so reaching here with a park still in flight means the
+ * park landed while the engine already held a resolved decision — the race the
+ * resolution path cannot see. Continuing would run FINALIZE against a stopped
+ * worker and a slot another run may already own. Failing closed leaves the park
+ * record, the freed slot, and the resolved decision intact for the restore that
+ * the next resolution (or `machine.pause.restore`) drives, or for a cancel.
  */
 export function freedSlotGateResolutionBlocker(run: Run): BlockedRunError | null {
   if (!isGateParkInFlightOrFreed(run)) return null;
   const code = isSlotFreedByPark(run)
-    ? MachineParkEligibilityCodes.freedSlotRestoreUnsupported
+    ? MachineParkEligibilityCodes.freedSlotRestoreRequired
     : MachineParkEligibilityCodes.gateParkInFlight;
   // BlockedRunError, not a plain Error: a plain throw makes the run terminal
   // `failed`, and cancel refuses terminal runs — which would strand the park

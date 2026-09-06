@@ -101,7 +101,7 @@ test('runtime.posture.apply refuses every posture but parked on a gate-parked ru
       runtimePostureApply({ runId: run.id, posture }),
       (error: unknown) => {
         assert.ok(error instanceof GatewayMethodError);
-        assert.equal(error.code, 'FREED_SLOT_RESTORE_UNSUPPORTED');
+        assert.equal(error.code, 'FREED_SLOT_RESTORE_REQUIRED');
         return true;
       },
       `posture '${posture}' must be refused`,

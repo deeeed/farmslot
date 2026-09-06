@@ -16,6 +16,7 @@ import {
   shouldKeepWorkerWarmThroughCiWatch,
   shouldTeardownGateHeldAgents,
 } from './gate-held-lifecycle.js';
+import { isGateParkInFlightOrFreed, needsGateParkRestore } from './park-slot-binding.js';
 import { postureForBoundary } from './resource-posture.js';
 import { makeRun } from './test-fixtures.js';
 
@@ -343,6 +344,109 @@ function freedGateParkRecord(runId: string, slotId: string): MachineParkRecord {
     updatedAt: new Date().toISOString(),
   };
 }
+
+test('a restore that re-bound the slot no longer reports it as freed for dispatch', () => {
+  const record = freedGateParkRecord('run-gate', 'slot-a');
+  // `slotFreedAt` survives the whole restore, because it is what tells a retry
+  // which stages it still owes. Occupancy is the counterpart fact, and reading
+  // the obligation as occupancy would offer dispatch a slot the run sits in.
+  assert.equal(isSlotFreedByPark({ park: record }), true);
+  assert.equal(
+    isSlotFreedByPark({ park: { ...record, slotReboundAt: '2026-09-05T00:00:20.000Z' } }),
+    false,
+  );
+});
+
+test('a gate park with unfinished restore stages still owes a restore and stays fenced', () => {
+  const record = freedGateParkRecord('run-gate', 'slot-a');
+  const halfRestored = {
+    ...record,
+    phase: 'partial' as const,
+    slotFreedAt: undefined,
+    slotReboundAt: '2026-09-05T00:00:20.000Z',
+    residuals: { runner: 'running' as const, resources: [] },
+    restoreProgress: {
+      operationId: 'restore-1',
+      attempting: 'reload' as const,
+      completed: ['rebind' as const, 'reattach' as const, 'reacquire' as const],
+      updatedAt: '2026-09-05T00:00:20.000Z',
+    },
+  };
+  // Every occupancy signal says healthy: slot bound, worker running, nothing
+  // detached. Only the stage record knows the reload was never acknowledged.
+  assert.equal(isSlotFreedByPark({ park: halfRestored }), false);
+  assert.equal(needsGateParkRestore({ park: halfRestored }), true);
+  assert.equal(isGateParkInFlightOrFreed({ park: halfRestored }), true);
+
+  // Completing every stage does NOT end the obligation while the record is still
+  // `partial`: the orchestration resume after them can fail, and reading the
+  // stage list as done there left the run unable to answer its gate and unable
+  // to be restored through it. Only `restored` ends it.
+  const everyStageDone = {
+    ...halfRestored,
+    restoreProgress: {
+      operationId: 'restore-1',
+      completed: ['rebind' as const, 'reattach' as const, 'reacquire' as const, 'reload' as const],
+      updatedAt: '2026-09-05T00:00:30.000Z',
+    },
+  };
+  assert.equal(needsGateParkRestore({ park: everyStageDone }), true);
+  assert.equal(isGateParkInFlightOrFreed({ park: everyStageDone }), true);
+
+  const settled = { ...everyStageDone, phase: 'restored' as const };
+  assert.equal(needsGateParkRestore({ park: settled }), false);
+  assert.equal(isGateParkInFlightOrFreed({ park: settled }), false);
+});
+
+test('a record that cleared its freed marker at the rebind still owes every stage', () => {
+  // Written before restores tracked their stages: the rebind was the first
+  // durable write and it cleared the only field that said the slot was freed.
+  // Nothing but the rebind fact is left to say a restore ever touched it, and
+  // reading occupancy instead left it answerable with a worker that may be dead.
+  const legacyPartial = {
+    ...freedGateParkRecord('run-gate', 'slot-a'),
+    phase: 'partial' as const,
+    slotFreedAt: undefined,
+    slotReboundAt: '2026-09-05T00:00:20.000Z',
+    preservedWorkspace: undefined,
+    residuals: { runner: 'running' as const, resources: [] },
+  };
+  assert.equal(needsGateParkRestore({ park: legacyPartial }), true);
+  assert.equal(isGateParkInFlightOrFreed({ park: legacyPartial }), true);
+});
+
+test('a partial park whose worker cannot be observed stays fenced', () => {
+  const record = freedGateParkRecord('run-gate', 'slot-a');
+  const partial = {
+    ...record,
+    phase: 'partial' as const,
+    slotFreedAt: undefined,
+    preservedWorkspace: undefined,
+  };
+  // `unknown` is the NORMAL answer for a failure before the re-host: the probe
+  // reads the recorded handle, and that names the pane a successor destroyed.
+  // Reading "could not observe" as "still running" lifts the fence on a dead
+  // worker and the next gate answer runs FINALIZE against it.
+  assert.equal(
+    isGateParkInFlightOrFreed({
+      park: { ...partial, residuals: { runner: 'unknown', resources: [] } },
+    }),
+    true,
+  );
+  assert.equal(
+    isGateParkInFlightOrFreed({
+      park: { ...partial, residuals: { runner: 'stopped', resources: [] } },
+    }),
+    true,
+  );
+  // A park that stopped nothing leaves the run answerable where it stands.
+  assert.equal(
+    isGateParkInFlightOrFreed({
+      park: { ...partial, residuals: { runner: 'running', resources: [] } },
+    }),
+    false,
+  );
+});
 
 test('isSlotFreedByPark keys on the recorded release, not the park intent', () => {
   const record = freedGateParkRecord('run-1', 'slot-1');
