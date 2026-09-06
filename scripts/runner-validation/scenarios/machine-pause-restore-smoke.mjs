@@ -22,11 +22,39 @@ function rpc(method, params = {}, timeoutMs = 120_000) {
   });
   const stdout = result.stdout?.trim() ?? '';
   if (result.status !== 0) {
-    throw new Error(
-      `Gateway RPC ${method} failed (exit ${result.status}): ${result.stderr?.trim() || stdout || 'gateway unavailable'}`,
-    );
+    const detail = result.stderr?.trim() || stdout || 'gateway unavailable';
+    const error = new Error(`Gateway RPC ${method} failed (exit ${result.status}): ${detail}`);
+    // The gateway's own typed refusal, parsed out and attached, so a caller can
+    // branch on WHICH refusal it got instead of on the text of a message. A
+    // caller with only a string to match cannot tell a refusal it means to wait
+    // through from a transport failure it must not swallow.
+    Object.assign(error, gatewayRefusal(detail));
+    throw error;
   }
   return JSON.parse(stdout);
+}
+
+/**
+ * The typed `{code, message}` a gateway refusal carries, or nothing.
+ *
+ * `cdp.mjs` prints `cdp.mjs: <envelope>` for a refusal and something else
+ * entirely for a transport failure, so a payload that does not parse into an
+ * error envelope is exactly the case a caller must NOT treat as a refusal.
+ */
+function gatewayRefusal(detail) {
+  const start = detail.indexOf('{');
+  if (start === -1) return {};
+  try {
+    const envelope = JSON.parse(detail.slice(start));
+    const error = envelope?.error;
+    if (!error || typeof error.code !== 'string') return {};
+    return { gatewayCode: error.code, gatewayMessage: error.message ?? '' };
+  } catch {
+    // Not an envelope. Deliberately no classification rather than a guess: the
+    // caller then rethrows, which is the right outcome for a payload nobody
+    // recognizes.
+    return {};
+  }
 }
 
 async function poll(description, read, accept, timeoutMs) {
@@ -856,22 +884,29 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
     // successor's slot row clears before its worker process does, and the
     // re-host correctly refuses a pane another runner is still alive in — so
     // "the row is free" is not the condition a restore needs.
+    const waitedThrough = [];
     const freshPreview = await poll(
       `${record.slotId} to accept a restore of ${runId}`,
       () => {
-        // A preview that REFUSES while the successor's teardown finishes is a
-        // state to wait through, not a failure to abort on: the gateway rejects
-        // the whole call for a slot that is still `busy`. The poll's own
-        // deadline is what turns a lasting refusal into a failure.
+        // ONE refusal is a state to wait through: the gateway rejects the whole
+        // call while the successor's teardown leaves the slot `busy`, and the
+        // poll's own deadline is what turns a lasting refusal into a failure.
+        // Everything else — a transport failure, malformed output, an
+        // unexpected gateway error — is rethrown. A bare catch here would wait
+        // out the full deadline and then report a timeout for a gateway that
+        // was never reachable.
         try {
           return rpc('machine.pause.restore', { machine: record.machine, selector });
-        } catch {
+        } catch (error) {
+          if (!isSlotNotReadyRefusal(error)) throw error;
+          waitedThrough.push({ at: new Date().toISOString(), reason: error.gatewayMessage });
           return null;
         }
       },
       (preview) => preview !== null && selectedRun(preview, runId)?.eligibility.eligible === true,
       timeoutMs,
     );
+    report.restoreWaitedThrough = waitedThrough;
     const freshEntry = selectedRun(freshPreview, runId);
     if (!freshEntry?.eligibility.eligible) {
       throw new Error(
@@ -1018,6 +1053,44 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
 }
 
 /**
+ * The one refusal the restore poll waits through: the slot is still `busy`
+ * because the successor's teardown has not finished.
+ *
+ * `METHOD_ERROR` is the gateway's catch-all for a refused call, so the code
+ * alone would also match every unrelated method error. The message is consulted
+ * to narrow it to this cause — and the exact refusal is recorded in the
+ * evidence, so a change in that wording shows up as a node that stopped
+ * waiting rather than as a silent behaviour change.
+ */
+function isSlotNotReadyRefusal(error) {
+  return (
+    error?.gatewayCode === 'METHOD_ERROR' && /is 'busy', not ready/.test(error.gatewayMessage ?? '')
+  );
+}
+
+/**
+ * Whether a park rejection is one of the two RACES this harness retries, by
+ * cause and not merely by code.
+ *
+ * Both codes are categories the gateway also emits for real verdicts —
+ * `PARK_EXECUTE_REFUSED` for any execute exception, `RUNNER_RECOVERY_UNSUPPORTED`
+ * for any recovery-handle exception — so retrying on the code alone would let a
+ * later success bury an unrelated failure. Only these two causes are races an
+ * operator answers by choosing `free-slot` again:
+ *
+ *   - the machine-pause preview digest went stale because something touched the
+ *     run between the preview and the execute;
+ *   - the runner liveness probe exceeded its fixed 10s budget on a loaded
+ *     machine (MANUAL-000121).
+ */
+function isRetryableParkRace(rejection) {
+  const reason = rejection?.reason ?? '';
+  if (rejection?.code === 'PARK_EXECUTE_REFUSED') return /preview is stale/.test(reason);
+  if (rejection?.code === 'RUNNER_RECOVERY_UNSUPPORTED') return /timed out after/.test(reason);
+  return false;
+}
+
+/**
  * Park a gate-held run through the operator's own `free-slot` choice.
  *
  * The gateway path, not a shortcut: `runtime.posture.apply` is exactly what
@@ -1031,35 +1104,36 @@ function parkGateHeldRun(runId, timeoutMs) {
     throw new Error(`run ${runId} has no pending publication gate to park at`);
   }
   // Retried, because two of this park's refusals are races rather than
-  // verdicts: the machine-pause preview digest goes stale when anything touches
-  // the run between the preview and the execute, and the runner liveness probe
-  // has a fixed 10s budget that a loaded machine can exceed (MANUAL-000121).
-  // An operator meets both by choosing `free-slot` again, so the harness does
-  // the same rather than reporting a machine-load artifact as a product defect.
-  const retryable = ['PARK_EXECUTE_REFUSED', 'RUNNER_RECOVERY_UNSUPPORTED'];
-  let outcome = null;
+  // verdicts. An operator meets both by choosing `free-slot` again, so the
+  // harness does the same rather than reporting a machine-load artifact as a
+  // product defect — but ONLY for those two causes, and every attempt is kept.
+  // A retry that reported just its last attempt would let a success hide the
+  // refusals it took to get there, which is the thing a reader of this evidence
+  // most needs to see.
+  const attempts = [];
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const operationId = `gate-park-restore-park-${process.pid}-${Date.now()}-${attempt}`;
     const applied = rpc(
       'runtime.posture.apply',
-      {
-        runId,
-        gateChoice: 'free-slot',
-        operationId: `gate-park-restore-park-${process.pid}-${Date.now()}-${attempt}`,
-      },
+      { runId, gateChoice: 'free-slot', operationId },
       timeoutMs,
     );
     const parked = rpc('run.get', { runId }).run;
-    outcome = {
+    const record = {
       attempt,
+      operationId,
       transitionOutcome: applied.transition?.outcome ?? null,
       rejection: applied.transition?.rejection ?? null,
       phase: parked.park?.phase ?? null,
       slotFreedAt: parked.park?.slotFreedAt ?? null,
     };
-    if (parked.park?.slotFreedAt && parked.park.phase === 'parked') return outcome;
-    if (!retryable.includes(outcome.rejection?.code)) break;
+    attempts.push(record);
+    if (parked.park?.slotFreedAt && parked.park.phase === 'parked') {
+      return { ...record, attempts };
+    }
+    if (!isRetryableParkRace(record.rejection)) break;
   }
-  throw new Error(`free-slot did not park the run: ${JSON.stringify(outcome)}`);
+  throw new Error(`free-slot did not park the run: ${JSON.stringify({ attempts })}`);
 }
 
 /**

@@ -1,38 +1,49 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-06T07:26:08.082Z",
+  "recordedAt": "2026-09-06T07:42:40.753Z",
   "host": "macwork",
   "scenario": "gate-park-restore-smoke",
   "runner": "claude",
   "runId": "98c3657b-caae-41d6-91eb-1b96447f2480",
-  "operationId": "gate-park-restore-92316-1788679359505",
+  "operationId": "gate-park-restore-63438-1788680342356",
   "gatewaySource": {
-    "sha": "3d0960a7d2095c4f9b69c3874b9add1c88a886d1",
+    "sha": "66891e19298cd01587249a70450f1465d5857962",
     "scope": ["services/gateway", "packages/protocol"],
     "dirty": false,
-    "describedAt": "2026-09-06T07:22:39.584Z"
+    "describedAt": "2026-09-06T07:39:02.454Z"
   },
   "machine": "macwork",
   "slotId": "macwork-ff-2",
   "parkedByChoice": {
     "attempt": 1,
+    "operationId": "gate-park-restore-park-63438-1788680347118-1",
     "transitionOutcome": "applied",
     "rejection": null,
     "phase": "parked",
-    "slotFreedAt": "2026-09-06T07:23:10.824Z"
+    "slotFreedAt": "2026-09-06T07:40:02.537Z",
+    "attempts": [
+      {
+        "attempt": 1,
+        "operationId": "gate-park-restore-park-63438-1788680347118-1",
+        "transitionOutcome": "applied",
+        "rejection": null,
+        "phase": "parked",
+        "slotFreedAt": "2026-09-06T07:40:02.537Z"
+      }
+    ]
   },
   "parked": {
     "status": "blocked",
     "phase": "parked",
-    "slotFreedAt": "2026-09-06T07:23:10.824Z",
+    "slotFreedAt": "2026-09-06T07:40:02.537Z",
     "generation": 0,
-    "decisionId": "3f9ead00-e5ea-428e-a4e6-23ce434f28e1",
+    "decisionId": "03503f8f-f539-472f-b515-929c14a0f03f",
     "preservedWorkspace": {
       "branch": "feat/manual-000121-fix-runner-stop-process-scan",
       "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
-      "detachedAt": "2026-09-06T07:23:10.810Z"
+      "detachedAt": "2026-09-06T07:40:02.529Z"
     },
-    "recordedPaneId": "%1383",
+    "recordedPaneId": "%1384",
     "sessionId": "12eb4240-de29-437b-88ff-9ba331f32899",
     "slot": {
       "slot": "macwork-ff-2",
@@ -53,7 +64,7 @@
     "matched": true
   },
   "previewEligible": {
-    "previewId": "restore-a131011a0fae07f447fd9db0",
+    "previewId": "restore-501720f86fbb0cb484b074f1",
     "eligibility": {
       "eligible": true,
       "code": "ELIGIBLE_FREED_SLOT_RESTORE",
@@ -66,7 +77,7 @@
     }
   },
   "slotTaken": {
-    "successorRunId": "0bb9a706-5e85-4eb0-91ef-e74771941b57",
+    "successorRunId": "25f9a39d-4fd8-4707-80ef-5880c0047bc0",
     "previewCode": "RESTORE_SLOT_TAKEN",
     "previewAvailable": false,
     "previewMutatedNothing": true,
@@ -75,17 +86,17 @@
     "decisionStillPending": true,
     "recordAfter": {
       "phase": "parked",
-      "slotFreedAt": "2026-09-06T07:23:10.824Z",
+      "slotFreedAt": "2026-09-06T07:40:02.537Z",
       "slotReboundAt": null,
       "restoreRefusal": {
         "code": "RESTORE_SLOT_TAKEN",
-        "reason": "slot 'macwork-ff-2' is now owned by run '0bb9a706-5e85-4eb0-91ef-e74771941b57'",
-        "at": "2026-09-06T07:23:32.132Z"
+        "reason": "slot 'macwork-ff-2' is now owned by run '25f9a39d-4fd8-4707-80ef-5880c0047bc0'",
+        "at": "2026-09-06T07:40:14.298Z"
       }
     },
     "slotAfter": {
       "slot": "macwork-ff-2",
-      "currentRunId": "0bb9a706-5e85-4eb0-91ef-e74771941b57",
+      "currentRunId": "25f9a39d-4fd8-4707-80ef-5880c0047bc0",
       "lifecycle": "busy",
       "phase": "preparing",
       "agent": "idle"
@@ -102,7 +113,7 @@
     "ok": true,
     "phase": "restored",
     "slotFreedAt": null,
-    "slotReboundAt": "2026-09-06T07:23:40.906Z",
+    "slotReboundAt": "2026-09-06T07:40:18.042Z",
     "restoreRefusal": null,
     "errors": [],
     "slot": {
@@ -124,15 +135,15 @@
       "acknowledgement": {
         "kind": "structured",
         "source": "hook-digest",
-        "reason": "hook prompt digest matched on pane %1384",
-        "turnToken": "12eb4240-de29-437b-88ff-9ba331f32899:1788679434132"
+        "reason": "hook prompt digest matched on pane %1385",
+        "turnToken": "12eb4240-de29-437b-88ff-9ba331f32899:1788680436238"
       },
-      "acceptedAt": "2026-09-06T07:23:58.062Z"
+      "acceptedAt": "2026-09-06T07:40:40.296Z"
     },
     "restoreEffects": [],
-    "paneBefore": "%1383",
-    "paneAfter": "%1384",
-    "contextPaneAfter": "%1384",
+    "paneBefore": "%1384",
+    "paneAfter": "%1385",
+    "contextPaneAfter": "%1385",
     "generation": 0,
     "status": "blocked"
   },
@@ -143,13 +154,24 @@
     "error": null,
     "parkedByChoice": {
       "attempt": 1,
+      "operationId": "gate-park-restore-park-63438-1788680454601-1",
       "transitionOutcome": "applied",
       "rejection": null,
       "phase": "parked",
-      "slotFreedAt": "2026-09-06T07:24:56.634Z"
+      "slotFreedAt": "2026-09-06T07:41:32.953Z",
+      "attempts": [
+        {
+          "attempt": 1,
+          "operationId": "gate-park-restore-park-63438-1788680454601-1",
+          "transitionOutcome": "applied",
+          "rejection": null,
+          "phase": "parked",
+          "slotFreedAt": "2026-09-06T07:41:32.953Z"
+        }
+      ]
     },
     "actionIsNonPublishing": true,
-    "decisionId": "3f9ead00-e5ea-428e-a4e6-23ce434f28e1",
+    "decisionId": "03503f8f-f539-472f-b515-929c14a0f03f",
     "actionId": "hold",
     "beforeStatus": "blocked",
     "resolveExit": 0,
@@ -159,25 +181,26 @@
       "restoredGeneration": 0,
       "reloadedSessionId": "12eb4240-de29-437b-88ff-9ba331f32899"
     },
-    "resolvedAt": "2026-09-06T07:25:55.993Z",
+    "resolvedAt": "2026-09-06T07:42:23.068Z",
     "parkPhase": "restored",
     "slotFreedAt": null,
     "restoreProgress": {
-      "operationId": "gate-restore-9716fe06-dc6d-4d92-9639-984d2b662797",
+      "operationId": "gate-restore-bd91d8ef-3a23-4d4e-94e4-72664a914cb0",
       "completed": ["rebind", "reattach", "reacquire", "reload"],
-      "updatedAt": "2026-09-06T07:25:43.939Z"
+      "updatedAt": "2026-09-06T07:42:10.030Z"
     },
     "statusAfterRestore": "human-gating",
     "afterStatus": "blocked",
     "gateStep": "running",
-    "rePresentedDecisionId": "03503f8f-f539-472f-b515-929c14a0f03f"
+    "rePresentedDecisionId": "99573519-b166-48ce-a17f-2cf202f7a537"
   },
   "answerable": {
-    "decisionId": "3f9ead00-e5ea-428e-a4e6-23ce434f28e1",
+    "decisionId": "03503f8f-f539-472f-b515-929c14a0f03f",
     "stillPending": true,
     "posture": "operator-wait",
     "gateChoiceSuppressedForGeneration": 0
   },
   "pass": true,
-  "error": null
+  "error": null,
+  "restoreWaitedThrough": []
 }
