@@ -355,6 +355,105 @@ test('stopRunnerForPark reports still-running with the probes it actually comple
   assert.equal(result.ok === false && result.probes, RUNNER_PARK_GRACEFUL_EXIT_MIN_PROBES);
 });
 
+test('stopRunnerForPark stops waiting at the hard deadline even below the probe floor', async () => {
+  // The probe floor exists so a host whose probes are slower than the nominal
+  // budget still gets enough observations. It must not become an unbounded
+  // wait: a stop whose probes never finish has to end at the hard deadline.
+  let probes = 0;
+  const startedAt = Date.now();
+  const result = await stopRunnerForPark(
+    { vars, recoveryHandle: handle, timeoutMs: 0, maxTimeoutMs: 120 },
+    {
+      exec: async (_vars, command) =>
+        command.includes('display-message')
+          ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+          : { exitCode: 0, stdout: '', stderr: '' },
+      findRunnerPid: async () => '202',
+      probeRunnerPid: async () => {
+        probes += 1;
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        return { state: 'present', pid: '202' };
+      },
+      verifyLiveBinding: verifyPersistedLiveBinding,
+      respawnPane: async () => {},
+      sleep: async () => {},
+    },
+  );
+  const elapsed = Date.now() - startedAt;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok === false && result.code, 'runner-still-running');
+  assert.ok(
+    probes < RUNNER_PARK_GRACEFUL_EXIT_MIN_PROBES,
+    `hard deadline must cut the probe floor short, saw ${probes} probes`,
+  );
+  assert.ok(elapsed < 2_000, `stop must not outlive its hard deadline, took ${elapsed}ms`);
+});
+
+test('stopRunnerForPark keeps waiting through a momentarily unreadable pane', async () => {
+  // The pane can be unreadable for a tick while the exit lands. That is not a
+  // verdict either way, so the loop keeps asking rather than failing the park
+  // at the exact moment it is succeeding.
+  let paneReads = 0;
+  let exitSent = false;
+  const result = await stopRunnerForPark(
+    { vars, recoveryHandle: handle, timeoutMs: 500 },
+    {
+      exec: async (_vars, command) => {
+        if (command.includes('send-keys')) exitSent = true;
+        if (!command.includes('display-message')) return { exitCode: 0, stdout: '', stderr: '' };
+        if (!exitSent) return { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' };
+        paneReads += 1;
+        return paneReads === 1
+          ? { exitCode: 1, stdout: '', stderr: "can't find pane %1" }
+          : { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' };
+      },
+      findRunnerPid: async () => '202',
+      probeRunnerPid: paneStopped,
+      verifyLiveBinding: verifyPersistedLiveBinding,
+      respawnPane: async () => {},
+      sleep: async () => {},
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok === true && result.status, 'stopped');
+  assert.ok(paneReads >= 2, 'the unreadable read must not end the wait');
+});
+
+test('stopRunnerForPark fails closed, and bounded, when the pane stays unreadable', async () => {
+  // A pane that never becomes readable completes no probes, so the probe floor
+  // must not hold the wait open to the hard deadline.
+  const startedAt = Date.now();
+  let exitSent = false;
+  const result = await stopRunnerForPark(
+    { vars, recoveryHandle: handle, timeoutMs: 0, maxTimeoutMs: 3_000 },
+    {
+      exec: async (_vars, command) => {
+        if (command.includes('send-keys')) exitSent = true;
+        if (!command.includes('display-message')) return { exitCode: 0, stdout: '', stderr: '' };
+        return exitSent
+          ? { exitCode: 1, stdout: '', stderr: "can't find pane %1" }
+          : { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' };
+      },
+      findRunnerPid: async () => '202',
+      probeRunnerPid: async () => {
+        throw new Error('liveness must not be probed against an unreadable pane');
+      },
+      verifyLiveBinding: verifyPersistedLiveBinding,
+      respawnPane: async () => {},
+      sleep: async () => {},
+    },
+  );
+  const elapsed = Date.now() - startedAt;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok === false && result.code, 'liveness-unknown');
+  assert.equal(result.ok === false && result.residualRunner, 'unknown');
+  assert.match(result.ok === false ? result.error : '', /uninspectable/);
+  assert.ok(elapsed < 2_000, `an unreadable pane must not hold the wait, took ${elapsed}ms`);
+});
+
 test('stopRunnerForPark fails closed when the intended pane is gone despite a live sibling', async () => {
   const commands: string[] = [];
   let matcherCalls = 0;
@@ -570,7 +669,11 @@ test('an unusable inspection with the runner still there does not report a stop'
   );
 
   assert.equal(result.ok, false, 'a runner still under the pane has not stopped');
-  assert.match(result.ok === false ? result.error : '', /binding unreadable/);
+  // The wait loop no longer consults the ownership inspection at all, so an
+  // unreadable binding cannot be mistaken for a stop OR reported as the stop's
+  // cause. What is actually true is reported instead: the runner is still there.
+  assert.equal(result.ok === false && result.code, 'runner-still-running');
+  assert.equal(result.ok === false && result.residualRunner, 'running');
 });
 
 // ─── ADR-054 free-slot: re-hosting a parked session (slice 2) ────────────────

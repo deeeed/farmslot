@@ -89,7 +89,9 @@ mock.module('../core/exec.js', {
           stderr: '',
         };
       }
-      if (command.includes('command=$(ps -o command=')) {
+      // The pane-tree liveness probe, matched on the env var the walk exports
+      // rather than on the shape of the `ps` invocation it happens to use.
+      if (command.includes('FARMSLOT_RUNNER_PATTERN=')) {
         if (runnerProbeFails) {
           return { exitCode: 124, stdout: '', stderr: 'command timed out after 10000ms' };
         }

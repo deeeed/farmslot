@@ -307,6 +307,12 @@ export interface StopRunnerForParkOptions {
   vars: SlotVars;
   recoveryHandle: MachinePauseRecoveryHandle;
   timeoutMs?: number;
+  /**
+   * Ceiling on the whole graceful-exit wait, however slow the probes are.
+   * Defaults to {@link RUNNER_PARK_GRACEFUL_EXIT_MAX_TIMEOUT_MS}; the park step
+   * that owns the enclosing budget can lower it.
+   */
+  maxTimeoutMs?: number;
 }
 
 export interface RunnerRunningForParkOptions {
@@ -447,7 +453,8 @@ export async function stopRunnerForPark(
   // unreadable tree neither concludes nor gives up.
   const startedAt = Date.now();
   const deadline = startedAt + (options.timeoutMs ?? RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS);
-  const hardDeadline = startedAt + RUNNER_PARK_GRACEFUL_EXIT_MAX_TIMEOUT_MS;
+  const hardDeadline =
+    startedAt + (options.maxTimeoutMs ?? RUNNER_PARK_GRACEFUL_EXIT_MAX_TIMEOUT_MS);
   let probes = 0;
   let lastUnusable: string | null = null;
   while (

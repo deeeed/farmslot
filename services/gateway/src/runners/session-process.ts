@@ -1040,10 +1040,25 @@ export interface RunnerDescendantPidProbeOptions extends ExecOnSlotOptions {
   attempts?: number;
 }
 
+/**
+ * Exec seam, mirroring {@link TerminateRunnerDescendantsDeps}. Production always
+ * takes the default; the regression guards use it to drive the exit statuses a
+ * loaded host produces without shelling out to a doctored `ps`.
+ */
+export interface RunnerDescendantPidProbeDeps {
+  exec?: typeof execOnSlot;
+}
+
 /** Exec budget for one liveness probe when a caller states none. */
 export const RUNNER_PROCESS_PROBE_TIMEOUT_MS = 10_000;
 /** Upper bound on a single escalated attempt, so backoff cannot run away. */
 export const RUNNER_PROCESS_PROBE_MAX_TIMEOUT_MS = 60_000;
+/**
+ * Exit status the probe reserves for "the `ps` snapshot itself did not happen".
+ * It must not collide with the walk's own verdicts — 0 found, 1 confirmed
+ * absent — because a snapshot that never ran proves nothing about the tree.
+ */
+export const RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT = 3;
 
 /**
  * Preserve transport/probe failure separately from a confirmed empty process tree.
@@ -1055,7 +1070,9 @@ export async function probeRunnerDescendantPid(
   panePid: string,
   runnerId?: string | null,
   options?: RunnerDescendantPidProbeOptions,
+  deps: RunnerDescendantPidProbeDeps = {},
 ): Promise<RunnerDescendantPidProbe> {
+  const exec = deps.exec ?? execOnSlot;
   if (!panePid) {
     return { state: 'unknown', code: 'pane-pid-missing', reason: 'pane PID is missing' };
   }
@@ -1078,20 +1095,24 @@ export async function probeRunnerDescendantPid(
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const timeout = Math.min(baseTimeout * 2 ** (attempt - 1), RUNNER_PROCESS_PROBE_MAX_TIMEOUT_MS);
     try {
-      const result = await execOnSlot(vars, cmd, { ...options, timeout });
+      const result = await exec(vars, cmd, { ...options, timeout });
       const pid = result.stdout.trim();
       if (result.exitCode === 0 && /^\d+$/.test(pid)) return { state: 'present', pid };
       if (result.exitCode === 1 && !pid && !result.stderr.trim()) return { state: 'absent' };
-      // 124 is the exec layer's own timeout verdict; anything else is a real
-      // probe failure that another attempt would only repeat.
+      // 124 is the exec layer's own timeout verdict and
+      // RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT is a `ps` that could not fork or
+      // returned nothing. Both are what an overloaded host does, so both earn
+      // another attempt with a larger budget. Any other status is a real probe
+      // failure that another attempt would only repeat.
       const timedOut = result.exitCode === 124;
+      const snapshotFailed = result.exitCode === RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT;
       failure = {
         state: 'unknown',
         code: timedOut ? 'probe-timeout' : 'probe-transport',
         reason: result.stderr.trim() || result.stdout.trim() || `probe exited ${result.exitCode}`,
         attempts: attempt,
       };
-      if (!timedOut) return failure;
+      if (!timedOut && !snapshotFailed) return failure;
     } catch (error) {
       failure = {
         state: 'unknown',
@@ -1346,10 +1367,25 @@ export function buildFindRunnerDescendantPidFromVariableCommand(
  * `fallback_match` the LAST whose full command line matches (a launcher or
  * wrapper). Children are visited in the order `ps` reports them, which is pid
  * order on both macOS and Linux.
+ *
+ * The snapshot is taken before the walk and checked, because the whole tree now
+ * rests on that one `ps`. A `ps` that could not fork, was killed, or returned
+ * nothing leaves the walk with no rows, and "no rows" is indistinguishable from
+ * "the runner is gone" once the walk has started — which is exactly the false
+ * `stopped` a park must never act on. A failed or empty snapshot therefore
+ * exits {@link RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT} with a reason on stderr, so
+ * the caller classifies it as an undecided probe rather than a confirmed
+ * absence.
+ *
+ * The pattern reaches awk through the environment, not `-v`: `awk -v` runs the
+ * value through escape processing, so `-v pattern='foo\.bar'` would hand awk
+ * `foo.bar` and silently widen the match. `ENVIRON` is passed through verbatim.
  */
 function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern: string): string {
   const walk = [
-    '{',
+    'BEGIN { pattern = ENVIRON["FARMSLOT_RUNNER_PATTERN"] }',
+    '$1 ~ /^[0-9]+$/ {',
+    '  rows++',
     '  line = $0',
     '  sub(/^[ \\t]+/, "", line)',
     '  sub(/^[^ \\t]+[ \\t]+/, "", line)',
@@ -1358,6 +1394,10 @@ function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern
     '  kids[$2] = kids[$2] " " $1',
     '}',
     'END {',
+    '  if (rows == 0) {',
+    '    print "runner liveness probe: process table snapshot has no rows" > "/dev/stderr"',
+    `    exit ${RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT}`,
+    '  }',
     '  queue[0] = root',
     '  head = 0',
     '  tail = 1',
@@ -1377,9 +1417,15 @@ function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern
     '  exit 1',
     '}',
   ].join('\n');
+  const snapshotFailed = (reason: string) =>
+    `{ printf '%s\\n' ${shellQuote(`runner liveness probe: ${reason}`)} >&2; exit ${RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT}; }`;
   return [
     `root=${quotedRoot}`,
-    `ps -axo pid=,ppid=,command= 2>/dev/null | awk -v root="$root" -v pattern=${shellQuote(pattern)} ${shellQuote(walk)}`,
+    `FARMSLOT_RUNNER_PATTERN=${shellQuote(pattern)}`,
+    'export FARMSLOT_RUNNER_PATTERN',
+    `snapshot=$(ps -axo pid=,ppid=,command= 2>/dev/null) || ${snapshotFailed('ps snapshot exited nonzero')}`,
+    `[ -n "$snapshot" ] || ${snapshotFailed('ps snapshot was empty')}`,
+    `printf '%s\\n' "$snapshot" | awk -v root="$root" ${shellQuote(walk)}`,
   ].join('\n');
 }
 

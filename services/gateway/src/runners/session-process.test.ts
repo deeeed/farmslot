@@ -19,6 +19,7 @@ import {
   resolveRetainedRunnerPane,
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
+  RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT,
   RunnerProcessProbeError,
   terminateRunnerDescendantsInTmuxSession,
   verifyExactLiveRunnerSessionBinding,
@@ -64,6 +65,57 @@ test('a timed-out probe is retried with an escalating budget and reports the att
   assert.equal(probe.state, 'unknown');
   assert.equal(probe.state === 'unknown' && probe.code, 'probe-timeout');
   assert.equal(probe.state === 'unknown' && probe.attempts, 3);
+});
+
+test('a failed process-table snapshot is undecided, never a confirmed absence', async () => {
+  // The walk exits RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT when its one `ps` did not
+  // happen. Classifying that as `absent` would let a park release a slot whose
+  // worker is still running, so it must reach the caller as `unknown`.
+  const attemptTimeouts: Array<number | undefined> = [];
+  const probe = await probeRunnerDescendantPid(
+    makeVars(),
+    String(process.pid),
+    'codex',
+    { attempts: 2, timeout: 50 },
+    {
+      exec: async (_vars, _cmd, opts) => {
+        attemptTimeouts.push(typeof opts === 'string' ? undefined : opts?.timeout);
+        return {
+          exitCode: RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT,
+          stdout: '',
+          stderr: 'runner liveness probe: ps snapshot exited nonzero\n',
+        };
+      },
+    },
+  );
+
+  assert.equal(probe.state, 'unknown');
+  assert.equal(probe.state === 'unknown' && probe.code, 'probe-transport');
+  assert.match(probe.state === 'unknown' ? (probe.reason ?? '') : '', /ps snapshot exited nonzero/);
+  // A snapshot that failed under load earns the same escalating retry a timeout
+  // does, rather than the single shot a genuine probe failure gets.
+  assert.equal(probe.state === 'unknown' && probe.attempts, 2);
+  assert.deepEqual(attemptTimeouts, [50, 100]);
+});
+
+test('a probe failure that a retry would only repeat is not retried', async () => {
+  let calls = 0;
+  const probe = await probeRunnerDescendantPid(
+    makeVars(),
+    String(process.pid),
+    'codex',
+    { attempts: 3 },
+    {
+      exec: async () => {
+        calls += 1;
+        return { exitCode: 127, stdout: '', stderr: 'awk: command not found' };
+      },
+    },
+  );
+
+  assert.equal(probe.state, 'unknown');
+  assert.equal(probe.state === 'unknown' && probe.code, 'probe-transport');
+  assert.equal(calls, 1);
 });
 
 test('runner descendant scan ignores the diagnostic wrapper after child exit', async () => {
