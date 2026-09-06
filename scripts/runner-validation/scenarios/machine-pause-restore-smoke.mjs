@@ -522,10 +522,17 @@ function gatewaySourceRevision() {
     const result = spawnSync('git', args, { cwd: process.cwd(), encoding: 'utf8' });
     return result.status === 0 ? result.stdout.trim() : null;
   };
+  const scope = ['services/gateway', 'packages/protocol'];
   const sha = read(['rev-parse', 'HEAD']);
-  const status = read(['status', '--porcelain', '--', 'services/gateway', 'packages/protocol']);
+  const status = read(['status', '--porcelain', '--', ...scope]);
   return {
     sha,
+    // What `dirty` measured, stated rather than assumed. It covers the code
+    // under test, not this harness: a change to the scenario alters what is
+    // asserted, not what the Gateway does, and conflating the two would make
+    // every harness tweak look like the artifact came from unreviewed gateway
+    // code.
+    scope,
     dirty: status === null ? null : status.length > 0,
     describedAt: new Date().toISOString(),
   };
@@ -851,8 +858,18 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
     // "the row is free" is not the condition a restore needs.
     const freshPreview = await poll(
       `${record.slotId} to accept a restore of ${runId}`,
-      () => rpc('machine.pause.restore', { machine: record.machine, selector }),
-      (preview) => selectedRun(preview, runId)?.eligibility.eligible === true,
+      () => {
+        // A preview that REFUSES while the successor's teardown finishes is a
+        // state to wait through, not a failure to abort on: the gateway rejects
+        // the whole call for a slot that is still `busy`. The poll's own
+        // deadline is what turns a lasting refusal into a failure.
+        try {
+          return rpc('machine.pause.restore', { machine: record.machine, selector });
+        } catch {
+          return null;
+        }
+      },
+      (preview) => preview !== null && selectedRun(preview, runId)?.eligibility.eligible === true,
       timeoutMs,
     );
     const freshEntry = selectedRun(freshPreview, runId);
@@ -1013,26 +1030,36 @@ function parkGateHeldRun(runId, timeoutMs) {
   if (!pendingGateDecision(before)) {
     throw new Error(`run ${runId} has no pending publication gate to park at`);
   }
-  const applied = rpc(
-    'runtime.posture.apply',
-    {
-      runId,
-      gateChoice: 'free-slot',
-      operationId: `gate-park-restore-park-${process.pid}-${Date.now()}`,
-    },
-    timeoutMs,
-  );
-  const parked = rpc('run.get', { runId }).run;
-  const outcome = {
-    transitionOutcome: applied.transition?.outcome ?? null,
-    rejection: applied.transition?.rejection ?? null,
-    phase: parked.park?.phase ?? null,
-    slotFreedAt: parked.park?.slotFreedAt ?? null,
-  };
-  if (!parked.park?.slotFreedAt || parked.park.phase !== 'parked') {
-    throw new Error(`free-slot did not park the run: ${JSON.stringify(outcome)}`);
+  // Retried, because two of this park's refusals are races rather than
+  // verdicts: the machine-pause preview digest goes stale when anything touches
+  // the run between the preview and the execute, and the runner liveness probe
+  // has a fixed 10s budget that a loaded machine can exceed (MANUAL-000121).
+  // An operator meets both by choosing `free-slot` again, so the harness does
+  // the same rather than reporting a machine-load artifact as a product defect.
+  const retryable = ['PARK_EXECUTE_REFUSED', 'RUNNER_RECOVERY_UNSUPPORTED'];
+  let outcome = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const applied = rpc(
+      'runtime.posture.apply',
+      {
+        runId,
+        gateChoice: 'free-slot',
+        operationId: `gate-park-restore-park-${process.pid}-${Date.now()}-${attempt}`,
+      },
+      timeoutMs,
+    );
+    const parked = rpc('run.get', { runId }).run;
+    outcome = {
+      attempt,
+      transitionOutcome: applied.transition?.outcome ?? null,
+      rejection: applied.transition?.rejection ?? null,
+      phase: parked.park?.phase ?? null,
+      slotFreedAt: parked.park?.slotFreedAt ?? null,
+    };
+    if (parked.park?.slotFreedAt && parked.park.phase === 'parked') return outcome;
+    if (!retryable.includes(outcome.rejection?.code)) break;
   }
-  return outcome;
+  throw new Error(`free-slot did not park the run: ${JSON.stringify(outcome)}`);
 }
 
 /**
