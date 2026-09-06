@@ -694,6 +694,12 @@ export interface ExactLiveRunnerSessionBindingOptions {
    * fresh-launch attribution applies.
    */
   runnerPid?: string;
+  /**
+   * Budget for this verification's own reads. A park's stop owns a wall-clock
+   * ceiling and this check sits inside it, so it cannot keep a fixed budget of
+   * its own. Omitted, each read keeps its default.
+   */
+  timeoutMs?: number;
 }
 
 export type ExactLiveRunnerSessionBindingResult =
@@ -763,7 +769,12 @@ export async function verifyExactLiveRunnerSessionBinding(
   options: ExactLiveRunnerSessionBindingOptions,
   deps: ExactLiveRunnerSessionBindingDeps = EXACT_LIVE_BINDING_DEPS,
 ): Promise<ExactLiveRunnerSessionBindingResult> {
-  const paneStartedAtMs = await deps.readPaneStartedAt(vars, options.paneId, runner);
+  const paneStartedAtMs = await deps.readPaneStartedAt(
+    vars,
+    options.paneId,
+    runner,
+    options.timeoutMs === undefined ? undefined : { timeout: options.timeoutMs },
+  );
   if (paneStartedAtMs == null) {
     return { ok: false, reason: `live runner process start is unavailable for ${options.paneId}` };
   }
@@ -1473,10 +1484,12 @@ export function buildFindRunnerDescendantPidFromVariableCommand(
  * value through escape processing, so `-v pattern='foo\.bar'` would hand awk
  * `foo.bar` and silently widen the match. `ENVIRON` is passed through verbatim.
  *
- * Every row must carry a numeric pid, a numeric ppid, a state and a command. A
- * single malformed row condemns the whole snapshot rather than being skipped:
- * a table we only partly understood cannot support a CONFIRMED absence, and
- * absence is what frees a slot. `123 garbage` therefore exits
+ * Every row must carry a numeric pid, a numeric ppid, a well-formed `ps` STAT
+ * word and a command. A single malformed row condemns the whole snapshot
+ * rather than being skipped: a table we only partly understood cannot support
+ * a CONFIRMED absence, and absence is what frees a slot. `123 garbage` and
+ * `123 1 codex --resume` — a row whose state column is missing, so every later
+ * column is shifted left — therefore exit
  * {@link RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT}, not 1.
  *
  * The walk carries a visited set, so an inconsistent snapshot whose ppid edges
@@ -1489,7 +1502,15 @@ function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern
   const walk = [
     'BEGIN { pattern = ENVIRON["FARMSLOT_RUNNER_PATTERN"] }',
     '{',
-    '  if (NF < 4 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ || $3 == "") {',
+    // The state column is validated as a `ps` STAT word, not merely as
+    // non-empty. A host whose `ps` omits it shifts every later column left, so
+    // `123 1 codex --resume` parsed as state `codex` with command `--resume`:
+    // a row the walk "understood" while reading the runner's own name as a
+    // process state. The first letter is the run state (the union of what
+    // macOS and Linux emit) and the rest are the flag characters either may
+    // append — plus `?`, which macOS prints for a process whose state it could
+    // not read. Anything else condemns the snapshot rather than being read.
+    '  if (NF < 4 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ || $3 !~ /^[DIRSTUWXZt?][+<>ALNSVWXEsl]*$/) {',
     '    malformed++',
     '    next',
     '  }',

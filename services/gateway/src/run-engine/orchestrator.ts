@@ -27,6 +27,7 @@ import { expandHook, expandTemplate } from '../core/hooks.js';
 import {
   readSlotField,
   resetSlot,
+  resetSlotIf,
   SLOT_PHASE_RELEASING,
   slotReleasingFenceFields,
 } from '../core/state.js';
@@ -190,8 +191,7 @@ export async function cleanupSlotAfterRunFailure(
   // mocking a module; production always takes the lazy import below.
   teardownWorker?: (slotId: string) => Promise<void>,
 ): Promise<void> {
-  const { resetSlotIf, slotOwnershipReleaseFields, transitionSlotStatus } =
-    await import('../core/index.js');
+  const { slotOwnershipReleaseFields, transitionSlotStatus } = await import('../core/index.js');
   // Object holder rather than a `let`: assignments inside the decide closure
   // are invisible to control-flow narrowing on a plain local.
   const planRef: {
@@ -1379,6 +1379,7 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     getProjectField,
     setRunFlags,
     resetSlot,
+    resetSlotIf,
     isTerminalTeardownInFlight,
     readSlotField,
     quarantineLeakedRun,

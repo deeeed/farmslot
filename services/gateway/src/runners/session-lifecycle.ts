@@ -56,6 +56,12 @@ export const RUNNER_PARK_GRACEFUL_EXIT_MAX_TIMEOUT_MS = 120_000;
 export const RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS = 3;
 /** Budget for one exact-pane read when the caller holds no tighter ceiling. */
 const RUNNER_PANE_INSPECT_TIMEOUT_MS = 10_000;
+/** Same, for the persisted session-path probe. */
+const RUNNER_SESSION_PATH_PROBE_TIMEOUT_MS = 10_000;
+/** Same, for the live session-binding verification. */
+const RUNNER_BINDING_VERIFY_TIMEOUT_MS = 10_000;
+/** Same, for delivering the graceful-exit command. */
+const RUNNER_EXIT_DELIVERY_TIMEOUT_MS = 10_000;
 export const RUNNER_PARK_RELOAD_ACCEPTANCE_TIMEOUT_MS = RUNNER_LAUNCH_READY_TIMEOUT_MS;
 
 export interface RunnerRecoveryInspection {
@@ -99,6 +105,27 @@ export interface InspectRunnerRecoveryOptions {
    * spent and no typed code left to record.
    */
   livenessProbe?: { attempts?: number; deadline?: number };
+  /**
+   * Absolute epoch-ms ceiling on this WHOLE inspection.
+   *
+   * Without it every step below kept an independent 10s budget outside the
+   * caller's wall clock: a park's pre-flight could spend a session-path read,
+   * a pane read, an escalating liveness probe and a binding verification on
+   * top of the stop's own ceiling. Each step is clamped to what remains, and a
+   * step that no longer fits is not started.
+   */
+  deadline?: number;
+}
+
+/**
+ * Budget for one step under an optional ceiling: the step's own default when
+ * there is no ceiling, what remains of the ceiling when it is tighter, and a
+ * non-positive number when nothing remains — which callers must read as "do
+ * not start this step" rather than "run it with no timeout".
+ */
+function stepBudgetMs(deadline: number | undefined, fallbackMs: number): number {
+  if (deadline === undefined) return fallbackMs;
+  return Math.min(fallbackMs, deadline - Date.now());
 }
 
 /** Inspect registry declarations and prove the exact persisted session still exists. */
@@ -147,10 +174,23 @@ export async function inspectRunnerRecovery(
   if (!options.vars) {
     throw new Error('inspectRunnerRecovery requires slot vars to probe a recovery handle');
   }
+  const paneTarget = options.recoveryHandle.target.paneId;
+  // Each of the four steps below is gated on the ceiling BEFORE it starts. A
+  // probe timeout is what the exhaustion is, so it is reported with the code
+  // every other exhausted probe uses rather than as a runner that cannot be
+  // inspected.
+  const sessionPathBudget = stepBudgetMs(options.deadline, RUNNER_SESSION_PATH_PROBE_TIMEOUT_MS);
+  if (sessionPathBudget <= 0) {
+    throw new RunnerProcessProbeError(
+      'probe-timeout',
+      paneTarget,
+      'inspection budget exhausted before the persisted session-path probe',
+    );
+  }
   const probe = await deps.exec(
     options.vars,
     resumableSessionProbeCommand(options.recoveryHandle.sessionPath),
-    { timeout: 10_000 },
+    { timeout: sessionPathBudget },
   );
   if (probe.exitCode !== 0) {
     const pathReason = `Persisted runner session path is unavailable: ${options.recoveryHandle.sessionPath}`;
@@ -163,7 +203,15 @@ export async function inspectRunnerRecovery(
       reason: pathReason,
     };
   }
-  const pane = await inspectExactPane(options.vars, options.recoveryHandle, deps);
+  const paneBudget = stepBudgetMs(options.deadline, RUNNER_PANE_INSPECT_TIMEOUT_MS);
+  if (paneBudget <= 0) {
+    throw new RunnerProcessProbeError(
+      'probe-timeout',
+      paneTarget,
+      'inspection budget exhausted before the exact-pane read',
+    );
+  }
+  const pane = await inspectExactPane(options.vars, options.recoveryHandle, deps, paneBudget);
   if ('error' in pane) {
     const targetReason = `Exact runner target is uninspectable: ${pane.error}`;
     return {
@@ -174,9 +222,22 @@ export async function inspectRunnerRecovery(
       reason: targetReason,
     };
   }
+  const livenessBudget = stepBudgetMs(options.deadline, RUNNER_PROCESS_PROBE_TIMEOUT_MS);
+  if (livenessBudget <= 0) {
+    throw new RunnerProcessProbeError(
+      'probe-timeout',
+      pane.paneId,
+      'inspection budget exhausted before the runner liveness probe',
+    );
+  }
   const runnerPid = await deps.findRunnerPid(options.vars, pane.panePid, runnerId, {
-    timeout: RUNNER_PROCESS_PROBE_TIMEOUT_MS,
+    timeout: livenessBudget,
     ...options.livenessProbe,
+    // The inspection's own ceiling wins over a probe policy that states a
+    // later one, so the retries cannot outlive the caller's wall clock.
+    ...(options.deadline === undefined
+      ? {}
+      : { deadline: Math.min(options.livenessProbe?.deadline ?? Infinity, options.deadline) }),
   });
   const state = runnerPid ? 'live' : 'stopped';
   const expected = options.expectedRunnerState ?? 'live';
@@ -191,6 +252,14 @@ export async function inspectRunnerRecovery(
     };
   }
   if (state === 'live') {
+    const bindingBudget = stepBudgetMs(options.deadline, RUNNER_BINDING_VERIFY_TIMEOUT_MS);
+    if (bindingBudget <= 0) {
+      throw new RunnerProcessProbeError(
+        'probe-timeout',
+        pane.paneId,
+        'inspection budget exhausted before the live session-binding verification',
+      );
+    }
     const binding = await (deps.verifyLiveBinding ?? verifyExactLiveRunnerSessionBinding)(
       options.vars,
       runnerId,
@@ -199,6 +268,7 @@ export async function inspectRunnerRecovery(
         slotId: options.vars.slotId,
         expectedSessionId: options.recoveryHandle.sessionId,
         expectedSessionPath: options.recoveryHandle.sessionPath,
+        timeoutMs: bindingBudget,
       },
     );
     if (!binding.ok) {
@@ -423,6 +493,9 @@ export async function stopRunnerForPark(
         // Same transient-retry policy the wait loop uses. A `ps` that could not
         // fork must not decide the park on its first miss.
         livenessProbe: { attempts: RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS, deadline: hardDeadline },
+        // The pre-flight spends the stop's wall clock, so it must be held to
+        // it step by step rather than only at the liveness probe.
+        deadline: hardDeadline,
       },
       deps,
     );
@@ -456,6 +529,20 @@ export async function stopRunnerForPark(
 
   const definition = getRunnerDefinition(runnerId);
   const sendTarget = handle.target.paneId;
+  // Delivery spends the same ceiling as everything else in the stop. A fixed
+  // budget here let a pre-flight that consumed the whole clock still add ten
+  // seconds on top of it.
+  const sendBudget = stepBudgetMs(hardDeadline, RUNNER_EXIT_DELIVERY_TIMEOUT_MS);
+  if (sendBudget <= 0) {
+    return failure(
+      'failed',
+      'liveness-probe-timeout',
+      runnerId,
+      target,
+      'unknown',
+      'stop budget exhausted before the graceful exit could be delivered',
+    );
+  }
   const sent = await deps.exec(
     options.vars,
     tmuxSendTextCommand(sendTarget, definition.gracefulExit!.command, {
@@ -463,7 +550,7 @@ export async function stopRunnerForPark(
       submitKey: definition.promptSubmitKey,
       submitDelayMs: definition.gracefulExit!.submitDelayMs,
     }),
-    { timeout: 10_000 },
+    { timeout: sendBudget },
   );
   if (sent.exitCode !== 0) {
     return failure(

@@ -11,7 +11,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { runtimeCapabilityProviderDigest, RuntimeCapabilityRegistry } from './registry.js';
-import { RuntimeCapabilityStore } from './store.js';
+import { RUNTIME_CAPABILITY_TERMINAL_FENCE_TTL_MS, RuntimeCapabilityStore } from './store.js';
 
 const SLOT = 'slot-a';
 
@@ -1040,6 +1040,44 @@ test('a run that already had terminal cleanup cannot acquire again', async (t) =
   // Another run is unaffected by the fence.
   const other = await acquire(registry, 'browser', 'run-b');
   assert.equal(other.ok, true);
+});
+
+test('an expired fence retires from memory on the same write that retires it on disk', async (t) => {
+  // Compaction retired the entry from the FILE while this process kept
+  // refusing on the copy in its own maps, so a fence past its TTL only
+  // actually expired at the next restart. Memory and disk retire together.
+  let now = new Date('2026-08-11T00:00:00.000Z');
+  const { registry, store } = await fixture(t, [entry('browser'), entry('editor')], {
+    now: () => now,
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-a', 'fam-a')).ok, true);
+  await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
+  assert.equal(
+    (await acquire(registry, 'browser', 'run-a')).ok,
+    false,
+    'a fresh fence still refuses',
+  );
+
+  now = new Date(now.getTime() + RUNTIME_CAPABILITY_TERMINAL_FENCE_TTL_MS + 60_000);
+  // Any write compacts. A second run acquiring an unrelated capability is the
+  // ordinary traffic that gets one, with nothing to do with run-a's fence.
+  assert.equal((await acquire(registry, 'editor', 'run-b')).ok, true);
+
+  assert.deepEqual(
+    store.snapshot().terminalOwnerEntries,
+    [],
+    'the expired entry is gone from disk',
+  );
+  assert.equal(
+    (await acquire(registry, 'browser', 'run-a')).ok,
+    true,
+    'a fence past its TTL must stop refusing in THIS process, not only after a restart',
+  );
+  assert.equal(
+    (await acquire(registry, 'editor', 'run-sibling', 'fam-a')).ok,
+    false,
+    'the expired family fence must not take a live exclusive lease with it',
+  );
 });
 
 test('the terminal fence survives a gateway restart over the same store', async (t) => {

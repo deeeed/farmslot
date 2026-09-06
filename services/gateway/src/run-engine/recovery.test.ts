@@ -1499,11 +1499,17 @@ test('orphan reconcile leaves a slot a release already fenced', async () => {
   assert.deepEqual(reset, []);
 });
 
-test('orphan reconcile reclaims a releasing fence nothing is finishing', async () => {
+test('orphan reconcile reclaims a releasing fence through the conditional reset', async () => {
   // The fence added for terminal teardown has no other way out: this loop
   // skips a releasing slot, `resetSlot` refuses one, and `slotRelease` returns
   // `released: false` for one. A release interrupted between fencing and
   // finishing would strand the slot for good without this bound.
+  //
+  // The reclaim must NOT go through `resetSlot`, which refuses every releasing
+  // slot: the predicate it hands to `resetSlotIf` is what makes the write both
+  // possible and safe. Asserted on the predicate itself here; the end-to-end
+  // proof against a real slot row lives in `core/slot-reset-fence.test.ts`.
+  const stale = new Date(Date.now() - STALE_RELEASE_RECLAIM_MS - 60_000).toISOString();
   const terminal = minimalActiveRun({
     id: 'terminal-stale',
     status: 'done',
@@ -1513,20 +1519,48 @@ test('orphan reconcile reclaims a releasing fence nothing is finishing', async (
     taskFile: '/tmp/terminal-stale/TASK.md',
   });
   const reset: string[] = [];
+  const conditional: Array<{
+    slotId: string;
+    predicate: (slot: Readonly<Record<string, unknown>>) => boolean;
+  }> = [];
   const deps = {
     listRuns: () => ({ runs: [terminal] }),
     loadFleetStatus: async () => ({
       slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'releasing' }],
     }),
     isTerminalTeardownInFlight: () => false,
-    readSlotField: async () =>
-      new Date(Date.now() - STALE_RELEASE_RECLAIM_MS - 60_000).toISOString(),
+    readSlotField: async () => stale,
     resetSlot: async (slotId: string) => reset.push(slotId),
+    resetSlotIf: async (
+      slotId: string,
+      predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+    ) => {
+      conditional.push({ slotId, predicate });
+      return true;
+    },
   } as unknown as RunRecoveryCollaborators;
 
   await reconcileOrphanedSlots(deps);
 
-  assert.deepEqual(reset, ['macwork-ff-2']);
+  assert.deepEqual(reset, [], 'the unguarded reset would have been refused');
+  assert.equal(conditional.length, 1);
+  assert.equal(conditional[0]!.slotId, 'macwork-ff-2');
+  const { predicate } = conditional[0]!;
+  assert.equal(
+    predicate({ phase: 'releasing', releasing_since: stale }),
+    true,
+    'the fence the reconciler observed is the one it may clear',
+  );
+  assert.equal(
+    predicate({ phase: 'releasing', releasing_since: new Date().toISOString() }),
+    false,
+    'a release that re-fenced in the meantime owns the slot',
+  );
+  assert.equal(
+    predicate({ phase: 'working', releasing_since: stale }),
+    false,
+    'a fence that already cleared is not reclaimed a second time',
+  );
 });
 
 test('orphan reconcile leaves a releasing fence that is still young', async () => {

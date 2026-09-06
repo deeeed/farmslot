@@ -107,3 +107,113 @@ test('resetSlot still resets a slot no release owns', async (t) => {
   assert.equal(row.lifecycle, 'ready');
   assert.equal(row.current_run_id, null);
 });
+
+/**
+ * The reclaim path, driven through the REAL `resetSlotIf` against a real slot
+ * row rather than a recorder. Routing it through `resetSlot` — which refuses
+ * every releasing slot by design — meant the reconciler logged a reclaim and
+ * changed nothing, and a mock that only records the call cannot see that.
+ *
+ * The reconciler is imported inside the subprocess, not here: it pulls in the
+ * slot store, which resolves its status file once at load, and the real one is
+ * the operator's fleet.
+ */
+async function reconcileAgainstStatusFile(statusPath: string) {
+  return runAgainstStatusFile(
+    statusPath,
+    `const { reconcileOrphanedSlots } = await import('./src/run-engine/recovery.js');
+     const { readSlotField, resetSlot, resetSlotIf } = await import('./src/core/state.js');
+     await reconcileOrphanedSlots({
+       listRuns: () => ({ runs: [] }),
+       loadFleetStatus: async () => ({
+         slots: [{ slot: 'fence-slot', lifecycle: 'busy', phase: 'releasing' }],
+       }),
+       isTerminalTeardownInFlight: () => false,
+       readSlotField,
+       resetSlot,
+       resetSlotIf,
+     });`,
+  );
+}
+
+/** Past `STALE_RELEASE_RECLAIM_MS` (30 minutes), which the reconciler owns. */
+const STALE_FENCE_AGE_MS = 31 * 60 * 1000;
+
+test('a stranded releasing fence is actually reclaimed, not just logged', async (t) => {
+  const stale = new Date(Date.now() - STALE_FENCE_AGE_MS).toISOString();
+  const statusPath = statusFileWith(t, {
+    slot: 'fence-slot',
+    lifecycle: 'busy',
+    phase: 'releasing',
+    releasing_since: stale,
+    current_run_id: 'run-stranded',
+  });
+
+  await reconcileAgainstStatusFile(statusPath);
+
+  const row = JSON.parse(readFileSync(statusPath, 'utf8')).slots[0];
+  assert.equal(row.lifecycle, 'ready', 'a fence nothing is finishing must be cleared');
+  assert.equal(row.current_run_id, null);
+  assert.notEqual(row.phase, 'releasing');
+});
+
+test('a releasing fence that moved under the reclaim keeps the new fence', async (t) => {
+  // The predicate is the whole observation the decision rested on. A release
+  // that re-fenced between the age read and the write owns the slot now, and
+  // the reclaim must refuse rather than republish a live teardown as ready.
+  const stale = new Date(Date.now() - STALE_FENCE_AGE_MS).toISOString();
+  const statusPath = statusFileWith(t, {
+    slot: 'fence-slot',
+    lifecycle: 'busy',
+    phase: 'releasing',
+    releasing_since: stale,
+    current_run_id: 'run-stranded',
+  });
+
+  await runAgainstStatusFile(
+    statusPath,
+    `const { reconcileOrphanedSlots } = await import('./src/run-engine/recovery.js');
+     const { readSlotField, resetSlot, resetSlotIf, updateSlotStatus } =
+       await import('./src/core/state.js');
+     const fresh = new Date().toISOString();
+     await reconcileOrphanedSlots({
+       listRuns: () => ({ runs: [] }),
+       loadFleetStatus: async () => ({
+         slots: [{ slot: 'fence-slot', lifecycle: 'busy', phase: 'releasing' }],
+       }),
+       isTerminalTeardownInFlight: () => false,
+       // Re-fence with a NEW stamp after the reconciler has read the old one,
+       // exactly as a fresh release landing in that window would.
+       readSlotField: async (slotId, field) => {
+         const observed = await readSlotField(slotId, field);
+         await updateSlotStatus(slotId, { releasing_since: fresh });
+         return observed;
+       },
+       resetSlot,
+       resetSlotIf,
+     });`,
+  );
+
+  const row = JSON.parse(readFileSync(statusPath, 'utf8')).slots[0];
+  assert.equal(row.lifecycle, 'busy', 'the rival release keeps the slot');
+  assert.equal(row.phase, 'releasing');
+  assert.equal(row.current_run_id, 'run-stranded');
+});
+
+test('a releasing fence inside the bound is left to its teardown', async (t) => {
+  const fresh = new Date(Date.now() - 5_000).toISOString();
+  const statusPath = statusFileWith(t, {
+    slot: 'fence-slot',
+    lifecycle: 'busy',
+    phase: 'releasing',
+    releasing_since: fresh,
+    current_run_id: 'run-releasing',
+  });
+
+  await reconcileAgainstStatusFile(statusPath);
+
+  const row = JSON.parse(readFileSync(statusPath, 'utf8')).slots[0];
+  assert.equal(row.lifecycle, 'busy');
+  assert.equal(row.phase, 'releasing');
+  assert.equal(row.current_run_id, 'run-releasing');
+});

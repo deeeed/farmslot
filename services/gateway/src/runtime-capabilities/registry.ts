@@ -20,6 +20,7 @@ import type {
 
 import {
   hydrateFenceEntries,
+  retainFreshFenceEntries,
   RUNTIME_CAPABILITY_EVENT_LIMIT,
   type RuntimeCapabilityFenceEntry,
   RuntimeCapabilityStore,
@@ -218,9 +219,31 @@ export class RuntimeCapabilityRegistry {
     this.pendingEvents.push(record);
   }
 
+  /**
+   * Retire expired fence entries from the IN-MEMORY maps on the same age rule
+   * the store's compaction applies to disk.
+   *
+   * Compaction alone left the two disagreeing: an entry past the TTL vanished
+   * from the file while `acquire` kept refusing on the copy this process still
+   * held, so the fence only actually expired at the next restart. Run on the
+   * write path, so memory and disk retire together.
+   */
+  private pruneExpiredFences(): void {
+    const nowMs = this.now().getTime();
+    for (const fenced of [this.terminatedOwners, this.terminatedFamilies]) {
+      const fresh = new Set(
+        retainFreshFenceEntries(fenceEntries(fenced), nowMs).map((entry) => entry.id),
+      );
+      for (const id of fenced.keys()) {
+        if (!fresh.has(id)) fenced.delete(id);
+      }
+    }
+  }
+
   private async persist(snapshot: RuntimeCapabilityStoreSnapshot): Promise<void> {
     const events = this.pendingEvents;
     this.pendingEvents = [];
+    this.pruneExpiredFences();
     // Stamped on every write, so the terminal fence lands in the SAME replace as
     // the release that armed it. A separate write would leave a window where the
     // providers were stopped but the fence was not durable yet.

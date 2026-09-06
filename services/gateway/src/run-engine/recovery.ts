@@ -137,6 +137,17 @@ export interface RunRecoveryCollaborators {
   getProjectField: (projectJson: RawProjectJson, field: string) => string;
   setRunFlags: (runId: string, flags: { warmRecovery?: true }) => void;
   resetSlot: (slotId: string) => Promise<void>;
+  /**
+   * Conditional reset: `predicate` runs INSIDE the serialized slot write, so
+   * the check and the write cannot be split by a concurrent release. The
+   * reconciler needs this because `resetSlot` refuses a releasing slot by
+   * design — reclaiming a stranded fence has to prove the fence it observed is
+   * still the one on the row, and then clear it in that same update.
+   */
+  resetSlotIf: (
+    slotId: string,
+    predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+  ) => Promise<boolean>;
   quarantineLeakedRun: (run: Run) => Promise<void>;
   reconcileRunAgentRuntime?: (run: Run) => Promise<void>;
   rearmHandoffAutoRecovery: (run: Run) => (() => void) | undefined;
@@ -1014,17 +1025,32 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
     if (slot.phase === SLOT_PHASE_RELEASING) {
       // Read from the slot row, not the fleet snapshot: the stamp is teardown
       // bookkeeping and does not belong on the client-facing slot contract.
-      const stalledFor = releasingFenceAgeMs(
-        await deps.readSlotField(slot.slot, SLOT_RELEASING_SINCE),
-        Date.now(),
-      );
+      const observedSince = await deps.readSlotField(slot.slot, SLOT_RELEASING_SINCE);
+      const stalledFor = releasingFenceAgeMs(observedSince, Date.now());
       if (stalledFor === null || stalledFor < STALE_RELEASE_RECLAIM_MS) {
         console.log(`[run-engine] reconcile: ${slot.slot} left alone; a release owns it`);
         continue;
       }
-      console.log(
-        `[run-engine] reconcile: ${slot.slot} fenced 'releasing' for ${Math.round(stalledFor / 1000)}s with no teardown running → reclaiming`,
+      // NOT `resetSlot`: that one refuses every releasing slot, so routing the
+      // reclaim through it left the stranded slot exactly as stranded. The
+      // reclaim is its own conditional write, and the condition is the whole
+      // observation this decision rested on — the same fence stamp is still on
+      // the row, the slot is still releasing, and no teardown registered
+      // itself in the meantime. A release that landed, or a new one that
+      // re-fenced, changes the stamp and the predicate refuses.
+      const reclaimed = await deps.resetSlotIf(
+        slot.slot,
+        (row) =>
+          row.phase === SLOT_PHASE_RELEASING &&
+          row[SLOT_RELEASING_SINCE] === observedSince &&
+          !deps.isTerminalTeardownInFlight(slot.slot),
       );
+      console.log(
+        reclaimed
+          ? `[run-engine] reconcile: ${slot.slot} fenced 'releasing' for ${Math.round(stalledFor / 1000)}s with no teardown running → reclaimed`
+          : `[run-engine] reconcile: ${slot.slot} release fence moved while reclaiming; left alone`,
+      );
+      continue;
     }
     console.log(
       `[run-engine] reconcile: orphaned ${slot.slot} (${slot.lifecycle}/${slot.phase}) → ready`,
