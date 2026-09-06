@@ -24,10 +24,58 @@ export function isRuntimeCapabilityProofMode(value: unknown): value is RuntimeCa
   return RUNTIME_CAPABILITY_PROOF_MODES.includes(value as RuntimeCapabilityProofMode);
 }
 
+/**
+ * How far a resource claim's exclusivity reaches.
+ *
+ * `slot` is the historical behaviour and stays the default: the claim only
+ * arbitrates against other leases on the same slot. `machine` reaches every
+ * slot on the same host, and `fleet` reaches every slot the Gateway knows
+ * about, which is how one physical device shared by several slots is expressed.
+ */
+export const RUNTIME_CAPABILITY_CLAIM_SCOPES = ['slot', 'machine', 'fleet'] as const;
+export type RuntimeCapabilityClaimScope = (typeof RUNTIME_CAPABILITY_CLAIM_SCOPES)[number];
+
+export function isRuntimeCapabilityClaimScope(
+  value: unknown,
+): value is RuntimeCapabilityClaimScope {
+  return RUNTIME_CAPABILITY_CLAIM_SCOPES.includes(value as RuntimeCapabilityClaimScope);
+}
+
 export interface RuntimeCapabilityResourceClaim {
   id: string;
   access: RuntimeCapabilitySharePolicy;
   kind?: 'port' | 'device' | 'process' | 'service' | 'other';
+  /**
+   * Absent means `slot`. Normalization fills it in, so a catalog entry always
+   * carries an explicit scope; the field stays optional because leases and
+   * fixtures written before scopes existed have none, and those are slot-scoped
+   * by definition.
+   */
+  scope?: RuntimeCapabilityClaimScope;
+}
+
+/** A claim's effective scope. The one place the `slot` default is applied. */
+export function runtimeCapabilityClaimScope(
+  claim: Pick<RuntimeCapabilityResourceClaim, 'scope'>,
+): RuntimeCapabilityClaimScope {
+  return claim.scope ?? 'slot';
+}
+
+/**
+ * The widest of two scopes.
+ *
+ * Arbitration is symmetric: if either side declares a claim `fleet`, the two
+ * are contending for one physical thing whatever the other side declared. Two
+ * projects can describe the same claim id differently, so the wider declaration
+ * wins rather than whichever acquire happened to come second.
+ */
+export function widerRuntimeCapabilityClaimScope(
+  left: RuntimeCapabilityClaimScope,
+  right: RuntimeCapabilityClaimScope,
+): RuntimeCapabilityClaimScope {
+  if (left === 'fleet' || right === 'fleet') return 'fleet';
+  if (left === 'machine' || right === 'machine') return 'machine';
+  return 'slot';
 }
 
 export interface RuntimeCapabilityCost {
@@ -179,6 +227,72 @@ export interface RuntimeCapabilityLease {
   cleanupFailure?: string;
   /** Admission pressure retained while this lease is queued. */
   pressure?: RuntimeCapabilityPressureConflict;
+  /**
+   * The machine the slot ran on when the lease was taken.
+   *
+   * Persisted rather than resolved on read: judging a foreign lease's claim
+   * needs its machine, and reading another slot's config to get it would make
+   * arbitration depend on a file that can be mid-write. A lease without it
+   * (written before scopes existed, or by a Gateway with no fleet) can only
+   * arbitrate at `slot` and `fleet` scope.
+   */
+  machine?: string;
+  /**
+   * The resource claims this lease holds, resolved from the catalog entry at
+   * acquire time.
+   *
+   * Persisted for the same reason as `machine`: a conflict check across slots
+   * would otherwise need every foreign slot's catalog, possibly from another
+   * project. A lease with no `claims` predates scoped arbitration and is
+   * treated as slot-scoped, which is exactly how it behaved when it was taken.
+   */
+  claims?: RuntimeCapabilityLeaseClaim[];
+  /** Why this lease is queued behind a scoped claim, while it is queued. */
+  wait?: RuntimeCapabilityScopedClaimWait;
+}
+
+/** One resource claim a lease holds, with the scope it was resolved at. */
+export interface RuntimeCapabilityLeaseClaim {
+  id: string;
+  access: RuntimeCapabilitySharePolicy;
+  scope: RuntimeCapabilityClaimScope;
+}
+
+/**
+ * A queued lease's place in a scoped claim's wait queue.
+ *
+ * `blockingOwner` is carried rather than looked up because
+ * `runtime.capability.status` is slot-filtered: the run holding the claim is
+ * usually on another slot, so without this a client could only report that
+ * something, somewhere, holds it.
+ */
+export interface RuntimeCapabilityScopedClaimWait {
+  kind: 'scoped-claim';
+  claimId: string;
+  scope: RuntimeCapabilityClaimScope;
+  blockingOwner: RuntimeCapabilityLeaseOwner;
+  blockingLeaseId: string;
+  enqueuedAt: string;
+}
+
+/**
+ * One waiter in a scoped claim's queue, derived on read.
+ *
+ * Position is never stored. Order comes from `enqueuedAt` then lease id, so a
+ * Gateway restart preserves it for free and nothing has to renumber a queue.
+ */
+export interface RuntimeCapabilityClaimWaiter {
+  claimId: string;
+  scope: RuntimeCapabilityClaimScope;
+  /** 1-based place in the queue for this claim, across every slot in scope. */
+  position: number;
+  leaseId: string;
+  slotId: string;
+  capabilityId: string;
+  owner: RuntimeCapabilityLeaseOwner;
+  enqueuedAt: string;
+  blockingOwner: RuntimeCapabilityLeaseOwner;
+  blockingLeaseId: string;
 }
 
 export interface RuntimeCapabilityLeaseConflict {
@@ -198,9 +312,34 @@ export interface RuntimeCapabilityPressureConflict {
   retryAfterMs?: number;
 }
 
+/**
+ * The acquire was refused AND enqueued: a scoped claim is held elsewhere and
+ * the caller asked to queue on that conflict.
+ *
+ * Distinct from `lease-conflict`, which is a flat refusal with nothing to wait
+ * for. A client that sees this has a durable place in line — `queuedLeaseId` —
+ * and the run is in a resource wait until the holder releases.
+ */
+export interface RuntimeCapabilityScopedWaitConflict {
+  kind: 'scoped-wait';
+  capabilityId: string;
+  claimId: string;
+  scope: RuntimeCapabilityClaimScope;
+  /** The run holding the claim, which may be on another slot. */
+  owner: RuntimeCapabilityLeaseOwner;
+  /** The holder's lease. */
+  leaseId: string;
+  /** The queued lease this acquire now owns. */
+  queuedLeaseId: string;
+  /** 1-based place in line at the moment of the refusal. */
+  position: number;
+  reason: string;
+}
+
 export type RuntimeCapabilityAcquireConflict =
   | RuntimeCapabilityLeaseConflict
   | RuntimeCapabilityPressureConflict
+  | RuntimeCapabilityScopedWaitConflict
   | {
       kind: 'unavailable' | 'invalid-request';
       capabilityId: string;

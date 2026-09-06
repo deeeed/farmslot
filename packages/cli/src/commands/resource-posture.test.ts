@@ -6,6 +6,7 @@ import type {
   ResourcePosturePlan,
   RunResourcePostureState,
   RuntimeCapabilityAcquireParams,
+  RuntimeCapabilityClaimWaiter,
   RuntimeCapabilityLease,
   RuntimeCapabilityReleaseParams,
   RuntimeCapabilityReleaseResult,
@@ -21,6 +22,7 @@ import {
   capabilityReleaseRows,
   formatCapabilityAcquire,
   formatCapabilityRelease,
+  formatCapabilityStatus,
   formatPostureApply,
   formatPosturePlan,
   formatPostureStatus,
@@ -545,5 +547,88 @@ test('a retained lease is a release that did not take effect', () => {
       failures: [],
     }),
     false,
+  );
+});
+
+test('posture status names the claim a run is queued behind', () => {
+  const output = formatPostureStatus(
+    statusResult(
+      postureState({
+        resourceWait: {
+          capabilityId: 'recording',
+          claimId: 'capture-helper',
+          scope: 'fleet',
+          blockingOwner: { runId: 'run-holder' },
+          queuedLeaseId: 'cap-queued',
+          position: 2,
+          since: '2026-09-05T00:01:00.000Z',
+          reason: "Resource 'capture-helper' is claimed at fleet scope",
+        },
+      }),
+    ),
+  );
+  assert.match(output, /waiting {2}recording is position 2 for 'capture-helper' at fleet scope/);
+  assert.match(output, /held by run-holder/);
+});
+
+test('capability status lists every waiter in a fleet-wide claim queue', () => {
+  const waiter = (
+    position: number,
+    runId: string,
+    slotId: string,
+  ): RuntimeCapabilityClaimWaiter => ({
+    claimId: 'capture-helper',
+    scope: 'fleet',
+    position,
+    leaseId: `cap-${position}`,
+    slotId,
+    capabilityId: 'recording',
+    owner: { runId },
+    enqueuedAt: `2026-09-05T00:0${position}:00.000Z`,
+    blockingOwner: { runId: 'run-holder' },
+    blockingLeaseId: 'cap-holder',
+  });
+  const output = formatCapabilityStatus({
+    slotId: 'macwork-ff-2',
+    project: 'farmslot-farm',
+    catalog: [],
+    leases: [],
+    proofPlans: {},
+    events: [],
+    claimWaiters: [waiter(1, 'run-b', 'macwork-ff-2'), waiter(2, 'run-c', 'macwork-ff-3')],
+  });
+  assert.match(output, /Claim queue/);
+  assert.match(output, /1 {3}capture-helper \(fleet\) {2}run=run-b {2}slot=macwork-ff-2/);
+  assert.match(output, /2 {3}capture-helper \(fleet\) {2}run=run-c {2}slot=macwork-ff-3/);
+  assert.match(output, /behind run-holder/);
+});
+
+test('a queued acquire reports the place in line, not just a refusal', () => {
+  const output = formatCapabilityAcquire(
+    {
+      ok: false,
+      conflict: {
+        kind: 'scoped-wait',
+        capabilityId: 'recording',
+        claimId: 'capture-helper',
+        scope: 'fleet',
+        owner: { runId: 'run-holder' },
+        leaseId: 'cap-holder',
+        queuedLeaseId: 'cap-queued',
+        position: 2,
+        reason: "Resource 'capture-helper' is claimed at fleet scope",
+      },
+    },
+    {
+      slotId: 'macwork-ff-2',
+      capabilityId: 'recording',
+      ownerRunId: 'run-b',
+      proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+    },
+  );
+  assert.match(output, /refused \(scoped-wait\)/);
+  assert.match(
+    output,
+    /queued {2}position 2 for 'capture-helper' at fleet scope {2}lease=cap-queued/,
   );
 });

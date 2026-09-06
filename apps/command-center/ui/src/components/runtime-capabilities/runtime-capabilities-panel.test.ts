@@ -10,6 +10,7 @@ import {
 
 import {
   projectRuntimeCapabilityLeases,
+  runtimeCapabilityQueueView,
   runtimeCapabilityRecoveryActions,
   runtimeCapabilityRetentionView,
   runtimeCapabilityStopUsesWarmPath,
@@ -450,5 +451,68 @@ test('a capability with no lease at all still offers Acquire', () => {
       available: true,
     }).includes('acquire'),
     true,
+  );
+});
+
+const SCOPED_WAIT = {
+  kind: 'scoped-claim',
+  claimId: 'capture-helper',
+  scope: 'fleet',
+  blockingOwner: { runId: 'run-holder' },
+  blockingLeaseId: 'cap-holder',
+  enqueuedAt: '2026-09-05T00:01:00.000Z',
+} as const;
+
+test('a queued lease explains which claim it is behind and who holds it', () => {
+  const queued = lease('queued', 'queued', 'run-queued', { wait: SCOPED_WAIT });
+  const view = runtimeCapabilityRetentionView({
+    entry,
+    lease: queued,
+    planned: false,
+    nowMs: NOW_MS,
+  });
+  assert.match(view.retentionReason, /queued behind 'capture-helper' at fleet scope/);
+  assert.match(view.retentionReason, /held by run-holder/);
+});
+
+test('queue position comes from the fleet-wide waiter list, not this slot leases', () => {
+  const queued = lease('queued-b', 'queued', 'run-b', { wait: SCOPED_WAIT });
+  const waiter = (position: number, leaseId: string, runId: string, slotId: string) => ({
+    claimId: 'capture-helper',
+    scope: 'fleet' as const,
+    position,
+    leaseId,
+    slotId,
+    capabilityId: 'browser-cdp',
+    owner: { runId },
+    enqueuedAt: `2026-09-05T00:0${position}:00.000Z`,
+    blockingOwner: { runId: 'run-holder' },
+    blockingLeaseId: 'cap-holder',
+  });
+
+  const view = runtimeCapabilityQueueView({
+    lease: queued,
+    claimWaiters: [
+      waiter(1, 'queued-a', 'run-a', 'slot-z'),
+      waiter(2, 'queued-b', 'run-b', 'slot-a'),
+    ],
+  });
+  assert.equal(view?.position, 2);
+  assert.equal(view?.total, 2);
+  assert.equal(view?.blockingRunId, 'run-holder');
+  assert.match(view!.summary, /position 2 of 2 for 'capture-helper' at fleet scope/);
+
+  // An older Gateway sends no derived queue: say "queued" rather than invent a place.
+  const withoutWaiters = runtimeCapabilityQueueView({ lease: queued, claimWaiters: undefined });
+  assert.equal(withoutWaiters?.position, undefined);
+  assert.match(withoutWaiters!.summary, /^queued for 'capture-helper'/);
+
+  // A lease that holds the provider is not in any queue.
+  assert.equal(
+    runtimeCapabilityQueueView({
+      lease: lease('holder', 'acquired', 'run-holder'),
+      claimWaiters: [],
+    }),
+    undefined,
   );
 });

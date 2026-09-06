@@ -35,6 +35,7 @@ import {
   type ResourcePostureWaitPolicy,
   type Run,
   type RunResourcePostureState,
+  type RunResourceWait,
   type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityCatalogEntry,
@@ -279,6 +280,32 @@ export function resolveEffectivePosturePolicy(
 }
 
 /** Transitions a run has retained, newest first, including the latest. */
+/**
+ * The run's resource wait, read off the transition that caused it.
+ *
+ * The queue place lives on the rejection the reconciler already records, so
+ * there is one source of truth for "this run is waiting on a claim" and it
+ * cannot drift from the transition an operator is reading.
+ */
+function resourceWaitFromTransition(
+  transition: ResourcePostureTransition,
+): RunResourceWait | undefined {
+  const rejection = transition.rejection;
+  if (rejection?.kind !== 'capability-unavailable') return undefined;
+  const conflict = rejection.conflict;
+  if (conflict.kind !== 'scoped-wait') return undefined;
+  return {
+    capabilityId: conflict.capabilityId,
+    claimId: conflict.claimId,
+    scope: conflict.scope,
+    blockingOwner: structuredClone(conflict.owner),
+    queuedLeaseId: conflict.queuedLeaseId,
+    position: conflict.position,
+    since: transition.completedAt ?? transition.requestedAt,
+    reason: conflict.reason,
+  };
+}
+
 function historyOf(state: RunResourcePostureState | undefined): ResourcePostureTransition[] {
   if (!state) return [];
   const history = state.recentTransitions ?? [];
@@ -801,6 +828,10 @@ export class RunResourcePostureReconciler {
         ...(dependencyParameters ? { dependencyParameters } : {}),
         // ADR-054: preparation must prove a retained provider is still alive.
         revalidateHealth: true,
+        // A scoped claim held by another slot is contention, not a dead end:
+        // the run takes a durable place in line and the work-graph reports it
+        // as waiting on a resource until the holder releases.
+        queueOnConflict: true,
       });
       if (!result.ok) {
         // Blocking, not partial: the caller's action cannot run, and no other
@@ -1143,12 +1174,18 @@ export class RunResourcePostureReconciler {
      */
     posture: ResourcePosture = context.policy.posture,
   ): RunResourcePostureState {
+    const resourceWait = resourceWaitFromTransition(transition);
     const state: RunResourcePostureState = {
       posture,
       policySource: context.policy.policySource,
       ...(context.policy.gateChoice ? { gateChoice: context.policy.gateChoice } : {}),
       ...(context.run.waitPolicy ? { waitPolicy: context.run.waitPolicy } : {}),
       capabilities: context.states,
+      // Derived from THIS transition, never carried forward. A wait that is
+      // over must not survive on the run: the work-graph reads this field to
+      // decide the node is blocked on a resource, and a stale copy would keep
+      // a running node reported as waiting forever.
+      ...(resourceWait ? { resourceWait } : {}),
       // Nothing in this module can stop a worker; `parked` delegates that to
       // machine parking, which refuses gate-held runs.
       workerRetained: posture !== 'parked',

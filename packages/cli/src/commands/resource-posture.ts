@@ -26,14 +26,17 @@ import {
   type ResourcePostureTransition,
   resourcePostureTransitionFailuresToShow,
   type RunResourcePostureState,
+  type RunResourceWait,
   RUNTIME_CAPABILITY_PROOF_MODES,
   type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityAcquireResult,
+  type RuntimeCapabilityClaimWaiter,
   type RuntimeCapabilityLease,
   RuntimeCapabilityMethods,
   type RuntimeCapabilityProofMode,
   type RuntimeCapabilityReleaseParams,
   type RuntimeCapabilityReleaseResult,
+  type RuntimeCapabilityStatusResult,
   type RuntimeCapabilityStopWarmParams,
   type RuntimeCapabilityStopWarmResult,
   type RuntimePostureApplyParams,
@@ -135,6 +138,44 @@ function transitionLines(transition: ResourcePostureTransition): string[] {
   return lines;
 }
 
+/** The run's own place in a scoped claim's queue. */
+export function resourceWaitLine(wait: RunResourceWait): string {
+  return `waiting  ${wait.capabilityId} is position ${wait.position} for '${wait.claimId}' at ${wait.scope} scope, held by ${wait.blockingOwner.runId} since ${wait.since}`;
+}
+
+/**
+ * Every waiter the Gateway derived for the claims this slot is queued on.
+ *
+ * Fleet-wide by construction: `leases` is slot-filtered, so counting waiters
+ * from it would tell each of three queued runs that it is first in line.
+ */
+export function claimWaiterLines(waiters: readonly RuntimeCapabilityClaimWaiter[]): string[] {
+  if (waiters.length === 0) return [];
+  return [
+    `${bold('Claim queue')}`,
+    ...waiters.map(
+      (waiter) =>
+        `  ${String(waiter.position).padEnd(3)} ${waiter.claimId} (${waiter.scope})  run=${waiter.owner.runId}  slot=${waiter.slotId}  capability=${waiter.capabilityId}  ${dim(
+          `behind ${waiter.blockingOwner.runId} since ${waiter.enqueuedAt}`,
+        )}`,
+    ),
+  ];
+}
+
+/** One slot's capability leases plus the scoped-claim queue they are waiting in. */
+export function formatCapabilityStatus(result: RuntimeCapabilityStatusResult): string {
+  const lines = [
+    `${bold('Runtime capabilities')}  slot=${result.slotId}  project=${result.project}`,
+    '',
+  ];
+  const active = result.leases.filter((lease) => lease.state !== 'released');
+  if (active.length === 0) lines.push(dim('  No live leases on this slot.'));
+  else lines.push(...active.map(leaseLine));
+  const waiters = result.claimWaiters ?? [];
+  if (waiters.length > 0) lines.push('', ...claimWaiterLines(waiters));
+  return lines.join('\n').trimEnd();
+}
+
 export function formatPostureState(
   runId: string,
   /** `undefined` when the result does not carry a slot; `null` when it has none. */
@@ -153,6 +194,9 @@ export function formatPostureState(
     // but could not is reported as failed or unresolved, never as stopped.
     `observed  ${counts.retained} retained · ${counts.warm} warm · ${counts.stopped} stopped · ${counts.failed} failed · ${counts.unresolved} unresolved`,
   ];
+  // Before the transition block: the wait is why the run is standing still, and
+  // it names a holder on ANOTHER slot that nothing else in this output mentions.
+  if (state.resourceWait) lines.push(resourceWaitLine(state.resourceWait));
   if (state.lastTransition) lines.push('', ...transitionLines(state.lastTransition));
   // Failures the Gateway reported for the transition that no capability entry
   // already carries; without this they would be reported nowhere.
@@ -271,7 +315,15 @@ export function formatCapabilityAcquire(
 ): string {
   const header = `${bold('Acquire capability')}  slot=${params.slotId}  capability=${params.capabilityId}  run=${params.ownerRunId}`;
   if (!result.ok) {
-    return [header, red(`refused (${result.conflict.kind}): ${result.conflict.reason}`)].join('\n');
+    const lines = [header, red(`refused (${result.conflict.kind}): ${result.conflict.reason}`)];
+    // A scoped wait is not a dead end: the acquire took a durable place in line,
+    // and saying so is the difference between "try again" and "you are queued".
+    if (result.conflict.kind === 'scoped-wait') {
+      lines.push(
+        `queued  position ${result.conflict.position} for '${result.conflict.claimId}' at ${result.conflict.scope} scope  lease=${result.conflict.queuedLeaseId}`,
+      );
+    }
+    return lines.join('\n');
   }
   const lines = [header, result.idempotent ? 'already held' : 'acquired', leaseLine(result.lease)];
   if (result.dependencyLeases.length > 0) {
@@ -584,6 +636,26 @@ export function registerResourcePostureCommands(resource: Command): void {
   const capability = resource
     .command('capability')
     .description('Single-capability recovery on one slot (ADR-054)');
+
+  capability
+    .command('status')
+    .description('Live capability leases on one slot and the scoped-claim queue behind them')
+    .argument('<slotId>', 'Slot identifier')
+    .action(async (slotId: string, _options: unknown, command: Command) => {
+      const { client, output } = resolveContext(command);
+      const emitter = createEmitter(output, command);
+      try {
+        const result = await withProgress(
+          `Reading capability status for ${slotId}`,
+          () =>
+            client.call<RuntimeCapabilityStatusResult>(RuntimeCapabilityMethods.status, { slotId }),
+          !emitter.machine,
+        );
+        emit(output, emitter, result, () => formatCapabilityStatus(result));
+      } catch (error) {
+        emitter.fail(error);
+      }
+    });
 
   capability
     .command('stop-warm')

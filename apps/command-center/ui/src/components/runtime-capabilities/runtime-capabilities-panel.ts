@@ -19,6 +19,7 @@ import { colors } from '../../styles/theme-tokens.js';
 
 import {
   projectRuntimeCapabilityLeases,
+  runtimeCapabilityQueueView,
   type RuntimeCapabilityRecoveryAction,
   runtimeCapabilityRecoveryActions,
   type RuntimeCapabilityRetentionView,
@@ -425,6 +426,12 @@ export class RuntimeCapabilitiesPanel extends LitElement {
         ? 'Healthy'
         : titleCase(displayedLease?.health.state);
     const queuedOwners = queuedReservations.map((lease) => lease.owner.runId).join(', ');
+    // Fleet-wide, from the Gateway's derived queue: this panel only sees its own
+    // slot's leases, so it cannot count a queue that spans machines.
+    const queueView = runtimeCapabilityQueueView({
+      lease: queuedReservations.at(-1),
+      claimWaiters: this.status?.claimWaiters,
+    });
     // Lease state and provider state are separate facts (ADR-054): a released
     // lease inside its keep-warm window still has a live process behind it.
     const stateLease = providerHolder ?? latest;
@@ -493,6 +500,16 @@ export class RuntimeCapabilitiesPanel extends LitElement {
           <span><b>Provider</b> v${entry.version} · ${entry.provenance.digest.slice(0, 8)}</span>
           ${queuedReservations.length > 0
             ? html`<span class="queue"><b>Queued reservations</b> ${queuedOwners}</span>`
+            : nothing}
+          ${queueView
+            ? html`<span
+                class="queue"
+                data-testid=${`runtime-capability-claim-queue-${entry.id}`}
+                data-claim-id=${queueView.claimId}
+                data-claim-position=${queueView.position ? String(queueView.position) : ''}
+                data-claim-blocking-run=${queueView.blockingRunId}
+                ><b>Waiting on</b> ${queueView.summary}</span
+              >`
             : nothing}
         </div>
         <div class="effects">

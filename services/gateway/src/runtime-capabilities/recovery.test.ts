@@ -310,3 +310,145 @@ test('restart records cleanup failure without claiming the lease was released', 
     false,
   );
 });
+
+/** A provider whose cost is one fleet-scoped exclusive claim on a shared helper. */
+function recorder(): RuntimeCapabilityCatalogEntry {
+  return {
+    ...browser(),
+    id: 'recording',
+    label: 'Recording',
+    cost: {
+      class: 'low',
+      resources: [{ id: 'capture-helper', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+    actions: {
+      acquire: { kind: 'slot-action', actionId: 'recording.acquire' },
+      health: { kind: 'slot-action', actionId: 'recording.health' },
+      release: { kind: 'slot-action', actionId: 'recording.release' },
+    },
+    provenance: {
+      project: 'test-project',
+      providerId: 'recording',
+      version: '1',
+      digest: 'browser-digest',
+    },
+  };
+}
+
+function scopedRegistry(
+  store: RuntimeCapabilityStore,
+  options: { now?: () => Date; leaseId?: () => string } = {},
+) {
+  return new RuntimeCapabilityRegistry({
+    store,
+    catalogForSlot: async (slotId) => ({
+      slotId,
+      project: 'test-project',
+      machine: 'macwork',
+      capabilities: [recorder(), { ...recorder(), id: 'camera', label: 'Camera' }],
+    }),
+    runAction: async () => ({ ok: true }),
+    ...options,
+  });
+}
+
+test('a claim queue keeps its order across a gateway restart', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-queue-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const storePath = path.join(directory, 'leases.json');
+  let clock = Date.parse('2026-09-05T00:00:00.000Z');
+  // Lease ids that sort AGAINST the enqueue order, so only a sort that reads
+  // `enqueuedAt` can put run-b in front of run-c.
+  const ids = ['lease-holder', 'lease-z', 'lease-a'];
+  let nextId = 0;
+  const before = scopedRegistry(new RuntimeCapabilityStore(storePath), {
+    now: () => new Date((clock += 1000)),
+    leaseId: () => ids[nextId++] ?? `lease-${nextId}`,
+  });
+  const wait = (slotId: string, ownerRunId: string) =>
+    before.acquire({
+      slotId,
+      capabilityId: 'recording',
+      ownerRunId,
+      proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+      queueOnConflict: true,
+    });
+  assert.equal(
+    (
+      await before.acquire({
+        slotId: 'slot-a',
+        capabilityId: 'recording',
+        ownerRunId: 'run-a',
+        proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+      })
+    ).ok,
+    true,
+  );
+  assert.equal((await wait('slot-b', 'run-b')).ok, false);
+  assert.equal((await wait('slot-c', 'run-c')).ok, false);
+
+  // A fresh registry over the same file: nothing renumbers, so the derived
+  // order has to come back out of `enqueuedAt` alone.
+  const after = scopedRegistry(new RuntimeCapabilityStore(storePath));
+  await after.recover(['slot-a', 'slot-b', 'slot-c']);
+  const status = await after.status({ slotId: 'slot-b' });
+  assert.deepEqual(
+    status.claimWaiters?.map((waiter) => [waiter.position, waiter.owner.runId]),
+    [
+      [1, 'run-b'],
+      [2, 'run-c'],
+    ],
+  );
+  assert.deepEqual(
+    (await after.status({ slotId: 'slot-c' })).leases.map((lease) => lease.state),
+    ['queued'],
+    'a restored queue slot is still queued, not re-derived as anything else',
+  );
+});
+
+test('a lease written before claim scopes existed stays slot-scoped', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-legacy-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const storePath = path.join(directory, 'leases.json');
+  const store = new RuntimeCapabilityStore(storePath);
+  const registry = scopedRegistry(store);
+  assert.equal(
+    (
+      await registry.acquire({
+        slotId: 'slot-a',
+        capabilityId: 'recording',
+        ownerRunId: 'run-a',
+        proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+      })
+    ).ok,
+    true,
+  );
+  // Strip what a pre-scope Gateway never wrote, then reload from disk.
+  const snapshot = store.snapshot();
+  for (const lease of snapshot.leases) {
+    delete lease.claims;
+    delete lease.machine;
+  }
+  await store.replace(snapshot);
+
+  const reloaded = scopedRegistry(new RuntimeCapabilityStore(storePath));
+  const foreign = await reloaded.acquire({
+    slotId: 'slot-b',
+    capabilityId: 'recording',
+    ownerRunId: 'run-b',
+    proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+  });
+  assert.equal(foreign.ok, true, 'a lease with no recorded claims arbitrates only on its own slot');
+  // On its OWN slot it still arbitrates, read from the catalog exactly as it
+  // was before claims were persisted.
+  const sameSlot = await reloaded.acquire({
+    slotId: 'slot-a',
+    capabilityId: 'camera',
+    ownerRunId: 'run-c',
+    proofRequirement: { capabilityId: 'camera', reason: 'record', mode: 'state' },
+  });
+  assert.equal(sameSlot.ok, false);
+  if (sameSlot.ok) return;
+  assert.equal(sameSlot.conflict.kind, 'lease-conflict');
+  assert.match(sameSlot.conflict.reason, /capture-helper/);
+});

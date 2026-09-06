@@ -9,6 +9,7 @@ import {
   DEFAULT_TASK_DIR,
   FAILURE_CATEGORIES,
   type FlowType,
+  isRuntimeCapabilityClaimScope,
   isValidDomainName,
   type PoolSlotMode,
   PREPARE_PHASES,
@@ -367,7 +368,7 @@ export interface RawProjectJson {
         share_policy?: string;
         cost?: {
           class?: string;
-          resources?: Array<{ id?: string; access?: string; kind?: string }>;
+          resources?: Array<{ id?: string; access?: string; kind?: string; scope?: string }>;
         };
         parameters?: Record<string, unknown>;
         actions?: {
@@ -1426,6 +1427,14 @@ export function validateRuntimeCapabilitiesConfig(
       ) {
         throw new Error(`${projectConfig}: ${field}.cost.resources.${index}.kind is invalid`);
       }
+      // Rejected rather than defaulted: a misspelled scope would silently
+      // narrow a fleet-wide device back to its own slot, which is the failure
+      // scopes exist to prevent.
+      if (resource.scope !== undefined && !isRuntimeCapabilityClaimScope(resource.scope)) {
+        throw new Error(
+          `${projectConfig}: ${field}.cost.resources.${index}.scope must be slot, machine, or fleet`,
+        );
+      }
     }
     if (provider.dependencies !== undefined) {
       if (
@@ -1756,6 +1765,12 @@ export function normalizeRawRuntimeCapabilities(
           ...(resource.kind
             ? { kind: resource.kind as 'port' | 'device' | 'process' | 'service' | 'other' }
             : {}),
+          // Defaulted HERE so every catalog entry carries an explicit scope and
+          // nothing downstream has to re-apply the default. An unknown value is
+          // dropped to `slot` rather than passed through: the schema already
+          // rejects it, and a scope nobody understands must not silently widen
+          // one project's claim across the fleet.
+          scope: isRuntimeCapabilityClaimScope(resource.scope) ? resource.scope : 'slot',
         })),
       },
       ...(provider.parameters ? { parameters: provider.parameters } : {}),

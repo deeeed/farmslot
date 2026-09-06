@@ -63,6 +63,8 @@ async function fixture(
     onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
     storeFactory?: (storePath: string) => RuntimeCapabilityStore;
     isTerminalOwner?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['isTerminalOwner'];
+    /** Machine each slot runs on, so `machine`-scoped claims can be exercised. */
+    machineFor?: (slotId: string) => string | undefined;
     assertTargetAvailable?: ConstructorParameters<
       typeof RuntimeCapabilityRegistry
     >[0]['assertTargetAvailable'];
@@ -83,7 +85,12 @@ async function fixture(
   const store = options.storeFactory?.(storePath) ?? new RuntimeCapabilityStore(storePath);
   const registry = new RuntimeCapabilityRegistry({
     store,
-    catalogForSlot: async (slotId) => ({ slotId, project: 'test-project', capabilities }),
+    catalogForSlot: async (slotId) => ({
+      slotId,
+      project: 'test-project',
+      ...(options.machineFor?.(slotId) ? { machine: options.machineFor(slotId)! } : {}),
+      capabilities,
+    }),
     runAction: async (_slotId, action, parameters, declaredParameters) => {
       const name =
         action.kind === 'slot-action' ? action.actionId : `${action.resourceId}.${action.action}`;
@@ -2123,4 +2130,242 @@ test('the guard is told whether the capability claims a device, never left to re
   assert.equal((await acquire(registry, 'sim', 'run-a')).ok, true);
   assert.equal((await acquire(registry, 'browser', 'run-b')).ok, true);
   assert.deepEqual(seen, [{ capabilityId: 'sim', claimsDevice: true }]);
+});
+
+const SLOT_B = 'slot-b';
+const SLOT_C = 'slot-c';
+
+/** A provider whose only cost is one scoped claim on a shared resource. */
+function claimEntry(
+  id: string,
+  claim: { id: string; access: 'exclusive' | 'shared'; scope?: 'slot' | 'machine' | 'fleet' },
+): RuntimeCapabilityCatalogEntry {
+  const base = entry(id);
+  return {
+    ...base,
+    cost: { class: 'low', resources: [{ kind: 'device', ...claim }] },
+  };
+}
+
+function acquireOn(
+  registry: RuntimeCapabilityRegistry,
+  slotId: string,
+  capabilityId: string,
+  ownerRunId: string,
+  extra: { queueOnConflict?: boolean } = {},
+) {
+  return registry.acquire({
+    slotId,
+    capabilityId,
+    ownerRunId,
+    proofRequirement: { capabilityId, reason: `prove ${capabilityId}`, mode: 'state' },
+    ...extra,
+  });
+}
+
+test('a fleet-scoped exclusive claim conflicts across slots and a slot-scoped one does not', async (t) => {
+  const { registry } = await fixture(t, [
+    claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' }),
+    claimEntry('local-only', { id: 'scratch-port', access: 'exclusive', scope: 'slot' }),
+  ]);
+
+  const held = await acquireOn(registry, SLOT, 'recording', 'run-a');
+  assert.equal(held.ok, true);
+  if (!held.ok) return;
+  assert.deepEqual(held.lease.claims, [
+    { id: 'capture-helper', access: 'exclusive', scope: 'fleet' },
+  ]);
+
+  const foreign = await acquireOn(registry, SLOT_B, 'recording', 'run-b');
+  assert.equal(foreign.ok, false);
+  if (foreign.ok) return;
+  assert.equal(foreign.conflict.kind, 'lease-conflict');
+  assert.match(foreign.conflict.reason, /claimed at fleet scope/);
+  assert.match(foreign.conflict.reason, /slot-a/);
+  assert.match(foreign.conflict.reason, /run-a/);
+
+  const slotScoped = await acquireOn(registry, SLOT, 'local-only', 'run-c');
+  assert.equal(slotScoped.ok, true);
+  const elsewhere = await acquireOn(registry, SLOT_B, 'local-only', 'run-d');
+  assert.equal(elsewhere.ok, true, 'a slot-scoped claim never reaches another slot');
+});
+
+test('a machine-scoped claim conflicts on its own machine only', async (t) => {
+  const { registry } = await fixture(
+    t,
+    [claimEntry('android', { id: 'usb-hub', access: 'exclusive', scope: 'machine' })],
+    { machineFor: (slotId) => (slotId === SLOT_C ? 'other-mac' : 'macwork') },
+  );
+
+  assert.equal((await acquireOn(registry, SLOT, 'android', 'run-a')).ok, true);
+  const sameMachine = await acquireOn(registry, SLOT_B, 'android', 'run-b');
+  assert.equal(sameMachine.ok, false);
+  if (sameMachine.ok) return;
+  assert.match(sameMachine.conflict.reason, /claimed at machine scope/);
+  assert.equal(
+    (await acquireOn(registry, SLOT_C, 'android', 'run-c')).ok,
+    true,
+    'a device name identifies a device on one machine only',
+  );
+});
+
+test('queueOnConflict takes a FIFO place in line and reports the blocking owner', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const { registry } = await fixture(
+    t,
+    [claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' })],
+    { now: () => new Date((clock += 1000)) },
+  );
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
+
+  const first = await acquireOn(registry, SLOT_B, 'recording', 'run-b', { queueOnConflict: true });
+  assert.equal(first.ok, false);
+  if (first.ok) return;
+  assert.equal(first.conflict.kind, 'scoped-wait');
+  if (first.conflict.kind !== 'scoped-wait') return;
+  assert.equal(first.conflict.claimId, 'capture-helper');
+  assert.equal(first.conflict.scope, 'fleet');
+  assert.equal(first.conflict.owner.runId, 'run-a');
+  assert.equal(first.conflict.position, 1);
+
+  const second = await acquireOn(registry, SLOT_C, 'recording', 'run-c', { queueOnConflict: true });
+  assert.equal(second.ok, false);
+  if (second.ok) return;
+  assert.equal(second.conflict.kind, 'scoped-wait');
+  if (second.conflict.kind !== 'scoped-wait') return;
+  assert.equal(second.conflict.position, 2);
+
+  // Asking again keeps the original place rather than going to the back.
+  const repeat = await acquireOn(registry, SLOT_B, 'recording', 'run-b', { queueOnConflict: true });
+  assert.equal(repeat.ok, false);
+  if (repeat.ok) return;
+  assert.equal(repeat.conflict.kind, 'scoped-wait');
+  if (repeat.conflict.kind !== 'scoped-wait') return;
+  assert.equal(repeat.conflict.position, 1);
+  assert.equal(repeat.conflict.queuedLeaseId, first.conflict.queuedLeaseId);
+
+  const status = await registry.status({ slotId: SLOT_C });
+  assert.deepEqual(
+    status.claimWaiters?.map((waiter) => [waiter.position, waiter.owner.runId]),
+    [
+      [1, 'run-b'],
+      [2, 'run-c'],
+    ],
+  );
+  assert.equal(status.claimWaiters?.[1]?.blockingOwner.runId, 'run-a');
+});
+
+test('releasing the holder drains exactly the head waiter through to acquired', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const events: RuntimeCapabilityLifecycleEvent[] = [];
+  const { registry } = await fixture(
+    t,
+    [claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' })],
+    { now: () => new Date((clock += 1000)), onEvent: (event) => events.push(event) },
+  );
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
+  const queuedB = await acquireOn(registry, SLOT_B, 'recording', 'run-b', {
+    queueOnConflict: true,
+  });
+  assert.equal(
+    (await acquireOn(registry, SLOT_C, 'recording', 'run-c', { queueOnConflict: true })).ok,
+    false,
+  );
+  assert.equal(queuedB.ok, false);
+  if (queuedB.ok) return;
+  assert.equal(queuedB.conflict.kind, 'scoped-wait');
+  if (queuedB.conflict.kind !== 'scoped-wait') return;
+
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  await registry.settleQueuedResumes();
+
+  const drained = (await registry.status({ slotId: SLOT_B })).leases;
+  assert.equal(drained[0]?.id, queuedB.conflict.queuedLeaseId);
+  assert.equal(drained[0]?.state, 'acquired');
+  assert.equal(drained[0]?.wait, undefined);
+
+  const stillQueued = (await registry.status({ slotId: SLOT_C })).leases;
+  assert.equal(stillQueued[0]?.state, 'queued', 'only the head waiter is promoted');
+
+  const forB = events.filter((event) => event.owner?.runId === 'run-b').map((event) => event.kind);
+  assert.deepEqual(forB, ['planned', 'queued', 'acquiring', 'acquiring', 'acquired']);
+  const releasedAt = events.findIndex(
+    (event) => event.kind === 'released' && event.owner?.runId === 'run-a',
+  );
+  const promotedAt = events.findIndex(
+    (event) => event.kind === 'acquiring' && event.owner?.runId === 'run-b',
+  );
+  assert.ok(releasedAt >= 0 && releasedAt < promotedAt, 'the release precedes the promotion');
+});
+
+test('the drain skips a waiter whose owner already had terminal cleanup', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const events: RuntimeCapabilityLifecycleEvent[] = [];
+  const terminal = new Set<string>();
+  const { registry } = await fixture(
+    t,
+    [claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' })],
+    {
+      now: () => new Date((clock += 1000)),
+      onEvent: (event) => events.push(event),
+      isTerminalOwner: (ownerRunId) => terminal.has(ownerRunId),
+    },
+  );
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
+  const doomed = await acquireOn(registry, SLOT_B, 'recording', 'run-b', { queueOnConflict: true });
+  const next = await acquireOn(registry, SLOT_C, 'recording', 'run-c', { queueOnConflict: true });
+  assert.equal(doomed.ok, false);
+  assert.equal(next.ok, false);
+  if (doomed.ok || next.ok) return;
+  assert.equal(doomed.conflict.kind, 'scoped-wait');
+  assert.equal(next.conflict.kind, 'scoped-wait');
+  if (doomed.conflict.kind !== 'scoped-wait' || next.conflict.kind !== 'scoped-wait') return;
+  const doomedLeaseId = doomed.conflict.queuedLeaseId;
+  const nextLeaseId = next.conflict.queuedLeaseId;
+
+  // run-b reaches a terminal status while it waits, with its queue place still
+  // on the record. Handing it the claim would leak the provider: nothing is
+  // left to release it.
+  terminal.add('run-b');
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  await registry.settleQueuedResumes();
+
+  const droppedLease = (await registry.status({ slotId: SLOT_B })).leases.find(
+    (lease) => lease.id === doomedLeaseId,
+  );
+  assert.equal(droppedLease?.state, 'released');
+  const served = (await registry.status({ slotId: SLOT_C })).leases.find(
+    (lease) => lease.id === nextLeaseId,
+  );
+  assert.equal(served?.state, 'acquired', 'the next live waiter is served instead');
+  assert.ok(events.some((event) => event.kind === 'released' && event.leaseId === doomedLeaseId));
+});
+
+test('releasing a whole slot does not promote a waiter on that same slot', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const { registry } = await fixture(
+    t,
+    [
+      claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' }),
+      claimEntry('camera', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' }),
+    ],
+    { now: () => new Date((clock += 1000)) },
+  );
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
+  // A second run on the SAME slot queues behind the first, then the slot is torn down.
+  const queued = await acquireOn(registry, SLOT, 'camera', 'run-b', { queueOnConflict: true });
+  assert.equal(queued.ok, false);
+  if (queued.ok) return;
+  assert.equal(queued.conflict.kind, 'scoped-wait');
+  if (queued.conflict.kind !== 'scoped-wait') return;
+
+  await registry.releaseSlot(SLOT);
+  await registry.settleQueuedResumes();
+
+  const leases = (await registry.status({ slotId: SLOT })).leases;
+  assert.deepEqual(
+    leases.map((lease) => lease.state),
+    ['released', 'released'],
+    'a slot teardown releases its waiter instead of handing it the claim it just freed',
+  );
 });

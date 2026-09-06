@@ -152,6 +152,10 @@ async function catalogForSlot(slotId: string): Promise<RuntimeCapabilityCatalogC
   return {
     slotId,
     project: slotVars.projectName,
+    // Stamped onto every lease this slot takes, so a `machine`-scoped claim can
+    // be arbitrated later from the lease snapshot alone rather than by
+    // re-reading a foreign slot's config mid-acquire.
+    machine: slotVars.machine,
     capabilities,
     ...(configured?.posture ? { posture: structuredClone(configured.posture) } : {}),
   };
@@ -212,11 +216,16 @@ async function runProviderAction(
 /**
  * Refuse a device target that another slot's live lease is already driving.
  *
- * Capability leases are slot-scoped, so nothing else stops two runs booting one
- * simulator once a target can name a device outside the slot's own config.
- * Fleet-scoped arbitration with a wait queue is the separate
- * `fleet-scoped-device-claims` item; until it lands this refuses rather than
- * queues.
+ * This is device IDENTITY, not arbitration: it refuses a second boot of one
+ * physical device whatever the capability catalog says, because two `simctl
+ * boot` calls on one udid is a mechanical fault, not a scheduling decision.
+ *
+ * Scoped resource claims are the arbitration, and they run FIRST when the
+ * acquire asked to queue (`queueOnConflict`): the two runs are then contending
+ * for one declared resource and the second takes a place in line instead of
+ * being told no. With no queue requested this still refuses, unchanged — the
+ * two never disagree about the same acquire, because only one of them is
+ * consulted for it.
  */
 /** The config reads the guard needs, injectable so the rule can be tested. */
 export interface DeviceTargetGuardDeps {

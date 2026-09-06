@@ -1802,3 +1802,59 @@ test('a re-target reaches a device held as another capability dependency', async
     true,
   );
 });
+
+test('a fleet-scoped claim held elsewhere blocks with a typed wait the run keeps', async (t) => {
+  const recording = entry('recording', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'capture-helper', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+  });
+  const { reconciler, registry, runs } = await harness(t, { capabilities: [recording] });
+  // The holder is on ANOTHER slot, which slot-scoped arbitration would ignore.
+  const holder = await registry.acquire({
+    slotId: 'slot-elsewhere',
+    capabilityId: 'recording',
+    ownerRunId: 'other-run',
+    proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+  });
+  assert.equal(holder.ok, true);
+
+  const blocked = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [{ capabilityId: 'recording', reason: 'validation', mode: 'state' }],
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.transition.outcome, 'rejected');
+  const rejection = blocked.transition.rejection;
+  assert.equal(rejection?.kind, 'capability-unavailable');
+  if (rejection?.kind !== 'capability-unavailable') return;
+  assert.equal(rejection.conflict.kind, 'scoped-wait');
+  if (rejection.conflict.kind !== 'scoped-wait') return;
+  assert.equal(rejection.conflict.claimId, 'capture-helper');
+  assert.equal(rejection.conflict.owner.runId, 'other-run');
+  assert.equal(rejection.conflict.position, 1);
+
+  const wait = blocked.status.resourceWait;
+  assert.equal(wait?.capabilityId, 'recording');
+  assert.equal(wait?.claimId, 'capture-helper');
+  assert.equal(wait?.scope, 'fleet');
+  assert.equal(wait?.blockingOwner.runId, 'other-run');
+  assert.equal(wait?.position, 1);
+  assert.equal(wait?.queuedLeaseId, rejection.conflict.queuedLeaseId);
+  assert.equal(runs.get('run-a')?.resourcePosture?.resourceWait?.claimId, 'capture-helper');
+
+  // Once the holder is done the wait must not linger: a node reading this field
+  // would otherwise report a running run as blocked forever.
+  await registry.release({ slotId: 'slot-elsewhere', ownerRunId: 'other-run', keepWarm: false });
+  await registry.settleQueuedResumes();
+  const served = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [{ capabilityId: 'recording', reason: 'validation', mode: 'state' }],
+  });
+  assert.equal(served.ok, true);
+  assert.equal(served.status.resourceWait, undefined);
+  assert.equal(runs.get('run-a')?.resourcePosture?.resourceWait, undefined);
+});

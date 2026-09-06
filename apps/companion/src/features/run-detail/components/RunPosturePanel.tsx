@@ -21,6 +21,7 @@ import {
   posturePolicyLine,
   postureTransitionLine,
   rejectionMessage,
+  resourceWaitLine,
   type RunPostureStatusState,
   summarizeRunPosture,
 } from '../../../lib/run-resource-posture';
@@ -149,6 +150,11 @@ export function RunPosturePanel({
       <Text style={styles.muted} testID="companion-run-posture-worker">
         worker {summary.workerRetained ? 'retained' : 'stopped'}
       </Text>
+      {summary.resourceWait ? (
+        <Text style={styles.mono} testID="companion-run-posture-resource-wait">
+          {resourceWaitLine(summary.resourceWait)}
+        </Text>
+      ) : null}
       <GateParkLines view={gatePark} />
       {transition ? (
         <Text style={styles.muted} testID="companion-run-posture-transition">

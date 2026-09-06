@@ -1806,3 +1806,86 @@ test('a targeted tick recomputes a graph stranded in needs-attention', async () 
   );
   assert.equal(stranded.graph.status, 'waiting');
 });
+
+test('a run queued behind a scoped resource claim reports the node as waiting on a resource', async () => {
+  const { backlog, queue, runs, workGraph } = await freshStores();
+  const created = await createReadyBacklogItem(backlog, 'Waiting on a shared device');
+  const graph = await workGraph.createWorkGraph(
+    { project: 'farmslot-farm', title: 'Resource wait graph' },
+    { kind: 'system' },
+  );
+  const graphId = graph.graph.graph.id;
+  const nodeId = 'wn_resource_wait';
+  await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
+  await workGraph.activateWorkGraph({ graphId });
+  const queued = queue
+    .getQueueSnapshot()
+    .find((item) => item.workGraphId === graphId && item.workNodeId === nodeId);
+  assert.ok(queued);
+  const run = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    workGraphId: graphId,
+    workNodeId: nodeId,
+  });
+  await backlog.markBacklogRunStarted(queued, run);
+  queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
+
+  runs.updateRun(run.id, {
+    status: 'monitoring',
+    resourcePosture: {
+      posture: 'active',
+      policySource: 'framework-default',
+      capabilities: [],
+      workerRetained: true,
+      resourceWait: {
+        capabilityId: 'recording',
+        claimId: 'capture-helper',
+        scope: 'fleet',
+        blockingOwner: { runId: 'run-holder' },
+        queuedLeaseId: 'cap-queued',
+        position: 2,
+        since: new Date().toISOString(),
+        reason: "Resource 'capture-helper' is claimed at fleet scope",
+      },
+      updatedAt: new Date().toISOString(),
+    },
+  });
+
+  const waiting = await workGraph.schedulerTick({ graphId });
+  const blocked = waiting.graphs[0]?.nodes.find((candidate) => candidate.id === nodeId);
+  assert.equal(blocked?.status, 'waiting');
+  assert.equal(blocked?.waitingOn[0]?.kind, 'resource');
+  assert.match(blocked?.waitingOn[0]?.detail ?? '', /capture-helper/);
+  assert.match(blocked?.waitingOn[0]?.detail ?? '', /run-holder/);
+  // A non-empty reason is what keeps this node clear of the stuck-shape
+  // reclaim: a waiting node with an empty `waitingOn` is reset to `ready` and
+  // re-dispatched, which would abandon the place this run holds in the queue.
+  assert.equal(blocked?.latestRunId, run.id);
+  assert.ok(
+    !queue
+      .getQueueSnapshot()
+      .some((item) => item.workGraphId === graphId && item.workNodeId === nodeId),
+    'a node waiting on a resource is not re-enqueued',
+  );
+
+  // Granted: the wait must not survive on the node.
+  runs.updateRun(run.id, {
+    resourcePosture: {
+      posture: 'active',
+      policySource: 'framework-default',
+      capabilities: [],
+      workerRetained: true,
+      updatedAt: new Date().toISOString(),
+    },
+  });
+  const served = await workGraph.schedulerTick({ graphId });
+  const running = served.graphs[0]?.nodes.find((candidate) => candidate.id === nodeId);
+  assert.equal(running?.status, 'running');
+  assert.deepEqual(running?.waitingOn, []);
+
+  await queue.persistQueueNow();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+});

@@ -179,8 +179,14 @@ item and depends on this one.
 - **Re-target validation to another device or platform.** Device-identity parameters on device
   capability providers; a rerun accepts a target override and reacquires.
   `.backlog/specs/farmslot-farm/2026-09-04-validation-device-retarget.md`
-- **Fleet-scoped device claims with a wait queue.** Today leases are slot-scoped and exclusive
-  conflicts fail fast. Add claim scope, queue on conflict, drain on release, signal availability.
+- **Fleet-scoped device claims with a wait queue.** _Shipped._ A resource claim declares a
+  `scope` (`slot`, the unchanged default, `machine`, or `fleet`); conflict checks span every slot
+  the scope reaches, judged from the claims and machine each lease persists at acquire time. An
+  acquire that passes `queueOnConflict` takes a durable FIFO place in line and is refused with a
+  typed `scoped-wait`; releasing the holder drains the head waiter and signals it with the existing
+  lifecycle event. The device-identity guard is unrelated and unchanged: it refuses a second boot of
+  one physical device whatever the catalog says, and yields only to an acquire that asked to queue,
+  which is the same contention serialized rather than denied.
   `.backlog/specs/farmslot-farm/2026-09-04-fleet-scoped-device-claims.md`
 
 ## Consequences

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06T22:48:20.009Z",
+  "host": "macwork",
+  "scenario": "fleet-device-contention",
+  "runner": "scripted",
+  "capabilityId": "recording",
+  "claimId": "capture-helper",
+  "hostLoad": {
+    "cores": 16,
+    "load1": 176.63671875,
+    "perCore": 11.04
+  },
+  "rerunCommand": "FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 FARMSLOT_GATEWAY=ws://localhost:7801 node scripts/runner-validation/run.mjs --scenario fleet-device-contention --slot macwork-ff-1",
+  "holderSlotId": "macwork-ff-1",
+  "waiterSlotId": "macwork-ff-3",
+  "holderRunId": "65db3cf5-cddf-4249-a848-24613ebc017d",
+  "waiterRunId": "7eb92d08-2e30-474d-92ae-fa00a07c4827",
+  "nodes": {
+    "holderAcquired": null,
+    "waiterQueued": null,
+    "queueVisible": null,
+    "runResourceWait": null,
+    "drained": null,
+    "waiterReleased": null,
+    "noLeftoverLeases": null
+  },
+  "blockedByAdmission": true,
+  "notCoveredLive": [
+    "work-graph waitingOn.kind=resource projection (needs a graph-node run; unit-covered in services/gateway/src/work-graph/store.test.ts)",
+    "android-device at fleet scope (no pool slot configures an android-device resource, so the provider is unavailable fleet-wide)"
+  ],
+  "pass": false,
+  "error": "holder acquire refused (host-pressure): Load average 172.86 is above 1.5x 16 cores.",
+  "declaredClaim": {
+    "id": "capture-helper",
+    "access": "exclusive",
+    "kind": "process",
+    "scope": "fleet"
+  },
+  "hostLoadAtFailure": {
+    "cores": 16,
+    "load1": 180.33056640625,
+    "perCore": 11.27
+  }
+}

@@ -9,6 +9,7 @@
 import type { MachinePauseEligibilityDetails } from './runs.js';
 import type {
   RuntimeCapabilityAcquireConflict,
+  RuntimeCapabilityClaimScope,
   RuntimeCapabilityHealthState,
   RuntimeCapabilityLeaseOwner,
   RuntimeCapabilityLeaseState,
@@ -212,6 +213,15 @@ export interface RunResourcePostureState {
   gateChoiceSuppressedForGeneration?: number;
   waitPolicy?: ResourcePostureWaitPolicy;
   capabilities: ResourcePostureCapabilityState[];
+  /**
+   * The scoped resource claim this run is queued behind, while it is queued.
+   *
+   * Derived from the last transition's rejection rather than written
+   * separately, so it cannot outlive the wait it describes. A later transition
+   * that is not a scoped wait clears it. The work-graph reads this to report
+   * the node as `waitingOn.kind: 'resource'`.
+   */
+  resourceWait?: RunResourceWait;
   /** ADR-038: no posture resolved here stops a gate-held worker. */
   workerRetained: boolean;
   lastTransition?: ResourcePostureTransition;
@@ -223,6 +233,26 @@ export interface RunResourcePostureState {
    */
   recentTransitions?: ResourcePostureTransition[];
   updatedAt: string;
+}
+
+/**
+ * A run's durable place in a scoped claim's queue.
+ *
+ * `position` is a snapshot from the moment the acquire was refused, not a live
+ * counter: nothing renumbers a queue, and re-deriving it here would need the
+ * whole fleet's leases on every read of a run.
+ */
+export interface RunResourceWait {
+  capabilityId: string;
+  claimId: string;
+  scope: RuntimeCapabilityClaimScope;
+  /** The run holding the claim, which is usually on another slot. */
+  blockingOwner: RuntimeCapabilityLeaseOwner;
+  /** The queued lease that holds this run's place in line. */
+  queuedLeaseId: string;
+  position: number;
+  since: string;
+  reason: string;
 }
 
 /** How many transitions a run keeps for operation-id replay. */

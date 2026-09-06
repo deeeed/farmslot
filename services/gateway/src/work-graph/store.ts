@@ -10,6 +10,7 @@ import {
   isTerminalRunStatus,
   normalizeRunTags,
   type Run,
+  type WaitingReason,
   type WorkEdge,
   type WorkGraph,
   type WorkGraphActionLedgerEntry,
@@ -760,6 +761,23 @@ function nodeHasOperatorCancelledRun(node: WorkNode, runs: readonly Run[]): bool
  * without any work having started, which is not the same thing as a node whose
  * dependency regressed mid-flight.
  */
+/**
+ * The waiting reason for a run queued behind a scoped resource claim, if any.
+ *
+ * One derivation, used by both reconciliation passes. A terminal run's wait is
+ * over whatever the last posture transition recorded, so it never produces a
+ * reason: a finished node must not read as blocked.
+ */
+function resourceWaitReason(run: Run | undefined): WaitingReason | undefined {
+  if (!run || isTerminalRunStatus(run.status)) return undefined;
+  const wait = run.resourcePosture?.resourceWait;
+  if (!wait) return undefined;
+  return {
+    kind: 'resource',
+    detail: `${wait.capabilityId} is queued behind '${wait.claimId}' held by ${wait.blockingOwner.runId} (position ${wait.position})`,
+  };
+}
+
 function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boolean {
   if (!isBacklogNode(node)) return false;
   const backlog = node.backlogItemId ? getBacklogItemSnapshot(node.backlogItemId) : null;
@@ -792,6 +810,12 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boo
     node.latestRunId = latestRun.id;
     node.currentFamilyId = latestRun.familyId;
     if (!latestRun.parentRunId) node.currentRootRunId = latestRun.id;
+    // Re-derived from the run on every sync rather than accumulated. A resource
+    // wait that has been served must not linger on the node, and no other
+    // branch below clears `waitingOn`, so it is dropped here first and only put
+    // back while the run really is queued behind a claim.
+    node.waitingOn = node.waitingOn.filter((reason) => reason.kind !== 'resource');
+    const resourceWait = resourceWaitReason(latestRun);
     if (isOperatorCancelledRun(latestRun)) {
       node.status = 'needs-attention';
       node.waitingOn = [
@@ -804,7 +828,14 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boo
       node.status = 'gated';
     else if (latestRun.status === 'done') node.status = 'succeeded';
     else if (latestRun.status === 'failed') node.status = 'failed';
-    else node.status = 'running';
+    else if (resourceWait) {
+      // The run holds a durable place in a scoped claim's queue. Reported as
+      // `waiting` with a non-empty reason on purpose: an empty `waitingOn` is
+      // the stuck shape the reclaim below resets to `ready`, and this node is
+      // not stuck — it is in line.
+      node.status = 'waiting';
+      node.waitingOn = [resourceWait];
+    } else node.status = 'running';
     node.updatedAt = new Date().toISOString();
     return false;
   }
@@ -1304,6 +1335,17 @@ export async function schedulerTick(
               detail: OPERATOR_CANCEL_WAIT_DETAIL,
             },
           ];
+          node.updatedAt = now;
+          continue;
+        }
+        // Held ahead of the edge pass, exactly like an operator cancellation.
+        // `computeWaiting` rewrites `waitingOn` from inbound edges alone, so
+        // without this the resource reason set above is erased on the same tick
+        // that wrote it and the node reads as an ordinary running node.
+        const resourceWait = resourceWaitReason(latestRun);
+        if (resourceWait) {
+          node.status = 'waiting';
+          node.waitingOn = [resourceWait];
           node.updatedAt = now;
           continue;
         }

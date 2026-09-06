@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat(resources): `farmslot resource capability status <slotId>` lists a slot's live leases and the fleet-wide queue behind the scoped claims they wait on, with each waiter's position, run, slot, and the run holding the claim. `resource posture status` names the claim a run is queued behind, and a queued `capability acquire` reports the place in line it took rather than only that it was refused.
 - feat(resources): add `farmslot resource posture status|preview|apply <runId>` and `farmslot resource capability acquire|release|stop-warm` for the ADR-054 run resource posture. Human output shows the Gateway's desired disposition beside the observed provider state per capability, with the warm deadline, the winning policy source, and the transition outcome.
 - feat(resources): the resource commands report only what the Gateway observed. A provider is called stopped only when a stop was observed; a failed cleanup, a deferred stop, a retained lease, or a still-running provider is named as such, and `release --stop` reports the flag that was requested separately from what the result proves.
 - feat(resources): `--json` emits one envelope, with the Gateway result at `data` on exit 0 and at `error.details` on exit 1. Any outcome where the request did not take effect exits 1, so a refusal is never mistaken for a change.
