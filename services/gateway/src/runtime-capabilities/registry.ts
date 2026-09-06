@@ -19,7 +19,10 @@ import type {
 } from '@farmslot/protocol';
 
 import {
+  hydrateFenceEntries,
+  retainFreshFenceEntries,
   RUNTIME_CAPABILITY_EVENT_LIMIT,
+  type RuntimeCapabilityFenceEntry,
   RuntimeCapabilityStore,
   type RuntimeCapabilityStoreSnapshot,
 } from './store.js';
@@ -65,6 +68,17 @@ export interface RuntimeCapabilityRegistryOptions {
   ) => Promise<RuntimeCapabilityAcquireConflict | null>;
   /** Family of a run, used when a caller omits the optional `ownerFamilyId`. */
   familyForRun?: (ownerRunId: string) => string | undefined;
+  /**
+   * Whether the RUN STORE says this owner is already terminal.
+   *
+   * The durable half of the fence. The persisted owner list is a fast path that
+   * survives restart but is bounded, so an owner evicted past that bound still
+   * has to be refused — and the run store is what actually knows, from the run's
+   * terminal status or its persisted terminal posture. Left unwired only by
+   * tests and validation gateways that have no run store.
+   */
+  isTerminalOwner?: (ownerRunId: string) => boolean;
+
   onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
   now?: () => Date;
   leaseId?: () => string;
@@ -121,6 +135,11 @@ function parameterValidator(schema: Record<string, unknown>): ValidateFunction {
   return validator;
 }
 
+/** The fence map as the store's entry list. */
+function fenceEntries(fenced: ReadonlyMap<string, string>): RuntimeCapabilityFenceEntry[] {
+  return [...fenced].map(([id, at]) => ({ id, at }));
+}
+
 export class RuntimeCapabilityRegistry {
   private readonly now: () => Date;
   private readonly leaseId: () => string;
@@ -129,9 +148,9 @@ export class RuntimeCapabilityRegistry {
    * Runs whose terminal cleanup has already run. A lease must never be handed to
    * one of them: the run is gone, so nothing would ever release it again.
    */
-  private terminatedOwners = new Set<string>();
+  private terminatedOwners = new Map<string, string>();
   /** Families whose terminal cleanup has run; siblings must not reacquire. */
-  private terminatedFamilies = new Set<string>();
+  private terminatedFamilies = new Map<string, string>();
   private loaded = false;
   private loadPromise: Promise<void> | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
@@ -144,7 +163,25 @@ export class RuntimeCapabilityRegistry {
   async initialize(): Promise<void> {
     if (this.loaded) return;
     if (!this.loadPromise) {
-      this.loadPromise = this.options.store.load().then(() => {
+      this.loadPromise = this.options.store.load().then((snapshot) => {
+        // Rebuild the fence from durable state before anything can acquire. A
+        // registry that came up empty here handed a terminal run a provider
+        // again after every restart, and nothing would have released it.
+        const loadedAt = this.timestamp();
+        for (const entry of hydrateFenceEntries(
+          snapshot.terminalOwnerEntries,
+          snapshot.terminalOwners,
+          loadedAt,
+        )) {
+          this.terminatedOwners.set(entry.id, entry.at);
+        }
+        for (const entry of hydrateFenceEntries(
+          snapshot.terminalFamilyEntries,
+          snapshot.terminalFamilies,
+          loadedAt,
+        )) {
+          this.terminatedFamilies.set(entry.id, entry.at);
+        }
         this.loaded = true;
       });
     }
@@ -182,9 +219,40 @@ export class RuntimeCapabilityRegistry {
     this.pendingEvents.push(record);
   }
 
+  /**
+   * Retire expired fence entries from the IN-MEMORY maps on the same age rule
+   * the store's compaction applies to disk.
+   *
+   * Compaction alone left the two disagreeing: an entry past the TTL vanished
+   * from the file while `acquire` kept refusing on the copy this process still
+   * held, so the fence only actually expired at the next restart. Run on the
+   * write path, so memory and disk retire together.
+   */
+  private pruneExpiredFences(): void {
+    const nowMs = this.now().getTime();
+    for (const fenced of [this.terminatedOwners, this.terminatedFamilies]) {
+      const fresh = new Set(
+        retainFreshFenceEntries(fenceEntries(fenced), nowMs).map((entry) => entry.id),
+      );
+      for (const id of fenced.keys()) {
+        if (!fresh.has(id)) fenced.delete(id);
+      }
+    }
+  }
+
   private async persist(snapshot: RuntimeCapabilityStoreSnapshot): Promise<void> {
     const events = this.pendingEvents;
     this.pendingEvents = [];
+    this.pruneExpiredFences();
+    // Stamped on every write, so the terminal fence lands in the SAME replace as
+    // the release that armed it. A separate write would leave a window where the
+    // providers were stopped but the fence was not durable yet.
+    snapshot.terminalOwnerEntries = fenceEntries(this.terminatedOwners);
+    snapshot.terminalFamilyEntries = fenceEntries(this.terminatedFamilies);
+    // The legacy count-bounded keys were folded into the entry lists at load;
+    // rewriting them would resurrect the bound the entries replaced.
+    snapshot.terminalOwners = undefined;
+    snapshot.terminalFamilies = undefined;
     await this.options.store.replace(snapshot);
     for (const event of events) this.options.onEvent?.(event);
   }
@@ -302,10 +370,8 @@ export class RuntimeCapabilityRegistry {
       acquiringFamilyId === params.ownerFamilyId
         ? params
         : { ...params, ...(acquiringFamilyId ? { ownerFamilyId: acquiringFamilyId } : {}) };
-    if (
-      this.terminatedOwners.has(params.ownerRunId) ||
-      (acquiringFamilyId !== undefined && this.terminatedFamilies.has(acquiringFamilyId))
-    ) {
+    const fenced = this.fenceVerdict(params.ownerRunId, acquiringFamilyId);
+    if (fenced) {
       // Fail closed. Handing a provider to a run that has already been torn down
       // leaks it: nothing will release it again.
       return {
@@ -313,7 +379,10 @@ export class RuntimeCapabilityRegistry {
         conflict: {
           kind: 'invalid-request',
           capabilityId: entry.id,
-          reason: `Run '${params.ownerRunId}' has already had its terminal capability cleanup; it cannot acquire '${entry.id}'`,
+          reason:
+            fenced.scope === 'owner'
+              ? `Run '${fenced.id}' has already had its terminal capability cleanup; it cannot acquire '${entry.id}'`
+              : `Family '${fenced.id}' has already had its terminal capability cleanup; run '${params.ownerRunId}' cannot acquire '${entry.id}'`,
         },
       };
     }
@@ -1102,10 +1171,7 @@ export class RuntimeCapabilityRegistry {
     // whole because the whole family is what this cleans, so a sibling cannot
     // reacquire on the way out.
     this.fenceOwner(ownerRunId);
-    if (familyId !== undefined) this.terminatedFamilies.add(familyId);
-    while (this.terminatedFamilies.size > 1_000) {
-      this.terminatedFamilies.delete(this.terminatedFamilies.values().next().value!);
-    }
+    if (familyId !== undefined) this.fenceFamily(familyId);
     const result = await this.releaseSelected(
       slotId,
       (lease) =>
@@ -1130,11 +1196,64 @@ export class RuntimeCapabilityRegistry {
     return result;
   }
 
+  // No count bound on either: entries retire by AGE in the store. A count bound
+  // evicted the oldest owners, which are exactly the ones whose run records
+  // archiving has already deleted, so the run-store fallback meant to cover
+  // eviction was blind precisely where eviction bit.
   private fenceOwner(ownerRunId: string): void {
-    this.terminatedOwners.add(ownerRunId);
-    while (this.terminatedOwners.size > 1_000) {
-      this.terminatedOwners.delete(this.terminatedOwners.values().next().value!);
+    if (!this.terminatedOwners.has(ownerRunId)) {
+      this.terminatedOwners.set(ownerRunId, this.timestamp());
     }
+  }
+
+  private fenceFamily(familyId: string): void {
+    if (!this.terminatedFamilies.has(familyId)) {
+      this.terminatedFamilies.set(familyId, this.timestamp());
+    }
+  }
+
+  /**
+   * Whether this owner has already had its terminal capability cleanup.
+   *
+   * Two sources, and the second is the one that makes the fence hold. The sets
+   * are a bounded fast path — they survive restart now because `persist` writes
+   * them, but they still evict — so an owner that fell out of them is checked
+   * against the run store, which knows from terminal status and persisted
+   * posture and never forgets.
+   */
+  private isFencedOwner(ownerRunId: string, familyId?: string): boolean {
+    return this.fenceVerdict(ownerRunId, familyId) !== null;
+  }
+
+  /**
+   * Which half of the fence refuses this acquire, or null when neither does.
+   *
+   * Returned rather than collapsed to a boolean so the refusal can say what is
+   * actually true. The message used to claim the requesting run had already had
+   * its own terminal cleanup even when it was a live sibling refused by the
+   * family fence, which sent operators looking for a cleanup that never
+   * happened.
+   */
+  private fenceVerdict(
+    ownerRunId: string,
+    familyId?: string,
+  ): { scope: 'owner' | 'family'; id: string } | null {
+    if (this.terminatedOwners.has(ownerRunId)) return { scope: 'owner', id: ownerRunId };
+    // The owner predicate is a SUPPLEMENT, not the authority: it answers for a
+    // run the store still has, and the durable entries answer for the rest.
+    // Correct at owner scope because a terminal run must never reacquire under
+    // its own id, whatever its cleanup history.
+    if (this.options.isTerminalOwner?.(ownerRunId) === true) {
+      return { scope: 'owner', id: ownerRunId };
+    }
+    if (familyId === undefined) return null;
+    // Family scope has NO run-store equivalent, deliberately. Asking whether any
+    // member is terminal fenced live children: a CI-watch chain's follow-up run
+    // shares its parent's family, so the parent reaching `done` refused its own
+    // child at PREPARE. Only a family-scope cleanup writes this, and only that
+    // is read back.
+    if (this.terminatedFamilies.has(familyId)) return { scope: 'family', id: familyId };
+    return null;
   }
 
   async releaseForPosture(
@@ -1631,6 +1750,27 @@ export class RuntimeCapabilityRegistry {
             entry?.sharePolicy === 'exclusive' &&
             (initialProviderHolderCounts.get(lease.capabilityId) ?? 0) > 1;
           if (lease.state === 'queued') {
+            // The fence applies to a queue slot too. A queued lease holds no
+            // provider, but `blocksAcquisition` counts it, so a fenced owner's
+            // queued exclusive lease blocks every other run on that capability
+            // for as long as the record survives — forever, since the owner is
+            // gone and will never retry admission. Released without any
+            // provider action, because there is nothing running to stop.
+            if (this.isFencedOwner(lease.owner.runId, lease.owner.familyId)) {
+              lease.state = 'released';
+              lease.updatedAt = this.timestamp();
+              lease.releasedAt = lease.updatedAt;
+              lease.referenceCount = 0;
+              this.recordEvent(snapshot, {
+                kind: 'recovery-rejected',
+                slotId,
+                capabilityId: lease.capabilityId,
+                leaseId: lease.id,
+                owner: lease.owner,
+                detail: `queue slot dropped: owner run '${lease.owner.runId}' already had its terminal capability cleanup`,
+              });
+              continue;
+            }
             this.recordEvent(snapshot, {
               kind: 'queued',
               slotId,
@@ -1692,6 +1832,56 @@ export class RuntimeCapabilityRegistry {
                 detail: lease.cleanupFailure,
               });
             }
+            continue;
+          }
+          // The terminal fence, applied BEFORE the health probe can promote this
+          // lease back to `acquired`. A healthy provider owned by a run that
+          // already had its terminal cleanup is exactly the leak the fence
+          // exists to stop: adopting it hands a live provider to a run that is
+          // gone, and nothing would ever release it again. Recovery used to
+          // consult only lease provenance, so a restart re-adopted it.
+          if (this.isFencedOwner(lease.owner.runId, lease.owner.familyId)) {
+            const liveHolders = sameCapabilityHolders.filter(
+              (candidate) =>
+                candidate.id !== lease.id &&
+                !this.isFencedOwner(candidate.owner.runId, candidate.owner.familyId),
+            );
+            // A sibling that is NOT fenced still owns the running provider, so
+            // stopping it here would tear it out from under a live run.
+            const stopped = liveHolders.length === 0;
+            const cleanup = stopped
+              ? await this.runAction(slotId, entry.actions.release)
+              : { ok: true };
+            lease.updatedAt = this.timestamp();
+            lease.health = { state: 'unknown', checkedAt: lease.updatedAt };
+            // The detail states what actually happened to the PROVIDER, which
+            // is not the same in all three cases: it was stopped, it was left
+            // running for a live sibling, or the stop failed and the lease is
+            // an error. Reporting "released" for all three told an operator the
+            // provider was down when it may still be up.
+            let outcome: string;
+            if (!cleanup.ok) {
+              lease.state = 'error';
+              lease.cleanupFailure =
+                cleanup.detail ?? 'restart cleanup failed after terminal capability cleanup';
+              outcome = `provider stop FAILED (${lease.cleanupFailure})`;
+            } else {
+              lease.state = 'released';
+              lease.releasedAt = lease.updatedAt;
+              lease.referenceCount = 0;
+              lease.cleanupFailure = undefined;
+              outcome = stopped
+                ? 'provider stopped'
+                : 'provider left running for a live sibling holder';
+            }
+            this.recordEvent(snapshot, {
+              kind: 'recovery-rejected',
+              slotId,
+              capabilityId: lease.capabilityId,
+              leaseId: lease.id,
+              owner: lease.owner,
+              detail: `owner run '${lease.owner.runId}' already had its terminal capability cleanup; lease not adopted, ${outcome}`,
+            });
             continue;
           }
           const health = await this.runAction(slotId, entry.actions.health);

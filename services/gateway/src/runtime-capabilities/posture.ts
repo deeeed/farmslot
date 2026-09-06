@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   hasLiveParkRecord,
+  MachineParkEligibilityCodes,
   type MachinePauseExecuteParams,
   type MachinePauseExecuteResult,
   type MachinePausePreviewParams,
@@ -44,6 +45,8 @@ import {
   type RuntimePostureApplyResult,
   type RuntimePostureStatusResult,
 } from '@farmslot/protocol';
+
+import { MachinePausePreviewStaleError } from '../machine-parking/preview-errors.js';
 
 const POLICY_SOURCE_RANK: Record<ResourcePosturePolicySource, number> = {
   'gate-choice': 3,
@@ -803,6 +806,9 @@ export class RunResourcePostureReconciler {
           reason:
             entry?.eligibility.reason ??
             `run ${context.run.id} was not returned by the machine pause preview`,
+          // Passed through, never re-derived: the gateway already knows the
+          // probe budget and clients must not parse it back out of the reason.
+          ...(entry?.eligibility.details ? { details: entry.eligibility.details } : {}),
         },
       };
     }
@@ -826,15 +832,21 @@ export class RunResourcePostureReconciler {
         operationId: inProgress.id,
       });
     } catch (error) {
-      // Machine parking throws on a stale preview or a rejected batch. That is a
-      // real verdict about this run, so surface it as the typed rejection the
-      // clients already render — not an unhandled error.
+      // Machine parking throws on a stale preview or a rejected batch. Both are
+      // typed rejections the clients already render — not unhandled errors — but
+      // they are different things: a rejected batch is a verdict about this run,
+      // while a stale digest is a race with whatever touched the batch in
+      // between, and the operator answers it by choosing `free-slot` again. They
+      // carried the same code, so telling them apart meant matching the message.
       return this.rejectionResult(
         { runId: context.run.id, operationId: inProgress.id },
         this.planFrom(context),
         {
           kind: 'park-ineligible',
-          code: 'PARK_EXECUTE_REFUSED',
+          code:
+            error instanceof MachinePausePreviewStaleError
+              ? MachineParkEligibilityCodes.machinePausePreviewStale
+              : 'PARK_EXECUTE_REFUSED',
           reason: error instanceof Error ? error.message : String(error),
         },
         priorState,

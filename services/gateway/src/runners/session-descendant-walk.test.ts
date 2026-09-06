@@ -223,3 +223,43 @@ test('a pid-reuse cycle terminates instead of running until the probe times out'
   assert.equal(probe.exitCode, 1, 'the cycle resolves to confirmed absence');
   assert.ok(Date.now() - started < 5_000, 'the walk must terminate on its own');
 });
+
+test('a row whose state column is not a ps state condemns the snapshot', (t) => {
+  // A `ps` that omits STAT shifts every later column left, so `123 1 codex
+  // --resume` used to parse as state `codex` and command `--resume` — the
+  // runner's own name read as a process state, on a row the walk believed it
+  // understood. That is the shape that produces a confirmed absence from a
+  // table nobody parsed, and absence is what frees a slot.
+  const probe = runProbeWithPsShim(
+    "#!/bin/sh\nprintf '%s\\n' '1 0 Ss /sbin/launchd' '123 1 codex --resume'\n",
+    t,
+  );
+
+  assert.equal(probe.exitCode, RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT);
+  assert.notEqual(probe.exitCode, 1, 'a shifted table must not confirm absence');
+  assert.match(probe.stderr, /snapshot unusable \(1 row\(s\), 1 malformed\)/);
+});
+
+test('the real STAT words both platforms emit are still accepted', (t) => {
+  // The validation fails closed, so being too strict would condemn healthy
+  // snapshots on the fleet and refuse every park. These are the flag
+  // combinations macOS and Linux actually print.
+  const probe = runProbeWithPsShim(
+    [
+      '#!/bin/sh',
+      "printf '%s\\n' '1 0 Ss /sbin/launchd' \\",
+      "  '2 1 R+ /usr/bin/top' \\",
+      "  '3 1 S<sl /usr/bin/audio' \\",
+      "  '4 1 I /usr/bin/idle' \\",
+      "  '5 1 tN /usr/bin/traced' \\",
+      "  '6 1 ?s /usr/bin/unreadable' \\",
+      "  '222 1 U codex --resume abc'",
+      '',
+    ].join('\n'),
+    t,
+    '1',
+  );
+
+  assert.equal(probe.exitCode, 0, `expected a match, got stderr: ${probe.stderr}`);
+  assert.equal(probe.stdout.trim(), '222');
+});

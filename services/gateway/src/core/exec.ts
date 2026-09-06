@@ -43,6 +43,14 @@ export function isLocal(host: string, machine: string): boolean {
 
 // ─── ExecOptions ───
 
+/**
+ * Exit status reported when a command exhausts its `timeout` budget.
+ *
+ * Callers that must tell "the probe ran out of time" from "the probe answered"
+ * branch on this rather than on the timeout sentence appended to stderr.
+ */
+export const EXEC_TIMEOUT_EXIT_CODE = 124;
+
 export interface ExecOptions {
   cwd?: string;
   timeout?: number;
@@ -136,7 +144,11 @@ function execSpawn(executable: string, argv: string[], opts?: ExecOptions): Prom
       resolved = true;
       if (timeoutTimer) clearTimeout(timeoutTimer);
       if (timeoutEscalation) clearTimeout(timeoutEscalation);
-      resolve({ stdout, stderr, exitCode: timedOut ? 124 : maxBufferExceeded ? 1 : exitCode });
+      resolve({
+        stdout,
+        stderr,
+        exitCode: timedOut ? EXEC_TIMEOUT_EXIT_CODE : maxBufferExceeded ? 1 : exitCode,
+      });
     };
     const closeStream = (stream: 'stdout' | 'stderr') => {
       if (stream === 'stdout') stdoutEnded = true;

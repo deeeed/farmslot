@@ -20,6 +20,7 @@ import {
   type MachineParkRestoreStage,
   type MachineParkSlotDisposition,
   type MachineParkWorkspace,
+  type MachinePauseEligibilityDetails,
   type MachinePauseExecuteParams,
   type MachinePauseExecuteResult,
   type MachinePauseMode,
@@ -100,6 +101,7 @@ import {
 } from '../runners/session-lifecycle.js';
 import {
   resolveRunRetainedSessionBinding,
+  RunnerLivenessProbeTimeoutError,
   RunnerProcessProbeError,
 } from '../runners/session-process.js';
 import { getAllRuns, getRun, persistRunNow, runsDirectory, updateRun } from '../runs/store.js';
@@ -109,6 +111,7 @@ import {
   MachineParkingIntentJournalStore,
   type MachineParkingIntentKind,
 } from './journal.js';
+import { MachinePausePreviewStaleError } from './preview-errors.js';
 
 type Fleet = Awaited<ReturnType<typeof loadFleetStatus>>;
 type MachineParkingRecoveryProof = NonNullable<MachineParkRecord['recoveryProof']>;
@@ -728,7 +731,9 @@ export class MachineParkingService {
         selector: cached.selector,
       });
       if (fresh.previewId !== params.previewId) {
-        throw new Error('machine pause preview is stale; preview the batch again');
+        throw new MachinePausePreviewStaleError(
+          'machine pause preview is stale; preview the batch again',
+        );
       }
       assertExecutablePreview(fresh.runs, params.reviewedTargets);
       const intent = await this.persistPauseIntents(fresh, operationId);
@@ -823,7 +828,9 @@ export class MachineParkingService {
       }
       const fresh = await this.buildRestorePreview(machine, params.selector);
       if (fresh.previewId !== params.previewId) {
-        throw new Error('machine restore preview is stale; preview the batch again');
+        throw new MachinePausePreviewStaleError(
+          'machine restore preview is stale; preview the batch again',
+        );
       }
       assertExecutableRestore(fresh.runs, params.reviewedTargets);
       const selected = fresh.runs.filter((item) => item.selected);
@@ -1259,9 +1266,10 @@ export class MachineParkingService {
       reason: string,
       resourceManifest = emptyManifest(),
       runnerId = run.metrics.runner?.trim() || 'unknown',
+      details?: MachinePauseEligibilityDetails,
     ): MachinePausePreviewRun => ({
       ...base,
-      eligibility: { eligible: false, code, reason },
+      eligibility: { eligible: false, code, reason, ...(details ? { details } : {}) },
       recoveryPolicy:
         mode === 'orchestration'
           ? { kind: 'orchestration-only', supported: true }
@@ -1381,6 +1389,20 @@ export class MachineParkingService {
         this.recoveryHandles.delete(this.recoveryHandles.keys().next().value!);
       }
     } catch (error) {
+      // A liveness probe that ran out of budget decided nothing about this
+      // runner's recovery capability. Reporting it as `RUNNER_RECOVERY_UNSUPPORTED`
+      // made a transient stall indistinguishable from a runner that genuinely
+      // cannot be reloaded, and left every consumer matching the message text to
+      // tell them apart.
+      if (error instanceof RunnerLivenessProbeTimeoutError) {
+        return reject(
+          MachineParkEligibilityCodes.runnerLivenessProbeTimeout,
+          error.message,
+          emptyManifest(),
+          undefined,
+          { probeBudgetMs: error.probeBudgetMs },
+        );
+      }
       return reject(
         'RUNNER_RECOVERY_UNSUPPORTED',
         error instanceof Error ? error.message : String(error),

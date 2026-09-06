@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { Run, SlotReleaseParams } from '@farmslot/protocol';
 
+import { createRun, deleteRun, updateRun } from '../runs/store.js';
+
+import { type CIWatchStepContext, executeCIWatchStep } from './ci-watch-step.js';
 import {
   ciRequiresPublishedPr,
   requiresPublicationApproval,
@@ -76,4 +79,59 @@ test('ciRequiresPublishedPr gates unpublished local-first dev and fix-bug runs',
     ),
     false,
   );
+});
+
+function ciWatchContext(
+  overrides: Partial<CIWatchStepContext> = {},
+): CIWatchStepContext & { deferred: SlotReleaseParams[] } {
+  const deferred: SlotReleaseParams[] = [];
+  return {
+    deferred,
+    activeMonitors: new Map(),
+    applyChainedRunEngineFlags: () => {},
+    broadcastFn: () => {},
+    buildCIWatchChainedRunParams: () => null,
+    hasValidPrNumber: () => false,
+    loadProjectVarsOrNull: async () => null,
+    resolveCIWatchTerminalPatch: () => null,
+    startRun: async () => {},
+    deferTerminalSlotRelease: (params) => void deferred.push(params),
+    ...overrides,
+  };
+}
+
+test('ci-watch hands its slot release to the engine instead of running it', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'interactive',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'MANUAL-000117',
+    runner: 'claude',
+    slotId: 'slot-defer-1',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'cancelled' });
+    await deleteRun(run.id);
+  });
+  // A no-code disposition takes the first skip path, which used to run
+  // `slotRelease` inline — gating the run's own `done` status on tmux teardown.
+  updateRun(run.id, {
+    status: 'ci-watching',
+    metrics: { ...run.metrics, disposition: 'already_fixed' },
+  });
+
+  const context = ciWatchContext();
+  const io = await executeCIWatchStep(run.id, context);
+
+  assert.equal(io.outputs?.skipped, true);
+  assert.equal(io.outputs?.reason, 'no-code-terminal-disposition');
+  assert.deepEqual(context.deferred, [
+    {
+      slotId: 'slot-defer-1',
+      keepWork: true,
+      keepWarm: true,
+      detachRuns: false,
+      expectedRunId: run.id,
+    },
+  ]);
 });

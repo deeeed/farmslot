@@ -11,6 +11,7 @@ import {
   recoverActiveRuns,
   recoveryHealthIsReady,
   type RunRecoveryCollaborators,
+  STALE_RELEASE_RECLAIM_MS,
 } from './recovery.js';
 
 test('recoveryHealthIsReady requires configured ready indicator to match', () => {
@@ -1432,6 +1433,210 @@ test('orphan reconcile reclaims a busy slot that only a park-freed run still nam
     loadFleetStatus: async () => ({
       slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: null }],
     }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async () => null,
+    resetSlot: async (slotId: string) => reset.push(slotId),
+  } as unknown as RunRecoveryCollaborators;
+
+  await reconcileOrphanedSlots(deps);
+
+  assert.deepEqual(reset, ['macwork-ff-2']);
+});
+
+test("orphan reconcile leaves a terminal run's slot alone while its teardown runs", async () => {
+  // ADR-053 publishes the terminal status BEFORE the teardown, and occupancy
+  // counts only non-terminal runs — so for the length of the teardown the slot
+  // looks orphaned here. Resetting it there republishes a slot whose windows
+  // are still being killed and whose worktree is still being reset.
+  const terminal = minimalActiveRun({
+    id: 'terminal-run',
+    status: 'done',
+    slotId: 'macwork-ff-2',
+    ticketOrPr: 'RECOVERY-TERMINAL-TEARDOWN',
+    familyRootTicketOrPr: 'RECOVERY-TERMINAL-TEARDOWN',
+    taskFile: '/tmp/recovery-terminal-teardown/TASK.md',
+  });
+  const reset: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [terminal] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'working' }],
+    }),
+    isTerminalTeardownInFlight: (slotId: string) => slotId === 'macwork-ff-2',
+    readSlotField: async () => null,
+    resetSlot: async (slotId: string) => reset.push(slotId),
+  } as unknown as RunRecoveryCollaborators;
+
+  await reconcileOrphanedSlots(deps);
+
+  assert.deepEqual(reset, [], 'a slot mid-teardown is not orphaned');
+});
+
+test('orphan reconcile leaves a slot a release already fenced', async () => {
+  // The same claim for a release this process did not start: `releasing` is the
+  // marker every other teardown path already respects.
+  const terminal = minimalActiveRun({
+    id: 'terminal-run-2',
+    status: 'failed',
+    slotId: 'macwork-ff-2',
+    ticketOrPr: 'RECOVERY-RELEASING-FENCE',
+    familyRootTicketOrPr: 'RECOVERY-RELEASING-FENCE',
+    taskFile: '/tmp/recovery-releasing-fence/TASK.md',
+  });
+  const reset: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [terminal] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'releasing' }],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async () => null,
+    resetSlot: async (slotId: string) => reset.push(slotId),
+  } as unknown as RunRecoveryCollaborators;
+
+  await reconcileOrphanedSlots(deps);
+
+  assert.deepEqual(reset, []);
+});
+
+test('orphan reconcile reclaims a releasing fence through the conditional reset', async () => {
+  // The fence added for terminal teardown has no other way out: this loop
+  // skips a releasing slot, `resetSlot` refuses one, and `slotRelease` returns
+  // `released: false` for one. A release interrupted between fencing and
+  // finishing would strand the slot for good without this bound.
+  //
+  // The reclaim must NOT go through `resetSlot`, which refuses every releasing
+  // slot: the predicate it hands to `resetSlotIf` is what makes the write both
+  // possible and safe. Asserted on the predicate itself here; the end-to-end
+  // proof against a real slot row lives in `core/slot-reset-fence.test.ts`.
+  const stale = new Date(Date.now() - STALE_RELEASE_RECLAIM_MS - 60_000).toISOString();
+  const terminal = minimalActiveRun({
+    id: 'terminal-stale',
+    status: 'done',
+    slotId: 'macwork-ff-2',
+    ticketOrPr: 'RECOVERY-STALE-RELEASE',
+    familyRootTicketOrPr: 'RECOVERY-STALE-RELEASE',
+    taskFile: '/tmp/terminal-stale/TASK.md',
+  });
+  const reset: string[] = [];
+  const conditional: Array<{
+    slotId: string;
+    predicate: (slot: Readonly<Record<string, unknown>>) => boolean;
+  }> = [];
+  const deps = {
+    listRuns: () => ({ runs: [terminal] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'releasing' }],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async () => stale,
+    resetSlot: async (slotId: string) => reset.push(slotId),
+    resetSlotIf: async (
+      slotId: string,
+      predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+    ) => {
+      conditional.push({ slotId, predicate });
+      return true;
+    },
+  } as unknown as RunRecoveryCollaborators;
+
+  await reconcileOrphanedSlots(deps);
+
+  assert.deepEqual(reset, [], 'the unguarded reset would have been refused');
+  assert.equal(conditional.length, 1);
+  assert.equal(conditional[0]!.slotId, 'macwork-ff-2');
+  const { predicate } = conditional[0]!;
+  assert.equal(
+    predicate({ phase: 'releasing', releasing_since: stale }),
+    true,
+    'the fence the reconciler observed is the one it may clear',
+  );
+  assert.equal(
+    predicate({ phase: 'releasing', releasing_since: new Date().toISOString() }),
+    false,
+    'a release that re-fenced in the meantime owns the slot',
+  );
+  assert.equal(
+    predicate({ phase: 'working', releasing_since: stale }),
+    false,
+    'a fence that already cleared is not reclaimed a second time',
+  );
+});
+
+test('orphan reconcile leaves a releasing fence that is still young', async () => {
+  // Reclaiming a LIVE teardown is the worse of the two errors, so the bound
+  // is generous and anything inside it keeps its protection.
+  const terminal = minimalActiveRun({
+    id: 'terminal-fresh',
+    status: 'done',
+    slotId: 'macwork-ff-2',
+    ticketOrPr: 'RECOVERY-FRESH-RELEASE',
+    familyRootTicketOrPr: 'RECOVERY-FRESH-RELEASE',
+    taskFile: '/tmp/terminal-fresh/TASK.md',
+  });
+  const reset: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [terminal] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'releasing' }],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async () => new Date(Date.now() - 5_000).toISOString(),
+    resetSlot: async (slotId: string) => reset.push(slotId),
+  } as unknown as RunRecoveryCollaborators;
+
+  await reconcileOrphanedSlots(deps);
+
+  assert.deepEqual(reset, []);
+});
+
+test('an unstamped releasing fence keeps its protection rather than being reclaimed', async () => {
+  // A fence written before the stamp existed has unknown age. Unknown must
+  // not read as stale, or the first tick after deploy reclaims live teardowns.
+  const terminal = minimalActiveRun({
+    id: 'terminal-unstamped',
+    status: 'done',
+    slotId: 'macwork-ff-2',
+    ticketOrPr: 'RECOVERY-UNSTAMPED',
+    familyRootTicketOrPr: 'RECOVERY-UNSTAMPED',
+    taskFile: '/tmp/terminal-unstamped/TASK.md',
+  });
+  const reset: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [terminal] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'releasing' }],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async () => null,
+    resetSlot: async (slotId: string) => reset.push(slotId),
+  } as unknown as RunRecoveryCollaborators;
+
+  await reconcileOrphanedSlots(deps);
+
+  assert.deepEqual(reset, []);
+});
+
+test('orphan reconcile still reclaims a genuinely abandoned slot', async () => {
+  // The guard must not turn the reconciler off: a terminal run whose teardown
+  // is NOT running — the gateway died mid-release and came back — is exactly
+  // what this loop exists to reclaim.
+  const terminal = minimalActiveRun({
+    id: 'terminal-run-3',
+    status: 'done',
+    slotId: 'macwork-ff-2',
+    ticketOrPr: 'RECOVERY-ABANDONED',
+    familyRootTicketOrPr: 'RECOVERY-ABANDONED',
+    taskFile: '/tmp/recovery-abandoned/TASK.md',
+  });
+  const reset: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [terminal] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: 'working' }],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async () => null,
     resetSlot: async (slotId: string) => reset.push(slotId),
   } as unknown as RunRecoveryCollaborators;
 
@@ -1455,6 +1660,8 @@ test('orphan reconcile leaves a busy slot its live occupant still holds', async 
     loadFleetStatus: async () => ({
       slots: [{ slot: 'macwork-ff-2', lifecycle: 'busy', phase: null }],
     }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async () => null,
     resetSlot: async (slotId: string) => reset.push(slotId),
   } as unknown as RunRecoveryCollaborators;
 

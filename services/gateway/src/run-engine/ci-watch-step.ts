@@ -1,10 +1,15 @@
-import { Events, type Run, type RunCreateParams, type RunStatus } from '@farmslot/protocol';
+import {
+  Events,
+  type Run,
+  type RunCreateParams,
+  type RunStatus,
+  type SlotReleaseParams,
+} from '@farmslot/protocol';
 
 import { monitorCI } from '../ci-monitor/service.js';
 import { getProjectField, getProjectFieldRaw } from '../core/config.js';
 import { markSlotHeld, updateSlotStatus } from '../core/index.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
-import { slotRelease } from '../methods/slot.js';
 import {
   createRetrospectiveForRun,
   isArtifactOnlyRun,
@@ -56,6 +61,15 @@ export interface CIWatchStepContext {
     outcome?: CIOutcome,
   ) => { status?: RunStatus; metrics?: Partial<Run['metrics']> } | null;
   startRun: (runId: string) => Promise<void>;
+  /**
+   * Hand the slot release to the engine instead of performing it here.
+   *
+   * CI-watch is the last step of every flow that has it, so a release run inside
+   * the step body gated the run's `done` status on tmux teardown (ADR-053). The
+   * engine runs this as a transition after-effect, once the terminal status is
+   * already published.
+   */
+  deferTerminalSlotRelease: (params: SlotReleaseParams) => void;
 }
 
 export async function executeCIWatchStep(
@@ -71,6 +85,7 @@ export async function executeCIWatchStep(
     loadProjectVarsOrNull,
     resolveCIWatchTerminalPatch,
     startRun,
+    deferTerminalSlotRelease,
   } = context;
   const current = getRun(runId)!;
   if (!current.slotId) throw new Error('No slot assigned');
@@ -82,23 +97,13 @@ export async function executeCIWatchStep(
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — skipping ci-watch for no-code disposition ${current.metrics.disposition}`,
     );
-    try {
-      const noopEmit = () => {};
-      await slotRelease(
-        {
-          slotId: current.slotId,
-          keepWork: true,
-          keepWarm: true,
-          detachRuns: false,
-          expectedRunId: current.id,
-        },
-        noopEmit,
-      );
-    } catch (err) {
-      console.warn(
-        `[run-engine] slot release after no-code ci-watch skip failed: ${(err as Error).message}`,
-      );
-    }
+    deferTerminalSlotRelease({
+      slotId: current.slotId,
+      keepWork: true,
+      keepWarm: true,
+      detachRuns: false,
+      expectedRunId: current.id,
+    });
     return {
       inputs: { prNumber: current.prNumber, disposition: current.metrics.disposition },
       outputs: {
@@ -120,23 +125,13 @@ export async function executeCIWatchStep(
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — skipping ci-watch for artifact-only completion policy`,
     );
-    try {
-      const noopEmit = () => {};
-      await slotRelease(
-        {
-          slotId: current.slotId,
-          keepWork: true,
-          keepWarm: true,
-          detachRuns: false,
-          expectedRunId: current.id,
-        },
-        noopEmit,
-      );
-    } catch (err) {
-      console.warn(
-        `[run-engine] slot release after artifact-only ci-watch skip failed: ${(err as Error).message}`,
-      );
-    }
+    deferTerminalSlotRelease({
+      slotId: current.slotId,
+      keepWork: true,
+      keepWarm: true,
+      detachRuns: false,
+      expectedRunId: current.id,
+    });
     return {
       inputs: { prNumber: current.prNumber, completionPolicy: current.completionPolicy },
       outputs: {
@@ -158,23 +153,13 @@ export async function executeCIWatchStep(
     console.warn(
       `[run-engine] run ${runId.slice(0, 8)} — skipping ci-watch before approved publication (${publicationStatusForRun(current)})`,
     );
-    try {
-      const noopEmit = () => {};
-      await slotRelease(
-        {
-          slotId: current.slotId,
-          keepWork: true,
-          keepWarm: true,
-          detachRuns: false,
-          expectedRunId: current.id,
-        },
-        noopEmit,
-      );
-    } catch (err) {
-      console.warn(
-        `[run-engine] slot release after unpublished ci-watch skip failed: ${(err as Error).message}`,
-      );
-    }
+    deferTerminalSlotRelease({
+      slotId: current.slotId,
+      keepWork: true,
+      keepWarm: true,
+      detachRuns: false,
+      expectedRunId: current.id,
+    });
     return {
       inputs: {
         prNumber: current.prNumber,
@@ -202,23 +187,13 @@ export async function executeCIWatchStep(
   const ciEnabled = pv ? getProjectFieldRaw(pv.projectJson, 'ci.enabled') : undefined;
   if (ciEnabled === false) {
     console.log(`[run-engine] run ${runId.slice(0, 8)} — ci disabled, skipping ci-watch`);
-    try {
-      const noopEmit = () => {};
-      await slotRelease(
-        {
-          slotId: current.slotId,
-          keepWork: true,
-          keepWarm: true,
-          detachRuns: false,
-          expectedRunId: current.id,
-        },
-        noopEmit,
-      );
-    } catch (err) {
-      console.warn(
-        `[run-engine] slot release after disabled ci-watch skip failed: ${(err as Error).message}`,
-      );
-    }
+    deferTerminalSlotRelease({
+      slotId: current.slotId,
+      keepWork: true,
+      keepWarm: true,
+      detachRuns: false,
+      expectedRunId: current.id,
+    });
     return {
       inputs: { prNumber: current.prNumber, ciRepo, enabled: false },
       outputs: {
@@ -254,23 +229,13 @@ export async function executeCIWatchStep(
   const inputs: Record<string, unknown> = { prNumber: current.prNumber };
   if (!current.prNumber) {
     console.warn(`[run-engine] run ${runId.slice(0, 8)} — no PR number, skipping ci-watch`);
-    try {
-      const noopEmit = () => {};
-      await slotRelease(
-        {
-          slotId: current.slotId,
-          keepWork: true,
-          keepWarm: true,
-          detachRuns: false,
-          expectedRunId: current.id,
-        },
-        noopEmit,
-      );
-    } catch (err) {
-      console.warn(
-        `[run-engine] slot release after no-pr ci-watch skip failed: ${(err as Error).message}`,
-      );
-    }
+    deferTerminalSlotRelease({
+      slotId: current.slotId,
+      keepWork: true,
+      keepWarm: true,
+      detachRuns: false,
+      expectedRunId: current.id,
+    });
     return {
       inputs,
       outputs: {
@@ -403,22 +368,14 @@ export async function executeCIWatchStep(
     // human-gate; the gate approved publication but did not capture CI,
     // review-comment follow-ups, update-branch friction, or final PR outcome.
     await createRetrospectiveForRun(runId);
-    // Release slot
-    try {
-      const noopEmit = () => {};
-      await slotRelease(
-        {
-          slotId: current.slotId,
-          keepWork: true,
-          keepWarm: true,
-          detachRuns: false,
-          expectedRunId: current.id,
-        },
-        noopEmit,
-      );
-    } catch (err) {
-      console.warn(`[run-engine] slot release after ci-watch failed: ${(err as Error).message}`);
-    }
+    // The slot release is the engine's to run, after the run publishes `done`.
+    deferTerminalSlotRelease({
+      slotId: current.slotId,
+      keepWork: true,
+      keepWarm: true,
+      detachRuns: false,
+      expectedRunId: current.id,
+    });
   }
 
   const ciWatchCliCommand =

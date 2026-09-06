@@ -6,8 +6,9 @@ import {
 } from '@farmslot/protocol';
 
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
-import { execOnSlot, type ExecOnSlotOptions } from '../core/exec.js';
+import { EXEC_TIMEOUT_EXIT_CODE, execOnSlot, type ExecOnSlotOptions } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import { NodeRpcTimeoutError } from '../fleet/node-rpc.js';
 
 import {
   observedAtFromRecord,
@@ -693,6 +694,12 @@ export interface ExactLiveRunnerSessionBindingOptions {
    * fresh-launch attribution applies.
    */
   runnerPid?: string;
+  /**
+   * Budget for this verification's own reads. A park's stop owns a wall-clock
+   * ceiling and this check sits inside it, so it cannot keep a fixed budget of
+   * its own. Omitted, each read keeps its default.
+   */
+  timeoutMs?: number;
 }
 
 export type ExactLiveRunnerSessionBindingResult =
@@ -762,7 +769,12 @@ export async function verifyExactLiveRunnerSessionBinding(
   options: ExactLiveRunnerSessionBindingOptions,
   deps: ExactLiveRunnerSessionBindingDeps = EXACT_LIVE_BINDING_DEPS,
 ): Promise<ExactLiveRunnerSessionBindingResult> {
-  const paneStartedAtMs = await deps.readPaneStartedAt(vars, options.paneId, runner);
+  const paneStartedAtMs = await deps.readPaneStartedAt(
+    vars,
+    options.paneId,
+    runner,
+    options.timeoutMs === undefined ? undefined : { timeout: options.timeoutMs },
+  );
   if (paneStartedAtMs == null) {
     return { ok: false, reason: `live runner process start is unavailable for ${options.paneId}` };
   }
@@ -986,6 +998,14 @@ export async function findRunnerDescendantPid(
   const probe = await probeRunnerDescendantPid(vars, panePid, runnerId, options);
   if (probe.state === 'present') return probe.pid;
   if (probe.state === 'absent') return '';
+  // A probe that ran out of budget said nothing about this runner's
+  // capabilities, so callers that classify recovery verdicts must be able to
+  // tell it apart from "this runner cannot be recovered" without reading the
+  // message. The distinction is carried by the type, never by the prose, and
+  // the exhausted budget rides along for the operator-facing rejection.
+  if (probe.timedOutAfterMs !== undefined) {
+    throw new RunnerLivenessProbeTimeoutError(panePid, probe.timedOutAfterMs, probe.reason);
+  }
   throw new RunnerProcessProbeError(probe.code, panePid, probe.reason);
 }
 
@@ -1004,7 +1024,7 @@ export type RunnerProcessProbeFailureCode =
 
 /** Typed liveness-probe failure, so a timeout stays a timeout up the stack. */
 export class RunnerProcessProbeError extends Error {
-  readonly name = 'RunnerProcessProbeError';
+  readonly name: string = 'RunnerProcessProbeError';
 
   constructor(
     readonly code: RunnerProcessProbeFailureCode,
@@ -1019,6 +1039,27 @@ export class RunnerProcessProbeError extends Error {
   }
 }
 
+/**
+ * The runner liveness probe exhausted its budget before returning a verdict.
+ *
+ * Transient by construction — a loaded machine, not a runner without the
+ * capability — so the operator's own retry is the answer and the caller must
+ * not record it as a capability refusal. It is a `probe-timeout` like any
+ * other, so callers that only read {@link RunnerProcessProbeError.code} keep
+ * working; the subclass exists to carry the budget that elapsed.
+ */
+export class RunnerLivenessProbeTimeoutError extends RunnerProcessProbeError {
+  override readonly name = 'RunnerLivenessProbeTimeoutError';
+
+  constructor(
+    panePid: string,
+    readonly probeBudgetMs: number,
+    reason?: string,
+  ) {
+    super('probe-timeout', panePid, reason);
+  }
+}
+
 export type RunnerDescendantPidProbe =
   | { state: 'present'; pid: string }
   | { state: 'absent' }
@@ -1028,6 +1069,12 @@ export type RunnerDescendantPidProbe =
       reason?: string;
       /** How many exec attempts were spent before giving up. */
       attempts?: number;
+      /**
+       * Set only when the probe ran out of budget, carrying the budget that
+       * elapsed. Read from the exec exit status or the transport's own typed
+       * deadline, never from the message text.
+       */
+      timedOutAfterMs?: number;
     };
 
 export interface RunnerDescendantPidProbeOptions extends ExecOnSlotOptions {
@@ -1101,6 +1148,7 @@ export async function probeRunnerDescendantPid(
     code: 'probe-transport',
     reason: 'probe was never attempted',
   };
+  let lastAttemptTimeout: number | undefined;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const escalated = Math.min(
       baseTimeout * 2 ** (attempt - 1),
@@ -1116,39 +1164,68 @@ export async function probeRunnerDescendantPid(
         code: 'probe-timeout',
         reason: `liveness probe budget exhausted before attempt ${attempt}`,
         attempts: attempt - 1,
+        // Nothing was spent on this attempt, so the budget the operator's
+        // retry has to beat is the one the previous attempt already burned.
+        timedOutAfterMs: lastAttemptTimeout ?? baseTimeout,
       };
       return failure;
     }
     const timeout = Math.min(escalated, remaining);
+    lastAttemptTimeout = timeout;
     try {
       const result = await exec(vars, cmd, { ...options, timeout });
       const pid = result.stdout.trim();
       if (result.exitCode === 0 && /^\d+$/.test(pid)) return { state: 'present', pid };
       if (result.exitCode === 1 && !pid && !result.stderr.trim()) return { state: 'absent' };
-      // 124 is the exec layer's own timeout verdict and
+      // EXEC_TIMEOUT_EXIT_CODE (124) is the exec layer's own timeout verdict and
       // RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT is a `ps` that could not fork or
       // returned nothing. Both are what an overloaded host does, so both earn
       // another attempt with a larger budget. Any other status is a real probe
       // failure that another attempt would only repeat.
-      const timedOut = result.exitCode === 124;
+      const timedOut = result.exitCode === EXEC_TIMEOUT_EXIT_CODE;
       const snapshotFailed = result.exitCode === RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT;
       failure = {
         state: 'unknown',
         code: timedOut ? 'probe-timeout' : 'probe-transport',
         reason: result.stderr.trim() || result.stdout.trim() || `probe exited ${result.exitCode}`,
         attempts: attempt,
+        // 124 is `execOnSlot`'s own timeout status, so the budget is a
+        // structural fact here rather than something recovered from stderr.
+        ...(timedOut ? { timedOutAfterMs: timeout } : {}),
       };
       if (!timedOut && !snapshotFailed) return failure;
     } catch (error) {
+      // A transport deadline is a probe timeout too: the remote probe never
+      // got an exit status, so without this it would read as a runner that
+      // cannot be recovered rather than as a machine that was too loaded.
+      const timedOutAfterMs = probeTimeoutBudgetFromError(error);
       failure = {
         state: 'unknown',
-        code: 'probe-transport',
+        code: timedOutAfterMs === undefined ? 'probe-transport' : 'probe-timeout',
         reason: (error as Error).message,
         attempts: attempt,
+        ...(timedOutAfterMs === undefined ? {} : { timedOutAfterMs }),
       };
     }
   }
   return failure;
+}
+
+/**
+ * The probe budget an error says was exhausted, or undefined when it says
+ * nothing about a budget.
+ *
+ * A transport deadline is a probe timeout too. Only the LOCAL path can report
+ * exit 124; a remote probe whose RPC never came back never got an exit status
+ * at all, and reading that as "cannot determine, cause unknown" is what made a
+ * loaded machine look like a runner without recovery support.
+ *
+ * A node that never connected is deliberately NOT here: no budget was
+ * exhausted, the machine is simply unreachable, and that is a real verdict an
+ * operator has to act on rather than retry through.
+ */
+export function probeTimeoutBudgetFromError(error: unknown): number | undefined {
+  return error instanceof NodeRpcTimeoutError ? error.timeoutMs : undefined;
 }
 
 interface TerminateRunnerDescendantsDeps {
@@ -1407,10 +1484,12 @@ export function buildFindRunnerDescendantPidFromVariableCommand(
  * value through escape processing, so `-v pattern='foo\.bar'` would hand awk
  * `foo.bar` and silently widen the match. `ENVIRON` is passed through verbatim.
  *
- * Every row must carry a numeric pid, a numeric ppid, a state and a command. A
- * single malformed row condemns the whole snapshot rather than being skipped:
- * a table we only partly understood cannot support a CONFIRMED absence, and
- * absence is what frees a slot. `123 garbage` therefore exits
+ * Every row must carry a numeric pid, a numeric ppid, a well-formed `ps` STAT
+ * word and a command. A single malformed row condemns the whole snapshot
+ * rather than being skipped: a table we only partly understood cannot support
+ * a CONFIRMED absence, and absence is what frees a slot. `123 garbage` and
+ * `123 1 codex --resume` — a row whose state column is missing, so every later
+ * column is shifted left — therefore exit
  * {@link RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT}, not 1.
  *
  * The walk carries a visited set, so an inconsistent snapshot whose ppid edges
@@ -1423,7 +1502,15 @@ function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern
   const walk = [
     'BEGIN { pattern = ENVIRON["FARMSLOT_RUNNER_PATTERN"] }',
     '{',
-    '  if (NF < 4 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ || $3 == "") {',
+    // The state column is validated as a `ps` STAT word, not merely as
+    // non-empty. A host whose `ps` omits it shifts every later column left, so
+    // `123 1 codex --resume` parsed as state `codex` with command `--resume`:
+    // a row the walk "understood" while reading the runner's own name as a
+    // process state. The first letter is the run state (the union of what
+    // macOS and Linux emit) and the rest are the flag characters either may
+    // append — plus `?`, which macOS prints for a process whose state it could
+    // not read. Anything else condemns the snapshot rather than being read.
+    '  if (NF < 4 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ || $3 !~ /^[DIRSTUWXZt?][+<>ALNSVWXEsl]*$/) {',
     '    malformed++',
     '    next',
     '  }',

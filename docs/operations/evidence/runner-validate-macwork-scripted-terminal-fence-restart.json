@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06T10:34:15.282Z",
+  "host": "macwork",
+  "scenario": "terminal-fence-restart",
+  "runner": "scripted",
+  "slotId": "macwork-ff-3",
+  "pass": true,
+  "restartKind": "dev tsx-watch supervisor restart triggered by touching a gateway source file, proven by the listening PID changing — NOT a `farmslot up` restart",
+  "nodes": [
+    {
+      "name": "no-live-proof-on-slot",
+      "pass": true,
+      "detail": "no active run occupies macwork-ff-3"
+    },
+    {
+      "name": "owner-acquires",
+      "pass": true,
+      "detail": "sandbox-gateway-ui lease cap-549fa4ea-baa2-4842-b6bd-3d95302f3825 reached acquired"
+    },
+    {
+      "name": "terminal-cleanup-applied",
+      "pass": true,
+      "detail": "terminal posture outcome applied"
+    },
+    {
+      "name": "sibling-refused-before-restart",
+      "pass": true,
+      "detail": "acquire ok=false reason=Run '8b0a810d-aa2d-4e20-9211-c17e93f8af87' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
+    },
+    {
+      "name": "gateway-process-replaced",
+      "pass": true,
+      "detail": "listener pid 88466 -> 26580 on port 7801"
+    },
+    {
+      "name": "sibling-refused-after-restart",
+      "pass": true,
+      "detail": "acquire ok=false reason=Run '8b0a810d-aa2d-4e20-9211-c17e93f8af87' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
+    },
+    {
+      "name": "fresh-run-still-acquires",
+      "pass": true,
+      "detail": "sandbox-gateway-ui lease cap-30c8df7e-8421-439a-9383-4c40b64f4f13 reached acquired"
+    }
+  ],
+  "project": "farmslot-farm",
+  "otherActiveRuns": [
+    {
+      "runId": "d2c9e8bd-ef0a-45df-a1f3-4e4dbf90b7f1",
+      "status": "blocked",
+      "slotId": "macwork-ff-2"
+    }
+  ],
+  "ownerRunId": "4457e576-d67e-477f-be90-ce548910818b",
+  "familyId": "4457e576-d67e-477f-be90-ce548910818b",
+  "terminalApply": {
+    "ok": true,
+    "outcome": "applied"
+  },
+  "siblingRunId": "8b0a810d-aa2d-4e20-9211-c17e93f8af87",
+  "refusedBeforeRestart": {
+    "ok": false,
+    "reason": "Run '8b0a810d-aa2d-4e20-9211-c17e93f8af87' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
+  },
+  "restart": {
+    "before": "88466",
+    "after": "26580"
+  },
+  "refusedAfterRestart": {
+    "ok": false,
+    "reason": "Run '8b0a810d-aa2d-4e20-9211-c17e93f8af87' has already had its terminal capability cleanup; it cannot acquire 'sandbox-gateway-ui'"
+  },
+  "freshRunId": "26f4c35a-4cb6-4dce-9670-2dc09ae5a6c2",
+  "freshAcquire": {
+    "ok": true,
+    "reason": null
+  },
+  "cleanupWarnings": [
+    "Gateway RPC run.cancel failed (exit 2): cdp.mjs: gateway RPC timeout after 15000ms",
+    "Gateway RPC run.cancel failed (exit 2): cdp.mjs: gateway RPC timeout after 15000ms",
+    "Gateway RPC run.cancel failed (exit 2): cdp.mjs: {\"type\":\"res\",\"id\":\"1\",\"ok\":false,\"error\":{\"code\":\"METHOD_ERROR\",\"message\":\"Run 26f4c35a-4cb6-4dce-9670-2dc09ae5a6c2 already in terminal state: failed\"}}"
+  ]
+}

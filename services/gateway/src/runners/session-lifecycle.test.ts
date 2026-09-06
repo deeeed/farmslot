@@ -492,6 +492,73 @@ test('stopRunnerForPark holds its wall-clock ceiling across a whole iteration', 
   );
 });
 
+test("the stop's ceiling covers the pre-flight reads, not only the wait loop", async () => {
+  // The pre-flight session-path read, the exact-pane read, the liveness probe
+  // and the binding verification each kept an independent 10s budget OUTSIDE
+  // the stop's wall clock, so a 200ms ceiling could still spend forty seconds
+  // before the graceful exit was even sent.
+  const startedAt = Date.now();
+  let exitSent = false;
+  const result = await stopRunnerForPark(
+    { vars, recoveryHandle: handle, timeoutMs: 0, maxTimeoutMs: 200 },
+    {
+      // Every exec honours the budget it is handed, the way a real remote read
+      // does. A step given no ceiling therefore costs its full default.
+      exec: async (_vars, command, options) => {
+        if (command.includes('send-keys')) exitSent = true;
+        const budget = typeof options === 'object' ? (options?.timeout ?? 10_000) : 10_000;
+        await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(budget, 10_000))));
+        return command.includes('display-message')
+          ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+          : { exitCode: 0, stdout: '', stderr: '' };
+      },
+      findRunnerPid: async (_vars, _panePid, _runnerId, options) => {
+        await new Promise((resolve) => setTimeout(resolve, options?.timeout ?? 10_000));
+        return '202';
+      },
+      probeRunnerPid: async () => ({ state: 'absent' }),
+      verifyLiveBinding: verifyPersistedLiveBinding,
+      respawnPane: async () => {},
+      sleep: async () => {},
+    },
+  );
+  const elapsed = Date.now() - startedAt;
+
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.ok === false && result.code,
+    'liveness-probe-timeout',
+    'an exhausted ceiling is a probe timeout, not a runner that cannot be inspected',
+  );
+  assert.equal(exitSent, false, 'a stop out of budget must not send an exit it cannot observe');
+  assert.ok(elapsed < 2_000, `the stop must respect its 200ms ceiling; took ${elapsed}ms`);
+});
+
+test('a pre-flight inspection with no ceiling keeps each step its own budget', async () => {
+  // The clamp must not become a new bound on callers that state none: every
+  // path other than the park's stop inspects with no deadline at all.
+  const budgets: Array<number | undefined> = [];
+  const inspection = await inspectRunnerRecovery(
+    { vars, runnerId: 'claude', recoveryHandle: handle, expectedRunnerState: 'stopped' },
+    {
+      exec: async (_vars, command, options) => {
+        budgets.push(typeof options === 'object' ? options?.timeout : undefined);
+        return command.includes('display-message')
+          ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+          : { exitCode: 0, stdout: '', stderr: '' };
+      },
+      findRunnerPid: async (_vars, _panePid, _runnerId, options) => {
+        budgets.push(options?.timeout);
+        return '';
+      },
+      verifyLiveBinding: verifyPersistedLiveBinding,
+    },
+  );
+
+  assert.equal(inspection.supported, true);
+  assert.deepEqual(budgets, [10_000, 10_000, 10_000], 'no ceiling means the step defaults stand');
+});
+
 test('stopRunnerForPark keeps the probe code when the pre-flight cannot decide', async () => {
   // The pre-flight inspection probes liveness too, and it throws rather than
   // returning. That throw used to escape past the typed result entirely, so the

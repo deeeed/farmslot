@@ -150,3 +150,7 @@ pool/*.bak.*
 
 # Vendored skills CLI clone (ensure-skills-local.sh); regenerable, never ours to commit.
 .skills-cache/
+
+# atomic-write temp files from the gateway state writers
+.farm-status.json.*.tmp
+.dispatch-queue.json.tmp.*

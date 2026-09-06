@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import test, { type TestContext } from 'node:test';
 
 import type {
   RuntimeCapabilityLease,
@@ -11,7 +14,9 @@ import {
   compactRuntimeCapabilitySnapshot,
   RUNTIME_CAPABILITY_EVENT_LIMIT,
   RUNTIME_CAPABILITY_PROOF_PLAN_LIMIT,
+  RUNTIME_CAPABILITY_TERMINAL_FENCE_TTL_MS,
   RUNTIME_CAPABILITY_TERMINAL_LEASE_LIMIT,
+  RuntimeCapabilityStore,
   type RuntimeCapabilityStoreSnapshot,
 } from './store.js';
 
@@ -124,4 +129,85 @@ test('a warm provider and a cleanup failure survive compaction so reconnects sti
   const byId = new Map(compacted.leases.map((candidate) => [candidate.id, candidate]));
   assert.equal(byId.get('lease-warm')?.keepWarmUntil, '2026-01-01T01:00:00.000Z');
   assert.equal(byId.get('lease-failed')?.cleanupFailure, 'shutdown exited 1');
+});
+
+test('a store file written before the terminal fence existed still loads', async (t: TestContext) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-store-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const storePath = path.join(directory, 'leases.json');
+  // Exactly the shape the gateway wrote before the fence was persisted: no
+  // version bump, no fence keys. Refusing it would strand every existing store.
+  await writeFile(
+    storePath,
+    `${JSON.stringify({ version: 1, leases: [lease(0, 'acquired')], proofPlans: {}, events: [] })}\n`,
+    'utf8',
+  );
+
+  const loaded = await new RuntimeCapabilityStore(storePath).load();
+  assert.equal(loaded.leases.length, 1);
+  assert.equal(loaded.terminalOwners, undefined);
+  assert.equal(loaded.terminalFamilies, undefined);
+});
+
+test('the terminal fence retires by age, not by count', () => {
+  // A count bound evicted the OLDEST entries — exactly the owners whose run
+  // records archiving has already deleted, so the live-record fallback meant to
+  // cover eviction was blind precisely where eviction bit. Age keeps them.
+  const fresh = Array.from({ length: 5_000 }, (_, index) => ({
+    id: `run-${index}`,
+    at: new Date().toISOString(),
+  }));
+  const ancient = {
+    id: 'run-ancient',
+    at: new Date(Date.now() - RUNTIME_CAPABILITY_TERMINAL_FENCE_TTL_MS - 60_000).toISOString(),
+  };
+
+  const compacted = compactRuntimeCapabilitySnapshot({
+    version: 1,
+    leases: [],
+    proofPlans: {},
+    events: [],
+    terminalOwnerEntries: [ancient, ...fresh],
+    terminalFamilyEntries: [ancient],
+  });
+
+  // Far past any count bound, and all of it kept.
+  assert.equal(compacted.terminalOwnerEntries?.length, fresh.length);
+  assert.equal(
+    compacted.terminalOwnerEntries?.some((entry) => entry.id === 'run-ancient'),
+    false,
+    'only entries past the TTL are dropped',
+  );
+  assert.deepEqual(compacted.terminalFamilyEntries, []);
+});
+
+test('a fence entry with an unreadable timestamp is kept rather than dropped', () => {
+  // Unknown age would otherwise open the fence for exactly the owners whose
+  // provenance is least certain.
+  const compacted = compactRuntimeCapabilitySnapshot({
+    version: 1,
+    leases: [],
+    proofPlans: {},
+    events: [],
+    terminalOwnerEntries: [{ id: 'run-unparseable', at: 'not-a-date' }],
+  });
+
+  assert.deepEqual(compacted.terminalOwnerEntries, [{ id: 'run-unparseable', at: 'not-a-date' }]);
+});
+
+test('a store written before fence entries existed keeps its fence', () => {
+  // The migration that must not lose anything: legacy id lists are folded into
+  // entries at compaction, so a caller replacing a pre-upgrade snapshot cannot
+  // silently erase an existing fence.
+  const compacted = compactRuntimeCapabilitySnapshot({
+    version: 1,
+    leases: [],
+    proofPlans: {},
+    events: [],
+    terminalOwners: ['run-legacy'],
+    terminalFamilies: ['fam-legacy'],
+  });
+
+  assert.equal(compacted.terminalOwnerEntries?.[0]?.id, 'run-legacy');
+  assert.equal(compacted.terminalFamilyEntries?.[0]?.id, 'fam-legacy');
 });

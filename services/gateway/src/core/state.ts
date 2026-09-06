@@ -252,10 +252,32 @@ type BusyPhase = 'preparing' | 'dispatching' | 'working' | 'releasing' | 'review
 export const SLOT_PHASE_RELEASING: BusyPhase = 'releasing';
 type HeldPhase = 'ci-watch' | 'pr-watch';
 
+/**
+ * When the releasing fence went up, as an ISO timestamp.
+ *
+ * The slot row carries `slot_epoch` but no clock, and the epoch cannot say how
+ * long a fence has been standing. Without that, a release interrupted between
+ * fencing the slot and finishing it strands the slot for good: the reconciler
+ * skips a releasing slot, `resetSlot` refuses one, and `slotRelease` returns
+ * `released: false` for one. This is what lets a bounded reclaim tell a
+ * teardown in progress from one that died.
+ */
+export const SLOT_RELEASING_SINCE = 'releasing_since';
+
+/** The releasing fence, stamped so a stalled one can be told from a live one. */
+export function slotReleasingFenceFields(now = new Date()): Record<string, unknown> {
+  return {
+    lifecycle: 'busy',
+    phase: SLOT_PHASE_RELEASING,
+    [SLOT_RELEASING_SINCE]: now.toISOString(),
+  };
+}
+
 function slotResetFields(warm: boolean): Record<string, unknown> {
   return {
     lifecycle: 'ready',
     phase: null,
+    [SLOT_RELEASING_SINCE]: null,
     agent: 'idle',
     warm,
     current_run_id: null,
@@ -368,12 +390,23 @@ export async function resetSlot(slotId: string, warm = false): Promise<void> {
   // the live-sim kill problem.
   void warm; // kept for API compatibility — caller still distinguishes warm vs cold elsewhere
 
-  // Slot release ends any warm reviewer sessions that lived on this slot — a
-  // later run must never resume a prior run's reviewer context. Listener
-  // registration (see initSelfReview) keeps core/ free of upward imports.
-  for (const listener of slotResetListeners) listener(slotId);
-
-  await updateSlotStatus(slotId, slotResetFields(warm));
+  // A slot mid-release belongs to that teardown: publishing it back to ready
+  // hands out a slot whose windows are still being killed and whose worktree is
+  // still being reset. Every path that OWNS a release (`slotRelease`,
+  // `cleanupSlotAfterRunFailure`) fences the slot and finishes through
+  // `resetSlotIf` under its own epoch guard, so nothing legitimate resets
+  // through the fence.
+  //
+  // Checked and written in ONE conditional update, not read-then-write: a
+  // release that fenced the slot between those two steps had its fence
+  // overwritten by the unconditional write that followed. `resetSlotIf` also
+  // fires the reset listeners only when the write actually applied, which is
+  // what a separate pre-write loop got wrong — it ended warm reviewer sessions
+  // for a reset that was then refused.
+  const applied = await resetSlotIf(slotId, (slot) => slot.phase !== SLOT_PHASE_RELEASING, warm);
+  if (!applied) {
+    console.log(`[state] slot ${slotId} is mid-release; leaving the reset to that teardown`);
+  }
 }
 
 export async function markSlotBusy(

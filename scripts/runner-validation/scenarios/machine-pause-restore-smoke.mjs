@@ -1154,25 +1154,28 @@ function isSlotNotReadyRefusal(error) {
 }
 
 /**
- * Whether a park rejection is one of the two RACES this harness retries, by
- * cause and not merely by code.
+ * Whether a park rejection is one of the two RACES this harness retries.
  *
- * Both codes are categories the gateway also emits for real verdicts —
- * `PARK_EXECUTE_REFUSED` for any execute exception, `RUNNER_RECOVERY_UNSUPPORTED`
- * for any recovery-handle exception — so retrying on the code alone would let a
- * later success bury an unrelated failure. Only these two causes are races an
- * operator answers by choosing `free-slot` again:
+ * The two causes each have their own code now, so this branches on the code
+ * alone. It used to match the reason text, because both causes shared a
+ * catch-all code with real verdicts — `PARK_EXECUTE_REFUSED` for any execute
+ * exception, `RUNNER_RECOVERY_UNSUPPORTED` for any recovery-handle exception —
+ * and retrying on those would have let a later success bury an unrelated
+ * failure. The gateway now emits the distinction at the source, so the harness
+ * reads it instead of re-deriving it from prose that can change per release.
+ *
+ * The two races an operator answers by choosing `free-slot` again:
  *
  *   - the machine-pause preview digest went stale because something touched the
  *     run between the preview and the execute;
- *   - the runner liveness probe exceeded its fixed 10s budget on a loaded
- *     machine (MANUAL-000121).
+ *   - the runner liveness probe exceeded its budget on a loaded machine
+ *     (MANUAL-000121); the budget itself arrives in `details.probeBudgetMs`.
  */
 function isRetryableParkRace(rejection) {
-  const reason = rejection?.reason ?? '';
-  if (rejection?.code === 'PARK_EXECUTE_REFUSED') return /preview is stale/.test(reason);
-  if (rejection?.code === 'RUNNER_RECOVERY_UNSUPPORTED') return /timed out after/.test(reason);
-  return false;
+  return (
+    rejection?.code === 'MACHINE_PAUSE_PREVIEW_STALE' ||
+    rejection?.code === 'RUNNER_LIVENESS_PROBE_TIMEOUT'
+  );
 }
 
 /**

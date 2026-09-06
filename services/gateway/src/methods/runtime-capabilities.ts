@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import {
   Events,
+  isTerminalRunStatus,
+  type Run,
   type RuntimeCapabilityAcquireParams,
   type RuntimeCapabilityAcquireResult,
   type RuntimeCapabilityCatalogEntry,
@@ -197,12 +199,38 @@ async function pressureFor(
   return evaluateRuntimeCapabilityAdmission(entry, pressure, queueOnPressure);
 }
 
+/**
+ * Whether the run store says this run has had its terminal capability cleanup.
+ *
+ * Terminal status OR the ADR-054 terminal posture: the posture is what the
+ * reconciler records when it stops a run's providers, and it can land before
+ * the run itself settles.
+ */
+function hasHadTerminalCleanup(run: Run): boolean {
+  return isTerminalRunStatus(run.status) || run.resourcePosture?.posture === 'terminal';
+}
+
 const registry = new RuntimeCapabilityRegistry({
   store: new RuntimeCapabilityStore(runtimeCapabilityStorePath()),
   catalogForSlot,
   runAction: runProviderAction,
   pressureFor,
   familyForRun: (ownerRunId) => getRun(ownerRunId)?.familyId,
+  // The durable half of the terminal fence. The registry's own owner list is a
+  // bounded fast path; the run store is what still knows after a restart or an
+  // eviction, from the run's own terminal status or the terminal posture
+  // ADR-054 recorded on it.
+  isTerminalOwner: (ownerRunId) => {
+    const run = getRun(ownerRunId);
+    if (!run) return false;
+    return hasHadTerminalCleanup(run);
+  },
+  // No family predicate on purpose. There is no run-store question that answers
+  // "did a family-scope cleanup run": asking whether any member is terminal
+  // fenced live children, because a CI-watch chain's follow-up run shares its
+  // parent's family and the parent reaching `done` refused its own child at
+  // PREPARE. The durable family entries, written only by an actual family-scope
+  // cleanup, are the whole authority.
   onEvent(event) {
     broadcastFn?.(Events.RUNTIME_CAPABILITY_LIFECYCLE, { event });
   },

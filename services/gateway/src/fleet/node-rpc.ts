@@ -55,6 +55,29 @@ export function handleNodeExecOutput(requestId: string, stream: string, data: st
 }
 
 /**
+ * The node RPC deadline elapsed before the node answered.
+ *
+ * A fact about the TRANSPORT, not about whatever was being asked. Callers that
+ * classify a remote probe need to tell it apart from a real verdict: a runner
+ * liveness probe that never got an answer says nothing about that runner's
+ * recovery capability, and reporting it as one turned a loaded machine into a
+ * permanent-looking refusal (MANUAL-000121).
+ *
+ * Typed rather than matched on the message, so the classification survives a
+ * reworded error.
+ */
+export class NodeRpcTimeoutError extends Error {
+  constructor(
+    readonly machine: string,
+    readonly timeoutMs: number,
+    detail = '',
+  ) {
+    super(`Node ${machine} timeout after ${timeoutMs}ms${detail}`);
+    this.name = 'NodeRpcTimeoutError';
+  }
+}
+
+/**
  * Send an RPC request to a connected node and await the response.
  */
 export function sendNodeRequest(
@@ -71,7 +94,7 @@ export function sendNodeRequest(
     const TIMEOUT = opts?.timeout ?? 30_000;
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(new Error(`Node ${node.machine} timeout after ${TIMEOUT}ms`));
+      reject(new NodeRpcTimeoutError(node.machine, TIMEOUT));
     }, TIMEOUT);
     pending.set(id, { resolve, reject, timer });
     opts?.onRequestId?.(id);
@@ -117,7 +140,7 @@ function sendNodeRequestStreaming(
       const suffix = usedDefault
         ? ' (default — caller should pass explicit timeout for long ops)'
         : '';
-      reject(new Error(`Node ${node.machine} timeout after ${effectiveTimeout}ms${suffix}`));
+      reject(new NodeRpcTimeoutError(node.machine, effectiveTimeout, suffix));
     }, effectiveTimeout);
 
     if (opts?.onOutput) {
@@ -141,6 +164,18 @@ async function waitForNode(machine: string, timeoutMs = 15_000): Promise<Connect
   }
   throw new Error(`No node connected for machine ${machine} after ${timeoutMs}ms`);
 }
+
+/**
+ * Margin the transport deadline gets on top of the remote command's own budget.
+ *
+ * The two used to be the same number, so the transport almost always gave up
+ * first: the node still has to fire its own timeout, escalate to SIGKILL after
+ * the five-second grace `execLocal` allows, and send the result back. The
+ * caller then saw a transport failure instead of the command's exit 124, and a
+ * probe timeout lost the one fact that identified it. Giving the transport the
+ * longer deadline lets the command's own timer win and report itself.
+ */
+const NODE_EXEC_TRANSPORT_GRACE_MS = 10_000;
 
 export interface NodeExecOpts {
   timeout?: number;
@@ -186,11 +221,17 @@ async function nodeExecRequest(
           ...(opts?.timeout != null ? { timeout: opts.timeout } : {}),
           ...(opts?.maxBuffer != null ? { maxBuffer: opts.maxBuffer } : {}),
         },
-        { timeout: opts?.timeout, onOutput: opts?.onOutput },
+        {
+          // Deliberately NOT the command budget: see NODE_EXEC_TRANSPORT_GRACE_MS.
+          ...(opts?.timeout != null
+            ? { timeout: opts.timeout + NODE_EXEC_TRANSPORT_GRACE_MS }
+            : {}),
+          onOutput: opts?.onOutput,
+        },
       )) as ExecResult;
     } catch (err) {
       const msg = (err as Error).message;
-      if (attempt === 0 && (msg.includes('not open') || msg.includes('timeout'))) {
+      if (attempt === 0 && (msg.includes('not open') || err instanceof NodeRpcTimeoutError)) {
         console.log(`[node-rpc] exec retry for ${machine}: ${msg}`);
         await new Promise((r) => setTimeout(r, 3000)); // wait for reconnect
         continue;

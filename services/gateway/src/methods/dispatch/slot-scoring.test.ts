@@ -280,6 +280,24 @@ test('slotClaimBlockedByHandoff blocks foreign reservations only', () => {
   );
 });
 
+test("a slot still in a terminal run's teardown is not free for dispatch", () => {
+  // Why the work-graph tick may run BEFORE slot teardown (ADR-053): a tick
+  // enqueues backlog work and never binds a slot — `QueueItem` carries no slot
+  // field — so selection happens later, here, and this is what refuses a slot
+  // whose teardown has not finished. Without it, ticking first would hand the
+  // dying run's slot to the next one.
+  assert.equal(
+    isFreeSlot(slot({ slot: 'macwork-ff-3', lifecycle: 'busy', phase: 'releasing' })),
+    false,
+  );
+  assert.equal(
+    isFreeSlot(slot({ slot: 'macwork-ff-3', lifecycle: 'busy', phase: 'working' })),
+    false,
+  );
+  // And the slot the teardown finished on is available again.
+  assert.equal(isFreeSlot(slot({ slot: 'macwork-ff-3', lifecycle: 'ready', agent: 'idle' })), true);
+});
+
 test('pickedSlotIneligibility rejects ghosts, foreign projects, and undispatchable slots', () => {
   const base = {
     enabled: true,

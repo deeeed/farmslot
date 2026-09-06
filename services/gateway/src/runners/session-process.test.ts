@@ -7,11 +7,14 @@ import test from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
+import { NodeRpcTimeoutError } from '../fleet/node-rpc.js';
+
 import {
   buildFindRunnerDescendantPidCommand,
   buildRunnerSessionDiscoveryCommand,
   findRunnerDescendantPid,
   probeRunnerDescendantPid,
+  probeTimeoutBudgetFromError,
   readPaneProcessStartedAtMs,
   recaptureRunnerSessionMetadataIfMissing,
   resolvePersistedRunnerSessionBinding,
@@ -20,6 +23,7 @@ import {
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
   RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT,
+  RunnerLivenessProbeTimeoutError,
   RunnerProcessProbeError,
   terminateRunnerDescendantsInTmuxSession,
   verifyExactLiveRunnerSessionBinding,
@@ -33,6 +37,53 @@ test('runner descendant PID lookup preserves an indeterminate probe', async () =
     findRunnerDescendantPid(makeVars(), '', 'cursor'),
     /Cannot determine runner liveness under pane PID/,
   );
+});
+
+test('a liveness probe that exhausts its budget is typed, not just worded', async () => {
+  // 1ms cannot outlast a process spawn, so the probe always hits its own
+  // timeout here. What the test asserts is the TYPE and the recorded budget:
+  // a caller classifying park eligibility must never have to read the message
+  // to tell a stalled probe from a runner that cannot be recovered.
+  const vars = makeVars({ repo: os.tmpdir(), remoteRepo: os.tmpdir() });
+  const rejection = await findRunnerDescendantPid(vars, String(process.pid), 'codex', {
+    timeout: 1,
+  }).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  assert.ok(
+    rejection instanceof RunnerLivenessProbeTimeoutError,
+    `expected a typed probe timeout, got ${String(rejection)}`,
+  );
+  assert.equal(rejection.probeBudgetMs, 1);
+});
+
+test('a transport deadline counts as a probe timeout; an unreachable node does not', () => {
+  // The remote half of the same classification, as the rule itself: a probe
+  // whose RPC deadline elapsed has no exit status to read, so without this it
+  // fell through as an unclassified failure and a loaded machine looked like a
+  // runner that cannot be recovered.
+  assert.equal(probeTimeoutBudgetFromError(new NodeRpcTimeoutError('mini', 10_000)), 10_000);
+  // A node that never connected exhausted no budget. It is a real verdict about
+  // the machine, not a transient stall, and must not be retried through.
+  assert.equal(
+    probeTimeoutBudgetFromError(new Error('No node connected for machine mini after 15000ms')),
+    undefined,
+  );
+  assert.equal(probeTimeoutBudgetFromError(new Error('boom')), undefined);
+});
+
+test('an indeterminate probe that did not time out is typed but not a timeout', async () => {
+  // Same rejection path, no budget exhausted: a real "cannot read this process
+  // tree" must keep its own code, or the retry classification would treat every
+  // unreadable tree as a transient stall.
+  const rejection = await findRunnerDescendantPid(makeVars(), '', 'cursor').then(
+    () => null,
+    (error: unknown) => error,
+  );
+  assert.ok(rejection instanceof RunnerProcessProbeError);
+  assert.equal(rejection.code, 'pane-pid-missing');
+  assert.equal(rejection instanceof RunnerLivenessProbeTimeoutError, false);
 });
 
 test('an undecidable probe reports a typed code rather than a bare message', async () => {

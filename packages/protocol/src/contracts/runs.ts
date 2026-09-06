@@ -1717,10 +1717,36 @@ export const MachineParkEligibilityCodes = {
   workspaceNotPreservable: 'WORKSPACE_NOT_PRESERVABLE',
   /** A gate park is in flight for this run; its gate cannot be resolved yet. */
   gateParkInFlight: 'GATE_PARK_IN_FLIGHT',
+  /**
+   * The runner liveness probe exceeded its fixed budget before it could say
+   * whether the worker is alive. Distinct from `RUNNER_RELOAD_UNSUPPORTED` and
+   * from the gateway's generic recovery-handle refusal: nothing was decided
+   * about this runner's capability, so the operator's own retry is the answer.
+   * `details.probeBudgetMs` carries the budget that elapsed.
+   */
+  runnerLivenessProbeTimeout: 'RUNNER_LIVENESS_PROBE_TIMEOUT',
+  /**
+   * The machine-pause preview digest moved between preview and execute, so the
+   * batch the operator reviewed is no longer the batch that would run. A race,
+   * not a verdict about the run: previewing again resolves it.
+   */
+  machinePausePreviewStale: 'MACHINE_PAUSE_PREVIEW_STALE',
 } as const;
 
 export type MachineParkEligibilityCode =
   (typeof MachineParkEligibilityCodes)[keyof typeof MachineParkEligibilityCodes];
+
+/**
+ * Structured facts behind an eligibility verdict, for the codes that have one.
+ *
+ * The reason string is prose for an operator; anything a client or a validation
+ * harness has to BRANCH on belongs here instead, so nobody has to parse the
+ * sentence back apart to recover a number the gateway already knew.
+ */
+export interface MachinePauseEligibilityDetails {
+  /** Budget the runner liveness probe exhausted (`RUNNER_LIVENESS_PROBE_TIMEOUT`). */
+  probeBudgetMs?: number;
+}
 
 /**
  * The git identity a freeing park took out of the slot's working tree.

@@ -25,6 +25,7 @@ import {
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { withMachineRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import type { RunnerParkHostPlan } from '../runners/session-lifecycle.js';
+import { RunnerLivenessProbeTimeoutError } from '../runners/session-process.js';
 
 import { assertValidJournal, type MachineParkingIntentJournal } from './journal.js';
 import {
@@ -2164,6 +2165,48 @@ test('release preview accepts a gate-held run with a declared session reload and
   assert.equal(entry.eligibility.code, 'ELIGIBLE_GATE_RELEASE_PAUSE');
   assert.equal(entry.slotDisposition, 'freed');
   assert.equal(preview.eligibleCount, 1);
+});
+
+test('release preview codes a stalled liveness probe apart from an unsupported runner', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  ctx.deps.resolveRecoveryHandle = async () => {
+    throw new RunnerLivenessProbeTimeoutError(
+      'Cannot determine runner liveness under pane PID 4242: command timed out after 10000ms',
+      10_000,
+    );
+  };
+
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const entry = preview.runs.find((run) => run.runId === 'run-gate')!;
+  assert.equal(entry.eligibility.eligible, false);
+  // A probe that ran out of time decided nothing about recovery support, so it
+  // must not wear the code that means "this runner cannot be recovered".
+  assert.equal(entry.eligibility.code, 'RUNNER_LIVENESS_PROBE_TIMEOUT');
+  // The budget is carried structurally; a retry decision must never have to
+  // parse it back out of the sentence.
+  assert.equal(entry.eligibility.details?.probeBudgetMs, 10_000);
+});
+
+test('release preview keeps the unsupported code for a real recovery-handle refusal', async () => {
+  const ctx = harness([gateHeldRun('run-gate', 'slot-a')]);
+  ctx.deps.resolveRecoveryHandle = async () => {
+    throw new Error('run has no persisted runner session binding');
+  };
+
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+  });
+
+  const entry = preview.runs.find((run) => run.runId === 'run-gate')!;
+  assert.equal(entry.eligibility.code, 'RUNNER_RECOVERY_UNSUPPORTED');
+  assert.equal(entry.eligibility.details, undefined);
 });
 
 test('release preview rejects a gate-held run whose runner declares no session reload', async () => {

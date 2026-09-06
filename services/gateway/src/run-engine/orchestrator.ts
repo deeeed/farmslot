@@ -11,9 +11,11 @@ import {
   type Run,
   type RunDecisionPayload,
   type RunStatus,
+  type SlotReleaseParams,
 } from '@farmslot/protocol';
 
 import { reconcileRunAgentRuntime } from '../agents/runtime-recovery.js';
+import { markBacklogRunObserved } from '../backlog/store.js';
 import {
   getProjectField,
   getProjectFieldRaw,
@@ -22,11 +24,27 @@ import {
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
-import { resetSlot, SLOT_PHASE_RELEASING } from '../core/state.js';
+import {
+  readSlotField,
+  resetSlot,
+  resetSlotIf,
+  SLOT_PHASE_RELEASING,
+  slotReleasingFenceFields,
+} from '../core/state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
-import { buildPrepareIdentityReapCommand, clearStalePrepareProcess } from '../methods/slot.js';
+import {
+  buildPrepareIdentityReapCommand,
+  clearStalePrepareProcess,
+  slotRelease,
+} from '../methods/slot.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
+import {
+  routeTerminalRunTransition,
+  type TerminalTransitionCollaborators,
+  type TerminalTransitionRequest,
+} from '../run-lifecycle/terminal-transition.js';
+import type { RunTransitionResult } from '../run-lifecycle/transition-router.js';
 import { PromptDeliveryUncertainError } from '../runners/registry.js';
 import {
   createRun,
@@ -37,6 +55,7 @@ import {
   updateRunStep,
 } from '../runs/store.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
+import { schedulerTick } from '../work-graph/store.js';
 
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
 import { executeCIWatchStep } from './ci-watch-step.js';
@@ -98,8 +117,14 @@ import { rearmInteractiveHandoffAutoRecovery } from './run-monitor.js';
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
 import { executeGradeStep, executeWriteTaskStep } from './task-steps.js';
 import { copyTaskFilesToSlot } from './task-sync.js';
+import {
+  beginTerminalTeardown,
+  endTerminalTeardown,
+  isTerminalTeardownInFlight,
+} from './terminal-teardown-registry.js';
 type BroadcastFn = (event: string, payload: unknown) => void;
 let broadcastFn: BroadcastFn = () => {};
+let settledBroadcastFn: BroadcastFn = () => {};
 function interactiveLightweightSkipOutputs(step: string): StepIO {
   return {
     inputs: { enabled: false, policy: 'interactive-lightweight', step },
@@ -157,14 +182,16 @@ const S = PipelineSteps;
  * guarded on the fence epoch, mirroring slotRelease. A slot already
  * mid-release is left to the release that owns the teardown.
  */
-async function cleanupSlotAfterRunFailure(
+export async function cleanupSlotAfterRunFailure(
   slotId: string,
   runId: string,
   reason: string,
   destructiveCleanup?: () => Promise<void>,
+  // Injected only so the escalated branch is reachable from a test without
+  // mocking a module; production always takes the lazy import below.
+  teardownWorker?: (slotId: string) => Promise<void>,
 ): Promise<void> {
-  const { resetSlotIf, slotOwnershipReleaseFields, transitionSlotStatus } =
-    await import('../core/index.js');
+  const { slotOwnershipReleaseFields, transitionSlotStatus } = await import('../core/index.js');
   // Object holder rather than a `let`: assignments inside the decide closure
   // are invisible to control-flow narrowing on a plain local.
   const planRef: {
@@ -183,7 +210,7 @@ async function cleanupSlotAfterRunFailure(
     planRef.escalated = plan === 'reset' && slot.current_run_id !== runId;
     switch (plan) {
       case 'reset':
-        return { fields: { lifecycle: 'busy', phase: SLOT_PHASE_RELEASING } };
+        return { fields: slotReleasingFenceFields() };
       case 'release-keep-handoff':
         return { fields: slotOwnershipReleaseFields(), endsOwnership: true };
       case 'clear-reservation':
@@ -201,30 +228,49 @@ async function cleanupSlotAfterRunFailure(
       // leaves the releasing fence up: non-dispatchable and visible to the
       // operator, instead of a dispatchable row hiding a live worker.
       try {
-        const { teardownWorkerOnSlot } = await import('../methods/dispatch/nudge.js');
-        await teardownWorkerOnSlot(slotId);
+        const kill =
+          teardownWorker ?? (await import('../methods/dispatch/nudge.js')).teardownWorkerOnSlot;
+        await kill(slotId);
       } catch (err) {
+        // The fence deliberately stays up and the slot is NOT published ready —
+        // a dispatchable row hiding a live worker is the worse outcome. What
+        // changed is that this is no longer only logged: returning quietly
+        // reported a clean teardown for a slot left fenced with a worker that
+        // may still be writing, so the transition recorded success for it.
+        const detail = (err as Error).message.slice(0, 200);
         console.warn(
-          `[run-engine] worker kill failed for ${slotId} after ${reason}; leaving the releasing fence up: ${(err as Error).message.slice(0, 200)}`,
+          `[run-engine] worker kill failed for ${slotId} after ${reason}; leaving the releasing fence up: ${detail}`,
         );
-        return;
+        throw new Error(
+          `worker kill failed for ${slotId} after ${reason}; slot left fenced as releasing: ${detail}`,
+        );
       }
     }
+    let destructiveFailure: Error | undefined;
     if (destructiveCleanup) {
       try {
         await destructiveCleanup();
       } catch (err) {
-        // The fence must not strand the slot in `releasing`: surface the
-        // teardown error but continue to the final reset.
-        console.warn(
-          `[run-engine] destructive cleanup for ${slotId} after ${reason}: ${(err as Error).message.slice(0, 200)}`,
-        );
+        // The fence must not strand the slot in `releasing`, so the reset below
+        // still runs. What changed is that the failure is no longer only
+        // logged: it is rethrown after the reset, so the terminal transition
+        // records an advisory failure instead of reporting a clean teardown for
+        // a slot whose processes may still be alive.
+        destructiveFailure = err as Error;
       }
     }
     await resetSlotIf(
       slotId,
       (slot) => (Number(slot.slot_epoch) || 0) === (transition.epoch ?? -1),
     );
+    if (destructiveFailure) {
+      console.warn(
+        `[run-engine] destructive cleanup for ${slotId} after ${reason}: ${destructiveFailure.message.slice(0, 200)}`,
+      );
+      throw new Error(
+        `destructive cleanup for ${slotId} after ${reason} failed: ${destructiveFailure.message.slice(0, 200)}`,
+      );
+    }
     console.log(`[run-engine] slot ${slotId} reset to ready/idle after ${reason}`);
     return;
   }
@@ -304,6 +350,136 @@ function getRunFlags(runId: string):
 // Partial I/O stash — steps store their partial inputs/outputs before throwing,
 // so the catch block in startRun() can persist them on failure.
 const stepPartialIO = new Map<string, StepIO>();
+/**
+ * Slot releases a terminal step asked the engine to run AFTER the run publishes.
+ *
+ * Keyed by run, cleared when startRun claims the run and again when the release
+ * is consumed, so a generation that ended without reaching its terminal tail
+ * cannot hand a stale release to the next one. A gateway that dies between the
+ * terminal publish and the release leaves a `busy`/`held` slot with no active
+ * run, which `reconcileOrphanedSlots` already reclaims.
+ */
+const pendingTerminalSlotRelease = new Map<string, SlotReleaseParams>();
+
+function deferTerminalSlotRelease(runId: string, params: SlotReleaseParams): void {
+  pendingTerminalSlotRelease.set(runId, params);
+}
+
+function takePendingTerminalSlotRelease(runId: string): SlotReleaseParams | undefined {
+  const params = pendingTerminalSlotRelease.get(runId);
+  pendingTerminalSlotRelease.delete(runId);
+  return params;
+}
+
+/**
+ * Record a failed advisory effect the way cancel does (ADR-053 parity).
+ *
+ * The router publishes the terminal run before the awaited settle, so a settle
+ * that failed leaves the backlog projection behind the run. `backlogReconcilePending`
+ * is the durable repair marker: archive and delete refuse a marked run, and
+ * restart reconciliation rebuilds the projection from it. Without this the
+ * terminal paths published and then lost the settle silently, while cancel
+ * repaired itself.
+ */
+function recordTerminalTransitionEffects(runId: string, result: RunTransitionResult | null): void {
+  if (!result) return;
+  const failed = result.effects.filter((effect) => effect.status === 'failed');
+  if (failed.length === 0) return;
+  if (failed.some((effect) => effect.name === 'backlog-settle') && getRun(runId)) {
+    updateRun(runId, { backlogReconcilePending: true });
+  }
+  console.warn(
+    `[run-engine] terminal transition for ${runId.slice(0, 8)} applied with ${failed.length} failed effect(s): ${failed
+      .map((effect) => `${effect.name} (${effect.detail ?? 'no detail'})`)
+      .join('; ')}`,
+  );
+}
+
+/**
+ * Route a terminal transition, hold its slot against reclamation, and record
+ * what its after-effects reported.
+ *
+ * The hold spans the whole transition, not just the slot effect: the publish
+ * happens first and the backlog settle and work-graph tick run in between, so
+ * the run is already terminal — and its slot already looks orphaned — well
+ * before the teardown itself begins.
+ */
+async function routeAndRecordTerminalTransition(request: TerminalTransitionRequest): Promise<void> {
+  const slotId = getRun(request.runId)?.slotId ?? null;
+  if (slotId) beginTerminalTeardown(slotId);
+  try {
+    recordTerminalTransitionEffects(request.runId, await routeTerminalRunTransition(request));
+  } finally {
+    if (slotId) endTerminalTeardown(slotId);
+  }
+}
+
+async function runDeferredSlotRelease(release: SlotReleaseParams): Promise<void> {
+  const noopEmit = () => {};
+  await slotRelease(release, noopEmit);
+}
+
+/**
+ * Slot teardown for a run going terminal by a FAILURE route that may still owe
+ * the release a step recorded.
+ *
+ * A CI-watch step whose outcome is `blocked` defers its release and then leaves
+ * the run terminal, so the engine routes it through the non-thrown backstop
+ * rather than the completion tail. Taking the release only in that tail dropped
+ * it: the keep-work and keep-warm handoff was lost, the ADR-054 terminal
+ * reconcile that lives inside `slotRelease` never ran, and the failure cleanup
+ * hard-reset the slot instead.
+ *
+ * Both run, in that order and independently of each other's failure, which is
+ * what the step body did before the release moved out of it: the release first,
+ * then the ownership-checked cleanup, which finds the slot already unowned and
+ * no-ops when the release landed.
+ */
+export function terminalSlotCleanup(
+  release: SlotReleaseParams | undefined,
+  failureCleanup: (run: Run) => Promise<void>,
+  runRelease: (params: SlotReleaseParams) => Promise<void> = runDeferredSlotRelease,
+): (run: Run) => Promise<void> {
+  if (!release) return failureCleanup;
+  return async (run) => {
+    const failures: string[] = [];
+    try {
+      await runRelease(release);
+    } catch (err) {
+      failures.push(`deferred release: ${(err as Error).message.slice(0, 200)}`);
+    }
+    try {
+      await failureCleanup(run);
+    } catch (err) {
+      failures.push((err as Error).message.slice(0, 200));
+    }
+    if (failures.length > 0) throw new Error(failures.join('; '));
+  };
+}
+
+/**
+ * The engine's collaborators for one terminal transition (ADR-053).
+ *
+ * `cleanupSlot` is the only part that varies: complete releases the slot the
+ * step asked for, fail and block run the ownership-checked failure cleanup, and
+ * a transition that owes no teardown passes null.
+ */
+function terminalCollaborators(
+  event: string,
+  cleanupSlot: ((run: Run) => Promise<void>) | null,
+): TerminalTransitionCollaborators {
+  return {
+    settleBacklog: (run) => markBacklogRunObserved(run),
+    tickWorkGraph: (graphId) => schedulerTick({ graphId }),
+    cleanupEvalHarness: (run) => cleanupEvalHarnessForTerminalRun(run),
+    cleanupSlot,
+    emit: (run) => {
+      // Not `broadcastFn`: that one also kicks off its own backlog settle and
+      // scheduler tick, racing the awaited ones this transition is about to run.
+      settledBroadcastFn(event, { run });
+    },
+  };
+}
 export function bumpRunGeneration(runId: string): number {
   const run = getRun(runId);
   if (!run) return 0;
@@ -314,8 +490,12 @@ export function bumpRunGeneration(runId: string): number {
 function getRunGeneration(runId: string): number {
   return getRun(runId)?.engineState?.generation ?? 0;
 }
-export function initRunEngine(broadcast: BroadcastFn): void {
+export function initRunEngine(broadcast: BroadcastFn, settledBroadcast?: BroadcastFn): void {
   broadcastFn = broadcast;
+  // Router-owned terminal publishes go out on this one. Defaults to the same
+  // broadcaster so a caller that does not distinguish them still works; the
+  // production wiring passes the variant without the backlog/work-graph lane.
+  settledBroadcastFn = settledBroadcast ?? broadcast;
   setEngineDecisionRuntime({ broadcast, stepToStatus: STEP_TO_STATUS });
   setPublishPackageRefreshBroadcast(broadcast);
   setReviewGateBroadcast(broadcast);
@@ -332,21 +512,64 @@ export function applyChainedRunEngineFlags(
   }
 }
 // ─── Start / drive a run ───
-async function cleanupEvalHarnessForTerminalRun(
+export async function cleanupEvalHarnessForTerminalRun(
   run: Run,
-  runId: string,
-  reason: string,
+  runLifecycle: typeof executeEvalHarnessLifecycle = executeEvalHarnessLifecycle,
 ): Promise<void> {
   if (!run.slotId || !run.engineState?.evalExperiment) return;
-  try {
-    await executeEvalHarnessLifecycle(run, 'cleanup', { throwOnFailure: false });
-  } catch (cleanupErr) {
-    // The terminal run state is authoritative. Cleanup errors are logged so the
-    // candidate package and slot can be inspected without hiding the root exit.
-    console.warn(
-      `[run-engine] eval harness cleanup after ${reason} failed for ${runId.slice(0, 8)}: ${(cleanupErr as Error).message.slice(0, 200)}`,
+  // Not wrapped: this runs as an ADVISORY after-effect of the terminal
+  // transition, which records the failure on the transition result and logs it.
+  // The terminal run state is already published and authoritative either way,
+  // so a cleanup error can be reported instead of being swallowed here.
+  //
+  // `throwOnFailure: false` keeps a failed hook from throwing, so the RETURNED
+  // status is the only place the failure appears. Reading it is what stops a
+  // failed harness cleanup from being recorded as a clean one.
+  const outcome = await runLifecycle(run, 'cleanup', { throwOnFailure: false });
+  if (outcome.status === 'failed') {
+    throw new Error(
+      `eval harness cleanup failed for ${run.id.slice(0, 8)}${outcome.logPath ? ` (log: ${outcome.logPath})` : ''}`,
     );
   }
+}
+
+/**
+ * Slot teardown for a failed or blocked run, as a terminal-transition effect.
+ *
+ * Both calls always run: the step-scoped cleanup and the safety net answer
+ * different questions (stale prepare processes versus gate-held agents on a slot
+ * a later step may have re-held), and letting the first one's failure skip the
+ * second is how a slot gets left in `releasing`. Failures are aggregated and
+ * rethrown so the router records them, rather than logged and dropped.
+ */
+function failedRunSlotCleanupEffect(
+  reason: string,
+  destructive?: (run: Run) => Promise<void>,
+  extra?: { reason: string; destructive?: (run: Run) => Promise<void> },
+): (run: Run) => Promise<void> {
+  return async (run) => {
+    if (!run.slotId) return;
+    const slotId = run.slotId;
+    const failures: string[] = [];
+    const attempt = async (
+      stage: string,
+      destructiveCleanup?: (run: Run) => Promise<void>,
+    ): Promise<void> => {
+      try {
+        await cleanupSlotAfterRunFailure(
+          slotId,
+          run.id,
+          stage,
+          destructiveCleanup ? () => destructiveCleanup(run) : undefined,
+        );
+      } catch (err) {
+        failures.push(`${stage}: ${(err as Error).message.slice(0, 200)}`);
+      }
+    };
+    await attempt(reason, destructive);
+    if (extra) await attempt(extra.reason, extra.destructive);
+    if (failures.length > 0) throw new Error(failures.join('; '));
+  };
 }
 
 // Defensive backstop for any step that mutates run.status without throwing. As of the
@@ -377,48 +600,48 @@ async function finalizeNonThrownTerminalRun(
       updateRunStep(runId, steps[j], { status: 'skipped' });
     }
   }
-  if (!run.completedAt) {
-    // Default outcome only when whoever flipped the status didn't already record one.
-    // MONITOR is no longer expected to take this branch (it now throws MonitorTerminalError
-    // which sets `outcome` in its catch); any future step that flips status without throwing
-    // would land here and `metrics.outcome ??` ensures we don't clobber an already-set value.
-    const inferredOutcome: 'partial' | 'failure' = run.status === 'blocked' ? 'partial' : 'failure';
-    updateRun(runId, {
-      completedAt: new Date().toISOString(),
-      metrics: {
-        ...run.metrics,
-        durationMs: Date.now() - new Date(run.createdAt).getTime(),
-        outcome: run.metrics.outcome ?? inferredOutcome,
-      },
-    });
-  }
-  await cleanupEvalHarnessForTerminalRun(run, runId, `non-thrown ${run.status}`);
-  if (run.slotId) {
-    const slotId = run.slotId;
-    try {
-      // Destructive teardown (stale worker/browser/webpack kill + gate-held
-      // agents) runs INSIDE the cleanup helper, behind its releasing fence and
-      // only when this run still owns the slot exclusively — an incoming
-      // nudge's reserved worker must never be killed by the dying owner.
-      // cleanupSlotProcesses is idempotent: it signals a prepare group only
-      // when its opaque scope still matches a live member, while missing or
-      // stale identities are removed without signalling. Calling it on flows
-      // where prepare did not run is therefore a no-op.
-      await cleanupSlotAfterRunFailure(slotId, runId, `non-thrown ${run.status}`, async () => {
-        await cleanupSlotProcesses(slotId);
-        const currentRun = getRun(runId);
-        if (currentRun) {
+  // Default outcome only when whoever flipped the status didn't already record one.
+  // MONITOR is no longer expected to take this branch (it now throws MonitorTerminalError
+  // which sets `outcome` in its catch); any future step that flips status without throwing
+  // would land here and `metrics.outcome ??` ensures we don't clobber an already-set value.
+  const inferredOutcome: 'partial' | 'failure' = run.status === 'blocked' ? 'partial' : 'failure';
+  const completionPatch: Partial<Run> = run.completedAt
+    ? {}
+    : {
+        completedAt: new Date().toISOString(),
+        metrics: {
+          ...run.metrics,
+          durationMs: Date.now() - new Date(run.createdAt).getTime(),
+          outcome: run.metrics.outcome ?? inferredOutcome,
+        },
+      };
+  // ADR-053: the terminal status is already on the run (a step flipped it), so
+  // this transition only SETTLES it — completion stamp, then the teardown as
+  // published-first after-effects. Destructive teardown (stale
+  // worker/browser/webpack kill + gate-held agents) runs INSIDE the cleanup
+  // helper, behind its releasing fence and only when this run still owns the
+  // slot exclusively — an incoming nudge's reserved worker must never be killed
+  // by the dying owner. cleanupSlotProcesses is idempotent: it signals a prepare
+  // group only when its opaque scope still matches a live member, while missing
+  // or stale identities are removed without signalling. Calling it on flows
+  // where prepare did not run is therefore a no-op.
+  await routeAndRecordTerminalTransition({
+    runId,
+    kind: run.status === 'blocked' ? 'block' : 'fail',
+    actor: 'engine',
+    settlingStatus: run.status,
+    patch: completionPatch,
+    collaborators: terminalCollaborators(
+      Events.RUN_UPDATED,
+      terminalSlotCleanup(
+        takePendingTerminalSlotRelease(runId),
+        failedRunSlotCleanupEffect(`non-thrown ${run.status}`, async (currentRun) => {
+          await cleanupSlotProcesses(currentRun.slotId!);
           await teardownGateHeldAgentsIfNeeded(currentRun);
-        }
-      });
-    } catch (err) {
-      // Surface but do not mask the run's terminal state.
-      console.warn(
-        `[run-engine] slot reset after non-thrown ${run.status} for ${run.slotId}: ${(err as Error).message.slice(0, 200)}`,
-      );
-    }
-  }
-  broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        }),
+      ),
+    ),
+  });
 }
 export interface RunEngineStepStartAcknowledgement {
   runId: string;
@@ -436,6 +659,18 @@ export interface StartRunOptions {
 }
 
 export async function startRun(runId: string, options: StartRunOptions = {}): Promise<void> {
+  try {
+    await driveRun(runId, options);
+  } finally {
+    // Every exit, not just the completion tail: a run that deferred a release
+    // and then cancelled, paused, bailed on a generation bump, or ended through
+    // a failure route used to leave its entry behind until the next `startRun`
+    // for the same run — which for a terminal run never comes.
+    pendingTerminalSlotRelease.delete(runId);
+  }
+}
+
+async function driveRun(runId: string, options: StartRunOptions): Promise<void> {
   const initialRun = getRun(runId);
   if (!initialRun) throw new Error(`Run not found: ${runId}`);
   // Eval replay task normalization is intentionally repeated here and again at
@@ -638,29 +873,30 @@ export async function startRun(runId: string, options: StartRunOptions = {}): Pr
           updateRunStep(runId, steps[j], { status: 'skipped' });
         }
         const blockedRun = getRun(runId)!;
-        updateRun(runId, {
-          status: 'blocked',
-          completedAt: new Date().toISOString(),
-          error: err.message,
-          metrics: {
-            ...blockedRun.metrics,
-            outcome: 'partial',
-            durationMs: Date.now() - new Date(blockedRun.createdAt).getTime(),
+        await routeAndRecordTerminalTransition({
+          runId,
+          kind: 'block',
+          actor: 'engine',
+          patch: {
+            status: 'blocked',
+            completedAt: new Date().toISOString(),
+            error: err.message,
+            metrics: {
+              ...blockedRun.metrics,
+              outcome: 'partial',
+              durationMs: Date.now() - new Date(blockedRun.createdAt).getTime(),
+            },
           },
+          collaborators: terminalCollaborators(
+            Events.RUN_UPDATED,
+            terminalSlotCleanup(
+              takePendingTerminalSlotRelease(runId),
+              failedRunSlotCleanupEffect('blocked run', (run) =>
+                teardownGateHeldAgentsIfNeeded(run),
+              ),
+            ),
+          ),
         });
-        if (blockedRun.slotId) {
-          await cleanupEvalHarnessForTerminalRun(blockedRun, runId, 'blocked run');
-          try {
-            await cleanupSlotAfterRunFailure(blockedRun.slotId, runId, 'blocked run', () =>
-              teardownGateHeldAgentsIfNeeded(blockedRun),
-            );
-          } catch (resetErr) {
-            console.warn(
-              `[run-engine] final slot reset failed for blocked run ${blockedRun.slotId}: ${(resetErr as Error).message.slice(0, 200)}`,
-            );
-          }
-        }
-        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
         return;
       }
 
@@ -686,38 +922,33 @@ export async function startRun(runId: string, options: StartRunOptions = {}): Pr
           updateRunStep(runId, steps[j], { status: 'skipped' });
         }
         const monitorRun = getRun(runId)!;
-        updateRun(runId, {
-          status: err.status,
-          completedAt: completedAtIso,
-          error: err.message,
-          metrics: {
-            ...monitorRun.metrics,
-            outcome: err.outcome,
-            durationMs: Date.now() - new Date(monitorRun.createdAt).getTime(),
-          },
-        });
-        if (monitorRun.slotId) {
-          await cleanupEvalHarnessForTerminalRun(
-            getRun(runId) ?? monitorRun,
-            runId,
-            `monitor-terminal ${err.status}`,
-          );
-          try {
-            const monitorSlotId = monitorRun.slotId;
-            await cleanupSlotAfterRunFailure(
-              monitorSlotId,
-              runId,
-              `monitor-terminal ${err.status}`,
-              () => cleanupSlotProcesses(monitorSlotId),
-            );
-          } catch (resetErr) {
-            console.warn(
-              `[run-engine] slot reset after monitor-terminal ${err.status} for ${monitorRun.slotId}: ${(resetErr as Error).message.slice(0, 200)}`,
-            );
-          }
-        }
+        // The step itself completed, so its completion event is independent of
+        // the run's terminal transition and is published first.
         broadcastFn(Events.RUN_STEP_COMPLETED, { runId, step: stepName });
-        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        await routeAndRecordTerminalTransition({
+          runId,
+          kind: err.status === 'blocked' ? 'block' : 'fail',
+          actor: 'engine',
+          patch: {
+            status: err.status,
+            completedAt: completedAtIso,
+            error: err.message,
+            metrics: {
+              ...monitorRun.metrics,
+              outcome: err.outcome,
+              durationMs: Date.now() - new Date(monitorRun.createdAt).getTime(),
+            },
+          },
+          collaborators: terminalCollaborators(
+            Events.RUN_UPDATED,
+            terminalSlotCleanup(
+              takePendingTerminalSlotRelease(runId),
+              failedRunSlotCleanupEffect(`monitor-terminal ${err.status}`, (run) =>
+                cleanupSlotProcesses(run.slotId!),
+              ),
+            ),
+          ),
+        });
         return;
       }
 
@@ -758,76 +989,63 @@ export async function startRun(runId: string, options: StartRunOptions = {}): Pr
 
       const failedRun = getRun(runId)!;
 
-      await cleanupEvalHarnessForTerminalRun(failedRun, runId, `${stepName} failure`);
-
-      // Handle slot on pre-worker failure (prepare/dispatch/write-task).
-      // A refused claim is the one exception: this run never owned the slot
-      // (an in-flight release or rival claim does), so resetting it here
-      // would clear the actual owner's lifecycle fence mid-teardown.
+      // A refused claim is the one exception to slot teardown: this run never
+      // owned the slot (an in-flight release or rival claim does), so resetting
+      // it here would clear the actual owner's lifecycle fence mid-teardown.
       const claimRefused = isSlotClaimRefusedError(err);
       if (claimRefused && failedRun.slotId) {
         console.log(
           `[run-engine] slot ${failedRun.slotId} left untouched after refused claim (${stepName})`,
         );
       }
-      if (
-        !claimRefused &&
-        failedRun.slotId &&
-        (stepName === S.PREPARE ||
-          stepName === S.DISPATCH ||
-          stepName === S.WRITE_TASK ||
-          stepName === S.FIND_SLOT)
-      ) {
-        try {
-          const failedSlotId = failedRun.slotId;
-          // Stale processes left by failed prepare (browser, webpack, launcher)
-          // are killed behind the cleanup fence, owner-only.
-          await cleanupSlotAfterRunFailure(
-            failedSlotId,
-            runId,
-            `${stepName} failure`,
-            stepName === S.PREPARE ? () => cleanupSlotProcesses(failedSlotId) : undefined,
+      // Pre-worker failures (find-slot/write-task/prepare/dispatch) also kill the
+      // stale processes a failed prepare leaves behind (browser, webpack,
+      // launcher), behind the cleanup fence and owner-only. The safety net runs
+      // after it either way: individual steps may already have reset the slot,
+      // but when they did not — or threw before reaching their cleanup — it is
+      // what stops stale busy/held state.
+      const preWorkerFailure =
+        stepName === S.PREPARE ||
+        stepName === S.DISPATCH ||
+        stepName === S.WRITE_TASK ||
+        stepName === S.FIND_SLOT;
+      // This run never owned the slot, so it owes no teardown — and a release a
+      // step recorded is not its to perform either. Dropped explicitly so it
+      // cannot leak to a later generation.
+      if (claimRefused) takePendingTerminalSlotRelease(runId);
+      const failureCleanup = claimRefused
+        ? null
+        : terminalSlotCleanup(
+            takePendingTerminalSlotRelease(runId),
+            preWorkerFailure
+              ? failedRunSlotCleanupEffect(
+                  `${stepName} failure`,
+                  stepName === S.PREPARE ? (run) => cleanupSlotProcesses(run.slotId!) : undefined,
+                  {
+                    reason: 'terminal safety net',
+                    destructive: (run) => teardownGateHeldAgentsIfNeeded(run),
+                  },
+                )
+              : failedRunSlotCleanupEffect('terminal safety net', (run) =>
+                  teardownGateHeldAgentsIfNeeded(run),
+                ),
           );
-        } catch (err) {
-          // The run has already failed; reset/cleanup errors are surfaced in
-          // logs but should not hide the original pipeline failure.
-          console.warn(
-            `[run-engine] slot reset after ${stepName} failure failed for ${failedRun.slotId}: ${(err as Error).message.slice(0, 200)}`,
-          );
-        }
-      }
-
-      updateRun(runId, {
-        status: 'failed',
-        error: msg,
-        completedAt: new Date().toISOString(),
-        metrics: {
-          ...failedRun.metrics,
-          outcome: 'failure',
-          durationMs: Date.now() - new Date(failedRun.createdAt).getTime(),
+      await routeAndRecordTerminalTransition({
+        runId,
+        kind: 'fail',
+        actor: 'engine',
+        patch: {
+          status: 'failed',
+          error: msg,
+          completedAt: new Date().toISOString(),
+          metrics: {
+            ...failedRun.metrics,
+            outcome: 'failure',
+            durationMs: Date.now() - new Date(failedRun.createdAt).getTime(),
+          },
         },
+        collaborators: terminalCollaborators(Events.RUN_UPDATED, failureCleanup),
       });
-
-      // Safety net: always reset slot fully when a run terminates.
-      // Individual steps may already handle this, but if they don't (or throw
-      // before reaching their cleanup), this prevents stale busy/held state.
-      // EXCEPT after a refused claim: this run never owned the slot, and the
-      // reset would reopen it mid-teardown for the release that does.
-      if (failedRun.slotId && !claimRefused) {
-        try {
-          await cleanupSlotAfterRunFailure(failedRun.slotId, runId, 'terminal safety net', () =>
-            teardownGateHeldAgentsIfNeeded(failedRun),
-          );
-        } catch (err) {
-          // The run failure has already been recorded; surface reset failure
-          // without replacing the root-cause error shown to the operator.
-          console.warn(
-            `[run-engine] final slot reset failed for ${failedRun.slotId}: ${(err as Error).message.slice(0, 200)}`,
-          );
-        }
-      }
-
-      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
       return;
     }
   }
@@ -841,12 +1059,25 @@ export async function startRun(runId: string, options: StartRunOptions = {}): Pr
     finalRun.status !== 'blocked'
   ) {
     const durationMs = Date.now() - new Date(finalRun.createdAt).getTime();
-    updateRun(runId, {
-      status: 'done',
-      completedAt: new Date().toISOString(),
-      metrics: { ...finalRun.metrics, outcome: 'success', durationMs },
+    // The last step recorded the release it wanted rather than performing it, so
+    // `done` is published first and tmux teardown follows as an after-effect. A
+    // step that handed the slot on — a CI-watch chain, a publication gate hold —
+    // defers nothing, and this transition then owes no teardown.
+    const release = takePendingTerminalSlotRelease(runId);
+    await routeAndRecordTerminalTransition({
+      runId,
+      kind: 'complete',
+      actor: 'engine',
+      patch: {
+        status: 'done',
+        completedAt: new Date().toISOString(),
+        metrics: { ...finalRun.metrics, outcome: 'success', durationMs },
+      },
+      collaborators: terminalCollaborators(
+        Events.RUN_COMPLETED,
+        release ? () => runDeferredSlotRelease(release) : null,
+      ),
     });
-    broadcastFn(Events.RUN_COMPLETED, { run: getRun(runId) });
   }
 }
 
@@ -1148,6 +1379,9 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     getProjectField,
     setRunFlags,
     resetSlot,
+    resetSlotIf,
+    isTerminalTeardownInFlight,
+    readSlotField,
     quarantineLeakedRun,
     reconcileRunAgentRuntime: async (run) => {
       await reconcileRunAgentRuntime(run);
@@ -1232,6 +1466,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         monitorTerminalError: (args) => new MonitorTerminalError(args),
         refreshRunLinks,
         stepPartialIO,
+        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, params),
       });
     case S.SELF_REVIEW:
       return executeSelfReviewStep(runId, {
@@ -1249,6 +1484,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         monitorTerminalError: (args) => new MonitorTerminalError(args),
         refreshRunLinks,
         stepPartialIO,
+        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, params),
       });
     case S.HUMAN_GATE:
       return executeHumanGateStep(runId, {
@@ -1266,6 +1502,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         monitorTerminalError: (args) => new MonitorTerminalError(args),
         refreshRunLinks,
         stepPartialIO,
+        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, params),
       });
     case S.COMPLETE:
       return executeCompleteStep(runId, {
@@ -1283,6 +1520,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         monitorTerminalError: (args) => new MonitorTerminalError(args),
         refreshRunLinks,
         stepPartialIO,
+        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, params),
       });
     case S.CI_WATCH:
       return executeCIWatchStep(runId, {
@@ -1294,6 +1532,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         loadProjectVarsOrNull,
         resolveCIWatchTerminalPatch,
         startRun,
+        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, params),
       });
     case S.FINALIZE:
       return executeFinalizeStep(runId, {

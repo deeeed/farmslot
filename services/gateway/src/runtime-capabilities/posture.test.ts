@@ -19,6 +19,8 @@ import {
   type RuntimeCapabilityReleaseResult,
 } from '@farmslot/protocol';
 
+import { MachinePausePreviewStaleError } from '../machine-parking/preview-errors.js';
+
 import {
   type PostureWarmSweepResult,
   resolveEffectivePosturePolicy,
@@ -741,7 +743,9 @@ test('a refused park keeps the posture the run actually had', async (t) => {
     capabilities: [CATALOG_LINT],
     // Preview accepts, then the execute refuses the way a stale preview does.
     parkExecute: async () => {
-      throw new Error('machine pause preview is stale; preview the batch again');
+      throw new MachinePausePreviewStaleError(
+        'machine pause preview is stale; preview the batch again',
+      );
     },
   });
   assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
@@ -760,6 +764,47 @@ test('a refused park keeps the posture the run actually had', async (t) => {
   assert.equal(result.status.workerRetained, true);
   assert.equal(runs.get('run-a')?.resourcePosture?.posture, 'operator-wait');
   assert.deepEqual(actions, []);
+});
+
+test('a stale preview digest is coded apart from a refused execute', async (t) => {
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [CATALOG_LINT],
+    parkExecute: async () => {
+      throw new MachinePausePreviewStaleError(
+        'machine pause preview is stale; preview the batch again',
+      );
+    },
+  });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'parked' });
+  assert.equal(result.transition.rejection?.kind, 'park-ineligible');
+  // The race gets its own code so a caller never has to read the sentence to
+  // tell it from a batch the gateway genuinely refused.
+  assert.equal(
+    result.transition.rejection?.kind === 'park-ineligible'
+      ? result.transition.rejection.code
+      : undefined,
+    'MACHINE_PAUSE_PREVIEW_STALE',
+  );
+});
+
+test('an execute refusal that is not a stale digest keeps the refused code', async (t) => {
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [CATALOG_LINT],
+    parkExecute: async () => {
+      throw new Error('machine pause batch was rejected by the operator review');
+    },
+  });
+  assert.equal((await acquire(registry, 'lint', 'run-a')).ok, true);
+
+  const result = await reconciler.apply({ runId: 'run-a', posture: 'parked' });
+  assert.equal(
+    result.transition.rejection?.kind === 'park-ineligible'
+      ? result.transition.rejection.code
+      : undefined,
+    'PARK_EXECUTE_REFUSED',
+  );
 });
 
 test('replaying an operation that ended partial reports partial, not success', async (t) => {
