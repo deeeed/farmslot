@@ -11,6 +11,7 @@ import {
   buildFindRunnerDescendantPidCommand,
   buildRunnerSessionDiscoveryCommand,
   findRunnerDescendantPid,
+  probeRunnerDescendantPid,
   readPaneProcessStartedAtMs,
   recaptureRunnerSessionMetadataIfMissing,
   resolvePersistedRunnerSessionBinding,
@@ -18,6 +19,7 @@ import {
   resolveRetainedRunnerPane,
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
+  RunnerProcessProbeError,
   terminateRunnerDescendantsInTmuxSession,
   verifyExactLiveRunnerSessionBinding,
 } from './session-process.js';
@@ -30,6 +32,38 @@ test('runner descendant PID lookup preserves an indeterminate probe', async () =
     findRunnerDescendantPid(makeVars(), '', 'cursor'),
     /Cannot determine runner liveness under pane PID/,
   );
+});
+
+test('an undecidable probe reports a typed code rather than a bare message', async () => {
+  assert.deepEqual(await probeRunnerDescendantPid(makeVars(), '', 'codex'), {
+    state: 'unknown',
+    code: 'pane-pid-missing',
+    reason: 'pane PID is missing',
+  });
+  // `runner-pattern-missing` stays a guard rather than a tested branch:
+  // normalizeRunner falls back to the default runner, so the registry has no
+  // input today that yields an empty process pattern.
+  const thrown = await findRunnerDescendantPid(makeVars(), '', 'codex').then(
+    () => null,
+    (error: unknown) => error as RunnerProcessProbeError,
+  );
+  assert.ok(thrown instanceof RunnerProcessProbeError);
+  assert.equal(thrown.code, 'pane-pid-missing');
+  assert.equal(thrown.panePid, '');
+});
+
+test('a timed-out probe is retried with an escalating budget and reports the attempt count', async () => {
+  // 1 ms cannot fit any real probe, so the exec layer's own timeout verdict
+  // (exit 124) is what the retry policy sees — not a simulated one.
+  const probe = await probeRunnerDescendantPid(
+    makeVars({ remoteRepo: process.cwd() }),
+    String(process.pid),
+    'codex',
+    { timeout: 1, attempts: 3 },
+  );
+  assert.equal(probe.state, 'unknown');
+  assert.equal(probe.state === 'unknown' && probe.code, 'probe-timeout');
+  assert.equal(probe.state === 'unknown' && probe.attempts, 3);
 });
 
 test('runner descendant scan ignores the diagnostic wrapper after child exit', async () => {
@@ -272,7 +306,7 @@ test('nudge target resolution fails closed when runner liveness is unknown', asy
         stdout: '1|dev|0|300|100\n2|bugfix|0|400|200',
         stderr: '',
       }),
-      probe: async () => ({ state: 'unknown', reason: 'ssh timeout' }),
+      probe: async () => ({ state: 'unknown', code: 'probe-timeout', reason: 'ssh timeout' }),
     }),
     /Cannot inspect retained runner.*ssh timeout/,
   );

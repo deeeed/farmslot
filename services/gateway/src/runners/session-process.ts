@@ -67,6 +67,7 @@ export async function readPaneProcessStartedAtMs(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   paneId: string,
   runnerId?: string | null,
+  options?: ExecOnSlotOptions,
 ): Promise<number | null> {
   const processPattern = runnerId ? runnerProcessPatternSource(runnerId) : '';
   const script = `
@@ -165,7 +166,13 @@ except Exception as error:
     print(f'pane process start probe failed: {error}', file=sys.stderr)
     raise SystemExit(1)
 PY`;
-  const result = await execOnSlot(vars, script);
+  // This probe starts a python3 interpreter and reads the whole process table.
+  // It ran unbounded until now, so a wedged interpreter on a loaded node could
+  // stall every caller indefinitely.
+  const result = await execOnSlot(vars, script, {
+    timeout: RUNNER_PROCESS_PROBE_TIMEOUT_MS,
+    ...options,
+  });
   if (result.exitCode !== 0) return null;
   const parsed = Number(result.stdout.trim());
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -974,19 +981,69 @@ export async function findRunnerDescendantPid(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   panePid: string,
   runnerId?: string | null,
-  options?: ExecOnSlotOptions,
+  options?: RunnerDescendantPidProbeOptions,
 ): Promise<string> {
   const probe = await probeRunnerDescendantPid(vars, panePid, runnerId, options);
   if (probe.state === 'present') return probe.pid;
   if (probe.state === 'absent') return '';
-  throw new Error(
-    `Cannot determine runner liveness under pane PID ${panePid || '(missing)'}${probe.reason ? `: ${probe.reason}` : ''}`,
-  );
+  throw new RunnerProcessProbeError(probe.code, panePid, probe.reason);
+}
+
+/**
+ * Why liveness could not be decided. Callers that persist an outcome — the
+ * machine-park record above all — record this instead of re-deriving intent
+ * from a free-text `command timed out after 10000ms`.
+ */
+export type RunnerProcessProbeFailureCode =
+  | 'pane-pid-missing'
+  | 'runner-pattern-missing'
+  /** A process matched, but only a recorded runner identity may act on it. */
+  | 'runner-identity-ambiguous'
+  | 'probe-timeout'
+  | 'probe-transport';
+
+/** Typed liveness-probe failure, so a timeout stays a timeout up the stack. */
+export class RunnerProcessProbeError extends Error {
+  readonly name = 'RunnerProcessProbeError';
+
+  constructor(
+    readonly code: RunnerProcessProbeFailureCode,
+    readonly panePid: string,
+    readonly reason?: string,
+  ) {
+    super(
+      `Cannot determine runner liveness under pane PID ${panePid || '(missing)'} (${code})${
+        reason ? `: ${reason}` : ''
+      }`,
+    );
+  }
 }
 
 export type RunnerDescendantPidProbe =
   | { state: 'present'; pid: string }
-  | { state: 'absent' | 'unknown'; reason?: string };
+  | { state: 'absent' }
+  | {
+      state: 'unknown';
+      code: RunnerProcessProbeFailureCode;
+      reason?: string;
+      /** How many exec attempts were spent before giving up. */
+      attempts?: number;
+    };
+
+export interface RunnerDescendantPidProbeOptions extends ExecOnSlotOptions {
+  /**
+   * Bounded retries for a timed-out or transport-failed attempt. Each retry
+   * doubles the exec budget, so a host too loaded to answer inside the first
+   * window gets a proportionally larger one instead of a false verdict.
+   * Defaults to 1 — callers that must not stall keep today's single attempt.
+   */
+  attempts?: number;
+}
+
+/** Exec budget for one liveness probe when a caller states none. */
+export const RUNNER_PROCESS_PROBE_TIMEOUT_MS = 10_000;
+/** Upper bound on a single escalated attempt, so backoff cannot run away. */
+export const RUNNER_PROCESS_PROBE_MAX_TIMEOUT_MS = 60_000;
 
 /**
  * Preserve transport/probe failure separately from a confirmed empty process tree.
@@ -997,24 +1054,54 @@ export async function probeRunnerDescendantPid(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   panePid: string,
   runnerId?: string | null,
-  options?: ExecOnSlotOptions,
+  options?: RunnerDescendantPidProbeOptions,
 ): Promise<RunnerDescendantPidProbe> {
-  if (!panePid) return { state: 'unknown', reason: 'pane PID is missing' };
+  if (!panePid) {
+    return { state: 'unknown', code: 'pane-pid-missing', reason: 'pane PID is missing' };
+  }
   const pattern = runnerProcessPatternSource(runnerId);
-  if (!pattern) return { state: 'unknown', reason: 'runner process pattern is missing' };
-  const cmd = buildFindRunnerDescendantPidCommand(panePid, pattern);
-  try {
-    const result = await execOnSlot(vars, cmd, options);
-    const pid = result.stdout.trim();
-    if (result.exitCode === 0 && /^\d+$/.test(pid)) return { state: 'present', pid };
-    if (result.exitCode === 1 && !pid && !result.stderr.trim()) return { state: 'absent' };
+  if (!pattern) {
     return {
       state: 'unknown',
-      reason: result.stderr.trim() || result.stdout.trim() || `probe exited ${result.exitCode}`,
+      code: 'runner-pattern-missing',
+      reason: 'runner process pattern is missing',
     };
-  } catch (error) {
-    return { state: 'unknown', reason: (error as Error).message };
   }
+  const cmd = buildFindRunnerDescendantPidCommand(panePid, pattern);
+  const attempts = Math.max(1, options?.attempts ?? 1);
+  const baseTimeout = options?.timeout ?? RUNNER_PROCESS_PROBE_TIMEOUT_MS;
+  let failure: Extract<RunnerDescendantPidProbe, { state: 'unknown' }> = {
+    state: 'unknown',
+    code: 'probe-transport',
+    reason: 'probe was never attempted',
+  };
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const timeout = Math.min(baseTimeout * 2 ** (attempt - 1), RUNNER_PROCESS_PROBE_MAX_TIMEOUT_MS);
+    try {
+      const result = await execOnSlot(vars, cmd, { ...options, timeout });
+      const pid = result.stdout.trim();
+      if (result.exitCode === 0 && /^\d+$/.test(pid)) return { state: 'present', pid };
+      if (result.exitCode === 1 && !pid && !result.stderr.trim()) return { state: 'absent' };
+      // 124 is the exec layer's own timeout verdict; anything else is a real
+      // probe failure that another attempt would only repeat.
+      const timedOut = result.exitCode === 124;
+      failure = {
+        state: 'unknown',
+        code: timedOut ? 'probe-timeout' : 'probe-transport',
+        reason: result.stderr.trim() || result.stdout.trim() || `probe exited ${result.exitCode}`,
+        attempts: attempt,
+      };
+      if (!timedOut) return failure;
+    } catch (error) {
+      failure = {
+        state: 'unknown',
+        code: 'probe-transport',
+        reason: (error as Error).message,
+        attempts: attempt,
+      };
+    }
+  }
+  return failure;
 }
 
 interface TerminateRunnerDescendantsDeps {
@@ -1060,6 +1147,7 @@ export async function terminateRunnerDescendantsInTmuxSession(
       if (result.state === 'present') {
         return {
           state: 'unknown',
+          code: 'runner-identity-ambiguous',
           reason: `${runnerId} process requires matching recorded runner identity`,
         };
       }
@@ -1245,36 +1333,54 @@ export function buildFindRunnerDescendantPidFromVariableCommand(
   return buildFindRunnerDescendantPidCommandWithRoot(`"$${variableName}"`, pattern);
 }
 
+/**
+ * One `ps` snapshot, one `awk` walk. The previous shape forked `pgrep -P` plus
+ * `ps -p` for every node it visited, and each of those re-reads the whole
+ * process table — so a pane tree of N processes cost 2N+1 full table passes.
+ * On a node at load 34-72 that blew the stop path's budget, the park settled
+ * `partial`, and a runner that had already exited was reported still running.
+ *
+ * The walk itself is unchanged and stays scoped to {@link quotedRoot}'s
+ * descendants: breadth-first from the root, `exact_match` is the FIRST process
+ * whose argv0 matches the runner pattern (the runner executable), and
+ * `fallback_match` the LAST whose full command line matches (a launcher or
+ * wrapper). Children are visited in the order `ps` reports them, which is pid
+ * order on both macOS and Linux.
+ */
 function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern: string): string {
-  const cmd = [
-    `root=${quotedRoot}`,
-    `exact_match=''`,
-    `fallback_match=''`,
-    `command=$(ps -o command= -p "$root" 2>/dev/null || true)`,
-    `argv0=\${command%% *}`,
-    `case "$command" in`,
-    `  *'__farmslot_status'*) ;;`,
-    `  *) if printf '%s\\n' "$command" | grep -Eq ${shellQuote(pattern)}; then fallback_match="$root"; if printf '%s\\n' "$argv0" | grep -Eq ${shellQuote(pattern)}; then exact_match="$root"; fi; fi ;;`,
-    `esac`,
-    `set -- "$root"`,
-    `while [ "$#" -gt 0 ]; do`,
-    `  parent=$1`,
-    `  shift`,
-    `  for pid in $(pgrep -P "$parent" 2>/dev/null); do`,
-    `    command=$(ps -o command= -p "$pid" 2>/dev/null || true)`,
-    `    argv0=\${command%% *}`,
-    `    case "$command" in`,
-    `      *'__farmslot_status'*) ;;`,
-    `      *) if printf '%s\\n' "$command" | grep -Eq ${shellQuote(pattern)}; then fallback_match="$pid"; if [ -z "$exact_match" ] && printf '%s\\n' "$argv0" | grep -Eq ${shellQuote(pattern)}; then exact_match="$pid"; fi; fi ;;`,
-    `    esac`,
-    `    set -- "$@" "$pid"`,
-    `  done`,
-    `done`,
-    `[ -n "$exact_match" ] && { echo "$exact_match"; exit 0; }`,
-    `[ -n "$fallback_match" ] && { echo "$fallback_match"; exit 0; }`,
-    `exit 1`,
+  const walk = [
+    '{',
+    '  line = $0',
+    '  sub(/^[ \\t]+/, "", line)',
+    '  sub(/^[^ \\t]+[ \\t]+/, "", line)',
+    '  sub(/^[^ \\t]+[ \\t]+/, "", line)',
+    '  cmd[$1] = line',
+    '  kids[$2] = kids[$2] " " $1',
+    '}',
+    'END {',
+    '  queue[0] = root',
+    '  head = 0',
+    '  tail = 1',
+    '  while (head < tail) {',
+    '    pid = queue[head++]',
+    '    command = cmd[pid]',
+    '    if (command != "" && index(command, "__farmslot_status") == 0 && command ~ pattern) {',
+    '      fallback = pid',
+    '      split(command, argv, /[ \\t]/)',
+    '      if (exact == "" && argv[1] ~ pattern) exact = pid',
+    '    }',
+    '    n = split(kids[pid], child, " ")',
+    '    for (i = 1; i <= n; i++) if (child[i] != "") queue[tail++] = child[i]',
+    '  }',
+    '  if (exact != "") { print exact; exit 0 }',
+    '  if (fallback != "") { print fallback; exit 0 }',
+    '  exit 1',
+    '}',
   ].join('\n');
-  return cmd;
+  return [
+    `root=${quotedRoot}`,
+    `ps -axo pid=,ppid=,command= 2>/dev/null | awk -v root="$root" -v pattern=${shellQuote(pattern)} ${shellQuote(walk)}`,
+  ].join('\n');
 }
 
 /**

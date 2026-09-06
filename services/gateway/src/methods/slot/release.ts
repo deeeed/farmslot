@@ -51,6 +51,7 @@ import {
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
 import { runnerPromptSubmitKey } from '../../runners/registry.js';
+import { RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS } from '../../runners/session-lifecycle.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
@@ -690,7 +691,12 @@ export async function killAgentInSession(
   );
   const candidates: Array<{ target: string; panePid: string; agentPid: string }> = [];
   for (const pane of panes) {
-    const candidatePid = await findRunnerDescendantPid(vars, pane.panePid, runner);
+    // Teardown must not mistake a slow host for an empty pane, so give the
+    // liveness probe the same bounded retry the park stop path uses.
+    const candidatePid = await findRunnerDescendantPid(vars, pane.panePid, runner, {
+      timeout: TMUX_CMD_TIMEOUT,
+      attempts: RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
+    });
     if (!candidatePid) continue;
     candidates.push({ ...pane, agentPid: candidatePid });
   }

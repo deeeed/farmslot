@@ -11,6 +11,7 @@ import {
   inspectRunnerRecovery,
   rehostRunnerParkTarget,
   reloadRunnerForPark,
+  RUNNER_PARK_GRACEFUL_EXIT_MIN_PROBES,
   RUNNER_PARK_GRACEFUL_EXIT_TIMEOUT_MS,
   RUNNER_PARK_RELOAD_ACCEPTANCE_TIMEOUT_MS,
   runnerRunningForPark,
@@ -46,6 +47,15 @@ const handle: MachinePauseRecoveryHandle = {
   capturedAt: '2026-08-21T00:00:00.000Z',
 };
 const EXACT_PANE_ROW = 'slot-1\tworker\t%1\t101\n';
+/** Pane-scoped liveness for the graceful-exit poll: present until `liveProbes` are spent. */
+const paneLiveness = (liveProbes: number) => {
+  let seen = 0;
+  return async () =>
+    (seen++ < liveProbes ? { state: 'present', pid: '202' } : { state: 'absent' }) as
+      | { state: 'present'; pid: string }
+      | { state: 'absent' };
+};
+const paneStopped = async () => ({ state: 'absent' }) as const;
 const verifyPersistedLiveBinding = async () =>
   ({
     ok: true,
@@ -200,6 +210,7 @@ test('runnerRunningForPark reports structured residual liveness', async () => {
         ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
         : { exitCode: 0, stdout: '', stderr: '' },
     findRunnerPid: async () => '202',
+    probeRunnerPid: paneLiveness(Number.POSITIVE_INFINITY),
     verifyLiveBinding: verifyPersistedLiveBinding,
     respawnPane: async () => {},
     sleep: async () => {},
@@ -213,7 +224,6 @@ test('runnerRunningForPark reports structured residual liveness', async () => {
 
 test('stopRunnerForPark sends only the registry graceful-exit command and confirms exit', async () => {
   const commands: string[] = [];
-  let probes = 0;
   const result = await stopRunnerForPark(
     { vars, recoveryHandle: handle, timeoutMs: 100 },
     {
@@ -224,7 +234,8 @@ test('stopRunnerForPark sends only the registry graceful-exit command and confir
         }
         return { exitCode: 0, stdout: '', stderr: '' };
       },
-      findRunnerPid: async () => (++probes === 1 ? '202' : ''),
+      findRunnerPid: async () => '202',
+      probeRunnerPid: paneStopped,
       verifyLiveBinding: verifyPersistedLiveBinding,
       respawnPane: async () => {},
       sleep: async () => {},
@@ -249,7 +260,6 @@ test('stopRunnerForPark sends only the registry graceful-exit command and confir
 
 test('stopRunnerForPark applies the runner-owned Codex submit delay', async () => {
   const commands: string[] = [];
-  let probes = 0;
   const result = await stopRunnerForPark(
     { vars, recoveryHandle: { ...handle, runnerId: 'codex' }, timeoutMs: 100 },
     {
@@ -259,7 +269,8 @@ test('stopRunnerForPark applies the runner-owned Codex submit delay', async () =
           ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
           : { exitCode: 0, stdout: '', stderr: '' };
       },
-      findRunnerPid: async () => (++probes === 1 ? '202' : ''),
+      findRunnerPid: async () => '202',
+      probeRunnerPid: paneStopped,
       verifyLiveBinding: verifyPersistedLiveBinding,
       respawnPane: async () => {},
       sleep: async () => {},
@@ -269,6 +280,79 @@ test('stopRunnerForPark applies the runner-owned Codex submit delay', async () =
   const exitCommand = commands.find((command) => command.includes("-l '/exit'"));
   assert.ok(exitCommand);
   assert.match(exitCommand, /-l '\/exit'[\s\S]*sleep 0[.]05[\s\S]*send-keys[^\n]*Enter/);
+});
+
+test('stopRunnerForPark keeps probing past an exhausted nominal budget', async () => {
+  // The loaded-host case: the wall clock is already spent when the exit command
+  // returns, so a wall-clock-only loop would report a runner that exits on the
+  // third observation as still running.
+  let probes = 0;
+  const result = await stopRunnerForPark(
+    { vars, recoveryHandle: handle, timeoutMs: 0 },
+    {
+      exec: async (_vars, command) =>
+        command.includes('display-message')
+          ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+          : { exitCode: 0, stdout: '', stderr: '' },
+      findRunnerPid: async () => '202',
+      probeRunnerPid: async () => {
+        probes += 1;
+        return probes < RUNNER_PARK_GRACEFUL_EXIT_MIN_PROBES
+          ? { state: 'present', pid: '202' }
+          : { state: 'absent' };
+      },
+      verifyLiveBinding: verifyPersistedLiveBinding,
+      respawnPane: async () => {},
+      sleep: async () => {},
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(probes, RUNNER_PARK_GRACEFUL_EXIT_MIN_PROBES);
+});
+
+test('stopRunnerForPark reports a typed code when liveness cannot be decided', async () => {
+  const result = await stopRunnerForPark(
+    { vars, recoveryHandle: handle, timeoutMs: 100 },
+    {
+      exec: async (_vars, command) =>
+        command.includes('display-message')
+          ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+          : { exitCode: 0, stdout: '', stderr: '' },
+      findRunnerPid: async () => '202',
+      probeRunnerPid: async () => ({
+        state: 'unknown',
+        code: 'probe-timeout',
+        reason: 'command timed out after 10000ms',
+        attempts: 3,
+      }),
+      verifyLiveBinding: verifyPersistedLiveBinding,
+      respawnPane: async () => {},
+      sleep: async () => {},
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.ok === false && result.code, 'liveness-probe-timeout');
+  assert.equal(result.ok === false && result.residualRunner, 'unknown');
+});
+
+test('stopRunnerForPark reports still-running with the probes it actually completed', async () => {
+  const result = await stopRunnerForPark(
+    { vars, recoveryHandle: handle, timeoutMs: 0 },
+    {
+      exec: async (_vars, command) =>
+        command.includes('display-message')
+          ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
+          : { exitCode: 0, stdout: '', stderr: '' },
+      findRunnerPid: async () => '202',
+      probeRunnerPid: async () => ({ state: 'present', pid: '202' }),
+      verifyLiveBinding: verifyPersistedLiveBinding,
+      respawnPane: async () => {},
+      sleep: async () => {},
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.ok === false && result.code, 'runner-still-running');
+  assert.equal(result.ok === false && result.probes, RUNNER_PARK_GRACEFUL_EXIT_MIN_PROBES);
 });
 
 test('stopRunnerForPark fails closed when the intended pane is gone despite a live sibling', async () => {
@@ -287,6 +371,7 @@ test('stopRunnerForPark fails closed when the intended pane is gone despite a li
         matcherCalls += 1;
         return 'sibling-runner-must-not-be-used';
       },
+      probeRunnerPid: paneStopped,
       respawnPane: async () => {},
       sleep: async () => {},
     },
@@ -317,6 +402,7 @@ test('reloadRunnerForPark respawns only the exact pane when its window may have 
         return { exitCode: 0, stdout: '', stderr: '' };
       },
       findRunnerPid: async () => (runnerProbes++ === 0 ? '' : '202'),
+      probeRunnerPid: paneStopped,
       verifyLiveBinding: verifyPersistedLiveBinding,
       respawnPane: async (_vars, target, command) => {
         assert.equal(target, '%1');
@@ -363,6 +449,7 @@ test('reloadRunnerForPark fails closed when the persisted session path is gone',
     {
       exec: async () => ({ exitCode: 1, stdout: '', stderr: '' }),
       findRunnerPid: async () => '',
+      probeRunnerPid: paneStopped,
       respawnPane: async () => {
         respawned = true;
       },
@@ -384,6 +471,7 @@ test('reloadRunnerForPark rejects an empty continuation prompt before respawn', 
           ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
           : { exitCode: 0, stdout: '', stderr: '' },
       findRunnerPid: async () => '',
+      probeRunnerPid: paneStopped,
       respawnPane: async () => {
         respawned = true;
       },
@@ -404,6 +492,7 @@ test('reloadRunnerForPark times out without treating process liveness as prompt 
           ? { exitCode: 0, stdout: EXACT_PANE_ROW, stderr: '' }
           : { exitCode: 0, stdout: '', stderr: '' },
       findRunnerPid: async () => '',
+      probeRunnerPid: paneStopped,
       respawnPane: async () => {},
       writePromptSentinel: async () => ({ digest: 'digest', sentAt: 100 }),
       capturePromptBaseline: async () => 100,
