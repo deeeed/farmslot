@@ -36,6 +36,7 @@ export const PATH_FILTERS = {
     'yarn.lock',
     'apps/docs/**',
     'packages/protocol/**',
+    'scripts/quality/check-gateway-api-docs.mjs',
     'services/gateway/**',
   ],
   cli: [
@@ -123,7 +124,10 @@ export const TARGET_STEPS = {
     ['command-center quality', ['yarn', '--cwd', 'apps/command-center', 'quality']],
   ],
   companion: [['companion quality', ['yarn', '--cwd', 'apps/companion', 'quality']]],
-  docs: [['docs quality', ['yarn', '--cwd', 'apps/docs', 'quality']]],
+  docs: [
+    ['docs quality', ['yarn', '--cwd', 'apps/docs', 'quality']],
+    ['generated gateway API docs', ['yarn', 'quality:gateway-api-docs']],
+  ],
   cli: [['cli quality', ['yarn', 'workspace', '@farmslot/cli', 'quality']]],
   expo_recipe: [['expo-recipe quality', ['yarn', 'workspace', '@farmslot/expo-recipe', 'quality']]],
   protocol: [['protocol quality', ['yarn', 'workspace', '@farmslot/protocol', 'quality']]],

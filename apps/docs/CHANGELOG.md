@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Regenerate the Gateway API reference for protocol `0.24.0` — adding `run.sessionCommand`, `tmux.pasteText`, `runtime.posture.{preview,apply,status}`, and `runtime.capability.stopWarm` — and guard its freshness in CI so it cannot go stale again.
 - Document the sustained-pressure admission, history-only pressure read, and gateway-owned pressure dispatch-gate methods (MANUAL-000109).
 - Document the machine-scoped pause, release, status, and restore Gateway methods.
 - Refresh the generated Gateway API reference with backlog refinement methods.
