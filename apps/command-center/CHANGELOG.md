@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- feat(probes): add `runtime-capability-claim-queue`, which reads the Slot View capability panel from live gateway data and asserts the queue position and blocking owner painted for a fleet-scoped claim waiter, and that no queue line is painted when nothing is queued.
 - feat(probes): add `recipe-rerun-device-target`, which drives the replay controls' device target with real select, input, and click events and asserts the `recipe.rerun` frame the component puts on the wire — a shell-bearing identity is refused before any frame is sent, switching the key sends only that key, and an empty field sends no target at all. Add `run-posture-device-target-row`, which renders the shipped Run Detail posture renderer and asserts the resolved device is painted on the device capability row only, in the protocol's key order.
 - probe(gate-park): `probes/run-gate-park-surfaces.js` drives a real free-slot park and restore and asserts the Run Detail gate-park block, gate notice, and slot badge from the rendered DOM.
 - feat(probes): add the `machine-pause-retained-resource-label` probe, which reopens the machine pause dialog through its own controls, switches it to release mode, and reads what an operator sees for a manifest resource the project catalog keeps running, plus the parked-record summary that must not flag that resource as an unexpected residual.
