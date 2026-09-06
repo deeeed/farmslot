@@ -123,8 +123,12 @@ operator never has to know the run was parked. `machine.pause.restore` drives th
   when the successor left uncommitted work in the tree or the branch no longer sits at that tip:
   a checkout would carry someone else's changes onto the parked branch, or bring back commits that
   are not the ones under review.
-- The worker comes back through the persisted runner session, with a structured acknowledgement or
-  not at all (`RESTORE_RUNNER_RELOAD_FAILED`). **The recorded tmux pane is not part of the
+- The worker comes back through the persisted runner session, proven or not at all
+  (`RESTORE_RUNNER_RELOAD_FAILED`). Two shapes count, and they are recorded distinctly: a relaunch
+  the runner ACKNOWLEDGED, and a worker already running this run's persisted session that the
+  restore ADOPTED, proven by the live-binding check on a pane the slot row says is this run's.
+  Both satisfy gate consumption — the question is whether the worker is back on its session, not
+  who relaunched it — and neither may be inferred from the run occupying its slot. **The recorded tmux pane is not part of the
   contract**: freeing the slot hands its tmux session to the next occupant, whose dispatch replaces
   the windows in it, so the pane is routinely gone. The runner capability layer re-hosts the session
   on a fresh pane in that slot's session and writes the new target to both the park record and the

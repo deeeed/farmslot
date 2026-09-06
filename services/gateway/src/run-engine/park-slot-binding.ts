@@ -83,8 +83,10 @@ export function needsGateParkRestore(run: Pick<Run, 'park'>): boolean {
  * neither answer its gate nor be restored, and cancelling it is the only exit.
  * So:
  *
- *   - `slotFreedAt` set — the release landed. Fenced, until restore or cancel.
- *   - record settled `partial` — the park will not finish. It is still fenced
+ *   - the record owes a restore — it freed the slot, or a restore re-bound it
+ *     and has not settled `restored`. Fenced, until that restore or a cancel.
+ *   - a park that never reached the slot and settled `partial` — it will not
+ *     finish. It is still fenced
  *     while ANY of its effects is outstanding: a detach not yet rolled back, or
  *     a runner that is not PROVABLY still running. A stopped worker cannot act
  *     on a gate answer, and letting the operator answer anyway would be the
@@ -99,15 +101,13 @@ export function isGateParkInFlightOrFreed(run: Pick<Run, 'park'>): boolean {
   if (!park) return false;
   // A record the operator already settled fences nothing, even though it still
   // carries the historical `slotFreedAt` of the release it undid.
-  //
+  if (park.phase === 'restored' || park.phase === 'cancelled') return false;
   // Everything that still owes a restore is fenced, by construction rather than
   // by two lists of conditions that have to be kept in step. A gate that can be
-  // answered while a restore is outstanding is the whole failure this guards.
-  if (park.phase !== 'restored' && park.phase !== 'cancelled' && needsGateParkRestore(run)) {
-    return true;
-  }
-  if (park.phase === 'restored' || park.phase === 'cancelled') return false;
-  if (park.slotFreedAt) return true;
+  // answered while a restore is outstanding is the whole failure this guards,
+  // and `needsGateParkRestore` already covers every freed or re-bound record —
+  // so what remains below is only the park that never reached the slot.
+  if (needsGateParkRestore(run)) return true;
   if (park.mode !== 'release' || park.slotDisposition !== 'freed') return false;
   if (park.phase === 'partial') {
     if (park.preservedWorkspace?.detachedAt) return true;

@@ -4078,7 +4078,16 @@ function zeroEffectIntent(
   // workspace detach and the slot release; either one landing means the intent
   // was not zero-effect, and discarding the record would lose the only note of
   // which branch was taken out of the slot's working tree.
-  if (record.slotFreedAt) return false;
+  //
+  // Keyed on the OBLIGATION rather than on `slotFreedAt` alone, because a
+  // record that cleared its freed marker at the rebind — everything written
+  // before restores tracked their stages — otherwise reads as a park that never
+  // touched anything. Zero-effect repair settles `restored` with no stages and
+  // no proof, so choosing it for a record that still owes a restore drops the
+  // consumption fence and the next answer skips the restoration entirely. A run
+  // that owes a restore has had effects by definition: something freed or
+  // re-bound its slot.
+  if (needsGateParkRestore({ park: record })) return false;
   if (record.preservedWorkspace?.detachedAt) return false;
   // A released lease is an effect the residuals cannot show. A manifest that is
   // all `retain` resources reports every resource `running` by design, and a

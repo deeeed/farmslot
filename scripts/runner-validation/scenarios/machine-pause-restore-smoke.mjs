@@ -97,6 +97,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
     runner,
     runId,
     operationId,
+    gatewaySource: gatewaySourceRevision(),
     machine: null,
     initialBinding: null,
     pausePreview: null,
@@ -508,6 +509,28 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
 // `gate-park-restore-negative-proofs.json` beside this scenario's evidence.
 const GATE_PARK_SCENARIO_ID = 'gate-park-restore-smoke';
 
+/**
+ * The gateway source this evidence was produced against.
+ *
+ * Recorded because this PR twice needed a human to reason about whether an
+ * artifact came from the code under review. A SHA plus a dirty flag makes that
+ * check mechanical: `dirty` means the tree carried uncommitted changes, so the
+ * SHA alone does not reproduce it.
+ */
+function gatewaySourceRevision() {
+  const read = (args) => {
+    const result = spawnSync('git', args, { cwd: process.cwd(), encoding: 'utf8' });
+    return result.status === 0 ? result.stdout.trim() : null;
+  };
+  const sha = read(['rev-parse', 'HEAD']);
+  const status = read(['status', '--porcelain', '--', 'services/gateway', 'packages/protocol']);
+  return {
+    sha,
+    dirty: status === null ? null : status.length > 0,
+    describedAt: new Date().toISOString(),
+  };
+}
+
 function fleetSlot(slotId) {
   const status = rpc('fleet.status', {});
   const slot = (status.fleet?.slots ?? []).find((candidate) => candidate.slot === slotId);
@@ -585,6 +608,7 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
     runner,
     runId,
     operationId,
+    gatewaySource: gatewaySourceRevision(),
     machine: null,
     slotId: null,
     parkedByChoice: null,
@@ -1136,7 +1160,8 @@ async function proveGateConsumption({ machine, timeoutMs }) {
     if (!proof.gateParkRestore?.reloadedSessionId) {
       throw new Error('the resolution reported no gate-park restore, so it never restored the run');
     }
-    const after = rpc('run.get', { runId: consumeRunId }).run;
+    const restoredRun = rpc('run.get', { runId: consumeRunId }).run;
+    const after = restoredRun;
     proof.resolvedAt =
       after.decisions.find((candidate) => candidate.id === decision.id)?.resolvedAt ?? null;
     if (!proof.resolvedAt) throw new Error('the decision was not consumed');
@@ -1151,25 +1176,29 @@ async function proveGateConsumption({ machine, timeoutMs }) {
     // Consuming is not progress. The engine has to ACT on the answer, or the
     // operator's decision went nowhere. What acting looks like depends on the
     // action: an approval walks past the gate, a hold re-presents it as a new
-    // decision. Either is the engine moving; neither is the run sitting on the
-    // decision it was just handed.
+    // decision. Either is the engine moving.
+    //
+    // The run's STATUS is deliberately not one of those signals. The restore
+    // inside this very call moves the run off the status the park preserved, so
+    // a status comparison against the parked value is satisfied by the restore
+    // rather than by the engine acting — an assertion that cannot fail on the
+    // path it is asserting about.
     const progressed = await poll(
       `run ${consumeRunId} to act on its answered gate`,
       () => rpc('run.get', { runId: consumeRunId }).run,
       (run) =>
         run.steps.find((step) => step.name === 'human-gate')?.status !== 'running' ||
-        run.status !== before.status ||
-        pendingGateDecision(run) !== null,
+        pendingGateDecision(run)?.id !== undefined,
       timeoutMs,
     );
+    proof.statusAfterRestore = restoredRun.status;
     proof.afterStatus = progressed.status;
     proof.gateStep = progressed.steps.find((step) => step.name === 'human-gate')?.status ?? null;
     proof.rePresentedDecisionId = pendingGateDecision(progressed)?.id ?? null;
-    if (
-      proof.gateStep === 'running' &&
-      proof.afterStatus === before.status &&
-      !proof.rePresentedDecisionId
-    ) {
+    if (proof.rePresentedDecisionId === decision.id) {
+      throw new Error('the answered decision is still the pending one; it was not consumed');
+    }
+    if (proof.gateStep === 'running' && !proof.rePresentedDecisionId) {
       throw new Error('the answered gate produced no engine action');
     }
     proof.pass = true;

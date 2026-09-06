@@ -2740,6 +2740,47 @@ test('a retry repairs an attach target the previous attempt left on a dead pane'
   assert.ok(ctx.calls.includes('rebind-context:run-gate:%555'));
 });
 
+test('a record that owes a restore is never settled as a zero-effect repair', async () => {
+  const ctx = await freedGateParkHarness();
+  const parked = ctx.runs.get('run-gate')!;
+  // Codex's shape: a record written before stages were tracked, so it cleared
+  // its freed marker at the rebind. Its workspace is reattached and its
+  // residuals read running, so every "did this park do anything" signal says
+  // no. Zero-effect repair settles `restored` with no stages and no proof —
+  // which drops the consumption fence, and the next answer skips restoring.
+  parked.park = {
+    ...parked.park!,
+    phase: 'partial',
+    slotFreedAt: undefined,
+    slotReboundAt: '2026-08-21T00:00:22.000Z',
+    restoreProgress: undefined,
+    preservedWorkspace: { branch: 'work/run-gate', headSha: 'sha-run-gate' },
+    residuals: { runner: 'running', resources: [] },
+    resourceManifest: {
+      capturedAt: '2026-08-21T00:00:00.000Z',
+      resources: [],
+      capabilityLeases: [],
+    },
+  };
+  ctx.slotOwners.set('slot-a', 'run-gate');
+  ctx.slotLifecycles.set('slot-a', 'busy');
+
+  const { entry } = await previewFreedRestore(ctx);
+
+  assert.notEqual(
+    entry.eligibility.code,
+    'ELIGIBLE_ZERO_EFFECT_REPAIR',
+    'a run that owes a restore has had effects by definition',
+  );
+  assert.equal(entry.eligibility.code, 'ELIGIBLE_FREED_SLOT_RESTORE');
+
+  await ctx.service.reconcile();
+  const after = ctx.runs.get('run-gate')!;
+  assert.notEqual(after.park!.phase, 'restored', 'reconcile does not settle it either');
+  assert.equal(needsGateParkRestore(after), true);
+  assert.equal(isGateParkInFlightOrFreed(after), true, 'the consumption fence holds');
+});
+
 test('a restore that fails after the rebind reports what is actually on the slot', async () => {
   const ctx = await freedGateParkHarness();
   ctx.deps.startResource = async () => ({ ok: false, detail: 'boot hook exploded' });
