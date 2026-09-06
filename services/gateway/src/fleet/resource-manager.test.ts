@@ -12,6 +12,7 @@ import {
   isSimulatorDeviceProbe,
   isSlotResourceConfigured,
   purgeRemovedSlotWarnings,
+  resourceStatusFromHealth,
   shouldProbeResourceForSlot,
   slotHasActiveRun,
 } from './resource-manager.js';
@@ -186,4 +187,16 @@ test('buildBrowserNodeWatchCommand requires stream-capturable browser status', (
   assert.match(pidFileOnly, /capture_helper_resolve "\$pid"/);
   assert.match(pidFileOnly, /timeout=3/);
   assert.match(pidFileOnly, /exit 1/);
+});
+
+test('a resource with no health hook is unknown, never running', () => {
+  // The rule a re-targeted capability lease is judged by is the same one the
+  // slot-wide poll uses. Trusting the health hook's exit code directly would
+  // have called a provider with no health hook healthy.
+  const withHook = { hooks: { health: 'true' } };
+  assert.equal(resourceStatusFromHealth(withHook, { ok: true }), 'running');
+  assert.equal(resourceStatusFromHealth(withHook, { ok: false }), 'stopped');
+  assert.equal(resourceStatusFromHealth(withHook, undefined), 'error');
+  assert.equal(resourceStatusFromHealth({ hooks: {} }, { ok: true }), 'unknown');
+  assert.equal(resourceStatusFromHealth(undefined, { ok: true }), 'unknown');
 });

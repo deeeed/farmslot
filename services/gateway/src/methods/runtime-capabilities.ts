@@ -28,12 +28,21 @@ import {
 } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
+import { executeResourceControl, probeResourceStatus } from '../fleet/resource-manager.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { getRun } from '../runs/store.js';
 import {
   evaluateRuntimeCapabilityAdmission,
   type RuntimeCapabilityPressureSnapshot,
 } from '../runtime-capabilities/admission.js';
+import {
+  claimsDevice,
+  crossSlotTargetConflict,
+  type DeviceHolder,
+  deviceIdentityOnly,
+  deviceTargetExtraVars,
+  displaceIdentity,
+} from '../runtime-capabilities/device-target.js';
 import {
   type RuntimeCapabilityActionResult,
   type RuntimeCapabilityCatalogContext,
@@ -43,7 +52,7 @@ import {
 } from '../runtime-capabilities/registry.js';
 import { RuntimeCapabilityStore } from '../runtime-capabilities/store.js';
 
-import { resourceControl, resourceHealth, resourceHostPressure } from './resource.js';
+import { resourceHealth, resourceHostPressure } from './resource.js';
 import { slotActionRun } from './slot-actions.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -148,15 +157,47 @@ async function catalogForSlot(slotId: string): Promise<RuntimeCapabilityCatalogC
   };
 }
 
+/**
+ * Run one provider action for a lease.
+ *
+ * The lease's acquire parameters are what make a re-target real (ADR-054 item
+ * 3): the device-identity subset becomes hook template variables that take
+ * precedence over the slot's configured resource fields, so `{{simulator}}`,
+ * `{{avd}}` and `{{adb_serial}}` resolve to the leased device. A value that
+ * cannot be safely substituted into a project hook command is refused here
+ * rather than escaped — see `deviceTargetExtraVars`.
+ */
 async function runProviderAction(
   slotId: string,
   ref: RuntimeCapabilityProviderActionRef,
+  parameters: Record<string, unknown>,
+  declaredParameters: readonly string[],
 ): Promise<RuntimeCapabilityActionResult> {
+  const target = deviceTargetExtraVars(parameters, declaredParameters);
+  if (!target.ok) return { ok: false, detail: target.reason };
+  const extraVars = target.value;
   if (ref.kind === 'slot-action') {
-    const result = await slotActionRun({ slotId, actionId: normalizeActionId(ref) });
+    const result = await slotActionRun({ slotId, actionId: normalizeActionId(ref) }, extraVars);
     return { ok: result.ok, ...(result.detail ? { detail: result.detail } : {}) };
   }
   if (ref.action === 'health') {
+    // With no device override the slot-wide poll stays the health read: it also
+    // refreshes the resource cache every client renders from. A re-targeted
+    // lease cannot use it — that poll answers for the slot's CONFIGURED device —
+    // so it probes the leased device directly instead.
+    // Gated on a DEVICE key, not on any extraVars: a parameter set carrying only
+    // `platform` resolves to the slot's own device, so the slot-wide poll is
+    // still the right read and still refreshes the cache clients render from.
+    if (extraVars && deviceIdentityOnly(extraVars)) {
+      // Same derivation as the poll below — `probeResourceStatus` is where that
+      // rule lives — so a re-targeted lease cannot be called healthy where the
+      // default path would report the resource unknown or stopped.
+      const probe = await probeResourceStatus(slotId, ref.resourceId, extraVars);
+      return {
+        ok: probe.status === 'running',
+        detail: `${ref.resourceId} is ${probe.status}${probe.detail ? `: ${probe.detail}` : ''}`,
+      };
+    }
     const result = await resourceHealth({ slotId });
     const resource = result.resources.find((candidate) => candidate.id === ref.resourceId);
     if (!resource) return { ok: false, detail: `Resource '${ref.resourceId}' is unavailable` };
@@ -165,7 +206,141 @@ async function runProviderAction(
       detail: `${ref.resourceId} is ${resource.status}`,
     };
   }
-  return resourceControl({ slotId, resourceId: ref.resourceId, action: ref.action });
+  return executeResourceControl(slotId, ref.resourceId, ref.action, extraVars);
+}
+
+/**
+ * Refuse a device target that another slot's live lease is already driving.
+ *
+ * Capability leases are slot-scoped, so nothing else stops two runs booting one
+ * simulator once a target can name a device outside the slot's own config.
+ * Fleet-scoped arbitration with a wait queue is the separate
+ * `fleet-scoped-device-claims` item; until it lands this refuses rather than
+ * queues.
+ */
+/** The config reads the guard needs, injectable so the rule can be tested. */
+export interface DeviceTargetGuardDeps {
+  loadSlotVars: (
+    slotId: string,
+  ) => Promise<{ machine: string; resourceVars: Record<string, string> }>;
+  catalogForSlot: (slotId: string) => Promise<{ capabilities: RuntimeCapabilityCatalogEntry[] }>;
+}
+
+export async function assertDeviceTargetAvailable(
+  input: {
+    slotId: string;
+    capabilityId: string;
+    ownerRunId: string;
+    parameters: Record<string, unknown>;
+    /**
+     * Whether this capability claims a device, resolved by the registry from the
+     * catalog entry it already holds under its own lock. Passed in rather than
+     * re-read here: re-reading meant a config file mid-write could make the
+     * guard skip itself for exactly the acquires it exists to check.
+     */
+    claimsDevice: boolean;
+    activeLeases: readonly RuntimeCapabilityLease[];
+  },
+  deps: DeviceTargetGuardDeps = { loadSlotVars, catalogForSlot },
+): Promise<string | null> {
+  const target = deviceTargetExtraVars(input.parameters);
+  if (!target.ok) return target.reason;
+  // `platform` names no device, so it can never conflict. Short-circuit before
+  // any slot config is read: the fan-out below can REFUSE when a foreign slot's
+  // config is unreadable, and refusing over a parameter that could not have
+  // conflicted would block an acquire for nothing.
+  const requested = target.value ? deviceIdentityOnly(target.value) : undefined;
+  if (!requested && !input.claimsDevice) return null;
+
+  // The acquiring slot's own machine and configured device. Fails CLOSED, like
+  // the foreign-slot read below: an acquire that names no device still resolves
+  // to the slot's configured one, and without this read we cannot say which
+  // device that is or which machine it is on.
+  let ownVars;
+  try {
+    ownVars = await deps.loadSlotVars(input.slotId);
+  } catch (error) {
+    return `cannot resolve the configured device of slot '${input.slotId}': ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+  }
+  const machine = ownVars.machine;
+  const effective = requested ?? deviceIdentityOnly(ownVars.resourceVars);
+  if (!effective) return null;
+
+  // Holders are built for every foreign slot and carry THEIR OWN machine;
+  // `crossSlotTargetConflict` does the machine scoping. Filtering here instead
+  // would leave that filter unreachable and stamp the acquirer's machine on the
+  // refusal, naming the wrong host. The extra reads are bounded by the number of
+  // distinct slots holding a live lease, which is small.
+  const slotState = new Map<
+    string,
+    {
+      machine: string;
+      identity: Record<string, unknown>;
+      /** Null for a slot on another machine, whose catalog is deliberately unread. */
+      deviceCapabilities: Set<string> | null;
+    }
+  >();
+  const holders: DeviceHolder[] = [];
+  for (const lease of input.activeLeases) {
+    if (lease.slotId === input.slotId) continue;
+    let state = slotState.get(lease.slotId);
+    if (!state) {
+      try {
+        const slotVars = await deps.loadSlotVars(lease.slotId);
+        if (slotVars.machine !== machine) {
+          // Another machine's slot can never conflict, so its project config is
+          // never read: doing so added a fail-closed surface for a slot that is
+          // irrelevant by construction, and an unreadable project file over
+          // there would refuse an acquire here. The holder is still built, with
+          // its own machine, so the scoping stays in the pure function rather
+          // than becoming an invisible filter at this call site.
+          state = {
+            machine: slotVars.machine,
+            identity: {},
+            deviceCapabilities: null,
+          };
+        } else {
+          const catalog = await deps.catalogForSlot(lease.slotId);
+          state = {
+            machine: slotVars.machine,
+            identity: slotVars.resourceVars,
+            // A slot's configured device is only off-limits when something is
+            // actually driving a DEVICE there. Treating any lease as a holder
+            // made a slot running only a browser or Metro block its own
+            // simulator, and named that capability as the reason.
+            deviceCapabilities: new Set(
+              catalog.capabilities.filter(claimsDevice).map((entry) => entry.id),
+            ),
+          };
+        }
+      } catch (error) {
+        // Handled, not swallowed: without that slot's configuration we cannot
+        // prove the requested device is free, and guessing costs two runs
+        // driving one device. Refuse and name the slot that could not be read.
+        return `cannot verify device target against slot '${lease.slotId}', which holds an active '${lease.capabilityId}' lease: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+      }
+      slotState.set(lease.slotId, state);
+    }
+    if (state.deviceCapabilities && !state.deviceCapabilities.has(lease.capabilityId)) continue;
+    holders.push({
+      slotId: lease.slotId,
+      machine: state.machine,
+      capabilityId: lease.capabilityId,
+      runId: lease.owner.runId,
+      // The lease's own identity DISPLACES the slot's configured one within the
+      // same group: a slot whose lease was re-targeted away from its configured
+      // simulator is not using that simulator, and refusing a target for it
+      // would block a legal move. For a slot on another machine the configured
+      // identity is empty (unread on purpose), so only the lease's own
+      // parameters travel — and the machine filter discards it regardless.
+      identities: [displaceIdentity(state.identity, lease.parameters)],
+    });
+  }
+  return crossSlotTargetConflict(effective, holders, machine);
 }
 
 async function pressureFor(
@@ -214,6 +389,7 @@ const registry = new RuntimeCapabilityRegistry({
   store: new RuntimeCapabilityStore(runtimeCapabilityStorePath()),
   catalogForSlot,
   runAction: runProviderAction,
+  assertTargetAvailable: assertDeviceTargetAvailable,
   pressureFor,
   familyForRun: (ownerRunId) => getRun(ownerRunId)?.familyId,
   // The durable half of the terminal fence. The registry's own owner list is a

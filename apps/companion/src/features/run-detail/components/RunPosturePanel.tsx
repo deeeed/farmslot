@@ -192,6 +192,11 @@ export function RunPosturePanel({
                 observed {row.observedState} ({row.rowStatusLabel})
               </Text>
             </Text>
+            {row.targetLabel ? (
+              <Text style={styles.mono} testID={`companion-run-posture-target-${row.capabilityId}`}>
+                target {row.targetLabel}
+              </Text>
+            ) : null}
             {row.warmUntil ? <Text style={styles.mono}>warm until {row.warmUntil}</Text> : null}
             <Text style={styles.muted}>{row.reason}</Text>
             {row.cleanupFailure ? (

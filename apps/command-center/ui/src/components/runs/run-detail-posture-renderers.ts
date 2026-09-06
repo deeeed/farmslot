@@ -10,6 +10,7 @@
 import { html, nothing } from 'lit';
 
 import {
+  formatRuntimeCapabilityTarget,
   gateParkStateLabel,
   gateParkSummaryLine,
   type GateParkView,
@@ -87,6 +88,8 @@ export interface RunPostureCapabilityRow {
   rowStatus: ResourcePostureRowStatus;
   reason: string;
   policySource: ResourcePosturePolicySource;
+  /** `simulator=…` for a provider that resolved to a device (ADR-054 item 3). */
+  targetLabel?: string;
   warmUntil?: string;
   cleanupFailure?: string;
   releaseEffects: string[];
@@ -103,6 +106,10 @@ export function postureCapabilityRow(
     rowStatus: resourcePostureRowStatus(state.desiredDisposition, state.observedState),
     reason: state.reason,
     policySource: state.policySource,
+    // The Gateway resolved this from the holding lease. Rendered, never derived
+    // from the slot's configured device: after a re-target the two differ, and
+    // the lease is the one that says which device is actually in use.
+    ...(state.target ? { targetLabel: formatRuntimeCapabilityTarget(state.target) } : {}),
     ...(state.warmUntil ? { warmUntil: state.warmUntil } : {}),
     ...(state.cleanupFailure ? { cleanupFailure: state.cleanupFailure } : {}),
     releaseEffects: state.releaseEffects,
@@ -518,6 +525,13 @@ export function renderRunPostureSummary(
                 <span class="posture-observed" style="color:${rowStatusColor(row.rowStatus)}"
                   >observed ${row.observedState} (${rowStatusLabel(row.rowStatus)})</span
                 >
+                ${row.targetLabel
+                  ? html`<span
+                      class="posture-desired"
+                      data-testid="run-posture-target-${row.capabilityId}"
+                      >target ${row.targetLabel}</span
+                    >`
+                  : nothing}
                 ${row.warmUntil
                   ? html`<span class="posture-desired">warm until ${row.warmUntil}</span>`
                   : nothing}

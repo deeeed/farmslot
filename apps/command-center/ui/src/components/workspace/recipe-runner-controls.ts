@@ -2,7 +2,7 @@ import { html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type { RecipeCommandParams, RecipeCommandResult } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { Methods, RUNTIME_CAPABILITY_TARGET_KEYS } from '@farmslot/protocol';
 
 import './recipe-output-panel.js';
 
@@ -31,6 +31,10 @@ export class RecipeRunnerControls extends LitElement {
   @property({ type: Number }) playbackSlowMs = 0;
   @property({ type: Boolean }) recordVideo = false;
   @property({ type: Boolean }) showPlayback = false;
+  /** Device-identity key the re-target field edits (ADR-054 item 3). */
+  @property() targetKey = 'simulator';
+  /** Device identity for this replay; empty replays on the slot's own device. */
+  @property() targetValue = '';
   @property({ type: Boolean }) showArtifactAction = false;
   @property({ type: Boolean }) disabled = false;
 
@@ -152,6 +156,38 @@ export class RecipeRunnerControls extends LitElement {
                 </label>
               `
             : nothing}
+          <label
+            style="display:flex; align-items:center; gap:6px; color:${colors.textMuted}; font-size:${fonts.sizeXs};"
+            title="Replay on another device without re-dispatching the run. Leave empty to use the slot's configured device."
+          >
+            Target
+            <select
+              data-testid="recipe-target-key"
+              .value=${this.targetKey}
+              ?disabled=${this._running || this.disabled}
+              style="background:${colors.bgCard}; color:${colors.textPrimary}; border:1px solid ${colors.bgCardHover}; border-radius:${radii.sm}; padding:4px 6px; font-family:${fonts.mono};"
+              @change=${(event: Event) => {
+                this.targetKey = (event.target as HTMLSelectElement).value;
+              }}
+            >
+              ${RUNTIME_CAPABILITY_TARGET_KEYS.filter((key) => key !== 'platform').map(
+                (key) =>
+                  html`<option value=${key} ?selected=${this.targetKey === key}>${key}</option>`,
+              )}
+            </select>
+            <input
+              data-testid="recipe-target-value"
+              type="text"
+              placeholder="slot default"
+              size="18"
+              .value=${this.targetValue}
+              ?disabled=${this._running || this.disabled}
+              style="background:${colors.bgCard}; color:${colors.textPrimary}; border:1px solid ${colors.bgCardHover}; border-radius:${radii.sm}; padding:4px 6px; font-family:${fonts.mono};"
+              @input=${(event: Event) => {
+                this.targetValue = (event.target as HTMLInputElement).value;
+              }}
+            />
+          </label>
           ${this.showArtifactAction
             ? html`
                 <label
@@ -180,6 +216,7 @@ export class RecipeRunnerControls extends LitElement {
               `
             : html`
                 <button
+                  data-testid="recipe-replay-run"
                   style="border:1px solid ${colors.accent}; border-radius:${radii.sm}; background:${colors.accent}; color:white; font-family:${fonts.mono}; font-size:${fonts.sizeXs}; font-weight:700; padding:6px 12px; cursor:pointer; opacity:${canRun
                     ? '1'
                     : '0.55'};"
@@ -205,6 +242,8 @@ export class RecipeRunnerControls extends LitElement {
             slotId=${this.slotId}
             recipeArtifactPath=${this.recipeArtifactPath}
             recipeRunId=${this.recipeRunId}
+            .targetKey=${this.targetKey}
+            .targetValue=${this.targetValue}
             .playbackSlowMs=${this.playbackSlowMs}
             .recordVideo=${this.recordVideo}
             .showArtifactAction=${this.showArtifactAction}

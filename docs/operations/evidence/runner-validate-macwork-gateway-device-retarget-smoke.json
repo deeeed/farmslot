@@ -1,0 +1,397 @@
+{
+  "item": "MANUAL-000113",
+  "scenario": "re-target validation to another device or platform",
+  "gateway": "ws://localhost:7801",
+  "slot": "macwork-ff-4",
+  "startedAt": "2026-09-06T18:10:28.450Z",
+  "completedAt": "2026-09-06T18:10:34.494Z",
+  "hostLoad": "2:10  up 3 days,  1:49, 4 users, load averages: 151.11 157.22 144.36",
+  "blocked": {
+    "what": [
+      "inventory-baseline",
+      "default-device-boots",
+      "posture-retarget-releases-then-reacquires",
+      "release-stops-leased-device",
+      "recipe-rerun-target-rewrites-the-proof-plan",
+      "shell-charset-refused",
+      "unknown-device-refused",
+      "cross-slot-guard",
+      "sibling-lease-untouched"
+    ],
+    "why": "the gateway's own admission control refuses every medium- and high-cost acquire while the host load average is above 1.5x its 16 cores, so no device can be booted; forcing past it would boot simulators on a saturated machine and would not be a fair test",
+    "rerunWith": "scripts/runner-validation/gateway/device-retarget-smoke-driver.mjs",
+    "rerunEnv": {
+      "SMOKE_RUN_ID": "a live, non-terminal run bound to SMOKE_SLOT \u2014 runtime.posture.apply and recipe.rerun both need a real run record",
+      "SMOKE_SLOT": "macwork-ff-4 (its configured simulator fs-4 is the only fs-* that exists on this host)",
+      "SMOKE_OTHER_SIM": "playground-1",
+      "precondition": "`uptime` load1 below 24"
+    },
+    "pendingNodes": [
+      "inventory-baseline",
+      "default-device-boots",
+      "posture-retarget-releases-then-reacquires",
+      "release-stops-leased-device",
+      "recipe-rerun-target-rewrites-the-proof-plan",
+      "shell-charset-refused",
+      "unknown-device-refused",
+      "cross-slot-guard",
+      "sibling-lease-untouched"
+    ]
+  },
+  "nodes": [
+    {
+      "node": "catalog-declares-device-parameters",
+      "claim": "the running gateway serves device-identity acquire parameters for both device providers",
+      "ok": true,
+      "evidence": {
+        "iosParameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "platform": {
+              "const": "ios"
+            },
+            "udid": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            },
+            "simulator": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        },
+        "androidParameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "platform": {
+              "const": "android"
+            },
+            "avd": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            },
+            "adb_serial": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "node": "shell-charset-refused-live",
+      "claim": "a device identity carrying shell meaning is refused as invalid-request before anything runs",
+      "ok": true,
+      "evidence": {
+        "conflict": {
+          "kind": "invalid-request",
+          "capabilityId": "ios-simulator",
+          "reason": "Capability parameters are invalid at /simulator: must match pattern \"^[A-Za-z0-9._:-]+$\""
+        }
+      }
+    },
+    {
+      "node": "wrong-platform-refused-live",
+      "claim": "asking the iOS provider for an Android platform is refused by its own parameter schema",
+      "ok": true,
+      "evidence": {
+        "conflict": {
+          "kind": "invalid-request",
+          "capabilityId": "ios-simulator",
+          "reason": "Capability parameters are invalid at /platform: must be equal to constant"
+        }
+      }
+    },
+    {
+      "node": "foreign-device-key-refused-live",
+      "claim": "an Android serial handed to the iOS provider is refused rather than ignored",
+      "ok": true,
+      "evidence": {
+        "conflict": {
+          "kind": "invalid-request",
+          "capabilityId": "ios-simulator",
+          "reason": "Capability parameters are invalid at /: must NOT have additional properties"
+        }
+      }
+    },
+    {
+      "node": "contradictory-identity-refused-live",
+      "claim": "udid and simulator naming two different devices is refused, not silently merged",
+      "ok": true,
+      "evidence": {
+        "conflict": {
+          "kind": "invalid-request",
+          "capabilityId": "ios-simulator",
+          "reason": "Device parameters name two different iOS simulators: udid='AAAA-1111' and simulator='BBBB-2222'"
+        }
+      }
+    },
+    {
+      "node": "boot-blocked-by-host-pressure",
+      "claim": "the boot half of this scenario did NOT run: the gateway refused admission on host pressure",
+      "ok": true,
+      "evidence": {
+        "conflict": {
+          "kind": "host-pressure",
+          "severity": "critical",
+          "reason": "Load average 160.08 is above 1.5x 16 cores.",
+          "machine": "macwork",
+          "queued": false,
+          "retryAfterMs": 15000
+        },
+        "uptime": "2:10  up 3 days,  1:49, 4 users, load averages: 151.11 157.22 144.36"
+      }
+    },
+    {
+      "node": "no-device-touched",
+      "claim": "every refusal above left every simulator on this machine in the state it was already in",
+      "ok": true,
+      "evidence": {
+        "before": {
+          "iPhone 16": {
+            "udid": "4DE58F8A-ED09-470C-B61D-6B1D2089803C",
+            "state": "Shutdown"
+          },
+          "mmdev-3": {
+            "udid": "88E7B7DE-CBC3-42A3-A23B-0F38D3D5BB17",
+            "state": "Booted"
+          },
+          "mmdev-4": {
+            "udid": "BC3ED993-D422-4A12-8C08-DF2B32DC13AB",
+            "state": "Shutdown"
+          },
+          "mmdev-5": {
+            "udid": "C071D870-531C-4968-B34C-DF9151704C9B",
+            "state": "Shutdown"
+          },
+          "temp/recipe/runtime": {
+            "udid": "2A32366E-A171-4229-8152-E74AE78767D3",
+            "state": "Shutdown"
+          },
+          "echodev-1": {
+            "udid": "3904A400-D340-4B04-9408-E18062B231DC",
+            "state": "Shutdown"
+          },
+          "fs-4": {
+            "udid": "E2CE5801-0A5F-458C-88A0-CDCA12A240E4",
+            "state": "Shutdown"
+          },
+          "mmdev-1": {
+            "udid": "18FE8A70-ED8B-4796-BB42-AA27EB1EFC6A",
+            "state": "Shutdown"
+          },
+          "mmdev-2": {
+            "udid": "2DF4C5EA-1A0A-4B8A-8B72-9A445FBE49E1",
+            "state": "Shutdown"
+          },
+          "mmdev-6": {
+            "udid": "1BB96956-9B40-4EB5-AF87-DEE0E7498588",
+            "state": "Shutdown"
+          },
+          "playground-1": {
+            "udid": "CAE47594-7920-4021-B145-D8E3A73F5C72",
+            "state": "Shutdown"
+          },
+          "sherpa-voice-1": {
+            "udid": "E4C630D3-3FF6-48E1-BD1A-C263A2E65809",
+            "state": "Shutdown"
+          }
+        },
+        "after": {
+          "iPhone 16": {
+            "udid": "4DE58F8A-ED09-470C-B61D-6B1D2089803C",
+            "state": "Shutdown"
+          },
+          "mmdev-3": {
+            "udid": "88E7B7DE-CBC3-42A3-A23B-0F38D3D5BB17",
+            "state": "Booted"
+          },
+          "mmdev-4": {
+            "udid": "BC3ED993-D422-4A12-8C08-DF2B32DC13AB",
+            "state": "Shutdown"
+          },
+          "mmdev-5": {
+            "udid": "C071D870-531C-4968-B34C-DF9151704C9B",
+            "state": "Shutdown"
+          },
+          "temp/recipe/runtime": {
+            "udid": "2A32366E-A171-4229-8152-E74AE78767D3",
+            "state": "Shutdown"
+          },
+          "echodev-1": {
+            "udid": "3904A400-D340-4B04-9408-E18062B231DC",
+            "state": "Shutdown"
+          },
+          "fs-4": {
+            "udid": "E2CE5801-0A5F-458C-88A0-CDCA12A240E4",
+            "state": "Shutdown"
+          },
+          "mmdev-1": {
+            "udid": "18FE8A70-ED8B-4796-BB42-AA27EB1EFC6A",
+            "state": "Shutdown"
+          },
+          "mmdev-2": {
+            "udid": "2DF4C5EA-1A0A-4B8A-8B72-9A445FBE49E1",
+            "state": "Shutdown"
+          },
+          "mmdev-6": {
+            "udid": "1BB96956-9B40-4EB5-AF87-DEE0E7498588",
+            "state": "Shutdown"
+          },
+          "playground-1": {
+            "udid": "CAE47594-7920-4021-B145-D8E3A73F5C72",
+            "state": "Shutdown"
+          },
+          "sherpa-voice-1": {
+            "udid": "E4C630D3-3FF6-48E1-BD1A-C263A2E65809",
+            "state": "Shutdown"
+          }
+        }
+      }
+    },
+    {
+      "node": "no-stray-lease",
+      "claim": "the refused acquires left no lease behind on the slot",
+      "ok": true,
+      "evidence": {
+        "leases": []
+      }
+    }
+  ],
+  "executedNodesOk": true,
+  "ok": false,
+  "cdp": {
+    "why": "the repo rule requires every UI change validated in the browser, not by typecheck or unit tests",
+    "chrome": "apps/command-center/scripts/debug-chrome.sh on FARMSLOT_CDP_PORT=9323",
+    "ui": "http://localhost:5175 against the live gateway ws://localhost:7801",
+    "probes": {
+      "apps/command-center/probes/recipe-rerun-device-target.js": {
+        "proves": "the shipped replay controls, driven by a real select change, real typed input, and a real CLICK on the replay button, put the operator device target on the wire as recipe.rerun params, and refuse a shell-bearing identity before any frame is sent",
+        "result": {
+          "steps": [
+            {
+              "step": "device-keys-offered",
+              "ok": true,
+              "evidence": {
+                "options": ["udid", "simulator", "avd", "adb_serial"],
+                "note": "platform is a provider selector, not a device, so it is not offered here"
+              }
+            },
+            {
+              "step": "empty-by-default",
+              "ok": true,
+              "evidence": {
+                "value": "",
+                "placeholder": "slot default"
+              }
+            },
+            {
+              "step": "charset-refused-before-the-wire",
+              "ok": true,
+              "evidence": {
+                "framesSent": 0,
+                "rendered": "Live output\n          \n        \n        \n          \n          Error: Device identity must match ^[A-Za-z0-9._:][A-Za-z0-9._:-]*$\n          \n                \n                  Device identity must matc"
+              }
+            },
+            {
+              "step": "target-reaches-the-gateway",
+              "ok": true,
+              "evidence": {
+                "method": "recipe.rerun",
+                "target": {
+                  "simulator": "playground-1"
+                },
+                "slotId": "macwork-ff-4"
+              }
+            },
+            {
+              "step": "key-switch-sends-only-the-new-key",
+              "ok": true,
+              "evidence": {
+                "target": {
+                  "adb_serial": "emulator-5554"
+                }
+              }
+            },
+            {
+              "step": "empty-field-sends-no-target",
+              "ok": true,
+              "evidence": {
+                "params": ["runId", "slotId"]
+              }
+            }
+          ],
+          "runId": "cdp-device-target-probe-run",
+          "slotId": "macwork-ff-4",
+          "ok": true
+        },
+        "negativeProof": "removed the charset refusal in ui/src/components/workspace/recipe-rerun-target.ts, let Vite reload, re-ran: the probe threw \"timed out waiting for client-side charset refusal\"; restored, green again",
+        "limitation": "mounts its own <recipe-runner-controls> rather than the one Slot View renders: that instance appears only for a slot with a linked run carrying a replayable recipe artifact, which needs a full dispatch. The element, its handlers, its params builder and the gateway client are the shipped ones; what is not covered is the slot-view wiring that supplies runId/recipeArtifactPath.",
+        "capturedAt": "2026-09-06T20:59:47Z"
+      },
+      "apps/command-center/probes/run-posture-device-target-row.js": {
+        "proves": "Run Detail paints the resolved device on the device capability row only, with the protocol key order, and no target on a capability that takes none",
+        "scope": "RENDERING only. The Gateway derivation of target from lease.parameters is posture.test.ts and the blocked driver node, both of which read a real lease.",
+        "result": {
+          "steps": [
+            {
+              "step": "row-carries-the-resolved-target",
+              "ok": true,
+              "evidence": {
+                "device": "simulator=playground-1",
+                "nonDevice": null
+              }
+            },
+            {
+              "step": "target-is-painted-on-the-device-row-only",
+              "ok": true,
+              "evidence": {
+                "painted": "target simulator=playground-1",
+                "nonDeviceRowHasTarget": false
+              }
+            },
+            {
+              "step": "target-sits-inside-its-capability-row",
+              "ok": true,
+              "evidence": {
+                "rowText": "ios-simulator wants retained observed running (as intended) target simulator=playground-1 required by the current proof plan"
+              }
+            },
+            {
+              "step": "multi-key-target-keeps-the-protocol-key-order",
+              "ok": true,
+              "evidence": {
+                "painted": "target udid=ABC-123, simulator=playground-1"
+              }
+            }
+          ],
+          "ok": true
+        },
+        "negativeProof": "removed the targetLabel mapping in ui/src/components/runs/run-detail-posture-renderers.ts, let Vite reload, re-ran: all four steps failed; restored, green again",
+        "capturedAt": "2026-09-06T20:59:47Z"
+      }
+    },
+    "screenshot": "docs/operations/evidence/command-center-device-retarget-cdp.png",
+    "companion": "no component render harness exists for RunPosturePanel in this repo; the Companion surface is validated at its library layer by apps/companion/src/lib/run-resource-posture.test.ts, whose targetLabel assertion is revert-proven",
+    "rerunAfter": "the dev gateway restarts on source edits and the page loses its socket; reload the tab before re-running the rerun probe",
+    "capturedAt": "2026-09-06T20:59:47Z",
+    "capturedAgainst": {
+      "uiSha": "0b1b5dc0",
+      "note": "the commit of the last change to any UI or probe file under apps/command-center. HEAD at capture was 64b8db6b; every commit after 0b1b5dc0 touched only services/gateway, the driver, and this evidence file, so the UI and probe code exercised here is exactly what is committed at HEAD.",
+      "workingTree": "clean for apps/command-center \u2014 no UI or probe file was uncommitted at capture; the uncommitted work at capture time was gateway-side only"
+    }
+  },
+  "producedBy": "scratchpad live-evidence pass against the running gateway. It is NOT the committed driver: the driver needs a device boot, which host admission refuses right now. The two node lists are therefore different on purpose, and both are listed below.",
+  "executedNodes": [
+    "boot-blocked-by-host-pressure",
+    "catalog-declares-device-parameters",
+    "contradictory-identity-refused-live",
+    "foreign-device-key-refused-live",
+    "no-device-touched",
+    "no-stray-lease",
+    "shell-charset-refused-live",
+    "wrong-platform-refused-live"
+  ]
+}

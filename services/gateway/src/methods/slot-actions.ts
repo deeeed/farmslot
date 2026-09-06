@@ -233,7 +233,17 @@ export async function slotActionList(params: SlotActionListParams): Promise<Slot
   };
 }
 
-export async function slotActionRun(params: SlotActionRunParams): Promise<SlotActionRunResult> {
+export async function slotActionRun(
+  params: SlotActionRunParams,
+  /**
+   * Template variables that take precedence over the slot's resource fields.
+   * The runtime capability layer passes the acquiring lease's device identity
+   * here (ADR-054 item 3) so a re-targeted action drives the leased device
+   * rather than the slot's configured default. Not on the wire: only in-process
+   * callers that own a lease may set it.
+   */
+  extraVars?: Record<string, string>,
+): Promise<SlotActionRunResult> {
   const actions = await resolveProjectActions(params.slotId);
   const action = findAction(actions, params.actionId);
   if (!action) {
@@ -244,7 +254,7 @@ export async function slotActionRun(params: SlotActionRunParams): Promise<SlotAc
   const { pool, slot } = await resolveSlot(params.slotId);
   const projectName = slot.project ?? pool.project;
   const projectVars = await loadProjectVars(projectName);
-  const expanded = expandTemplate(action.command, slotVars, projectVars);
+  const expanded = expandTemplate(action.command, slotVars, projectVars, extraVars);
   if (hasUnresolvedPlaceholders(expanded)) {
     const unresolved = findUnresolvedPlaceholders(expanded);
     return {

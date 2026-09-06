@@ -42,11 +42,14 @@ import {
   type RuntimeCapabilityProofRequirement,
   type RuntimeCapabilityReleaseResult,
   type RuntimeCapabilityStatusResult,
+  runtimeCapabilityTargetFromParameters,
   type RuntimePostureApplyResult,
   type RuntimePostureStatusResult,
 } from '@farmslot/protocol';
 
 import { MachinePausePreviewStaleError } from '../machine-parking/preview-errors.js';
+
+import { sameCapabilityParameters } from './parameters.js';
 
 const POLICY_SOURCE_RANK: Record<ResourcePosturePolicySource, number> = {
   'gate-choice': 3,
@@ -692,6 +695,87 @@ export class RunResourcePostureReconciler {
         blocked.length;
     }
 
+    // ADR-054 item 3 — re-target, as ONE release before any acquire.
+    //
+    // Every lease whose parameters disagree with what the plan now asks for goes
+    // first, together. Doing it lazily per capability was order-dependent: a
+    // capability reached earlier pulls a device in as its dependency and
+    // revalidates it against the device still held, so the requirement that
+    // actually named the new device was refused by a lease its own sibling had
+    // just re-pinned. Releasing up front also matches what this module already
+    // does for every other disposition, and acquiring first would conflict the
+    // run against itself on an exclusive device claim.
+    //
+    // `keepWarm: true` keeps this on the one release path every other posture
+    // release uses. It does not mean the old provider survives: the acquire that
+    // follows finds a warm provider held for a DIFFERENT device and stops it
+    // under its own identity before booting the requested one.
+    const staleByParameters = context.states
+      .filter((state) => state.desiredDisposition === 'acquired')
+      .flatMap((state) => {
+        const requirement = context.proofRequirements.find(
+          (candidate) => candidate.capabilityId === state.capabilityId,
+        );
+        if (!requirement) return [];
+        const wanted = requirement.parameters ?? {};
+        return (context.leases.get(state.capabilityId) ?? []).filter(
+          (lease) =>
+            lease.state !== 'released' && !sameCapabilityParameters(lease.parameters, wanted),
+        );
+      });
+    // A dependent pins its dependency: the registry refuses to release a lease
+    // something else still needs, so releasing the device alone is retained and
+    // the re-target silently does nothing. The dependent goes with it and is
+    // reacquired by the loop below, which pulls the dependency in again on the
+    // device the plan now names.
+    // A worklist, not one pass: `dependencyLeaseIds` holds DIRECT dependencies
+    // only, so a grandparent is reached solely through its parent. A single pass
+    // would find it or not depending on map iteration order.
+    const staleIds = new Set(staleByParameters.map((lease) => lease.id));
+    const staleTargets = [...staleByParameters];
+    const allLeases = [...context.leases.values()].flat();
+    for (let index = 0; index < staleTargets.length; index += 1) {
+      const stale = staleTargets[index]!;
+      for (const lease of allLeases) {
+        if (staleIds.has(lease.id) || lease.state === 'released') continue;
+        if (!lease.dependencyLeaseIds.includes(stale.id)) continue;
+        staleIds.add(lease.id);
+        staleTargets.push(lease);
+      }
+    }
+    if (staleTargets.length > 0) {
+      const retargeted = await this.deps.releaseForPosture(
+        context.slotId,
+        staleTargets.map((lease) => ({ leaseId: lease.id, keepWarm: true })),
+      );
+      for (const effect of retargeted.effects) effects.add(effect);
+      // A release that failed leaves the old device's state unknown. It is
+      // recorded so the transition reports it; the acquires below then refuse on
+      // their own, because the registry treats a lease with an unresolved
+      // cleanup failure as still holding the provider.
+      for (const failure of retargeted.failures) {
+        failures.push({
+          capabilityId: failure.capabilityId,
+          leaseId: failure.leaseId,
+          reason: `re-target release failed: ${failure.reason}`,
+        });
+      }
+    }
+
+    // Every requirement's parameters, keyed by capability, so a dependency
+    // acquire resolves to the same device the plan names for it whatever order
+    // this loop reaches things in.
+    const dependencyParameters = context.proofRequirements.reduce<
+      Record<string, Record<string, unknown>> | undefined
+    >((accumulator, requirement) => {
+      if (!requirement.parameters || Object.keys(requirement.parameters).length === 0) {
+        return accumulator;
+      }
+      const next = accumulator ?? {};
+      next[requirement.capabilityId] = requirement.parameters;
+      return next;
+    }, undefined);
+
     for (const state of context.states) {
       if (state.desiredDisposition !== 'acquired') continue;
       const requirement = context.proofRequirements.find(
@@ -709,6 +793,12 @@ export class RunResourcePostureReconciler {
         ...(context.run.familyId ? { ownerFamilyId: context.run.familyId } : {}),
         proofRequirement: requirement,
         ...(requirement.parameters ? { parameters: requirement.parameters } : {}),
+        // The WHOLE plan, so a capability reached as this one's dependency is
+        // acquired with the device the plan names for it. This loop walks
+        // capabilities in id order, and without it whichever capability came
+        // first would pin its dependency to the slot's configured device and
+        // the requirement that actually named a target would be refused.
+        ...(dependencyParameters ? { dependencyParameters } : {}),
         // ADR-054: preparation must prove a retained provider is still alive.
         revalidateHealth: true,
       });
@@ -1164,6 +1254,11 @@ export class RunResourcePostureReconciler {
       reason,
       ...(holder?.id ? { leaseId: holder.id } : {}),
       ...(holder?.owner ? { owner: holder.owner } : {}),
+      // The device this lease actually resolved to, which is the slot's
+      // configured one until something re-targets it (ADR-054 item 3).
+      ...(runtimeCapabilityTargetFromParameters(holder?.parameters)
+        ? { target: runtimeCapabilityTargetFromParameters(holder?.parameters) }
+        : {}),
       ...(warmUntil ? { warmUntil } : {}),
       ...(holder?.updatedAt ? { lastTransitionAt: holder.updatedAt } : {}),
       releaseEffects: entry ? [...entry.releaseEffects] : [],

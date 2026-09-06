@@ -10,6 +10,8 @@ import { Events, Methods } from '@farmslot/protocol';
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts } from '../../styles/theme-tokens.js';
 
+import { recipeRerunTarget } from './recipe-rerun-target.js';
+
 export const RECIPE_OUTPUT_MAX_LINES = 500;
 /** recipe.rerun should return immediately; allow headroom for gateway validation only. */
 export const RECIPE_RERUN_START_TIMEOUT_MS = 30_000;
@@ -40,6 +42,10 @@ export class RecipeOutputPanel extends LitElement {
   @property() slotId = '';
   @property() recipeArtifactPath = '';
   @property() recipeRunId = '';
+  /** Device-identity key the re-target field edits (ADR-054 item 3). */
+  @property() targetKey = 'simulator';
+  /** Device identity to re-target this rerun at; empty means the slot's own. */
+  @property() targetValue = '';
   @property({ type: Number }) playbackSlowMs = 0;
   @property({ type: Boolean }) recordVideo = false;
   @property({ type: Boolean }) showArtifactAction = false;
@@ -134,6 +140,9 @@ export class RecipeOutputPanel extends LitElement {
 
     try {
       const params: RecipeRerunParams = { runId: this.runId, slotId: this.slotId };
+      const retarget = recipeRerunTarget(this.targetKey, this.targetValue);
+      if (retarget.error) throw new Error(retarget.error);
+      if (retarget.target) params.target = retarget.target;
       if (this.recipeArtifactPath) params.recipeArtifactPath = this.recipeArtifactPath;
       if (this.recipeRunId) params.recipeRunId = this.recipeRunId;
       if (this.playbackSlowMs > 0) params.playbackSlowMs = this.playbackSlowMs;

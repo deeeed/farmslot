@@ -412,3 +412,23 @@ test('a positional match is not described as the operator own resolution', () =>
   assert.notDeepEqual(attributed, positional);
   assert.notEqual(positional, nothing);
 });
+
+test('the resolved device target is rendered from the lease, not the slot config', () => {
+  const plain = postureCapabilityRow(capability({ capabilityId: 'browser-cdp' }));
+  assert.equal(plain.targetLabel, undefined);
+
+  const retargeted = postureCapabilityRow(
+    capability({
+      capabilityId: 'ios-simulator',
+      target: { platform: 'ios', simulator: 'SIM-2' },
+    }),
+  );
+  assert.equal(retargeted.targetLabel, 'platform=ios, simulator=SIM-2');
+
+  const summary = summarizeRunPosture(
+    postureState({
+      capabilities: [capability({ capabilityId: 'ios-simulator', target: { simulator: 'SIM-2' } })],
+    }),
+  );
+  assert.equal(summary.rows[0]?.targetLabel, 'simulator=SIM-2');
+});

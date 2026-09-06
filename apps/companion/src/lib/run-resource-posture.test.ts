@@ -9,6 +9,7 @@ import type {
 
 import {
   postureAfterPausedRefresh,
+  postureCapabilityRow,
   postureCountsLine,
   posturePolicyLine,
   postureRowStatusLabel,
@@ -272,4 +273,21 @@ test('a paused refresh cannot mark another run counts ready', () => {
   assert.deepEqual(postureAfterPausedRefresh(postureWhileRefreshing(ready, false)), {
     status: 'idle',
   });
+});
+
+test('the resolved device target reaches the Companion row from the lease', () => {
+  const plain = postureCapabilityRow(capability({ capabilityId: 'browser-cdp' }));
+  assert.equal(plain.targetLabel, undefined);
+
+  const retargeted = postureCapabilityRow(
+    capability({ capabilityId: 'ios-simulator', target: { platform: 'ios', simulator: 'SIM-2' } }),
+  );
+  assert.equal(retargeted.targetLabel, 'platform=ios, simulator=SIM-2');
+
+  const summary = summarizeRunPosture(
+    postureState({
+      capabilities: [capability({ capabilityId: 'ios-simulator', target: { simulator: 'SIM-2' } })],
+    }),
+  );
+  assert.equal(summary.rows[0]?.targetLabel, 'simulator=SIM-2');
 });

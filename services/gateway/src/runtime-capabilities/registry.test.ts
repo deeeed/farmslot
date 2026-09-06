@@ -10,6 +10,7 @@ import type {
   RuntimeCapabilityProviderActionRef,
 } from '@farmslot/protocol';
 
+import { deviceTargetExtraVars } from './device-target.js';
 import { runtimeCapabilityProviderDigest, RuntimeCapabilityRegistry } from './registry.js';
 import { RUNTIME_CAPABILITY_TERMINAL_FENCE_TTL_MS, RuntimeCapabilityStore } from './store.js';
 
@@ -62,32 +63,47 @@ async function fixture(
     onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
     storeFactory?: (storePath: string) => RuntimeCapabilityStore;
     isTerminalOwner?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['isTerminalOwner'];
+    assertTargetAvailable?: ConstructorParameters<
+      typeof RuntimeCapabilityRegistry
+    >[0]['assertTargetAvailable'];
     now?: () => Date;
   } = {},
 ) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-registry-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const actions: string[] = [];
+  /** Every provider action with the acquire parameters it was run for. */
+  const actionCalls: Array<{
+    action: string;
+    parameters: Record<string, unknown>;
+    declaredParameters: string[];
+  }> = [];
   let nextLease = 0;
   const storePath = path.join(directory, 'leases.json');
   const store = options.storeFactory?.(storePath) ?? new RuntimeCapabilityStore(storePath);
   const registry = new RuntimeCapabilityRegistry({
     store,
     catalogForSlot: async (slotId) => ({ slotId, project: 'test-project', capabilities }),
-    runAction: async (_slotId, action) => {
-      actions.push(
-        action.kind === 'slot-action' ? action.actionId : `${action.resourceId}.${action.action}`,
-      );
-      return options.runAction ? options.runAction(_slotId, action) : { ok: true };
+    runAction: async (_slotId, action, parameters, declaredParameters) => {
+      const name =
+        action.kind === 'slot-action' ? action.actionId : `${action.resourceId}.${action.action}`;
+      actions.push(name);
+      actionCalls.push({ action: name, parameters, declaredParameters: [...declaredParameters] });
+      return options.runAction
+        ? options.runAction(_slotId, action, parameters, declaredParameters)
+        : { ok: true };
     },
     ...(options.pressureFor ? { pressureFor: options.pressureFor } : {}),
     ...(options.familyForRun ? { familyForRun: options.familyForRun } : {}),
     ...(options.onEvent ? { onEvent: options.onEvent } : {}),
     ...(options.isTerminalOwner ? { isTerminalOwner: options.isTerminalOwner } : {}),
+    ...(options.assertTargetAvailable
+      ? { assertTargetAvailable: options.assertTargetAvailable }
+      : {}),
     leaseId: () => `lease-${++nextLease}`,
     now: options.now ?? (() => new Date('2026-08-11T00:00:00.000Z')),
   });
-  return { registry, actions, store, storePath };
+  return { registry, actions, actionCalls, store, storePath };
 }
 
 function acquire(
@@ -1753,4 +1769,358 @@ test('affected-resource metadata reaches capability status and is part of the pr
     }),
     'flipping retain to stop must not be adoptable under the same digest',
   );
+});
+
+// ── ADR-054 item 3: device re-targeting ───────────────────────────────────────
+
+function acquireWithParameters(
+  registry: RuntimeCapabilityRegistry,
+  capabilityId: string,
+  ownerRunId: string,
+  parameters: Record<string, unknown>,
+) {
+  return registry.acquire({
+    slotId: SLOT,
+    capabilityId,
+    ownerRunId,
+    parameters,
+    proofRequirement: { capabilityId, reason: `prove ${capabilityId}`, mode: 'state' },
+  });
+}
+
+const DEVICE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { simulator: { type: 'string', pattern: '^[A-Za-z0-9._:-]+$' } },
+};
+
+test('a provider action is run with the acquiring lease parameters', async (t) => {
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA };
+  const { registry, actionCalls } = await fixture(t, [device]);
+
+  const acquired = await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-2' });
+  assert.equal(acquired.ok, true);
+  assert.deepEqual(
+    actionCalls
+      .filter((call) => call.action.startsWith('sim.'))
+      .map(({ action, parameters }) => ({ action, parameters })),
+    [
+      { action: 'sim.acquire', parameters: { simulator: 'SIM-2' } },
+      { action: 'sim.health', parameters: { simulator: 'SIM-2' } },
+    ],
+  );
+});
+
+test('release runs against the device its own lease acquired', async (t) => {
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA };
+  const { registry, actionCalls } = await fixture(t, [device]);
+  await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-2' });
+
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  assert.deepEqual(
+    actionCalls
+      .filter((call) => call.action === 'sim.release')
+      .map(({ action, parameters }) => ({ action, parameters })),
+    [{ action: 'sim.release', parameters: { simulator: 'SIM-2' } }],
+  );
+});
+
+test('a device identity outside the shell-safe charset is refused by the provider layer', async (t) => {
+  // The registry itself is charset-agnostic: the refusal is the production
+  // `runAction`, which is what turns a parameter into a hook template variable.
+  const device = { ...entry('sim'), parameters: { type: 'object' } };
+  const { registry } = await fixture(t, [device], {
+    runAction: async (_slotId, _action, parameters) => {
+      const resolved = deviceTargetExtraVars(parameters);
+      return resolved.ok ? { ok: true } : { ok: false, detail: resolved.reason };
+    },
+  });
+
+  const refused = await acquireWithParameters(registry, 'sim', 'run-a', {
+    simulator: '$(whoami)',
+  });
+  assert.equal(refused.ok, false);
+  if (refused.ok) return;
+  assert.equal(refused.conflict.kind, 'unavailable');
+  assert.match(refused.conflict.reason, /must be a string matching/);
+});
+
+test('a target another slot holds is refused before the provider boots anything', async (t) => {
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA };
+  const seen: Array<{ slotId: string; parameters: Record<string, unknown> }> = [];
+  const { registry, actions } = await fixture(t, [device], {
+    assertTargetAvailable: async (input) => {
+      seen.push({ slotId: input.slotId, parameters: input.parameters });
+      return input.parameters.simulator === 'SIM-TAKEN'
+        ? "Device 'SIM-TAKEN' is the ios-simulator of slot 'slot-b'"
+        : null;
+    },
+  });
+
+  const refused = await acquireWithParameters(registry, 'sim', 'run-a', {
+    simulator: 'SIM-TAKEN',
+  });
+  assert.equal(refused.ok, false);
+  if (refused.ok) return;
+  assert.equal(refused.conflict.kind, 'invalid-request');
+  assert.match(refused.conflict.reason, /slot 'slot-b'/);
+  assert.deepEqual(actions, [], 'no provider action may run for a refused target');
+
+  const allowed = await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-FREE' });
+  assert.equal(allowed.ok, true);
+  assert.deepEqual(
+    seen.map((call) => call.parameters.simulator),
+    ['SIM-TAKEN', 'SIM-FREE'],
+  );
+});
+
+test('a capability that claims no device never pays for the target guard', async (t) => {
+  let called = 0;
+  const { registry } = await fixture(t, [entry('browser')], {
+    assertTargetAvailable: async () => {
+      called += 1;
+      return null;
+    },
+  });
+  assert.equal((await acquire(registry, 'browser', 'run-a')).ok, true);
+  assert.equal(called, 0);
+});
+
+test('an ordinary acquire for the slot own device is guarded too', async (t) => {
+  // The device an acquire with no parameters resolves to is the slot's
+  // configured one, and another slot may have re-targeted onto exactly that
+  // device. Checking only acquires that NAME a device left the common case —
+  // any ordinary validation — able to boot a device a second time.
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA };
+  device.cost = {
+    class: 'high',
+    resources: [{ id: 'ios-simulator', access: 'exclusive', kind: 'device' }],
+  };
+  const seen: Array<Record<string, unknown>> = [];
+  const { registry } = await fixture(t, [device], {
+    assertTargetAvailable: async (input) => {
+      seen.push(input.parameters);
+      return "Device 'fs-4' is the ios-simulator of slot 'slot-b'";
+    },
+  });
+
+  const refused = await acquire(registry, 'sim', 'run-a');
+  assert.equal(refused.ok, false, 'a bare acquire onto a taken device must be refused');
+  if (refused.ok) return;
+  assert.equal(refused.conflict.kind, 'invalid-request');
+  assert.match(refused.conflict.reason, /slot 'slot-b'/);
+  assert.deepEqual(seen, [{}], 'the guard resolves the slot device itself from empty parameters');
+});
+
+test('a warm provider on another device is stopped with its own identity, not the requested one', async (t) => {
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA, keepWarmMs: 600_000 };
+  const { registry, actionCalls } = await fixture(t, [device]);
+  await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-1' });
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  const warm = (await registry.status({ slotId: SLOT })).leases[0];
+  assert.equal(warm?.keepWarmUntil, '2026-08-11T00:10:00.000Z');
+  actionCalls.length = 0;
+
+  const retargeted = await acquireWithParameters(registry, 'sim', 'run-b', {
+    simulator: 'SIM-2',
+  });
+  assert.equal(retargeted.ok, true);
+  // The warm provider is never health-probed with the new identity, and its
+  // shutdown names SIM-1. Probing with SIM-2 would report the warm provider
+  // healthy or dead for the wrong device.
+  assert.deepEqual(
+    actionCalls.map(({ action, parameters }) => ({ action, parameters })),
+    [
+      { action: 'sim.release', parameters: { simulator: 'SIM-1' } },
+      { action: 'sim.acquire', parameters: { simulator: 'SIM-2' } },
+      { action: 'sim.health', parameters: { simulator: 'SIM-2' } },
+    ],
+  );
+});
+
+test('a warm provider on the SAME device is still adopted without rebooting it', async (t) => {
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA, keepWarmMs: 600_000 };
+  const { registry, actionCalls } = await fixture(t, [device]);
+  await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-1' });
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  actionCalls.length = 0;
+
+  const reused = await acquireWithParameters(registry, 'sim', 'run-b', { simulator: 'SIM-1' });
+  assert.equal(reused.ok, true);
+  assert.equal(
+    actionCalls.filter((call) => call.action === 'sim.acquire').length,
+    0,
+    'a healthy warm provider on the same device must be adopted, not rebooted',
+  );
+});
+
+test('a same-owner lease on a different device is refused rather than silently reused', async (t) => {
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA };
+  const { registry } = await fixture(t, [device]);
+  await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-1' });
+
+  const refused = await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-2' });
+  assert.equal(refused.ok, false);
+  if (refused.ok) return;
+  assert.equal(refused.conflict.kind, 'invalid-request');
+  assert.match(refused.conflict.reason, /different parameters/);
+});
+
+test('the cross-slot guard sees a warm provider, which runs under no active lease', async (t) => {
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA, keepWarmMs: 600_000 };
+  const seen: Array<{ slotId: string; capabilityId: string; state: string }[]> = [];
+  const { registry } = await fixture(t, [device], {
+    assertTargetAvailable: async (input) => {
+      seen.push(
+        input.activeLeases.map((lease) => ({
+          slotId: lease.slotId,
+          capabilityId: lease.capabilityId,
+          state: lease.state,
+        })),
+      );
+      return null;
+    },
+  });
+  await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-1' });
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  const warm = (await registry.status({ slotId: SLOT })).leases[0];
+  assert.equal(warm?.state, 'released');
+  assert.equal(warm?.keepWarmUntil, '2026-08-11T00:10:00.000Z');
+  seen.length = 0;
+
+  await acquireWithParameters(registry, 'sim', 'run-b', { simulator: 'SIM-9' });
+  // Keep-warm is the one state where a device is running with no active lease.
+  // A guard that could not see it would let a second slot adopt the device, and
+  // the warm sweeper would then stop it under that slot's live run.
+  assert.deepEqual(seen[0], [{ slotId: SLOT, capabilityId: 'sim', state: 'released' }]);
+});
+
+test('a released lease with no keep-warm window is not offered to the guard', async (t) => {
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA };
+  const seen: Array<Array<{ state: string }>> = [];
+  const { registry } = await fixture(t, [device], {
+    assertTargetAvailable: async (input) => {
+      seen.push(input.activeLeases.map((lease) => ({ state: lease.state })));
+      return null;
+    },
+  });
+  await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-1' });
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  seen.length = 0;
+
+  await acquireWithParameters(registry, 'sim', 'run-b', { simulator: 'SIM-9' });
+  assert.deepEqual(seen[0], [], 'a released provider that was stopped holds no device');
+});
+
+test('a device reached as a dependency is acquired with the device the plan names', async (t) => {
+  // The shipped shape: companion-native-client-ios depends on ios-simulator.
+  // Reconcilers walk capabilities in id order, so the client is reached first
+  // and used to pin its dependency to the slot's configured device — after
+  // which the requirement that actually named a target was refused.
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA };
+  const client = { ...entry('client', 'exclusive', ['sim']) };
+  const { registry, actionCalls } = await fixture(t, [device, client]);
+
+  const acquired = await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'client',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'client', reason: 'prove client', mode: 'state' },
+    dependencyParameters: { sim: { simulator: 'SIM-2' } },
+  });
+  assert.equal(acquired.ok, true);
+  if (!acquired.ok) return;
+  assert.deepEqual(
+    acquired.dependencyLeases.find((lease) => lease.capabilityId === 'sim')?.parameters,
+    { simulator: 'SIM-2' },
+  );
+  assert.deepEqual(
+    actionCalls.filter((call) => call.action === 'sim.acquire').map(({ parameters }) => parameters),
+    [{ simulator: 'SIM-2' }],
+  );
+
+  // The requirement that names the device now agrees with the lease its parent
+  // created, so the re-target completes instead of refusing itself.
+  const direct = await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-2' });
+  assert.equal(direct.ok, true);
+});
+
+test('the stored proof plan supplies dependency parameters when the caller passes none', async (t) => {
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA };
+  const client = { ...entry('client', 'exclusive', ['sim']) };
+  const { registry, actionCalls } = await fixture(t, [device, client]);
+  // Recorded by the device's own top-level acquire.
+  await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-2' });
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  actionCalls.length = 0;
+
+  await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'client',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'client', reason: 'prove client', mode: 'state' },
+  });
+  assert.deepEqual(
+    actionCalls.filter((call) => call.action === 'sim.acquire').map(({ parameters }) => parameters),
+    [{ simulator: 'SIM-2' }],
+  );
+});
+
+test('a refusal caused by a dependency lease names that dependency', async (t) => {
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA };
+  const client = { ...entry('client', 'exclusive', ['sim']) };
+  const { registry } = await fixture(t, [device, client]);
+  await registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'client',
+    ownerRunId: 'run-a',
+    proofRequirement: { capabilityId: 'client', reason: 'prove client', mode: 'state' },
+    dependencyParameters: { sim: { simulator: 'SIM-1' } },
+  });
+
+  const refused = await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-2' });
+  assert.equal(refused.ok, false);
+  if (refused.ok) return;
+  // "different parameters" alone pointed the operator at the wrong requirement.
+  assert.match(refused.conflict.reason, /held as a dependency of client/);
+  assert.match(refused.conflict.reason, /SIM-1/);
+});
+
+test('the stored proof plan records the device an acquire actually used', async (t) => {
+  // The plan is the default requirement set for the next validation-prepare, so
+  // a plan that forgot the device would quietly send the run back to the slot's
+  // configured one — or be refused for disagreeing with the lease it holds.
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA };
+  const { registry } = await fixture(t, [device]);
+  await acquireWithParameters(registry, 'sim', 'run-a', { simulator: 'SIM-2' });
+
+  const status = await registry.status({ slotId: SLOT });
+  assert.deepEqual(status.proofPlans['run-a']?.requirements, [
+    {
+      capabilityId: 'sim',
+      reason: 'prove sim',
+      mode: 'state',
+      parameters: { simulator: 'SIM-2' },
+    },
+  ]);
+});
+
+test('the guard is told whether the capability claims a device, never left to re-read it', async (t) => {
+  // Re-deriving it from a catalog read meant a config file mid-write could make
+  // the guard skip itself for exactly the acquires it exists to check.
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA };
+  device.cost = {
+    class: 'high',
+    resources: [{ id: 'ios-simulator', access: 'exclusive', kind: 'device' }],
+  };
+  const seen: Array<{ capabilityId: string; claimsDevice: boolean }> = [];
+  const { registry } = await fixture(t, [device, entry('browser')], {
+    assertTargetAvailable: async (input) => {
+      seen.push({ capabilityId: input.capabilityId, claimsDevice: input.claimsDevice });
+      return null;
+    },
+  });
+  assert.equal((await acquire(registry, 'sim', 'run-a')).ok, true);
+  assert.equal((await acquire(registry, 'browser', 'run-b')).ok, true);
+  assert.deepEqual(seen, [{ capabilityId: 'sim', claimsDevice: true }]);
 });

@@ -46,6 +46,18 @@ export interface RuntimeCapabilityAcquireParams {
    * recipe reruns set this so a dead retained provider cannot pass preparation.
    */
   revalidateHealth?: boolean;
+  /**
+   * Parameters to acquire each DEPENDENCY with, keyed by capability id.
+   *
+   * A device provider is often reached as another provider's dependency
+   * (`companion-native-client-ios` -> `ios-simulator`). Acquiring a dependency
+   * with no parameters pins the slot's configured device, and the requirement
+   * that actually names a target is then refused for disagreeing with the lease
+   * its own parent just created. The caller reconciling a proof plan passes the
+   * whole plan's parameters here so the order it happens to walk the plan in
+   * cannot decide which device is used.
+   */
+  dependencyParameters?: Record<string, Record<string, unknown>>;
 }
 
 export type RuntimeCapabilityAcquireResult =

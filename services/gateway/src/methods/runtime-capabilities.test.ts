@@ -5,7 +5,12 @@ import type { RuntimeCapabilityLease } from '@farmslot/protocol';
 
 import type { WarmSweepSummary } from '../runtime-capabilities/registry.js';
 
-import { runtimeCapabilityStopWarm, stopWarmResultFromSummary } from './runtime-capabilities.js';
+import {
+  assertDeviceTargetAvailable,
+  type DeviceTargetGuardDeps,
+  runtimeCapabilityStopWarm,
+  stopWarmResultFromSummary,
+} from './runtime-capabilities.js';
 
 const PARAMS = { slotId: 'slot-a', capabilityId: 'metro' };
 
@@ -154,4 +159,145 @@ test('an error lease without a stored failure does not mask a real verdict', () 
   const stale: RuntimeCapabilityLease = { ...lease('metro'), state: 'error' };
   const result = stopWarmResultFromSummary(PARAMS, summary(), [stale]);
   assert.equal(result.outcome, 'not-warm');
+});
+
+// ── ADR-054 item 3: the cross-slot device guard, at the methods level ─────────
+
+function guardLease(
+  slotId: string,
+  capabilityId: string,
+  runId: string,
+  parameters: Record<string, unknown> = {},
+): RuntimeCapabilityLease {
+  return { ...lease(capabilityId), id: `lease-${slotId}`, slotId, owner: { runId }, parameters };
+}
+
+function guardDeps(
+  slots: Record<string, { machine: string; simulator: string }>,
+): DeviceTargetGuardDeps {
+  return {
+    loadSlotVars: async (slotId) => {
+      const slot = slots[slotId];
+      if (!slot) throw new Error(`unknown slot ${slotId}`);
+      return { machine: slot.machine, resourceVars: { simulator: slot.simulator } };
+    },
+    catalogForSlot: async () => ({
+      capabilities: [
+        {
+          id: 'ios-simulator',
+          cost: { class: 'high', resources: [{ id: 'sim', access: 'exclusive', kind: 'device' }] },
+        },
+      ] as never,
+    }),
+  };
+}
+
+test('a same-named device on another machine reaches the guard and is skipped', async () => {
+  // The pool reuses `fs-1` on macpro and macwork. Before the holder carried its
+  // OWN machine, every holder was stamped with the acquirer's, so the machine
+  // filter could never fire and an ordinary acquire on one machine was refused
+  // because another machine ran a same-named simulator.
+  const deps = guardDeps({
+    'macpro-ff-1': { machine: 'macpro', simulator: 'fs-1' },
+    'macwork-ff-1': { machine: 'macwork', simulator: 'fs-1' },
+  });
+  const refusal = await assertDeviceTargetAvailable(
+    {
+      slotId: 'macpro-ff-1',
+      capabilityId: 'ios-simulator',
+      ownerRunId: 'run-a',
+      parameters: {},
+      claimsDevice: true,
+      activeLeases: [guardLease('macwork-ff-1', 'ios-simulator', 'run-b')],
+    },
+    deps,
+  );
+  assert.equal(refusal, null, 'two machines, two physically distinct simulators');
+});
+
+test('a same-named device on the SAME machine is still refused, naming that machine', async () => {
+  const deps = guardDeps({
+    'macwork-ff-4': { machine: 'macwork', simulator: 'fs-1' },
+    'macwork-ff-1': { machine: 'macwork', simulator: 'fs-1' },
+  });
+  const refusal = await assertDeviceTargetAvailable(
+    {
+      slotId: 'macwork-ff-4',
+      capabilityId: 'ios-simulator',
+      ownerRunId: 'run-a',
+      parameters: {},
+      claimsDevice: true,
+      activeLeases: [guardLease('macwork-ff-1', 'ios-simulator', 'run-b')],
+    },
+    deps,
+  );
+  assert.match(refusal ?? '', /slot 'macwork-ff-1' on macwork/);
+  assert.match(refusal ?? '', /run-b/);
+});
+
+test('an unreadable foreign slot refuses rather than failing open', async () => {
+  const deps = guardDeps({ 'macwork-ff-4': { machine: 'macwork', simulator: 'fs-1' } });
+  const refusal = await assertDeviceTargetAvailable(
+    {
+      slotId: 'macwork-ff-4',
+      capabilityId: 'ios-simulator',
+      ownerRunId: 'run-a',
+      parameters: {},
+      claimsDevice: true,
+      activeLeases: [guardLease('macwork-ff-9', 'ios-simulator', 'run-b')],
+    },
+    deps,
+  );
+  assert.match(refusal ?? '', /cannot verify device target against slot 'macwork-ff-9'/);
+});
+
+test('a capability that claims no device and names none is not guarded at all', async () => {
+  let reads = 0;
+  const refusal = await assertDeviceTargetAvailable(
+    {
+      slotId: 'macwork-ff-4',
+      capabilityId: 'browser-cdp',
+      ownerRunId: 'run-a',
+      parameters: {},
+      claimsDevice: false,
+      activeLeases: [],
+    },
+    {
+      loadSlotVars: async () => {
+        reads += 1;
+        throw new Error('should not be read');
+      },
+      catalogForSlot: async () => ({ capabilities: [] }),
+    },
+  );
+  assert.equal(refusal, null);
+  assert.equal(reads, 0, 'no slot config is read for a capability with nothing to guard');
+});
+
+test('an unreadable project config on another machine does not refuse', async () => {
+  // That slot cannot conflict, so its catalog is never read. Reading it added a
+  // fail-closed surface for a slot that is irrelevant by construction.
+  let catalogReads = 0;
+  const refusal = await assertDeviceTargetAvailable(
+    {
+      slotId: 'macwork-ff-4',
+      capabilityId: 'ios-simulator',
+      ownerRunId: 'run-a',
+      parameters: {},
+      claimsDevice: true,
+      activeLeases: [guardLease('macpro-ff-1', 'ios-simulator', 'run-b')],
+    },
+    {
+      loadSlotVars: async (slotId) =>
+        slotId === 'macwork-ff-4'
+          ? { machine: 'macwork', resourceVars: { simulator: 'fs-1' } }
+          : { machine: 'macpro', resourceVars: { simulator: 'fs-1' } },
+      catalogForSlot: async () => {
+        catalogReads += 1;
+        throw new Error('project.json is mid-write');
+      },
+    },
+  );
+  assert.equal(refusal, null);
+  assert.equal(catalogReads, 0, "another machine's project config is never read");
 });
