@@ -350,23 +350,6 @@ export function retargetProofRequirements(
       }) declares the device parameters this target names`,
     };
   }
-  if (target.platform) {
-    const platform = target.platform;
-    const allowed = candidates.filter(
-      (requirement) => schemaAllowsPlatform(byId.get(requirement.capabilityId), platform) === true,
-    );
-    const undecided = candidates.filter(
-      (requirement) =>
-        schemaAllowsPlatform(byId.get(requirement.capabilityId), platform) === undefined,
-    );
-    candidates = allowed.length > 0 ? allowed : undecided;
-    if (candidates.length === 0) {
-      return {
-        ok: false,
-        reason: `no capability in this run's proof plan serves platform '${platform}'`,
-      };
-    }
-  }
   // THE INVARIANT, stated rather than left incidental: every rewritten
   // requirement drives the SAME physical device. Two capabilities do that only
   // when one transitively depends on the other — on farmslot-farm the simulator
@@ -374,10 +357,29 @@ export function retargetProofRequirements(
   // dependency-connected group; re-targeting only part of it would leave the
   // rest running against the device the run just left, and re-targeting two
   // unconnected groups would move two devices for one target.
-  const groups = dependencyGroups(
+  let groups = dependencyGroups(
     candidates.map((requirement) => requirement.capabilityId),
     byId,
   );
+  // The platform selects a GROUP, never individual members. Filtering members
+  // first could keep the simulator and drop a connected sibling whose schema
+  // leaves the platform undecided, and that sibling would be left running
+  // against the device the run just left — the exact split this invariant
+  // exists to prevent.
+  if (target.platform) {
+    const platform = target.platform;
+    const verdicts = (group: Set<string>) =>
+      [...group].map((id) => schemaAllowsPlatform(byId.get(id), platform));
+    const serving = groups.filter((group) => verdicts(group).includes(true));
+    const undecided = groups.filter((group) => verdicts(group).every((v) => v === undefined));
+    groups = serving.length > 0 ? serving : undecided;
+    if (groups.length === 0) {
+      return {
+        ok: false,
+        reason: `no capability in this run's proof plan serves platform '${platform}'`,
+      };
+    }
+  }
   if (groups.length > 1) {
     return {
       ok: false,

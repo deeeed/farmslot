@@ -275,7 +275,12 @@ export async function assertDeviceTargetAvailable(
   // distinct slots holding a live lease, which is small.
   const slotState = new Map<
     string,
-    { machine: string; identity: Record<string, unknown>; deviceCapabilities: Set<string> }
+    {
+      machine: string;
+      identity: Record<string, unknown>;
+      /** Null for a slot on another machine, whose catalog is deliberately unread. */
+      deviceCapabilities: Set<string> | null;
+    }
   >();
   const holders: DeviceHolder[] = [];
   for (const lease of input.activeLeases) {
@@ -284,18 +289,32 @@ export async function assertDeviceTargetAvailable(
     if (!state) {
       try {
         const slotVars = await deps.loadSlotVars(lease.slotId);
-        const catalog = await deps.catalogForSlot(lease.slotId);
-        state = {
-          machine: slotVars.machine,
-          identity: slotVars.resourceVars,
-          // A slot's configured device is only off-limits when something is
-          // actually driving a DEVICE there. Treating any lease as a holder
-          // made a slot running only a browser or Metro block its own
-          // simulator, and named that capability as the reason.
-          deviceCapabilities: new Set(
-            catalog.capabilities.filter(claimsDevice).map((entry) => entry.id),
-          ),
-        };
+        if (slotVars.machine !== machine) {
+          // Another machine's slot can never conflict, so its project config is
+          // never read: doing so added a fail-closed surface for a slot that is
+          // irrelevant by construction, and an unreadable project file over
+          // there would refuse an acquire here. The holder is still built, with
+          // its own machine, so the scoping stays in the pure function rather
+          // than becoming an invisible filter at this call site.
+          state = {
+            machine: slotVars.machine,
+            identity: {},
+            deviceCapabilities: null,
+          };
+        } else {
+          const catalog = await deps.catalogForSlot(lease.slotId);
+          state = {
+            machine: slotVars.machine,
+            identity: slotVars.resourceVars,
+            // A slot's configured device is only off-limits when something is
+            // actually driving a DEVICE there. Treating any lease as a holder
+            // made a slot running only a browser or Metro block its own
+            // simulator, and named that capability as the reason.
+            deviceCapabilities: new Set(
+              catalog.capabilities.filter(claimsDevice).map((entry) => entry.id),
+            ),
+          };
+        }
       } catch (error) {
         // Handled, not swallowed: without that slot's configuration we cannot
         // prove the requested device is free, and guessing costs two runs
@@ -306,7 +325,7 @@ export async function assertDeviceTargetAvailable(
       }
       slotState.set(lease.slotId, state);
     }
-    if (!state.deviceCapabilities.has(lease.capabilityId)) continue;
+    if (state.deviceCapabilities && !state.deviceCapabilities.has(lease.capabilityId)) continue;
     holders.push({
       slotId: lease.slotId,
       machine: state.machine,
@@ -315,7 +334,9 @@ export async function assertDeviceTargetAvailable(
       // The lease's own identity DISPLACES the slot's configured one within the
       // same group: a slot whose lease was re-targeted away from its configured
       // simulator is not using that simulator, and refusing a target for it
-      // would block a legal move.
+      // would block a legal move. For a slot on another machine the configured
+      // identity is empty (unread on purpose), so only the lease's own
+      // parameters travel — and the machine filter discards it regardless.
       identities: [displaceIdentity(state.identity, lease.parameters)],
     });
   }

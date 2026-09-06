@@ -95,8 +95,98 @@ async function release(slotId, ownerRunId) {
   return gateway('runtime.capability.release', { slotId, ownerRunId });
 }
 
+function leaseSummary(status) {
+  return (status.leases ?? []).map((lease) => ({
+    capabilityId: lease.capabilityId,
+    state: lease.state,
+    parameters: lease.parameters,
+    owner: lease.owner,
+  }));
+}
+
+/** Why a node did not pass, read off the evidence it recorded. */
+function blockedReason(entry) {
+  const text = JSON.stringify(entry.evidence ?? {});
+  if (text.includes('not-exercised')) return 'precondition';
+  if (text.includes('host-pressure') || /above 1\.5x/.test(text)) return 'host-admission';
+  return 'failure';
+}
+
+/**
+ * The one place this driver writes its artifact, used by a clean finish and by
+ * the catch alike.
+ *
+ * `blocked` is derived from THIS run: every node that did not pass, with the
+ * reason read from what that node actually recorded. `ok` is exactly "nothing
+ * is blocked" — there is no second condition, and no verdict is carried over
+ * from a previous run.
+ *
+ * What IS carried over is evidence this driver cannot produce: the CDP probe
+ * results and their negative proofs. Overwriting those on a rerun, or on a
+ * thrown gateway call, would destroy the only record of the browser validation.
+ */
+function writeEvidence({ measured = {}, error } = {}) {
+  const previous = existsSync(EVIDENCE_PATH) ? JSON.parse(readFileSync(EVIDENCE_PATH, 'utf8')) : {};
+  const capturedAt = new Date().toISOString();
+  const blockedNodes = nodes.filter((entry) => !entry.ok);
+  // Setup guidance, not a verdict: how to rerun does not change with the
+  // outcome, and a throw must not drop it either.
+  const rerunEnv = previous.blocked?.rerunEnv ?? previous.rerunEnv;
+  const reasons = [...new Set(blockedNodes.map(blockedReason))];
+  const artifact = {
+    item: 'MANUAL-000113',
+    scenario: 're-target validation to another device',
+    // Written from THIS run. The previous value described a scratchpad pass and
+    // would have become false the moment the driver actually ran.
+    producedBy: {
+      script: 'scripts/runner-validation/gateway/device-retarget-smoke-driver.mjs',
+      capturedAt,
+      gateway: GW,
+      slot: SLOT,
+      siblingSlot: SIBLING,
+      runId: HAS_REAL_RUN ? OWNER : null,
+    },
+    // Evidence from another producer, never this driver's to overwrite.
+    ...(previous.cdp !== undefined ? { cdp: previous.cdp } : {}),
+    ...(previous.negativeProof !== undefined ? { negativeProof: previous.negativeProof } : {}),
+    ...(rerunEnv ? { rerunEnv } : {}),
+    ownDevice: OWN_SIM,
+    retargetDevice: OTHER_SIM,
+    completedAt: capturedAt,
+    hostLoad: hostLoad ?? previous.hostLoad,
+    nodes,
+    ok: blockedNodes.length === 0 && !error,
+    ...(error ? { error } : {}),
+    ...(blockedNodes.length > 0
+      ? {
+          blocked: {
+            what: blockedNodes.map((entry) => entry.node),
+            why: reasons
+              .map((reason) =>
+                reason === 'host-admission'
+                  ? 'the gateway refused admission on host pressure, so no device could be booted'
+                  : reason === 'precondition'
+                    ? 'SMOKE_RUN_ID was not set, so the posture and recipe.rerun nodes had no run to drive'
+                    : 'the node ran and did not hold',
+              )
+              .join('; '),
+            rerunWith: 'scripts/runner-validation/gateway/device-retarget-smoke-driver.mjs',
+            ...(rerunEnv ? { rerunEnv } : {}),
+          },
+        }
+      : {}),
+    ...measured,
+  };
+  writeFileSync(EVIDENCE_PATH, `${JSON.stringify(artifact, null, 2)}\n`);
+  console.log(`\nwrote ${EVIDENCE_PATH} — ok=${artifact.ok}`);
+  process.exitCode = artifact.ok ? 0 : 1;
+}
+
+let hostLoad;
+
 async function main() {
   const started = new Date().toISOString();
+  hostLoad = (await run('uptime', [])).stdout.trim();
 
   // 0. Baseline.
   let sims = await simctl();
@@ -294,80 +384,23 @@ async function main() {
   const finalSlot = await gateway('runtime.capability.status', { slotId: SLOT });
   const finalSibling = await gateway('runtime.capability.status', { slotId: SIBLING });
 
-  // The committed artifact carries sections this driver does not produce: the
-  // CDP probe results and their negative proofs, and the record of which halves
-  // were blocked and why. Overwriting it would destroy that evidence on the
-  // first quiet-machine rerun, so those sections are carried forward and only
-  // the fields this run actually measured are replaced.
-  const previous = existsSync(EVIDENCE_PATH) ? JSON.parse(readFileSync(EVIDENCE_PATH, 'utf8')) : {};
-  const failed = nodes.filter((entry) => !entry.ok).map((entry) => entry.node);
-  const driverNodesOk = failed.length === 0;
-  // `cdp` and `negativeProof` are evidence this driver did not produce and must
-  // never destroy. `blocked` and `hostLoad` describe why the scenario is not
-  // finished, so they survive a partial run and are dropped only by a fully
-  // green one.
-  const preserved = {};
-  for (const key of ['cdp', 'producedBy', 'negativeProof']) {
-    if (previous[key] !== undefined) preserved[key] = previous[key];
-  }
-  if (!driverNodesOk) {
-    // A partial run keeps the scenario-level record, but `pendingNodes` and
-    // `what` describe THIS run, not a stale one.
-    for (const key of ['executedNodes', 'executedNodesOk']) {
-      if (previous[key] !== undefined) preserved[key] = previous[key];
-    }
-    if (previous.hostLoad !== undefined) preserved.hostLoad = previous.hostLoad;
-    preserved.blocked = {
-      ...(previous.blocked ?? {}),
-      what: failed,
-      pendingNodes: failed,
-      lastRunAt: new Date().toISOString(),
-    };
-  }
-  const artifact = {
-    ...preserved,
-    item: 'MANUAL-000113',
-    scenario: 're-target validation to another device',
-    gateway: GW,
-    slot: SLOT,
-    siblingSlot: SIBLING,
-    ownDevice: OWN_SIM,
-    retargetDevice: OTHER_SIM,
-    startedAt: started,
-    completedAt: new Date().toISOString(),
-    nodes,
-    // This run's own verdict, and the scenario's. They differ: the scenario is
-    // only `ok` when this run passed AND nothing is left blocked.
-    driverNodesOk,
-    ok: driverNodesOk && !preserved.blocked,
-    finalDeviceState: { [OWN_SIM]: finalSims[OWN_SIM], [OTHER_SIM]: finalSims[OTHER_SIM] },
-    finalLeases: {
-      [SLOT]: (finalSlot.leases ?? []).map((lease) => ({
-        capabilityId: lease.capabilityId,
-        state: lease.state,
-        parameters: lease.parameters,
-        owner: lease.owner,
-      })),
-      [SIBLING]: (finalSibling.leases ?? []).map((lease) => ({
-        capabilityId: lease.capabilityId,
-        state: lease.state,
-        parameters: lease.parameters,
-        owner: lease.owner,
-      })),
+  writeEvidence({
+    measured: {
+      startedAt: started,
+      finalDeviceState: { [OWN_SIM]: finalSims[OWN_SIM], [OTHER_SIM]: finalSims[OTHER_SIM] },
+      finalLeases: {
+        [SLOT]: leaseSummary(finalSlot),
+        [SIBLING]: leaseSummary(finalSibling),
+      },
     },
-  };
-  writeFileSync(EVIDENCE_PATH, `${JSON.stringify(artifact, null, 2)}\n`);
-  console.log(
-    `\nwrote docs/operations/evidence/runner-validate-macwork-gateway-device-retarget-smoke.json — ok=${artifact.ok}`,
-  );
-  process.exitCode = artifact.ok ? 0 : 1;
+  });
 }
 
 main().catch((error) => {
+  // Through the SAME merge as a clean finish. A thrown gateway() or simctl()
+  // used to overwrite the artifact with four keys, destroying the CDP evidence
+  // and negative proofs this driver never produced.
   console.error('smoke failed:', error?.message ?? error);
-  writeFileSync(
-    `${ROOT}/docs/operations/evidence/runner-validate-macwork-gateway-device-retarget-smoke.json`,
-    `${JSON.stringify({ item: 'MANUAL-000113', ok: false, error: String(error?.message ?? error), nodes }, null, 2)}\n`,
-  );
+  writeEvidence({ error: String(error?.message ?? error) });
   process.exitCode = 1;
 });

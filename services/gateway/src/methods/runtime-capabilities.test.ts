@@ -273,3 +273,31 @@ test('a capability that claims no device and names none is not guarded at all', 
   assert.equal(refusal, null);
   assert.equal(reads, 0, 'no slot config is read for a capability with nothing to guard');
 });
+
+test('an unreadable project config on another machine does not refuse', async () => {
+  // That slot cannot conflict, so its catalog is never read. Reading it added a
+  // fail-closed surface for a slot that is irrelevant by construction.
+  let catalogReads = 0;
+  const refusal = await assertDeviceTargetAvailable(
+    {
+      slotId: 'macwork-ff-4',
+      capabilityId: 'ios-simulator',
+      ownerRunId: 'run-a',
+      parameters: {},
+      claimsDevice: true,
+      activeLeases: [guardLease('macpro-ff-1', 'ios-simulator', 'run-b')],
+    },
+    {
+      loadSlotVars: async (slotId) =>
+        slotId === 'macwork-ff-4'
+          ? { machine: 'macwork', resourceVars: { simulator: 'fs-1' } }
+          : { machine: 'macpro', resourceVars: { simulator: 'fs-1' } },
+      catalogForSlot: async () => {
+        catalogReads += 1;
+        throw new Error('project.json is mid-write');
+      },
+    },
+  );
+  assert.equal(refusal, null);
+  assert.equal(catalogReads, 0, "another machine's project config is never read");
+});

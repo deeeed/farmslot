@@ -505,3 +505,40 @@ test('a declared platform on the requirement survives a device re-target', () =>
   if (!outcome.ok) return;
   assert.deepEqual(outcome.value[0]?.parameters, { platform: 'ios', simulator: 'SIM-2' });
 });
+
+test('the platform selects a whole device group, never individual members', () => {
+  // The sibling declares `platform` as a free string, so its verdict is
+  // undecided. Filtering members would keep ios-simulator and drop the sibling,
+  // leaving it running against the device the run just left.
+  const sibling = entry(
+    'companion-native-client-ios',
+    {
+      type: 'object',
+      properties: { platform: { type: 'string' }, simulator: { type: 'string' } },
+    },
+    { device: true, dependencies: ['ios-simulator'] },
+  );
+  const outcome = retargetProofRequirements(
+    [requirement('ios-simulator'), requirement('companion-native-client-ios')],
+    [IOS, sibling],
+    { platform: 'ios', simulator: 'SIM-2' },
+  );
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  assert.deepEqual(outcome.value[0]?.parameters, { simulator: 'SIM-2' });
+  assert.deepEqual(
+    outcome.value[1]?.parameters,
+    { simulator: 'SIM-2' },
+    'the connected sibling must move with its group, not be left behind',
+  );
+});
+
+test('a platform that no group serves is still refused', () => {
+  const outcome = retargetProofRequirements([requirement('ios-simulator')], [IOS], {
+    platform: 'android',
+    simulator: 'SIM-2',
+  });
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.match(outcome.reason, /serves platform 'android'/);
+});

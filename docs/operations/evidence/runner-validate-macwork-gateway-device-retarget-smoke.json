@@ -329,9 +329,7 @@
         },
         "negativeProof": "removed the charset refusal in ui/src/components/workspace/recipe-rerun-target.ts, let Vite reload, re-ran: the probe threw \"timed out waiting for client-side charset refusal\"; restored, green again",
         "limitation": "mounts its own <recipe-runner-controls> rather than the one Slot View renders: that instance appears only for a slot with a linked run carrying a replayable recipe artifact, which needs a full dispatch. The element, its handlers, its params builder and the gateway client are the shipped ones; what is not covered is the slot-view wiring that supplies runId/recipeArtifactPath.",
-        "capturedAt": "2026-09-06T20:21:49Z",
-        "sha": "0b1b5dc0a45d7753d94c7d509972074d6167aa8d",
-        "workingTree": "dirty \u2014 this round is uncommitted on top of that sha"
+        "capturedAt": "2026-09-06T20:59:47Z"
       },
       "apps/command-center/probes/run-posture-device-target-row.js": {
         "proves": "Run Detail paints the resolved device on the device capability row only, with the protocol key order, and no target on a capability that takes none",
@@ -372,16 +370,18 @@
           "ok": true
         },
         "negativeProof": "removed the targetLabel mapping in ui/src/components/runs/run-detail-posture-renderers.ts, let Vite reload, re-ran: all four steps failed; restored, green again",
-        "capturedAt": "2026-09-06T20:21:49Z",
-        "sha": "0b1b5dc0a45d7753d94c7d509972074d6167aa8d",
-        "workingTree": "dirty \u2014 this round is uncommitted on top of that sha"
+        "capturedAt": "2026-09-06T20:59:47Z"
       }
     },
     "screenshot": "docs/operations/evidence/command-center-device-retarget-cdp.png",
     "companion": "no component render harness exists for RunPosturePanel in this repo; the Companion surface is validated at its library layer by apps/companion/src/lib/run-resource-posture.test.ts, whose targetLabel assertion is revert-proven",
     "rerunAfter": "the dev gateway restarts on source edits and the page loses its socket; reload the tab before re-running the rerun probe",
-    "capturedAt": "2026-09-06T20:21:49Z",
-    "sha": "0b1b5dc0a45d7753d94c7d509972074d6167aa8d"
+    "capturedAt": "2026-09-06T20:59:47Z",
+    "capturedAgainst": {
+      "uiSha": "0b1b5dc0",
+      "note": "the commit of the last change to any UI or probe file under apps/command-center. HEAD at capture was 64b8db6b; every commit after 0b1b5dc0 touched only services/gateway, the driver, and this evidence file, so the UI and probe code exercised here is exactly what is committed at HEAD.",
+      "workingTree": "clean for apps/command-center \u2014 no UI or probe file was uncommitted at capture; the uncommitted work at capture time was gateway-side only"
+    }
   },
   "producedBy": "scratchpad live-evidence pass against the running gateway. It is NOT the committed driver: the driver needs a device boot, which host admission refuses right now. The two node lists are therefore different on purpose, and both are listed below.",
   "executedNodes": [
