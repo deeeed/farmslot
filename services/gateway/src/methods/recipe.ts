@@ -6,7 +6,9 @@ import path from 'node:path';
 
 import {
   Events,
+  formatRuntimeCapabilityTarget,
   isRecord,
+  isRuntimeCapabilityTargetKey,
   type LiveRecipeContext,
   type RecipeCancelParams,
   type RecipeCancelResult,
@@ -22,6 +24,10 @@ import {
   type RecipeRerunParams,
   type RecipeValidationResult,
   resolvedRecipeArtifactPath,
+  RUNTIME_CAPABILITY_TARGET_KEYS,
+  type RuntimeCapabilityProofRequirement,
+  type RuntimeCapabilityStatusResult,
+  type RuntimeCapabilityTarget,
   type ScriptActionResult,
   validateRecipeActionManifestDocument,
   validateRecipeArtifactPackage,
@@ -58,9 +64,14 @@ import {
 import { prepareRunPostureForValidation } from '../run-engine/resource-posture.js';
 import { withTaskRecipeTrustEnvironment } from '../runners/launch-command.js';
 import { getRun, updateRun } from '../runs/store.js';
+import {
+  deviceTargetExtraVars,
+  retargetProofRequirements,
+} from '../runtime-capabilities/device-target.js';
 import type { RunResourcePostureReconciler } from '../runtime-capabilities/posture.js';
 
 import { runHealthCheck } from './slot/check.js';
+import { getRuntimeCapabilityRegistry } from './runtime-capabilities.js';
 
 type EmitFn = (event: string, payload: unknown) => void;
 
@@ -1124,17 +1135,55 @@ function emitRecipeRerunStream(
   emit(Events.SCRIPT_OUTPUT, { requestId, stream, data, timestamp: Date.now() });
 }
 
+type CapabilityStatusReader = (slotId: string) => Promise<RuntimeCapabilityStatusResult>;
+
+/**
+ * Rewrite the run's stored proof plan so this rerun acquires the named device
+ * (ADR-054 item 3). The plan is the registry's, not the client's: the target
+ * only edits the parameters of the one requirement whose provider declares
+ * them, and an ambiguous or unserviceable target is refused before anything is
+ * released.
+ */
+async function retargetedProofRequirements(
+  runId: string,
+  target: RuntimeCapabilityTarget,
+  capabilityStatus: CapabilityStatusReader,
+): Promise<RuntimeCapabilityProofRequirement[]> {
+  const run = getRun(runId);
+  if (!run?.slotId) {
+    throw new Error(`Recipe rerun target rejected: run ${runId} has no assigned slot`);
+  }
+  const status = await capabilityStatus(run.slotId);
+  const outcome = retargetProofRequirements(
+    status.proofPlans[runId]?.requirements ?? [],
+    status.catalog,
+    target,
+  );
+  if (!outcome.ok) throw new Error(`Recipe rerun target rejected: ${outcome.reason}`);
+  return outcome.value;
+}
+
 /**
  * ADR-054 validation preparation: reacquire and health-check the run's declared
  * proof capabilities before a recipe rerun touches the slot. Blocks the action
  * with a typed reason rather than running against a stopped provider or taking
  * a capability away from another owner.
+ *
+ * With a `target`, this is also the re-target: the posture reconciler releases
+ * the lease held on the previous device before acquiring the named one.
  */
 export async function assertRecipeRerunProofCapabilities(
   runId: string,
   reconciler?: RunResourcePostureReconciler,
+  target?: RuntimeCapabilityTarget,
+  /** The registry read that supplies the stored proof plan and the catalog. */
+  capabilityStatus: CapabilityStatusReader = (slotId) =>
+    getRuntimeCapabilityRegistry().status({ slotId }),
 ): Promise<void> {
-  const posture = await prepareRunPostureForValidation(runId, undefined, reconciler);
+  const proofRequirements = target
+    ? await retargetedProofRequirements(runId, target, capabilityStatus)
+    : undefined;
+  const posture = await prepareRunPostureForValidation(runId, proofRequirements, reconciler);
   if (!posture.ok) {
     throw new Error(`Recipe rerun blocked by runtime capability posture: ${posture.reason}`);
   }
@@ -1151,6 +1200,7 @@ async function executeRecipeRerunJob(args: {
   recipeRunId?: string;
   playbackSlowMs?: number;
   recordVideo?: boolean;
+  target?: RuntimeCapabilityTarget;
 }): Promise<void> {
   const {
     emit,
@@ -1163,6 +1213,7 @@ async function executeRecipeRerunJob(args: {
     recipeRunId,
     playbackSlowMs,
     recordVideo,
+    target,
   } = args;
   const startTime = Date.now();
   let slotRecipeRunArtifactsDir = '';
@@ -1241,9 +1292,15 @@ async function executeRecipeRerunJob(args: {
     // capabilities here so the rerun never starts against a stopped provider,
     // and blocks with a typed reason rather than touching another owner's
     // resource.
-    emitRecipeRerunStream(emit, requestId, 'Preflight: reconciling proof capabilities...\n');
+    emitRecipeRerunStream(
+      emit,
+      requestId,
+      target
+        ? `Preflight: re-targeting proof capabilities to ${formatRuntimeCapabilityTarget(target)}...\n`
+        : 'Preflight: reconciling proof capabilities...\n',
+    );
     try {
-      await assertRecipeRerunProofCapabilities(runId);
+      await assertRecipeRerunProofCapabilities(runId, undefined, target);
     } catch (error) {
       emitRecipeRerunStream(
         emit,
@@ -1357,10 +1414,28 @@ export async function recipeRerun(
   params: RecipeRerunParams,
   emit: EmitFn,
 ): Promise<ScriptActionResult> {
-  const { runId, slotId, recipeArtifactPath, recipeRunId, playbackSlowMs, recordVideo } = params;
+  const { runId, slotId, recipeArtifactPath, recipeRunId, playbackSlowMs, recordVideo, target } =
+    params;
 
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
+  // Wire-level guard: a device identity reaches a project hook command template,
+  // so a malformed one is a request error here rather than something the
+  // provider layer has to defend against later.
+  if (target !== undefined) {
+    if (!target || typeof target !== 'object' || Array.isArray(target)) {
+      throw new Error('target must be an object of device identity parameters');
+    }
+    const unknown = Object.keys(target).filter((key) => !isRuntimeCapabilityTargetKey(key));
+    if (unknown.length > 0) {
+      throw new Error(
+        `target has unsupported keys: ${unknown.join(', ')}. Supported: ${RUNTIME_CAPABILITY_TARGET_KEYS.join(', ')}`,
+      );
+    }
+    const validated = deviceTargetExtraVars(target);
+    if (!validated.ok) throw new Error(validated.reason);
+    if (!validated.value) throw new Error('target names no device parameter');
+  }
 
   const fleet = await loadFleetStatus();
   const slotStatus = fleet.slots.find((s) => s.slot === slotId);
@@ -1400,6 +1475,7 @@ export async function recipeRerun(
     recipeRunId,
     playbackSlowMs,
     recordVideo,
+    ...(target ? { target } : {}),
   });
 
   return { requestId };

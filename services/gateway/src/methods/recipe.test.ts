@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 
-import { digestRecipeDocument } from '@farmslot/protocol';
+import {
+  digestRecipeDocument,
+  type RuntimeCapabilityProofRequirement,
+  type RuntimeCapabilityStatusResult,
+} from '@farmslot/protocol';
 
 import { getOrchestratorTaskRoot, type RawProjectJson } from '../core/config.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
@@ -965,6 +969,141 @@ test('recipe rerun is blocked with a typed reason when a proof capability is una
       assertRecipeRerunProofCapabilities(run.id, reconciler),
       /blocked by runtime capability posture.*browser-cdp.*owned by other-run/,
     );
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+// ── ADR-054 item 3: recipe rerun re-targeted at another device ────────────────
+
+function capabilityStatusFor(
+  slotId: string,
+  requirements: RuntimeCapabilityProofRequirement[],
+  runId: string,
+): (slot: string) => Promise<RuntimeCapabilityStatusResult> {
+  const deviceEntry = {
+    id: 'ios-simulator',
+    project: 'farmslot-farm',
+    label: 'iOS Simulator',
+    version: '1',
+    sharePolicy: 'exclusive' as const,
+    cost: { class: 'high' as const, resources: [] },
+    parameters: {
+      type: 'object',
+      properties: { platform: { const: 'ios' }, simulator: { type: 'string' } },
+    },
+    actions: {
+      acquire: { kind: 'resource' as const, resourceId: 'ios-sim', action: 'boot' as const },
+      health: { kind: 'resource' as const, resourceId: 'ios-sim', action: 'health' as const },
+      release: { kind: 'resource' as const, resourceId: 'ios-sim', action: 'shutdown' as const },
+    },
+    releaseEffects: [],
+    provenance: {
+      project: 'farmslot-farm',
+      providerId: 'ios-simulator',
+      version: '1',
+      digest: 'd1',
+    },
+    availability: { state: 'available' as const },
+  };
+  return async () =>
+    ({
+      slotId,
+      project: 'farmslot-farm',
+      catalog: [deviceEntry],
+      leases: [],
+      proofPlans: {
+        [runId]: {
+          version: 1,
+          slotId,
+          ownerRunId: runId,
+          createdAt: '2026-09-04T00:00:00.000Z',
+          requirements,
+        },
+      },
+    }) as unknown as RuntimeCapabilityStatusResult;
+}
+
+test('a rerun target rewrites the stored proof plan the reconciler is given', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000113',
+  });
+  updateRun(run.id, { slotId: 'macwork-ff-1' });
+  try {
+    const { reconciler, calls } = postureReconciler();
+    await assertRecipeRerunProofCapabilities(
+      run.id,
+      reconciler,
+      { simulator: 'SIM-2' },
+      capabilityStatusFor(
+        'macwork-ff-1',
+        [
+          { capabilityId: 'companion-metro', reason: 'metro', mode: 'state' },
+          { capabilityId: 'ios-simulator', reason: 'device', mode: 'visual' },
+        ],
+        run.id,
+      ),
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].posture, 'active');
+    assert.deepEqual(calls[0].proofRequirements, [
+      { capabilityId: 'companion-metro', reason: 'metro', mode: 'state' },
+      {
+        capabilityId: 'ios-simulator',
+        reason: 'device',
+        mode: 'visual',
+        parameters: { simulator: 'SIM-2' },
+      },
+    ]);
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+test('a rerun with no target leaves the registry stored proof plan alone', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000113',
+  });
+  updateRun(run.id, { slotId: 'macwork-ff-1' });
+  try {
+    const { reconciler, calls } = postureReconciler();
+    await assertRecipeRerunProofCapabilities(run.id, reconciler);
+    assert.equal(calls[0].proofRequirements, undefined);
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+test('a rerun target no proof capability accepts is refused before any posture is applied', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000113',
+  });
+  updateRun(run.id, { slotId: 'macwork-ff-1' });
+  try {
+    const { reconciler, calls } = postureReconciler();
+    await assert.rejects(
+      assertRecipeRerunProofCapabilities(
+        run.id,
+        reconciler,
+        { adb_serial: 'emulator-5554' },
+        capabilityStatusFor(
+          'macwork-ff-1',
+          [{ capabilityId: 'ios-simulator', reason: 'device', mode: 'visual' }],
+          run.id,
+        ),
+      ),
+      /Recipe rerun target rejected/,
+    );
+    assert.equal(calls.length, 0, 'a refused target must not reconcile anything');
   } finally {
     await cleanupPostureRun(run.id);
   }

@@ -28,12 +28,18 @@ import {
 } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
+import { executeResourceControl, executeResourceHealth } from '../fleet/resource-manager.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { getRun } from '../runs/store.js';
 import {
   evaluateRuntimeCapabilityAdmission,
   type RuntimeCapabilityPressureSnapshot,
 } from '../runtime-capabilities/admission.js';
+import {
+  crossSlotTargetConflict,
+  type DeviceHolder,
+  deviceTargetExtraVars,
+} from '../runtime-capabilities/device-target.js';
 import {
   type RuntimeCapabilityActionResult,
   type RuntimeCapabilityCatalogContext,
@@ -43,7 +49,7 @@ import {
 } from '../runtime-capabilities/registry.js';
 import { RuntimeCapabilityStore } from '../runtime-capabilities/store.js';
 
-import { resourceControl, resourceHealth, resourceHostPressure } from './resource.js';
+import { resourceHealth, resourceHostPressure } from './resource.js';
 import { slotActionRun } from './slot-actions.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -148,15 +154,40 @@ async function catalogForSlot(slotId: string): Promise<RuntimeCapabilityCatalogC
   };
 }
 
+/**
+ * Run one provider action for a lease.
+ *
+ * The lease's acquire parameters are what make a re-target real (ADR-054 item
+ * 3): the device-identity subset becomes hook template variables that take
+ * precedence over the slot's configured resource fields, so `{{simulator}}`,
+ * `{{avd}}` and `{{adb_serial}}` resolve to the leased device. A value that
+ * cannot be safely substituted into a project hook command is refused here
+ * rather than escaped — see `deviceTargetExtraVars`.
+ */
 async function runProviderAction(
   slotId: string,
   ref: RuntimeCapabilityProviderActionRef,
+  parameters: Record<string, unknown>,
 ): Promise<RuntimeCapabilityActionResult> {
+  const target = deviceTargetExtraVars(parameters);
+  if (!target.ok) return { ok: false, detail: target.reason };
+  const extraVars = target.value;
   if (ref.kind === 'slot-action') {
-    const result = await slotActionRun({ slotId, actionId: normalizeActionId(ref) });
+    const result = await slotActionRun({ slotId, actionId: normalizeActionId(ref) }, extraVars);
     return { ok: result.ok, ...(result.detail ? { detail: result.detail } : {}) };
   }
   if (ref.action === 'health') {
+    // With no device override the slot-wide poll stays the health read: it also
+    // refreshes the resource cache every client renders from. A re-targeted
+    // lease cannot use it — that poll answers for the slot's CONFIGURED device —
+    // so it probes the leased device directly instead.
+    if (extraVars) {
+      const health = await executeResourceHealth(slotId, ref.resourceId, extraVars);
+      return {
+        ok: health.ok,
+        detail: health.detail ?? `${ref.resourceId} health ${health.ok ? 'passed' : 'failed'}`,
+      };
+    }
     const result = await resourceHealth({ slotId });
     const resource = result.resources.find((candidate) => candidate.id === ref.resourceId);
     if (!resource) return { ok: false, detail: `Resource '${ref.resourceId}' is unavailable` };
@@ -165,7 +196,54 @@ async function runProviderAction(
       detail: `${ref.resourceId} is ${resource.status}`,
     };
   }
-  return resourceControl({ slotId, resourceId: ref.resourceId, action: ref.action });
+  return executeResourceControl(slotId, ref.resourceId, ref.action, extraVars);
+}
+
+/**
+ * Refuse a device target that another slot's live lease is already driving.
+ *
+ * Capability leases are slot-scoped, so nothing else stops two runs booting one
+ * simulator once a target can name a device outside the slot's own config.
+ * Fleet-scoped arbitration with a wait queue is the separate
+ * `fleet-scoped-device-claims` item; until it lands this refuses rather than
+ * queues.
+ */
+async function assertDeviceTargetAvailable(input: {
+  slotId: string;
+  capabilityId: string;
+  ownerRunId: string;
+  parameters: Record<string, unknown>;
+  activeLeases: readonly RuntimeCapabilityLease[];
+}): Promise<string | null> {
+  const target = deviceTargetExtraVars(input.parameters);
+  if (!target.ok) return target.reason;
+  if (!target.value) return null;
+  const configured = new Map<string, Record<string, unknown>>();
+  const holders: DeviceHolder[] = [];
+  for (const lease of input.activeLeases) {
+    if (lease.slotId === input.slotId) continue;
+    let slotIdentity = configured.get(lease.slotId);
+    if (!slotIdentity) {
+      try {
+        slotIdentity = (await loadSlotVars(lease.slotId)).resourceVars;
+      } catch (error) {
+        // Handled, not swallowed: without that slot's configuration we cannot
+        // prove the requested device is free, and guessing costs two runs
+        // driving one device. Refuse and name the slot that could not be read.
+        return `cannot verify device target against slot '${lease.slotId}', which holds an active '${lease.capabilityId}' lease: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+      }
+      configured.set(lease.slotId, slotIdentity);
+    }
+    holders.push({
+      slotId: lease.slotId,
+      capabilityId: lease.capabilityId,
+      runId: lease.owner.runId,
+      identities: [lease.parameters, slotIdentity],
+    });
+  }
+  return crossSlotTargetConflict(target.value, holders);
 }
 
 async function pressureFor(
@@ -214,6 +292,7 @@ const registry = new RuntimeCapabilityRegistry({
   store: new RuntimeCapabilityStore(runtimeCapabilityStorePath()),
   catalogForSlot,
   runAction: runProviderAction,
+  assertTargetAvailable: assertDeviceTargetAvailable,
   pressureFor,
   familyForRun: (ownerRunId) => getRun(ownerRunId)?.familyId,
   // The durable half of the terminal fence. The registry's own owner list is a

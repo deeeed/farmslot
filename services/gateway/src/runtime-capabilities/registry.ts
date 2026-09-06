@@ -18,6 +18,7 @@ import type {
   RuntimeCapabilityStatusResult,
 } from '@farmslot/protocol';
 
+import { sameCapabilityParameters, stableJson } from './parameters.js';
 import {
   hydrateFenceEntries,
   retainFreshFenceEntries,
@@ -60,7 +61,26 @@ export interface RuntimeCapabilityRegistryOptions {
   runAction: (
     slotId: string,
     action: RuntimeCapabilityProviderActionRef,
+    /**
+     * The acquire parameters of the lease this action belongs to. Device
+     * identity travels here (ADR-054 item 3), so a release always stops the
+     * device its own lease acquired rather than the slot's configured default.
+     */
+    parameters: Record<string, unknown>,
   ) => Promise<RuntimeCapabilityActionResult>;
+  /**
+   * Refuse a device target that is not usable on this fleet, before the provider
+   * boots anything. Returns the refusal reason, or null to allow. Left unwired
+   * by tests and validation gateways that have no fleet.
+   */
+  assertTargetAvailable?: (input: {
+    slotId: string;
+    capabilityId: string;
+    ownerRunId: string;
+    parameters: Record<string, unknown>;
+    /** Leases that currently hold a provider, across every slot. */
+    activeLeases: readonly RuntimeCapabilityLease[];
+  }) => Promise<string | null>;
   pressureFor?: (
     slotId: string,
     capability: RuntimeCapabilityCatalogEntry,
@@ -93,27 +113,10 @@ const ACTIVE_STATES = new Set<RuntimeCapabilityLease['state']>([
 const parameterAjv = new Ajv2020({ allErrors: true, strict: false });
 const parameterValidators = new Map<string, ValidateFunction>();
 
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
-      .filter((key) => record[key] !== undefined)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
-
 export function runtimeCapabilityProviderDigest(
   entry: Omit<RuntimeCapabilityCatalogEntry, 'provenance' | 'availability' | 'project' | 'id'>,
 ): string {
   return createHash('sha256').update(stableJson(entry)).digest('hex');
-}
-
-function sameParameters(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
-  return stableJson(a) === stableJson(b);
 }
 
 function blocksAcquisition(lease: RuntimeCapabilityLease): boolean {
@@ -260,9 +263,10 @@ export class RuntimeCapabilityRegistry {
   private async runAction(
     slotId: string,
     action: RuntimeCapabilityProviderActionRef,
+    parameters: Record<string, unknown>,
   ): Promise<RuntimeCapabilityActionResult> {
     try {
-      return await this.options.runAction(slotId, action);
+      return await this.options.runAction(slotId, action, parameters);
     } catch (error) {
       return {
         ok: false,
@@ -436,6 +440,21 @@ export class RuntimeCapabilityRegistry {
         };
       }
     }
+    if (this.options.assertTargetAvailable && Object.keys(parameters).length > 0) {
+      const refusal = await this.options.assertTargetAvailable({
+        slotId: params.slotId,
+        capabilityId: entry.id,
+        ownerRunId: params.ownerRunId,
+        parameters,
+        activeLeases: snapshot.leases.filter(holdsProvider),
+      });
+      if (refusal) {
+        return {
+          ok: false,
+          conflict: { kind: 'invalid-request', capabilityId: entry.id, reason: refusal },
+        };
+      }
+    }
     const sameOwner = snapshot.leases.find(
       (lease) =>
         lease.slotId === params.slotId &&
@@ -445,7 +464,7 @@ export class RuntimeCapabilityRegistry {
     );
     let staleOwnerLease = false;
     if (sameOwner?.state === 'acquired') {
-      if (!sameParameters(sameOwner.parameters, parameters)) {
+      if (!sameCapabilityParameters(sameOwner.parameters, parameters)) {
         return {
           ok: false,
           conflict: {
@@ -460,7 +479,11 @@ export class RuntimeCapabilityRegistry {
       // died while the run waited would pass preparation and the action would run
       // against nothing.
       if (params.revalidateHealth) {
-        const health = await this.runAction(params.slotId, entry.actions.health);
+        const health = await this.runAction(
+          params.slotId,
+          entry.actions.health,
+          sameOwner.parameters,
+        );
         sameOwner.updatedAt = this.timestamp();
         if (health.ok) {
           sameOwner.health = {
@@ -540,7 +563,7 @@ export class RuntimeCapabilityRegistry {
         );
         const cleanup = otherHolders
           ? { ok: true }
-          : await this.runAction(params.slotId, entry.actions.release);
+          : await this.runAction(params.slotId, entry.actions.release, sameOwner.parameters);
         sameOwner.updatedAt = this.timestamp();
         if (!cleanup.ok) {
           sameOwner.state = 'error';
@@ -680,7 +703,7 @@ export class RuntimeCapabilityRegistry {
     if (
       entry.sharePolicy === 'shared' &&
       foreign &&
-      !sameParameters(foreign.parameters, parameters)
+      !sameCapabilityParameters(foreign.parameters, parameters)
     ) {
       return {
         ok: false,
@@ -771,11 +794,26 @@ export class RuntimeCapabilityRegistry {
     // the new one's — but it is cleaned up first, through its own lease record.
     const warmProvenanceChanged =
       warmLease !== undefined && warmLease.provenance.digest !== entry.provenance.digest;
+    // A warm provider acquired for a DIFFERENT device is not this acquisition's
+    // provider. It is never adopted, and it is never simply ignored either: its
+    // process is still running, so it is cleaned up through its own lease — with
+    // its own parameters — before the requested device is booted beside it.
+    const warmParametersDiffer =
+      warmLease !== undefined && !sameCapabilityParameters(warmLease.parameters, parameters);
     let warmProviderHealthy = false;
     if (active.length === 0 && warmLease) {
       const warmHealth = warmProvenanceChanged
         ? { ok: false, detail: 'warm provider predates the current provider definition' }
-        : await this.runAction(params.slotId, entry.actions.health);
+        : warmParametersDiffer
+          ? {
+              ok: false,
+              detail: `warm provider was acquired for a different device target (${stableJson(
+                warmLease.parameters,
+              )})`,
+            }
+          : // Probed with the WARM lease's own parameters: the question is
+            // whether THAT provider is still up, not whether the requested one is.
+            await this.runAction(params.slotId, entry.actions.health, warmLease.parameters);
       warmProviderHealthy = warmHealth.ok;
       if (warmHealth.ok) {
         warmLease.keepWarmUntil = undefined;
@@ -824,7 +862,11 @@ export class RuntimeCapabilityRegistry {
             },
           };
         }
-        const cleanup = await this.runAction(params.slotId, (staleEntry ?? entry).actions.release);
+        const cleanup = await this.runAction(
+          params.slotId,
+          (staleEntry ?? entry).actions.release,
+          warmLease.parameters,
+        );
         warmLease.keepWarmUntil = undefined;
         if (!cleanup.ok) {
           warmLease.state = 'error';
@@ -892,7 +934,7 @@ export class RuntimeCapabilityRegistry {
     );
     const shouldRunAcquire = !providerAlreadyActive && !warmProviderHealthy;
     if (shouldRunAcquire) {
-      const acquired = await this.runAction(params.slotId, entry.actions.acquire);
+      const acquired = await this.runAction(params.slotId, entry.actions.acquire, parameters);
       if (!acquired.ok) {
         lease.updatedAt = this.timestamp();
         lease.health = { state: 'unhealthy', checkedAt: lease.updatedAt, detail: acquired.detail };
@@ -920,7 +962,7 @@ export class RuntimeCapabilityRegistry {
         };
       }
     }
-    const health = await this.runAction(params.slotId, entry.actions.health);
+    const health = await this.runAction(params.slotId, entry.actions.health, parameters);
     if (!health.ok) {
       lease.updatedAt = this.timestamp();
       lease.health = { state: 'unhealthy', checkedAt: lease.updatedAt, detail: health.detail };
@@ -1073,7 +1115,7 @@ export class RuntimeCapabilityRegistry {
       const cleanup =
         otherHolders || previousState === 'queued'
           ? { ok: true }
-          : await this.runAction(lease.slotId, entry.actions.release);
+          : await this.runAction(lease.slotId, entry.actions.release, lease.parameters);
       lease.updatedAt = this.timestamp();
       if (!cleanup.ok) {
         lease.state = 'error';
@@ -1403,7 +1445,7 @@ export class RuntimeCapabilityRegistry {
           releaseActionRan = true;
           // The provider is going away, so any earlier warm deadline is void.
           lease.keepWarmUntil = undefined;
-          actionResult = await this.runAction(slotId, entry.actions.release);
+          actionResult = await this.runAction(slotId, entry.actions.release, lease.parameters);
         }
         if (!actionResult.ok) {
           lease.state = 'error';
@@ -1609,7 +1651,7 @@ export class RuntimeCapabilityRegistry {
           });
           continue;
         }
-        const cleanup = await this.runAction(lease.slotId, entry.actions.release);
+        const cleanup = await this.runAction(lease.slotId, entry.actions.release, lease.parameters);
         lease.updatedAt = this.timestamp();
         if (!cleanup.ok) {
           lease.state = 'error';
@@ -1803,7 +1845,7 @@ export class RuntimeCapabilityRegistry {
             );
             const cleanup =
               otherHolders.length === 0
-                ? await this.runAction(slotId, entry.actions.release)
+                ? await this.runAction(slotId, entry.actions.release, lease.parameters)
                 : { ok: true };
             lease.updatedAt = this.timestamp();
             lease.health = { state: 'unknown', checkedAt: lease.updatedAt };
@@ -1850,7 +1892,7 @@ export class RuntimeCapabilityRegistry {
             // stopping it here would tear it out from under a live run.
             const stopped = liveHolders.length === 0;
             const cleanup = stopped
-              ? await this.runAction(slotId, entry.actions.release)
+              ? await this.runAction(slotId, entry.actions.release, lease.parameters)
               : { ok: true };
             lease.updatedAt = this.timestamp();
             lease.health = { state: 'unknown', checkedAt: lease.updatedAt };
@@ -1884,7 +1926,7 @@ export class RuntimeCapabilityRegistry {
             });
             continue;
           }
-          const health = await this.runAction(slotId, entry.actions.health);
+          const health = await this.runAction(slotId, entry.actions.health, lease.parameters);
           if (health.ok) {
             lease.state = 'acquired';
             lease.updatedAt = this.timestamp();
@@ -1903,7 +1945,7 @@ export class RuntimeCapabilityRegistry {
             });
             continue;
           }
-          const cleanup = await this.runAction(slotId, entry.actions.release);
+          const cleanup = await this.runAction(slotId, entry.actions.release, lease.parameters);
           lease.updatedAt = this.timestamp();
           lease.health = { state: 'unhealthy', checkedAt: lease.updatedAt, detail: health.detail };
           if (cleanup.ok) {

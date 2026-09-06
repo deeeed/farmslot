@@ -686,3 +686,89 @@ test('expandDispatchCmd falls back to {runner} when the path placeholder resolve
 
   assert.equal(command, 'cd /repo && cursor --model gpt-5.6-sol-max --force');
 });
+
+test('a leased device identity beats the slot resource field for every device placeholder', () => {
+  // ADR-054 item 3: a re-targeted capability lease passes its device identity as
+  // extraVars, and the provider hook must drive THAT device, not the one the
+  // slot was configured with.
+  const slotVars: SlotVars = {
+    slotId: 'macwork-ff-1',
+    machine: 'macwork',
+    platform: 'ios',
+    host: 'localhost',
+    sshUser: 'example',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/repo',
+    session: 'ff-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/repo',
+    projectName: 'farmslot-farm',
+    // `loadSlotVars` mirrors the resolved platform into resourceVars, which is
+    // what `{{platform}}` reads.
+    resourceVars: {
+      port: '8061',
+      platform: 'ios',
+      simulator: 'SLOT-SIM',
+      avd: 'SLOT-AVD',
+      adb_serial: 'SLOT-SERIAL',
+    },
+  };
+  const template = '{{simulator}} {{avd}} {{adb_serial}} {{ADB_SERIAL}} {{platform}} {{port}}';
+
+  assert.equal(
+    expandTemplate(template, slotVars),
+    'SLOT-SIM SLOT-AVD SLOT-SERIAL SLOT-SERIAL ios 8061',
+  );
+  assert.equal(
+    expandTemplate(template, slotVars, undefined, {
+      simulator: 'LEASE-SIM',
+      avd: 'LEASE-AVD',
+      adb_serial: 'LEASE-SERIAL',
+      platform: 'android',
+    }),
+    'LEASE-SIM LEASE-AVD LEASE-SERIAL LEASE-SERIAL android 8061',
+    'the lease identity must win, and unrelated placeholders must be untouched',
+  );
+});
+
+test('a device placeholder the slot does not configure still resolves from the lease', () => {
+  const slotVars: SlotVars = {
+    slotId: 'macwork-ff-1',
+    machine: 'macwork',
+    platform: 'ios',
+    host: 'localhost',
+    sshUser: 'example',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/repo',
+    session: 'ff-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/repo',
+    projectName: 'farmslot-farm',
+    resourceVars: { port: '8061', simulator: 'SLOT-SIM' },
+  };
+  // Without the lease this collapses to empty, which is what makes an
+  // unconfigured device placeholder safe. The lease fills it instead.
+  assert.equal(expandTemplate('{{adb_serial}}', slotVars), '');
+  assert.equal(
+    expandTemplate('{{adb_serial}}', slotVars, undefined, { adb_serial: 'emulator-5554' }),
+    'emulator-5554',
+  );
+});

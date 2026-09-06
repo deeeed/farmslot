@@ -42,11 +42,14 @@ import {
   type RuntimeCapabilityProofRequirement,
   type RuntimeCapabilityReleaseResult,
   type RuntimeCapabilityStatusResult,
+  runtimeCapabilityTargetFromParameters,
   type RuntimePostureApplyResult,
   type RuntimePostureStatusResult,
 } from '@farmslot/protocol';
 
 import { MachinePausePreviewStaleError } from '../machine-parking/preview-errors.js';
+
+import { sameCapabilityParameters } from './parameters.js';
 
 const POLICY_SOURCE_RANK: Record<ResourcePosturePolicySource, number> = {
   'gate-choice': 3,
@@ -702,6 +705,36 @@ export class RunResourcePostureReconciler {
         completed += 1;
         continue;
       }
+      // ADR-054 item 3 — re-target. The requirement names a device this run is
+      // not currently holding, so the lease on the OLD device is released first
+      // and through the policy every other posture release uses: the project's
+      // keep-warm setting decides whether its provider lingers. Acquiring first
+      // would conflict the run against itself on an exclusive device claim, and
+      // the registry answers a same-owner lease with different parameters with a
+      // typed refusal rather than guessing which device was meant.
+      const wanted = requirement.parameters ?? {};
+      const staleTargets = (context.leases.get(state.capabilityId) ?? []).filter(
+        (lease) =>
+          lease.state !== 'released' && !sameCapabilityParameters(lease.parameters, wanted),
+      );
+      if (staleTargets.length > 0) {
+        const retargeted = await this.deps.releaseForPosture(
+          context.slotId,
+          staleTargets.map((lease) => ({ leaseId: lease.id, keepWarm: true })),
+        );
+        for (const effect of retargeted.effects) effects.add(effect);
+        // A release that failed leaves the old device's state unknown. It is
+        // recorded here so the transition reports it; the acquire below then
+        // refuses on its own, because the registry treats a lease with an
+        // unresolved cleanup failure as still holding the provider.
+        for (const failure of retargeted.failures) {
+          failures.push({
+            capabilityId: failure.capabilityId,
+            leaseId: failure.leaseId,
+            reason: `re-target release failed: ${failure.reason}`,
+          });
+        }
+      }
       const result = await this.deps.acquireCapability({
         slotId: context.slotId,
         capabilityId: state.capabilityId,
@@ -1164,6 +1197,11 @@ export class RunResourcePostureReconciler {
       reason,
       ...(holder?.id ? { leaseId: holder.id } : {}),
       ...(holder?.owner ? { owner: holder.owner } : {}),
+      // The device this lease actually resolved to, which is the slot's
+      // configured one until something re-targets it (ADR-054 item 3).
+      ...(runtimeCapabilityTargetFromParameters(holder?.parameters)
+        ? { target: runtimeCapabilityTargetFromParameters(holder?.parameters) }
+        : {}),
       ...(warmUntil ? { warmUntil } : {}),
       ...(holder?.updatedAt ? { lastTransitionAt: holder.updatedAt } : {}),
       releaseEffects: entry ? [...entry.releaseEffects] : [],

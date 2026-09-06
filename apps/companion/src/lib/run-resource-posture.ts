@@ -15,6 +15,7 @@
  * for.
  */
 import {
+  formatRuntimeCapabilityTarget,
   type ResourcePosture,
   type ResourcePostureCapabilityState,
   type ResourcePostureCounts,
@@ -98,6 +99,8 @@ export interface RunPostureCapabilityRow {
   rowStatusLabel: string;
   reason: string;
   policySource: ResourcePosturePolicySource;
+  /** `simulator=…` for a provider that resolved to a device (ADR-054 item 3). */
+  targetLabel?: string;
   warmUntil?: string;
   cleanupFailure?: string;
   releaseEffects: string[];
@@ -116,6 +119,9 @@ export function postureCapabilityRow(
     rowStatusLabel: postureRowStatusLabel(rowStatus),
     reason: state.reason,
     policySource: state.policySource,
+    // Resolved by the Gateway from the holding lease, never from the slot's
+    // configured device: after a re-target the two differ.
+    ...(state.target ? { targetLabel: formatRuntimeCapabilityTarget(state.target) } : {}),
     ...(state.warmUntil ? { warmUntil: state.warmUntil } : {}),
     ...(state.cleanupFailure ? { cleanupFailure: state.cleanupFailure } : {}),
     releaseEffects: state.releaseEffects,

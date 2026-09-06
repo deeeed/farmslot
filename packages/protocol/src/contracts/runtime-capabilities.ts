@@ -228,3 +228,63 @@ export interface RuntimeCapabilityLifecycleEvent {
   owner?: RuntimeCapabilityLeaseOwner;
   detail?: string;
 }
+
+/**
+ * Device-identity parameters a capability provider may accept so a validation
+ * or recipe rerun can name a target device instead of re-dispatching the run to
+ * another slot (ADR-054 item 3).
+ *
+ * These are the ONLY acquire parameters the Gateway turns into hook template
+ * variables. Everything else in a provider's parameter schema stays data the
+ * provider's own actions read; it never reaches a shell template.
+ */
+export const RUNTIME_CAPABILITY_TARGET_KEYS = [
+  'platform',
+  'udid',
+  'simulator',
+  'avd',
+  'adb_serial',
+] as const;
+export type RuntimeCapabilityTargetKey = (typeof RUNTIME_CAPABILITY_TARGET_KEYS)[number];
+export type RuntimeCapabilityTarget = Partial<Record<RuntimeCapabilityTargetKey, string>>;
+
+/**
+ * The charset a device identity may use. Deliberately narrow: these values are
+ * substituted into project hook command templates, so anything that could carry
+ * shell meaning is refused before it reaches a template rather than escaped
+ * afterwards.
+ */
+export const RUNTIME_CAPABILITY_TARGET_VALUE_PATTERN = /^[A-Za-z0-9._:-]+$/;
+
+export function isRuntimeCapabilityTargetKey(value: unknown): value is RuntimeCapabilityTargetKey {
+  return RUNTIME_CAPABILITY_TARGET_KEYS.includes(value as RuntimeCapabilityTargetKey);
+}
+
+export function isRuntimeCapabilityTargetValue(value: unknown): value is string {
+  return typeof value === 'string' && RUNTIME_CAPABILITY_TARGET_VALUE_PATTERN.test(value);
+}
+
+/**
+ * The device-identity subset of a lease's stored acquire parameters, for
+ * clients that show which device a lease actually resolved to. Values that are
+ * not well-formed identities are dropped rather than rendered: a lease can only
+ * have been acquired with valid ones, so anything else is not a target.
+ */
+export function runtimeCapabilityTargetFromParameters(
+  parameters: Record<string, unknown> | undefined,
+): RuntimeCapabilityTarget | undefined {
+  if (!parameters) return undefined;
+  const target: RuntimeCapabilityTarget = {};
+  for (const key of RUNTIME_CAPABILITY_TARGET_KEYS) {
+    const value = parameters[key];
+    if (isRuntimeCapabilityTargetValue(value)) target[key] = value;
+  }
+  return Object.keys(target).length > 0 ? target : undefined;
+}
+
+/** `simulator=A, udid=B` in the order the keys are declared. For labels only. */
+export function formatRuntimeCapabilityTarget(target: RuntimeCapabilityTarget): string {
+  return RUNTIME_CAPABILITY_TARGET_KEYS.filter((key) => target[key] !== undefined)
+    .map((key) => `${key}=${target[key]}`)
+    .join(', ');
+}

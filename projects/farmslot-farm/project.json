@@ -427,6 +427,15 @@
           "class": "high",
           "resources": [{ "id": "ios-simulator", "access": "exclusive", "kind": "device" }]
         },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "platform": { "const": "ios" },
+            "udid": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" },
+            "simulator": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" }
+          }
+        },
         "actions": {
           "acquire": { "kind": "resource", "resource_id": "ios-sim", "action": "boot" },
           "health": { "kind": "resource", "resource_id": "ios-sim", "action": "health" },
@@ -449,6 +458,15 @@
         "cost": {
           "class": "high",
           "resources": [{ "id": "android-device", "access": "exclusive", "kind": "device" }]
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "platform": { "const": "android" },
+            "avd": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" },
+            "adb_serial": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" }
+          }
         },
         "actions": {
           "acquire": { "kind": "resource", "resource_id": "android-device", "action": "health" },

@@ -12,6 +12,7 @@ import type {
   RuntimeCapabilityHealthState,
   RuntimeCapabilityLeaseOwner,
   RuntimeCapabilityLeaseState,
+  RuntimeCapabilityTarget,
 } from './runtime-capabilities.js';
 
 /**
@@ -102,6 +103,13 @@ export interface ResourcePostureCapabilityState {
   reason: string;
   leaseId?: string;
   owner?: RuntimeCapabilityLeaseOwner;
+  /**
+   * The device identity the holding lease actually resolved to, when the
+   * provider takes one. Read off the lease's stored acquire parameters, so a
+   * client shows the device that is really in use rather than the slot's
+   * configured default after a re-target.
+   */
+  target?: RuntimeCapabilityTarget;
   /** Deadline until which a released provider stays live. */
   warmUntil?: string;
   lastTransitionAt?: string;

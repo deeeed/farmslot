@@ -1,4 +1,9 @@
-import type { ExecResult, SlotActionPlacement, SlotStatus } from '../contracts/index.js';
+import type {
+  ExecResult,
+  RuntimeCapabilityTarget,
+  SlotActionPlacement,
+  SlotStatus,
+} from '../contracts/index.js';
 import type { RecipeValidationResult } from '../recipe/index.js';
 
 import { Methods } from './registry.js';
@@ -281,6 +286,14 @@ export interface RecipeRerunParams {
   recipeRunId?: string;
   playbackSlowMs?: number;
   recordVideo?: boolean;
+  /**
+   * Re-target this rerun at another device or platform (ADR-054 item 3). The
+   * Gateway rewrites the matching device requirement in the run's stored proof
+   * plan, releases the lease held on the previous device, and reacquires with
+   * these parameters before the rerun touches the slot. Omit to use the slot's
+   * configured device.
+   */
+  target?: RuntimeCapabilityTarget;
 }
 
 export interface RecipeCancelParams {

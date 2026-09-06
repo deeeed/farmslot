@@ -83,6 +83,7 @@ interface HarnessOptions {
   runAction?: (
     slotId: string,
     action: RuntimeCapabilityProviderActionRef,
+    parameters: Record<string, unknown>,
   ) => { ok: boolean; detail?: string };
   parkPreview?: (params: MachinePausePreviewParams) => Promise<MachinePausePreviewResult>;
   parkExecute?: (params: MachinePauseExecuteParams) => Promise<MachinePauseExecuteResult>;
@@ -103,6 +104,8 @@ async function harness(t: TestContext, options: HarnessOptions) {
   if (!options.storePath) t.after(() => rm(directory, { recursive: true, force: true }));
   const storePath = options.storePath ?? path.join(directory, 'leases.json');
   const actions: string[] = [];
+  /** Every provider action with the acquire parameters it was run for. */
+  const actionCalls: Array<{ action: string; parameters: Record<string, unknown> }> = [];
   let nextLease = 0;
   const now = options.now ?? (() => new Date('2026-08-11T00:00:00.000Z'));
   const registry = new RuntimeCapabilityRegistry({
@@ -113,11 +116,12 @@ async function harness(t: TestContext, options: HarnessOptions) {
       capabilities: options.capabilities,
       ...(options.projectPosture ? { posture: options.projectPosture } : {}),
     }),
-    runAction: async (slotId, action) => {
-      actions.push(
-        action.kind === 'slot-action' ? action.actionId : `${action.resourceId}.${action.action}`,
-      );
-      return options.runAction?.(slotId, action) ?? { ok: true };
+    runAction: async (slotId, action, parameters) => {
+      const name =
+        action.kind === 'slot-action' ? action.actionId : `${action.resourceId}.${action.action}`;
+      actions.push(name);
+      actionCalls.push({ action: name, parameters });
+      return options.runAction?.(slotId, action, parameters) ?? { ok: true };
     },
     leaseId: () => `lease-${++nextLease}`,
     now,
@@ -226,7 +230,18 @@ async function harness(t: TestContext, options: HarnessOptions) {
     newOperationId: () => 'op-generated',
   });
 
-  return { registry, reconciler, actions, runs, broadcasts, parkCalls, storePath, directory, run };
+  return {
+    registry,
+    reconciler,
+    actions,
+    actionCalls,
+    runs,
+    broadcasts,
+    parkCalls,
+    storePath,
+    directory,
+    run,
+  };
 }
 
 /** The record a completed release park leaves on the run. */
@@ -1504,4 +1519,195 @@ test('the inherited gate choice is resolved inside the per-run queue', async (t)
 
   // Ordering proves the hook ran inside the queue rather than at enqueue time.
   assert.deepEqual(resolvedAt, ['first-admitted', 'second-resolved']);
+});
+
+// ── ADR-054 item 3: re-target validation to another device ────────────────────
+
+const CATALOG_DEVICE = entry('device', {
+  cost: { class: 'high', resources: [{ id: 'the-device', access: 'exclusive', kind: 'device' }] },
+  parameters: {
+    type: 'object',
+    additionalProperties: false,
+    properties: { simulator: { type: 'string', pattern: '^[A-Za-z0-9._:-]+$' } },
+  },
+});
+
+function acquireDevice(
+  registry: RuntimeCapabilityRegistry,
+  simulator: string,
+  ownerRunId = 'run-a',
+) {
+  return registry.acquire({
+    slotId: SLOT,
+    capabilityId: 'device',
+    ownerRunId,
+    ownerFamilyId: 'fam-a',
+    parameters: { simulator },
+    proofRequirement: {
+      capabilityId: 'device',
+      reason: 'prove device',
+      mode: 'state',
+      parameters: { simulator },
+    },
+  });
+}
+
+test('validation preparation on a new device releases the old lease then acquires the new one', async (t) => {
+  const { reconciler, registry, actionCalls } = await harness(t, {
+    capabilities: [CATALOG_DEVICE],
+  });
+  assert.equal((await acquireDevice(registry, 'SIM-1')).ok, true);
+  actionCalls.length = 0;
+
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      {
+        capabilityId: 'device',
+        reason: 'validation',
+        mode: 'state',
+        parameters: { simulator: 'SIM-2' },
+      },
+    ],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.transition.outcome, 'applied');
+  // Release before acquire, each against its own device: acquiring first would
+  // conflict the run against itself on the exclusive device claim.
+  assert.deepEqual(actionCalls, [
+    { action: 'device.release', parameters: { simulator: 'SIM-1' } },
+    { action: 'device.acquire', parameters: { simulator: 'SIM-2' } },
+    { action: 'device.health', parameters: { simulator: 'SIM-2' } },
+  ]);
+  const leases = (await registry.status({ slotId: SLOT, ownerRunId: 'run-a' })).leases;
+  assert.deepEqual(
+    leases.filter((lease) => lease.state === 'acquired').map((lease) => lease.parameters),
+    [{ simulator: 'SIM-2' }],
+  );
+  // Posture status reports the device the lease actually resolved to, which is
+  // what Command Center and Companion render.
+  const reported = await reconciler.status('run-a');
+  assert.deepEqual(
+    reported.state?.capabilities.find((capability) => capability.capabilityId === 'device')?.target,
+    { simulator: 'SIM-2' },
+  );
+});
+
+test('a re-target honours keep-warm: the warm provider is cleaned up before the new device boots', async (t) => {
+  const warmDevice = { ...CATALOG_DEVICE, keepWarmMs: 600_000 };
+  const { reconciler, actionCalls, registry } = await harness(t, { capabilities: [warmDevice] });
+  assert.equal((await acquireDevice(registry, 'SIM-1')).ok, true);
+  actionCalls.length = 0;
+
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      {
+        capabilityId: 'device',
+        reason: 'validation',
+        mode: 'state',
+        parameters: { simulator: 'SIM-2' },
+      },
+    ],
+  });
+  assert.equal(result.ok, true);
+  // The release honoured keep-warm, so no shutdown ran at release time. The
+  // acquire then finds a warm provider for a DIFFERENT device and stops that one
+  // — with SIM-1 — rather than leaving two simulators booted.
+  assert.deepEqual(actionCalls, [
+    { action: 'device.release', parameters: { simulator: 'SIM-1' } },
+    { action: 'device.acquire', parameters: { simulator: 'SIM-2' } },
+    { action: 'device.health', parameters: { simulator: 'SIM-2' } },
+  ]);
+});
+
+test('re-targeting one run never touches another run device lease', async (t) => {
+  const { reconciler, registry, actionCalls } = await harness(t, {
+    capabilities: [CATALOG_METRO, CATALOG_DEVICE],
+  });
+  assert.equal((await acquire(registry, 'metro', 'other-run', 'fam-b')).ok, true);
+  assert.equal((await acquireDevice(registry, 'SIM-1')).ok, true);
+  actionCalls.length = 0;
+
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      {
+        capabilityId: 'device',
+        reason: 'validation',
+        mode: 'state',
+        parameters: { simulator: 'SIM-2' },
+      },
+    ],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(
+    actionCalls.some((call) => call.action.startsWith('metro.')),
+    false,
+    "another run's lease must not be touched by a re-target",
+  );
+  const other = await registry.status({ slotId: SLOT, ownerRunId: 'other-run' });
+  assert.equal(other.leases[0]?.state, 'acquired');
+});
+
+test('a re-target whose old device will not stop is reported and blocks the new acquire', async (t) => {
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [CATALOG_DEVICE],
+    runAction: (_slotId, action) =>
+      action.kind === 'slot-action' && action.actionId === 'device.release'
+        ? { ok: false, detail: 'simctl shutdown failed' }
+        : { ok: true },
+  });
+  assert.equal((await acquireDevice(registry, 'SIM-1')).ok, true);
+
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      {
+        capabilityId: 'device',
+        reason: 'validation',
+        mode: 'state',
+        parameters: { simulator: 'SIM-2' },
+      },
+    ],
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.transition.outcome, 'rejected');
+  assert.match(
+    result.transition.failures.map((failure) => failure.reason).join(' '),
+    /re-target release failed: simctl shutdown failed/,
+  );
+  assert.equal(result.transition.rejection?.kind, 'capability-unavailable');
+});
+
+test('re-applying the same device is not a re-target', async (t) => {
+  const { reconciler, registry, actionCalls } = await harness(t, {
+    capabilities: [CATALOG_DEVICE],
+  });
+  assert.equal((await acquireDevice(registry, 'SIM-1')).ok, true);
+  actionCalls.length = 0;
+
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      {
+        capabilityId: 'device',
+        reason: 'validation',
+        mode: 'state',
+        parameters: { simulator: 'SIM-1' },
+      },
+    ],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(
+    actionCalls.some((call) => call.action === 'device.release'),
+    false,
+    'the same device must be revalidated in place, never released and rebooted',
+  );
+  assert.deepEqual(actionCalls, [{ action: 'device.health', parameters: { simulator: 'SIM-1' } }]);
 });

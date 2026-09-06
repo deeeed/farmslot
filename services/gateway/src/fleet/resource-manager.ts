@@ -438,6 +438,8 @@ export async function resolveSlotResources(slotId: string): Promise<SlotResource
 export async function executeResourceHealth(
   slotId: string,
   resourceId: string,
+  /** See `executeResourceControl`: the leased device identity wins over slot resources. */
+  extraVars?: Record<string, string>,
 ): Promise<{ ok: boolean; detail?: string }> {
   const { pool, slot } = await resolveSlot(slotId);
   if (!isSlotResourceConfigured(slot.resources, resourceId)) {
@@ -459,7 +461,7 @@ export async function executeResourceHealth(
     return { ok: true };
   }
 
-  const expanded = expandTemplate(hookCmd, slotVars, projectVars);
+  const expanded = expandTemplate(hookCmd, slotVars, projectVars, extraVars);
 
   // Skip if required placeholders couldn't be resolved
   if (hasUnresolvedPlaceholders(expanded)) {
@@ -1177,6 +1179,13 @@ export async function executeResourceControl(
   slotId: string,
   resourceId: string,
   action: ResourceControlAction,
+  /**
+   * Template variables that take precedence over the slot's resource fields.
+   * The runtime capability layer passes the acquiring lease's device identity
+   * here (ADR-054 item 3), so `{{simulator}}`/`{{avd}}`/`{{adb_serial}}` resolve
+   * to the leased device before falling back to the slot's configured one.
+   */
+  extraVars?: Record<string, string>,
 ): Promise<{ ok: boolean; detail?: string }> {
   const { pool, slot } = await resolveSlot(slotId);
   if (!isSlotResourceConfigured(slot.resources, resourceId)) {
@@ -1197,7 +1206,7 @@ export async function executeResourceControl(
     return { ok: false, detail: `No '${action}' hook defined for resource '${resourceId}'` };
   }
 
-  const expanded = expandTemplate(hookCmd, slotVars, projectVars);
+  const expanded = expandTemplate(hookCmd, slotVars, projectVars, extraVars);
 
   // Check for unresolved required variables after expansion
   if (hasUnresolvedPlaceholders(expanded)) {
@@ -1207,7 +1216,7 @@ export async function executeResourceControl(
 
   // For shutdown: skip if health check says resource isn't running
   if (action === 'shutdown' && resourceDef.hooks?.health) {
-    const health = await executeResourceHealth(slotId, resourceId);
+    const health = await executeResourceHealth(slotId, resourceId, extraVars);
     if (!health.ok) {
       return { ok: true, detail: 'already stopped' };
     }

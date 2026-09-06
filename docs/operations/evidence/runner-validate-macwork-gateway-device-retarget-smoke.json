@@ -1,0 +1,244 @@
+{
+  "item": "MANUAL-000113",
+  "scenario": "re-target validation to another device or platform",
+  "gateway": "ws://localhost:7801",
+  "slot": "macwork-ff-4",
+  "startedAt": "2026-09-06T17:12:07.217Z",
+  "completedAt": "2026-09-06T17:12:10.999Z",
+  "hostLoad": "1:12  up 3 days, 50 mins, 4 users, load averages: 137.58 140.70 141.28",
+  "blocked": {
+    "what": "device boot, re-target, release-on-leased-device, cross-slot guard",
+    "why": "the gateway's own admission control refuses every acquire while the host load average is above 1.5x its 16 cores; forcing past it would boot simulators on a saturated machine and would not be a fair test",
+    "rerunWith": "/Users/deeeed/dev/farmslot/artifacts/device-retarget-smoke-driver.mjs (node it, once `uptime` load1 is below 24 so the gateway admission gate lets an acquire through)"
+  },
+  "nodes": [
+    {
+      "node": "catalog-declares-device-parameters",
+      "claim": "the running gateway serves device-identity acquire parameters for both device providers",
+      "ok": true,
+      "evidence": {
+        "iosParameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "platform": {
+              "const": "ios"
+            },
+            "udid": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            },
+            "simulator": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        },
+        "androidParameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "platform": {
+              "const": "android"
+            },
+            "avd": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            },
+            "adb_serial": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "node": "shell-charset-refused-live",
+      "claim": "a device identity carrying shell meaning is refused as invalid-request before anything runs",
+      "ok": true,
+      "evidence": {
+        "conflict": {
+          "kind": "invalid-request",
+          "capabilityId": "ios-simulator",
+          "reason": "Capability parameters are invalid at /simulator: must match pattern \"^[A-Za-z0-9._:-]+$\""
+        }
+      }
+    },
+    {
+      "node": "wrong-platform-refused-live",
+      "claim": "asking the iOS provider for an Android platform is refused by its own parameter schema",
+      "ok": true,
+      "evidence": {
+        "conflict": {
+          "kind": "invalid-request",
+          "capabilityId": "ios-simulator",
+          "reason": "Capability parameters are invalid at /platform: must be equal to constant"
+        }
+      }
+    },
+    {
+      "node": "foreign-device-key-refused-live",
+      "claim": "an Android serial handed to the iOS provider is refused rather than ignored",
+      "ok": true,
+      "evidence": {
+        "conflict": {
+          "kind": "invalid-request",
+          "capabilityId": "ios-simulator",
+          "reason": "Capability parameters are invalid at /: must NOT have additional properties"
+        }
+      }
+    },
+    {
+      "node": "contradictory-identity-refused-live",
+      "claim": "udid and simulator naming two different devices is refused, not silently merged",
+      "ok": true,
+      "evidence": {
+        "conflict": {
+          "kind": "invalid-request",
+          "capabilityId": "ios-simulator",
+          "reason": "Device parameters name two different iOS simulators: udid='AAAA-1111' and simulator='BBBB-2222'"
+        }
+      }
+    },
+    {
+      "node": "boot-blocked-by-host-pressure",
+      "claim": "the boot half of this scenario did NOT run: the gateway refused admission on host pressure",
+      "ok": true,
+      "evidence": {
+        "conflict": {
+          "kind": "host-pressure",
+          "severity": "critical",
+          "reason": "Load average 152.27 is above 1.5x 16 cores.",
+          "machine": "macwork",
+          "queued": false,
+          "retryAfterMs": 15000
+        },
+        "uptime": "1:12  up 3 days, 50 mins, 4 users, load averages: 137.58 140.70 141.28"
+      }
+    },
+    {
+      "node": "no-device-touched",
+      "claim": "every refusal above left every simulator on this machine in the state it was already in",
+      "ok": true,
+      "evidence": {
+        "before": {
+          "iPhone 16": {
+            "udid": "4DE58F8A-ED09-470C-B61D-6B1D2089803C",
+            "state": "Shutdown"
+          },
+          "mmdev-3": {
+            "udid": "88E7B7DE-CBC3-42A3-A23B-0F38D3D5BB17",
+            "state": "Booted"
+          },
+          "mmdev-4": {
+            "udid": "BC3ED993-D422-4A12-8C08-DF2B32DC13AB",
+            "state": "Shutdown"
+          },
+          "mmdev-5": {
+            "udid": "C071D870-531C-4968-B34C-DF9151704C9B",
+            "state": "Shutdown"
+          },
+          "temp/recipe/runtime": {
+            "udid": "2A32366E-A171-4229-8152-E74AE78767D3",
+            "state": "Shutdown"
+          },
+          "echodev-1": {
+            "udid": "3904A400-D340-4B04-9408-E18062B231DC",
+            "state": "Shutdown"
+          },
+          "fs-4": {
+            "udid": "E2CE5801-0A5F-458C-88A0-CDCA12A240E4",
+            "state": "Shutdown"
+          },
+          "mmdev-1": {
+            "udid": "18FE8A70-ED8B-4796-BB42-AA27EB1EFC6A",
+            "state": "Shutdown"
+          },
+          "mmdev-2": {
+            "udid": "2DF4C5EA-1A0A-4B8A-8B72-9A445FBE49E1",
+            "state": "Shutdown"
+          },
+          "mmdev-6": {
+            "udid": "1BB96956-9B40-4EB5-AF87-DEE0E7498588",
+            "state": "Shutdown"
+          },
+          "playground-1": {
+            "udid": "CAE47594-7920-4021-B145-D8E3A73F5C72",
+            "state": "Shutdown"
+          },
+          "sherpa-voice-1": {
+            "udid": "E4C630D3-3FF6-48E1-BD1A-C263A2E65809",
+            "state": "Shutdown"
+          }
+        },
+        "after": {
+          "iPhone 16": {
+            "udid": "4DE58F8A-ED09-470C-B61D-6B1D2089803C",
+            "state": "Shutdown"
+          },
+          "mmdev-3": {
+            "udid": "88E7B7DE-CBC3-42A3-A23B-0F38D3D5BB17",
+            "state": "Booted"
+          },
+          "mmdev-4": {
+            "udid": "BC3ED993-D422-4A12-8C08-DF2B32DC13AB",
+            "state": "Shutdown"
+          },
+          "mmdev-5": {
+            "udid": "C071D870-531C-4968-B34C-DF9151704C9B",
+            "state": "Shutdown"
+          },
+          "temp/recipe/runtime": {
+            "udid": "2A32366E-A171-4229-8152-E74AE78767D3",
+            "state": "Shutdown"
+          },
+          "echodev-1": {
+            "udid": "3904A400-D340-4B04-9408-E18062B231DC",
+            "state": "Shutdown"
+          },
+          "fs-4": {
+            "udid": "E2CE5801-0A5F-458C-88A0-CDCA12A240E4",
+            "state": "Shutdown"
+          },
+          "mmdev-1": {
+            "udid": "18FE8A70-ED8B-4796-BB42-AA27EB1EFC6A",
+            "state": "Shutdown"
+          },
+          "mmdev-2": {
+            "udid": "2DF4C5EA-1A0A-4B8A-8B72-9A445FBE49E1",
+            "state": "Shutdown"
+          },
+          "mmdev-6": {
+            "udid": "1BB96956-9B40-4EB5-AF87-DEE0E7498588",
+            "state": "Shutdown"
+          },
+          "playground-1": {
+            "udid": "CAE47594-7920-4021-B145-D8E3A73F5C72",
+            "state": "Shutdown"
+          },
+          "sherpa-voice-1": {
+            "udid": "E4C630D3-3FF6-48E1-BD1A-C263A2E65809",
+            "state": "Shutdown"
+          }
+        }
+      }
+    },
+    {
+      "node": "no-stray-lease",
+      "claim": "the refused acquires left no lease behind on the slot",
+      "ok": true,
+      "evidence": {
+        "leases": []
+      }
+    }
+  ],
+  "ok": true,
+  "negativeProof": {
+    "node": "contradictory-identity-refused-live",
+    "method": "disabled the device-target guard's refusal path in services/gateway/src/methods/runtime-capabilities.ts (assertDeviceTargetAvailable returned null instead of the reason), let tsx watch reload the production dev gateway, re-ran the same RPC, then restored",
+    "baseline": "invalid-request: Device parameters name two different iOS simulators: udid='AAAA-1111' and simulator='BBBB-2222'",
+    "mutated": "host-pressure: Load average 134.11 is above 1.5x 16 cores. (the contradiction was no longer caught; only admission stopped it)",
+    "restored": "invalid-request: Device parameters name two different iOS simulators: udid='AAAA-1111' and simulator='BBBB-2222'"
+  }
+}
