@@ -18,6 +18,7 @@ import type {
   RuntimeCapabilityStatusResult,
 } from '@farmslot/protocol';
 
+import { claimsDevice } from './device-target.js';
 import { sameCapabilityParameters, stableJson } from './parameters.js';
 import {
   hydrateFenceEntries,
@@ -67,6 +68,14 @@ export interface RuntimeCapabilityRegistryOptions {
      * device its own lease acquired rather than the slot's configured default.
      */
     parameters: Record<string, unknown>,
+    /**
+     * The parameter names THIS provider's schema declares. Only these may be
+     * substituted into its hook command: the device allowlist is global, so
+     * without this a provider that names a parameter `platform` or `simulator`
+     * for its own purposes would have it rewritten into its command line, and
+     * `platform` would shadow the slot's auto-injected one.
+     */
+    declaredParameters: readonly string[],
   ) => Promise<RuntimeCapabilityActionResult>;
   /**
    * Refuse a device target that is not usable on this fleet, before the provider
@@ -127,6 +136,30 @@ function blocksAcquisition(lease: RuntimeCapabilityLease): boolean {
 
 function holdsProvider(lease: RuntimeCapabilityLease): boolean {
   return ACTIVE_STATES.has(lease.state) && lease.state !== 'queued';
+}
+
+/**
+ * Whether this lease's PROVIDER is running, which is not the same question as
+ * whether the lease still holds it. A keep-warm lease is `released` with a
+ * deadline and its provider is deliberately still up — the one state where a
+ * device runs under no active lease. Anything asking "is this device in use"
+ * has to see those, or a second slot adopts the device and the warm sweeper
+ * later stops it under the run that adopted it.
+ *
+ * An ELAPSED deadline counts too, exactly as the warm-lease adoption path
+ * treats it: the deadline is a schedule, not proof the sweeper has run.
+ */
+function runsProvider(lease: RuntimeCapabilityLease): boolean {
+  return holdsProvider(lease) || (lease.state === 'released' && lease.keepWarmUntil !== undefined);
+}
+
+/** Parameter names a provider's own schema declares, or none when it has no schema. */
+function declaredParameterNames(
+  entry: Pick<RuntimeCapabilityCatalogEntry, 'parameters'>,
+): readonly string[] {
+  const properties = (entry.parameters as { properties?: Record<string, unknown> } | undefined)
+    ?.properties;
+  return properties && typeof properties === 'object' ? Object.keys(properties) : [];
 }
 
 function parameterValidator(schema: Record<string, unknown>): ValidateFunction {
@@ -260,13 +293,39 @@ export class RuntimeCapabilityRegistry {
     for (const event of events) this.options.onEvent?.(event);
   }
 
+  /**
+   * What to acquire a dependency with. The caller's explicit map wins; the
+   * stored proof plan is the fallback for callers that do not reconcile a whole
+   * plan at once. Never `{}` when the plan says otherwise — that silently pins
+   * the slot's configured device under a re-target.
+   */
+  private parametersForDependency(
+    snapshot: RuntimeCapabilityStoreSnapshot,
+    params: RuntimeCapabilityAcquireParams,
+    dependencyId: string,
+  ): Record<string, unknown> {
+    const explicit = params.dependencyParameters?.[dependencyId];
+    if (explicit) return structuredClone(explicit);
+    const planned = snapshot.proofPlans[params.ownerRunId]?.requirements.find(
+      (requirement) => requirement.capabilityId === dependencyId,
+    )?.parameters;
+    return planned ? structuredClone(planned) : {};
+  }
+
   private async runAction(
     slotId: string,
     action: RuntimeCapabilityProviderActionRef,
     parameters: Record<string, unknown>,
+    /** The provider the action belongs to; its schema is the substitution allowlist. */
+    entry: Pick<RuntimeCapabilityCatalogEntry, 'parameters'>,
   ): Promise<RuntimeCapabilityActionResult> {
     try {
-      return await this.options.runAction(slotId, action, parameters);
+      return await this.options.runAction(
+        slotId,
+        action,
+        parameters,
+        declaredParameterNames(entry),
+      );
     } catch (error) {
       return {
         ok: false,
@@ -440,13 +499,23 @@ export class RuntimeCapabilityRegistry {
         };
       }
     }
-    if (this.options.assertTargetAvailable && Object.keys(parameters).length > 0) {
+    // Asked for EVERY device-claiming acquire, not only one that names a
+    // device. An ordinary acquire with no parameters resolves to the slot's own
+    // configured device, and another slot may have re-targeted onto exactly
+    // that device — in which case this acquire is the second boot. Skipping the
+    // check for `{}` left the common case unguarded.
+    if (
+      this.options.assertTargetAvailable &&
+      (Object.keys(parameters).length > 0 || claimsDevice(entry))
+    ) {
       const refusal = await this.options.assertTargetAvailable({
         slotId: params.slotId,
         capabilityId: entry.id,
         ownerRunId: params.ownerRunId,
         parameters,
-        activeLeases: snapshot.leases.filter(holdsProvider),
+        // Warm leases included: their provider is still up, so a target naming
+        // that device would be adopted and then stopped by the warm sweeper.
+        activeLeases: snapshot.leases.filter(runsProvider),
       });
       if (refusal) {
         return {
@@ -465,12 +534,24 @@ export class RuntimeCapabilityRegistry {
     let staleOwnerLease = false;
     if (sameOwner?.state === 'acquired') {
       if (!sameCapabilityParameters(sameOwner.parameters, parameters)) {
+        // Say WHY the held lease exists when it is not this caller's own doing.
+        // A device provider pinned as another capability's dependency is the
+        // usual cause, and "different parameters" alone sent the operator
+        // looking at the wrong requirement.
+        const dependents = snapshot.leases
+          .filter(
+            (candidate) =>
+              candidate.dependencyLeaseIds.includes(sameOwner.id) && blocksAcquisition(candidate),
+          )
+          .map((candidate) => candidate.capabilityId);
         return {
           ok: false,
           conflict: {
             kind: 'invalid-request',
             capabilityId: entry.id,
-            reason: 'Existing idempotent lease has different parameters',
+            reason: dependents.length
+              ? `Existing idempotent lease has different parameters; it is held as a dependency of ${dependents.join(', ')}, which acquired it as ${stableJson(sameOwner.parameters)}`
+              : 'Existing idempotent lease has different parameters',
           },
         };
       }
@@ -483,6 +564,7 @@ export class RuntimeCapabilityRegistry {
           params.slotId,
           entry.actions.health,
           sameOwner.parameters,
+          entry,
         );
         sameOwner.updatedAt = this.timestamp();
         if (health.ok) {
@@ -514,8 +596,18 @@ export class RuntimeCapabilityRegistry {
                   capabilityId: dependencyId,
                   reason: `Required by ${entry.id}: ${params.proofRequirement.reason}`,
                   mode: params.proofRequirement.mode,
+                  ...(Object.keys(this.parametersForDependency(snapshot, ownedParams, dependencyId))
+                    .length > 0
+                    ? {
+                        parameters: this.parametersForDependency(
+                          snapshot,
+                          ownedParams,
+                          dependencyId,
+                        ),
+                      }
+                    : {}),
                 },
-                parameters: {},
+                parameters: this.parametersForDependency(snapshot, ownedParams, dependencyId),
                 queueOnPressure: false,
                 revalidateHealth: true,
               },
@@ -563,7 +655,7 @@ export class RuntimeCapabilityRegistry {
         );
         const cleanup = otherHolders
           ? { ok: true }
-          : await this.runAction(params.slotId, entry.actions.release, sameOwner.parameters);
+          : await this.runAction(params.slotId, entry.actions.release, sameOwner.parameters, entry);
         sameOwner.updatedAt = this.timestamp();
         if (!cleanup.ok) {
           sameOwner.state = 'error';
@@ -621,7 +713,21 @@ export class RuntimeCapabilityRegistry {
         slotId: params.slotId,
         ownerRunId: params.ownerRunId,
         createdAt: existingPlan?.createdAt ?? this.timestamp(),
-        requirements: [...withoutDuplicate, structuredClone(params.proofRequirement)],
+        // The EFFECTIVE parameters, not just whatever the caller happened to put
+        // on the requirement. `parameters` may arrive beside the requirement
+        // rather than on it, and a plan that omits the device it was acquired
+        // with is not replayable: the next validation-prepare reads this plan as
+        // its default requirement set and would reacquire the slot's configured
+        // device, or be refused for disagreeing with the lease it already holds.
+        requirements: [
+          ...withoutDuplicate,
+          {
+            ...structuredClone(params.proofRequirement),
+            ...(Object.keys(parameters).length > 0
+              ? { parameters: structuredClone(parameters) }
+              : {}),
+          },
+        ],
       };
       this.recordEvent(snapshot, {
         kind: 'planned',
@@ -747,11 +853,19 @@ export class RuntimeCapabilityRegistry {
     const existingLeaseIds = new Set(snapshot.leases.map((lease) => lease.id));
     const dependencyLeases: RuntimeCapabilityLease[] = [];
     for (const dependencyId of entry.dependencies ?? []) {
+      const dependencyParameters = this.parametersForDependency(
+        snapshot,
+        ownedParams,
+        dependencyId,
+      );
       const requirement = {
         capabilityId: dependencyId,
         reason: `Required by ${entry.id}: ${params.proofRequirement.reason}`,
         mode: params.proofRequirement.mode,
-      } as const;
+        ...(Object.keys(dependencyParameters).length > 0
+          ? { parameters: dependencyParameters }
+          : {}),
+      };
       const dependency = await this.acquireInternal(
         snapshot,
         catalog,
@@ -759,7 +873,7 @@ export class RuntimeCapabilityRegistry {
           ...ownedParams,
           capabilityId: dependencyId,
           proofRequirement: requirement,
-          parameters: {},
+          parameters: dependencyParameters,
           queueOnPressure: false,
         },
         false,
@@ -813,7 +927,7 @@ export class RuntimeCapabilityRegistry {
             }
           : // Probed with the WARM lease's own parameters: the question is
             // whether THAT provider is still up, not whether the requested one is.
-            await this.runAction(params.slotId, entry.actions.health, warmLease.parameters);
+            await this.runAction(params.slotId, entry.actions.health, warmLease.parameters, entry);
       warmProviderHealthy = warmHealth.ok;
       if (warmHealth.ok) {
         warmLease.keepWarmUntil = undefined;
@@ -866,6 +980,7 @@ export class RuntimeCapabilityRegistry {
           params.slotId,
           (staleEntry ?? entry).actions.release,
           warmLease.parameters,
+          staleEntry ?? entry,
         );
         warmLease.keepWarmUntil = undefined;
         if (!cleanup.ok) {
@@ -934,7 +1049,12 @@ export class RuntimeCapabilityRegistry {
     );
     const shouldRunAcquire = !providerAlreadyActive && !warmProviderHealthy;
     if (shouldRunAcquire) {
-      const acquired = await this.runAction(params.slotId, entry.actions.acquire, parameters);
+      const acquired = await this.runAction(
+        params.slotId,
+        entry.actions.acquire,
+        parameters,
+        entry,
+      );
       if (!acquired.ok) {
         lease.updatedAt = this.timestamp();
         lease.health = { state: 'unhealthy', checkedAt: lease.updatedAt, detail: acquired.detail };
@@ -962,7 +1082,7 @@ export class RuntimeCapabilityRegistry {
         };
       }
     }
-    const health = await this.runAction(params.slotId, entry.actions.health, parameters);
+    const health = await this.runAction(params.slotId, entry.actions.health, parameters, entry);
     if (!health.ok) {
       lease.updatedAt = this.timestamp();
       lease.health = { state: 'unhealthy', checkedAt: lease.updatedAt, detail: health.detail };
@@ -1115,7 +1235,7 @@ export class RuntimeCapabilityRegistry {
       const cleanup =
         otherHolders || previousState === 'queued'
           ? { ok: true }
-          : await this.runAction(lease.slotId, entry.actions.release, lease.parameters);
+          : await this.runAction(lease.slotId, entry.actions.release, lease.parameters, entry);
       lease.updatedAt = this.timestamp();
       if (!cleanup.ok) {
         lease.state = 'error';
@@ -1445,7 +1565,12 @@ export class RuntimeCapabilityRegistry {
           releaseActionRan = true;
           // The provider is going away, so any earlier warm deadline is void.
           lease.keepWarmUntil = undefined;
-          actionResult = await this.runAction(slotId, entry.actions.release, lease.parameters);
+          actionResult = await this.runAction(
+            slotId,
+            entry.actions.release,
+            lease.parameters,
+            entry,
+          );
         }
         if (!actionResult.ok) {
           lease.state = 'error';
@@ -1651,7 +1776,12 @@ export class RuntimeCapabilityRegistry {
           });
           continue;
         }
-        const cleanup = await this.runAction(lease.slotId, entry.actions.release, lease.parameters);
+        const cleanup = await this.runAction(
+          lease.slotId,
+          entry.actions.release,
+          lease.parameters,
+          entry,
+        );
         lease.updatedAt = this.timestamp();
         if (!cleanup.ok) {
           lease.state = 'error';
@@ -1845,7 +1975,7 @@ export class RuntimeCapabilityRegistry {
             );
             const cleanup =
               otherHolders.length === 0
-                ? await this.runAction(slotId, entry.actions.release, lease.parameters)
+                ? await this.runAction(slotId, entry.actions.release, lease.parameters, entry)
                 : { ok: true };
             lease.updatedAt = this.timestamp();
             lease.health = { state: 'unknown', checkedAt: lease.updatedAt };
@@ -1892,7 +2022,7 @@ export class RuntimeCapabilityRegistry {
             // stopping it here would tear it out from under a live run.
             const stopped = liveHolders.length === 0;
             const cleanup = stopped
-              ? await this.runAction(slotId, entry.actions.release, lease.parameters)
+              ? await this.runAction(slotId, entry.actions.release, lease.parameters, entry)
               : { ok: true };
             lease.updatedAt = this.timestamp();
             lease.health = { state: 'unknown', checkedAt: lease.updatedAt };
@@ -1926,7 +2056,12 @@ export class RuntimeCapabilityRegistry {
             });
             continue;
           }
-          const health = await this.runAction(slotId, entry.actions.health, lease.parameters);
+          const health = await this.runAction(
+            slotId,
+            entry.actions.health,
+            lease.parameters,
+            entry,
+          );
           if (health.ok) {
             lease.state = 'acquired';
             lease.updatedAt = this.timestamp();
@@ -1945,7 +2080,12 @@ export class RuntimeCapabilityRegistry {
             });
             continue;
           }
-          const cleanup = await this.runAction(slotId, entry.actions.release, lease.parameters);
+          const cleanup = await this.runAction(
+            slotId,
+            entry.actions.release,
+            lease.parameters,
+            entry,
+          );
           lease.updatedAt = this.timestamp();
           lease.health = { state: 'unhealthy', checkedAt: lease.updatedAt, detail: health.detail };
           if (cleanup.ok) {

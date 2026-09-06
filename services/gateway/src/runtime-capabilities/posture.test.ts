@@ -84,6 +84,7 @@ interface HarnessOptions {
     slotId: string,
     action: RuntimeCapabilityProviderActionRef,
     parameters: Record<string, unknown>,
+    declaredParameters: readonly string[],
   ) => { ok: boolean; detail?: string };
   parkPreview?: (params: MachinePausePreviewParams) => Promise<MachinePausePreviewResult>;
   parkExecute?: (params: MachinePauseExecuteParams) => Promise<MachinePauseExecuteResult>;
@@ -116,12 +117,12 @@ async function harness(t: TestContext, options: HarnessOptions) {
       capabilities: options.capabilities,
       ...(options.projectPosture ? { posture: options.projectPosture } : {}),
     }),
-    runAction: async (slotId, action, parameters) => {
+    runAction: async (slotId, action, parameters, declaredParameters) => {
       const name =
         action.kind === 'slot-action' ? action.actionId : `${action.resourceId}.${action.action}`;
       actions.push(name);
       actionCalls.push({ action: name, parameters });
-      return options.runAction?.(slotId, action, parameters) ?? { ok: true };
+      return options.runAction?.(slotId, action, parameters, declaredParameters) ?? { ok: true };
     },
     leaseId: () => `lease-${++nextLease}`,
     now,
@@ -1684,6 +1685,35 @@ test('a re-target whose old device will not stop is reported and blocks the new 
   assert.equal(result.transition.rejection?.kind, 'capability-unavailable');
 });
 
+test('a requirement that only restates the platform does not reboot the same device', async (t) => {
+  // `platform` selects which provider the target meant, not which device. The
+  // proof-plan rewrite drops it for exactly this reason; this locks the
+  // consequence, which is that no release or acquire action runs.
+  const { reconciler, registry, actionCalls } = await harness(t, {
+    capabilities: [CATALOG_DEVICE],
+  });
+  assert.equal((await acquireDevice(registry, 'SIM-1')).ok, true);
+  actionCalls.length = 0;
+
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      {
+        capabilityId: 'device',
+        reason: 'validation',
+        mode: 'state',
+        parameters: { simulator: 'SIM-1' },
+      },
+    ],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(
+    actionCalls.some((call) => call.action === 'device.release'),
+    false,
+  );
+});
+
 test('re-applying the same device is not a re-target', async (t) => {
   const { reconciler, registry, actionCalls } = await harness(t, {
     capabilities: [CATALOG_DEVICE],
@@ -1710,4 +1740,65 @@ test('re-applying the same device is not a re-target', async (t) => {
     'the same device must be revalidated in place, never released and rebooted',
   );
   assert.deepEqual(actionCalls, [{ action: 'device.health', parameters: { simulator: 'SIM-1' } }]);
+});
+
+test('a re-target reaches a device held as another capability dependency', async (t) => {
+  // The shipped plan shape: `client` sorts before `device`, so the acquire loop
+  // reaches the client first and pulls the device in as its dependency. Without
+  // the whole plan's parameters, that dependency pinned the OLD device and the
+  // device requirement was then refused for disagreeing with it.
+  const client = entry('client', {
+    cost: { class: 'high', resources: [] },
+    dependencies: ['device'],
+  });
+  const { reconciler, registry, actionCalls } = await harness(t, {
+    capabilities: [client, CATALOG_DEVICE],
+  });
+  assert.equal(
+    (
+      await registry.acquire({
+        slotId: SLOT,
+        capabilityId: 'client',
+        ownerRunId: 'run-a',
+        ownerFamilyId: 'fam-a',
+        proofRequirement: { capabilityId: 'client', reason: 'prove client', mode: 'state' },
+        dependencyParameters: { device: { simulator: 'SIM-1' } },
+      })
+    ).ok,
+    true,
+  );
+  actionCalls.length = 0;
+
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      { capabilityId: 'client', reason: 'validation', mode: 'state' },
+      {
+        capabilityId: 'device',
+        reason: 'validation',
+        mode: 'state',
+        parameters: { simulator: 'SIM-2' },
+      },
+    ],
+  });
+  assert.equal(
+    result.ok,
+    true,
+    JSON.stringify(result.transition.rejection ?? result.transition.failures),
+  );
+  const leases = (await registry.status({ slotId: SLOT, ownerRunId: 'run-a' })).leases;
+  assert.deepEqual(
+    leases
+      .filter((lease) => lease.capabilityId === 'device' && lease.state === 'acquired')
+      .map((lease) => lease.parameters),
+    [{ simulator: 'SIM-2' }],
+    'the dependency must land on the device the plan names, not the slot default',
+  );
+  assert.equal(
+    actionCalls.some(
+      (call) => call.action === 'device.acquire' && call.parameters.simulator === 'SIM-2',
+    ),
+    true,
+  );
 });

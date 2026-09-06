@@ -3,13 +3,40 @@
   "scenario": "re-target validation to another device or platform",
   "gateway": "ws://localhost:7801",
   "slot": "macwork-ff-4",
-  "startedAt": "2026-09-06T17:12:07.217Z",
-  "completedAt": "2026-09-06T17:12:10.999Z",
-  "hostLoad": "1:12  up 3 days, 50 mins, 4 users, load averages: 137.58 140.70 141.28",
+  "startedAt": "2026-09-06T18:10:28.450Z",
+  "completedAt": "2026-09-06T18:10:34.494Z",
+  "hostLoad": "2:10  up 3 days,  1:49, 4 users, load averages: 151.11 157.22 144.36",
   "blocked": {
-    "what": "device boot, re-target, release-on-leased-device, cross-slot guard",
-    "why": "the gateway's own admission control refuses every acquire while the host load average is above 1.5x its 16 cores; forcing past it would boot simulators on a saturated machine and would not be a fair test",
-    "rerunWith": "/Users/deeeed/dev/farmslot/artifacts/device-retarget-smoke-driver.mjs (node it, once `uptime` load1 is below 24 so the gateway admission gate lets an acquire through)"
+    "what": [
+      "inventory-baseline",
+      "default-device-boots",
+      "posture-retarget-releases-then-reacquires",
+      "release-stops-leased-device",
+      "recipe-rerun-target-rewrites-the-proof-plan",
+      "shell-charset-refused",
+      "unknown-device-refused",
+      "cross-slot-guard",
+      "sibling-lease-untouched"
+    ],
+    "why": "the gateway's own admission control refuses every medium- and high-cost acquire while the host load average is above 1.5x its 16 cores, so no device can be booted; forcing past it would boot simulators on a saturated machine and would not be a fair test",
+    "rerunWith": "scripts/runner-validation/gateway/device-retarget-smoke-driver.mjs",
+    "rerunEnv": {
+      "SMOKE_RUN_ID": "a live, non-terminal run bound to SMOKE_SLOT \u2014 runtime.posture.apply and recipe.rerun both need a real run record",
+      "SMOKE_SLOT": "macwork-ff-4 (its configured simulator fs-4 is the only fs-* that exists on this host)",
+      "SMOKE_OTHER_SIM": "playground-1",
+      "precondition": "`uptime` load1 below 24"
+    },
+    "pendingNodes": [
+      "inventory-baseline",
+      "default-device-boots",
+      "posture-retarget-releases-then-reacquires",
+      "release-stops-leased-device",
+      "recipe-rerun-target-rewrites-the-proof-plan",
+      "shell-charset-refused",
+      "unknown-device-refused",
+      "cross-slot-guard",
+      "sibling-lease-untouched"
+    ]
   },
   "nodes": [
     {
@@ -109,12 +136,12 @@
         "conflict": {
           "kind": "host-pressure",
           "severity": "critical",
-          "reason": "Load average 152.27 is above 1.5x 16 cores.",
+          "reason": "Load average 160.08 is above 1.5x 16 cores.",
           "machine": "macwork",
           "queued": false,
           "retryAfterMs": 15000
         },
-        "uptime": "1:12  up 3 days, 50 mins, 4 users, load averages: 137.58 140.70 141.28"
+        "uptime": "2:10  up 3 days,  1:49, 4 users, load averages: 151.11 157.22 144.36"
       }
     },
     {
@@ -233,12 +260,129 @@
       }
     }
   ],
-  "ok": true,
-  "negativeProof": {
-    "node": "contradictory-identity-refused-live",
-    "method": "disabled the device-target guard's refusal path in services/gateway/src/methods/runtime-capabilities.ts (assertDeviceTargetAvailable returned null instead of the reason), let tsx watch reload the production dev gateway, re-ran the same RPC, then restored",
-    "baseline": "invalid-request: Device parameters name two different iOS simulators: udid='AAAA-1111' and simulator='BBBB-2222'",
-    "mutated": "host-pressure: Load average 134.11 is above 1.5x 16 cores. (the contradiction was no longer caught; only admission stopped it)",
-    "restored": "invalid-request: Device parameters name two different iOS simulators: udid='AAAA-1111' and simulator='BBBB-2222'"
-  }
+  "executedNodesOk": true,
+  "ok": false,
+  "cdp": {
+    "why": "the repo rule requires every UI change validated in the browser, not by typecheck or unit tests",
+    "chrome": "apps/command-center/scripts/debug-chrome.sh on FARMSLOT_CDP_PORT=9323",
+    "ui": "http://localhost:5175 against the live gateway ws://localhost:7801",
+    "probes": {
+      "apps/command-center/probes/recipe-rerun-device-target.js": {
+        "proves": "the real replay controls, driven by real select/input/click events, put the operator device target on the wire as recipe.rerun params, and refuse a shell-bearing identity before any frame is sent",
+        "result": {
+          "steps": [
+            {
+              "step": "device-keys-offered",
+              "ok": true,
+              "evidence": {
+                "options": ["udid", "simulator", "avd", "adb_serial"],
+                "note": "platform is a provider selector, not a device, so it is not offered here"
+              }
+            },
+            {
+              "step": "empty-by-default",
+              "ok": true,
+              "evidence": {
+                "value": "",
+                "placeholder": "slot default"
+              }
+            },
+            {
+              "step": "charset-refused-before-the-wire",
+              "ok": true,
+              "evidence": {
+                "framesSent": 0,
+                "rendered": "Live output\n          \n        \n        \n          \n          Error: Device identity must match ^[A-Za-z0-9._:][A-Za-z0-9._:-]*$\n          \n                \n                  Device identity must matc"
+              }
+            },
+            {
+              "step": "target-reaches-the-gateway",
+              "ok": true,
+              "evidence": {
+                "method": "recipe.rerun",
+                "target": {
+                  "simulator": "playground-1"
+                },
+                "slotId": "macwork-ff-4"
+              }
+            },
+            {
+              "step": "key-switch-sends-only-the-new-key",
+              "ok": true,
+              "evidence": {
+                "target": {
+                  "adb_serial": "emulator-5554"
+                }
+              }
+            },
+            {
+              "step": "empty-field-sends-no-target",
+              "ok": true,
+              "evidence": {
+                "params": ["runId", "slotId"]
+              }
+            }
+          ],
+          "runId": "cdp-device-target-probe-run",
+          "slotId": "macwork-ff-4",
+          "ok": true
+        },
+        "negativeProof": "removed the charset refusal in ui/src/components/workspace/recipe-rerun-target.ts, let Vite reload, re-ran: the probe threw \"timed out waiting for client-side charset refusal\"; restored, green again"
+      },
+      "apps/command-center/probes/run-posture-device-target-row.js": {
+        "proves": "Run Detail paints the resolved device on the device capability row only, with the protocol key order, and no target on a capability that takes none",
+        "scope": "RENDERING only. The Gateway derivation of target from lease.parameters is posture.test.ts and the blocked driver node, both of which read a real lease.",
+        "result": {
+          "steps": [
+            {
+              "step": "row-carries-the-resolved-target",
+              "ok": true,
+              "evidence": {
+                "device": "simulator=playground-1",
+                "nonDevice": null
+              }
+            },
+            {
+              "step": "target-is-painted-on-the-device-row-only",
+              "ok": true,
+              "evidence": {
+                "painted": "target simulator=playground-1",
+                "nonDeviceRowHasTarget": false
+              }
+            },
+            {
+              "step": "target-sits-inside-its-capability-row",
+              "ok": true,
+              "evidence": {
+                "rowText": "ios-simulator wants retained observed running (as intended) target simulator=playground-1 required by the current proof plan"
+              }
+            },
+            {
+              "step": "multi-key-target-keeps-the-protocol-key-order",
+              "ok": true,
+              "evidence": {
+                "painted": "target udid=ABC-123, simulator=playground-1"
+              }
+            }
+          ],
+          "ok": true
+        },
+        "negativeProof": "removed the targetLabel mapping in ui/src/components/runs/run-detail-posture-renderers.ts, let Vite reload, re-ran: all four steps failed; restored, green again"
+      }
+    },
+    "screenshot": "docs/operations/evidence/command-center-device-retarget-cdp.png",
+    "companion": "no component render harness exists for RunPosturePanel in this repo; the Companion surface is validated at its library layer by apps/companion/src/lib/run-resource-posture.test.ts, whose targetLabel assertion is revert-proven",
+    "rerunAfter": "the dev gateway restarts on source edits and the page loses its socket; reload the tab before re-running the rerun probe"
+  },
+  "producedBy": "scratchpad live-evidence pass against the running gateway. It is NOT the committed driver: the driver needs a device boot, which host admission refuses right now. The two node lists are therefore different on purpose, and both are listed below.",
+  "executedNodes": [
+    "boot-blocked-by-host-pressure",
+    "catalog-declares-device-parameters",
+    "contradictory-identity-refused-live",
+    "foreign-device-key-refused-live",
+    "no-device-touched",
+    "no-stray-lease",
+    "shell-charset-refused-live",
+    "wrong-platform-refused-live"
+  ]
 }

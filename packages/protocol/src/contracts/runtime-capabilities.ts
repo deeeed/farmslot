@@ -253,8 +253,12 @@ export type RuntimeCapabilityTarget = Partial<Record<RuntimeCapabilityTargetKey,
  * substituted into project hook command templates, so anything that could carry
  * shell meaning is refused before it reaches a template rather than escaped
  * afterwards.
+ *
+ * A LEADING dash is refused too. `-x` is shell-safe but it is still an argument
+ * to whatever the hook runs — `simctl boot -x`, `adb -s -x` — so an identity
+ * must start with an identity character.
  */
-export const RUNTIME_CAPABILITY_TARGET_VALUE_PATTERN = /^[A-Za-z0-9._:-]+$/;
+export const RUNTIME_CAPABILITY_TARGET_VALUE_PATTERN = /^[A-Za-z0-9._:][A-Za-z0-9._:-]*$/;
 
 export function isRuntimeCapabilityTargetKey(value: unknown): value is RuntimeCapabilityTargetKey {
   return RUNTIME_CAPABILITY_TARGET_KEYS.includes(value as RuntimeCapabilityTargetKey);

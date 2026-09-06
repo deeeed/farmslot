@@ -5,6 +5,12 @@
  *
  * Every assertion reads a structured signal — `xcrun simctl list -j devices`
  * for device state, gateway RPC results for lease state. No pane text.
+ *
+ * The re-target is driven through the two paths an operator actually uses, not
+ * through raw acquire/release: `runtime.posture.apply` (the reconciler path
+ * `recipe.rerun` delegates to) and `recipe.rerun` with a `target` (which adds
+ * the proof-plan rewrite). Both need a real run bound to the slot — set
+ * SMOKE_RUN_ID to a live, non-terminal run whose slot is SMOKE_SLOT.
  */
 import { execFile } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
@@ -56,7 +62,13 @@ const SLOT = process.env.SMOKE_SLOT ?? 'macwork-ff-4';
 const SIBLING = process.env.SMOKE_SIBLING ?? 'macwork-ff-1';
 const OWN_SIM = process.env.SMOKE_OWN_SIM ?? 'fs-4';
 const OTHER_SIM = process.env.SMOKE_OTHER_SIM ?? 'playground-1';
-const OWNER = `smoke-113-${process.pid}`;
+/**
+ * The lease owner. `runtime.posture.apply` and `recipe.rerun` both need a REAL
+ * run record, so those two nodes record `not-exercised` and fail when this is a
+ * synthetic id rather than reporting a pass they did not earn.
+ */
+const OWNER = process.env.SMOKE_RUN_ID ?? `smoke-113-${process.pid}`;
+const HAS_REAL_RUN = Boolean(process.env.SMOKE_RUN_ID);
 const SIBLING_OWNER = `smoke-113-sibling-${process.pid}`;
 
 function requirement(parameters) {
@@ -111,45 +123,102 @@ async function main() {
     },
   );
 
-  // 2. Re-target: release the old device lease, acquire the new identity.
-  await release(SLOT, OWNER);
-  const retarget = await acquire(SLOT, OWNER, { simulator: OTHER_SIM });
-  sims = await simctl();
-  node(
-    'retarget-boots-named-device',
-    `acquiring with simulator='${OTHER_SIM}' boots THAT device and leaves the slot's own one shut down`,
-    retarget.ok === true &&
-      retarget.lease?.parameters?.simulator === OTHER_SIM &&
-      sims[OTHER_SIM]?.state === 'Booted' &&
-      sims[OWN_SIM]?.state === 'Shutdown',
-    {
-      acquire: retarget.ok,
-      parameters: retarget.lease?.parameters,
-      other: sims[OTHER_SIM],
-      own: sims[OWN_SIM],
-      conflict: retarget.conflict,
-    },
-  );
+  // 2. Re-target through the POSTURE RECONCILER, which is the path
+  //    `recipe.rerun` delegates to (`prepareRunPostureForValidation`). The
+  //    release of the old device and the acquire of the new one are the
+  //    product's own, driven by the proof requirements alone.
+  if (!HAS_REAL_RUN) {
+    node(
+      'posture-retarget-releases-then-reacquires',
+      `the posture reconciler releases '${OWN_SIM}' and acquires '${OTHER_SIM}' in one apply`,
+      false,
+      { 'not-exercised': 'SMOKE_RUN_ID was not set, so there is no run record to reconcile' },
+    );
+  } else {
+    const applied = await gateway('runtime.posture.apply', {
+      runId: OWNER,
+      posture: 'active',
+      proofRequirements: [requirement({ simulator: OTHER_SIM })],
+    });
+    sims = await simctl();
+    const status = await gateway('runtime.capability.status', { slotId: SLOT, ownerRunId: OWNER });
+    const held = status.leases?.find(
+      (lease) => lease.capabilityId === 'ios-simulator' && lease.state === 'acquired',
+    );
+    node(
+      'posture-retarget-releases-then-reacquires',
+      `the posture reconciler releases '${OWN_SIM}' and acquires '${OTHER_SIM}' in one apply`,
+      applied.ok === true &&
+        held?.parameters?.simulator === OTHER_SIM &&
+        sims[OTHER_SIM]?.state === 'Booted' &&
+        sims[OWN_SIM]?.state === 'Shutdown',
+      {
+        outcome: applied.transition?.outcome,
+        failures: applied.transition?.failures,
+        rejection: applied.transition?.rejection,
+        leaseParameters: held?.parameters,
+        other: sims[OTHER_SIM],
+        own: sims[OWN_SIM],
+      },
+    );
+  }
 
-  // 3. Release runs against the device the lease acquired, not the slot default.
+  // 3. Release stops the device the LEASE acquired, not the slot's default.
   await release(SLOT, OWNER);
   sims = await simctl();
   node(
     'release-stops-leased-device',
-    `releasing the re-targeted lease shuts down '${OTHER_SIM}'`,
+    `releasing the re-targeted lease shuts down '${OTHER_SIM}', not the slot's own '${OWN_SIM}'`,
     sims[OTHER_SIM]?.state === 'Shutdown',
-    { other: sims[OTHER_SIM] },
+    { other: sims[OTHER_SIM], own: sims[OWN_SIM] },
   );
 
-  // 4. Re-target back to the slot's own device.
-  const back = await acquire(SLOT, OWNER, undefined);
-  sims = await simctl();
-  node(
-    'retarget-back',
-    `acquiring with no parameters again boots '${OWN_SIM}' and leaves '${OTHER_SIM}' shut down`,
-    back.ok === true && sims[OWN_SIM]?.state === 'Booted' && sims[OTHER_SIM]?.state === 'Shutdown',
-    { acquire: back.ok, own: sims[OWN_SIM], other: sims[OTHER_SIM], conflict: back.conflict },
-  );
+  // 4. `recipe.rerun` with a target: the proof-plan rewrite on top of that same
+  //    reconciler path. This is the acceptance criterion's own RPC.
+  if (!HAS_REAL_RUN) {
+    node(
+      'recipe-rerun-target-rewrites-the-proof-plan',
+      `\`recipe.rerun\` with a target moves the run's lease to the named device`,
+      false,
+      { 'not-exercised': 'SMOKE_RUN_ID was not set, so recipe.rerun has no run to replay' },
+    );
+  } else {
+    let rerun;
+    try {
+      rerun = await gateway('recipe.rerun', {
+        runId: OWNER,
+        slotId: SLOT,
+        target: { simulator: OWN_SIM },
+      });
+    } catch (error) {
+      rerun = { error: String(error?.message ?? error).slice(0, 400) };
+    }
+    // The rerun streams its preflight; give the posture step time to land.
+    await new Promise((resolve) => setTimeout(resolve, 20_000));
+    sims = await simctl();
+    const status = await gateway('runtime.capability.status', { slotId: SLOT, ownerRunId: OWNER });
+    const held = status.leases?.find(
+      (lease) => lease.capabilityId === 'ios-simulator' && lease.state === 'acquired',
+    );
+    const plan = status.proofPlans?.[OWNER]?.requirements?.find(
+      (entry) => entry.capabilityId === 'ios-simulator',
+    );
+    node(
+      'recipe-rerun-target-rewrites-the-proof-plan',
+      `\`recipe.rerun\` with target simulator='${OWN_SIM}' rewrites the stored plan and moves the lease back`,
+      plan?.parameters?.simulator === OWN_SIM &&
+        held?.parameters?.simulator === OWN_SIM &&
+        sims[OWN_SIM]?.state === 'Booted' &&
+        sims[OTHER_SIM]?.state === 'Shutdown',
+      {
+        rerun,
+        storedPlan: plan,
+        leaseParameters: held?.parameters,
+        own: sims[OWN_SIM],
+        other: sims[OTHER_SIM],
+      },
+    );
+  }
   await release(SLOT, OWNER);
 
   // 5. Typed refusals. Each is a node that can fail: a regression that accepted
@@ -244,17 +313,19 @@ async function main() {
     },
   };
   writeFileSync(
-    `${ROOT}/artifacts/device-retarget-smoke.json`,
+    `${ROOT}/docs/operations/evidence/runner-validate-macwork-gateway-device-retarget-smoke.json`,
     `${JSON.stringify(artifact, null, 2)}\n`,
   );
-  console.log(`\nwrote artifacts/device-retarget-smoke.json — ok=${artifact.ok}`);
+  console.log(
+    `\nwrote docs/operations/evidence/runner-validate-macwork-gateway-device-retarget-smoke.json — ok=${artifact.ok}`,
+  );
   process.exitCode = artifact.ok ? 0 : 1;
 }
 
 main().catch((error) => {
   console.error('smoke failed:', error?.message ?? error);
   writeFileSync(
-    `${ROOT}/artifacts/device-retarget-smoke.json`,
+    `${ROOT}/docs/operations/evidence/runner-validate-macwork-gateway-device-retarget-smoke.json`,
     `${JSON.stringify({ item: 'MANUAL-000113', ok: false, error: String(error?.message ?? error), nodes }, null, 2)}\n`,
   );
   process.exitCode = 1;

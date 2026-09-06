@@ -59,8 +59,18 @@ const IDENTITY_GROUP: Record<Exclude<RuntimeCapabilityTargetKey, 'platform'>, st
  */
 export function deviceTargetExtraVars(
   parameters: Record<string, unknown> | undefined,
+  /**
+   * The parameter names the provider's own schema declares. Supplied at the
+   * action layer, where the provider is known; omitted by the pure callers that
+   * are only validating a target's shape. The device allowlist is global, so
+   * without this a provider that names a parameter `platform` or `simulator`
+   * for its own purposes would have it substituted into its hook command — and
+   * `platform` is auto-injected from the slot, so it would be shadowed.
+   */
+  declaredParameters?: readonly string[],
 ): DeviceTargetOutcome<Record<string, string> | undefined> {
   if (!parameters) return { ok: true, value: undefined };
+  const declared = declaredParameters ? new Set(declaredParameters) : undefined;
   const extraVars: Record<string, string> = {};
   for (const key of RUNTIME_CAPABILITY_TARGET_KEYS) {
     const value = parameters[key];
@@ -74,22 +84,32 @@ export function deviceTargetExtraVars(
           `hook command and is refused rather than escaped`,
       };
     }
+    // Validated whatever the provider declares — a value that could carry shell
+    // meaning is refused even when it will not be substituted, because the
+    // refusal is what tells the operator the identity is wrong.
+    if (declared && !declared.has(key)) continue;
     extraVars[key] = value;
+  }
+  // The contradiction check reads the REQUEST, not the substitution set: a
+  // provider that declares only `simulator` still must not be handed a `udid`
+  // naming a different device.
+  const udid = parameters.udid;
+  const simulator = parameters.simulator;
+  if (typeof udid === 'string' && typeof simulator === 'string' && udid !== simulator) {
+    return {
+      ok: false,
+      reason: `Device parameters name two different iOS simulators: udid='${udid}' and simulator='${simulator}'`,
+    };
   }
   // A simulator IS its udid. Projects template `{{simulator}}`, so a target that
   // named only `udid` would otherwise expand to the slot's configured device and
-  // silently boot the wrong one.
-  if (extraVars.udid !== undefined && extraVars.simulator === undefined) {
-    extraVars.simulator = extraVars.udid;
-  } else if (
+  // silently boot the wrong one. Only when the provider declares `simulator`.
+  if (
     extraVars.udid !== undefined &&
-    extraVars.simulator !== undefined &&
-    extraVars.udid !== extraVars.simulator
+    extraVars.simulator === undefined &&
+    (!declared || declared.has('simulator'))
   ) {
-    return {
-      ok: false,
-      reason: `Device parameters name two different iOS simulators: udid='${extraVars.udid}' and simulator='${extraVars.simulator}'`,
-    };
+    extraVars.simulator = extraVars.udid;
   }
   return { ok: true, value: Object.keys(extraVars).length > 0 ? extraVars : undefined };
 }
@@ -106,6 +126,57 @@ function identityGroups(record: Record<string, unknown>): Map<string, Set<string
     groups.set(group, bucket);
   }
   return groups;
+}
+
+/**
+ * Whether a provider's declared cost claims a DEVICE.
+ *
+ * Only such a lease makes its slot's configured device off-limits. Treating any
+ * lease as a holder made a slot running only a browser or Metro block its own
+ * simulator, and reported that unrelated capability as the reason.
+ */
+export function claimsDevice(entry: Pick<RuntimeCapabilityCatalogEntry, 'cost'>): boolean {
+  return entry.cost.resources.some((claim) => claim.kind === 'device');
+}
+
+/**
+ * The device-identity keys of a record, or undefined when it names no device.
+ * `platform` is dropped: it selects a provider, not a device, so a parameter set
+ * carrying only `platform` can never conflict with anything.
+ */
+export function deviceIdentityOnly(
+  record: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const identity: Record<string, unknown> = {};
+  for (const key of DEVICE_KEYS) {
+    if (isRuntimeCapabilityTargetValue(record[key])) identity[key] = record[key];
+  }
+  return Object.keys(identity).length > 0 ? identity : undefined;
+}
+
+/**
+ * A slot's configured identity, with the lease's own identity taking over any
+ * group the lease actually names.
+ *
+ * A slot whose lease was re-targeted away from its configured simulator is not
+ * using that simulator, so counting the slot field as in-use would refuse a
+ * legal target. Groups the lease says nothing about keep the slot's value,
+ * because that is still what a future acquire there would resolve to.
+ */
+export function displaceIdentity(
+  configured: Record<string, unknown>,
+  leaseParameters: Record<string, unknown>,
+): Record<string, unknown> {
+  const leaseGroups = new Set(identityGroups(leaseParameters).keys());
+  const merged: Record<string, unknown> = {};
+  for (const key of DEVICE_KEYS) {
+    if (leaseGroups.has(IDENTITY_GROUP[key])) continue;
+    if (isRuntimeCapabilityTargetValue(configured[key])) merged[key] = configured[key];
+  }
+  for (const key of DEVICE_KEYS) {
+    if (isRuntimeCapabilityTargetValue(leaseParameters[key])) merged[key] = leaseParameters[key];
+  }
+  return merged;
 }
 
 /** One slot, elsewhere on the fleet, that currently holds a capability lease. */
@@ -236,12 +307,33 @@ export function retargetProofRequirements(
     };
   }
   const chosen = candidates[0]!;
+  // REPLACE the previous target's device keys, never union with them. The stored
+  // plan carries the last re-target, so `{udid: A}` followed by `{simulator: B}`
+  // would otherwise merge into a requirement naming two different simulators —
+  // one of which the operator never sent — and the contradiction would surface
+  // only at acquire, after the posture had already released the device.
+  // `platform` selects WHICH provider the target meant; it is not a device.
+  // Storing it would make a target that merely restates the platform of the
+  // provider already holding the device differ from the held lease, and the
+  // posture would release and reboot that same device for nothing.
+  const { platform: _selector, ...deviceKeys } = target;
+  const kept: Record<string, unknown> = { ...chosen.parameters };
+  // Only a target that actually names a device replaces the stored identity.
+  // Clearing it for a platform-only target would silently revert the run to the
+  // slot's configured device.
+  if (Object.keys(deviceKeys).length > 0) {
+    for (const key of RUNTIME_CAPABILITY_TARGET_KEYS) delete kept[key];
+  }
+  const parameters = { ...kept, ...deviceKeys };
+  // Validate the MERGED result, not only the incoming target, and do it here —
+  // before the caller reconciles anything — so a contradiction is a refusal
+  // rather than a release followed by a refusal.
+  const merged = deviceTargetExtraVars(parameters);
+  if (!merged.ok) return merged;
   return {
     ok: true,
     value: requirements.map((requirement) =>
-      requirement === chosen
-        ? { ...requirement, parameters: { ...requirement.parameters, ...target } }
-        : requirement,
+      requirement === chosen ? { ...requirement, parameters } : requirement,
     ),
   };
 }

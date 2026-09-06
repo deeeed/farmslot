@@ -667,6 +667,55 @@ export function buildBrowserNodeWatchCommand(pidPath: string, cdpPortRaw?: strin
 }
 
 /**
+ * The status a resource is in, given its definition and what its health hook
+ * returned. One rule, shared by the slot-wide poll and the single-resource
+ * probe, so a re-targeted capability lease (ADR-054 item 3) is never judged by a
+ * looser rule than the slot's own resources are. A resource with no health hook
+ * is `unknown` — the hook's absence is not evidence that it is running.
+ */
+export function resourceStatusFromHealth(
+  definition: { hooks?: { health?: string } } | undefined,
+  health: { ok: boolean } | undefined,
+): ResourceStatus {
+  if (!definition) return 'unknown';
+  if (!definition.hooks?.health) return 'unknown';
+  if (!health) return 'error';
+  return health.ok ? 'running' : 'stopped';
+}
+
+/**
+ * One resource's observed status, derived exactly as `pollSlotResources` derives
+ * it: a resource with no health hook is `unknown`, never `running`.
+ *
+ * The capability layer needs this for a re-targeted lease (ADR-054 item 3),
+ * where the slot-wide poll is the wrong question — it answers for the slot's
+ * CONFIGURED device. Trusting the health hook's exit code directly would have
+ * called a provider with no health hook healthy, which the default path never
+ * does. The only behaviour the slot-wide poll keeps to itself is refreshing the
+ * status cache every client renders from, which an override must not write to.
+ */
+export async function probeResourceStatus(
+  slotId: string,
+  resourceId: string,
+  extraVars?: Record<string, string>,
+): Promise<{ status: ResourceStatus; detail?: string }> {
+  const resources = await resolveSlotResources(slotId);
+  const resource = resources.find((candidate) => candidate.id === resourceId);
+  if (!resource) return { status: 'unknown', detail: `resource '${resourceId}' is not configured` };
+  if (!resource.definition.hooks?.health) {
+    return {
+      status: resourceStatusFromHealth(resource.definition, undefined),
+      detail: `resource '${resourceId}' has no health hook`,
+    };
+  }
+  const health = await executeResourceHealth(slotId, resourceId, extraVars);
+  return {
+    status: resourceStatusFromHealth(resource.definition, health),
+    ...(health.detail ? { detail: health.detail } : {}),
+  };
+}
+
+/**
  * Poll all resources for a single slot. Updates cache and returns results.
  */
 export async function pollSlotResources(
@@ -686,15 +735,18 @@ export async function pollSlotResources(
         return;
       }
       if (!r.definition.hooks?.health) {
-        // No health hook — keep as unknown
-        results.push({ id: r.id, status: 'unknown' });
+        results.push({ id: r.id, status: resourceStatusFromHealth(r.definition, undefined) });
         return;
       }
       try {
         const health = await executeResourceHealth(slotId, r.id);
-        results.push({ id: r.id, status: health.ok ? 'running' : 'stopped' });
+        results.push({ id: r.id, status: resourceStatusFromHealth(r.definition, health) });
       } catch {
-        results.push({ id: r.id, status: 'error' });
+        // A probe that threw says the resource is in an error state, which is
+        // what `resourceStatusFromHealth` returns for an absent result. The
+        // reason is not discarded: the poll's job is the status column, and the
+        // single-resource probe used by the capability layer lets it propagate.
+        results.push({ id: r.id, status: resourceStatusFromHealth(r.definition, undefined) });
       }
     }),
   );
