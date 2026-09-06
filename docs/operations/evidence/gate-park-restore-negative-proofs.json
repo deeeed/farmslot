@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06T00:26:20.250584Z",
+  "host": "macwork",
+  "scenario": "gate-park-restore-smoke",
+  "purpose": "Each node of the live gate-park restore scenario, broken in the gateway and observed failing against the production gateway, then restored. The error strings are verbatim from those runs.",
+  "runId": "aee49175-c87c-4b1d-816d-059c7a8a7018",
+  "nodes": [
+    {
+      "node": "previewEligible",
+      "file": "services/gateway/src/machine-parking/service.ts",
+      "intact": "the freed-slot eligibility verdict returns code 'ELIGIBLE_FREED_SLOT_RESTORE'",
+      "mutation": "returns 'ELIGIBLE_RESTORE' instead, i.e. the retained verdict",
+      "pass": false,
+      "error": "restore preview took code 'ELIGIBLE_RESTORE'",
+      "observedAt": "2026-09-06T00:16:53.133Z"
+    },
+    {
+      "node": "restored",
+      "file": "services/gateway/src/machine-parking/service.ts",
+      "intact": "restoreOne calls reclaimFreedSlot for a freed park",
+      "mutation": "the call is removed, so the restore never re-binds the slot",
+      "pass": false,
+      "error": "restore did not complete: outcome=failed phase=partial errors=[{\"phase\":\"parked\",\"action\":\"workspace.reattach\",\"code\":\"EFFECT_FAILED\",\"message\":\"slot 'macwork-ff-1' is owned by 'nobody', not 'aee49175-c87c-4b1d-816d-059c7a8a7018'; leaving the detached workspace alone\",\"occurredAt\":\"2026-09-06T00:19:24.789Z\",\"retryable\":true},{\"phase\":\"orchestration-resuming\",\"action\":\"workspace.reattach\",\"code\":\"EFFECT_FAILED\",\"message\":\"the parked branch is still detached; restore cannot complete until it is back in the working tree\",\"occurredAt\":\"2026-09-06T00:19:24.794Z\",\"retryable\":true}]",
+      "observedAt": "2026-09-06T00:19:25.889Z"
+    },
+    {
+      "node": "answerable",
+      "file": "services/gateway/src/methods/run/lifecycle-control.ts",
+      "intact": "the gate-park hold branch suppresses the inherited 'free-slot' choice",
+      "mutation": "the suppression is removed, so the restored gate can re-park the run",
+      "pass": false,
+      "error": "the restored gate can still inherit free-slot (suppressed=null, generation=0)",
+      "observedAt": "2026-09-06T00:26:04.382Z"
+    }
+  ],
+  "inherentNegatives": {
+    "fencedWhileParked": "asserts runtime.posture.apply is REFUSED with FREED_SLOT_RESTORE_REQUIRED; a lifted fence fails the node",
+    "slotTaken": "asserts the preview and run.resolveDecision both refuse with RESTORE_SLOT_TAKEN and that the preview mutated nothing; an accepted restore fails the node",
+    "parked": "observed failing live twice during development when the park's graceful-exit stop misread an exiting worker (recorded in the round-2 report)"
+  }
+}

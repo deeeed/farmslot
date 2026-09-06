@@ -2740,6 +2740,105 @@ test('a retry repairs an attach target the previous attempt left on a dead pane'
   assert.ok(ctx.calls.includes('rebind-context:run-gate:%555'));
 });
 
+test('a restore that fails after the rebind reports what is actually on the slot', async () => {
+  const ctx = await freedGateParkHarness();
+  ctx.deps.startResource = async () => ({ ok: false, detail: 'boot hook exploded' });
+
+  assert.equal((await ctx.service.restoreForGateResolution('run-gate')).ok, false);
+
+  const after = ctx.runs.get('run-gate')!;
+  // `slotFreedAt` survives the whole restore as the obligation marker, so
+  // reading it alone kept reporting the record's PRE-FREE observations for a
+  // slot the run is sitting in again.
+  assert.equal(after.park!.phase, 'partial');
+  assert.ok(after.park!.slotReboundAt);
+  const resource = after.park!.residuals.resources[0];
+  assert.equal(
+    resource?.detail,
+    'observed running',
+    `residuals came from the record, not the slot: ${JSON.stringify(after.park!.residuals)}`,
+  );
+});
+
+test('the reconciler leaves a mid-restore record alone instead of calling it parked', async () => {
+  const ctx = await freedGateParkHarness();
+  const parked = ctx.runs.get('run-gate')!;
+  // A restore that re-bound the slot and is still working through its stages.
+  // The freed marker is still set — it is the obligation — and reading it as
+  // "this run is parked" re-phased the record on the next tick, self-confirmed
+  // by the very field that made it look freed.
+  parked.park = {
+    ...parked.park!,
+    phase: 'resources-restoring',
+    slotReboundAt: '2026-08-21T00:00:22.000Z',
+    residuals: { runner: 'stopped', resources: [] },
+    resourceManifest: {
+      capturedAt: '2026-08-21T00:00:00.000Z',
+      resources: [],
+      capabilityLeases: [],
+    },
+  };
+  ctx.slotOwners.set('slot-a', 'run-gate');
+  ctx.slotLifecycles.set('slot-a', 'busy');
+
+  await ctx.service.reconcile();
+
+  assert.notEqual(
+    ctx.runs.get('run-gate')!.park!.phase,
+    'parked',
+    'a record mid-restore is not a parked one',
+  );
+});
+
+test('a restore whose resume failed after every stage is still retryable', async () => {
+  const ctx = await freedGateParkHarness();
+  ctx.deps.resumeRun = async () => {
+    throw new Error('the engine loop was gone');
+  };
+
+  assert.equal((await ctx.service.restoreForGateResolution('run-gate')).ok, false);
+
+  const after = ctx.runs.get('run-gate')!;
+  // Every stage landed and the record is still `partial`. Reading the stage
+  // list as done ended the obligation, which disabled the retry AND let restart
+  // repair drop the marker — leaving nothing on disk to finish it from.
+  assert.deepEqual(after.park!.restoreProgress?.completed, [
+    'rebind',
+    'reattach',
+    'reacquire',
+    'reload',
+  ]);
+  assert.equal(after.park!.phase, 'partial');
+  assert.equal(needsGateParkRestore(after), true);
+  assert.equal(isGateParkInFlightOrFreed(after), true);
+
+  await ctx.service.reconcile();
+  assert.equal(ctx.restoreSlotJournals.size, 1, 'the marker survives until the record settles');
+});
+
+test('a worker that was already back is recorded as adopted, not as an acknowledged reload', async () => {
+  const ctx = await freedGateParkHarness();
+  // The retry shape: a previous attempt's reload landed, so nothing is
+  // relaunched here and no turn is delivered. The proof is the live-binding
+  // check, and a consumer must be able to tell that from an acknowledged prompt.
+  ctx.runnerStates.set('run-gate', 'running');
+
+  const restored = await ctx.service.restoreForGateResolution('run-gate');
+
+  assert.equal(restored.ok, true, JSON.stringify(ctx.runs.get('run-gate')!.park!.errors));
+  const proof = ctx.runs.get('run-gate')!.park!.recoveryProof;
+  assert.equal(proof?.acknowledgement.kind, 'adopted');
+  assert.equal(proof?.acknowledgement.turnToken, undefined, 'an adopted worker started no turn');
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('reload-runner:')),
+    false,
+    'nothing was relaunched',
+  );
+  // Adoption still satisfies consumption: the question is whether this run's
+  // worker is back on its persisted session, not who relaunched it.
+  assert.equal(restored.ok === true && restored.reloadedSessionId, 'session-run-gate');
+});
+
 test('a restoration with no acknowledged reload is reported as a refusal, not a success', async () => {
   const ctx = await freedGateParkHarness();
   const parked = ctx.runs.get('run-gate')!;
@@ -2799,19 +2898,36 @@ test('a gate restore queued behind a completed one reports the completed restora
   assert.equal(ctx.runs.get('run-gate')!.park!.phase, 'restored');
 });
 
-test('the restore asks the runner layer what this run may adopt, never just the session', async () => {
+test('adoption evidence is the CURRENT slot binding, never a historical pane', async () => {
   const ctx = await freedGateParkHarness();
   await ctx.service.restoreForGateResolution('run-gate');
-  // The recorded pane is what this run's own records name; a live worker on any
-  // other pane is not this run's to adopt however well its session id matches.
+
+  // Before the rebind the slot belongs to nobody, and a live worker on a slot
+  // nobody owns is an orphan — not this run's to adopt however well its session
+  // id matches. So the read-only inspection is given no evidence at all.
+  assert.ok(
+    ctx.calls.includes('inspect-park-host:run-gate:no-ownership'),
+    ctx.calls.filter((call) => call.startsWith('inspect-park-host:')).join('\n'),
+  );
+  // After the rebind the row names this run, which is what makes its recorded
+  // panes adoptable.
   assert.ok(
     ctx.calls.some((call) => call.startsWith('rehost-park-target:run-gate:%')),
     ctx.calls.filter((call) => call.startsWith('rehost-park-target:')).join('\n'),
   );
+});
+
+test('a live worker on a slot a rival owns is never adoptable', async () => {
+  const ctx = await freedGateParkHarness();
+  ctx.slotOwners.set('slot-a', 'run-successor');
+  ctx.slotLifecycles.set('slot-a', 'busy');
+
+  await ctx.service.restoreForGateResolution('run-gate');
+
   assert.equal(
-    ctx.calls.some((call) => call.endsWith(':no-ownership')),
+    ctx.calls.some((call) => call.startsWith('inspect-park-host:run-gate:%')),
     false,
-    'no host decision is made without ownership evidence',
+    'a slot someone else owns authorizes nothing',
   );
 });
 

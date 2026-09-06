@@ -479,10 +479,12 @@ export async function runResumeTransitionLocked(
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
 
-  // The restore re-binds the slot and clears `slotFreedAt` BEFORE it reaches
-  // this transition, so a resume that still sees a freed slot means the rebind
-  // never landed. Resuming there would drive the run against a slot it does not
-  // hold, so it fails closed rather than trusting the caller's ordering.
+  // The restore re-binds the slot BEFORE it reaches this transition, and
+  // `isSlotFreedByPark` keys on that rebind — so a resume that still reads the
+  // slot as freed means the rebind never landed. Resuming there would drive the
+  // run against a slot it does not hold, so it fails closed rather than
+  // trusting the caller's ordering. (`slotFreedAt` itself survives until the
+  // whole restore completes; it is the obligation, not the occupancy.)
   if (isSlotFreedByPark(existing)) {
     throw new Error(
       `Run ${params.runId} is gate-parked with its slot still freed ` +
@@ -512,7 +514,7 @@ export async function runResumeTransitionLocked(
     // operator saw any of the outcome. Suppressed for exactly this generation,
     // the one the hold preserved; choosing `free-slot` again is still available,
     // it just has to be chosen rather than inherited.
-    void suppressInheritedGateChoice;
+    suppressInheritedGateChoice(params.runId, existing, existing.engineState?.generation ?? 0);
     const held = getRun(params.runId)!;
     emit(Events.RUN_UPDATED, { run: held });
     return gateParkResumeAcknowledgement(held, () => new Date().toISOString())!;

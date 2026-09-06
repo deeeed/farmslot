@@ -556,12 +556,21 @@ function pendingGateDecision(run) {
   );
 }
 
-function resolveDecisionAttempt(runId, decisionId, actionId) {
+function resolveDecisionAttempt(runId, decisionId, actionId, timeoutMs = 300_000) {
   const script = path.resolve('apps/command-center/scripts/cdp.mjs');
   const result = spawnSync(
     'node',
     [script, 'gateway', 'run.resolveDecision', JSON.stringify({ runId, decisionId, actionId })],
-    { cwd: process.cwd(), encoding: 'utf8', timeout: 300_000 },
+    {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      timeout: timeoutMs + 10_000,
+      // Answering a freed park RESTORES first — a slot claim, a checkout, a
+      // resource boot, and a runner relaunch. The client's default 5s budget
+      // gives up long before that lands and reports a timeout for a call that
+      // is still working.
+      env: { ...process.env, FARMSLOT_RPC_TIMEOUT_MS: String(timeoutMs) },
+    },
   );
   return {
     status: result.status,
@@ -713,19 +722,21 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
       }
       // Snapshotted immediately either side of the READ, so "no mutation" is a
       // measurement of the preview itself rather than of the window around it.
-      const beforePreview = {
+      // The successor's OWN row phase is excluded: it is a live run walking its
+      // pipeline, and comparing that would fail on its progress rather than on
+      // anything the preview did.
+      const previewSnapshot = () => ({
         record: rpc('run.get', { runId }).run.park,
-        slot: slotBinding(record.slotId),
+        slotOwner: slotBinding(record.slotId).currentRunId,
         workspace: workspaceIdentity(fleetSlot(record.slotId)),
-      };
+      });
+      const beforePreview = previewSnapshot();
       const takenPreview = rpc('machine.pause.restore', { machine: record.machine, selector });
-      const afterPreview = {
-        record: rpc('run.get', { runId }).run.park,
-        slot: slotBinding(record.slotId),
-        workspace: workspaceIdentity(fleetSlot(record.slotId)),
-      };
+      const afterPreview = previewSnapshot();
       if (JSON.stringify(beforePreview) !== JSON.stringify(afterPreview)) {
-        throw new Error('the slot-taken restore preview changed the record, the slot, or the tree');
+        throw new Error(
+          `the slot-taken restore preview changed the record, the slot owner, or the tree: ${JSON.stringify(beforePreview)} -> ${JSON.stringify(afterPreview)}`,
+        );
       }
       const takenEntry = selectedRun(takenPreview, runId);
       // The read-only verdict is checked BEFORE the resolve is attempted. If the
@@ -742,7 +753,7 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
       if (takenEntry.restoreTarget?.available !== false) {
         throw new Error('a taken slot still reported its restore target available');
       }
-      const attempt = resolveDecisionAttempt(runId, decision.id, decision.actions[0].id);
+      const attempt = resolveDecisionAttempt(runId, decision.id, decision.actions[0].id, timeoutMs);
       const attemptOutput = `${attempt.stdout}${attempt.stderr}`;
       const after = rpc('run.get', { runId }).run;
       report.slotTaken = {
@@ -782,24 +793,44 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
       if (report.slotTaken.recordAfter.restoreRefusal?.code !== 'RESTORE_SLOT_TAKEN') {
         throw new Error('the refusal reason was not persisted on the record');
       }
-      if (
-        JSON.stringify(report.slotTaken.slotAfter) !== JSON.stringify(successorSlot) ||
-        JSON.stringify(report.slotTaken.workspaceAfter) !== JSON.stringify(parkedWorkspace)
-      ) {
-        throw new Error('a refused restore changed the slot row or the working tree');
+      // The successor's OWN phase moves while these assertions run — it is a
+      // live run walking its pipeline — so comparing the whole row would fail
+      // on the successor's progress rather than on anything the refusal did.
+      // What the refusal must not have done is take the slot back or touch the
+      // tree, and that is what is compared.
+      if (report.slotTaken.slotAfter.currentRunId !== successorSlot.currentRunId) {
+        throw new Error(
+          `a refused restore moved slot ownership from '${successorSlot.currentRunId}' to '${report.slotTaken.slotAfter.currentRunId}'`,
+        );
+      }
+      if (JSON.stringify(report.slotTaken.workspaceAfter) !== JSON.stringify(parkedWorkspace)) {
+        throw new Error('a refused restore changed the working tree');
       }
       // Hand the slot back before the restore half.
       rpc('run.cancel', { runId: successorRunId, reason: 'gate-park restore live proof' });
+      // Both facts, not just the owner: a row whose owner cleared but whose
+      // lifecycle has not settled back to `ready` is still mid-teardown, and a
+      // restore into it is refused. Waiting on ownership alone raced the
+      // successor's own release.
       await poll(
         `${record.slotId} to be released by ${successorRunId}`,
         () => slotBinding(record.slotId),
-        (slot) => slot.currentRunId === null,
+        (slot) => slot.currentRunId === null && slot.lifecycle === 'ready',
         timeoutMs,
       );
     }
 
     // ─── restored ─────────────────────────────────────────────────────────
-    const freshPreview = rpc('machine.pause.restore', { machine: record.machine, selector });
+    // Waits on the Gateway's own verdict rather than on a proxy for it. The
+    // successor's slot row clears before its worker process does, and the
+    // re-host correctly refuses a pane another runner is still alive in — so
+    // "the row is free" is not the condition a restore needs.
+    const freshPreview = await poll(
+      `${record.slotId} to accept a restore of ${runId}`,
+      () => rpc('machine.pause.restore', { machine: record.machine, selector }),
+      (preview) => selectedRun(preview, runId)?.eligibility.eligible === true,
+      timeoutMs,
+    );
     const freshEntry = selectedRun(freshPreview, runId);
     if (!freshEntry?.eligibility.eligible) {
       throw new Error(
@@ -904,17 +935,6 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
       );
     }
 
-    // ─── consumed ─────────────────────────────────────────────────────────
-    // The REAL operator trigger, end to end: `run.resolveDecision` restores a
-    // freed park, consumes the decision, and the run walks past the gate. It
-    // needs a gate-held run the proof may spend, because consuming is the
-    // point — so it runs against a disposable run supplied for it, never
-    // against the one whose gate an operator is still holding.
-    report.consumed = await proveGateConsumption({ machine: record.machine, timeoutMs });
-    if (report.consumed.attempted && !report.consumed.pass) {
-      throw new Error(`gate consumption proof failed: ${report.consumed.error}`);
-    }
-
     // ─── answerable ───────────────────────────────────────────────────────
     // Read-only on purpose: the operator's decision is theirs to make. What is
     // proved here is that the fence lifted, not that the gate was answered.
@@ -935,6 +955,17 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
       throw new Error(
         `the restored gate can still inherit free-slot (suppressed=${report.answerable.gateChoiceSuppressedForGeneration}, generation=${report.parked.generation})`,
       );
+    }
+    // ─── consumed ─────────────────────────────────────────────────────────
+    // LAST, because it spends the gate the node above just proved answerable —
+    // and consuming it also consumes the one-shot suppression that node checks.
+    // The REAL operator trigger, end to end: `run.resolveDecision` restores a
+    // freed park, consumes the decision, and the engine acts on the answer. It
+    // needs a gate-held run the proof may spend, so it runs against a
+    // disposable run supplied for it, never against one an operator is holding.
+    report.consumed = await proveGateConsumption({ machine: record.machine, timeoutMs });
+    if (report.consumed.attempted && !report.consumed.pass) {
+      throw new Error(`gate consumption proof failed: ${report.consumed.error}`);
     }
     report.pass = true;
   } catch (error) {
@@ -1063,7 +1094,14 @@ async function proveGateConsumption({ machine, timeoutMs }) {
   }
   const proof = { attempted: true, pass: false, runId: consumeRunId, error: null };
   try {
-    const before = rpc('run.get', { runId: consumeRunId }).run;
+    // Parked here when it is not already, so this node is self-contained and can
+    // follow the restore cycle above on the same run: that cycle deliberately
+    // leaves the run RESTORED, and consumption needs it parked.
+    let before = rpc('run.get', { runId: consumeRunId }).run;
+    if (!before.park?.slotFreedAt) {
+      proof.parkedByChoice = parkGateHeldRun(consumeRunId, timeoutMs);
+      before = rpc('run.get', { runId: consumeRunId }).run;
+    }
     const park = before.park;
     if (!park?.slotFreedAt || park.mode !== 'release' || park.slotDisposition !== 'freed') {
       throw new Error(`run ${consumeRunId} is not a freed gate park`);
@@ -1072,12 +1110,21 @@ async function proveGateConsumption({ machine, timeoutMs }) {
       throw new Error(`run ${consumeRunId} is parked on ${park.machine}`);
     const decision = pendingGateDecision(before);
     if (!decision) throw new Error(`run ${consumeRunId} has no pending publication gate`);
-    const action = decision.actions[0].id;
+    // Prefer an answer that keeps the run non-terminal and PUBLISHES NOTHING.
+    // The claim under test is that answering the gate restores the run before
+    // it consumes the decision — publishing is not part of it, and a proof that
+    // opens a PR as a side effect is a proof nobody can safely re-run.
+    const actionIds = decision.actions.map((candidate) => candidate.id);
+    const action =
+      actionIds.find((candidate) => candidate === 'hold') ??
+      actionIds.find((candidate) => !candidate.startsWith('approve-')) ??
+      actionIds[0];
+    proof.actionIsNonPublishing = action !== actionIds.find((c) => c.startsWith('approve-'));
     proof.decisionId = decision.id;
     proof.actionId = action;
     proof.beforeStatus = before.status;
 
-    const attempt = resolveDecisionAttempt(consumeRunId, decision.id, action);
+    const attempt = resolveDecisionAttempt(consumeRunId, decision.id, action, timeoutMs);
     proof.resolveExit = attempt.status;
     if (attempt.status !== 0) {
       throw new Error(
@@ -1101,18 +1148,30 @@ async function proveGateConsumption({ machine, timeoutMs }) {
         `the park settled '${proof.parkPhase}' with slotFreedAt ${proof.slotFreedAt}`,
       );
     }
-    // Consuming is not progress. The gate step has to leave `running` and the
-    // run has to move on, or the answer went nowhere.
+    // Consuming is not progress. The engine has to ACT on the answer, or the
+    // operator's decision went nowhere. What acting looks like depends on the
+    // action: an approval walks past the gate, a hold re-presents it as a new
+    // decision. Either is the engine moving; neither is the run sitting on the
+    // decision it was just handed.
     const progressed = await poll(
-      `run ${consumeRunId} to move past its gate`,
+      `run ${consumeRunId} to act on its answered gate`,
       () => rpc('run.get', { runId: consumeRunId }).run,
       (run) =>
         run.steps.find((step) => step.name === 'human-gate')?.status !== 'running' ||
-        run.status !== before.status,
+        run.status !== before.status ||
+        pendingGateDecision(run) !== null,
       timeoutMs,
     );
     proof.afterStatus = progressed.status;
     proof.gateStep = progressed.steps.find((step) => step.name === 'human-gate')?.status ?? null;
+    proof.rePresentedDecisionId = pendingGateDecision(progressed)?.id ?? null;
+    if (
+      proof.gateStep === 'running' &&
+      proof.afterStatus === before.status &&
+      !proof.rePresentedDecisionId
+    ) {
+      throw new Error('the answered gate produced no engine action');
+    }
     proof.pass = true;
   } catch (error) {
     proof.error = error?.message || String(error);

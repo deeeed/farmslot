@@ -444,7 +444,7 @@ function validRecoveryProof(value: unknown): boolean {
   return (
     nonEmpty(value.sessionId) &&
     value.live === true &&
-    value.acknowledgement.kind === 'structured' &&
+    (value.acknowledgement.kind === 'structured' || value.acknowledgement.kind === 'adopted') &&
     nonEmpty(value.acknowledgement.source) &&
     nonEmpty(value.acknowledgement.reason) &&
     optionalString(value.acknowledgement.turnToken, true) &&

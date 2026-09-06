@@ -378,7 +378,11 @@ test('a gate park with unfinished restore stages still owes a restore and stays 
   assert.equal(needsGateParkRestore({ park: halfRestored }), true);
   assert.equal(isGateParkInFlightOrFreed({ park: halfRestored }), true);
 
-  const finished = {
+  // Completing every stage does NOT end the obligation while the record is still
+  // `partial`: the orchestration resume after them can fail, and reading the
+  // stage list as done there left the run unable to answer its gate and unable
+  // to be restored through it. Only `restored` ends it.
+  const everyStageDone = {
     ...halfRestored,
     restoreProgress: {
       operationId: 'restore-1',
@@ -386,8 +390,29 @@ test('a gate park with unfinished restore stages still owes a restore and stays 
       updatedAt: '2026-09-05T00:00:30.000Z',
     },
   };
-  assert.equal(needsGateParkRestore({ park: finished }), false);
-  assert.equal(isGateParkInFlightOrFreed({ park: finished }), false);
+  assert.equal(needsGateParkRestore({ park: everyStageDone }), true);
+  assert.equal(isGateParkInFlightOrFreed({ park: everyStageDone }), true);
+
+  const settled = { ...everyStageDone, phase: 'restored' as const };
+  assert.equal(needsGateParkRestore({ park: settled }), false);
+  assert.equal(isGateParkInFlightOrFreed({ park: settled }), false);
+});
+
+test('a record that cleared its freed marker at the rebind still owes every stage', () => {
+  // Written before restores tracked their stages: the rebind was the first
+  // durable write and it cleared the only field that said the slot was freed.
+  // Nothing but the rebind fact is left to say a restore ever touched it, and
+  // reading occupancy instead left it answerable with a worker that may be dead.
+  const legacyPartial = {
+    ...freedGateParkRecord('run-gate', 'slot-a'),
+    phase: 'partial' as const,
+    slotFreedAt: undefined,
+    slotReboundAt: '2026-09-05T00:00:20.000Z',
+    preservedWorkspace: undefined,
+    residuals: { runner: 'running' as const, resources: [] },
+  };
+  assert.equal(needsGateParkRestore({ park: legacyPartial }), true);
+  assert.equal(isGateParkInFlightOrFreed({ park: legacyPartial }), true);
 });
 
 test('a partial park whose worker cannot be observed stays fenced', () => {

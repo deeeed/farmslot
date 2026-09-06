@@ -81,6 +81,7 @@ import {
   runtimeCapabilityStatus,
 } from '../methods/runtime-capabilities.js';
 import { isGateHeldPublicationRun } from '../run-engine/gate-held-lifecycle.js';
+import { needsGateParkRestore } from '../run-engine/park-slot-binding.js';
 import {
   withMachineRunTransition,
   withRunTransitionWhileMachineHeld,
@@ -804,7 +805,7 @@ export class MachineParkingService {
           operationId,
           machine,
           selector: params.selector,
-          runs: idempotent.map((record) => restoreOutcomeRun(record)),
+          runs: await this.restoreOutcomeRuns(idempotent),
           records: idempotent,
           ...(await this.optionalPressure(machine)),
         };
@@ -857,7 +858,7 @@ export class MachineParkingService {
         operationId,
         machine,
         selector: params.selector,
-        runs: records.map((record) => restoreOutcomeRun(record)),
+        runs: await this.restoreOutcomeRuns(records),
         records,
         ...(await this.optionalPressure(machine)),
       };
@@ -951,13 +952,22 @@ export class MachineParkingService {
    * a running process and no proof, and falling back to the handle's session id
    * there would report a reload that was never acknowledged — which is exactly
    * the evidence gate consumption is supposed to depend on.
+   *
+   * BOTH acknowledgement kinds satisfy consumption, and the rule is worth
+   * stating. The question consumption asks is "is this run's worker back on its
+   * persisted session", not "did we personally relaunch it". `adopted` answers
+   * that through the structured live-binding check on a pane the current slot
+   * binding says is this run's — which is the same evidence the reload path
+   * verifies AFTER relaunching. What neither may be is inferred from occupancy.
    */
   private completedGateRestore(
     runId: string,
     settled: MachineParkRecord,
   ): MachineParkGateRestoreResult {
     const proof = settled.recoveryProof;
-    if (!proof || proof.live !== true || proof.acknowledgement.kind !== 'structured') {
+    const acknowledged =
+      proof?.acknowledgement.kind === 'structured' || proof?.acknowledgement.kind === 'adopted';
+    if (!proof || proof.live !== true || !acknowledged) {
       return {
         ok: false,
         runId,
@@ -980,6 +990,45 @@ export class MachineParkingService {
       gateReplayed: restoredGeneration > settled.generation,
       record: settled,
     };
+  }
+
+  /**
+   * The preview-shaped entries describing what a restore attempt actually did.
+   *
+   * `available` comes from the SAME question the preview asks — can that slot
+   * take this run back right now — rather than from the record's obligation
+   * marker. Reading the marker reported a partial that is sitting in its own
+   * slot as unavailable, so the same record answered two different ways
+   * depending on which call the client happened to make.
+   */
+  private async restoreOutcomeRuns(
+    records: MachineParkRecord[],
+  ): Promise<MachinePauseRestorePreviewRun[]> {
+    return Promise.all(
+      records.map(async (record) => ({
+        runId: record.runId,
+        generation: record.generation,
+        selected: true,
+        eligibility:
+          record.phase === 'restored'
+            ? {
+                eligible: true as const,
+                code: 'RESTORE_COMPLETE',
+                reason: 'The reviewed parked run was restored.',
+              }
+            : {
+                eligible: false as const,
+                code: 'RESTORE_PARTIAL',
+                reason: lastError(record),
+              },
+        restoreTarget: {
+          slotId: record.slotId,
+          disposition: record.slotDisposition ?? 'retained',
+          available: (await this.slotAcceptsRestore(record.slotId, record.runId)).ok,
+        },
+        record,
+      })),
+    );
   }
 
   private async refusedGateRestore(
@@ -1052,6 +1101,12 @@ export class MachineParkingService {
             record.mode === 'release' &&
             record.slotDisposition === 'freed' &&
             Boolean(record.slotFreedAt) &&
+            // Not once a restore has re-bound the slot. `slotFreedAt` survives
+            // the restore, and `observeResiduals` reported `stopped` from the
+            // same record, so this re-phased a mid-restore `partial` back to a
+            // clean `parked` — self-confirmed by the very field that made it
+            // look freed, and erasing the `partial` an operator needs to see.
+            !record.slotReboundAt &&
             stopped
           ) {
             phase = 'parked';
@@ -2261,13 +2316,19 @@ export class MachineParkingService {
    *
    * A matching native session id proves the process is resuming this
    * CONVERSATION; a successor dispatched with the same `--resume` proves that
-   * too. What it cannot prove is that the worker belongs to this Farmslot run,
-   * so adoption additionally needs the slot to be this run's (or free — a free
-   * slot's worker is an orphan, and only this run's records name its panes) and
-   * the pane to be one this run itself recorded.
+   * too. What it cannot prove is that the worker belongs to this Farmslot run.
    *
-   * Returns undefined when the slot belongs to someone else, and the caller
-   * then refuses every live occupant rather than adopting one.
+   * So the evidence has to be CURRENT, and the only current binding this
+   * gateway records is the slot row: it names the run that owns the slot right
+   * now. A historical pane id is not evidence — the pane it names was handed to
+   * whoever took the slot next, and a same-conversation successor sitting in it
+   * after its own row cleared would be adopted and then respawned over.
+   *
+   * Returns undefined unless the row names this run, and the caller then
+   * refuses every live occupant rather than adopting one. That is deliberately
+   * strict about the free-slot case: a live worker on a slot nobody owns is an
+   * orphan, and orphans are not this restore's to take. Adoption only has to
+   * work after the rebind, which is where a retry needs it.
    */
   private async parkHostOwnership(
     run: Run,
@@ -2278,7 +2339,7 @@ export class MachineParkingService {
       row && typeof row.current_run_id === 'string' && row.current_run_id
         ? row.current_run_id
         : null;
-    if (owner && owner !== run.id) return undefined;
+    if (owner !== run.id) return undefined;
     const ownedPaneIds = [
       ...new Set(
         [
@@ -2982,7 +3043,12 @@ export class MachineParkingService {
                     sessionId: handle.sessionId,
                     live: true,
                     acknowledgement: {
-                      kind: 'structured',
+                      // `adopted`, not `structured`: nothing was relaunched and
+                      // no turn was delivered here. The evidence is the host
+                      // plan's structured live-binding check, which is a real
+                      // signal — but a consumer must be able to tell it from a
+                      // prompt the runner acknowledged.
+                      kind: 'adopted',
                       source: 'runner-session-binding',
                       reason: `the live worker on pane ${handle.target.paneId} owns this run's persisted session`,
                     },
@@ -3123,7 +3189,13 @@ export class MachineParkingService {
     // holding processes it does not own. The record is the authority instead:
     // the free only lands after the runner and every manifest resource were
     // observed stopped, so those observations are what it carries.
-    if (record.slotFreedAt) {
+    //
+    // Only while the slot is still ANOTHER's, though. `slotFreedAt` survives the
+    // whole restore as the obligation marker, so reading it alone kept reporting
+    // a restored run's live worker as stopped from a record written before the
+    // rebind. Once `slotReboundAt` says the slot is ours again, probing it is
+    // both safe and the only way to report what is actually there.
+    if (record.slotFreedAt && !record.slotReboundAt) {
       return {
         runner: 'stopped' as const,
         resources: record.resourceManifest.resources.map((resource) => ({
@@ -3520,8 +3592,10 @@ export class MachineParkingService {
     if (run.park.operationId !== record.operationId) return true;
     if (run.park.phase === 'restored' || run.park.phase === 'cancelled') return true;
     if (isTerminalRunStatus(run.status)) return true;
-    // Every stage landed, so the marker outlived its transition.
-    if (machineParkRestoreComplete(run.park.restoreProgress)) return true;
+    // Nothing is owed any more, so the marker outlived its transition. Keyed on
+    // the obligation rather than the stage list: every stage can be complete and
+    // the record still `partial`, because the resume after them failed.
+    if (!needsGateParkRestore(run)) return true;
     const availability = await this.slotAcceptsRestore(record.slotId, record.runId);
     if (!availability.ok) {
       await this.recordRestoreRefusal(
@@ -3532,6 +3606,16 @@ export class MachineParkingService {
       return true;
     }
     const operationId = run.park.restoreProgress?.operationId ?? record.operationId;
+    const done =
+      run.park.restoreProgress?.operationId === operationId
+        ? run.park.restoreProgress.completed
+        : [];
+    // Re-driving stages this attempt already landed costs four record patches
+    // and a slot read every reconcile tick, for as long as the park sits
+    // unrestored. Keeping the marker is right; repeating finished work is not.
+    if (done.includes('rebind') && done.includes('reattach')) {
+      return !needsGateParkRestore(this.requireRun(record.runId));
+    }
     try {
       // Resumes from the recorded stage. Only the two FLEET-VISIBLE stages are
       // finished here: a crash between them leaves a row bound to a run every
@@ -3546,9 +3630,11 @@ export class MachineParkingService {
       await this.appendError(record.runId, 'resources-restoring', 'slot.rebind', error);
       return false;
     }
-    // The remaining stages are a restore's to run, so the marker stays; keeping
-    // it is what makes the next reconcile re-prove these two rather than assume.
-    return machineParkRestoreComplete(this.requireRun(record.runId).park?.restoreProgress);
+    // The marker is dropped only when the record owes nothing at all. Reading
+    // the stage list instead dropped it for a record whose stages all landed
+    // and whose orchestration resume then failed — a `partial` that still needs
+    // a restore, with nothing left on disk to finish it from.
+    return !needsGateParkRestore(this.requireRun(record.runId));
   }
 
   private async settleUnexpectedFailure(
@@ -3692,39 +3778,6 @@ export const machineParkRestoreForGateResolution = (runId: string) =>
   machineParkingService.restoreForGateResolution(runId);
 export const machinePauseRestore = (params: MachinePauseRestoreParams) =>
   machineParkingService.restore(params);
-/**
- * The preview-shaped entry describing what a restore attempt actually did.
- *
- * `available` is read off the record rather than the fleet: after an attempt the
- * record is the authority for its own slot binding, and one that still
- * advertises a freed slot did not get it back.
- */
-function restoreOutcomeRun(record: MachineParkRecord): MachinePauseRestorePreviewRun {
-  return {
-    runId: record.runId,
-    generation: record.generation,
-    selected: true,
-    eligibility:
-      record.phase === 'restored'
-        ? {
-            eligible: true as const,
-            code: 'RESTORE_COMPLETE',
-            reason: 'The reviewed parked run was restored.',
-          }
-        : {
-            eligible: false as const,
-            code: 'RESTORE_PARTIAL',
-            reason: lastError(record),
-          },
-    restoreTarget: {
-      slotId: record.slotId,
-      disposition: record.slotDisposition ?? 'retained',
-      available: !record.slotFreedAt,
-    },
-    record,
-  };
-}
-
 function selectPauseRuns(
   runs: Run[],
   fleet: Fleet,
@@ -4005,6 +4058,12 @@ function owesFreedSlotStages(record: MachineParkRecord): boolean {
   return record.slotDisposition === 'freed' && Boolean(record.slotReboundAt);
 }
 
+/**
+ * A release park that declared it would free the run's slot. Keyed on the
+ * INTENT, because the callers that use it — the preview's `paused` relaxation
+ * and the restore preflight — must admit a gate park whose release never
+ * landed just as readily as one whose did.
+ */
 function isGateParkRecord(record: MachineParkRecord): boolean {
   return record.mode === 'release' && record.slotDisposition === 'freed';
 }

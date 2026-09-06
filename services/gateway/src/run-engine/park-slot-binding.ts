@@ -1,4 +1,4 @@
-import { machineParkRestoreComplete, type Run } from '@farmslot/protocol';
+import type { Run } from '@farmslot/protocol';
 
 /**
  * Whether this run's machine-park record released its slot (ADR-054
@@ -42,17 +42,27 @@ export function isSlotFreedByPark(run: Pick<Run, 'park'>): boolean {
 export function needsGateParkRestore(run: Pick<Run, 'park'>): boolean {
   const park = run.park;
   if (!park) return false;
+  // `restored` is the ONLY thing that ends the obligation. Not the stage list:
+  // every stage can be complete and the record still be `partial`, because the
+  // orchestration resume after them failed — and reading the stages as done
+  // there left the run unable to answer its gate and unable to be restored
+  // through it. Not the residuals either: a reload that started the worker and
+  // lost its acknowledgement leaves an occupied slot and a running process.
   if (park.phase === 'restored' || park.phase === 'cancelled') return false;
   if (park.mode !== 'release' || park.slotDisposition !== 'freed') return false;
-  // A restore that STARTED owes the rest of its stages, whatever the record's
-  // occupancy says now. This is the case a record written before restores
-  // tracked their stages also lands in: it cleared the freed marker at its
-  // first stage, so nothing else is left that says the restore is unfinished.
-  if (park.restoreProgress) return !machineParkRestoreComplete(park.restoreProgress);
-  // No restore has started, so only a park that actually freed the slot owes
-  // one. A park still landing is the in-flight fence's business, not a
-  // restore's: there is nothing coherent to restore into yet.
-  return Boolean(park.slotFreedAt);
+  // The park itself is still landing. There is nothing coherent to restore
+  // into yet, and the in-flight fence covers that case instead.
+  //
+  // Everything else got PAST the park: it freed the slot, or a restore already
+  // re-bound it. A record written before stages were tracked lands here through
+  // `slotReboundAt` — it cleared its freed marker at the rebind, so that is the
+  // only fact left saying a restore touched it.
+  //
+  // A park that settled without reaching the slot at all is deliberately NOT
+  // here. It owes no freed-slot stages, and the outstanding-effect fence below
+  // is the right guard for it: it can still leave a run answerable where it
+  // stands when the park stopped nothing.
+  return Boolean(park.slotFreedAt) || Boolean(park.slotReboundAt);
 }
 
 /**
@@ -89,13 +99,16 @@ export function isGateParkInFlightOrFreed(run: Pick<Run, 'park'>): boolean {
   if (!park) return false;
   // A record the operator already settled fences nothing, even though it still
   // carries the historical `slotFreedAt` of the release it undid.
+  //
+  // Everything that still owes a restore is fenced, by construction rather than
+  // by two lists of conditions that have to be kept in step. A gate that can be
+  // answered while a restore is outstanding is the whole failure this guards.
+  if (park.phase !== 'restored' && park.phase !== 'cancelled' && needsGateParkRestore(run)) {
+    return true;
+  }
   if (park.phase === 'restored' || park.phase === 'cancelled') return false;
   if (park.slotFreedAt) return true;
   if (park.mode !== 'release' || park.slotDisposition !== 'freed') return false;
-  // A restore that started and did not finish every stage it owes. Its slot may
-  // be back and its worker may even be running, so nothing about the run's
-  // occupancy says it is safe to answer the gate — only the stage record does.
-  if (park.restoreProgress && !machineParkRestoreComplete(park.restoreProgress)) return true;
   if (park.phase === 'partial') {
     if (park.preservedWorkspace?.detachedAt) return true;
     // The park stops the runner before it ever touches the slot, so a partial

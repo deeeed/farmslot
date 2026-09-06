@@ -1874,9 +1874,23 @@ export interface MachineParkRecord {
     sessionId: string;
     live: true;
     acknowledgement: {
-      kind: 'structured';
+      /**
+       * How the worker was proven back.
+       *
+       * `structured` — the restore relaunched the session and the runner
+       * acknowledged the continuation prompt: a turn was delivered and started.
+       *
+       * `adopted` — the worker was ALREADY running this run's persisted session
+       * when the restore reached it, so nothing was relaunched and no turn was
+       * delivered. The evidence is the structured live-binding check, not a
+       * prompt acknowledgement, and the two must be distinguishable: a consumer
+       * with only `source` to go on cannot tell a delivered turn from an
+       * inherited one.
+       */
+      kind: 'structured' | 'adopted';
       source: string;
       reason: string;
+      /** Present only for `structured`; an adopted worker started no turn. */
       turnToken?: string;
     };
     acceptedAt: string;

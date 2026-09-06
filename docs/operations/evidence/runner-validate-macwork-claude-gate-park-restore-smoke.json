@@ -1,38 +1,43 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-05T23:59:38.301Z",
+  "recordedAt": "2026-09-06T05:52:35.400Z",
   "host": "macwork",
   "scenario": "gate-park-restore-smoke",
   "runner": "claude",
-  "runId": "aee49175-c87c-4b1d-816d-059c7a8a7018",
-  "operationId": "gate-park-restore-80672-1788652743155",
+  "runId": "98c3657b-caae-41d6-91eb-1b96447f2480",
+  "operationId": "gate-park-restore-64510-1788673788911",
   "machine": "macwork",
-  "slotId": "macwork-ff-1",
-  "parkedByChoice": null,
+  "slotId": "macwork-ff-2",
+  "parkedByChoice": {
+    "transitionOutcome": "applied",
+    "rejection": null,
+    "phase": "parked",
+    "slotFreedAt": "2026-09-06T05:50:20.959Z"
+  },
   "parked": {
     "status": "blocked",
     "phase": "parked",
-    "slotFreedAt": "2026-09-05T23:57:11.838Z",
+    "slotFreedAt": "2026-09-06T05:50:20.959Z",
     "generation": 0,
-    "decisionId": "fa14a286-dcb9-4e38-8a5c-1a903aedd856",
+    "decisionId": "a955741b-d41d-4d81-af48-aa3b181590b8",
     "preservedWorkspace": {
-      "branch": "feat/manual-000119-regenerate-gateway-api-docs",
-      "headSha": "e8110332ab842e98a8eeb07ad11075c3f0e7ccd5",
-      "detachedAt": "2026-09-05T23:57:11.832Z"
+      "branch": "feat/manual-000121-fix-runner-stop-process-scan",
+      "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
+      "detachedAt": "2026-09-06T05:50:20.954Z"
     },
-    "recordedPaneId": "%1170",
-    "sessionId": "44cd377e-b171-437d-8878-9ee4f1bed35f",
+    "recordedPaneId": "%1314",
+    "sessionId": "12eb4240-de29-437b-88ff-9ba331f32899",
     "slot": {
-      "slot": "macwork-ff-1",
+      "slot": "macwork-ff-2",
       "currentRunId": null,
       "lifecycle": "ready",
       "phase": null,
       "agent": "idle"
     },
     "workspace": {
-      "repo": "/Users/deeeed/dev/farmslot-wt/farmslot-1",
+      "repo": "/Users/deeeed/dev/farmslot-wt/farmslot-2",
       "branch": "HEAD",
-      "headSha": "e8110332ab842e98a8eeb07ad11075c3f0e7ccd5",
+      "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
       "dirty": 0
     }
   },
@@ -41,20 +46,20 @@
     "matched": true
   },
   "previewEligible": {
-    "previewId": "restore-f4320fcca10fe28fcb8c97ab",
+    "previewId": "restore-fea25d5afd7a38478d7dcb84",
     "eligibility": {
       "eligible": true,
       "code": "ELIGIBLE_FREED_SLOT_RESTORE",
-      "reason": "The freed slot is still free and the persisted runner session will be re-hosted on a new pane."
+      "reason": "The freed slot is still free and the persisted runner session is reloadable in place."
     },
     "restoreTarget": {
-      "slotId": "macwork-ff-1",
+      "slotId": "macwork-ff-2",
       "disposition": "freed",
       "available": true
     }
   },
   "slotTaken": {
-    "successorRunId": "49ad303a-20a1-45d0-aa22-f66de20762d4",
+    "successorRunId": "658a8598-eab5-4cd8-90b8-c0840ba394fe",
     "previewCode": "RESTORE_SLOT_TAKEN",
     "previewAvailable": false,
     "previewMutatedNothing": true,
@@ -63,25 +68,25 @@
     "decisionStillPending": true,
     "recordAfter": {
       "phase": "parked",
-      "slotFreedAt": "2026-09-05T23:57:11.838Z",
+      "slotFreedAt": "2026-09-06T05:50:20.959Z",
       "slotReboundAt": null,
       "restoreRefusal": {
         "code": "RESTORE_SLOT_TAKEN",
-        "reason": "slot 'macwork-ff-1' is now owned by run '49ad303a-20a1-45d0-aa22-f66de20762d4'",
-        "at": "2026-09-05T23:59:06.777Z"
+        "reason": "slot 'macwork-ff-2' is now owned by run '658a8598-eab5-4cd8-90b8-c0840ba394fe'",
+        "at": "2026-09-06T05:50:29.195Z"
       }
     },
     "slotAfter": {
-      "slot": "macwork-ff-1",
-      "currentRunId": "49ad303a-20a1-45d0-aa22-f66de20762d4",
+      "slot": "macwork-ff-2",
+      "currentRunId": "658a8598-eab5-4cd8-90b8-c0840ba394fe",
       "lifecycle": "busy",
       "phase": "preparing",
       "agent": "idle"
     },
     "workspaceAfter": {
-      "repo": "/Users/deeeed/dev/farmslot-wt/farmslot-1",
+      "repo": "/Users/deeeed/dev/farmslot-wt/farmslot-2",
       "branch": "HEAD",
-      "headSha": "e8110332ab842e98a8eeb07ad11075c3f0e7ccd5",
+      "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
       "dirty": 0
     }
   },
@@ -90,59 +95,76 @@
     "ok": true,
     "phase": "restored",
     "slotFreedAt": null,
-    "slotReboundAt": "2026-09-05T23:59:13.181Z",
+    "slotReboundAt": "2026-09-06T05:50:33.579Z",
     "restoreRefusal": null,
     "errors": [],
     "slot": {
-      "slot": "macwork-ff-1",
-      "currentRunId": "aee49175-c87c-4b1d-816d-059c7a8a7018",
+      "slot": "macwork-ff-2",
+      "currentRunId": "98c3657b-caae-41d6-91eb-1b96447f2480",
       "lifecycle": "busy",
       "phase": "review-gate",
       "agent": "working"
     },
     "workspace": {
-      "repo": "/Users/deeeed/dev/farmslot-wt/farmslot-1",
-      "branch": "feat/manual-000119-regenerate-gateway-api-docs",
-      "headSha": "e8110332ab842e98a8eeb07ad11075c3f0e7ccd5",
+      "repo": "/Users/deeeed/dev/farmslot-wt/farmslot-2",
+      "branch": "feat/manual-000121-fix-runner-stop-process-scan",
+      "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
       "dirty": 0
     },
     "recoveryProof": {
-      "sessionId": "44cd377e-b171-437d-8878-9ee4f1bed35f",
+      "sessionId": "12eb4240-de29-437b-88ff-9ba331f32899",
       "live": true,
       "acknowledgement": {
         "kind": "structured",
         "source": "hook-digest",
-        "reason": "runner hook activity observed after prompt handoff",
-        "turnToken": "44cd377e-b171-437d-8878-9ee4f1bed35f:1788652768862"
+        "reason": "hook prompt digest matched on pane %1315",
+        "turnToken": "12eb4240-de29-437b-88ff-9ba331f32899:1788673845339"
       },
-      "acceptedAt": "2026-09-05T23:59:35.622Z"
+      "acceptedAt": "2026-09-06T05:50:56.114Z"
     },
-    "restoreEffects": [
-      {
-        "resourceId": "dev-server",
-        "action": "verified",
-        "ok": true,
-        "at": "2026-09-05T23:59:16.008Z"
-      }
-    ],
-    "paneBefore": "%1170",
-    "paneAfter": "%1210",
-    "contextPaneAfter": "%1210",
+    "restoreEffects": [],
+    "paneBefore": "%1314",
+    "paneAfter": "%1315",
+    "contextPaneAfter": "%1315",
     "generation": 0,
     "status": "blocked"
   },
   "consumed": {
-    "attempted": false,
-    "pass": false,
-    "reason": "proving consumption spends a publication gate, so it needs a run supplied for that purpose",
-    "howToSupply": [
-      "dispatch a second backlog item to a session-reload runner and let it reach its publication HUMAN_GATE",
-      "park it with runtime.posture.apply { gateChoice: \"free-slot\" }",
-      "pass its run id as FARMSLOT_GATE_PARK_CONSUME_RUN_ID; this node then answers that gate"
-    ]
+    "attempted": true,
+    "pass": true,
+    "runId": "98c3657b-caae-41d6-91eb-1b96447f2480",
+    "error": null,
+    "parkedByChoice": {
+      "transitionOutcome": "applied",
+      "rejection": null,
+      "phase": "parked",
+      "slotFreedAt": "2026-09-06T05:51:46.134Z"
+    },
+    "actionIsNonPublishing": true,
+    "decisionId": "a955741b-d41d-4d81-af48-aa3b181590b8",
+    "actionId": "hold",
+    "beforeStatus": "blocked",
+    "resolveExit": 0,
+    "gateParkRestore": {
+      "runId": "98c3657b-caae-41d6-91eb-1b96447f2480",
+      "slotId": "macwork-ff-2",
+      "restoredGeneration": 0,
+      "reloadedSessionId": "12eb4240-de29-437b-88ff-9ba331f32899"
+    },
+    "resolvedAt": "2026-09-06T05:52:35.125Z",
+    "parkPhase": "restored",
+    "slotFreedAt": null,
+    "restoreProgress": {
+      "operationId": "gate-restore-60150929-f6ec-4a70-9c3b-21b70b7c4c2a",
+      "completed": ["rebind", "reattach", "reacquire", "reload"],
+      "updatedAt": "2026-09-06T05:52:24.546Z"
+    },
+    "afterStatus": "human-gating",
+    "gateStep": "running",
+    "rePresentedDecisionId": null
   },
   "answerable": {
-    "decisionId": "fa14a286-dcb9-4e38-8a5c-1a903aedd856",
+    "decisionId": "a955741b-d41d-4d81-af48-aa3b181590b8",
     "stillPending": true,
     "posture": "operator-wait",
     "gateChoiceSuppressedForGeneration": 0
