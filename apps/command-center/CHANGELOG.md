@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- probe(gate-park): `probes/run-gate-park-surfaces.js` drives a real free-slot park and restore and asserts the Run Detail gate-park block, gate notice, and slot badge from the rendered DOM.
 - feat(probes): add the `machine-pause-retained-resource-label` probe, which reopens the machine pause dialog through its own controls, switches it to release mode, and reads what an operator sees for a manifest resource the project catalog keeps running, plus the parked-record summary that must not flag that resource as an unexpected residual.
 - feat(probes): add the `run-resource-posture` probe, which reads the Run Detail posture summary and capability rows from the rendered page and drives the human-gate posture preview through the real UI path, and the `run-resource-posture-surfaces` probe, which drives the backlog `waitPolicy` field and a live warm-provider Stop through real clicks, verifying each outcome against the Gateway and releasing its own lease afterwards.
 - feat(probes): add the `run-posture-gate-choice-honored` probe, which stages a real run at `operator-wait` with a pending human decision, clicks each gate choice, and checks the Gateway's own preview render — `project-default` must not be flagged as unhonoured for deferring, and a refused `free-slot` must still report its rejection.
