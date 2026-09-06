@@ -24,7 +24,12 @@ import {
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
-import { resetSlot, SLOT_PHASE_RELEASING } from '../core/state.js';
+import {
+  readSlotField,
+  resetSlot,
+  SLOT_PHASE_RELEASING,
+  slotReleasingFenceFields,
+} from '../core/state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
 import {
@@ -176,11 +181,14 @@ const S = PipelineSteps;
  * guarded on the fence epoch, mirroring slotRelease. A slot already
  * mid-release is left to the release that owns the teardown.
  */
-async function cleanupSlotAfterRunFailure(
+export async function cleanupSlotAfterRunFailure(
   slotId: string,
   runId: string,
   reason: string,
   destructiveCleanup?: () => Promise<void>,
+  // Injected only so the escalated branch is reachable from a test without
+  // mocking a module; production always takes the lazy import below.
+  teardownWorker?: (slotId: string) => Promise<void>,
 ): Promise<void> {
   const { resetSlotIf, slotOwnershipReleaseFields, transitionSlotStatus } =
     await import('../core/index.js');
@@ -202,7 +210,7 @@ async function cleanupSlotAfterRunFailure(
     planRef.escalated = plan === 'reset' && slot.current_run_id !== runId;
     switch (plan) {
       case 'reset':
-        return { fields: { lifecycle: 'busy', phase: SLOT_PHASE_RELEASING } };
+        return { fields: slotReleasingFenceFields() };
       case 'release-keep-handoff':
         return { fields: slotOwnershipReleaseFields(), endsOwnership: true };
       case 'clear-reservation':
@@ -220,13 +228,22 @@ async function cleanupSlotAfterRunFailure(
       // leaves the releasing fence up: non-dispatchable and visible to the
       // operator, instead of a dispatchable row hiding a live worker.
       try {
-        const { teardownWorkerOnSlot } = await import('../methods/dispatch/nudge.js');
-        await teardownWorkerOnSlot(slotId);
+        const kill =
+          teardownWorker ?? (await import('../methods/dispatch/nudge.js')).teardownWorkerOnSlot;
+        await kill(slotId);
       } catch (err) {
+        // The fence deliberately stays up and the slot is NOT published ready —
+        // a dispatchable row hiding a live worker is the worse outcome. What
+        // changed is that this is no longer only logged: returning quietly
+        // reported a clean teardown for a slot left fenced with a worker that
+        // may still be writing, so the transition recorded success for it.
+        const detail = (err as Error).message.slice(0, 200);
         console.warn(
-          `[run-engine] worker kill failed for ${slotId} after ${reason}; leaving the releasing fence up: ${(err as Error).message.slice(0, 200)}`,
+          `[run-engine] worker kill failed for ${slotId} after ${reason}; leaving the releasing fence up: ${detail}`,
         );
-        return;
+        throw new Error(
+          `worker kill failed for ${slotId} after ${reason}; slot left fenced as releasing: ${detail}`,
+        );
       }
     }
     let destructiveFailure: Error | undefined;
@@ -1363,6 +1380,7 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     setRunFlags,
     resetSlot,
     isTerminalTeardownInFlight,
+    readSlotField,
     quarantineLeakedRun,
     reconcileRunAgentRuntime: async (run) => {
       await reconcileRunAgentRuntime(run);

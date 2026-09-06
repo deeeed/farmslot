@@ -62,9 +62,6 @@ async function fixture(
     onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
     storeFactory?: (storePath: string) => RuntimeCapabilityStore;
     isTerminalOwner?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['isTerminalOwner'];
-    isTerminalFamily?: ConstructorParameters<
-      typeof RuntimeCapabilityRegistry
-    >[0]['isTerminalFamily'];
     now?: () => Date;
   } = {},
 ) {
@@ -87,7 +84,6 @@ async function fixture(
     ...(options.familyForRun ? { familyForRun: options.familyForRun } : {}),
     ...(options.onEvent ? { onEvent: options.onEvent } : {}),
     ...(options.isTerminalOwner ? { isTerminalOwner: options.isTerminalOwner } : {}),
-    ...(options.isTerminalFamily ? { isTerminalFamily: options.isTerminalFamily } : {}),
     leaseId: () => `lease-${++nextLease}`,
     now: options.now ?? (() => new Date('2026-08-11T00:00:00.000Z')),
   });
@@ -1112,25 +1108,30 @@ test('an owner evicted past the fence bound is still refused through the run sto
   assert.equal((await acquire(restarted, 'browser', 'run-b')).ok, true);
 });
 
-test('a live sibling of an evicted terminal family is still refused', async (t) => {
-  // The hole an owner-only fallback leaves: the sibling is NOT terminal, so
-  // asking the run store about the sibling answers "live" and it acquires a
-  // provider its family's terminal cleanup already tore down.
-  const terminalFamilies = new Set<string>();
+test('a live child of a terminal family is NOT fenced by its parent finishing', async (t) => {
+  // The regression an "is any member terminal" predicate caused. A CI-watch
+  // chain's follow-up run shares its parent's family, so the parent reaching
+  // `done` refused its own live child at PREPARE. Only an actual family-scope
+  // cleanup may fence a family.
+  const { registry } = await fixture(t, [entry('browser')], {
+    familyForRun: () => 'fam-a',
+    // The parent is terminal in the run store; the child is not.
+    isTerminalOwner: (ownerRunId) => ownerRunId === 'run-parent',
+  });
+
+  const child = await acquire(registry, 'browser', 'run-child', 'fam-a');
+  assert.equal(child.ok, true, 'a live chained child must still acquire');
+});
+
+test('a family-scope cleanup fences the family, and survives eviction and restart', async (t) => {
   const { registry, store } = await fixture(t, [entry('browser')], {
     familyForRun: (ownerRunId) => (ownerRunId === 'run-outsider' ? 'fam-b' : 'fam-a'),
-    isTerminalFamily: (familyId) => terminalFamilies.has(familyId),
   });
   assert.equal((await acquire(registry, 'browser', 'run-a', 'fam-a')).ok, true);
-  terminalFamilies.add('fam-a');
   await registry.releaseRunTerminal(SLOT, 'run-a', 'fam-a');
 
-  // Evict both durable lists the way churn past the bound would, leaving only
-  // the run-store fallbacks.
-  const snapshot = store.snapshot();
-  snapshot.terminalOwners = [];
-  snapshot.terminalFamilies = [];
-  await store.replace(snapshot);
+  // A brand new registry over the same store, with NO run-store predicates at
+  // all: whatever it refuses, it refuses from the durable entries alone.
   const restarted = new RuntimeCapabilityRegistry({
     store: new RuntimeCapabilityStore(store.path),
     catalogForSlot: async (slotId) => ({
@@ -1140,20 +1141,46 @@ test('a live sibling of an evicted terminal family is still refused', async (t) 
     }),
     runAction: async () => ({ ok: true }),
     familyForRun: (ownerRunId) => (ownerRunId === 'run-outsider' ? 'fam-b' : 'fam-a'),
-    isTerminalFamily: (familyId) => terminalFamilies.has(familyId),
     leaseId: () => 'lease-sibling',
   });
 
   const sibling = await acquire(restarted, 'browser', 'run-sibling', 'fam-a');
-  assert.equal(sibling.ok, false, 'a live sibling of a terminal family must not acquire');
+  assert.equal(sibling.ok, false, 'the family cleanup fences the family');
   if (sibling.ok) return;
-  // And the refusal says what is actually true: the FAMILY was cleaned, not
-  // this run, which never had a cleanup of its own.
+  // The refusal says what is actually true: the FAMILY was cleaned, not this run.
   assert.match(sibling.conflict.reason, /Family 'fam-a' has already had its terminal/);
   assert.doesNotMatch(sibling.conflict.reason, /Run 'run-sibling' has already had/);
 
   // A run in another family is untouched.
   assert.equal((await acquire(restarted, 'browser', 'run-outsider', 'fam-b')).ok, true);
+});
+
+test('an archived terminal owner is still refused, with no live record to read', async (t) => {
+  // Archiving deletes the run record, so every live-record fallback goes blind.
+  // The durable entries are what keep authority, and they retire by age rather
+  // than by count so the oldest owners — the ones archiving has already
+  // removed — are exactly the ones still covered.
+  const { registry, store } = await fixture(t, [entry('browser')]);
+  assert.equal((await acquire(registry, 'browser', 'run-archived')).ok, true);
+  await registry.releaseRunTerminal(SLOT, 'run-archived');
+
+  const restarted = new RuntimeCapabilityRegistry({
+    store: new RuntimeCapabilityStore(store.path),
+    catalogForSlot: async (slotId) => ({
+      slotId,
+      project: 'test-project',
+      capabilities: [entry('browser')],
+    }),
+    runAction: async () => ({ ok: true }),
+    // The run is archived: the store cannot answer for it at all.
+    isTerminalOwner: () => false,
+    leaseId: () => 'lease-archived',
+  });
+
+  const late = await acquire(restarted, 'browser', 'run-archived');
+  assert.equal(late.ok, false, 'an archived terminal owner must not reacquire');
+  if (late.ok) return;
+  assert.match(late.conflict.reason, /terminal capability cleanup/);
 });
 
 test('a queued lease of a fenced owner is dropped instead of blocking the capability', async (t) => {

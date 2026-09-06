@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { Events, type Run } from '@farmslot/protocol';
 
-import { withRunSettlementLane } from './broadcast-lanes.js';
+import { type BroadcastFn, withRunSettlementLane } from './broadcast-lanes.js';
 
 const RUN = { id: 'run_1', status: 'done', workGraphId: 'graph-1' } as Run;
 
@@ -11,7 +11,7 @@ test('the settlement lane drives settlement for run events, and only for those',
   const published: string[] = [];
   const settled: string[] = [];
   const withLane = withRunSettlementLane(
-    (event) => void published.push(event),
+    (event: string) => void published.push(event),
     (run) => void settled.push(run.id),
   );
 
@@ -39,7 +39,9 @@ test('the base broadcaster settles nothing on its own', () => {
   // against a projection whose persistence was still in flight.
   const published: string[] = [];
   const settled: string[] = [];
-  const base = (event: string) => void published.push(event);
+  // Typed as the real thing: a narrower stub compiled here but not under the
+  // gateway's own tsc, which is how this file shipped a TS2554.
+  const base: BroadcastFn = (event) => void published.push(event);
   const withLane = withRunSettlementLane(base, (run) => void settled.push(run.id));
 
   base(Events.RUN_COMPLETED, { run: RUN });

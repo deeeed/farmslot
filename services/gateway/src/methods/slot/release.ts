@@ -34,6 +34,7 @@ import {
   resetSlotIf,
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
+  slotReleasingFenceFields,
   type SlotVars,
   updateSlotStatusIf,
 } from '../../core/index.js';
@@ -230,7 +231,7 @@ async function slotReleaseImpl(
       // Unbound (operator) release: releases whoever currently holds the slot.
       return true;
     },
-    { lifecycle: 'busy', phase: SLOT_PHASE_RELEASING },
+    slotReleasingFenceFields(),
   );
   if (!mark.applied) {
     step(

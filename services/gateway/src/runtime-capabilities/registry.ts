@@ -19,8 +19,9 @@ import type {
 } from '@farmslot/protocol';
 
 import {
+  hydrateFenceEntries,
   RUNTIME_CAPABILITY_EVENT_LIMIT,
-  RUNTIME_CAPABILITY_TERMINAL_FENCE_LIMIT,
+  type RuntimeCapabilityFenceEntry,
   RuntimeCapabilityStore,
   type RuntimeCapabilityStoreSnapshot,
 } from './store.js';
@@ -76,16 +77,7 @@ export interface RuntimeCapabilityRegistryOptions {
    * tests and validation gateways that have no run store.
    */
   isTerminalOwner?: (ownerRunId: string) => boolean;
-  /**
-   * Whether the RUN STORE says this FAMILY has had its terminal cleanup.
-   *
-   * Terminal cleanup covers a whole family, so the family list has to survive
-   * eviction exactly as the owner list does — and it cannot be derived from the
-   * requesting run, which is the hole this closes: a LIVE sibling of an evicted
-   * terminal family is not itself terminal, so an owner-only fallback let it
-   * acquire a provider its family's cleanup had already torn down.
-   */
-  isTerminalFamily?: (familyId: string) => boolean;
+
   onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
   now?: () => Date;
   leaseId?: () => string;
@@ -142,6 +134,11 @@ function parameterValidator(schema: Record<string, unknown>): ValidateFunction {
   return validator;
 }
 
+/** The fence map as the store's entry list. */
+function fenceEntries(fenced: ReadonlyMap<string, string>): RuntimeCapabilityFenceEntry[] {
+  return [...fenced].map(([id, at]) => ({ id, at }));
+}
+
 export class RuntimeCapabilityRegistry {
   private readonly now: () => Date;
   private readonly leaseId: () => string;
@@ -150,9 +147,9 @@ export class RuntimeCapabilityRegistry {
    * Runs whose terminal cleanup has already run. A lease must never be handed to
    * one of them: the run is gone, so nothing would ever release it again.
    */
-  private terminatedOwners = new Set<string>();
+  private terminatedOwners = new Map<string, string>();
   /** Families whose terminal cleanup has run; siblings must not reacquire. */
-  private terminatedFamilies = new Set<string>();
+  private terminatedFamilies = new Map<string, string>();
   private loaded = false;
   private loadPromise: Promise<void> | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
@@ -169,11 +166,20 @@ export class RuntimeCapabilityRegistry {
         // Rebuild the fence from durable state before anything can acquire. A
         // registry that came up empty here handed a terminal run a provider
         // again after every restart, and nothing would have released it.
-        for (const ownerRunId of snapshot.terminalOwners ?? []) {
-          this.terminatedOwners.add(ownerRunId);
+        const loadedAt = this.timestamp();
+        for (const entry of hydrateFenceEntries(
+          snapshot.terminalOwnerEntries,
+          snapshot.terminalOwners,
+          loadedAt,
+        )) {
+          this.terminatedOwners.set(entry.id, entry.at);
         }
-        for (const familyId of snapshot.terminalFamilies ?? []) {
-          this.terminatedFamilies.add(familyId);
+        for (const entry of hydrateFenceEntries(
+          snapshot.terminalFamilyEntries,
+          snapshot.terminalFamilies,
+          loadedAt,
+        )) {
+          this.terminatedFamilies.set(entry.id, entry.at);
         }
         this.loaded = true;
       });
@@ -218,8 +224,12 @@ export class RuntimeCapabilityRegistry {
     // Stamped on every write, so the terminal fence lands in the SAME replace as
     // the release that armed it. A separate write would leave a window where the
     // providers were stopped but the fence was not durable yet.
-    snapshot.terminalOwners = [...this.terminatedOwners];
-    snapshot.terminalFamilies = [...this.terminatedFamilies];
+    snapshot.terminalOwnerEntries = fenceEntries(this.terminatedOwners);
+    snapshot.terminalFamilyEntries = fenceEntries(this.terminatedFamilies);
+    // The legacy count-bounded keys were folded into the entry lists at load;
+    // rewriting them would resurrect the bound the entries replaced.
+    snapshot.terminalOwners = undefined;
+    snapshot.terminalFamilies = undefined;
     await this.options.store.replace(snapshot);
     for (const event of events) this.options.onEvent?.(event);
   }
@@ -1163,17 +1173,19 @@ export class RuntimeCapabilityRegistry {
     return result;
   }
 
+  // No count bound on either: entries retire by AGE in the store. A count bound
+  // evicted the oldest owners, which are exactly the ones whose run records
+  // archiving has already deleted, so the run-store fallback meant to cover
+  // eviction was blind precisely where eviction bit.
   private fenceOwner(ownerRunId: string): void {
-    this.terminatedOwners.add(ownerRunId);
-    while (this.terminatedOwners.size > RUNTIME_CAPABILITY_TERMINAL_FENCE_LIMIT) {
-      this.terminatedOwners.delete(this.terminatedOwners.values().next().value!);
+    if (!this.terminatedOwners.has(ownerRunId)) {
+      this.terminatedOwners.set(ownerRunId, this.timestamp());
     }
   }
 
   private fenceFamily(familyId: string): void {
-    this.terminatedFamilies.add(familyId);
-    while (this.terminatedFamilies.size > RUNTIME_CAPABILITY_TERMINAL_FENCE_LIMIT) {
-      this.terminatedFamilies.delete(this.terminatedFamilies.values().next().value!);
+    if (!this.terminatedFamilies.has(familyId)) {
+      this.terminatedFamilies.set(familyId, this.timestamp());
     }
   }
 
@@ -1204,14 +1216,20 @@ export class RuntimeCapabilityRegistry {
     familyId?: string,
   ): { scope: 'owner' | 'family'; id: string } | null {
     if (this.terminatedOwners.has(ownerRunId)) return { scope: 'owner', id: ownerRunId };
+    // The owner predicate is a SUPPLEMENT, not the authority: it answers for a
+    // run the store still has, and the durable entries answer for the rest.
+    // Correct at owner scope because a terminal run must never reacquire under
+    // its own id, whatever its cleanup history.
     if (this.options.isTerminalOwner?.(ownerRunId) === true) {
       return { scope: 'owner', id: ownerRunId };
     }
     if (familyId === undefined) return null;
+    // Family scope has NO run-store equivalent, deliberately. Asking whether any
+    // member is terminal fenced live children: a CI-watch chain's follow-up run
+    // shares its parent's family, so the parent reaching `done` refused its own
+    // child at PREPARE. Only a family-scope cleanup writes this, and only that
+    // is read back.
     if (this.terminatedFamilies.has(familyId)) return { scope: 'family', id: familyId };
-    if (this.options.isTerminalFamily?.(familyId) === true) {
-      return { scope: 'family', id: familyId };
-    }
     return null;
   }
 

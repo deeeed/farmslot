@@ -57,6 +57,36 @@ test('resetSlot leaves a slot that a release already fenced', async (t) => {
   assert.equal(row.current_run_id, 'run-releasing');
 });
 
+test('a release that fences between the check and the write is not overwritten', async (t) => {
+  // The reason this is ONE conditional update rather than a read then a write.
+  // The old shape read `phase` OUTSIDE the store's write chain, found it clear,
+  // and then wrote unconditionally — so a release that fenced the slot in that
+  // gap had its fence erased and continued tearing down a slot already
+  // republished as ready.
+  //
+  // Driven by starting the reset and landing the fence before awaiting it: the
+  // read resolves first either way, and only the conditional write re-checks
+  // inside the chain.
+  const statusPath = statusFileWith(t, {
+    slot: 'fence-slot',
+    lifecycle: 'busy',
+    phase: 'working',
+    current_run_id: 'run-done',
+  });
+
+  await runAgainstStatusFile(
+    statusPath,
+    `const { resetSlot, updateSlotStatus } = await import('./src/core/state.js');
+     const reset = resetSlot('fence-slot', true);
+     const fence = updateSlotStatus('fence-slot', { lifecycle: 'busy', phase: 'releasing' });
+     await Promise.all([reset, fence]);`,
+  );
+
+  const row = JSON.parse(readFileSync(statusPath, 'utf8')).slots[0];
+  assert.equal(row.phase, 'releasing', 'the rival release keeps its fence');
+  assert.equal(row.lifecycle, 'busy');
+});
+
 test('resetSlot still resets a slot no release owns', async (t) => {
   // The fence must not turn the reset off: this is the ordinary path every
   // reclaim and cancel depends on.
