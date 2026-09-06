@@ -137,6 +137,7 @@ export function renderInteractiveHandoffGate(
         state: context.posture,
         disabled: context.actionsBlocked || context.signalCheckBusy,
         onSelect: (choice) => context.selectPostureChoice(choice),
+        run,
       })}
       <div class="gate-actions">
         ${primaryAction

@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06T08:39:48.841Z",
+  "host": "macwork",
+  "scenario": "gate-park-restore-smoke",
+  "runner": "claude",
+  "runId": "98c3657b-caae-41d6-91eb-1b96447f2480",
+  "operationId": "gate-park-restore-84141-1788683950405",
+  "gatewaySource": {
+    "sha": "d3fe0cb6ef8d11ba7f1925710e4458d21629442a",
+    "scope": ["services/gateway", "packages/protocol"],
+    "dirty": true,
+    "describedAt": "2026-09-06T08:39:10.484Z"
+  },
+  "machine": "macwork",
+  "slotId": "macwork-ff-2",
+  "parkedByChoice": null,
+  "parked": {
+    "status": "blocked",
+    "phase": "parked",
+    "slotFreedAt": "2026-09-06T08:38:59.168Z",
+    "generation": 0,
+    "decisionId": "99573519-b166-48ce-a17f-2cf202f7a537",
+    "preservedWorkspace": {
+      "branch": "feat/manual-000121-fix-runner-stop-process-scan",
+      "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
+      "detachedAt": "2026-09-06T08:38:59.160Z"
+    },
+    "recordedPaneId": "%1385",
+    "sessionId": "12eb4240-de29-437b-88ff-9ba331f32899",
+    "slot": {
+      "slot": "macwork-ff-2",
+      "currentRunId": null,
+      "lifecycle": "ready",
+      "phase": null,
+      "agent": "idle"
+    },
+    "workspace": {
+      "repo": "/Users/deeeed/dev/farmslot-wt/farmslot-2",
+      "branch": "HEAD",
+      "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
+      "dirty": 0
+    }
+  },
+  "cliStatus": {
+    "attempted": true,
+    "pass": true,
+    "machine": "macwork",
+    "runId": "98c3657b-caae-41d6-91eb-1b96447f2480",
+    "error": null,
+    "exit": 0,
+    "envelopeStatus": "ok",
+    "envelopeCommand": "machine.status",
+    "gateParkRunIds": ["98c3657b-caae-41d6-91eb-1b96447f2480"],
+    "entry": {
+      "runId": "98c3657b-caae-41d6-91eb-1b96447f2480",
+      "machine": "macwork",
+      "slotId": "macwork-ff-2",
+      "phase": "parked",
+      "slotState": "freed",
+      "slotDisposition": "freed",
+      "freedSlotId": "macwork-ff-2",
+      "slotFreedAt": "2026-09-06T08:38:59.168Z",
+      "preservedWorkspace": {
+        "branch": "feat/manual-000121-fix-runner-stop-process-scan",
+        "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
+        "detachedAt": "2026-09-06T08:38:59.160Z"
+      },
+      "restoreBeforeGateAnswer": true,
+      "restoreStage": {
+        "state": "not-started",
+        "attempting": null,
+        "completed": [],
+        "remaining": ["rebind", "reattach", "reacquire", "reload"]
+      },
+      "restoreTarget": {
+        "slotId": "macwork-ff-2",
+        "disposition": "freed",
+        "available": null
+      }
+    }
+  },
+  "fencedWhileParked": {
+    "exit": 2,
+    "matched": true
+  },
+  "previewEligible": {
+    "previewId": "restore-de4d20e0e28f29c514a6dd20",
+    "eligibility": {
+      "eligible": true,
+      "code": "ELIGIBLE_FREED_SLOT_RESTORE",
+      "reason": "The freed slot is still free and the persisted runner session is reloadable in place."
+    },
+    "restoreTarget": {
+      "slotId": "macwork-ff-2",
+      "disposition": "freed",
+      "available": true
+    }
+  },
+  "slotTaken": null,
+  "restored": {
+    "outcome": "complete",
+    "ok": true,
+    "phase": "restored",
+    "slotFreedAt": null,
+    "slotReboundAt": "2026-09-06T08:39:18.332Z",
+    "restoreRefusal": null,
+    "errors": [],
+    "slot": {
+      "slot": "macwork-ff-2",
+      "currentRunId": "98c3657b-caae-41d6-91eb-1b96447f2480",
+      "lifecycle": "busy",
+      "phase": "review-gate",
+      "agent": "working"
+    },
+    "workspace": {
+      "repo": "/Users/deeeed/dev/farmslot-wt/farmslot-2",
+      "branch": "feat/manual-000121-fix-runner-stop-process-scan",
+      "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
+      "dirty": 0
+    },
+    "recoveryProof": {
+      "sessionId": "12eb4240-de29-437b-88ff-9ba331f32899",
+      "live": true,
+      "acknowledgement": {
+        "kind": "structured",
+        "source": "hook-digest",
+        "reason": "hook prompt digest matched on pane %1385",
+        "turnToken": "12eb4240-de29-437b-88ff-9ba331f32899:1788683971938"
+      },
+      "acceptedAt": "2026-09-06T08:39:39.559Z"
+    },
+    "restoreEffects": [],
+    "paneBefore": "%1385",
+    "paneAfter": "%1385",
+    "contextPaneAfter": "%1385",
+    "generation": 0,
+    "status": "blocked"
+  },
+  "consumed": {
+    "attempted": false,
+    "pass": false,
+    "reason": "proving consumption spends a publication gate, so it needs a run supplied for that purpose",
+    "howToSupply": [
+      "dispatch a second backlog item to a session-reload runner and let it reach its publication HUMAN_GATE",
+      "park it with runtime.posture.apply { gateChoice: \"free-slot\" }",
+      "pass its run id as FARMSLOT_GATE_PARK_CONSUME_RUN_ID; this node then answers that gate"
+    ]
+  },
+  "answerable": {
+    "decisionId": "99573519-b166-48ce-a17f-2cf202f7a537",
+    "stillPending": true,
+    "posture": "operator-wait",
+    "gateChoiceSuppressedForGeneration": 0
+  },
+  "pass": true,
+  "error": null,
+  "restoreWaitedThrough": [],
+  "note": "Same gate-park-restore scenario, re-run for the MANUAL-000112 slice-3 cliStatus node with FARMSLOT_GATE_PARK_TAKE_SLOT=0 and no FARMSLOT_GATE_PARK_CONSUME_RUN_ID, against run 98c3657b on macwork-ff-2. slotTaken and consumed are therefore out of scope for THIS capture; runner-validate-macwork-claude-gate-park-restore-smoke.json holds the full cycle including both."
+}

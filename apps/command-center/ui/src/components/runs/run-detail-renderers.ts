@@ -10,6 +10,7 @@ import type {
 } from '@farmslot/protocol';
 import {
   canActivateRunOnSlot,
+  isSlotFreedByPark,
   modeForFlow,
   modelsMatch,
   normalizeRunTags,
@@ -89,7 +90,7 @@ export interface RunDetailViewContext {
    * ADR-054 resource posture, rendered beside the pipeline phase. It takes no
    * run: the panel renders the posture status already fetched for the bound run.
    */
-  _renderPosture: () => unknown;
+  _renderPosture: (run: Run) => unknown;
   _renderInteractivePackets: (run: Run) => unknown;
   _renderAgentSessions: (run: Run) => unknown;
   _onReplayStep: (
@@ -334,6 +335,12 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const isTerminal = r.status === 'done' || r.status === 'failed' || r.status === 'cancelled';
   const engine = resolveRunEngine(r);
   const boundSlotId = resolveRunSlotId(r);
+  // ADR-054 `free-slot`: while the park record holds the release, the slot row
+  // belongs to dispatch, not to this run. The run still names the slot — its
+  // recovery handle and preserved branch key off it — so the badge keeps the
+  // link and says what is actually true about occupancy instead of implying the
+  // run is sitting in it.
+  const slotFreedByPark = isSlotFreedByPark(r);
   const executionTemplate = r.executionTemplate ?? r.templateProvenance?.executionTemplate;
   const variantDrift = Boolean(
     r.variant && engine.runner && !r.variant.startsWith(`${engine.runner}-`),
@@ -680,7 +687,15 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                   title="Toggle this run's slot in pinned slots"
                 >
                   ${isSlotPinned(boundSlotId) ? 'pinned' : 'pin'}
-                </button>`
+                </button>
+                ${slotFreedByPark
+                  ? html`<span
+                      data-testid="run-slot-freed-by-park"
+                      style="margin-left:8px; color:${colors.statusWarn}; font-size:10px; font-family:${fonts.mono}"
+                      title="A free-slot park released this slot; answering the gate restores the run into it."
+                      >freed for dispatch</span
+                    >`
+                  : nothing}`
             : 'pending'}
         </div>
       </div>
@@ -841,7 +856,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           </div>
         `
       : nothing}
-    ${r.grade ? ctx.renderGrade(r.grade) : nothing} ${ctx._renderPosture()}
+    ${r.grade ? ctx.renderGrade(r.grade) : nothing} ${ctx._renderPosture(r)}
     <div class="pipeline-section">
       <run-pipeline
         .run=${r}

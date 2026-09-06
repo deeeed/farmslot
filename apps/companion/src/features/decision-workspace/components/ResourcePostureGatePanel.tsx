@@ -10,7 +10,12 @@
  */
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { ResourcePostureGateChoice } from '@farmslot/protocol';
+import {
+  gateParkGateNotice,
+  gateParkSummaryLine,
+  type GateParkView,
+  type ResourcePostureGateChoice,
+} from '@farmslot/protocol';
 
 import {
   gateChoiceHelp,
@@ -161,6 +166,42 @@ export function ResourcePostureWithheldNotice({
   );
 }
 
+/**
+ * What the operator has to know before answering a gate on a parked run.
+ *
+ * It lives outside `ResourcePostureGatePanel` for the same reason the withheld
+ * notice does, and more sharply: a `free-slot` park moves the run's posture to
+ * `parked`, which is exactly when that panel returns null. Putting the notice
+ * inside it would hide "answering restores the run first" in the one case where
+ * it is the most important thing on the screen.
+ */
+export function RunGateParkNotice({ view }: { view: GateParkView | null }) {
+  const notice = gateParkGateNotice(view);
+  if (!view || !notice) return null;
+  const blocked = notice.kind !== 'restore-first';
+  return (
+    <View
+      style={[styles.withheld, !blocked && styles.parkNotice]}
+      testID="companion-run-gate-park-notice"
+    >
+      <Text
+        style={blocked ? styles.blocked : styles.muted}
+        testID={`companion-run-gate-park-${notice.kind}`}
+      >
+        {notice.message}
+      </Text>
+      <Text style={styles.line} testID="companion-run-gate-park-summary">
+        {gateParkSummaryLine(view)}
+      </Text>
+      {notice.refusal ? (
+        <Text style={styles.blocked} testID="companion-run-gate-park-refusal">
+          Last restore refused ({notice.refusal.code}): {notice.refusal.reason}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   blocked: {
     color: colors.statusWarn,
@@ -218,6 +259,9 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: fonts.sizeXs,
     lineHeight: 16,
+  },
+  parkNotice: {
+    borderColor: colors.bgCardHover,
   },
   plan: {
     borderTopColor: colors.bgCardHover,

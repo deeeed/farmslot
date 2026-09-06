@@ -1,6 +1,10 @@
 import { Command, Option } from 'commander';
 
 import {
+  gateParkStateLabel,
+  gateParkSummaryLine,
+  type GateParkView,
+  liveGateParkView,
   type MachineParkRecord,
   type MachineParkResourceManifest,
   type MachinePauseExecuteParams,
@@ -168,6 +172,51 @@ function formatPreviewRun(run: MachinePausePreviewRun | MachinePauseRestorePrevi
   return lines;
 }
 
+/**
+ * The gate parks in a durable status result — the runs whose slot went back to
+ * dispatch while their gate stayed answerable (ADR-054 `free-slot`).
+ *
+ * Derived through the shared protocol reading so `machine status` cannot
+ * disagree with what Command Center and Companion say about the same record.
+ * Settled records drop out: they describe a park the operator already resolved.
+ */
+export function gateParkedRuns(records: readonly MachineParkRecord[]): GateParkView[] {
+  const views: GateParkView[] = [];
+  for (const record of records) {
+    const view = liveGateParkView({ id: record.runId, park: record });
+    if (view && view.slotDisposition === 'freed') views.push(view);
+  }
+  return views;
+}
+
+/**
+ * One line per gate-parked run: what the park did with the slot, the branch it
+ * preserved, the slot a restore would use, and the refusal standing against it.
+ *
+ * Availability is stated only when something answered it. `machine status`
+ * reads durable records and never probes a slot, so it reports the target
+ * without claiming it is free — `farmslot machine restore` is what asks.
+ */
+export function formatGateParkLine(view: GateParkView): string {
+  const target = view.restoreTarget;
+  const availability =
+    target.available === null
+      ? 'availability not read'
+      : target.available
+        ? 'available'
+        : `not available${target.reason ? `: ${target.reason}` : ''}`;
+  const parts = [
+    `  ${bold(view.runId)}`,
+    gateParkStateLabel(view),
+    `freed=${view.freedSlotId ?? '-'}`,
+    `restore=${target.slotId} (${availability})`,
+  ];
+  if (view.refusal) {
+    parts.push(red(`refused ${view.refusal.code}: ${view.refusal.reason}`));
+  }
+  return `${parts.join('  ')}\n    ${dim(gateParkSummaryLine(view))}`;
+}
+
 function formatParkRecord(park: MachineParkRecord): string[] {
   return [
     `  ${bold(park.runId)}  slot=${park.slotId}  mode=${park.mode}  phase=${park.phase}  generation=${park.generation}`,
@@ -203,6 +252,11 @@ export function formatMachinePauseResult(
     } else {
       for (const park of parkRecords ?? []) lines.push(...formatParkRecord(park));
     }
+  }
+  const gateParks = gateParkedRuns(parkRecords ?? []);
+  if (gateParks.length > 0) {
+    lines.push('', `${bold('Gate parks')}  ${gateParks.length} run(s) holding a freed slot`);
+    for (const view of gateParks) lines.push(formatGateParkLine(view));
   }
   if (nextCommand) lines.push('', `${bold('Next')}  ${nextCommand}`);
   return lines.join('\n');
@@ -422,7 +476,11 @@ export function registerMachineCommand(program: Command): void {
           () => client.call<MachinePauseStatusResult>(MachinePauseMethods.status, statusParams),
           !emit.machine,
         );
-        if (emit.machine) emit.ok(result);
+        // The derived gate-park list rides along with the raw records rather
+        // than replacing them: a script that already reads `records` keeps
+        // working, and one that wants the parked runs no longer has to
+        // re-implement the reading the clients use.
+        if (emit.machine) emit.ok({ ...result, gateParks: gateParkedRuns(result.records) });
         else output.write(`${formatMachinePauseResult(result)}\n`);
       } catch (error) {
         emit.fail(error);

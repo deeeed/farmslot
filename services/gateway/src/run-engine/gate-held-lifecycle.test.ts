@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { type MachineParkRecord, PipelineSteps } from '@farmslot/protocol';
+import {
+  isGateParkInFlightOrFreed,
+  type MachineParkRecord,
+  needsGateParkRestore,
+  PipelineSteps,
+} from '@farmslot/protocol';
 
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
@@ -16,7 +21,6 @@ import {
   shouldKeepWorkerWarmThroughCiWatch,
   shouldTeardownGateHeldAgents,
 } from './gate-held-lifecycle.js';
-import { isGateParkInFlightOrFreed, needsGateParkRestore } from './park-slot-binding.js';
 import { postureForBoundary } from './resource-posture.js';
 import { makeRun } from './test-fixtures.js';
 

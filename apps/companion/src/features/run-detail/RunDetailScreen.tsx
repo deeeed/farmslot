@@ -6,7 +6,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   Events,
+  isSlotFreedByPark,
   isTerminalRunStatus,
+  liveGateParkView,
   Methods,
   type RecipeRunArtifactGroup,
   type Run,
@@ -526,12 +528,17 @@ export default function RunDetailScreen() {
           <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
           {run.summary && <Text style={baseStyles.textSecondary}>{run.summary}</Text>}
           <View style={[styles.row, { marginTop: spacing.lg }]}>
-            {run.slotId && <Text style={baseStyles.textMuted}>Slot: {run.slotId}</Text>}
+            {run.slotId && (
+              <Text style={baseStyles.textMuted}>
+                Slot: {run.slotId}
+                {isSlotFreedByPark(run) ? ' (freed for dispatch)' : ''}
+              </Text>
+            )}
             <Text style={baseStyles.textMuted}>{formatDuration(run.metrics?.durationMs)}</Text>
           </View>
         </View>
 
-        <RunPosturePanel state={runPosture} />
+        <RunPosturePanel state={runPosture} gatePark={liveGateParkView(run)} />
 
         {reviewPackageActiveTab === 'evidence' && focusedArtifactPath ? (
           <RunFocusedArtifactCard

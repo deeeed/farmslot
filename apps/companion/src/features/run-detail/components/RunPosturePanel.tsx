@@ -9,7 +9,12 @@
  */
 import { StyleSheet, Text, View } from 'react-native';
 
-import type { ResourcePostureRowStatus } from '@farmslot/protocol';
+import {
+  gateParkStateLabel,
+  gateParkSummaryLine,
+  type GateParkView,
+  type ResourcePostureRowStatus,
+} from '@farmslot/protocol';
 
 import {
   postureCountsLine,
@@ -28,13 +33,78 @@ function rowStatusColor(rowStatus: ResourcePostureRowStatus): string {
   return colors.textMuted;
 }
 
-export function RunPosturePanel({ state }: { state: RunPostureStatusState }) {
-  if (state.status === 'idle') return null;
+/**
+ * Where the run's slot went, from the shared protocol reading.
+ *
+ * The posture rows say what the run is HOLDING; this says what happened to its
+ * slot. A parked run needs both: its posture reads `parked` on every surface,
+ * and only this names the slot dispatch was handed and the branch that was
+ * taken out of its working tree. Availability is whatever the Gateway said, and
+ * `null` is reported as not read rather than as free.
+ */
+function GateParkLines({ view }: { view: GateParkView | null }) {
+  if (!view) return null;
+  const target = view.restoreTarget;
+  return (
+    <View style={styles.row} testID="companion-run-posture-gate-park">
+      <Text style={styles.capability} testID="companion-run-posture-gate-park-state">
+        {gateParkStateLabel(view)}
+      </Text>
+      <Text style={styles.mono} testID="companion-run-posture-gate-park-summary">
+        {gateParkSummaryLine(view)}
+      </Text>
+      {view.freedSlotId ? (
+        <Text style={styles.muted} testID="companion-run-posture-gate-park-freed">
+          {view.freedSlotId} is free for dispatch while this run stays parked.
+        </Text>
+      ) : null}
+      <Text style={styles.mono} testID="companion-run-posture-gate-park-target">
+        Restore target {target.slotId} —{' '}
+        {target.available === null
+          ? 'availability not read'
+          : target.available
+            ? 'available'
+            : `not available${target.reason ? `: ${target.reason}` : ''}`}
+      </Text>
+      {view.refusal ? (
+        <Text style={styles.failure} testID="companion-run-posture-gate-park-refusal">
+          Last restore refused ({view.refusal.code}): {view.refusal.reason}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+export function RunPosturePanel({
+  state,
+  gatePark = null,
+}: {
+  state: RunPostureStatusState;
+  /** The run's live gate park, when it has one. Read from the park record, not the posture. */
+  gatePark?: GateParkView | null;
+}) {
+  // A live park is worth a panel on its own: the posture read can be idle or
+  // failed exactly when a run is parked, and hiding where its slot went because
+  // a different request has not landed is the wrong thing to hide.
+  if (state.status === 'idle' && !gatePark) return null;
+
+  if (state.status === 'idle') {
+    return (
+      <View style={styles.card} testID="companion-run-posture">
+        <Text style={styles.title}>Resource posture</Text>
+        <GateParkLines view={gatePark} />
+        <Text style={styles.muted} testID="companion-run-posture-unread">
+          Posture status has not been read for this run.
+        </Text>
+      </View>
+    );
+  }
 
   if (state.status === 'loading' && !state.state) {
     return (
       <View style={styles.card} testID="companion-run-posture">
         <Text style={styles.title}>Resource posture</Text>
+        <GateParkLines view={gatePark} />
         <Text style={styles.muted}>Loading posture…</Text>
       </View>
     );
@@ -46,6 +116,7 @@ export function RunPosturePanel({ state }: { state: RunPostureStatusState }) {
     return (
       <View style={styles.card} testID="companion-run-posture">
         <Text style={styles.title}>Resource posture</Text>
+        <GateParkLines view={gatePark} />
         <Text style={styles.failure} testID="companion-run-posture-error">
           {state.message ?? 'Posture status is unavailable.'}
         </Text>
@@ -72,6 +143,7 @@ export function RunPosturePanel({ state }: { state: RunPostureStatusState }) {
       <Text style={styles.muted} testID="companion-run-posture-worker">
         worker {summary.workerRetained ? 'retained' : 'stopped'}
       </Text>
+      <GateParkLines view={gatePark} />
       {transition ? (
         <Text style={styles.muted} testID="companion-run-posture-transition">
           {postureTransitionLine(transition)}
