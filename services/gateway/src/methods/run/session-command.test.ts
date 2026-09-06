@@ -126,7 +126,11 @@ test('run.sessionCommand reports live runner liveness from the process probe, no
   const unknown = await runSessionCommand(
     { runId: 'run-1' },
     deps(codexWorkerRun(), {
-      probeRunnerPid: async () => ({ state: 'unknown', reason: 'ssh unreachable' }),
+      probeRunnerPid: async () => ({
+        state: 'unknown',
+        code: 'probe-transport',
+        reason: 'ssh unreachable',
+      }),
     }),
   );
   assert.equal(unknown.supported && unknown.liveness, 'unknown');

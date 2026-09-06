@@ -49,8 +49,13 @@ test('buildMonitorCommand embeds slot identity, task dir, repo, session, and run
   assert.match(cmd, /tmux capture-pane -p -J -t 'ff-1' -S -30/);
   // Runner-liveness pattern comes from the runner registry, not inline runner ids.
   assert.match(cmd, /root="\$PANE_PID"/);
-  assert.match(cmd, /grep -Eq 'claude\|codex\|scripted-runner'/);
-  assert.match(cmd, /pgrep -P "\$parent"/);
+  // The runner pattern reaches the walk's matcher through the environment, so
+  // an escaped character in it cannot be stripped on the way.
+  assert.match(cmd, /FARMSLOT_RUNNER_PATTERN='claude\|codex\|scripted-runner'/);
+  // One snapshot, walked in awk — not a pgrep/ps fork per visited process.
+  // State travels with the snapshot so a zombie is never matched as a live runner.
+  assert.match(cmd, /ps -axo pid=,ppid=,state=,command=/);
+  assert.doesNotMatch(cmd, /pgrep -P/);
   assert.match(cmd, /\) >\/dev\/null 2>&1; then/);
 });
 

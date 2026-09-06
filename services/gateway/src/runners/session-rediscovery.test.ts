@@ -128,7 +128,11 @@ test('an unprobeable pane makes the scan indeterminate, not a confident absence'
   const result = await rediscoverRunnerSessionPane(
     { vars: VARS, session: 'ff-1', runner: 'codex', ...EXPECTED },
     deps({
-      probeRunnerPid: async () => ({ state: 'unknown', reason: 'ps unavailable' }),
+      probeRunnerPid: async () => ({
+        state: 'unknown',
+        code: 'probe-transport',
+        reason: 'ps unavailable',
+      }),
     }),
   );
 
@@ -145,7 +149,7 @@ test('one unprobeable pane does not mask an owner found in another pane', async 
     deps({
       probeRunnerPid: async (_vars, panePid) =>
         panePid === '4001'
-          ? { state: 'unknown', reason: 'ps unavailable' }
+          ? { state: 'unknown', code: 'probe-transport', reason: 'ps unavailable' }
           : { state: 'present', pid: '9000' },
     }),
   );

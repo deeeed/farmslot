@@ -11,6 +11,7 @@ import {
   buildFindRunnerDescendantPidCommand,
   buildRunnerSessionDiscoveryCommand,
   findRunnerDescendantPid,
+  probeRunnerDescendantPid,
   readPaneProcessStartedAtMs,
   recaptureRunnerSessionMetadataIfMissing,
   resolvePersistedRunnerSessionBinding,
@@ -18,6 +19,8 @@ import {
   resolveRetainedRunnerPane,
   resolveRunRetainedSessionBinding,
   retainedSessionSendOption,
+  RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT,
+  RunnerProcessProbeError,
   terminateRunnerDescendantsInTmuxSession,
   verifyExactLiveRunnerSessionBinding,
 } from './session-process.js';
@@ -30,6 +33,142 @@ test('runner descendant PID lookup preserves an indeterminate probe', async () =
     findRunnerDescendantPid(makeVars(), '', 'cursor'),
     /Cannot determine runner liveness under pane PID/,
   );
+});
+
+test('an undecidable probe reports a typed code rather than a bare message', async () => {
+  assert.deepEqual(await probeRunnerDescendantPid(makeVars(), '', 'codex'), {
+    state: 'unknown',
+    code: 'pane-pid-missing',
+    reason: 'pane PID is missing',
+  });
+  // `runner-pattern-missing` stays a guard rather than a tested branch:
+  // normalizeRunner falls back to the default runner, so the registry has no
+  // input today that yields an empty process pattern.
+  const thrown = await findRunnerDescendantPid(makeVars(), '', 'codex').then(
+    () => null,
+    (error: unknown) => error as RunnerProcessProbeError,
+  );
+  assert.ok(thrown instanceof RunnerProcessProbeError);
+  assert.equal(thrown.code, 'pane-pid-missing');
+  assert.equal(thrown.panePid, '');
+});
+
+test('a timed-out probe is retried with an escalating budget and reports the attempt count', async () => {
+  // 1 ms cannot fit any real probe, so the exec layer's own timeout verdict
+  // (exit 124) is what the retry policy sees — not a simulated one.
+  const probe = await probeRunnerDescendantPid(
+    makeVars({ remoteRepo: process.cwd() }),
+    String(process.pid),
+    'codex',
+    { timeout: 1, attempts: 3 },
+  );
+  assert.equal(probe.state, 'unknown');
+  assert.equal(probe.state === 'unknown' && probe.code, 'probe-timeout');
+  assert.equal(probe.state === 'unknown' && probe.attempts, 3);
+});
+
+test('a failed process-table snapshot is undecided, never a confirmed absence', async () => {
+  // The walk exits RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT when its one `ps` did not
+  // happen. Classifying that as `absent` would let a park release a slot whose
+  // worker is still running, so it must reach the caller as `unknown`.
+  const attemptTimeouts: Array<number | undefined> = [];
+  const probe = await probeRunnerDescendantPid(
+    makeVars(),
+    String(process.pid),
+    'codex',
+    { attempts: 2, timeout: 50 },
+    {
+      exec: async (_vars, _cmd, opts) => {
+        attemptTimeouts.push(typeof opts === 'string' ? undefined : opts?.timeout);
+        return {
+          exitCode: RUNNER_PROCESS_PROBE_SNAPSHOT_EXIT,
+          stdout: '',
+          stderr: 'runner liveness probe: ps snapshot exited nonzero\n',
+        };
+      },
+    },
+  );
+
+  assert.equal(probe.state, 'unknown');
+  assert.equal(probe.state === 'unknown' && probe.code, 'probe-transport');
+  assert.match(probe.state === 'unknown' ? (probe.reason ?? '') : '', /ps snapshot exited nonzero/);
+  // A snapshot that failed under load earns the same escalating retry a timeout
+  // does, rather than the single shot a genuine probe failure gets.
+  assert.equal(probe.state === 'unknown' && probe.attempts, 2);
+  assert.deepEqual(attemptTimeouts, [50, 100]);
+});
+
+test('a probe deadline caps the retries, not just each attempt', async () => {
+  // Without a deadline three attempts of a 10s base spend 70s, which is how a
+  // caller holding a wall-clock ceiling blows past it. Each attempt must be
+  // clamped to what remains, and an attempt that cannot fit must not start.
+  const timeouts: Array<number | undefined> = [];
+  const startedAt = Date.now();
+  const probe = await probeRunnerDescendantPid(
+    makeVars(),
+    String(process.pid),
+    'codex',
+    { attempts: 5, timeout: 10_000, deadline: Date.now() + 120 },
+    {
+      exec: async (_vars, _cmd, opts) => {
+        const timeout = typeof opts === 'string' ? undefined : opts?.timeout;
+        timeouts.push(timeout);
+        await new Promise((resolve) => setTimeout(resolve, timeout ?? 0));
+        return { exitCode: 124, stdout: '', stderr: 'command timed out' };
+      },
+    },
+  );
+  const elapsed = Date.now() - startedAt;
+
+  assert.equal(probe.state, 'unknown');
+  assert.equal(probe.state === 'unknown' && probe.code, 'probe-timeout');
+  assert.ok(
+    timeouts.every((timeout) => (timeout ?? 0) <= 120),
+    `no attempt may exceed the remaining budget, saw ${JSON.stringify(timeouts)}`,
+  );
+  assert.ok(elapsed < 1_000, `retries must stop at the deadline, took ${elapsed}ms`);
+  assert.ok(timeouts.length < 5, `the last attempts must not start, ran ${timeouts.length}`);
+});
+
+test('a probe whose budget is already spent is not attempted at all', async () => {
+  let calls = 0;
+  const probe = await probeRunnerDescendantPid(
+    makeVars(),
+    String(process.pid),
+    'codex',
+    { attempts: 3, deadline: Date.now() - 1 },
+    {
+      exec: async () => {
+        calls += 1;
+        return { exitCode: 0, stdout: '1\n', stderr: '' };
+      },
+    },
+  );
+
+  assert.equal(calls, 0, 'an exhausted budget must not start an exec');
+  assert.equal(probe.state, 'unknown');
+  assert.equal(probe.state === 'unknown' && probe.code, 'probe-timeout');
+  assert.match(probe.state === 'unknown' ? (probe.reason ?? '') : '', /budget exhausted/);
+});
+
+test('a probe failure that a retry would only repeat is not retried', async () => {
+  let calls = 0;
+  const probe = await probeRunnerDescendantPid(
+    makeVars(),
+    String(process.pid),
+    'codex',
+    { attempts: 3 },
+    {
+      exec: async () => {
+        calls += 1;
+        return { exitCode: 127, stdout: '', stderr: 'awk: command not found' };
+      },
+    },
+  );
+
+  assert.equal(probe.state, 'unknown');
+  assert.equal(probe.state === 'unknown' && probe.code, 'probe-transport');
+  assert.equal(calls, 1);
 });
 
 test('runner descendant scan ignores the diagnostic wrapper after child exit', async () => {
@@ -272,7 +411,7 @@ test('nudge target resolution fails closed when runner liveness is unknown', asy
         stdout: '1|dev|0|300|100\n2|bugfix|0|400|200',
         stderr: '',
       }),
-      probe: async () => ({ state: 'unknown', reason: 'ssh timeout' }),
+      probe: async () => ({ state: 'unknown', code: 'probe-timeout', reason: 'ssh timeout' }),
     }),
     /Cannot inspect retained runner.*ssh timeout/,
   );

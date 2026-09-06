@@ -17,6 +17,7 @@ import * as resourcePostureSmoke from './resource-posture-smoke.mjs';
 import * as retainedHandoffSmoke from './retained-handoff-smoke.mjs';
 import * as retainedSafeSendSmoke from './retained-safe-send-smoke.mjs';
 import * as reviewRecoveryTerminalContract from './review-recovery-terminal-contract.mjs';
+import * as runnerStopProcessScan from './runner-stop-process-scan.mjs';
 import * as selfReviewFixTurnLease from './self-review-fix-turn-lease.mjs';
 import * as sessionAttributionSmoke from './session-attribution-smoke.mjs';
 import * as sessionReopenSmoke from './session-reopen-smoke.mjs';
@@ -36,6 +37,7 @@ export const SCENARIOS = {
   'dispatch-prompt-trust': dispatchPromptTrust,
   'prompt-accepted': promptAccepted,
   'review-recovery-terminal-contract': reviewRecoveryTerminalContract,
+  'runner-stop-process-scan': runnerStopProcessScan,
   'self-review-fix-turn-lease': selfReviewFixTurnLease,
   'retained-handoff-smoke': retainedHandoffSmoke,
   'retained-safe-send-smoke': retainedSafeSendSmoke,

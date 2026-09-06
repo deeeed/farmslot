@@ -1,0 +1,233 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06T14:30:15.137Z",
+  "host": "macwork",
+  "scenario": "runner-stop-process-scan",
+  "runner": "gateway",
+  "baselineRef": "origin/main",
+  "baselineSha": "af5897644de3216cbaa3008fe6b2e1e49b07ac63",
+  "currentSha": "1df30c4b01d5791d9a4568bd9868d4cd7599d5d5",
+  "currentTreeDirty": true,
+  "baseline": {
+    "sourceRoot": "/Users/deeeed/dev/farmslot/temp/runner-stop-process-scan-p2pY9t/baseline",
+    "sourceSha": "af5897644de3216cbaa3008fe6b2e1e49b07ac63",
+    "loadAverage": [126.28759765625, 126.48388671875, 126.619140625],
+    "cpus": 16,
+    "nodes": [
+      {
+        "id": "walk-finds-the-nested-runner",
+        "claim": "the generated walk finds a runner nested under the tmux pane process",
+        "pass": true,
+        "observed": {
+          "paneRoot": "30905",
+          "exitCode": 0,
+          "stdout": "31271"
+        }
+      },
+      {
+        "id": "one-probe-reads-the-process-table-once",
+        "claim": "a probe of a branching pane tree costs exactly one process-table read and no per-node pgrep",
+        "pass": false,
+        "observed": {
+          "psCalls": 6,
+          "pgrepCalls": 6,
+          "directChildrenOfRoot": 4,
+          "exitCode": 0,
+          "elapsedMs": 1550
+        }
+      },
+      {
+        "id": "a-failed-ps-is-not-a-confirmed-absence",
+        "claim": "a `ps` that exits nonzero is reported as undecided, not as a stopped runner",
+        "pass": false,
+        "observed": {
+          "exitCode": 1,
+          "stderr": "",
+          "confirmedAbsentSignature": true
+        }
+      },
+      {
+        "id": "an-empty-ps-is-not-a-confirmed-absence",
+        "claim": "a `ps` that returns no output is reported as undecided, not as a stopped runner",
+        "pass": false,
+        "observed": {
+          "exitCode": 1,
+          "stderr": "",
+          "confirmedAbsentSignature": true
+        }
+      },
+      {
+        "id": "an-unparsable-ps-is-not-a-confirmed-absence",
+        "claim": "output that reaches the walk with no pid rows is reported as undecided",
+        "pass": false,
+        "observed": {
+          "exitCode": 1,
+          "stderr": "",
+          "confirmedAbsentSignature": true
+        }
+      },
+      {
+        "id": "the-runner-pattern-keeps-its-regex-escapes",
+        "claim": "an escaped dot in the runner pattern still matches only a literal dot",
+        "pass": true,
+        "observed": {
+          "escapedExit": 1,
+          "widenedExit": 0
+        }
+      },
+      {
+        "id": "a-tree-with-no-runner-is-confirmed-absent",
+        "claim": "a pane whose runner exited reports the confirmed-absent signature: exit 1, nothing printed",
+        "pass": true,
+        "observed": {
+          "exitCode": 1,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    ],
+    "pass": false
+  },
+  "current": {
+    "sourceRoot": "/Users/deeeed/dev/farmslot",
+    "sourceSha": "1df30c4b01d5791d9a4568bd9868d4cd7599d5d5",
+    "loadAverage": [121.10791015625, 125.41748046875, 126.24169921875],
+    "cpus": 16,
+    "nodes": [
+      {
+        "id": "walk-finds-the-nested-runner",
+        "claim": "the generated walk finds a runner nested under the tmux pane process",
+        "pass": true,
+        "observed": {
+          "paneRoot": "37724",
+          "exitCode": 0,
+          "stdout": "38337"
+        }
+      },
+      {
+        "id": "one-probe-reads-the-process-table-once",
+        "claim": "a probe of a branching pane tree costs exactly one process-table read and no per-node pgrep",
+        "pass": true,
+        "observed": {
+          "psCalls": 1,
+          "pgrepCalls": 0,
+          "directChildrenOfRoot": 4,
+          "exitCode": 0,
+          "elapsedMs": 502
+        }
+      },
+      {
+        "id": "a-failed-ps-is-not-a-confirmed-absence",
+        "claim": "a `ps` that exits nonzero is reported as undecided, not as a stopped runner",
+        "pass": true,
+        "observed": {
+          "exitCode": 3,
+          "stderr": "runner liveness probe: ps snapshot exited nonzero",
+          "confirmedAbsentSignature": false
+        }
+      },
+      {
+        "id": "an-empty-ps-is-not-a-confirmed-absence",
+        "claim": "a `ps` that returns no output is reported as undecided, not as a stopped runner",
+        "pass": true,
+        "observed": {
+          "exitCode": 3,
+          "stderr": "runner liveness probe: ps snapshot was empty",
+          "confirmedAbsentSignature": false
+        }
+      },
+      {
+        "id": "an-unparsable-ps-is-not-a-confirmed-absence",
+        "claim": "output that reaches the walk with no pid rows is reported as undecided",
+        "pass": true,
+        "observed": {
+          "exitCode": 3,
+          "stderr": "runner liveness probe: process table snapshot unusable (0 row(s), 1 malformed)",
+          "confirmedAbsentSignature": false
+        }
+      },
+      {
+        "id": "the-runner-pattern-keeps-its-regex-escapes",
+        "claim": "an escaped dot in the runner pattern still matches only a literal dot",
+        "pass": true,
+        "observed": {
+          "escapedExit": 1,
+          "widenedExit": 0
+        }
+      },
+      {
+        "id": "a-tree-with-no-runner-is-confirmed-absent",
+        "claim": "a pane whose runner exited reports the confirmed-absent signature: exit 1, nothing printed",
+        "pass": true,
+        "observed": {
+          "exitCode": 1,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    ],
+    "pass": true
+  },
+  "baselineLog": [
+    "PASS walk-finds-the-nested-runner: the generated walk finds a runner nested under the tmux pane process",
+    "FAIL one-probe-reads-the-process-table-once: a probe of a branching pane tree costs exactly one process-table read and no per-node pgrep",
+    "FAIL a-failed-ps-is-not-a-confirmed-absence: a `ps` that exits nonzero is reported as undecided, not as a stopped runner",
+    "FAIL an-empty-ps-is-not-a-confirmed-absence: a `ps` that returns no output is reported as undecided, not as a stopped runner",
+    "FAIL an-unparsable-ps-is-not-a-confirmed-absence: output that reaches the walk with no pid rows is reported as undecided",
+    "PASS the-runner-pattern-keeps-its-regex-escapes: an escaped dot in the runner pattern still matches only a literal dot",
+    "PASS a-tree-with-no-runner-is-confirmed-absent: a pane whose runner exited reports the confirmed-absent signature: exit 1, nothing printed"
+  ],
+  "currentLog": [
+    "PASS walk-finds-the-nested-runner: the generated walk finds a runner nested under the tmux pane process",
+    "PASS one-probe-reads-the-process-table-once: a probe of a branching pane tree costs exactly one process-table read and no per-node pgrep",
+    "PASS a-failed-ps-is-not-a-confirmed-absence: a `ps` that exits nonzero is reported as undecided, not as a stopped runner",
+    "PASS an-empty-ps-is-not-a-confirmed-absence: a `ps` that returns no output is reported as undecided, not as a stopped runner",
+    "PASS an-unparsable-ps-is-not-a-confirmed-absence: output that reaches the walk with no pid rows is reported as undecided",
+    "PASS the-runner-pattern-keeps-its-regex-escapes: an escaped dot in the runner pattern still matches only a literal dot",
+    "PASS a-tree-with-no-runner-is-confirmed-absent: a pane whose runner exited reports the confirmed-absent signature: exit 1, nothing printed"
+  ],
+  "gatewayNode": {
+    "id": "gateway-rpc-reports-both-liveness-verdicts",
+    "claim": "a forced fleet.status refresh over the gateway returns both a found runner and a confirmed-absent one",
+    "gateway": "ws://localhost:7801",
+    "pass": true,
+    "skipped": false,
+    "observed": {
+      "elapsedMs": 83079,
+      "verdictCounts": {
+        "-": 5,
+        "no-tmux": 55,
+        "working": 6,
+        "idle": 14
+      },
+      "working": [
+        "macpro-mm-1",
+        "macwork-mmdev-3",
+        "macwork-mmdev-4",
+        "mini-mm-1",
+        "mini-mme-2",
+        "mini-mme-3"
+      ],
+      "idle": [
+        "macpro-mm-2",
+        "macpro-mm-3",
+        "macpro-mm-6",
+        "macpro-mme-6",
+        "macpro-ff-1",
+        "macpro-ff-2",
+        "macwork-mmedev-3",
+        "macwork-ff-1",
+        "macwork-ff-2",
+        "macwork-ff-3",
+        "mini-mm-2",
+        "mini-mme-1",
+        "mini-ff-1",
+        "mini-mm-3"
+      ]
+    }
+  },
+  "failBefore": true,
+  "passAfter": true,
+  "pass": true,
+  "error": null
+}

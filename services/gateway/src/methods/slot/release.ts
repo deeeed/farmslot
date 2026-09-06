@@ -51,6 +51,10 @@ import {
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
 import { runnerPromptSubmitKey } from '../../runners/registry.js';
+import {
+  RUNNER_PARK_GRACEFUL_EXIT_MAX_TIMEOUT_MS,
+  RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
+} from '../../runners/session-lifecycle.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
@@ -629,6 +633,9 @@ export async function killSlotAgents(slotId: string): Promise<void> {
 
 // ─── slotRecycle — convenience wrapper ───
 
+/** Ceiling on the whole pane scan, matching the park stop path's own ceiling. */
+const RUNNER_TEARDOWN_PANE_SCAN_TIMEOUT_MS = RUNNER_PARK_GRACEFUL_EXIT_MAX_TIMEOUT_MS;
+
 export async function killAgentInSession(
   vars: SlotVars,
   runner?: string,
@@ -689,8 +696,23 @@ export async function killAgentInSession(
       .filter(Boolean),
   );
   const candidates: Array<{ target: string; panePid: string; agentPid: string }> = [];
+  // Each pane's probe may retry with a doubling budget, so the per-pane worst
+  // case is bounded but the scan across panes was not. Cap the whole scan the
+  // way the park stop path caps its wait, and refuse rather than decide a
+  // teardown from panes we never got to look at.
+  const scanDeadline = Date.now() + RUNNER_TEARDOWN_PANE_SCAN_TIMEOUT_MS;
   for (const pane of panes) {
-    const candidatePid = await findRunnerDescendantPid(vars, pane.panePid, runner);
+    if (Date.now() >= scanDeadline) {
+      throw new Error(
+        `Runner teardown could not scan every pane in ${session} within ${RUNNER_TEARDOWN_PANE_SCAN_TIMEOUT_MS}ms; refusing to act on a partial scan`,
+      );
+    }
+    // Teardown must not mistake a slow host for an empty pane, so give the
+    // liveness probe the same bounded retry the park stop path uses.
+    const candidatePid = await findRunnerDescendantPid(vars, pane.panePid, runner, {
+      timeout: TMUX_CMD_TIMEOUT,
+      attempts: RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
+    });
     if (!candidatePid) continue;
     candidates.push({ ...pane, agentPid: candidatePid });
   }
