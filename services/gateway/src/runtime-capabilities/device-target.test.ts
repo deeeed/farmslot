@@ -16,14 +16,26 @@ import {
   retargetProofRequirements,
 } from './device-target.js';
 
-function entry(id: string, parameters?: Record<string, unknown>): RuntimeCapabilityCatalogEntry {
+function entry(
+  id: string,
+  parameters?: Record<string, unknown>,
+  options: { device?: boolean; dependencies?: string[] } = {},
+): RuntimeCapabilityCatalogEntry {
   return {
     id,
     project: 'farmslot-farm',
     label: id,
     version: '1',
     sharePolicy: 'exclusive',
-    cost: { class: 'high', resources: [] },
+    cost: {
+      class: 'high',
+      // Declaring a device parameter is not the same as DRIVING a device; the
+      // rewrite rule needs both, so the fixtures distinguish them.
+      resources: options.device
+        ? [{ id: `${id}-device`, access: 'exclusive', kind: 'device' }]
+        : [],
+    },
+    ...(options.dependencies ? { dependencies: options.dependencies } : {}),
     ...(parameters ? { parameters } : {}),
     actions: {
       acquire: { kind: 'slot-action', actionId: `${id}.acquire` },
@@ -36,22 +48,30 @@ function entry(id: string, parameters?: Record<string, unknown>): RuntimeCapabil
   };
 }
 
-const IOS = entry('ios-simulator', {
-  type: 'object',
-  properties: {
-    platform: { const: 'ios' },
-    udid: { type: 'string' },
-    simulator: { type: 'string' },
+const IOS = entry(
+  'ios-simulator',
+  {
+    type: 'object',
+    properties: {
+      platform: { const: 'ios' },
+      udid: { type: 'string' },
+      simulator: { type: 'string' },
+    },
   },
-});
-const ANDROID = entry('android-device', {
-  type: 'object',
-  properties: {
-    platform: { const: 'android' },
-    avd: { type: 'string' },
-    adb_serial: { type: 'string' },
+  { device: true },
+);
+const ANDROID = entry(
+  'android-device',
+  {
+    type: 'object',
+    properties: {
+      platform: { const: 'android' },
+      avd: { type: 'string' },
+      adb_serial: { type: 'string' },
+    },
   },
-});
+  { device: true },
+);
 const METRO = entry('companion-metro');
 
 function requirement(capabilityId: string): RuntimeCapabilityProofRequirement {
@@ -200,7 +220,7 @@ test('a platform-only target is refused rather than silently doing nothing', () 
   const outcome = retargetProofRequirements([held], [IOS], { platform: 'ios' });
   assert.equal(outcome.ok, false);
   if (outcome.ok) return;
-  assert.match(outcome.reason, /names no device parameter/);
+  assert.match(outcome.reason, /names only a platform, no device parameter/);
 });
 
 test('a second re-target REPLACES the previous device key instead of unioning with it', () => {
@@ -304,10 +324,11 @@ test('a device target reaches every requirement that declares it', () => {
   // The simulator and the dev client installed onto it both drive one physical
   // device. Re-targeting only one left the other installing onto the simulator
   // the run had just left.
-  const client = entry('companion-native-client-ios', {
-    type: 'object',
-    properties: { platform: { const: 'ios' }, simulator: { type: 'string' } },
-  });
+  const client = entry(
+    'companion-native-client-ios',
+    { type: 'object', properties: { platform: { const: 'ios' }, simulator: { type: 'string' } } },
+    { device: true, dependencies: ['ios-simulator'] },
+  );
   const outcome = retargetProofRequirements(
     [requirement('companion-metro'), requirement('ios-simulator'), requirement(client.id)],
     [METRO, IOS, client],
@@ -433,4 +454,54 @@ test('the same device name on two machines is not a conflict', () => {
     crossSlotTargetConflict({ simulator: 'fs-1' }, holders, 'macwork') ?? '',
     /macwork-ff-1' on macwork/,
   );
+});
+
+test('a provider that takes a simulator name but drives no device is left alone', () => {
+  // Declaring the parameter makes the identity reach a provider's hooks; only a
+  // device claim makes it drive the device. A report step that takes a simulator
+  // name is not part of the physical device this target names.
+  const report = entry('visual-report', {
+    type: 'object',
+    properties: { simulator: { type: 'string' } },
+  });
+  const outcome = retargetProofRequirements(
+    [requirement('ios-simulator'), requirement('visual-report')],
+    [IOS, report],
+    { simulator: 'SIM-2' },
+  );
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  assert.deepEqual(outcome.value[0]?.parameters, { simulator: 'SIM-2' });
+  assert.equal(outcome.value[1]?.parameters, undefined, 'no dependency edge, no device claim');
+});
+
+test('two unconnected device groups cannot both be meant by one target', () => {
+  const second = entry(
+    'second-simulator',
+    { type: 'object', properties: { simulator: { type: 'string' } } },
+    { device: true },
+  );
+  const outcome = retargetProofRequirements(
+    [requirement('ios-simulator'), requirement('second-simulator')],
+    [IOS, second],
+    { simulator: 'SIM-2' },
+  );
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.match(outcome.reason, /unconnected device groups/);
+});
+
+test('a declared platform on the requirement survives a device re-target', () => {
+  // Only the device identity is replaced. A provider that declares `platform`
+  // may need it in its hooks, so dropping it would change what it is told.
+  const held = {
+    capabilityId: 'ios-simulator',
+    reason: 'device',
+    mode: 'visual' as const,
+    parameters: { platform: 'ios', simulator: 'SIM-1' },
+  };
+  const outcome = retargetProofRequirements([held], [IOS], { simulator: 'SIM-2' });
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  assert.deepEqual(outcome.value[0]?.parameters, { platform: 'ios', simulator: 'SIM-2' });
 });

@@ -239,6 +239,54 @@ export function crossSlotTargetConflict(
   return null;
 }
 
+/**
+ * Split capability ids into dependency-connected groups. Edges are the catalog's
+ * own `dependencies`, followed in both directions and only between ids in the
+ * set, so `ios-simulator` and the client that depends on it land together while
+ * an unrelated device provider forms its own group.
+ */
+function dependencyGroups(
+  ids: readonly string[],
+  byId: ReadonlyMap<string, RuntimeCapabilityCatalogEntry>,
+): Array<Set<string>> {
+  const members = new Set(ids);
+  const neighbours = new Map<string, Set<string>>(ids.map((id) => [id, new Set<string>()]));
+  const link = (a: string, b: string) => {
+    neighbours.get(a)?.add(b);
+    neighbours.get(b)?.add(a);
+  };
+  // Transitive: a dependency outside the set still connects two ids inside it.
+  const reaches = (from: string, seen = new Set<string>()): Set<string> => {
+    for (const dependency of byId.get(from)?.dependencies ?? []) {
+      if (seen.has(dependency)) continue;
+      seen.add(dependency);
+      reaches(dependency, seen);
+    }
+    return seen;
+  };
+  for (const id of ids) {
+    for (const reachable of reaches(id)) {
+      if (members.has(reachable)) link(id, reachable);
+    }
+  }
+  const groups: Array<Set<string>> = [];
+  const placed = new Set<string>();
+  for (const id of ids) {
+    if (placed.has(id)) continue;
+    const group = new Set<string>();
+    const queue = [id];
+    while (queue.length > 0) {
+      const current = queue.pop()!;
+      if (group.has(current)) continue;
+      group.add(current);
+      placed.add(current);
+      for (const neighbour of neighbours.get(current) ?? []) queue.push(neighbour);
+    }
+    groups.push(group);
+  }
+  return groups;
+}
+
 /** Whether a provider schema says this platform is one it serves. */
 function schemaAllowsPlatform(
   entry: RuntimeCapabilityCatalogEntry | undefined,
@@ -286,9 +334,14 @@ export function retargetProofRequirements(
     return { ok: false, reason: 'target names no device parameter' };
   }
   const byId = new Map(catalog.map((entry) => [entry.id, entry]));
-  let candidates = requirements.filter((requirement) =>
-    declaresTargetedParameters(byId.get(requirement.capabilityId), target),
-  );
+  // Declaring the parameter is what makes the identity reach a provider's hooks;
+  // claiming a device is what makes it DRIVE the device. Both are required. A
+  // provider that merely takes a simulator name — a report, a lint step — is not
+  // part of the physical device this target names and is left alone.
+  let candidates = requirements.filter((requirement) => {
+    const entry = byId.get(requirement.capabilityId);
+    return Boolean(entry) && declaresTargetedParameters(entry, target) && claimsDevice(entry!);
+  });
   if (candidates.length === 0) {
     return {
       ok: false,
@@ -314,14 +367,26 @@ export function retargetProofRequirements(
       };
     }
   }
-  // EVERY matching requirement is rewritten, not just one. More than one
-  // provider drives the same physical device — on farmslot-farm the simulator
-  // itself and the dev client installed onto it — and re-targeting only one of
-  // them leaves the other running its hooks against the slot's configured
-  // device, so the client would install onto the simulator the run just left.
-  // Declaring the parameter is the operative signal, because that is also what
-  // decides whether the identity is substituted into the provider's hooks.
-  const chosenIds = new Set(candidates.map((requirement) => requirement.capabilityId));
+  // THE INVARIANT, stated rather than left incidental: every rewritten
+  // requirement drives the SAME physical device. Two capabilities do that only
+  // when one transitively depends on the other — on farmslot-farm the simulator
+  // and the dev client installed onto it. So the rewrite set is one
+  // dependency-connected group; re-targeting only part of it would leave the
+  // rest running against the device the run just left, and re-targeting two
+  // unconnected groups would move two devices for one target.
+  const groups = dependencyGroups(
+    candidates.map((requirement) => requirement.capabilityId),
+    byId,
+  );
+  if (groups.length > 1) {
+    return {
+      ok: false,
+      reason: `target is ambiguous: ${groups
+        .map((group) => [...group].sort().join('+'))
+        .join(' and ')} are unconnected device groups, so one target cannot mean both`,
+    };
+  }
+  const chosenIds = groups[0]!;
   // `platform` selects WHICH provider the target meant; it is not a device, so
   // it is never stored. Storing it would make a target that merely restates the
   // platform of the provider already holding the device differ from the held
@@ -332,7 +397,7 @@ export function retargetProofRequirements(
   // untouched gave the caller a rerun and no signal that the target did
   // nothing — the same refusal the whole-target check above gives applies here.
   if (Object.keys(deviceKeys).length === 0) {
-    return { ok: false, reason: 'target names no device parameter' };
+    return { ok: false, reason: 'target names only a platform, no device parameter' };
   }
   // REPLACE the stored device identity, never union with it. The plan carries
   // the last re-target, so `{udid: A}` followed by `{simulator: B}` would
@@ -343,7 +408,10 @@ export function retargetProofRequirements(
   // the merged result cannot contradict itself.
   const rewrite = (requirement: RuntimeCapabilityProofRequirement) => {
     const kept: Record<string, unknown> = { ...requirement.parameters };
-    for (const key of RUNTIME_CAPABILITY_TARGET_KEYS) delete kept[key];
+    // Only the DEVICE identity is replaced. A stored `platform` is not part of
+    // that identity, and a provider that declares it may need it in its hooks,
+    // so dropping it would silently change what the provider is told.
+    for (const key of DEVICE_KEYS) delete kept[key];
     return { ...requirement, parameters: { ...kept, ...deviceKeys } };
   };
   return {

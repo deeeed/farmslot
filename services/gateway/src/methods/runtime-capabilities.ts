@@ -218,20 +218,31 @@ async function runProviderAction(
  * `fleet-scoped-device-claims` item; until it lands this refuses rather than
  * queues.
  */
-async function assertDeviceTargetAvailable(input: {
-  slotId: string;
-  capabilityId: string;
-  ownerRunId: string;
-  parameters: Record<string, unknown>;
-  /**
-   * Whether this capability claims a device, resolved by the registry from the
-   * catalog entry it already holds under its own lock. Passed in rather than
-   * re-read here: re-reading meant a config file mid-write could make the guard
-   * skip itself for exactly the acquires it exists to check.
-   */
-  claimsDevice: boolean;
-  activeLeases: readonly RuntimeCapabilityLease[];
-}): Promise<string | null> {
+/** The config reads the guard needs, injectable so the rule can be tested. */
+export interface DeviceTargetGuardDeps {
+  loadSlotVars: (
+    slotId: string,
+  ) => Promise<{ machine: string; resourceVars: Record<string, string> }>;
+  catalogForSlot: (slotId: string) => Promise<{ capabilities: RuntimeCapabilityCatalogEntry[] }>;
+}
+
+export async function assertDeviceTargetAvailable(
+  input: {
+    slotId: string;
+    capabilityId: string;
+    ownerRunId: string;
+    parameters: Record<string, unknown>;
+    /**
+     * Whether this capability claims a device, resolved by the registry from the
+     * catalog entry it already holds under its own lock. Passed in rather than
+     * re-read here: re-reading meant a config file mid-write could make the
+     * guard skip itself for exactly the acquires it exists to check.
+     */
+    claimsDevice: boolean;
+    activeLeases: readonly RuntimeCapabilityLease[];
+  },
+  deps: DeviceTargetGuardDeps = { loadSlotVars, catalogForSlot },
+): Promise<string | null> {
   const target = deviceTargetExtraVars(input.parameters);
   if (!target.ok) return target.reason;
   // `platform` names no device, so it can never conflict. Short-circuit before
@@ -247,7 +258,7 @@ async function assertDeviceTargetAvailable(input: {
   // device that is or which machine it is on.
   let ownVars;
   try {
-    ownVars = await loadSlotVars(input.slotId);
+    ownVars = await deps.loadSlotVars(input.slotId);
   } catch (error) {
     return `cannot resolve the configured device of slot '${input.slotId}': ${
       error instanceof Error ? error.message : String(error)
@@ -257,37 +268,34 @@ async function assertDeviceTargetAvailable(input: {
   const effective = requested ?? deviceIdentityOnly(ownVars.resourceVars);
   if (!effective) return null;
 
+  // Holders are built for every foreign slot and carry THEIR OWN machine;
+  // `crossSlotTargetConflict` does the machine scoping. Filtering here instead
+  // would leave that filter unreachable and stamp the acquirer's machine on the
+  // refusal, naming the wrong host. The extra reads are bounded by the number of
+  // distinct slots holding a live lease, which is small.
   const slotState = new Map<
     string,
-    { identity: Record<string, unknown>; deviceCapabilities: Set<string> } | null
+    { machine: string; identity: Record<string, unknown>; deviceCapabilities: Set<string> }
   >();
   const holders: DeviceHolder[] = [];
   for (const lease of input.activeLeases) {
     if (lease.slotId === input.slotId) continue;
     let state = slotState.get(lease.slotId);
-    if (state === undefined) {
+    if (!state) {
       try {
-        const slotVars = await loadSlotVars(lease.slotId);
-        if (slotVars.machine !== machine) {
-          // A device name identifies a device ON ITS MACHINE. The pool reuses
-          // `fs-1`, `emulator-5554` and the same avd names across machines, so
-          // comparing identities fleet-wide refuses an ordinary acquire on one
-          // machine because another machine happens to run a same-named
-          // simulator. Two physically distinct devices are not a conflict.
-          state = null;
-        } else {
-          const catalog = await catalogForSlot(lease.slotId);
-          state = {
-            identity: slotVars.resourceVars,
-            // A slot's configured device is only off-limits when something is
-            // actually driving a DEVICE there. Treating any lease as a holder
-            // made a slot running only a browser or Metro block its own
-            // simulator, and named that capability as the reason.
-            deviceCapabilities: new Set(
-              catalog.capabilities.filter(claimsDevice).map((entry) => entry.id),
-            ),
-          };
-        }
+        const slotVars = await deps.loadSlotVars(lease.slotId);
+        const catalog = await deps.catalogForSlot(lease.slotId);
+        state = {
+          machine: slotVars.machine,
+          identity: slotVars.resourceVars,
+          // A slot's configured device is only off-limits when something is
+          // actually driving a DEVICE there. Treating any lease as a holder
+          // made a slot running only a browser or Metro block its own
+          // simulator, and named that capability as the reason.
+          deviceCapabilities: new Set(
+            catalog.capabilities.filter(claimsDevice).map((entry) => entry.id),
+          ),
+        };
       } catch (error) {
         // Handled, not swallowed: without that slot's configuration we cannot
         // prove the requested device is free, and guessing costs two runs
@@ -298,10 +306,10 @@ async function assertDeviceTargetAvailable(input: {
       }
       slotState.set(lease.slotId, state);
     }
-    if (!state || !state.deviceCapabilities.has(lease.capabilityId)) continue;
+    if (!state.deviceCapabilities.has(lease.capabilityId)) continue;
     holders.push({
       slotId: lease.slotId,
-      machine,
+      machine: state.machine,
       capabilityId: lease.capabilityId,
       runId: lease.owner.runId,
       // The lease's own identity DISPLACES the slot's configured one within the

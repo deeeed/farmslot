@@ -987,7 +987,12 @@ function capabilityStatusFor(
     label: 'iOS Simulator',
     version: '1',
     sharePolicy: 'exclusive' as const,
-    cost: { class: 'high' as const, resources: [] },
+    // Claims a device, like the shipped provider: a target only rewrites a
+    // requirement whose provider actually drives the device it names.
+    cost: {
+      class: 'high' as const,
+      resources: [{ id: 'ios-simulator', access: 'exclusive' as const, kind: 'device' as const }],
+    },
     parameters: {
       type: 'object',
       properties: { platform: { const: 'ios' }, simulator: { type: 'string' } },

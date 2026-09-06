@@ -300,9 +300,29 @@ async function main() {
   // first quiet-machine rerun, so those sections are carried forward and only
   // the fields this run actually measured are replaced.
   const previous = existsSync(EVIDENCE_PATH) ? JSON.parse(readFileSync(EVIDENCE_PATH, 'utf8')) : {};
+  const failed = nodes.filter((entry) => !entry.ok).map((entry) => entry.node);
+  const driverNodesOk = failed.length === 0;
+  // `cdp` and `negativeProof` are evidence this driver did not produce and must
+  // never destroy. `blocked` and `hostLoad` describe why the scenario is not
+  // finished, so they survive a partial run and are dropped only by a fully
+  // green one.
   const preserved = {};
-  for (const key of ['cdp', 'producedBy', 'executedNodes', 'executedNodesOk', 'negativeProof']) {
+  for (const key of ['cdp', 'producedBy', 'negativeProof']) {
     if (previous[key] !== undefined) preserved[key] = previous[key];
+  }
+  if (!driverNodesOk) {
+    // A partial run keeps the scenario-level record, but `pendingNodes` and
+    // `what` describe THIS run, not a stale one.
+    for (const key of ['executedNodes', 'executedNodesOk']) {
+      if (previous[key] !== undefined) preserved[key] = previous[key];
+    }
+    if (previous.hostLoad !== undefined) preserved.hostLoad = previous.hostLoad;
+    preserved.blocked = {
+      ...(previous.blocked ?? {}),
+      what: failed,
+      pendingNodes: failed,
+      lastRunAt: new Date().toISOString(),
+    };
   }
   const artifact = {
     ...preserved,
@@ -316,19 +336,10 @@ async function main() {
     startedAt: started,
     completedAt: new Date().toISOString(),
     nodes,
-    // This run's own verdict. The scenario as a whole is only `ok` when nothing
-    // is still blocked, which is what `blocked` below records.
-    driverNodesOk: nodes.every((entry) => entry.ok),
-    ...(nodes.every((entry) => entry.ok)
-      ? { ok: true }
-      : {
-          ok: false,
-          blocked: {
-            ...(previous.blocked ?? {}),
-            what: nodes.filter((entry) => !entry.ok).map((entry) => entry.node),
-            lastRunAt: new Date().toISOString(),
-          },
-        }),
+    // This run's own verdict, and the scenario's. They differ: the scenario is
+    // only `ok` when this run passed AND nothing is left blocked.
+    driverNodesOk,
+    ok: driverNodesOk && !preserved.blocked,
     finalDeviceState: { [OWN_SIM]: finalSims[OWN_SIM], [OTHER_SIM]: finalSims[OTHER_SIM] },
     finalLeases: {
       [SLOT]: (finalSlot.leases ?? []).map((lease) => ({
