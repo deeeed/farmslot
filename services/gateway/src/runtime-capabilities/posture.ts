@@ -728,12 +728,17 @@ export class RunResourcePostureReconciler {
     // the re-target silently does nothing. The dependent goes with it and is
     // reacquired by the loop below, which pulls the dependency in again on the
     // device the plan now names.
+    // A worklist, not one pass: `dependencyLeaseIds` holds DIRECT dependencies
+    // only, so a grandparent is reached solely through its parent. A single pass
+    // would find it or not depending on map iteration order.
     const staleIds = new Set(staleByParameters.map((lease) => lease.id));
     const staleTargets = [...staleByParameters];
-    for (const group of context.leases.values()) {
-      for (const lease of group) {
+    const allLeases = [...context.leases.values()].flat();
+    for (let index = 0; index < staleTargets.length; index += 1) {
+      const stale = staleTargets[index]!;
+      for (const lease of allLeases) {
         if (staleIds.has(lease.id) || lease.state === 'released') continue;
-        if (!lease.dependencyLeaseIds.some((id) => staleIds.has(id))) continue;
+        if (!lease.dependencyLeaseIds.includes(stale.id)) continue;
         staleIds.add(lease.id);
         staleTargets.push(lease);
       }

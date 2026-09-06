@@ -2,10 +2,20 @@
 // (ADR-054 item 3, MANUAL-000113) all the way to the Gateway.
 //
 // Real element, real DOM events, real gateway socket. Nothing is written into
-// component state: the key is chosen through the select's own `change` handler
-// and the identity is typed through the input's own `input` handler, exactly as
-// an operator does it. What the probe asserts is the frame the component then
-// puts on the wire and the Gateway's answer to it — not a value it planted.
+// component state: the key is chosen through the select's own `change` handler,
+// the identity is typed through the input's own `input` handler, and the replay
+// is started by clicking the button, exactly as an operator does it. What the
+// probe asserts is the frame the component then puts on the wire — not a value
+// it planted.
+//
+// LIMITATION, stated rather than hidden: this mounts its own
+// `<recipe-runner-controls>` instead of driving the one Slot View renders. That
+// instance appears only when the slot has a linked run WITH a replayable recipe
+// artifact, which needs a full dispatch; on a fleet where no such run exists the
+// route never reaches the component. The element, its handlers, its params
+// builder and the gateway client are the shipped ones either way — what is not
+// covered here is the wiring in `slot-view-recipe-renderers.ts` that supplies
+// `runId`/`recipeArtifactPath`.
 //
 // Run on any connected Command Center route, e.g.
 //   node scripts/cdp.mjs eval slot/<slot-id> --file probes/recipe-rerun-device-target.js
@@ -42,6 +52,18 @@ function typeInto(input, value) {
 function choose(select, value) {
   select.value = value;
   select.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+/** Start the replay the way an operator does: click the button. */
+async function clickReplay(controls) {
+  // The button is swapped for Cancel while a replay is in flight, so wait for
+  // the real control to come back rather than assuming it is there.
+  const button = await waitFor(
+    () => controls.querySelector('[data-testid="recipe-replay-run"]:not([disabled])'),
+    'the replay button',
+  );
+  button.click();
+  await controls.updateComplete;
 }
 
 const host = document.createElement('div');
@@ -105,7 +127,7 @@ try {
   typeInto(input, 'fs-4; touch /tmp/farmslot-113-cdp');
   await controls.updateComplete;
   sentFrames.length = 0;
-  await controls.run();
+  await clickReplay(controls);
   await waitFor(
     () => deep('recipe-output-panel', host)?.textContent?.includes('Device identity must match'),
     'client-side charset refusal',
@@ -119,7 +141,7 @@ try {
   typeInto(input, 'playground-1');
   await controls.updateComplete;
   sentFrames.length = 0;
-  await controls.run();
+  await clickReplay(controls);
   const frame = await waitFor(() => sentFrames[0], 'recipe.rerun frame');
   step(
     'target-reaches-the-gateway',
@@ -133,7 +155,7 @@ try {
   typeInto(input, 'emulator-5554');
   await controls.updateComplete;
   sentFrames.length = 0;
-  await controls.run();
+  await clickReplay(controls);
   const second = await waitFor(() => sentFrames[0], 'second recipe.rerun frame');
   step(
     'key-switch-sends-only-the-new-key',
@@ -145,7 +167,7 @@ try {
   typeInto(input, '   ');
   await controls.updateComplete;
   sentFrames.length = 0;
-  await controls.run();
+  await clickReplay(controls);
   const third = await waitFor(() => sentFrames[0], 'third recipe.rerun frame');
   step('empty-field-sends-no-target', third?.params?.target === undefined, {
     params: Object.keys(third?.params ?? {}),

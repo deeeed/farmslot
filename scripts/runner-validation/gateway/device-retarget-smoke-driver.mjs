@@ -13,7 +13,7 @@
  * SMOKE_RUN_ID to a live, non-terminal run whose slot is SMOKE_SLOT.
  */
 import { execFile } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
@@ -21,6 +21,7 @@ const GW = 'ws://localhost:7801';
 const HOME = '/Users/deeeed/.farmslot-dev';
 const ROOT = '/Users/deeeed/dev/farmslot';
 const CDP = `${ROOT}/apps/command-center/scripts/cdp.mjs`;
+const EVIDENCE_PATH = `${ROOT}/docs/operations/evidence/runner-validate-macwork-gateway-device-retarget-smoke.json`;
 
 const nodes = [];
 
@@ -193,16 +194,25 @@ async function main() {
     } catch (error) {
       rerun = { error: String(error?.message ?? error).slice(0, 400) };
     }
-    // The rerun streams its preflight; give the posture step time to land.
-    await new Promise((resolve) => setTimeout(resolve, 20_000));
+    // Poll for the outcome rather than sleeping a guessed interval: a fixed wait
+    // is both a slow pass and a flaky fail.
+    const deadline = Date.now() + 120_000;
+    let status;
+    let held;
+    let plan;
+    for (;;) {
+      status = await gateway('runtime.capability.status', { slotId: SLOT, ownerRunId: OWNER });
+      held = status.leases?.find(
+        (lease) => lease.capabilityId === 'ios-simulator' && lease.state === 'acquired',
+      );
+      plan = status.proofPlans?.[OWNER]?.requirements?.find(
+        (entry) => entry.capabilityId === 'ios-simulator',
+      );
+      if (held?.parameters?.simulator === OWN_SIM && plan?.parameters?.simulator === OWN_SIM) break;
+      if (Date.now() > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
     sims = await simctl();
-    const status = await gateway('runtime.capability.status', { slotId: SLOT, ownerRunId: OWNER });
-    const held = status.leases?.find(
-      (lease) => lease.capabilityId === 'ios-simulator' && lease.state === 'acquired',
-    );
-    const plan = status.proofPlans?.[OWNER]?.requirements?.find(
-      (entry) => entry.capabilityId === 'ios-simulator',
-    );
     node(
       'recipe-rerun-target-rewrites-the-proof-plan',
       `\`recipe.rerun\` with target simulator='${OWN_SIM}' rewrites the stored plan and moves the lease back`,
@@ -284,7 +294,18 @@ async function main() {
   const finalSlot = await gateway('runtime.capability.status', { slotId: SLOT });
   const finalSibling = await gateway('runtime.capability.status', { slotId: SIBLING });
 
+  // The committed artifact carries sections this driver does not produce: the
+  // CDP probe results and their negative proofs, and the record of which halves
+  // were blocked and why. Overwriting it would destroy that evidence on the
+  // first quiet-machine rerun, so those sections are carried forward and only
+  // the fields this run actually measured are replaced.
+  const previous = existsSync(EVIDENCE_PATH) ? JSON.parse(readFileSync(EVIDENCE_PATH, 'utf8')) : {};
+  const preserved = {};
+  for (const key of ['cdp', 'producedBy', 'executedNodes', 'executedNodesOk', 'negativeProof']) {
+    if (previous[key] !== undefined) preserved[key] = previous[key];
+  }
   const artifact = {
+    ...preserved,
     item: 'MANUAL-000113',
     scenario: 're-target validation to another device',
     gateway: GW,
@@ -295,7 +316,19 @@ async function main() {
     startedAt: started,
     completedAt: new Date().toISOString(),
     nodes,
-    ok: nodes.every((entry) => entry.ok),
+    // This run's own verdict. The scenario as a whole is only `ok` when nothing
+    // is still blocked, which is what `blocked` below records.
+    driverNodesOk: nodes.every((entry) => entry.ok),
+    ...(nodes.every((entry) => entry.ok)
+      ? { ok: true }
+      : {
+          ok: false,
+          blocked: {
+            ...(previous.blocked ?? {}),
+            what: nodes.filter((entry) => !entry.ok).map((entry) => entry.node),
+            lastRunAt: new Date().toISOString(),
+          },
+        }),
     finalDeviceState: { [OWN_SIM]: finalSims[OWN_SIM], [OTHER_SIM]: finalSims[OTHER_SIM] },
     finalLeases: {
       [SLOT]: (finalSlot.leases ?? []).map((lease) => ({
@@ -312,10 +345,7 @@ async function main() {
       })),
     },
   };
-  writeFileSync(
-    `${ROOT}/docs/operations/evidence/runner-validate-macwork-gateway-device-retarget-smoke.json`,
-    `${JSON.stringify(artifact, null, 2)}\n`,
-  );
+  writeFileSync(EVIDENCE_PATH, `${JSON.stringify(artifact, null, 2)}\n`);
   console.log(
     `\nwrote docs/operations/evidence/runner-validate-macwork-gateway-device-retarget-smoke.json — ok=${artifact.ok}`,
   );

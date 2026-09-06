@@ -216,6 +216,7 @@ export class RecipeRunnerControls extends LitElement {
               `
             : html`
                 <button
+                  data-testid="recipe-replay-run"
                   style="border:1px solid ${colors.accent}; border-radius:${radii.sm}; background:${colors.accent}; color:white; font-family:${fonts.mono}; font-size:${fonts.sizeXs}; font-weight:700; padding:6px 12px; cursor:pointer; opacity:${canRun
                     ? '1'
                     : '0.55'};"

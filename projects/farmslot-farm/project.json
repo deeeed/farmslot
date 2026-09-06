@@ -432,8 +432,8 @@
           "additionalProperties": false,
           "properties": {
             "platform": { "const": "ios" },
-            "udid": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" },
-            "simulator": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" }
+            "udid": { "type": "string", "pattern": "^[A-Za-z0-9._:][A-Za-z0-9._:-]*$" },
+            "simulator": { "type": "string", "pattern": "^[A-Za-z0-9._:][A-Za-z0-9._:-]*$" }
           }
         },
         "actions": {
@@ -464,8 +464,8 @@
           "additionalProperties": false,
           "properties": {
             "platform": { "const": "android" },
-            "avd": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" },
-            "adb_serial": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" }
+            "avd": { "type": "string", "pattern": "^[A-Za-z0-9._:][A-Za-z0-9._:-]*$" },
+            "adb_serial": { "type": "string", "pattern": "^[A-Za-z0-9._:][A-Za-z0-9._:-]*$" }
           }
         },
         "actions": {
@@ -497,6 +497,15 @@
             { "id": "ios-native-build", "access": "exclusive", "kind": "process" },
             { "id": "companion-install", "access": "exclusive", "kind": "device" }
           ]
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "platform": { "const": "ios" },
+            "udid": { "type": "string", "pattern": "^[A-Za-z0-9._:][A-Za-z0-9._:-]*$" },
+            "simulator": { "type": "string", "pattern": "^[A-Za-z0-9._:][A-Za-z0-9._:-]*$" }
+          }
         },
         "actions": {
           "acquire": { "kind": "slot-action", "action_id": "native-client-install-ios" },

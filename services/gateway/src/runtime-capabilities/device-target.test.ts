@@ -117,13 +117,14 @@ test('a target on another slot device with a live lease is refused', () => {
   const holders: DeviceHolder[] = [
     {
       slotId: 'macwork-ff-2',
+      machine: 'macwork',
       capabilityId: 'ios-simulator',
       runId: 'run-b',
       identities: [{}, { simulator: 'SIM-2', platform: 'ios' }],
     },
   ];
-  assert.equal(crossSlotTargetConflict({ simulator: 'SIM-1' }, holders), null);
-  const refused = crossSlotTargetConflict({ simulator: 'SIM-2' }, holders);
+  assert.equal(crossSlotTargetConflict({ simulator: 'SIM-1' }, holders, 'macwork'), null);
+  const refused = crossSlotTargetConflict({ simulator: 'SIM-2' }, holders, 'macwork');
   assert.match(refused ?? '', /slot 'macwork-ff-2'/);
   assert.match(refused ?? '', /run-b/);
 });
@@ -132,24 +133,26 @@ test('udid and simulator are one identity when checking another slot', () => {
   const holders: DeviceHolder[] = [
     {
       slotId: 'macwork-ff-2',
+      machine: 'macwork',
       capabilityId: 'ios-simulator',
       runId: 'run-b',
       identities: [{ udid: 'SIM-2' }],
     },
   ];
-  assert.match(crossSlotTargetConflict({ simulator: 'SIM-2' }, holders) ?? '', /SIM-2/);
+  assert.match(crossSlotTargetConflict({ simulator: 'SIM-2' }, holders, 'macwork') ?? '', /SIM-2/);
 });
 
 test('platform alone is not a device, so it never conflicts', () => {
   const holders: DeviceHolder[] = [
     {
       slotId: 'macwork-ff-2',
+      machine: 'macwork',
       capabilityId: 'ios-simulator',
       runId: 'run-b',
       identities: [{ platform: 'ios', simulator: 'SIM-2' }],
     },
   ];
-  assert.equal(crossSlotTargetConflict({ platform: 'ios' }, holders), null);
+  assert.equal(crossSlotTargetConflict({ platform: 'ios' }, holders, 'macwork'), null);
 });
 
 test('a target rewrites only the requirement whose provider declares it', () => {
@@ -185,7 +188,9 @@ test('platform picks the provider but is never stored as a device parameter', ()
   assert.equal(outcome.value[0]?.parameters, undefined);
 });
 
-test('a target that only restates the platform changes no stored parameter', () => {
+test('a platform-only target is refused rather than silently doing nothing', () => {
+  // It selects a provider and names no device, so there is nothing to re-target.
+  // Returning ok left the operator with a rerun and no signal.
   const held = {
     capabilityId: 'ios-simulator',
     reason: 'device',
@@ -193,13 +198,9 @@ test('a target that only restates the platform changes no stored parameter', () 
     parameters: { simulator: 'SIM-2' },
   };
   const outcome = retargetProofRequirements([held], [IOS], { platform: 'ios' });
-  assert.equal(outcome.ok, true);
-  if (!outcome.ok) return;
-  assert.deepEqual(
-    outcome.value[0]?.parameters,
-    { simulator: 'SIM-2' },
-    'restating the platform must not force a release and reboot of the same device',
-  );
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.match(outcome.reason, /names no device parameter/);
 });
 
 test('a second re-target REPLACES the previous device key instead of unioning with it', () => {
@@ -217,22 +218,21 @@ test('a second re-target REPLACES the previous device key instead of unioning wi
   assert.deepEqual(outcome.value[0]?.parameters, { simulator: 'BBBB-2222' });
 });
 
-test('a contradiction already in the STORED plan is refused before anything is released', () => {
-  // A plan written before the replacement rule, or by a direct
-  // `runtime.capability.acquire` caller that passed both keys. A platform-only
-  // target names no device, so the stored identity is carried forward — and
-  // carrying a contradiction forward would release the held device and only
-  // then refuse at acquire. The merged plan is validated here instead.
+test('a re-target clears every stored device key, so the merge cannot contradict itself', () => {
+  // The stored plan carries both spellings; the target names one device. Keeping
+  // the other would produce a requirement naming two simulators, refused later —
+  // after the posture had already released the held device.
   const held = {
     capabilityId: 'ios-simulator',
     reason: 'device',
     mode: 'visual' as const,
-    parameters: { udid: 'AAAA-1111', simulator: 'BBBB-2222' },
+    parameters: { udid: 'AAAA-1111', simulator: 'AAAA-1111', note: 'kept' },
   };
-  const outcome = retargetProofRequirements([held], [IOS], { platform: 'ios' });
-  assert.equal(outcome.ok, false);
-  if (outcome.ok) return;
-  assert.match(outcome.reason, /two different iOS simulators/);
+  const outcome = retargetProofRequirements([held], [IOS], { simulator: 'BBBB-2222' });
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  assert.deepEqual(outcome.value[0]?.parameters, { note: 'kept', simulator: 'BBBB-2222' });
+  assert.equal(deviceTargetExtraVars(outcome.value[0]!.parameters!).ok, true);
 });
 
 test('a contradiction in the incoming target is refused too', () => {
@@ -300,19 +300,36 @@ test('a target no capability in the plan accepts is refused, not ignored', () =>
   assert.match(outcome.reason, /declares the device parameters this target names/);
 });
 
-test('an ambiguous target is refused rather than re-targeting a guess', () => {
-  const both = entry('both-devices', {
+test('a device target reaches every requirement that declares it', () => {
+  // The simulator and the dev client installed onto it both drive one physical
+  // device. Re-targeting only one left the other installing onto the simulator
+  // the run had just left.
+  const client = entry('companion-native-client-ios', {
     type: 'object',
-    properties: { simulator: { type: 'string' } },
+    properties: { platform: { const: 'ios' }, simulator: { type: 'string' } },
   });
   const outcome = retargetProofRequirements(
-    [requirement('ios-simulator'), requirement('both-devices')],
-    [IOS, both],
+    [requirement('companion-metro'), requirement('ios-simulator'), requirement(client.id)],
+    [METRO, IOS, client],
     { simulator: 'SIM-2' },
   );
-  assert.equal(outcome.ok, false);
-  if (outcome.ok) return;
-  assert.match(outcome.reason, /ambiguous/);
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  assert.equal(outcome.value[0]?.parameters, undefined, 'metro declares no device parameter');
+  assert.deepEqual(outcome.value[1]?.parameters, { simulator: 'SIM-2' });
+  assert.deepEqual(outcome.value[2]?.parameters, { simulator: 'SIM-2' });
+});
+
+test('a target still reaches only the providers that declare its key', () => {
+  const outcome = retargetProofRequirements(
+    [requirement('ios-simulator'), requirement('android-device')],
+    [IOS, ANDROID],
+    { adb_serial: 'emulator-5554' },
+  );
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  assert.equal(outcome.value[0]?.parameters, undefined, 'the iOS provider declares no adb_serial');
+  assert.deepEqual(outcome.value[1]?.parameters, { adb_serial: 'emulator-5554' });
 });
 
 test('a target that fails the charset is refused before any plan is rewritten', () => {
@@ -379,13 +396,41 @@ test("a foreign slot's lease displaces its configured device within the same gro
   );
 
   const holders: DeviceHolder[] = [
-    { slotId: 'slot-b', capabilityId: 'ios-simulator', runId: 'run-b', identities: [displaced] },
+    {
+      slotId: 'slot-b',
+      machine: 'macwork',
+      capabilityId: 'ios-simulator',
+      runId: 'run-b',
+      identities: [displaced],
+    },
   ];
-  assert.equal(crossSlotTargetConflict({ simulator: 'SIM-A' }, holders), null);
-  assert.match(crossSlotTargetConflict({ simulator: 'SIM-B' }, holders) ?? '', /SIM-B/);
+  assert.equal(crossSlotTargetConflict({ simulator: 'SIM-A' }, holders, 'macwork'), null);
+  assert.match(crossSlotTargetConflict({ simulator: 'SIM-B' }, holders, 'macwork') ?? '', /SIM-B/);
   // A group the lease says nothing about keeps the slot's own value.
   assert.match(
-    crossSlotTargetConflict({ adb_serial: 'emulator-5554' }, holders) ?? '',
+    crossSlotTargetConflict({ adb_serial: 'emulator-5554' }, holders, 'macwork') ?? '',
     /emulator-5554/,
+  );
+});
+
+test('the same device name on two machines is not a conflict', () => {
+  // The pool deliberately reuses `fs-1`, `emulator-5554` and avd names across
+  // machines. Comparing identities fleet-wide refused an ordinary acquire on one
+  // machine because another machine ran a same-named simulator.
+  const holders: DeviceHolder[] = [
+    {
+      slotId: 'macwork-ff-1',
+      machine: 'macwork',
+      capabilityId: 'ios-simulator',
+      runId: 'run-b',
+      identities: [{ simulator: 'fs-1' }],
+    },
+  ];
+  // Same name, DIFFERENT machine: two physically distinct simulators.
+  assert.equal(crossSlotTargetConflict({ simulator: 'fs-1' }, holders, 'macpro'), null);
+  // Same name, same machine: still a conflict.
+  assert.match(
+    crossSlotTargetConflict({ simulator: 'fs-1' }, holders, 'macwork') ?? '',
+    /macwork-ff-1' on macwork/,
   );
 });

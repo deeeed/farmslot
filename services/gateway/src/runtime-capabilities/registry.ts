@@ -87,6 +87,13 @@ export interface RuntimeCapabilityRegistryOptions {
     capabilityId: string;
     ownerRunId: string;
     parameters: Record<string, unknown>;
+    /**
+     * Whether this capability claims a device, taken from the catalog entry the
+     * registry already resolved under its own lock. The guard must not re-read
+     * the catalog to answer this: a config file mid-write would make it skip
+     * itself for exactly the acquires it exists to check.
+     */
+    claimsDevice: boolean;
     /** Leases that currently hold a provider, across every slot. */
     activeLeases: readonly RuntimeCapabilityLease[];
   }) => Promise<string | null>;
@@ -513,6 +520,7 @@ export class RuntimeCapabilityRegistry {
         capabilityId: entry.id,
         ownerRunId: params.ownerRunId,
         parameters,
+        claimsDevice: claimsDevice(entry),
         // Warm leases included: their provider is still up, so a target naming
         // that device would be adopted and then stopped by the warm sweeper.
         activeLeases: snapshot.leases.filter(runsProvider),
@@ -586,6 +594,11 @@ export class RuntimeCapabilityRegistry {
           // and reacquired instead of silently passing preparation.
           const revalidatedDependencies: RuntimeCapabilityLease[] = [];
           for (const dependencyId of entry.dependencies ?? []) {
+            const revalidateDependencyParameters = this.parametersForDependency(
+              snapshot,
+              ownedParams,
+              dependencyId,
+            );
             const dependency = await this.acquireInternal(
               snapshot,
               catalog,
@@ -596,18 +609,11 @@ export class RuntimeCapabilityRegistry {
                   capabilityId: dependencyId,
                   reason: `Required by ${entry.id}: ${params.proofRequirement.reason}`,
                   mode: params.proofRequirement.mode,
-                  ...(Object.keys(this.parametersForDependency(snapshot, ownedParams, dependencyId))
-                    .length > 0
-                    ? {
-                        parameters: this.parametersForDependency(
-                          snapshot,
-                          ownedParams,
-                          dependencyId,
-                        ),
-                      }
+                  ...(Object.keys(revalidateDependencyParameters).length > 0
+                    ? { parameters: revalidateDependencyParameters }
                     : {}),
                 },
-                parameters: this.parametersForDependency(snapshot, ownedParams, dependencyId),
+                parameters: revalidateDependencyParameters,
                 queueOnPressure: false,
                 revalidateHealth: true,
               },

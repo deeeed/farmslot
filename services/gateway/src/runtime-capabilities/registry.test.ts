@@ -2104,3 +2104,23 @@ test('the stored proof plan records the device an acquire actually used', async 
     },
   ]);
 });
+
+test('the guard is told whether the capability claims a device, never left to re-read it', async (t) => {
+  // Re-deriving it from a catalog read meant a config file mid-write could make
+  // the guard skip itself for exactly the acquires it exists to check.
+  const device = { ...entry('sim'), parameters: DEVICE_SCHEMA };
+  device.cost = {
+    class: 'high',
+    resources: [{ id: 'ios-simulator', access: 'exclusive', kind: 'device' }],
+  };
+  const seen: Array<{ capabilityId: string; claimsDevice: boolean }> = [];
+  const { registry } = await fixture(t, [device, entry('browser')], {
+    assertTargetAvailable: async (input) => {
+      seen.push({ capabilityId: input.capabilityId, claimsDevice: input.claimsDevice });
+      return null;
+    },
+  });
+  assert.equal((await acquire(registry, 'sim', 'run-a')).ok, true);
+  assert.equal((await acquire(registry, 'browser', 'run-b')).ok, true);
+  assert.deepEqual(seen, [{ capabilityId: 'sim', claimsDevice: true }]);
+});

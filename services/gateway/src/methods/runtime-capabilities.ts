@@ -223,6 +223,13 @@ async function assertDeviceTargetAvailable(input: {
   capabilityId: string;
   ownerRunId: string;
   parameters: Record<string, unknown>;
+  /**
+   * Whether this capability claims a device, resolved by the registry from the
+   * catalog entry it already holds under its own lock. Passed in rather than
+   * re-read here: re-reading meant a config file mid-write could make the guard
+   * skip itself for exactly the acquires it exists to check.
+   */
+  claimsDevice: boolean;
   activeLeases: readonly RuntimeCapabilityLease[];
 }): Promise<string | null> {
   const target = deviceTargetExtraVars(input.parameters);
@@ -232,47 +239,55 @@ async function assertDeviceTargetAvailable(input: {
   // config is unreadable, and refusing over a parameter that could not have
   // conflicted would block an acquire for nothing.
   const requested = target.value ? deviceIdentityOnly(target.value) : undefined;
-  const own = await catalogForSlot(input.slotId).catch(() => null);
-  const capability = own?.capabilities.find((entry) => entry.id === input.capabilityId);
-  if (!requested && !(capability && claimsDevice(capability))) return null;
-  // An acquire that names no device still resolves to one: the slot's own
-  // configured device. Another slot may have re-targeted onto exactly that
-  // device, which makes this ordinary acquire the second boot of it.
-  let effective = requested;
-  if (!effective) {
-    try {
-      effective = deviceIdentityOnly((await loadSlotVars(input.slotId)).resourceVars);
-    } catch (error) {
-      return `cannot resolve the configured device of slot '${input.slotId}': ${
-        error instanceof Error ? error.message : String(error)
-      }`;
-    }
-    if (!effective) return null;
+  if (!requested && !input.claimsDevice) return null;
+
+  // The acquiring slot's own machine and configured device. Fails CLOSED, like
+  // the foreign-slot read below: an acquire that names no device still resolves
+  // to the slot's configured one, and without this read we cannot say which
+  // device that is or which machine it is on.
+  let ownVars;
+  try {
+    ownVars = await loadSlotVars(input.slotId);
+  } catch (error) {
+    return `cannot resolve the configured device of slot '${input.slotId}': ${
+      error instanceof Error ? error.message : String(error)
+    }`;
   }
+  const machine = ownVars.machine;
+  const effective = requested ?? deviceIdentityOnly(ownVars.resourceVars);
+  if (!effective) return null;
+
   const slotState = new Map<
     string,
-    { identity: Record<string, unknown>; deviceCapabilities: Set<string> }
+    { identity: Record<string, unknown>; deviceCapabilities: Set<string> } | null
   >();
   const holders: DeviceHolder[] = [];
   for (const lease of input.activeLeases) {
     if (lease.slotId === input.slotId) continue;
     let state = slotState.get(lease.slotId);
-    if (!state) {
+    if (state === undefined) {
       try {
-        const [slotVars, catalog] = await Promise.all([
-          loadSlotVars(lease.slotId),
-          catalogForSlot(lease.slotId),
-        ]);
-        state = {
-          identity: slotVars.resourceVars,
-          // A slot's configured device is only off-limits when something is
-          // actually driving a DEVICE there. Treating any lease as a holder
-          // made a slot running only a browser or Metro block its own
-          // simulator, and named that capability as the reason.
-          deviceCapabilities: new Set(
-            catalog.capabilities.filter(claimsDevice).map((entry) => entry.id),
-          ),
-        };
+        const slotVars = await loadSlotVars(lease.slotId);
+        if (slotVars.machine !== machine) {
+          // A device name identifies a device ON ITS MACHINE. The pool reuses
+          // `fs-1`, `emulator-5554` and the same avd names across machines, so
+          // comparing identities fleet-wide refuses an ordinary acquire on one
+          // machine because another machine happens to run a same-named
+          // simulator. Two physically distinct devices are not a conflict.
+          state = null;
+        } else {
+          const catalog = await catalogForSlot(lease.slotId);
+          state = {
+            identity: slotVars.resourceVars,
+            // A slot's configured device is only off-limits when something is
+            // actually driving a DEVICE there. Treating any lease as a holder
+            // made a slot running only a browser or Metro block its own
+            // simulator, and named that capability as the reason.
+            deviceCapabilities: new Set(
+              catalog.capabilities.filter(claimsDevice).map((entry) => entry.id),
+            ),
+          };
+        }
       } catch (error) {
         // Handled, not swallowed: without that slot's configuration we cannot
         // prove the requested device is free, and guessing costs two runs
@@ -283,9 +298,10 @@ async function assertDeviceTargetAvailable(input: {
       }
       slotState.set(lease.slotId, state);
     }
-    if (!state.deviceCapabilities.has(lease.capabilityId)) continue;
+    if (!state || !state.deviceCapabilities.has(lease.capabilityId)) continue;
     holders.push({
       slotId: lease.slotId,
+      machine,
       capabilityId: lease.capabilityId,
       runId: lease.owner.runId,
       // The lease's own identity DISPLACES the slot's configured one within the
@@ -295,7 +311,7 @@ async function assertDeviceTargetAvailable(input: {
       identities: [displaceIdentity(state.identity, lease.parameters)],
     });
   }
-  return crossSlotTargetConflict(effective, holders);
+  return crossSlotTargetConflict(effective, holders, machine);
 }
 
 async function pressureFor(

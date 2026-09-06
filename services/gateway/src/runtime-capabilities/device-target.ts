@@ -182,6 +182,12 @@ export function displaceIdentity(
 /** One slot, elsewhere on the fleet, that currently holds a capability lease. */
 export interface DeviceHolder {
   slotId: string;
+  /**
+   * The machine the slot runs on. A device name identifies a device on its own
+   * machine only, and the pool deliberately reuses names across machines, so a
+   * caller must not offer holders from another machine.
+   */
+  machine: string;
   capabilityId: string;
   runId: string;
   /**
@@ -203,18 +209,28 @@ export interface DeviceHolder {
 export function crossSlotTargetConflict(
   target: Record<string, unknown>,
   holders: readonly DeviceHolder[],
+  /**
+   * The machine the acquiring slot runs on. A device name identifies a device on
+   * ONE machine, and the pool reuses `fs-1`, `emulator-5554` and avd names
+   * across machines, so a holder elsewhere names a physically different device.
+   * The scoping lives here rather than at the call site so a caller cannot
+   * forget it.
+   */
+  machine: string,
 ): string | null {
   const wanted = identityGroups(target);
   if (wanted.size === 0) return null;
   for (const holder of holders) {
+    if (holder.machine !== machine) continue;
     for (const identity of holder.identities) {
       for (const [group, values] of identityGroups(identity)) {
         const clash = [...(wanted.get(group) ?? [])].find((value) => values.has(value));
         if (clash) {
           return (
-            `Device '${clash}' is the ${group} of slot '${holder.slotId}', which holds an active ` +
-            `'${holder.capabilityId}' lease for run '${holder.runId}'. Capability leases are ` +
-            `slot-scoped, so re-targeting onto it would boot the same device twice`
+            `Device '${clash}' is the ${group} of slot '${holder.slotId}' on ${holder.machine}, ` +
+            `which holds an active '${holder.capabilityId}' lease for run '${holder.runId}'. ` +
+            `Capability leases are slot-scoped, so re-targeting onto it would boot the same ` +
+            `device twice`
           );
         }
       }
@@ -298,42 +314,42 @@ export function retargetProofRequirements(
       };
     }
   }
-  if (candidates.length > 1) {
-    return {
-      ok: false,
-      reason: `target is ambiguous: ${candidates
-        .map((requirement) => requirement.capabilityId)
-        .join(', ')} all accept it. Name a platform to choose one`,
-    };
-  }
-  const chosen = candidates[0]!;
-  // REPLACE the previous target's device keys, never union with them. The stored
-  // plan carries the last re-target, so `{udid: A}` followed by `{simulator: B}`
-  // would otherwise merge into a requirement naming two different simulators —
-  // one of which the operator never sent — and the contradiction would surface
-  // only at acquire, after the posture had already released the device.
-  // `platform` selects WHICH provider the target meant; it is not a device.
-  // Storing it would make a target that merely restates the platform of the
-  // provider already holding the device differ from the held lease, and the
-  // posture would release and reboot that same device for nothing.
+  // EVERY matching requirement is rewritten, not just one. More than one
+  // provider drives the same physical device — on farmslot-farm the simulator
+  // itself and the dev client installed onto it — and re-targeting only one of
+  // them leaves the other running its hooks against the slot's configured
+  // device, so the client would install onto the simulator the run just left.
+  // Declaring the parameter is the operative signal, because that is also what
+  // decides whether the identity is substituted into the provider's hooks.
+  const chosenIds = new Set(candidates.map((requirement) => requirement.capabilityId));
+  // `platform` selects WHICH provider the target meant; it is not a device, so
+  // it is never stored. Storing it would make a target that merely restates the
+  // platform of the provider already holding the device differ from the held
+  // lease, and the posture would release and reboot that same device for
+  // nothing.
   const { platform: _selector, ...deviceKeys } = target;
-  const kept: Record<string, unknown> = { ...chosen.parameters };
-  // Only a target that actually names a device replaces the stored identity.
-  // Clearing it for a platform-only target would silently revert the run to the
-  // slot's configured device.
-  if (Object.keys(deviceKeys).length > 0) {
-    for (const key of RUNTIME_CAPABILITY_TARGET_KEYS) delete kept[key];
+  // A platform-only target changes no device. Returning ok with the plan
+  // untouched gave the caller a rerun and no signal that the target did
+  // nothing — the same refusal the whole-target check above gives applies here.
+  if (Object.keys(deviceKeys).length === 0) {
+    return { ok: false, reason: 'target names no device parameter' };
   }
-  const parameters = { ...kept, ...deviceKeys };
-  // Validate the MERGED result, not only the incoming target, and do it here —
-  // before the caller reconciles anything — so a contradiction is a refusal
-  // rather than a release followed by a refusal.
-  const merged = deviceTargetExtraVars(parameters);
-  if (!merged.ok) return merged;
+  // REPLACE the stored device identity, never union with it. The plan carries
+  // the last re-target, so `{udid: A}` followed by `{simulator: B}` would
+  // otherwise merge into a requirement naming two different simulators — one of
+  // which the operator never sent — and the contradiction would surface only at
+  // acquire, after the posture had already released the device. Because every
+  // device key is cleared here and `deviceKeys` was validated as a whole above,
+  // the merged result cannot contradict itself.
+  const rewrite = (requirement: RuntimeCapabilityProofRequirement) => {
+    const kept: Record<string, unknown> = { ...requirement.parameters };
+    for (const key of RUNTIME_CAPABILITY_TARGET_KEYS) delete kept[key];
+    return { ...requirement, parameters: { ...kept, ...deviceKeys } };
+  };
   return {
     ok: true,
     value: requirements.map((requirement) =>
-      requirement === chosen ? { ...requirement, parameters } : requirement,
+      chosenIds.has(requirement.capabilityId) ? rewrite(requirement) : requirement,
     ),
   };
 }

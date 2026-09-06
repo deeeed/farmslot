@@ -268,7 +268,7 @@
     "ui": "http://localhost:5175 against the live gateway ws://localhost:7801",
     "probes": {
       "apps/command-center/probes/recipe-rerun-device-target.js": {
-        "proves": "the real replay controls, driven by real select/input/click events, put the operator device target on the wire as recipe.rerun params, and refuse a shell-bearing identity before any frame is sent",
+        "proves": "the shipped replay controls, driven by a real select change, real typed input, and a real CLICK on the replay button, put the operator device target on the wire as recipe.rerun params, and refuse a shell-bearing identity before any frame is sent",
         "result": {
           "steps": [
             {
@@ -327,7 +327,8 @@
           "slotId": "macwork-ff-4",
           "ok": true
         },
-        "negativeProof": "removed the charset refusal in ui/src/components/workspace/recipe-rerun-target.ts, let Vite reload, re-ran: the probe threw \"timed out waiting for client-side charset refusal\"; restored, green again"
+        "negativeProof": "removed the charset refusal in ui/src/components/workspace/recipe-rerun-target.ts, let Vite reload, re-ran: the probe threw \"timed out waiting for client-side charset refusal\"; restored, green again",
+        "limitation": "mounts its own <recipe-runner-controls> rather than the one Slot View renders: that instance appears only for a slot with a linked run carrying a replayable recipe artifact, which needs a full dispatch. The element, its handlers, its params builder and the gateway client are the shipped ones; what is not covered is the slot-view wiring that supplies runId/recipeArtifactPath."
       },
       "apps/command-center/probes/run-posture-device-target-row.js": {
         "proves": "Run Detail paints the resolved device on the device capability row only, with the protocol key order, and no target on a capability that takes none",
