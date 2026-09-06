@@ -2,19 +2,11 @@
  * Companion's gate-park contract, against payloads captured from the live
  * Gateway (ADR-054 `free-slot`).
  *
- * The two records below are the real `MachineParkRecord`s the dev Gateway
- * served for run `98c3657b` on `macwork-ff-2` on 2026-09-06 — first while its
- * slot was freed for dispatch, then after `machine.pause.restore` put it back.
- * A synthetic fixture proves only that the reading agrees with what a test
- * author imagined the Gateway sends; these prove it agrees with what it sends.
+ * The records come from `run-gate-park.fixtures`, which holds payloads captured
+ * from the live dev Gateway rather than synthesized ones.
  *
- * `recoveryHandle` and `resourceManifest` are dropped from the captured
- * payloads because they carry machine-local filesystem paths and the reading
- * never touches either. Everything the reading does touch is verbatim.
- *
- * What is NOT proven here: the device render. Companion's tests run the library
- * layer only — no React renderer — so `RunPosturePanel` and `RunGateParkNotice`
- * are exercised through the values they are handed, not on a phone.
+ * What is NOT proven here: that any of it reaches the screen. That is
+ * `run-gate-park-render.test.ts`, which renders the real components.
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -30,84 +22,13 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import {
+  CAPTURED_FREED,
+  CAPTURED_RESTORED,
+  PARTIAL_ANSWERABLE,
+  PARTIAL_NEEDS_RESTORE,
+} from './run-gate-park.fixtures';
 import { gateChoiceHelp } from './run-posture-gate';
-
-/** Captured live: the park had stopped the worker and released the slot. */
-const CAPTURED_FREED: MachineParkRecord = {
-  version: 1,
-  operationId: 'posture-38342581-e33a-4fb5-83e9-c03cb6a5c7f9',
-  previewId: 'pause-9ceb574831586e32806a9fd6',
-  runId: '98c3657b-caae-41d6-91eb-1b96447f2480',
-  generation: 0,
-  machine: 'macwork',
-  slotId: 'macwork-ff-2',
-  mode: 'release',
-  phase: 'parked',
-  slotDisposition: 'freed',
-  preservedWorkspace: {
-    branch: 'feat/manual-000121-fix-runner-stop-process-scan',
-    headSha: 'e32886e217f77bac5e0688d49ae87590cbf78f6c',
-    detachedAt: '2026-09-06T08:32:06.144Z',
-  },
-  prePauseStatus: 'blocked',
-  prePauseCurrentStep: { index: 7, name: 'human-gate', status: 'running' },
-  resourceManifest: { capturedAt: '2026-09-06T08:31:58.420Z', resources: [], capabilityLeases: [] },
-  recoveryHandle: null,
-  errors: [],
-  residuals: { runner: 'stopped', resources: [] },
-  createdAt: '2026-09-06T08:31:58.426Z',
-  updatedAt: '2026-09-06T08:32:06.161Z',
-  parkedAt: '2026-09-06T08:32:05.898Z',
-  slotFreedAt: '2026-09-06T08:32:06.161Z',
-};
-
-/** Captured live: the same record after `machine.pause.restore` settled it. */
-const CAPTURED_RESTORED: MachineParkRecord = {
-  version: 1,
-  operationId: 'machine-park-f5ff3427-140e-455f-8bdc-cd290e56edf4',
-  previewId: 'restore-7868bd703aff5786efefa7aa',
-  runId: '98c3657b-caae-41d6-91eb-1b96447f2480',
-  generation: 0,
-  machine: 'macwork',
-  slotId: 'macwork-ff-2',
-  mode: 'release',
-  phase: 'restored',
-  slotDisposition: 'freed',
-  preservedWorkspace: {
-    branch: 'feat/manual-000121-fix-runner-stop-process-scan',
-    headSha: 'e32886e217f77bac5e0688d49ae87590cbf78f6c',
-  },
-  prePauseStatus: 'blocked',
-  prePauseCurrentStep: { index: 7, name: 'human-gate', status: 'running' },
-  resourceManifest: { capturedAt: '2026-09-06T08:31:58.420Z', resources: [], capabilityLeases: [] },
-  recoveryHandle: null,
-  errors: [],
-  residuals: { runner: 'running', resources: [] },
-  createdAt: '2026-09-06T08:31:58.426Z',
-  updatedAt: '2026-09-06T08:35:04.966Z',
-  parkedAt: '2026-09-06T08:32:05.898Z',
-  restoreDisposition: 'effectful',
-  restoreProgress: {
-    operationId: 'machine-park-f5ff3427-140e-455f-8bdc-cd290e56edf4',
-    completed: ['rebind', 'reattach', 'reacquire', 'reload'],
-    updatedAt: '2026-09-06T08:34:53.208Z',
-  },
-  slotReboundAt: '2026-09-06T08:34:20.300Z',
-  restoreEffects: [],
-  recoveryProof: {
-    sessionId: '12eb4240-de29-437b-88ff-9ba331f32899',
-    live: true,
-    acknowledgement: {
-      kind: 'structured',
-      source: 'hook-digest',
-      reason: 'hook prompt digest matched on pane %1385',
-      turnToken: '12eb4240-de29-437b-88ff-9ba331f32899:1788683682163',
-    },
-    acceptedAt: '2026-09-06T08:34:53.176Z',
-  },
-  restoredAt: '2026-09-06T08:35:04.960Z',
-  restoredGeneration: 0,
-};
 
 function runWith(park: MachineParkRecord): Pick<Run, 'id' | 'park'> {
   return { id: park.runId, park };
@@ -167,4 +88,21 @@ test('the free-slot choice copy no longer says gate-held runs are ineligible', (
   const help = gateChoiceHelp('free-slot');
   assert.match(help, /hand its slot back to dispatch/u);
   assert.doesNotMatch(help, /not eligible/u);
+});
+
+test('a partial park is read the way the Gateway fence reads it', () => {
+  // The blocking regression this suite missed: every partial was labeled "still
+  // landing" and its gate reported unanswerable, including the one the Gateway
+  // accepts.
+  const answerable = liveGateParkView({ id: PARTIAL_ANSWERABLE.runId, park: PARTIAL_ANSWERABLE });
+  assert.equal(answerable?.slotState, 'partial-answerable');
+  assert.equal(answerable?.restoreBeforeGateAnswer, false);
+  assert.equal(gateParkGateNotice(answerable)?.blocking, false);
+
+  const fenced = liveGateParkView({
+    id: PARTIAL_NEEDS_RESTORE.runId,
+    park: PARTIAL_NEEDS_RESTORE,
+  });
+  assert.equal(fenced?.slotState, 'partial-needs-restore');
+  assert.equal(gateParkGateNotice(fenced)?.blocking, true);
 });

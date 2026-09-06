@@ -289,6 +289,7 @@ test('the gate notice tells the operator that answering restores the run first',
   const notice = gateParkGateNotice(view);
   assert.deepEqual(notice, {
     kind: 'restore-first',
+    blocking: false,
     message:
       'Answering this gate restores the run into macwork-ff-1 first, then resolves the decision.',
   });
@@ -336,6 +337,7 @@ test('a park still landing says the gate cannot be answered yet', () => {
   );
   assert.deepEqual(gateParkGateNotice(view), {
     kind: 'park-in-flight',
+    blocking: true,
     message: 'A free-slot park is still landing for this run, so its gate cannot be answered yet.',
   });
 });
@@ -377,4 +379,126 @@ test('the summary line names the freed slot, the preserved branch, and what the 
     gateParkSummaryLine(view),
     'Parked, slot freed for dispatch · slot macwork-ff-1 · branch feat/free-slot at abc1234 (detached) · restore owes reload · attempting reload',
   );
+});
+
+test('a partial park that stopped short of the slot with a live worker is answerable', () => {
+  // The failure the surfaces used to get wrong: a `free-slot` park that died
+  // during resource stop, before it touched the runner and before any detach.
+  // The Gateway's own fence leaves this gate answerable, so no surface may say
+  // it cannot be answered.
+  const park = parkRecord({
+    slotDisposition: 'freed',
+    phase: 'partial',
+    residuals: { runner: 'running', resources: [] },
+  });
+  assert.equal(isGateParkInFlightOrFreed({ park }), false, 'the Gateway does not fence this run');
+  const view = gateParkView(runWith(park));
+  assert.ok(view);
+  assert.equal(view.slotState, 'partial-answerable');
+  assert.equal(view.freedSlotId, null);
+  assert.equal(view.restoreBeforeGateAnswer, false);
+  assert.equal(gateParkStateLabel(view), 'Park failed before the slot; worker still running');
+
+  const notice = gateParkGateNotice(view);
+  assert.equal(notice?.kind, 'park-answerable');
+  assert.equal(notice?.blocking, false);
+  assert.match(notice.message, /can be answered where it stands/u);
+  assert.doesNotMatch(notice.message, /cannot be answered/u);
+});
+
+test('a partial park with a stopped worker owes an explicit restore', () => {
+  const park = parkRecord({
+    slotDisposition: 'freed',
+    phase: 'partial',
+    residuals: { runner: 'stopped', resources: [] },
+  });
+  assert.equal(isGateParkInFlightOrFreed({ park }), true, 'the Gateway fences this run');
+  const view = gateParkView(runWith(park));
+  assert.equal(view?.slotState, 'partial-needs-restore');
+  assert.equal(gateParkStateLabel(view!), 'Park failed partway; needs a restore');
+
+  const notice = gateParkGateNotice(view);
+  assert.equal(notice?.kind, 'park-needs-restore');
+  assert.equal(notice?.blocking, true);
+  // Waiting cannot help a park that has already stopped, so the copy must not
+  // suggest it.
+  assert.doesNotMatch(notice.message, /still landing/u);
+  assert.match(notice.message, /Waiting will not clear it/u);
+  assert.match(notice.message, /restore the run into macwork-ff-1, or cancel it/u);
+});
+
+test('a partial park whose worker cannot be observed is fenced, not assumed alive', () => {
+  const park = parkRecord({
+    slotDisposition: 'freed',
+    phase: 'partial',
+    residuals: { runner: 'unknown', resources: [] },
+  });
+  assert.equal(gateParkView(runWith(park))?.slotState, 'partial-needs-restore');
+});
+
+test('a partial park with an outstanding detach owes a restore even with a live worker', () => {
+  const park = parkRecord({
+    slotDisposition: 'freed',
+    phase: 'partial',
+    residuals: { runner: 'running', resources: [] },
+    preservedWorkspace: {
+      branch: 'feat/free-slot',
+      headSha: 'abc1234',
+      detachedAt: '2026-09-05T10:04:00.000Z',
+    },
+  });
+  assert.equal(isGateParkInFlightOrFreed({ park }), true);
+  assert.equal(gateParkView(runWith(park))?.slotState, 'partial-needs-restore');
+});
+
+test('a park still in flight is still reported as still landing', () => {
+  // The distinction only earns its keep if a genuinely in-flight park keeps the
+  // wait-for-it copy.
+  const view = gateParkView(
+    runWith(parkRecord({ slotDisposition: 'freed', phase: 'resources-stopping' })),
+  );
+  assert.equal(view?.slotState, 'freeing');
+  const notice = gateParkGateNotice(view);
+  assert.equal(notice?.kind, 'park-in-flight');
+  assert.equal(notice?.blocking, true);
+  assert.match(notice.message, /still landing/u);
+});
+
+test('a Gateway verdict of available supersedes a refusal from an earlier attempt', () => {
+  const park = parkRecord({
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-09-05T10:05:00.000Z',
+    restoreRefusal: {
+      code: MachineParkEligibilityCodes.restoreSlotTaken,
+      reason: 'macwork-ff-1 was running run-9',
+      at: '2026-09-05T11:00:00.000Z',
+    },
+  });
+  const notice = gateParkGateNotice(
+    gateParkView(runWith(park), {
+      target: { slotId: 'macwork-ff-1', disposition: 'freed', available: true },
+      eligibility: { code: 'ELIGIBLE_FREED_SLOT_RESTORE', reason: 'the slot is free again' },
+    }),
+  );
+  assert.equal(notice?.kind, 'restore-first');
+  assert.equal(notice?.blocking, false, 'a stale refusal must not outrank a fresh verdict');
+  assert.equal(notice?.refusalSuperseded, true);
+  assert.equal(notice?.refusal?.code, 'RESTORE_SLOT_TAKEN');
+});
+
+test('an unread availability leaves a recorded refusal standing', () => {
+  const park = parkRecord({
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-09-05T10:05:00.000Z',
+    restoreRefusal: {
+      code: MachineParkEligibilityCodes.restoreSlotTaken,
+      reason: 'macwork-ff-1 is now running run-9',
+      at: '2026-09-05T11:00:00.000Z',
+    },
+  });
+  const notice = gateParkGateNotice(gateParkView(runWith(park)));
+  assert.equal(notice?.kind, 'restore-blocked');
+  assert.equal(notice?.blocking, true);
+  assert.equal(notice?.refusalSuperseded, undefined);
+  assert.match(notice.message, /Nothing has re-checked that slot since/u);
 });

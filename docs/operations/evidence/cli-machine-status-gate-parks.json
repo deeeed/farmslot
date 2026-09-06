@@ -1,37 +1,10 @@
 {
-  "note": "farmslot machine status macwork --json against the live dev gateway (ws://localhost:7801) while run 98c3657b was gate-parked with its slot freed. Records trimmed to the gate-parked run; gateParks is the derived list verbatim.",
-  "capturedAt": "2026-09-06T08:33:57.587Z",
+  "note": "farmslot machine status macwork --json against the live dev gateway (ws://localhost:7801) during the PR 594 fix round. Both park records on the machine are settled (phase restored), so the derived gateParks list is correctly empty — this exercises the liveGateParkView settled filter against real records. The earlier capture of a NON-empty list, taken while run 98c3657b was gate-parked with its slot freed, is in runner-validate-macwork-claude-gate-park-cli-status.json under cliStatus.entry.",
+  "capturedAt": "2026-09-06T11:14:39.601Z",
   "command": "yarn farmslot machine status macwork --json",
   "status": "ok",
   "envelopeCommand": "machine.status",
   "recordCount": 2,
-  "gateParks": [
-    {
-      "runId": "98c3657b-caae-41d6-91eb-1b96447f2480",
-      "machine": "macwork",
-      "slotId": "macwork-ff-2",
-      "phase": "parked",
-      "slotState": "freed",
-      "slotDisposition": "freed",
-      "freedSlotId": "macwork-ff-2",
-      "slotFreedAt": "2026-09-06T08:32:06.161Z",
-      "preservedWorkspace": {
-        "branch": "feat/manual-000121-fix-runner-stop-process-scan",
-        "headSha": "e32886e217f77bac5e0688d49ae87590cbf78f6c",
-        "detachedAt": "2026-09-06T08:32:06.144Z"
-      },
-      "restoreBeforeGateAnswer": true,
-      "restoreStage": {
-        "state": "not-started",
-        "attempting": null,
-        "completed": [],
-        "remaining": ["rebind", "reattach", "reacquire", "reload"]
-      },
-      "restoreTarget": {
-        "slotId": "macwork-ff-2",
-        "disposition": "freed",
-        "available": null
-      }
-    }
-  ]
+  "recordPhases": ["restored", "restored"],
+  "gateParks": []
 }

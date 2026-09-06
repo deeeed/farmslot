@@ -178,7 +178,9 @@ export function ResourcePostureWithheldNotice({
 export function RunGateParkNotice({ view }: { view: GateParkView | null }) {
   const notice = gateParkGateNotice(view);
   if (!view || !notice) return null;
-  const blocked = notice.kind !== 'restore-first';
+  // The shared contract decides this. Inferring it from `kind` puts a warning
+  // style on `park-answerable`, which is a gate the Gateway will accept.
+  const blocked = notice.blocking;
   return (
     <View
       style={[styles.withheld, !blocked && styles.parkNotice]}
@@ -194,8 +196,13 @@ export function RunGateParkNotice({ view }: { view: GateParkView | null }) {
         {gateParkSummaryLine(view)}
       </Text>
       {notice.refusal ? (
-        <Text style={styles.blocked} testID="companion-run-gate-park-refusal">
-          Last restore refused ({notice.refusal.code}): {notice.refusal.reason}
+        <Text
+          style={notice.refusalSuperseded ? styles.muted : styles.blocked}
+          testID="companion-run-gate-park-refusal"
+        >
+          {notice.refusalSuperseded ? 'An earlier restore' : 'The last restore'} refused (
+          {notice.refusal.code}): {notice.refusal.reason}
+          {notice.refusalSuperseded ? ' — the Gateway now reports that slot available.' : ''}
         </Text>
       ) : null}
     </View>

@@ -190,6 +190,41 @@ export function gateParkedRuns(records: readonly MachineParkRecord[]): GateParkV
 }
 
 /**
+ * The gate parks in a restore preview, each with the Gateway's OWN availability
+ * verdict attached.
+ *
+ * A restore preview is the one CLI surface that holds a real verdict, so it is
+ * the one place the CLI may state whether the slot can take the run back. It
+ * used to print no gate-park line at all: the section read `records`, which
+ * `formatMachinePauseResult` leaves undefined whenever preview runs are
+ * present, so exactly the surface with the best answer showed nothing.
+ */
+export function gateParkedPreviewRuns(
+  runs: readonly MachinePauseRestorePreviewRun[],
+): GateParkView[] {
+  const views: GateParkView[] = [];
+  for (const run of runs) {
+    const view = liveGateParkView(
+      { id: run.runId, park: run.record },
+      { target: run.restoreTarget, eligibility: run.eligibility },
+    );
+    if (view && view.slotDisposition === 'freed') views.push(view);
+  }
+  return views;
+}
+
+/**
+ * How many of these gate parks are holding a freed slot RIGHT NOW.
+ *
+ * Not the same as how many are listed: a park still landing has not released
+ * anything yet, and one mid-restore has already taken its slot back. Counting
+ * either as "holding a freed slot" overstates what dispatch actually gained.
+ */
+export function gateParksHoldingFreedSlot(views: readonly GateParkView[]): number {
+  return views.filter((view) => view.freedSlotId !== null).length;
+}
+
+/**
  * One line per gate-parked run: what the park did with the slot, the branch it
  * preserved, the slot a restore would use, and the refusal standing against it.
  *
@@ -253,9 +288,22 @@ export function formatMachinePauseResult(
       for (const park of parkRecords ?? []) lines.push(...formatParkRecord(park));
     }
   }
-  const gateParks = gateParkedRuns(parkRecords ?? []);
+  // Restore previews carry a Gateway verdict per run; a durable status read has
+  // only records. Both produce gate-park lines — the difference is that one can
+  // state availability and the other says it was never read.
+  const gateParks = previewRuns
+    ? gateParkedPreviewRuns(
+        previewRuns.filter(
+          (run): run is MachinePauseRestorePreviewRun => 'record' in run && 'restoreTarget' in run,
+        ),
+      )
+    : gateParkedRuns(parkRecords ?? []);
   if (gateParks.length > 0) {
-    lines.push('', `${bold('Gate parks')}  ${gateParks.length} run(s) holding a freed slot`);
+    const holding = gateParksHoldingFreedSlot(gateParks);
+    lines.push(
+      '',
+      `${bold('Gate parks')}  ${gateParks.length} run(s), ${holding} holding a freed slot`,
+    );
     for (const view of gateParks) lines.push(formatGateParkLine(view));
   }
   if (nextCommand) lines.push('', `${bold('Next')}  ${nextCommand}`);
@@ -386,8 +434,35 @@ function emitResult(
     emit.fail(partialError(result, nextCommand ?? 'farmslot machine status <machine>'));
     return;
   }
-  if (emit.machine) emit.ok(result);
+  if (emit.machine) emit.ok(withGateParks(result));
   else output.write(`${formatMachinePauseResult(result, nextCommand)}\n`);
+}
+
+/**
+ * The result as the Gateway returned it, plus the derived `gateParks` list.
+ *
+ * Additive on purpose: a script already reading `records` or `runs` keeps
+ * working, and one that wants the parked runs no longer re-implements the
+ * reading the clients use. A restore preview's entries carry the Gateway's
+ * availability verdict; every other surface reports it as not read.
+ */
+export function withGateParks<
+  T extends
+    | MachinePausePreviewResult
+    | MachinePauseExecuteResult
+    | MachinePauseStatusResult
+    | MachinePauseRestoreResult,
+>(result: T): T & { gateParks: GateParkView[] } {
+  if ('runs' in result && (!('execute' in result) || !result.execute)) {
+    const previewRuns = result.runs.filter(
+      (run): run is MachinePauseRestorePreviewRun => 'record' in run && 'restoreTarget' in run,
+    );
+    return { ...result, gateParks: gateParkedPreviewRuns(previewRuns) };
+  }
+  return {
+    ...result,
+    gateParks: gateParkedRuns('records' in result ? result.records : []),
+  };
 }
 
 export function registerMachineCommand(program: Command): void {
@@ -476,11 +551,7 @@ export function registerMachineCommand(program: Command): void {
           () => client.call<MachinePauseStatusResult>(MachinePauseMethods.status, statusParams),
           !emit.machine,
         );
-        // The derived gate-park list rides along with the raw records rather
-        // than replacing them: a script that already reads `records` keeps
-        // working, and one that wants the parked runs no longer has to
-        // re-implement the reading the clients use.
-        if (emit.machine) emit.ok({ ...result, gateParks: gateParkedRuns(result.records) });
+        if (emit.machine) emit.ok(withGateParks(result));
         else output.write(`${formatMachinePauseResult(result)}\n`);
       } catch (error) {
         emit.fail(error);

@@ -336,7 +336,11 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const engine = resolveRunEngine(r);
   const boundSlotId = resolveRunSlotId(r);
   // ADR-054 `free-slot`: while the park record holds the release, the slot row
-  // belongs to dispatch, not to this run. The run still names the slot — its
+  // belongs to dispatch, not to this run. `isSlotFreedByPark` ignores `phase`,
+  // and cancel deliberately skips slot release for a park-freed run, so this
+  // marker outlives the run: on a terminal run the badge is still TRUE and the
+  // restore it used to promise can never happen. The claim is kept; the promise
+  // is not. The run still names the slot — its
   // recovery handle and preserved branch key off it — so the badge keeps the
   // link and says what is actually true about occupancy instead of implying the
   // run is sitting in it.
@@ -691,8 +695,11 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                 ${slotFreedByPark
                   ? html`<span
                       data-testid="run-slot-freed-by-park"
+                      data-terminal=${isTerminal ? 'true' : 'false'}
                       style="margin-left:8px; color:${colors.statusWarn}; font-size:10px; font-family:${fonts.mono}"
-                      title="A free-slot park released this slot; answering the gate restores the run into it."
+                      title=${isTerminal
+                        ? 'A free-slot park released this slot before the run reached its end state. No restore will happen.'
+                        : 'A free-slot park released this slot; answering the gate restores the run into it.'}
                       >freed for dispatch</span
                     >`
                   : nothing}`

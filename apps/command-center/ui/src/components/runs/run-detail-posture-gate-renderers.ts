@@ -448,7 +448,9 @@ const GATE_PARK_STYLES = html`
 export function renderRunGateParkNotice(view: GateParkView | null): unknown {
   const notice = gateParkGateNotice(view);
   if (!view || !notice) return nothing;
-  const blocked = notice.kind !== 'restore-first';
+  // The shared contract decides this. Inferring it from `kind` puts a stop sign
+  // on `park-answerable`, which is a gate the Gateway will accept.
+  const blocked = notice.blocking;
   return html`
     ${GATE_PARK_STYLES}
     <div
@@ -463,8 +465,16 @@ export function renderRunGateParkNotice(view: GateParkView | null): unknown {
         ${gateParkSummaryLine(view)}
       </div>
       ${notice.refusal
-        ? html`<div class="posture-park-detail" data-testid="run-posture-park-notice-refusal">
-            Last restore refused (${notice.refusal.code}): ${notice.refusal.reason}
+        ? html`<div
+            class="posture-park-detail"
+            data-testid="run-posture-park-notice-refusal"
+            data-superseded=${notice.refusalSuperseded ? 'true' : 'false'}
+          >
+            ${notice.refusalSuperseded ? 'An earlier restore' : 'The last restore'} refused
+            (${notice.refusal.code}):
+            ${notice.refusal.reason}${notice.refusalSuperseded
+              ? ' — the Gateway now reports that slot available.'
+              : ''}
           </div>`
         : nothing}
     </div>

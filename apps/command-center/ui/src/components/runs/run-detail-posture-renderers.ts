@@ -336,6 +336,12 @@ export function renderRunPostureResolution(state: RunPostureResolutionState): un
  * handed, which branch was taken out of its working tree, and which slot a
  * restore would use. Availability is whatever the Gateway said, or "not known"
  * — this never decides it.
+ *
+ * The freed line is HISTORICAL. The record proves this run released the slot;
+ * it says nothing about who holds it now, and a successor takes it routinely.
+ * The old present-tense wording stayed on screen next to RESTORE_SLOT_TAKEN,
+ * which is one slot described as free and taken at once. Current occupancy is
+ * only ever the restore target's Gateway verdict, rendered below it.
  */
 export function renderRunGatePark(view: GateParkView | null): unknown {
   if (!view) return nothing;
@@ -359,7 +365,7 @@ export function renderRunGatePark(view: GateParkView | null): unknown {
       </div>
       ${view.freedSlotId
         ? html`<div class="posture-park-line" data-testid="run-posture-gate-park-freed">
-            ${view.freedSlotId} is free for dispatch while this run stays parked.
+            This run released ${view.freedSlotId} to dispatch.
           </div>`
         : nothing}
       <div class="posture-park-line" data-testid="run-posture-gate-park-target">

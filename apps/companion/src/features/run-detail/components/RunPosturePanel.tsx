@@ -53,9 +53,15 @@ function GateParkLines({ view }: { view: GateParkView | null }) {
       <Text style={styles.mono} testID="companion-run-posture-gate-park-summary">
         {gateParkSummaryLine(view)}
       </Text>
+      {/*
+        Historical, not current. The record proves this run RELEASED the slot; a
+        successor takes it routinely, so "is free for dispatch" read as a claim
+        about now and sat next to RESTORE_SLOT_TAKEN. Current occupancy is only
+        ever the restore target's Gateway verdict, rendered below.
+      */}
       {view.freedSlotId ? (
         <Text style={styles.muted} testID="companion-run-posture-gate-park-freed">
-          {view.freedSlotId} is free for dispatch while this run stays parked.
+          This run released {view.freedSlotId} to dispatch.
         </Text>
       ) : null}
       <Text style={styles.mono} testID="companion-run-posture-gate-park-target">

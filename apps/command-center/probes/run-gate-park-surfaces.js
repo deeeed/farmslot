@@ -17,7 +17,10 @@
  *      that answering the gate restores the run into that slot first, and marks
  *      the Slot badge as freed for dispatch.
  *   3. `machine.pause.restore` puts the run back, and every one of those
- *      surfaces goes away again while the gate stays pending.
+ *      surfaces goes away again while the gate stays pending, with the
+ *      preserved branch back at the SAME tip and the SAME decision ids pending.
+ *   4. A negative control: a run with no park record at all renders none of it,
+ *      so a surface hard-wired to show a gate park cannot pass this probe.
  *
  * Nothing is injected. The park and the restore are real protocol actions on a
  * real slot, and everything asserted is read out of the rendered DOM after the
@@ -149,6 +152,7 @@ return (async () => {
     };
   }
 
+  const TERMINAL_STATUSES = ['done', 'failed', 'cancelled'];
   const report = {
     runId,
     testedSha: window.__farmslotProbeSha ?? null,
@@ -172,7 +176,10 @@ return (async () => {
     report.slotId = initial.slotId;
     report.machine = initial.park?.machine ?? null;
     report.before = { park: parkFacts(initial), pendingDecisions: pendingDecisionIds(initial) };
-    if (report.before.pendingDecisions.length === 0) {
+    if (
+      report.before.pendingDecisions.length === 0 &&
+      !TERMINAL_STATUSES.includes(initial.status)
+    ) {
       failures.push('the run has no pending decision, so there is no gate to describe');
     }
     if (initial.park && initial.park.phase !== 'restored' && initial.park.phase !== 'cancelled') {
@@ -180,6 +187,12 @@ return (async () => {
         `the run already has a live park record (phase '${initial.park.phase}'); this probe expects a settled starting point`,
       );
     }
+    // A terminal run cannot be parked at all, so the park cycle below would
+    // fail on the Gateway's refusal rather than on anything this probe is
+    // about. Reported as an unmet precondition, not as a surface defect: the
+    // controls above still ran and still mean what they say.
+    report.parkable = !TERMINAL_STATUSES.includes(initial.status);
+    report.runStatus = initial.status;
     await renderRunDetail();
     report.before.surfaces = readSurfaces();
     if (report.before.surfaces.parkBlockPresent) {
@@ -192,7 +205,48 @@ return (async () => {
       failures.push('the Slot badge claimed a freed slot before anything was freed');
     }
 
-    // ---- 2. Park with `free-slot`, the choice the gate resolves to ----
+    // ---- 2. Negative control ----
+    //
+    // Every assertion above is of the form "the surface said X while the record
+    // said X". None of them can fail if the surface simply says X always. This
+    // renders a run that has NO park record at all and requires the surfaces to
+    // go silent — the same check the settled control makes, against a different
+    // record shape, so a renderer hard-wired to show a gate park is caught.
+    const control = { attempted: false };
+    const other = (await rpc('run.list', { limit: 40 })).runs.find(
+      (candidate) => candidate.id !== runId && !candidate.park,
+    );
+    if (!other) {
+      control.skipped = 'no run without a park record on this gateway to use as a control';
+    } else {
+      control.attempted = true;
+      control.runId = other.id;
+      location.hash = '#runs';
+      await wait(400);
+      location.hash = `#run/${other.id}`;
+      await waitFor(() => deepAll('.header h2')[0]);
+      await wait(1200);
+      const surfaces = readSurfaces();
+      control.surfaces = surfaces;
+      if (surfaces.parkBlockPresent) {
+        failures.push('a run with no park record still rendered a gate-park block');
+      }
+      if (surfaces.noticePresent) {
+        failures.push('a run with no park record still rendered a gate notice');
+      }
+      if (surfaces.slotBadgeFreedMarker) {
+        failures.push('a run with no park record still marked its slot freed');
+      }
+    }
+    report.control = control;
+
+    // ---- 3. Park with `free-slot`, the choice the gate resolves to ----
+    if (!report.parkable) {
+      report.parkCycleSkipped = `run ${runId} is '${initial.status}', so it cannot be parked; supply a gate-held run to prove the park cycle`;
+      report.failures = failures;
+      report.ok = failures.length === 0;
+      return report;
+    }
     const plan = await rpc('runtime.posture.preview', { runId, gateChoice: 'free-slot' });
     report.previewPlan = {
       posture: plan.posture,
@@ -260,12 +314,29 @@ return (async () => {
         if (!surfaces.slotBadgeFreedMarker) {
           failures.push('the Slot badge did not mark the freed slot as freed for dispatch');
         }
-        if (report.parked.pendingDecisions.length !== report.before.pendingDecisions.length) {
-          failures.push('the park changed the run pending decisions; the gate must stay untouched');
+        // Exact ids, not a count. A park that resolved one decision and opened
+        // another keeps the count identical while having consumed the gate this
+        // probe promised not to touch.
+        if (report.parked.pendingDecisions.join(',') !== report.before.pendingDecisions.join(',')) {
+          failures.push(
+            `the park changed which decisions are pending: ${report.before.pendingDecisions.join(',')} -> ${report.parked.pendingDecisions.join(',')}`,
+          );
+        }
+        const headSha = freed.park.preservedWorkspace?.headSha;
+        if (!headSha) {
+          failures.push('the freeing park recorded no preserved tip to restore the branch to');
+        } else if (!(surfaces.parkSummary ?? '').includes(headSha)) {
+          failures.push(
+            `the gate-park summary did not name the preserved tip ${headSha}; a branch name without its commit identifies nothing`,
+          );
+        }
+        if (!freed.park.preservedWorkspace?.detachedAt) {
+          failures.push('the park did not record when it detached the branch');
         }
       }
 
       // ---- 3. Restore, and every surface goes away ----
+      const headShaBeforeRestore = freed?.park.preservedWorkspace?.headSha ?? null;
       const restorePreview = await rpc('machine.pause.restore', {
         machine: freed?.park.machine ?? initial.park?.machine,
         selector: { kind: 'include', runIds: [runId] },
@@ -313,8 +384,21 @@ return (async () => {
           if (surfaces.slotBadgeFreedMarker) {
             failures.push('the Slot badge still claimed the slot was freed after the restore');
           }
-          if (report.after.pendingDecisions.length !== report.before.pendingDecisions.length) {
-            failures.push('the restore consumed or added a decision; the gate must stay pending');
+          if (
+            report.after.pendingDecisions.join(',') !== report.before.pendingDecisions.join(',')
+          ) {
+            failures.push(
+              `the restore changed which decisions are pending: ${report.before.pendingDecisions.join(',')} -> ${report.after.pendingDecisions.join(',')}`,
+            );
+          }
+          // The preserved branch must come back at the SAME tip. A restore that
+          // checked out the branch at a different commit has silently moved the
+          // run's work, which no status field reports.
+          const restoredSha = settled.park.preservedWorkspace?.headSha;
+          if (restoredSha !== headShaBeforeRestore) {
+            failures.push(
+              `the preserved tip changed across the restore: ${headShaBeforeRestore} -> ${restoredSha}`,
+            );
           }
         }
       }

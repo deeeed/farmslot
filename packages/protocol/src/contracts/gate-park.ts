@@ -177,12 +177,31 @@ export function hasLiveParkRecord(run: Pick<Run, 'park'>): boolean {
  * whose release has not landed, and calling it freed would advertise a slot
  * whose worker is still being stopped. `restoring` is likewise not `freed`:
  * the slot is back under the run, but the restore still owes stages.
+ *
+ * The two `partial` states are split for the same reason, and it is the split
+ * that matters most to an operator. A `partial` park has SETTLED — it will not
+ * finish — so calling it "still landing" promises a completion that is never
+ * coming, and telling the operator to wait is advice that cannot work. Which of
+ * the two it is comes from the Gateway's own fence, never from a second reading
+ * of the record: a partial that detached nothing and left an observably live
+ * worker is answerable where it stands, and every other partial owes an
+ * explicit restore before its gate may be answered.
  */
 export type GateParkSlotState =
   /** A park that holds the run's slot — the machine-wide pause of ADR-053. */
   | 'retained'
-  /** A freeing park whose slot release has not landed yet. */
+  /** A freeing park still in flight; its slot release has not landed yet. */
   | 'freeing'
+  /**
+   * A freeing park that failed before it reached the slot and left nothing
+   * outstanding. The worker is observably running and the gate is answerable.
+   */
+  | 'partial-answerable'
+  /**
+   * A freeing park that failed with an effect outstanding — a detach not rolled
+   * back, or a worker that is not provably alive. Only a restore clears it.
+   */
+  | 'partial-needs-restore'
   /** The slot is released; dispatch may select it while the run stays parked. */
   | 'freed'
   /** A restore re-bound the slot but still owes stages before the gate is answerable. */
@@ -270,6 +289,16 @@ function slotStateOf(park: MachineParkRecord): GateParkSlotState {
   if (park.mode !== 'release' || park.slotDisposition !== 'freed') return 'retained';
   if (park.slotFreedAt && !park.slotReboundAt) return 'freed';
   if (park.slotReboundAt) return 'restoring';
+  // A `partial` never reached the slot AND has stopped trying, so it is not
+  // "still landing". Whether its gate is answerable is not a second opinion
+  // formed here — it is `isGateParkInFlightOrFreed`, the same predicate
+  // `assertNotGateParked` fences the resolution on. Deriving it any other way
+  // is how the surfaces came to tell an operator to wait for a park that had
+  // already given up, on a run whose worker was alive and whose gate the
+  // Gateway would have accepted.
+  if (park.phase === 'partial') {
+    return isGateParkInFlightOrFreed({ park }) ? 'partial-needs-restore' : 'partial-answerable';
+  }
   // The write-ahead record declares the intent before any release effect lands.
   return 'freeing';
 }
@@ -387,6 +416,12 @@ export function liveGateParkView(
 export function gateParkStateLabel(view: GateParkView): string {
   if (view.slotState === 'retained') return 'Parked, slot retained';
   if (view.slotState === 'freeing') return 'Parking, slot not freed yet';
+  // Neither partial says "parking": the park stopped, and the difference
+  // between the two is the only thing that tells the operator what to do next.
+  if (view.slotState === 'partial-answerable') {
+    return 'Park failed before the slot; worker still running';
+  }
+  if (view.slotState === 'partial-needs-restore') return 'Park failed partway; needs a restore';
   if (view.slotState === 'freed') return 'Parked, slot freed for dispatch';
   if (view.slotState === 'restoring') return 'Restoring into its slot';
   return 'Park settled';
@@ -416,12 +451,31 @@ export function gateParkSummaryLine(view: GateParkView): string {
  * A refused restore is reported as a block on the answer, never as a failed
  * run: the record stays parked, the decision stays pending, and the operator
  * can answer again once the refusal clears — or cancel.
+ *
+ * `blocking` is carried rather than left to each client to infer from `kind`.
+ * A client that re-derives it gets the one case that matters backwards: a
+ * `partial` park that stopped short of the slot is a warning worth showing and
+ * is NOT a block, so styling every non-`restore-first` notice as a block puts
+ * a stop sign on a gate the Gateway will accept.
  */
 export interface GateParkGateNotice {
-  kind: 'restore-first' | 'restore-blocked' | 'park-in-flight';
+  kind:
+    | 'restore-first'
+    | 'restore-blocked'
+    | 'park-in-flight'
+    | 'park-needs-restore'
+    | 'park-answerable';
+  /** Whether this notice stands between the operator and answering the gate. */
+  blocking: boolean;
   message: string;
-  /** The typed refusal the last restore attempt recorded, when one stands. */
+  /** The typed refusal the last restore attempt recorded. */
   refusal?: MachineParkRestoreRefusal;
+  /**
+   * A Gateway verdict says the target IS available now, so the refusal above
+   * describes a previous attempt rather than the current answer. Without this
+   * a refusal that has since been overtaken keeps reading as a standing block.
+   */
+  refusalSuperseded?: boolean;
 }
 
 export function gateParkGateNotice(view: GateParkView | null): GateParkGateNotice | null {
@@ -429,8 +483,27 @@ export function gateParkGateNotice(view: GateParkView | null): GateParkGateNotic
   if (view.slotState === 'freeing') {
     return {
       kind: 'park-in-flight',
+      blocking: true,
       message:
         'A free-slot park is still landing for this run, so its gate cannot be answered yet.',
+    };
+  }
+  if (view.slotState === 'partial-needs-restore') {
+    return {
+      kind: 'park-needs-restore',
+      blocking: true,
+      // Deliberately says what to DO. This park has stopped, so "wait" is the
+      // one instruction that cannot work, and it is what the old copy gave.
+      message: `A free-slot park failed partway and left an effect outstanding, so this gate cannot be answered until a restore settles it. Waiting will not clear it — restore the run into ${view.slotId}, or cancel it.`,
+      ...(view.refusal ? { refusal: view.refusal } : {}),
+    };
+  }
+  if (view.slotState === 'partial-answerable') {
+    return {
+      kind: 'park-answerable',
+      blocking: false,
+      message: `A free-slot park failed before it reached ${view.slotId} and left the worker running, so this gate can be answered where it stands.`,
+      ...(view.refusal ? { refusal: view.refusal } : {}),
     };
   }
   if (!view.restoreBeforeGateAnswer) return null;
@@ -438,17 +511,31 @@ export function gateParkGateNotice(view: GateParkView | null): GateParkGateNotic
   // `available === null` is "not known", never "unavailable": only a Gateway
   // verdict answers it, and treating an unread answer as a block would stand in
   // the operator's way for a restore that would have succeeded.
-  const blocked = target.available === false || Boolean(view.refusal);
-  if (!blocked) {
+  //
+  // A recorded refusal is likewise not a current verdict. It says the LAST
+  // attempt refused, which is the best thing known only while nothing newer has
+  // looked; an `available: true` verdict is newer by construction, and letting
+  // a stale refusal outrank it blocks a restore the Gateway just approved.
+  if (target.available === false) {
     return {
-      kind: 'restore-first',
-      message: `Answering this gate restores the run into ${target.slotId} first, then resolves the decision.`,
+      kind: 'restore-blocked',
+      blocking: true,
+      message: `Answering this gate restores the run into ${target.slotId} first, and the Gateway reports that slot cannot take it back.${target.reason ? ` ${target.reason}` : ''}`,
+      ...(view.refusal ? { refusal: view.refusal } : {}),
     };
   }
-  const detail = target.available === false && target.reason ? ` ${target.reason}` : '';
+  if (target.available === null && view.refusal) {
+    return {
+      kind: 'restore-blocked',
+      blocking: true,
+      message: `Answering this gate restores the run into ${target.slotId} first, and the last restore attempt refused. Nothing has re-checked that slot since.`,
+      refusal: view.refusal,
+    };
+  }
   return {
-    kind: 'restore-blocked',
-    message: `Answering this gate restores the run into ${target.slotId} first, and that restore is currently refused.${detail}`,
-    ...(view.refusal ? { refusal: view.refusal } : {}),
+    kind: 'restore-first',
+    blocking: false,
+    message: `Answering this gate restores the run into ${target.slotId} first, then resolves the decision.`,
+    ...(view.refusal ? { refusal: view.refusal, refusalSuperseded: true } : {}),
   };
 }
